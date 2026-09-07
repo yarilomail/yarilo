@@ -99,6 +99,12 @@ type StoredNameAdopter interface {
 	AdoptStoredNames(folderID uint64, keyOf func(name string, guid [16]byte) (uint32, bool)) error
 }
 
+// StoredNameLister reads the names an older build kept beside the index. Read
+// once, by the pass that moves them into the driver's own store (#1726).
+type StoredNameLister interface {
+	StoredNames(folderID uint64) (map[uint32]string, error)
+}
+
 // FlagsDirtyMarker records that a message's flags have not reached storage. A
 // driver that keeps flags in the file name sets it when the rename fails.
 type FlagsDirtyMarker interface {

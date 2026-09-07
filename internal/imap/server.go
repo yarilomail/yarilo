@@ -3229,26 +3229,9 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			mw.WriteInternalDate(m.InternalDate)
 		}
 		if opts.RFC822Size {
-			// Virtual (CRLF) size: the octet count actually transmitted.
-			// Physical size varies with stored line endings.
-			size := m.RFC822Size()
-			// Records with VSize==0 predate Save() returning virtual size and
-			// fall back to physical size; recompute from the body on read so
-			// the reported size stays stable.
-			if m.VSize == 0 && mailbox.Readable(s.folderBox(), m) {
-				if rc, ferr := s.fetchSelected(m); ferr == nil {
-					if raw, rerr := io.ReadAll(rc); rerr == nil {
-						size = virtualSizeFromRaw(raw)
-					}
-					rc.Close()
-				} else {
-					// The size still goes out, from the index. It is the one
-					// attribute here that has a second source, which is why
-					// this is the quietest way to answer wrongly.
-					mark("rfc822.size", ferr)
-				}
-			}
-			mw.WriteRFC822Size(int64(size))
+			// Virtual (CRLF) size, from where the driver keeps it: a maildir
+			// name carries it, a dbox record holds it (#1726).
+			mw.WriteRFC822Size(int64(mailbox.RFC822SizeOf(s.folderBox(), s.folder.Name, m)))
 		}
 		if opts.ModSeq && m.ModSeq > 0 {
 			mw.WriteModSeq(m.ModSeq)

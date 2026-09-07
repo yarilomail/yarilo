@@ -302,6 +302,7 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
+			mailbox.FillSizes(bundle.box, name, msgs)
 			var size uint64
 			for _, m := range msgs {
 				size += uint64(m.Size)

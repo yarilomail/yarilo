@@ -91,7 +91,7 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 		ThreadID:   h.threadOf(emailID(m)),
 		MailboxIDs: map[string]bool{ref.mailboxID: true},
 		Keywords:   keywordsOf(m),
-		Size:       m.Size,
+		Size:       mailbox.RFC822SizeOf(h.box, ref.folder, m),
 		ReceivedAt: m.InternalDate.UTC().Format(time.RFC3339),
 		BodyValues: map[string]jmapcore.EmailBodyValue{},
 	}

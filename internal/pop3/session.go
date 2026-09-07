@@ -685,6 +685,7 @@ func (s *session) loadMailbox() error {
 		slog.Error("pop3: get messages", "user", s.userInfo.Username, "err", err)
 		return err
 	}
+	mailbox.FillSizes(s.box, folder.Name, msgs)
 	var savedUIDLs map[uint32]string
 	if s.srv.opts.SaveUIDL {
 		if saved, err := readPOP3UIDLs(s.idx, folder.ID); err != nil {
