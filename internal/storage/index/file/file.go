@@ -346,6 +346,9 @@ func (h *userHandle) ForgetStoredNames(folderID uint64) error {
 func (h *userHandle) StoredNames(folderID uint64) (map[uint32]string, error) {
 	return h.stamped(folderID).StoredNames(folderID)
 }
+func (h *userHandle) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, error) {
+	return h.stamped(folderID).StampSizes(folderID, vsizes)
+}
 func (h *userHandle) MarkFolderCorrupt(folderID uint64) error {
 	return h.stamped(folderID).MarkFolderCorrupt(folderID)
 }

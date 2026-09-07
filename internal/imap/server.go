@@ -2785,6 +2785,9 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	if err != nil {
 		return nil, err
 	}
+	// LARGER/SMALLER compare a number, and a record that carries none would
+	// compare zero against every bound (#1726).
+	mailbox.FillSizes(s.folderBox(), s.folder.Name, msgs)
 
 	needsBody := len(criteria.Header) > 0 || len(criteria.Body) > 0 || len(criteria.Text) > 0 ||
 		!criteria.SentSince.IsZero() || !criteria.SentBefore.IsZero() || searchNeedsBodyRecurse(criteria.Not, criteria.Or)
@@ -3229,9 +3232,19 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			mw.WriteInternalDate(m.InternalDate)
 		}
 		if opts.RFC822Size {
-			// Virtual (CRLF) size, from where the driver keeps it: a maildir
-			// name carries it, a dbox record holds it (#1726).
-			mw.WriteRFC822Size(int64(mailbox.RFC822SizeOf(s.folderBox(), s.folder.Name, m)))
+			// From where the driver keeps it: a maildir name carries it, a dbox
+			// record holds it (#1726).
+			size, vsize, serr := mailbox.MessageSize(s.folderBox(), s.folder.Name, m)
+			if serr != nil {
+				// The number still goes out, from the record. It is the one
+				// attribute here with a second source, which is why answering
+				// wrongly is otherwise silent.
+				mark("rfc822.size", serr)
+			}
+			if vsize != 0 {
+				size = vsize
+			}
+			mw.WriteRFC822Size(int64(size))
 		}
 		if opts.ModSeq && m.ModSeq > 0 {
 			mw.WriteModSeq(m.ModSeq)

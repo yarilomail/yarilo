@@ -14,9 +14,8 @@ import (
 
 const oldBody = "From: a@b\r\n\r\nold body\r\n"
 
-// oldMaildirFolder is the shape an older build left: files in cur/, records that
-// name them through the sidecar alone, and a uid list that never heard of them.
-// withSizes says whether the names carry the ,S= and ,W= fields.
+// oldMaildirFolder is the shape an older build left: files in cur/, records named
+// through the sidecar alone, and a uid list that never heard of them.
 func oldMaildirFolder(t *testing.T, withSizes bool) (string, mailbox.UserMailbox, mailbox.UserIndex, *mailbox.Folder, []string) {
 	t.Helper()
 	home := t.TempDir()
@@ -170,4 +169,82 @@ func indexDirOf(t *testing.T, idx mailbox.UserIndex) string {
 		t.Fatal("the index cannot say where a folder lives")
 	}
 	return d.IndexDirFor("INBOX")
+}
+
+// A base already listed under one uid stays with it: the sidecar naming the
+// same file for another record must not move the file between them (#1727).
+func TestAListedFileIsNotTakenFromItsOwner(t *testing.T) {
+	home, box, idx, f, names := oldMaildirFolder(t, true)
+
+	// uid 1 owns the file; the sidecar says uid 2 has it too.
+	namer, ok := mailbox.Driver(box).(mailbox.UIDNamer)
+	if !ok {
+		t.Fatal("the maildir driver does not record a uid")
+	}
+	if _, err := namer.AssignUID("INBOX", names[0], 1); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := filepath.Join(indexDirOf(t, idx), "yarilo.index.names")
+	if err := os.WriteFile(sidecar, []byte(fmt.Sprintf("2\t%s\t%d\n", names[0], len(oldBody))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// uid 2's own file is gone, so the sidecar's claim is all it has.
+	if err := os.Remove(filepath.Join(home, "Maildir", "cur", names[1])); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateNames(t, box, idx, f)
+
+	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range msgs {
+		got, perr := mailbox.MessagePath(box, "INBOX", m)
+		switch m.UID {
+		case 1:
+			if perr != nil || got != names[0] {
+				t.Errorf("uid 1 lost its file: %q, %v", got, perr)
+			}
+		case 2:
+			if perr == nil {
+				t.Errorf("uid 2 took %q, which uid 1 owns", got)
+			}
+		}
+	}
+}
+
+// Quota sums the record's own size, so the pass writes back what it measured:
+// a folder recovered without it is counted as empty against the user (#1728).
+func TestQuotaSeesTheRecoveredSize(t *testing.T) {
+	_, box, idx, f, _ := oldMaildirFolder(t, true)
+	if err := os.Remove(filepath.Join(indexDirOf(t, idx), "yarilo.index.names")); err != nil {
+		t.Fatal(err)
+	}
+	migrateNames(t, box, idx, f)
+
+	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reported uint64
+	for _, m := range msgs {
+		reported += uint64(mailbox.RFC822SizeOf(box, "INBOX", m))
+	}
+	sizer, ok := idx.(interface {
+		FolderVSize(uint64) (uint64, uint32, error)
+	})
+	if !ok {
+		t.Fatal("the index does not answer for the folder's size")
+	}
+	bytes, count, err := sizer.FolderVSize(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != uint32(len(msgs)) {
+		t.Errorf("quota counts %d messages, the folder holds %d", count, len(msgs))
+	}
+	if bytes != reported {
+		t.Errorf("quota sums %d bytes, the messages report %d", bytes, reported)
+	}
 }

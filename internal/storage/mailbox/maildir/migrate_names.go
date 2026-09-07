@@ -11,11 +11,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// MigrateUIDNames puts every record's name in the list, which is where a
-// maildir message is found from its uid. Two sources: the sidecar an older
-// build wrote, and, where that is gone, the guid the base name derives (#1726).
-//
-// The sidecar is removed only once every record it named is in the list.
+// MigrateUIDNames puts every record's name in the list: from the sidecar, then
+// from the guid a base name derives. The sidecar goes once all of it is in (#1726).
 func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Folder) (int, error) {
 	marker, ok := idx.(mailbox.UIDNameMarker)
 	if !ok {
@@ -35,6 +32,7 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 
 	placed := 0
 	var unresolved []uint32
+	vsizes := map[uint32]uint32{}
 	err = u.withMailboxLockSite(folder.Name, lockSiteMigrateNames, func() error {
 		known, kerr := u.basesByUID(folder.Name)
 		if kerr != nil {
@@ -56,15 +54,38 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 		if len(place) == 0 {
 			return nil
 		}
-		n, perr := u.placeUIDsLocked(folder.Name, place)
+		n, taken, perr := u.placeUIDsLocked(folder.Name, place)
 		placed = n
-		return perr
+		unresolved = append(unresolved, taken...)
+		if perr != nil {
+			return perr
+		}
+		for uid, base := range place {
+			if _, refused := refusedSet(taken)[uid]; refused {
+				continue
+			}
+			if _, vsize, ok := sizesFromName(base); ok {
+				vsizes[uid] = vsize
+				continue
+			}
+			if _, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder.Name), "cur", base)); merr == nil {
+				vsizes[uid] = vsize
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return placed, err
 	}
 	for _, uid := range unresolved {
 		reportUnplaced(u.username, folder.Name, uid)
+	}
+	// The size was kept beside the name and went with it; quota sums the record,
+	// so a folder recovered without it is counted as empty (#1728).
+	if stamper, canStamp := idx.(mailbox.SizeStamper); canStamp && len(vsizes) > 0 {
+		if _, serr := stamper.StampSizes(folder.ID, vsizes); serr != nil {
+			return placed, serr
+		}
 	}
 	if len(stored) > 0 {
 		if left := u.storedNotListed(folder.Name, stored); left > 0 {
@@ -101,9 +122,8 @@ func (u *userMailbox) baseFor(m *mailbox.MessageMeta, stored map[uint32]string, 
 	return "", ""
 }
 
-// basesByGUID indexes cur/ by the guid each base derives. A record whose guid
-// was overridden at save is not in here: its guid lived in the list entry that
-// is gone, so the pass reports it rather than guessing a file for it (#1726).
+// basesByGUID indexes cur/ by the guid each base derives. An overridden guid
+// lived in the lost list entry, so such a record is reported, not guessed (#1726).
 func (u *userMailbox) basesByGUID(folder string) map[[16]byte]string {
 	entries, err := u.dirEntriesFor(folder)
 	if err != nil {
@@ -174,4 +194,13 @@ func reportUnplaced(user, folder string, uid uint32) {
 	}
 	slog.Error("maildir: no file in this folder answers for the record",
 		"user", user, "folder", folder, "uid", uid)
+}
+
+// refusedSet is the uids placeUIDsLocked would not take a file for.
+func refusedSet(uids []uint32) map[uint32]struct{} {
+	out := make(map[uint32]struct{}, len(uids))
+	for _, uid := range uids {
+		out[uid] = struct{}{}
+	}
+	return out
 }

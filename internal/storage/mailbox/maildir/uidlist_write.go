@@ -352,17 +352,16 @@ func SetTestWriteSeams(sync func(*os.File) error, beforeRename func(string)) {
 	syncFile, beforeUIDListRename = sync, beforeRename
 }
 
-// placeUIDsLocked writes a batch of uid → base entries in one rewrite of the
-// list. Per record it would rewrite the whole file once per message, which on a
-// folder the migration touches is every message it holds (#1726).
-func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (int, error) {
+// placeUIDsLocked writes a batch in one rewrite of the list, and returns the
+// uids it refused: a base listed under another uid stays with its owner (#1726).
+func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (int, []uint32, error) {
 	if err := u.ensureUIDListLocked(folder); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	path := u.uidListPath(folder)
 	l, err := readUIDListFile(path)
 	if err != nil {
-		return 0, fmt.Errorf("maildir/uidlist: read: %w", err)
+		return 0, nil, fmt.Errorf("maildir/uidlist: read: %w", err)
 	}
 	if l.torn {
 		u.reportTornUIDList(folder, path, l)
@@ -372,8 +371,13 @@ func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (i
 		listed[l.records[i].base] = i
 	}
 	placed := 0
+	var taken []uint32
 	for uid, base := range place {
 		if uid == 0 {
+			continue
+		}
+		if i, ok := listed[base]; ok && l.records[i].uid != uid {
+			taken = append(taken, uid)
 			continue
 		}
 		if testPlaceLimit > 0 && placed >= testPlaceLimit {
@@ -393,16 +397,16 @@ func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (i
 		placed++
 	}
 	if placed == 0 {
-		return 0, nil
+		return 0, taken, nil
 	}
 	if err := u.writeUIDList(folder, l); err != nil {
-		return 0, err
+		return 0, taken, err
 	}
-	return placed, nil
+	return placed, taken, nil
 }
 
 // testPlaceLimit caps how many entries one pass writes. Test seam: a partial
-// placement is the state the sidecar must survive, and nothing else produces it.
+// placement is the state the sidecar must survive, and nothing else makes one.
 var testPlaceLimit int
 
 // SetTestPlaceLimit caps the batch and returns a function restoring it.

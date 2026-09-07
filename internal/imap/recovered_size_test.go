@@ -14,10 +14,10 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A record recovered by the uid-name pass reports a size, and it is the size of
-// the body the same FETCH returns: a record that lost its sidecar reported zero
-// and handed out nothing (#1726).
-func TestARecoveredRecordReportsTheSizeOfItsBody(t *testing.T) {
+// recoveredMaildirFolder is a user whose INBOX holds one record in the damaged
+// shape: no size, no list entry, its file still in cur/.
+func recoveredMaildirFolder(t *testing.T) (string, string) {
+	t.Helper()
 	root := t.TempDir()
 	home := filepath.Join(root, "test.com", "user")
 	info := &mailbox.UserInfo{Username: "user@test.com", Home: home, Driver: "maildir"}
@@ -43,7 +43,6 @@ func TestARecoveredRecordReportsTheSizeOfItsBody(t *testing.T) {
 	sum := sha256.Sum256([]byte(base))
 	var guid [16]byte
 	copy(guid[:], sum[:16])
-	// The damaged shape: no size in the record, no entry in the list.
 	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, GUID: guid}); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +52,13 @@ func TestARecoveredRecordReportsTheSizeOfItsBody(t *testing.T) {
 	if err := box.Close(); err != nil {
 		t.Fatal(err)
 	}
+	return root, body
+}
+
+// A recovered record reports a size, and it is the size of the body the same
+// FETCH hands out; one that lost its sidecar reported zero (#1726).
+func TestARecoveredRecordReportsTheSizeOfItsBody(t *testing.T) {
+	root, _ := recoveredMaildirFolder(t)
 
 	c := startTestServerIn(t, root)
 	if err := c.Login("user@test.com", "testpass").Wait(); err != nil {
@@ -81,5 +87,26 @@ func TestARecoveredRecordReportsTheSizeOfItsBody(t *testing.T) {
 	}
 	if msgs[0].RFC822Size != int64(len(got)) {
 		t.Errorf("RFC822.SIZE is %d, the body is %d bytes", msgs[0].RFC822Size, len(got))
+	}
+}
+
+// SEARCH LARGER compares a number, and a recovered record must bring one: with
+// the record's own zero it matched no bound at all (#1727).
+func TestSearchLargerFindsARecoveredRecord(t *testing.T) {
+	root, _ := recoveredMaildirFolder(t)
+	c := startTestServerIn(t, root)
+	if err := c.Login("user@test.com", "testpass").Wait(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Logout().Wait() }()
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := c.Search(&imap.SearchCriteria{Larger: 1}, nil).Wait()
+	if err != nil {
+		t.Fatalf("SEARCH: %v", err)
+	}
+	if len(data.AllSeqNums()) != 1 {
+		t.Errorf("SEARCH LARGER 1 found %v, want the one message", data.AllSeqNums())
 	}
 }

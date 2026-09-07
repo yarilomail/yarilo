@@ -13,9 +13,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The size comes from where the driver keeps it: a maildir name carries both
-// numbers, and a name without them is measured. A record that never held a
-// size is not an empty message (#1726).
+// The size comes from where the driver keeps it: the name carries both numbers,
+// and a name without them is measured (#1726).
 func TestTheSizeComesFromTheName(t *testing.T) {
 	// A lone LF makes the two numbers differ, which is the whole point of W=.
 	const body = "From: a@b\n\nx\n"
