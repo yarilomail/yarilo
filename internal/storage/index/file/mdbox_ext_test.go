@@ -143,3 +143,96 @@ func (u *userIndex) folderStateFor(t *testing.T, folder string) *folderState {
 	t.Fatalf("folder %q not open", folder)
 	return nil
 }
+
+// An index written before the extension existed takes it on the first record
+// that carries a storage key: declaring a field grows the record, and a header
+// that still names the old width refuses every later flush (#1709 regression).
+func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
+	dir := t.TempDir()
+	a := openIdx(dir, testUser)
+	f, err := a.OpenFolder("INBOX", 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The shape an older build left: records, no storage key among them.
+	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.withFolder(f.ID, func(fs *folderState) error { return fs.flush() }); err != nil {
+		t.Fatal(err)
+	}
+	a.Close() //nolint:errcheck
+
+	// The shape an older build left: the same base with no mdbox extension
+	// declared, so its records are eight bytes narrower.
+	before := stripMdboxExt(t, filepath.Join(testHome(dir, testUser), "yarilo.index"))
+
+	b := openIdx(dir, testUser)
+	defer b.Close() //nolint:errcheck
+	fb, err := b.OpenFolder("INBOX", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.AppendMessage(fb.ID, &mailbox.MessageMeta{
+		UID: 2, Size: 10, MapUID: 7, SaveDate: 1788000000,
+	}); err != nil {
+		t.Fatalf("the first record with a storage key: %v", err)
+	}
+	fsb := b.folderStateFor(t, "INBOX")
+	if got := fsb.file.Header.RecordSize; got != before+mdboxRecSize {
+		t.Errorf("the header says %d bytes a record, was %d before the field", got, before)
+	}
+	msgs, err := b.GetMessages(fb.ID, mailbox.SeqSet{})
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("the folder holds %d records, want 2", len(msgs))
+	}
+	for _, m := range msgs {
+		if m.UID == 2 && m.MapUID != 7 {
+			t.Errorf("uid 2 says map uid %d, want 7", m.MapUID)
+		}
+		if m.Size != 10 {
+			t.Errorf("uid %d reads back size %d, want 10", m.UID, m.Size)
+		}
+	}
+}
+
+// stripMdboxExt rewrites an index without the extension and returns the record
+// size that leaves, standing in for a base written before the field existed.
+func stripMdboxExt(t *testing.T, path string) uint32 {
+	t.Helper()
+	f, err := mailindex.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := make([]mailindex.Extension, 0, len(f.Extensions))
+	for _, e := range f.Extensions {
+		if e.Name != extNameMdbox {
+			kept = append(kept, e)
+		}
+	}
+	if len(kept) == len(f.Extensions) {
+		t.Fatalf("the fresh base declares no %q extension to strip", extNameMdbox)
+	}
+	layout, err := mailindex.ComputeRecordLayout(kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extBytes, err := mailindex.EncodeExtHeaders(layout.Extensions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Extensions = layout.Extensions
+	f.Layout = layout
+	f.Header.RecordSize = layout.RecordSize
+	f.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
+	for _, rec := range f.Records {
+		delete(rec.Ext, extNameMdbox)
+	}
+	if _, err := mailindex.Recreate(f.ToRecreateInput(path)); err != nil {
+		t.Fatal(err)
+	}
+	return layout.RecordSize
+}
