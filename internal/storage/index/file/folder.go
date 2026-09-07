@@ -591,9 +591,8 @@ func (fs *folderState) flush() error {
 	if err := os.MkdirAll(fs.indexDir, 0o700); err != nil {
 		return fmt.Errorf("fileindex/flush: mkdir: %w", err)
 	}
-	// Persisted as maintained, not re-derived: a record that carries no size
-	// says nothing about the message, and summing it as zero loses the folder's
-	// quota to the first flush (#1728).
+	// Persisted as maintained, not re-derived: a record carrying no size summed
+	// as zero costs the folder its quota on the first flush (#1728).
 	fs.persistVsizeLocked()
 	// Mint the lineage and record what this base absorbs before building it: a
 	// crash before the truncation leaves a base that knows what it contains.
