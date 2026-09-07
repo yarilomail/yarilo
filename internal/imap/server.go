@@ -1200,6 +1200,12 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	if refreshed := s.migrateNamesOnSelect(h, rel, f); refreshed != nil {
 		f = refreshed
 	}
+	if n, ferr := mailbox.FillSizelessRecords(h.idx, h.box, f); ferr != nil {
+		slog.Warn("imap: sizes not filled", "folder", rel, "err", ferr)
+	} else if n > 0 {
+		slog.Info("imap: records took the size their storage holds",
+			"user", s.username(), "folder", rel, "filled", n)
+	}
 	if refreshed := s.dboxHealIfCorrupt(h, rel, f); refreshed != nil {
 		f = refreshed
 	}

@@ -446,7 +446,8 @@ func (fs *folderState) refreshExtState() error {
 }
 
 // recalcVsizeLocked recomputes the aggregate from the per-record vsize
-// extension, falling back to physical size for records predating it.
+// extension. Records carrying none are counted but add nothing, so the driver
+// fills them before this is trusted (#1728).
 func (fs *folderState) recalcVsizeLocked() {
 	var (
 		total  uint64
@@ -590,9 +591,8 @@ func (fs *folderState) flush() error {
 	if err := os.MkdirAll(fs.indexDir, 0o700); err != nil {
 		return fmt.Errorf("fileindex/flush: mkdir: %w", err)
 	}
-	// Re-derive the vsize aggregate from records and persist it, mirroring
-	// the message-count recount below.
-	fs.recalcVsizeLocked()
+	// Persisted as maintained, not re-derived: a record carrying no size summed
+	// as zero costs the folder its quota on the first flush (#1728).
 	fs.persistVsizeLocked()
 	// Mint the lineage and record what this base absorbs before building it: a
 	// crash before the truncation leaves a base that knows what it contains.

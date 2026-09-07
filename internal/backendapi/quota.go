@@ -226,6 +226,11 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 		if oerr != nil {
 			continue
 		}
+		// Filled first: a rebuild sums the records, and a record that carries
+		// no size would zero the folder on the operator's own command (#1728).
+		if _, ferr := mailbox.FillSizelessRecords(bundle.idx, bundle.box, f); ferr != nil {
+			slog.Warn("quota recalc: sizes not filled", "user", req.User, "folder", name, "err", ferr)
+		}
 		if rerr := bundle.idx.RecomputeVSize(f.ID); rerr != nil {
 			slog.Warn("quota recalc: rebuild failed", "user", req.User, "folder", name, "err", rerr)
 		}

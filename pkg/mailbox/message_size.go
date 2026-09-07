@@ -1,5 +1,7 @@
 package mailbox
 
+import "io"
+
 // RecordSizer answers a message's sizes from where its driver keeps them. A
 // maildir name carries both; a dbox record already holds them (#1726).
 type RecordSizer interface {
@@ -52,4 +54,68 @@ func FillSizes(box UserMailbox, folder string, msgs []*MessageMeta) {
 		}
 		m.Size, m.VSize = size, vsize
 	}
+}
+
+// CountSizes reads a message and returns its physical and virtual sizes: the
+// octet count on disk, and the one on the wire with every bare LF as CRLF.
+func CountSizes(r io.Reader) (size, vsize uint32, err error) {
+	buf := make([]byte, 32*1024)
+	var prev byte
+	for {
+		n, rerr := r.Read(buf)
+		for i := 0; i < n; i++ {
+			size++
+			vsize++
+			if buf[i] == '\n' && prev != '\r' {
+				vsize++
+			}
+			prev = buf[i]
+		}
+		if rerr == io.EOF {
+			return size, vsize, nil
+		}
+		if rerr != nil {
+			return 0, 0, rerr
+		}
+	}
+}
+
+// FillSizelessRecords gives the records that carry no size the one their driver
+// holds, so the folder's sum stops reading them as empty (#1728).
+func FillSizelessRecords(idx UserIndex, box UserMailbox, folder *Folder) (int, error) {
+	lister, canList := idx.(SizelessLister)
+	stamper, canStamp := idx.(SizeStamper)
+	if !canList || !canStamp {
+		return 0, nil
+	}
+	if _, ok := Driver(box).(RecordSizer); !ok {
+		return 0, nil
+	}
+	uids, err := lister.SizelessUIDs(folder.ID)
+	if err != nil || len(uids) == 0 {
+		return 0, err
+	}
+	msgs, err := ReadMessages(idx, folder.ID, SeqSet{})
+	if err != nil {
+		return 0, err
+	}
+	want := make(map[uint32]struct{}, len(uids))
+	for _, uid := range uids {
+		want[uid] = struct{}{}
+	}
+	vsizes := make(map[uint32]uint32, len(uids))
+	for _, m := range msgs {
+		if _, missing := want[m.UID]; !missing {
+			continue
+		}
+		_, vsize, serr := MessageSize(box, folder.Name, m)
+		if serr != nil || vsize == 0 {
+			continue
+		}
+		vsizes[m.UID] = vsize
+	}
+	if len(vsizes) == 0 {
+		return 0, nil
+	}
+	return stamper.StampSizes(folder.ID, vsizes)
 }
