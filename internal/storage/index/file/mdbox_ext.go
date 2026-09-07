@@ -3,8 +3,6 @@ package file
 import (
 	"encoding/binary"
 	"log/slog"
-
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 )
 
 // The mdbox extension: a message's storage key, kept in the mailbox index the
@@ -30,16 +28,10 @@ func decodeMdboxRec(b []byte) (mapUID, saveDate uint32) {
 	return binary.LittleEndian.Uint32(b[0:4]), binary.LittleEndian.Uint32(b[4:8])
 }
 
-// ensureMdboxExtLocked declares the extension on an index written before it, so
-// the field the records carry has a layout. Caller holds fs.mu.
+// ensureMdboxExtLocked declares the extension, moving header and layout with the
+// field: an appended one alone leaves a base no flush can rewrite. Holds fs.mu.
 func (fs *folderState) ensureMdboxExtLocked() {
-	if findExt(fs.file.Extensions, extNameMdbox) != nil {
-		return
-	}
-	fs.file.Extensions = append(fs.file.Extensions, mailindex.Extension{
-		Name: extNameMdbox, RecordSize: mdboxRecSize, RecordAlign: 4,
-	})
-	if err := fs.syncHeaderSizeLocked(); err != nil {
+	if err := fs.file.AddRecordExtension(extNameMdbox, nil, mdboxRecSize, 4, 0); err != nil {
 		slog.Warn("fileindex: mdbox extension not declared", "folder", fs.folder, "err", err)
 	}
 }
