@@ -28,9 +28,8 @@ func decodeMdboxRec(b []byte) (mapUID, saveDate uint32) {
 	return binary.LittleEndian.Uint32(b[0:4]), binary.LittleEndian.Uint32(b[4:8])
 }
 
-// ensureMdboxExtLocked declares the extension on an index written before it.
-// The field widens every record, so the header and layout move with it: an
-// appended extension alone leaves a base no flush can rewrite. Caller holds fs.mu.
+// ensureMdboxExtLocked declares the extension, moving header and layout with the
+// field: an appended one alone leaves a base no flush can rewrite. Holds fs.mu.
 func (fs *folderState) ensureMdboxExtLocked() {
 	if err := fs.file.AddRecordExtension(extNameMdbox, nil, mdboxRecSize, 4, 0); err != nil {
 		slog.Warn("fileindex: mdbox extension not declared", "folder", fs.folder, "err", err)

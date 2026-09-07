@@ -144,9 +144,8 @@ func (u *userIndex) folderStateFor(t *testing.T, folder string) *folderState {
 	return nil
 }
 
-// An index written before the extension existed takes it on the first record
-// that carries a storage key: declaring a field grows the record, and a header
-// that still names the old width refuses every later flush (#1709 regression).
+// The field widens every record, so a base written before it must take the new
+// width too: a header left at the old one refuses every flush (#1709).
 func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 	dir := t.TempDir()
 	a := openIdx(dir, testUser)
@@ -178,11 +177,29 @@ func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("the first record with a storage key: %v", err)
 	}
-	fsb := b.folderStateFor(t, "INBOX")
-	if got := fsb.file.Header.RecordSize; got != before+mdboxRecSize {
-		t.Errorf("the header says %d bytes a record, was %d before the field", got, before)
+	// The base itself, not the state in hand: a refused rewrite leaves the
+	// folder serving from memory and the disk unchanged.
+	if err := b.withFolder(fb.ID, func(fs *folderState) error { return fs.flush() }); err != nil {
+		t.Fatalf("flush after the field was declared: %v", err)
 	}
-	msgs, err := b.GetMessages(fb.ID, mailbox.SeqSet{})
+	b.Close() //nolint:errcheck
+
+	path := filepath.Join(testHome(dir, testUser), "yarilo.index")
+	onDisk, err := mailindex.Open(path)
+	if err != nil {
+		t.Fatalf("reopen the base: %v", err)
+	}
+	if got := onDisk.Header.RecordSize; got != before+mdboxRecSize {
+		t.Errorf("the base says %d bytes a record, %d before the field", got, before)
+	}
+
+	c := openIdx(dir, testUser)
+	defer c.Close() //nolint:errcheck
+	fc, err := c.OpenFolder("INBOX", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := c.GetMessages(fc.ID, mailbox.SeqSet{})
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -199,8 +216,8 @@ func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 	}
 }
 
-// stripMdboxExt rewrites an index without the extension and returns the record
-// size that leaves, standing in for a base written before the field existed.
+// stripMdboxExt rewrites an index without the extension, returning the record
+// size that leaves: a base as an older build wrote it.
 func stripMdboxExt(t *testing.T, path string) uint32 {
 	t.Helper()
 	f, err := mailindex.Open(path)
