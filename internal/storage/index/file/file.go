@@ -3,8 +3,8 @@
 //
 // It is a thin adapter on top of internal/storage/mailindex; the
 // on-disk format is byte-for-byte the canonical mail-index v7.3.
-// The yarilo-specific .names sidecar is transitional (sdbox
-// encodes the UID in the filename, mdbox uses map_uid instead).
+// Records name their own storage; the legacy .names sidecar is read
+// once during adoption and then removed (#1700).
 //
 // The package exposes the Backend / OpenUser / UserIndex surface.
 package file
@@ -507,10 +507,9 @@ type folderState struct {
 	// replace, and reload()'s fast path would trust a stale snapshot.
 	baseIdent os.FileInfo
 
-	// logFD and namesFD stay open so an append costs one write(2). Callers must
-	// closeFDs() before anything that replaces these files on disk.
-	logFD   *os.File
-	namesFD *os.File
+	// logFD stays open so an append costs one write(2). Callers must
+	// closeFDs() before anything that replaces the file on disk.
+	logFD *os.File
 
 	// dboxHdr is the folder GUID + flags from the dbox-hdr ext.
 	hdr dboxHdr
@@ -528,16 +527,12 @@ type folderState struct {
 	owner string
 }
 
-// closeFDs closes logFD and namesFD. Must run before anything replaces those
-// files on disk, and when the folderState is evicted.
+// closeFDs closes logFD. Must run before anything replaces that file on disk,
+// and when the folderState is evicted.
 func (fs *folderState) closeFDs() {
 	if fs.logFD != nil {
 		_ = fs.logFD.Close()
 		fs.logFD = nil
-	}
-	if fs.namesFD != nil {
-		_ = fs.namesFD.Close()
-		fs.namesFD = nil
 	}
 }
 
@@ -597,7 +592,7 @@ func (u *userIndex) compactLogIfNeeded(fs *folderState) {
 		slog.Warn("fileindex: could not stamp the expunge floor; not compacting", "folder", fs.folder, "err", err)
 		return
 	}
-	if err := fs.flush(false); err != nil {
+	if err := fs.flush(); err != nil {
 		// Non-fatal but not silent: the log grows until every open replays it
 		// (#1258/#1270), and the counter is what an operator alerts on (#1285).
 		metricCompactionRefused.Inc()

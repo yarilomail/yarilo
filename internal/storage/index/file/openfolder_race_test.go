@@ -78,7 +78,7 @@ func raceTestLockServer(t *testing.T) func() locks.Locker {
 // OpenFolder's dedup map only protects repeat calls on the SAME *userIndex;
 // it does nothing across instances. Two instances can both reach loadOrInit's
 // os.Stat before either has created the base index file, both see
-// ErrNotExist, and both call createFresh — the later flush(true) silently
+// ErrNotExist, and both call createFresh — the later flush() silently
 // resets NextUID to 1, discarding every UID the other side already
 // allocated. This test drives that pattern directly (mdbox driver, matching
 // the live reproduction) and asserts NextUID never regresses below any UID

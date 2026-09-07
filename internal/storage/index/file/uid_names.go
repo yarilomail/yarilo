@@ -34,7 +34,7 @@ func (u *userIndex) MarkUIDNamed(folderID uint64) error {
 		if err := fs.markUIDNamedLocked(); err != nil {
 			return err
 		}
-		if err := fs.flush(true); err != nil {
+		if err := fs.flush(); err != nil {
 			return err
 		}
 		return fs.dropSidecarLocked()
@@ -76,10 +76,6 @@ func (fs *folderState) dropSidecarLocked() error {
 	if !uidNamedLocked(fs) {
 		return nil
 	}
-	if fs.namesFD != nil {
-		_ = fs.namesFD.Close()
-		fs.namesFD = nil
-	}
 	if err := os.Remove(namesPath(fs.indexDir)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -113,6 +109,6 @@ func (u *userIndex) MarkUIDNamedPass(folderID uint64, pass uint32) error {
 				return err
 			}
 		}
-		return fs.flush(true)
+		return fs.flush()
 	})
 }

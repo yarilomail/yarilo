@@ -81,9 +81,8 @@ func TestADirtyRecordKeepsItsFlagsUntilTheRenameLands(t *testing.T) {
 	}
 }
 
-// A record the list does not name stands for nothing a reader can open. It is
-// left in place -- the file may be there under a name nobody recorded -- and
-// said out loud once (#1693, #1700).
+// A record the list does not name opens nothing: left in place, since its file
+// may be there unrecorded, and said out loud once (#1693, #1700).
 func TestARecordTheListDoesNotNameIsLeftAloneAndReported(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	if _, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, [16]byte{}); err != nil {

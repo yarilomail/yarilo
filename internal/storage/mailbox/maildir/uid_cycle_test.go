@@ -156,8 +156,8 @@ func TestTheWriterRefusesARecordWithNoUID(t *testing.T) {
 	}
 }
 
-// Resolving a whole folder costs one read of the list, not one per message:
-// the uid-keyed map is built with the cache the scan already validates.
+// Resolving a whole folder costs one read of the list and one walk of cur/, not
+// one of each per message: both go through the cache the scan already validates.
 func TestAFolderCostsOneReadOfTheList(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}
@@ -191,13 +191,21 @@ func TestAFolderCostsOneReadOfTheList(t *testing.T) {
 		t.Fatalf("the folder holds %d records, want %d", len(msgs), n)
 	}
 
+	// A fresh handle, so the counts are the resolve's own and not what the save
+	// loop left warm in the cache.
+	fresh := maildir.New().OpenUser(info)
+	defer fresh.Close() //nolint:errcheck
 	maildir.ResetListReads()
+	maildir.ResetDirReads()
 	for _, m := range msgs {
-		if _, err := mailbox.MessagePath(box, "INBOX", m); err != nil {
+		if _, err := mailbox.MessagePath(fresh, "INBOX", m); err != nil {
 			t.Fatalf("uid %d: %v", m.UID, err)
 		}
 	}
-	if got := maildir.ListReads(); got > 1 {
+	if got := maildir.ListReads(); got != 1 {
 		t.Errorf("naming %d messages read the list %d times, want one", len(msgs), got)
+	}
+	if got := maildir.DirReads(); got != 1 {
+		t.Errorf("naming %d messages walked cur/ %d times, want one", len(msgs), got)
 	}
 }

@@ -109,7 +109,7 @@ func TestFlushRepairsAStaleHeaderSize(t *testing.T) {
 		t.Fatalf("the state under test is not damaged: header %d already agrees", want)
 	}
 
-	if err := fs.flush(false); err != nil {
+	if err := fs.flush(); err != nil {
 		t.Fatalf("flush over a damaged header: %v", err)
 	}
 	if fs.file.Header.HeaderSize != want {

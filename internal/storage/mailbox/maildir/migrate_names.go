@@ -7,9 +7,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// MigrateUIDNames takes nothing from the sidecar an older build left and
-// removes it: on maildir the list is the mapping, and a second answer beside
-// the index is the thing #1700 exists to remove.
+// MigrateUIDNames takes nothing from an older build's sidecar and removes it:
+// on maildir the list is the mapping (#1700).
 func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Folder) (int, error) {
 	forgetter, ok := idx.(mailbox.StoredNameForgetter)
 	if !ok {

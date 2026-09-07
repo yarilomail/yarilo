@@ -149,7 +149,7 @@ func TestEnsureCacheExtensionOnAnIndexThatPredatesIt(t *testing.T) {
 		fs.file.Layout = layout
 		fs.file.Header.RecordSize = layout.RecordSize
 		fs.file.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
-		return fs.flush(true)
+		return fs.flush()
 	}); err != nil {
 		t.Fatal(err)
 	}

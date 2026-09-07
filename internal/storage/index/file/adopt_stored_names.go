@@ -40,7 +40,7 @@ func (u *userIndex) AdoptStoredNames(folderID uint64, keyOf func(name string, gu
 		if err := fs.markUIDNamedLocked(); err != nil {
 			return err
 		}
-		if err := fs.flush(true); err != nil {
+		if err := fs.flush(); err != nil {
 			return fmt.Errorf("fileindex/adopt: %q: %w", fs.folder, err)
 		}
 		if err := fs.dropSidecarLocked(); err != nil {

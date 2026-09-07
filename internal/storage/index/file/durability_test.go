@@ -27,7 +27,7 @@ func TestTheConversionOrdersDurabilityBeforeRemoval(t *testing.T) {
 
 	steps := []string{
 		"fs.fsyncOnFlush = true",
-		"fs.flush(true)",
+		"fs.flush()",
 		"fsyncDir(fs.indexDir)",
 		"dboxconv.RemoveForeignFolder(dir)",
 	}

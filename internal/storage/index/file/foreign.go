@@ -225,7 +225,7 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	// unlink -- a flush is not durable by default anywhere else.
 	fs.fsyncOnFlush = true
 	defer func() { fs.fsyncOnFlush = false }()
-	if err := fs.flush(true); err != nil {
+	if err := fs.flush(); err != nil {
 		return false, fmt.Errorf("fileindex/convert: folder %q: %w", fs.folder, err)
 	}
 	if err := fsyncDir(fs.indexDir); err != nil {
@@ -390,7 +390,7 @@ func (u *userIndex) convertForeignSdboxFolder(fs *folderState, dir string) (bool
 	}
 	fs.fsyncOnFlush = true
 	defer func() { fs.fsyncOnFlush = false }()
-	if err := fs.flush(true); err != nil {
+	if err := fs.flush(); err != nil {
 		return false, fmt.Errorf("fileindex/convert: folder %q: %w", fs.folder, err)
 	}
 	if err := fsyncDir(fs.indexDir); err != nil {

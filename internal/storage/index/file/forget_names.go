@@ -6,15 +6,10 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// ForgetStoredNames removes the sidecar without reading it, under the folder's
-// exclusive lock. For a driver whose own store is the mapping there is nothing
-// in it to take: keeping the file would leave a second answer on disk (#1700).
+// ForgetStoredNames removes the sidecar unread, under the folder lock: where the
+// driver's own store is the mapping, the file is a second answer (#1700).
 func (u *userIndex) ForgetStoredNames(folderID uint64) error {
 	return u.withFolder(folderID, func(fs *folderState) error {
-		if fs.namesFD != nil {
-			_ = fs.namesFD.Close()
-			fs.namesFD = nil
-		}
 		if err := os.Remove(namesPath(fs.indexDir)); err != nil && !os.IsNotExist(err) {
 			return err
 		}

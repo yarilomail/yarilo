@@ -78,6 +78,7 @@ func (u *userMailbox) dirEntriesFor(folder string) ([]os.DirEntry, error) {
 	if entries, ok := cache.dirEntries(st.ModTime()); ok {
 		return entries, nil
 	}
+	dirReads.Add(1)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("maildir/by-uid: list %q: %w", folder, err)
@@ -132,6 +133,12 @@ func SetTestFlagRenameDelay(d time.Duration) func() {
 // folder" is a number a row asserts rather than a claim (#1700).
 var listReads atomic.Int64
 
-// ListReads returns the count, ResetListReads zeroes it. Test seams.
+// dirReads counts the times cur/ was read off disk, the other half of the cost:
+// the list alone says nothing about how often the directory is walked (#1700).
+var dirReads atomic.Int64
+
+// ListReads and DirReads return the counts, the Reset pair zeroes them. Test seams.
 func ListReads() int  { return int(listReads.Load()) }
 func ResetListReads() { listReads.Store(0) }
+func DirReads() int   { return int(dirReads.Load()) }
+func ResetDirReads()  { dirReads.Store(0) }

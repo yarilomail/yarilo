@@ -159,7 +159,7 @@ func (u *userIndex) stampLineage(fs *folderState) error {
 		}
 		// Flush only: truncating here would lose a concurrent writer's committed
 		// entries. The flush folds the log in and records how far it reached.
-		if err := fs.flush(true); err != nil {
+		if err := fs.flush(); err != nil {
 			return fmt.Errorf("fileindex/stamp: flush: %w", err)
 		}
 		// A log that holds nothing but its own header can be reissued under the
@@ -278,7 +278,7 @@ func (u *userIndex) loadExisting(fs *folderState) error {
 			if err := os.Link(fs.indexPath, backup); err != nil {
 				debugLog("legacy backup hardlink failed", "err", err)
 			}
-			if err := fs.flush(true); err != nil {
+			if err := fs.flush(); err != nil {
 				return fmt.Errorf("fileindex/openfolder: write migrated: %w", err)
 			}
 			return ensureLogStub(fs.indexPath, fs.volatileDir, fs.file.Header.IndexID, fs.lineage.Lineage)
@@ -349,7 +349,7 @@ func (u *userIndex) loadModern(fs *folderState) error {
 				return nil // a racer already repaired it
 			}
 			fs.file.Header.UIDValidity = uint32(time.Now().Unix())
-			if err := fs.flush(true); err != nil {
+			if err := fs.flush(); err != nil {
 				return fmt.Errorf("fileindex/openfolder: fix uidvalidity: %w", err)
 			}
 			return nil
@@ -393,7 +393,7 @@ func (fs *folderState) createFresh(uidValidity uint32) error {
 	fs.file = mf
 	fs.hdr = dboxHdr{MailboxGUID: guid}
 	fs.keywords = keywordsHdr{}
-	if err := fs.flush(true); err != nil {
+	if err := fs.flush(); err != nil {
 		return err
 	}
 	return ensureLogStub(fs.indexPath, fs.volatileDir, indexID, fs.lineage.Lineage)
@@ -574,9 +574,8 @@ func (fs *folderState) advanceModSeqAtLeast(target uint64) error {
 	return nil
 }
 
-// flush rewrites the on-disk .index file from fs.file plus the .names
-// sidecar from fs.filenames.
-func (fs *folderState) flush(wholeNames bool) error {
+// flush rewrites the on-disk .index file from fs.file.
+func (fs *folderState) flush() error {
 	// flush persists Header.NextUID as ground truth and discards the log; name
 	// the caller so a NextUID regression traces to the flush that wrote it.
 	if pc, _, _, ok := runtime.Caller(1); ok {
@@ -663,12 +662,6 @@ func (fs *folderState) flush(wholeNames bool) error {
 		return fmt.Errorf("fileindex/flush: recreate: %w", err)
 	}
 	fs.lineage = next
-	if wholeNames {
-		if fs.namesFD != nil {
-			_ = fs.namesFD.Close()
-			fs.namesFD = nil
-		}
-	}
 	// Track base mtime+identity so the reload fast path fires after this flush.
 	if st, _ := os.Stat(fs.indexPath); st != nil {
 		fs.baseMod = st.ModTime()
@@ -747,8 +740,6 @@ func (fs *folderState) reloadLocked() error {
 		logReplaced = true
 		slog.Warn("fileindex: .log replaced under open fd, dropping stale handle",
 			"folder", fs.folder)
-		// closeFDs also drops namesFD: the same compaction rewrote the
-		// .names sidecar, so the cached fd is stale too. Both reopen lazily.
 		fs.closeFDs()
 	}
 
@@ -867,7 +858,7 @@ func (fs *folderState) applyLogTail(lg *logReader) error {
 			if floorErr := fs.stampExpungeFloorLocked(); floorErr != nil {
 				return fmt.Errorf("fileindex/reload: stamp floor after indexid mismatch: %w", floorErr)
 			}
-			if flushErr := fs.flush(false); flushErr != nil {
+			if flushErr := fs.flush(); flushErr != nil {
 				return fmt.Errorf("fileindex/reload: flush after indexid mismatch: %w", flushErr)
 			}
 			if truncErr := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); truncErr != nil {
@@ -887,7 +878,7 @@ func (fs *folderState) applyLogTail(lg *logReader) error {
 // ignored; callers use AppendMessage, UpdateFlags or ExpungeMessage.
 func (u *userIndex) SaveFolder(f *mailbox.Folder) error {
 	return u.withFolder(f.ID, func(fs *folderState) error {
-		return fs.flush(false)
+		return fs.flush()
 	})
 }
 
@@ -910,7 +901,7 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 		if nextUID > fs.file.Header.NextUID {
 			fs.file.Header.NextUID = nextUID
 		}
-		return fs.flush(false)
+		return fs.flush()
 	})
 }
 
@@ -954,7 +945,7 @@ func (u *userIndex) RecomputeVSize(folderID uint64) error {
 	return u.withFolder(folderID, func(fs *folderState) error {
 		fs.recalcVsizeLocked()
 		fs.persistVsizeLocked()
-		return fs.flush(false)
+		return fs.flush()
 	})
 }
 
@@ -1000,7 +991,7 @@ func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 			ext.HdrData = encodeGUIDHdr(guidStateComplete)
 			ext.HdrSize = guidHdrSize
 		}
-		return fs.flush(true)
+		return fs.flush()
 	})
 }
 
@@ -1109,7 +1100,7 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 	// The registry grew: persist the extension headers so a cross-pod reader
 	// can decode the bitmasks. Rare -- first use of each name only.
 	if len(fs.keywords.Names) > prevKwCount {
-		if err := fs.flush(false); err != nil {
+		if err := fs.flush(); err != nil {
 			return err
 		}
 	}
@@ -1677,7 +1668,7 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 		if err := fs.stampExpungeFloorLocked(); err != nil {
 			return err
 		}
-		if err := fs.flush(true); err != nil {
+		if err := fs.flush(); err != nil {
 			return err
 		}
 		// Truncate the log so stale TxAppend records don't resurface
@@ -1733,7 +1724,7 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 		if !changed {
 			return nil
 		}
-		return fs.flush(false)
+		return fs.flush()
 	})
 }
 
@@ -1744,7 +1735,7 @@ func (u *userIndex) OptimizeIndex(folderID uint64) error {
 		if err := fs.stampExpungeFloorLocked(); err != nil {
 			return err
 		}
-		if err := fs.flush(true); err != nil {
+		if err := fs.flush(); err != nil {
 			return err
 		}
 		fs.closeFDs()
@@ -2542,7 +2533,7 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) 
 			}
 			rec.Ext[extNameCache] = encodeCacheRec(off)
 		}
-		return fs.flush(true)
+		return fs.flush()
 	})
 }
 
@@ -2640,7 +2631,7 @@ func (u *userIndex) PurgeCache(folderID uint64) (carried int, reclaimed int64, e
 		ext.ResetID = newSeq
 		carried = len(moved)
 		reclaimed = before.Size() - after.Size()
-		return fs.flush(true)
+		return fs.flush()
 	})
 	return carried, reclaimed, err
 }
@@ -2668,7 +2659,7 @@ func abandonCacheGeneration(fs *folderState) (uint32, error) {
 	for _, rec := range fs.file.Records {
 		delete(rec.Ext, extNameCache)
 	}
-	return ext.ResetID, fs.flush(true)
+	return ext.ResetID, fs.flush()
 }
 
 // BumpCacheGeneration abandons the current cache generation and returns the
@@ -2696,7 +2687,7 @@ func (u *userIndex) EnsureCacheExtension(folderID uint64) (indexID, resetID uint
 				cacheRecSize, 4, newCacheGeneration(0)); aerr != nil {
 				return fmt.Errorf("fileindex: add cache extension: %w", aerr)
 			}
-			if ferr := fs.flush(true); ferr != nil {
+			if ferr := fs.flush(); ferr != nil {
 				return ferr
 			}
 		}

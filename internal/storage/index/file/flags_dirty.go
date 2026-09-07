@@ -23,7 +23,7 @@ func (u *userIndex) SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error
 			if rec.Flags == before {
 				return nil
 			}
-			return fs.flush(true)
+			return fs.flush()
 		}
 		return nil
 	})
