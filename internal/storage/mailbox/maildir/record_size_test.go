@@ -80,7 +80,7 @@ func TestTheSizeComesFromTheName(t *testing.T) {
 }
 
 // A dbox record answers from itself: the sizes are in the index there, and a
-// read of the file to learn one would be a read the reference never makes.
+// read of the file to repeat them is one the reference never makes.
 func TestADboxSizeIsNotReadFromTheFile(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "sdbox"}
@@ -104,8 +104,10 @@ func TestADboxSizeIsNotReadFromTheFile(t *testing.T) {
 	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := mailbox.Driver(box).(mailbox.RecordSizer); ok {
-		t.Fatal("the dbox driver answers sizes from storage; the record is where they live")
+	// Proven by taking the storage away: a record holding both numbers is
+	// answered from itself, and nothing opens the message to repeat them.
+	if rerr := box.Remove("INBOX", saved); rerr != nil {
+		t.Fatal(rerr)
 	}
 	size, got, serr := mailbox.MessageSize(box, "INBOX", m)
 	if serr != nil {

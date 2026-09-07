@@ -713,6 +713,9 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				effLim = s.opts.QuotaPolicy.Scale(effLim)
 				if !ignore && !effLim.Unlimited() {
 					entries, _ := rcptBox.ListFolders()
+					// A folder no session has opened still sums its records, and
+					// a record that carries no size sums as nothing (#1728).
+					fillSizes(rcptIdx, rcptBox, mailbox.SelectableNames(entries))
 					u := quota.CountUsage(rcptIdx, mailbox.SelectableNames(entries), lim)
 					// Inbound delivery is grace-eligible (LMTP/LDA overshoot).
 					if quota.IsOverWithGrace(u, effLim, int64(len(msg)), 1, s.opts.QuotaPolicy.StorageGrace) {
@@ -938,4 +941,18 @@ func (s *session) Reset() {
 func (s *session) Logout() error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "QUIT")
 	return nil
+}
+
+// fillSizes gives the records that carry no size the one their storage holds,
+// so a delivery judges the limit on the mail and not on a folder of zeros.
+func fillSizes(idx mailbox.UserIndex, box mailbox.UserMailbox, folders []string) {
+	for _, name := range folders {
+		f, err := idx.OpenFolder(name, 0)
+		if err != nil {
+			continue
+		}
+		if _, ferr := mailbox.FillSizelessRecords(idx, box, f); ferr != nil {
+			slog.Warn("lmtp: sizes not filled", "folder", name, "err", ferr)
+		}
+	}
 }
