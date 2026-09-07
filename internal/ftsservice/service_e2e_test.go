@@ -76,13 +76,17 @@ func saveRawMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserInde
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, _, _, err := box.Save(testMbox.Name, strings.NewReader(raw), uid, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save(testMbox.Name, strings.NewReader(raw), uid, int64(len(raw)), nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := uidx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: uid, Filename: name, Size: uint32(len(raw)),
-	}); err != nil {
+	meta := &mailbox.MessageMeta{
+		UID: uid, Filename: name, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
+	}
+	if err := mailbox.NameSaved(box, testMbox.Name, meta); err != nil {
+		t.Fatal(err)
+	}
+	if err := uidx.AppendMessage(f.ID, meta); err != nil {
 		t.Fatal(err)
 	}
 }

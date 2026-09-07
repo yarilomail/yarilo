@@ -72,6 +72,9 @@ func Run(cfg Config) (Report, error) {
 			return Report{}, fmt.Errorf("ftsbench: save uid %d: %w", m.UID, err)
 		}
 		meta := &mailbox.MessageMeta{UID: m.UID, Filename: name, Size: uint32(len(m.Raw)), VSize: vsize, GUID: guid}
+		if err := mailbox.NameSaved(box, benchMbox.Name, meta); err != nil {
+			return Report{}, fmt.Errorf("ftsbench: name uid %d: %w", m.UID, err)
+		}
 		if err := uidx.AppendMessage(folder.ID, meta); err != nil {
 			return Report{}, fmt.Errorf("ftsbench: append uid %d: %w", m.UID, err)
 		}
