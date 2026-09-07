@@ -99,6 +99,12 @@ type StoredNameAdopter interface {
 	AdoptStoredNames(folderID uint64, keyOf func(name string, guid [16]byte) (uint32, bool)) error
 }
 
+// SizelessLister names the records carrying no virtual size, so the driver that
+// keeps the size elsewhere can fill them (#1728).
+type SizelessLister interface {
+	SizelessUIDs(folderID uint64) ([]uint32, error)
+}
+
 // SizeStamper writes a virtual size into records that carry none, for the pass
 // that recovered the names those sizes were kept beside (#1728).
 type SizeStamper interface {

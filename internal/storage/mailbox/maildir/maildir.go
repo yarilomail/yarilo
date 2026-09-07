@@ -982,6 +982,8 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 		afterScan()
 	}
 
+	u.fillMissingSizes(idx, folder, scanned)
+
 	// Nothing to apply, no lock at all: fifty sessions polling one folder took
 	// it to find the first had done the work (#1630). A stale answer errs
 	// toward taking the lock, and the section re-reads before writing.
