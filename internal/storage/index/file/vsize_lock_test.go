@@ -38,7 +38,7 @@ func TestFolderVSizeTakesNoExclusiveLock(t *testing.T) {
 	}
 	// A message, so the folder has an aggregate worth reading and a lineage of
 	// its own -- the property the lock-free path stands on.
-	if err := idx.AllocateAndAppend(f.ID, &mailbox.MessageMeta{Filename: "m1", Size: 10, VSize: 10}); err != nil {
+	if err := idx.AllocateAndAppend(f.ID, &mailbox.MessageMeta{Size: 10, VSize: 10}); err != nil {
 		t.Fatal(err)
 	}
 

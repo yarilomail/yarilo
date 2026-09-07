@@ -1,7 +1,6 @@
 package file
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -47,7 +46,7 @@ func TestReopeningAnOpenFolderMakesNoLockRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("first open of %s: %v", n, err)
 		}
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10, VSize: 10}); err != nil {
+		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10, VSize: 10}); err != nil {
 			t.Fatalf("append to %s: %v", n, err)
 		}
 	}
@@ -101,7 +100,7 @@ func TestAWalkOpenStillSeesAnotherWritersMessage(t *testing.T) {
 	}
 	for uid := 1; uid <= 3; uid++ {
 		if err := writer.AppendMessage(wf.ID, &mailbox.MessageMeta{
-			UID: uint32(uid), Filename: fmt.Sprint(uid), Size: 100, VSize: 100,
+			UID: uint32(uid), Size: 100, VSize: 100,
 		}); err != nil {
 			t.Fatal(err)
 		}

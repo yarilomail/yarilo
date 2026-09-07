@@ -72,7 +72,11 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("save A %d: %v", i, err)
 		}
-		if err := ixA.AppendMessage(folderA.ID, &mailbox.MessageMeta{UID: uid, Filename: filename}); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid}
+		if err := mailbox.NameSaved(mbA, "INBOX", filename, meta); err != nil {
+			t.Fatalf("name A %d: %v", i, err)
+		}
+		if err := ixA.AppendMessage(folderA.ID, meta); err != nil {
 			t.Fatalf("append A %d: %v", i, err)
 		}
 	}
@@ -90,11 +94,11 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate A post: %v", err)
 	}
-	filename, _, _, err := mbA.Save("INBOX", strings.NewReader("after-save"), uid, 0, nil, [16]byte{})
+	_, _, _, err = mbA.Save("INBOX", strings.NewReader("after-save"), uid, 0, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save A post: %v", err)
 	}
-	if err := ixA.AppendMessage(folderA.ID, &mailbox.MessageMeta{UID: uid, Filename: filename}); err != nil {
+	if err := ixA.AppendMessage(folderA.ID, &mailbox.MessageMeta{UID: uid}); err != nil {
 		t.Fatalf("append A post: %v", err)
 	}
 	if uid != 4 {

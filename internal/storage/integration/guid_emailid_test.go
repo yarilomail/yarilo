@@ -135,7 +135,7 @@ func TestGUIDSurvivesFlagChange(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	for _, m := range msgs {
-		if m.Filename == flagged && m.GUID != guid {
+		if name, _ := mailbox.MessagePath(mb, "INBOX", m); name == flagged && m.GUID != guid {
 			t.Fatalf("flag change altered EMAILID: %x -> %x", guid, m.GUID)
 		}
 	}
@@ -166,9 +166,9 @@ func TestGUIDReachesIndex(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 	meta := &mailbox.MessageMeta{
-		UID: uid, Filename: temp, Size: uint32(len(body)), VSize: vsize, GUID: guid,
+		UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid,
 	}
-	if err := mailbox.NameSaved(mb, "INBOX", meta); err != nil {
+	if err := mailbox.NameSaved(mb, "INBOX", temp, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := idx.AppendMessage(folder.ID, meta); err != nil {

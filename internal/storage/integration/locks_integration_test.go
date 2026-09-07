@@ -157,8 +157,8 @@ func TestTwoProcessAppendNoUIDCollision(t *testing.T) {
 						errCh <- err
 						return
 					}
-					meta := &mailbox.MessageMeta{UID: uid, Filename: filename, Flags: []string{}}
-					if err := mailbox.NameSaved(mb, "INBOX", meta); err != nil {
+					meta := &mailbox.MessageMeta{UID: uid, Flags: []string{}}
+					if err := mailbox.NameSaved(mb, "INBOX", filename, meta); err != nil {
 						errCh <- err
 						return
 					}

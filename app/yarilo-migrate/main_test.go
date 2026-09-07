@@ -206,7 +206,7 @@ func TestMigrate_MdboxV1_ToMdbox(t *testing.T) {
 		want[b] = true
 	}
 	for _, mm := range msgs {
-		rc, err := verifyBox.Fetch("INBOX", mm.Filename, false)
+		rc, err := mailbox.OpenMessage(verifyBox, "INBOX", mm)
 		if err != nil {
 			t.Errorf("fetch uid=%d: %v", mm.UID, err)
 			continue

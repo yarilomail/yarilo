@@ -971,14 +971,14 @@ func (s *Service) indexOne(mbox fts.MailboxRef, item fetched, upd fts.Update) er
 		// for themselves why it was damaged.
 		slog.Warn("fts: message MIME was damaged, indexed after repair",
 			"folder", mbox.Name, "mailbox_guid", mbox.GUID,
-			"uid", m.UID, "guid", mailbox.FormatObjectID(m.GUID), "file", m.Filename,
+			"uid", m.UID, "guid", mailbox.FormatObjectID(m.GUID),
 			"dropped_header_lines", report.DroppedHeaderLines, "err", report.Cause)
 	}
 	// Per-message breadcrumb: which UID/file was fed to the engine. Metadata
 	// only (size is the index-time signal for "was there anything to
 	// tokenize").
 	slog.Debug("fts: message indexed", "folder", mbox.Name, "guid", mbox.GUID,
-		"uid", m.UID, "file", m.Filename, "size", m.Size, "alt_tier", m.AltTier)
+		"uid", m.UID, "size", m.Size, "alt_tier", m.AltTier)
 	return nil
 }
 

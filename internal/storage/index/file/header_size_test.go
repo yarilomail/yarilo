@@ -43,7 +43,7 @@ func TestKeywordRegistryOfEitherParityFlushes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open: %v", err)
 			}
-			m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+			m := &mailbox.MessageMeta{Size: 100}
 			if err := idx.AllocateAndAppend(f.ID, m); err != nil {
 				t.Fatalf("append: %v", err)
 			}
@@ -87,7 +87,7 @@ func TestFlushRepairsAStaleHeaderSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+	m := &mailbox.MessageMeta{Size: 100}
 	if err := idx.AllocateAndAppend(f.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestFlushRepairsAStaleHeaderSize(t *testing.T) {
 		t.Fatalf("the state under test is not damaged: header %d already agrees", want)
 	}
 
-	if err := fs.flush(false); err != nil {
+	if err := fs.flush(); err != nil {
 		t.Fatalf("flush over a damaged header: %v", err)
 	}
 	if fs.file.Header.HeaderSize != want {

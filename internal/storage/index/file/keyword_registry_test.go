@@ -32,7 +32,7 @@ func TestKeywordRegisteredByAnotherHandleIsVisibleAfterReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writer open: %v", err)
 	}
-	m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+	m := &mailbox.MessageMeta{Size: 100}
 	if err := writer.AllocateAndAppend(wf.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestKeywordSetThroughTheBatchPathIsVisibleToAnotherHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writer open: %v", err)
 	}
-	m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+	m := &mailbox.MessageMeta{Size: 100}
 	if err := writer.AllocateAndAppend(wf.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestFlagOnlyStoreDoesNotRewriteTheBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+	m := &mailbox.MessageMeta{Size: 100}
 	if err := idx.AllocateAndAppend(f.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}

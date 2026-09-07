@@ -566,7 +566,6 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 		}
 		meta := &mailbox.MessageMeta{
 			UID:          uint32(uid64),
-			Filename:     e.Name(),
 			Size:         uint32(info.Size()),
 			InternalDate: info.ModTime(),
 		}

@@ -58,7 +58,7 @@ func TestReadPartsFitInsideTheWhole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10}); err != nil {
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
@@ -229,7 +229,7 @@ func TestUnlockedReadsMakeNoRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10}); err != nil {
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
@@ -300,7 +300,7 @@ func TestReadersTakeTheLockTheirClassificationSays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10}); err != nil {
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
@@ -371,7 +371,7 @@ func TestEachLockSiteIsReachedFromItsOwnPath(t *testing.T) {
 	// A write.
 	writeBefore := site("exclusive", lockSiteWrite)
 	go func() {
-		done <- ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10})
+		done <- ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10})
 	}()
 	if err := <-done; err != nil {
 		t.Fatalf("AppendMessage: %v", err)

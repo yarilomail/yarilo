@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,15 @@ func (m *mockMailbox) Save(_ string, _ io.Reader, _ uint32, _ int64, _ []string,
 func (m *mockMailbox) Move(_, _, filename string, guid [16]byte) (string, [16]byte, error) {
 	return filename, guid, nil
 }
+func (m *mockMailbox) RecordPath(_ string, meta *mailbox.MessageMeta) (string, error) {
+	return strconv.FormatUint(uint64(meta.UID), 10), nil
+}
+
+func (m *mockMailbox) OpenRecord(folder string, meta *mailbox.MessageMeta) (io.ReadCloser, error) {
+	name, _ := m.RecordPath(folder, meta)
+	return m.Fetch(folder, name, meta.AltTier)
+}
+
 func (m *mockMailbox) Fetch(_, filename string, _ bool) (io.ReadCloser, error) {
 	if m.bodies != nil {
 		if b, ok := m.bodies[filename]; ok {
@@ -480,8 +490,8 @@ func TestSession_STAT_WithMessages(t *testing.T) {
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
-			{UID: 2, Filename: "msg2", Size: 200},
+			{UID: 1, Size: 100},
+			{UID: 2, Size: 200},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -499,8 +509,8 @@ func TestSession_LIST(t *testing.T) {
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
-			{UID: 2, Filename: "msg2", Size: 200},
+			{UID: 1, Size: 100},
+			{UID: 2, Size: 200},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -521,9 +531,9 @@ func TestSession_RETR(t *testing.T) {
 	body := []byte("From: a@b.com\r\n\r\nHello\r\n")
 	opts := newTestOpts(
 		&mockAuth{users: map[string]string{"u": "p"}},
-		&mockMailbox{bodies: map[string][]byte{"msg1": body}},
+		&mockMailbox{bodies: map[string][]byte{"1": body}},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: uint32(len(body))},
+			{UID: 1, Size: uint32(len(body))},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -551,8 +561,8 @@ func TestSession_UIDL(t *testing.T) {
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
-			{UID: 2, Filename: "msg2", Size: 200},
+			{UID: 1, Size: 100},
+			{UID: 2, Size: 200},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -574,7 +584,7 @@ func TestSession_DELE_QUIT(t *testing.T) {
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
+			{UID: 1, Size: 100},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -614,7 +624,7 @@ func TestSession_RSET(t *testing.T) {
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
+			{UID: 1, Size: 100},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -639,8 +649,8 @@ func TestSession_RSET(t *testing.T) {
 
 func TestSession_SaveUIDL_PersistsAcrossSessions(t *testing.T) {
 	idx := &mockIndex{msgs: []*mailbox.MessageMeta{
-		{UID: 1, Filename: "msg1", Size: 50},
-		{UID: 2, Filename: "msg2", Size: 60},
+		{UID: 1, Size: 50},
+		{UID: 2, Size: 60},
 	}}
 	opts := newTestOpts(
 		&mockAuth{users: map[string]string{"u": "p"}},

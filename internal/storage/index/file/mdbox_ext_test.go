@@ -60,7 +60,7 @@ func TestOurRecordCarriesTheMapUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: "7", Size: 10, MapUID: 7, SaveDate: 1788000000,
+		UID: 1, Size: 10, MapUID: 7, SaveDate: 1788000000,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestOurMdboxExtensionHasTheReferenceGeometry(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: "7", Size: 10, MapUID: 7, SaveDate: 1788000000,
+		UID: 1, Size: 10, MapUID: 7, SaveDate: 1788000000,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -127,4 +127,19 @@ func TestOurMdboxExtensionHasTheReferenceGeometry(t *testing.T) {
 	if ours.ResetID != theirs.ResetID {
 		t.Errorf("our reset id is %d, theirs %d", ours.ResetID, theirs.ResetID)
 	}
+}
+
+// folderStateFor reaches the open state for a folder, so a row can read what
+// the records hold rather than what a reader reports.
+func (u *userIndex) folderStateFor(t *testing.T, folder string) *folderState {
+	t.Helper()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	for _, fs := range u.open {
+		if fs.folder == folder {
+			return fs
+		}
+	}
+	t.Fatalf("folder %q not open", folder)
+	return nil
 }

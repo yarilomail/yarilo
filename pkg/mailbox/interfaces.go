@@ -99,6 +99,18 @@ type StoredNameAdopter interface {
 	AdoptStoredNames(folderID uint64, keyOf func(name string, guid [16]byte) (uint32, bool)) error
 }
 
+// FlagsDirtyMarker records that a message's flags have not reached storage. A
+// driver that keeps flags in the file name sets it when the rename fails.
+type FlagsDirtyMarker interface {
+	SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error
+}
+
+// StoredNameForgetter removes the sidecar an older build kept, for a driver
+// whose own store already is the mapping.
+type StoredNameForgetter interface {
+	ForgetStoredNames(folderID uint64) error
+}
+
 // UIDNameMarker answers, and records, whether a folder's message files already
 // carry the names their uids give them. In the index, not beside the mail.
 type UIDNameMarker interface {
@@ -207,15 +219,14 @@ func FormatObjectID(guid [16]byte) string {
 
 // MessageMeta holds per-message metadata stored in the index.
 type MessageMeta struct {
-	UID      uint32
-	Filename string // backend-specific filename returned by UserMailbox.Save
+	UID uint32
 	// MapUID and SaveDate are the mdbox storage key, carried in the record so
 	// the name is derived rather than stored beside it (#1700).
 	MapUID   uint32
 	SaveDate uint32
-	// SelfNamed says the driver finds this message from the record alone, so
-	// the index is given no filename to keep.
-	SelfNamed    bool
+	// FlagsDirty says the flags in the record have not reached storage yet, so
+	// what the store says about them is older than what the client was told.
+	FlagsDirty   bool
 	Flags        []string
 	Keywords     []string
 	ModSeq       uint64
@@ -431,8 +442,7 @@ type UserIndex interface {
 	// pre-allocates the next modseq value in one lock/reload/flush cycle.
 	AllocateUIDWithModSeq(folderID uint64) (uid uint32, modseq uint64, err error)
 	// AllocateAndAppend assigns a UID and records the message in a single
-	// lock/reload/flush cycle. m.UID and m.ModSeq are filled in by the call; all
-	// other fields (including m.Filename) must be set by the caller beforehand.
+	// lock/reload/flush cycle: m.UID and m.ModSeq are filled in by the call.
 	AllocateAndAppend(folderID uint64, m *MessageMeta) error
 	UpdateFlags(folderID uint64, uid uint32, flags, keywords []string) error
 
@@ -447,15 +457,11 @@ type UserIndex interface {
 	// through UpdateFlags means sending the whole remaining set, which is a set
 	// the caller read earlier.
 	RemoveFlags(folderID uint64, uid uint32, flags, keywords []string) error
-	// UpdateFilename repoints the stored on-disk filename for a UID without
-	// touching flags, UID or modseq. Used by maildir sync-on-open when another MUA
-	// renamed a tracked file out of band. No-op when uid is unknown.
-	UpdateFilename(folderID uint64, uid uint32, filename string) error
 	// UpdateFlagsMulti replaces flags+keywords for a batch of UIDs in a
 	// single lock/reload/flush cycle. Returns the new modseq per UID.
 	UpdateFlagsMulti(folderID uint64, updates map[uint32]FlagsUpdate) (map[uint32]FlagsResult, error)
-	// SetAltTier sets or clears the AltTier marker (FlagBackend) for every message
-	// in folderID whose Filename matches one of the supplied names, under the
+	// SetAltTier sets or clears the AltTier marker (FlagBackend) for every record
+	// whose storage key matches one of the supplied names, under the
 	// folder's cross-process mailbox lock. Called by the altmove API after
 	// relocating mdbox files so subsequent Fetch calls skip the primary-tier open.
 	SetAltTier(folderID uint64, filenames []string, altTier bool) error
@@ -608,15 +614,6 @@ type FlagWriteResult struct {
 	UID      uint32
 	Filename string
 	Err      error
-}
-
-// FilenameWriterMulti records a whole command's new names at once.
-//
-// Optional, like FlagWriterMulti and for the same reason: the single form takes
-// the index's exclusive lock per message, and on maildir a flag change renames
-// nearly every message in a batch. A caller without it falls back.
-type FilenameWriterMulti interface {
-	UpdateFilenames(folderID uint64, names map[uint32]string) error
 }
 
 // FlagWriterMulti records a whole command's flag writes at once.

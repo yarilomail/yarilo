@@ -742,6 +742,16 @@ func (s *session) readXUIDL(m *mailbox.MessageMeta) string {
 	return hdr.Get("X-Uidl")
 }
 
+// storedName is what the driver calls this message on disk. %f and %m are the
+// two variables that read it, and the record no longer carries one (#1700).
+func (s *session) storedName(m *mailbox.MessageMeta) string {
+	name, err := mailbox.MessagePath(s.box, "INBOX", m)
+	if err != nil {
+		return ""
+	}
+	return name
+}
+
 // formatUIDL formats a UIDL string from opts.UIDLFormat.
 func (s *session) formatUIDL(m *mailbox.MessageMeta) string {
 	format := s.srv.opts.UIDLFormat
@@ -774,11 +784,11 @@ func (s *session) formatUIDL(m *mailbox.MessageMeta) string {
 		case 'v':
 			b.WriteString(applyNumFmt(mod, uint64(s.folder.UIDValidity)))
 		case 'f':
-			b.WriteString(m.Filename)
+			b.WriteString(s.storedName(m))
 		case 'g':
 			b.WriteString(hex.EncodeToString(m.GUID[:]))
 		case 'm':
-			h := md5.Sum([]byte(m.Filename))
+			h := md5.Sum([]byte(s.storedName(m)))
 			b.WriteString(hex.EncodeToString(h[:]))
 		default:
 			b.WriteByte('%')

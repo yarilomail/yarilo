@@ -73,10 +73,15 @@ func (ts *threadedServer) deliver(t *testing.T, raw string) string {
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	if err := ts.idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: ts.uid, Filename: name, Size: uint32(len(raw)), VSize: vsize,
+	meta := &mailbox.MessageMeta{
+		UID: ts.uid, Size: uint32(len(raw)), VSize: vsize,
 		GUID: guid, InternalDate: time.Now(),
-	}); err != nil {
+	}
+	if err := mailbox.NameSaved(ts.box, "INBOX", name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	meta.GUID = guid
+	if err := ts.idx.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	id := mailbox.FormatObjectID(guid)

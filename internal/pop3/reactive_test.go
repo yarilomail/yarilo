@@ -17,6 +17,10 @@ type fakeCorruptBox struct{ mailbox.UserMailbox }
 func (fakeCorruptBox) Fetch(string, string, bool) (io.ReadCloser, error) {
 	return nil, fmt.Errorf("file gone: %w", mailbox.ErrCorruptStorage)
 }
+func (b fakeCorruptBox) RecordPath(string, *mailbox.MessageMeta) (string, error) { return "gone", nil }
+func (b fakeCorruptBox) OpenRecord(f string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
+	return b.Fetch(f, "gone", false)
+}
 func (fakeCorruptBox) HealCorruptFolder(mailbox.UserIndex, *mailbox.Folder) ([]uint32, error) {
 	return nil, nil
 }
@@ -40,7 +44,7 @@ func TestFetchINBOXGatesMarking(t *testing.T) {
 	s := &session{box: fakeCorruptBox{}, idx: idx}
 
 	for i := 0; i < 5; i++ {
-		_, err := s.fetchINBOX(&mailbox.MessageMeta{Filename: "1"})
+		_, err := s.fetchINBOX(&mailbox.MessageMeta{})
 		if !errors.Is(err, mailbox.ErrCorruptStorage) {
 			t.Fatalf("fetch %d: got %v, want ErrCorruptStorage", i, err)
 		}

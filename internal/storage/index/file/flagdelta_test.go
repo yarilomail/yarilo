@@ -36,7 +36,7 @@ func TestAddFlagsKeepsAConcurrentChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10}); err != nil {
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestRemoveFlagsClearsOnlyWhatItNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 7, Filename: "7", Size: 10}); err != nil {
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 7, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	if err := ui.AddFlags(f.ID, 7, []string{`\Seen`, `\Flagged`}, []string{"$Work", "$Later"}); err != nil {
@@ -121,7 +121,7 @@ func TestBatchDeltasKeepAConcurrentChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10}); err != nil {
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 

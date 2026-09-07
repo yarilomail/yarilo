@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,18 +105,12 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 		return nil, err
 	}
 
-	names, sizes, namesErr := loadNames(indexDir)
-	if namesErr != nil {
-		return nil, namesErr
-	}
 	fs := &folderState{
 		user:        u.username,
 		folder:      folder,
 		indexDir:    indexDir,
 		indexPath:   indexPath,
 		volatileDir: u.folderVolatileDir(folder),
-		filenames:   names,
-		sizes:       sizes,
 		traceID:     traceID,
 		intent:      intent,
 	}
@@ -164,7 +159,7 @@ func (u *userIndex) stampLineage(fs *folderState) error {
 		}
 		// Flush only: truncating here would lose a concurrent writer's committed
 		// entries. The flush folds the log in and records how far it reached.
-		if err := fs.flush(true); err != nil {
+		if err := fs.flush(); err != nil {
 			return fmt.Errorf("fileindex/stamp: flush: %w", err)
 		}
 		// A log that holds nothing but its own header can be reissued under the
@@ -283,7 +278,7 @@ func (u *userIndex) loadExisting(fs *folderState) error {
 			if err := os.Link(fs.indexPath, backup); err != nil {
 				debugLog("legacy backup hardlink failed", "err", err)
 			}
-			if err := fs.flush(true); err != nil {
+			if err := fs.flush(); err != nil {
 				return fmt.Errorf("fileindex/openfolder: write migrated: %w", err)
 			}
 			return ensureLogStub(fs.indexPath, fs.volatileDir, fs.file.Header.IndexID, fs.lineage.Lineage)
@@ -354,7 +349,7 @@ func (u *userIndex) loadModern(fs *folderState) error {
 				return nil // a racer already repaired it
 			}
 			fs.file.Header.UIDValidity = uint32(time.Now().Unix())
-			if err := fs.flush(true); err != nil {
+			if err := fs.flush(); err != nil {
 				return fmt.Errorf("fileindex/openfolder: fix uidvalidity: %w", err)
 			}
 			return nil
@@ -398,7 +393,7 @@ func (fs *folderState) createFresh(uidValidity uint32) error {
 	fs.file = mf
 	fs.hdr = dboxHdr{MailboxGUID: guid}
 	fs.keywords = keywordsHdr{}
-	if err := fs.flush(true); err != nil {
+	if err := fs.flush(); err != nil {
 		return err
 	}
 	return ensureLogStub(fs.indexPath, fs.volatileDir, indexID, fs.lineage.Lineage)
@@ -458,11 +453,7 @@ func (fs *folderState) recalcVsizeLocked() {
 		maxUID uint32
 	)
 	for _, rec := range fs.file.Records {
-		v := decodeVsizeRec(rec.Ext[extNameVsize])
-		if v == 0 {
-			v = fs.sizes[rec.UID] // legacy record: best-available physical size
-		}
-		total += uint64(v)
+		total += uint64(decodeVsizeRec(rec.Ext[extNameVsize]))
 		if rec.UID > maxUID {
 			maxUID = rec.UID
 		}
@@ -583,9 +574,8 @@ func (fs *folderState) advanceModSeqAtLeast(target uint64) error {
 	return nil
 }
 
-// flush rewrites the on-disk .index file from fs.file plus the .names
-// sidecar from fs.filenames.
-func (fs *folderState) flush(wholeNames bool) error {
+// flush rewrites the on-disk .index file from fs.file.
+func (fs *folderState) flush() error {
 	// flush persists Header.NextUID as ground truth and discards the log; name
 	// the caller so a NextUID regression traces to the flush that wrote it.
 	if pc, _, _, ok := runtime.Caller(1); ok {
@@ -672,19 +662,6 @@ func (fs *folderState) flush(wholeNames bool) error {
 		return fmt.Errorf("fileindex/flush: recreate: %w", err)
 	}
 	fs.lineage = next
-	if wholeNames {
-		if fs.namesFD != nil {
-			_ = fs.namesFD.Close()
-			fs.namesFD = nil
-		}
-		live := make(map[uint32]struct{}, len(fs.file.Records))
-		for _, rec := range fs.file.Records {
-			live[rec.UID] = struct{}{}
-		}
-		if err := saveNames(fs.indexDir, fs.volatileDir, fs.user, fs.folder, fs.filenames, fs.sizes, live, fs.file.Header.NextUID); err != nil {
-			return err
-		}
-	}
 	// Track base mtime+identity so the reload fast path fires after this flush.
 	if st, _ := os.Stat(fs.indexPath); st != nil {
 		fs.baseMod = st.ModTime()
@@ -763,8 +740,6 @@ func (fs *folderState) reloadLocked() error {
 		logReplaced = true
 		slog.Warn("fileindex: .log replaced under open fd, dropping stale handle",
 			"folder", fs.folder)
-		// closeFDs also drops namesFD: the same compaction rewrote the
-		// .names sidecar, so the cached fd is stale too. Both reopen lazily.
 		fs.closeFDs()
 	}
 
@@ -839,13 +814,6 @@ func (fs *folderState) reloadLocked() error {
 		if err := fs.refreshExtState(); err != nil {
 			return err
 		}
-		names, sizes, nerr := loadNames(fs.indexDir)
-		if nerr != nil {
-			// A partial map becomes a truncated sidecar at the next wholesale
-			// flush, so refuse the reload instead (#1693).
-			return nerr
-		}
-		fs.filenames, fs.sizes = names, sizes
 		fs.baseMod = newBaseMod
 		fs.baseIdent = baseStat
 		fs.lineage = readLineage(mf)
@@ -890,7 +858,7 @@ func (fs *folderState) applyLogTail(lg *logReader) error {
 			if floorErr := fs.stampExpungeFloorLocked(); floorErr != nil {
 				return fmt.Errorf("fileindex/reload: stamp floor after indexid mismatch: %w", floorErr)
 			}
-			if flushErr := fs.flush(false); flushErr != nil {
+			if flushErr := fs.flush(); flushErr != nil {
 				return fmt.Errorf("fileindex/reload: flush after indexid mismatch: %w", flushErr)
 			}
 			if truncErr := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); truncErr != nil {
@@ -910,7 +878,7 @@ func (fs *folderState) applyLogTail(lg *logReader) error {
 // ignored; callers use AppendMessage, UpdateFlags or ExpungeMessage.
 func (u *userIndex) SaveFolder(f *mailbox.Folder) error {
 	return u.withFolder(f.ID, func(fs *folderState) error {
-		return fs.flush(false)
+		return fs.flush()
 	})
 }
 
@@ -933,7 +901,7 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 		if nextUID > fs.file.Header.NextUID {
 			fs.file.Header.NextUID = nextUID
 		}
-		return fs.flush(false)
+		return fs.flush()
 	})
 }
 
@@ -977,7 +945,7 @@ func (u *userIndex) RecomputeVSize(folderID uint64) error {
 	return u.withFolder(folderID, func(fs *folderState) error {
 		fs.recalcVsizeLocked()
 		fs.persistVsizeLocked()
-		return fs.flush(false)
+		return fs.flush()
 	})
 }
 
@@ -1023,7 +991,7 @@ func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 			ext.HdrData = encodeGUIDHdr(guidStateComplete)
 			ext.HdrSize = guidHdrSize
 		}
-		return fs.flush(true)
+		return fs.flush()
 	})
 }
 
@@ -1082,11 +1050,9 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 		fs.file.Header.NextUID = next + 1
 		m.UID = next
 		if name != nil {
-			named, nerr := name(m.UID)
-			if nerr != nil {
+			if _, nerr := name(m.UID); nerr != nil {
 				return nerr
 			}
-			m.Filename = named
 		}
 		if err := fs.appendLocked(m); err != nil {
 			return err
@@ -1134,7 +1100,7 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 	// The registry grew: persist the extension headers so a cross-pod reader
 	// can decode the bitmasks. Rare -- first use of each name only.
 	if len(fs.keywords.Names) > prevKwCount {
-		if err := fs.flush(false); err != nil {
+		if err := fs.flush(); err != nil {
 			return err
 		}
 	}
@@ -1165,15 +1131,6 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 	if rec.Flags&mailindex.FlagDeleted != 0 {
 		fs.file.Header.DeletedMessagesCount++
 	}
-	// A record that names its own storage needs no filename; one that names
-	// neither is the defect the guard exists for (#1693, #1700).
-	if m.MapUID == 0 && !namesItsOwnStorage(m) {
-		requireName("append", fs.folder, m.UID, m.Filename)
-	}
-	if m.Filename != "" {
-		fs.filenames[m.UID] = m.Filename
-	}
-	fs.sizes[m.UID] = m.Size
 	fs.vsize.Vsize += uint64(m.RFC822Size())
 	fs.vsize.MessageCount++
 	if m.UID > fs.vsize.HighestUID {
@@ -1294,82 +1251,6 @@ func (u *userIndex) writeFlags(folderID uint64, uid uint32, flags, keywords []st
 			encU32Update(44, fs.file.Header.DeletedMessagesCount),
 		)
 		return fs.appendMutLog(recs...)
-	})
-}
-
-// beforeAppendName runs before each name is written. Test seam: the append
-// clock must be proven to span the writes, since a fast disk reports zero.
-var beforeAppendName func()
-
-// UpdateFilenames records a command's new names under one acquisition: the
-// single form locks per message, costing a 41-name STORE 17.7s of 18.1s (#1646).
-func (u *userIndex) UpdateFilenames(folderID uint64, names map[uint32]string) error {
-	if len(names) == 0 {
-		return nil
-	}
-	u.mu.Lock()
-	fs, ok := u.open[folderID]
-	u.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("fileindex: folder %d not open", folderID)
-	}
-
-	// Timed in three: one acquisition, and a single name still cost 4s where the
-	// mean was 14ms. The wait, the freshness check and the appends are separate
-	// floors, and only one has a known cure (#1650).
-	whole := time.Now()
-	var lockMS, reloadMS, appendMS int64
-	err := u.withFolderLock(fs, func() error {
-		lockMS = time.Since(whole).Milliseconds()
-		reloadStart := time.Now()
-		if rerr := fs.reload(); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			return rerr
-		}
-		reloadMS = time.Since(reloadStart).Milliseconds()
-		appendStart := time.Now()
-		defer func() { appendMS = time.Since(appendStart).Milliseconds() }()
-		for uid, filename := range names {
-			if beforeAppendName != nil {
-				beforeAppendName()
-			}
-			// A uid the folder no longer carries is skipped, not refused: it was
-			// expunged between the rename and here, and the rest must land.
-			if cur, have := fs.filenames[uid]; !have || cur == filename {
-				continue
-			}
-			// An empty name would erase a readable record; keep what is there.
-			if !requireName("update-batch", fs.folder, uid, filename) {
-				continue
-			}
-			fs.filenames[uid] = filename
-			if aerr := fs.appendName(uid, filename, fs.sizes[uid]); aerr != nil {
-				return aerr
-			}
-		}
-		return nil
-	})
-	slog.Debug("fileindex: names timing",
-		"user", u.username, "folder", fs.folder, "names", len(names),
-		"lock_ms", lockMS, "reload_ms", reloadMS, "append_ms", appendMS,
-		"total_ms", time.Since(whole).Milliseconds())
-	return err
-}
-
-// UpdateFilename repoints a UID's stored filename, which lives only in the
-// .names sidecar; last write wins on reload, and an unknown uid is a no-op.
-func (u *userIndex) UpdateFilename(folderID uint64, uid uint32, filename string) error {
-	return u.withFolder(folderID, func(fs *folderState) error {
-		if _, ok := fs.filenames[uid]; !ok {
-			return nil
-		}
-		if fs.filenames[uid] == filename {
-			return nil
-		}
-		if !requireName("update", fs.folder, uid, filename) {
-			return nil
-		}
-		fs.filenames[uid] = filename
-		return fs.appendName(uid, filename, fs.sizes[uid])
 	})
 }
 
@@ -1532,11 +1413,6 @@ func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
 			fs.file.Header.DeletedMessagesCount--
 		}
 		expungedVSize := decodeVsizeRec(rec.Ext[extNameVsize])
-		if expungedVSize == 0 {
-			// Without the per-record vsize extension, fall back to physical
-			// size as recalcVsizeLocked does, or the aggregate goes stale.
-			expungedVSize = fs.sizes[rec.UID]
-		}
 		fs.file.Records = append(fs.file.Records[:idx], fs.file.Records[idx+1:]...)
 		fs.file.Header.MessagesCount--
 		if uint64(expungedVSize) <= fs.vsize.Vsize {
@@ -1547,8 +1423,6 @@ func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
 		if fs.vsize.MessageCount > 0 {
 			fs.vsize.MessageCount--
 		}
-		delete(fs.filenames, uid)
-		delete(fs.sizes, uid)
 
 		// 28-byte payload: uid(4)+guid(16)+modseq(8). Compatible with
 		// scanExpungesSince which reads the same layout.
@@ -1599,14 +1473,14 @@ func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet, unlocked b
 			}
 			mapUID, saveDate := decodeMdboxRec(rec.Ext[extNameMdbox])
 			meta := &mailbox.MessageMeta{
-				UID:      rec.UID,
-				MapUID:   mapUID,
-				SaveDate: saveDate,
-				Filename: fs.filenames[rec.UID],
-				Flags:    indexFlagsToIMAP(uint8(rec.Flags)),
-				Size:     recordSize(rec, fs.sizes),
-				VSize:    decodeVsizeRec(rec.Ext[extNameVsize]),
-				AltTier:  rec.Flags&mailindex.FlagBackend != 0,
+				UID:        rec.UID,
+				MapUID:     mapUID,
+				SaveDate:   saveDate,
+				Flags:      indexFlagsToIMAP(uint8(rec.Flags)),
+				FlagsDirty: rec.Flags&mailindex.FlagDirty != 0,
+				Size:       decodeVsizeRec(rec.Ext[extNameVsize]),
+				VSize:      decodeVsizeRec(rec.Ext[extNameVsize]),
+				AltTier:    rec.Flags&mailindex.FlagBackend != 0,
 			}
 			if data, ok := rec.Ext[extNameModSeq]; ok {
 				meta.ModSeq = decodeModseqRec(data)
@@ -1724,8 +1598,6 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 		}
 
 		fs.file.Records = fs.file.Records[:0]
-		fs.filenames = make(map[uint32]string)
-		fs.sizes = make(map[uint32]uint32)
 		fs.file.Header.MessagesCount = 0
 		fs.file.Header.SeenMessagesCount = 0
 		fs.file.Header.DeletedMessagesCount = 0
@@ -1761,6 +1633,11 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 					extNameGUID:     encodeGUIDRec(m.GUID),
 				},
 			}
+			if m.MapUID != 0 {
+				// The storage key travels with the record, or a rebuilt folder
+				// would hold messages that name no storage (#1700).
+				rec.Ext[extNameMdbox] = encodeMdboxRec(m.MapUID, m.SaveDate)
+			}
 			fs.file.Records = append(fs.file.Records, rec)
 			kept[m.UID] = struct{}{}
 			fs.file.Header.MessagesCount++
@@ -1770,11 +1647,6 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 			if rec.Flags&mailindex.FlagDeleted != 0 {
 				fs.file.Header.DeletedMessagesCount++
 			}
-			requireName("reset", fs.folder, m.UID, m.Filename)
-			if m.Filename != "" {
-				fs.filenames[m.UID] = m.Filename
-			}
-			fs.sizes[m.UID] = m.Size
 			if m.UID > maxUID {
 				maxUID = m.UID
 			}
@@ -1796,7 +1668,7 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 		if err := fs.stampExpungeFloorLocked(); err != nil {
 			return err
 		}
-		if err := fs.flush(true); err != nil {
+		if err := fs.flush(); err != nil {
 			return err
 		}
 		// Truncate the log so stale TxAppend records don't resurface
@@ -1835,8 +1707,8 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 	return u.withFolder(folderID, func(fs *folderState) error {
 		changed := false
 		for _, rec := range fs.file.Records {
-			fn := fs.filenames[rec.UID]
-			if _, ok := set[fn]; !ok {
+			mapUID, _ := decodeMdboxRec(rec.Ext[extNameMdbox])
+			if _, ok := set[strconv.FormatUint(uint64(mapUID), 10)]; !ok {
 				continue
 			}
 			before := rec.Flags
@@ -1852,7 +1724,7 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 		if !changed {
 			return nil
 		}
-		return fs.flush(false)
+		return fs.flush()
 	})
 }
 
@@ -1863,7 +1735,7 @@ func (u *userIndex) OptimizeIndex(folderID uint64) error {
 		if err := fs.stampExpungeFloorLocked(); err != nil {
 			return err
 		}
-		if err := fs.flush(true); err != nil {
+		if err := fs.flush(); err != nil {
 			return err
 		}
 		fs.closeFDs()
@@ -2015,8 +1887,6 @@ func (fs *folderState) adoptLegacy(snap legacySnapshot) error {
 	if err := fs.persistKeywordRegistry(); err != nil {
 		return err
 	}
-	fs.filenames = snap.Filenames
-	fs.sizes = make(map[uint32]uint32)
 	return nil
 }
 
@@ -2307,7 +2177,6 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	var maxModseq uint64
 	le := binary.LittleEndian
 	hdrBuf := make([]byte, 8)
-	appendedMsgs := false
 
 	// Absolute offsets; committedEnd follows the last complete BOUNDARY, so a
 	// torn trailing group stays out of the confirmed return.
@@ -2473,7 +2342,6 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				if rp.Flags&mailindex.FlagDeleted != 0 {
 					fs.file.Header.DeletedMessagesCount++
 				}
-				appendedMsgs = true
 			}
 
 		case kind == mailindex.TxTypeKeywordUpdate:
@@ -2539,14 +2407,6 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 		}
 	}
 
-	if appendedMsgs {
-		names, sizes, nerr := loadNames(fs.indexDir)
-		if nerr != nil {
-			return committedEnd, nerr
-		}
-		fs.filenames, fs.sizes = names, sizes
-	}
-
 	if maxModseq > 0 {
 		if ext := findExt(fs.file.Extensions, extNameModSeq); ext != nil {
 			if hdr, hdrErr := decodeModseqHdr(ext.HdrData); hdrErr == nil && maxModseq > hdr.HighestModSeq {
@@ -2601,9 +2461,6 @@ func (fs *folderState) flushAppend(rec *mailindex.Record) error {
 	appendPayload, err := mailindex.EncodeTxAppendPayload(layout, []*mailindex.Record{rec})
 	if err != nil {
 		return fmt.Errorf("fileindex/append: encode: %w", err)
-	}
-	if err := fs.appendName(rec.UID, fs.filenames[rec.UID], fs.sizes[rec.UID]); err != nil {
-		return fmt.Errorf("fileindex/append: names: %w", err)
 	}
 	// Emit a TxModseqUpdate alongside the append, or a cross-process reader's
 	// applyLog never advances HighestModSeq from it -- only TxModseqUpdate
@@ -2676,7 +2533,7 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) 
 			}
 			rec.Ext[extNameCache] = encodeCacheRec(off)
 		}
-		return fs.flush(true)
+		return fs.flush()
 	})
 }
 
@@ -2774,7 +2631,7 @@ func (u *userIndex) PurgeCache(folderID uint64) (carried int, reclaimed int64, e
 		ext.ResetID = newSeq
 		carried = len(moved)
 		reclaimed = before.Size() - after.Size()
-		return fs.flush(true)
+		return fs.flush()
 	})
 	return carried, reclaimed, err
 }
@@ -2802,7 +2659,7 @@ func abandonCacheGeneration(fs *folderState) (uint32, error) {
 	for _, rec := range fs.file.Records {
 		delete(rec.Ext, extNameCache)
 	}
-	return ext.ResetID, fs.flush(true)
+	return ext.ResetID, fs.flush()
 }
 
 // BumpCacheGeneration abandons the current cache generation and returns the
@@ -2830,7 +2687,7 @@ func (u *userIndex) EnsureCacheExtension(folderID uint64) (indexID, resetID uint
 				cacheRecSize, 4, newCacheGeneration(0)); aerr != nil {
 				return fmt.Errorf("fileindex: add cache extension: %w", aerr)
 			}
-			if ferr := fs.flush(true); ferr != nil {
+			if ferr := fs.flush(); ferr != nil {
 				return ferr
 			}
 		}

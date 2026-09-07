@@ -41,7 +41,7 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 		}
 		for _, m := range msgs {
 			want := sdboxMailPrefix + strconv.FormatUint(uint64(m.UID), 10)
-			old := m.Filename
+			old := ""
 			if old == "" {
 				// A record that lost its name still names its file: the old one
 				// was the GUID in hex, and the GUID is in the record (#1713).

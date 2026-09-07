@@ -94,7 +94,7 @@ func (s *Server) handleIndexDump(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, indexRecordOut{
 			UID:      m.UID,
-			Filename: m.Filename,
+			Filename: storedNameOrEmpty(bundle.box, req.Folder, m),
 			Flags:    m.Flags,
 			Keywords: m.Keywords,
 			ModSeq:   m.ModSeq,
@@ -112,4 +112,14 @@ func (s *Server) handleIndexDump(w http.ResponseWriter, r *http.Request) {
 		"records":        out,
 		"truncated":      truncated,
 	})
+}
+
+// storedNameOrEmpty is what the driver calls this message on disk; the record
+// keeps no name, and this field reports the store.
+func storedNameOrEmpty(box mailbox.UserMailbox, folder string, m *mailbox.MessageMeta) string {
+	name, err := mailbox.MessagePath(box, folder, m)
+	if err != nil {
+		return ""
+	}
+	return name
 }

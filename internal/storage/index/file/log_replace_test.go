@@ -26,7 +26,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 		t.Fatalf("podA OpenFolder: %v", err)
 	}
 	ms, _ := podA.NextModSeq(fa.ID)
-	if err := podA.AppendMessage(fa.ID, &mailbox.MessageMeta{UID: 1, ModSeq: ms, Filename: "1.eml", Size: 100}); err != nil {
+	if err := podA.AppendMessage(fa.ID, &mailbox.MessageMeta{UID: 1, ModSeq: ms, Size: 100}); err != nil {
 		t.Fatalf("podA append UID1: %v", err)
 	}
 
@@ -45,7 +45,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 	}
 	for uid := uint32(2); uid <= 5; uid++ {
 		ms, _ := podB.NextModSeq(fb.ID)
-		if err := podB.AppendMessage(fb.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Filename: "x.eml", Size: 100}); err != nil {
+		if err := podB.AppendMessage(fb.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Size: 100}); err != nil {
 			t.Fatalf("podB append UID%d: %v", uid, err)
 		}
 	}
@@ -92,7 +92,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 		t.Fatalf("allocated UID regressed: got %d, want >= 6", uid)
 	}
 	ms, _ = podA.NextModSeq(fa.ID)
-	if err := podA.AppendMessage(fa.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Filename: "new.eml", Size: 100}); err != nil {
+	if err := podA.AppendMessage(fa.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Size: 100}); err != nil {
 		t.Fatalf("podA append new UID: %v", err)
 	}
 

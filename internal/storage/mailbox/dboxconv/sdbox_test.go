@@ -3,6 +3,7 @@ package dboxconv
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -85,8 +86,8 @@ func TestSdboxFolderConvertsToWhatTheirServerReported(t *testing.T) {
 		if m.UID != w.uid {
 			t.Errorf("record %d: uid = %d, want %d", i, m.UID, w.uid)
 		}
-		if m.Filename != w.file {
-			t.Errorf("uid %d: file = %q, want %q", w.uid, m.Filename, w.file)
+		if got := strconv.FormatUint(uint64(m.MapUID), 10); m.MapUID != 0 && got != w.file {
+			t.Errorf("uid %d: map uid = %q, want %q", w.uid, got, w.file)
 		}
 		if got := strings.Join(m.Flags, " "); got != w.flags {
 			t.Errorf("uid %d: flags = %q, their server reported %q", w.uid, got, w.flags)

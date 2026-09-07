@@ -37,7 +37,7 @@ func TestReadPathSerializesAgainstConcurrentLockHolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	if err := idxA.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid, Filename: "1.eml"}); err != nil {
+	if err := idxA.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 

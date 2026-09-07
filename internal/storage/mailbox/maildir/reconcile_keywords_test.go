@@ -110,7 +110,11 @@ func TestReconcile_AStoreAfterAdoptionKeepsTheKeywordLetters(t *testing.T) {
 		t.Fatalf("update flags: %v", err)
 	}
 	got := res[m.UID]
-	if _, err := box.WriteFlags("INBOX", m.Filename, got.Flags, got.Keywords); err != nil {
+	stored, perr := mailbox.MessagePath(box, "INBOX", m)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	if _, err := box.WriteFlags("INBOX", stored, got.Flags, got.Keywords); err != nil {
 		t.Fatalf("write flags: %v", err)
 	}
 

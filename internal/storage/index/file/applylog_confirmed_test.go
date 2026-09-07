@@ -29,7 +29,7 @@ func TestApplyLogConfirmedEndExcludesTornIncrementalTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AllocateUID: %v", err)
 	}
-	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Filename: "1.eml", Size: 10}); err != nil {
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 

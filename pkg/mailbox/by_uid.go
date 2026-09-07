@@ -1,26 +1,31 @@
 package mailbox
 
-import "io"
+import (
+	"fmt"
+	"io"
+)
 
-// OpenMessage reads a message's body. A driver that can find it from the record
-// is asked that way; the rest are handed the name the record carries (#1700).
+// OpenMessage reads a message's body from what the record says. A driver that
+// cannot answer from a record names no message here (#1700).
 func OpenMessage(box UserMailbox, folder string, m *MessageMeta) (io.ReadCloser, error) {
-	if addr, ok := Driver(box).(UIDAddressable); ok {
-		return addr.OpenRecord(folder, m)
+	addr, ok := Driver(box).(UIDAddressable)
+	if !ok {
+		return nil, fmt.Errorf("mailbox: %T cannot find a message from its record", Driver(box))
 	}
-	return box.Fetch(folder, m.Filename, m.AltTier)
+	return addr.OpenRecord(folder, m)
 }
 
 // MessagePath names a message for the operations that take a name -- copy,
-// move, remove. Same rule: derived where it can be, carried where it cannot.
+// move, remove -- which stay the driver's own vocabulary.
 func MessagePath(box UserMailbox, folder string, m *MessageMeta) (string, error) {
-	if addr, ok := Driver(box).(UIDAddressable); ok {
-		return addr.RecordPath(folder, m)
+	addr, ok := Driver(box).(UIDAddressable)
+	if !ok {
+		return "", fmt.Errorf("mailbox: %T cannot name a message from its record", Driver(box))
 	}
-	return m.Filename, nil
+	return addr.RecordPath(folder, m)
 }
 
-// RemoveMessage unlinks it, by whichever of the two the driver understands.
+// RemoveMessage unlinks it by the name the driver gives it.
 func RemoveMessage(box UserMailbox, folder string, m *MessageMeta) error {
 	name, err := MessagePath(box, folder, m)
 	if err != nil {
@@ -29,11 +34,8 @@ func RemoveMessage(box UserMailbox, folder string, m *MessageMeta) error {
 	return box.Remove(folder, name)
 }
 
-// Readable reports whether a message's body can be found: from the record for a
-// driver that names its own storage, and from the name for the rest (#1700).
+// Readable reports whether a message's body can be found from its record.
 func Readable(box UserMailbox, m *MessageMeta) bool {
-	if _, ok := Driver(box).(UIDAddressable); ok {
-		return true
-	}
-	return m.Filename != ""
+	_, ok := Driver(box).(UIDAddressable)
+	return ok
 }

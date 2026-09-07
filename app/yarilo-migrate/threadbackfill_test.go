@@ -58,10 +58,15 @@ func seedAccount(t *testing.T, root, user string) *mailbox.UserInfo {
 		if err != nil {
 			t.Fatalf("open folder: %v", err)
 		}
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: uid[m.folder], Filename: name, Size: uint32(len(m.raw)), VSize: vsize,
+		meta := &mailbox.MessageMeta{
+			UID: uid[m.folder], Size: uint32(len(m.raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Now(),
-		}); err != nil {
+		}
+		if err := mailbox.NameSaved(box, m.folder, name, meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = guid
+		if err := ui.AppendMessage(f.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -292,9 +297,12 @@ func TestMessagesWithoutAGuidAreSkippedNotMerged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 99, Filename: name, Size: uint32(len(raw)), VSize: vsize,
-	}); err != nil {
+	old := &mailbox.MessageMeta{UID: 99, Size: uint32(len(raw)), VSize: vsize}
+	if err := mailbox.NameSaved(box, "INBOX", name, old); err != nil {
+		t.Fatal(err)
+	}
+	old.GUID = [16]byte{}
+	if err := idx.AppendMessage(f.ID, old); err != nil {
 		t.Fatal(err)
 	}
 	idx.Close() //nolint:errcheck
@@ -451,10 +459,10 @@ func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 		t.Fatalf("open folder: %v", err)
 	}
 	meta := &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: uint32(len(raw)), VSize: vsize,
+		UID: 1, Size: uint32(len(raw)), VSize: vsize,
 		GUID: guid, InternalDate: time.Now(),
 	}
-	if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := idx.AppendMessage(f.ID, meta); err != nil {

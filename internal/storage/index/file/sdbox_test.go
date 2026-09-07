@@ -76,8 +76,8 @@ func TestAForeignSdboxStoreIsAdopted(t *testing.T) {
 	}
 	for i, w := range want {
 		m := msgs[i]
-		if m.UID != w.uid || m.Filename != w.file {
-			t.Errorf("record %d = uid %d file %q, want uid %d file %q", i, m.UID, m.Filename, w.uid, w.file)
+		if m.UID != w.uid {
+			t.Errorf("record %d = uid %d, want %d (their file %s)", i, m.UID, w.uid, w.file)
 		}
 		if got := strings.Join(m.Flags, " "); got != w.flags {
 			t.Errorf("uid %d: flags = %q, their server reported %q", w.uid, got, w.flags)

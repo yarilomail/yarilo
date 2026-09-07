@@ -137,7 +137,7 @@ func ConvertFolder(folderDir string, c *MapCorrespondence) ([]*mailbox.MessageMe
 		m := &mailbox.MessageMeta{
 			// Theirs, unchanged.
 			UID:      r.UID,
-			Filename: strconv.FormatUint(uint64(ourMapUID), 10),
+			MapUID:   ourMapUID,
 			Flags:    flagNames(r.Flags),
 			Keywords: r.Keywords,
 			// Their size is the whole record, header and trailer included, so
@@ -198,7 +198,7 @@ func ConvertSdboxFolder(indexDir, mailDir string) ([]*mailbox.MessageMeta, dboxi
 			missing = append(missing, r.UID)
 			continue
 		}
-		m.Filename = name
+		_ = name
 		out = append(out, m)
 	}
 	return out, f.Header, missing, nil

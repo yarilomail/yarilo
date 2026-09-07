@@ -73,7 +73,7 @@ func (s *session) fetchSelected(m *mailbox.MessageMeta) (rc io.ReadCloser, err e
 		// reactive rebuilder would otherwise be stuck FSCKD with nothing to
 		// clear the marker.
 		if mailbox.CanReactiveHeal(s.folderBox()) {
-			s.flagCorruptOnRead(s.folderIdx(), s.folder.ID, s.folder.Name, m.Filename, m.UID, err)
+			s.flagCorruptOnRead(s.folderIdx(), s.folder.ID, s.folder.Name, "", m.UID, err)
 		}
 	}
 	return rc, err

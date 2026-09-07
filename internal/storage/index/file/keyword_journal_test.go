@@ -23,7 +23,7 @@ func TestKeywordStoreDoesNotRewriteTheBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+	m := &mailbox.MessageMeta{Size: 100}
 	if err := idx.AllocateAndAppend(f.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestApplyLogRefusesAMalformedKeywordRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AllocateUID: %v", err)
 	}
-	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Filename: "1.eml", Size: 10}); err != nil {
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestKeywordJournalReplayMatchesTheWriter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+	m := &mailbox.MessageMeta{Size: 100}
 	if err := idx.AllocateAndAppend(f.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestKeywordResetIsJournalledAndReplayed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+	m := &mailbox.MessageMeta{Size: 100}
 	if err := idx.AllocateAndAppend(f.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestKeywordBitsAreNotPortableButNamesAre(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	m := &mailbox.MessageMeta{Filename: "f", Size: 100}
+	m := &mailbox.MessageMeta{Size: 100}
 	if err := idx.AllocateAndAppend(f.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestKeywordBitsAreNotPortableButNamesAre(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}
-	if err := other.AllocateAndAppend(f2.ID, &mailbox.MessageMeta{Filename: "g", Size: 10}); err != nil {
+	if err := other.AllocateAndAppend(f2.ID, &mailbox.MessageMeta{Size: 10}); err != nil {
 		t.Fatalf("second append: %v", err)
 	}
 	if _, err := other.UpdateFlagsMulti(f2.ID, map[uint32]mailbox.FlagsUpdate{

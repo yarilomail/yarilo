@@ -26,7 +26,7 @@ func serverWithFolders(tb testing.TB, n int) (*Server, *userHandle) {
 			tb.Fatalf("open %s: %v", name, err)
 		}
 		if err := h.idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: 1, Filename: "m.eml", Size: 10,
+			UID: 1, Size: 10,
 		}); err != nil {
 			tb.Fatalf("append %s: %v", name, err)
 		}

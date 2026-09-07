@@ -47,8 +47,8 @@ func TestASavedMessageIsNamedByItsUID(t *testing.T) {
 	}
 
 	want := "u." + strconv.FormatUint(uint64(m.UID), 10)
-	if m.Filename != want {
-		t.Errorf("the record names %q, want %q", m.Filename, want)
+	if got, err := mailbox.MessagePath(mb, "INBOX", m); err != nil || got != want {
+		t.Errorf("the driver names it %q (%v), want %q", got, err, want)
 	}
 	entries, err := os.ReadDir(filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails"))
 	if err != nil {
@@ -69,16 +69,22 @@ func TestASavedMessageIsNamedByItsUID(t *testing.T) {
 // uid exists. Tests that only need a stored message use it.
 func saveNamed(t *testing.T, mb mailbox.UserMailbox, folder, body string, uid uint32, guid [16]byte) (string, uint32) {
 	t.Helper()
+	name, vsize, _ := saveNamedGUID(t, mb, folder, body, uid, guid)
+	return name, vsize
+}
+
+// saveNamedGUID is the same two steps, handing back what the save minted.
+func saveNamedGUID(t *testing.T, mb mailbox.UserMailbox, folder, body string, uid uint32, guid [16]byte) (string, uint32, [16]byte) {
+	t.Helper()
 	temp, vsize, g, err := mb.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, guid)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	_ = g
-	name, err := mb.(mailbox.UIDNamer).AssignUID(folder, temp, uid)
+	named, err := mb.(mailbox.UIDNamer).AssignUID(folder, temp, uid)
 	if err != nil {
 		t.Fatalf("assign uid %d: %v", uid, err)
 	}
-	return name, vsize
+	return named, vsize, g
 }
 
 // A store this server wrote before #1704 is full of names the reference cannot
@@ -106,7 +112,7 @@ func TestAGUIDNamedStoreIsMigrated(t *testing.T) {
 		}
 		guids = append(guids, old)
 		if aerr := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: old, Size: 4, VSize: vsize, GUID: guid,
+			UID: uid, Size: 4, VSize: vsize, GUID: guid,
 		}); aerr != nil {
 			t.Fatal(aerr)
 		}
@@ -145,10 +151,11 @@ func TestAGUIDNamedStoreIsMigrated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The record keeps no name at all now: u.<uid> is what it answers with.
+	// The record keeps no name at all now: u.<uid> is what the driver answers.
 	for _, m := range msgs {
-		if m.Filename != "" {
-			t.Errorf("uid %d still carries a name: %q", m.UID, m.Filename)
+		want := "u." + strconv.FormatUint(uint64(m.UID), 10)
+		if got, err := mailbox.MessagePath(mb, "INBOX", m); err != nil || got != want {
+			t.Errorf("uid %d resolves to %q (%v), want %q", m.UID, got, err, want)
 		}
 	}
 	for _, m := range msgs {
@@ -241,8 +248,8 @@ func TestAnAppendTakesTheFolderKeyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &mailbox.MessageMeta{Filename: temp, Size: 4, VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, mb, folder.ID, "INBOX", m); err != nil {
+	m := &mailbox.MessageMeta{Size: 4, VSize: vsize, GUID: guid}
+	if err := mailbox.RecordSaved(idx, mb, folder.ID, "INBOX", temp, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -287,8 +294,8 @@ func TestNoPathWritesAGUIDName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &mailbox.MessageMeta{Filename: temp, Size: 4, VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, mb, inbox.ID, "INBOX", m); err != nil {
+	m := &mailbox.MessageMeta{Size: 4, VSize: vsize, GUID: guid}
+	if err := mailbox.RecordSaved(idx, mb, inbox.ID, "INBOX", temp, m); err != nil {
 		t.Fatal(err)
 	}
 	// Copied.
@@ -319,8 +326,8 @@ func TestNoPathWritesAGUIDName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nm := &mailbox.MessageMeta{Filename: moved, Size: 6, VSize: 6}
-	if err := mailbox.RecordSaved(idx, mb, archive.ID, "Archive", nm); err != nil {
+	nm := &mailbox.MessageMeta{Size: 6, VSize: 6}
+	if err := mailbox.RecordSaved(idx, mb, archive.ID, "Archive", moved, nm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -462,8 +469,8 @@ func TestAMoveIntoATakenNameEndsUnderTheDestinationUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &mailbox.MessageMeta{Filename: moved, Size: 4, VSize: 4}
-	if err := mailbox.RecordSaved(idx, mb, archive.ID, "Archive", m); err != nil {
+	m := &mailbox.MessageMeta{Size: 4, VSize: 4}
+	if err := mailbox.RecordSaved(idx, mb, archive.ID, "Archive", moved, m); err != nil {
 		t.Fatal(err)
 	}
 	name, err := mailbox.MessagePath(mb, "Archive", m)
@@ -513,7 +520,7 @@ func TestANamelessRecordFindsItsBodyByGUID(t *testing.T) {
 	}
 	// The record an older build left behind: a guid, a size, and no name.
 	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: 1, Size: 6, VSize: vsize, GUID: guid, SelfNamed: true,
+		UID: 1, Size: 6, VSize: vsize, GUID: guid,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +566,7 @@ func TestAFolderMarkedByTheOlderPassIsWalkedAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: 1, Size: 6, VSize: vsize, GUID: guid, SelfNamed: true,
+		UID: 1, Size: 6, VSize: vsize, GUID: guid,
 	}); err != nil {
 		t.Fatal(err)
 	}

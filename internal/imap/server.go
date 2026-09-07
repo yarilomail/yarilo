@@ -676,31 +676,25 @@ func (s *session) writeFlagsBatch(multi mailbox.FlagWriterMulti, folder string, 
 	s.storeRenameMS = time.Since(renameStart).Milliseconds()
 	nameStart := time.Now()
 	renamed := 0
-	batch, batched := idx.(mailbox.FilenameWriterMulti)
-	names := map[uint32]string{}
+	dirt, marks := idx.(mailbox.FlagsDirtyMarker)
 	for i, res := range results {
 		if res.Err != nil {
 			slog.Warn("imap: could not record flags in storage", "folder", folder,
 				"uid", res.UID, "err", res.Err)
+			// The record holds flags the store does not: a sync must not take
+			// the older answer off the name until the rename lands (#1700).
+			if marks {
+				_ = dirt.SetFlagsDirty(s.folder.ID, res.UID, true)
+			}
 			continue
 		}
-		if res.Filename == writes[i].Filename {
-			continue
+		if marks {
+			_ = dirt.SetFlagsDirty(s.folder.ID, res.UID, false)
 		}
-		renamed++
-		if batched {
-			names[res.UID] = res.Filename
-			continue
-		}
-		if err := idx.UpdateFilename(s.folder.ID, res.UID, res.Filename); err != nil {
-			slog.Warn("imap: could not record the new filename", "folder", folder,
-				"uid", res.UID, "name", res.Filename, "err", err)
-		}
-	}
-	if batched && len(names) > 0 {
-		if err := batch.UpdateFilenames(s.folder.ID, names); err != nil {
-			slog.Warn("imap: could not record the new filenames", "folder", folder,
-				"count", len(names), "err", err)
+		if res.Filename != writes[i].Filename {
+			// The name changed because the flags did; nothing records it, since
+			// the list keys on the base name and that did not move (#1700).
+			renamed++
 		}
 	}
 	s.storeNameMS = time.Since(nameStart).Milliseconds()
@@ -733,18 +727,15 @@ func (s *session) writeFlagsToStorage(pending []pendingStore) {
 			continue
 		}
 		name, err := writer.WriteFlags(folder, p.filename, p.newFlags, p.newKW)
+		if dirt, marks := idx.(mailbox.FlagsDirtyMarker); marks {
+			_ = dirt.SetFlagsDirty(s.folder.ID, p.uid, err != nil)
+		}
 		if err != nil {
 			slog.Warn("imap: could not record flags in storage", "folder", folder,
 				"uid", p.uid, "err", err)
 			continue
 		}
-		if name == p.filename {
-			continue
-		}
-		if err := idx.UpdateFilename(s.folder.ID, p.uid, name); err != nil {
-			slog.Warn("imap: could not record the new filename", "folder", folder,
-				"uid", p.uid, "name", name, "err", err)
-		}
+		_ = name
 	}
 }
 
@@ -1579,7 +1570,6 @@ func (s *session) renameInbox(dest string) error {
 			return fmt.Errorf("imap/rename-inbox move: %w", moveErr)
 		}
 		nm := &mailbox.MessageMeta{
-			Filename:     newFilename,
 			Flags:        m.Flags,
 			Keywords:     m.Keywords,
 			Size:         m.Size,
@@ -1587,8 +1577,8 @@ func (s *session) renameInbox(dest string) error {
 			InternalDate: m.InternalDate,
 			GUID:         guid,
 		}
-		if err := mailbox.RecordSaved(s.idx, s.box, destFolder.ID, dest, nm); err != nil {
-			_ = s.box.Remove(dest, nm.Filename)
+		if err := mailbox.RecordSaved(s.idx, s.box, destFolder.ID, dest, newFilename, nm); err != nil {
+			_ = s.box.Remove(dest, newFilename)
 			return fmt.Errorf("imap/rename-inbox record: %w", err)
 		}
 		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm))
@@ -2294,15 +2284,17 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 		internalDate = opts.Time
 	}
 	m := &mailbox.MessageMeta{
-		Filename: filename, Flags: flagList, Keywords: kwList, Size: uint32(size), VSize: vsize,
+		Flags: flagList, Keywords: kwList, Size: uint32(size), VSize: vsize,
 		InternalDate: internalDate, GUID: guid,
 	}
-	if err := mailbox.RecordSaved(h.idx, h.box, f.ID, rel, m); err != nil {
+	if err := mailbox.RecordSaved(h.idx, h.box, f.ID, rel, filename, m); err != nil {
 		_ = h.box.Remove(rel, filename)
 		return nil, fmt.Errorf("imap/append record: %w", err)
 	}
-	// A uid-named driver renamed the file inside that cycle.
-	filename = m.Filename
+	// The driver settled the name inside that cycle; ask it, do not carry one.
+	if named, nerr := mailbox.MessagePath(h.box, rel, m); nerr == nil {
+		filename = named
+	}
 	tDone := time.Now()
 	slog.Debug("imap: append timing",
 		"user", s.userInfo.Username, "folder", rel, "size", size,
@@ -2727,7 +2719,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	// here — the per-message expunge events below supply "after", so an "under"
 	// crossing fires on a delete-only session regardless of SELECT-time seeding.
 	s.captureQuotaSnap()
-	refs := newBodyRefs(s.folderBox(), s.folder.Name, msgs)
+	refs := newBodyRefs(bodyNames(s.folderBox(), s.folder.Name, msgs))
 	// Each expunge shifts later sequence numbers down by one, so track and
 	// adjust seqNum as we go rather than using the static GetMessages index.
 	seqNum := uint32(len(msgs))
@@ -2754,7 +2746,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 				"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID)
 		case bodyShared:
 			slog.Warn("imap: expunge kept the body, another record still points at it",
-				"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", m.Filename)
+				"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", storedName)
 		case bodyFree:
 			if pathErr != nil {
 				// One line for one fact: the body stays because the record
@@ -2765,7 +2757,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 			}
 			if rerr := s.folderBox().Remove(s.folder.Name, storedName); rerr != nil {
 				slog.Warn("imap: expunge storage remove failed (the record is already gone; the file is an orphan until a rebuild)",
-					"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", m.Filename, "err", rerr)
+					"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", storedName, "err", rerr)
 			}
 		}
 		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m))
@@ -3361,7 +3353,6 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 						"user", s.userInfo.Username,
 						"folder", s.folder.Name,
 						"uid", m.UID,
-						"file", m.Filename,
 						"err", ferr,
 					)
 				}
@@ -3390,7 +3381,6 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 					"user", s.userInfo.Username,
 					"folder", s.folder.Name,
 					"uid", m.UID,
-					"file", m.Filename,
 					"size", len(extracted),
 					"md5", fmt.Sprintf("%x", sum),
 				)
@@ -3447,7 +3437,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			metricUnreadable.WithLabelValues("fetch", reason).Inc()
 			slog.Warn("imap: fetch answered without attributes it could not read",
 				"user", s.userInfo.Username, "folder", s.folder.Name,
-				"uid", m.UID, "file", m.Filename, "reason", reason,
+				"uid", m.UID, "reason", reason,
 				"missing", strings.Join(unreadable, ","))
 		}
 		mw.Close() //nolint:errcheck
@@ -3532,7 +3522,15 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		case imaplib.StoreFlagsDel:
 			upd = storeDelta(storeFlags, mailbox.FlagsRemove)
 		}
-		pending = append(pending, pendingStore{seqNum, m.UID, newFlags, newKW, m.Filename, m.AltTier})
+		// The driver renames the file to carry the flags, so it is handed the
+		// name it holds now -- resolved from the record, not carried in it.
+		storeName, nameErr := mailbox.MessagePath(s.folderBox(), s.folder.Name, m)
+		if nameErr != nil {
+			slog.Warn("imap: store cannot name the message, so its flags stay in the index only",
+				"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "err", nameErr)
+			storeName = ""
+		}
+		pending = append(pending, pendingStore{seqNum, m.UID, newFlags, newKW, storeName, m.AltTier})
 		batchUpdates[m.UID] = upd
 	}
 
@@ -3709,7 +3707,6 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		}
 		saveTotalMs += time.Since(tSave).Milliseconds()
 		nm := &mailbox.MessageMeta{
-			Filename:     newFilename,
 			Flags:        m.Flags,
 			Keywords:     m.Keywords,
 			Size:         uint32(len(data)),
@@ -3718,8 +3715,8 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 			GUID:         guid,
 		}
 		tIndex := time.Now()
-		if err := mailbox.RecordSaved(destH.idx, destH.box, destFolder.ID, destRel, nm); err != nil {
-			_ = destH.box.Remove(destRel, nm.Filename)
+		if err := mailbox.RecordSaved(destH.idx, destH.box, destFolder.ID, destRel, newFilename, nm); err != nil {
+			_ = destH.box.Remove(destRel, newFilename)
 			return nil, fmt.Errorf("imap/copy record: %w", err)
 		}
 		indexTotalMs += time.Since(tIndex).Milliseconds()
@@ -4099,7 +4096,6 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		}
 		saveTotalMs += time.Since(tSave).Milliseconds()
 		nm := &mailbox.MessageMeta{
-			Filename:     newFilename,
 			Flags:        m.Flags,
 			Keywords:     m.Keywords,
 			Size:         size,
@@ -4108,11 +4104,11 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 			GUID:         guid,
 		}
 		tIndex := time.Now()
-		if err := mailbox.RecordSaved(destH.idx, destH.box, destFolder.ID, destRel, nm); err != nil {
+		if err := mailbox.RecordSaved(destH.idx, destH.box, destFolder.ID, destRel, newFilename, nm); err != nil {
 			if srcBox == destH.box {
-				_, _, _ = srcBox.Move(destRel, s.folder.Name, nm.Filename, guid)
+				_, _, _ = srcBox.Move(destRel, s.folder.Name, newFilename, guid)
 			} else {
-				_ = destH.box.Remove(destRel, nm.Filename)
+				_ = destH.box.Remove(destRel, newFilename)
 			}
 			return fmt.Errorf("imap/move record: %w", err)
 		}
@@ -4120,7 +4116,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm))
 		srcUIDs.AddNum(imaplib.UID(m.UID))
 		dstUIDs.AddNum(imaplib.UID(nm.UID))
-		hits = append(hits, matched{seqNum: seqNum, srcUID: m.UID, vsize: m.VSize, filename: m.Filename, destUID: nm.UID, destFile: newFilename, moved: srcBox == destH.box})
+		hits = append(hits, matched{seqNum: seqNum, srcUID: m.UID, vsize: m.VSize, destUID: nm.UID, destFile: newFilename, moved: srcBox == destH.box})
 	}
 
 	// COPYUID needs at least one pair; the encoder rejects an empty set and
@@ -4361,16 +4357,28 @@ func virtualSizeFromRaw(raw []byte) uint32 {
 // on the first expunge would strip the body from the ones still live.
 type bodyRefs map[string]int
 
-// newBodyRefs counts how many records point at each body, by the name the
-// driver gives it: two records naming one file must not both unlink it.
-func newBodyRefs(box mailbox.UserMailbox, folder string, msgs []*mailbox.MessageMeta) bodyRefs {
-	r := make(bodyRefs, len(msgs))
-	for _, m := range msgs {
-		if name, err := mailbox.MessagePath(box, folder, m); err == nil && name != "" {
-			r[name]++
+// newBodyRefs counts how many records point at each body: two records naming
+// one file must not both unlink it.
+func newBodyRefs(names []string) bodyRefs {
+	r := make(bodyRefs, len(names))
+	for _, n := range names {
+		if n != "" {
+			r[n]++
 		}
 	}
 	return r
+}
+
+// bodyNames asks the driver what each record is called, which is the only place
+// a name comes from now (#1700).
+func bodyNames(box mailbox.UserMailbox, folder string, msgs []*mailbox.MessageMeta) []string {
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		if name, err := mailbox.MessagePath(box, folder, m); err == nil {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // bodyFate is what an expunge does with the record's body.

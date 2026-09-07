@@ -18,27 +18,6 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// slowFlagBackend is maildir with the flag-write pass made visibly slow, so the
-// timing line has something to fail to notice.
-type slowFlagBackend struct {
-	mailbox.MailboxBackend
-	delay time.Duration
-}
-
-type slowFlagUser struct {
-	mailbox.UserMailbox
-	delay time.Duration
-}
-
-func (b *slowFlagBackend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
-	return &slowFlagUser{UserMailbox: b.MailboxBackend.OpenUser(u), delay: b.delay}
-}
-
-func (u *slowFlagUser) WriteFlagsMulti(folder string, writes []mailbox.FlagWrite) []mailbox.FlagWriteResult {
-	time.Sleep(u.delay)
-	return u.UserMailbox.(mailbox.FlagWriterMulti).WriteFlagsMulti(folder, writes)
-}
-
 // The timing line has to span the storage write, which runs in a defer after
 // the point the line used to be printed at. It did not, and a measured run came
 // back with a 2.7s ceiling for stalls of 16 to 18 seconds: the part that could
@@ -52,8 +31,12 @@ func TestStoreTimingSpansTheStorageWrite(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(prev)
 
+	// The storage write is made visibly slow through the driver's own seam: a
+	// wrapper here would hide every other answer the driver gives (#1700).
+	defer maildir.SetTestFlagRenameDelay(delay)()
+
 	opts := imapserver.Options{
-		Mailbox:  &slowFlagBackend{MailboxBackend: maildir.New(), delay: delay},
+		Mailbox:  maildir.New(),
 		Index:    file.New(),
 		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
 		Auth:     &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=100000"},
