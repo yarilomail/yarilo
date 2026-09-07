@@ -100,14 +100,14 @@ func TestAForeignStoreIsConvertedOnFirstOpen(t *testing.T) {
 	// in-place conversion: the map entries point at their storage file, at their
 	// offsets, and nothing was copied.
 	for _, m := range msgs {
-		rc, err := box.Fetch("INBOX", m.Filename, false)
+		rc, err := mailbox.OpenMessage(box, "INBOX", m)
 		if err != nil {
-			t.Fatalf("fetch %s: %v", m.Filename, err)
+			t.Fatalf("fetch uid %d: %v", m.UID, err)
 		}
 		b, err := io.ReadAll(rc)
 		_ = rc.Close()
 		if err != nil {
-			t.Fatalf("read %s: %v", m.Filename, err)
+			t.Fatalf("read uid %d: %v", m.UID, err)
 		}
 		if len(b) == 0 {
 			t.Errorf("message %s read as empty", m.Filename)

@@ -128,3 +128,18 @@ func TestOurMdboxExtensionHasTheReferenceGeometry(t *testing.T) {
 		t.Errorf("our reset id is %d, theirs %d", ours.ResetID, theirs.ResetID)
 	}
 }
+
+// folderStateFor reaches the open state for a folder, so a row can read what
+// the records hold rather than what a reader reports.
+func (u *userIndex) folderStateFor(t *testing.T, folder string) *folderState {
+	t.Helper()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	for _, fs := range u.open {
+		if fs.folder == folder {
+			return fs
+		}
+	}
+	t.Fatalf("folder %q not open", folder)
+	return nil
+}

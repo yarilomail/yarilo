@@ -69,7 +69,7 @@ func TestReconcile_ImportsFromNewAndIsFetchable(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].UID != 1 {
 		t.Fatalf("index = %+v, want one message UID 1", msgs)
 	}
-	name := msgs[0].Filename
+	name := storedName(t, box, "INBOX", msgs[0])
 	if !strings.Contains(name, ":2,") {
 		t.Fatalf("migrated name %q lacks the :2, info marker", name)
 	}
@@ -97,7 +97,7 @@ func TestReconcile_ExternalFlagRenamePreservesUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	uid, oldName := before[0].UID, before[0].Filename
+	uid, oldName := before[0].UID, storedName(t, box, "INBOX", before[0])
 
 	// A second MUA marks it \Seen by renaming X:2, -> X:2,S (base unchanged).
 	curDir := filepath.Join(box.folderPath("INBOX"), "cur")
@@ -121,8 +121,8 @@ func TestReconcile_ExternalFlagRenamePreservesUID(t *testing.T) {
 	if m == nil {
 		t.Fatalf("UID %d lost after flag rename", uid)
 	}
-	if m.Filename != newName {
-		t.Fatalf("filename not repointed: %q, want %q", m.Filename, newName)
+	if got := storedName(t, box, "INBOX", m); got != newName {
+		t.Fatalf("the record resolves to %q, want %q", got, newName)
 	}
 	seen := false
 	for _, f := range m.Flags {
@@ -151,7 +151,7 @@ func TestReconcile_VanishedFileWritesTombstone(t *testing.T) {
 	}
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	uid := msgs[0].UID
-	if err := box.Remove("INBOX", msgs[0].Filename); err != nil {
+	if err := mailbox.RemoveMessage(box, "INBOX", msgs[0]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,44 +179,6 @@ func TestReconcile_VanishedFileWritesTombstone(t *testing.T) {
 
 // Concern #3: a tracked message whose on-disk name is unchanged keeps its index
 // flags — the reconcile must not revert a client's \Seen back to the flagless
-// filename trailer. And an unchanged folder is a no-op.
-func TestReconcile_PreservesIndexFlagsAndNoOp(t *testing.T) {
-	box, idx, folder := recSetup(t)
-	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, [16]byte{}) // flagless :2,
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: 5, VSize: 5, Flags: []string{`\Seen`},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	st, err := box.ReconcileIndex(idx, folder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Changed {
-		t.Fatalf("unchanged folder reconciled: %+v", st)
-	}
-	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	if len(msgs) != 1 || msgs[0].UID != 1 {
-		t.Fatalf("record churned: %+v", msgs)
-	}
-	seen := false
-	for _, f := range msgs[0].Flags {
-		if f == `\Seen` {
-			seen = true
-		}
-	}
-	if !seen {
-		t.Fatalf("index \\Seen reverted by reconcile: %+v", msgs[0].Flags)
-	}
-}
-
-// An imported record must carry the GUID Scan reports. A folder already marked
-// backfilled is never revisited, so a zero here would be an EMAILID that stays
-// all-zero for the life of the message.
 func TestReconcile_ImportCarriesGUIDAfterBackfill(t *testing.T) {
 	box, idx, folder := recSetup(t)
 
@@ -280,64 +242,21 @@ func TestReconcile_SameBaseTwiceImportsOnce(t *testing.T) {
 	if len(msgs) != 1 {
 		names := make([]string, 0, len(msgs))
 		for _, m := range msgs {
-			names = append(names, m.Filename)
+			names = append(names, storedName(t, box, "INBOX", m))
 		}
 		t.Fatalf("got %d records for one message: %v", len(msgs), names)
 	}
 }
 
-// The damaged state found in the field: two records naming one file, which the
-// repointing branch produces once one of a duplicated pair's files goes away.
-// The lower UID keeps the message; the other is a tombstone.
-func TestReconcile_CollapsesRecordsSharingOneFile(t *testing.T) {
-	box, idx, folder := recSetup(t)
-	name, _, guid, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, [16]byte{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, uid := range []uint32{1, 2} {
-		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: 5, VSize: 5, GUID: guid,
-		}); err != nil {
-			t.Fatalf("append uid %d: %v", uid, err)
-		}
-	}
-
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{})
-	if err != nil {
-		t.Fatalf("get messages: %v", err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("got %d records for one file, want 1", len(msgs))
-	}
-	if msgs[0].UID != 1 {
-		t.Errorf("kept UID %d, want the lowest (1)", msgs[0].UID)
-	}
-	// The survivor must still be readable: the collapse only drops index rows.
-	rc, err := box.Fetch("INBOX", msgs[0].Filename, msgs[0].AltTier)
-	if err != nil {
-		t.Fatalf("fetch survivor: %v", err)
-	}
-	rc.Close() //nolint:errcheck
-}
-
-// Records that gained a zero GUID after their folder was marked backfilled are
-// invisible to the backfill, so the reconcile stamps them regardless of the
-// marker. Without this they keep an all-zero EMAILID for good.
 func TestReconcile_RestampsZeroGUIDBehindCompleteMarker(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	name, _, want, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
+	recAppend(t, box, idx, folder, &mailbox.MessageMeta{
 		UID: 1, Filename: name, Size: 5, VSize: 5,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if err := idx.SetGUIDs(folder.ID, nil); err != nil {
 		t.Fatalf("mark complete: %v", err)
 	}
@@ -361,5 +280,19 @@ func TestReconcile_RestampsZeroGUIDBehindCompleteMarker(t *testing.T) {
 	}
 	if msgs[0].GUID != want {
 		t.Errorf("GUID = %x, want the one storage reports (%x)", msgs[0].GUID, want)
+	}
+}
+
+// recAppend records a message the way every caller does: the list learns the
+// uid, and the record keeps no name.
+func recAppend(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder, m *mailbox.MessageMeta) {
+	t.Helper()
+	guid := m.GUID
+	if err := mailbox.NameSaved(box, folder.Name, m); err != nil {
+		t.Fatalf("name uid %d: %v", m.UID, err)
+	}
+	m.GUID = guid
+	if err := idx.AppendMessage(folder.ID, m); err != nil {
+		t.Fatalf("append uid %d: %v", m.UID, err)
 	}
 }

@@ -76,7 +76,6 @@ func (fs *folderState) dropSidecarLocked() error {
 	if !uidNamedLocked(fs) {
 		return nil
 	}
-	fs.filenames = map[uint32]string{}
 	if fs.namesFD != nil {
 		_ = fs.namesFD.Close()
 		fs.namesFD = nil

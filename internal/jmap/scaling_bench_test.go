@@ -72,10 +72,14 @@ func benchServerSized(b *testing.B, folders, messagesPerFolder, bodyBytes int) *
 			if serr != nil {
 				b.Fatalf("save: %v", serr)
 			}
-			if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
+			meta := &mailbox.MessageMeta{
 				UID: uint32(uid), Filename: fname, Size: uint32(len(body)), VSize: vsize,
 				GUID: guid, InternalDate: time.Now(),
-			}); err != nil {
+			}
+			if err := mailbox.NameSaved(box, name, meta); err != nil {
+				b.Fatalf("name: %v", err)
+			}
+			if err := ui.AppendMessage(f.ID, meta); err != nil {
 				b.Fatalf("append: %v", err)
 			}
 		}

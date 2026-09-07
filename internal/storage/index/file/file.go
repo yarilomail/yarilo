@@ -14,14 +14,12 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -338,16 +336,9 @@ func (h *userHandle) RemoveFlags(folderID uint64, uid uint32, flags, keywords []
 	return h.stamped(folderID).RemoveFlags(folderID, uid, flags, keywords)
 }
 
-func (h *userHandle) UpdateFilename(folderID uint64, uid uint32, filename string) error {
-	return h.stamped(folderID).UpdateFilename(folderID, uid, filename)
+func (h *userHandle) SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error {
+	return h.stamped(folderID).SetFlagsDirty(folderID, uid, dirty)
 }
-
-// UpdateFilenames satisfies mailbox.FilenameWriterMulti. On the handle too:
-// callers hold it, and a method only on *userIndex fails the assertion silently.
-func (h *userHandle) UpdateFilenames(folderID uint64, names map[uint32]string) error {
-	return h.stamped(folderID).UpdateFilenames(folderID, names)
-}
-
 func (h *userHandle) MarkFolderCorrupt(folderID uint64) error {
 	return h.stamped(folderID).MarkFolderCorrupt(folderID)
 }
@@ -499,10 +490,8 @@ type folderState struct {
 	// only where the only other copy is removed right after (#1524).
 	fsyncOnFlush bool
 
-	file      *mailindex.File // the wire-format snapshot
-	keywords  keywordsHdr     // parsed keyword name registry
-	filenames map[uint32]string
-	sizes     map[uint32]uint32 // UID → message size in bytes, stored in .names sidecar
+	file     *mailindex.File // the wire-format snapshot
+	keywords keywordsHdr     // parsed keyword name registry
 
 	// lineage pairs this base with its log; folded* say which log it absorbed
 	// and how far. Zero predates the extension and proves nothing.
@@ -1189,138 +1178,6 @@ func loadNames(indexDir string) (map[uint32]string, map[uint32]uint32, error) {
 		return names, sizes, fmt.Errorf("fileindex/names: read: %w", err)
 	}
 	return names, sizes, nil
-}
-
-// requireName reports whether the caller supplied one. On an update the answer
-// is refused rather than obeyed: erasing a name is the loss itself (#1693).
-func requireName(where, folder string, uid uint32, filename string) bool {
-	if filename != "" {
-		return true
-	}
-	report(where, folder, uid, "no filename", "the message would be unreadable")
-	return false
-}
-
-// report panics under test with the caller's file and line, and logs in
-// production. The stack carries the frames above it.
-func report(where, folder string, uid uint32, what, why string) {
-	_, file, line, _ := runtime.Caller(3)
-	if underTest() {
-		panic(fmt.Sprintf("fileindex: %s of uid %d in %q with %s at %s:%d -- %s (#1693)",
-			where, uid, folder, what, file, line, why))
-	}
-	slog.Error("fileindex: record written without what makes it readable",
-		"where", where, "folder", folder, "uid", uid, "missing", what,
-		"caller", fmt.Sprintf("%s:%d", file, line))
-}
-
-// underTest reports whether this is a `go test` binary. Looked up on the call:
-// testing registers its flags after package variables run.
-func underTest() bool { return flag.Lookup("test.v") != nil }
-
-// appendName appends one entry to the .names sidecar through a kept-open fd, so
-// it costs one write(2). loadNames takes the last entry for a uid.
-func (fs *folderState) appendName(uid uint32, filename string, size uint32) error {
-	if filename == "" {
-		return nil // nothing to record: the record names its own storage
-	}
-	if fs.namesFD == nil {
-		dst := namesPath(fs.indexDir)
-		f, err := os.OpenFile(dst, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-		if err != nil {
-			return fmt.Errorf("fileindex/names: open: %w", err)
-		}
-		fs.namesFD = f
-	}
-	if _, err := fmt.Fprintf(fs.namesFD, "%d\t%s\t%d\n", uid, filename, size); err != nil {
-		_ = fs.namesFD.Close()
-		fs.namesFD = nil
-		return fmt.Errorf("fileindex/names: write: %w", err)
-	}
-	return nil
-}
-
-// saveNames rewrites the sidecar from the records the index holds, name from
-// memory else from disk: a record returns through the log, a name has none.
-// ghostsSaid holds the records already reported, so one nameless record costs
-// one line rather than one per flush (#1693).
-var ghostsSaid sync.Map
-
-func reportGhost(user, folder, indexDir string, uid uint32) {
-	key := user + "\x00" + indexDir + "\x00" + strconv.FormatUint(uint64(uid), 10)
-	if _, said := ghostsSaid.LoadOrStore(key, struct{}{}); said {
-		return
-	}
-	slog.Error("fileindex: a record the index holds is named nowhere",
-		"user", user, "folder", folder, "uid", uid, "index_dir", indexDir)
-}
-
-// beforeNameMerge runs before the merge reads the sidecar. Test seam: the merge
-// holds the folder lock, and that is measured rather than read off a comment.
-var beforeNameMerge func()
-
-func saveNames(indexDir, volatileDir, user, folder string, names map[uint32]string, sizes map[uint32]uint32, live map[uint32]struct{}, nextUID uint32) error {
-	if err := os.MkdirAll(indexDir, 0o700); err != nil {
-		return fmt.Errorf("fileindex/names: mkdir: %w", err)
-	}
-	if volatileDir != "" {
-		if err := os.MkdirAll(volatileDir, 0o700); err != nil {
-			return fmt.Errorf("fileindex/names: mkdir volatile: %w", err)
-		}
-	}
-	if beforeNameMerge != nil {
-		beforeNameMerge()
-	}
-	onDisk, diskSizes, err := loadNames(indexDir)
-	if err != nil {
-		return err
-	}
-	write := make(map[uint32]struct{}, len(live))
-	for uid := range live {
-		write[uid] = struct{}{}
-	}
-	// At or above nextUID it is an append not replayed here, below it a record
-	// the index dropped: expunged.
-	for uid := range onDisk {
-		if _, held := live[uid]; !held && uid >= nextUID {
-			write[uid] = struct{}{}
-		}
-	}
-	dst := namesPath(indexDir)
-	tmp := sidecarTmpPath(dst, volatileDir)
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("fileindex/names: open tmp: %w", err)
-	}
-	bw := bufio.NewWriter(f)
-	for uid := range write {
-		name, size := names[uid], sizes[uid]
-		if name == "" {
-			name = onDisk[uid]
-			if size == 0 {
-				size = diskSizes[uid]
-			}
-		}
-		// Logged, not refused: a migrated index arrives before anything has
-		// named its records. Once per record: a folder open all day said it all day.
-		if name == "" {
-			reportGhost(user, folder, indexDir, uid)
-		}
-		fmt.Fprintf(bw, "%d\t%s\t%d\n", uid, name, size) //nolint:errcheck
-	}
-	if err := bw.Flush(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("fileindex/names: flush: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("fileindex/names: close: %w", err)
-	}
-	if err := sidecarCommit(tmp, dst, volatileDir); err != nil {
-		return fmt.Errorf("fileindex/names: rename: %w", err)
-	}
-	return nil
 }
 
 // ensureLogStub writes an empty .log if none exists: the canonical reader fails

@@ -4,7 +4,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
@@ -118,9 +117,9 @@ func runConversionSession(t *testing.T, indexTmpl string) {
 func readAll(t *testing.T, box mailbox.UserMailbox, msgs []*mailbox.MessageMeta) {
 	t.Helper()
 	for _, m := range msgs {
-		rc, err := box.Fetch("INBOX", m.Filename, false)
+		rc, err := mailbox.OpenMessage(box, "INBOX", m)
 		if err != nil {
-			t.Fatalf("uid %d (map uid %s): %v", m.UID, m.Filename, err)
+			t.Fatalf("uid %d (map uid %d): %v", m.UID, m.MapUID, err)
 		}
 		b, rerr := io.ReadAll(rc)
 		_ = rc.Close()
@@ -260,9 +259,9 @@ func TestConvertedMapRecordsCarryTheirGUIDs(t *testing.T) {
 	}
 	var zero [16]byte
 	for _, msg := range msgs {
-		mapUID, perr := strconv.ParseUint(msg.Filename, 10, 32)
-		if perr != nil {
-			t.Fatalf("uid %d: map uid %q: %v", msg.UID, msg.Filename, perr)
+		mapUID := uint64(msg.MapUID)
+		if mapUID == 0 {
+			t.Fatalf("uid %d carries no map uid", msg.UID)
 		}
 		rec, ok := byUID[uint32(mapUID)]
 		if !ok {

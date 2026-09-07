@@ -129,10 +129,14 @@ func searchServer(t *testing.T, stub *stubFTS, maxConns, maxFolders int, folders
 		if err != nil {
 			t.Fatalf("open %s: %v", name, err)
 		}
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
+		meta := &mailbox.MessageMeta{
 			UID: 1, Filename: fname, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
 			InternalDate: time.Now(),
-		}); err != nil {
+		}
+		if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		if err := ui.AppendMessage(f.ID, meta); err != nil {
 			t.Fatalf("append %s: %v", name, err)
 		}
 	}
@@ -566,9 +570,12 @@ func rawMessageServer(t *testing.T, stub *stubFTS, raw string) *Server {
 	if err != nil {
 		t.Fatalf("open INBOX: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: fname, Size: uint32(len(raw)), VSize: vsize, GUID: guid, InternalDate: time.Now(),
-	}); err != nil {
+	meta := &mailbox.MessageMeta{UID: 1, Filename: fname, Size: uint32(len(raw)), VSize: vsize, GUID: guid, InternalDate: time.Now()}
+	if err := mailbox.NameSaved(box, f.Name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	meta.GUID = guid
+	if err := ui.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := ui.Close(); err != nil {

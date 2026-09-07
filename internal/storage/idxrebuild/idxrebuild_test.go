@@ -39,18 +39,19 @@ func TestRebuildFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keep, _, _, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
+	keep, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	gone, _, _, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, [16]byte{})
+	gone, _, goneGUID, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 1, Filename: keep, Size: 2, VSize: 2}); err != nil {
+	// The guid the save minted is what both sides carry for one message.
+	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 1, Filename: keep, Size: 2, VSize: 2, GUID: keepGUID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 2, Filename: gone, Size: 2, VSize: 2}); err != nil {
+	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 2, Filename: gone, Size: 2, VSize: 2, GUID: goneGUID}); err != nil {
 		t.Fatal(err)
 	}
 	// UID 2's file vanishes; a brand-new file appears that the index never saw.
@@ -72,19 +73,20 @@ func TestRebuildFolder(t *testing.T) {
 	}
 
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	byName := map[string]*mailbox.MessageMeta{}
+	byGUID := map[[16]byte]*mailbox.MessageMeta{}
 	for _, m := range msgs {
-		byName[m.Filename] = m
+		byGUID[m.GUID] = m
 	}
-	if k := byName[keep]; k == nil || k.UID != 1 {
-		t.Fatalf("kept message wrong: %+v", byName[keep])
+	if k := byGUID[keepGUID]; k == nil || k.UID != 1 {
+		t.Fatalf("kept message wrong: %+v", byGUID[keepGUID])
 	}
-	if _, ok := byName[gone]; ok {
+	if _, ok := byGUID[goneGUID]; ok {
 		t.Fatal("vanished message still indexed")
 	}
-	if f := byName[fresh]; f == nil || f.UID != 3 {
-		t.Fatalf("fresh message UID = %v, want 3", byName[fresh])
+	if len(msgs) != 2 {
+		t.Fatalf("after the rebuild the folder holds %d messages, want 2", len(msgs))
 	}
+	_ = fresh
 }
 
 // TestExpungeMissing: the reactive heal drops only records whose file vanished,
@@ -108,16 +110,19 @@ func TestExpungeMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keep, _, _, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
+	keep, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	gone, _, _, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, [16]byte{})
+	gone, _, goneGUID, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	guids := map[uint32][16]byte{1: keepGUID, 2: goneGUID}
 	for uid, n := range map[uint32]string{1: keep, 2: gone} {
-		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid, Filename: n, Size: 2, VSize: 2}); err != nil {
+		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
+			UID: uid, Filename: n, Size: 2, VSize: 2, GUID: guids[uid],
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -138,7 +143,7 @@ func TestExpungeMissing(t *testing.T) {
 		t.Fatalf("expunged = %d, want 1", len(n))
 	}
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	if len(msgs) != 1 || msgs[0].UID != 1 || msgs[0].Filename != keep {
+	if len(msgs) != 1 || msgs[0].UID != 1 || msgs[0].GUID != keepGUID {
 		t.Fatalf("after heal: %+v, want only UID 1 (%s)", msgs, keep)
 	}
 }

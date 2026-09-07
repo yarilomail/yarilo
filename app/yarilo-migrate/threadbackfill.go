@@ -293,7 +293,7 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 // would make this step cost the size of the mail store rather than the size of
 // its metadata.
 func readHeaders(box mailbox.UserMailbox, folder string, m *mailbox.MessageMeta) ([]byte, error) {
-	rc, err := box.Fetch(folder, m.Filename, m.AltTier)
+	rc, err := mailbox.OpenMessage(box, folder, m)
 	if err != nil {
 		return nil, err
 	}

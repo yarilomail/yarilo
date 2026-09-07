@@ -62,10 +62,10 @@ func TestReactiveHealDropsVanishedPreservesRest(t *testing.T) {
 
 	var names []string
 	for uid := uint32(1); uid <= 3; uid++ {
-		n, _ := saveNamed(t, mb, "INBOX", "msg\n", uid, [16]byte{})
+		n, _, g := saveNamedGUID(t, mb, "INBOX", "msg\n", uid, [16]byte{})
 		names = append(names, n)
 		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: n, Size: 4, VSize: 4,
+			UID: uid, Filename: n, Size: 4, VSize: 4, GUID: g,
 		}); err != nil {
 			t.Fatal(err)
 		}

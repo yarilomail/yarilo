@@ -80,9 +80,13 @@ func deliver(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, folde
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
+	meta := &mailbox.MessageMeta{
 		UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize, Flags: flags, GUID: guid,
-	}); err != nil {
+	}
+	if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := idx.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 }

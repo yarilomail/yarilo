@@ -113,8 +113,11 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 // folderCache is one folder's mtime-validated view of its uidlist and directory.
 // Its own mutex: the scan reaches it holding no mailbox lock since #1626.
 type folderCache struct {
-	mu       sync.Mutex
-	uidMap   map[string]uint32
+	mu     sync.Mutex
+	uidMap map[string]uint32
+	// byUID is the same mapping read the other way, which is how a record asks:
+	// it has the uid and wants the name (#1700).
+	byUID    map[uint32]string
 	guidMap  map[string][16]byte // explicit GUID overrides; empty for name-derived GUIDs
 	uidMtime time.Time
 	uidSize  int64
@@ -137,6 +140,21 @@ func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.uidMap, c.guidMap, c.uidMtime, c.uidSize = m, guids, mtime, size
+	c.byUID = make(map[uint32]string, len(m))
+	for base, uid := range m {
+		c.byUID[uid] = base
+	}
+}
+
+// baseOf answers the record's question, from the map the load built.
+func (c *folderCache) baseOf(uid uint32, mtime time.Time, size int64) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.byUID == nil || !mtime.Equal(c.uidMtime) || size != c.uidSize {
+		return "", false
+	}
+	base, ok := c.byUID[uid]
+	return base, ok
 }
 
 func (c *folderCache) guidOf(base string) ([16]byte, bool) {
@@ -160,6 +178,12 @@ func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID boo
 	}
 	uids[base] = uid
 	c.uidMap = uids
+	byUID := make(map[uint32]string, len(c.byUID)+1)
+	for k, v := range c.byUID {
+		byUID[k] = v
+	}
+	byUID[uid] = base
+	c.byUID = byUID
 	if hasGUID {
 		guids := make(map[string][16]byte, len(c.guidMap)+1)
 		for k, v := range c.guidMap {
@@ -193,7 +217,7 @@ func (c *folderCache) storeDirEntries(entries []os.DirEntry, mtime time.Time) {
 func (c *folderCache) invalidateUIDs() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.uidMap, c.guidMap = nil, nil
+	c.uidMap, c.guidMap, c.byUID = nil, nil, nil
 }
 
 func (c *folderCache) invalidateDir() {
@@ -1004,19 +1028,28 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 		if err != nil {
 			return fmt.Errorf("maildir/sync: get messages: %w", err)
 		}
+		// The list says which base a uid holds; the record itself no longer
+		// carries a name (#1700).
+		uidToBase, err := u.basesByUID(folder.Name)
+		if err != nil {
+			return err
+		}
 		tracked := make(map[string]struct{}, len(existing))
 		var restamp map[uint32][16]byte
 		var zeroGUID [16]byte
 		for _, m := range existing {
-			if m.Filename == "" {
+			base, known := uidToBase[m.UID]
+			if !known {
+				// A record the list does not name opens nothing. Left in place:
+				// its file may be there under a name nobody recorded.
+				reportUnlisted(u.username, folder.Name, m.UID)
 				continue
 			}
-			base := maildirBase(m.Filename)
 			rec, ok := onDisk[base]
 			if !ok {
 				// Absent from an unlocked scan, so confirmed before the record
 				// is dropped.
-				if u.stillOnDisk(folder.Name, m.Filename) {
+				if u.stillOnDisk(folder.Name, base) {
 					continue
 				}
 				// Vanished out of band → expunge (QRESYNC tombstone).
@@ -1045,20 +1078,17 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 				}
 				restamp[m.UID] = rec.GUID
 			}
-			if rec.Filename != m.Filename {
-				// Renamed out of band, so adopt the on-disk flags -- but only
-				// if that name is still there: writing flags from a name
-				// somebody renamed past records a state nobody set (#1626).
+			if !sameFlags(rec.Flags, m.Flags) || !sameFlags(rec.Keywords, m.Keywords) {
+				// The name carries the flags and is the truth, except where a
+				// failed rename marked the record's own flags dirty (#1700).
+				if m.FlagsDirty {
+					continue
+				}
 				if !u.stillOnDisk(folder.Name, rec.Filename) {
 					continue
 				}
-				if !sameFlags(rec.Flags, m.Flags) || !sameFlags(rec.Keywords, m.Keywords) {
-					if err := idx.UpdateFlags(folder.ID, m.UID, rec.Flags, rec.Keywords); err != nil {
-						return fmt.Errorf("maildir/sync: update flags %d: %w", m.UID, err)
-					}
-				}
-				if err := idx.UpdateFilename(folder.ID, m.UID, rec.Filename); err != nil {
-					return fmt.Errorf("maildir/sync: update filename %d: %w", m.UID, err)
+				if err := idx.UpdateFlags(folder.ID, m.UID, rec.Flags, rec.Keywords); err != nil {
+					return fmt.Errorf("maildir/sync: update flags %d: %w", m.UID, err)
 				}
 				st.Updated++
 			}
@@ -1878,17 +1908,23 @@ func (u *userMailbox) reconcileIsClean(idx mailbox.UserIndex, folder *mailbox.Fo
 	if err != nil || len(existing) == 0 {
 		return false
 	}
+	// By base name, which the list holds and a flag change does not move.
+	uidToBase, err := u.basesByUID(folder.Name)
+	if err != nil {
+		return false
+	}
 	var zeroGUID [16]byte
 	byName := make(map[string]*mailbox.MessageMeta, len(existing))
 	for _, m := range existing {
-		if m.Filename == "" {
+		base, known := uidToBase[m.UID]
+		if !known {
 			return false
 		}
-		if _, dup := byName[m.Filename]; dup {
+		if _, dup := byName[base]; dup {
 			// Two records on one file: the pass collapses them, which is work.
 			return false
 		}
-		byName[m.Filename] = m
+		byName[base] = m
 	}
 	// Counted, not just matched: a record for a file the scan does not report
 	// is work even when every scanned file is known.
@@ -1899,13 +1935,19 @@ func (u *userMailbox) reconcileIsClean(idx mailbox.UserIndex, folder *mailbox.Fo
 		if scanned[i].Filename == "" {
 			return false
 		}
-		m, known := byName[scanned[i].Filename]
+		m, known := byName[maildirBase(scanned[i].Filename)]
 		if !known {
 			return false
 		}
 		if m.GUID == zeroGUID && scanned[i].GUID != zeroGUID {
 			// The record has no identity and the storage has one for it:
 			// stamping it is the only thing that ever will.
+			return false
+		}
+		if !m.FlagsDirty &&
+			(!sameFlags(scanned[i].Flags, m.Flags) || !sameFlags(scanned[i].Keywords, m.Keywords)) {
+			// The name says something else about the flags, and the name is
+			// the truth: adopting it is work (#1700).
 			return false
 		}
 	}

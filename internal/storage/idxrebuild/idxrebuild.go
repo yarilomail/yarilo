@@ -43,10 +43,12 @@ func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mail
 	if err != nil {
 		return nil, fmt.Errorf("idxrebuild/scan: %w", err)
 	}
-	present := make(map[string]struct{}, len(scanned))
+	// Keyed by GUID: the index no longer keeps a name, and the GUID is what
+	// both sides carry for the same message (#1700).
+	present := make(map[[16]byte]struct{}, len(scanned))
 	for i := range scanned {
-		if scanned[i].Filename != "" {
-			present[scanned[i].Filename] = struct{}{}
+		if scanned[i].GUID != ([16]byte{}) {
+			present[scanned[i].GUID] = struct{}{}
 		}
 	}
 	existing, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -55,10 +57,10 @@ func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mail
 	}
 	var expunged []uint32
 	for _, m := range existing {
-		if m.Filename == "" {
-			continue
+		if m.GUID == ([16]byte{}) {
+			continue // a record from before GUIDs: nothing to compare it by
 		}
-		if _, ok := present[m.Filename]; ok {
+		if _, ok := present[m.GUID]; ok {
 			continue
 		}
 		if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
@@ -92,10 +94,10 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 		return stats, fmt.Errorf("idxrebuild/get messages: %w", err)
 	}
 
-	byFilename := make(map[string]*mailbox.MessageMeta, len(existing))
+	byGUID := make(map[[16]byte]*mailbox.MessageMeta, len(existing))
 	for _, m := range existing {
-		if m.Filename != "" {
-			byFilename[m.Filename] = m
+		if m.GUID != ([16]byte{}) {
+			byGUID[m.GUID] = m
 		}
 	}
 
@@ -117,7 +119,7 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 			InternalDate: rec.InternalDate,
 			GUID:         rec.GUID,
 		}
-		if old, ok := byFilename[rec.Filename]; ok {
+		if old, ok := byGUID[rec.GUID]; ok {
 			newMeta.UID = old.UID
 			// Preserve the record's own modseq so a rebuild does not restamp
 			// every surviving message (a QRESYNC modseq storm); a newly assigned
@@ -191,7 +193,13 @@ func BackfillGUIDs(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 	}
 	guids := make(map[uint32][16]byte, len(msgs))
 	for _, m := range msgs {
-		if g, ok := byName[m.Filename]; ok {
+		// The name comes from the driver: a record no longer carries one, and
+		// the scan reports files by the name they wear on disk (#1700).
+		name, perr := mailbox.MessagePath(box, folder.Name, m)
+		if perr != nil {
+			continue
+		}
+		if g, ok := byName[name]; ok {
 			guids[m.UID] = g
 		}
 	}

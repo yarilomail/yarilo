@@ -69,16 +69,22 @@ func TestASavedMessageIsNamedByItsUID(t *testing.T) {
 // uid exists. Tests that only need a stored message use it.
 func saveNamed(t *testing.T, mb mailbox.UserMailbox, folder, body string, uid uint32, guid [16]byte) (string, uint32) {
 	t.Helper()
+	name, vsize, _ := saveNamedGUID(t, mb, folder, body, uid, guid)
+	return name, vsize
+}
+
+// saveNamedGUID is the same two steps, handing back what the save minted.
+func saveNamedGUID(t *testing.T, mb mailbox.UserMailbox, folder, body string, uid uint32, guid [16]byte) (string, uint32, [16]byte) {
+	t.Helper()
 	temp, vsize, g, err := mb.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, guid)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	_ = g
-	name, err := mb.(mailbox.UIDNamer).AssignUID(folder, temp, uid)
+	named, err := mb.(mailbox.UIDNamer).AssignUID(folder, temp, uid)
 	if err != nil {
 		t.Fatalf("assign uid %d: %v", uid, err)
 	}
-	return name, vsize
+	return named, vsize, g
 }
 
 // A store this server wrote before #1704 is full of names the reference cannot
