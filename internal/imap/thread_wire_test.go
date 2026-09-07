@@ -45,10 +45,15 @@ func threadServerIn(t *testing.T, raws []string) (net.Conn, *bufio.Reader, strin
 		if err != nil {
 			t.Fatalf("open folder: %v", err)
 		}
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
+		meta := &mailbox.MessageMeta{
 			UID: uid, Filename: name, Size: uint32(len(raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Date(2026, 3, 1, 0, 0, i, 0, time.UTC),
-		}); err != nil {
+		}
+		if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = guid
+		if err := ui.AppendMessage(f.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}

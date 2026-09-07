@@ -75,7 +75,7 @@ func TestFlagsAreNotWrittenFromANameThatMovedOn(t *testing.T) {
 		t.Fatalf("index = %v, err = %v", msgs, err)
 	}
 	cur := filepath.Join(box.folderPath("INBOX"), "cur")
-	name := msgs[0].Filename
+	name := storedName(t, box, "INBOX", msgs[0])
 
 	// Another writer sets \Seen. The scan will see that name.
 	seen := renameWithFlags(name, "S")
@@ -103,7 +103,7 @@ func TestFlagsAreNotWrittenFromANameThatMovedOn(t *testing.T) {
 	if err != nil || len(after) != 1 {
 		t.Fatalf("index = %v, err = %v", after, err)
 	}
-	if after[0].Filename == seen {
+	if storedName(t, box, "INBOX", after[0]) == seen {
 		t.Errorf("the index took %q, a name that was gone before it was written", seen)
 	}
 	if hasFlagIn(after[0].Flags, `\Seen`) {
@@ -343,8 +343,8 @@ func TestAReconcileWithNewMailStillMovesIt(t *testing.T) {
 	}
 	// And the name it recorded is one Fetch can open, which is cur/ and only
 	// cur/.
-	if _, err := box.Fetch("INBOX", msgs[0].Filename, false); err != nil {
-		t.Errorf("the index names %q, which cannot be read: %v", msgs[0].Filename, err)
+	if _, err := mailbox.OpenMessage(box, "INBOX", msgs[0]); err != nil {
+		t.Errorf("uid %d cannot be read from its record: %v", msgs[0].UID, err)
 	}
 }
 
@@ -372,8 +372,8 @@ func TestAMessageArrivingInNewAfterTheCheckIsNotImportedFromThere(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, m := range msgs {
-		if _, ferr := box.Fetch("INBOX", m.Filename, false); ferr != nil {
-			t.Errorf("the index names %q, which Fetch cannot open: %v", m.Filename, ferr)
+		if _, ferr := mailbox.OpenMessage(box, "INBOX", m); ferr != nil {
+			t.Errorf("uid %d cannot be opened from its record: %v", m.UID, ferr)
 		}
 	}
 
@@ -389,7 +389,7 @@ func TestAMessageArrivingInNewAfterTheCheckIsNotImportedFromThere(t *testing.T) 
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("index = %v, err = %v", msgs, err)
 	}
-	if _, ferr := box.Fetch("INBOX", msgs[0].Filename, false); ferr != nil {
+	if _, ferr := mailbox.OpenMessage(box, "INBOX", msgs[0]); ferr != nil {
 		t.Errorf("after the next pass %q still cannot be read: %v", msgs[0].Filename, ferr)
 	}
 }
@@ -502,7 +502,7 @@ func TestEachDifferenceStillTakesTheLock(t *testing.T) {
 				t.Fatalf("index = %v, err = %v", msgs, err)
 			}
 			cur := filepath.Join(box.folderPath("INBOX"), "cur")
-			tc.apply(t, box, cur, msgs[0].Filename)
+			tc.apply(t, box, cur, storedName(t, box, "INBOX", msgs[0]))
 
 			l := box.b.locker.(*countingLocker)
 			before := l.acquires.Load()

@@ -55,10 +55,14 @@ func threadedAccount(t *testing.T) (*Server, string, string) {
 		if err != nil {
 			t.Fatalf("open folder: %v", err)
 		}
-		if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
+		meta := &mailbox.MessageMeta{
 			UID: uid, Filename: name, Size: uint32(len(raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Now(),
-		}); err != nil {
+		}
+		if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		if err := idx.AppendMessage(f.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 		// Recorded exactly as a delivery records it, id spelling included.

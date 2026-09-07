@@ -14,12 +14,17 @@ func (u *userIndex) AdoptStoredNames(folderID uint64, keyOf func(name string, gu
 		if uidNamedLocked(fs) {
 			return nil
 		}
+		// The one read of the sidecar left: this pass, and then it is gone.
+		stored, _, lerr := loadNames(fs.indexDir)
+		if lerr != nil {
+			return lerr
+		}
 		stamped := 0
 		for _, rec := range fs.file.Records {
 			if mapUID, _ := decodeMdboxRec(rec.Ext[extNameMdbox]); mapUID != 0 {
 				continue
 			}
-			key, ok := keyOf(fs.filenames[rec.UID], decodeGUIDRec(rec.Ext[extNameGUID]))
+			key, ok := keyOf(stored[rec.UID], decodeGUIDRec(rec.Ext[extNameGUID]))
 			if !ok {
 				continue
 			}

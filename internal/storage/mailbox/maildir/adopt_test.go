@@ -139,13 +139,17 @@ func TestAFileTheUIDListDoesNotKnowGetsTheNextUID(t *testing.T) {
 	}
 	byName := map[string]uint32{}
 	for _, m := range msgs {
-		byName[m.Filename] = m.UID
+		name, err := mailbox.MessagePath(box, "INBOX", m)
+		if err != nil {
+			t.Fatalf("uid %d has no name: %v", m.UID, err)
+		}
+		byName[maildirBaseOf(name)] = m.UID
 	}
-	if byName[known] != 40 {
-		t.Errorf("the file their list names has uid %d, want 40", byName[known])
+	if byName[maildirBaseOf(known)] != 40 {
+		t.Errorf("the file their list names has uid %d, want 40", byName[maildirBaseOf(known)])
 	}
-	if byName[fresh] < 42 {
-		t.Errorf("the file their list does not name has uid %d; it should come after their next uid, 42", byName[fresh])
+	if byName[maildirBaseOf(fresh)] < 42 {
+		t.Errorf("the file their list does not name has uid %d; it should come after their next uid, 42", byName[maildirBaseOf(fresh)])
 	}
 }
 

@@ -68,7 +68,11 @@ func TestTheRenameClockSpansTheRenames(t *testing.T) {
 
 	writes := make([]mailbox.FlagWrite, 0, len(msgs))
 	for _, m := range msgs {
-		writes = append(writes, mailbox.FlagWrite{UID: m.UID, Filename: m.Filename, Flags: []string{`\Seen`}})
+		name, perr := mailbox.MessagePath(box, "INBOX", m)
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		writes = append(writes, mailbox.FlagWrite{UID: m.UID, Filename: name, Flags: []string{`\Seen`}})
 	}
 	for i, res := range box.WriteFlagsMulti("INBOX", writes) {
 		if res.Err != nil {

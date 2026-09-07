@@ -41,9 +41,12 @@ func stageStore(t *testing.T, n int) (root, user string) {
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-		}); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
+		if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = [16]byte{}
+		if err := idx.AppendMessage(folder.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -241,9 +244,12 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-		}); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
+		if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = [16]byte{}
+		if err := idx.AppendMessage(folder.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -430,9 +436,12 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-	}); err != nil {
+	meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
+	if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	meta.GUID = [16]byte{}
+	if err := idx.AppendMessage(folder.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := idx.Close(); err != nil {
@@ -513,9 +522,12 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
-			if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-				UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-			}); err != nil {
+			meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
+			if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+				t.Fatalf("name: %v", err)
+			}
+			meta.GUID = [16]byte{}
+			if err := idx.AppendMessage(folder.ID, meta); err != nil {
 				t.Fatalf("append: %v", err)
 			}
 			if err := idx.Close(); err != nil {

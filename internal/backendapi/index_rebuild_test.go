@@ -265,15 +265,21 @@ func (a *adminUserContext) deliver(t *testing.T, body string) {
 	if err != nil {
 		t.Fatalf("allocateUID: %v", err)
 	}
-	filename, _, _, err := a.box.Save("INBOX", io.NopCloser(bytes.NewBufferString(body)), uid, int64(len(body)), nil, [16]byte{})
+	filename, vsize, guid, err := a.box.Save("INBOX", io.NopCloser(bytes.NewBufferString(body)), uid, int64(len(body)), nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := a.idx.AppendMessage(a.folder.ID, &mailbox.MessageMeta{
+	meta := &mailbox.MessageMeta{
 		UID:      uid,
 		Filename: filename,
 		Size:     uint32(len(body)),
-	}); err != nil {
+		VSize:    vsize,
+		GUID:     guid,
+	}
+	if err := mailbox.NameSaved(a.box, "INBOX", meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := a.idx.AppendMessage(a.folder.ID, meta); err != nil {
 		t.Fatalf("appendMessage: %v", err)
 	}
 }
@@ -310,9 +316,11 @@ func (a *adminUserContext) uidsByFilename(t *testing.T) map[string]uint32 {
 	if err != nil {
 		t.Fatalf("uidsByFilename/getMessages: %v", err)
 	}
+	// By GUID: the record no longer carries a name, and the identity is what
+	// a rebuild must not move (#1700).
 	out := make(map[string]uint32, len(msgs))
 	for _, m := range msgs {
-		out[m.Filename] = m.UID
+		out[mailbox.FormatObjectID(m.GUID)] = m.UID
 	}
 	return out
 }

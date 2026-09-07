@@ -99,6 +99,12 @@ type StoredNameAdopter interface {
 	AdoptStoredNames(folderID uint64, keyOf func(name string, guid [16]byte) (uint32, bool)) error
 }
 
+// FlagsDirtyMarker records that a message's flags have not reached storage. A
+// driver that keeps flags in the file name sets it when the rename fails.
+type FlagsDirtyMarker interface {
+	SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error
+}
+
 // UIDNameMarker answers, and records, whether a folder's message files already
 // carry the names their uids give them. In the index, not beside the mail.
 type UIDNameMarker interface {
@@ -215,7 +221,10 @@ type MessageMeta struct {
 	SaveDate uint32
 	// SelfNamed says the driver finds this message from the record alone, so
 	// the index is given no filename to keep.
-	SelfNamed    bool
+	SelfNamed bool
+	// FlagsDirty says the flags in the record have not reached storage yet, so
+	// what the store says about them is older than what the client was told.
+	FlagsDirty   bool
 	Flags        []string
 	Keywords     []string
 	ModSeq       uint64
@@ -450,7 +459,6 @@ type UserIndex interface {
 	// UpdateFilename repoints the stored on-disk filename for a UID without
 	// touching flags, UID or modseq. Used by maildir sync-on-open when another MUA
 	// renamed a tracked file out of band. No-op when uid is unknown.
-	UpdateFilename(folderID uint64, uid uint32, filename string) error
 	// UpdateFlagsMulti replaces flags+keywords for a batch of UIDs in a
 	// single lock/reload/flush cycle. Returns the new modseq per UID.
 	UpdateFlagsMulti(folderID uint64, updates map[uint32]FlagsUpdate) (map[uint32]FlagsResult, error)
@@ -608,15 +616,6 @@ type FlagWriteResult struct {
 	UID      uint32
 	Filename string
 	Err      error
-}
-
-// FilenameWriterMulti records a whole command's new names at once.
-//
-// Optional, like FlagWriterMulti and for the same reason: the single form takes
-// the index's exclusive lock per message, and on maildir a flag change renames
-// nearly every message in a batch. A caller without it falls back.
-type FilenameWriterMulti interface {
-	UpdateFilenames(folderID uint64, names map[uint32]string) error
 }
 
 // FlagWriterMulti records a whole command's flag writes at once.

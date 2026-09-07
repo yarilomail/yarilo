@@ -53,10 +53,14 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 	}
 	// A real delivery stamps InternalDate; without it the date filters would be
 	// tested against the zero time, which is before every plausible bound.
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
+	meta := &mailbox.MessageMeta{
 		UID: 1, Filename: name, Size: uint32(len(raw)), VSize: vsize, Flags: flags, GUID: guid,
 		InternalDate: time.Now(),
-	}); err != nil {
+	}
+	if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := ui.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := ui.Close(); err != nil {

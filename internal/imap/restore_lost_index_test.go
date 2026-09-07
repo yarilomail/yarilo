@@ -102,7 +102,7 @@ func TestAFolderWhoseIndexIsLostIsRebuiltFromStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range msgs {
-		rc, ferr := box.Fetch("INBOX", m.Filename, m.AltTier)
+		rc, ferr := mailbox.OpenMessage(box, "INBOX", m)
 		if ferr != nil {
 			t.Errorf("uid %d: the rebuilt record does not read: %v", m.UID, ferr)
 			continue

@@ -128,10 +128,14 @@ func serverSharingItsLocker(t *testing.T) (*Server, string, *mailbox.UserInfo, l
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
+	meta := &mailbox.MessageMeta{
 		UID: 1, Filename: name, Size: uint32(len(setTestMessage)), VSize: vsize,
 		Flags: flags, GUID: guid, InternalDate: time.Now(),
-	}); err != nil {
+	}
+	if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := idx.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := idx.Close(); err != nil {
@@ -167,10 +171,14 @@ func deliverAnother(info *mailbox.UserInfo, locker locks.Locker, uid uint32) (st
 	if err != nil {
 		return "", fmt.Errorf("open folder: %w", err)
 	}
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
+	meta := &mailbox.MessageMeta{
 		UID: uid, Filename: name, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
 		InternalDate: time.Now(),
-	}); err != nil {
+	}
+	if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+		return "", fmt.Errorf("name: %w", err)
+	}
+	if err := idx.AppendMessage(f.ID, meta); err != nil {
 		return "", fmt.Errorf("append: %w", err)
 	}
 	return hex.EncodeToString(guid[:]), nil

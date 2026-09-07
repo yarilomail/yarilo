@@ -40,10 +40,14 @@ func stageLegacyFolder(t *testing.T, n int) (mailbox.UserMailbox, mailbox.UserIn
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		// No GUID: the record shape this fixture reproduces.
-		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-		}); err != nil {
+		// No GUID: the record shape this fixture reproduces. The name is still
+		// settled the way every caller settles it.
+		meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
+		if err := mailbox.NameSaved(mb, "INBOX", meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = [16]byte{}
+		if err := idx.AppendMessage(folder.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -231,13 +235,18 @@ func TestBackfillMatchesStorage(t *testing.T) {
 		t.Fatalf("get messages: %v", err)
 	}
 	for _, m := range msgs {
-		want, ok := fromStorage[m.Filename]
+		name, perr := mailbox.MessagePath(mb, "INBOX", m)
+		if perr != nil {
+			t.Errorf("uid %d cannot be named: %v", m.UID, perr)
+			continue
+		}
+		want, ok := fromStorage[name]
 		if !ok {
-			t.Errorf("storage does not report %q", m.Filename)
+			t.Errorf("storage does not report %q", name)
 			continue
 		}
 		if m.GUID != want {
-			t.Errorf("index GUID %x != storage GUID %x for %q", m.GUID, want, m.Filename)
+			t.Errorf("index GUID %x != storage GUID %x for %q", m.GUID, want, name)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -127,11 +128,10 @@ func (u *userMailbox) RebuildStorage(idx mailbox.UserIndex, restoreOrphans bool)
 					return fmt.Errorf("mdbox/rebuild: reread %q: %w", fe.Name, gerr)
 				}
 				for _, mm := range msgs {
-					if mm.Filename == "" {
-						continue
-					}
-					if uid, perr := parseFilename(mm.Filename); perr == nil {
-						refCount[uid]++
+					// The record carries its own map_uid; a record that carries
+					// none stands for no storage and counts for nothing (#1700).
+					if mm.MapUID != 0 {
+						refCount[mm.MapUID]++
 					}
 				}
 			}
@@ -262,10 +262,10 @@ func (u *userMailbox) resetFolderToPresent(idx mailbox.UserIndex, f *mailbox.Fol
 	}
 	rebuilt := make([]*mailbox.MessageMeta, 0, len(existing))
 	for _, mm := range existing {
-		if mm.Filename == "" {
+		if mm.MapUID == 0 {
 			continue
 		}
-		if _, ok := present[mm.Filename]; !ok {
+		if _, ok := present[strconv.FormatUint(uint64(mm.MapUID), 10)]; !ok {
 			continue // map_uid vanished from storage; drop this record
 		}
 		rebuilt = append(rebuilt, mm)
