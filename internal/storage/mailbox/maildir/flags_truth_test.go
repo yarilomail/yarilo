@@ -3,6 +3,8 @@ package maildir
 import (
 	"bytes"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,8 +19,8 @@ func TestTheNameTakesTheSeenFlagOffTheRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recAppend(t, box, idx, folder, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: 5, VSize: 5, Flags: []string{`\Seen`},
+	recAppend(t, box, idx, folder, name, &mailbox.MessageMeta{
+		UID: 1, Size: 5, VSize: 5, Flags: []string{`\Seen`},
 	})
 
 	if _, err := box.ReconcileIndex(idx, folder); err != nil {
@@ -43,8 +45,8 @@ func TestADirtyRecordKeepsItsFlagsUntilTheRenameLands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recAppend(t, box, idx, folder, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: 5, VSize: 5, Flags: []string{`\Seen`},
+	recAppend(t, box, idx, folder, name, &mailbox.MessageMeta{
+		UID: 1, Size: 5, VSize: 5, Flags: []string{`\Seen`},
 	})
 	marker, ok := idx.(mailbox.FlagsDirtyMarker)
 	if !ok {
@@ -84,13 +86,12 @@ func TestADirtyRecordKeepsItsFlagsUntilTheRenameLands(t *testing.T) {
 // said out loud once (#1693, #1700).
 func TestARecordTheListDoesNotNameIsLeftAloneAndReported(t *testing.T) {
 	box, idx, folder := recSetup(t)
-	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, [16]byte{})
-	if err != nil {
+	if _, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, [16]byte{}); err != nil {
 		t.Fatal(err)
 	}
 	// Recorded in the index and nowhere else: no list entry for this uid.
 	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: 5, VSize: 5,
+		UID: 1, Size: 5, VSize: 5,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -117,5 +118,38 @@ func TestARecordTheListDoesNotNameIsLeftAloneAndReported(t *testing.T) {
 	}
 	if got := strings.Count(logged.String(), "names no file for this record"); got != 1 {
 		t.Errorf("the record was reported %d times over two passes, want once", got)
+	}
+}
+
+// A folder an older build left with a sidecar loses it on the pass a SELECT
+// runs, and nothing is taken from it: the list is the mapping (#1700).
+func TestTheSidecarIsRemovedAndNothingTakenFromIt(t *testing.T) {
+	box, idx, folder := recSetup(t)
+	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recAppend(t, box, idx, folder, name, &mailbox.MessageMeta{UID: 1, Size: 5, VSize: 5})
+
+	dir := idx.(interface{ IndexDirFor(string) string }).IndexDirFor("INBOX")
+	sidecar := filepath.Join(dir, "yarilo.index.names")
+	if err := os.WriteFile(sidecar, []byte("1\tsomething-else\t9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := box.MigrateUIDNames(idx, folder); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
+		t.Errorf("the sidecar survived: %v", err)
+	}
+	// And the message is still found, from the list rather than from the file
+	// that was just removed.
+	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if len(msgs) != 1 {
+		t.Fatalf("the folder holds %d records", len(msgs))
+	}
+	if got := storedName(t, box, "INBOX", msgs[0]); got != name {
+		t.Errorf("uid 1 resolves to %q, want %q", got, name)
 	}
 }

@@ -762,7 +762,6 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 		uid := uidMap[maildirBase(name)]
 		msgs = append(msgs, &mailbox.MessageMeta{
 			UID:      uid,
-			Filename: name,
 			Flags:    flags,
 			Keywords: keywords,
 			Size:     sz,
@@ -1040,8 +1039,8 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 		for _, m := range existing {
 			base, known := uidToBase[m.UID]
 			if !known {
-				// A record the list does not name opens nothing. Left in place:
-				// its file may be there under a name nobody recorded.
+				// A record the list does not name opens nothing; left in place,
+				// since its file may be there unrecorded.
 				reportUnlisted(u.username, folder.Name, m.UID)
 				continue
 			}
@@ -1114,7 +1113,6 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			// get two records, and expunging either would delete the shared file.
 			tracked[base] = struct{}{}
 			m := &mailbox.MessageMeta{
-				Filename:     rec.Filename,
 				Size:         rec.Size,
 				VSize:        rec.VSize,
 				InternalDate: rec.InternalDate,
@@ -1267,6 +1265,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 		return nil, err
 	}
 	defer f.Close()
+	listReads.Add(1)
 
 	m := make(map[string]uint32)
 	var guids map[string][16]byte

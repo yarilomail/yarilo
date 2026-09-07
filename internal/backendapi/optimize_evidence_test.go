@@ -175,7 +175,11 @@ func seedMdbox(t *testing.T, root, user string, n int) {
 		if serr != nil {
 			t.Fatalf("save: %v", serr)
 		}
-		if aerr := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid, Filename: filename, Size: uint32(len(body))}); aerr != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body))}
+		if nerr := mailbox.NameSaved(box, "INBOX", filename, meta); nerr != nil {
+			t.Fatalf("name: %v", nerr)
+		}
+		if aerr := idx.AppendMessage(folder.ID, meta); aerr != nil {
 			t.Fatalf("append: %v", aerr)
 		}
 	}

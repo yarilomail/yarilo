@@ -1059,11 +1059,9 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 		fs.file.Header.NextUID = next + 1
 		m.UID = next
 		if name != nil {
-			named, nerr := name(m.UID)
-			if nerr != nil {
+			if _, nerr := name(m.UID); nerr != nil {
 				return nerr
 			}
-			m.Filename = named
 		}
 		if err := fs.appendLocked(m); err != nil {
 			return err

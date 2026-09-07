@@ -52,7 +52,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid, Filename: filename}); err != nil {
+	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 

@@ -108,7 +108,7 @@ func TestRepairedMessageIsReportedWithItsIdentity(t *testing.T) {
 	if !strings.Contains(line, "message MIME was damaged") {
 		t.Fatalf("the repair was not reported:\n%s", line)
 	}
-	for _, want := range []string{"folder=" + testMbox.Name, "guid=", "file=", "dropped_header_lines=1"} {
+	for _, want := range []string{"folder=" + testMbox.Name, "guid=", "uid=", "dropped_header_lines=1"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the report does not carry %q, so the message cannot be found:\n%s", want, line)
 		}

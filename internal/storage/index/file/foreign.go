@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxconv"
@@ -186,15 +185,11 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	// cost of a map write, not a walk over every storage file (#1573).
 	guids := make(map[uint32][16]byte, len(metas))
 	for _, meta := range metas {
-		mapUID, perr := strconv.ParseUint(meta.Filename, 10, 32)
-		if perr != nil {
-			return false, fmt.Errorf("fileindex/convert: folder %q uid %d: map uid %q: %w",
-				fs.folder, meta.UID, meta.Filename, perr)
+		if meta.MapUID == 0 {
+			return false, fmt.Errorf("fileindex/convert: folder %q uid %d: their record names no map uid",
+				fs.folder, meta.UID)
 		}
-		guids[uint32(mapUID)] = meta.GUID
-		// Their record keeps the key in the map alone; ours keeps it in the
-		// record, which is what makes the name derivable (#1700).
-		meta.MapUID = uint32(mapUID)
+		guids[meta.MapUID] = meta.GUID
 	}
 	if n, gerr := m.SetGUIDs(guids); gerr != nil {
 		return false, fmt.Errorf("fileindex/convert: folder %q: stamp guids: %w", fs.folder, gerr)

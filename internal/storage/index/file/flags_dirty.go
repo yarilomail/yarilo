@@ -5,9 +5,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// SetFlagsDirty marks, or clears, a record whose flags have not reached storage:
-// until they do, what the file name says about them is older than what the
-// client was told, and a sync must not take it (#1700).
+// SetFlagsDirty marks a record whose flags have not reached storage: until they
+// do, the name says something older than the client was told (#1700).
 func (u *userIndex) SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error {
 	return u.withFolder(folderID, func(fs *folderState) error {
 		for _, rec := range fs.file.Records {

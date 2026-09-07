@@ -12,6 +12,7 @@ package idxrebuild
 import (
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -113,7 +114,7 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 			continue
 		}
 		newMeta := &mailbox.MessageMeta{
-			Filename:     rec.Filename,
+			MapUID:       mapUIDOf(rec.Filename),
 			Size:         rec.Size,
 			VSize:        rec.VSize,
 			InternalDate: rec.InternalDate,
@@ -164,6 +165,16 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 	}
 	stats.ExpungedUIDs = expunged
 	return stats, nil
+}
+
+// mapUIDOf reads an mdbox storage key out of the name a scan reported. Other
+// drivers name a file otherwise and get a zero, which reads as "no key".
+func mapUIDOf(name string) uint32 {
+	id, err := strconv.ParseUint(name, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(id)
 }
 
 // BackfillGUIDs stamps GUIDs onto a folder whose index predates the guid

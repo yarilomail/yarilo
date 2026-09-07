@@ -21,7 +21,7 @@ func seedFolderWithExpunge(t *testing.T) (*userIndex, uint64, string) {
 		if err != nil {
 			t.Fatalf("AllocateUID: %v", err)
 		}
-		if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Filename: "m.eml", Size: 10}); err != nil {
+		if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
 			t.Fatalf("AppendMessage: %v", err)
 		}
 	}
@@ -74,7 +74,7 @@ func TestEveryFoldRaisesTheExpungeFloor(t *testing.T) {
 				return u, f.ID
 			},
 			fold: func(t *testing.T, u *userIndex, folderID uint64) {
-				if err := u.AppendMessage(folderID, &mailbox.MessageMeta{UID: 3, Filename: "m.eml", Size: 10}); err != nil {
+				if err := u.AppendMessage(folderID, &mailbox.MessageMeta{UID: 3, Size: 10}); err != nil {
 					t.Fatalf("AppendMessage: %v", err)
 				}
 			},
@@ -83,7 +83,7 @@ func TestEveryFoldRaisesTheExpungeFloor(t *testing.T) {
 			name: "ResetFolder",
 			fold: func(t *testing.T, u *userIndex, folderID uint64) {
 				if _, err := u.ResetFolder(folderID, []*mailbox.MessageMeta{
-					{UID: 2, Filename: "m.eml", Size: 10},
+					{UID: 2, Size: 10},
 				}); err != nil {
 					t.Fatalf("ResetFolder: %v", err)
 				}

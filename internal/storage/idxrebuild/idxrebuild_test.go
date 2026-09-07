@@ -39,7 +39,7 @@ func TestRebuildFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keep, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
+	_, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,10 +48,10 @@ func TestRebuildFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The guid the save minted is what both sides carry for one message.
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 1, Filename: keep, Size: 2, VSize: 2, GUID: keepGUID}); err != nil {
+	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 1, Size: 2, VSize: 2, GUID: keepGUID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 2, Filename: gone, Size: 2, VSize: 2, GUID: goneGUID}); err != nil {
+	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 2, Size: 2, VSize: 2, GUID: goneGUID}); err != nil {
 		t.Fatal(err)
 	}
 	// UID 2's file vanishes; a brand-new file appears that the index never saw.
@@ -119,9 +119,9 @@ func TestExpungeMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	guids := map[uint32][16]byte{1: keepGUID, 2: goneGUID}
-	for uid, n := range map[uint32]string{1: keep, 2: gone} {
+	for uid := range map[uint32]string{1: keep, 2: gone} {
 		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: n, Size: 2, VSize: 2, GUID: guids[uid],
+			UID: uid, Size: 2, VSize: 2, GUID: guids[uid],
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -167,11 +167,12 @@ func TestARebuildRefilesAFileWhoseRecordWasExpunged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, [16]byte{})
+	name, _, guid, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.AllocateAndAppend(folder.ID, &mailbox.MessageMeta{Filename: name, Size: 5}); err != nil {
+	meta := &mailbox.MessageMeta{Size: 5, GUID: guid}
+	if err := mailbox.RecordSaved(idx, box, folder.ID, "INBOX", name, meta); err != nil {
 		t.Fatal(err)
 	}
 	before, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})

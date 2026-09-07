@@ -16,7 +16,7 @@ func TestResetFolderPreservesModSeq(t *testing.T) {
 
 	for i := uint32(1); i <= 3; i++ {
 		modseq, _ := b.NextModSeq(f.ID)
-		m := &mailbox.MessageMeta{UID: i, Filename: filenameFor(i), ModSeq: modseq}
+		m := &mailbox.MessageMeta{UID: i, ModSeq: modseq}
 		if err := b.AppendMessage(f.ID, m); err != nil {
 			t.Fatalf("append uid=%d: %v", i, err)
 		}
@@ -64,15 +64,15 @@ func TestResetFolderStampsMissingModSeq(t *testing.T) {
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
 	modseq, _ := b.NextModSeq(f.ID)
-	kept := &mailbox.MessageMeta{UID: 1, Filename: filenameFor(1), ModSeq: modseq}
+	kept := &mailbox.MessageMeta{UID: 1, ModSeq: modseq}
 	if err := b.AppendMessage(f.ID, kept); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 
 	// uid 2 carries ModSeq 0 → must be stamped fresh.
 	records := []*mailbox.MessageMeta{
-		{UID: 1, Filename: filenameFor(1), ModSeq: modseq},
-		{UID: 2, Filename: filenameFor(2)},
+		{UID: 1, ModSeq: modseq},
+		{UID: 2},
 	}
 	if _, err := b.ResetFolder(f.ID, records); err != nil {
 		t.Fatalf("ResetFolder: %v", err)

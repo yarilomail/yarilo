@@ -270,13 +270,12 @@ func (a *adminUserContext) deliver(t *testing.T, body string) {
 		t.Fatalf("save: %v", err)
 	}
 	meta := &mailbox.MessageMeta{
-		UID:      uid,
-		Filename: filename,
-		Size:     uint32(len(body)),
-		VSize:    vsize,
-		GUID:     guid,
+		UID:   uid,
+		Size:  uint32(len(body)),
+		VSize: vsize,
+		GUID:  guid,
 	}
-	if err := mailbox.NameSaved(a.box, "INBOX", meta); err != nil {
+	if err := mailbox.NameSaved(a.box, "INBOX", filename, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := a.idx.AppendMessage(a.folder.ID, meta); err != nil {
@@ -446,7 +445,11 @@ func TestOptimizeAllFoldsTheMdboxMap(t *testing.T) {
 		if serr != nil {
 			t.Fatalf("save: %v", serr)
 		}
-		if aerr := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid, Filename: filename, Size: uint32(len(body))}); aerr != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body))}
+		if nerr := mailbox.NameSaved(box, "INBOX", filename, meta); nerr != nil {
+			t.Fatalf("name: %v", nerr)
+		}
+		if aerr := idx.AppendMessage(folder.ID, meta); aerr != nil {
 			t.Fatalf("append: %v", aerr)
 		}
 	}

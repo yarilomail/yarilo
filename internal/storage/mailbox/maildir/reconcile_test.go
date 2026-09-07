@@ -254,8 +254,8 @@ func TestReconcile_RestampsZeroGUIDBehindCompleteMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recAppend(t, box, idx, folder, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: 5, VSize: 5,
+	recAppend(t, box, idx, folder, name, &mailbox.MessageMeta{
+		UID: 1, Size: 5, VSize: 5,
 	})
 	if err := idx.SetGUIDs(folder.ID, nil); err != nil {
 		t.Fatalf("mark complete: %v", err)
@@ -285,10 +285,10 @@ func TestReconcile_RestampsZeroGUIDBehindCompleteMarker(t *testing.T) {
 
 // recAppend records a message the way every caller does: the list learns the
 // uid, and the record keeps no name.
-func recAppend(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder, m *mailbox.MessageMeta) {
+func recAppend(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder, saved string, m *mailbox.MessageMeta) {
 	t.Helper()
 	guid := m.GUID
-	if err := mailbox.NameSaved(box, folder.Name, m); err != nil {
+	if err := mailbox.NameSaved(box, folder.Name, saved, m); err != nil {
 		t.Fatalf("name uid %d: %v", m.UID, err)
 	}
 	m.GUID = guid

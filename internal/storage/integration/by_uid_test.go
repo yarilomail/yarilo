@@ -44,8 +44,8 @@ func TestAMessageIsFoundByItsUIDAfterAReopen(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m := &mailbox.MessageMeta{Filename: saved, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", m); err != nil {
+			m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 			uid := m.UID
@@ -109,8 +109,8 @@ func TestReadingByUIDWalksNothing(t *testing.T) {
 		if serr != nil {
 			t.Fatal(serr)
 		}
-		m := &mailbox.MessageMeta{Filename: saved, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", m); err != nil {
+		m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 			t.Fatal(err)
 		}
 		_ = m
@@ -174,8 +174,8 @@ func oldSidecarIsIgnored(t *testing.T, driver, indexDir string, openBox func(*ma
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &mailbox.MessageMeta{Filename: saved, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", m); err != nil {
+	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,8 +201,9 @@ func oldSidecarIsIgnored(t *testing.T, driver, indexDir string, openBox func(*ma
 	if len(msgs) != 1 {
 		t.Fatalf("got %d messages, want 1", len(msgs))
 	}
-	if msgs[0].Filename == "u.deadbeef" || msgs[0].Size == 9 {
-		t.Errorf("the sidecar was consulted: name %q size %d", msgs[0].Filename, msgs[0].Size)
+	name, nerr := mailbox.MessagePath(box, "INBOX", msgs[0])
+	if nerr != nil || name == "u.deadbeef" || msgs[0].Size == 9 {
+		t.Errorf("the sidecar was consulted: name %q (%v) size %d", name, nerr, msgs[0].Size)
 	}
 	rc, err := mailbox.OpenMessage(box, "INBOX", msgs[0])
 	if err != nil {
@@ -238,8 +239,8 @@ func TestTheSizeSurvivesAReopen(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m := &mailbox.MessageMeta{Filename: saved, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", m); err != nil {
+			m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 			idx.Close() //nolint:errcheck
@@ -287,7 +288,7 @@ func TestAnOldMdboxFolderAdoptsItsSidecar(t *testing.T) {
 	}
 	// The shape an older build left: a record with no storage key, and the name
 	// in the sidecar beside it.
-	m := &mailbox.MessageMeta{UID: 1, Filename: saved, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	m := &mailbox.MessageMeta{UID: 1, Size: uint32(len(body)), VSize: vsize, GUID: guid}
 	if err := idx.AppendMessage(f.ID, m); err != nil {
 		t.Fatal(err)
 	}
@@ -346,8 +347,8 @@ func TestTheFolderWeLeaveHasTheReferenceShape(t *testing.T) {
 		if serr != nil {
 			t.Fatal(serr)
 		}
-		m := &mailbox.MessageMeta{Filename: saved, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", m); err != nil {
+		m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -462,8 +463,8 @@ func TestTheSizeIsWhatWasStoredNotWhatWasHandedOver(t *testing.T) {
 			if vsize != uint32(len(body)+3) {
 				t.Fatalf("Save reports %d for a %d-byte body with three bare LFs", vsize, len(body))
 			}
-			m := &mailbox.MessageMeta{Filename: saved, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", m); err != nil {
+			m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 			idx.Close() //nolint:errcheck
@@ -517,7 +518,7 @@ func TestANamelessMdboxRecordFindsItsKeyByGUID(t *testing.T) {
 	// The record an older build left after losing its sidecar line: a guid, a
 	// size, no name and no key.
 	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Size: uint32(len(body)), VSize: vsize, GUID: guid, SelfNamed: true,
+		UID: 1, Size: uint32(len(body)), VSize: vsize, GUID: guid,
 	}); err != nil {
 		t.Fatal(err)
 	}

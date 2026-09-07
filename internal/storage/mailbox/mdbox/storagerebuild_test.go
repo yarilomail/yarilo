@@ -75,8 +75,8 @@ func deliverMsg(t *testing.T, box *userMailbox, idx mailbox.UserIndex, folder, b
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	meta := &mailbox.MessageMeta{UID: uid, Filename: fn, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.NameSaved(box, folder, meta); err != nil {
+	meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if err := mailbox.NameSaved(box, folder, fn, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := idx.AppendMessage(f.ID, meta); err != nil {
@@ -278,7 +278,7 @@ func TestRebuildDropsDanglingFolderRecord(t *testing.T) {
 	// Dangling: index references map_uid 999999 which was never stored.
 	f, _ := idx.OpenFolder("INBOX", 0)
 	uid, _ := idx.AllocateUID(f.ID)
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Filename: "999999", MapUID: 999999, Size: 4}); err != nil {
+	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, MapUID: 999999, Size: 4}); err != nil {
 		t.Fatal(err)
 	}
 	if got := folderCount(t, idx, "INBOX"); got != 2 {

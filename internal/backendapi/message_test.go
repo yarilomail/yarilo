@@ -66,8 +66,8 @@ func messageServerRaw(t *testing.T, msg string) (*httptest.Server, string, uint3
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	meta := &mailbox.MessageMeta{UID: 1, Filename: name, Size: uint32(len(msg)), VSize: vsize, GUID: guid}
-	if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+	meta := &mailbox.MessageMeta{UID: 1, Size: uint32(len(msg)), VSize: vsize, GUID: guid}
+	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := ui.AppendMessage(f.ID, meta); err != nil {

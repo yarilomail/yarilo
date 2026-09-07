@@ -136,9 +136,9 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 		return
 	}
 	nm := &mailbox.MessageMeta{
-		Filename: newFilename, Flags: flags, Size: uint32(len(raw)), VSize: vsize, InternalDate: time.Now(), GUID: guid,
+		Flags: flags, Size: uint32(len(raw)), VSize: vsize, InternalDate: time.Now(), GUID: guid,
 	}
-	if err := mailbox.RecordSaved(dh.idx, dh.box, df.ID, drel, nm); err != nil {
+	if err := mailbox.RecordSaved(dh.idx, dh.box, df.ID, drel, newFilename, nm); err != nil {
 		_ = dh.box.Remove(drel, newFilename)
 		slog.Warn("imapsieve: fileinto record", "folder", name, "err", err)
 		return

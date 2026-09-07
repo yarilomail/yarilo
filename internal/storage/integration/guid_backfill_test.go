@@ -42,8 +42,8 @@ func stageLegacyFolder(t *testing.T, n int) (mailbox.UserMailbox, mailbox.UserIn
 		}
 		// No GUID: the record shape this fixture reproduces. The name is still
 		// settled the way every caller settles it.
-		meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
-		if err := mailbox.NameSaved(mb, "INBOX", meta); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+		if err := mailbox.NameSaved(mb, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		meta.GUID = [16]byte{}

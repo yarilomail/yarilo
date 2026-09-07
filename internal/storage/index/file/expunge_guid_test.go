@@ -24,7 +24,7 @@ func TestExpungeRecordCarriesTheMessageGUID(t *testing.T) {
 	}
 	for uid := uint32(1); uid <= 2; uid++ {
 		if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: "m.eml", Size: 10, GUID: guids[uid],
+			UID: uid, Size: 10, GUID: guids[uid],
 		}); err != nil {
 			t.Fatalf("AppendMessage: %v", err)
 		}
@@ -72,7 +72,7 @@ func TestVanishedGUIDsReportsLegacyRecordsAsIncomplete(t *testing.T) {
 	fs := b.open[f.ID]
 	mailboxGUID := fs.hdr.MailboxGUID
 	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: "m.eml", Size: 10, GUID: mailboxGUID,
+		UID: 1, Size: 10, GUID: mailboxGUID,
 	}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}

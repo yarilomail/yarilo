@@ -56,10 +56,10 @@ func threadedAccount(t *testing.T) (*Server, string, string) {
 			t.Fatalf("open folder: %v", err)
 		}
 		meta := &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(raw)), VSize: vsize,
+			UID: uid, Size: uint32(len(raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Now(),
 		}
-		if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+		if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		if err := idx.AppendMessage(f.ID, meta); err != nil {

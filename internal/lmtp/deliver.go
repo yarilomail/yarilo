@@ -82,7 +82,6 @@ func deliverOne(box mailbox.UserMailbox, idx mailbox.UserIndex, folder string, r
 	}
 	meta := &mailbox.MessageMeta{
 		UID:          uid,
-		Filename:     filename,
 		ModSeq:       modseq,
 		Size:         uint32(size),
 		VSize:        vsize,
@@ -91,13 +90,12 @@ func deliverOne(box mailbox.UserMailbox, idx mailbox.UserIndex, folder string, r
 		GUID:         guid,
 	}
 	// A driver named by uid saved under a temp name: the uid is already ours.
-	if err := mailbox.NameSaved(box, folder, meta); err != nil {
+	if err := mailbox.NameSaved(box, folder, filename, meta); err != nil {
 		return 0, *f, noGUID, fmt.Errorf("lmtp: name: %w", err)
 	}
-	filename = meta.Filename
 	tIndex := time.Now()
 	slog.Debug("lmtp: body saved, committing index", "user", username, "folder", folder, "uid", uid,
-		"call_id", callID, "filename", filename, "save_ms", tIndex.Sub(tSave).Milliseconds())
+		"call_id", callID, "uid", uid, "save_ms", tIndex.Sub(tSave).Milliseconds())
 	if err := idx.AppendMessage(f.ID, meta); err != nil {
 		slog.Warn("lmtp: index append failed, rolling back save",
 			"user", username, "folder", folder, "uid", uid, "call_id", callID, "err", err)

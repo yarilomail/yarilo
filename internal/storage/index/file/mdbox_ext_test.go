@@ -60,7 +60,7 @@ func TestOurRecordCarriesTheMapUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: "7", Size: 10, MapUID: 7, SaveDate: 1788000000,
+		UID: 1, Size: 10, MapUID: 7, SaveDate: 1788000000,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestOurMdboxExtensionHasTheReferenceGeometry(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: "7", Size: 10, MapUID: 7, SaveDate: 1788000000,
+		UID: 1, Size: 10, MapUID: 7, SaveDate: 1788000000,
 	}); err != nil {
 		t.Fatal(err)
 	}

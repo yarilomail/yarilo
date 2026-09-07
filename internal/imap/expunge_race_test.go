@@ -96,7 +96,7 @@ func TestTheReReadSeesAnotherHandlesExpunge(t *testing.T) {
 	}
 	for _, uid := range []uint32{1, 2} {
 		if err := a.AppendMessage(fa.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: "m." + string(rune('0'+uid)), Size: 10,
+			UID: uid, Size: 10,
 		}); err != nil {
 			t.Fatal(err)
 		}

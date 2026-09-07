@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A maildir message is found the way the reference finds it: the list says
-// which uid a base name holds, and the directory says which flags it wears
-// right now -- the trailer moves with every flag change (#1700).
+// A maildir message is found as the reference finds it: the list holds the base
+// a uid names, the directory holds the flags it wears now (#1700).
 func (u *userMailbox) RecordPath(folder string, m *mailbox.MessageMeta) (string, error) {
 	if m.UID == 0 {
 		return "", fmt.Errorf("maildir/by-uid: uid 0 names no message")
@@ -127,3 +127,11 @@ func SetTestFlagRenameDelay(d time.Duration) func() {
 	beforeFlagRename = func() { time.Sleep(d) }
 	return func() { beforeFlagRename = nil }
 }
+
+// listReads counts the times the list was read off disk, so "one read per
+// folder" is a number a row asserts rather than a claim (#1700).
+var listReads atomic.Int64
+
+// ListReads returns the count, ResetListReads zeroes it. Test seams.
+func ListReads() int  { return int(listReads.Load()) }
+func ResetListReads() { listReads.Store(0) }

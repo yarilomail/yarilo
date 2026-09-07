@@ -339,6 +339,10 @@ func (h *userHandle) RemoveFlags(folderID uint64, uid uint32, flags, keywords []
 func (h *userHandle) SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error {
 	return h.stamped(folderID).SetFlagsDirty(folderID, uid, dirty)
 }
+func (h *userHandle) IndexDirFor(folder string) string { return h.ui.IndexDirFor(folder) }
+func (h *userHandle) ForgetStoredNames(folderID uint64) error {
+	return h.stamped(folderID).ForgetStoredNames(folderID)
+}
 func (h *userHandle) MarkFolderCorrupt(folderID uint64) error {
 	return h.stamped(folderID).MarkFolderCorrupt(folderID)
 }

@@ -41,8 +41,8 @@ func stageStore(t *testing.T, n int) (root, user string) {
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
-		if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+		if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		meta.GUID = [16]byte{}
@@ -244,8 +244,8 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
-		if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+		if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		meta.GUID = [16]byte{}
@@ -436,8 +436,8 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
-	if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+	meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	meta.GUID = [16]byte{}
@@ -522,8 +522,8 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
-			meta := &mailbox.MessageMeta{UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize}
-			if err := mailbox.NameSaved(box, "INBOX", meta); err != nil {
+			meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+			if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
 				t.Fatalf("name: %v", err)
 			}
 			meta.GUID = [16]byte{}

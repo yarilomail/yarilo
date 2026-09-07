@@ -19,7 +19,7 @@ func TestFsckIndexIDMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial open: %v", err)
 	}
-	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "a.eml", Size: 100}); err != nil {
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 100}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	// Compact the log into the base .index so the message survives log truncation.

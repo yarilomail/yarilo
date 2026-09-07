@@ -254,7 +254,7 @@ func TestEmailSetHonoursIfInState(t *testing.T) {
 // in a client.
 func TestSystemKeywordMappingIsSymmetric(t *testing.T) {
 	for kw, flag := range jmapToIMAPFlag {
-		meta := &mailbox.MessageMeta{Flags: []string{flag}, Filename: "m"}
+		meta := &mailbox.MessageMeta{Flags: []string{flag}}
 		if got := keywordsOf(meta); !got[kw] {
 			t.Errorf("flag %q is written for %q but does not read back as it: %v", flag, kw, got)
 		}
@@ -262,7 +262,7 @@ func TestSystemKeywordMappingIsSymmetric(t *testing.T) {
 	// And nothing readable is unwritable: keywordsOf's system table must have
 	// no entry this one lacks.
 	for _, flag := range []string{`\Seen`, `\Answered`, `\Flagged`, `\Draft`, `\Deleted`} {
-		kws := keywordsOf(&mailbox.MessageMeta{Flags: []string{flag}, Filename: "m"})
+		kws := keywordsOf(&mailbox.MessageMeta{Flags: []string{flag}})
 		for kw := range kws {
 			if _, ok := jmapToIMAPFlag[kw]; !ok {
 				t.Errorf("keyword %q is readable but cannot be written back", kw)

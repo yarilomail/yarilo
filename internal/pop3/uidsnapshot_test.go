@@ -64,9 +64,9 @@ func assertDeletionUsesSnapshotUIDs(t *testing.T, locker locks.Locker) {
 		userInfo: &mailbox.UserInfo{Username: "u@example.org"},
 		folder:   &mailbox.Folder{ID: 1, Name: "INBOX"},
 		msgs: []*mailbox.MessageMeta{
-			{UID: 11, Filename: "a"},
-			{UID: 12, Filename: "b"},
-			{UID: 13, Filename: "c"},
+			{UID: 11},
+			{UID: 12},
+			{UID: 13},
 		},
 	}
 	s.deleted = make([]bool, len(s.msgs))
@@ -86,9 +86,9 @@ func assertDeletionUsesSnapshotUIDs(t *testing.T, locker locks.Locker) {
 	// proves nothing: with a newer message at the front, position 2 names a
 	// different UID than the snapshot does.
 	fresher := []*mailbox.MessageMeta{
-		{UID: 10, Filename: "new"},
-		{UID: 11, Filename: "a"},
-		{UID: 12, Filename: "b"},
+		{UID: 10},
+		{UID: 11},
+		{UID: 12},
 	}
 	if fresher[1].UID == idx.expunged[0] {
 		t.Error("position addressing and UID addressing agree on this fixture, so it distinguishes nothing")

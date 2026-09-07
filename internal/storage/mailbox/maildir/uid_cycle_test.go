@@ -62,8 +62,8 @@ func TestTheListCarriesAnAppendBeforeAnyReconcile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &mailbox.MessageMeta{Filename: saved, Size: 16, VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", m); err != nil {
+	m := &mailbox.MessageMeta{Size: 16, VSize: vsize, GUID: guid}
+	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,8 +115,8 @@ func TestAMoveIntoATakenNameIsRecordedUnderTheDestinationUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &mailbox.MessageMeta{Filename: moved, Size: 16, VSize: 16, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, archive.ID, "Archive", m); err != nil {
+	m := &mailbox.MessageMeta{Size: 16, VSize: 16, GUID: guid}
+	if err := mailbox.RecordSaved(idx, box, archive.ID, "Archive", moved, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,5 +153,51 @@ func TestTheWriterRefusesARecordWithNoUID(t *testing.T) {
 	}
 	if _, err := namer.AssignUID("INBOX", saved, 0); err == nil {
 		t.Fatal("a record with no uid was accepted: it maps nothing")
+	}
+}
+
+// Resolving a whole folder costs one read of the list, not one per message:
+// the uid-keyed map is built with the cache the scan already validates.
+func TestAFolderCostsOneReadOfTheList(t *testing.T) {
+	home := t.TempDir()
+	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}
+	box := maildir.New().OpenUser(info)
+	defer box.Close() //nolint:errcheck
+	if err := box.Create("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	idx := indexfile.New().OpenUser(info)
+	defer idx.Close() //nolint:errcheck
+	f, err := idx.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 20
+	for i := 0; i < n; i++ {
+		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, [16]byte{})
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		m := &mailbox.MessageMeta{Size: 16, VSize: vsize, GUID: guid}
+		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != n {
+		t.Fatalf("the folder holds %d records, want %d", len(msgs), n)
+	}
+
+	maildir.ResetListReads()
+	for _, m := range msgs {
+		if _, err := mailbox.MessagePath(box, "INBOX", m); err != nil {
+			t.Fatalf("uid %d: %v", m.UID, err)
+		}
+	}
+	if got := maildir.ListReads(); got > 1 {
+		t.Errorf("naming %d messages read the list %d times, want one", len(msgs), got)
 	}
 }

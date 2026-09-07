@@ -12,9 +12,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// %f and %m are the two UIDL variables that read a message's name on disk. The
-// record stopped carrying one, so they ask the driver: a UIDL that changed
-// shape would have every client download the mailbox again (#1700).
+// %f and %m read a message's name on disk, and the record carries none: a UIDL
+// that changed shape would have every client download the mailbox again.
 func TestTheUIDLNameVariablesReadTheNameOnDisk(t *testing.T) {
 	for _, tc := range []struct {
 		driver string
@@ -45,8 +44,8 @@ func TestTheUIDLNameVariablesReadTheNameOnDisk(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m := &mailbox.MessageMeta{Filename: saved, Size: uint32(len(raw)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", m); err != nil {
+			m := &mailbox.MessageMeta{Size: uint32(len(raw)), VSize: vsize, GUID: guid}
+			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 

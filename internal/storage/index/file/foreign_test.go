@@ -110,7 +110,7 @@ func TestAForeignStoreIsConvertedOnFirstOpen(t *testing.T) {
 			t.Fatalf("read uid %d: %v", m.UID, err)
 		}
 		if len(b) == 0 {
-			t.Errorf("message %s read as empty", m.Filename)
+			t.Errorf("uid %d read as empty", m.UID)
 		}
 	}
 
@@ -160,9 +160,9 @@ func TestASecondOpenDoesNotConvertAgain(t *testing.T) {
 		t.Fatalf("second open sees %d messages, first saw %d", len(second), len(first))
 	}
 	for i := range first {
-		if first[i].UID != second[i].UID || first[i].Filename != second[i].Filename {
-			t.Errorf("message %d reads as uid %d/%s, was uid %d/%s",
-				i, second[i].UID, second[i].Filename, first[i].UID, first[i].Filename)
+		if first[i].UID != second[i].UID || first[i].MapUID != second[i].MapUID {
+			t.Errorf("message %d reads as uid %d/map %d, was uid %d/map %d",
+				i, second[i].UID, second[i].MapUID, first[i].UID, first[i].MapUID)
 		}
 	}
 }

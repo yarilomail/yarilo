@@ -390,7 +390,7 @@ func TestAMessageArrivingInNewAfterTheCheckIsNotImportedFromThere(t *testing.T) 
 		t.Fatalf("index = %v, err = %v", msgs, err)
 	}
 	if _, ferr := mailbox.OpenMessage(box, "INBOX", msgs[0]); ferr != nil {
-		t.Errorf("after the next pass %q still cannot be read: %v", msgs[0].Filename, ferr)
+		t.Errorf("after the next pass uid %d still cannot be read: %v", msgs[0].UID, ferr)
 	}
 }
 

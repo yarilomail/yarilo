@@ -31,13 +31,8 @@ func sdboxWithMail(t *testing.T, n int) (*mailbox.UserInfo, mailbox.UserMailbox,
 		if serr != nil {
 			t.Fatal(serr)
 		}
-		name := temp
-		if namer, ok := mailbox.Driver(box).(mailbox.UIDNamer); ok {
-			if name, serr = namer.AssignUID("INBOX", temp, uint32(i+1)); serr != nil {
-				t.Fatal(serr)
-			}
-		}
-		if aerr := idx.AllocateAndAppend(f.ID, &mailbox.MessageMeta{Filename: name}); aerr != nil {
+		m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: uint32(len(body))}
+		if aerr := mailbox.RecordSaved(idx, box, f.ID, "INBOX", temp, m); aerr != nil {
 			t.Fatal(aerr)
 		}
 	}

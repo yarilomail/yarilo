@@ -212,7 +212,7 @@ func (u *userMailbox) restoreTaggedOrphans(idx mailbox.UserIndex, present map[st
 		// flags live in the fileindex, an orphan is a message no index references,
 		// and the storage trailer carries no flags, so there is no surviving source.
 		nm := &mailbox.MessageMeta{
-			Filename:     fn,
+			MapUID:       uid,
 			Size:         rec.Size,
 			VSize:        rec.VSize,
 			InternalDate: rec.InternalDate,

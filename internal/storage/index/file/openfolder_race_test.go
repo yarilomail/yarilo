@@ -121,7 +121,7 @@ func TestOpenFolderConcurrentFirstOpenNoUIDRegression(t *testing.T) {
 			}
 			ms, _ := lmtp.NextModSeq(f.ID)
 			if err := lmtp.AppendMessage(f.ID, &mailbox.MessageMeta{
-				UID: uid, ModSeq: ms, Filename: "d.eml", Size: 100,
+				UID: uid, ModSeq: ms, Size: 100,
 			}); err != nil {
 				t.Errorf("lmtp AppendMessage uid=%d: %v", uid, err)
 				return
