@@ -328,9 +328,8 @@ func splitKeywords(keywords map[string]bool) (flags, custom []string) {
 	return flags, custom
 }
 
-// writeFlagsToStorage puts the settled flags where the driver keeps them. On a
-// driver whose name carries them, a write that stops at the index is undone by
-// the next sync, which is what the name says (#1724).
+// writeFlagsToStorage puts the settled flags where the driver keeps them: on
+// maildir a write that stops at the index is undone by the next sync (#1724).
 func (h *userHandle) writeFlagsToStorage(folderID uint64, folder string,
 	metaOf map[uint32]*mailbox.MessageMeta, settled map[uint32]mailbox.FlagsResult, applied map[uint32]bool) {
 	writes := make([]mailbox.FlagWrite, 0, len(settled))

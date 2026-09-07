@@ -2,13 +2,8 @@ package mailbox
 
 import "log/slog"
 
-// FlagsWritten records settled flags where the driver keeps them and marks each
-// record dirty when its write does not land: on a driver whose name carries the
-// flags, a record the store never heard of is reverted by the next sync (#1724).
-//
-// Best effort by design: the flags are already committed to the index, which is
-// what the client was told. A rename that fails is a warning and a later
-// reconcile, not an error on a write that succeeded.
+// FlagsWritten records settled flags where the driver keeps them, marking a
+// record dirty when its write does not land. Best effort (#1724).
 func FlagsWritten(idx UserIndex, box UserMailbox, folderID uint64, folder string, writes []FlagWrite) []FlagWriteResult {
 	named := make([]FlagWrite, 0, len(writes))
 	for _, w := range writes {

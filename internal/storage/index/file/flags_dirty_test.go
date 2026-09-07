@@ -6,9 +6,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The mark is what protects a record whose flags never reached storage, and the
-// reader that acts on it is another process: it has to survive a reopen. Written
-// to the base alone it does not — the log replays the older flags over it (#1724).
+// The process that acts on the mark is not the one that set it, so it has to
+// survive a reopen; written to the base alone it does not (#1724).
 func TestTheDirtyMarkSurvivesAReopen(t *testing.T) {
 	dir := t.TempDir()
 	a := openIdx(dir, testUser)

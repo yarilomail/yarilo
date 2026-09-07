@@ -673,16 +673,25 @@ func (s *session) writeFlagsToStorage(pending []pendingStore) {
 	s.storeRenameMS = time.Since(renameStart).Milliseconds()
 
 	nameStart := time.Now()
+	s.storeRenamed = renamedCount(writes, results)
+	s.storeNameMS = time.Since(nameStart).Milliseconds()
+}
+
+// renamedCount is how many messages the store holds under a new name. Keyed by
+// uid: the writer skips what it cannot name, so position does not line up.
+func renamedCount(writes []mailbox.FlagWrite, results []mailbox.FlagWriteResult) int {
+	sent := make(map[uint32]string, len(writes))
+	for _, w := range writes {
+		sent[w.UID] = w.Filename
+	}
 	renamed := 0
-	for i, res := range results {
-		if res.Err == nil && i < len(writes) && res.Filename != writes[i].Filename {
-			// The name changed because the flags did; nothing records it, since
-			// the list keys on the base name and that did not move (#1700).
+	for _, res := range results {
+		was, known := sent[res.UID]
+		if res.Err == nil && known && res.Filename != was {
 			renamed++
 		}
 	}
-	s.storeNameMS = time.Since(nameStart).Milliseconds()
-	s.storeRenamed = renamed
+	return renamed
 }
 
 // usageDelta is the size to move the running total by for one message.
