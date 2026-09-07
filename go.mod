@@ -5,7 +5,7 @@ go 1.26.8
 require (
 	github.com/0kaba0hub/go-xapian v0.2.0
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
-	github.com/MicahParks/keyfunc/v3 v3.8.1
+	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/abadojack/whatlanggo v1.0.1
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/blevesearch/snowballstem v0.9.0
@@ -16,7 +16,7 @@ require (
 	github.com/foxcpp/go-sieve v0.0.0-20260703081245-75bf8d082267
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/google/pprof v0.0.0-20260830191439-4932ad3515ea
+	github.com/google/pprof v0.0.0-20260906184651-6331bc6350fe
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/file v1.2.1
