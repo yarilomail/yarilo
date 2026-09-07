@@ -15,7 +15,7 @@ func (u *userIndex) AdoptStoredNames(folderID uint64, keyOf func(name string, gu
 			return nil
 		}
 		// The one read of the sidecar left: this pass, and then it is gone.
-		stored, _, lerr := loadNames(fs.indexDir)
+		stored, lerr := loadNames(fs.indexDir)
 		if lerr != nil {
 			return lerr
 		}

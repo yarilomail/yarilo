@@ -343,6 +343,12 @@ func (h *userHandle) IndexDirFor(folder string) string { return h.ui.IndexDirFor
 func (h *userHandle) ForgetStoredNames(folderID uint64) error {
 	return h.stamped(folderID).ForgetStoredNames(folderID)
 }
+func (h *userHandle) StoredNames(folderID uint64) (map[uint32]string, error) {
+	return h.stamped(folderID).StoredNames(folderID)
+}
+func (h *userHandle) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, error) {
+	return h.stamped(folderID).StampSizes(folderID, vsizes)
+}
 func (h *userHandle) MarkFolderCorrupt(folderID uint64) error {
 	return h.stamped(folderID).MarkFolderCorrupt(folderID)
 }
@@ -1138,17 +1144,16 @@ func migrateLegacyFilenames(indexDir string) error {
 	return nil
 }
 
-// loadNames reads the .names sidecar (TSV, legacy rows taken as size 0). A scan
-// that stops early is an error: the next flush would rewrite from a partial map.
-func loadNames(indexDir string) (map[uint32]string, map[uint32]uint32, error) {
+// loadNames reads the .names sidecar an older build left: uid, name, and a size
+// the driver now answers for itself. A scan that stops early is an error.
+func loadNames(indexDir string) (map[uint32]string, error) {
 	names := map[uint32]string{}
-	sizes := map[uint32]uint32{}
 	f, err := os.Open(namesPath(indexDir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return names, sizes, nil
+			return names, nil
 		}
-		return names, sizes, fmt.Errorf("fileindex/names: open: %w", err)
+		return names, fmt.Errorf("fileindex/names: open: %w", err)
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -1162,21 +1167,16 @@ func loadNames(indexDir string) (map[uint32]string, map[uint32]uint32, error) {
 		if err != nil {
 			continue
 		}
-		uid := uint32(uid64)
 		rest := line[tab1+1:]
 		if tab2 := strings.IndexByte(rest, '\t'); tab2 >= 0 {
-			names[uid] = rest[:tab2]
-			if sz, err := strconv.ParseUint(rest[tab2+1:], 10, 32); err == nil {
-				sizes[uid] = uint32(sz)
-			}
-		} else {
-			names[uid] = rest
+			rest = rest[:tab2]
 		}
+		names[uint32(uid64)] = rest
 	}
 	if err := sc.Err(); err != nil {
-		return names, sizes, fmt.Errorf("fileindex/names: read: %w", err)
+		return names, fmt.Errorf("fileindex/names: read: %w", err)
 	}
-	return names, sizes, nil
+	return names, nil
 }
 
 // ensureLogStub writes an empty .log if none exists: the canonical reader fails

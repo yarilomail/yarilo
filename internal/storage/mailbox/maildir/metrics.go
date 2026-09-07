@@ -23,5 +23,6 @@ const (
 	lockSiteKeywords       = "keyword-letters" // allocating a keyword letter outside a write
 	lockSiteReconcileMove  = "reconcile-move"  // new/ into cur/
 	lockSiteReconcileApply = "reconcile-apply" // the index write a reconcile decided on
+	lockSiteMigrateNames   = "migrate-names"   // the pass that puts records in the list
 	lockSiteRename         = "rename"          // a folder rename, both locks
 )

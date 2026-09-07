@@ -351,3 +351,66 @@ func SetTestWriteSeams(sync func(*os.File) error, beforeRename func(string)) {
 	}
 	syncFile, beforeUIDListRename = sync, beforeRename
 }
+
+// placeUIDsLocked writes a batch in one rewrite of the list, and returns the
+// uids it refused: a base listed under another uid stays with its owner (#1726).
+func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (int, []uint32, error) {
+	if err := u.ensureUIDListLocked(folder); err != nil {
+		return 0, nil, err
+	}
+	path := u.uidListPath(folder)
+	l, err := readUIDListFile(path)
+	if err != nil {
+		return 0, nil, fmt.Errorf("maildir/uidlist: read: %w", err)
+	}
+	if l.torn {
+		u.reportTornUIDList(folder, path, l)
+	}
+	listed := make(map[string]int, len(l.records))
+	for i := range l.records {
+		listed[l.records[i].base] = i
+	}
+	placed := 0
+	var taken []uint32
+	for uid, base := range place {
+		if uid == 0 {
+			continue
+		}
+		if i, ok := listed[base]; ok && l.records[i].uid != uid {
+			taken = append(taken, uid)
+			continue
+		}
+		if testPlaceLimit > 0 && placed >= testPlaceLimit {
+			break
+		}
+		rec := uidRecord{uid: uid, base: base}
+		if !nameCarriesSizes(base) {
+			if psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", base)); merr == nil {
+				rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
+			}
+		}
+		if i, ok := listed[base]; ok {
+			l.records[i] = rec
+		} else {
+			l.records = append(l.records, rec)
+		}
+		placed++
+	}
+	if placed == 0 {
+		return 0, taken, nil
+	}
+	if err := u.writeUIDList(folder, l); err != nil {
+		return 0, taken, err
+	}
+	return placed, taken, nil
+}
+
+// testPlaceLimit caps how many entries one pass writes. Test seam: a partial
+// placement is the state the sidecar must survive, and nothing else makes one.
+var testPlaceLimit int
+
+// SetTestPlaceLimit caps the batch and returns a function restoring it.
+func SetTestPlaceLimit(n int) func() {
+	testPlaceLimit = n
+	return func() { testPlaceLimit = 0 }
+}

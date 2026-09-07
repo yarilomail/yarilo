@@ -14,8 +14,8 @@ const (
 	extNameUIDNames = "uid-names"
 	uidNamesSize    = 4
 	// uidNamesPass is the pass a folder must have been through. Raised when the
-	// pass learns more: version 1 orphaned the body of a nameless record (#1713).
-	uidNamesPass = 2
+	// pass learns more: version 2 dropped a maildir sidecar unread (#1726).
+	uidNamesPass = 3
 )
 
 // UIDNamed answers from the header a folder open already read.

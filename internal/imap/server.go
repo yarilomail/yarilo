@@ -2785,6 +2785,9 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	if err != nil {
 		return nil, err
 	}
+	// LARGER/SMALLER compare a number, and a record that carries none would
+	// compare zero against every bound (#1726).
+	mailbox.FillSizes(s.folderBox(), s.folder.Name, msgs)
 
 	needsBody := len(criteria.Header) > 0 || len(criteria.Body) > 0 || len(criteria.Text) > 0 ||
 		!criteria.SentSince.IsZero() || !criteria.SentBefore.IsZero() || searchNeedsBodyRecurse(criteria.Not, criteria.Or)
@@ -3229,24 +3232,16 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			mw.WriteInternalDate(m.InternalDate)
 		}
 		if opts.RFC822Size {
-			// Virtual (CRLF) size: the octet count actually transmitted.
-			// Physical size varies with stored line endings.
-			size := m.RFC822Size()
-			// Records with VSize==0 predate Save() returning virtual size and
-			// fall back to physical size; recompute from the body on read so
-			// the reported size stays stable.
-			if m.VSize == 0 && mailbox.Readable(s.folderBox(), m) {
-				if rc, ferr := s.fetchSelected(m); ferr == nil {
-					if raw, rerr := io.ReadAll(rc); rerr == nil {
-						size = virtualSizeFromRaw(raw)
-					}
-					rc.Close()
-				} else {
-					// The size still goes out, from the index. It is the one
-					// attribute here that has a second source, which is why
-					// this is the quietest way to answer wrongly.
-					mark("rfc822.size", ferr)
-				}
+			// From where the driver keeps it: a maildir name carries it, a dbox
+			// record holds it (#1726).
+			size, vsize, serr := mailbox.MessageSize(s.folderBox(), s.folder.Name, m)
+			if serr != nil {
+				// The number still goes out, from the record: the one attribute
+				// here with a second source, so a wrong answer is otherwise mute.
+				mark("rfc822.size", serr)
+			}
+			if vsize != 0 {
+				size = vsize
 			}
 			mw.WriteRFC822Size(int64(size))
 		}
