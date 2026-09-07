@@ -3236,9 +3236,8 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			// record holds it (#1726).
 			size, vsize, serr := mailbox.MessageSize(s.folderBox(), s.folder.Name, m)
 			if serr != nil {
-				// The number still goes out, from the record. It is the one
-				// attribute here with a second source, which is why answering
-				// wrongly is otherwise silent.
+				// The number still goes out, from the record: the one attribute
+				// here with a second source, so a wrong answer is otherwise mute.
 				mark("rfc822.size", serr)
 			}
 			if vsize != 0 {
