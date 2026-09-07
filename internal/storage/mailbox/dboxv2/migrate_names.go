@@ -41,13 +41,15 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 		}
 		for _, m := range msgs {
 			want := sdboxMailPrefix + strconv.FormatUint(uint64(m.UID), 10)
-			old := ""
-			if old == "" {
-				// A record that lost its name still names its file: the old one
-				// was the GUID in hex, and the GUID is in the record (#1713).
-				old = sdboxMailPrefix + hex.EncodeToString(m.GUID[:])
-			}
+			// A record that lost its name still names its file: the old one was
+			// the GUID in hex, and the GUID is in the record (#1713).
+			old := sdboxMailPrefix + hex.EncodeToString(m.GUID[:])
 			if old == want {
+				continue
+			}
+			if _, serr := os.Lstat(filepath.Join(dir, want)); serr == nil {
+				// The record is already named: renaming a guid-named twin over
+				// the file it reads would swap the message for it (#1718).
 				continue
 			}
 			from := filepath.Join(dir, old)
@@ -61,7 +63,7 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 			}
 			renamed[m.UID] = want
 		}
-		adopted, left, cerr := u.adoptOrphans(idx, folder)
+		adopted, left, cerr := u.adoptOrphans(idx, folder, msgs)
 		leftovers = left
 		placed = adopted
 		return cerr

@@ -1,6 +1,7 @@
 package dboxv2
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -13,9 +14,9 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// brokenDir is where a body no reader can parse is set aside: out of the
-// folder, never deleted, and named so an operator can find it.
-const brokenDir = ".broken"
+// brokenSuffix names a body set aside beside its own file, as the reference
+// does and as mdbox already does: no directory of our own (#1718).
+const brokenSuffix = ".broken"
 
 // guidNamedFile is a message still under the name a guid gave it.
 type guidNamedFile struct {
@@ -55,22 +56,32 @@ func guidNamedFiles(dir string) ([]guidNamedFile, error) {
 	return out, nil
 }
 
-// adoptOrphans places what the rename pass could not: a file no record names.
-// Old enough to be a crash's leftover, it is re-filed as a message of its own
-// where the body reads, and set aside where it does not (#1718).
-//
-// Returns how many are still there afterwards, which is what holds the marker.
-func (u *userMailbox) adoptOrphans(idx mailbox.UserIndex, folder *mailbox.Folder) (adopted, left int, err error) {
+// adoptOrphans places what the rename pass could not, and returns what is still
+// there afterwards -- which is what holds the marker (#1718).
+func (u *userMailbox) adoptOrphans(idx mailbox.UserIndex, folder *mailbox.Folder, msgs []*mailbox.MessageMeta) (adopted, left int, err error) {
 	dir := u.folderPath(folder.Name)
 	files, err := guidNamedFiles(dir)
 	if err != nil {
 		return 0, 0, err
+	}
+	held := make(map[[16]byte]uint32, len(msgs))
+	for _, m := range msgs {
+		held[m.GUID] = m.UID
 	}
 	for _, f := range files {
 		if f.age < staleTemp {
 			// A save in flight: its own caller is about to name it, and taking
 			// it now would take a message from the session storing it.
 			left++
+			continue
+		}
+		if uid, dup := held[f.guid]; dup {
+			// Not an orphan: the record holding this guid has its own file, so
+			// filing this one would make two messages of one (#1718).
+			if serr := u.setAside(folder.Name, f.name,
+				fmt.Sprintf("uid %d already holds this guid", uid), nil); serr != nil {
+				return adopted, left + 1, serr
+			}
 			continue
 		}
 		switch placed, perr := u.refileOrphan(idx, folder, f); {
@@ -89,21 +100,16 @@ func (u *userMailbox) adoptOrphans(idx mailbox.UserIndex, folder *mailbox.Folder
 // carries so the message keeps the id a client may already hold.
 func (u *userMailbox) refileOrphan(idx mailbox.UserIndex, folder *mailbox.Folder, f guidNamedFile) (bool, error) {
 	path := filepath.Join(u.folderPath(folder.Name), f.name)
-	body, err := os.Open(path)
-	if err != nil {
-		return false, fmt.Errorf("sdbox/orphan: open %s: %w", f.name, err)
-	}
-	defer body.Close() //nolint:errcheck
 	rc, oerr := u.Fetch(folder.Name, f.name, false)
 	if oerr != nil {
-		return false, u.setAside(folder.Name, f.name, oerr)
+		return false, u.setAside(folder.Name, f.name, "no reader accepts it", oerr)
 	}
 	raw, rerr := io.ReadAll(rc)
 	_ = rc.Close()
 	if rerr != nil {
-		return false, u.setAside(folder.Name, f.name, rerr)
+		return false, u.setAside(folder.Name, f.name, "no reader accepts it", rerr)
 	}
-	saved, vsize, guid, serr := u.Save(folder.Name, strings.NewReader(string(raw)), 0, int64(len(raw)), nil, f.guid)
+	saved, vsize, guid, serr := u.Save(folder.Name, bytes.NewReader(raw), 0, int64(len(raw)), nil, f.guid)
 	if serr != nil {
 		return false, fmt.Errorf("sdbox/orphan: save %s: %w", f.name, serr)
 	}
@@ -119,18 +125,15 @@ func (u *userMailbox) refileOrphan(idx mailbox.UserIndex, folder *mailbox.Folder
 	return true, nil
 }
 
-// setAside moves a body nothing can read out of the folder. Never deleted: it
-// is the only copy, and what it is worth is the operator's to judge.
-func (u *userMailbox) setAside(folder, name string, cause error) error {
-	dst := filepath.Join(u.folderPath(folder), brokenDir)
-	if err := os.MkdirAll(dst, 0o700); err != nil {
-		return fmt.Errorf("sdbox/orphan: mkdir %s: %w", dst, err)
-	}
+// setAside renames a body out of the pass's way, beside itself. Never deleted:
+// it is the only copy, and what it is worth is the operator's to judge.
+func (u *userMailbox) setAside(folder, name, why string, cause error) error {
 	from := filepath.Join(u.folderPath(folder), name)
-	if err := os.Rename(from, filepath.Join(dst, name)); err != nil {
+	if err := os.Rename(from, from+brokenSuffix); err != nil {
 		return fmt.Errorf("sdbox/orphan: set aside %s: %w", name, err)
 	}
-	slog.Error("sdbox: a body no record names and no reader accepts was set aside",
-		"user", u.username, "folder", folder, "file", name, "dir", brokenDir, "err", cause)
+	slog.Error("sdbox: a body the folder cannot place was set aside",
+		"user", u.username, "folder", folder, "file", name+brokenSuffix,
+		"why", why, "err", cause)
 	return nil
 }

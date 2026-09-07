@@ -108,8 +108,8 @@ func TestAnOrphanedBodyIsFiledAsAMessage(t *testing.T) {
 	}
 }
 
-// A body no reader accepts is set aside rather than deleted: it is the only
-// copy, and what it is worth is the operator's to judge (#1718).
+// A body no reader accepts is set aside beside itself, never deleted: it is the
+// only copy, and what it is worth is the operator's to judge (#1718).
 func TestAnUnreadableOrphanIsSetAside(t *testing.T) {
 	mb, idx, folder, dir, name := orphanFolder(t, "unreadable\n", 48*time.Hour)
 	if err := os.WriteFile(filepath.Join(dir, name), []byte("not a dbox record"), 0o600); err != nil {
@@ -125,11 +125,65 @@ func TestAnUnreadableOrphanIsSetAside(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 		t.Errorf("the unreadable body is still in the folder: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".broken", name)); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, name+".broken")); err != nil {
 		t.Errorf("the unreadable body was not set aside: %v", err)
 	}
 	marker := idx.(mailbox.UIDNameMarker)
 	if done, err := marker.UIDNamed(folder.ID); err != nil || !done {
 		t.Errorf("the folder was not marked with the body out of it (done=%v, err=%v)", done, err)
+	}
+}
+
+// A guid-named file whose guid a record already holds is a second copy of one
+// message, not an orphan: filing it would make two messages of one (#1718).
+func TestADuplicateBodyIsNotFiledAgain(t *testing.T) {
+	_, mb, home := newTestUser(t)
+	idx := fileidx.New().OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home})
+	defer idx.Close() //nolint:errcheck
+	folder, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
+
+	const body = "From: a@b\r\n\r\ntwice\r\n"
+	saved, vsize, guid, serr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if rerr := mailbox.RecordSaved(idx, mb, folder.ID, "INBOX", saved, m); rerr != nil {
+		t.Fatal(rerr)
+	}
+	// The same message a second time: a record a reader accepts, guid-named,
+	// old enough to be a leftover, with no record of its own.
+	twin, _, _, terr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, guid)
+	if terr != nil {
+		t.Fatal(terr)
+	}
+	dup := "u." + guidHex(guid)
+	if rerr := os.Rename(filepath.Join(dir, twin), filepath.Join(dir, dup)); rerr != nil {
+		t.Fatal(rerr)
+	}
+	when := time.Now().Add(-48 * time.Hour)
+	if terr := os.Chtimes(filepath.Join(dir, dup), when, when); terr != nil {
+		t.Fatal(terr)
+	}
+
+	migrateSdbox(t, mb, idx, folder)
+
+	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Errorf("the folder holds %d messages, want the one it had", len(msgs))
+	}
+	if _, err := os.Stat(filepath.Join(dir, dup+".broken")); err != nil {
+		t.Errorf("the second copy was not set aside: %v", err)
+	}
+	marker := idx.(mailbox.UIDNameMarker)
+	if done, derr := marker.UIDNamed(folder.ID); derr != nil || !done {
+		t.Errorf("the folder was not marked with the copy out of the way (done=%v, err=%v)", done, derr)
 	}
 }
