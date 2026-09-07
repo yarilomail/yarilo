@@ -7,7 +7,7 @@ require (
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
 	github.com/MicahParks/keyfunc/v3 v3.8.1
 	github.com/abadojack/whatlanggo v1.0.1
-	github.com/alicebob/miniredis/v2 v2.38.0
+	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/blevesearch/snowballstem v0.9.0
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8.0.20260619144330-06898882abab
 	github.com/emersion/go-message v0.18.2
