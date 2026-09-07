@@ -655,9 +655,9 @@ type pendingStore struct {
 	altTier  bool
 }
 
-// writeFlagsBatch is writeFlagsToStorage against a driver that writes a whole
-// command at once, with the same per-message best-effort rule.
-func (s *session) writeFlagsBatch(multi mailbox.FlagWriterMulti, folder string, idx mailbox.UserIndex, pending []pendingStore) {
+// writeFlagsToStorage hands the settled flag set to the driver that keeps it,
+// through the one operation both writers share (#1724).
+func (s *session) writeFlagsToStorage(pending []pendingStore) {
 	writes := make([]mailbox.FlagWrite, 0, len(pending))
 	for i := range pending {
 		p := &pending[i]
@@ -668,30 +668,14 @@ func (s *session) writeFlagsBatch(multi mailbox.FlagWriterMulti, folder string, 
 			UID: p.uid, Filename: p.filename, Flags: p.newFlags, Keywords: p.newKW,
 		})
 	}
-	if len(writes) == 0 {
-		return
-	}
 	renameStart := time.Now()
-	results := multi.WriteFlagsMulti(folder, writes)
+	results := mailbox.FlagsWritten(s.folderIdx(), s.folderBox(), s.folder.ID, s.folder.Name, writes)
 	s.storeRenameMS = time.Since(renameStart).Milliseconds()
+
 	nameStart := time.Now()
 	renamed := 0
-	dirt, marks := idx.(mailbox.FlagsDirtyMarker)
 	for i, res := range results {
-		if res.Err != nil {
-			slog.Warn("imap: could not record flags in storage", "folder", folder,
-				"uid", res.UID, "err", res.Err)
-			// The record holds flags the store does not: a sync must not take
-			// the older answer off the name until the rename lands (#1700).
-			if marks {
-				_ = dirt.SetFlagsDirty(s.folder.ID, res.UID, true)
-			}
-			continue
-		}
-		if marks {
-			_ = dirt.SetFlagsDirty(s.folder.ID, res.UID, false)
-		}
-		if res.Filename != writes[i].Filename {
+		if res.Err == nil && i < len(writes) && res.Filename != writes[i].Filename {
 			// The name changed because the flags did; nothing records it, since
 			// the list keys on the base name and that did not move (#1700).
 			renamed++
@@ -699,44 +683,6 @@ func (s *session) writeFlagsBatch(multi mailbox.FlagWriterMulti, folder string, 
 	}
 	s.storeNameMS = time.Since(nameStart).Milliseconds()
 	s.storeRenamed = renamed
-}
-
-// writeFlagsToStorage hands the settled flag set to a driver that records it
-// outside the index, and records the name it comes back with.
-//
-// Best effort by design: the flags are already committed to the index, which is
-// what the client was told. A rename that fails leaves the store describing an
-// older state -- worth a warning and a later reconcile, not an error on a
-// command that succeeded.
-func (s *session) writeFlagsToStorage(pending []pendingStore) {
-	driver := mailbox.Driver(s.folderBox())
-	folder := s.folder.Name
-	idx := s.folderIdx()
-	// The batch form takes the folder lock once, not once per message (#1623).
-	if multi, ok := driver.(mailbox.FlagWriterMulti); ok {
-		s.writeFlagsBatch(multi, folder, idx, pending)
-		return
-	}
-	writer, ok := driver.(mailbox.FlagWriter)
-	if !ok {
-		return
-	}
-	for i := range pending {
-		p := &pending[i]
-		if p.filename == "" {
-			continue
-		}
-		name, err := writer.WriteFlags(folder, p.filename, p.newFlags, p.newKW)
-		if dirt, marks := idx.(mailbox.FlagsDirtyMarker); marks {
-			_ = dirt.SetFlagsDirty(s.folder.ID, p.uid, err != nil)
-		}
-		if err != nil {
-			slog.Warn("imap: could not record flags in storage", "folder", folder,
-				"uid", p.uid, "err", err)
-			continue
-		}
-		_ = name
-	}
 }
 
 // usageDelta is the size to move the running total by for one message.

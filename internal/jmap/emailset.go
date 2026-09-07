@@ -96,6 +96,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 		add     map[uint32]mailbox.FlagsUpdate
 		remove  map[uint32]mailbox.FlagsUpdate
 		idOfUID map[uint32]string
+		metaOf  map[uint32]*mailbox.MessageMeta
 	}
 	work := map[uint64]*folderWork{}
 	workFor := func(ref messageRef) *folderWork {
@@ -105,6 +106,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 				folder: ref.folder,
 				set:    map[uint32]mailbox.FlagsUpdate{}, add: map[uint32]mailbox.FlagsUpdate{},
 				remove: map[uint32]mailbox.FlagsUpdate{}, idOfUID: map[uint32]string{},
+				metaOf: map[uint32]*mailbox.MessageMeta{},
 			}
 			work[ref.folderID] = w
 		}
@@ -124,6 +126,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 		}
 		w := workFor(ref)
 		w.idOfUID[ref.meta.UID] = id
+		w.metaOf[ref.meta.UID] = ref.meta
 		if plan.replace != nil {
 			flags, custom := splitKeywords(plan.replace)
 			w.set[ref.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsSet, Flags: flags, Keywords: custom}
@@ -152,6 +155,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 		// the price of relative writes: another session can observe the added
 		// keyword before the removed one is gone. Nothing is lost either way,
 		// which is the property a replacement could not offer.
+		settled := map[uint32]mailbox.FlagsResult{}
 		for _, batch := range []map[uint32]mailbox.FlagsUpdate{w.set, w.add, w.remove} {
 			if len(batch) == 0 {
 				continue
@@ -173,6 +177,9 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 				continue
 			}
 			for uid := range batch {
+				if res, ok := results[uid]; ok {
+					settled[uid] = res
+				}
 				if _, ok := results[uid]; !ok {
 					// The store skips a UID it no longer has: between the
 					// lookup and the write the message was expunged.
@@ -182,6 +189,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 				applied[uid] = true
 			}
 		}
+		h.writeFlagsToStorage(folderID, w.folder, w.metaOf, settled, applied)
 		for uid, id := range w.idOfUID {
 			if serr, bad := failed[id]; bad {
 				resp.NotUpdated[id] = serr
@@ -318,4 +326,31 @@ func splitKeywords(keywords map[string]bool) (flags, custom []string) {
 	sort.Strings(flags)
 	sort.Strings(custom)
 	return flags, custom
+}
+
+// writeFlagsToStorage puts the settled flags where the driver keeps them. On a
+// driver whose name carries them, a write that stops at the index is undone by
+// the next sync, which is what the name says (#1724).
+func (h *userHandle) writeFlagsToStorage(folderID uint64, folder string,
+	metaOf map[uint32]*mailbox.MessageMeta, settled map[uint32]mailbox.FlagsResult, applied map[uint32]bool) {
+	writes := make([]mailbox.FlagWrite, 0, len(settled))
+	for uid, res := range settled {
+		if !applied[uid] {
+			continue
+		}
+		meta, known := metaOf[uid]
+		if !known {
+			continue
+		}
+		name, err := mailbox.MessagePath(h.box, folder, meta)
+		if err != nil {
+			slog.Warn("jmap: the record names no file for its flags",
+				"folder", folder, "uid", uid, "err", err)
+			continue
+		}
+		writes = append(writes, mailbox.FlagWrite{
+			UID: uid, Filename: name, Flags: res.Flags, Keywords: res.Keywords,
+		})
+	}
+	mailbox.FlagsWritten(h.idx, h.box, folderID, folder, writes)
 }
