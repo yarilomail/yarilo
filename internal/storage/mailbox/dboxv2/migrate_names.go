@@ -33,7 +33,7 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 		return 0, fmt.Errorf("sdbox/migrate: get messages %q: %w", folder.Name, err)
 	}
 	renamed := make(map[uint32]string, len(msgs))
-	leftovers := 0
+	leftovers, placed := 0, 0
 	err = u.withMailboxLock(folder.Name, func() error {
 		dir := u.folderPath(folder.Name)
 		if serr := sweepStaleTemps(dir); serr != nil {
@@ -41,13 +41,15 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 		}
 		for _, m := range msgs {
 			want := sdboxMailPrefix + strconv.FormatUint(uint64(m.UID), 10)
-			old := ""
-			if old == "" {
-				// A record that lost its name still names its file: the old one
-				// was the GUID in hex, and the GUID is in the record (#1713).
-				old = sdboxMailPrefix + hex.EncodeToString(m.GUID[:])
-			}
+			// A record that lost its name still names its file: the old one was
+			// the GUID in hex, and the GUID is in the record (#1713).
+			old := sdboxMailPrefix + hex.EncodeToString(m.GUID[:])
 			if old == want {
+				continue
+			}
+			if _, serr := os.Lstat(filepath.Join(dir, want)); serr == nil {
+				// The record is already named: renaming a guid-named twin over
+				// the file it reads would swap the message for it (#1718).
 				continue
 			}
 			from := filepath.Join(dir, old)
@@ -61,21 +63,22 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 			}
 			renamed[m.UID] = want
 		}
-		left, cerr := guidNamedLeft(dir)
+		adopted, left, cerr := u.adoptOrphans(idx, folder, msgs)
 		leftovers = left
+		placed = adopted
 		return cerr
 	})
 	if err != nil {
 		return 0, err
 	}
 	if leftovers > 0 {
-		// Not marked: a file still named by a GUID is a body this pass could
-		// not place, and marking would close the folder to the next one (#1713).
-		slog.Warn("sdbox: the folder still holds messages named by a guid",
-			"user", u.username, "folder", folder.Name, "left", leftovers)
-		return len(renamed), nil
+		// Not marked: what is left is a save still in flight, and its own caller
+		// names it within the cycle -- the next pass finds it placed (#1713).
+		slog.Warn("sdbox: the folder still holds a message named by a guid",
+			"user", u.username, "folder", folder.Name, "left", leftovers, "adopted", placed)
+		return len(renamed) + placed, nil
 	}
-	if len(renamed) == 0 {
+	if len(renamed)+placed == 0 {
 		return 0, marker.MarkUIDNamed(folder.ID)
 	}
 	// After the rename, never before: a crash between the two leaves a file the
@@ -86,28 +89,8 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 		return 0, err
 	}
 	slog.Info("sdbox: renamed messages to the name their uid gives them",
-		"user", u.username, "folder", folder.Name, "renamed", len(renamed))
-	return len(renamed), nil
-}
-
-// guidNamedLeft counts the messages still named by a GUID: what the pass could
-// not place, and the reason to walk this folder again.
-func guidNamedLeft(dir string) (int, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0, fmt.Errorf("sdbox/migrate: list %s: %w", dir, err)
-	}
-	left := 0
-	for _, e := range entries {
-		rest, ok := strings.CutPrefix(e.Name(), sdboxMailPrefix)
-		if !ok || len(rest) != 32 {
-			continue
-		}
-		if _, herr := hex.DecodeString(rest); herr == nil {
-			left++
-		}
-	}
-	return left, nil
+		"user", u.username, "folder", folder.Name, "renamed", len(renamed), "adopted", placed)
+	return len(renamed) + placed, nil
 }
 
 // staleTemp is when a half-finished save stops being one: a save names its file
