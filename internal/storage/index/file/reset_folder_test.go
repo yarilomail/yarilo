@@ -93,7 +93,3 @@ func TestResetFolderStampsMissingModSeq(t *testing.T) {
 		t.Errorf("uid 2 stamped modseq = %d, want > header highest %d", got[2], modseq)
 	}
 }
-
-func filenameFor(uid uint32) string {
-	return string(rune('0'+uid)) + ".file"
-}
