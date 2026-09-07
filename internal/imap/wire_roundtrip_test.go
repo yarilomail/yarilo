@@ -18,9 +18,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The other half of the wire row: a message delivered over LMTP is fetched back
-// over an IMAP session, byte for byte. Neither side passes a storage name to the
-// other -- the record is the only thing between them (#1700).
+// A message delivered over LMTP is fetched back over an IMAP session, byte for
+// byte: the record is the only thing between the two (#1700).
 func TestADeliveryOverTheWireFetchesBackOverIMAP(t *testing.T) {
 	const user, pass = "user@test.com", "testpass"
 	for _, be := range backends {
@@ -109,9 +108,8 @@ func TestADeliveryOverTheWireFetchesBackOverIMAP(t *testing.T) {
 	}
 }
 
-// deliverLMTP speaks the LMTP dialogue by hand: the point of the row is that the
-// bytes crossed a socket, so a helper that called the session directly would be
-// asserting the wrong thing.
+// deliverLMTP speaks the dialogue by hand: the row is about bytes that crossed a
+// socket, which a call into the session would not assert.
 func deliverLMTP(t *testing.T, addr, rcpt, body string) {
 	t.Helper()
 	conn, err := net.Dial("tcp", addr)
@@ -157,9 +155,8 @@ func deliverLMTP(t *testing.T, addr, rcpt, body string) {
 	io.WriteString(conn, "QUIT\r\n") //nolint:errcheck
 }
 
-// formatPassdb is stubPassdb plus the userdb field that names the storage
-// driver: without it the session resolves a different index layout than the
-// delivery wrote to.
+// formatPassdb adds the userdb field naming the driver: without it the session
+// resolves a different index layout than the delivery wrote to.
 type formatPassdb struct {
 	user, pass, format string
 }
