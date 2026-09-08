@@ -43,7 +43,8 @@ func TestASharedHoldDoesNotSatisfyAWrite(t *testing.T) {
 	}
 	defer func() { _ = lk.Unlock(ctx, shared.ID) }()
 
-	start := time.Now()
+	refusedBefore := counterValue(t, "yarilo_locks_hold_upgrade_refused_total", "site", "write-flags")
+	acquiresBefore := acquireCount(t, "mbox")
 	_, rerr := mailbox.Driver(mb).(mailbox.FlagWriter).WriteFlags("INBOX", name, []string{`\Seen`}, nil)
 	if !errors.Is(rerr, locks.ErrHoldNotExclusive) {
 		t.Fatalf("the write under a shared hold answered %v, want ErrHoldNotExclusive", rerr)
@@ -51,8 +52,11 @@ func TestASharedHoldDoesNotSatisfyAWrite(t *testing.T) {
 	if !strings.Contains(rerr.Error(), "write-flags") {
 		t.Errorf("the refusal is %q and does not name the site that wanted the lock", rerr)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("the refusal took %v: it waited on the lock instead of answering", elapsed)
+	if got := counterValue(t, "yarilo_locks_hold_upgrade_refused_total", "site", "write-flags") - refusedBefore; got != 1 {
+		t.Errorf("the refusal was counted %v times at its site, want 1: production cannot see it", got)
+	}
+	if got := acquireCount(t, "mbox") - acquiresBefore; got != 0 {
+		t.Errorf("the refused write made %v acquisitions; it must answer without asking the service", got)
 	}
 }
 
@@ -134,7 +138,8 @@ func TestAnOuterExclusiveHoldStillCarriesABatch(t *testing.T) {
 	}
 	defer func() { _ = lk.Unlock(ctx, outer.ID) }()
 
-	start := time.Now()
+	reentrantBefore := reentrantCount(t, "exclusive")
+	acquiresBefore := acquireCount(t, "mbox")
 	for i, name := range names {
 		if rerr := mb.Remove("INBOX", name); rerr != nil {
 			t.Fatalf("batch remove %d: %v", i, rerr)
@@ -143,9 +148,53 @@ func TestAnOuterExclusiveHoldStillCarriesABatch(t *testing.T) {
 			t.Fatalf("batch expunge %d: %v", i, eerr)
 		}
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("the batch took %v: the outer hold no longer carries it", elapsed)
+	if got := reentrantCount(t, "exclusive") - reentrantBefore; got != 3 {
+		t.Errorf("the batch re-entered the outer hold %v times, want 3 -- one per expunge", got)
 	}
+	if got := acquireCount(t, "mbox") - acquiresBefore; got != 0 {
+		t.Errorf("the batch made %v acquisitions of its own; the outer hold carries it", got)
+	}
+}
+
+// acquireCount is how many blocking acquisitions were made on one resource
+// class, counted at the client: an attempt that blocks is counted too.
+func acquireCount(t *testing.T, class string) float64 {
+	t.Helper()
+	return sumMetric(t, "yarilo_locks_acquire_wait_seconds", "resource", class)
+}
+
+// counterValue reads one counter, summed over every series carrying label=value.
+func counterValue(t *testing.T, name, label, value string) float64 {
+	t.Helper()
+	return sumMetric(t, name, label, value)
+}
+
+func sumMetric(t *testing.T, name, label, value string) float64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	var total float64
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() != label || l.GetValue() != value {
+					continue
+				}
+				if h := m.GetHistogram(); h != nil {
+					total += float64(h.GetSampleCount())
+				}
+				if c := m.GetCounter(); c != nil {
+					total += c.GetValue()
+				}
+			}
+		}
+	}
+	return total
 }
 
 // reentrantCount reads fileindex_lock_reentrant_total for one mode, over every
