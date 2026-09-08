@@ -123,31 +123,10 @@ func FillSizelessRecords(idx UserIndex, box UserMailbox, folder *Folder) (int, e
 	}
 	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		slog.Debug("mailbox: records carried no size; stamping what storage answers",
-			"user", ownerOf(box), "folder", folder.Name, "sizeless", len(uids),
+			"user", box.Username(), "folder", folder.Name, "sizeless", len(uids),
 			"stamping", len(vsizes), "uids", uidsForDebug(vsizes))
 	}
 	return stamper.StampSizes(folder.ID, vsizes)
-}
-
-// SelfNaming is a handle that can say whose mail it holds. Diagnostics ask for
-// it so a line names an account instead of a folder alone (#1741).
-type SelfNaming interface {
-	Username() string
-}
-
-// ownerOf is the account a handle serves, or "unknown" when it will not say.
-func ownerOf(box UserMailbox) string {
-	if n, ok := box.(SelfNaming); ok {
-		if u := n.Username(); u != "" {
-			return u
-		}
-	}
-	if n, ok := Driver(box).(SelfNaming); ok {
-		if u := n.Username(); u != "" {
-			return u
-		}
-	}
-	return "unknown"
 }
 
 // uidsForDebug names the records a stamp touched, capped so one line stays one

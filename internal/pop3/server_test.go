@@ -741,3 +741,5 @@ func TestSession_LockSession_RejectsConcurrent(t *testing.T) {
 	send(t, c3, "QUIT")
 	readline(t, r3)
 }
+
+func (m *mockMailbox) Username() string { return "mock@example.com" }

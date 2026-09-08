@@ -82,7 +82,7 @@ func sizelessMeta(t *testing.T, u *userMailbox, folder, filename string) *mailbo
 }
 
 // A size read from storage says which frame it read: without the offset and the
-// frame's length a wrong number cannot be told from a neighbour's (#1741).
+// frame's length a wrong number cannot be told from a neighbour's (#1749).
 func TestTheStorageSizeRowNamesTheFrameItRead(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	u := openTestUserMailbox(t, home)
