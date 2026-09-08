@@ -93,9 +93,9 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 	return len(renamed) + placed, nil
 }
 
-// staleTemp is when a half-finished save stops being one: a save names its file
-// within a cycle, so anything this old is a crash's leftover.
-const staleTemp = 24 * time.Hour
+// staleTemp is the shared rule: a save names its file within a cycle, so
+// anything this old is a crash's leftover (#1736).
+const staleTemp = mailbox.StaleTemp
 
 // sweepStaleTemps removes those leftovers. A young one is left alone: it is a
 // save in flight, and its own caller is about to name it.

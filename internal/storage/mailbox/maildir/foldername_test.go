@@ -28,9 +28,13 @@ func TestDestructiveFolderNamesAreRefused(t *testing.T) {
 			home := t.TempDir()
 			u := openTestUser(t, home)
 
-			if _, _, _, err := u.Save("INBOX", strings.NewReader("Subject: a\r\n\r\nbody\r\n"),
-				1, 20, nil, [16]byte{}); err != nil {
-				t.Fatal(err)
+			saved, _, _, serr := u.Save("INBOX", strings.NewReader("Subject: a\r\n\r\nbody\r\n"),
+				1, 20, nil, [16]byte{})
+			if serr != nil {
+				t.Fatal(serr)
+			}
+			if _, aerr := mailbox.Driver(u).(mailbox.UIDNamer).AssignUID("INBOX", saved, 1); aerr != nil {
+				t.Fatalf("assign uid: %v", aerr)
 			}
 			root := filepath.Join(home, "Maildir")
 			if _, err := os.Stat(filepath.Join(root, "cur")); err != nil {

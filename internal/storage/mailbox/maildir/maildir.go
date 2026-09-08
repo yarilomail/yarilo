@@ -556,16 +556,11 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	if override {
 		u.rememberGUID(folder, finalName, effGUID)
 	}
-	if err := u.withMailboxLockSite(folder, lockSiteSave, func() error {
-		dstPath := filepath.Join(folderPath, "cur", finalName)
-		if err := os.Rename(tmpPath, dstPath); err != nil {
-			os.Remove(tmpPath)
-			return fmt.Errorf("maildir: rename to cur: %w", err)
-		}
-		u.folderCacheFor(folder).invalidateDir()
-		return nil
-	}); err != nil {
-		return "", 0, noGUID, err
+	// The body stays in tmp/, which no scan reads; AssignUID moves it into cur/
+	// under the hold that gives it its uid and its row (#1736).
+	if err := os.Rename(tmpPath, filepath.Join(folderPath, "tmp", finalName)); err != nil {
+		os.Remove(tmpPath) //nolint:errcheck
+		return "", 0, noGUID, fmt.Errorf("maildir: name the temp: %w", err)
 	}
 	return finalName, sc.phys + sc.lfNoCR, effGUID, nil
 }
@@ -584,10 +579,13 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 	}
 	err := u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
 		srcPath := filepath.Join(u.folderPath(srcFolder), "cur", filename)
-		dstDir := filepath.Join(u.folderPath(dstFolder), "cur")
+		// Into the destination's tmp/, not its cur/: the file is published by
+		// the naming step, under the hold that writes its row (#1736).
+		dstDir := filepath.Join(u.folderPath(dstFolder), "tmp")
+		curDir := filepath.Join(u.folderPath(dstFolder), "cur")
 		dstPath := filepath.Join(dstDir, newName)
 		override := outGUID != guidFromBase(newName)
-		if _, err := os.Lstat(dstPath); err == nil {
+		if _, err := os.Lstat(filepath.Join(curDir, newName)); err == nil {
 			// Base name taken: mint a fresh one and pin the GUID explicitly.
 			oldBase := maildirBase(filename)
 			trailer := filename[len(oldBase):] // ":2,<flags>"
@@ -970,6 +968,8 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			return st, err
 		}
 	}
+
+	u.sweepStaleTemps(folder.Name)
 
 	// The walk, holding nothing. A flag change renames only the part after
 	// ":2,", and everything here is keyed by the base name -- so the scan is
