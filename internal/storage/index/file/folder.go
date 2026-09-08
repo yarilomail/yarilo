@@ -1,6 +1,7 @@
 package file
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -1085,6 +1086,7 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 	if m.UID == 0 {
 		return fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
 	}
+	fs.debugSizelessAppend(m)
 	var modseq uint64
 	if m.ModSeq != 0 {
 		modseq = m.ModSeq
@@ -2801,3 +2803,34 @@ func SetTestFreezeReload() func() {
 	freezeReload = true
 	return func() { freezeReload = false }
 }
+
+// debugSizelessAppend says which record arrived with no virtual size and from
+// where: every save path has one by the time it appends (#1749).
+func (fs *folderState) debugSizelessAppend(m *mailbox.MessageMeta) {
+	if m.VSize != 0 || !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	slog.Debug("fileindex: appended a record with no virtual size",
+		"trace_id", fs.traceID, "user", fs.user, "folder", fs.folder,
+		"uid", m.UID, "size", m.Size, "map_uid", m.MapUID, "site", callingSite())
+}
+
+// callingSite is the first frame outside this package: the index's own wrappers
+// name themselves for every caller, which answers nothing (#1749).
+func callingSite() string {
+	pcs := make([]uintptr, 24)
+	n := runtime.Callers(3, pcs)
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		f, more := frames.Next()
+		if f.Function != "" && !strings.HasPrefix(f.Function, indexPkgPath) {
+			return f.Function
+		}
+		if !more {
+			return "unknown"
+		}
+	}
+}
+
+// indexPkgPath is this package, matched as a prefix of a frame's function name.
+const indexPkgPath = "github.com/yarilomail/yarilo/internal/storage/index/file."

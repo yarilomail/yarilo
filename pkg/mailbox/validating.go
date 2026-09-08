@@ -41,6 +41,9 @@ type validatingUser struct {
 	layoutSep string
 }
 
+// Username is the wrapped handle's: the wrapper serves one account.
+func (v *validatingUser) Username() string { return v.inner.Username() }
+
 func (v *validatingUser) check(folder string) error {
 	return ValidateName(folder, v.nsSep, v.layoutSep, v.rules)
 }

@@ -1,6 +1,10 @@
 package mailbox
 
-import "io"
+import (
+	"context"
+	"io"
+	"log/slog"
+)
 
 // RecordSizer answers a message's sizes from where its driver keeps them. A
 // maildir name carries both; a dbox record already holds them (#1726).
@@ -117,5 +121,23 @@ func FillSizelessRecords(idx UserIndex, box UserMailbox, folder *Folder) (int, e
 	if len(vsizes) == 0 {
 		return 0, nil
 	}
+	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		slog.Debug("mailbox: records carried no size; stamping what storage answers",
+			"user", box.Username(), "folder", folder.Name, "sizeless", len(uids),
+			"stamping", len(vsizes), "uids", uidsForDebug(vsizes))
+	}
 	return stamper.StampSizes(folder.ID, vsizes)
+}
+
+// uidsForDebug names the records a stamp touched, capped so one line stays one
+// line on a folder that needs thousands.
+func uidsForDebug(vsizes map[uint32]uint32) []uint32 {
+	out := make([]uint32, 0, len(vsizes))
+	for uid := range vsizes {
+		if len(out) == 32 {
+			break
+		}
+		out = append(out, uid)
+	}
+	return out
 }

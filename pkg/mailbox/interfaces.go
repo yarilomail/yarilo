@@ -421,6 +421,8 @@ type MailboxBackend interface {
 // storage (dbox record trailer, maildir uidlist), so it survives an index
 // rebuild.
 type UserMailbox interface {
+	// Username is whose mail this handle holds; every diagnostic line names it.
+	Username() string
 	Init() error
 	Create(folder string) error
 	Delete(folder string) error
