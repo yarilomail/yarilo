@@ -2,6 +2,7 @@ package maildir
 
 import (
 	"bufio"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -298,6 +299,10 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error
 	if l.torn {
 		u.reportTornUIDList(folder, path, l)
 	}
+	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
+	if fi, serr := os.Stat(path); serr == nil {
+		beforeMod, beforeSize = fi.ModTime().UnixNano(), fi.Size()
+	}
 	at := make(map[string]int, len(l.records))
 	for i, rec := range l.records {
 		at[rec.base] = i
@@ -321,6 +326,11 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error
 	if err := u.writeUIDList(folder, l); err != nil {
 		return err
 	}
+	uids := make([]uint32, 0, len(entries))
+	for _, e := range entries {
+		uids = append(uids, e.uid)
+	}
+	u.debugListWrite("reconcile-import", folder, uids, "", beforeRows, beforeMod, beforeSize)
 	u.folderCacheFor(folder).invalidateUIDs()
 	return nil
 }
@@ -366,6 +376,10 @@ func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (i
 	if l.torn {
 		u.reportTornUIDList(folder, path, l)
 	}
+	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
+	if fi, serr := os.Stat(path); serr == nil {
+		beforeMod, beforeSize = fi.ModTime().UnixNano(), fi.Size()
+	}
 	listed := make(map[string]int, len(l.records))
 	for i := range l.records {
 		listed[l.records[i].base] = i
@@ -402,6 +416,11 @@ func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (i
 	if err := u.writeUIDList(folder, l); err != nil {
 		return 0, taken, err
 	}
+	placedUIDs := make([]uint32, 0, len(place))
+	for uid := range place {
+		placedUIDs = append(placedUIDs, uid)
+	}
+	u.debugListWrite("migrate-place", folder, placedUIDs, "", beforeRows, beforeMod, beforeSize)
 	return placed, taken, nil
 }
 
@@ -413,4 +432,45 @@ var testPlaceLimit int
 func SetTestPlaceLimit(n int) func() {
 	testPlaceLimit = n
 	return func() { testPlaceLimit = 0 }
+}
+
+// listState is the file as it stands, for the debug rows that pin a write to a
+// moment: a lost row shows up as two writers seeing the same "before" (#1739).
+func (u *userMailbox) listState(folder string) (rows int, mtime int64, size int64) {
+	path := u.uidListPath(folder)
+	fi, err := os.Stat(path)
+	if err != nil {
+		return -1, 0, 0
+	}
+	l, rerr := readUIDListFile(path)
+	if rerr != nil {
+		return -1, fi.ModTime().UnixNano(), fi.Size()
+	}
+	return len(l.records), fi.ModTime().UnixNano(), fi.Size()
+}
+
+// debugListWrite names who wrote what, and what the file looked like on both
+// sides of the write. DEBUG, so it costs nothing until an operator asks.
+func (u *userMailbox) debugListWrite(site, folder string, uids []uint32, base string, beforeRows int, beforeMod, beforeSize int64) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	rows, mod, size := u.listState(folder)
+	slog.Debug("maildir: uidlist written",
+		"site", site, "user", u.username, "folder", folder, "owner", u.owner,
+		"uids", uids, "base", base,
+		"rows_before", beforeRows, "rows_after", rows,
+		"mtime_before", beforeMod, "mtime_after", mod,
+		"size_before", beforeSize, "size_after", size)
+}
+
+// debugListRead says whether a reader took the list off disk or off the cached
+// snapshot the mtime and size validate, and how many rows it got (#1739).
+func (u *userMailbox) debugListRead(folder, from string, rows int, mod, size int64) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	slog.Debug("maildir: uidlist read",
+		"from", from, "user", u.username, "folder", folder, "owner", u.owner,
+		"rows", rows, "mtime", mod, "size", size)
 }
