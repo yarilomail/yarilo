@@ -125,7 +125,7 @@ type folderCache struct {
 }
 
 // snapshotUIDs returns the cached map when the uidlist has not moved. The map
-// escapes the lock, so nothing may write into it afterwards -- see addUID.
+// escapes the lock, so nothing may write into it afterwards.
 func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -143,6 +143,25 @@ func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, 
 	for base, uid := range m {
 		c.byUID[uid] = base
 	}
+}
+
+// adoptWritten makes the cache the content just written: a map merged into an
+// older one loses another session's rows while the stamp says nothing is (#1739).
+func (u *userMailbox) adoptWritten(folder string, l *uidList) {
+	fi, err := os.Stat(u.uidListPath(folder))
+	if err != nil {
+		u.folderCacheFor(folder).invalidateUIDs()
+		return
+	}
+	m := make(map[string]uint32, len(l.records))
+	guids := make(map[string][16]byte)
+	for _, rec := range l.records {
+		m[rec.base] = rec.uid
+		if rec.hasGUID {
+			guids[rec.base] = rec.guid
+		}
+	}
+	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
 }
 
 // baseOf answers the record's question, from the map the load built.
@@ -164,34 +183,6 @@ func (c *folderCache) guidOf(base string) ([16]byte, bool) {
 	}
 	g, ok := c.guidMap[base]
 	return g, ok
-}
-
-// addUID replaces the maps rather than writing into them: snapshotUIDs hands one
-// out and a scan holds it unlocked, so a copy per delivery keeps it untouched.
-func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID bool, stamp listStamp) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	uids := make(map[string]uint32, len(c.uidMap)+1)
-	for k, v := range c.uidMap {
-		uids[k] = v
-	}
-	uids[base] = uid
-	c.uidMap = uids
-	byUID := make(map[uint32]string, len(c.byUID)+1)
-	for k, v := range c.byUID {
-		byUID[k] = v
-	}
-	byUID[uid] = base
-	c.byUID = byUID
-	if hasGUID {
-		guids := make(map[string][16]byte, len(c.guidMap)+1)
-		for k, v := range c.guidMap {
-			guids[k] = v
-		}
-		guids[base] = guid
-		c.guidMap = guids
-	}
-	c.uidStamp = stamp
 }
 
 // dirEntries returns the cached directory listing when the directory has not
@@ -672,9 +663,7 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 	}
 
 	u.debugListWrite("assign", folder, []uint32{uid}, base, beforeRows, beforeMod, beforeSize)
-	if fi, statErr := os.Stat(path); statErr == nil {
-		u.folderCacheFor(folder).addUID(base, uid, guid, guidOverride, stampOf(fi))
-	}
+	u.adoptWritten(folder, l)
 	return nil
 }
 
