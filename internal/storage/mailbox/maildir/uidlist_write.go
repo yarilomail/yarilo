@@ -289,14 +289,16 @@ type listEntry struct {
 
 // recordUIDsLocked writes a whole batch of assignments in one rewrite: per
 // message the list would be rewritten once for every message it already holds.
-func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error {
+// recordUIDsLocked writes a batch of rows in one rewrite and returns the uids
+// it refused: a base already listed under another uid keeps its owner (#1745).
+func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) ([]uint32, error) {
 	if err := u.ensureUIDListLocked(folder); err != nil {
-		return err
+		return nil, err
 	}
 	path := u.uidListPath(folder)
 	l, err := readUIDListFile(path)
 	if err != nil {
-		return fmt.Errorf("maildir/uidlist: read: %w", err)
+		return nil, fmt.Errorf("maildir/uidlist: read: %w", err)
 	}
 	if l.torn {
 		u.reportTornUIDList(folder, path, l)
@@ -309,8 +311,13 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error
 	for i, rec := range l.records {
 		at[rec.base] = i
 	}
+	var taken []uint32
 	for _, e := range entries {
 		base := maildirBase(e.filename)
+		if i, ok := at[base]; ok && l.records[i].uid != e.uid {
+			taken = append(taken, e.uid)
+			continue
+		}
 		rec := uidRecord{uid: e.uid, base: base}
 		if !nameCarriesSizes(base) {
 			psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", e.filename))
@@ -326,7 +333,7 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error
 		l.records = append(l.records, rec)
 	}
 	if err := u.writeUIDList(folder, l); err != nil {
-		return err
+		return nil, err
 	}
 	uids := make([]uint32, 0, len(entries))
 	for _, e := range entries {
@@ -334,7 +341,7 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error
 	}
 	u.debugListWrite("reconcile-import", folder, uids, "", beforeRows, beforeMod, beforeSize)
 	u.folderCacheFor(folder).invalidateUIDs()
-	return nil
+	return taken, nil
 }
 
 // ensureUIDListLocked gives a folder with none a header-only list: the index

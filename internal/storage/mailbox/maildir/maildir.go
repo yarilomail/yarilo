@@ -1029,6 +1029,7 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			}
 		}()
 		var recorded []listEntry
+		var pending []pendingImport
 		onDisk := make(map[string]*mailbox.ScanRecord, len(scanned))
 		for i := range scanned {
 			if scanned[i].Filename != "" {
@@ -1148,19 +1149,47 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 					return fmt.Errorf("maildir/sync: append %s at its recorded uid %d: %w",
 						rec.Filename, uid, err)
 				}
-			} else {
-				if err := idx.AllocateAndAppend(folder.ID, m); err != nil {
-					return fmt.Errorf("maildir/sync: append %s: %w", rec.Filename, err)
-				}
-				// The list is the mapping: without the record the name resolves
-				// only from the index's own sidecar (#1701).
-				recorded = append(recorded, listEntry{uid: m.UID, filename: rec.Filename})
+				st.Imported++
+				continue
 			}
-			st.Imported++
+			uid, err := idx.AllocateUID(folder.ID)
+			if err != nil {
+				return fmt.Errorf("maildir/sync: allocate uid for %s: %w", rec.Filename, err)
+			}
+			m.UID = uid
+			pending = append(pending, pendingImport{meta: m, filename: rec.Filename})
+			recorded = append(recorded, listEntry{uid: uid, filename: rec.Filename})
 		}
-		if len(recorded) > 0 {
-			if err := u.recordUIDsLocked(folder.Name, recorded); err != nil {
+		if len(pending) > 0 {
+			// The row first: a record older than its row is a message the
+			// folder holds and cannot name (#1745).
+			if testBeforeRowWrite != nil {
+				testBeforeRowWrite()
+			}
+			taken, err := u.recordUIDsLocked(folder.Name, recorded)
+			if err != nil {
 				return err
+			}
+			if testStopAfterRows {
+				return errStoppedAfterRows
+			}
+			refused := make(map[uint32]struct{}, len(taken))
+			for _, uid := range taken {
+				refused[uid] = struct{}{}
+				metricImportRowRefused.Inc()
+			}
+			if len(taken) > 0 {
+				slog.Warn("maildir: the list already names these files under other uids; they stay with their owners",
+					"user", u.username, "folder", folder.Name, "count", len(taken))
+			}
+			for _, p := range pending {
+				if _, no := refused[p.meta.UID]; no {
+					continue
+				}
+				if err := idx.AppendMessage(folder.ID, p.meta); err != nil {
+					return fmt.Errorf("maildir/sync: append %s: %w", p.filename, err)
+				}
+				st.Imported++
 			}
 		}
 		if len(restamp) > 0 {
@@ -1176,6 +1205,36 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 	})
 	st.Changed = st.Imported > 0 || st.Expunged > 0 || st.Updated > 0
 	return st, err
+}
+
+// testStopAfterRows ends a reconcile between the rows and the records. Test
+// seam: the crash window the order is chosen for.
+var testStopAfterRows bool
+
+// errStoppedAfterRows is what the seam returns.
+var errStoppedAfterRows = errors.New("maildir/sync: stopped after the rows (test seam)")
+
+// testBeforeRowWrite runs just before the rows are written. Test seam: another
+// writer taking a base between the scan and the write.
+var testBeforeRowWrite func()
+
+// SetTestBeforeRowWrite arms that seam and returns a function disarming it.
+func SetTestBeforeRowWrite(fn func()) func() {
+	testBeforeRowWrite = fn
+	return func() { testBeforeRowWrite = nil }
+}
+
+// SetTestStopAfterRows arms the seam and returns a function disarming it.
+func SetTestStopAfterRows() func() {
+	testStopAfterRows = true
+	return func() { testStopAfterRows = false }
+}
+
+// pendingImport is a message whose uid is allocated and whose row is not yet
+// written; the record follows the row (#1745).
+type pendingImport struct {
+	meta     *mailbox.MessageMeta
+	filename string
 }
 
 // sameFlags reports whether two flag sets are equal ignoring order.
