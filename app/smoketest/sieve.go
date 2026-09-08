@@ -16,7 +16,32 @@ import (
 // msieveDial opens a plain TCP connection to the ManageSieve port, reads the
 // pre-auth capability block, and performs a STARTTLS upgrade when advertised.
 // Returns the (possibly upgraded) connection with the greeting already consumed.
+// msieveEndpoint is where ManageSieve answers and how it is secured. The
+// default stays starttls, which is what the port has always served here.
+func msieveEndpoint() (endpoint, error) {
+	mode, err := parseTLSMode("managesieve-tls", *flagManageSieveTLS)
+	if err != nil {
+		return endpoint{}, err
+	}
+	return endpoint{name: "managesieve", host: manageSieveHost(), port: *flagManageSievePort, mode: mode}, nil
+}
+
 func msieveDial() (net.Conn, error) {
+	ep, err := msieveEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	if ep.mode == tlsSSL {
+		conn, _, derr := ep.dial()
+		if derr != nil {
+			return nil, derr
+		}
+		if _, cerr := msieveReadCapabilities(conn); cerr != nil {
+			conn.Close() //nolint:errcheck
+			return nil, fmt.Errorf("capabilities: %w", cerr)
+		}
+		return conn, nil
+	}
 	addr := net.JoinHostPort(manageSieveHost(), *flagManageSievePort)
 	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
 	if err != nil {
@@ -29,7 +54,7 @@ func msieveDial() (net.Conn, error) {
 		conn.Close()
 		return nil, fmt.Errorf("capabilities: %w", err)
 	}
-	if !starttls {
+	if !starttls || ep.mode == tlsNone {
 		return conn, nil
 	}
 
@@ -214,18 +239,35 @@ type imapClient struct {
 	seq  int
 }
 
+// imapEndpoint is where IMAP answers and how it is secured.
+func imapEndpoint() (endpoint, error) {
+	mode, err := parseTLSMode("imap-tls", *flagIMAPTLS)
+	if err != nil {
+		return endpoint{}, err
+	}
+	return endpoint{
+		name: "imap", host: imapHost(), port: *flagIMAPSPort, mode: mode,
+		upgrade: lineUpgrade("a000 STARTTLS", "a000 OK"),
+	}, nil
+}
+
 func imapDial() (*imapClient, error) {
-	tlsCfg := &tls.Config{InsecureSkipVerify: *flagInsecure, ServerName: imapHost()} //nolint:gosec
-	addr := net.JoinHostPort(imapHost(), *flagIMAPSPort)
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: *flagTimeout}, "tcp", addr, tlsCfg)
+	ep, err := imapEndpoint()
 	if err != nil {
 		return nil, err
 	}
-	c := &imapClient{conn: conn, r: bufio.NewReader(conn)}
-	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
-	if _, err := c.r.ReadString('\n'); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("greeting: %w", err)
+	conn, r, err := ep.dial()
+	if err != nil {
+		return nil, err
+	}
+	c := &imapClient{conn: conn, r: r}
+	// STARTTLS consumed the greeting to send the command into a settled
+	// stream; the upgraded connection sends none of its own.
+	if ep.mode != tlsSTARTTLS {
+		if _, err := c.r.ReadString('\n'); err != nil {
+			conn.Close() //nolint:errcheck
+			return nil, fmt.Errorf("greeting: %w", err)
+		}
 	}
 	return c, nil
 }

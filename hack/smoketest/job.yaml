@@ -60,6 +60,10 @@ spec:
         - -telemetry=http://yarilo-imap-login-telemetry:8080
         - -pop3s
         - -pop3s-port=995
+        # The maildrop cycle: STAT/LIST/RETR/UIDL and a deletion, on a message
+        # this run delivers and removes again (#1734).
+        - -pop3-user=u1@d00001.test
+        - -pop3-pass=Yarilo!test1
         - -managesieve
         - -managesieve-port=4190
         - -managesieve-user=u1@d00001.test

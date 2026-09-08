@@ -56,6 +56,14 @@ var (
 	flagProxyProtocol   = flag.Bool("proxy-protocol", false, "send HAProxy PROXY header before SMTP banner")
 	flagXClient         = flag.Bool("xclient", false, "check that MX port advertises XCLIENT in EHLO")
 	flagPOP3S           = flag.Bool("pop3s", false, "check POP3S greeting and CAPA")
+	flagPOP3TLS         = flag.String("pop3-tls", "ssl", "POP3 connection: ssl, starttls or none")
+	flagPOP3Port        = flag.String("pop3-port", "", "POP3 port; empty falls back to -pop3s-port")
+	flagIMAPUser        = flag.String("imap-user", "", "IMAP username used where a check names no identity of its own")
+	flagIMAPPass        = flag.String("imap-pass", "", "password for -imap-user")
+	flagManageSieveTLS  = flag.String("managesieve-tls", "starttls", "ManageSieve connection: ssl, starttls or none")
+	flagIMAPTLS         = flag.String("imap-tls", "ssl", "IMAP connection: ssl, starttls or none")
+	flagPOP3User        = flag.String("pop3-user", "", "POP3 username for the maildrop cycle (enables it)")
+	flagPOP3Pass        = flag.String("pop3-pass", "", "password for -pop3-user")
 	flagLMTPLogin       = flag.Bool("lmtp-login", false, "check yarilo-lmtp-login LHLO greeting (port -lmtp-login-port)")
 	flagManageSieve     = flag.Bool("managesieve", false, "check ManageSieve auth + script CRUD (port -managesieve-port)")
 	flagSieve           = flag.Bool("sieve", false, "check Sieve plugin execution via SMTP injection + IMAP verify")
@@ -99,6 +107,8 @@ var (
 
 	// A deployment that wants the whole gate says so once, instead of
 	// diffing the skipped list by hand on every rollout (#1197).
+	flagOnly = flag.String("only", "",
+		"run only these areas, comma-separated (e.g. \"pop3\" or \"imap,jmap\"); empty runs every area")
 	flagRequireAll       = flag.Bool("require-all", false, "treat a check disabled by a missing flag as a failure")
 	flagRequireAllExcept = flag.String("require-all-except", "",
 		"comma-separated check areas -require-all does not demand (e.g. jmap), for deployments that do not run them")
@@ -211,6 +221,11 @@ func main() {
 		os.Exit(2)
 	}
 	checks := register()
+	checks, err := keepAreas(checks, *flagOnly)
+	if err != nil {
+		slog.Error("smoke: bad -only", "err", err)
+		os.Exit(2)
+	}
 	exempt, err := parseExemptions(*flagRequireAllExcept, *flagRequireAll, checks)
 	if err != nil {
 		slog.Error("smoke: bad -require-all-except", "err", err)
@@ -255,9 +270,16 @@ func register() []check {
 	want("smtp", *flagProxyProtocol, "smtp MX PROXY protocol", "needs -proxy-protocol", checkSMTPProxyProtocol)
 	want("smtp", *flagXClient, "smtp MX XCLIENT cap", "needs -xclient", checkSMTPXClient)
 	want("pop3s", *flagPOP3S, "pop3s CAPA", "needs -pop3s", checkPOP3S)
+	want("pop3", *flagPOP3User != "", "pop3 maildrop cycle (STAT/LIST/RETR/UIDL/DELE)",
+		"needs -pop3-user", func() error {
+			return checkPOP3Cycle(*flagPOP3User, *flagPOP3Pass)
+		})
 	want("lmtp-login", *flagLMTPLogin, "lmtp-login LHLO", "needs -lmtp-login", checkLMTPLogin)
 	want("managesieve", *flagManageSieve, "managesieve auth+CRUD", "needs -managesieve", checkManageSieve)
 	want("sieve", *flagSieve, "sieve plugins", "needs -sieve", checkSieve)
+	want("imap", *flagIMAPUser != "", "imap login", "needs -imap-user", func() error {
+		return checkIMAPLogin(*flagIMAPUser, *flagIMAPPass)
+	})
 	want("imap", *flagPasswdFileUser != "", "imap login (passwd-file passdb)", "needs -passwd-file-user", func() error {
 		return checkIMAPLogin(*flagPasswdFileUser, *flagPasswdFilePass)
 	})
@@ -315,6 +337,37 @@ func register() []check {
 		"needs -jmap and -jmap-user", checkJMAPHeaderForms)
 
 	return checks
+}
+
+// keepAreas narrows the gate to the areas named, so one protocol runs on its
+// own. An area nothing declares is an error, not a run of nothing (#1734).
+func keepAreas(checks []check, list string) ([]check, error) {
+	if strings.TrimSpace(list) == "" {
+		return checks, nil
+	}
+	known := map[string]bool{}
+	for _, c := range checks {
+		known[c.area] = true
+	}
+	want := map[string]bool{}
+	for _, a := range strings.Split(list, ",") {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if !known[a] {
+			areas := slices.Sorted(maps.Keys(known))
+			return nil, fmt.Errorf("no smoke check belongs to area %q; known areas: %s", a, strings.Join(areas, ", "))
+		}
+		want[a] = true
+	}
+	var kept []check
+	for _, c := range checks {
+		if want[c.area] {
+			kept = append(kept, c)
+		}
+	}
+	return kept, nil
 }
 
 // parseExemptions reads -require-all-except. An area no check declares is an
