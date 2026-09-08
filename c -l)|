@@ -1,1 +1,0 @@
-  rows=$(tail -n +2 $H/yarilo-uidlist 2>/dev/null 

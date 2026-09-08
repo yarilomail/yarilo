@@ -287,8 +287,6 @@ type listEntry struct {
 	filename string
 }
 
-// recordUIDsLocked writes a whole batch of assignments in one rewrite: per
-// message the list would be rewritten once for every message it already holds.
 // recordUIDsLocked writes a batch of rows in one rewrite and returns the uids
 // it refused: a base already listed under another uid keeps its owner (#1745).
 func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) ([]uint32, error) {
