@@ -1203,3 +1203,6 @@ func logOtherHeaderSize(file string, offset uint32, announced, actual int) {
 	slog.Warn("mdbox: record written at a header size the file does not announce; read at the other size",
 		"file", file, "offset", offset, "announced", announced, "actual", actual)
 }
+
+// Username implements mailbox.SelfNaming: a diagnostic line names the account.
+func (u *userMailbox) Username() string { return u.username }

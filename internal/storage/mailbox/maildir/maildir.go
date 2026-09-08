@@ -2035,3 +2035,6 @@ func (u *userMailbox) reconcileIsClean(idx mailbox.UserIndex, folder *mailbox.Fo
 	}
 	return true
 }
+
+// Username implements mailbox.SelfNaming: a diagnostic line names the account.
+func (u *userMailbox) Username() string { return u.username }

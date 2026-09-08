@@ -13,7 +13,11 @@ func (u *userMailbox) RecordSize(folder string, m *mailbox.MessageMeta) (uint32,
 		return m.Size, m.VSize, err
 	}
 	defer rc.Close() //nolint:errcheck
-	return mailbox.CountSizes(rc)
+	size, vsize, cerr := mailbox.CountSizes(rc)
+	if cerr == nil {
+		u.debugStorageSize(folder, m.UID, m.MapUID, size, vsize)
+	}
+	return size, vsize, cerr
 }
 
 var _ mailbox.RecordSizer = (*userMailbox)(nil)

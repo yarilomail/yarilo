@@ -832,3 +832,6 @@ func randomGUID() [16]byte {
 	_, _ = rand.Read(g[:])
 	return g
 }
+
+// Username implements mailbox.SelfNaming: a diagnostic line names the account.
+func (u *userMailbox) Username() string { return u.username }

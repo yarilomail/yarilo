@@ -1,6 +1,7 @@
 package file
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -1085,6 +1086,7 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 	if m.UID == 0 {
 		return fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
 	}
+	fs.debugSizelessAppend(m)
 	var modseq uint64
 	if m.ModSeq != 0 {
 		modseq = m.ModSeq
@@ -2800,4 +2802,21 @@ var freezeReload bool
 func SetTestFreezeReload() func() {
 	freezeReload = true
 	return func() { freezeReload = false }
+}
+
+// debugSizelessAppend says which record arrived with no virtual size and from
+// where: every save path has one by the time it appends (#1741).
+func (fs *folderState) debugSizelessAppend(m *mailbox.MessageMeta) {
+	if m.VSize != 0 || !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	site := "unknown"
+	if pc, _, _, ok := runtime.Caller(2); ok {
+		if fn := runtime.FuncForPC(pc); fn != nil {
+			site = fn.Name()
+		}
+	}
+	slog.Debug("fileindex: appended a record with no virtual size",
+		"trace_id", fs.traceID, "user", fs.user, "folder", fs.folder,
+		"uid", m.UID, "size", m.Size, "map_uid", m.MapUID, "site", site)
 }
