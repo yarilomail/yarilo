@@ -56,7 +56,7 @@ func (l *slowLocker) Subscribe(context.Context, string) (<-chan locks.Event, err
 	return make(chan locks.Event), nil
 }
 func (l *slowLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
-func (l *slowLocker) HoldsResource(string) bool                                   { return false }
+func (l *slowLocker) HoldsResource(string) (locks.HoldMode, bool)                 { return locks.HoldNone, false }
 func (l *slowLocker) IncrementCounter(context.Context, string, int64) (int64, error) {
 	return 0, nil
 }

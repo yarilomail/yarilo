@@ -420,7 +420,9 @@ func (u *userIndex) AdoptForeignNames() error {
 		return run()
 	}
 	key := locks.IndexKey(u.username)
-	if u.b.locker.HoldsResource(key) {
+	if held, err := locks.Reentrant(u.b.locker, key, "index-adopt", false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return run()
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "index-adopt"), 35*time.Second)

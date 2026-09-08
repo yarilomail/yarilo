@@ -374,7 +374,9 @@ func (l *recordingLocker) Subscribe(context.Context, string) (<-chan locks.Event
 	return nil, nil
 }
 func (l *recordingLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
-func (l *recordingLocker) HoldsResource(resource string) bool                          { return l.holding[resource] }
+func (l *recordingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
+	return heldMode(l.holding[resource])
+}
 func (l *recordingLocker) IncrementCounter(context.Context, string, int64) (int64, error) {
 	return 0, nil
 }
@@ -505,4 +507,12 @@ func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 	if st.Threads != 1 {
 		t.Errorf("threads = %d, want 1", st.Threads)
 	}
+}
+
+// heldMode answers HoldsResource for a fake tracking holds as a bool set.
+func heldMode(held bool) (locks.HoldMode, bool) {
+	if held {
+		return locks.HoldExclusive, true
+	}
+	return locks.HoldNone, false
 }

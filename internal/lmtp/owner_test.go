@@ -39,7 +39,7 @@ func (l *recordingLocker) LockShared(ctx context.Context, r, owner string, ttl t
 }
 func (l *recordingLocker) Unlock(context.Context, string) error               { return nil }
 func (l *recordingLocker) Renew(context.Context, string, time.Duration) error { return nil }
-func (l *recordingLocker) HoldsResource(string) bool                          { return false }
+func (l *recordingLocker) HoldsResource(string) (locks.HoldMode, bool)        { return locks.HoldNone, false }
 func (l *recordingLocker) Close() error                                       { return nil }
 func (l *recordingLocker) Subscribe(context.Context, string) (<-chan locks.Event, error) {
 	return nil, nil

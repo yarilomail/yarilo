@@ -28,7 +28,7 @@ func (b *busyThenFree) Subscribe(context.Context, string) (<-chan Event, error) 
 	return nil, nil
 }
 func (b *busyThenFree) Emit(context.Context, string, EventType, string) error { return nil }
-func (b *busyThenFree) HoldsResource(string) bool                             { return false }
+func (b *busyThenFree) HoldsResource(string) (HoldMode, bool)                 { return HoldNone, false }
 func (b *busyThenFree) IncrementCounter(context.Context, string, int64) (int64, error) {
 	return 0, nil
 }

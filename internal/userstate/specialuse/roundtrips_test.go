@@ -43,7 +43,7 @@ func (c *countingLocker) Unlock(_ context.Context, _ string) error {
 	return nil
 }
 
-func (c *countingLocker) HoldsResource(_ string) bool { return false }
+func (c *countingLocker) HoldsResource(_ string) (locks.HoldMode, bool) { return locks.HoldNone, false }
 
 // Resolving every folder in a listing must cost one trip to the lock service,
 // not one per folder. The document is per user: asking per name asks the same
@@ -104,7 +104,7 @@ type failingLocker struct {
 	locks.Locker
 }
 
-func (failingLocker) HoldsResource(_ string) bool { return false }
+func (failingLocker) HoldsResource(_ string) (locks.HoldMode, bool) { return locks.HoldNone, false }
 
 func (failingLocker) Lock(_ context.Context, _, _ string, _ time.Duration) (locks.Lock, error) {
 	return locks.Lock{}, errors.New("lock service unreachable")

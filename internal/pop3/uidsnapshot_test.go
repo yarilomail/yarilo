@@ -21,8 +21,8 @@ type batchLocker struct {
 func (batchLocker) Lock(_ context.Context, resource, owner string, _ time.Duration) (locks.Lock, error) {
 	return locks.Lock{ID: fmt.Sprintf("%s/%s", resource, owner), Resource: resource, Owner: owner}, nil
 }
-func (batchLocker) Unlock(_ context.Context, _ string) error { return nil }
-func (batchLocker) HoldsResource(_ string) bool              { return false }
+func (batchLocker) Unlock(_ context.Context, _ string) error      { return nil }
+func (batchLocker) HoldsResource(_ string) (locks.HoldMode, bool) { return locks.HoldNone, false }
 func (batchLocker) Emit(_ context.Context, _ string, _ locks.EventType, _ string) error {
 	return nil
 }

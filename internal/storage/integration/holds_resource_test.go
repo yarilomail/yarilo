@@ -65,7 +65,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 		t.Fatalf("outer lock: %v", err)
 	}
 	defer func() { _ = lk.Unlock(ctx, outer.ID) }()
-	if !lk.HoldsResource(key) {
+	if _, held := lk.HoldsResource(key); !held {
 		t.Fatal("HoldsResource returned false after Lock")
 	}
 
@@ -93,7 +93,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 	if err := lk.Unlock(ctx, outer.ID); err != nil {
 		t.Fatalf("outer unlock: %v", err)
 	}
-	if lk.HoldsResource(key) {
+	if _, held := lk.HoldsResource(key); held {
 		t.Fatal("HoldsResource still true after Unlock — holds map not pruned")
 	}
 }

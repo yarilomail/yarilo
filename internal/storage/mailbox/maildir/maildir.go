@@ -264,7 +264,9 @@ func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) 
 	key := locks.MailboxKey(u.username, folder)
 	// An outer scope already holds it for a batch (POP3 QUIT, multi-message
 	// EXPUNGE): acquiring again is a same-owner BUSY loop.
-	if u.b.locker.HoldsResource(key) {
+	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return fn()
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
@@ -462,7 +464,11 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB, site string, fn func
 	keyA := locks.MailboxKey(u.username, a)
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
 	defer cancel()
-	if !u.b.locker.HoldsResource(keyA) {
+	heldA, herr := locks.Reentrant(u.b.locker, keyA, site, false)
+	if herr != nil {
+		return herr
+	}
+	if heldA == locks.HoldNone {
 		lkA, err := locks.Acquire(ctx, u.b.locker, keyA, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("maildir/lock %s: %w", a, err)
@@ -474,7 +480,11 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB, site string, fn func
 		return fn()
 	}
 	keyB := locks.MailboxKey(u.username, b)
-	if !u.b.locker.HoldsResource(keyB) {
+	heldB, herr := locks.Reentrant(u.b.locker, keyB, site, false)
+	if herr != nil {
+		return herr
+	}
+	if heldB == locks.HoldNone {
 		lkB, err := locks.Acquire(ctx, u.b.locker, keyB, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("maildir/lock %s: %w", b, err)

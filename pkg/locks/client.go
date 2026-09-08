@@ -49,7 +49,7 @@ type Client struct {
 	// concurrent goroutine on the same client sees no hold and goes through
 	// normal Acquire (ErrBusy + retry until release).
 	holdsMu sync.RWMutex
-	holds   map[uint64]map[string]string // goID → resource → lockID
+	holds   map[uint64]map[string]hold // goID → resource → hold
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -119,7 +119,7 @@ func NewClient(ctx context.Context, dial Dialer, opts ...ClientOption) (*Client,
 	c := &Client{
 		dial:     dial,
 		poolSize: defaultPoolSize,
-		holds:    make(map[uint64]map[string]string),
+		holds:    make(map[uint64]map[string]hold),
 		closed:   make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -297,13 +297,7 @@ func (c *Client) Lock(ctx context.Context, resource, owner string, ttl time.Dura
 		if len(resp) != 2 {
 			return Lock{}, fmt.Errorf("locks/client: malformed OK response: %w", ErrProtocol)
 		}
-		gid := goID()
-		c.holdsMu.Lock()
-		if c.holds[gid] == nil {
-			c.holds[gid] = make(map[string]string)
-		}
-		c.holds[gid][resource] = resp[1]
-		c.holdsMu.Unlock()
+		c.recordHold(resource, resp[1], HoldExclusive)
 		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires}, nil
 	case respBusy:
 		current, site := "", SiteUnknown
@@ -340,13 +334,7 @@ func (c *Client) LockShared(ctx context.Context, resource, owner string, ttl tim
 		if len(resp) != 2 {
 			return Lock{}, fmt.Errorf("locks/client: malformed OK response: %w", ErrProtocol)
 		}
-		gid := goID()
-		c.holdsMu.Lock()
-		if c.holds[gid] == nil {
-			c.holds[gid] = make(map[string]string)
-		}
-		c.holds[gid][resource] = resp[1]
-		c.holdsMu.Unlock()
+		c.recordHold(resource, resp[1], HoldShared)
 		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires}, nil
 	case respBusy:
 		current, site := "", SiteUnknown
@@ -384,18 +372,34 @@ func (c *Client) Unlock(ctx context.Context, lockID string) error {
 	return fmt.Errorf("locks/client: unexpected response %v: %w", resp, ErrProtocol)
 }
 
-// HoldsResource implements Locker. Returns true only when the calling goroutine
-// itself holds this resource; concurrent goroutines on the same client see
-// false and go through normal Acquire.
-func (c *Client) HoldsResource(resource string) bool {
+// HoldsResource implements Locker. Answers only for the calling goroutine;
+// concurrent goroutines on the same client see no hold and go through Acquire.
+func (c *Client) HoldsResource(resource string) (HoldMode, bool) {
 	gid := goID()
 	c.holdsMu.RLock()
 	defer c.holdsMu.RUnlock()
 	if m, ok := c.holds[gid]; ok {
-		_, has := m[resource]
-		return has
+		if h, has := m[resource]; has {
+			return h.mode, true
+		}
 	}
-	return false
+	return HoldNone, false
+}
+
+// hold is one resource this goroutine holds, and how.
+type hold struct {
+	id   string
+	mode HoldMode
+}
+
+func (c *Client) recordHold(resource, lockID string, mode HoldMode) {
+	gid := goID()
+	c.holdsMu.Lock()
+	defer c.holdsMu.Unlock()
+	if c.holds[gid] == nil {
+		c.holds[gid] = make(map[string]hold)
+	}
+	c.holds[gid][resource] = hold{id: lockID, mode: mode}
 }
 
 // dropHoldByID removes the calling goroutine's resource→ID entry matching
@@ -408,8 +412,8 @@ func (c *Client) dropHoldByID(lockID string) {
 	if !ok {
 		return
 	}
-	for resource, id := range m {
-		if id == lockID {
+	for resource, h := range m {
+		if h.id == lockID {
 			delete(m, resource)
 			if len(m) == 0 {
 				delete(c.holds, gid)

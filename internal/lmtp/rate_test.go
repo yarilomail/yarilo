@@ -48,8 +48,8 @@ func (f *fakeLocker) Subscribe(context.Context, string) (<-chan locks.Event, err
 func (f *fakeLocker) Emit(context.Context, string, locks.EventType, string) error {
 	panic("not implemented")
 }
-func (f *fakeLocker) HoldsResource(string) bool { panic("not implemented") }
-func (f *fakeLocker) Close() error              { return nil }
+func (f *fakeLocker) HoldsResource(string) (locks.HoldMode, bool) { panic("not implemented") }
+func (f *fakeLocker) Close() error                                { return nil }
 
 func TestCheckRecipientRate_AllowsWithinBurst(t *testing.T) {
 	l := newFakeLocker()

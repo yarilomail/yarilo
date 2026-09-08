@@ -457,8 +457,10 @@ func (m *Map) withMapLock(fn func() error) error {
 		return fn()
 	}
 	key := locks.MdboxMapKey(m.username)
-	if m.locker.HoldsResource(key) {
-		// Already ours: no round trip, so nothing waited.
+	// Already ours: no round trip, so nothing waited.
+	if held, err := locks.Reentrant(m.locker, key, "mdbox-map", false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return timed(metricMapLockHold, fn)
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "mdbox-map"), 35*time.Second)

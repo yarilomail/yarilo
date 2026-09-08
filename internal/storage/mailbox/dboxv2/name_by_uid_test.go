@@ -212,7 +212,7 @@ func (l *appendRecorder) Unlock(_ context.Context, _ string) error {
 	return nil
 }
 func (l *appendRecorder) Renew(context.Context, string, time.Duration) error { return nil }
-func (l *appendRecorder) HoldsResource(string) bool                          { return false }
+func (l *appendRecorder) HoldsResource(string) (locks.HoldMode, bool)        { return locks.HoldNone, false }
 func (l *appendRecorder) Close() error                                       { return nil }
 func (l *appendRecorder) Subscribe(context.Context, string) (<-chan locks.Event, error) {
 	return nil, nil

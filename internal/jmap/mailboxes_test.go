@@ -395,10 +395,13 @@ func (l *testLocker) Subscribe(context.Context, string) (<-chan locks.Event, err
 }
 
 func (l *testLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
-func (l *testLocker) HoldsResource(resource string) bool {
+func (l *testLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.holds[resource] > 0
+	if l.holds[resource] > 0 {
+		return locks.HoldExclusive, true
+	}
+	return locks.HoldNone, false
 }
 
 func (l *testLocker) IncrementCounter(context.Context, string, int64) (int64, error) { return 0, nil }

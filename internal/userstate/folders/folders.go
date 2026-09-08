@@ -247,7 +247,9 @@ func (s *Store) withLock(fn func() error) error {
 		return fn()
 	}
 	key := locks.IndexKey(s.user)
-	if s.locker.HoldsResource(key) {
+	if held, err := locks.Reentrant(s.locker, key, "folders-write", false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return fn()
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "folders-write"), 35*time.Second)
