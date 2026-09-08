@@ -119,27 +119,26 @@ type folderCache struct {
 	// it has the uid and wants the name (#1700).
 	byUID    map[uint32]string
 	guidMap  map[string][16]byte // explicit GUID overrides; empty for name-derived GUIDs
-	uidMtime time.Time
-	uidSize  int64
+	uidStamp listStamp
 	entries  []os.DirEntry
 	dirMtime time.Time
 }
 
 // snapshotUIDs returns the cached map when the uidlist has not moved. The map
 // escapes the lock, so nothing may write into it afterwards -- see addUID.
-func (c *folderCache) snapshotUIDs(mtime time.Time, size int64) (map[string]uint32, bool) {
+func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.uidMap != nil && mtime.Equal(c.uidMtime) && size == c.uidSize {
+	if c.uidMap != nil && stamp.same(c.uidStamp) {
 		return c.uidMap, true
 	}
 	return nil, false
 }
 
-func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, mtime time.Time, size int64) {
+func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, stamp listStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.uidMap, c.guidMap, c.uidMtime, c.uidSize = m, guids, mtime, size
+	c.uidMap, c.guidMap, c.uidStamp = m, guids, stamp
 	c.byUID = make(map[uint32]string, len(m))
 	for base, uid := range m {
 		c.byUID[uid] = base
@@ -147,10 +146,10 @@ func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, 
 }
 
 // baseOf answers the record's question, from the map the load built.
-func (c *folderCache) baseOf(uid uint32, mtime time.Time, size int64) (string, bool) {
+func (c *folderCache) baseOf(uid uint32, stamp listStamp) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.byUID == nil || !mtime.Equal(c.uidMtime) || size != c.uidSize {
+	if c.byUID == nil || !stamp.same(c.uidStamp) {
 		return "", false
 	}
 	base, ok := c.byUID[uid]
@@ -169,7 +168,7 @@ func (c *folderCache) guidOf(base string) ([16]byte, bool) {
 
 // addUID replaces the maps rather than writing into them: snapshotUIDs hands one
 // out and a scan holds it unlocked, so a copy per delivery keeps it untouched.
-func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID bool, mtime time.Time, size int64) {
+func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID bool, stamp listStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	uids := make(map[string]uint32, len(c.uidMap)+1)
@@ -192,7 +191,7 @@ func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID boo
 		guids[base] = guid
 		c.guidMap = guids
 	}
-	c.uidMtime, c.uidSize = mtime, size
+	c.uidStamp = stamp
 }
 
 // dirEntries returns the cached directory listing when the directory has not
@@ -674,7 +673,7 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 
 	u.debugListWrite("assign", folder, []uint32{uid}, base, beforeRows, beforeMod, beforeSize)
 	if fi, statErr := os.Stat(path); statErr == nil {
-		u.folderCacheFor(folder).addUID(base, uid, guid, guidOverride, fi.ModTime(), fi.Size())
+		u.folderCacheFor(folder).addUID(base, uid, guid, guidOverride, stampOf(fi))
 	}
 	return nil
 }
@@ -1334,7 +1333,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 		return nil, statErr
 	}
 
-	if m, ok := u.folderCacheFor(folder).snapshotUIDs(fi.ModTime(), fi.Size()); ok {
+	if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
 		u.debugListRead(folder, "cache", len(m), fi.ModTime().UnixNano(), fi.Size())
 		return m, nil
 	}
@@ -1393,7 +1392,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 		return nil, err
 	}
 
-	u.folderCacheFor(folder).storeUIDs(m, guids, fi.ModTime(), fi.Size())
+	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
 	u.debugListRead(folder, "disk", len(m), fi.ModTime().UnixNano(), fi.Size())
 	return m, nil
 }

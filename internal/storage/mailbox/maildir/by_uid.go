@@ -45,7 +45,7 @@ func (u *userMailbox) baseForUID(folder string, uid uint32) (string, error) {
 		}
 		return "", fmt.Errorf("maildir/by-uid: stat list %q: %w", folder, err)
 	}
-	base, _ := u.folderCacheFor(folder).baseOf(uid, fi.ModTime(), fi.Size())
+	base, _ := u.folderCacheFor(folder).baseOf(uid, stampOf(fi))
 	return base, nil
 }
 
