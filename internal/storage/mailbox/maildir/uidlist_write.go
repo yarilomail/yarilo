@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -44,6 +45,7 @@ type uidList struct {
 // readUIDListFile parses the whole file. A line that parses adds a record; the
 // first that does not ends the list and marks it torn.
 func readUIDListFile(path string) (*uidList, error) {
+	listParses.Add(1)
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -300,8 +302,8 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error
 		u.reportTornUIDList(folder, path, l)
 	}
 	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
-	if fi, serr := os.Stat(path); serr == nil {
-		beforeMod, beforeSize = fi.ModTime().UnixNano(), fi.Size()
+	if listDebug() {
+		beforeMod, beforeSize = u.listStat(folder)
 	}
 	at := make(map[string]int, len(l.records))
 	for i, rec := range l.records {
@@ -377,8 +379,8 @@ func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (i
 		u.reportTornUIDList(folder, path, l)
 	}
 	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
-	if fi, serr := os.Stat(path); serr == nil {
-		beforeMod, beforeSize = fi.ModTime().UnixNano(), fi.Size()
+	if listDebug() {
+		beforeMod, beforeSize = u.listStat(folder)
 	}
 	listed := make(map[string]int, len(l.records))
 	for i := range l.records {
@@ -434,28 +436,39 @@ func SetTestPlaceLimit(n int) func() {
 	return func() { testPlaceLimit = 0 }
 }
 
-// listState is the file as it stands, for the debug rows that pin a write to a
-// moment: a lost row shows up as two writers seeing the same "before" (#1739).
-func (u *userMailbox) listState(folder string) (rows int, mtime int64, size int64) {
-	path := u.uidListPath(folder)
-	fi, err := os.Stat(path)
+// listDebug gates every reading the rows need: the "before" side once cost a
+// second parse of the whole list on every save (#1739).
+func listDebug() bool {
+	return slog.Default().Enabled(context.Background(), slog.LevelDebug)
+}
+
+// listStat is the file's identity for a debug row, without reading it.
+func (u *userMailbox) listStat(folder string) (mtime, size int64) {
+	fi, err := os.Stat(u.uidListPath(folder))
 	if err != nil {
-		return -1, 0, 0
+		return 0, 0
 	}
-	l, rerr := readUIDListFile(path)
-	if rerr != nil {
-		return -1, fi.ModTime().UnixNano(), fi.Size()
+	return fi.ModTime().UnixNano(), fi.Size()
+}
+
+// listRows counts the file, for the "after" side alone: the "before" side is
+// the record set the writer already holds.
+func (u *userMailbox) listRows(folder string) int {
+	l, err := readUIDListFile(u.uidListPath(folder))
+	if err != nil {
+		return -1
 	}
-	return len(l.records), fi.ModTime().UnixNano(), fi.Size()
+	return len(l.records)
 }
 
 // debugListWrite names who wrote what, and what the file looked like on both
 // sides of the write. DEBUG, so it costs nothing until an operator asks.
 func (u *userMailbox) debugListWrite(site, folder string, uids []uint32, base string, beforeRows int, beforeMod, beforeSize int64) {
-	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+	if !listDebug() {
 		return
 	}
-	rows, mod, size := u.listState(folder)
+	rows := u.listRows(folder)
+	mod, size := u.listStat(folder)
 	slog.Debug("maildir: uidlist written",
 		"site", site, "user", u.username, "folder", folder, "owner", u.owner,
 		"uids", uids, "base", base,
@@ -467,10 +480,18 @@ func (u *userMailbox) debugListWrite(site, folder string, uids []uint32, base st
 // debugListRead says whether a reader took the list off disk or off the cached
 // snapshot the mtime and size validate, and how many rows it got (#1739).
 func (u *userMailbox) debugListRead(folder, from string, rows int, mod, size int64) {
-	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+	if !listDebug() {
 		return
 	}
 	slog.Debug("maildir: uidlist read",
 		"from", from, "user", u.username, "folder", folder, "owner", u.owner,
 		"rows", rows, "mtime", mod, "size", size)
 }
+
+// listParses counts the times the file was parsed, so "one parse per save" is a
+// number a row asserts rather than a claim (#1739).
+var listParses atomic.Int64
+
+// ListParses returns the count, ResetListParses zeroes it. Test seams.
+func ListParses() int  { return int(listParses.Load()) }
+func ResetListParses() { listParses.Store(0) }

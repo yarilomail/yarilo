@@ -634,7 +634,10 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 	if l.torn {
 		u.reportTornUIDList(folder, path, l)
 	}
-	beforeRows, beforeMod, beforeSize := u.listState(folder)
+	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
+	if listDebug() {
+		beforeMod, beforeSize = u.listStat(folder)
+	}
 	base := maildirBase(filename)
 	rec := uidRecord{uid: uid, base: base, guid: guid, hasGUID: guidOverride}
 	if !nameCarriesSizes(base) {

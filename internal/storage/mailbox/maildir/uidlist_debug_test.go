@@ -2,6 +2,7 @@ package maildir
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -80,5 +81,28 @@ func TestTheDebugRowsAreSilentAtInfo(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "uidlist") {
 		t.Errorf("the debug rows spoke at info level: %s", buf.String())
+	}
+}
+
+// With the rows off, a save opens the list once. The "before" side used to be
+// read whatever the level was, so every save paid a second parse (#1739).
+func TestTheWritePathOpensTheListOnceAtInfo(t *testing.T) {
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
+	box := openTestUser(t, t.TempDir())
+	u := box.(*userMailbox)
+	body := "From: a@b\r\n\r\nx\r\n"
+	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ResetListParses()
+	if _, err := u.AssignUID("INBOX", name, 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := ListParses(); got != 1 {
+		t.Errorf("naming one message parsed the list %d times, want one", got)
 	}
 }
