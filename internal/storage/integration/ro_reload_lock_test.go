@@ -50,8 +50,8 @@ func TestReadPathSerializesAgainstConcurrentLockHolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client B lock: %v", err)
 	}
-	if !clientB.HoldsResource(key) {
-		t.Fatal("client B does not hold the lock it just acquired")
+	if mode, ok := clientB.HoldsResource(key); !ok || mode != locks.HoldExclusive {
+		t.Fatalf("client B holds %q/%v after an exclusive Lock", mode, ok)
 	}
 
 	// A read-only op on idxA must block acquiring the same key that B holds.

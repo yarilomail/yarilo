@@ -179,7 +179,9 @@ func (a *Allocator) withLock(fn func() error) error {
 		return fn()
 	}
 	key := locks.IndexKey(a.user)
-	if a.locker.HoldsResource(key) {
+	if held, err := locks.Reentrant(a.locker, key, "uidvalidity-write", false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return fn()
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "uidvalidity-write"), 35*time.Second)

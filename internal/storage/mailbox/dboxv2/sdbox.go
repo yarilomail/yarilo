@@ -152,7 +152,9 @@ func (u *userMailbox) withMailboxLock(folder string, fn func() error) error {
 		return fn()
 	}
 	key := locks.MailboxKey(u.username, folder)
-	if u.b.locker.HoldsResource(key) {
+	if held, err := locks.Reentrant(u.b.locker, key, "sdbox-folder", false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return fn()
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "sdbox-folder"), 35*time.Second)
@@ -290,7 +292,11 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 	keyA := locks.MailboxKey(u.username, a)
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "sdbox-folder"), 35*time.Second)
 	defer cancel()
-	if !u.b.locker.HoldsResource(keyA) {
+	heldA, herr := locks.Reentrant(u.b.locker, keyA, "sdbox-folder", false)
+	if herr != nil {
+		return herr
+	}
+	if heldA == locks.HoldNone {
 		lkA, err := locks.Acquire(ctx, u.b.locker, keyA, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("sdbox/lock %s: %w", a, err)
@@ -301,7 +307,11 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 		return fn()
 	}
 	keyB := locks.MailboxKey(u.username, b)
-	if !u.b.locker.HoldsResource(keyB) {
+	heldB, herr := locks.Reentrant(u.b.locker, keyB, "sdbox-folder", false)
+	if herr != nil {
+		return herr
+	}
+	if heldB == locks.HoldNone {
 		lkB, err := locks.Acquire(ctx, u.b.locker, keyB, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("sdbox/lock %s: %w", b, err)

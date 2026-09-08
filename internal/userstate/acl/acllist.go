@@ -369,7 +369,9 @@ func (s *Store) withListLock(fn func() error) error {
 		return fn()
 	}
 	key := locks.ACLListKey(s.mailboxesRoot())
-	if s.locker.HoldsResource(key) {
+	if held, err := locks.Reentrant(s.locker, key, "acl-list", false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return fn()
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "acl-list"), 35*time.Second)

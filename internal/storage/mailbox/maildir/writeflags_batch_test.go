@@ -34,7 +34,9 @@ func (l *countingLocker) Unlock(ctx context.Context, id string) error {
 	return nil
 }
 
-func (l *countingLocker) HoldsResource(resource string) bool { return l.held[resource] }
+func (l *countingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
+	return heldMode(l.held[resource])
+}
 
 func batchBox(t *testing.T) (*userMailbox, *countingLocker) {
 	t.Helper()
@@ -171,4 +173,12 @@ func TestABatchWithOneMissingFileWritesTheRest(t *testing.T) {
 func onKeywordFileRead(fn func(path string)) func() {
 	keywordFileRead = fn
 	return func() { keywordFileRead = nil }
+}
+
+// heldMode answers HoldsResource for a fake tracking holds as a bool set.
+func heldMode(held bool) (locks.HoldMode, bool) {
+	if held {
+		return locks.HoldExclusive, true
+	}
+	return locks.HoldNone, false
 }

@@ -811,7 +811,11 @@ func (u *userIndex) withDistLock(fs *folderState, shared bool, site string, fn f
 	if u.b.locker != nil {
 		mode := lockMode(shared)
 		key := locks.MailboxKey(u.username, fs.folder)
-		if !u.b.locker.HoldsResource(key) {
+		held, herr := locks.Reentrant(u.b.locker, key, site, shared)
+		if herr != nil {
+			return herr
+		}
+		if held == locks.HoldNone {
 			ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
 			defer cancel()
 			t0 := time.Now()
@@ -837,9 +841,9 @@ func (u *userIndex) withDistLock(fs *folderState, shared bool, site string, fn f
 				metricLockRelease.WithLabelValues(mode, site).Observe(time.Since(released).Seconds())
 			}()
 		} else {
-			// Already ours -- inside another operation that took the lock, so no
-			// round trip. Counted apart so leaving the process has an answer.
-			metricLockReentrant.WithLabelValues(mode, site).Inc()
+			// Counted under the mode held, not the one asked for: they
+			// differ whenever a read runs inside a write (#1741).
+			metricLockReentrant.WithLabelValues(string(held), site).Inc()
 		}
 	}
 	return fn()
@@ -858,7 +862,11 @@ func (u *userIndex) withTwoFolderLocks(folderA, folderB string, fn func() error)
 	keyA := locks.MailboxKey(u.username, a)
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), lockSiteWrite), 35*time.Second)
 	defer cancel()
-	if !u.b.locker.HoldsResource(keyA) {
+	heldA, herr := locks.Reentrant(u.b.locker, keyA, lockSiteWrite, false)
+	if herr != nil {
+		return herr
+	}
+	if heldA == locks.HoldNone {
 		lkA, err := locks.Acquire(ctx, u.b.locker, keyA, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("fileindex/lock %s: %w", a, err)
@@ -869,7 +877,11 @@ func (u *userIndex) withTwoFolderLocks(folderA, folderB string, fn func() error)
 		return fn()
 	}
 	keyB := locks.MailboxKey(u.username, b)
-	if !u.b.locker.HoldsResource(keyB) {
+	heldB, herr := locks.Reentrant(u.b.locker, keyB, lockSiteWrite, false)
+	if herr != nil {
+		return herr
+	}
+	if heldB == locks.HoldNone {
 		lkB, err := locks.Acquire(ctx, u.b.locker, keyB, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("fileindex/lock %s: %w", b, err)

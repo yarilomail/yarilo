@@ -56,7 +56,7 @@ func (b *busyLocker) Unlock(context.Context, string) error { return nil }
 func (b *busyLocker) Renew(context.Context, string, time.Duration) error {
 	return nil
 }
-func (b *busyLocker) HoldsResource(string) bool                               { return false }
+func (b *busyLocker) HoldsResource(string) (HoldMode, bool)                   { return HoldNone, false }
 func (b *busyLocker) Close() error                                            { return nil }
 func (b *busyLocker) Subscribe(context.Context, string) (<-chan Event, error) { return nil, nil }
 func (b *busyLocker) Emit(context.Context, string, EventType, string) error   { return nil }

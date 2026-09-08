@@ -59,7 +59,7 @@ func (l *mutexLocker) Unlock(_ context.Context, id string) error {
 	return nil
 }
 func (l *mutexLocker) Renew(context.Context, string, time.Duration) error { return nil }
-func (l *mutexLocker) HoldsResource(string) bool                          { return false }
+func (l *mutexLocker) HoldsResource(string) (locks.HoldMode, bool)        { return locks.HoldNone, false }
 func (l *mutexLocker) Close() error                                       { return nil }
 func (l *mutexLocker) Subscribe(context.Context, string) (<-chan locks.Event, error) {
 	return nil, nil
@@ -175,7 +175,7 @@ func (l *orderingLocker) LockShared(ctx context.Context, r, o string, ttl time.D
 }
 func (l *orderingLocker) Unlock(context.Context, string) error               { return nil }
 func (l *orderingLocker) Renew(context.Context, string, time.Duration) error { return nil }
-func (l *orderingLocker) HoldsResource(string) bool                          { return false }
+func (l *orderingLocker) HoldsResource(string) (locks.HoldMode, bool)        { return locks.HoldNone, false }
 func (l *orderingLocker) Close() error                                       { return nil }
 func (l *orderingLocker) Subscribe(context.Context, string) (<-chan locks.Event, error) {
 	return nil, nil
