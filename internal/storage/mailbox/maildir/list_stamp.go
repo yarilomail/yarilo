@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// listStamp is the list file's identity: inode, size and mtime, as
-// maildir_uidlist_has_changed reads it. A rewrite renames, so the inode
-// changes even when the other two collide (#1739).
+// listStamp is the list file's identity as the reference reads it: a rewrite
+// renames, so the inode moves even when size and mtime collide (#1739).
 type listStamp struct {
 	ino   uint64
 	size  int64
