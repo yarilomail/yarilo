@@ -556,9 +556,8 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	if override {
 		u.rememberGUID(folder, finalName, effGUID)
 	}
-	// The body stays in tmp/, which nothing reads: a scan walks cur/ and new/.
-	// It reaches cur/ in AssignUID, under the same hold that gives it its uid
-	// and its list row, so a reconcile cannot meet a file no record names yet.
+	// The body stays in tmp/, which no scan reads; AssignUID moves it into cur/
+	// under the hold that gives it its uid and its row (#1736).
 	if err := os.Rename(tmpPath, filepath.Join(folderPath, "tmp", finalName)); err != nil {
 		os.Remove(tmpPath) //nolint:errcheck
 		return "", 0, noGUID, fmt.Errorf("maildir: name the temp: %w", err)

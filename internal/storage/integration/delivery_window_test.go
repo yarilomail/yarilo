@@ -52,12 +52,8 @@ func unnamedRecords(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex
 	return len(msgs), unnamed
 }
 
-// A save is a body, a name and a record. A reconcile that runs between the
-// first two must not see a file no record tracks: it would import it, and the
-// delivery that follows would take its row, leaving a record naming nothing.
-//
-// The reference takes the uidlist lock before moving out of tmp/ for exactly
-// this reason, and our save does the same since #1736.
+// A reconcile between the body and the record must not see a file no record
+// tracks: it imports it, and the save that follows takes its row (#1736).
 func TestAReconcileInsideADeliveryWindow(t *testing.T) {
 	box, idx, f, reconcile := windowFixture(t)
 
