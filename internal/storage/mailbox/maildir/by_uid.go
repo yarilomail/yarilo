@@ -118,6 +118,7 @@ func reportUnlisted(user, folder string, uid uint32) {
 	if _, said := unlistedSaid.LoadOrStore(key, struct{}{}); said {
 		return
 	}
+	metricRecordWithoutRow.Inc()
 	slog.Error("maildir: the list names no file for this record",
 		"user", user, "folder", folder, "uid", uid)
 }
