@@ -11,8 +11,7 @@ import (
 )
 
 // A sync whose snapshot predates another writer's append must not treat that
-// message as a file nobody holds: the list already names it, and minting a
-// second uid takes the row from the record that has it (#1739).
+// message as a file nobody holds: the list already names it (#1739).
 func TestASyncDoesNotTakeTheRowOfARecordItHasNotSeen(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}
@@ -56,9 +55,8 @@ func TestASyncDoesNotTakeTheRowOfARecordItHasNotSeen(t *testing.T) {
 	}
 	written := m.UID
 
-	// The sync now decides on the snapshot it already has -- the state a
-	// process reaches when its reload finds nothing changed. The refresh under
-	// the lock is what has to see through it.
+	// The sync decides on the snapshot it has, as a process does when its
+	// reload finds nothing changed; the refresh has to see through it.
 	thaw := indexfile.SetTestFreezeReload()
 	rec := mailbox.Driver(syncBox).(interface {
 		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
@@ -99,9 +97,8 @@ func uidsOf(msgs []*mailbox.MessageMeta) []uint32 {
 	return out
 }
 
-// A file the list names keeps its uid when the index no longer holds it: the
-// list is the mapping, and a fresh uid would invalidate a client's cache for a
-// message that never moved (#1593, #1739).
+// A file the list names keeps its uid when the index no longer holds it: a
+// fresh one invalidates a client's cache for a message that never moved (#1593).
 func TestAnImportedFileKeepsTheUIDTheListGivesIt(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}

@@ -138,13 +138,7 @@ image:
   ## rather than a staleness risk (#1217).
   pullPolicy: IfNotPresent
 
-## Info everywhere, debug only where the uidlist rows are written and read:
-## cluster-wide debug rotates away the window being investigated (#1739).
-logLevel: info
-logLevelOverrides:
-  yarilo-imap: debug
-  yarilo-lmtp: debug
-  yarilo-fts: debug
+logLevel: debug
 
 service:
   type: LoadBalancer
