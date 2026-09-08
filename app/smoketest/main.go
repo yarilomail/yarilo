@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -611,29 +612,35 @@ func checkDirectorStatusBody(body []byte) error {
 // ---- POP3S (port 995) ----------------------------------------------------
 
 func checkPOP3S() error {
-	addr := net.JoinHostPort(pop3Host(), *flagPOP3SPort)
-	dialer := &net.Dialer{Timeout: *flagTimeout}
-	tlsCfg := &tls.Config{
-		ServerName:         pop3Host(),
-		InsecureSkipVerify: *flagInsecure, //nolint:gosec
-	}
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+	ep, err := pop3Endpoint()
 	if err != nil {
-		return fmt.Errorf("connect %s: %w", addr, err)
+		return err
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
-
-	greeting, err := readLine(conn)
+	conn, r, err := ep.dial()
+	if err != nil {
+		return err
+	}
+	defer conn.Close() //nolint:errcheck
+	if ep.mode == tlsSTARTTLS {
+		// The upgrade consumed the greeting to send STLS into a settled
+		// stream; CAPA follows with none of its own.
+		return pop3Capabilities(conn, r)
+	}
+	greeting, err := readString(r)
 	if err != nil {
 		return fmt.Errorf("read greeting: %w", err)
 	}
 	if !strings.HasPrefix(greeting, "+OK") {
 		return fmt.Errorf("unexpected POP3 greeting: %q", greeting)
 	}
+	return pop3Capabilities(conn, r)
+}
 
+// pop3Capabilities asks for CAPA and insists on the one capability a client
+// needs to log in at all.
+func pop3Capabilities(conn net.Conn, r *bufio.Reader) error {
 	fmt.Fprintf(conn, "CAPA\r\n")
-	resp, err := readLine(conn)
+	resp, err := readString(r)
 	if err != nil {
 		return fmt.Errorf("CAPA response: %w", err)
 	}
@@ -642,7 +649,7 @@ func checkPOP3S() error {
 	}
 	foundUSER := false
 	for {
-		line, err := readLine(conn)
+		line, err := readString(r)
 		if err != nil {
 			return fmt.Errorf("CAPA read: %w", err)
 		}
@@ -656,9 +663,15 @@ func checkPOP3S() error {
 	if !foundUSER {
 		return fmt.Errorf("CAPA missing USER capability")
 	}
-
 	fmt.Fprintf(conn, "QUIT\r\n")
 	return nil
+}
+
+// readString is readLine against a reader the dial already holds: the greeting
+// and any upgrade were read through it, so a second reader would lose bytes.
+func readString(r *bufio.Reader) (string, error) {
+	l, err := r.ReadString('\n')
+	return strings.TrimRight(l, "\r\n"), err
 }
 
 // ---- LMTP login (port 24) ------------------------------------------------

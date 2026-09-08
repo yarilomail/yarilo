@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// tlsMode is how a protocol's connection is secured. Named per protocol rather
-// than assumed from the port: a deployment may serve IMAP plain on 143 behind a
-// terminator, and a gate that assumes 993 means TLS tests the wrong thing.
+// tlsMode is how a protocol's connection is secured: named per protocol, since
+// a port says nothing about what a deployment serves on it.
 type tlsMode string
 
 const (

@@ -139,3 +139,68 @@ func TestTheEndpointDialsWhatTheModeNames(t *testing.T) {
 		}
 	})
 }
+
+// The greeting check dials what -pop3-tls names, like the cycle: a check that
+// dials TLS of its own is the "995 means TLS" this flag exists to remove.
+func TestTheGreetingCheckHonoursTheMode(t *testing.T) {
+	host, port := plainGreeter(t, false)
+	restore := func() func() {
+		oh, op, ot, oi := *flagPOP3Host, *flagPOP3SPort, *flagPOP3TLS, *flagInsecure
+		*flagPOP3Host, *flagPOP3SPort, *flagPOP3TLS, *flagInsecure = host, port, "none", true
+		return func() {
+			*flagPOP3Host, *flagPOP3SPort, *flagPOP3TLS, *flagInsecure = oh, op, ot, oi
+		}
+	}()
+	defer restore()
+
+	// The plain server answers the greeting and refuses CAPA, so the check must
+	// reach it at all -- a TLS dial of its own would fail the handshake instead.
+	err := checkPOP3S()
+	if err == nil {
+		t.Fatal("a server without CAPA was accepted")
+	}
+	if strings.Contains(err.Error(), "handshake") || strings.Contains(err.Error(), "tls") {
+		t.Errorf("the check dialled TLS against a plain endpoint: %v", err)
+	}
+	if !strings.Contains(err.Error(), "CAPA") {
+		t.Errorf("said %q, want the CAPA refusal it should have read", err)
+	}
+}
+
+// starttls asked for and not advertised is a refusal: continuing in the clear
+// would report a surface nobody serves.
+func TestManageSieveRefusesASilentDowngrade(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close() //nolint:errcheck
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			// A capability block that offers no STARTTLS.
+			fmt.Fprintf(c, "\"IMPLEMENTATION\" \"fake\"\r\nOK\r\n")
+		}
+	}()
+	host, port, _ := net.SplitHostPort(ln.Addr().String())
+	restore := func() func() {
+		oh, op, ot := *flagManageSieveHost, *flagManageSievePort, *flagManageSieveTLS
+		*flagManageSieveHost, *flagManageSievePort, *flagManageSieveTLS = host, port, "starttls"
+		return func() {
+			*flagManageSieveHost, *flagManageSievePort, *flagManageSieveTLS = oh, op, ot
+		}
+	}()
+	defer restore()
+
+	conn, err := msieveDial()
+	if err == nil {
+		conn.Close() //nolint:errcheck
+		t.Fatal("the session continued in the clear after starttls was asked for")
+	}
+	if !strings.Contains(err.Error(), "advertises none") {
+		t.Errorf("said %q, want it to name the missing advertisement", err)
+	}
+}

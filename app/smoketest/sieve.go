@@ -13,11 +13,8 @@ import (
 
 // ── ManageSieve connection (STARTTLS-aware) ───────────────────────────────
 
-// msieveDial opens a plain TCP connection to the ManageSieve port, reads the
-// pre-auth capability block, and performs a STARTTLS upgrade when advertised.
-// Returns the (possibly upgraded) connection with the greeting already consumed.
 // msieveEndpoint is where ManageSieve answers and how it is secured. The
-// default stays starttls, which is what the port has always served here.
+// default stays starttls, which is what this port has always served.
 func msieveEndpoint() (endpoint, error) {
 	mode, err := parseTLSMode("managesieve-tls", *flagManageSieveTLS)
 	if err != nil {
@@ -26,6 +23,8 @@ func msieveEndpoint() (endpoint, error) {
 	return endpoint{name: "managesieve", host: manageSieveHost(), port: *flagManageSievePort, mode: mode}, nil
 }
 
+// msieveDial returns the connection with the capability block consumed, upgraded
+// when the mode asks for it.
 func msieveDial() (net.Conn, error) {
 	ep, err := msieveEndpoint()
 	if err != nil {
@@ -54,8 +53,14 @@ func msieveDial() (net.Conn, error) {
 		conn.Close()
 		return nil, fmt.Errorf("capabilities: %w", err)
 	}
-	if !starttls || ep.mode == tlsNone {
+	if ep.mode == tlsNone {
 		return conn, nil
+	}
+	if !starttls {
+		// Asked for and not offered is a refusal, not a reason to continue in
+		// the clear: the gate would then report a surface nobody serves.
+		conn.Close() //nolint:errcheck
+		return nil, fmt.Errorf("managesieve: starttls asked for, and the server advertises none")
 	}
 
 	fmt.Fprintf(conn, "STARTTLS\r\n") //nolint:errcheck
