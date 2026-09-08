@@ -338,7 +338,7 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) ([]ui
 		uids = append(uids, e.uid)
 	}
 	u.debugListWrite("reconcile-import", folder, uids, "", beforeRows, beforeMod, beforeSize)
-	u.folderCacheFor(folder).invalidateUIDs()
+	u.adoptWritten(folder, l)
 	return taken, nil
 }
 
@@ -428,6 +428,7 @@ func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (i
 		placedUIDs = append(placedUIDs, uid)
 	}
 	u.debugListWrite("migrate-place", folder, placedUIDs, "", beforeRows, beforeMod, beforeSize)
+	u.adoptWritten(folder, l)
 	return placed, taken, nil
 }
 

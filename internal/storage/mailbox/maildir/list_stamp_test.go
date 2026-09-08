@@ -113,3 +113,58 @@ func names(m map[string]uint32) string {
 	}
 	return strings.Join(out, ",")
 }
+
+// Two handles, as two sessions are: B writes its row from a snapshot older than
+// A's write, and must still read A's row back (#1739).
+func TestASecondWriterKeepsTheRowTheFirstWrote(t *testing.T) {
+	home := t.TempDir()
+	info := &mailbox.UserInfo{Username: "u@x", Home: home, Separator: "/"}
+	a := New().OpenUser(info).(*userMailbox)
+	b := New().OpenUser(info).(*userMailbox)
+	t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
+	if err := a.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	const body = "From: a@b\r\nSubject: x\r\n\r\nbody\r\n"
+	save := func(u *userMailbox, uid uint32) string {
+		name, _, _, err := u.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return name
+	}
+	// A row already there, so B's snapshot is a real one and not the empty
+	// map a missing list gives.
+	first := save(a, 364)
+	if _, err := a.AssignUID("INBOX", first, 364); err != nil {
+		t.Fatal(err)
+	}
+	nameA, nameB := save(a, 365), save(b, 366)
+
+	// B reads the list before A names its message: the snapshot it would merge
+	// into is one row short.
+	if _, err := b.readUIDList("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AssignUID("INBOX", nameA, 365); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.AssignUID("INBOX", nameB, 366); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		uid  uint32
+		name string
+	}{{364, first}, {365, nameA}, {366, nameB}} {
+		base, err := b.baseForUID("INBOX", tc.uid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if base != maildirBase(tc.name) {
+			t.Errorf("the second writer reads uid %d as %q, and the list names it %q",
+				tc.uid, base, maildirBase(tc.name))
+		}
+	}
+}
