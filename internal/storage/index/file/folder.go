@@ -695,6 +695,16 @@ func (u *userIndex) withFolder(folderID uint64, fn func(*folderState) error) err
 //  2. Base unchanged, log grew: apply only the new log entries.
 //  3. Base changed: full re-read of base + remaining log.
 func (fs *folderState) reload() error {
+	if freezeReload {
+		// Test seam: the snapshot a process keeps when a reload decides nothing
+		// changed. An explicit refresh sees through it, as it must.
+		return nil
+	}
+	return fs.reloadNow()
+}
+
+// reloadNow is reload without the seam: what an explicit refresh asks for.
+func (fs *folderState) reloadNow() error {
 	// One wrapper for every path out of the read (#1344), naming the folder so
 	// layers above answer per folder rather than per account.
 	return asCorrupt(fs.folder, fs.reloadLocked())
@@ -2780,4 +2790,14 @@ func (fs *folderState) expungeFloorLocked() uint64 {
 		return 0
 	}
 	return decodeExpungeFloor(ext.HdrData)
+}
+
+// freezeReload holds every folder view where it is. Test seam: two racing
+// writers cannot make a stale snapshot, the file's mtime gives it away (#1739).
+var freezeReload bool
+
+// SetTestFreezeReload freezes the view and returns a function thawing it.
+func SetTestFreezeReload() func() {
+	freezeReload = true
+	return func() { freezeReload = false }
 }
