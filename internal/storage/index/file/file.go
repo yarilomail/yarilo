@@ -352,6 +352,9 @@ func (h *userHandle) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int,
 func (h *userHandle) SizelessUIDs(folderID uint64) ([]uint32, error) {
 	return h.stamped(folderID).SizelessUIDs(folderID)
 }
+func (h *userHandle) RefreshFolder(folderID uint64) error {
+	return h.stamped(folderID).RefreshFolder(folderID)
+}
 func (h *userHandle) MarkFolderCorrupt(folderID uint64) error {
 	return h.stamped(folderID).MarkFolderCorrupt(folderID)
 }

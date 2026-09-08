@@ -958,7 +958,6 @@ func (u *userMailbox) moveNewToCurLocked(folder string) error {
 // index is authoritative for flags this server set.
 func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
-	adopted := false
 	// The move precedes the scan because it renames, and is asked about before
 	// the lock: one acquisition taken to find an empty new/ is paid on every
 	// poll (#1630).
@@ -1005,7 +1004,6 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 				aerr := a.AdoptUIDSpace(folder.ID, uidValidity, nextUID)
 				switch {
 				case aerr == nil:
-					adopted = true
 				case errors.Is(aerr, mailbox.ErrUIDSpaceInUse):
 					// An ordinary folder with mail in it, which is most of them.
 					// Whether a folder is empty is the index's to answer, not a
@@ -1028,6 +1026,13 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			}
 		}
 
+		// The view first, then the decision: "this folder does not hold the
+		// file" must mean the folder, not this process's last read (#1739).
+		if r, ok := idx.(mailbox.FolderRefresher); ok {
+			if rerr := r.RefreshFolder(folder.ID); rerr != nil {
+				return fmt.Errorf("maildir/sync: refresh: %w", rerr)
+			}
+		}
 		existing, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
 			return fmt.Errorf("maildir/sync: get messages: %w", err)
@@ -1125,10 +1130,9 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 				Keywords:     rec.Keywords,
 				GUID:         rec.GUID,
 			}
-			// The uidlist already says which UID this file has, and reusing it
-			// keeps a client's cache valid across a takeover (#1593). Only for
-			// a file the list knows: one delivered since gets the next UID.
-			if uid, known := u.UIDFor(folder.Name, rec.Filename); known && adopted {
+			// The list already says which uid this file has, and that answer
+			// wins: a second one takes the row from the record holding it (#1739).
+			if uid, known := u.UIDFor(folder.Name, rec.Filename); known {
 				m.UID = uid
 				if err := idx.AppendMessage(folder.ID, m); err != nil {
 					return fmt.Errorf("maildir/sync: append %s at its recorded uid %d: %w",

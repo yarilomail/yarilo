@@ -103,6 +103,12 @@ type StoredNameAdopter interface {
 // starts meaning "died": one value, so every driver sweeps alike (#1736).
 const StaleTemp = 24 * time.Hour
 
+// FolderRefresher re-reads a folder from disk. A sync that imports what its own
+// snapshot does not hold must decide on the folder, not on its snapshot (#1739).
+type FolderRefresher interface {
+	RefreshFolder(folderID uint64) error
+}
+
 // SizelessLister names the records carrying no virtual size, so the driver that
 // keeps the size elsewhere can fill them (#1728).
 type SizelessLister interface {
