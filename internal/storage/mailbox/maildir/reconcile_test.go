@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -297,5 +298,41 @@ func recAppend(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, fol
 	m.GUID = guid
 	if err := idx.AppendMessage(folder.ID, m); err != nil {
 		t.Fatalf("append uid %d: %v", m.UID, err)
+	}
+}
+
+// A body a save never named is swept once it is old enough; one still in flight
+// is left where it is (#1736).
+func TestOnlyAnOldTempIsSwept(t *testing.T) {
+	box := openTestUser(t, t.TempDir())
+	u := box.(*userMailbox)
+	tmp := filepath.Join(u.folderPath("INBOX"), "tmp")
+
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+		kept bool
+	}{
+		{name: "in flight", age: time.Minute, kept: true},
+		{name: "a save that died", age: 48 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(tmp, "1700000001.M1P1_1.host,S=4,W=4:2,"+tc.name)
+			if err := os.WriteFile(file, []byte("body"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			when := time.Now().Add(-tc.age)
+			if err := os.Chtimes(file, when, when); err != nil {
+				t.Fatal(err)
+			}
+			u.sweepStaleTemps("INBOX")
+			_, err := os.Stat(file)
+			switch {
+			case tc.kept && err != nil:
+				t.Errorf("a save in flight was swept: %v", err)
+			case !tc.kept && err == nil:
+				t.Error("a save that died is still in tmp/")
+			}
+		})
 	}
 }

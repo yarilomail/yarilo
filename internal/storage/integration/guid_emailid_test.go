@@ -87,6 +87,13 @@ func TestGUIDIsRealAndStable(t *testing.T) {
 			if movedGUID != guid1 {
 				t.Errorf("MOVE changed EMAILID: %x -> %x", guid1, movedGUID)
 			}
+			// A move leaves the body in the destination's tmp/ since #1736; the
+			// naming step publishes it, as it does for a save.
+			if namer, ok := mailbox.Driver(mb).(mailbox.UIDNamer); ok {
+				if _, aerr := namer.AssignUID("Archive", moved, 1); aerr != nil {
+					t.Fatalf("publish the moved message: %v", aerr)
+				}
+			}
 			archived, err := mb.Scan("Archive")
 			if err != nil {
 				t.Fatalf("scan Archive: %v", err)

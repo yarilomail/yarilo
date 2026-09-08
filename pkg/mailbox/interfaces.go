@@ -99,6 +99,10 @@ type StoredNameAdopter interface {
 	AdoptStoredNames(folderID uint64, keyOf func(name string, guid [16]byte) (uint32, bool)) error
 }
 
+// StaleTemp is when a body a save left behind stops meaning "in flight" and
+// starts meaning "died": one value, so every driver sweeps alike (#1736).
+const StaleTemp = 24 * time.Hour
+
 // SizelessLister names the records carrying no virtual size, so the driver that
 // keeps the size elsewhere can fill them (#1728).
 type SizelessLister interface {

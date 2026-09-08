@@ -580,10 +580,13 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 	}
 	err := u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
 		srcPath := filepath.Join(u.folderPath(srcFolder), "cur", filename)
-		dstDir := filepath.Join(u.folderPath(dstFolder), "cur")
+		// Into the destination's tmp/, not its cur/: the file is published by
+		// the naming step, under the hold that writes its row (#1736).
+		dstDir := filepath.Join(u.folderPath(dstFolder), "tmp")
+		curDir := filepath.Join(u.folderPath(dstFolder), "cur")
 		dstPath := filepath.Join(dstDir, newName)
 		override := outGUID != guidFromBase(newName)
-		if _, err := os.Lstat(dstPath); err == nil {
+		if _, err := os.Lstat(filepath.Join(curDir, newName)); err == nil {
 			// Base name taken: mint a fresh one and pin the GUID explicitly.
 			oldBase := maildirBase(filename)
 			trailer := filename[len(oldBase):] // ":2,<flags>"
@@ -966,6 +969,8 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			return st, err
 		}
 	}
+
+	u.sweepStaleTemps(folder.Name)
 
 	// The walk, holding nothing. A flag change renames only the part after
 	// ":2,", and everything here is keyed by the base name -- so the scan is

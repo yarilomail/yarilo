@@ -34,9 +34,8 @@ func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, er
 	}
 	guid, override := u.takeGUID(folder, filename)
 	if err := u.withMailboxLockSite(folder, lockSiteSave, func() error {
-		// The file enters cur/ here and leaves this hold already named: the
-		// reference takes the list lock before moving out of tmp/ for the same
-		// reason, so nobody else can assign the message a uid (#1736).
+		// The file enters cur/ here and leaves this hold already named, which is
+		// why the reference takes the list lock before moving out of tmp/ (#1736).
 		if err := u.publishFromTemp(folder, filename); err != nil {
 			return err
 		}
