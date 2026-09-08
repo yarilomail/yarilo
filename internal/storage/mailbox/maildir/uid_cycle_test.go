@@ -62,6 +62,9 @@ func TestTheListCarriesAnAppendBeforeAnyReconcile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID("INBOX", saved, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	m := &mailbox.MessageMeta{Size: 16, VSize: vsize, GUID: guid}
 	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
@@ -107,6 +110,9 @@ func TestAMoveIntoATakenNameIsRecordedUnderTheDestinationUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID("INBOX", src, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	// The same base name already in the destination: the collision path.
 	if err := os.WriteFile(filepath.Join(home, "Maildir", ".Archive", "cur", src), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -146,6 +152,9 @@ func TestTheWriterRefusesARecordWithNoUID(t *testing.T) {
 	saved, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID("INBOX", saved, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	namer, ok := box.(mailbox.UIDNamer)
 	if !ok {

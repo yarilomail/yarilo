@@ -386,6 +386,9 @@ func saveAndAssign(t *testing.T, box mailbox.UserMailbox, folder, body string, u
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
+	if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID(folder, name, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	named, err := box.(mailbox.UIDNamer).AssignUID(folder, name, uid)
 	if err != nil {
 		t.Fatalf("assign uid %d: %v", uid, err)

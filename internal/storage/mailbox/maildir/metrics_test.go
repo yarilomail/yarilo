@@ -34,6 +34,9 @@ func TestLockAcquisitionsAreCountedByCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := box.AssignUID("INBOX", saved, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	_ = saved
 	if err := box.Create("Work"); err != nil {
 		t.Fatal(err)
@@ -77,6 +80,9 @@ func TestNamingCostsNothingInsideACycleAndOneHoldOutside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := box.AssignUID("INBOX", saved, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	before := l.acquires.Load()
 	// Inside a hold of the same key, as AllocateAndAppendNamed runs it.
 	if err := func() error {
@@ -96,6 +102,9 @@ func TestNamingCostsNothingInsideACycleAndOneHoldOutside(t *testing.T) {
 	saved2, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", saved2, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	before = l.acquires.Load()
 	if _, err := box.AssignUID("INBOX", saved2, 2); err != nil {

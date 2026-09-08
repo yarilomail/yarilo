@@ -556,16 +556,12 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	if override {
 		u.rememberGUID(folder, finalName, effGUID)
 	}
-	if err := u.withMailboxLockSite(folder, lockSiteSave, func() error {
-		dstPath := filepath.Join(folderPath, "cur", finalName)
-		if err := os.Rename(tmpPath, dstPath); err != nil {
-			os.Remove(tmpPath)
-			return fmt.Errorf("maildir: rename to cur: %w", err)
-		}
-		u.folderCacheFor(folder).invalidateDir()
-		return nil
-	}); err != nil {
-		return "", 0, noGUID, err
+	// The body stays in tmp/, which nothing reads: a scan walks cur/ and new/.
+	// It reaches cur/ in AssignUID, under the same hold that gives it its uid
+	// and its list row, so a reconcile cannot meet a file no record names yet.
+	if err := os.Rename(tmpPath, filepath.Join(folderPath, "tmp", finalName)); err != nil {
+		os.Remove(tmpPath) //nolint:errcheck
+		return "", 0, noGUID, fmt.Errorf("maildir: name the temp: %w", err)
 	}
 	return finalName, sc.phys + sc.lfNoCR, effGUID, nil
 }

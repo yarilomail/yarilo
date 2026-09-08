@@ -2,6 +2,8 @@ package maildir
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 )
 
 // rememberGUID keeps an explicit GUID until the message has a uid to be
@@ -32,9 +34,33 @@ func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, er
 	}
 	guid, override := u.takeGUID(folder, filename)
 	if err := u.withMailboxLockSite(folder, lockSiteSave, func() error {
+		// The file enters cur/ here and leaves this hold already named: the
+		// reference takes the list lock before moving out of tmp/ for the same
+		// reason, so nobody else can assign the message a uid (#1736).
+		if err := u.publishFromTemp(folder, filename); err != nil {
+			return err
+		}
 		return u.appendUIDListLocked(folder, uid, filename, override, guid)
 	}); err != nil {
 		return "", err
 	}
 	return filename, nil
+}
+
+// publishFromTemp moves a saved body out of tmp/ into cur/. A message already
+// there is one a caller named twice, which is not an error to fail on.
+func (u *userMailbox) publishFromTemp(folder, filename string) error {
+	dir := u.folderPath(folder)
+	src := filepath.Join(dir, "tmp", filename)
+	if _, err := os.Lstat(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("maildir/assign: stat temp %q: %w", filename, err)
+	}
+	if err := os.Rename(src, filepath.Join(dir, "cur", filename)); err != nil {
+		return fmt.Errorf("maildir/assign: publish %q: %w", filename, err)
+	}
+	u.folderCacheFor(folder).invalidateDir()
+	return nil
 }

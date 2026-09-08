@@ -254,6 +254,9 @@ func TestReconcile_RestampsZeroGUIDBehindCompleteMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := box.AssignUID("INBOX", name, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	recAppend(t, box, idx, folder, name, &mailbox.MessageMeta{
 		UID: 1, Size: 5, VSize: 5,
 	})

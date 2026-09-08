@@ -132,6 +132,9 @@ func TestSave_Fetch_Remove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	if !strings.Contains(filename, ":2,S") {
 		t.Errorf("filename %q should contain ':2,S'", filename)
 	}
@@ -371,6 +374,9 @@ func TestSave_VSize_PureCRLF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	phys, virt, hasPhys, hasVirt := parseSizeInfo(filename)
 	if !hasPhys || !hasVirt {
 		t.Fatalf("filename missing size annotations: %q", filename)
@@ -394,6 +400,9 @@ func TestSave_VSize_PureLF(t *testing.T) {
 	filename, vsize, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	phys, virt, _, _ := parseSizeInfo(filename)
 	if int(phys) != len(body) {
@@ -421,6 +430,9 @@ func TestSave_VSize_MixedLineEndings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	phys, virt, _, _ := parseSizeInfo(filename)
 	if virt != phys+1 {
 		t.Errorf("virt=%d, phys=%d, want virt=phys+1 (one bare LF)", virt, phys)
@@ -436,6 +448,9 @@ func TestList_PopulatesSizesFromFilename(t *testing.T) {
 	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	phys, virt, _, _ := parseSizeInfo(filename)
 
@@ -582,8 +597,12 @@ func TestList_ReadDirCacheHitSkipsReadDir(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, nil, [16]byte{}); err != nil {
+	saved, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, nil, [16]byte{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", saved, 1); aerr != nil {
+		t.Fatal(aerr)
 	}
 
 	// First List populates the cache.
@@ -614,8 +633,12 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("msg1"), 1, 1, nil, [16]byte{}); err != nil {
+	first, _, _, err := box.Save("INBOX", strings.NewReader("msg1"), 1, 1, nil, [16]byte{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", first, 1); aerr != nil {
+		t.Fatal(aerr)
 	}
 	if _, err := box.List("INBOX"); err != nil {
 		t.Fatal(err)
@@ -626,8 +649,12 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 	}
 
 	// Save a second message — must invalidate the cache.
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("msg2"), 2, 1, nil, [16]byte{}); err != nil {
+	second, _, _, err := box.Save("INBOX", strings.NewReader("msg2"), 2, 1, nil, [16]byte{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", second, 2); aerr != nil {
+		t.Fatal(aerr)
 	}
 	if c.entries != nil {
 		t.Error("readdir cache not invalidated after Save")
@@ -650,6 +677,9 @@ func TestList_ReadDirCacheInvalidatedAfterRemove(t *testing.T) {
 	fn, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", fn, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	if _, err := box.List("INBOX"); err != nil {
 		t.Fatal(err)
@@ -712,6 +742,9 @@ func TestSyncTokenChangesOnDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := box.AssignUID("INBOX", name, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 	// Backdate again to a distinct settled time so the change is visible purely
 	// through the mtime component, not the dirty nonce.
 	ageFolder(t, box, "INBOX", old.Add(time.Minute))
@@ -761,6 +794,9 @@ func saveAndRecord(t *testing.T, box *userMailbox, folder, body string, uid uint
 	name, _, _, err := box.Save(folder, strings.NewReader(body), 0, int64(len(body)), flags, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
+	}
+	if _, aerr := box.AssignUID(folder, name, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	if _, err := box.AssignUID(folder, name, uid); err != nil {
 		t.Fatalf("assign uid %d: %v", uid, err)

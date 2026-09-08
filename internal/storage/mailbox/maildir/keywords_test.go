@@ -103,6 +103,9 @@ func TestFlagsAndKeywordsReachTheFilename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID("INBOX", name, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
+	}
 
 	writer, ok := mailbox.Driver(box).(mailbox.FlagWriter)
 	if !ok {
@@ -181,6 +184,9 @@ func TestKeywordLettersAreFolderLocalAndNeverRenumbered(t *testing.T) {
 		name, _, _, err := box.Save(folder, strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, [16]byte{})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID(folder, name, 1); aerr != nil {
+			t.Fatalf("assign uid: %v", aerr)
 		}
 		return name
 	}
@@ -261,6 +267,9 @@ func TestANewKeywordTakesTheFirstFreeLetter(t *testing.T) {
 	name, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID("INBOX", name, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	writer := mailbox.Driver(box).(mailbox.FlagWriter)
 	got, err := writer.WriteFlags("INBOX", name, nil, []string{"$New"})

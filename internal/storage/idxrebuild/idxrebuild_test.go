@@ -1,6 +1,7 @@
 package idxrebuild_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,14 +40,16 @@ func TestRebuildFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
+	keep, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	publish(t, box, "INBOX", keep, 1)
 	gone, _, goneGUID, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	publish(t, box, "INBOX", gone, 2)
 	// The guid the save minted is what both sides carry for one message.
 	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 1, Size: 2, VSize: 2, GUID: keepGUID}); err != nil {
 		t.Fatal(err)
@@ -58,9 +61,11 @@ func TestRebuildFolder(t *testing.T) {
 	if err := box.Remove("INBOX", gone); err != nil {
 		t.Fatal(err)
 	}
-	fresh, _, _, err := box.Save("INBOX", strings.NewReader("c\n"), 0, 2, nil, [16]byte{})
-	if err != nil {
-		t.Fatal(err)
+	// Straight into cur/, as another MDA writes it: a file our own save would
+	// have named, and the index never saw.
+	fresh := "1700000009.M9P9_9.host,S=2,W=2:2,"
+	if werr := os.WriteFile(filepath.Join(home(root, user), "Maildir", "cur", fresh), []byte("c\n"), 0o600); werr != nil {
+		t.Fatal(werr)
 	}
 
 	folder, _ = idx.OpenFolder("INBOX", 1)
@@ -114,10 +119,12 @@ func TestExpungeMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	publish(t, box, "INBOX", keep, 1)
 	gone, _, goneGUID, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	publish(t, box, "INBOX", gone, 2)
 	guids := map[uint32][16]byte{1: keepGUID, 2: goneGUID}
 	for uid := range map[uint32]string{1: keep, 2: gone} {
 		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
@@ -129,9 +136,10 @@ func TestExpungeMissing(t *testing.T) {
 	if err := box.Remove("INBOX", gone); err != nil {
 		t.Fatal(err)
 	}
-	// An orphan appears on disk that the index never saw — must be left alone.
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("c\n"), 0, 2, nil, [16]byte{}); err != nil {
-		t.Fatal(err)
+	// An orphan appears on disk that the index never saw -- must be left alone.
+	orphan := "1700000009.M8P8_8.host,S=2,W=2:2,"
+	if werr := os.WriteFile(filepath.Join(home(root, user), "Maildir", "cur", orphan), []byte("c\n"), 0o600); werr != nil {
+		t.Fatal(werr)
 	}
 
 	folder, _ = idx.OpenFolder("INBOX", 1)
@@ -207,5 +215,18 @@ func TestARebuildRefilesAFileWhoseRecordWasExpunged(t *testing.T) {
 	if after[0].UID == before[0].UID {
 		t.Errorf("the message came back with its old UID %d; a re-filed orphan gets a "+
 			"fresh one", after[0].UID)
+	}
+}
+
+// publish moves a saved body out of tmp/ into the folder, which since #1736 is
+// what the naming step does: a save alone leaves it where no scan looks.
+func publish(t *testing.T, box mailbox.UserMailbox, folder, name string, uid uint32) {
+	t.Helper()
+	namer, ok := mailbox.Driver(box).(mailbox.UIDNamer)
+	if !ok {
+		return
+	}
+	if _, err := namer.AssignUID(folder, name, uid); err != nil {
+		t.Fatalf("publish %q: %v", name, err)
 	}
 }
