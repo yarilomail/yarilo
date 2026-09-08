@@ -634,6 +634,10 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 	if l.torn {
 		u.reportTornUIDList(folder, path, l)
 	}
+	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
+	if listDebug() {
+		beforeMod, beforeSize = u.listStat(folder)
+	}
 	base := maildirBase(filename)
 	rec := uidRecord{uid: uid, base: base, guid: guid, hasGUID: guidOverride}
 	if !nameCarriesSizes(base) {
@@ -658,6 +662,7 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 		return err
 	}
 
+	u.debugListWrite("assign", folder, []uint32{uid}, base, beforeRows, beforeMod, beforeSize)
 	if fi, statErr := os.Stat(path); statErr == nil {
 		u.folderCacheFor(folder).addUID(base, uid, guid, guidOverride, fi.ModTime(), fi.Size())
 	}
@@ -1257,6 +1262,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	}
 
 	if m, ok := u.folderCacheFor(folder).snapshotUIDs(fi.ModTime(), fi.Size()); ok {
+		u.debugListRead(folder, "cache", len(m), fi.ModTime().UnixNano(), fi.Size())
 		return m, nil
 	}
 
@@ -1315,6 +1321,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	}
 
 	u.folderCacheFor(folder).storeUIDs(m, guids, fi.ModTime(), fi.Size())
+	u.debugListRead(folder, "disk", len(m), fi.ModTime().UnixNano(), fi.Size())
 	return m, nil
 }
 

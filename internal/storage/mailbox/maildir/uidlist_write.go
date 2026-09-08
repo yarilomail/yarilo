@@ -2,6 +2,7 @@ package maildir
 
 import (
 	"bufio"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -43,6 +45,7 @@ type uidList struct {
 // readUIDListFile parses the whole file. A line that parses adds a record; the
 // first that does not ends the list and marks it torn.
 func readUIDListFile(path string) (*uidList, error) {
+	listParses.Add(1)
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -298,6 +301,10 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error
 	if l.torn {
 		u.reportTornUIDList(folder, path, l)
 	}
+	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
+	if listDebug() {
+		beforeMod, beforeSize = u.listStat(folder)
+	}
 	at := make(map[string]int, len(l.records))
 	for i, rec := range l.records {
 		at[rec.base] = i
@@ -321,6 +328,11 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) error
 	if err := u.writeUIDList(folder, l); err != nil {
 		return err
 	}
+	uids := make([]uint32, 0, len(entries))
+	for _, e := range entries {
+		uids = append(uids, e.uid)
+	}
+	u.debugListWrite("reconcile-import", folder, uids, "", beforeRows, beforeMod, beforeSize)
 	u.folderCacheFor(folder).invalidateUIDs()
 	return nil
 }
@@ -366,6 +378,10 @@ func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (i
 	if l.torn {
 		u.reportTornUIDList(folder, path, l)
 	}
+	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
+	if listDebug() {
+		beforeMod, beforeSize = u.listStat(folder)
+	}
 	listed := make(map[string]int, len(l.records))
 	for i := range l.records {
 		listed[l.records[i].base] = i
@@ -402,6 +418,11 @@ func (u *userMailbox) placeUIDsLocked(folder string, place map[uint32]string) (i
 	if err := u.writeUIDList(folder, l); err != nil {
 		return 0, taken, err
 	}
+	placedUIDs := make([]uint32, 0, len(place))
+	for uid := range place {
+		placedUIDs = append(placedUIDs, uid)
+	}
+	u.debugListWrite("migrate-place", folder, placedUIDs, "", beforeRows, beforeMod, beforeSize)
 	return placed, taken, nil
 }
 
@@ -414,3 +435,63 @@ func SetTestPlaceLimit(n int) func() {
 	testPlaceLimit = n
 	return func() { testPlaceLimit = 0 }
 }
+
+// listDebug gates every reading the rows need: the "before" side once cost a
+// second parse of the whole list on every save (#1739).
+func listDebug() bool {
+	return slog.Default().Enabled(context.Background(), slog.LevelDebug)
+}
+
+// listStat is the file's identity for a debug row, without reading it.
+func (u *userMailbox) listStat(folder string) (mtime, size int64) {
+	fi, err := os.Stat(u.uidListPath(folder))
+	if err != nil {
+		return 0, 0
+	}
+	return fi.ModTime().UnixNano(), fi.Size()
+}
+
+// listRows counts the file, for the "after" side alone: the "before" side is
+// the record set the writer already holds.
+func (u *userMailbox) listRows(folder string) int {
+	l, err := readUIDListFile(u.uidListPath(folder))
+	if err != nil {
+		return -1
+	}
+	return len(l.records)
+}
+
+// debugListWrite names who wrote what, and what the file looked like on both
+// sides of the write. DEBUG, so it costs nothing until an operator asks.
+func (u *userMailbox) debugListWrite(site, folder string, uids []uint32, base string, beforeRows int, beforeMod, beforeSize int64) {
+	if !listDebug() {
+		return
+	}
+	rows := u.listRows(folder)
+	mod, size := u.listStat(folder)
+	slog.Debug("maildir: uidlist written",
+		"site", site, "user", u.username, "folder", folder, "owner", u.owner,
+		"uids", uids, "base", base,
+		"rows_before", beforeRows, "rows_after", rows,
+		"mtime_before", beforeMod, "mtime_after", mod,
+		"size_before", beforeSize, "size_after", size)
+}
+
+// debugListRead says whether a reader took the list off disk or off the cached
+// snapshot the mtime and size validate, and how many rows it got (#1739).
+func (u *userMailbox) debugListRead(folder, from string, rows int, mod, size int64) {
+	if !listDebug() {
+		return
+	}
+	slog.Debug("maildir: uidlist read",
+		"from", from, "user", u.username, "folder", folder, "owner", u.owner,
+		"rows", rows, "mtime", mod, "size", size)
+}
+
+// listParses counts the times the file was parsed, so "one parse per save" is a
+// number a row asserts rather than a claim (#1739).
+var listParses atomic.Int64
+
+// ListParses returns the count, ResetListParses zeroes it. Test seams.
+func ListParses() int  { return int(listParses.Load()) }
+func ResetListParses() { listParses.Store(0) }
