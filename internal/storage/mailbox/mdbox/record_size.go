@@ -8,6 +8,7 @@ func (u *userMailbox) RecordSize(folder string, m *mailbox.MessageMeta) (uint32,
 	if m.Size != 0 && m.VSize != 0 {
 		return m.Size, m.VSize, nil
 	}
+	storageSizeReads.Add(1)
 	rc, err := u.OpenRecord(folder, m)
 	if err != nil {
 		return m.Size, m.VSize, err

@@ -1135,6 +1135,9 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 		rec.Ext[extNameMdbox] = encodeMdboxRec(m.MapUID, m.SaveDate)
 		fs.ensureMdboxExtLocked()
 	}
+	if err := fs.ensureVsizeExtLocked(); err != nil {
+		slog.Warn("fileindex: vsize extension not declared", "folder", fs.folder, "err", err)
+	}
 	fs.file.Records = append(fs.file.Records, rec)
 	fs.file.Header.MessagesCount++
 	if rec.Flags&mailindex.FlagSeen != 0 {

@@ -129,6 +129,18 @@ func decodeHdrVsize(b []byte) (hdrVsize, error) {
 // MessageMeta.VSize; summed by the hdr-vsize recalc.
 const vsizeRecSize = 4
 
+// ensureVsizeExtLocked declares the extension in a folder written before it
+// existed: without it a stamped size never reaches disk (#1752). Holds fs.mu.
+func (fs *folderState) ensureVsizeExtLocked() error {
+	if findExt(fs.file.Extensions, extNameVsize) != nil {
+		return nil
+	}
+	if err := fs.file.AddRecordExtension(extNameVsize, nil, vsizeRecSize, 4, 0); err != nil {
+		return fmt.Errorf("fileindex: add vsize extension: %w", err)
+	}
+	return nil
+}
+
 func encodeVsizeRec(v uint32) []byte {
 	out := make([]byte, vsizeRecSize)
 	binary.LittleEndian.PutUint32(out, v)

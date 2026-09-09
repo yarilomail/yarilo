@@ -1,12 +1,17 @@
 package file
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import (
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
 
 // StampSizes writes a virtual size into records carrying none and refreshes the
 // quota aggregate: a recovered folder counted as empty otherwise (#1728).
 func (u *userIndex) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, error) {
 	stamped := 0
 	err := u.withFolder(folderID, func(fs *folderState) error {
+		if err := fs.ensureVsizeExtLocked(); err != nil {
+			return err
+		}
 		for _, rec := range fs.file.Records {
 			vsize, known := vsizes[rec.UID]
 			if !known || vsize == 0 {
