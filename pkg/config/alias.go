@@ -522,6 +522,34 @@ func warnRetiredKeys(k *koanf.Koanf, keys []retiredKey) {
 	}
 }
 
+// refuseRemovedKeys refuses a config naming a setting whose behaviour is gone:
+// started quietly it would describe a deployment this build cannot serve.
+func refuseRemovedKeys(k *koanf.Koanf, keys []retiredKey) error {
+	for _, r := range keys {
+		if !k.Exists(r.key) {
+			continue
+		}
+		return fmt.Errorf("config: %q was removed and this build has no behaviour for it: %s",
+			r.key, r.note)
+	}
+	return nil
+}
+
+// removedKeys is that list, on the same terms as the retired one: a key lands
+// here only once the chart has stopped rendering it.
+func removedKeys() []retiredKey {
+	return []retiredKey{
+		{
+			key:  "director_service.lmtp_listen",
+			note: "the director no longer serves LMTP; point the MTA at the LMTP login service (#1756)",
+		},
+		{
+			key:  "director_service.lmtp_backend_port",
+			note: "the director no longer dials backends for LMTP (#1756)",
+		},
+	}
+}
+
 // retiredKeys is the whole list. It is short by construction: a key only lands
 // here when the setting it named is gone, and it leaves once the beta window
 // that promised the warning has passed.

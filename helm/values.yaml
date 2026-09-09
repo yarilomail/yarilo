@@ -379,8 +379,7 @@ components:
     ## Internal director protocol (ring management, LOOKUP between directors).
     directorPort: 9102
 
-    ## Client-facing listeners.
-    ## IMAP/POP3/Submission are handled by dedicated login pods; director only proxies LMTP.
+    ## Client-facing listeners are the login pods'; the director serves the ring.
 
     ## mTLS for internal connections (director ↔ auth, director ↔ backend).
     ## Ring mTLS (#753). Ring peers are dialled by EPHEMERAL pod IP, so the
@@ -1236,7 +1235,7 @@ components:
         cpu: 500m
         memory: 256Mi
 
-  ## LMTP backend — director proxies 24→lmtp:24.
+  ## LMTP backend — receives preamble-wrapped connections from lmtp-login.
   lmtp:
     startupProbe:
       enabled: true
