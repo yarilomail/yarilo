@@ -59,8 +59,7 @@ func assertDeletionUsesSnapshotUIDs(t *testing.T, locker locks.Locker) {
 	box := &mockMailbox{}
 	s := &session{
 		srv:      &Server{opts: Options{Locker: locker}},
-		idx:      idx,
-		box:      box,
+		box:      mailbox.Open(box, idx),
 		userInfo: &mailbox.UserInfo{Username: "u@example.org"},
 		folder:   &mailbox.Folder{ID: 1, Name: "INBOX"},
 		msgs: []*mailbox.MessageMeta{

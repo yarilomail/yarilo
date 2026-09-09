@@ -41,7 +41,7 @@ func (f *fakeMarkIdx) ClearFolderCorrupt(uint64) error { return nil }
 // the folder FSCKD at most once per session, not once per message.
 func TestFetchINBOXGatesMarking(t *testing.T) {
 	idx := &fakeMarkIdx{}
-	s := &session{box: fakeCorruptBox{}, idx: idx}
+	s := &session{box: mailbox.Open(fakeCorruptBox{}, idx)}
 
 	for i := 0; i < 5; i++ {
 		_, err := s.fetchINBOX(&mailbox.MessageMeta{})

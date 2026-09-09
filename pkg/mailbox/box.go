@@ -1,17 +1,30 @@
 package mailbox
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/yarilomail/yarilo/pkg/locks"
+)
 
 // Box is one account's mail, both halves together: every rule needing the store
 // and the index lives here, so a consumer asks for a message (#1715).
 type Box struct {
-	store UserMailbox
-	index UserIndex
+	store  UserMailbox
+	index  UserIndex
+	locker locks.Locker
+	owner  string
 }
 
 // Open pairs the two halves of one account.
-func Open(store UserMailbox, index UserIndex) *Box {
-	return &Box{store: store, index: index}
+func Open(store UserMailbox, index UserIndex, opts ...BoxOption) *Box {
+	b := &Box{store: store, index: index}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
 }
 
 // Store is the half that holds bodies. Consumers still reaching for it are the
@@ -45,4 +58,66 @@ func (b *Box) RecordDelivered(f *Folder, folder, saved string, m *MessageMeta) e
 // so a sum over the folder is taken on mail and not on zeros (#1728).
 func (b *Box) FillSizes(f *Folder) (int, error) {
 	return FillSizelessRecords(b.index, b.store, f)
+}
+
+// WithLocker gives the box the cross-process lock client, so a rule needing one
+// hold over many messages has one to take.
+func WithLocker(l locks.Locker, owner string) BoxOption {
+	return func(b *Box) { b.locker, b.owner = l, owner }
+}
+
+// BoxOption tunes a box at Open time.
+type BoxOption func(*Box)
+
+// ExpungeMarked removes messages and their records under one hold: taking the
+// key per message lets another writer in between two of its own removals. One
+// failure is not the batch's, which is what a POP3 UPDATE promises (#1715).
+func (b *Box) ExpungeMarked(f *Folder, folder string, msgs []*MessageMeta) (removed []uint32, failed int) {
+	if b.locker == nil {
+		return b.expungeEach(f, folder, msgs)
+	}
+	key := locks.MailboxKey(b.store.Username(), folder)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "pop3-batch"), 35*time.Second)
+	defer cancel()
+	lk, err := locks.Acquire(ctx, b.locker, key, b.owner, 30*time.Second)
+	if err != nil {
+		slog.Error("mailbox/expunge: the batch could not take the folder; falling back to one hold per message",
+			"user", b.store.Username(), "folder", folder, "err", err)
+		return b.expungeEach(f, folder, msgs)
+	}
+	defer func() { _ = b.locker.Unlock(ctx, lk.ID) }()
+	return b.expungeEach(f, folder, msgs)
+}
+
+// expungeEach is the loop itself: under an outer hold the driver's own lock is
+// re-entrant, so this is one hold or many depending on the caller above it.
+func (b *Box) expungeEach(f *Folder, folder string, msgs []*MessageMeta) (removed []uint32, failed int) {
+	for _, m := range msgs {
+		if err := RemoveMessage(b.store, folder, m); err != nil {
+			slog.Error("mailbox/expunge: remove", "user", b.store.Username(),
+				"folder", folder, "uid", m.UID, "err", err)
+			failed++
+			continue
+		}
+		if err := b.index.ExpungeMessage(f.ID, m.UID); err != nil {
+			slog.Error("mailbox/expunge: record", "user", b.store.Username(),
+				"folder", folder, "uid", m.UID, "err", err)
+		}
+		removed = append(removed, m.UID)
+	}
+	return removed, failed
+}
+
+// Close releases both halves. A half that will not close is logged and the
+// other still closes: a session ending must not leave one handle open.
+func (b *Box) Close() {
+	if err := b.store.Close(); err != nil {
+		slog.Warn("mailbox: closing the store", "user", b.store.Username(), "err", err)
+	}
+	if b.index == nil {
+		return
+	}
+	if err := b.index.Close(); err != nil {
+		slog.Warn("mailbox: closing the index", "user", b.store.Username(), "err", err)
+	}
 }

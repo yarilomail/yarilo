@@ -70,8 +70,7 @@ type session struct {
 	limitIP         string // IP used for ConnLimit.Acquire; released in releaseLock
 	pendingUser     string // temporary storage of USER arg before PASS arrives
 	userInfo        *mailbox.UserInfo
-	box             mailbox.UserMailbox
-	idx             mailbox.UserIndex
+	box             *mailbox.Box
 	folder          *mailbox.Folder
 	msgs            []*mailbox.MessageMeta
 	deleted         []bool
@@ -617,8 +616,7 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	}
 
 	s.userInfo = userInfo
-	s.box = box
-	s.idx = idx
+	s.box = mailbox.Open(box, idx, mailbox.WithLocker(s.srv.opts.Locker, locks.Owner(userInfo.Username, userInfo.LockID())))
 
 	if err := s.loadMailbox(); err != nil {
 		s.writeErr("internal error")
@@ -654,7 +652,7 @@ func (s *session) authenticate(authzid, username, password string) (*protocol.Au
 }
 
 func (s *session) loadMailbox() error {
-	folder, err := s.idx.OpenFolder("INBOX", uint32(time.Now().Unix()))
+	folder, err := s.box.Index().OpenFolder("INBOX", uint32(time.Now().Unix()))
 	if err != nil {
 		slog.Error("pop3: open folder", "user", s.userInfo.Username, "err", err)
 		return err
@@ -662,15 +660,15 @@ func (s *session) loadMailbox() error {
 	// heal a corrupt-flagged dbox folder at login so a POP3-only mailbox
 	// does not stay broken waiting for an IMAP SELECT
 	if folder.Fsckd {
-		if rb, ok := mailbox.Driver(s.box).(mailbox.ReactiveHealer); ok {
+		if rb, ok := mailbox.Driver(s.box.Store()).(mailbox.ReactiveHealer); ok {
 			// no FTS client here: expunged UIDs leave FTS ghost documents
 			// until the next rescan. Heal runs at most once per session
 			// (at login), so no retry bound is needed.
-			if expunged, herr := rb.HealCorruptFolder(s.idx, folder); herr != nil {
+			if expunged, herr := rb.HealCorruptFolder(s.box.Index(), folder); herr != nil {
 				slog.Warn("pop3: dbox reactive heal failed", "user", s.userInfo.Username, "err", herr)
 			} else if len(expunged) > 0 {
 				slog.Info("pop3: dbox reactive heal", "user", s.userInfo.Username, "expunged", len(expunged))
-				if refreshed, rerr := s.idx.OpenFolder("INBOX", 0); rerr == nil {
+				if refreshed, rerr := s.box.Index().OpenFolder("INBOX", 0); rerr == nil {
 					folder = refreshed
 				}
 			}
@@ -680,15 +678,15 @@ func (s *session) loadMailbox() error {
 	// address UIDs taken from it, never positions in a fresh index, so a
 	// snapshot one delivery behind narrows the session's view and cannot
 	// misdirect a deletion (#1249).
-	msgs, err := mailbox.ReadMessages(s.idx, folder.ID, mailbox.SeqSet{})
+	msgs, err := mailbox.ReadMessages(s.box.Index(), folder.ID, mailbox.SeqSet{})
 	if err != nil {
 		slog.Error("pop3: get messages", "user", s.userInfo.Username, "err", err)
 		return err
 	}
-	mailbox.FillSizes(s.box, folder.Name, msgs)
+	mailbox.FillSizes(s.box.Store(), folder.Name, msgs)
 	var savedUIDLs map[uint32]string
 	if s.srv.opts.SaveUIDL {
-		if saved, err := readPOP3UIDLs(s.idx, folder.ID); err != nil {
+		if saved, err := readPOP3UIDLs(s.box.Index(), folder.ID); err != nil {
 			slog.Warn("pop3: load saved uidls", "user", s.userInfo.Username, "err", err)
 		} else {
 			savedUIDLs = saved
@@ -746,7 +744,7 @@ func (s *session) readXUIDL(m *mailbox.MessageMeta) string {
 // storedName is what the driver calls this message on disk. %f and %m are the
 // two variables that read it, and the record no longer carries one (#1700).
 func (s *session) storedName(m *mailbox.MessageMeta) string {
-	name, err := mailbox.MessagePath(s.box, "INBOX", m)
+	name, err := mailbox.MessagePath(s.box.Store(), "INBOX", m)
 	if err != nil {
 		return ""
 	}
@@ -913,10 +911,10 @@ func (s *session) cmdList(arg string) {
 // fetchINBOX reads a message body and flags the folder for a reactive heal if
 // the read tripped over corrupt sdbox storage (missing/truncated/bad file).
 func (s *session) fetchINBOX(m *mailbox.MessageMeta) (io.ReadCloser, error) {
-	rc, err := mailbox.OpenMessage(s.box, "INBOX", m)
+	rc, err := mailbox.OpenMessage(s.box.Store(), "INBOX", m)
 	// flag once per session: one mark heals every missing record on the
 	// next open, so a RETR loop over a corrupt mailbox pays no per-message cost
-	if err != nil && !s.markedCorrupt && mailbox.MarkCorruptOnFetchErr(s.box, s.idx, "INBOX", err) {
+	if err != nil && !s.markedCorrupt && mailbox.MarkCorruptOnFetchErr(s.box.Store(), s.box.Index(), "INBOX", err) {
 		s.markedCorrupt = true
 	}
 	return rc, err
@@ -969,7 +967,7 @@ func (s *session) cmdRset() {
 			// the whole session old. Clear the one flag rather than declare the
 			// set, or every change another session made meanwhile is dropped
 			// (#1250).
-			if err := s.idx.RemoveFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
+			if err := s.box.Index().RemoveFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
 				slog.Error("pop3: rset remove seen", "uid", m.UID, "err", err)
 			} else {
 				m.Flags = removeFlag(m.Flags, `\Seen`)
@@ -1047,7 +1045,7 @@ func (s *session) cmdQuit() {
 		for i, seen := range s.seenMsgs {
 			if seen && !s.deleted[i] {
 				m := s.msgs[i]
-				if err := s.idx.AddFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
+				if err := s.box.Index().AddFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
 					slog.Error("pop3: set seen", "uid", m.UID, "err", err)
 				} else {
 					m.Flags = appendFlag(m.Flags, `\Seen`)
@@ -1064,7 +1062,7 @@ func (s *session) cmdQuit() {
 				uidlMap[m.UID] = s.uidls[i]
 			}
 		}
-		if err := s.idx.SavePOP3UIDLs(s.folder.ID, uidlMap); err != nil {
+		if err := s.box.Index().SavePOP3UIDLs(s.folder.ID, uidlMap); err != nil {
 			slog.Warn("pop3: save uidls", "user", s.userInfo.Username, "err", err)
 		}
 	}
@@ -1080,7 +1078,7 @@ func (s *session) cmdQuit() {
 				continue
 			}
 			m := s.msgs[i]
-			if err := s.idx.AddFlags(s.folder.ID, m.UID, []string{deletedFlag}, nil); err != nil {
+			if err := s.box.Index().AddFlags(s.folder.ID, m.UID, []string{deletedFlag}, nil); err != nil {
 				slog.Error("pop3: flag deleted", "uid", m.UID, "err", err)
 				errCount++
 			} else {
@@ -1114,54 +1112,23 @@ func (s *session) cmdQuit() {
 }
 
 func (s *session) expungeDeleted() int {
-	if s.srv.opts.Locker != nil && s.userInfo != nil {
-		var errCount int
-		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
-		owner := locks.Owner(s.userInfo.Username, s.userInfo.LockID())
-		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "pop3-batch"), 35*time.Second)
-		defer cancel()
-		lk, err := locks.Acquire(ctx, s.srv.opts.Locker, key, owner, 30*time.Second)
-		if err != nil {
-			slog.Error("pop3: outer lock failed; falling back to per-message", "err", err)
-			return s.expungeDeletedPerMessage()
-		}
-		defer func() { _ = s.srv.opts.Locker.Unlock(ctx, lk.ID) }()
-		// withMailboxLock sees HoldsResource and skips re-acquiring:
-		// the whole batch runs under one X lock
-		for i, m := range s.msgs {
-			if !s.deleted[i] {
-				continue
-			}
-			if rerr := mailbox.RemoveMessage(s.box, "INBOX", m); rerr != nil {
-				slog.Error("pop3: remove", "uid", m.UID, "err", rerr)
-				errCount++
-				continue
-			}
-			s.idx.ExpungeMessage(s.folder.ID, m.UID) //nolint:errcheck
-			// best-effort EXPUNGED event so IMAP IDLE on sibling pods wakes up
-			_ = s.srv.opts.Locker.Emit(ctx, key, locks.EventExpunged, strconv.FormatUint(uint64(m.UID), 10))
-		}
-		return errCount
-	}
-	return s.expungeDeletedPerMessage()
-}
-
-// expungeDeletedPerMessage is used when no Locker is wired (single-process
-// dev, tests); each storage call takes its own X lock.
-func (s *session) expungeDeletedPerMessage() int {
-	var errCount int
+	marked := make([]*mailbox.MessageMeta, 0, len(s.msgs))
 	for i, m := range s.msgs {
-		if !s.deleted[i] {
-			continue
-		}
-		if err := mailbox.RemoveMessage(s.box, "INBOX", m); err != nil {
-			slog.Error("pop3: remove", "uid", m.UID, "err", err)
-			errCount++
-		} else {
-			s.idx.ExpungeMessage(s.folder.ID, m.UID) //nolint:errcheck
+		if s.deleted[i] {
+			marked = append(marked, m)
 		}
 	}
-	return errCount
+	removed, failed := s.box.ExpungeMarked(s.folder, "INBOX", marked)
+	if s.srv.opts.Locker != nil && s.userInfo != nil {
+		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, uid := range removed {
+			// Best-effort: an IDLE session on a sibling pod wakes on this.
+			_ = s.srv.opts.Locker.Emit(ctx, key, locks.EventExpunged, strconv.FormatUint(uint64(uid), 10))
+		}
+	}
+	return failed
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -1216,12 +1183,8 @@ func (s *session) releaseLock() {
 		s.limitIP = ""
 	}
 	if s.box != nil {
-		s.box.Close() //nolint:errcheck
+		s.box.Close()
 		s.box = nil
-	}
-	if s.idx != nil {
-		s.idx.Close() //nolint:errcheck
-		s.idx = nil
 	}
 }
 
