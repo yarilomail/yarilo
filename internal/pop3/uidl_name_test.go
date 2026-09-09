@@ -53,7 +53,7 @@ func TestTheUIDLNameVariablesReadTheNameOnDisk(t *testing.T) {
 			if err != nil || want == "" {
 				t.Fatalf("the driver cannot name the message: %q %v", want, err)
 			}
-			s := &session{box: box, srv: &Server{opts: Options{UIDLFormat: "%f"}}}
+			s := &session{box: mailbox.Open(box, nil), srv: &Server{opts: Options{UIDLFormat: "%f"}}}
 			if got := s.formatUIDL(m); got != want {
 				t.Errorf("%%f = %q, want %q", got, want)
 			}

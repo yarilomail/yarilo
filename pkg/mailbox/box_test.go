@@ -1,9 +1,13 @@
 package mailbox_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/yarilomail/yarilo/pkg/locks"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -124,5 +128,143 @@ func TestFillSizesGivesRecordsTheSizeStorageHolds(t *testing.T) {
 	}
 	if got := mailbox.RFC822SizeOf(box.Store(), "INBOX", msgs[0]); got != uint32(len(body)) {
 		t.Errorf("the record answers size %d, the body is %d", got, len(body))
+	}
+}
+
+// A batch takes the folder once, not once per message: the count is the number
+// of round trips the service sees for one POP3 UPDATE (#1715).
+func TestExpungeMarkedTakesTheFolderOnce(t *testing.T) {
+	box, f := openBox(t, "u4@example.com")
+	lk := &countingLocker{held: map[string]locks.HoldMode{}}
+	batched := mailbox.Open(box.Store(), box.Index(), mailbox.WithLocker(lk, "test/0/u4@example.com/s1"))
+
+	msgs := make([]*mailbox.MessageMeta, 0, 3)
+	for i := 0; i < 3; i++ {
+		body := "From: a@b\r\nSubject: m\r\n\r\nbody\r\n"
+		uid, err := box.Index().AllocateUID(f.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		m := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+		if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
+			t.Fatal(err)
+		}
+		msgs = append(msgs, m)
+	}
+
+	lk.locks = 0
+	removed, failed := batched.ExpungeMarked(f, "INBOX", msgs)
+	if failed != 0 || len(removed) != 3 {
+		t.Fatalf("the batch removed %v and failed %d, want three removed", removed, failed)
+	}
+	if lk.locks != 1 {
+		t.Errorf("the batch took the folder %d times for 3 messages, want 1", lk.locks)
+	}
+	left, err := box.Index().GetMessages(f.ID, mailbox.SeqSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Errorf("the folder still holds %d records after the batch", len(left))
+	}
+}
+
+// Without a locker the batch still removes everything: a dev run and a test
+// have no lock service, and the promise is the messages, not the hold.
+func TestExpungeMarkedWorksWithNoLocker(t *testing.T) {
+	box, f := openBox(t, "u5@example.com")
+	const body = "From: a@b\r\nSubject: m\r\n\r\nbody\r\n"
+	uid, err := box.Index().AllocateUID(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	m := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
+		t.Fatal(err)
+	}
+	removed, failed := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m})
+	if failed != 0 || len(removed) != 1 {
+		t.Fatalf("removed %v, failed %d", removed, failed)
+	}
+}
+
+// countingLocker counts the times the folder key was taken.
+type countingLocker struct {
+	locks.Locker
+	locks int
+	held  map[string]locks.HoldMode
+}
+
+func (l *countingLocker) Lock(_ context.Context, resource, owner string, _ time.Duration) (locks.Lock, error) {
+	l.locks++
+	l.held[resource] = locks.HoldExclusive
+	return locks.Lock{ID: resource, Resource: resource, Owner: owner}, nil
+}
+
+func (l *countingLocker) Unlock(_ context.Context, id string) error {
+	delete(l.held, id)
+	return nil
+}
+
+func (l *countingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
+	mode, ok := l.held[resource]
+	return mode, ok
+}
+
+// A stop between the two steps leaves a file with no record, which the next
+// reconcile re-files, and never a record naming a file that is gone (#1690).
+func TestTheRecordGoesBeforeTheBody(t *testing.T) {
+	box, f := openBox(t, "u6@example.com")
+	const body = "From: a@b\r\nSubject: order\r\n\r\nbody\r\n"
+	uid, err := box.Index().AllocateUID(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	m := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
+		t.Fatal(err)
+	}
+	name, err := mailbox.MessagePath(box.Store(), "INBOX", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// What the folder holds at the moment between the two steps.
+	var recordsThen int
+	var bodyThen bool
+	disarm := mailbox.SetTestAfterRecordExpunged(func() {
+		msgs, gerr := box.Index().GetMessages(f.ID, mailbox.SeqSet{})
+		if gerr != nil {
+			t.Error(gerr)
+		}
+		recordsThen = len(msgs)
+		rc, ferr := box.Store().Fetch("INBOX", name, false)
+		if ferr == nil {
+			bodyThen = true
+			rc.Close() //nolint:errcheck
+		}
+	})
+	removed, failed := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m})
+	disarm()
+	if failed != 0 || len(removed) != 1 {
+		t.Fatalf("removed %v, failed %d", removed, failed)
+	}
+	if recordsThen != 0 {
+		t.Errorf("at the stop the folder still held %d records: the body went first", recordsThen)
+	}
+	if !bodyThen {
+		t.Error("at the stop the body was already gone: the body went first")
 	}
 }
