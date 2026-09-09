@@ -22,30 +22,8 @@ import (
 // "lmtp: uid committed" breadcrumbs below).
 var deliverCallSeq atomic.Uint64
 
-// deliverOne saves a single message into the recipient's folder. The
-// caller opens handles via MailboxBackend.OpenUser + IndexBackend.OpenUser
-// (after resolving the recipient's UserInfo) and calls Init() on the
-// UserMailbox before the first delivery in a session.
-//
-// When locker is non-nil and the delivery succeeds, a `delivered` EVENT
-// is emitted on mbox:<username>:<folder> so any subscribed IMAP IDLE
-// session (in this or any other pod) is woken up. Username is used only
-// to build the lock/event key — the actual mailbox path is resolved
-// upstream via the per-user UserMailbox handle.
-//
-// Phase 4 — userdb lookup for LMTP:
-//
-//	Currently the resolver uses only the template (no userdb home override),
-//	because LMTP delivery is unauthenticated and yarilo has no userdb lookup
-//	path for incoming SMTP recipients. To support per-user home overrides
-//	during delivery, add a UserDB interface (driver: SQL query or dict
-//	protocol) and call it here before OpenUser, passing the resulting home
-//	as homeOverride to Resolver.UserInfo.
-//
-// deliverOne returns the delivered UID and the folder it landed in. The folder
-// travels back because the full-text hook needs its GUID: the index is keyed by
-// it (#1183), and a reference built from the name alone is refused by the
-// service -- silently, on a fire-and-forget path (#1206 found it).
+// deliverOne saves one message and records it. The folder travels back because
+// the full-text hook needs its GUID; a name alone is refused silently (#1206).
 func deliverOne(box *mailbox.Box, folder string, r io.ReadSeeker, size int64, locker locks.Locker, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
 	idx := box.Index()
 	tDeliver := time.Now()

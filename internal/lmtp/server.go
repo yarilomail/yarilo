@@ -43,9 +43,6 @@ type Options struct {
 	// For immediate TLS (ssl mode), wrap the listener before calling Serve().
 	TLSConfig *tls.Config
 
-	// Router resolves recipient usernames to backend IPs. Non-nil on director
-	// nodes activates proxy mode; nil on backend nodes means local delivery.
-	Router UserRouter
 	// BackendPort is the LMTP port on backend pods. Default: 24.
 	BackendPort int
 
@@ -127,9 +124,8 @@ type Options struct {
 
 // Server is an LMTP server backed by a MailboxBackend and IndexBackend.
 type Server struct {
-	srv    *goSmtp.Server
-	opts   Options
-	router *proxyRouter // non-nil when proxy mode is active
+	srv  *goSmtp.Server
+	opts Options
 }
 
 // New creates an LMTP server from Options.
@@ -140,17 +136,8 @@ func New(opts Options) *Server {
 	// path on the shared volume (#1149).
 	opts.MailboxByDriver = mailbox.MemoizeByDriver(opts.MailboxByDriver)
 
-	var router *proxyRouter
-	if opts.Router != nil {
-		timeout := time.Duration(opts.Config.Proxy.Timeout) * time.Second
-		if timeout == 0 {
-			timeout = 125 * time.Second
-		}
-		router = newProxyRouter(opts.Hostname, opts.Router, opts.BackendPort, timeout)
-	}
-
-	s := &Server{opts: opts, router: router}
-	be := &backend{opts: opts, router: router, srv: s}
+	s := &Server{opts: opts}
+	be := &backend{opts: opts, srv: s}
 
 	srv := goSmtp.NewServer(be)
 	srv.Domain = opts.Hostname
@@ -169,7 +156,6 @@ func New(opts Options) *Server {
 func (s *Server) Serve(ln net.Listener) error {
 	slog.Info("lmtp: listening", "addr", ln.Addr().String(),
 		"preamble", s.opts.AuthAddr != "",
-		"proxy_mode", s.opts.Router != nil,
 	)
 	if s.opts.AuthAddr != "" {
 		ln = &loginproto.PreambleListener{
@@ -194,9 +180,8 @@ func (s *Server) Serve(ln net.Listener) error {
 // ---- backend ----------------------------------------------------------------
 
 type backend struct {
-	opts   Options
-	router *proxyRouter
-	srv    *Server
+	opts Options
+	srv  *Server
 }
 
 func (b *backend) NewSession(c *goSmtp.Conn) (goSmtp.Session, error) {
@@ -212,7 +197,7 @@ func (b *backend) NewSession(c *goSmtp.Conn) (goSmtp.Session, error) {
 			}
 		}
 	}
-	return &session{opts: b.opts, router: b.router, srv: b.srv, peerIP: peerIP, mtaConn: mtaConn, connID: nextConnID(), lockID: locks.NewID()}, nil
+	return &session{opts: b.opts, srv: b.srv, peerIP: peerIP, mtaConn: mtaConn, connID: nextConnID(), lockID: locks.NewID()}, nil
 }
 
 // connIDSeq is a per-process monotonic counter identifying one LMTP
@@ -226,14 +211,12 @@ func nextConnID() uint64 { return connIDSeq.Add(1) }
 // ---- session ----------------------------------------------------------------
 
 type session struct {
-	opts       Options
-	router     *proxyRouter
-	srv        *Server  // back-reference
-	peerIP     string   // upstream MTA IP, captured at NewSession
-	mtaConn    net.Conn // raw TCP conn from the upstream MTA
-	from       string
-	rcpts      []string            // local recipients
-	proxyRcpts map[string][]string // backend addr → []rcpt (proxy mode)
+	opts    Options
+	srv     *Server  // back-reference
+	peerIP  string   // upstream MTA IP, captured at NewSession
+	mtaConn net.Conn // raw TCP conn from the upstream MTA
+	from    string
+	rcpts   []string // local recipients
 
 	// rcptUserInfo caches per-recipient UserInfo fetched at RCPT TO time
 	// so LMTPData can use correct Home and QuotaRules without re-querying.
@@ -277,9 +260,6 @@ func (s *session) Mail(from string, _ *goSmtp.MailOptions) error {
 
 func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "RCPT", "to", to)
-	if s.router != nil {
-		return s.rcptProxy(to)
-	}
 	return s.rcptLocal(to)
 }
 
@@ -358,23 +338,6 @@ func (s *session) rcptLocal(to string) error {
 	return nil
 }
 
-func (s *session) rcptProxy(to string) error {
-	user, _, err := resolveMailbox(to)
-	if err != nil {
-		return &goSmtp.SMTPError{Code: 501, EnhancedCode: goSmtp.EnhancedCode{5, 1, 3}, Message: "Bad recipient address"}
-	}
-	addr, err := s.router.route(user)
-	if err != nil {
-		slog.Error("lmtp: proxy route failed", "user", user, "err", err)
-		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary routing error"}
-	}
-	if s.proxyRcpts == nil {
-		s.proxyRcpts = make(map[string][]string)
-	}
-	s.proxyRcpts[addr] = append(s.proxyRcpts[addr], to)
-	return nil
-}
-
 // Data is never called in LMTP mode — LMTPData handles DATA instead.
 func (s *session) Data(_ io.Reader) error { return nil }
 
@@ -423,16 +386,6 @@ func (s *session) matchNamespace(folder string) *config.NamespaceConfig {
 	return best
 }
 
-// deliveryTarget resolves a delivery folder through the recipient's namespaces.
-// A namespace-prefixed folder routes to that namespace's storage with the prefix stripped;
-// everything else goes to the recipient's own store. Returns the target
-// box/idx, the namespace-relative folder, and a close func for any store this
-// call opened (a no-op for the personal store, which the caller owns).
-//
-// When enforcePost is set, delivery into a shared / public namespace requires
-// the recipient to hold the 'p' (post) right on the target folder; a denial
-// falls back to the recipient's INBOX (implicit keep). The recipient's own
-// personal store is never ACL-checked (IGNORE_ACLS semantics).
 // folderByMailboxID resolves a MAILBOXID (RFC 8474 objectid) to the name of the
 // personal-namespace folder carrying it, backing fileinto :mailboxid and
 // mailboxidexists (RFC 9042). It walks the user's selectable folders and matches
@@ -512,6 +465,8 @@ func (s *session) lookupMetadata(ctx context.Context, userInfo *mailbox.UserInfo
 	return string(vals[0]), true, nil
 }
 
+// deliveryTarget routes a folder through the recipient's namespaces: a denied
+// post right falls back to INBOX, and the personal store is never ACL-checked.
 func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.UserMailbox, rcptIdx mailbox.UserIndex, folder string, enforcePost bool) (mailbox.UserMailbox, mailbox.UserIndex, string, func()) {
 	noop := func() {}
 	// One owner of NFC, here at the resolver, so a Sieve fileinto naming a
@@ -634,31 +589,6 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		return err
 	}
 
-	// For proxy mode, build message with common headers (no per-rcpt Delivered-To).
-	proxyData := data
-	if s.opts.Config.AddReceivedHeader {
-		proxyData = append([]byte(buildReceivedHeader(s.from, s.opts.Hostname)), data...)
-	}
-
-	// Proxy recipients: fan-out to backends in parallel.
-	if len(s.proxyRcpts) > 0 {
-		results := s.router.proxyFanOut(s.proxyRcpts, s.from, proxyData)
-		for rcpt, rerr := range results {
-			if rerr != nil {
-				slog.Error("lmtp: proxy delivery failed", "rcpt", rcpt, "err", rerr)
-				if s.opts.Config.VerboseReplies {
-					rerr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: rerr.Error()}
-				} else {
-					rerr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: "Proxy delivery failed"}
-				}
-			} else {
-				slog.Info("lmtp: proxy delivered", "rcpt", rcpt, "size", len(proxyData))
-			}
-			setProxyStatus(status, rcpt, rerr)
-		}
-	}
-
-	// Local recipients: deliver directly.
 	for _, rcpt := range s.rcpts {
 		// Every exit below reports a status for this recipient, and every one
 		// of them is timed: see setStatus.
@@ -934,7 +864,6 @@ func (s *session) Reset() {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "RSET")
 	s.from = ""
 	s.rcpts = nil
-	s.proxyRcpts = nil
 	s.rcptUserInfo = nil
 }
 

@@ -349,11 +349,6 @@ components:
     seed_poll_idle_interval: 5
     assignment_policy: least_sessions
     backend_unreachable_reporters: 1
-    listeners:
-      lmtp:
-        enabled: true
-        port: 24
-        containerPort: 10024
     backends: []
 
 

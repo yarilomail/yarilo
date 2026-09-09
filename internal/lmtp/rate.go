@@ -15,28 +15,8 @@ import (
 // client as `421 4.7.0`.
 var ErrRateLimited = errors.New("lmtp/rate: recipient rate limit exceeded")
 
-// checkRecipientRate enforces the per-(IP, mailbox) token bucket
-// at RCPT TO. Returns nil when the delivery may proceed, or
-// ErrRateLimited when the cluster-wide counter for the current
-// window has crossed burst.
-//
-// Counter strategy:
-//
-//   - Key: `lmtp:rate:<ip>:<mailbox>:<bucket-id>`
-//     where bucket-id = floor(now.Unix() / windowSeconds)
-//   - On every RCPT, INC the counter by 1; if the resulting
-//     value > burst, deny.
-//   - Old bucket keys expire naturally on the next read of a
-//     newer bucket-id (we never look at them again). pkg/locks
-//     counters have no TTL, but stale keys consume O(1) memory
-//     per (IP, mailbox, window) tuple — periodic purge on the
-//     locks backend is a follow-up, not a correctness gap.
-//
-// A nil locker disables the check entirely (single-pod tests,
-// embedded mode without a counter backend) — returns nil. An
-// IncrementCounter transport error logs at the caller and is
-// treated as "allow": availability of the rate-limit subsystem
-// must never block legitimate delivery.
+// checkRecipientRate enforces the per-(IP, mailbox) bucket at RCPT TO. A nil
+// locker or a counter error allows the delivery: this must not stop mail.
 func checkRecipientRate(ctx context.Context, locker locks.Locker, ip, mailbox string, burst, windowSeconds int) error {
 	if locker == nil || burst <= 0 || windowSeconds <= 0 {
 		return nil

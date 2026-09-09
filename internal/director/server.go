@@ -1183,8 +1183,8 @@ func (s *Server) LookupBackend(username string) *ring.Backend {
 	return s.ring.LookupBackend(username)
 }
 
-// RouteUser returns the backend IP for a recipient username, implementing
-// lmtp.UserRouter. One order (#708): sticky userDir pin → ring.
+// RouteUser returns the backend IP for a recipient username. One order (#708):
+// sticky userDir pin → ring.
 func (s *Server) RouteUser(username string) (string, error) {
 	username = s.normalizeUser(username)
 	if e := s.userDir.Get(username); e != nil && !e.Weak {

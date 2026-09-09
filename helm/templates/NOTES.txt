@@ -29,12 +29,8 @@ Active login pods:
   {{- end }}
 {{- end }}
 
-Director (LMTP proxy + ring):
-{{- if .Values.components.director.listeners.lmtp.enabled }}
-  LMTP: {{ .Values.components.director.listeners.lmtp.port }}
-{{- else }}
-  LMTP listener disabled.
-{{- end }}
+Director (ring):
+  Incoming mail is delivered to the LMTP login service, not to the director.
 
 Backend components:
 {{- if .Values.components.imap.enabled }}
