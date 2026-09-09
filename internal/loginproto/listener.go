@@ -119,8 +119,9 @@ type PreambleListener struct {
 	MasterLookupTimeout time.Duration
 
 	// depMu guards the throttle for the dependency-unreachable log line.
-	depMu   sync.Mutex
-	depLast time.Time
+	depMu           sync.Mutex
+	depLast         time.Time
+	misdirectedLast time.Time
 	// ExpectedService, when non-empty, must match the service in the VERIFY response.
 	ExpectedService string
 	// TLSConfig, when set, terminates internal mTLS on each accepted connection
@@ -249,8 +250,17 @@ const dependencyFailureLogEvery = time.Minute
 // The two are told apart by the marker the auth client already carries for
 // exactly this distinction (#1408).
 func (l *PreambleListener) noteHandshakeFailure(c net.Conn, err error) {
+	reason := refusalReason(err)
+	preambleRejected.WithLabelValues(reason).Inc()
+	if reason == "no-preamble" {
+		// Not routine: a sender pointed at the wrong port has every session
+		// refused, so this one is said out loud, rate-limited.
+		l.noteMisdirected(c, err)
+		return
+	}
 	if !errors.Is(err, masterclient.ErrUnavailable) {
-		slog.Debug("loginproto: preamble handshake failed", "remote", c.RemoteAddr(), "err", err)
+		slog.Debug("loginproto: preamble handshake failed",
+			"remote", c.RemoteAddr(), "reason", reason, "err", err)
 		return
 	}
 	l.depMu.Lock()
@@ -271,6 +281,26 @@ func (l *PreambleListener) noteHandshakeFailure(c net.Conn, err error) {
 	slog.Warn("loginproto: refusing sessions, a dependency is unreachable",
 		"remote", c.RemoteAddr(), "err", err,
 		"hint", "sessions on this backend are refused with UNAVAILABLE until it answers")
+}
+
+// noteMisdirected reports a peer speaking the bare protocol here, once per
+// interval: the sender sees only a failure code, so the reason lives here.
+func (l *PreambleListener) noteMisdirected(c net.Conn, err error) {
+	l.depMu.Lock()
+	now := time.Now()
+	quiet := !l.misdirectedLast.IsZero() && now.Sub(l.misdirectedLast) < dependencyFailureLogEvery
+	if !quiet {
+		l.misdirectedLast = now
+	}
+	l.depMu.Unlock()
+	if quiet {
+		slog.Debug("loginproto: preamble handshake failed",
+			"remote", c.RemoteAddr(), "reason", "no-preamble", "err", err)
+		return
+	}
+	slog.Warn("loginproto: a peer spoke the bare protocol where the internal preamble is required",
+		"remote", c.RemoteAddr(), "reason", "no-preamble", "err", err,
+		"hint", "point the sender at the login service for this protocol; every session it opens here is refused")
 }
 
 const preambleReadTimeout = 5 * time.Second

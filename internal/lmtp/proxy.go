@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -53,7 +54,9 @@ type proxyResult struct {
 
 // proxyForward connects to addr, performs a full LMTP transaction, and returns
 // per-recipient results for all rcpts. Runs the entire connection in one call.
+// Every leg names itself in the error, so a refusal says where it stopped.
 func (p *proxyRouter) proxyForward(addr, from string, rcpts []string, data []byte) []proxyResult {
+	slog.Debug("lmtp/proxy: forwarding", "backend", addr, "rcpts", len(rcpts), "from", from)
 	results := make([]proxyResult, len(rcpts))
 	for i, r := range rcpts {
 		results[i].rcpt = r
