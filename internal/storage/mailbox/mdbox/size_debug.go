@@ -10,6 +10,16 @@ import (
 // cost nothing when it is not printed, and only a number proves that (#1740).
 var sizeRowLookups atomic.Uint64
 
+// storageSizeReads counts size questions answered by opening the body. Zero is
+// the reading a folder gives once its records carry sizes (#1752).
+var storageSizeReads atomic.Uint64
+
+// StorageSizeReads is that count.
+func StorageSizeReads() uint64 { return storageSizeReads.Load() }
+
+// ResetStorageSizeReads zeroes it.
+func ResetStorageSizeReads() { storageSizeReads.Store(0) }
+
 // SizeRowLookups is that count, for a test asserting the gate holds.
 func SizeRowLookups() uint64 { return sizeRowLookups.Load() }
 
