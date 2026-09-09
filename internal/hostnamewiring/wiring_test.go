@@ -20,14 +20,13 @@ import (
 // compiles, every one produces a name, and only the name differs.
 func TestOnlySubmissionTakesSubmissionsHostname(t *testing.T) {
 	root := filepath.Join("..", "..")
-	// Where an LMTP server or proxy is constructed. Each must name the
-	// installation.
+	// Where an LMTP server is constructed. Each must name the installation.
 	lmtpSites := []string{
 		filepath.Join(root, "internal", "backend", "backend.go"),
-		filepath.Join(root, "app", "yarilo-director", "main.go"),
 		filepath.Join(root, "app", "yarilo-lmtp-login", "main.go"),
 	}
-	optsHostname := regexp.MustCompile(`Hostname:\s*(cfg\.[A-Za-z.()]+)`)
+	// The value may arrive through a local name, as the login binary does.
+	optsHostname := regexp.MustCompile(`(?:Hostname:\s*|hostname\s*:=\s*)(cfg\.[A-Za-z.()]+)`)
 
 	var checked int
 	for _, path := range lmtpSites {

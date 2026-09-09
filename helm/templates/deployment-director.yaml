@@ -58,11 +58,6 @@ spec:
             - name: director
               containerPort: {{ .Values.components.director.directorPort }}
               protocol: TCP
-            {{- if .Values.components.director.listeners.lmtp.enabled }}
-            - name: lmtp
-              containerPort: {{ .Values.components.director.listeners.lmtp.containerPort }}
-              protocol: TCP
-            {{- end }}
             - name: telemetry
               containerPort: 8080
               protocol: TCP

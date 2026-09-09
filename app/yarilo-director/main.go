@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/cluster/ring"
 	"github.com/yarilomail/yarilo/internal/director"
-	"github.com/yarilomail/yarilo/internal/lmtp"
 	"github.com/yarilomail/yarilo/internal/telemetry"
 	"github.com/yarilomail/yarilo/pkg/build"
 	"github.com/yarilomail/yarilo/pkg/config"
@@ -91,24 +89,6 @@ func main() {
 				slog.Warn("director: ring_tls_server_name is not present in this director's internal-tls certificate SANs — peers present the same cert, so ring TLS handshakes will fail; re-issue the cert with this name (chart Certificate handles this)",
 					"ring_tls_server_name", name)
 			}
-		}
-	}
-
-	// mTLS client config for dialling backend pods; shared internal cert,
-	// pin internal_tls.server_name
-	var backendTLSCfg *tls.Config
-	if cfg.InternalTLS.Enabled {
-		backendTLSCfg, err = mtls.ClientConfig(
-			cfg.InternalTLS.Cert,
-			cfg.InternalTLS.Key,
-			cfg.InternalTLS.CA,
-			cfg.InternalTLS.ServerName,
-			cfg.InternalTLS.SessionCacheSize,
-			cfg.InternalTLS.SessionCacheTTL,
-		)
-		if err != nil {
-			slog.Error("internal_tls client config failed", "err", err)
-			os.Exit(1)
 		}
 	}
 
@@ -187,12 +167,6 @@ func main() {
 	// or the hard timeout elapses
 	srv.StartKillSweep(ctx)
 
-	// start mail protocol proxy listeners
-	if err := startProxies(ctx, srv, cfg, nil, backendTLSCfg); err != nil {
-		slog.Error("proxy startup failed", "err", err)
-		os.Exit(1)
-	}
-
 	// join the ring via the configured seeds, or run as a singleton
 	// until a seed becomes reachable
 	srv.StartMembership(ctx, cfg.DirectorService.Peers)
@@ -269,50 +243,6 @@ func resolveBackends(ctx context.Context, cfg *config.Config, srv *director.Serv
 		}
 		slog.Info("director: backends resolved", "host", ms.Host, "pods", len(addrs), "tag", ms.Tag)
 	}
-}
-
-// startProxies starts the LMTP proxy listener with per-recipient fan-out.
-// IMAP, POP3, and Submission are handled by dedicated login-pod binaries.
-func startProxies(ctx context.Context, srv *director.Server, cfg *config.Config, _, _ *tls.Config) error {
-	// gated on director_service.lmtp_listen, not the shared services.lmtp
-	// block, which belongs to the lmtp/lmtp-login pods
-	addr := cfg.DirectorService.LMTPListen
-	if addr == "" {
-		return nil
-	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("lmtp proxy: listen %s: %w", addr, err)
-	}
-
-	backendPort := cfg.DirectorService.LMTPBackendPort
-	if backendPort == 0 {
-		if _, p, perr := net.SplitHostPort(addr); perr == nil {
-			if n, cerr := strconv.Atoi(p); cerr == nil {
-				backendPort = n
-			}
-		}
-	}
-	lmtpSrv := lmtp.New(lmtp.Options{
-		// The director's LMTP proxy: it announces this installation, not
-		// submission, whose key overrides submission alone (#1506).
-		Hostname:    cfg.Hostname,
-		Config:      cfg.Protocol.LMTP,
-		Router:      srv,
-		BackendPort: backendPort,
-	})
-
-	slog.Info("director: lmtp proxy listening", "addr", addr)
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-	go func() {
-		if err := lmtpSrv.Serve(ln); err != nil {
-			slog.Error("director: lmtp proxy error", "err", err)
-		}
-	}()
-	return nil
 }
 
 // parseCIDRs parses a list of CIDR strings into *net.IPNet values.

@@ -1671,18 +1671,6 @@ type DirectorServiceConfig struct {
 	// 15-second script would otherwise be killed for ever, leaving nothing
 	// behind but a WARN on the server (#1352). Zero selects the default.
 	FlushProgramTimeoutSeconds int `koanf:"flush_program_timeout"`
-	// LMTPListen enables the director's embedded LMTP proxy (per-recipient
-	// fan-out via ring routing) on this address, e.g. ":10024". Empty =
-	// disabled. This deliberately does NOT reuse the shared services.lmtp
-	// block: that block belongs to the lmtp/lmtp-login pods, and gating the
-	// director proxy on it forced the Helm chart to rewrite services.lmtp
-	// whenever the director was enabled — silently breaking lmtp-login
-	// (#748 item 1).
-	LMTPListen string `koanf:"lmtp_listen"`
-	// LMTPBackendPort is the LMTP port dialed on ring backends by the
-	// embedded proxy. 0 = the port parsed from LMTPListen (the pre-#748
-	// behavior, where both were services.lmtp.port).
-	LMTPBackendPort int `koanf:"lmtp_backend_port"`
 }
 
 // IMAPLoginServiceConfig configures the yarilo-imap-login proxy.

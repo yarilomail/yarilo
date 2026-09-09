@@ -381,11 +381,6 @@ components:
 
     ## Client-facing listeners.
     ## IMAP/POP3/Submission are handled by dedicated login pods; director only proxies LMTP.
-    listeners:
-      lmtp:
-        enabled: false
-        port: 24
-        containerPort: 10024
 
     ## mTLS for internal connections (director ↔ auth, director ↔ backend).
     ## Ring mTLS (#753). Ring peers are dialled by EPHEMERAL pod IP, so the

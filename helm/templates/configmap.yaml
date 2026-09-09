@@ -72,9 +72,7 @@ data:
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       lmtp:
-        ## Always the lmtp/lmtp-login pods' listener (#748 item 1): the
-        ## director's embedded LMTP proxy has its own key
-        ## (director_service.lmtp_listen) and must never repurpose this block.
+        ## Always the lmtp/lmtp-login pods' listener (#748 item 1).
         enabled: {{ .Values.components.lmtp.listeners.lmtp.enabled }}
         port: {{ .Values.components.lmtp.listeners.lmtp.containerPort }}
         ssl_mode: "no"
@@ -994,9 +992,6 @@ data:
           vhosts: {{ .vhosts }}
           {{- end }}
         {{- end }}
-      {{- end }}
-      {{- if .Values.components.director.listeners.lmtp.enabled }}
-      lmtp_listen: {{ printf ":%d" (int .Values.components.director.listeners.lmtp.containerPort) | quote }}
       {{- end }}
       ## Seed list for the self-organizing ring (#750). An explicit
       ## peers override wins; otherwise, at replicas > 1, the seed is
