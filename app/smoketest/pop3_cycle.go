@@ -188,65 +188,76 @@ func checkPOP3Cycle(user, pass string) error {
 	if err != nil {
 		return err
 	}
-	defer s.close()
-	return verifyMaildrop(s, user, pass, marker, num, listed)
+	return pop3Cycle(s, user, pass, marker, num, listed)
+}
+
+// pop3Cycle walks an open session: the reading one closes before the deletion
+// walk opens its own, since a maildrop belongs to one session (#1734).
+func pop3Cycle(s *pop3Session, user, pass, marker string, num int, listed int64) error {
+	id, err := verifyMaildrop(s, marker, num, listed)
+	s.close()
+	if err != nil {
+		return err
+	}
+	return pop3CheckDeletion(user, pass, marker, id)
 }
 
 // verifyMaildrop is the judgement, apart from the delivery: what STAT, LIST,
-// RETR, UIDL and DELE must agree on for a client to have the message.
-func verifyMaildrop(s *pop3Session, user, pass, marker string, num int, listed int64) error {
+// RETR, UIDL and DELE must agree on. It returns the probe's uidl for the
+// deletion walk, which runs in sessions of its own.
+func verifyMaildrop(s *pop3Session, marker string, num int, listed int64) (string, error) {
 	count, total, err := s.stat()
 	if err != nil {
-		return err
+		return "", err
 	}
 	sizes, err := s.list()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if count != len(sizes) {
-		return fmt.Errorf("STAT counts %d messages, LIST names %d", count, len(sizes))
+		return "", fmt.Errorf("STAT counts %d messages, LIST names %d", count, len(sizes))
 	}
 	var sum int64
 	for _, e := range sizes {
 		sum += e.octets
 	}
 	if total != sum {
-		return fmt.Errorf("STAT reports %d octets, the LIST rows add up to %d", total, sum)
+		return "", fmt.Errorf("STAT reports %d octets, the LIST rows add up to %d", total, sum)
 	}
 
 	body, err := s.retr(num)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !strings.Contains(body, marker) {
-		return fmt.Errorf("RETR %d returned a message without the marker", num)
+		return "", fmt.Errorf("RETR %d returned a message without the marker", num)
 	}
 	if int64(len(body)) != listed {
-		return fmt.Errorf("LIST promised %d octets for message %d, RETR delivered %d",
+		return "", fmt.Errorf("LIST promised %d octets for message %d, RETR delivered %d",
 			listed, num, len(body))
 	}
 
 	ids, err := s.uidl()
 	if err != nil {
-		return err
+		return "", err
 	}
 	id, named := ids[num]
 	if !named || id == "" {
-		return fmt.Errorf("UIDL names no id for message %d", num)
+		return "", fmt.Errorf("UIDL names no id for message %d", num)
 	}
 	// Uniqueness before the count: a shared id is the more specific fault, and
 	// a maildrop that hands one out also miscounts.
 	seen := map[string]int{}
 	for n, v := range ids {
 		if first, dup := seen[v]; dup {
-			return fmt.Errorf("messages %d and %d share the uidl %q", first, n, v)
+			return "", fmt.Errorf("messages %d and %d share the uidl %q", first, n, v)
 		}
 		seen[v] = n
 	}
 	if len(ids) != count {
-		return fmt.Errorf("UIDL lists %d ids for %d messages", len(ids), count)
+		return "", fmt.Errorf("UIDL lists %d ids for %d messages", len(ids), count)
 	}
-	return pop3CheckDeletion(user, pass, marker, id)
+	return id, nil
 }
 
 // pop3CheckDeletion walks what RFC 1939 makes a deletion: undone by a session
@@ -271,9 +282,13 @@ func pop3CheckDeletion(user, pass, marker, id string) error {
 
 	after, err := pop3Login(user, pass)
 	if err != nil {
-		return err
+		return fmt.Errorf("the maildrop was still held after a session that dropped without QUIT: %w", err)
 	}
 	ids, err := after.uidl()
+	if err != nil && strings.Contains(err.Error(), "already in use") {
+		after.close()
+		return fmt.Errorf("the maildrop was still held after a session that dropped without QUIT: %w", err)
+	}
 	if err != nil {
 		after.close()
 		return err
