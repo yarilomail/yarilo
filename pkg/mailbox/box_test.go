@@ -218,3 +218,53 @@ func (l *countingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
 	mode, ok := l.held[resource]
 	return mode, ok
 }
+
+// A stop between the two steps leaves a file with no record, which the next
+// reconcile re-files, and never a record naming a file that is gone (#1690).
+func TestTheRecordGoesBeforeTheBody(t *testing.T) {
+	box, f := openBox(t, "u6@example.com")
+	const body = "From: a@b\r\nSubject: order\r\n\r\nbody\r\n"
+	uid, err := box.Index().AllocateUID(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	m := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
+		t.Fatal(err)
+	}
+	name, err := mailbox.MessagePath(box.Store(), "INBOX", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// What the folder holds at the moment between the two steps.
+	var recordsThen int
+	var bodyThen bool
+	disarm := mailbox.SetTestAfterRecordExpunged(func() {
+		msgs, gerr := box.Index().GetMessages(f.ID, mailbox.SeqSet{})
+		if gerr != nil {
+			t.Error(gerr)
+		}
+		recordsThen = len(msgs)
+		rc, ferr := box.Store().Fetch("INBOX", name, false)
+		if ferr == nil {
+			bodyThen = true
+			rc.Close() //nolint:errcheck
+		}
+	})
+	removed, failed := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m})
+	disarm()
+	if failed != 0 || len(removed) != 1 {
+		t.Fatalf("removed %v, failed %d", removed, failed)
+	}
+	if recordsThen != 0 {
+		t.Errorf("at the stop the folder still held %d records: the body went first", recordsThen)
+	}
+	if !bodyThen {
+		t.Error("at the stop the body was already gone: the body went first")
+	}
+}

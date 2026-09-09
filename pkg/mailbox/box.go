@@ -69,9 +69,8 @@ func WithLocker(l locks.Locker, owner string) BoxOption {
 // BoxOption tunes a box at Open time.
 type BoxOption func(*Box)
 
-// ExpungeMarked removes messages and their records under one hold: taking the
-// key per message lets another writer in between two of its own removals. One
-// failure is not the batch's, which is what a POP3 UPDATE promises (#1715).
+// ExpungeMarked removes messages under one hold: taking the key per message
+// lets another writer in between two removals. One failure is not the batch's.
 func (b *Box) ExpungeMarked(f *Folder, folder string, msgs []*MessageMeta) (removed []uint32, failed int) {
 	if b.locker == nil {
 		return b.expungeEach(f, folder, msgs)
@@ -89,23 +88,44 @@ func (b *Box) ExpungeMarked(f *Folder, folder string, msgs []*MessageMeta) (remo
 	return b.expungeEach(f, folder, msgs)
 }
 
-// expungeEach is the loop itself: under an outer hold the driver's own lock is
-// re-entrant, so this is one hold or many depending on the caller above it.
+// expungeEach reads the name, removes the record, then the body: a stop between
+// the last two leaves a file for the next rebuild, never a record with no file (#1690).
 func (b *Box) expungeEach(f *Folder, folder string, msgs []*MessageMeta) (removed []uint32, failed int) {
 	for _, m := range msgs {
-		if err := RemoveMessage(b.store, folder, m); err != nil {
-			slog.Error("mailbox/expunge: remove", "user", b.store.Username(),
+		// The name before the record: a driver named by uid reads it out of
+		// the record this loop is about to remove (#1712).
+		name, nameErr := MessagePath(b.store, folder, m)
+		if err := b.index.ExpungeMessage(f.ID, m.UID); err != nil {
+			slog.Error("mailbox/expunge: record", "user", b.store.Username(),
 				"folder", folder, "uid", m.UID, "err", err)
 			failed++
 			continue
 		}
-		if err := b.index.ExpungeMessage(f.ID, m.UID); err != nil {
-			slog.Error("mailbox/expunge: record", "user", b.store.Username(),
-				"folder", folder, "uid", m.UID, "err", err)
-		}
 		removed = append(removed, m.UID)
+		if testAfterRecordExpunged != nil {
+			testAfterRecordExpunged()
+		}
+		if nameErr != nil || name == "" {
+			slog.Warn("mailbox/expunge: the record named no file; its body, if any, stays",
+				"user", b.store.Username(), "folder", folder, "uid", m.UID, "err", nameErr)
+			continue
+		}
+		if err := b.store.Remove(folder, name); err != nil {
+			slog.Error("mailbox/expunge: body", "user", b.store.Username(),
+				"folder", folder, "uid", m.UID, "file", name, "err", err)
+		}
 	}
 	return removed, failed
+}
+
+// testAfterRecordExpunged runs between the record and the body. Test seam: the
+// crash window the order is chosen for.
+var testAfterRecordExpunged func()
+
+// SetTestAfterRecordExpunged arms that seam and returns a function disarming it.
+func SetTestAfterRecordExpunged(fn func()) func() {
+	testAfterRecordExpunged = fn
+	return func() { testAfterRecordExpunged = nil }
 }
 
 // Close releases both halves. A half that will not close is logged and the
