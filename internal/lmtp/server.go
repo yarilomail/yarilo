@@ -715,7 +715,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 					entries, _ := rcptBox.ListFolders()
 					// A folder no session has opened still sums its records, and
 					// a record that carries no size sums as nothing (#1728).
-					fillSizes(rcptIdx, rcptBox, mailbox.SelectableNames(entries))
+					fillSizes(mailbox.Open(rcptBox, rcptIdx), mailbox.SelectableNames(entries))
 					u := quota.CountUsage(rcptIdx, mailbox.SelectableNames(entries), lim)
 					// Inbound delivery is grace-eligible (LMTP/LDA overshoot).
 					if quota.IsOverWithGrace(u, effLim, int64(len(msg)), 1, s.opts.QuotaPolicy.StorageGrace) {
@@ -812,7 +812,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 					slog.Warn("lmtp: create folder", "folder", d.Folder, "err", err)
 				}
 			}
-			uid, folder, guid, err := deliverOne(tBox, tIdx, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), s.opts.Locker, username, s.from, d.Flags)
+			uid, folder, guid, err := deliverOne(mailbox.Open(tBox, tIdx), rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), s.opts.Locker, username, s.from, d.Flags)
 			closeTarget()
 			if err != nil {
 				deliverErr = err
@@ -945,13 +945,13 @@ func (s *session) Logout() error {
 
 // fillSizes gives the records that carry no size the one their storage holds,
 // so a delivery judges the limit on the mail and not on a folder of zeros.
-func fillSizes(idx mailbox.UserIndex, box mailbox.UserMailbox, folders []string) {
+func fillSizes(box *mailbox.Box, folders []string) {
 	for _, name := range folders {
-		f, err := idx.OpenFolder(name, 0)
+		f, err := box.Folder(name, 0)
 		if err != nil {
 			continue
 		}
-		if _, ferr := mailbox.FillSizelessRecords(idx, box, f); ferr != nil {
+		if _, ferr := box.FillSizes(f); ferr != nil {
 			slog.Warn("lmtp: sizes not filled", "folder", name, "err", ferr)
 		}
 	}

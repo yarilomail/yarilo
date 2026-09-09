@@ -46,7 +46,8 @@ var deliverCallSeq atomic.Uint64
 // travels back because the full-text hook needs its GUID: the index is keyed by
 // it (#1183), and a reference built from the name alone is refused by the
 // service -- silently, on a fire-and-forget path (#1206 found it).
-func deliverOne(box mailbox.UserMailbox, idx mailbox.UserIndex, folder string, r io.ReadSeeker, size int64, locker locks.Locker, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
+func deliverOne(box *mailbox.Box, folder string, r io.ReadSeeker, size int64, locker locks.Locker, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
+	idx := box.Index()
 	tDeliver := time.Now()
 	var noGUID [16]byte
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
@@ -76,7 +77,7 @@ func deliverOne(box mailbox.UserMailbox, idx mailbox.UserIndex, folder string, r
 		return 0, *f, noGUID, fmt.Errorf("lmtp: modseq: %w", err)
 	}
 	tSave := time.Now()
-	filename, vsize, guid, err := box.Save(folder, bytes.NewReader(data), uid, size, flags, [16]byte{})
+	filename, vsize, guid, err := box.Store().Save(folder, bytes.NewReader(data), uid, size, flags, [16]byte{})
 	if err != nil {
 		return 0, *f, noGUID, fmt.Errorf("lmtp: save: %w", err)
 	}
@@ -89,18 +90,16 @@ func deliverOne(box mailbox.UserMailbox, idx mailbox.UserIndex, folder string, r
 		Flags:        flags,
 		GUID:         guid,
 	}
-	// A driver named by uid saved under a temp name: the uid is already ours.
-	if err := mailbox.NameSaved(box, folder, filename, meta); err != nil {
-		return 0, *f, noGUID, fmt.Errorf("lmtp: name: %w", err)
-	}
 	tIndex := time.Now()
 	slog.Debug("lmtp: body saved, committing index", "user", username, "folder", folder, "uid", uid,
-		"call_id", callID, "uid", uid, "save_ms", tIndex.Sub(tSave).Milliseconds())
-	if err := idx.AppendMessage(f.ID, meta); err != nil {
-		slog.Warn("lmtp: index append failed, rolling back save",
+		"call_id", callID, "save_ms", tIndex.Sub(tSave).Milliseconds())
+	// The box settles the name and the record in that order; a failure at
+	// either end leaves the body for the next reconcile, not a half record.
+	if err := box.RecordDelivered(f, folder, filename, meta); err != nil {
+		slog.Warn("lmtp: delivery not recorded, rolling back save",
 			"user", username, "folder", folder, "uid", uid, "call_id", callID, "err", err)
-		_ = box.Remove(folder, filename)
-		return 0, *f, noGUID, fmt.Errorf("lmtp: index append: %w", err)
+		_ = box.Store().Remove(folder, filename)
+		return 0, *f, noGUID, fmt.Errorf("lmtp: record: %w", err)
 	}
 	slog.Debug("lmtp: uid committed", "user", username, "folder", folder, "uid", uid, "call_id", callID)
 	slog.Debug("lmtp: deliver timing",
