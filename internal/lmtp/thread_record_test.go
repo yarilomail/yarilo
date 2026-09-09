@@ -20,7 +20,7 @@ import (
 // what the recorder was told.
 func deliverThreaded(t *testing.T, s *session, box mailbox.UserMailbox, ui mailbox.UserIndex, info *mailbox.UserInfo, raw string) string {
 	t.Helper()
-	_, _, guid, err := deliverOne(box, ui, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
+	_, _, guid, err := deliverOne(mailbox.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
 	if err != nil {
 		t.Fatalf("deliverOne: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestADeliverySurvivesAnUnwritableSidecar(t *testing.T) {
 	info.ControlDir = filepath.Join(blocked, "sub")
 
 	raw := "Message-ID: <root@x>\r\nSubject: Plan\r\n\r\nbody\r\n"
-	_, _, guid, err := deliverOne(box, ui, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
+	_, _, guid, err := deliverOne(mailbox.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
 	if err != nil {
 		t.Fatalf("the delivery itself failed: %v", err)
 	}
