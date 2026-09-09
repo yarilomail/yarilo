@@ -645,19 +645,14 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		results := s.router.proxyFanOut(s.proxyRcpts, s.from, proxyData)
 		for rcpt, rerr := range results {
 			if rerr != nil {
-				slog.Error("lmtp: proxy delivery failed",
-					"conn_id", s.connID, "rcpt", rcpt, "backend", s.router.backendFor(rcpt, s.proxyRcpts),
-					"leg", proxyLeg(rerr), "err", rerr)
-				proxyRefused.WithLabelValues(proxyLeg(rerr)).Inc()
+				slog.Error("lmtp: proxy delivery failed", "rcpt", rcpt, "err", rerr)
 				if s.opts.Config.VerboseReplies {
 					rerr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: rerr.Error()}
 				} else {
 					rerr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: "Proxy delivery failed"}
 				}
 			} else {
-				slog.Info("lmtp: proxy delivered",
-					"conn_id", s.connID, "rcpt", rcpt, "size", len(proxyData),
-					"backend", s.router.backendFor(rcpt, s.proxyRcpts))
+				slog.Info("lmtp: proxy delivered", "rcpt", rcpt, "size", len(proxyData))
 			}
 			setProxyStatus(status, rcpt, rerr)
 		}

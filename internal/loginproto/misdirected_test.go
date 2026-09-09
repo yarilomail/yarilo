@@ -2,6 +2,7 @@ package loginproto
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 
@@ -42,7 +43,7 @@ func TestRefusalReasonsAreToldApart(t *testing.T) {
 	}{
 		{"bare protocol", ErrNotYarilo, "no-preamble"},
 		{"auth down", masterclient.ErrUnavailable, "auth-unavailable"},
-		{"read timed out", errors.New("read tcp: i/o timeout"), "timeout"},
+		{"read timed out", &net.OpError{Op: "read", Err: timeoutErr{}}, "timeout"},
 		{"anything else", errors.New("short write"), "other"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,3 +69,26 @@ func TestAMisdirectedConnectionIsCounted(t *testing.T) {
 type nopConn struct{ net.Conn }
 
 func (nopConn) RemoteAddr() net.Addr { return &net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 4242} }
+
+// timeoutErr is what a deadline gives: a net.Error that says it timed out.
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string { return "i/o timeout" }
+func (timeoutErr) Timeout() bool { return true }
+
+// A wrapped cause is still told apart: the reason comes from the error's type,
+// not from words in its text.
+func TestAWrappedCauseKeepsItsReason(t *testing.T) {
+	wrapped := fmt.Errorf("preamble: %w", ErrNotYarilo)
+	if got := refusalReason(wrapped); got != "no-preamble" {
+		t.Errorf("reason %q for a wrapped cause, want no-preamble", got)
+	}
+	dressed := fmt.Errorf("read tcp 10.0.0.1: %w", &net.OpError{Op: "read", Err: timeoutErr{}})
+	if got := refusalReason(dressed); got != "timeout" {
+		t.Errorf("reason %q for a wrapped timeout, want timeout", got)
+	}
+	// A message that merely says the words is not a reason.
+	if got := refusalReason(errors.New("the handshake timeout was mentioned")); got != "other" {
+		t.Errorf("reason %q for a text-only match, want other", got)
+	}
+}

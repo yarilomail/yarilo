@@ -1,8 +1,9 @@
 package loginproto
 
 import (
+	"crypto/tls"
 	"errors"
-	"strings"
+	"net"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -20,16 +21,19 @@ var preambleRejected = promauto.NewCounterVec(prometheus.CounterOpts{
 // refusalReason names why a handshake ended, from the closed set the label may
 // carry.
 func refusalReason(err error) string {
+	var netErr net.Error
+	var recordErr tls.RecordHeaderError
+	var certErr *tls.CertificateVerificationError
 	switch {
+	case err == nil:
+		return "none"
 	case errors.Is(err, ErrNotYarilo):
 		return "no-preamble"
 	case errors.Is(err, masterclient.ErrUnavailable):
 		return "auth-unavailable"
-	case err == nil:
-		return "none"
-	case strings.Contains(err.Error(), "handshake"):
+	case errors.As(err, &recordErr), errors.As(err, &certErr):
 		return "tls"
-	case strings.Contains(err.Error(), "timeout"):
+	case errors.As(err, &netErr) && netErr.Timeout():
 		return "timeout"
 	}
 	return "other"
