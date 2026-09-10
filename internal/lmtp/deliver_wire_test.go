@@ -12,6 +12,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -79,7 +80,7 @@ func TestADeliveryOverTheWireIsReadableFromItsRecord(t *testing.T) {
 			if len(msgs) != 1 {
 				t.Fatalf("the folder holds %d records after one delivery", len(msgs))
 			}
-			rc, err := mailbox.OpenMessage(box, "INBOX", msgs[0])
+			rc, err := mbox.OpenMessage(box, "INBOX", msgs[0])
 			if err != nil {
 				t.Fatalf("uid %d cannot be read from its record: %v", msgs[0].UID, err)
 			}

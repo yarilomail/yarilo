@@ -8,6 +8,7 @@ import (
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -32,7 +33,7 @@ func sdboxWithMail(t *testing.T, n int) (*mailbox.UserInfo, mailbox.UserMailbox,
 			t.Fatal(serr)
 		}
 		m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: uint32(len(body))}
-		if aerr := mailbox.RecordSaved(idx, box, f.ID, "INBOX", temp, m); aerr != nil {
+		if aerr := mbox.RecordSaved(idx, box, f.ID, "INBOX", temp, m); aerr != nil {
 			t.Fatal(aerr)
 		}
 	}
@@ -97,7 +98,7 @@ func TestAFolderWhoseIndexIsLostIsRebuiltFromStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range msgs {
-		rc, ferr := mailbox.OpenMessage(box, "INBOX", m)
+		rc, ferr := mbox.OpenMessage(box, "INBOX", m)
 		if ferr != nil {
 			t.Errorf("uid %d: the rebuilt record does not read: %v", m.UID, ferr)
 			continue

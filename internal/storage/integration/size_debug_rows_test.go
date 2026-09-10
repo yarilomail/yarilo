@@ -12,6 +12,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -131,12 +132,12 @@ func TestTheStampingRowNamesWhatItFilled(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+	if err := mbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 
 	c := captureAt(t, slog.LevelDebug)
-	n, err := mailbox.FillSizelessRecords(idx, box, f)
+	n, err := mbox.FillSizelessRecords(idx, box, f)
 	if err != nil {
 		t.Fatal(err)
 	}

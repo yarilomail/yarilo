@@ -10,6 +10,7 @@ import (
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -42,7 +43,7 @@ func stageStore(t *testing.T, n int) (root, user string) {
 			t.Fatalf("save: %v", err)
 		}
 		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
-		if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+		if err := mbox.NameSaved(box, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		meta.GUID = [16]byte{}
@@ -245,7 +246,7 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 			t.Fatalf("save: %v", err)
 		}
 		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
-		if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+		if err := mbox.NameSaved(box, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		meta.GUID = [16]byte{}
@@ -437,7 +438,7 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 	meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
-	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+	if err := mbox.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	meta.GUID = [16]byte{}
@@ -523,7 +524,7 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 				t.Fatalf("save: %v", err)
 			}
 			meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
-			if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+			if err := mbox.NameSaved(box, "INBOX", name, meta); err != nil {
 				t.Fatalf("name: %v", err)
 			}
 			meta.GUID = [16]byte{}

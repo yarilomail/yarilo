@@ -11,6 +11,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -67,7 +68,7 @@ func messageServerRaw(t *testing.T, msg string) (*httptest.Server, string, uint3
 		t.Fatalf("open folder: %v", err)
 	}
 	meta := &mailbox.MessageMeta{UID: 1, Size: uint32(len(msg)), VSize: vsize, GUID: guid}
-	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+	if err := mbox.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := ui.AppendMessage(f.ID, meta); err != nil {

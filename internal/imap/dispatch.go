@@ -9,6 +9,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -30,7 +31,7 @@ type nsHandle struct {
 	box mailbox.UserMailbox
 	idx mailbox.UserIndex
 	// mbox pairs the two, and is what a rule needing both asks (#1715).
-	mbox *mailbox.Box
+	mbox mailbox.Box
 	// subs is the per-namespace subscription store. Personal keeps the
 	// filename "subscriptions" so upgrades preserve existing state;
 	// shared/public use "subscriptions-<ns>" siblings.
@@ -322,7 +323,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		spec:     spec,
 		box:      box,
 		idx:      idx,
-		mbox:     mailbox.Open(box, idx),
+		mbox:     mbox.Open(box, idx),
 		subs:     store,
 		acl:      aclStore,
 		userInfo: ui,

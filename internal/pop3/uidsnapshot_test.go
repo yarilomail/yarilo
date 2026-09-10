@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -59,7 +60,7 @@ func assertDeletionUsesSnapshotUIDs(t *testing.T, locker locks.Locker) {
 	box := &mockMailbox{}
 	s := &session{
 		srv:      &Server{opts: Options{Locker: locker}},
-		box:      mailbox.Open(box, idx),
+		box:      mbox.Open(box, idx),
 		userInfo: &mailbox.UserInfo{Username: "u@example.org"},
 		folder:   &mailbox.Folder{ID: 1, Name: "INBOX"},
 		msgs: []*mailbox.MessageMeta{

@@ -10,6 +10,7 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -59,7 +60,7 @@ func threadedAccount(t *testing.T) (*Server, string, string) {
 			UID: uid, Size: uint32(len(raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Now(),
 		}
-		if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+		if err := mbox.NameSaved(box, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		if err := idx.AppendMessage(f.ID, meta); err != nil {

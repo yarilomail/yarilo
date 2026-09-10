@@ -3,6 +3,7 @@ package dboxv2
 import (
 	"path/filepath"
 
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -29,7 +30,7 @@ func (u *userMailbox) RecordSize(folder string, m *mailbox.MessageMeta) (uint32,
 		return m.Size, m.VSize, oerr
 	}
 	defer rc.Close() //nolint:errcheck
-	return mailbox.CountSizes(rc)
+	return mbox.CountSizes(rc)
 }
 
 var _ mailbox.RecordSizer = (*userMailbox)(nil)

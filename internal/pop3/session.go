@@ -26,6 +26,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/auth/scram"
 	"github.com/yarilomail/yarilo/internal/loginproto"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -70,7 +71,7 @@ type session struct {
 	limitIP         string // IP used for ConnLimit.Acquire; released in releaseLock
 	pendingUser     string // temporary storage of USER arg before PASS arrives
 	userInfo        *mailbox.UserInfo
-	box             *mailbox.Box
+	box             mailbox.Box
 	folder          *mailbox.Folder
 	msgs            []*mailbox.MessageMeta
 	deleted         []bool
@@ -616,7 +617,7 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	}
 
 	s.userInfo = userInfo
-	s.box = mailbox.Open(box, idx, mailbox.WithLocker(s.srv.opts.Locker, locks.Owner(userInfo.Username, userInfo.LockID())))
+	s.box = mbox.Open(box, idx, mbox.WithLocker(s.srv.opts.Locker, locks.Owner(userInfo.Username, userInfo.LockID())))
 
 	if err := s.loadMailbox(); err != nil {
 		s.writeErr("internal error")

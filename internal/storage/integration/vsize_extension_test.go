@@ -10,6 +10,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -77,7 +78,7 @@ func TestAFolderWithoutTheVsizeExtensionGetsItAndIsFilledOnce(t *testing.T) {
 	box, idx, f, path := vsizeFixture(t, "u1@example.com", 3)
 	before := recordSizeOnDisk(t, path)
 
-	filled, err := mailbox.FillSizelessRecords(idx, box, f)
+	filled, err := mbox.FillSizelessRecords(idx, box, f)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestAFolderWithoutTheVsizeExtensionGetsItAndIsFilledOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range msgs {
-		if got := mailbox.RFC822SizeOf(box, "INBOX", m); got == 0 {
+		if got := mbox.RFC822SizeOf(box, "INBOX", m); got == 0 {
 			t.Errorf("uid %d still answers size 0", m.UID)
 		}
 	}
@@ -107,7 +108,7 @@ func TestAFolderWithoutTheVsizeExtensionGetsItAndIsFilledOnce(t *testing.T) {
 // body at all (#1752).
 func TestTheFillDoesNotRepeatOnTheNextOpen(t *testing.T) {
 	box, idx, f, _ := vsizeFixture(t, "u2@example.com", 2)
-	if _, err := mailbox.FillSizelessRecords(idx, box, f); err != nil {
+	if _, err := mbox.FillSizelessRecords(idx, box, f); err != nil {
 		t.Fatal(err)
 	}
 	if err := idx.Close(); err != nil {
@@ -122,7 +123,7 @@ func TestTheFillDoesNotRepeatOnTheNextOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	mdbox.ResetStorageSizeReads()
-	filled, err := mailbox.FillSizelessRecords(idx2, box, f2)
+	filled, err := mbox.FillSizelessRecords(idx2, box, f2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +174,7 @@ func vsizeFixture(t *testing.T, user string, n int) (mailbox.UserMailbox, mailbo
 		if serr != nil {
 			t.Fatal(serr)
 		}
-		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved,
+		if err := mbox.RecordSaved(idx, box, f.ID, "INBOX", saved,
 			&mailbox.MessageMeta{Size: uint32(len(body)), VSize: uint32(len(body)), GUID: guid}); err != nil {
 			t.Fatal(err)
 		}

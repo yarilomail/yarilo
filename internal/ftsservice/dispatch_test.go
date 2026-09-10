@@ -8,7 +8,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/fts"
 )
 
-func mbox(user, folder string) job {
+func jobFor(user, folder string) job {
 	return job{user: user, mbox: fts.MailboxRef{Name: folder}}
 }
 
@@ -18,9 +18,9 @@ func mbox(user, folder string) job {
 // every worker.
 func TestDispatchSkipsAUserAlreadyRunning(t *testing.T) {
 	q := newQueue()
-	q.push(mbox("u1", "INBOX"), false)
-	q.push(mbox("u1", "Sent"), false)
-	q.push(mbox("u2", "INBOX"), false)
+	q.push(jobFor("u1", "INBOX"), false)
+	q.push(jobFor("u1", "Sent"), false)
+	q.push(jobFor("u2", "INBOX"), false)
 
 	first, ok := q.pop(context.Background())
 	if !ok || first.user != "u1" {
@@ -39,8 +39,8 @@ func TestDispatchSkipsAUserAlreadyRunning(t *testing.T) {
 // Skipped work is not lost: once the user is released it is dispatched.
 func TestDispatchReleasesSkippedWorkAfterDone(t *testing.T) {
 	q := newQueue()
-	q.push(mbox("u1", "INBOX"), false)
-	q.push(mbox("u1", "Sent"), false)
+	q.push(jobFor("u1", "INBOX"), false)
+	q.push(jobFor("u1", "Sent"), false)
 
 	first, _ := q.pop(context.Background())
 
@@ -66,8 +66,8 @@ func TestDispatchReleasesSkippedWorkAfterDone(t *testing.T) {
 // when one is released — otherwise it sleeps while work is available.
 func TestDispatchWakesAParkedWorker(t *testing.T) {
 	q := newQueue()
-	q.push(mbox("u1", "INBOX"), false)
-	q.push(mbox("u1", "Sent"), false)
+	q.push(jobFor("u1", "INBOX"), false)
+	q.push(jobFor("u1", "Sent"), false)
 	first, _ := q.pop(context.Background())
 
 	got := make(chan job, 1)
@@ -96,12 +96,12 @@ func TestDispatchWakesAParkedWorker(t *testing.T) {
 // hold up a lower-priority one belonging to somebody else.
 func TestDispatchHonoursPriorityAmongEligibleUsers(t *testing.T) {
 	q := newQueue()
-	q.push(mbox("u1", "INBOX"), false)
+	q.push(jobFor("u1", "INBOX"), false)
 	first, _ := q.pop(context.Background()) // u1 now running
 
-	q.push(mbox("u2", "INBOX"), false)
-	q.push(mbox("u1", "Sent"), false) // not eligible
-	q.push(mbox("u3", "INBOX"), true) // priority, eligible
+	q.push(jobFor("u2", "INBOX"), false)
+	q.push(jobFor("u1", "Sent"), false) // not eligible
+	q.push(jobFor("u3", "INBOX"), true) // priority, eligible
 
 	next, ok := q.pop(context.Background())
 	if !ok {
@@ -116,8 +116,8 @@ func TestDispatchHonoursPriorityAmongEligibleUsers(t *testing.T) {
 // Closing releases workers parked on ineligible work, or shutdown hangs.
 func TestDispatchCloseUnblocksAParkedWorker(t *testing.T) {
 	q := newQueue()
-	q.push(mbox("u1", "INBOX"), false)
-	q.push(mbox("u1", "Sent"), false)
+	q.push(jobFor("u1", "INBOX"), false)
+	q.push(jobFor("u1", "Sent"), false)
 	q.pop(context.Background()) //nolint:errcheck // u1 now running
 
 	done := make(chan bool, 1)

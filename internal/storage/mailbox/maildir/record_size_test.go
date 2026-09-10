@@ -10,6 +10,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -64,11 +65,11 @@ func TestTheSizeComesFromTheName(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &mailbox.MessageMeta{UID: 1, Size: tc.recordSize, VSize: tc.recordVSize}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", name, m); err != nil {
+			if err := mbox.RecordSaved(idx, box, f.ID, "INBOX", name, m); err != nil {
 				t.Fatal(err)
 			}
 
-			size, vsize, serr := mailbox.MessageSize(box, "INBOX", m)
+			size, vsize, serr := mbox.MessageSize(box, "INBOX", m)
 			if serr != nil {
 				t.Fatalf("size: %v", serr)
 			}
@@ -101,7 +102,7 @@ func TestADboxSizeIsNotReadFromTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+	if err := mbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 	// Proven by taking the storage away: a record holding both numbers is
@@ -109,7 +110,7 @@ func TestADboxSizeIsNotReadFromTheFile(t *testing.T) {
 	if rerr := box.Remove("INBOX", saved); rerr != nil {
 		t.Fatal(rerr)
 	}
-	size, got, serr := mailbox.MessageSize(box, "INBOX", m)
+	size, got, serr := mbox.MessageSize(box, "INBOX", m)
 	if serr != nil {
 		t.Fatal(serr)
 	}

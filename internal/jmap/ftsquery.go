@@ -76,7 +76,7 @@ type ftsEvaluator struct {
 	fts  *FTS
 	user string
 	box  mailbox.UserMailbox
-	mbox *mailbox.Box
+	mbox mailbox.Box
 
 	// deadline bounds the whole request's waiting, not each folder's: with a
 	// fan-out the size of the ceiling, a per-folder budget would multiply into

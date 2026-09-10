@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -28,7 +29,7 @@ func TestTheDebugRowNamesTheWriterAndBothSides(t *testing.T) {
 	if _, err := u.AssignUID("INBOX", name, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mailbox.MessagePath(box, "INBOX", &mailbox.MessageMeta{UID: 1}); err != nil {
+	if _, err := mbox.MessagePath(box, "INBOX", &mailbox.MessageMeta{UID: 1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,7 +48,7 @@ func TestTheDebugRowNamesTheWriterAndBothSides(t *testing.T) {
 	// apart is the point, since a stale snapshot reads as a missing row.
 	buf.Reset()
 	fresh := openTestUser(t, homeOf(t, u)).(*userMailbox)
-	if _, err := mailbox.MessagePath(fresh, "INBOX", &mailbox.MessageMeta{UID: 1}); err != nil {
+	if _, err := mbox.MessagePath(fresh, "INBOX", &mailbox.MessageMeta{UID: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), `"from":"disk"`) {

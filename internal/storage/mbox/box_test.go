@@ -1,4 +1,4 @@
-package mailbox_test
+package mbox_test
 
 import (
 	"context"
@@ -11,11 +11,12 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // openBox is one account through both halves at once.
-func openBox(t *testing.T, user string) (*mailbox.Box, *mailbox.Folder) {
+func openBox(t *testing.T, user string) (*mbox.Box, *mailbox.Folder) {
 	t.Helper()
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: user, Home: home, Driver: "maildir"}
@@ -25,7 +26,7 @@ func openBox(t *testing.T, user string) (*mailbox.Box, *mailbox.Folder) {
 	if err := store.Init(); err != nil {
 		t.Fatal(err)
 	}
-	box := mailbox.Open(store, idx)
+	box := mbox.Open(store, idx)
 	f, err := box.Folder("INBOX", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +59,7 @@ func TestRecordDeliveredNamesTheMessageBeforeRecordingIt(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("the folder holds %d records, want 1", len(msgs))
 	}
-	name, err := mailbox.MessagePath(box.Store(), "INBOX", msgs[0])
+	name, err := mbox.MessagePath(box.Store(), "INBOX", msgs[0])
 	if err != nil || name == "" {
 		t.Fatalf("the recorded message names no file: %q %v", name, err)
 	}
@@ -79,7 +80,7 @@ var errRefusedName = errors.New("the name was refused")
 // message a client sees and cannot read (#1745).
 func TestRecordDeliveredLeavesNoRecordWhenTheNameFails(t *testing.T) {
 	plain, f := openBox(t, "u2@example.com")
-	box := mailbox.Open(&refusingNamer{UserMailbox: plain.Store()}, plain.Index())
+	box := mbox.Open(&refusingNamer{UserMailbox: plain.Store()}, plain.Index())
 	m := &mailbox.MessageMeta{UID: 7, Size: 10, VSize: 10}
 	err := box.RecordDelivered(f, "INBOX", "1700000000.M1P1.host:2,", m)
 	if err == nil {
@@ -126,7 +127,7 @@ func TestFillSizelessGivesRecordsTheSizeStorageHolds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := mailbox.RFC822SizeOf(box.Store(), "INBOX", msgs[0]); got != uint32(len(body)) {
+	if got := mbox.RFC822SizeOf(box.Store(), "INBOX", msgs[0]); got != uint32(len(body)) {
 		t.Errorf("the record answers size %d, the body is %d", got, len(body))
 	}
 }
@@ -136,7 +137,7 @@ func TestFillSizelessGivesRecordsTheSizeStorageHolds(t *testing.T) {
 func TestExpungeMarkedTakesTheFolderOnce(t *testing.T) {
 	box, f := openBox(t, "u4@example.com")
 	lk := &countingLocker{held: map[string]locks.HoldMode{}}
-	batched := mailbox.Open(box.Store(), box.Index(), mailbox.WithLocker(lk, "test/0/u4@example.com/s1"))
+	batched := mbox.Open(box.Store(), box.Index(), mbox.WithLocker(lk, "test/0/u4@example.com/s1"))
 
 	msgs := make([]*mailbox.MessageMeta, 0, 3)
 	for i := 0; i < 3; i++ {
@@ -236,7 +237,7 @@ func TestTheRecordGoesBeforeTheBody(t *testing.T) {
 	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
-	name, err := mailbox.MessagePath(box.Store(), "INBOX", m)
+	name, err := mbox.MessagePath(box.Store(), "INBOX", m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +245,7 @@ func TestTheRecordGoesBeforeTheBody(t *testing.T) {
 	// What the folder holds at the moment between the two steps.
 	var recordsThen int
 	var bodyThen bool
-	disarm := mailbox.SetTestAfterRecordExpunged(func() {
+	disarm := mbox.SetTestAfterRecordExpunged(func() {
 		msgs, gerr := box.Index().GetMessages(f.ID, mailbox.SeqSet{})
 		if gerr != nil {
 			t.Error(gerr)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -158,7 +159,7 @@ func TestTwoProcessAppendNoUIDCollision(t *testing.T) {
 						return
 					}
 					meta := &mailbox.MessageMeta{UID: uid, Flags: []string{}}
-					if err := mailbox.NameSaved(mb, "INBOX", filename, meta); err != nil {
+					if err := mbox.NameSaved(mb, "INBOX", filename, meta); err != nil {
 						errCh <- err
 						return
 					}

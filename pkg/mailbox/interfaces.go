@@ -109,6 +109,12 @@ type FolderRefresher interface {
 	RefreshFolder(folderID uint64) error
 }
 
+// RecordSizer answers a message's sizes from where its driver keeps them: a
+// maildir name carries both, a dbox record already holds them (#1726).
+type RecordSizer interface {
+	RecordSize(folder string, m *MessageMeta) (size, vsize uint32, err error)
+}
+
 // SizelessLister names the records carrying no virtual size, so the driver that
 // keeps the size elsewhere can fill them (#1728).
 type SizelessLister interface {

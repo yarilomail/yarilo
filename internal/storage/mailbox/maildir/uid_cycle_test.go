@@ -9,6 +9,7 @@ import (
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -66,7 +67,7 @@ func TestTheListCarriesAnAppendBeforeAnyReconcile(t *testing.T) {
 		t.Fatalf("assign uid: %v", aerr)
 	}
 	m := &mailbox.MessageMeta{Size: 16, VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+	if err := mbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -122,7 +123,7 @@ func TestAMoveIntoATakenNameIsRecordedUnderTheDestinationUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: 16, VSize: 16, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, archive.ID, "Archive", moved, m); err != nil {
+	if err := mbox.RecordSaved(idx, box, archive.ID, "Archive", moved, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -188,7 +189,7 @@ func TestAFolderCostsOneReadOfTheList(t *testing.T) {
 			t.Fatal(serr)
 		}
 		m := &mailbox.MessageMeta{Size: 16, VSize: vsize, GUID: guid}
-		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+		if err := mbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -207,7 +208,7 @@ func TestAFolderCostsOneReadOfTheList(t *testing.T) {
 	maildir.ResetListReads()
 	maildir.ResetDirReads()
 	for _, m := range msgs {
-		if _, err := mailbox.MessagePath(fresh, "INBOX", m); err != nil {
+		if _, err := mbox.MessagePath(fresh, "INBOX", m); err != nil {
 			t.Fatalf("uid %d: %v", m.UID, err)
 		}
 	}

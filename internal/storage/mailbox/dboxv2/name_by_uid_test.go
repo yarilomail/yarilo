@@ -12,6 +12,7 @@ import (
 	"time"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -47,7 +48,7 @@ func TestASavedMessageIsNamedByItsUID(t *testing.T) {
 	}
 
 	want := "u." + strconv.FormatUint(uint64(m.UID), 10)
-	if got, err := mailbox.MessagePath(mb, "INBOX", m); err != nil || got != want {
+	if got, err := mbox.MessagePath(mb, "INBOX", m); err != nil || got != want {
 		t.Errorf("the driver names it %q (%v), want %q", got, err, want)
 	}
 	entries, err := os.ReadDir(filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails"))
@@ -154,12 +155,12 @@ func TestAGUIDNamedStoreIsMigrated(t *testing.T) {
 	// The record keeps no name at all now: u.<uid> is what the driver answers.
 	for _, m := range msgs {
 		want := "u." + strconv.FormatUint(uint64(m.UID), 10)
-		if got, err := mailbox.MessagePath(mb, "INBOX", m); err != nil || got != want {
+		if got, err := mbox.MessagePath(mb, "INBOX", m); err != nil || got != want {
 			t.Errorf("uid %d resolves to %q (%v), want %q", m.UID, got, err, want)
 		}
 	}
 	for _, m := range msgs {
-		rc, ferr := mailbox.OpenMessage(mb, "INBOX", m)
+		rc, ferr := mbox.OpenMessage(mb, "INBOX", m)
 		if ferr != nil {
 			t.Errorf("uid %d: %v", m.UID, ferr)
 			continue
@@ -249,7 +250,7 @@ func TestAnAppendTakesTheFolderKeyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: 4, VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, mb, folder.ID, "INBOX", temp, m); err != nil {
+	if err := mbox.RecordSaved(idx, mb, folder.ID, "INBOX", temp, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -295,7 +296,7 @@ func TestNoPathWritesAGUIDName(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: 4, VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, mb, inbox.ID, "INBOX", temp, m); err != nil {
+	if err := mbox.RecordSaved(idx, mb, inbox.ID, "INBOX", temp, m); err != nil {
 		t.Fatal(err)
 	}
 	// Copied.
@@ -305,7 +306,7 @@ func TestNoPathWritesAGUIDName(t *testing.T) {
 	if !ok {
 		t.Fatal("the sdbox driver no longer copies")
 	}
-	srcName, err := mailbox.MessagePath(mb, "INBOX", m)
+	srcName, err := mbox.MessagePath(mb, "INBOX", m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +328,7 @@ func TestNoPathWritesAGUIDName(t *testing.T) {
 		t.Fatal(err)
 	}
 	nm := &mailbox.MessageMeta{Size: 6, VSize: 6}
-	if err := mailbox.RecordSaved(idx, mb, archive.ID, "Archive", moved, nm); err != nil {
+	if err := mbox.RecordSaved(idx, mb, archive.ID, "Archive", moved, nm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -470,10 +471,10 @@ func TestAMoveIntoATakenNameEndsUnderTheDestinationUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: 4, VSize: 4}
-	if err := mailbox.RecordSaved(idx, mb, archive.ID, "Archive", moved, m); err != nil {
+	if err := mbox.RecordSaved(idx, mb, archive.ID, "Archive", moved, m); err != nil {
 		t.Fatal(err)
 	}
-	name, err := mailbox.MessagePath(mb, "Archive", m)
+	name, err := mbox.MessagePath(mb, "Archive", m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +492,7 @@ func TestAMoveIntoATakenNameEndsUnderTheDestinationUID(t *testing.T) {
 			}
 		}
 	}
-	if rc, ferr := mailbox.OpenMessage(mb, "Archive", m); ferr != nil {
+	if rc, ferr := mbox.OpenMessage(mb, "Archive", m); ferr != nil {
 		t.Errorf("the moved message cannot be read: %v", ferr)
 	} else {
 		rc.Close() //nolint:errcheck
@@ -539,7 +540,7 @@ func TestANamelessRecordFindsItsBodyByGUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc, err := mailbox.OpenMessage(mb, "INBOX", msgs[0])
+	rc, err := mbox.OpenMessage(mb, "INBOX", msgs[0])
 	if err != nil {
 		t.Fatalf("the healed message cannot be read: %v", err)
 	}

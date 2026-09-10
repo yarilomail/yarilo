@@ -1,27 +1,23 @@
-package mailbox
+package mbox
 
 import (
 	"context"
 	"io"
 	"log/slog"
-)
 
-// RecordSizer answers a message's sizes from where its driver keeps them. A
-// maildir name carries both; a dbox record already holds them (#1726).
-type RecordSizer interface {
-	RecordSize(folder string, m *MessageMeta) (size, vsize uint32, err error)
-}
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
 
 // MessageSize is the size to report for a message: the record's own numbers
 // when it has them, otherwise the driver's answer from storage (#1726).
-func MessageSize(box UserMailbox, folder string, m *MessageMeta) (size, vsize uint32, err error) {
+func MessageSize(box mailbox.UserMailbox, folder string, m *mailbox.MessageMeta) (size, vsize uint32, err error) {
 	if m == nil {
 		return 0, 0, nil
 	}
 	if m.Size != 0 && m.VSize != 0 {
 		return m.Size, m.VSize, nil
 	}
-	sizer, ok := Driver(box).(RecordSizer)
+	sizer, ok := mailbox.Driver(box).(mailbox.RecordSizer)
 	if !ok {
 		return m.Size, m.VSize, nil
 	}
@@ -29,8 +25,8 @@ func MessageSize(box UserMailbox, folder string, m *MessageMeta) (size, vsize ui
 }
 
 // RFC822SizeOf is MessageSize reduced to the one number RFC822.SIZE reports:
-// the virtual size, falling back to the physical one the way MessageMeta does.
-func RFC822SizeOf(box UserMailbox, folder string, m *MessageMeta) uint32 {
+// the virtual size, falling back to the physical one the way mailbox.MessageMeta does.
+func RFC822SizeOf(box mailbox.UserMailbox, folder string, m *mailbox.MessageMeta) uint32 {
 	size, vsize, err := MessageSize(box, folder, m)
 	if err != nil {
 		return m.RFC822Size()
@@ -43,8 +39,8 @@ func RFC822SizeOf(box UserMailbox, folder string, m *MessageMeta) uint32 {
 
 // FillSizes stamps each record's sizes from storage where the record has none,
 // so the callers that report a size read one answer, not two (#1726).
-func FillSizes(box UserMailbox, folder string, msgs []*MessageMeta) {
-	sizer, ok := Driver(box).(RecordSizer)
+func FillSizes(box mailbox.UserMailbox, folder string, msgs []*mailbox.MessageMeta) {
+	sizer, ok := mailbox.Driver(box).(mailbox.RecordSizer)
 	if !ok {
 		return
 	}
@@ -86,20 +82,20 @@ func CountSizes(r io.Reader) (size, vsize uint32, err error) {
 
 // FillSizelessRecords gives the records that carry no size the one their driver
 // holds, so the folder's sum stops reading them as empty (#1728).
-func FillSizelessRecords(idx UserIndex, box UserMailbox, folder *Folder) (int, error) {
-	lister, canList := idx.(SizelessLister)
-	stamper, canStamp := idx.(SizeStamper)
+func FillSizelessRecords(idx mailbox.UserIndex, box mailbox.UserMailbox, folder *mailbox.Folder) (int, error) {
+	lister, canList := idx.(mailbox.SizelessLister)
+	stamper, canStamp := idx.(mailbox.SizeStamper)
 	if !canList || !canStamp {
 		return 0, nil
 	}
-	if _, ok := Driver(box).(RecordSizer); !ok {
+	if _, ok := mailbox.Driver(box).(mailbox.RecordSizer); !ok {
 		return 0, nil
 	}
 	uids, err := lister.SizelessUIDs(folder.ID)
 	if err != nil || len(uids) == 0 {
 		return 0, err
 	}
-	msgs, err := ReadMessages(idx, folder.ID, SeqSet{})
+	msgs, err := mailbox.ReadMessages(idx, folder.ID, mailbox.SeqSet{})
 	if err != nil {
 		return 0, err
 	}

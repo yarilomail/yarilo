@@ -1,11 +1,13 @@
-package mailbox
+package mbox
+
+import "github.com/yarilomail/yarilo/pkg/mailbox"
 
 // RecordSaved allocates the uid and records the message; a driver named by uid
 // settles the name in that cycle. saved is what Save returned (#1700).
-func RecordSaved(idx UserIndex, box UserMailbox, folderID uint64, folder, saved string, m *MessageMeta) error {
+func RecordSaved(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint64, folder, saved string, m *mailbox.MessageMeta) error {
 	stampStorageKey(box, folder, saved, m)
-	namer, isNamer := Driver(box).(UIDNamer)
-	appender, isAppender := idx.(NamingAppender)
+	namer, isNamer := mailbox.Driver(box).(mailbox.UIDNamer)
+	appender, isAppender := idx.(mailbox.NamingAppender)
 	if !isNamer || !isAppender {
 		return idx.AllocateAndAppend(folderID, m)
 	}
@@ -21,9 +23,9 @@ func RecordSaved(idx UserIndex, box UserMailbox, folderID uint64, folder, saved 
 
 // NameSaved gives a saved message its name when the caller already holds the
 // uid, as a delivery that reserved one does. No cycle of its own.
-func NameSaved(box UserMailbox, folder, saved string, m *MessageMeta) error {
+func NameSaved(box mailbox.UserMailbox, folder, saved string, m *mailbox.MessageMeta) error {
 	stampStorageKey(box, folder, saved, m)
-	namer, ok := Driver(box).(UIDNamer)
+	namer, ok := mailbox.Driver(box).(mailbox.UIDNamer)
 	if !ok {
 		return nil
 	}
@@ -37,8 +39,8 @@ func NameSaved(box UserMailbox, folder, saved string, m *MessageMeta) error {
 
 // stampStorageKey carries a driver's own key into the record: mdbox's map_uid,
 // which is what the name is read back from.
-func stampStorageKey(box UserMailbox, folder, name string, m *MessageMeta) {
-	keyer, ok := Driver(box).(StorageKeyer)
+func stampStorageKey(box mailbox.UserMailbox, folder, name string, m *mailbox.MessageMeta) {
+	keyer, ok := mailbox.Driver(box).(mailbox.StorageKeyer)
 	if !ok || name == "" {
 		return
 	}

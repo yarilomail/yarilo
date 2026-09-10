@@ -1,4 +1,4 @@
-package mailbox
+package mbox
 
 import (
 	"context"
@@ -7,20 +7,22 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
-// Box is one account's mail, both halves together: every rule needing the store
-// and the index lives here, so a consumer asks for a message (#1715).
+// Box is the shared base every driver's mailbox embeds: the rules that need the
+// store and the index together live here, once (#1715).
 type Box struct {
-	store  UserMailbox
-	index  UserIndex
+	store  mailbox.UserMailbox
+	index  mailbox.UserIndex
 	locker locks.Locker
 	owner  string
 }
 
 // Open pairs the two halves of one account.
-func Open(store UserMailbox, index UserIndex, opts ...BoxOption) *Box {
+func Open(store mailbox.UserMailbox, index mailbox.UserIndex, opts ...BoxOption) *Box {
 	b := &Box{store: store, index: index}
 	for _, opt := range opts {
 		opt(b)
@@ -30,22 +32,22 @@ func Open(store UserMailbox, index UserIndex, opts ...BoxOption) *Box {
 
 // Store is the half that holds bodies. Consumers still reaching for it are the
 // ones this arc has not moved yet.
-func (b *Box) Store() UserMailbox { return b.store }
+func (b *Box) Store() mailbox.UserMailbox { return b.store }
 
 // Index is the half that holds records, on the same terms.
-func (b *Box) Index() UserIndex { return b.index }
+func (b *Box) Index() mailbox.UserIndex { return b.index }
 
 // Username is whose mail this is.
 func (b *Box) Username() string { return b.store.Username() }
 
 // Folder opens one folder's index.
-func (b *Box) Folder(name string, uidValidity uint32) (*Folder, error) {
+func (b *Box) Folder(name string, uidValidity uint32) (*mailbox.Folder, error) {
 	return b.index.OpenFolder(name, uidValidity)
 }
 
 // RecordDelivered records a saved body: the name reaches storage first, so a
 // failed name leaves no record behind (#1745).
-func (b *Box) RecordDelivered(f *Folder, folder, saved string, m *MessageMeta) error {
+func (b *Box) RecordDelivered(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) error {
 	if err := NameSaved(b.store, folder, saved, m); err != nil {
 		return fmt.Errorf("mailbox/deliver: name %q: %w", saved, err)
 	}
@@ -57,69 +59,69 @@ func (b *Box) RecordDelivered(f *Folder, folder, saved string, m *MessageMeta) e
 
 // FillSizeless gives the records that carry no size the one their storage holds,
 // so a sum over the folder is taken on mail and not on zeros (#1728).
-func (b *Box) FillSizeless(f *Folder) (int, error) {
+func (b *Box) FillSizeless(f *mailbox.Folder) (int, error) {
 	return FillSizelessRecords(b.index, b.store, f)
 }
 
 // Readable reports whether a record resolves to a body at all: one that does
 // not is reported, never handed to a client as an empty message.
-func (b *Box) Readable(m *MessageMeta) bool { return Readable(b.store, m) }
+func (b *Box) Readable(m *mailbox.MessageMeta) bool { return Readable(b.store, m) }
 
 // MessagePath is the file a record names.
-func (b *Box) MessagePath(folder string, m *MessageMeta) (string, error) {
+func (b *Box) MessagePath(folder string, m *mailbox.MessageMeta) (string, error) {
 	return MessagePath(b.store, folder, m)
 }
 
 // OpenMessage opens the body a record names.
-func (b *Box) OpenMessage(folder string, m *MessageMeta) (io.ReadCloser, error) {
+func (b *Box) OpenMessage(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
 	return OpenMessage(b.store, folder, m)
 }
 
 // RFC822Size is the size a client is told: the record's own, or the driver's
 // answer from storage when it has none (#1726).
-func (b *Box) RFC822Size(folder string, m *MessageMeta) uint32 {
+func (b *Box) RFC822Size(folder string, m *mailbox.MessageMeta) uint32 {
 	return RFC822SizeOf(b.store, folder, m)
 }
 
 // FillResponseSizes fills a slice in memory for one response; nothing reaches
 // disk, where the index's own StampSizes is what persists a size (#1728).
-func (b *Box) FillResponseSizes(folder string, msgs []*MessageMeta) {
+func (b *Box) FillResponseSizes(folder string, msgs []*mailbox.MessageMeta) {
 	FillSizes(b.store, folder, msgs)
 }
 
 // WriteFlags settles flag changes in storage and marks those that did not
 // reach it: a change kept in the index alone leaves the store stale (#1601).
-func (b *Box) WriteFlags(f *Folder, folder string, writes []FlagWrite) []FlagWriteResult {
+func (b *Box) WriteFlags(f *mailbox.Folder, folder string, writes []mailbox.FlagWrite) []mailbox.FlagWriteResult {
 	return FlagsWritten(b.index, b.store, f.ID, folder, writes)
 }
 
 // RecordSaved records a body already written into a folder — an APPEND, a
 // fileinto, a copy — settling its name before its record (#1745).
-func (b *Box) RecordSaved(f *Folder, folder, saved string, m *MessageMeta) error {
+func (b *Box) RecordSaved(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) error {
 	return RecordSaved(b.index, b.store, f.ID, folder, saved, m)
 }
 
 // NameSaved settles the name of a body saved under a uid the caller already
 // holds, as a delivery that reserved one does.
-func (b *Box) NameSaved(folder, saved string, m *MessageMeta) error {
+func (b *Box) NameSaved(folder, saved string, m *mailbox.MessageMeta) error {
 	return NameSaved(b.store, folder, saved, m)
 }
 
 // MessageSize is both numbers a record reports, from the record or from the
 // driver when it carries none (#1726).
-func (b *Box) MessageSize(folder string, m *MessageMeta) (size, vsize uint32, err error) {
+func (b *Box) MessageSize(folder string, m *mailbox.MessageMeta) (size, vsize uint32, err error) {
 	return MessageSize(b.store, folder, m)
 }
 
 // RemoveMessage unlinks the body a record names, leaving the record to the
 // caller: an operator tool removing one is not an expunge.
-func (b *Box) RemoveMessage(folder string, m *MessageMeta) error {
+func (b *Box) RemoveMessage(folder string, m *mailbox.MessageMeta) error {
 	return RemoveMessage(b.store, folder, m)
 }
 
 // Messages reads records with the driver's fill-ins applied.
-func (b *Box) Messages(folderID uint64, set SeqSet) ([]*MessageMeta, error) {
-	return ReadMessages(b.index, folderID, set)
+func (b *Box) Messages(folderID uint64, set mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
+	return mailbox.ReadMessages(b.index, folderID, set)
 }
 
 // WithLocker gives the box the cross-process lock client, so a rule needing one
@@ -133,7 +135,7 @@ type BoxOption func(*Box)
 
 // ExpungeMarked removes messages under one hold: taking the key per message
 // lets another writer in between two removals. One failure is not the batch's.
-func (b *Box) ExpungeMarked(f *Folder, folder string, msgs []*MessageMeta) (removed []uint32, failed int) {
+func (b *Box) ExpungeMarked(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta) (removed []uint32, failed int) {
 	if b.locker == nil {
 		return b.expungeEach(f, folder, msgs)
 	}
@@ -152,7 +154,7 @@ func (b *Box) ExpungeMarked(f *Folder, folder string, msgs []*MessageMeta) (remo
 
 // expungeEach reads the name, removes the record, then the body: a stop between
 // the last two leaves a file for the next rebuild, never a record with no file (#1690).
-func (b *Box) expungeEach(f *Folder, folder string, msgs []*MessageMeta) (removed []uint32, failed int) {
+func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta) (removed []uint32, failed int) {
 	for _, m := range msgs {
 		// The name before the record: a driver named by uid reads it out of
 		// the record this loop is about to remove (#1712).
@@ -203,3 +205,5 @@ func (b *Box) Close() {
 		slog.Warn("mailbox: closing the index", "user", b.store.Username(), "err", err)
 	}
 }
+
+var _ mailbox.Box = (*Box)(nil)
