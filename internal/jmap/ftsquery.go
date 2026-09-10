@@ -76,6 +76,7 @@ type ftsEvaluator struct {
 	fts  *FTS
 	user string
 	box  mailbox.UserMailbox
+	mbox *mailbox.Box
 
 	// deadline bounds the whole request's waiting, not each folder's: with a
 	// fan-out the size of the ceiling, a per-folder budget would multiply into
@@ -126,6 +127,7 @@ func (s *Server) newFTSEvaluator(h *userHandle) *ftsEvaluator {
 		fts:      s.opts.FTS,
 		user:     h.info.Username,
 		box:      h.box,
+		mbox:     h.mbox,
 		byFolder: map[uint64]*folderMatches{},
 	}
 }
@@ -351,7 +353,7 @@ func (e *ftsEvaluator) readMessage(sf scopeFolder, m *mailbox.MessageMeta) (mess
 }
 
 func (e *ftsEvaluator) readParts(sf scopeFolder, m *mailbox.MessageMeta) (message.Header, []walkedPart, error) {
-	rc, err := mailbox.OpenMessage(e.box, sf.name, m)
+	rc, err := e.mbox.OpenMessage(sf.name, m)
 	if err != nil {
 		return message.Header{}, nil, err
 	}

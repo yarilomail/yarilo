@@ -60,6 +60,7 @@ func Run(cfg Config) (Report, error) {
 	defer box.Close() //nolint:errcheck
 	uidx := idx.OpenUser(info)
 	defer uidx.Close() //nolint:errcheck
+	mbox := mailbox.Open(box, uidx)
 
 	folder, err := uidx.OpenFolder(benchMbox.Name, benchMbox.UIDValidity)
 	if err != nil {
@@ -72,7 +73,7 @@ func Run(cfg Config) (Report, error) {
 			return Report{}, fmt.Errorf("ftsbench: save uid %d: %w", m.UID, err)
 		}
 		meta := &mailbox.MessageMeta{UID: m.UID, Size: uint32(len(m.Raw)), VSize: vsize, GUID: guid}
-		if err := mailbox.NameSaved(box, benchMbox.Name, name, meta); err != nil {
+		if err := mbox.NameSaved(benchMbox.Name, name, meta); err != nil {
 			return Report{}, fmt.Errorf("ftsbench: name uid %d: %w", m.UID, err)
 		}
 		if err := uidx.AppendMessage(folder.ID, meta); err != nil {
@@ -127,7 +128,7 @@ func Run(cfg Config) (Report, error) {
 	})
 	criteria := &imaplib.SearchCriteria{Body: []string{Needle}}
 	scanP95 := measure(cfg.Iterations, func() {
-		scanOnce(box, benchMbox.Name, metas, criteria)
+		scanOnce(mbox, benchMbox.Name, metas, criteria)
 	})
 
 	indexBytes, err := dirSize(cfg.Root, flatcurve.Label)
@@ -151,9 +152,9 @@ func Run(cfg Config) (Report, error) {
 
 // scanOnce reproduces the brute-force SEARCH path: fetch every message and
 // match it against the criteria.
-func scanOnce(box mailbox.UserMailbox, folder string, metas []*mailbox.MessageMeta, criteria *imaplib.SearchCriteria) {
+func scanOnce(box *mailbox.Box, folder string, metas []*mailbox.MessageMeta, criteria *imaplib.SearchCriteria) {
 	for i, m := range metas {
-		rc, err := mailbox.OpenMessage(box, folder, m)
+		rc, err := box.OpenMessage(folder, m)
 		if err != nil {
 			continue
 		}

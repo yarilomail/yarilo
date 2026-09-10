@@ -323,7 +323,7 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
 			continue
 		}
-		if err := mailbox.RemoveMessage(bundle.box, req.Folder, m); err != nil {
+		if err := bundle.mbox.RemoveMessage(req.Folder, m); err != nil {
 			slog.Warn("backendapi/folder: remove blob failed",
 				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
 		}

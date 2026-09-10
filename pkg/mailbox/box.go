@@ -99,10 +99,22 @@ func (b *Box) RecordSaved(f *Folder, folder, saved string, m *MessageMeta) error
 	return RecordSaved(b.index, b.store, f.ID, folder, saved, m)
 }
 
+// NameSaved settles the name of a body saved under a uid the caller already
+// holds, as a delivery that reserved one does.
+func (b *Box) NameSaved(folder, saved string, m *MessageMeta) error {
+	return NameSaved(b.store, folder, saved, m)
+}
+
 // MessageSize is both numbers a record reports, from the record or from the
 // driver when it carries none (#1726).
 func (b *Box) MessageSize(folder string, m *MessageMeta) (size, vsize uint32, err error) {
 	return MessageSize(b.store, folder, m)
+}
+
+// RemoveMessage unlinks the body a record names, leaving the record to the
+// caller: an operator tool removing one is not an expunge.
+func (b *Box) RemoveMessage(folder string, m *MessageMeta) error {
+	return RemoveMessage(b.store, folder, m)
 }
 
 // Messages reads records with the driver's fill-ins applied.

@@ -38,6 +38,7 @@ type nsBundle struct {
 	info     *mailbox.UserInfo
 	box      mailbox.UserMailbox
 	idx      mailbox.UserIndex
+	mbox     *mailbox.Box
 	location string
 }
 
@@ -249,6 +250,7 @@ func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, 
 		info:     ui,
 		box:      box,
 		idx:      idx,
+		mbox:     mailbox.Open(box, idx),
 		location: ui.Home,
 	}
 	return bundle, nil

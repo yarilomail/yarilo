@@ -108,10 +108,12 @@ type Service struct {
 }
 
 type userHandle struct {
-	info *mailbox.UserInfo
-	ui   fts.UserIndex
-	box  mailbox.UserMailbox
-	idx  mailbox.UserIndex
+	info     *mailbox.UserInfo
+	ui       fts.UserIndex
+	box      mailbox.UserMailbox
+	idx      mailbox.UserIndex
+	mbox     *mailbox.Box // paired once, under mboxOnce
+	mboxOnce sync.Once
 
 	// inUse counts the operations holding this handle right now. The idle
 	// sweeper must not close an index mid-commit, so a handle is only ever
@@ -234,6 +236,12 @@ func (s *Service) handle(user string) (*userHandle, error) {
 	h.lastUsed = time.Now()
 	s.users[user] = h
 	return h, nil
+}
+
+// mailboxOf pairs the handle's halves once (#1715).
+func (h *userHandle) mailboxOf() *mailbox.Box {
+	h.mboxOnce.Do(func() { h.mbox = mailbox.Open(h.box, h.idx) })
+	return h.mbox
 }
 
 // release marks an operation on a handle finished. Idleness is measured from
@@ -392,14 +400,6 @@ func checkIndexRoot(tmpl string) error {
 	return nil
 }
 
-// indexRoot resolves where this user's FTS data lives.
-//
-// The configured root wins when set; otherwise the resolution mirrors
-// fileindex's — INDEX= override, then mail path, then home — which is where FTS
-// data has always gone. Changing the setting on a running deployment leaves
-// the old data where it was and starts writing to the new place — the index
-// rebuilds itself on demand, which is the property that makes FTS data movable
-// at all.
 // userRefFor builds the engine's view of a user. Extracted so the wiring can be
 // asserted on its own: a path-derived engine that is not told the escape
 // character silently names folders differently from the mail tree, and that is
@@ -421,6 +421,8 @@ func ftsPathOf(root string) string {
 	return path
 }
 
+// indexRoot resolves where this user's FTS data lives: the configured root, or
+// the index's own order. Changing it leaves old data; the index rebuilds.
 func (s *Service) indexRoot(info *mailbox.UserInfo) string {
 	if s.opts.IndexRoot != "" {
 		return mailbox.ExpandLocation(ftsPathOf(s.opts.IndexRoot), info.Home, info.Username)

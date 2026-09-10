@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
-
-	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // downloadPrefix is the path the session resource advertises as downloadUrl:
@@ -62,7 +60,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 		return
 	}
 
-	rc, err := mailbox.OpenMessage(h.box, ref.folder, ref.meta)
+	rc, err := h.mbox.OpenMessage(ref.folder, ref.meta)
 	if err != nil {
 		slog.Warn("jmap: download fetch failed", "user", id.user, "blob", blobID, "err", err)
 		jmapcore.WriteProblem(w, http.StatusNotFound, "No such blob")
