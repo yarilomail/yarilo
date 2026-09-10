@@ -14,7 +14,7 @@ import (
 )
 
 type reconciler interface {
-	ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+	ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 }
 
 // openMaildir gives a folder and the two handles a session holds.
@@ -84,7 +84,7 @@ func TestNoRecordIsOlderThanItsRow(t *testing.T) {
 			body := fmt.Sprintf("From: a@b\r\nSubject: dropped %d-%d\r\n\r\nbody\r\n", round, i)
 			dropInCur(t, root, fmt.Sprintf("17000000%02d.M%dP%d.host,S=%d,W=%d:2,", round, i, round, len(body), len(body)), body)
 		}
-		if _, err := rec.ReconcileIndex(idx, f); err != nil {
+		if _, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 			t.Fatalf("round %d reconcile: %v", round, err)
 		}
 		msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{})
@@ -113,7 +113,7 @@ func TestNoRecordIsOlderThanItsRow(t *testing.T) {
 				}
 			}
 		}
-		if _, err := rec.ReconcileIndex(idx, f); err != nil {
+		if _, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 			t.Fatalf("round %d second reconcile: %v", round, err)
 		}
 	}
@@ -161,7 +161,7 @@ func TestARefusedRowSkipsOneMessageNotTheBatch(t *testing.T) {
 			t.Fatalf("write list: %v", werr)
 		}
 	})
-	st, err := rec.ReconcileIndex(idx, f)
+	st, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), f)
 	disarm()
 	if err != nil {
 		t.Fatalf("the batch failed on one refused row: %v", err)
@@ -192,7 +192,7 @@ func TestRowsWrittenWithoutRecordsHealOnTheNextSync(t *testing.T) {
 		dropInCur(t, root, fmt.Sprintf("1700000%03d.M1P1_%d.host,S=%d,W=%d:2,", i, i, len(b), len(b)), b)
 	}
 	stop := maildir.SetTestStopAfterRows()
-	if _, err := rec.ReconcileIndex(idx, f); err == nil {
+	if _, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), f); err == nil {
 		stop()
 		t.Fatal("the seam did not end the reconcile")
 	}
@@ -205,7 +205,7 @@ func TestRowsWrittenWithoutRecordsHealOnTheNextSync(t *testing.T) {
 		t.Fatalf("the interrupted reconcile left %d records; the rows go first", len(msgs))
 	}
 
-	if _, err := rec.ReconcileIndex(idx, f); err != nil {
+	if _, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err = idx.GetMessages(f.ID, mailbox.SeqSet{})

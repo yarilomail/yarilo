@@ -59,12 +59,12 @@ func TestAdoptingAMaildirKeepsItsUIDs(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	syncer, ok := mailbox.Driver(box).(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
 	if !ok {
 		t.Fatal("the maildir driver no longer reconciles")
 	}
-	if _, err := syncer.ReconcileIndex(idx, f); err != nil {
+	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -125,9 +125,9 @@ func TestAFileTheUIDListDoesNotKnowGetsTheNextUID(t *testing.T) {
 	defer idx.Close() //nolint:errcheck
 	f, _ := idx.OpenFolder("INBOX", 0)
 	syncer := mailbox.Driver(box).(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
-	if _, err := syncer.ReconcileIndex(idx, f); err != nil {
+	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	after, _ := idx.OpenFolder("INBOX", 0)

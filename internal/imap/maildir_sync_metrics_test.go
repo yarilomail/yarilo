@@ -81,7 +81,7 @@ type fakeSyncBox struct {
 
 func (f *fakeSyncBox) ProactiveScan() bool       { return true }
 func (f *fakeSyncBox) SyncToken(_ string) string { return f.token }
-func (f *fakeSyncBox) ReconcileIndex(_ mailbox.UserIndex, _ *mailbox.Folder) (mailbox.SyncStats, error) {
+func (f *fakeSyncBox) ReconcileIndex(_ mailbox.Box, _ *mailbox.Folder) (mailbox.SyncStats, error) {
 	return mailbox.SyncStats{}, nil
 }
 

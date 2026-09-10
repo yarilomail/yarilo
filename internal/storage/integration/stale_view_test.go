@@ -60,9 +60,9 @@ func TestASyncDoesNotTakeTheRowOfARecordItHasNotSeen(t *testing.T) {
 	// reload finds nothing changed; the refresh has to see through it.
 	thaw := indexfile.SetTestFreezeReload()
 	rec := mailbox.Driver(syncBox).(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
-	st, err := rec.ReconcileIndex(syncIdx, sf)
+	st, err := rec.ReconcileIndex(mailboxbase.Open(syncBox, syncIdx), sf)
 	thaw()
 	if err != nil {
 		t.Fatal(err)
@@ -133,9 +133,9 @@ func TestAnImportedFileKeepsTheUIDTheListGivesIt(t *testing.T) {
 	}
 
 	rec := mailbox.Driver(box).(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
-	if _, err := rec.ReconcileIndex(idx, f); err != nil {
+	if _, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{})

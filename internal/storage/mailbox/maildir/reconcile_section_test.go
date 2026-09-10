@@ -30,7 +30,7 @@ func TestTheReconcileSectionDoesNotWalkTheDirectory(t *testing.T) {
 		name := "17000000" + string(rune('0'+i%10)) + ".M1P" + string(rune('a'+i)) + ".host"
 		deliverToNew(t, box, name, "body\r\n")
 	}
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	folder, err := idx.OpenFolder("INBOX", folder.UIDValidity)
@@ -45,7 +45,7 @@ func TestTheReconcileSectionDoesNotWalkTheDirectory(t *testing.T) {
 	box.sectionDir.Store(0)
 	box.sectionFS.Store(0)
 
-	st, err := box.ReconcileIndex(idx, folder)
+	st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestTheReconcileSectionDoesNotWalkTheDirectory(t *testing.T) {
 func TestFlagsAreNotWrittenFromANameThatMovedOn(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	deliverToNew(t, box, "1700000001.M1Pa.host", "body\r\n")
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -97,7 +97,7 @@ func TestFlagsAreNotWrittenFromANameThatMovedOn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	after, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -298,7 +298,7 @@ func TestAReconcileWithNothingInNewTakesTheLockOnce(t *testing.T) {
 
 	l := box.b.locker.(*countingLocker)
 	before := l.acquires.Load()
-	st, err := box.ReconcileIndex(idx, folder)
+	st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestAReconcileWithNewMailStillMovesIt(t *testing.T) {
 	movePhaseProbe = func(taken bool) { moveTaken = taken }
 	defer func() { movePhaseProbe = nil }()
 
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	if !moveTaken {
@@ -365,7 +365,7 @@ func TestAMessageArrivingInNewAfterTheCheckIsNotImportedFromThere(t *testing.T) 
 	}
 	defer func() { movePhaseProbe = nil; afterScan = nil }()
 
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -383,7 +383,7 @@ func TestAMessageArrivingInNewAfterTheCheckIsNotImportedFromThere(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err = idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -419,7 +419,7 @@ func TestAnUnreadableNewDirectoryFailsRatherThanBeingSkipped(t *testing.T) {
 	movePhaseProbe = func(taken bool) { moveTaken = taken }
 	defer func() { movePhaseProbe = nil }()
 
-	if _, err := box.ReconcileIndex(idx, folder); err == nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err == nil {
 		t.Error("the reconcile succeeded although new/ cannot be read")
 	}
 	if !moveTaken {
@@ -437,7 +437,7 @@ func TestAnUnreadableNewDirectoryFailsRatherThanBeingSkipped(t *testing.T) {
 func TestAPollOfAnUnchangedFolderTakesNoLock(t *testing.T) {
 	box, idx, folder := recSetupLocked(t)
 	deliverToNew(t, box, "1700000001.M1Pa.host", "From: a@b\r\n\r\nx\r\n")
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	folder, err := idx.OpenFolder("INBOX", folder.UIDValidity)
@@ -451,7 +451,7 @@ func TestAPollOfAnUnchangedFolderTakesNoLock(t *testing.T) {
 
 	l := box.b.locker.(*countingLocker)
 	before := l.acquires.Load()
-	st, err := box.ReconcileIndex(idx, folder)
+	st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +491,7 @@ func TestEachDifferenceStillTakesTheLock(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			box, idx, folder := recSetupLocked(t)
 			deliverToNew(t, box, "1700000001.M1Pa.host", "From: a@b\r\n\r\nx\r\n")
-			if _, err := box.ReconcileIndex(idx, folder); err != nil {
+			if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 				t.Fatal(err)
 			}
 			folder, err := idx.OpenFolder("INBOX", folder.UIDValidity)
@@ -507,7 +507,7 @@ func TestEachDifferenceStillTakesTheLock(t *testing.T) {
 
 			l := box.b.locker.(*countingLocker)
 			before := l.acquires.Load()
-			if _, err := box.ReconcileIndex(idx, folder); err != nil {
+			if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 				t.Fatal(err)
 			}
 			if got := l.acquires.Load() - before; got == 0 {

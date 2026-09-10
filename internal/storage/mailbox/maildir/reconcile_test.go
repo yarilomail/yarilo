@@ -59,7 +59,7 @@ func TestReconcile_ImportsFromNewAndIsFetchable(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	deliverToNew(t, box, "1700000000.MDA.host", "hello body\n")
 
-	st, err := box.ReconcileIndex(idx, folder)
+	st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestReconcile_ImportsFromNewAndIsFetchable(t *testing.T) {
 func TestReconcile_ExternalFlagRenamePreservesUID(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	deliverToNew(t, box, "1700000001.MDA.host", "body\n")
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -108,7 +108,7 @@ func TestReconcile_ExternalFlagRenamePreservesUID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := box.ReconcileIndex(idx, folder)
+	st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestReconcile_ExternalFlagRenamePreservesUID(t *testing.T) {
 func TestReconcile_VanishedFileWritesTombstone(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	deliverToNew(t, box, "1700000002.MDA.host", "body\n")
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -157,7 +157,7 @@ func TestReconcile_VanishedFileWritesTombstone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := box.ReconcileIndex(idx, folder)
+	st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestReconcile_ImportCarriesGUIDAfterBackfill(t *testing.T) {
 	}
 
 	deliverToNew(t, box, "1700000001.MDA.host", "body\n")
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
@@ -234,7 +234,7 @@ func TestReconcile_SameBaseTwiceImportsOnce(t *testing.T) {
 		}
 	}
 
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{})
@@ -273,7 +273,7 @@ func TestReconcile_RestampsZeroGUIDBehindCompleteMarker(t *testing.T) {
 		t.Fatal("folder should be marked complete for this case")
 	}
 
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{})
