@@ -311,7 +311,7 @@ func (s *session) envelopeOf(m *mailbox.MessageMeta, raw []byte) (*imaplib.Envel
 	return imapserver.ExtractEnvelope(hdr), nil
 }
 
-// applyEnvelope fills the ordering fields ENVELOPE carries. Address.Mailbox is
+// applyHead fills the ordering fields ENVELOPE carries. Address.Mailbox is
 // the addr-mailbox of RFC 5256 -- the local part, not the display name -- so
 // the sort key comes straight out of the cache with nothing re-parsed.
 func applyHead(out *imapthread.Message, head msgcache.Head) {

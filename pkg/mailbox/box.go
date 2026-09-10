@@ -81,9 +81,10 @@ func (b *Box) RFC822Size(folder string, m *MessageMeta) uint32 {
 	return RFC822SizeOf(b.store, folder, m)
 }
 
-// StampSizes fills a slice in memory, so everyone reporting a size in one
-// response reports the same number.
-func (b *Box) StampSizes(folder string, msgs []*MessageMeta) {
+// FillResponseSizes fills a slice in memory for one response, so everyone
+// reporting a size in it reports the same number. Nothing reaches disk: the
+// index's own StampSizes is what persists a size (#1728).
+func (b *Box) FillResponseSizes(folder string, msgs []*MessageMeta) {
 	FillSizes(b.store, folder, msgs)
 }
 

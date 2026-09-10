@@ -318,7 +318,7 @@ func TestTheSizeToldIsTheSizeOfTheBody(t *testing.T) {
 	if got := box.RFC822Size("INBOX", read[0]); got != uint32(len(body)) {
 		t.Errorf("the client is told %d octets, the body is %d", got, len(body))
 	}
-	box.StampSizes("INBOX", read)
+	box.FillResponseSizes("INBOX", read)
 	if read[0].VSize != uint32(len(body)) {
 		t.Errorf("after the stamp the record carries %d, the body is %d", read[0].VSize, len(body))
 	}

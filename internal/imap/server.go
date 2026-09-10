@@ -625,7 +625,6 @@ func (s *session) folderBox() mailbox.UserMailbox {
 	return s.box
 }
 
-// folderIdx returns the UserIndex backing s.folder.
 // folderMailbox is s.folder's two halves together, which is what a read asks:
 // a record either resolves to a body or is reported (#1715).
 func (s *session) folderMailbox() *mailbox.Box {
@@ -635,6 +634,7 @@ func (s *session) folderMailbox() *mailbox.Box {
 	return s.mbox
 }
 
+// folderIdx returns the UserIndex backing s.folder.
 func (s *session) folderIdx() mailbox.UserIndex {
 	if s.folderNS != nil {
 		return s.folderNS.idx
@@ -2804,7 +2804,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	}
 	// LARGER/SMALLER compare a number, and a record that carries none would
 	// compare zero against every bound (#1726).
-	s.folderMailbox().StampSizes(s.folder.Name, msgs)
+	s.folderMailbox().FillResponseSizes(s.folder.Name, msgs)
 
 	needsBody := len(criteria.Header) > 0 || len(criteria.Body) > 0 || len(criteria.Text) > 0 ||
 		!criteria.SentSince.IsZero() || !criteria.SentBefore.IsZero() || searchNeedsBodyRecurse(criteria.Not, criteria.Or)
