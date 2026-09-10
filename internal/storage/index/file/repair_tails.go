@@ -6,11 +6,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// RepairRecordTails rewrites the storage key, virtual size and guid of the
-// named records from what the store says, and reports how many it changed.
-//
-// Every other size path stamps only what is missing; this one overwrites, so it
-// names each record it touched and the number it replaced (#1770).
+// RepairRecordTails rewrites the storage key, virtual size and guid of the named
+// records. It overwrites where every other path stamps, so it names each one.
 func (u *userIndex) RepairRecordTails(folderID uint64, tails map[uint32]mailbox.RecordTail) (int, error) {
 	if len(tails) == 0 {
 		return 0, nil
@@ -21,6 +18,11 @@ func (u *userIndex) RepairRecordTails(folderID uint64, tails map[uint32]mailbox.
 			return err
 		}
 		fs.ensureMdboxExtLocked()
+		// A base predating the field would drop the bytes at the flush.
+		if err := fs.declareRecordExtLocked(extNameGUID, encodeGUIDHdr(guidStatePending),
+			guidRecSize, 1, fs.file.Header.UIDValidity); err != nil {
+			return err
+		}
 		for _, rec := range fs.file.Records {
 			tail, ok := tails[rec.UID]
 			if !ok {

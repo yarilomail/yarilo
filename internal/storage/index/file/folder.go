@@ -2333,10 +2333,11 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 		case kind == mailindex.TxTypeExtIntro:
 			intro, ok := mailindex.DecodeTxExtIntroPayload(payload)
 			if !ok || intro.Name == "" {
-				break
+				// Every append after this one would be read at the old width.
+				return committedEnd, fmt.Errorf("fileindex/applylog: torn extension intro at offset %d (%d payload bytes)",
+					recStart, len(payload))
 			}
-			// The intro states the header's size; its bytes arrive in the
-			// EXT_HDR_UPDATE that follows, so reserve them zeroed.
+			// The header's bytes arrive in the EXT_HDR_UPDATE that follows.
 			if aerr := fs.file.AddRecordExtension(intro.Name, make([]byte, intro.HdrSize),
 				intro.RecordSize, intro.RecordAlign, intro.ResetID); aerr != nil {
 				return committedEnd, fmt.Errorf("fileindex/applylog: declare %q: %w", intro.Name, aerr)
@@ -2350,7 +2351,10 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 
 		case kind == mailindex.TxTypeExtHdrUpdate:
 			upd, ok := mailindex.DecodeTxExtHdrUpdatePayload(payload)
-			if !ok || lastIntro == "" {
+			if !ok {
+				return committedEnd, fmt.Errorf("fileindex/applylog: torn extension header update at offset %d", recStart)
+			}
+			if lastIntro == "" {
 				break
 			}
 			ext := findExt(fs.file.Extensions, lastIntro)

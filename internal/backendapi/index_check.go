@@ -19,6 +19,7 @@ type indexCheckFolder struct {
 	Checked  int    `json:"checked"`
 	Shifted  int    `json:"shifted"`
 	Repaired int    `json:"repaired"`
+	Skipped  int    `json:"skipped"`
 }
 
 type indexCheckStats struct {
@@ -26,15 +27,15 @@ type indexCheckStats struct {
 	Checked    int                `json:"checked"`
 	Shifted    int                `json:"shifted"`
 	Repaired   int                `json:"repaired"`
+	Skipped    int                `json:"skipped"`
 	Folders    []indexCheckFolder `json:"folders,omitempty"`
 	Failed     map[string]string  `json:"failed,omitempty"`
 	DurationMs int64              `json:"duration_ms"`
 	Note       string             `json:"note"`
 }
 
-// handleIndexCheck reads every folder of one account looking for records whose
-// tail was written at a width the base did not announce (#1770), and with
-// fix=true rebuilds each one from the message in storage.
+// handleIndexCheck finds the records whose tail was written at a width the base
+// did not announce, and with fix=true rebuilds each from storage (#1770).
 func (s *Server) handleIndexCheck(w http.ResponseWriter, r *http.Request) {
 	var req indexCheckRequest
 	if !decodeJSON(w, r, &req) {
@@ -85,9 +86,11 @@ func (s *Server) handleIndexCheck(w http.ResponseWriter, r *http.Request) {
 		out.Checked += st.Checked
 		out.Shifted += st.Shifted
 		out.Repaired += st.Repaired
+		out.Skipped += st.Skipped
 		if st.Shifted > 0 {
 			out.Folders = append(out.Folders, indexCheckFolder{
-				Folder: folder.Name, Checked: st.Checked, Shifted: st.Shifted, Repaired: st.Repaired,
+				Folder: folder.Name, Checked: st.Checked, Shifted: st.Shifted,
+				Repaired: st.Repaired, Skipped: st.Skipped,
 			})
 		}
 	}
@@ -95,8 +98,8 @@ func (s *Server) handleIndexCheck(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, out)
 }
 
-// folderTailStats counts without fix and repairs with it, so an operator can
-// read the account before changing a byte in it.
+// folderTailStats counts without fix and repairs with it: an operator reads the
+// account before changing a byte in it.
 func folderTailStats(b mailbox.Box, folder *mailbox.Folder, stored map[uint32]mailbox.ScanRecord, fix bool) (idxrebuild.TailStats, error) {
 	if fix {
 		return idxrebuild.RepairShiftedTails(b, folder, stored)
@@ -120,7 +123,7 @@ func indexCheckNote(fix, noStorageKeys bool) string {
 		return "this driver keeps no storage key per record, so no record can carry a shifted tail"
 	}
 	if fix {
-		return "each repaired record's tail (storage key, size, guid) was rebuilt from the message in storage; run with the user's mailboxes quiesced"
+		return "each repaired record's tail (storage key, size, guid) was rebuilt from the message in storage; a skipped one is named in the log with its reason. Run with the user's mailboxes quiesced"
 	}
 	return "read-only: rerun with --fix to rebuild every shifted record's tail from storage"
 }

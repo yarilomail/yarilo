@@ -13,11 +13,6 @@ import (
 
 // A record whose tail was read eight bytes early is rebuilt from the message
 // itself: size, storage key and guid all come back (#1770).
-//
-// The damaged shape is the one found on disk -- the size is the record's own
-// map_uid, the save_date is zero, and the guid holds the halves of two other
-// fields -- so the repair is asserted against a real message, not a fixture of
-// its own making.
 func TestARepairRebuildsAShiftedTailFromTheMessage(t *testing.T) {
 	root := t.TempDir()
 	const user = "u@x.com"
@@ -94,8 +89,7 @@ func TestARepairRebuildsAShiftedTailFromTheMessage(t *testing.T) {
 	}
 }
 
-// A healthy account is left alone: the mark has to be tight enough that an
-// ordinary message is never rewritten.
+// A healthy account is left alone: neither half of the mark is enough on its own.
 func TestARepairLeavesHealthyRecordsAlone(t *testing.T) {
 	root := t.TempDir()
 	const user = "clean@x.com"
@@ -132,5 +126,124 @@ func TestARepairLeavesHealthyRecordsAlone(t *testing.T) {
 	}
 	if st.Checked != 2 || st.Shifted != 0 || st.Repaired != 0 {
 		t.Fatalf("the pass reports %+v over healthy records, want checked=2 and nothing else", st)
+	}
+}
+
+// The mark takes both halves, on values that tell them apart: a size that
+// legitimately equals the key, and an undated record whose size is its own.
+func TestTheMarkNeedsBothHalves(t *testing.T) {
+	cases := []struct {
+		name string
+		meta mailbox.MessageMeta
+		want bool
+	}{
+		{"shifted", mailbox.MessageMeta{MapUID: 15014, SaveDate: 0, VSize: 15014}, true},
+		{"size legitimately equals the key", mailbox.MessageMeta{MapUID: 15014, SaveDate: 1788764634, VSize: 15014}, false},
+		{"never dated, size its own", mailbox.MessageMeta{MapUID: 15014, SaveDate: 0, VSize: 379}, false},
+		{"no storage key", mailbox.MessageMeta{MapUID: 0, SaveDate: 0, VSize: 0}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := idxrebuild.ShiftedTail(&c.meta); got != c.want {
+				t.Errorf("the mark reads %v for %+v, want %v", got, c.meta, c.want)
+			}
+		})
+	}
+}
+
+// And the pass leaves such a record alone end to end, not only the predicate.
+func TestARepairLeavesASizeThatEqualsItsKeyAlone(t *testing.T) {
+	root := t.TempDir()
+	const user = "legit@x.com"
+	info := &mailbox.UserInfo{Username: user, Home: home(root, user)}
+
+	store := mdbox.New().OpenUser(info)
+	if err := store.Init(); err != nil {
+		t.Fatal(err)
+	}
+	idx := fileidx.New().OpenUser(info)
+	box := mailboxbase.Open(store, idx)
+	folder, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const body = "Subject: one\r\n\r\nthe message itself\r\n"
+	name, _, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: uint32(len(body)), GUID: guid}
+	if err := box.RecordSaved(folder, "INBOX", name, meta); err != nil {
+		t.Fatal(err)
+	}
+	// A size that happens to be the storage key, and a save_date that is real.
+	if _, err := idx.(mailbox.TailRepairer).RepairRecordTails(folder.ID, map[uint32]mailbox.RecordTail{
+		meta.UID: {MapUID: meta.MapUID, SaveDate: 1788764634, VSize: meta.MapUID, GUID: guid},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := idxrebuild.StoredTails(box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := idxrebuild.RepairShiftedTails(box, folder, stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Shifted != 0 || st.Repaired != 0 {
+		t.Fatalf("the pass reports %+v over a record the store agrees with, want nothing touched", st)
+	}
+	after, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after[0].VSize != meta.MapUID {
+		t.Errorf("the record now reads size %d; the pass rewrote what it was not asked to", after[0].VSize)
+	}
+}
+
+// A shifted record the store cannot answer for is counted, not passed over:
+// "shifted 2 / repaired 1" has to say which one was left.
+func TestAShiftedRecordTheStoreCannotAnswerForIsCounted(t *testing.T) {
+	root := t.TempDir()
+	const user = "gone@x.com"
+	info := &mailbox.UserInfo{Username: user, Home: home(root, user)}
+
+	store := mdbox.New().OpenUser(info)
+	if err := store.Init(); err != nil {
+		t.Fatal(err)
+	}
+	idx := fileidx.New().OpenUser(info)
+	box := mailboxbase.Open(store, idx)
+	folder, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const body = "Subject: one\r\n\r\nthe message itself\r\n"
+	name, _, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: uint32(len(body)), GUID: guid}
+	if err := box.RecordSaved(folder, "INBOX", name, meta); err != nil {
+		t.Fatal(err)
+	}
+	// Shifted, and naming a key the store holds nothing under.
+	const absent = 999001
+	if _, err := idx.(mailbox.TailRepairer).RepairRecordTails(folder.ID, map[uint32]mailbox.RecordTail{
+		meta.UID: {MapUID: absent, SaveDate: 0, VSize: absent, GUID: guid},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := idxrebuild.StoredTails(box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := idxrebuild.RepairShiftedTails(box, folder, stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Shifted != 1 || st.Repaired != 0 || st.Skipped != 1 {
+		t.Fatalf("the pass reports %+v, want shifted=1 repaired=0 skipped=1", st)
 	}
 }

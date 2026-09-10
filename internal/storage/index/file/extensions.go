@@ -130,8 +130,7 @@ func decodeHdrVsize(b []byte) (hdrVsize, error) {
 const vsizeRecSize = 4
 
 // declareRecordExtLocked is the only door a record extension enters by: the
-// intro reaches the log before any record of the new width, so a reader whose
-// base predates the extension still decodes one (#1770). Holds fs.mu.
+// intro reaches the log before any record of the new width (#1770). Holds fs.mu.
 func (fs *folderState) declareRecordExtLocked(name string, hdrData []byte, recSize, align uint16, resetID uint32) error {
 	if findExt(fs.file.Extensions, name) != nil {
 		return nil

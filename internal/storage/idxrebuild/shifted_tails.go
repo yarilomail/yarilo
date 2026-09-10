@@ -2,28 +2,25 @@ package idxrebuild
 
 import (
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// ShiftedTail is a record whose tail was written at a width its folder's base
-// did not announce, so every field from the storage key on reads eight bytes
-// early: the virtual size comes back as the record's own map_uid and the guid
-// carries the halves of two other fields (#1770).
-//
-// Both halves of the mark are needed. A save stamps a save_date, so a zero one
-// says the field was never written as itself; alone it would also match a
-// record from a build that predates the field.
+// ShiftedTail marks a record read eight bytes early, from the storage key on.
+// Both halves: a zero save_date alone predates the field just as well (#1770).
 func ShiftedTail(m *mailbox.MessageMeta) bool {
 	return m != nil && m.MapUID != 0 && m.SaveDate == 0 && m.VSize == m.MapUID
 }
 
-// TailStats is what one repair pass touched.
+// TailStats is what one repair pass touched. Skipped is a shifted record the
+// store could not answer for.
 type TailStats struct {
 	Checked  int
 	Shifted  int
 	Repaired int
+	Skipped  int
 }
 
 // StoredTails keys a scan of the store by the storage key each message is named
@@ -51,12 +48,7 @@ func StoredTails(b mailbox.Box) (map[uint32]mailbox.ScanRecord, error) {
 }
 
 // RepairShiftedTails rebuilds every shifted record's tail in one folder from
-// what the store holds, and reports what it checked and changed.
-//
-// The message carries no save_date of its own, so the repair takes the receive
-// stamp its trailer does carry; a record whose message names no date keeps the
-// index's own, and one with neither is left for an operator to look at rather
-// than stamped with a number nothing on disk supports.
+// what the store holds, and reports what it checked, changed and left.
 func RepairShiftedTails(b mailbox.Box, folder *mailbox.Folder, stored map[uint32]mailbox.ScanRecord) (TailStats, error) {
 	var stats TailStats
 	repairer, ok := b.Index().(mailbox.TailRepairer)
@@ -74,23 +66,15 @@ func RepairShiftedTails(b mailbox.Box, folder *mailbox.Folder, stored map[uint32
 			continue
 		}
 		stats.Shifted++
-		rec, known := stored[m.MapUID]
-		if !known || rec.VSize == 0 {
+		tail, why := tailFromStore(m, stored)
+		if why != "" {
+			stats.Skipped++
+			slog.Warn("idxrebuild: shifted record left as it is",
+				"user", b.Username(), "folder", folder.Name, "uid", m.UID,
+				"map_uid", m.MapUID, "reason", why)
 			continue
 		}
-		saved := rec.InternalDate
-		if saved.IsZero() {
-			saved = m.InternalDate
-		}
-		if saved.IsZero() {
-			continue
-		}
-		tails[m.UID] = mailbox.RecordTail{
-			MapUID:   m.MapUID,
-			SaveDate: uint32(saved.Unix()),
-			VSize:    rec.VSize,
-			GUID:     rec.GUID,
-		}
+		tails[m.UID] = tail
 	}
 	if len(tails) == 0 {
 		return stats, nil
@@ -101,4 +85,29 @@ func RepairShiftedTails(b mailbox.Box, folder *mailbox.Folder, stored map[uint32
 	}
 	stats.Repaired = n
 	return stats, nil
+}
+
+// tailFromStore builds one record's replacement tail, or names why it cannot.
+// The date is the trailer's own stamp: an invented one just hides the record.
+func tailFromStore(m *mailbox.MessageMeta, stored map[uint32]mailbox.ScanRecord) (mailbox.RecordTail, string) {
+	rec, known := stored[m.MapUID]
+	if !known {
+		return mailbox.RecordTail{}, "the store holds no message under this key"
+	}
+	if rec.VSize == 0 {
+		return mailbox.RecordTail{}, "the message reports no virtual size"
+	}
+	saved := rec.InternalDate
+	if saved.IsZero() {
+		saved = m.InternalDate
+	}
+	if saved.IsZero() {
+		return mailbox.RecordTail{}, "neither the message nor the record carries a date"
+	}
+	return mailbox.RecordTail{
+		MapUID:   m.MapUID,
+		SaveDate: uint32(saved.Unix()),
+		VSize:    rec.VSize,
+		GUID:     rec.GUID,
+	}, ""
 }

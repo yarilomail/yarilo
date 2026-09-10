@@ -145,8 +145,7 @@ func (u *userIndex) folderStateFor(t *testing.T, folder string) *folderState {
 }
 
 // A second reader decodes a record appended right after the field was declared,
-// with no base rewrite in between (#1770). The row below flushes first, which
-// is why it stayed green -- one writer's own memory always agrees with itself.
+// with no base rewrite in between; the row below flushes first, and stayed green.
 func TestASecondReaderDecodesARecordAppendedBeforeAnyBaseRewrite(t *testing.T) {
 	dir := t.TempDir()
 	a := openIdx(dir, testUser)
@@ -161,7 +160,7 @@ func TestASecondReaderDecodesARecordAppendedBeforeAnyBaseRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Close() //nolint:errcheck
-	stripMdboxExt(t, filepath.Join(testHome(dir, testUser), "yarilo.index"))
+	stripExt(t, filepath.Join(testHome(dir, testUser), "yarilo.index"), extNameMdbox)
 
 	// The writer: the first record carrying a storage key, and nothing after it.
 	b := openIdx(dir, testUser)
@@ -232,7 +231,7 @@ func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 
 	// The shape an older build left: the same base with no mdbox extension
 	// declared, so its records are eight bytes narrower.
-	before := stripMdboxExt(t, filepath.Join(testHome(dir, testUser), "yarilo.index"))
+	before := stripExt(t, filepath.Join(testHome(dir, testUser), "yarilo.index"), extNameMdbox)
 
 	b := openIdx(dir, testUser)
 	defer b.Close() //nolint:errcheck
@@ -284,9 +283,9 @@ func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 	}
 }
 
-// stripMdboxExt rewrites an index without the extension, returning the record
+// stripExt rewrites an index without the named extension, returning the record
 // size that leaves: a base as an older build wrote it.
-func stripMdboxExt(t *testing.T, path string) uint32 {
+func stripExt(t *testing.T, path, name string) uint32 {
 	t.Helper()
 	f, err := mailindex.Open(path)
 	if err != nil {
@@ -294,12 +293,12 @@ func stripMdboxExt(t *testing.T, path string) uint32 {
 	}
 	kept := make([]mailindex.Extension, 0, len(f.Extensions))
 	for _, e := range f.Extensions {
-		if e.Name != extNameMdbox {
+		if e.Name != name {
 			kept = append(kept, e)
 		}
 	}
 	if len(kept) == len(f.Extensions) {
-		t.Fatalf("the fresh base declares no %q extension to strip", extNameMdbox)
+		t.Fatalf("the fresh base declares no %q extension to strip", name)
 	}
 	layout, err := mailindex.ComputeRecordLayout(kept)
 	if err != nil {
@@ -314,7 +313,7 @@ func stripMdboxExt(t *testing.T, path string) uint32 {
 	f.Header.RecordSize = layout.RecordSize
 	f.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	for _, rec := range f.Records {
-		delete(rec.Ext, extNameMdbox)
+		delete(rec.Ext, name)
 	}
 	if _, err := mailindex.Recreate(f.ToRecreateInput(path)); err != nil {
 		t.Fatal(err)
