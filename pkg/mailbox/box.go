@@ -93,10 +93,16 @@ func (b *Box) WriteFlags(f *Folder, folder string, writes []FlagWrite) []FlagWri
 	return FlagsWritten(b.index, b.store, f.ID, folder, writes)
 }
 
-// Copy records a message already saved into another folder: its name settles
-// before its record, on the destination's own halves (#1745).
-func (b *Box) Copy(dst *Folder, dstFolder, saved string, m *MessageMeta) error {
-	return RecordSaved(b.index, b.store, dst.ID, dstFolder, saved, m)
+// RecordSaved records a body already written into a folder — an APPEND, a
+// fileinto, a copy — settling its name before its record (#1745).
+func (b *Box) RecordSaved(f *Folder, folder, saved string, m *MessageMeta) error {
+	return RecordSaved(b.index, b.store, f.ID, folder, saved, m)
+}
+
+// MessageSize is both numbers a record reports, from the record or from the
+// driver when it carries none (#1726).
+func (b *Box) MessageSize(folder string, m *MessageMeta) (size, vsize uint32, err error) {
+	return MessageSize(b.store, folder, m)
 }
 
 // Messages reads records with the driver's fill-ins applied.

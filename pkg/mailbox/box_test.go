@@ -374,9 +374,9 @@ func TestWriteFlagsSettlesInStorage(t *testing.T) {
 	}
 }
 
-// A copy settles its name in the destination before its record: the same rule
-// as a delivery, on the destination's own halves (#1745).
-func TestCopySettlesTheNameBeforeTheRecord(t *testing.T) {
+// A body already saved is recorded name first, the same rule a delivery keeps,
+// on the destination's own halves (#1745).
+func TestRecordSavedSettlesTheNameBeforeTheRecord(t *testing.T) {
 	box, f := openBox(t, "u10@example.com")
 	if err := box.Store().Create("Archive"); err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestCopySettlesTheNameBeforeTheRecord(t *testing.T) {
 		t.Fatal(serr)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := box.Copy(dst, "Archive", saved, m); err != nil {
+	if err := box.RecordSaved(dst, "Archive", saved, m); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := box.Index().GetMessages(dst.ID, mailbox.SeqSet{})

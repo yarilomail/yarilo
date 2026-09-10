@@ -101,7 +101,7 @@ func sortNeeds(criteria []imaplib.SortCriterion) orderingNeeds {
 }
 
 func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.SearchCriteria, command string, needs orderingNeeds) ([]imapthread.Message, error) {
-	msgs, err := readMessages(s.folderIdx(), s.folder.ID)
+	msgs, err := readMessages(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return nil, err
 	}
