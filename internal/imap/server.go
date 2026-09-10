@@ -511,6 +511,7 @@ type session struct {
 	// s.dispatch() and use the resulting handle instead.
 	box  mailbox.UserMailbox
 	idx  mailbox.UserIndex
+	mbox *mailbox.Box
 	subs *subs.Store
 
 	limitIP string
@@ -625,6 +626,15 @@ func (s *session) folderBox() mailbox.UserMailbox {
 }
 
 // folderIdx returns the UserIndex backing s.folder.
+// folderMailbox is s.folder's two halves together, which is what a read asks:
+// a record either resolves to a body or is reported (#1715).
+func (s *session) folderMailbox() *mailbox.Box {
+	if s.folderNS != nil && s.folderNS.mbox != nil {
+		return s.folderNS.mbox
+	}
+	return s.mbox
+}
+
 func (s *session) folderIdx() mailbox.UserIndex {
 	if s.folderNS != nil {
 		return s.folderNS.idx
@@ -1127,6 +1137,7 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	s.primary = primary
 	s.box = primary.box
 	s.idx = primary.idx
+	s.mbox = primary.mbox
 	s.subs = primary.subs
 
 	// quota_over_status: reconcile the external over-flag against actual
@@ -1522,7 +1533,7 @@ func (s *session) renameInbox(dest string) error {
 	}
 	for _, m := range msgs {
 		// Relocation, not a new message: the GUID carries over (RFC 8474).
-		srcName, pathErr := mailbox.MessagePath(s.box, "INBOX", m)
+		srcName, pathErr := s.mbox.MessagePath("INBOX", m)
 		if pathErr != nil {
 			return fmt.Errorf("imap/rename-inbox path: %w", pathErr)
 		}
@@ -2253,7 +2264,7 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 		return nil, fmt.Errorf("imap/append record: %w", err)
 	}
 	// The driver settled the name inside that cycle; ask it, do not carry one.
-	if named, nerr := mailbox.MessagePath(h.box, rel, m); nerr == nil {
+	if named, nerr := h.mbox.MessagePath(rel, m); nerr == nil {
 		filename = named
 	}
 	tDone := time.Now()
@@ -2697,7 +2708,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		}
 		// The name before the record: a driver named by uid reads it out of the
 		// record this loop is about to remove (#1700).
-		storedName, pathErr := mailbox.MessagePath(s.folderBox(), s.folder.Name, m)
+		storedName, pathErr := s.folderMailbox().MessagePath(s.folder.Name, m)
 		// Index first: no reader may see a record whose file is already gone. A
 		// crash here leaves a file the next rebuild re-files with a new UID.
 		idx.ExpungeMessage(s.folder.ID, m.UID) //nolint:errcheck
@@ -2751,7 +2762,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 // -- a message nobody looked at is not a message that matched.
 func (s *session) matchMessage(seqNum uint32, m *mailbox.MessageMeta, criteria *imaplib.SearchCriteria, needRaw bool) (bool, []byte, error) {
 	var rawMsg []byte
-	if needRaw && mailbox.Readable(s.folderBox(), m) {
+	if needRaw && s.folderMailbox().Readable(m) {
 		rc, err := s.fetchSelected(m)
 		if err == nil {
 			rawMsg, err = io.ReadAll(rc)
@@ -2793,7 +2804,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	}
 	// LARGER/SMALLER compare a number, and a record that carries none would
 	// compare zero against every bound (#1726).
-	mailbox.FillSizes(s.folderBox(), s.folder.Name, msgs)
+	s.folderMailbox().StampSizes(s.folder.Name, msgs)
 
 	needsBody := len(criteria.Header) > 0 || len(criteria.Body) > 0 || len(criteria.Text) > 0 ||
 		!criteria.SentSince.IsZero() || !criteria.SentBefore.IsZero() || searchNeedsBodyRecurse(criteria.Not, criteria.Or)
@@ -2980,7 +2991,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 					}
 				}
 				var raw []byte
-				if needRaw && mailbox.Readable(s.folderBox(), m) {
+				if needRaw && s.folderMailbox().Readable(m) {
 					if rc, err := s.fetchSelected(m); err == nil {
 						raw, _ = io.ReadAll(rc)
 						rc.Close()
@@ -3264,7 +3275,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			// threading existed.
 			mw.WriteThreadID(threadIDs[m.UID])
 		}
-		if opts.Envelope && mailbox.Readable(s.folderBox(), m) {
+		if opts.Envelope && s.folderMailbox().Readable(m) {
 			if env := envCache.Envelope(m); env != nil {
 				mw.WriteEnvelope(env)
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
@@ -3277,7 +3288,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				mark("envelope", ferr)
 			}
 		}
-		if opts.BodyStructure != nil && mailbox.Readable(s.folderBox(), m) {
+		if opts.BodyStructure != nil && s.folderMailbox().Readable(m) {
 			if bs := envCache.BodyStructure(m); bs != nil {
 				mw.WriteBodyStructure(bs)
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
@@ -3290,7 +3301,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			}
 		}
 		for _, section := range opts.BodySection {
-			if !mailbox.Readable(s.folderBox(), m) {
+			if !s.folderMailbox().Readable(m) {
 				if slog.Default().Enabled(context.Background(), slog.LevelDebug) &&
 					section.Specifier == imaplib.PartSpecifierNone && len(section.Part) == 0 {
 					slog.Debug("imap: fetch body[] no filename",
@@ -3358,7 +3369,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		// part spec we decode message-level CTE; multipart-walk (BINARY[1])
 		// returns the section unchanged when MIME parsing is non-trivial.
 		for _, section := range opts.BinarySection {
-			if !mailbox.Readable(s.folderBox(), m) {
+			if !s.folderMailbox().Readable(m) {
 				break
 			}
 			rc, ferr := s.fetchSelected(m)
@@ -3377,7 +3388,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		}
 		// BINARY.SIZE[] — same decode, return size only.
 		for _, section := range opts.BinarySectionSize {
-			if !mailbox.Readable(s.folderBox(), m) {
+			if !s.folderMailbox().Readable(m) {
 				break
 			}
 			rc, ferr := s.fetchSelected(m)
@@ -3480,7 +3491,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		}
 		// The driver renames the file to carry the flags, so it is handed the
 		// name it holds now -- resolved from the record, not carried in it.
-		storeName, nameErr := mailbox.MessagePath(s.folderBox(), s.folder.Name, m)
+		storeName, nameErr := s.folderMailbox().MessagePath(s.folder.Name, m)
 		if nameErr != nil {
 			slog.Warn("imap: store cannot name the message, so its flags stay in the index only",
 				"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "err", nameErr)

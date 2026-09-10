@@ -3,6 +3,7 @@ package mailbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -54,10 +55,41 @@ func (b *Box) RecordDelivered(f *Folder, folder, saved string, m *MessageMeta) e
 	return nil
 }
 
-// FillSizes gives the records that carry no size the one their storage holds,
+// FillSizeless gives the records that carry no size the one their storage holds,
 // so a sum over the folder is taken on mail and not on zeros (#1728).
-func (b *Box) FillSizes(f *Folder) (int, error) {
+func (b *Box) FillSizeless(f *Folder) (int, error) {
 	return FillSizelessRecords(b.index, b.store, f)
+}
+
+// Readable reports whether a record resolves to a body at all: one that does
+// not is reported, never handed to a client as an empty message.
+func (b *Box) Readable(m *MessageMeta) bool { return Readable(b.store, m) }
+
+// MessagePath is the file a record names.
+func (b *Box) MessagePath(folder string, m *MessageMeta) (string, error) {
+	return MessagePath(b.store, folder, m)
+}
+
+// OpenMessage opens the body a record names.
+func (b *Box) OpenMessage(folder string, m *MessageMeta) (io.ReadCloser, error) {
+	return OpenMessage(b.store, folder, m)
+}
+
+// RFC822Size is the size a client is told: the record's own, or the driver's
+// answer from storage when it has none (#1726).
+func (b *Box) RFC822Size(folder string, m *MessageMeta) uint32 {
+	return RFC822SizeOf(b.store, folder, m)
+}
+
+// StampSizes fills a slice in memory, so everyone reporting a size in one
+// response reports the same number.
+func (b *Box) StampSizes(folder string, msgs []*MessageMeta) {
+	FillSizes(b.store, folder, msgs)
+}
+
+// Messages reads records with the driver's fill-ins applied.
+func (b *Box) Messages(folderID uint64, set SeqSet) ([]*MessageMeta, error) {
+	return ReadMessages(b.index, folderID, set)
 }
 
 // WithLocker gives the box the cross-process lock client, so a rule needing one
