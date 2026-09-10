@@ -323,3 +323,83 @@ func TestTheSizeToldIsTheSizeOfTheBody(t *testing.T) {
 		t.Errorf("after the stamp the record carries %d, the body is %d", read[0].VSize, len(body))
 	}
 }
+
+// A flag change reaches storage: one kept in the index alone leaves the store
+// describing the message as it arrived (#1601).
+func TestWriteFlagsSettlesInStorage(t *testing.T) {
+	box, f := openBox(t, "u9@example.com")
+	const body = "From: a@b\r\nSubject: flags\r\n\r\nbody\r\n"
+	uid, err := box.Index().AllocateUID(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	m := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
+		t.Fatal(err)
+	}
+	name, err := box.MessagePath("INBOX", m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results := box.WriteFlags(f, "INBOX", []mailbox.FlagWrite{
+		{UID: uid, Filename: name, Flags: []string{`\Seen`}},
+	})
+	if len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("the write answered %+v", results)
+	}
+	// The name carries it, which is where a maildir keeps a flag.
+	if !strings.Contains(results[0].Filename, "S") {
+		t.Errorf("the message is called %q and \\Seen was set", results[0].Filename)
+	}
+	// And a reader of storage alone sees it.
+	msgs, err := box.Store().List("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, sm := range msgs {
+		for _, fl := range sm.Flags {
+			if fl == `\Seen` {
+				seen = true
+			}
+		}
+	}
+	if !seen {
+		t.Error("storage does not hold the flag: the change stayed in the index")
+	}
+}
+
+// A copy settles its name in the destination before its record: the same rule
+// as a delivery, on the destination's own halves (#1745).
+func TestCopySettlesTheNameBeforeTheRecord(t *testing.T) {
+	box, f := openBox(t, "u10@example.com")
+	if err := box.Store().Create("Archive"); err != nil {
+		t.Fatal(err)
+	}
+	dst, err := box.Folder("Archive", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const body = "From: a@b\r\nSubject: copied\r\n\r\nbody\r\n"
+	saved, vsize, guid, serr := box.Store().Save("Archive", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if err := box.Copy(dst, "Archive", saved, m); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := box.Index().GetMessages(dst.ID, mailbox.SeqSet{})
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("the destination holds %d records: %v", len(msgs), err)
+	}
+	if name, perr := box.MessagePath("Archive", msgs[0]); perr != nil || name == "" {
+		t.Errorf("the copied record names no file: %q %v", name, perr)
+	}
+	_ = f
+}
