@@ -75,7 +75,7 @@ func (s *Server) handleIndexDump(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "open folder: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	all, err := mailbox.ReadMessages(bundle.idx, folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	all, err := bundle.mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		apiError(w, "get messages: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -57,7 +57,7 @@ func (s *Server) findMessages(h *userHandle, want map[string]bool) (map[string]m
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", e.Name, err)
 		}
-		metas, err := mailbox.ReadMessages(h.idx, f.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		metas, err := h.mbox.Messages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
 			return nil, fmt.Errorf("jmap: read folder %q: %w", e.Name, err)
 		}

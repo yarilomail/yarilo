@@ -678,7 +678,7 @@ func (s *session) loadMailbox() error {
 	// address UIDs taken from it, never positions in a fresh index, so a
 	// snapshot one delivery behind narrows the session's view and cannot
 	// misdirect a deletion (#1249).
-	msgs, err := mailbox.ReadMessages(s.box.Index(), folder.ID, mailbox.SeqSet{})
+	msgs, err := s.box.Messages(folder.ID, mailbox.SeqSet{})
 	if err != nil {
 		slog.Error("pop3: get messages", "user", s.userInfo.Username, "err", err)
 		return err

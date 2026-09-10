@@ -250,7 +250,7 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 		if ferr != nil {
 			return nil, fmt.Errorf("open %s: %w", name, ferr)
 		}
-		metas, merr := mailbox.ReadMessages(idx, folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		metas, merr := mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if merr != nil {
 			return nil, fmt.Errorf("read %s: %w", name, merr)
 		}

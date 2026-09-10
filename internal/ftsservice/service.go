@@ -805,7 +805,7 @@ func (s *Service) runIndex(j job) error {
 	// catches up, and the checkpoint only ever moves forward. So a snapshot one
 	// delivery behind costs a later index, never a lost document, and the read
 	// can skip the cross-process lock (#1249).
-	msgs, err := mailbox.ReadMessages(h.idx, folder.ID, mailbox.SeqSet{})
+	msgs, err := h.mailboxOf().Messages(folder.ID, mailbox.SeqSet{})
 	if err != nil {
 		return fmt.Errorf("ftsservice: list messages: %w", err)
 	}

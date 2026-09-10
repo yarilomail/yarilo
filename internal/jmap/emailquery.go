@@ -74,7 +74,7 @@ func (s *Server) emailQuery(ctx context.Context, h *userHandle, accountID string
 
 	matched := make([]queryHit, 0, 64)
 	for _, f := range scope.folders {
-		metas, err := mailbox.ReadMessages(h.idx, f.id, mailbox.SeqSet{{From: 1, To: 0}})
+		metas, err := h.mbox.Messages(f.id, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
 			return nil, storeFailure("Email/query read of "+f.name, accountID, err)
 		}
