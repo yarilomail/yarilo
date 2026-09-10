@@ -29,6 +29,8 @@ type nsHandle struct {
 	// box / idx are the per-user storage handles; nil when declared-only.
 	box mailbox.UserMailbox
 	idx mailbox.UserIndex
+	// mbox pairs the two, and is what a rule needing both asks (#1715).
+	mbox *mailbox.Box
 	// subs is the per-namespace subscription store. Personal keeps the
 	// filename "subscriptions" so upgrades preserve existing state;
 	// shared/public use "subscriptions-<ns>" siblings.
@@ -320,6 +322,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		spec:     spec,
 		box:      box,
 		idx:      idx,
+		mbox:     mailbox.Open(box, idx),
 		subs:     store,
 		acl:      aclStore,
 		userInfo: ui,

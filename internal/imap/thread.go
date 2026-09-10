@@ -296,7 +296,7 @@ func (s *session) envelopeOf(m *mailbox.MessageMeta, raw []byte) (*imaplib.Envel
 		}
 		return imapserver.ExtractEnvelope(hdr), nil
 	}
-	if !mailbox.Readable(s.folderBox(), m) {
+	if !s.folderMailbox().Readable(m) {
 		return &imaplib.Envelope{}, nil
 	}
 	rc, err := s.fetchSelected(m)
@@ -311,7 +311,7 @@ func (s *session) envelopeOf(m *mailbox.MessageMeta, raw []byte) (*imaplib.Envel
 	return imapserver.ExtractEnvelope(hdr), nil
 }
 
-// applyEnvelope fills the ordering fields ENVELOPE carries. Address.Mailbox is
+// applyHead fills the ordering fields ENVELOPE carries. Address.Mailbox is
 // the addr-mailbox of RFC 5256 -- the local part, not the display name -- so
 // the sort key comes straight out of the cache with nothing re-parsed.
 func applyHead(out *imapthread.Message, head msgcache.Head) {
@@ -408,7 +408,7 @@ func messageIDList(v string) []string {
 // and nothing else, and a THREAD over a large mailbox would otherwise read
 // every byte of every message in it.
 func (s *session) readHeader(m *mailbox.MessageMeta) ([]byte, error) {
-	if !mailbox.Readable(s.folderBox(), m) {
+	if !s.folderMailbox().Readable(m) {
 		// Nothing was ever stored for this record; that is not a read failure.
 		return nil, nil
 	}

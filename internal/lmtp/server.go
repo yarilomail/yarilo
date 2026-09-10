@@ -880,7 +880,7 @@ func fillSizes(box *mailbox.Box, folders []string) {
 		if err != nil {
 			continue
 		}
-		if _, ferr := box.FillSizes(f); ferr != nil {
+		if _, ferr := box.FillSizeless(f); ferr != nil {
 			slog.Warn("lmtp: sizes not filled", "folder", name, "err", ferr)
 		}
 	}

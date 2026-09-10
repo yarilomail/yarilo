@@ -99,7 +99,7 @@ func TestRecordDeliveredLeavesNoRecordWhenTheNameFails(t *testing.T) {
 
 // The box fills what its records lack, so a sum over the folder is taken on
 // mail and not on zeros (#1728).
-func TestFillSizesGivesRecordsTheSizeStorageHolds(t *testing.T) {
+func TestFillSizelessGivesRecordsTheSizeStorageHolds(t *testing.T) {
 	box, f := openBox(t, "u3@example.com")
 	const body = "From: a@b\r\nSubject: sized\r\n\r\nbody\r\n"
 	uid, err := box.Index().AllocateUID(f.ID)
@@ -115,7 +115,7 @@ func TestFillSizesGivesRecordsTheSizeStorageHolds(t *testing.T) {
 	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
-	filled, err := box.FillSizes(f)
+	filled, err := box.FillSizeless(f)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,5 +266,60 @@ func TestTheRecordGoesBeforeTheBody(t *testing.T) {
 	}
 	if !bodyThen {
 		t.Error("at the stop the body was already gone: the body went first")
+	}
+}
+
+// A record resolving to nothing is reported, never answered as an empty
+// message: a client told "zero octets" acts on it (#1715).
+func TestAnUnresolvableRecordIsReportedNotEmptied(t *testing.T) {
+	box, f := openBox(t, "u7@example.com")
+	// A record with no name at all: the state a folder recovered from storage
+	// without its list is in.
+	m := &mailbox.MessageMeta{UID: 9, Size: 40}
+	if err := box.Index().AppendMessage(f.ID, m); err != nil {
+		t.Fatal(err)
+	}
+	if box.Readable(m) && func() bool {
+		name, err := box.MessagePath("INBOX", m)
+		return err == nil && name != ""
+	}() {
+		t.Fatal("a record naming no file was accepted as readable")
+	}
+	if _, err := box.OpenMessage("INBOX", m); err == nil {
+		t.Error("opening a record that names no file was accepted")
+	}
+	if got := box.RFC822Size("INBOX", m); got != 40 {
+		t.Errorf("the size answered is %d; the record's own is 40 and storage cannot be asked", got)
+	}
+}
+
+// The size a client is told is the size of the body it gets, including for a
+// record that carries none — what a recovered folder holds (#1726, #1727).
+func TestTheSizeToldIsTheSizeOfTheBody(t *testing.T) {
+	box, f := openBox(t, "u8@example.com")
+	const body = "From: a@b\r\nSubject: sized\r\n\r\nbody\r\n"
+	uid, err := box.Index().AllocateUID(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, _, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	// No sizes on the record, as a recovered one has.
+	m := &mailbox.MessageMeta{UID: uid, GUID: guid}
+	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
+		t.Fatal(err)
+	}
+	read, err := box.Index().GetMessages(f.ID, mailbox.SeqSet{})
+	if err != nil || len(read) != 1 {
+		t.Fatalf("records: %d %v", len(read), err)
+	}
+	if got := box.RFC822Size("INBOX", read[0]); got != uint32(len(body)) {
+		t.Errorf("the client is told %d octets, the body is %d", got, len(body))
+	}
+	box.FillResponseSizes("INBOX", read)
+	if read[0].VSize != uint32(len(body)) {
+		t.Errorf("after the stamp the record carries %d, the body is %d", read[0].VSize, len(body))
 	}
 }
