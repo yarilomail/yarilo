@@ -32,6 +32,10 @@ type userContext struct {
 	// opened handle. Personal is always present after open(); shared/public
 	// only when configured.
 	handles map[string]*nsBundle
+
+	// mode is how this context opens: a namespace reached later opens the same
+	// way the account did, or a read would create through the second one.
+	mode openMode
 }
 
 // nsBundle is one namespace's storage state, backed by the same per-user
@@ -186,6 +190,7 @@ func (s *Server) openUserContextInner(username string, mode openMode) (*userCont
 		owner:     locks.Owner(username, reqID),
 		requestID: reqID,
 		handles:   make(map[string]*nsBundle),
+		mode:      mode,
 	}
 
 	personalSpec, ok := s.personalSpec()
@@ -279,7 +284,14 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
 		}
 	}
-	b, err := s.openNS(spec, nsInfo, nil)
+	// No Init unless the caller opened eagerly; no refusal either, since outside
+	// the personal namespace the home is the owner's and gates nothing here.
+	var b *nsBundle
+	if uc.mode == openEager {
+		b, err = s.openNS(spec, nsInfo, nil)
+	} else {
+		b, err = s.openNSDeferred(spec, nsInfo, nil)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("backendapi/userctx: open %q: %w", name, err)
 	}

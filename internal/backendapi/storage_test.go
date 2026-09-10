@@ -20,7 +20,7 @@ import (
 // storageTestServer wires a Server backed by an on-disk maildir +
 // fileindex pair plus an in-memory metadata dict. Every test gets
 // its own t.TempDir so writes do not bleed across runs.
-func storageTestServer(t *testing.T) (*httptest.Server, string) {
+func storageTestServer(t *testing.T, opts ...func(*Options)) (*httptest.Server, string) {
 	t.Helper()
 	root := t.TempDir()
 	// Wrapped as mailboxbuild.ByDriver wraps it in production: the folder-name
@@ -35,7 +35,7 @@ func storageTestServer(t *testing.T) (*httptest.Server, string) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	s := New(Options{
+	cfg := Options{
 		Dicts:   map[string]dict.Dict{"metadata": d},
 		Mailbox: mb,
 		Index:   idx,
@@ -51,7 +51,11 @@ func storageTestServer(t *testing.T) (*httptest.Server, string) {
 			"Drafts": `\Drafts`,
 		},
 		MetadataDict: d,
-	})
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	s := New(cfg)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return ts, root

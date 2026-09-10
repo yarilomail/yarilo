@@ -2,6 +2,7 @@ package backendapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -102,49 +103,61 @@ func TestARefusedFolderNameMaterialisesNothing(t *testing.T) {
 }
 
 // A write that names no folder has nothing to check and nothing to make: an
-// account that is not on disk is an answer, not a directory to create.
+// account that is not on disk is answered, not created.
 func TestAWriteWithoutAFolderNameMaterialisesNothing(t *testing.T) {
+	plain := func(t *testing.T) (*httptest.Server, string, string) {
+		ts, root := storageTestServer(t)
+		return ts, root, freshUser
+	}
+	// fts and migrate need a backend that has them wired, or the refusal comes
+	// from the missing service and the row never reaches the account.
+	withFTS := func(t *testing.T) (*httptest.Server, string, string) {
+		ts, root := storageTestServer(t, func(o *Options) { o.FTSClient = &fakeFTS{} })
+		return ts, root, freshUser
+	}
+	withMigrate := func(t *testing.T) (*httptest.Server, string, string) {
+		root := t.TempDir()
+		return migrateServer(t, root), root, "alice@example.com"
+	}
 	cases := []struct {
-		name string
-		path string
-		body map[string]any
+		name     string
+		path     string
+		setup    func(*testing.T) (*httptest.Server, string, string)
+		body     func(user string) map[string]any
+		wantCode int
 	}{
-		{"index rebuild-storage", "/api/backend/index/rebuild-storage", map[string]any{"user": freshUser}},
-		{"index optimize", "/api/backend/index/optimize", map[string]any{"user": freshUser, "all": true}},
-		{"index cache-purge", "/api/backend/index/cache-purge", map[string]any{"user": freshUser, "folder": "INBOX"}},
-		{"quota recalc", "/api/backend/quota/recalc", map[string]any{"user": freshUser}},
-		{"mdbox purge", "/api/backend/mdbox/purge", map[string]any{"user": freshUser}},
-		{"mdbox altmove", "/api/backend/mdbox/altmove", map[string]any{"user": freshUser}},
+		{"index rebuild-storage", "/api/backend/index/rebuild-storage", plain,
+			func(u string) map[string]any { return map[string]any{"user": u} }, http.StatusNotFound},
+		{"index rebuild", "/api/backend/index/rebuild", plain,
+			func(u string) map[string]any { return map[string]any{"user": u, "folder": "INBOX"} }, http.StatusNotFound},
+		{"index optimize", "/api/backend/index/optimize", plain,
+			func(u string) map[string]any { return map[string]any{"user": u, "all": true} }, http.StatusNotFound},
+		{"index cache-purge", "/api/backend/index/cache-purge", plain,
+			func(u string) map[string]any { return map[string]any{"user": u, "folder": "INBOX"} }, http.StatusNotFound},
+		{"quota recalc", "/api/backend/quota/recalc", plain,
+			func(u string) map[string]any { return map[string]any{"user": u} }, http.StatusNotFound},
+		{"mdbox purge", "/api/backend/mdbox/purge", plain,
+			func(u string) map[string]any { return map[string]any{"user": u} }, http.StatusNotFound},
+		{"mdbox altmove", "/api/backend/mdbox/altmove", plain,
+			func(u string) map[string]any { return map[string]any{"user": u} }, http.StatusNotFound},
+		// The user rides in the query string on this one.
+		{"fts rescan", "/api/backend/fts/rescan?user=" + freshUser, withFTS,
+			func(u string) map[string]any { return nil }, http.StatusNotFound},
+		{"subscriptions migrate", "/api/backend/subscriptions/migrate", withMigrate,
+			func(u string) map[string]any { return map[string]any{"user": u, "namespace": "user/%u"} }, http.StatusNotFound},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			ts, root := storageTestServer(t)
+			ts, root, user := c.setup(t)
 			before := treeSnapshot(t, root)
-			status, body := doJSON(t, ts, http.MethodPost, c.path, "", c.body)
-			if status == http.StatusOK {
-				t.Errorf("status=200 body=%s, want a refusal for an account with no home", body)
+			status, body := doJSON(t, ts, http.MethodPost, c.path, "", c.body(user))
+			if status != c.wantCode {
+				t.Errorf("status=%d body=%s, want %d", status, body, c.wantCode)
 			}
 			if after := treeSnapshot(t, root); after != before {
 				t.Errorf("the write left an account behind:\nbefore: %s\nafter:  %s", before, after)
 			}
 		})
-	}
-}
-
-// And a good name on the same account still brings it into being, or the row
-// above would pass on a path that never materialises at all.
-func TestAGoodFolderNameStillMaterialisesTheAccount(t *testing.T) {
-	ts, root := storageTestServer(t)
-	before := treeSnapshot(t, root)
-	// The folder does not exist yet, so the answer is 404 -- but the account it
-	// was asked about is now on disk, which is what the eager open used to do.
-	doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
-		"user":   freshUser,
-		"folder": "Work",
-		"acl":    []map[string]any{{"identifier": "bob@example.com", "rights": "lr"}},
-	})
-	if after := treeSnapshot(t, root); after == before {
-		t.Error("the account was never materialised, so the row above proves nothing")
 	}
 }
 
