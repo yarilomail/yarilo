@@ -448,7 +448,6 @@ func listDebug() bool {
 	return slog.Default().Enabled(context.Background(), slog.LevelDebug)
 }
 
-// listStat is the file's identity for a debug row, without reading it.
 // listStampNow is the list file's identity as it stands, for a debug line.
 func (u *userMailbox) listStampNow(folder string) listStamp {
 	fi, err := os.Stat(u.uidListPath(folder))
@@ -458,6 +457,7 @@ func (u *userMailbox) listStampNow(folder string) listStamp {
 	return stampOf(fi)
 }
 
+// listStat is the file's identity for a debug row, without reading it.
 func (u *userMailbox) listStat(folder string) (mtime, size int64) {
 	fi, err := os.Stat(u.uidListPath(folder))
 	if err != nil {
