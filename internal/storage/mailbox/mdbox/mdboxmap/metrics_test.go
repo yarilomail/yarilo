@@ -2,6 +2,7 @@ package mdboxmap
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -98,7 +99,9 @@ func TestTheAcquisitionIsPaidWithNoOtherHolder(t *testing.T) {
 // findings, so they must not land in one number: an optimisation aimed at the
 // wrong one is what an undivided measurement buys.
 func TestLockWaitAndHoldAreCountedApart(t *testing.T) {
-	const delay = 60 * time.Millisecond
+	// Any non-zero wait will do: what the row is about is which span each
+	// observation went to, and that is an order, not a duration (#1738).
+	const delay = time.Millisecond
 	dir := t.TempDir()
 	m, err := Open(dir, "alice@example.com", WithLocker(&slowLocker{delay: delay}), WithOwner("test.bin/1/alice@example.com/sess1"))
 	if err != nil {
@@ -106,26 +109,35 @@ func TestLockWaitAndHoldAreCountedApart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = m.Close() })
 
-	waitBefore, waitCountBefore := histSum(t, metricMapLockAcquire)
-	holdBefore, holdCountBefore := histSum(t, metricMapLockHold)
+	var mu sync.Mutex
+	var seen []string
+	disarm := SetTestSpanRecorder(func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, name)
+	})
+	defer disarm()
+
+	_, waitCountBefore := histSum(t, metricMapLockAcquire)
+	_, holdCountBefore := histSum(t, metricMapLockHold)
 
 	if _, err := m.AppendRecord(1, 0, 10, [16]byte{1}); err != nil {
 		t.Fatalf("AppendRecord: %v", err)
 	}
 
-	wait, waitCount := histSum(t, metricMapLockAcquire)
-	hold, holdCount := histSum(t, metricMapLockHold)
+	_, waitCount := histSum(t, metricMapLockAcquire)
+	_, holdCount := histSum(t, metricMapLockHold)
 	if waitCount != waitCountBefore+1 || holdCount != holdCountBefore+1 {
 		t.Fatalf("one append produced %d waits and %d holds, want one of each",
 			waitCount-waitCountBefore, holdCount-holdCountBefore)
 	}
-	if got := wait - waitBefore; got < delay.Seconds() {
-		t.Errorf("recorded %.3fs of waiting for a lock that took %v", got, delay)
-	}
-	// The work itself did not sleep, so a hold as long as the wait would mean
-	// the two are measuring the same span.
-	if got := hold - holdBefore; got >= delay.Seconds() {
-		t.Errorf("hold %.3fs includes the %v wait: the spans are not separated", got, delay)
+
+	mu.Lock()
+	order := strings.Join(seen, ",")
+	mu.Unlock()
+	const want = spanWaitStart + "," + spanWaitEnd + "," + spanHoldStart + "," + spanHoldEnd
+	if order != want {
+		t.Errorf("the spans ran as %q, want %q: the hold must begin after the wait ends", order, want)
 	}
 }
 

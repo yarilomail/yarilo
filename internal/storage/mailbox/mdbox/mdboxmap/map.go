@@ -461,17 +461,26 @@ func (m *Map) withMapLock(fn func() error) error {
 	if held, err := locks.Reentrant(m.locker, key, "mdbox-map", false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
-		return timed(metricMapLockHold, fn)
+		return heldSpan(fn)
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "mdbox-map"), 35*time.Second)
 	defer cancel()
+	noteSpan(spanWaitStart)
 	start := time.Now()
 	lk, err := locks.Acquire(ctx, m.locker, key, m.owner, 30*time.Second)
 	metricMapLockAcquire.Observe(time.Since(start).Seconds())
+	noteSpan(spanWaitEnd)
 	if err != nil {
 		return fmt.Errorf("mdboxmap/lock: %w", err)
 	}
 	defer func() { _ = m.locker.Unlock(ctx, lk.ID) }()
+	return heldSpan(fn)
+}
+
+// heldSpan runs the work under the lock and records that span alone.
+func heldSpan(fn func() error) error {
+	noteSpan(spanHoldStart)
+	defer noteSpan(spanHoldEnd)
 	return timed(metricMapLockHold, fn)
 }
 
