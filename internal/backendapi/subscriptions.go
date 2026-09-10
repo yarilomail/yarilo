@@ -25,7 +25,7 @@ type subsRequest struct {
 }
 
 func (s *Server) handleSubsList(w http.ResponseWriter, r *http.Request) {
-	store, _, err := s.openSubsStore(w, r)
+	store, _, err := s.openSubsStore(w, r, true)
 	if err != nil {
 		return
 	}
@@ -43,7 +43,7 @@ func (s *Server) handleSubsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSubsAdd(w http.ResponseWriter, r *http.Request) {
-	store, folder, err := s.openSubsStore(w, r)
+	store, folder, err := s.openSubsStore(w, r, false)
 	if err != nil {
 		return
 	}
@@ -59,7 +59,7 @@ func (s *Server) handleSubsAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSubsRemove(w http.ResponseWriter, r *http.Request) {
-	store, folder, err := s.openSubsStore(w, r)
+	store, folder, err := s.openSubsStore(w, r, false)
 	if err != nil {
 		return
 	}
@@ -77,7 +77,7 @@ func (s *Server) handleSubsRemove(w http.ResponseWriter, r *http.Request) {
 // openSubsStore decodes the request and returns the namespace's
 // subs.Store. On error the HTTP response is already written.
 // The store holds no long-lived handles, so uc can be closed here.
-func (s *Server) openSubsStore(w http.ResponseWriter, r *http.Request) (*subs.Store, string, error) {
+func (s *Server) openSubsStore(w http.ResponseWriter, r *http.Request, readOnly bool) (*subs.Store, string, error) {
 	var req subsRequest
 	if !decodeJSON(w, r, &req) {
 		return nil, "", errDecode
@@ -86,7 +86,7 @@ func (s *Server) openSubsStore(w http.ResponseWriter, r *http.Request) (*subs.St
 		apiError(w, "user required", http.StatusBadRequest)
 		return nil, "", errUserRequired
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextFor(req.User, readOnly)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, "", err
@@ -101,6 +101,10 @@ func (s *Server) openSubsStore(w http.ResponseWriter, r *http.Request) (*subs.St
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, "", err
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return nil, "", errNoMailHome
 	}
 	store := subs.New(
 		bundle.folderControlRoot(),

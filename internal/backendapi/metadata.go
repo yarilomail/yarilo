@@ -102,7 +102,7 @@ func (s *Server) handleMetadataList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetadataGet(w http.ResponseWriter, r *http.Request) {
-	mc, req, err := s.openMetadataContextReq(w, r, true)
+	mc, req, err := s.openMetadataContextReq(w, r, true, true)
 	if err != nil {
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) handleMetadataGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetadataSet(w http.ResponseWriter, r *http.Request) {
-	mc, req, err := s.openMetadataContextReq(w, r, true)
+	mc, req, err := s.openMetadataContextReq(w, r, true, false)
 	if err != nil {
 		return
 	}
@@ -184,7 +184,7 @@ func (s *Server) handleMetadataSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetadataDelete(w http.ResponseWriter, r *http.Request) {
-	mc, req, err := s.openMetadataContextReq(w, r, true)
+	mc, req, err := s.openMetadataContextReq(w, r, true, false)
 	if err != nil {
 		return
 	}
@@ -226,11 +226,11 @@ func (s *Server) handleMetadataDelete(w http.ResponseWriter, r *http.Request) {
 // scope from req.Scope. For get/set/delete (where the entry name
 // carries the scope) use openMetadataContextReq with requireEntry.
 func (s *Server) openMetadataContext(w http.ResponseWriter, r *http.Request, requireEntry bool) (*metadataContext, error) {
-	mc, _, err := s.openMetadataContextReq(w, r, requireEntry)
+	mc, _, err := s.openMetadataContextReq(w, r, requireEntry, true)
 	return mc, err
 }
 
-func (s *Server) openMetadataContextReq(w http.ResponseWriter, r *http.Request, requireEntry bool) (*metadataContext, *metadataRequest, error) {
+func (s *Server) openMetadataContextReq(w http.ResponseWriter, r *http.Request, requireEntry, readOnly bool) (*metadataContext, *metadataRequest, error) {
 	var req metadataRequest
 	if !decodeJSON(w, r, &req) {
 		return nil, nil, errDecode
@@ -244,7 +244,7 @@ func (s *Server) openMetadataContextReq(w http.ResponseWriter, r *http.Request, 
 		return nil, nil, errEntryRequired
 	}
 
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextFor(req.User, readOnly)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, nil, err
@@ -254,6 +254,10 @@ func (s *Server) openMetadataContextReq(w http.ResponseWriter, r *http.Request, 
 		uc.Close()
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, nil, err
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return nil, nil, errNoMailHome
 	}
 	// One owner of NFC on the admin surface too (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)

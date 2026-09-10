@@ -279,6 +279,7 @@ func TestSubscriptions_LiveAtMailRoot(t *testing.T) {
 func TestSpecialUseOverridesAndDefaults(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
+	materialiseHome(t, ts, user)
 
 	// Default applies before any override.
 	_, body := doJSON(t, ts, http.MethodPost, "/api/backend/specialuse/get", "",

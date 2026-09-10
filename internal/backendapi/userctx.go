@@ -55,7 +55,10 @@ func accountNameOK(r *mailbox.Resolver, username string) error {
 	if !strings.Contains(tmpl, "%d") || strings.Contains(username, "@") {
 		return nil
 	}
-	return fmt.Errorf("backendapi/userctx: no such user: %s", username)
+	// Names what was checked: the userdb was not asked, and an operator sent
+	// looking for a missing account would be looking in the wrong place.
+	return fmt.Errorf("backendapi/userctx: %q carries no domain, and mail_home %q cannot place it",
+		username, tmpl)
 }
 
 // errNoMailHome is the answer a read gives for an account whose home is not on
@@ -83,6 +86,12 @@ func readBundle(w http.ResponseWriter, s *Server, uc *userContext, namespace str
 // dir); shared/public failures are reported per-call via ns().
 func (s *Server) openUserContext(username string) (*userContext, error) {
 	return s.openUserContextInner(username, false)
+}
+
+// openUserContextFor picks the opener by what the caller is about to do, for the
+// entry points one function serves for both a read verb and a write one.
+func (s *Server) openUserContextFor(username string, readOnly bool) (*userContext, error) {
+	return s.openUserContextInner(username, readOnly)
 }
 
 // openUserContextReadOnly is like openUserContext but skips Init so no

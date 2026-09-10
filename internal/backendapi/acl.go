@@ -101,7 +101,7 @@ type aclEntryJSON struct {
 }
 
 func (s *Server) handleACLList(w http.ResponseWriter, r *http.Request) {
-	store, _, _, _, err := s.openACLStore(w, r)
+	store, _, _, _, err := s.openACLStore(w, r, true)
 	if err != nil {
 		return
 	}
@@ -114,7 +114,7 @@ func (s *Server) handleACLList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleACLGet(w http.ResponseWriter, r *http.Request) {
-	store, req, _, _, err := s.openACLStore(w, r)
+	store, req, _, _, err := s.openACLStore(w, r, true)
 	if err != nil {
 		return
 	}
@@ -134,7 +134,7 @@ func (s *Server) handleACLGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleACLSet(w http.ResponseWriter, r *http.Request) {
-	store, req, _, owner, err := s.openACLStore(w, r)
+	store, req, _, owner, err := s.openACLStore(w, r, false)
 	if err != nil {
 		return
 	}
@@ -163,7 +163,7 @@ func (s *Server) handleACLSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleACLApply(w http.ResponseWriter, r *http.Request) {
-	store, req, _, owner, err := s.openACLStore(w, r)
+	store, req, _, owner, err := s.openACLStore(w, r, false)
 	if err != nil {
 		return
 	}
@@ -235,7 +235,7 @@ func aclModeFromWire(s string) (mailbox.ACLModify, error) {
 }
 
 func (s *Server) handleACLDelete(w http.ResponseWriter, r *http.Request) {
-	store, req, _, _, err := s.openACLStore(w, r)
+	store, req, _, _, err := s.openACLStore(w, r, false)
 	if err != nil {
 		return
 	}
@@ -251,7 +251,7 @@ func (s *Server) handleACLDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleACLRebuild(w http.ResponseWriter, r *http.Request) {
-	store, req, present, _, err := s.openACLStore(w, r)
+	store, req, present, _, err := s.openACLStore(w, r, false)
 	if err != nil {
 		return
 	}
@@ -449,7 +449,7 @@ func (s *Server) aclRebuildDryRun(w http.ResponseWriter, store *acl.Store, req *
 // openACLStore decodes the common request body, resolves the
 // per-namespace bundle, and returns the acl.Store. Mirrors
 // openSubsStore / openSpecialUseStore in this package.
-func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request) (*acl.Store, *aclRequest, map[string]bool, string, error) {
+func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly bool) (*acl.Store, *aclRequest, map[string]bool, string, error) {
 	var req aclRequest
 	if !decodeJSON(w, r, &req) {
 		return nil, nil, nil, "", errDecode
@@ -480,7 +480,7 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request) (*acl.Stor
 		apiError(w, errUserRequired.Error(), http.StatusBadRequest)
 		return nil, nil, nil, "", errUserRequired
 	}
-	uc, err := s.openUserContext(account)
+	uc, err := s.openUserContextFor(account, readOnly)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, nil, nil, "", err
@@ -494,6 +494,10 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request) (*acl.Stor
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, nil, nil, "", err
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return nil, nil, nil, "", errNoMailHome
 	}
 	// Admin surface manages explicit entries, not effective-with-default
 	// resolution, so acl_defaults_from_inbox does not apply here.
@@ -809,7 +813,7 @@ func entriesToJSON(in []acl.ListEntry) []map[string]any {
 // indistinguishable on disk from one orphaned by the old rule. That is also why
 // this is an operator action and not something a resolver does on read.
 func (s *Server) handleACLMaterialise(w http.ResponseWriter, r *http.Request) {
-	store, req, _, _, err := s.openACLStore(w, r)
+	store, req, _, _, err := s.openACLStore(w, r, false)
 	if err != nil {
 		return
 	}

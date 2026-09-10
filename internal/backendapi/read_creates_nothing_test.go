@@ -20,6 +20,13 @@ func TestAReadCreatesNothingOnDisk(t *testing.T) {
 		{"folder stats", "/api/backend/folder/stats", map[string]any{"user": "nobody@example.com", "folder": "INBOX"}, http.StatusNotFound},
 		{"message get", "/api/backend/message/get", map[string]any{"user": "nobody@example.com", "folder": "INBOX", "uid": 1, "mode": "raw"}, http.StatusNotFound},
 		{"user usage", "/api/backend/user/usage", map[string]any{"user": "nobody@example.com"}, http.StatusOK},
+		{"acl get", "/api/backend/acl/get", map[string]any{"user": "nobody@example.com", "folder": "INBOX"}, http.StatusNotFound},
+		{"acl list", "/api/backend/acl/list", map[string]any{"user": "nobody@example.com", "folder": "INBOX"}, http.StatusNotFound},
+		{"metadata get", "/api/backend/metadata/get", map[string]any{"user": "nobody@example.com", "entry": "/private/comment"}, http.StatusNotFound},
+		{"metadata list", "/api/backend/metadata/list", map[string]any{"user": "nobody@example.com"}, http.StatusNotFound},
+		{"specialuse get", "/api/backend/specialuse/get", map[string]any{"user": "nobody@example.com", "folder": "Sent"}, http.StatusNotFound},
+		{"specialuse list", "/api/backend/specialuse/list", map[string]any{"user": "nobody@example.com"}, http.StatusNotFound},
+		{"subscriptions list", "/api/backend/subscriptions/list", map[string]any{"user": "nobody@example.com"}, http.StatusNotFound},
 		// A bare name: the home template carries %d, so it names no account.
 		{"bare name check", "/api/backend/index/check", map[string]any{"user": "nobody"}, http.StatusBadRequest},
 		{"bare name dump", "/api/backend/index/dump", map[string]any{"user": "nobody", "folder": "INBOX"}, http.StatusBadRequest},
