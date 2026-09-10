@@ -167,7 +167,7 @@ type ReactiveHealer interface {
 	// HealCorruptFolder repairs folder and returns the UIDs it expunged (records
 	// whose backing message vanished), so the caller can invalidate their FTS
 	// documents.
-	HealCorruptFolder(idx UserIndex, folder *Folder) ([]uint32, error)
+	HealCorruptFolder(box Box, folder *Folder) ([]uint32, error)
 }
 
 // CanReactiveHeal reports whether box can self-heal corruption. Marking a folder
@@ -216,7 +216,7 @@ type StorageRebuildStats struct {
 // into its recorded home folder, never blindly adopted. The default leaves
 // unreferenced messages zero-ref for purge.
 type StorageWideRebuilder interface {
-	RebuildStorage(idx UserIndex, restoreOrphans bool) (StorageRebuildStats, error)
+	RebuildStorage(box Box, restoreOrphans bool) (StorageRebuildStats, error)
 }
 
 // MarkCorruptOnFetchErr flags folder for a heal when err wraps ErrCorruptStorage.

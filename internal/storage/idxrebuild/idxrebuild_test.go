@@ -70,7 +70,7 @@ func TestRebuildFolder(t *testing.T) {
 	}
 
 	folder, _ = idx.OpenFolder("INBOX", 1)
-	st, err := idxrebuild.RebuildFolder(box, idx, folder)
+	st, err := idxrebuild.RebuildFolder(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestExpungeMissing(t *testing.T) {
 	}
 
 	folder, _ = idx.OpenFolder("INBOX", 1)
-	n, err := idxrebuild.ExpungeMissing(box, idx, folder)
+	n, err := idxrebuild.ExpungeMissing(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestARebuildRefilesAFileWhoseRecordWasExpunged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := idxrebuild.RebuildFolder(box, idx, folder)
+	st, err := idxrebuild.RebuildFolder(mailboxbase.Open(box, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}

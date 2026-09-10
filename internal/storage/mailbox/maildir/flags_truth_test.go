@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -146,7 +147,7 @@ func TestTheSidecarIsRemovedAndNothingTakenFromIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := box.MigrateUIDNames(idx, folder); err != nil {
+	if _, err := box.MigrateUIDNames(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(sidecar); !os.IsNotExist(err) {

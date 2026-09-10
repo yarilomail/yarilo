@@ -102,7 +102,7 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 		return nil, http.StatusInternalServerError, fmt.Errorf("open folder: %w", err)
 	}
 
-	rstats, err := idxrebuild.RebuildFolder(bundle.box, bundle.idx, folder)
+	rstats, err := idxrebuild.RebuildFolder(bundle.mbox, folder)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -184,7 +184,7 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	// The rebuild takes the storage (map) lock itself; the per-folder lock is
 	// taken inside idx.ResetFolder.
-	st, err := rb.RebuildStorage(bundle.idx, req.RestoreOrphans)
+	st, err := rb.RebuildStorage(bundle.mbox, req.RestoreOrphans)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusInternalServerError)
 		return

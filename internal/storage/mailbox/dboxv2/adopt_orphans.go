@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -59,7 +58,7 @@ func guidNamedFiles(dir string) ([]guidNamedFile, error) {
 
 // adoptOrphans places what the rename pass could not, and returns what is still
 // there afterwards -- which is what holds the marker (#1718).
-func (u *userMailbox) adoptOrphans(idx mailbox.UserIndex, folder *mailbox.Folder, msgs []*mailbox.MessageMeta) (adopted, left int, err error) {
+func (u *userMailbox) adoptOrphans(box mailbox.Box, folder *mailbox.Folder, msgs []*mailbox.MessageMeta) (adopted, left int, err error) {
 	dir := u.folderPath(folder.Name)
 	files, err := guidNamedFiles(dir)
 	if err != nil {
@@ -85,7 +84,7 @@ func (u *userMailbox) adoptOrphans(idx mailbox.UserIndex, folder *mailbox.Folder
 			}
 			continue
 		}
-		switch placed, perr := u.refileOrphan(idx, folder, f); {
+		switch placed, perr := u.refileOrphan(box, folder, f); {
 		case perr != nil:
 			return adopted, left + 1, perr
 		case placed:
@@ -99,7 +98,7 @@ func (u *userMailbox) adoptOrphans(idx mailbox.UserIndex, folder *mailbox.Folder
 
 // refileOrphan gives the body a record of its own, keeping the guid its name
 // carries so the message keeps the id a client may already hold.
-func (u *userMailbox) refileOrphan(idx mailbox.UserIndex, folder *mailbox.Folder, f guidNamedFile) (bool, error) {
+func (u *userMailbox) refileOrphan(box mailbox.Box, folder *mailbox.Folder, f guidNamedFile) (bool, error) {
 	path := filepath.Join(u.folderPath(folder.Name), f.name)
 	rc, oerr := u.Fetch(folder.Name, f.name, false)
 	if oerr != nil {
@@ -115,7 +114,7 @@ func (u *userMailbox) refileOrphan(idx mailbox.UserIndex, folder *mailbox.Folder
 		return false, fmt.Errorf("sdbox/orphan: save %s: %w", f.name, serr)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(raw)), VSize: vsize, GUID: guid}
-	if aerr := mailboxbase.RecordSaved(idx, u, folder.ID, folder.Name, saved, m); aerr != nil {
+	if aerr := box.RecordSaved(folder, folder.Name, saved, m); aerr != nil {
 		return false, fmt.Errorf("sdbox/orphan: record %s: %w", f.name, aerr)
 	}
 	if derr := os.Remove(path); derr != nil && !os.IsNotExist(derr) {

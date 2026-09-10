@@ -1137,7 +1137,7 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	s.primary = primary
 	s.box = primary.box
 	s.idx = primary.idx
-	s.mbox = primary.mbox
+	s.mbox = primary.mailbox()
 	s.subs = primary.subs
 
 	// quota_over_status: reconcile the external over-flag against actual
@@ -1211,7 +1211,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	if refreshed := s.migrateNamesOnSelect(h, rel, f); refreshed != nil {
 		f = refreshed
 	}
-	if n, ferr := h.mbox.FillSizeless(f); ferr != nil {
+	if n, ferr := h.mailbox().FillSizeless(f); ferr != nil {
 		slog.Warn("imap: sizes not filled", "folder", rel, "err", ferr)
 	} else if n > 0 {
 		slog.Info("imap: records took the size their storage holds",
@@ -1225,7 +1225,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 	// Mail stored before per-message GUIDs carries none, so stamp it once here.
 	// Not fatal: the folder stays pending and every other operation works.
-	if err := idxrebuild.BackfillGUIDs(h.box, h.idx, f, rel); err != nil {
+	if err := idxrebuild.BackfillGUIDs(h.mailbox(), f, rel); err != nil {
 		slog.Warn("imap: guid backfill failed", "folder", rel, "err", err)
 	}
 	s.folder = f
@@ -1253,7 +1253,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 
 	tGetMsgs := time.Now()
-	msgs, err := readMessages(h.mbox, f.ID)
+	msgs, err := readMessages(h.mailbox(), f.ID)
 	slog.Debug("imap: select timing getmsgs_ms", "folder", rel, "getmsgs_ms", time.Since(tGetMsgs).Milliseconds(), "total_ms", time.Since(tSelect).Milliseconds())
 	if err != nil {
 		return nil, fmt.Errorf("imap: select getmsgs %s: %w", rel, err)
@@ -2103,7 +2103,7 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	if refreshed := s.dboxHealIfCorrupt(h, rel, f); refreshed != nil {
 		f = refreshed
 	}
-	msgs, err := readMessages(h.mbox, f.ID)
+	msgs, err := readMessages(h.mailbox(), f.ID)
 	if err != nil {
 		return nil, fmt.Errorf("imap: status getmsgs %s: %w", rel, err)
 	}
@@ -2259,12 +2259,12 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 		Flags: flagList, Keywords: kwList, Size: uint32(size), VSize: vsize,
 		InternalDate: internalDate, GUID: guid,
 	}
-	if err := h.mbox.RecordSaved(f, rel, filename, m); err != nil {
+	if err := h.mailbox().RecordSaved(f, rel, filename, m); err != nil {
 		_ = h.box.Remove(rel, filename)
 		return nil, fmt.Errorf("imap/append record: %w", err)
 	}
 	// The driver settled the name inside that cycle; ask it, do not carry one.
-	if named, nerr := h.mbox.MessagePath(rel, m); nerr == nil {
+	if named, nerr := h.mailbox().MessagePath(rel, m); nerr == nil {
 		filename = named
 	}
 	tDone := time.Now()
@@ -3682,7 +3682,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 			GUID:         guid,
 		}
 		tIndex := time.Now()
-		if err := destH.mbox.RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
+		if err := destH.mailbox().RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
 			_ = destH.box.Remove(destRel, newFilename)
 			return nil, fmt.Errorf("imap/copy record: %w", err)
 		}
@@ -4072,7 +4072,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 			GUID:         guid,
 		}
 		tIndex := time.Now()
-		if err := destH.mbox.RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
+		if err := destH.mailbox().RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
 			if srcBox == destH.box {
 				_, _, _ = srcBox.Move(destRel, s.folder.Name, newFilename, guid)
 			} else {

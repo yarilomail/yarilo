@@ -98,7 +98,7 @@ func (s *session) dboxHealIfCorrupt(h *nsHandle, rel string, f *mailbox.Folder) 
 	if !ok {
 		return nil
 	}
-	expunged, err := rb.HealCorruptFolder(h.idx, f)
+	expunged, err := rb.HealCorruptFolder(h.mailbox(), f)
 	if errors.Is(err, mdbox.ErrHealDeferred) {
 		// Already failed at this storage generation: a reconnect is not new
 		// evidence, and each attempt costs a whole-storage scan (#1682).
@@ -167,7 +167,7 @@ func (s *session) dboxRestoreIfIndexLost(h *nsHandle, rel string, f *mailbox.Fol
 	}
 	slog.Warn("imap: folder index is missing and its messages are in storage; rebuilding from the files",
 		"user", s.username(), "folder", rel, "files", len(recs))
-	st, err := idxrebuild.RebuildFolder(h.box, h.idx, f)
+	st, err := idxrebuild.RebuildFolder(h.mailbox(), f)
 	if err != nil {
 		slog.Warn("imap: rebuild after index loss failed", "user", s.username(), "folder", rel, "err", err)
 		return nil

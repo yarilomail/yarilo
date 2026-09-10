@@ -149,7 +149,7 @@ func TestBackfillStampsLegacyRecords(t *testing.T) {
 		t.Fatal("legacy folder reported as already backfilled")
 	}
 
-	if err := idxrebuild.BackfillGUIDs(mb, idx, folder, "INBOX"); err != nil {
+	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(mb, idx), folder, "INBOX"); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 
@@ -193,7 +193,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 		t.Fatalf("partial pass: %v", err)
 	}
 
-	if err := idxrebuild.BackfillGUIDs(mb, idx, folder, "INBOX"); err != nil {
+	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(mb, idx), folder, "INBOX"); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	first := guidsByUID(t, idx, folder.ID)
@@ -201,7 +201,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 		t.Errorf("resumed pass rewrote an assigned GUID: %x, want %x", first[firstUID], pinned)
 	}
 
-	if err := idxrebuild.BackfillGUIDs(mb, idx, folder, "INBOX"); err != nil {
+	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(mb, idx), folder, "INBOX"); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	second := guidsByUID(t, idx, folder.ID)
@@ -219,7 +219,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 // reports, or a rebuild from storage would change EMAILID.
 func TestBackfillMatchesStorage(t *testing.T) {
 	mb, idx, folder := stageLegacyFolder(t, 3)
-	if err := idxrebuild.BackfillGUIDs(mb, idx, folder, "INBOX"); err != nil {
+	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(mb, idx), folder, "INBOX"); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 

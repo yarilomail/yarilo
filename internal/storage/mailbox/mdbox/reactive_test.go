@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -32,7 +33,7 @@ func TestHealExpungesVanishedAndClearsMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expunged, err := box.HealCorruptFolder(idx, f)
+	expunged, err := box.HealCorruptFolder(mailboxbase.Open(box, idx), f)
 	if err != nil {
 		t.Fatalf("heal: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestHealAbortsOnVanishedFileMidScan(t *testing.T) {
 	}
 
 	f, _ := idx.OpenFolder("INBOX", 0)
-	if _, err := box.HealCorruptFolder(idx, f); err == nil {
+	if _, err := box.HealCorruptFolder(mailboxbase.Open(box, idx), f); err == nil {
 		t.Fatal("heal should abort on an ENOENT-after-listing (purge/altmove race) scan")
 	}
 	if got := folderCount(t, idx, "INBOX"); got != 1 {
@@ -94,7 +95,7 @@ func TestHealAbortsOnIncompleteScan(t *testing.T) {
 	_ = fh.Close()
 
 	f, _ := idx.OpenFolder("INBOX", 0)
-	_, err = box.HealCorruptFolder(idx, f)
+	_, err = box.HealCorruptFolder(mailboxbase.Open(box, idx), f)
 	if err == nil {
 		t.Fatal("heal should abort (return error) on an incomplete scan")
 	}

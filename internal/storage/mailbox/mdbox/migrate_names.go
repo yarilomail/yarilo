@@ -8,8 +8,8 @@ import (
 
 // MigrateUIDNames moves what an older build kept in the sidecar into the
 // records: an mdbox name is the map_uid, which the record can hold (#1700).
-func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Folder) (int, error) {
-	adopter, ok := idx.(mailbox.StoredNameAdopter)
+func (u *userMailbox) MigrateUIDNames(box mailbox.Box, folder *mailbox.Folder) (int, error) {
+	adopter, ok := box.Index().(mailbox.StoredNameAdopter)
 	if !ok {
 		return 0, nil
 	}

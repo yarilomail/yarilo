@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -89,7 +90,7 @@ func TestASecondSessionDoesNotRepeatAFailedHeal(t *testing.T) {
 	idx := &failingIndex{err: fmt.Errorf("%w: %w", ErrScanIncomplete, errScanCorrupt)}
 	f := &mailbox.Folder{ID: 7, Name: "INBOX", Fsckd: true}
 
-	if _, err := first.HealCorruptFolder(idx, f); err == nil {
+	if _, err := first.HealCorruptFolder(mailboxbase.Open(first, idx), f); err == nil {
 		t.Fatal("the first heal was expected to fail")
 	}
 
@@ -97,7 +98,7 @@ func TestASecondSessionDoesNotRepeatAFailedHeal(t *testing.T) {
 	second := b.OpenUser(&mailbox.UserInfo{
 		Username: first.username, Home: first.home, SessionID: "s2",
 	}).(*userMailbox)
-	_, err := second.HealCorruptFolder(idx, f)
+	_, err := second.HealCorruptFolder(mailboxbase.Open(second, idx), f)
 	if !errors.Is(err, ErrHealDeferred) {
 		t.Fatalf("the second session's heal returned %v, want ErrHealDeferred: a reconnect "+
 			"is repeating a scan that already failed with nothing changed since", err)
@@ -111,7 +112,7 @@ func TestASecondSessionDoesNotRepeatAFailedHeal(t *testing.T) {
 	if err := m.BumpRebuildCount(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.HealCorruptFolder(idx, f); errors.Is(err, ErrHealDeferred) {
+	if _, err := second.HealCorruptFolder(mailboxbase.Open(second, idx), f); errors.Is(err, ErrHealDeferred) {
 		t.Error("the heal is still deferred after a rebuild: the barrier does not reset, " +
 			"so it is a second \"gave up\" somebody has to clear")
 	}
@@ -146,7 +147,7 @@ func TestTwoFoldersOfOneUserDoNotHealAtOnce(t *testing.T) {
 		wg.Add(1)
 		go func(f *mailbox.Folder) {
 			defer wg.Done()
-			_, _ = u.HealCorruptFolder(idx, f)
+			_, _ = u.HealCorruptFolder(mailboxbase.Open(u, idx), f)
 		}(folder)
 	}
 	wg.Wait()
@@ -206,7 +207,7 @@ func TestBothKeysAreAlwaysTakenMapFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	idx := &failingIndex{err: errors.New("scan incomplete")}
-	_, _ = u.HealCorruptFolder(idx, &mailbox.Folder{ID: 7, Name: "INBOX", Fsckd: true})
+	_, _ = u.HealCorruptFolder(mailboxbase.Open(u, idx), &mailbox.Folder{ID: 7, Name: "INBOX", Fsckd: true})
 
 	order := rec.taken()
 	mapKey := locks.MdboxMapKey(u.username)
@@ -237,13 +238,13 @@ func TestATransientAbortDoesNotBarTheNextSession(t *testing.T) {
 	idx := &failingIndex{err: fmt.Errorf("%w: %w", ErrScanIncomplete, errScanIO)}
 	f := &mailbox.Folder{ID: 7, Name: "INBOX", Fsckd: true}
 
-	if _, err := first.HealCorruptFolder(idx, f); err == nil {
+	if _, err := first.HealCorruptFolder(mailboxbase.Open(first, idx), f); err == nil {
 		t.Fatal("the first heal was expected to fail")
 	}
 	second := b.OpenUser(&mailbox.UserInfo{
 		Username: first.username, Home: first.home, SessionID: "s2",
 	}).(*userMailbox)
-	if _, err := second.HealCorruptFolder(idx, f); errors.Is(err, ErrHealDeferred) {
+	if _, err := second.HealCorruptFolder(mailboxbase.Open(second, idx), f); errors.Is(err, ErrHealDeferred) {
 		t.Error("a transient abort barred the next session: a folder can then stay marked " +
 			"until something rebuilds, with nothing wrong with it")
 	}

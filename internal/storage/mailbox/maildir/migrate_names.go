@@ -13,8 +13,8 @@ import (
 
 // MigrateUIDNames puts every record's name in the list: from the sidecar, then
 // from the guid a base name derives. The sidecar goes once all of it is in (#1726).
-func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Folder) (int, error) {
-	marker, ok := idx.(mailbox.UIDNameMarker)
+func (u *userMailbox) MigrateUIDNames(box mailbox.Box, folder *mailbox.Folder) (int, error) {
+	marker, ok := box.Index().(mailbox.UIDNameMarker)
 	if !ok {
 		return 0, fmt.Errorf("maildir/migrate: %q: the index cannot record the pass", folder.Name)
 	}
@@ -24,11 +24,11 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 	case done:
 		return 0, nil
 	}
-	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	msgs, err := box.Index().GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return 0, fmt.Errorf("maildir/migrate: get messages %q: %w", folder.Name, err)
 	}
-	stored := u.storedNames(idx, folder)
+	stored := u.storedNames(box, folder)
 
 	placed := 0
 	var unresolved []uint32
@@ -82,7 +82,7 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 	}
 	// The size was kept beside the name and went with it; quota sums the record,
 	// so a folder recovered without it is counted as empty (#1728).
-	if stamper, canStamp := idx.(mailbox.SizeStamper); canStamp && len(vsizes) > 0 {
+	if stamper, canStamp := box.Index().(mailbox.SizeStamper); canStamp && len(vsizes) > 0 {
 		if _, serr := stamper.StampSizes(folder.ID, vsizes); serr != nil {
 			return placed, serr
 		}
@@ -95,7 +95,7 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 				"user", u.username, "folder", folder.Name, "left", left, "placed", placed)
 			return placed, nil
 		}
-		if forgetter, canForget := idx.(mailbox.StoredNameForgetter); canForget {
+		if forgetter, canForget := box.Index().(mailbox.StoredNameForgetter); canForget {
 			if ferr := forgetter.ForgetStoredNames(folder.ID); ferr != nil {
 				return placed, ferr
 			}
@@ -138,9 +138,9 @@ func (u *userMailbox) basesByGUID(folder string) map[[16]byte]string {
 }
 
 // storedNames is what the sidecar holds, or nothing when it is already gone.
-func (u *userMailbox) storedNames(idx mailbox.UserIndex, folder *mailbox.Folder) map[uint32]string {
-	lister, ok := idx.(mailbox.StoredNameLister)
-	if !ok || !u.sidecarPresent(idx, folder) {
+func (u *userMailbox) storedNames(box mailbox.Box, folder *mailbox.Folder) map[uint32]string {
+	lister, ok := box.Index().(mailbox.StoredNameLister)
+	if !ok || !u.sidecarPresent(box, folder) {
 		return nil
 	}
 	names, err := lister.StoredNames(folder.ID)
@@ -171,8 +171,8 @@ func (u *userMailbox) storedNotListed(folder string, stored map[uint32]string) i
 }
 
 // sidecarPresent is one stat, so an open costs nothing once the file is gone.
-func (u *userMailbox) sidecarPresent(idx mailbox.UserIndex, folder *mailbox.Folder) bool {
-	dir, ok := idx.(interface{ IndexDirFor(string) string })
+func (u *userMailbox) sidecarPresent(box mailbox.Box, folder *mailbox.Folder) bool {
+	dir, ok := box.Index().(interface{ IndexDirFor(string) string })
 	if !ok {
 		return false
 	}

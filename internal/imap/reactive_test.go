@@ -18,7 +18,7 @@ type healBox struct {
 	err      error
 }
 
-func (b *healBox) HealCorruptFolder(_ mailbox.UserIndex, _ *mailbox.Folder) ([]uint32, error) {
+func (b *healBox) HealCorruptFolder(_ mailbox.Box, _ *mailbox.Folder) ([]uint32, error) {
 	b.calls++
 	return b.expunged, b.err
 }

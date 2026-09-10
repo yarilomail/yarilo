@@ -69,12 +69,12 @@ func oldMaildirFolder(t *testing.T, withSizes bool) (string, mailbox.UserMailbox
 func migrateNames(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, f *mailbox.Folder) int {
 	t.Helper()
 	mig, ok := mailbox.Driver(box).(interface {
-		MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 	})
 	if !ok {
 		t.Fatal("the maildir driver does not migrate uid names")
 	}
-	n, err := mig.MigrateUIDNames(idx, f)
+	n, err := mig.MigrateUIDNames(mailboxbase.Open(box, idx), f)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

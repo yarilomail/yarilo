@@ -22,7 +22,7 @@ func (b fakeCorruptBox) RecordPath(string, *mailbox.MessageMeta) (string, error)
 func (b fakeCorruptBox) OpenRecord(f string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
 	return b.Fetch(f, "gone", false)
 }
-func (fakeCorruptBox) HealCorruptFolder(mailbox.UserIndex, *mailbox.Folder) ([]uint32, error) {
+func (fakeCorruptBox) HealCorruptFolder(mailbox.Box, *mailbox.Folder) ([]uint32, error) {
 	return nil, nil
 }
 
