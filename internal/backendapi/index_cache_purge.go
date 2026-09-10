@@ -36,7 +36,7 @@ func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Folder = mailbox.NormalizeName(req.Folder, s.skipNFC())
 
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -45,6 +45,10 @@ func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 		return
 	}
 	exists, err := bundle.box.FolderExists(req.Folder)

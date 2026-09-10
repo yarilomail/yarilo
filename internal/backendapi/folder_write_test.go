@@ -285,8 +285,7 @@ func containsString(haystack []string, needle string) bool {
 func TestFolderDelete_RejectsINBOX(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "",
-		map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	for _, name := range []string{"INBOX", "inbox"} {
 		status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/delete", "",

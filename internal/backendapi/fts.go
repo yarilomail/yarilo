@@ -45,6 +45,9 @@ func (s *Server) ftsMailboxRef(uc *userContext, folder string) (fts.MailboxRef, 
 	if err != nil {
 		return fts.MailboxRef{}, err
 	}
+	if bundle == nil {
+		return fts.MailboxRef{}, errNoMailHome
+	}
 	f, err := bundle.idx.OpenFolder(folder, 0)
 	if err != nil {
 		return fts.MailboxRef{}, err
@@ -80,7 +83,7 @@ func (s *Server) handleFTSStatus(w http.ResponseWriter, r *http.Request) {
 		apiError(w, errFolderRequired.Error(), http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(user)
+	uc, err := s.openUserContextReadOnly(user)
 	if err != nil {
 		apiError(w, "fts status: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -121,7 +124,7 @@ func (s *Server) handleFTSRescan(w http.ResponseWriter, r *http.Request) {
 		apiError(w, errUserRequired.Error(), http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(user)
+	uc, err := s.openUserContextReadOnly(user)
 	if err != nil {
 		apiError(w, "fts rescan: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -135,6 +138,10 @@ func (s *Server) handleFTSRescan(w http.ResponseWriter, r *http.Request) {
 		bundle, err := uc.ns(s, "")
 		if err != nil {
 			apiError(w, "fts rescan: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if bundle == nil {
+			apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 			return
 		}
 		folders, err := bundle.box.ListFolders()

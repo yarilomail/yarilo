@@ -13,7 +13,7 @@ import (
 func TestACL_RootReadDeleteAndListingMarker(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
 		"user": user, "root": true,
@@ -80,7 +80,7 @@ func TestACL_RootReadDeleteAndListingMarker(t *testing.T) {
 func TestACL_RebuildDryRunReportsDrift(t *testing.T) {
 	ts, root := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 	doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
 		"user": user, "folder": "INBOX",
 		"acl": []map[string]any{{"identifier": "bob@example.com", "rights": "lr"}},

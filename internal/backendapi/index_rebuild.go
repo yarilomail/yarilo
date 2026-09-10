@@ -56,7 +56,7 @@ func (s *Server) handleIndexRebuild(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuildStats, int, error) {
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
@@ -65,6 +65,9 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
+	}
+	if bundle == nil {
+		return nil, http.StatusNotFound, errNoMailHome
 	}
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -163,7 +166,7 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -173,6 +176,10 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 		return
 	}
 	rb, ok := mailbox.Driver(bundle.box).(mailbox.StorageWideRebuilder)
@@ -315,7 +322,7 @@ func (s *Server) handleIndexOptimize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) optimizeFolder(ctx context.Context, req optimizeRequest) (*optimizeStats, int, error) {
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
@@ -324,6 +331,9 @@ func (s *Server) optimizeFolder(ctx context.Context, req optimizeRequest) (*opti
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
+	}
+	if bundle == nil {
+		return nil, http.StatusNotFound, errNoMailHome
 	}
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -391,7 +401,7 @@ func readFoldSizes(sizer journalSizer, folderID uint64) *foldSizes {
 // on purpose: each fold takes that folder's cross-process lock, and running
 // them together would queue a user's own sessions behind their own maintenance.
 func (s *Server) optimizeAccount(ctx context.Context, req optimizeRequest) (*optimizeAccountStats, int, error) {
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
@@ -399,6 +409,9 @@ func (s *Server) optimizeAccount(ctx context.Context, req optimizeRequest) (*opt
 	if err != nil {
 		uc.Close()
 		return nil, http.StatusBadRequest, err
+	}
+	if bundle == nil {
+		return nil, http.StatusNotFound, errNoMailHome
 	}
 	entries, err := bundle.box.ListFolders()
 	if err != nil {

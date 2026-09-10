@@ -110,7 +110,7 @@ func lookupInt(ctx context.Context, d dict.Dict, set *dict.OpSettings, key strin
 // userCountUsage sums the authoritative index-derived usage across a user's
 // personal-namespace folders (the count backend). Shared by /show and /recalc.
 func (s *Server) userCountUsage(user, namespace string) (quota.Usage, quota.Limits, error) {
-	uc, err := s.openUserContext(user)
+	uc, err := s.openUserContextReadOnly(user)
 	if err != nil {
 		return quota.Usage{}, quota.Limits{}, err
 	}
@@ -118,6 +118,9 @@ func (s *Server) userCountUsage(user, namespace string) (quota.Usage, quota.Limi
 	bundle, err := uc.ns(s, namespace)
 	if err != nil {
 		return quota.Usage{}, quota.Limits{}, err
+	}
+	if bundle == nil {
+		return quota.Usage{}, quota.Limits{}, errNoMailHome
 	}
 	folders, err := bundle.box.ListFolders()
 	if err != nil {
@@ -203,7 +206,7 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -212,6 +215,10 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 		return
 	}
 	folders, err := bundle.box.ListFolders()

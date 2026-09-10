@@ -46,7 +46,7 @@ func (s *Server) handleACLRegistryList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleACLRegistryRebuild(w http.ResponseWriter, r *http.Request) {
-	store, req, _, _, err := s.openACLStore(w, r)
+	store, req, _, _, err := s.openACLStore(w, r, false)
 	if err != nil {
 		return
 	}

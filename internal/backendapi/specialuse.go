@@ -57,7 +57,7 @@ func (s *Server) handleSpecialUseList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSpecialUseGet(w http.ResponseWriter, r *http.Request) {
-	store, req, err := s.openSpecialUseStoreReq(w, r)
+	store, req, err := s.openSpecialUseStoreReq(w, r, true)
 	if err != nil {
 		return
 	}
@@ -90,7 +90,7 @@ func (s *Server) handleSpecialUseGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSpecialUseSet(w http.ResponseWriter, r *http.Request) {
-	store, req, err := s.openSpecialUseStoreReq(w, r)
+	store, req, err := s.openSpecialUseStoreReq(w, r, false)
 	if err != nil {
 		return
 	}
@@ -110,7 +110,7 @@ func (s *Server) handleSpecialUseSet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSpecialUseDelete(w http.ResponseWriter, r *http.Request) {
-	store, req, err := s.openSpecialUseStoreReq(w, r)
+	store, req, err := s.openSpecialUseStoreReq(w, r, false)
 	if err != nil {
 		return
 	}
@@ -126,10 +126,10 @@ func (s *Server) handleSpecialUseDelete(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) openSpecialUseStore(w http.ResponseWriter, r *http.Request) (*specialuse.Store, *specialUseRequest, error) {
-	return s.openSpecialUseStoreReq(w, r)
+	return s.openSpecialUseStoreReq(w, r, true)
 }
 
-func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request) (*specialuse.Store, *specialUseRequest, error) {
+func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request, readOnly bool) (*specialuse.Store, *specialUseRequest, error) {
 	var req specialUseRequest
 	if !decodeJSON(w, r, &req) {
 		return nil, nil, errDecode
@@ -138,7 +138,7 @@ func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request) 
 		apiError(w, errUserRequired.Error(), http.StatusBadRequest)
 		return nil, nil, errUserRequired
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextFor(req.User, readOnly)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, nil, err
@@ -150,6 +150,10 @@ func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request) 
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, nil, err
 	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return nil, nil, errNoMailHome
+	}
 	store := specialuse.New(
 		bundle.folderHome(),
 		uc.info.Username,
@@ -160,5 +164,8 @@ func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request) 
 	// One owner of NFC for all three special-use handlers, resolved here so
 	// none of them addresses a decomposed spelling of a folder (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, readOnly, req.Folder) {
+		return nil, nil, errFolderNotFound
+	}
 	return store, &req, nil
 }

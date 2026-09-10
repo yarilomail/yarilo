@@ -20,7 +20,7 @@ import (
 // storageTestServer wires a Server backed by an on-disk maildir +
 // fileindex pair plus an in-memory metadata dict. Every test gets
 // its own t.TempDir so writes do not bleed across runs.
-func storageTestServer(t *testing.T) (*httptest.Server, string) {
+func storageTestServer(t *testing.T, opts ...func(*Options)) (*httptest.Server, string) {
 	t.Helper()
 	root := t.TempDir()
 	// Wrapped as mailboxbuild.ByDriver wraps it in production: the folder-name
@@ -35,7 +35,7 @@ func storageTestServer(t *testing.T) (*httptest.Server, string) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	s := New(Options{
+	cfg := Options{
 		Dicts:   map[string]dict.Dict{"metadata": d},
 		Mailbox: mb,
 		Index:   idx,
@@ -51,10 +51,29 @@ func storageTestServer(t *testing.T) (*httptest.Server, string) {
 			"Drafts": `\Drafts`,
 		},
 		MetadataDict: d,
-	})
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	s := New(cfg)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return ts, root
+}
+
+// materialiseHome brings the account into being the way a write does, since a
+// read no longer creates one; the scratch folder goes so only Init's work remains.
+func materialiseHome(t *testing.T, ts *httptest.Server, user string) {
+	t.Helper()
+	const scratch = "MaterialiseProbe"
+	if status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "",
+		map[string]any{"user": user, "folder": scratch}); status != 200 {
+		t.Fatalf("materialise %s: status=%d body=%s", user, status, body)
+	}
+	if status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/delete", "",
+		map[string]any{"user": user, "folder": scratch}); status != 200 {
+		t.Fatalf("materialise cleanup %s: status=%d body=%s", user, status, body)
+	}
 }
 
 func decodeJSONBody(t *testing.T, data []byte, out any) {
@@ -68,8 +87,7 @@ func TestFolderListAndInfoAfterInit(t *testing.T) {
 	ts, root := storageTestServer(t)
 	const user = "alice@example.com"
 
-	// First call opens UserMailbox.Init which materialises INBOX.
-	// Subsequent folder/list must return INBOX.
+	materialiseHome(t, ts, user)
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "",
 		map[string]any{"user": user})
 	if status != 200 {
@@ -120,8 +138,7 @@ func TestFolderGUIDStableAcrossCalls(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "bob@example.com"
 
-	// Trigger init.
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	var first, second struct {
 		GUID string `json:"guid"`
@@ -142,6 +159,7 @@ func TestUserInfoExposesNamespacesAndHome(t *testing.T) {
 	ts, root := storageTestServer(t)
 	const user = "carol@example.com"
 
+	materialiseHome(t, ts, user)
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/user/info", "",
 		map[string]any{"user": user})
 	if status != 200 {
@@ -171,7 +189,7 @@ func TestUserInfoExposesNamespacesAndHome(t *testing.T) {
 	if !resp.Namespaces[0].Exists {
 		// user/info does NOT auto-init — exists reflects the actual
 		// home dir state. Trigger init via a folder call first.
-		doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+		materialiseHome(t, ts, user)
 		_, body = doJSON(t, ts, http.MethodPost, "/api/backend/user/info", "", map[string]any{"user": user})
 		decodeJSONBody(t, body, &resp)
 		if !resp.Namespaces[0].Exists {
@@ -265,6 +283,7 @@ func TestSubscriptions_LiveAtMailRoot(t *testing.T) {
 func TestSpecialUseOverridesAndDefaults(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
+	materialiseHome(t, ts, user)
 
 	// Default applies before any override.
 	_, body := doJSON(t, ts, http.MethodPost, "/api/backend/specialuse/get", "",
@@ -365,6 +384,7 @@ func TestIndexDumpEmptyAfterInit(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
 
+	materialiseHome(t, ts, user)
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/index/dump", "",
 		map[string]any{"user": user, "folder": "INBOX"})
 	if status != 200 {
