@@ -25,7 +25,6 @@ var deliverCallSeq atomic.Uint64
 // deliverOne saves one message and records it. The folder travels back because
 // the full-text hook needs its GUID; a name alone is refused silently (#1206).
 func deliverOne(box *mailbox.Box, folder string, r io.ReadSeeker, size int64, locker locks.Locker, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
-	idx := box.Index()
 	tDeliver := time.Now()
 	var noGUID [16]byte
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
@@ -33,35 +32,19 @@ func deliverOne(box *mailbox.Box, folder string, r io.ReadSeeker, size int64, lo
 	}
 	data, _ := io.ReadAll(r)
 
-	f, err := idx.OpenFolder(folder, 0)
+	f, err := box.Folder(folder, 0)
 	if err != nil {
 		return 0, mailbox.Folder{}, noGUID, fmt.Errorf("lmtp: open index: %w", err)
 	}
-	uid, err := idx.AllocateUID(f.ID)
-	if err != nil {
-		return 0, *f, noGUID, fmt.Errorf("lmtp: allocate UID: %w", err)
-	}
-	// Breadcrumb for the non-atomic AllocateUID -> Save -> AppendMessage window:
-	// AllocateUID commits and releases the folder lock immediately, so any other
-	// delivery to the same folder can interleave here while this one is still
-	// writing the body (mdbox/sdbox: map lookup + refcount + possible rotation,
-	// measurably slower than maildir's flat-file write). Logged with the uid and
-	// a per-call correlation id so two deliveries racing on the same folder can
-	// be told apart in a shared log stream.
+	// One hold: uid, modseq, name and record settle inside RecordSaved, and the
+	// body is written before it, outside the hold (#1706).
 	callID := deliverCallSeq.Add(1)
-	slog.Debug("lmtp: uid allocated", "user", username, "folder", folder, "uid", uid, "call_id", callID)
-	modseq, err := idx.NextModSeq(f.ID)
-	if err != nil {
-		return 0, *f, noGUID, fmt.Errorf("lmtp: modseq: %w", err)
-	}
 	tSave := time.Now()
-	filename, vsize, guid, err := box.Store().Save(folder, bytes.NewReader(data), uid, size, flags, [16]byte{})
+	filename, vsize, guid, err := box.Store().Save(folder, bytes.NewReader(data), 0, size, flags, [16]byte{})
 	if err != nil {
 		return 0, *f, noGUID, fmt.Errorf("lmtp: save: %w", err)
 	}
 	meta := &mailbox.MessageMeta{
-		UID:          uid,
-		ModSeq:       modseq,
 		Size:         uint32(size),
 		VSize:        vsize,
 		InternalDate: time.Now(),
@@ -69,16 +52,15 @@ func deliverOne(box *mailbox.Box, folder string, r io.ReadSeeker, size int64, lo
 		GUID:         guid,
 	}
 	tIndex := time.Now()
-	slog.Debug("lmtp: body saved, committing index", "user", username, "folder", folder, "uid", uid,
+	slog.Debug("lmtp: body saved, recording it", "user", username, "folder", folder,
 		"call_id", callID, "save_ms", tIndex.Sub(tSave).Milliseconds())
-	// The box settles the name and the record in that order; a failure at
-	// either end leaves the body for the next reconcile, not a half record.
-	if err := box.RecordDelivered(f, folder, filename, meta); err != nil {
+	if err := box.RecordSaved(f, folder, filename, meta); err != nil {
 		slog.Warn("lmtp: delivery not recorded, rolling back save",
-			"user", username, "folder", folder, "uid", uid, "call_id", callID, "err", err)
+			"user", username, "folder", folder, "call_id", callID, "err", err)
 		_ = box.Store().Remove(folder, filename)
 		return 0, *f, noGUID, fmt.Errorf("lmtp: record: %w", err)
 	}
+	uid := meta.UID
 	slog.Debug("lmtp: uid committed", "user", username, "folder", folder, "uid", uid, "call_id", callID)
 	slog.Debug("lmtp: deliver timing",
 		"folder", folder, "size", size,
