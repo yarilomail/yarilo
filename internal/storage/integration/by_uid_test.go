@@ -423,12 +423,12 @@ func metaKeys(t *testing.T, raw []byte) string {
 func migrate(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, f *mailbox.Folder) {
 	t.Helper()
 	m, ok := mailbox.Driver(box).(interface {
-		MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 	})
 	if !ok {
 		t.Fatal("the driver has no pass for a folder from an older build")
 	}
-	if _, err := m.MigrateUIDNames(idx, f); err != nil {
+	if _, err := m.MigrateUIDNames(mailboxbase.Open(box, idx), f); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -77,7 +78,7 @@ func TestReactiveHealDropsVanishedPreservesRest(t *testing.T) {
 	}
 
 	rb := mb.(*userMailbox)
-	expunged, err := rb.HealCorruptFolder(idx, folder)
+	expunged, err := rb.HealCorruptFolder(mailboxbase.Open(mb, idx), folder)
 	if err != nil {
 		t.Fatalf("heal: %v", err)
 	}

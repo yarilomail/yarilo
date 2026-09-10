@@ -665,7 +665,7 @@ func (s *session) loadMailbox() error {
 			// no FTS client here: expunged UIDs leave FTS ghost documents
 			// until the next rescan. Heal runs at most once per session
 			// (at login), so no retry bound is needed.
-			if expunged, herr := rb.HealCorruptFolder(s.box.Index(), folder); herr != nil {
+			if expunged, herr := rb.HealCorruptFolder(s.box, folder); herr != nil {
 				slog.Warn("pop3: dbox reactive heal failed", "user", s.userInfo.Username, "err", herr)
 			} else if len(expunged) > 0 {
 				slog.Info("pop3: dbox reactive heal", "user", s.userInfo.Username, "expunged", len(expunged))

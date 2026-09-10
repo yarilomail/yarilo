@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
@@ -30,8 +31,10 @@ type nsHandle struct {
 	// box / idx are the per-user storage handles; nil when declared-only.
 	box mailbox.UserMailbox
 	idx mailbox.UserIndex
-	// mbox pairs the two, and is what a rule needing both asks (#1715).
-	mbox mailbox.Box
+	// mbox pairs the two, built on first use so a handle assembled from
+	// halves still answers (#1715).
+	mbox     mailbox.Box
+	mboxOnce sync.Once
 	// subs is the per-namespace subscription store. Personal keeps the
 	// filename "subscriptions" so upgrades preserve existing state;
 	// shared/public use "subscriptions-<ns>" siblings.
@@ -323,12 +326,17 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		spec:     spec,
 		box:      box,
 		idx:      idx,
-		mbox:     mailboxbase.Open(box, idx),
 		subs:     store,
 		acl:      aclStore,
 		userInfo: ui,
 		owner:    nsOwner,
 	}, nil
+}
+
+// mailbox pairs the handle's halves, once.
+func (h *nsHandle) mailbox() mailbox.Box {
+	h.mboxOnce.Do(func() { h.mbox = mailboxbase.Open(h.box, h.idx) })
+	return h.mbox
 }
 
 // mailboxBackendFor returns the MailboxBackend for a namespace, selected by the

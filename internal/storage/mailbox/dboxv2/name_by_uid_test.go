@@ -120,12 +120,12 @@ func TestAGUIDNamedStoreIsMigrated(t *testing.T) {
 	}
 
 	migrator, ok := mb.(interface {
-		MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 	})
 	if !ok {
 		t.Fatal("the sdbox driver cannot migrate the names it wrote")
 	}
-	n, err := migrator.MigrateUIDNames(idx, folder)
+	n, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,9 +379,9 @@ func TestOnlyAnOldTempIsSweptAway(t *testing.T) {
 	}
 
 	migrator := mb.(interface {
-		MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 	})
-	if _, err := migrator.MigrateUIDNames(idx, folder); err != nil {
+	if _, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, old)); !os.IsNotExist(err) {
@@ -412,9 +412,9 @@ func TestAMigratedFolderIsNotWalkedAgain(t *testing.T) {
 	saveNamed(t, mb, "INBOX", "msg\n", 1, [16]byte{})
 
 	migrator := mb.(interface {
-		MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 	})
-	if _, err := migrator.MigrateUIDNames(idx, folder); err != nil {
+	if _, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 
@@ -425,7 +425,7 @@ func TestAMigratedFolderIsNotWalkedAgain(t *testing.T) {
 	before := dirMTime(t, dir)
 
 	for i := 0; i < 3; i++ {
-		if n, err := migrator.MigrateUIDNames(idx, folder); err != nil || n != 0 {
+		if n, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil || n != 0 {
 			t.Fatalf("pass %d: renamed %d, err %v -- a migrated folder has nothing to do", i, n, err)
 		}
 	}
@@ -527,9 +527,9 @@ func TestANamelessRecordFindsItsBodyByGUID(t *testing.T) {
 	}
 
 	migrator := mb.(interface {
-		MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 	})
-	if _, err := migrator.MigrateUIDNames(idx, folder); err != nil {
+	if _, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 
@@ -580,9 +580,9 @@ func TestAFolderMarkedByTheOlderPassIsWalkedAgain(t *testing.T) {
 	}
 
 	migrator := mb.(interface {
-		MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 	})
-	if _, err := migrator.MigrateUIDNames(idx, folder); err != nil {
+	if _, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "u.1")); err != nil {

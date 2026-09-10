@@ -12,6 +12,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/internal/userdbinfo"
 	"github.com/yarilomail/yarilo/pkg/authclient"
@@ -141,7 +142,7 @@ func backfillUser(boxBE mailbox.MailboxBackend, idxBE mailbox.IndexBackend, reso
 			slog.Info("would backfill", "user", user, "folder", e.Name)
 			continue
 		}
-		if err := idxrebuild.BackfillGUIDs(box, idx, folder, e.Name); err != nil {
+		if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(box, idx), folder, e.Name); err != nil {
 			return fmt.Errorf("backfill %s: %w", e.Name, err)
 		}
 		st.Migrated++

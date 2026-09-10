@@ -31,7 +31,7 @@ var beforeHealScan func()
 // map refcount is not decremented here; the leak is reclaimed by the next
 // rebuild and purge. Lock order: map outer, folder inner, as delivery takes
 // them -- Scan walks the whole storage, not one folder (#1682).
-func (u *userMailbox) HealCorruptFolder(idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
+func (u *userMailbox) HealCorruptFolder(box mailbox.Box, folder *mailbox.Folder) ([]uint32, error) {
 	var expunged []uint32
 	err := u.withMapLock(func() error {
 		gen, gerr := u.storageGeneration()
@@ -49,7 +49,7 @@ func (u *userMailbox) HealCorruptFolder(idx mailbox.UserIndex, folder *mailbox.F
 				beforeHealScan()
 			}
 			var e error
-			expunged, e = idxrebuild.ExpungeMissing(u, idx, folder)
+			expunged, e = idxrebuild.ExpungeMissing(box, folder)
 			if e != nil {
 				// Only unreadable bytes bar a retry: a scan a purge kept from
 				// finishing says nothing about the folder.
@@ -58,7 +58,7 @@ func (u *userMailbox) HealCorruptFolder(idx mailbox.UserIndex, folder *mailbox.F
 				}
 				return e
 			}
-			if cm, ok := idx.(mailbox.CorruptionMarker); ok {
+			if cm, ok := box.Index().(mailbox.CorruptionMarker); ok {
 				return cm.ClearFolderCorrupt(folder.ID)
 			}
 			return nil

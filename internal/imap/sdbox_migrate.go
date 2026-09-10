@@ -9,7 +9,7 @@ import (
 // uidNameMigrator is a driver holding messages under names it wrote before the
 // name became the uid's (#1704).
 type uidNameMigrator interface {
-	MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+	MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 }
 
 // migrateNamesOnSelect brings a folder's file names to u.<uid> before a SELECT
@@ -19,7 +19,7 @@ func (s *session) migrateNamesOnSelect(h *nsHandle, rel string, f *mailbox.Folde
 	if !ok {
 		return nil
 	}
-	n, err := m.MigrateUIDNames(h.idx, f)
+	n, err := m.MigrateUIDNames(h.mailbox(), f)
 	if err != nil {
 		slog.Warn("imap: name migration failed", "user", s.username(), "folder", rel, "err", err)
 		return nil

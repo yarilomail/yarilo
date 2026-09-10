@@ -44,12 +44,12 @@ func orphanFolder(t *testing.T, body string, age time.Duration) (mailbox.UserMai
 func migrateSdbox(t *testing.T, mb mailbox.UserMailbox, idx mailbox.UserIndex, f *mailbox.Folder) int {
 	t.Helper()
 	m, ok := mb.(interface {
-		MigrateUIDNames(mailbox.UserIndex, *mailbox.Folder) (int, error)
+		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 	})
 	if !ok {
 		t.Fatal("the sdbox driver cannot migrate the names it wrote")
 	}
-	n, err := m.MigrateUIDNames(idx, f)
+	n, err := m.MigrateUIDNames(mailboxbase.Open(mb, idx), f)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -40,8 +39,8 @@ type Stats struct {
 // The caller holds the folder's mailbox lock. Orphan files on disk that the
 // index has never seen are NOT imported here — that is corruption repair, not
 // orphan adoption, which belongs to the operator rebuild.
-func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
-	scanned, err := box.Scan(folder.Name)
+func ExpungeMissing(b mailbox.Box, folder *mailbox.Folder) ([]uint32, error) {
+	scanned, err := b.Store().Scan(folder.Name)
 	if err != nil {
 		return nil, fmt.Errorf("idxrebuild/scan: %w", err)
 	}
@@ -53,7 +52,7 @@ func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mail
 			present[scanned[i].GUID] = struct{}{}
 		}
 	}
-	existing, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	existing, err := b.Index().GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return nil, fmt.Errorf("idxrebuild/get messages: %w", err)
 	}
@@ -65,7 +64,7 @@ func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mail
 		if _, ok := present[m.GUID]; ok {
 			continue
 		}
-		if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
+		if err := b.Index().ExpungeMessage(folder.ID, m.UID); err != nil {
 			return expunged, fmt.Errorf("idxrebuild/expunge %d: %w", m.UID, err)
 		}
 		expunged = append(expunged, m.UID)
@@ -74,7 +73,7 @@ func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mail
 }
 
 // RebuildFolder regenerates idx's record set for folder from the physical
-// storage reported by box.Scan. Files the index already knows keep their UID
+// storage reported by b.Store().Scan. Files the index already knows keep their UID
 // (and, for dbox, their prior flags/keywords since the driver returns none);
 // files the index has never seen are assigned a fresh UID from folder.NextUID
 // upward; index records whose file has vanished are dropped. ResetFolder bumps
@@ -82,16 +81,16 @@ func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mail
 //
 // The scan error is returned verbatim so the caller can classify it (e.g. a
 // driver that has not implemented Scan yet).
-func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder) (Stats, error) {
+func RebuildFolder(b mailbox.Box, folder *mailbox.Folder) (Stats, error) {
 	var stats Stats
 
-	scanned, err := box.Scan(folder.Name)
+	scanned, err := b.Store().Scan(folder.Name)
 	if err != nil {
 		return stats, fmt.Errorf("idxrebuild/scan: %w", err)
 	}
 	stats.Scanned = len(scanned)
 
-	existing, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	existing, err := b.Index().GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return stats, fmt.Errorf("idxrebuild/get messages: %w", err)
 	}
@@ -160,7 +159,7 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 	// input produce byte-identical .index files.
 	sort.Slice(rebuilt, func(i, j int) bool { return rebuilt[i].UID < rebuilt[j].UID })
 
-	expunged, err := idx.ResetFolder(folder.ID, rebuilt)
+	expunged, err := b.Index().ResetFolder(folder.ID, rebuilt)
 	if err != nil {
 		return stats, fmt.Errorf("idxrebuild/reset folder: %w", err)
 	}
@@ -182,12 +181,12 @@ func mapUIDOf(name string) uint32 {
 // extension; a folder already marked complete costs one O(1) header read.
 // Values come from Scan, never invented here, or a later rebuild from storage
 // would change EMAILID. Scan rather than List: mdbox enumerates via the index.
-func BackfillGUIDs(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder, name string) error {
-	need, err := idx.GUIDBackfillNeeded(folder.ID)
+func BackfillGUIDs(b mailbox.Box, folder *mailbox.Folder, name string) error {
+	need, err := b.Index().GUIDBackfillNeeded(folder.ID)
 	if err != nil || !need {
 		return err
 	}
-	recs, err := box.Scan(name)
+	recs, err := b.Store().Scan(name)
 	if err != nil {
 		// No disk-scan, no GUIDs: stay pending rather than mark it done empty.
 		return fmt.Errorf("idxrebuild: scan %s: %w", name, err)
@@ -199,7 +198,7 @@ func BackfillGUIDs(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 			byName[r.Filename] = r.GUID
 		}
 	}
-	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{})
+	msgs, err := b.Index().GetMessages(folder.ID, mailbox.SeqSet{})
 	if err != nil {
 		return fmt.Errorf("idxrebuild: read %s: %w", name, err)
 	}
@@ -207,7 +206,7 @@ func BackfillGUIDs(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 	for _, m := range msgs {
 		// The name comes from the driver: a record no longer carries one, and
 		// the scan reports files by the name they wear on disk (#1700).
-		name, perr := mailboxbase.MessagePath(box, folder.Name, m)
+		name, perr := b.MessagePath(folder.Name, m)
 		if perr != nil {
 			continue
 		}
@@ -215,5 +214,5 @@ func BackfillGUIDs(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 			guids[m.UID] = g
 		}
 	}
-	return idx.SetGUIDs(folder.ID, guids)
+	return b.Index().SetGUIDs(folder.ID, guids)
 }

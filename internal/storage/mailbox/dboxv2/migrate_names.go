@@ -16,9 +16,9 @@ import (
 
 // MigrateUIDNames renames what earlier builds stored under a GUID name to
 // u.<uid>. Once per folder: the marker answers for a migrated one (#1704).
-func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Folder) (int, error) {
+func (u *userMailbox) MigrateUIDNames(box mailbox.Box, folder *mailbox.Folder) (int, error) {
 	// The fact belongs to the folder's index, not to a file among the mail.
-	marker, ok := idx.(mailbox.UIDNameMarker)
+	marker, ok := box.Index().(mailbox.UIDNameMarker)
 	if !ok {
 		return 0, fmt.Errorf("sdbox/migrate: %q: the index cannot record the pass", folder.Name)
 	}
@@ -28,7 +28,7 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 	case done:
 		return 0, nil
 	}
-	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	msgs, err := box.Index().GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return 0, fmt.Errorf("sdbox/migrate: get messages %q: %w", folder.Name, err)
 	}
@@ -63,7 +63,7 @@ func (u *userMailbox) MigrateUIDNames(idx mailbox.UserIndex, folder *mailbox.Fol
 			}
 			renamed[m.UID] = want
 		}
-		adopted, left, cerr := u.adoptOrphans(idx, folder, msgs)
+		adopted, left, cerr := u.adoptOrphans(box, folder, msgs)
 		leftovers = left
 		placed = adopted
 		return cerr
