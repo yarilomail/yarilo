@@ -9,11 +9,13 @@ import (
 
 // registerIndexRoutes registers index routes: dump (read-only),
 // rebuild (per-folder resync; 501 for mdbox), rebuild-storage
-// (storage-wide, for mdbox), optimize (compact .index.log).
+// (storage-wide, for mdbox), check (find and repair shifted record tails),
+// optimize (compact .index.log).
 func (s *Server) registerIndexRoutes() {
 	s.mux.Handle("POST /api/backend/index/dump", s.middleware(s.handleIndexDump))
 	s.mux.Handle("POST /api/backend/index/rebuild", s.middleware(s.handleIndexRebuild))
 	s.mux.Handle("POST /api/backend/index/rebuild-storage", s.middleware(s.handleStorageRebuild))
+	s.mux.Handle("POST /api/backend/index/check", s.middleware(s.handleIndexCheck))
 	s.mux.Handle("POST /api/backend/index/optimize", s.middleware(s.handleIndexOptimize))
 	s.mux.Handle("POST /api/backend/index/cache-purge", s.middleware(s.handleIndexCachePurge))
 }
