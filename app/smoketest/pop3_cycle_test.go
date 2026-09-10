@@ -24,6 +24,9 @@ type fakePOP3 struct {
 	dropOnAbort  bool // remove the message for a session that never quit
 	keepOnQuit   bool // keep it after a DELE the session committed
 	deleted      bool // committed state
+	oneAtATime   bool // refuse a second session, as a locked maildrop does
+	open         int  // sessions currently on the wire
+	overlapped   bool // two were open at once
 }
 
 func newFakePOP3(t *testing.T, marker string) *fakePOP3 {
@@ -58,6 +61,33 @@ func (f *fakePOP3) serve() {
 	}
 }
 
+// enter and leave count the sessions on the maildrop, so an overlap is caught
+// here rather than by a server refusing it in production (#1734).
+func (f *fakePOP3) enter() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.open > 0 {
+		f.overlapped = true
+		if f.oneAtATime {
+			return false
+		}
+	}
+	f.open++
+	return true
+}
+
+func (f *fakePOP3) leave() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.open--
+}
+
+func (f *fakePOP3) sawOverlap() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.overlapped
+}
+
 func (f *fakePOP3) has() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -74,6 +104,21 @@ func (f *fakePOP3) session(c net.Conn) {
 	defer c.Close() //nolint:errcheck
 	r := bufio.NewReader(c)
 	pending := false
+	if !f.enter() {
+		fmt.Fprintf(c, "+OK fake ready\r\n")
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if strings.HasPrefix(strings.ToUpper(line), "USER") || strings.HasPrefix(strings.ToUpper(line), "PASS") {
+				fmt.Fprintf(c, "+OK\r\n")
+				continue
+			}
+			fmt.Fprintf(c, "-ERR mailbox already in use, try again later\r\n")
+		}
+	}
+	defer f.leave()
 	fmt.Fprintf(c, "+OK fake ready\r\n")
 	for {
 		line, err := r.ReadString('\n')
@@ -168,12 +213,12 @@ func runCycleAgainst(t *testing.T, f *fakePOP3, marker string) error {
 	if err != nil {
 		t.Fatalf("login against the fake: %v", err)
 	}
-	defer s.close()
 	num, listed, err := s.findProbe(marker)
 	if err != nil {
+		s.close()
 		t.Fatalf("the fake does not hold the probe: %v", err)
 	}
-	return verifyMaildrop(s, "u", "p", marker, num, listed)
+	return pop3Cycle(s, "u", "p", marker, num, listed)
 }
 
 // The maildrop a client can trust: the numbers agree with each other and with
@@ -238,5 +283,19 @@ func TestThePOP3CycleReadsSTATAsTwoNumbers(t *testing.T) {
 	}
 	if count != 1 || octets != int64(len(f.body)) {
 		t.Errorf("STAT read as %d/%d, want 1/%d", count, octets, len(f.body))
+	}
+}
+
+// The check keeps one session on the maildrop: a server holding it for its own
+// session refuses the second, and the check must not be what opens it (#1734).
+func TestThePOP3CycleKeepsOneSessionAtATime(t *testing.T) {
+	marker := "probe-marker"
+	f := newFakePOP3(t, marker)
+	f.oneAtATime = true
+	if err := runCycleAgainst(t, f, marker); err != nil {
+		t.Errorf("a maildrop serving one session at a time refused the check: %v", err)
+	}
+	if f.sawOverlap() {
+		t.Error("the check had two sessions open on one maildrop")
 	}
 }
