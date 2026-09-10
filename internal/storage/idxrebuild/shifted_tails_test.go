@@ -247,3 +247,44 @@ func TestAShiftedRecordTheStoreCannotAnswerForIsCounted(t *testing.T) {
 		t.Fatalf("the pass reports %+v, want shifted=1 repaired=0 skipped=1", st)
 	}
 }
+
+// The box the binaries build, not a bare driver: folder-name validation is
+// wrapped around every backend, and a storage-wide scan names no folder (#1770).
+func TestTheScanReadsThroughTheBoxTheBinariesBuild(t *testing.T) {
+	root := t.TempDir()
+	const user = "wrapped@x.com"
+	info := &mailbox.UserInfo{Username: user, Home: home(root, user)}
+
+	backend := mailbox.Validating(mdbox.New(), mailbox.NameRules{ValidateFSNames: true})
+	store := backend.OpenUser(info)
+	if err := store.Init(); err != nil {
+		t.Fatal(err)
+	}
+	idx := fileidx.New().OpenUser(info)
+	box := mailboxbase.Open(store, idx)
+	folder, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const body = "Subject: one\r\n\r\nthe message itself\r\n"
+	name, vsize, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := box.RecordSaved(folder, "INBOX", name, &mailbox.MessageMeta{
+		Size: uint32(len(body)), VSize: vsize, GUID: guid,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := idxrebuild.StoredTails(box)
+	if err != nil {
+		t.Fatalf("the scan through the wrapper: %v", err)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("the scan returned %d messages, want 1 -- the account holds one", len(stored))
+	}
+	if _, err := idxrebuild.RepairShiftedTails(box, folder, stored); err != nil {
+		t.Fatalf("the pass through the wrapper: %v", err)
+	}
+}
