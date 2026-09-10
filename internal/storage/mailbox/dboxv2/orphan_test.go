@@ -8,7 +8,7 @@ import (
 	"time"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -98,7 +98,7 @@ func TestAnOrphanedBodyIsFiledAsAMessage(t *testing.T) {
 	if got := guidHex(msgs[0].GUID); got != wantGUID {
 		t.Errorf("the record carries guid %s, the file carried %s", got, wantGUID)
 	}
-	rc, oerr := mbox.OpenMessage(mb, "INBOX", msgs[0])
+	rc, oerr := mailboxbase.OpenMessage(mb, "INBOX", msgs[0])
 	if oerr != nil {
 		t.Fatalf("the filed message cannot be read: %v", oerr)
 	}
@@ -153,7 +153,7 @@ func TestADuplicateBodyIsNotFiledAgain(t *testing.T) {
 		t.Fatal(serr)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if rerr := mbox.RecordSaved(idx, mb, folder.ID, "INBOX", saved, m); rerr != nil {
+	if rerr := mailboxbase.RecordSaved(idx, mb, folder.ID, "INBOX", saved, m); rerr != nil {
 		t.Fatal(rerr)
 	}
 	// The same message a second time: a record a reader accepts, guid-named,

@@ -10,7 +10,7 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -77,7 +77,7 @@ func TestAutoindexCarriesTheFolderGUID(t *testing.T) {
 	t.Cleanup(func() { ui.Close() }) //nolint:errcheck
 
 	raw := "From: x@y\r\nSubject: probe\r\n\r\nbody\r\n"
-	uid, folder, _, err := deliverOne(mbox.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
+	uid, folder, _, err := deliverOne(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
 	if err != nil {
 		t.Fatalf("deliverOne: %v", err)
 	}

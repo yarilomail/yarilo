@@ -9,7 +9,7 @@ import (
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -98,14 +98,14 @@ func TestAMaildirRecordNamedOnlyBySidecarSurvivesTheMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, m := range msgs {
-		got, perr := mbox.MessagePath(box, "INBOX", m)
+		got, perr := mailboxbase.MessagePath(box, "INBOX", m)
 		if perr != nil {
 			t.Fatalf("uid %d can no longer be named: %v", m.UID, perr)
 		}
 		if got != names[i] {
 			t.Errorf("uid %d names %q, want %q", m.UID, got, names[i])
 		}
-		size, vsize, serr := mbox.MessageSize(box, "INBOX", m)
+		size, vsize, serr := mailboxbase.MessageSize(box, "INBOX", m)
 		if serr != nil {
 			t.Fatalf("uid %d has no size: %v", m.UID, serr)
 		}
@@ -132,7 +132,7 @@ func TestARecordWhoseSidecarIsGoneIsFoundByItsGUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, m := range msgs {
-		got, perr := mbox.MessagePath(box, "INBOX", m)
+		got, perr := mailboxbase.MessagePath(box, "INBOX", m)
 		if perr != nil {
 			t.Fatalf("uid %d was not recovered: %v", m.UID, perr)
 		}
@@ -201,7 +201,7 @@ func TestAListedFileIsNotTakenFromItsOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range msgs {
-		got, perr := mbox.MessagePath(box, "INBOX", m)
+		got, perr := mailboxbase.MessagePath(box, "INBOX", m)
 		switch m.UID {
 		case 1:
 			if perr != nil || got != names[0] {
@@ -230,7 +230,7 @@ func TestQuotaSeesTheRecoveredSize(t *testing.T) {
 	}
 	var reported uint64
 	for _, m := range msgs {
-		reported += uint64(mbox.RFC822SizeOf(box, "INBOX", m))
+		reported += uint64(mailboxbase.RFC822SizeOf(box, "INBOX", m))
 	}
 	sizer, ok := idx.(interface {
 		FolderVSize(uint64) (uint64, uint32, error)

@@ -17,7 +17,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/fts/language"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
@@ -134,7 +134,7 @@ func searchServer(t *testing.T, stub *stubFTS, maxConns, maxFolders int, folders
 			UID: 1, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
 			InternalDate: time.Now(),
 		}
-		if err := mbox.NameSaved(box, "INBOX", fname, meta); err != nil {
+		if err := mailboxbase.NameSaved(box, "INBOX", fname, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		if err := ui.AppendMessage(f.ID, meta); err != nil {
@@ -572,7 +572,7 @@ func rawMessageServer(t *testing.T, stub *stubFTS, raw string) *Server {
 		t.Fatalf("open INBOX: %v", err)
 	}
 	meta := &mailbox.MessageMeta{UID: 1, Size: uint32(len(raw)), VSize: vsize, GUID: guid, InternalDate: time.Now()}
-	if err := mbox.NameSaved(box, f.Name, fname, meta); err != nil {
+	if err := mailboxbase.NameSaved(box, f.Name, fname, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	meta.GUID = guid

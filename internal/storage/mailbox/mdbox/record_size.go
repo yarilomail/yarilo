@@ -1,7 +1,7 @@
 package mdbox
 
 import (
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -17,7 +17,7 @@ func (u *userMailbox) RecordSize(folder string, m *mailbox.MessageMeta) (uint32,
 		return m.Size, m.VSize, err
 	}
 	defer rc.Close() //nolint:errcheck
-	size, vsize, cerr := mbox.CountSizes(rc)
+	size, vsize, cerr := mailboxbase.CountSizes(rc)
 	if cerr == nil {
 		u.debugStorageSize(folder, m.UID, m.MapUID, size, vsize)
 	}

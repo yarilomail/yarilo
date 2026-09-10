@@ -11,8 +11,8 @@ import (
 	"time"
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -237,7 +237,7 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 // thread ids from the same history -- and every client's cached conversation
 // would be wrong after a rerun.
 func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string, path, user string, st *threadStats) (*threads.State, error) {
-	mbox := mbox.Open(box, idx)
+	mbox := mailboxbase.Open(box, idx)
 	ordered := append([]string(nil), names...)
 	sort.Strings(ordered)
 

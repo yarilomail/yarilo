@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -111,7 +111,7 @@ func TestReconcile_AStoreAfterAdoptionKeepsTheKeywordLetters(t *testing.T) {
 		t.Fatalf("update flags: %v", err)
 	}
 	got := res[m.UID]
-	stored, perr := mbox.MessagePath(box, "INBOX", m)
+	stored, perr := mailboxbase.MessagePath(box, "INBOX", m)
 	if perr != nil {
 		t.Fatal(perr)
 	}

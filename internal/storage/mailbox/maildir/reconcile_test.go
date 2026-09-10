@@ -9,7 +9,7 @@ import (
 	"time"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -153,7 +153,7 @@ func TestReconcile_VanishedFileWritesTombstone(t *testing.T) {
 	}
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	uid := msgs[0].UID
-	if err := mbox.RemoveMessage(box, "INBOX", msgs[0]); err != nil {
+	if err := mailboxbase.RemoveMessage(box, "INBOX", msgs[0]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -293,7 +293,7 @@ func TestReconcile_RestampsZeroGUIDBehindCompleteMarker(t *testing.T) {
 func recAppend(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder, saved string, m *mailbox.MessageMeta) {
 	t.Helper()
 	guid := m.GUID
-	if err := mbox.NameSaved(box, folder.Name, saved, m); err != nil {
+	if err := mailboxbase.NameSaved(box, folder.Name, saved, m); err != nil {
 		t.Fatalf("name uid %d: %v", m.UID, err)
 	}
 	m.GUID = guid

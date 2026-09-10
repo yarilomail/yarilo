@@ -26,7 +26,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/auth/scram"
 	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -617,7 +617,7 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	}
 
 	s.userInfo = userInfo
-	s.box = mbox.Open(box, idx, mbox.WithLocker(s.srv.opts.Locker, locks.Owner(userInfo.Username, userInfo.LockID())))
+	s.box = mailboxbase.Open(box, idx, mailboxbase.WithLocker(s.srv.opts.Locker, locks.Owner(userInfo.Username, userInfo.LockID())))
 
 	if err := s.loadMailbox(); err != nil {
 		s.writeErr("internal error")

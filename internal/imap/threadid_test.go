@@ -11,7 +11,7 @@ import (
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -69,7 +69,7 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 			UID: uid, Size: uint32(len(raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Now(),
 		}
-		if err := mbox.NameSaved(box, "INBOX", name, meta); err != nil {
+		if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		meta.GUID = guid

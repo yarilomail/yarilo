@@ -1,4 +1,4 @@
-package mbox
+package mailboxbase
 
 import (
 	"context"
@@ -121,7 +121,7 @@ func (b *Box) RemoveMessage(folder string, m *mailbox.MessageMeta) error {
 
 // Messages reads records with the driver's fill-ins applied.
 func (b *Box) Messages(folderID uint64, set mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
-	return mailbox.ReadMessages(b.index, folderID, set)
+	return ReadMessages(b.index, folderID, set)
 }
 
 // WithLocker gives the box the cross-process lock client, so a rule needing one

@@ -12,7 +12,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -77,7 +77,7 @@ func benchServerSized(b *testing.B, folders, messagesPerFolder, bodyBytes int) *
 				UID: uint32(uid), Size: uint32(len(body)), VSize: vsize,
 				GUID: guid, InternalDate: time.Now(),
 			}
-			if err := mbox.NameSaved(box, name, fname, meta); err != nil {
+			if err := mailboxbase.NameSaved(box, name, fname, meta); err != nil {
 				b.Fatalf("name: %v", err)
 			}
 			if err := ui.AppendMessage(f.ID, meta); err != nil {

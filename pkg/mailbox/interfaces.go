@@ -581,22 +581,6 @@ type UnlockedReader interface {
 	GetMessagesUnlocked(folderID uint64, uids SeqSet) ([]*MessageMeta, error)
 }
 
-// ReadMessages is the read for a caller whose answer goes to a client and
-// decides nothing on disk — FETCH, SEARCH, a JMAP query, a diagnostic dump. It
-// takes the lock-free path where the index offers one.
-//
-// A caller whose answer chooses what to rewrite or delete must call
-// GetMessages directly. That is not a preference: a stale answer there does not
-// become visible a moment later, it decides wrongly and the write lands anyway.
-// Keeping the two as separate calls is what makes the choice visible at the
-// call site instead of hidden in an argument.
-func ReadMessages(idx UserIndex, folderID uint64, uids SeqSet) ([]*MessageMeta, error) {
-	if u, ok := idx.(UnlockedReader); ok {
-		return u.GetMessagesUnlocked(folderID, uids)
-	}
-	return idx.GetMessages(folderID, uids)
-}
-
 // CorruptIndexError says the folder's index cannot be read because what is on
 // disk is not what this version writes -- a wrong major version, a truncated
 // header. It names the folder because that is the one thing an operator needs

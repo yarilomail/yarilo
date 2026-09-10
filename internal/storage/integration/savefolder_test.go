@@ -12,7 +12,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -74,7 +74,7 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 			t.Fatalf("save A %d: %v", i, err)
 		}
 		meta := &mailbox.MessageMeta{UID: uid}
-		if err := mbox.NameSaved(mbA, "INBOX", filename, meta); err != nil {
+		if err := mailboxbase.NameSaved(mbA, "INBOX", filename, meta); err != nil {
 			t.Fatalf("name A %d: %v", i, err)
 		}
 		if err := ixA.AppendMessage(folderA.ID, meta); err != nil {

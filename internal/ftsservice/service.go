@@ -19,7 +19,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/fts/buildmail"
 	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
 	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -241,7 +241,7 @@ func (s *Service) handle(user string) (*userHandle, error) {
 
 // mailboxOf pairs the handle's halves once (#1715).
 func (h *userHandle) mailboxOf() mailbox.Box {
-	h.mboxOnce.Do(func() { h.mbox = mbox.Open(h.box, h.idx) })
+	h.mboxOnce.Do(func() { h.mbox = mailboxbase.Open(h.box, h.idx) })
 	return h.mbox
 }
 

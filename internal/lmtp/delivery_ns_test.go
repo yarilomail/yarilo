@@ -8,7 +8,7 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -62,7 +62,7 @@ func TestDeliveryTargetRoutesNamespaces(t *testing.T) {
 	if err := box2.Create(rel2); err != nil {
 		t.Fatalf("create News: %v", err)
 	}
-	if _, _, _, err := deliverOne(mbox.Open(box2, idx2), rel2, bytes.NewReader([]byte("From: x@y\r\n\r\nhi\r\n")), 18, nil, "alice@x", "x@y", nil); err != nil {
+	if _, _, _, err := deliverOne(mailboxbase.Open(box2, idx2), rel2, bytes.NewReader([]byte("From: x@y\r\n\r\nhi\r\n")), 18, nil, "alice@x", "x@y", nil); err != nil {
 		t.Fatalf("deliverOne: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(publicDir, ".News", "new")); err != nil {

@@ -13,7 +13,7 @@ import (
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -87,7 +87,7 @@ func TestMigrate_DboxV1_ToSdbox(t *testing.T) {
 	}
 	bodySet := map[string]bool{}
 	for _, m := range msgs {
-		rc, err := mbox.OpenMessage(verifyBox, "INBOX", m)
+		rc, err := mailboxbase.OpenMessage(verifyBox, "INBOX", m)
 		if err != nil {
 			t.Errorf("verify fetch uid=%d: %v", m.UID, err)
 			continue
@@ -207,7 +207,7 @@ func TestMigrate_MdboxV1_ToMdbox(t *testing.T) {
 		want[b] = true
 	}
 	for _, mm := range msgs {
-		rc, err := mbox.OpenMessage(verifyBox, "INBOX", mm)
+		rc, err := mailboxbase.OpenMessage(verifyBox, "INBOX", mm)
 		if err != nil {
 			t.Errorf("fetch uid=%d: %v", mm.UID, err)
 			continue

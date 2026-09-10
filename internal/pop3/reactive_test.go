@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -42,7 +42,7 @@ func (f *fakeMarkIdx) ClearFolderCorrupt(uint64) error { return nil }
 // the folder FSCKD at most once per session, not once per message.
 func TestFetchINBOXGatesMarking(t *testing.T) {
 	idx := &fakeMarkIdx{}
-	s := &session{box: mbox.Open(fakeCorruptBox{}, idx)}
+	s := &session{box: mailboxbase.Open(fakeCorruptBox{}, idx)}
 
 	for i := 0; i < 5; i++ {
 		_, err := s.fetchINBOX(&mailbox.MessageMeta{})

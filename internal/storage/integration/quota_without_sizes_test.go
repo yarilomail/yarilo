@@ -10,8 +10,8 @@ import (
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -93,7 +93,7 @@ func TestTheDriverFillsTheSizesTheRecordsLack(t *testing.T) {
 	if got := folderSum(t, idx, f); got != 0 {
 		t.Fatalf("the fixture is not sizeless: the folder already sums %d", got)
 	}
-	if _, err := mbox.FillSizelessRecords(idx, box, f); err != nil {
+	if _, err := mailboxbase.FillSizelessRecords(idx, box, f); err != nil {
 		t.Fatalf("fill: %v", err)
 	}
 	if got := folderSum(t, idx, f); got != want {
@@ -160,7 +160,7 @@ func TestAdoptedDboxRecordsAreFilled(t *testing.T) {
 		// What the conversion writes: the record names the message and says
 		// nothing about its size.
 		m := &mailbox.MessageMeta{GUID: guid}
-		if rerr := mbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); rerr != nil {
+		if rerr := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); rerr != nil {
 			t.Fatal(rerr)
 		}
 		want += uint64(len(body))
@@ -168,7 +168,7 @@ func TestAdoptedDboxRecordsAreFilled(t *testing.T) {
 	if got := folderSum(t, idx, f); got != 0 {
 		t.Fatalf("the fixture is not sizeless: the folder sums %d", got)
 	}
-	if _, err := mbox.FillSizelessRecords(idx, box, f); err != nil {
+	if _, err := mailboxbase.FillSizelessRecords(idx, box, f); err != nil {
 		t.Fatalf("fill: %v", err)
 	}
 	if got := folderSum(t, idx, f); got != want {
@@ -208,7 +208,7 @@ func TestANameWithoutTheVirtualSizeIsCounted(t *testing.T) {
 	if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID("INBOX", name, 1); aerr != nil {
 		t.Fatal(aerr)
 	}
-	if _, ferr := mbox.FillSizelessRecords(idx, box, f); ferr != nil {
+	if _, ferr := mailboxbase.FillSizelessRecords(idx, box, f); ferr != nil {
 		t.Fatal(ferr)
 	}
 	wantV := uint64(len(body) + 3)

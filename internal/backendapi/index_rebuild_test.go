@@ -13,7 +13,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
 
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -276,7 +276,7 @@ func (a *adminUserContext) deliver(t *testing.T, body string) {
 		VSize: vsize,
 		GUID:  guid,
 	}
-	if err := mbox.NameSaved(a.box, "INBOX", filename, meta); err != nil {
+	if err := mailboxbase.NameSaved(a.box, "INBOX", filename, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := a.idx.AppendMessage(a.folder.ID, meta); err != nil {
@@ -447,7 +447,7 @@ func TestOptimizeAllFoldsTheMdboxMap(t *testing.T) {
 			t.Fatalf("save: %v", serr)
 		}
 		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body))}
-		if nerr := mbox.NameSaved(box, "INBOX", filename, meta); nerr != nil {
+		if nerr := mailboxbase.NameSaved(box, "INBOX", filename, meta); nerr != nil {
 			t.Fatalf("name: %v", nerr)
 		}
 		if aerr := idx.AppendMessage(folder.ID, meta); aerr != nil {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -69,7 +69,7 @@ func TestTheRenameClockSpansTheRenames(t *testing.T) {
 
 	writes := make([]mailbox.FlagWrite, 0, len(msgs))
 	for _, m := range msgs {
-		name, perr := mbox.MessagePath(box, "INBOX", m)
+		name, perr := mailboxbase.MessagePath(box, "INBOX", m)
 		if perr != nil {
 			t.Fatal(perr)
 		}

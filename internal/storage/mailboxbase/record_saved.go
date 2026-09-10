@@ -1,4 +1,4 @@
-package mbox
+package mailboxbase
 
 import "github.com/yarilomail/yarilo/pkg/mailbox"
 

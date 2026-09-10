@@ -10,7 +10,7 @@ import (
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
 
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -344,7 +344,7 @@ func TestAReconcileWithNewMailStillMovesIt(t *testing.T) {
 	}
 	// And the name it recorded is one Fetch can open, which is cur/ and only
 	// cur/.
-	if _, err := mbox.OpenMessage(box, "INBOX", msgs[0]); err != nil {
+	if _, err := mailboxbase.OpenMessage(box, "INBOX", msgs[0]); err != nil {
 		t.Errorf("uid %d cannot be read from its record: %v", msgs[0].UID, err)
 	}
 }
@@ -373,7 +373,7 @@ func TestAMessageArrivingInNewAfterTheCheckIsNotImportedFromThere(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, m := range msgs {
-		if _, ferr := mbox.OpenMessage(box, "INBOX", m); ferr != nil {
+		if _, ferr := mailboxbase.OpenMessage(box, "INBOX", m); ferr != nil {
 			t.Errorf("uid %d cannot be opened from its record: %v", m.UID, ferr)
 		}
 	}
@@ -390,7 +390,7 @@ func TestAMessageArrivingInNewAfterTheCheckIsNotImportedFromThere(t *testing.T) 
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("index = %v, err = %v", msgs, err)
 	}
-	if _, ferr := mbox.OpenMessage(box, "INBOX", msgs[0]); ferr != nil {
+	if _, ferr := mailboxbase.OpenMessage(box, "INBOX", msgs[0]); ferr != nil {
 		t.Errorf("after the next pass uid %d still cannot be read: %v", msgs[0].UID, ferr)
 	}
 }

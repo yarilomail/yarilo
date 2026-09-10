@@ -31,7 +31,7 @@ import (
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -347,7 +347,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		}
 		// The uid is already ours, so the name is settled here rather than in an
 		// allocating cycle (#1704, #1700).
-		if err := mbox.Open(box, idx).NameSaved(msg.Folder, filename, meta); err != nil {
+		if err := mailboxbase.Open(box, idx).NameSaved(msg.Folder, filename, meta); err != nil {
 			return fmt.Errorf("name %s/%s: %w", user, msg.Folder, err)
 		}
 		if err := idx.AppendMessage(f.ID, meta); err != nil {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -115,7 +115,7 @@ func (u *userMailbox) refileOrphan(idx mailbox.UserIndex, folder *mailbox.Folder
 		return false, fmt.Errorf("sdbox/orphan: save %s: %w", f.name, serr)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(raw)), VSize: vsize, GUID: guid}
-	if aerr := mbox.RecordSaved(idx, u, folder.ID, folder.Name, saved, m); aerr != nil {
+	if aerr := mailboxbase.RecordSaved(idx, u, folder.ID, folder.Name, saved, m); aerr != nil {
 		return false, fmt.Errorf("sdbox/orphan: record %s: %w", f.name, aerr)
 	}
 	if derr := os.Remove(path); derr != nil && !os.IsNotExist(derr) {

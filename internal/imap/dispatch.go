@@ -9,7 +9,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -323,7 +323,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		spec:     spec,
 		box:      box,
 		idx:      idx,
-		mbox:     mbox.Open(box, idx),
+		mbox:     mailboxbase.Open(box, idx),
 		subs:     store,
 		acl:      aclStore,
 		userInfo: ui,

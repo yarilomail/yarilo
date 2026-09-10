@@ -1,15 +1,19 @@
-package mailbox
+package mailboxbase
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
 
 // lockedOnly is an index without the optional capability — every index that
 // cannot prove its files' freshness looks like this.
 type lockedOnly struct {
-	UserIndex
+	mailbox.UserIndex
 	locked int
 }
 
-func (l *lockedOnly) GetMessages(_ uint64, _ SeqSet) ([]*MessageMeta, error) {
+func (l *lockedOnly) GetMessages(_ uint64, _ mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
 	l.locked++
 	return nil, nil
 }
@@ -20,7 +24,7 @@ type capable struct {
 	unlocked int
 }
 
-func (c *capable) GetMessagesUnlocked(_ uint64, _ SeqSet) ([]*MessageMeta, error) {
+func (c *capable) GetMessagesUnlocked(_ uint64, _ mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
 	c.unlocked++
 	return nil, nil
 }
@@ -30,7 +34,7 @@ func (c *capable) GetMessagesUnlocked(_ uint64, _ SeqSet) ([]*MessageMeta, error
 // correct on the second index and quietly undo the whole change on the first.
 func TestReadMessagesPrefersTheUnlockedReadAndFallsBack(t *testing.T) {
 	c := &capable{}
-	if _, err := ReadMessages(c, 1, SeqSet{}); err != nil {
+	if _, err := ReadMessages(c, 1, mailbox.SeqSet{}); err != nil {
 		t.Fatalf("ReadMessages: %v", err)
 	}
 	if c.unlocked != 1 || c.locked != 0 {
@@ -38,7 +42,7 @@ func TestReadMessagesPrefersTheUnlockedReadAndFallsBack(t *testing.T) {
 	}
 
 	l := &lockedOnly{}
-	if _, err := ReadMessages(l, 1, SeqSet{}); err != nil {
+	if _, err := ReadMessages(l, 1, mailbox.SeqSet{}); err != nil {
 		t.Fatalf("ReadMessages: %v", err)
 	}
 	if l.locked != 1 {

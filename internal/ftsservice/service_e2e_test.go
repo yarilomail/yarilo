@@ -18,7 +18,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/fts/language"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -84,7 +84,7 @@ func saveRawMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserInde
 	meta := &mailbox.MessageMeta{
 		UID: uid, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
 	}
-	if err := mbox.NameSaved(box, testMbox.Name, name, meta); err != nil {
+	if err := mailboxbase.NameSaved(box, testMbox.Name, name, meta); err != nil {
 		t.Fatal(err)
 	}
 	if err := uidx.AppendMessage(f.ID, meta); err != nil {

@@ -1,4 +1,4 @@
-package mbox
+package mailboxbase
 
 import (
 	"log/slog"

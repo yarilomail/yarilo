@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
@@ -86,7 +86,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 		box:  s.mailboxFor(info).OpenUser(info),
 		idx:  s.Index.OpenUser(info),
 	}
-	h.mbox = mbox.Open(h.box, h.idx)
+	h.mbox = mailboxbase.Open(h.box, h.idx)
 	h.threads = s.Threads
 	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)
 	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)

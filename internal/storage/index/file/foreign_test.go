@@ -13,7 +13,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -101,7 +101,7 @@ func TestAForeignStoreIsConvertedOnFirstOpen(t *testing.T) {
 	// in-place conversion: the map entries point at their storage file, at their
 	// offsets, and nothing was copied.
 	for _, m := range msgs {
-		rc, err := mbox.OpenMessage(box, "INBOX", m)
+		rc, err := mailboxbase.OpenMessage(box, "INBOX", m)
 		if err != nil {
 			t.Fatalf("fetch uid %d: %v", m.UID, err)
 		}

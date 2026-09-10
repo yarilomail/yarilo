@@ -9,7 +9,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -55,7 +55,7 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	if err := store.Init(); err != nil {
 		t.Fatal(err)
 	}
-	box := mbox.Open(store, idx)
+	box := mailboxbase.Open(store, idx)
 	if _, err := box.Folder("INBOX", 1); err != nil {
 		t.Fatal(err)
 	}
