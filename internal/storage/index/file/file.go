@@ -349,6 +349,9 @@ func (h *userHandle) StoredNames(folderID uint64) (map[uint32]string, error) {
 func (h *userHandle) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, error) {
 	return h.stamped(folderID).StampSizes(folderID, vsizes)
 }
+func (h *userHandle) RepairRecordTails(folderID uint64, tails map[uint32]mailbox.RecordTail) (int, error) {
+	return h.stamped(folderID).RepairRecordTails(folderID, tails)
+}
 func (h *userHandle) SizelessUIDs(folderID uint64) ([]uint32, error) {
 	return h.stamped(folderID).SizelessUIDs(folderID)
 }

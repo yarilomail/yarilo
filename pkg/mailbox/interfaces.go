@@ -127,6 +127,21 @@ type SizeStamper interface {
 	StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, error)
 }
 
+// RecordTail is the half of a record that follows its storage key: what an
+// operator repair rebuilds from the message itself.
+type RecordTail struct {
+	MapUID   uint32
+	SaveDate uint32
+	VSize    uint32
+	GUID     [16]byte
+}
+
+// TailRepairer overwrites those fields for the named records. Unlike a stamp it
+// replaces what is there, so only an explicit operator pass calls it (#1770).
+type TailRepairer interface {
+	RepairRecordTails(folderID uint64, tails map[uint32]RecordTail) (int, error)
+}
+
 // StoredNameLister reads the names an older build kept beside the index. Read
 // once, by the pass that moves them into the driver's own store (#1726).
 type StoredNameLister interface {

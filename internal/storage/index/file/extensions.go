@@ -129,16 +129,38 @@ func decodeHdrVsize(b []byte) (hdrVsize, error) {
 // MessageMeta.VSize; summed by the hdr-vsize recalc.
 const vsizeRecSize = 4
 
+// declareRecordExtLocked is the only door a record extension enters by: the
+// intro reaches the log before any record of the new width (#1770). Holds fs.mu.
+func (fs *folderState) declareRecordExtLocked(name string, hdrData []byte, recSize, align uint16, resetID uint32) error {
+	if findExt(fs.file.Extensions, name) != nil {
+		return nil
+	}
+	records := [][]byte{encLogRec(mailindex.TxTypeExtIntro, 0, mailindex.EncodeTxExtIntroPayload(mailindex.TxExtIntro{
+		ExtID:       mailindex.TxExtIntroNewExt,
+		ResetID:     resetID,
+		HdrSize:     uint32(len(hdrData)),
+		RecordSize:  recSize,
+		RecordAlign: align,
+		Name:        name,
+	}))}
+	// The intro states the header's size; its bytes follow separately.
+	if len(hdrData) > 0 {
+		records = append(records, encLogRec(mailindex.TxTypeExtHdrUpdate, 0,
+			mailindex.EncodeTxExtHdrUpdatePayload(mailindex.TxExtHdrUpdate{Offset: 0, Data: hdrData})))
+	}
+	if err := fs.appendMutLog(records...); err != nil {
+		return fmt.Errorf("fileindex: declare %q extension: %w", name, err)
+	}
+	if err := fs.file.AddRecordExtension(name, hdrData, recSize, align, resetID); err != nil {
+		return fmt.Errorf("fileindex: add %q extension: %w", name, err)
+	}
+	return nil
+}
+
 // ensureVsizeExtLocked declares the extension in a folder written before it
 // existed: without it a stamped size never reaches disk (#1752). Holds fs.mu.
 func (fs *folderState) ensureVsizeExtLocked() error {
-	if findExt(fs.file.Extensions, extNameVsize) != nil {
-		return nil
-	}
-	if err := fs.file.AddRecordExtension(extNameVsize, nil, vsizeRecSize, 4, 0); err != nil {
-		return fmt.Errorf("fileindex: add vsize extension: %w", err)
-	}
-	return nil
+	return fs.declareRecordExtLocked(extNameVsize, nil, vsizeRecSize, 4, 0)
 }
 
 func encodeVsizeRec(v uint32) []byte {

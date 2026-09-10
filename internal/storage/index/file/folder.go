@@ -979,11 +979,9 @@ func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 	return u.withFolder(folderID, func(fs *folderState) error {
 		// An index written before the extension existed needs it added first;
 		// existing records gain 16 zero bytes on the next write.
-		if findExt(fs.file.Extensions, extNameGUID) == nil {
-			if err := fs.file.AddRecordExtension(extNameGUID, encodeGUIDHdr(guidStatePending),
-				guidRecSize, 1, fs.file.Header.UIDValidity); err != nil {
-				return fmt.Errorf("fileindex: add guid extension: %w", err)
-			}
+		if err := fs.declareRecordExtLocked(extNameGUID, encodeGUIDHdr(guidStatePending),
+			guidRecSize, 1, fs.file.Header.UIDValidity); err != nil {
+			return err
 		}
 		for _, rec := range fs.file.Records {
 			g, ok := guids[rec.UID]
@@ -2190,6 +2188,9 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	}
 
 	var maxModseq uint64
+	// EXT_HDR_UPDATE patches the extension the preceding intro named, as the
+	// wire format defines it: the record itself carries no name.
+	var lastIntro string
 	le := binary.LittleEndian
 	hdrBuf := make([]byte, 8)
 
@@ -2328,6 +2329,39 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 					}
 				}
 			}
+
+		case kind == mailindex.TxTypeExtIntro:
+			intro, ok := mailindex.DecodeTxExtIntroPayload(payload)
+			if !ok || intro.Name == "" {
+				// Every append after this one would be read at the old width.
+				return committedEnd, fmt.Errorf("fileindex/applylog: torn extension intro at offset %d (%d payload bytes)",
+					recStart, len(payload))
+			}
+			// The header's bytes arrive in the EXT_HDR_UPDATE that follows.
+			if aerr := fs.file.AddRecordExtension(intro.Name, make([]byte, intro.HdrSize),
+				intro.RecordSize, intro.RecordAlign, intro.ResetID); aerr != nil {
+				return committedEnd, fmt.Errorf("fileindex/applylog: declare %q: %w", intro.Name, aerr)
+			}
+			newLayout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions)
+			if lerr != nil {
+				return committedEnd, fmt.Errorf("fileindex/applylog: record layout: %w", lerr)
+			}
+			layout = newLayout
+			lastIntro = intro.Name
+
+		case kind == mailindex.TxTypeExtHdrUpdate:
+			upd, ok := mailindex.DecodeTxExtHdrUpdatePayload(payload)
+			if !ok {
+				return committedEnd, fmt.Errorf("fileindex/applylog: torn extension header update at offset %d", recStart)
+			}
+			if lastIntro == "" {
+				break
+			}
+			ext := findExt(fs.file.Extensions, lastIntro)
+			if ext == nil || int(upd.Offset)+len(upd.Data) > len(ext.HdrData) {
+				break
+			}
+			copy(ext.HdrData[upd.Offset:], upd.Data)
 
 		case kind == mailindex.TxTypeAppend:
 			stride := int(layout.RecordSize)
@@ -2532,11 +2566,9 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) 
 		return nil
 	}
 	return u.withFolder(folderID, func(fs *folderState) error {
-		if findExt(fs.file.Extensions, extNameCache) == nil {
-			if err := fs.file.AddRecordExtension(extNameCache, nil,
-				cacheRecSize, 4, fs.file.Header.UIDValidity); err != nil {
-				return fmt.Errorf("fileindex: add cache extension: %w", err)
-			}
+		if err := fs.declareRecordExtLocked(extNameCache, nil,
+			cacheRecSize, 4, fs.file.Header.UIDValidity); err != nil {
+			return err
 		}
 		for _, rec := range fs.file.Records {
 			off, ok := offsets[rec.UID]
@@ -2698,9 +2730,9 @@ func (u *userIndex) EnsureCacheExtension(folderID uint64) (indexID, resetID uint
 		if findExt(fs.file.Extensions, extNameCache) == nil {
 			// From the clock, not UIDValidity: a file left at this path by an
 			// earlier life must not match the generation we are creating.
-			if aerr := fs.file.AddRecordExtension(extNameCache, nil,
+			if aerr := fs.declareRecordExtLocked(extNameCache, nil,
 				cacheRecSize, 4, newCacheGeneration(0)); aerr != nil {
-				return fmt.Errorf("fileindex: add cache extension: %w", aerr)
+				return aerr
 			}
 			if ferr := fs.flush(); ferr != nil {
 				return ferr

@@ -17,12 +17,14 @@ func dispatchIndex(args []string) error {
 		return indexRebuild(args[1:])
 	case "rebuild-storage":
 		return indexRebuildStorage(args[1:])
+	case "check":
+		return indexCheck(args[1:])
 	case "cache-purge":
 		return indexCachePurge(args[1:])
 	case "optimize":
 		return indexOptimize(args[1:])
 	default:
-		return fmt.Errorf("unknown index command %q — available: dump, rebuild, rebuild-storage, optimize, cache-purge", args[0])
+		return fmt.Errorf("unknown index command %q — available: dump, check, rebuild, rebuild-storage, optimize, cache-purge", args[0])
 	}
 }
 
@@ -32,6 +34,13 @@ func printIndexUsage() {
 Commands:
   dump     <user> <folder> [--namespace NS] [--limit N]
         Dump every fileindex record (UID, flags, modseq, size, GUID).
+
+  check    <user> [--namespace NS] [--fix]
+        Read every folder of the account and report the records whose tail
+        was written at a width the base did not announce -- their size reads
+        back as their own storage key (#1770). Read-only without --fix;
+        with it, each such record's storage key, size and guid are rebuilt
+        from the message in storage. Prints checked / shifted / repaired.
 
   rebuild  <user> <folder> [--namespace NS]
         Scan the on-disk storage and regenerate ONE folder's fileindex,
@@ -80,6 +89,23 @@ func indexDump(args []string) error {
 		"folder":    fs.Arg(1),
 		"namespace": *ns,
 		"limit":     *limit,
+	}))
+}
+
+func indexCheck(args []string) error {
+	fs := flag.NewFlagSet("index check", flag.ContinueOnError)
+	ns := fs.String("namespace", "personal", "namespace slug")
+	fix := fs.Bool("fix", false, "rebuild every shifted record's tail from storage (default: report only)")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: yarctl backend index check <user> [--namespace NS] [--fix]")
+	}
+	return printJSON(backendAPIPost("/api/backend/index/check", map[string]any{
+		"user":      fs.Arg(0),
+		"namespace": *ns,
+		"fix":       *fix,
 	}))
 }
 

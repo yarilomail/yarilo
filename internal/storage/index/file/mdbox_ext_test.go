@@ -144,6 +144,73 @@ func (u *userIndex) folderStateFor(t *testing.T, folder string) *folderState {
 	return nil
 }
 
+// A second reader decodes a record appended right after the field was declared,
+// with no base rewrite in between; the row below flushes first, and stayed green.
+func TestASecondReaderDecodesARecordAppendedBeforeAnyBaseRewrite(t *testing.T) {
+	dir := t.TempDir()
+	a := openIdx(dir, testUser)
+	f, err := a.OpenFolder("INBOX", 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.withFolder(f.ID, func(fs *folderState) error { return fs.flush() }); err != nil {
+		t.Fatal(err)
+	}
+	a.Close() //nolint:errcheck
+	stripExt(t, filepath.Join(testHome(dir, testUser), "yarilo.index"), extNameMdbox)
+
+	// The writer: the first record carrying a storage key, and nothing after it.
+	b := openIdx(dir, testUser)
+	defer b.Close() //nolint:errcheck
+	fb, err := b.OpenFolder("INBOX", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := mailbox.MessageMeta{
+		UID: 2, Size: 379, VSize: 379, MapUID: 15014, SaveDate: 1788764634,
+		GUID: [16]byte{0xcf, 0x9a, 0x26, 0xcc, 0x1a, 0x37, 0x85, 0x06,
+			0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88},
+	}
+	if err := b.AppendMessage(fb.ID, &want); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	// The reader: another handle, taking the base and the log from disk.
+	c := openIdx(dir, testUser)
+	defer c.Close() //nolint:errcheck
+	fc, err := c.OpenFolder("INBOX", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := c.GetMessages(fc.ID, mailbox.SeqSet{})
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	var got *mailbox.MessageMeta
+	for _, m := range msgs {
+		if m.UID == 2 {
+			got = m
+		}
+	}
+	if got == nil {
+		t.Fatalf("the second reader holds %d records and none is uid 2", len(msgs))
+	}
+	if got.VSize != want.VSize {
+		t.Errorf("the second reader reports size %d, want %d -- %d is the record's map_uid",
+			got.VSize, want.VSize, got.MapUID)
+	}
+	if got.MapUID != want.MapUID || got.SaveDate != want.SaveDate {
+		t.Errorf("the second reader reads the storage key (%d, %d), want (%d, %d)",
+			got.MapUID, got.SaveDate, want.MapUID, want.SaveDate)
+	}
+	if got.GUID != want.GUID {
+		t.Errorf("the second reader reads guid %x, want %x", got.GUID, want.GUID)
+	}
+}
+
 // The field widens every record, so a base written before it must take the new
 // width too: a header left at the old one refuses every flush (#1709).
 func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
@@ -164,7 +231,7 @@ func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 
 	// The shape an older build left: the same base with no mdbox extension
 	// declared, so its records are eight bytes narrower.
-	before := stripMdboxExt(t, filepath.Join(testHome(dir, testUser), "yarilo.index"))
+	before := stripExt(t, filepath.Join(testHome(dir, testUser), "yarilo.index"), extNameMdbox)
 
 	b := openIdx(dir, testUser)
 	defer b.Close() //nolint:errcheck
@@ -216,9 +283,9 @@ func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 	}
 }
 
-// stripMdboxExt rewrites an index without the extension, returning the record
+// stripExt rewrites an index without the named extension, returning the record
 // size that leaves: a base as an older build wrote it.
-func stripMdboxExt(t *testing.T, path string) uint32 {
+func stripExt(t *testing.T, path, name string) uint32 {
 	t.Helper()
 	f, err := mailindex.Open(path)
 	if err != nil {
@@ -226,12 +293,12 @@ func stripMdboxExt(t *testing.T, path string) uint32 {
 	}
 	kept := make([]mailindex.Extension, 0, len(f.Extensions))
 	for _, e := range f.Extensions {
-		if e.Name != extNameMdbox {
+		if e.Name != name {
 			kept = append(kept, e)
 		}
 	}
 	if len(kept) == len(f.Extensions) {
-		t.Fatalf("the fresh base declares no %q extension to strip", extNameMdbox)
+		t.Fatalf("the fresh base declares no %q extension to strip", name)
 	}
 	layout, err := mailindex.ComputeRecordLayout(kept)
 	if err != nil {
@@ -246,7 +313,7 @@ func stripMdboxExt(t *testing.T, path string) uint32 {
 	f.Header.RecordSize = layout.RecordSize
 	f.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	for _, rec := range f.Records {
-		delete(rec.Ext, extNameMdbox)
+		delete(rec.Ext, name)
 	}
 	if _, err := mailindex.Recreate(f.ToRecreateInput(path)); err != nil {
 		t.Fatal(err)

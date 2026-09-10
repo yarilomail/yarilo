@@ -31,7 +31,7 @@ func decodeMdboxRec(b []byte) (mapUID, saveDate uint32) {
 // ensureMdboxExtLocked declares the extension, moving header and layout with the
 // field: an appended one alone leaves a base no flush can rewrite. Holds fs.mu.
 func (fs *folderState) ensureMdboxExtLocked() {
-	if err := fs.file.AddRecordExtension(extNameMdbox, nil, mdboxRecSize, 4, 0); err != nil {
+	if err := fs.declareRecordExtLocked(extNameMdbox, nil, mdboxRecSize, 4, 0); err != nil {
 		slog.Warn("fileindex: mdbox extension not declared", "folder", fs.folder, "err", err)
 	}
 }
