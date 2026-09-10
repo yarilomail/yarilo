@@ -20,11 +20,12 @@ import (
 
 type mockAuth struct {
 	users map[string]string // username → password
+	home  string            // userdb home; the session lock lives in it
 }
 
 func (m *mockAuth) Authenticate(user, pass, _, _ string) (*protocol.AuthResponse, error) {
 	if expected, ok := m.users[user]; ok && expected == pass {
-		return &protocol.AuthResponse{Result: protocol.AuthOK, Username: user}, nil
+		return &protocol.AuthResponse{Result: protocol.AuthOK, Username: user, Home: m.home}, nil
 	}
 	return &protocol.AuthResponse{Result: protocol.AuthFail}, nil
 }
@@ -234,29 +235,42 @@ func login(t *testing.T, c net.Conn, r *bufio.Reader, user, pass string) {
 
 // ---- lock tests -------------------------------------------------------------
 
-func TestServer_TryLock(t *testing.T) {
-	srv := New(Options{})
-	if !srv.tryLock("alice") {
-		t.Fatal("first tryLock must succeed")
-	}
-	if srv.tryLock("alice") {
-		t.Fatal("second tryLock on same key must fail")
-	}
-	srv.unlock("alice")
-	if !srv.tryLock("alice") {
-		t.Fatal("tryLock after unlock must succeed")
-	}
-	srv.unlock("alice")
+// The session lock follows the key, and there is only one of it: with the key
+// off two sessions of one user coexist, as the reference leaves them (#1760).
+func TestTheSessionLockFollowsTheKey(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		lock    bool
+		wantErr bool
+	}{
+		{"key off", false, false},
+		{"key on", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			opts := newTestOpts(&mockAuth{users: map[string]string{"u@x": "p"}, home: home},
+				&mockMailbox{}, &mockIndex{})
+			opts.LockSession = tc.lock
 
-	// Different keys are independent.
-	if !srv.tryLock("alice") {
-		t.Fatal("alice lock")
+			// Two connections, two servers: the lock they share is the one in
+			// the user's home, which is what the key names.
+			first, fr := newPOP3Session(t, opts)
+			login(t, first, fr, "u@x", "p")
+			second, sr := newPOP3Session(t, opts)
+
+			send(t, second, "USER u@x")
+			readline(t, sr)
+			send(t, second, "PASS p")
+			got := readline(t, sr)
+
+			switch {
+			case tc.wantErr && !strings.HasPrefix(got, "-ERR [IN-USE]"):
+				t.Errorf("the second session got %q, want -ERR [IN-USE]", got)
+			case !tc.wantErr && !strings.HasPrefix(got, "+OK"):
+				t.Errorf("the second session got %q with the key off", got)
+			}
+		})
 	}
-	if !srv.tryLock("bob") {
-		t.Fatal("bob lock must be independent")
-	}
-	srv.unlock("alice")
-	srv.unlock("bob")
 }
 
 // ---- AUTH state tests -------------------------------------------------------
