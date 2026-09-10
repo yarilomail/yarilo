@@ -66,7 +66,6 @@ type session struct {
 	sid                string   // cross-service correlation ID from login-proxy
 
 	// set after successful login
-	lockKey         string
 	sessionLockFile string // path to dotlock file; "" when not held
 	limitIP         string // IP used for ConnLimit.Acquire; released in releaseLock
 	pendingUser     string // temporary storage of USER arg before PASS arrives
@@ -578,41 +577,23 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 		s.limitIP = ip
 	}
 
-	if !s.srv.tryLock(userInfo.Username) {
-		if s.srv.opts.ConnLimit != nil {
-			s.srv.opts.ConnLimit.Release(userInfo.Username, s.limitIP)
-			s.limitIP = ""
-		}
-		s.writeErr("mailbox already in use, try again later")
-		return false
-	}
-	s.lockKey = userInfo.Username
-
 	personalBox := mailbox.SelectPersonalBackend(s.srv.opts.Mailbox, s.srv.opts.MailboxByDriver, userInfo.Driver)
 	box := personalBox.OpenUser(userInfo)
 	idx := s.srv.opts.Index.OpenUser(userInfo)
 
 	if err := box.Init(); err != nil {
 		slog.Error("pop3: mailbox init", "user", userInfo.Username, "err", err)
-		s.srv.unlock(s.lockKey)
-		s.lockKey = ""
-		if s.srv.opts.ConnLimit != nil {
-			s.srv.opts.ConnLimit.Release(userInfo.Username, s.limitIP)
-			s.limitIP = ""
-		}
+		s.releaseConnLimit(userInfo.Username)
 		s.writeErr("internal error")
 		return false
 	}
 
 	// dotlock after Init so the home directory exists on disk
 	if s.srv.opts.LockSession && !s.acquireDotlock(userInfo.Home) {
-		s.srv.unlock(s.lockKey)
-		s.lockKey = ""
-		if s.srv.opts.ConnLimit != nil {
-			s.srv.opts.ConnLimit.Release(userInfo.Username, s.limitIP)
-			s.limitIP = ""
-		}
-		s.writeErr("mailbox already in use, try again later")
+		s.releaseConnLimit(userInfo.Username)
+		// RFC 2449 response code, advertised in CAPA as RESP-CODES: a client
+		// reading it retries instead of asking for the password again.
+		s.writeErr("[IN-USE] mailbox already in use, try again later")
 		return false
 	}
 
@@ -620,9 +601,10 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	s.box = mailboxbase.Open(box, idx, mailboxbase.WithLocker(s.srv.opts.Locker, locks.Owner(userInfo.Username, userInfo.LockID())))
 
 	if err := s.loadMailbox(); err != nil {
+		// The whole login is rolled back, the session lock included: a retry on
+		// this connection would otherwise meet a lock its own attempt left.
+		s.releaseLock()
 		s.writeErr("internal error")
-		s.srv.unlock(s.lockKey)
-		s.lockKey = ""
 		return false
 	}
 	master, _ := res.Fields.Get("master_user")
@@ -1175,18 +1157,22 @@ func (s *session) releaseLock() {
 		os.Remove(s.sessionLockFile) //nolint:errcheck
 		s.sessionLockFile = ""
 	}
-	if s.lockKey != "" {
-		s.srv.unlock(s.lockKey)
-		s.lockKey = ""
-	}
-	if s.limitIP != "" && s.srv.opts.ConnLimit != nil && s.userInfo != nil {
-		s.srv.opts.ConnLimit.Release(s.userInfo.Username, s.limitIP)
-		s.limitIP = ""
+	if s.userInfo != nil {
+		s.releaseConnLimit(s.userInfo.Username)
 	}
 	if s.box != nil {
 		s.box.Close()
 		s.box = nil
 	}
+}
+
+// releaseConnLimit gives back the per-user@IP slot this session took.
+func (s *session) releaseConnLimit(username string) {
+	if s.limitIP == "" || s.srv.opts.ConnLimit == nil {
+		return
+	}
+	s.srv.opts.ConnLimit.Release(username, s.limitIP)
+	s.limitIP = ""
 }
 
 // acquireDotlock creates $HOME/yarilo-pop3-session.lock. A lock older than

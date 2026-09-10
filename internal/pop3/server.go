@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"sync"
 	"time"
 
 	proxyproto "github.com/pires/go-proxyproto"
@@ -76,9 +75,7 @@ type Options struct {
 
 // Server is the yarilo POP3 server.
 type Server struct {
-	opts  Options
-	mu    sync.Mutex
-	locks map[string]struct{} // per-user session locks
+	opts Options
 }
 
 // New creates a POP3 server.
@@ -87,7 +84,7 @@ func New(opts Options) *Server {
 	// shares one write semaphore instead of building a fresh one each login
 	// (#1149).
 	opts.MailboxByDriver = mailbox.MemoizeByDriver(opts.MailboxByDriver)
-	return &Server{opts: opts, locks: make(map[string]struct{})}
+	return &Server{opts: opts}
 }
 
 // ListenAndServeTLS starts the POP3S (TLS) listener.
@@ -150,24 +147,6 @@ func (s *Server) wrapListeners(ln net.Listener) net.Listener {
 		}
 	}
 	return ln
-}
-
-// tryLock acquires an exclusive per-user session lock.
-// Returns false if a session for this user is already active.
-func (s *Server) tryLock(key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.locks[key]; ok {
-		return false
-	}
-	s.locks[key] = struct{}{}
-	return true
-}
-
-func (s *Server) unlock(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.locks, key)
 }
 
 func proxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
