@@ -11,6 +11,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -39,7 +40,7 @@ func statsServer(t *testing.T, be mailbox.MailboxBackend) (*httptest.Server, str
 		t.Fatalf("open folder: %v", err)
 	}
 	meta := &mailbox.MessageMeta{UID: 1, Size: uint32(len(raw)), VSize: vsize, GUID: guid}
-	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := ui.AppendMessage(f.ID, meta); err != nil {

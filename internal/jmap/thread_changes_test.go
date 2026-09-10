@@ -10,6 +10,7 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -77,7 +78,7 @@ func (ts *threadedServer) deliver(t *testing.T, raw string) string {
 		UID: ts.uid, Size: uint32(len(raw)), VSize: vsize,
 		GUID: guid, InternalDate: time.Now(),
 	}
-	if err := mailbox.NameSaved(ts.box, "INBOX", name, meta); err != nil {
+	if err := mailboxbase.NameSaved(ts.box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	meta.GUID = guid

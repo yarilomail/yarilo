@@ -9,6 +9,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -180,7 +181,7 @@ func TestARebuildRefilesAFileWhoseRecordWasExpunged(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := &mailbox.MessageMeta{Size: 5, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, folder.ID, "INBOX", name, meta); err != nil {
+	if err := mailboxbase.RecordSaved(idx, box, folder.ID, "INBOX", name, meta); err != nil {
 		t.Fatal(err)
 	}
 	before, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})

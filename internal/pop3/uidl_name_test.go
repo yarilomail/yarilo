@@ -9,6 +9,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -45,15 +46,15 @@ func TestTheUIDLNameVariablesReadTheNameOnDisk(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &mailbox.MessageMeta{Size: uint32(len(raw)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+			if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 
-			want, err := mailbox.MessagePath(box, "INBOX", m)
+			want, err := mailboxbase.MessagePath(box, "INBOX", m)
 			if err != nil || want == "" {
 				t.Fatalf("the driver cannot name the message: %q %v", want, err)
 			}
-			s := &session{box: mailbox.Open(box, nil), srv: &Server{opts: Options{UIDLFormat: "%f"}}}
+			s := &session{box: mailboxbase.Open(box, nil), srv: &Server{opts: Options{UIDLFormat: "%f"}}}
 			if got := s.formatUIDL(m); got != want {
 				t.Errorf("%%f = %q, want %q", got, want)
 			}

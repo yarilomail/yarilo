@@ -10,6 +10,7 @@ import (
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -139,7 +140,7 @@ func TestAFileTheUIDListDoesNotKnowGetsTheNextUID(t *testing.T) {
 	}
 	byName := map[string]uint32{}
 	for _, m := range msgs {
-		name, err := mailbox.MessagePath(box, "INBOX", m)
+		name, err := mailboxbase.MessagePath(box, "INBOX", m)
 		if err != nil {
 			t.Fatalf("uid %d has no name: %v", m.UID, err)
 		}

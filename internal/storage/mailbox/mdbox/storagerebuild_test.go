@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -76,7 +77,7 @@ func deliverMsg(t *testing.T, box *userMailbox, idx mailbox.UserIndex, folder, b
 		t.Fatalf("save: %v", err)
 	}
 	meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.NameSaved(box, folder, fn, meta); err != nil {
+	if err := mailboxbase.NameSaved(box, folder, fn, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := idx.AppendMessage(f.ID, meta); err != nil {

@@ -6,6 +6,7 @@ import (
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -45,7 +46,7 @@ func unnamedRecords(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex
 		t.Fatal(err)
 	}
 	for _, m := range msgs {
-		if _, perr := mailbox.MessagePath(box, "INBOX", m); perr != nil {
+		if _, perr := mailboxbase.MessagePath(box, "INBOX", m); perr != nil {
 			unnamed++
 		}
 	}
@@ -74,7 +75,7 @@ func TestAReconcileInsideADeliveryWindow(t *testing.T) {
 	}
 
 	m := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.NameSaved(box, "INBOX", saved, m); err != nil {
+	if err := mailboxbase.NameSaved(box, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 	if err := idx.AppendMessage(f.ID, m); err != nil {
@@ -129,7 +130,7 @@ func TestAReconcileInsideASessionWindow(t *testing.T) {
 			if st := reconcile(); st.Imported != 0 {
 				t.Errorf("the reconcile imported %d files the session was still writing", st.Imported)
 			}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+			if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 			records, unnamed := unnamedRecords(t, box, idx, f)
@@ -176,7 +177,7 @@ func TestAReconcileInsideAMoveWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, src.ID, "INBOX", saved, m); err != nil {
+	if err := mailboxbase.RecordSaved(idx, box, src.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,7 +200,7 @@ func TestAReconcileInsideAMoveWindow(t *testing.T) {
 	}
 
 	nm := &mailbox.MessageMeta{Size: m.Size, VSize: m.VSize, GUID: movedGUID}
-	if err := mailbox.RecordSaved(idx, box, dst.ID, "Archive", moved, nm); err != nil {
+	if err := mailboxbase.RecordSaved(idx, box, dst.ID, "Archive", moved, nm); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := idx.GetMessages(dst.ID, mailbox.SeqSet{})
@@ -209,7 +210,7 @@ func TestAReconcileInsideAMoveWindow(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("one move left %d records in the destination", len(msgs))
 	}
-	if _, perr := mailbox.MessagePath(box, "Archive", msgs[0]); perr != nil {
+	if _, perr := mailboxbase.MessagePath(box, "Archive", msgs[0]); perr != nil {
 		t.Errorf("the moved message cannot be named: %v", perr)
 	}
 }

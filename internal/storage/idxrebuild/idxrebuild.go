@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -206,7 +207,7 @@ func BackfillGUIDs(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 	for _, m := range msgs {
 		// The name comes from the driver: a record no longer carries one, and
 		// the scan reports files by the name they wear on disk (#1700).
-		name, perr := mailbox.MessagePath(box, folder.Name, m)
+		name, perr := mailboxbase.MessagePath(box, folder.Name, m)
 		if perr != nil {
 			continue
 		}

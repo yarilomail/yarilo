@@ -24,7 +24,7 @@ var deliverCallSeq atomic.Uint64
 
 // deliverOne saves one message and records it. The folder travels back because
 // the full-text hook needs its GUID; a name alone is refused silently (#1206).
-func deliverOne(box *mailbox.Box, folder string, r io.ReadSeeker, size int64, locker locks.Locker, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
+func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, locker locks.Locker, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
 	tDeliver := time.Now()
 	var noGUID [16]byte
 	if _, err := r.Seek(0, io.SeekStart); err != nil {

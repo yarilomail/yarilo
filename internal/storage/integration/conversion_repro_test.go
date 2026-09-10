@@ -11,6 +11,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -117,7 +118,7 @@ func runConversionSession(t *testing.T, indexTmpl string) {
 func readAll(t *testing.T, box mailbox.UserMailbox, msgs []*mailbox.MessageMeta) {
 	t.Helper()
 	for _, m := range msgs {
-		rc, err := mailbox.OpenMessage(box, "INBOX", m)
+		rc, err := mailboxbase.OpenMessage(box, "INBOX", m)
 		if err != nil {
 			t.Fatalf("uid %d (map uid %d): %v", m.UID, m.MapUID, err)
 		}

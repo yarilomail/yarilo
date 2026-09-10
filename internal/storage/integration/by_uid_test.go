@@ -14,6 +14,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -45,7 +46,7 @@ func TestAMessageIsFoundByItsUIDAfterAReopen(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+			if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 			uid := m.UID
@@ -71,7 +72,7 @@ func TestAMessageIsFoundByItsUIDAfterAReopen(t *testing.T) {
 			if len(msgs) != 1 || msgs[0].UID != uid {
 				t.Fatalf("the folder reads back as %v", msgs)
 			}
-			rc, err := mailbox.OpenMessage(box2, "INBOX", msgs[0])
+			rc, err := mailboxbase.OpenMessage(box2, "INBOX", msgs[0])
 			if err != nil {
 				t.Fatalf("open uid %d: %v", uid, err)
 			}
@@ -110,7 +111,7 @@ func TestReadingByUIDWalksNothing(t *testing.T) {
 			t.Fatal(serr)
 		}
 		m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+		if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 			t.Fatal(err)
 		}
 		_ = m
@@ -123,7 +124,7 @@ func TestReadingByUIDWalksNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, m := range msgs {
-		rc, oerr := mailbox.OpenMessage(box, "INBOX", m)
+		rc, oerr := mailboxbase.OpenMessage(box, "INBOX", m)
 		if oerr != nil {
 			t.Fatalf("uid %d: %v", m.UID, oerr)
 		}
@@ -175,7 +176,7 @@ func oldSidecarIsIgnored(t *testing.T, driver, indexDir string, openBox func(*ma
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+	if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,11 +202,11 @@ func oldSidecarIsIgnored(t *testing.T, driver, indexDir string, openBox func(*ma
 	if len(msgs) != 1 {
 		t.Fatalf("got %d messages, want 1", len(msgs))
 	}
-	name, nerr := mailbox.MessagePath(box, "INBOX", msgs[0])
+	name, nerr := mailboxbase.MessagePath(box, "INBOX", msgs[0])
 	if nerr != nil || name == "u.deadbeef" || msgs[0].Size == 9 {
 		t.Errorf("the sidecar was consulted: name %q (%v) size %d", name, nerr, msgs[0].Size)
 	}
-	rc, err := mailbox.OpenMessage(box, "INBOX", msgs[0])
+	rc, err := mailboxbase.OpenMessage(box, "INBOX", msgs[0])
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -240,7 +241,7 @@ func TestTheSizeSurvivesAReopen(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+			if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 			idx.Close() //nolint:errcheck
@@ -317,7 +318,7 @@ func TestAnOldMdboxFolderAdoptsItsSidecar(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].MapUID == 0 {
 		t.Fatalf("the record carries no storage key after the adoption: %+v", msgs)
 	}
-	rc, err := mailbox.OpenMessage(box, "INBOX", msgs[0])
+	rc, err := mailboxbase.OpenMessage(box, "INBOX", msgs[0])
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -348,7 +349,7 @@ func TestTheFolderWeLeaveHasTheReferenceShape(t *testing.T) {
 			t.Fatal(serr)
 		}
 		m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-		if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+		if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -464,7 +465,7 @@ func TestTheSizeIsWhatWasStoredNotWhatWasHandedOver(t *testing.T) {
 				t.Fatalf("Save reports %d for a %d-byte body with three bare LFs", vsize, len(body))
 			}
 			m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+			if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 			idx.Close() //nolint:errcheck
@@ -539,7 +540,7 @@ func TestANamelessMdboxRecordFindsItsKeyByGUID(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].MapUID == 0 {
 		t.Fatalf("the record still names no storage: %+v", msgs)
 	}
-	rc, err := mailbox.OpenMessage(box, "INBOX", msgs[0])
+	rc, err := mailboxbase.OpenMessage(box, "INBOX", msgs[0])
 	if err != nil {
 		t.Fatalf("the healed message cannot be read: %v", err)
 	}

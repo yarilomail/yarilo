@@ -7,6 +7,7 @@ import (
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -50,7 +51,7 @@ func TestASyncDoesNotTakeTheRowOfARecordItHasNotSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(writerIdx, writer, wf.ID, "INBOX", saved, m); err != nil {
+	if err := mailboxbase.RecordSaved(writerIdx, writer, wf.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 	written := m.UID
@@ -80,7 +81,7 @@ func TestASyncDoesNotTakeTheRowOfARecordItHasNotSeen(t *testing.T) {
 	if msgs[0].UID != written {
 		t.Errorf("the record is uid %d, the save wrote %d", msgs[0].UID, written)
 	}
-	name, perr := mailbox.MessagePath(writer, "INBOX", msgs[0])
+	name, perr := mailboxbase.MessagePath(writer, "INBOX", msgs[0])
 	if perr != nil {
 		t.Fatalf("uid %d lost its row: %v", msgs[0].UID, perr)
 	}
@@ -120,7 +121,7 @@ func TestAnImportedFileKeepsTheUIDTheListGivesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+	if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
 	written := m.UID
@@ -147,7 +148,7 @@ func TestAnImportedFileKeepsTheUIDTheListGivesIt(t *testing.T) {
 	if msgs[0].UID != written {
 		t.Errorf("the imported file came back as uid %d, the list names it %d", msgs[0].UID, written)
 	}
-	if _, perr := mailbox.MessagePath(box, "INBOX", msgs[0]); perr != nil {
+	if _, perr := mailboxbase.MessagePath(box, "INBOX", msgs[0]); perr != nil {
 		t.Errorf("the imported record cannot name its file: %v", perr)
 	}
 }

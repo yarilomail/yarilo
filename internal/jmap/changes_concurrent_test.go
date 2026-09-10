@@ -11,6 +11,7 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -132,7 +133,7 @@ func serverSharingItsLocker(t *testing.T) (*Server, string, *mailbox.UserInfo, l
 		UID: 1, Size: uint32(len(setTestMessage)), VSize: vsize,
 		Flags: flags, GUID: guid, InternalDate: time.Now(),
 	}
-	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := idx.AppendMessage(f.ID, meta); err != nil {
@@ -175,7 +176,7 @@ func deliverAnother(info *mailbox.UserInfo, locker locks.Locker, uid uint32) (st
 		UID: uid, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
 		InternalDate: time.Now(),
 	}
-	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
 		return "", fmt.Errorf("name: %w", err)
 	}
 	if err := idx.AppendMessage(f.ID, meta); err != nil {

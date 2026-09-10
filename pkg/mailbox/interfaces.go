@@ -109,6 +109,12 @@ type FolderRefresher interface {
 	RefreshFolder(folderID uint64) error
 }
 
+// RecordSizer answers a message's sizes from where its driver keeps them: a
+// maildir name carries both, a dbox record already holds them (#1726).
+type RecordSizer interface {
+	RecordSize(folder string, m *MessageMeta) (size, vsize uint32, err error)
+}
+
 // SizelessLister names the records carrying no virtual size, so the driver that
 // keeps the size elsewhere can fill them (#1728).
 type SizelessLister interface {
@@ -573,22 +579,6 @@ type UserIndex interface {
 // locked path.
 type UnlockedReader interface {
 	GetMessagesUnlocked(folderID uint64, uids SeqSet) ([]*MessageMeta, error)
-}
-
-// ReadMessages is the read for a caller whose answer goes to a client and
-// decides nothing on disk — FETCH, SEARCH, a JMAP query, a diagnostic dump. It
-// takes the lock-free path where the index offers one.
-//
-// A caller whose answer chooses what to rewrite or delete must call
-// GetMessages directly. That is not a preference: a stale answer there does not
-// become visible a moment later, it decides wrongly and the write lands anyway.
-// Keeping the two as separate calls is what makes the choice visible at the
-// call site instead of hidden in an argument.
-func ReadMessages(idx UserIndex, folderID uint64, uids SeqSet) ([]*MessageMeta, error) {
-	if u, ok := idx.(UnlockedReader); ok {
-		return u.GetMessagesUnlocked(folderID, uids)
-	}
-	return idx.GetMessages(folderID, uids)
 }
 
 // CorruptIndexError says the folder's index cannot be read because what is on

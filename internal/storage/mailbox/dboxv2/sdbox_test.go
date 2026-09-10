@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -155,7 +156,7 @@ func TestListAndFolderOps(t *testing.T) {
 		t.Fatalf("got %d messages, want 3", len(msgs))
 	}
 	for _, m := range msgs {
-		if _, perr := mailbox.MessagePath(mb, "INBOX", m); perr != nil {
+		if _, perr := mailboxbase.MessagePath(mb, "INBOX", m); perr != nil {
 			t.Errorf("uid %d cannot be named: %v", m.UID, perr)
 		}
 	}

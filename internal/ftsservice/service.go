@@ -19,6 +19,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/fts/buildmail"
 	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -112,7 +113,7 @@ type userHandle struct {
 	ui       fts.UserIndex
 	box      mailbox.UserMailbox
 	idx      mailbox.UserIndex
-	mbox     *mailbox.Box // paired once, under mboxOnce
+	mbox     mailbox.Box // paired once, under mboxOnce
 	mboxOnce sync.Once
 
 	// inUse counts the operations holding this handle right now. The idle
@@ -239,8 +240,8 @@ func (s *Service) handle(user string) (*userHandle, error) {
 }
 
 // mailboxOf pairs the handle's halves once (#1715).
-func (h *userHandle) mailboxOf() *mailbox.Box {
-	h.mboxOnce.Do(func() { h.mbox = mailbox.Open(h.box, h.idx) })
+func (h *userHandle) mailboxOf() mailbox.Box {
+	h.mboxOnce.Do(func() { h.mbox = mailboxbase.Open(h.box, h.idx) })
 	return h.mbox
 }
 

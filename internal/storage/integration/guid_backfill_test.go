@@ -10,6 +10,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -43,7 +44,7 @@ func stageLegacyFolder(t *testing.T, n int) (mailbox.UserMailbox, mailbox.UserIn
 		// No GUID: the record shape this fixture reproduces. The name is still
 		// settled the way every caller settles it.
 		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
-		if err := mailbox.NameSaved(mb, "INBOX", name, meta); err != nil {
+		if err := mailboxbase.NameSaved(mb, "INBOX", name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		meta.GUID = [16]byte{}
@@ -235,7 +236,7 @@ func TestBackfillMatchesStorage(t *testing.T) {
 		t.Fatalf("get messages: %v", err)
 	}
 	for _, m := range msgs {
-		name, perr := mailbox.MessagePath(mb, "INBOX", m)
+		name, perr := mailboxbase.MessagePath(mb, "INBOX", m)
 		if perr != nil {
 			t.Errorf("uid %d cannot be named: %v", m.UID, perr)
 			continue

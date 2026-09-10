@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userdbinfo"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -38,7 +39,7 @@ type nsBundle struct {
 	info     *mailbox.UserInfo
 	box      mailbox.UserMailbox
 	idx      mailbox.UserIndex
-	mbox     *mailbox.Box
+	mbox     mailbox.Box
 	location string
 }
 
@@ -250,7 +251,7 @@ func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, 
 		info:     ui,
 		box:      box,
 		idx:      idx,
-		mbox:     mailbox.Open(box, idx),
+		mbox:     mailboxbase.Open(box, idx),
 		location: ui.Home,
 	}
 	return bundle, nil

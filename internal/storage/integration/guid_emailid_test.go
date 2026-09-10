@@ -10,6 +10,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -142,7 +143,7 @@ func TestGUIDSurvivesFlagChange(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	for _, m := range msgs {
-		if name, _ := mailbox.MessagePath(mb, "INBOX", m); name == flagged && m.GUID != guid {
+		if name, _ := mailboxbase.MessagePath(mb, "INBOX", m); name == flagged && m.GUID != guid {
 			t.Fatalf("flag change altered EMAILID: %x -> %x", guid, m.GUID)
 		}
 	}
@@ -175,7 +176,7 @@ func TestGUIDReachesIndex(t *testing.T) {
 	meta := &mailbox.MessageMeta{
 		UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid,
 	}
-	if err := mailbox.NameSaved(mb, "INBOX", temp, meta); err != nil {
+	if err := mailboxbase.NameSaved(mb, "INBOX", temp, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := idx.AppendMessage(folder.ID, meta); err != nil {

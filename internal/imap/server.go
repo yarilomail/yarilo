@@ -511,7 +511,7 @@ type session struct {
 	// s.dispatch() and use the resulting handle instead.
 	box  mailbox.UserMailbox
 	idx  mailbox.UserIndex
-	mbox *mailbox.Box
+	mbox mailbox.Box
 	subs *subs.Store
 
 	limitIP string
@@ -627,7 +627,7 @@ func (s *session) folderBox() mailbox.UserMailbox {
 
 // folderMailbox is s.folder's two halves together, which is what a read asks:
 // a record either resolves to a body or is reported (#1715).
-func (s *session) folderMailbox() *mailbox.Box {
+func (s *session) folderMailbox() mailbox.Box {
 	if s.folderNS != nil && s.folderNS.mbox != nil {
 		return s.folderNS.mbox
 	}
@@ -4339,7 +4339,7 @@ func newBodyRefs(names []string) bodyRefs {
 
 // bodyNames asks the box what each record is called, which is the only place a
 // name comes from now (#1700).
-func bodyNames(box *mailbox.Box, folder string, msgs []*mailbox.MessageMeta) []string {
+func bodyNames(box mailbox.Box, folder string, msgs []*mailbox.MessageMeta) []string {
 	out := make([]string, 0, len(msgs))
 	for _, m := range msgs {
 		if name, err := box.MessagePath(folder, m); err == nil {
@@ -4479,7 +4479,7 @@ type unlockedReader interface {
 // decides nothing on disk. Callers whose answer drives a write or a delete --
 // STORE, EXPUNGE, COPY, MOVE -- must keep using GetMessages, which is why this
 // is a separate function rather than a swap inside one (#1249).
-func readMessages(box *mailbox.Box, folderID uint64) ([]*mailbox.MessageMeta, error) {
+func readMessages(box mailbox.Box, folderID uint64) ([]*mailbox.MessageMeta, error) {
 	return box.Messages(folderID, mailbox.SeqSet{})
 }
 

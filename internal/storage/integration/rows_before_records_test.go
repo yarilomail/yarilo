@@ -9,6 +9,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -53,7 +54,7 @@ func namelessRecords(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserInde
 	}
 	var out []uint32
 	for _, m := range msgs {
-		if name, err := mailbox.MessagePath(box, "INBOX", m); err != nil || name == "" {
+		if name, err := mailboxbase.MessagePath(box, "INBOX", m); err != nil || name == "" {
 			out = append(out, m.UID)
 		}
 	}
@@ -74,7 +75,7 @@ func TestNoRecordIsOlderThanItsRow(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-			if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+			if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -94,7 +95,7 @@ func TestNoRecordIsOlderThanItsRow(t *testing.T) {
 		// the shapes a run walks between reconciles.
 		writer := mailbox.Driver(box).(mailbox.FlagWriter)
 		for i, m := range msgs {
-			name, perr := mailbox.MessagePath(box, "INBOX", m)
+			name, perr := mailboxbase.MessagePath(box, "INBOX", m)
 			if perr != nil {
 				continue
 			}
@@ -134,7 +135,7 @@ func TestARefusedRowSkipsOneMessageNotTheBatch(t *testing.T) {
 	if serr != nil {
 		t.Fatal(serr)
 	}
-	if err := mailbox.RecordSaved(idx, box, f.ID, "INBOX", saved,
+	if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved,
 		&mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}); err != nil {
 		t.Fatal(err)
 	}

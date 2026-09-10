@@ -12,6 +12,7 @@ import (
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -62,7 +63,7 @@ func seedAccount(t *testing.T, root, user string) *mailbox.UserInfo {
 			UID: uid[m.folder], Size: uint32(len(m.raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Now(),
 		}
-		if err := mailbox.NameSaved(box, m.folder, name, meta); err != nil {
+		if err := mailboxbase.NameSaved(box, m.folder, name, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		meta.GUID = guid
@@ -298,7 +299,7 @@ func TestMessagesWithoutAGuidAreSkippedNotMerged(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := &mailbox.MessageMeta{UID: 99, Size: uint32(len(raw)), VSize: vsize}
-	if err := mailbox.NameSaved(box, "INBOX", name, old); err != nil {
+	if err := mailboxbase.NameSaved(box, "INBOX", name, old); err != nil {
 		t.Fatal(err)
 	}
 	old.GUID = [16]byte{}
@@ -464,7 +465,7 @@ func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 		UID: 1, Size: uint32(len(raw)), VSize: vsize,
 		GUID: guid, InternalDate: time.Now(),
 	}
-	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := idx.AppendMessage(f.ID, meta); err != nil {

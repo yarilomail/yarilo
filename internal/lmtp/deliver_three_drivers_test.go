@@ -12,6 +12,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -41,7 +42,7 @@ func TestADeliveredMessageIsReadableFromItsRecord(t *testing.T) {
 			defer ui.Close() //nolint:errcheck
 
 			raw := "From: a@b\r\nSubject: delivered\r\n\r\n" + tc.driver + " body\r\n"
-			if _, _, _, err := deliverOne(mailbox.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)),
+			if _, _, _, err := deliverOne(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)),
 				int64(len(raw)), nil, info.Username, "x@y", nil); err != nil {
 				t.Fatalf("deliver: %v", err)
 			}
@@ -57,7 +58,7 @@ func TestADeliveredMessageIsReadableFromItsRecord(t *testing.T) {
 			if len(msgs) != 1 {
 				t.Fatalf("the folder holds %d records after one delivery", len(msgs))
 			}
-			rc, err := mailbox.OpenMessage(box, "INBOX", msgs[0])
+			rc, err := mailboxbase.OpenMessage(box, "INBOX", msgs[0])
 			if err != nil {
 				t.Fatalf("uid %d cannot be read from its record: %v", msgs[0].UID, err)
 			}
@@ -101,7 +102,7 @@ func TestNoSidecarIsWrittenByADelivery(t *testing.T) {
 			ui := idx.OpenUser(info)
 			defer ui.Close() //nolint:errcheck
 			raw := "From: a@b\r\n\r\nbody\r\n"
-			if _, _, _, err := deliverOne(mailbox.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)),
+			if _, _, _, err := deliverOne(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)),
 				int64(len(raw)), nil, info.Username, "x@y", nil); err != nil {
 				t.Fatal(err)
 			}

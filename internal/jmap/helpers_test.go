@@ -13,6 +13,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -57,7 +58,7 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 		UID: 1, Size: uint32(len(raw)), VSize: vsize, Flags: flags, GUID: guid,
 		InternalDate: time.Now(),
 	}
-	if err := mailbox.NameSaved(box, "INBOX", name, meta); err != nil {
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
 		t.Fatalf("name: %v", err)
 	}
 	if err := ui.AppendMessage(f.ID, meta); err != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/ftsservice"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -60,7 +61,7 @@ func Run(cfg Config) (Report, error) {
 	defer box.Close() //nolint:errcheck
 	uidx := idx.OpenUser(info)
 	defer uidx.Close() //nolint:errcheck
-	mbox := mailbox.Open(box, uidx)
+	mbox := mailboxbase.Open(box, uidx)
 
 	folder, err := uidx.OpenFolder(benchMbox.Name, benchMbox.UIDValidity)
 	if err != nil {
@@ -152,7 +153,7 @@ func Run(cfg Config) (Report, error) {
 
 // scanOnce reproduces the brute-force SEARCH path: fetch every message and
 // match it against the criteria.
-func scanOnce(box *mailbox.Box, folder string, metas []*mailbox.MessageMeta, criteria *imaplib.SearchCriteria) {
+func scanOnce(box mailbox.Box, folder string, metas []*mailbox.MessageMeta, criteria *imaplib.SearchCriteria) {
 	for i, m := range metas {
 		rc, err := box.OpenMessage(folder, m)
 		if err != nil {
