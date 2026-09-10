@@ -56,7 +56,7 @@ func TestReconcile_KeywordsReachTheIndexUnderTheirRealNames(t *testing.T) {
 	const base = "1700000010.M1P1.host,S=20"
 	deliverToCur(t, box, base+":2,abdS", "From: a@b\r\n\r\nx\r\n")
 
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,7 +93,7 @@ func TestReconcile_AStoreAfterAdoptionKeepsTheKeywordLetters(t *testing.T) {
 	const base = "1700000011.M1P1.host,S=20"
 	deliverToCur(t, box, base+":2,ab", "From: a@b\r\n\r\nx\r\n")
 
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})

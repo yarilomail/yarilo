@@ -18,7 +18,7 @@ type proactiveSyncer interface {
 	SyncToken(folder string) string
 	// ReconcileIndex imports new files, migrates new/→cur/, expunges vanished
 	// ones and repoints renamed files under the driver's own mailbox lock.
-	ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error)
+	ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (mailbox.SyncStats, error)
 }
 
 // syncTokens returns the token cache this session reconciles against: the
@@ -72,7 +72,7 @@ func (s *session) reconcileFolder(h *nsHandle, rel string) bool {
 		slog.Warn("imap: reconcile open folder failed", "folder", rel, "err", err)
 		return false
 	}
-	st, err := ps.ReconcileIndex(h.idx, f)
+	st, err := ps.ReconcileIndex(h.mailbox(), f)
 	if err != nil {
 		slog.Warn("imap: maildir reconcile failed", "folder", rel, "err", err)
 		return false

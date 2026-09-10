@@ -27,10 +27,10 @@ func windowFixture(t *testing.T) (mailbox.UserMailbox, mailbox.UserIndex, *mailb
 		t.Fatal(err)
 	}
 	rec := mailbox.Driver(box).(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
 	return box, idx, f, func() mailbox.SyncStats {
-		st, rerr := rec.ReconcileIndex(idx, f)
+		st, rerr := rec.ReconcileIndex(mailboxbase.Open(box, idx), f)
 		if rerr != nil {
 			t.Fatalf("reconcile: %v", rerr)
 		}
@@ -168,7 +168,7 @@ func TestAReconcileInsideAMoveWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := mailbox.Driver(box).(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
 
 	const body = "From: a@b\r\nSubject: move\r\n\r\nbody\r\n"
@@ -191,7 +191,7 @@ func TestAReconcileInsideAMoveWindow(t *testing.T) {
 
 	// The window: the file has left INBOX and the destination has no record of
 	// it yet. A session selecting Archive reconciles here.
-	st, err := rec.ReconcileIndex(idx, dst)
+	st, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), dst)
 	if err != nil {
 		t.Fatal(err)
 	}

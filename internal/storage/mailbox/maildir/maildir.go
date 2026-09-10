@@ -954,7 +954,7 @@ func (u *userMailbox) moveNewToCurLocked(folder string) error {
 // ReconcileIndex brings idx into agreement with the maildir, matching by base
 // name so a flag rename keeps its UID. An unchanged name is left alone: the
 // index is authoritative for flags this server set.
-func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
+func (u *userMailbox) ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
 	// The move precedes the scan because it renames, and is asked about before
 	// the lock: one acquisition taken to find an empty new/ is paid on every
@@ -987,7 +987,7 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 	// Nothing to apply, no lock at all: fifty sessions polling one folder took
 	// it to find the first had done the work (#1630). A stale answer errs
 	// toward taking the lock, and the section re-reads before writing.
-	if u.reconcileIsClean(idx, folder, scanned) {
+	if u.reconcileIsClean(box, folder, scanned) {
 		return st, nil
 	}
 
@@ -997,7 +997,7 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 		// A store being taken over: its uidlist already names a UID space.
 		// Here rather than in its own acquisition -- it must precede the
 		// appends, and nothing in the scan depends on it.
-		if a, ok := idx.(mailbox.UIDSpaceAdopter); ok {
+		if a, ok := box.Index().(mailbox.UIDSpaceAdopter); ok {
 			if uidValidity, nextUID, have := u.UIDSpace(folder.Name); have {
 				aerr := a.AdoptUIDSpace(folder.ID, uidValidity, nextUID)
 				switch {
@@ -1027,12 +1027,12 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 
 		// The view first, then the decision: "this folder does not hold the
 		// file" must mean the folder, not this process's last read (#1739).
-		if r, ok := idx.(mailbox.FolderRefresher); ok {
+		if r, ok := box.Index().(mailbox.FolderRefresher); ok {
 			if rerr := r.RefreshFolder(folder.ID); rerr != nil {
 				return fmt.Errorf("maildir/sync: refresh: %w", rerr)
 			}
 		}
-		existing, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		existing, err := box.Index().GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
 			return fmt.Errorf("maildir/sync: get messages: %w", err)
 		}
@@ -1061,7 +1061,7 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 					continue
 				}
 				// Vanished out of band → expunge (QRESYNC tombstone).
-				if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
+				if err := box.Index().ExpungeMessage(folder.ID, m.UID); err != nil {
 					return fmt.Errorf("maildir/sync: expunge %d: %w", m.UID, err)
 				}
 				st.Expunged++
@@ -1071,7 +1071,7 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 				// Another record already owns this message. GetMessages is
 				// UID-ordered, so the lowest UID is the keeper and the rest go:
 				// left in place, expunging one would unlink the shared body.
-				if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
+				if err := box.Index().ExpungeMessage(folder.ID, m.UID); err != nil {
 					return fmt.Errorf("maildir/sync: expunge duplicate %d: %w", m.UID, err)
 				}
 				st.Expunged++
@@ -1095,7 +1095,7 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 				if !u.stillOnDisk(folder.Name, rec.Filename) {
 					continue
 				}
-				if err := idx.UpdateFlags(folder.ID, m.UID, rec.Flags, rec.Keywords); err != nil {
+				if err := box.Index().UpdateFlags(folder.ID, m.UID, rec.Flags, rec.Keywords); err != nil {
 					return fmt.Errorf("maildir/sync: update flags %d: %w", m.UID, err)
 				}
 				st.Updated++
@@ -1133,14 +1133,14 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			// wins: a second one takes the row from the record holding it (#1739).
 			if uid, known := u.UIDFor(folder.Name, rec.Filename); known {
 				m.UID = uid
-				if err := idx.AppendMessage(folder.ID, m); err != nil {
+				if err := box.Index().AppendMessage(folder.ID, m); err != nil {
 					return fmt.Errorf("maildir/sync: append %s at its recorded uid %d: %w",
 						rec.Filename, uid, err)
 				}
 				st.Imported++
 				continue
 			}
-			uid, err := idx.AllocateUID(folder.ID)
+			uid, err := box.Index().AllocateUID(folder.ID)
 			if err != nil {
 				return fmt.Errorf("maildir/sync: allocate uid for %s: %w", rec.Filename, err)
 			}
@@ -1174,14 +1174,14 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 				if _, no := refused[p.meta.UID]; no {
 					continue
 				}
-				if err := idx.AppendMessage(folder.ID, p.meta); err != nil {
+				if err := box.Index().AppendMessage(folder.ID, p.meta); err != nil {
 					return fmt.Errorf("maildir/sync: append %s: %w", p.filename, err)
 				}
 				st.Imported++
 			}
 		}
 		if len(restamp) > 0 {
-			if err := idx.SetGUIDs(folder.ID, restamp); err != nil {
+			if err := box.Index().SetGUIDs(folder.ID, restamp); err != nil {
 				return fmt.Errorf("maildir/sync: restamp guids: %w", err)
 			}
 			// Not counted as a change: the client's view is the same, only the
@@ -1966,8 +1966,8 @@ func (u *userMailbox) inCurDir(folder, filename string) bool {
 // reconcileIsClean reports whether the scan and the index agree, so the apply
 // phase need not take its lock. False whenever it cannot be sure, including an
 // empty folder still waiting to adopt a UID space.
-func (u *userMailbox) reconcileIsClean(idx mailbox.UserIndex, folder *mailbox.Folder, scanned []mailbox.ScanRecord) bool {
-	reader, ok := idx.(mailbox.UnlockedReader)
+func (u *userMailbox) reconcileIsClean(box mailbox.Box, folder *mailbox.Folder, scanned []mailbox.ScanRecord) bool {
+	reader, ok := box.Index().(mailbox.UnlockedReader)
 	if !ok {
 		return false
 	}

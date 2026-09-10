@@ -11,6 +11,7 @@ import (
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -126,12 +127,12 @@ func TestTheIndexTakesItsUIDValidityFromTheList(t *testing.T) {
 func reconcile(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, f *mailbox.Folder) {
 	t.Helper()
 	syncer, ok := box.(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
 	if !ok {
 		t.Fatal("the maildir driver no longer reconciles")
 	}
-	if _, err := syncer.ReconcileIndex(idx, f); err != nil {
+	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -190,9 +191,9 @@ func TestSizeKeysOnlyWhereTheNameLacksThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	syncer := box.(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
-	if _, err := syncer.ReconcileIndex(idx, f); err != nil {
+	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 		t.Fatal(err)
 	}
 

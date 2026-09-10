@@ -47,7 +47,7 @@ func TestTheRenameClockSpansTheRenames(t *testing.T) {
 	for _, n := range names {
 		deliverToNew(t, box, n, "From: a@b\r\n\r\nx\r\n")
 	}
-	if _, err := box.ReconcileIndex(idx, folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{})

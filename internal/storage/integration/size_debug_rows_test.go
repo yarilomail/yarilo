@@ -66,7 +66,7 @@ func TestASizelessAppendNamesItsSite(t *testing.T) {
 	dropInCur(t, root, "1700000001.M4P4_4.host:2,", "From: a@b\r\nSubject: unsized\r\n\r\nbody\r\n")
 
 	c := captureAt(t, slog.LevelDebug)
-	if _, err := rec.ReconcileIndex(idx, f); err != nil {
+	if _, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
 		t.Fatal(err)
 	}
 	row := c.find("fileindex: appended a record with no virtual size")

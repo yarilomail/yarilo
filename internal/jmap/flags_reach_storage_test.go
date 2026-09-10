@@ -10,6 +10,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -40,12 +41,12 @@ func reconcile(t *testing.T, home string) {
 		t.Fatalf("open folder: %v", err)
 	}
 	syncer, ok := mailbox.Driver(box).(interface {
-		ReconcileIndex(mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
 	if !ok {
 		t.Fatal("the maildir driver does not reconcile")
 	}
-	if _, err := syncer.ReconcileIndex(ui, f); err != nil {
+	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, ui), f); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 }
