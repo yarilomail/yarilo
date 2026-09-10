@@ -678,12 +678,12 @@ func (s *session) loadMailbox() error {
 	// address UIDs taken from it, never positions in a fresh index, so a
 	// snapshot one delivery behind narrows the session's view and cannot
 	// misdirect a deletion (#1249).
-	msgs, err := mailbox.ReadMessages(s.box.Index(), folder.ID, mailbox.SeqSet{})
+	msgs, err := s.box.Messages(folder.ID, mailbox.SeqSet{})
 	if err != nil {
 		slog.Error("pop3: get messages", "user", s.userInfo.Username, "err", err)
 		return err
 	}
-	mailbox.FillSizes(s.box.Store(), folder.Name, msgs)
+	s.box.FillResponseSizes(folder.Name, msgs)
 	var savedUIDLs map[uint32]string
 	if s.srv.opts.SaveUIDL {
 		if saved, err := readPOP3UIDLs(s.box.Index(), folder.ID); err != nil {
@@ -744,7 +744,7 @@ func (s *session) readXUIDL(m *mailbox.MessageMeta) string {
 // storedName is what the driver calls this message on disk. %f and %m are the
 // two variables that read it, and the record no longer carries one (#1700).
 func (s *session) storedName(m *mailbox.MessageMeta) string {
-	name, err := mailbox.MessagePath(s.box.Store(), "INBOX", m)
+	name, err := s.box.MessagePath("INBOX", m)
 	if err != nil {
 		return ""
 	}
@@ -911,7 +911,7 @@ func (s *session) cmdList(arg string) {
 // fetchINBOX reads a message body and flags the folder for a reactive heal if
 // the read tripped over corrupt sdbox storage (missing/truncated/bad file).
 func (s *session) fetchINBOX(m *mailbox.MessageMeta) (io.ReadCloser, error) {
-	rc, err := mailbox.OpenMessage(s.box.Store(), "INBOX", m)
+	rc, err := s.box.OpenMessage("INBOX", m)
 	// flag once per session: one mark heals every missing record on the
 	// next open, so a RETR loop over a corrupt mailbox pays no per-message cost
 	if err != nil && !s.markedCorrupt && mailbox.MarkCorruptOnFetchErr(s.box.Store(), s.box.Index(), "INBOX", err) {

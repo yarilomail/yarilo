@@ -298,11 +298,11 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 			if err != nil || f == nil {
 				continue
 			}
-			msgs, err := mailbox.ReadMessages(bundle.idx, f.ID, nil)
+			msgs, err := bundle.mbox.Messages(f.ID, nil)
 			if err != nil {
 				continue
 			}
-			mailbox.FillSizes(bundle.box, name, msgs)
+			bundle.mbox.FillResponseSizes(name, msgs)
 			var size uint64
 			for _, m := range msgs {
 				size += uint64(m.Size)

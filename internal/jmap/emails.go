@@ -57,7 +57,7 @@ func (s *Server) findMessages(h *userHandle, want map[string]bool) (map[string]m
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", e.Name, err)
 		}
-		metas, err := mailbox.ReadMessages(h.idx, f.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		metas, err := h.mbox.Messages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
 			return nil, fmt.Errorf("jmap: read folder %q: %w", e.Name, err)
 		}
@@ -91,7 +91,7 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 		ThreadID:   h.threadOf(emailID(m)),
 		MailboxIDs: map[string]bool{ref.mailboxID: true},
 		Keywords:   keywordsOf(m),
-		Size:       mailbox.RFC822SizeOf(h.box, ref.folder, m),
+		Size:       h.mbox.RFC822Size(ref.folder, m),
 		ReceivedAt: m.InternalDate.UTC().Format(time.RFC3339),
 		BodyValues: map[string]jmapcore.EmailBodyValue{},
 	}
@@ -116,7 +116,7 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 		}
 	}
 
-	rc, err := mailbox.OpenMessage(h.box, ref.folder, m)
+	rc, err := h.mbox.OpenMessage(ref.folder, m)
 	if err != nil {
 		return email, headerFields, fmt.Errorf("jmap: fetch %s/%d: %w", ref.folder, m.UID, err)
 	}

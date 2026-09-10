@@ -190,7 +190,7 @@ type changedIDs struct{ created, updated []string }
 // an update. Without that field both would have to be reported as updates, and
 // a client would refetch every changed message as though it had never seen it.
 func (s *Server) folderMessageIDs(h *userHandle, f folderMark, sinceModSeq uint64, sinceNextUID uint32) (changedIDs, error) {
-	metas, err := mailbox.ReadMessages(h.idx, f.folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	metas, err := h.mbox.Messages(f.folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return changedIDs{}, fmt.Errorf("jmap: read folder %q: %w", f.name, err)
 	}

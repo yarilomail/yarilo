@@ -341,7 +341,7 @@ func (h *userHandle) writeFlagsToStorage(folderID uint64, folder string,
 		if !known {
 			continue
 		}
-		name, err := mailbox.MessagePath(h.box, folder, meta)
+		name, err := h.mbox.MessagePath(folder, meta)
 		if err != nil {
 			slog.Warn("jmap: the record names no file for its flags",
 				"folder", folder, "uid", uid, "err", err)
@@ -351,5 +351,5 @@ func (h *userHandle) writeFlagsToStorage(folderID uint64, folder string,
 			UID: uid, Filename: name, Flags: res.Flags, Keywords: res.Keywords,
 		})
 	}
-	mailbox.FlagsWritten(h.idx, h.box, folderID, folder, writes)
+	h.mbox.WriteFlags(&mailbox.Folder{ID: folderID}, folder, writes)
 }

@@ -236,6 +236,7 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 // thread ids from the same history -- and every client's cached conversation
 // would be wrong after a rerun.
 func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string, path, user string, st *threadStats) (*threads.State, error) {
+	mbox := mailbox.Open(box, idx)
 	ordered := append([]string(nil), names...)
 	sort.Strings(ordered)
 
@@ -249,7 +250,7 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 		if ferr != nil {
 			return nil, fmt.Errorf("open %s: %w", name, ferr)
 		}
-		metas, merr := mailbox.ReadMessages(idx, folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		metas, merr := mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if merr != nil {
 			return nil, fmt.Errorf("read %s: %w", name, merr)
 		}
@@ -262,7 +263,7 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 				st.Unreadable++
 				continue
 			}
-			head, herr := readHeaders(box, name, m)
+			head, herr := readHeaders(mbox, name, m)
 			if herr != nil {
 				st.Unreadable++
 				slog.Warn("thread backfill: message unreadable, left unthreaded",
@@ -292,8 +293,8 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 // can be tens of gigabytes: reading whole bodies to find the top of each one
 // would make this step cost the size of the mail store rather than the size of
 // its metadata.
-func readHeaders(box mailbox.UserMailbox, folder string, m *mailbox.MessageMeta) ([]byte, error) {
-	rc, err := mailbox.OpenMessage(box, folder, m)
+func readHeaders(box *mailbox.Box, folder string, m *mailbox.MessageMeta) ([]byte, error) {
+	rc, err := box.OpenMessage(folder, m)
 	if err != nil {
 		return nil, err
 	}
