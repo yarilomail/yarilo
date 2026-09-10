@@ -446,6 +446,15 @@ func (s *Server) aclRebuildDryRun(w http.ResponseWriter, store *acl.Store, req *
 	})
 }
 
+// aclOpener: a read opens read-only, a write opens without Init and materialises
+// once the name it was given has passed.
+func aclOpener(s *Server, readOnly bool) func(string) (*userContext, error) {
+	if readOnly {
+		return s.openUserContextReadOnly
+	}
+	return s.openUserContextDeferred
+}
+
 // openACLStore decodes the common request body, resolves the
 // per-namespace bundle, and returns the acl.Store. Mirrors
 // openSubsStore / openSpecialUseStore in this package.
@@ -480,7 +489,7 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 		apiError(w, errUserRequired.Error(), http.StatusBadRequest)
 		return nil, nil, nil, "", errUserRequired
 	}
-	uc, err := s.openUserContextFor(account, readOnly)
+	uc, err := aclOpener(s, readOnly)(account)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return nil, nil, nil, "", err
@@ -499,6 +508,12 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 		return nil, nil, nil, "", errNoMailHome
 	}
+	// The bundle has touched no disk yet: a write checks the name on it first,
+	// and only a name that passes materialises the account (#1774, #1069).
+	materialise := func() error { return nil }
+	if !readOnly {
+		materialise = bundle.materialise
+	}
 	// Admin surface manages explicit entries, not effective-with-default
 	// resolution, so acl_defaults_from_inbox does not apply here.
 	// The admin path writes the files the IMAP commands read, so a name IMAP
@@ -508,6 +523,14 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 	//
 	// The empty name is left to each handler: it means "the namespace root" to
 	// some of them and nothing to others.
+	if req.Folder == "" {
+		// The namespace root is granted where no mailbox exists yet (#1091), so
+		// this path materialises with nothing to check first.
+		if err := materialise(); err != nil {
+			apiError(w, err.Error(), http.StatusInternalServerError)
+			return nil, nil, nil, "", err
+		}
+	}
 	if req.Root && req.Folder != "" {
 		apiError(w, `"root" addresses the namespace root; do not send "folder" with it`, http.StatusBadRequest)
 		return nil, nil, nil, "", errRootWithFolder
@@ -518,6 +541,10 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 		req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
 		if err := mailbox.CheckName(bundle.box, req.Folder); err != nil {
 			apiError(w, err.Error(), http.StatusBadRequest)
+			return nil, nil, nil, "", err
+		}
+		if err := materialise(); err != nil {
+			apiError(w, err.Error(), http.StatusInternalServerError)
 			return nil, nil, nil, "", err
 		}
 		// RFC 4314 3.3, the rule #1075 put on the IMAP side: the ACL commands

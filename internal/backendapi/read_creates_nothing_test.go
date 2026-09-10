@@ -47,6 +47,45 @@ func TestAReadCreatesNothingOnDisk(t *testing.T) {
 	}
 }
 
+// A write checks what it was given before it makes anything: a folder name the
+// rules refuse leaves no account behind, on a name that is a perfectly good one.
+func TestARefusedFolderNameMaterialisesNothing(t *testing.T) {
+	for _, folder := range []string{".", "/", "..", "../elsewhere", "a/../b"} {
+		t.Run(folder, func(t *testing.T) {
+			ts, root := storageTestServer(t)
+			before := treeSnapshot(t, root)
+			status, body := doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
+				"user":   "fresh@example.com",
+				"folder": folder,
+				"acl":    []map[string]any{{"identifier": "bob@example.com", "rights": "lr"}},
+			})
+			if status != http.StatusBadRequest {
+				t.Errorf("status=%d body=%s, want 400", status, body)
+			}
+			if after := treeSnapshot(t, root); after != before {
+				t.Errorf("a refused name left an account behind:\nbefore: %s\nafter:  %s", before, after)
+			}
+		})
+	}
+}
+
+// And a good name on the same account still brings it into being, or the row
+// above would pass on a path that never materialises at all.
+func TestAGoodFolderNameStillMaterialisesTheAccount(t *testing.T) {
+	ts, root := storageTestServer(t)
+	before := treeSnapshot(t, root)
+	// The folder does not exist yet, so the answer is 404 -- but the account it
+	// was asked about is now on disk, which is what the eager open used to do.
+	doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
+		"user":   "fresh@example.com",
+		"folder": "Work",
+		"acl":    []map[string]any{{"identifier": "bob@example.com", "rights": "lr"}},
+	})
+	if after := treeSnapshot(t, root); after == before {
+		t.Error("the account was never materialised, so the row above proves nothing")
+	}
+}
+
 // The name guard is what keeps an eager endpoint from making that tree: a write
 // is refused before it opens anything, not after it has made a home.
 func TestABareNameIsRefusedByAWriteToo(t *testing.T) {
