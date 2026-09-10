@@ -26,13 +26,14 @@ type TailStats struct {
 // StoredTails keys a scan of the store by the storage key each message is named
 // by, so a repair reads the truth once per account rather than once per record.
 func StoredTails(b mailbox.Box) (map[uint32]mailbox.ScanRecord, error) {
-	// The empty folder name is only legal for a store whose scan is
-	// storage-wide; a per-folder driver has no storage key to key this by.
-	agnostic, ok := mailbox.Driver(b.Store()).(mailbox.FolderAgnosticStorage)
+	// On the driver: a storage-wide scan names no folder, and the validating
+	// wrapper the binaries build reads the empty name as the mailbox root.
+	driver := mailbox.Driver(b.Store())
+	agnostic, ok := driver.(mailbox.FolderAgnosticStorage)
 	if !ok || !agnostic.FolderAgnosticScan() {
 		return nil, nil
 	}
-	scanned, err := b.Store().Scan("")
+	scanned, err := driver.Scan("")
 	if err != nil {
 		return nil, fmt.Errorf("idxrebuild/tails: scan: %w", err)
 	}
