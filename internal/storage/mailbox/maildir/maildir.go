@@ -1323,7 +1323,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	}
 
 	if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
-		u.debugListRead(folder, "cache", len(m), fi.ModTime().UnixNano(), fi.Size())
+		u.debugListRead(folder, "cache", len(m), stampOf(fi))
 		return m, nil
 	}
 
@@ -1382,7 +1382,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	}
 
 	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
-	u.debugListRead(folder, "disk", len(m), fi.ModTime().UnixNano(), fi.Size())
+	u.debugListRead(folder, "disk", len(m), stampOf(fi))
 	return m, nil
 }
 

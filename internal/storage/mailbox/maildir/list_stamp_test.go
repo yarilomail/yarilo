@@ -168,3 +168,33 @@ func TestASecondWriterKeepsTheRowTheFirstWrote(t *testing.T) {
 		}
 	}
 }
+
+// The stamp carries the inode and the ctime: without them a stamp that compares
+// equal to a changed file cannot be read as anything (#1739).
+func TestTheStampCarriesTheInodeAndCtime(t *testing.T) {
+	home := t.TempDir()
+	u := New().OpenUser(&mailbox.UserInfo{Username: "u@x", Home: home, Separator: "/"}).(*userMailbox)
+	t.Cleanup(func() { _ = u.Close() })
+	if err := u.Init(); err != nil {
+		t.Fatal(err)
+	}
+	path := u.uidListPath("INBOX")
+
+	rewriteList(t, path, "1700000001.M1P1.hostA")
+	first := u.listStampNow("INBOX")
+	if first.inode() == 0 {
+		t.Fatal("the stamp names no inode; this filesystem cannot answer the question the row is about")
+	}
+	if first.ctimeNanos() == 0 {
+		t.Error("the stamp names no ctime")
+	}
+
+	rewriteList(t, path, "1700000001.M1P1.hostB")
+	second := u.listStampNow("INBOX")
+	if second.mtime != first.mtime || second.size != first.size {
+		t.Skip("the rewrite moved mtime or size; the fixture cannot make the two collide here")
+	}
+	if second.inode() == first.inode() && second.ctimeNanos() == first.ctimeNanos() {
+		t.Error("two rewrites of one length in one moment are indistinguishable: neither the inode nor the ctime moved")
+	}
+}

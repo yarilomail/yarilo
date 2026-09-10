@@ -12,6 +12,7 @@ type listStamp struct {
 	ino   uint64
 	size  int64
 	mtime time.Time
+	ctime int64 // nanoseconds; carried for diagnostics, not yet compared
 }
 
 // stampOf reads that identity. A filesystem that will not say gives inode 0,
@@ -20,9 +21,18 @@ func stampOf(fi os.FileInfo) listStamp {
 	s := listStamp{size: fi.Size(), mtime: fi.ModTime()}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
 		s.ino = st.Ino
+		s.ctime = statCtimeNanos(st)
 	}
 	return s
 }
+
+// ino is the file's inode, for a diagnostic line: a stamp that compares equal
+// while the content differs is only explicable with this number (#1739).
+func (s listStamp) inode() uint64 { return s.ino }
+
+// ctimeNanos is when the inode itself last changed: a rename-over always moves
+// it, including onto a reused inode the other three cannot tell apart.
+func (s listStamp) ctimeNanos() int64 { return s.ctime }
 
 // same reports whether two stamps name the same file in the same state.
 func (s listStamp) same(other listStamp) bool {

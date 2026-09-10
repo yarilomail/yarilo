@@ -448,6 +448,15 @@ func listDebug() bool {
 	return slog.Default().Enabled(context.Background(), slog.LevelDebug)
 }
 
+// listStampNow is the list file's identity as it stands, for a debug line.
+func (u *userMailbox) listStampNow(folder string) listStamp {
+	fi, err := os.Stat(u.uidListPath(folder))
+	if err != nil {
+		return listStamp{}
+	}
+	return stampOf(fi)
+}
+
 // listStat is the file's identity for a debug row, without reading it.
 func (u *userMailbox) listStat(folder string) (mtime, size int64) {
 	fi, err := os.Stat(u.uidListPath(folder))
@@ -474,24 +483,26 @@ func (u *userMailbox) debugListWrite(site, folder string, uids []uint32, base st
 		return
 	}
 	rows := u.listRows(folder)
-	mod, size := u.listStat(folder)
+	after := u.listStampNow(folder)
 	slog.Debug("maildir: uidlist written",
 		"site", site, "user", u.username, "folder", folder, "owner", u.owner,
 		"uids", uids, "base", base,
 		"rows_before", beforeRows, "rows_after", rows,
-		"mtime_before", beforeMod, "mtime_after", mod,
-		"size_before", beforeSize, "size_after", size)
+		"mtime_before", beforeMod, "mtime_after", after.mtime.UnixNano(),
+		"size_before", beforeSize, "size_after", after.size,
+		"ino_after", after.inode(), "ctime_after", after.ctimeNanos())
 }
 
 // debugListRead says whether a reader took the list off disk or off the cached
 // snapshot the mtime and size validate, and how many rows it got (#1739).
-func (u *userMailbox) debugListRead(folder, from string, rows int, mod, size int64) {
+func (u *userMailbox) debugListRead(folder, from string, rows int, st listStamp) {
 	if !listDebug() {
 		return
 	}
 	slog.Debug("maildir: uidlist read",
 		"from", from, "user", u.username, "folder", folder, "owner", u.owner,
-		"rows", rows, "mtime", mod, "size", size)
+		"rows", rows, "mtime", st.mtime.UnixNano(), "size", st.size,
+		"ino", st.inode(), "ctime", st.ctimeNanos())
 }
 
 // listParses counts the times the file was parsed, so "one parse per save" is a
