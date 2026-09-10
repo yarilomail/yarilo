@@ -2,7 +2,9 @@ package backendapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -43,6 +45,38 @@ type nsBundle struct {
 	location string
 }
 
+// accountNameOK refuses a name the layout cannot place: with %d in the home
+// template a nameless domain resolves above every account (#1774).
+func accountNameOK(r *mailbox.Resolver, username string) error {
+	tmpl := r.HomeTemplate
+	if tmpl == "" {
+		tmpl = "%d/%u"
+	}
+	if !strings.Contains(tmpl, "%d") || strings.Contains(username, "@") {
+		return nil
+	}
+	return fmt.Errorf("backendapi/userctx: no such user: %s", username)
+}
+
+// errNoMailHome is the answer a read gives for an account whose home is not on
+// disk. A read never makes one (#1774).
+var errNoMailHome = errors.New("no mail home for this user")
+
+// readBundle answers a namespace for an operation that reads. A missing home is
+// an answer, not a directory to create.
+func readBundle(w http.ResponseWriter, s *Server, uc *userContext, namespace string) (*nsBundle, bool) {
+	bundle, err := uc.ns(s, namespace)
+	if err != nil {
+		apiError(w, err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return nil, false
+	}
+	return bundle, true
+}
+
 // openUserContext builds a context for username. The personal handle is
 // opened eagerly; shared/public are opened lazily by ns(). Returns an error
 // if the personal handle fails to open (typically a missing/unreadable home
@@ -65,6 +99,9 @@ func (s *Server) openUserContextInner(username string, readOnly bool) (*userCont
 	resolver := s.opts.Resolver
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
+	}
+	if err := accountNameOK(resolver, username); err != nil {
+		return nil, err
 	}
 	ui := resolver.UserInfo(username, "")
 	var pui *protocol.UserInfo

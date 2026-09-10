@@ -57,6 +57,21 @@ func storageTestServer(t *testing.T) (*httptest.Server, string) {
 	return ts, root
 }
 
+// materialiseHome brings the account into being the way a write does, since a
+// read no longer creates one; the scratch folder goes so only Init's work remains.
+func materialiseHome(t *testing.T, ts *httptest.Server, user string) {
+	t.Helper()
+	const scratch = "MaterialiseProbe"
+	if status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "",
+		map[string]any{"user": user, "folder": scratch}); status != 200 {
+		t.Fatalf("materialise %s: status=%d body=%s", user, status, body)
+	}
+	if status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/delete", "",
+		map[string]any{"user": user, "folder": scratch}); status != 200 {
+		t.Fatalf("materialise cleanup %s: status=%d body=%s", user, status, body)
+	}
+}
+
 func decodeJSONBody(t *testing.T, data []byte, out any) {
 	t.Helper()
 	if err := json.Unmarshal(data, out); err != nil {
@@ -68,8 +83,7 @@ func TestFolderListAndInfoAfterInit(t *testing.T) {
 	ts, root := storageTestServer(t)
 	const user = "alice@example.com"
 
-	// First call opens UserMailbox.Init which materialises INBOX.
-	// Subsequent folder/list must return INBOX.
+	materialiseHome(t, ts, user)
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "",
 		map[string]any{"user": user})
 	if status != 200 {
@@ -120,8 +134,7 @@ func TestFolderGUIDStableAcrossCalls(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "bob@example.com"
 
-	// Trigger init.
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	var first, second struct {
 		GUID string `json:"guid"`
@@ -142,6 +155,7 @@ func TestUserInfoExposesNamespacesAndHome(t *testing.T) {
 	ts, root := storageTestServer(t)
 	const user = "carol@example.com"
 
+	materialiseHome(t, ts, user)
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/user/info", "",
 		map[string]any{"user": user})
 	if status != 200 {
@@ -365,6 +379,7 @@ func TestIndexDumpEmptyAfterInit(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
 
+	materialiseHome(t, ts, user)
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/index/dump", "",
 		map[string]any{"user": user, "folder": "INBOX"})
 	if status != 200 {

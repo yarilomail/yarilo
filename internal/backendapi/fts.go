@@ -45,6 +45,9 @@ func (s *Server) ftsMailboxRef(uc *userContext, folder string) (fts.MailboxRef, 
 	if err != nil {
 		return fts.MailboxRef{}, err
 	}
+	if bundle == nil {
+		return fts.MailboxRef{}, errNoMailHome
+	}
 	f, err := bundle.idx.OpenFolder(folder, 0)
 	if err != nil {
 		return fts.MailboxRef{}, err
@@ -80,7 +83,7 @@ func (s *Server) handleFTSStatus(w http.ResponseWriter, r *http.Request) {
 		apiError(w, errFolderRequired.Error(), http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(user)
+	uc, err := s.openUserContextReadOnly(user)
 	if err != nil {
 		apiError(w, "fts status: "+err.Error(), http.StatusInternalServerError)
 		return

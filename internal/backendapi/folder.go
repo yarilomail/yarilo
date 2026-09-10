@@ -42,16 +42,15 @@ func (s *Server) handleFolderList(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer uc.Close()
 
-	bundle, err := uc.ns(s, req.Namespace)
-	if err != nil {
-		apiError(w, err.Error(), http.StatusBadRequest)
+	bundle, ok := readBundle(w, s, uc, req.Namespace)
+	if !ok {
 		return
 	}
 	entries, err := bundle.box.ListFolders()
@@ -91,16 +90,15 @@ func (s *Server) handleFolderStats(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder required", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer uc.Close()
 
-	bundle, err := uc.ns(s, req.Namespace)
-	if err != nil {
-		apiError(w, err.Error(), http.StatusBadRequest)
+	bundle, ok := readBundle(w, s, uc, req.Namespace)
+	if !ok {
 		return
 	}
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
@@ -167,7 +165,7 @@ func (s *Server) folderInfoCommon(w http.ResponseWriter, r *http.Request) (*fold
 	if req.Folder == "" {
 		return nil, http.StatusBadRequest, errFolderRequired
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
@@ -176,6 +174,9 @@ func (s *Server) folderInfoCommon(w http.ResponseWriter, r *http.Request) (*fold
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
+	}
+	if bundle == nil {
+		return nil, http.StatusNotFound, errNoMailHome
 	}
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
 	exists, err := bundle.box.FolderExists(req.Folder)

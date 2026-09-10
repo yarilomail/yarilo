@@ -243,7 +243,7 @@ func TestACL_RequestRejectsMissingUser(t *testing.T) {
 func TestACL_SetRefusesNamesIMAPWouldRefuse(t *testing.T) {
 	ts, root := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	before := treeSnapshot(t, root)
 

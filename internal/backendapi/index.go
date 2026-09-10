@@ -50,16 +50,15 @@ func (s *Server) handleIndexDump(w http.ResponseWriter, r *http.Request) {
 	if req.Limit < 0 {
 		req.Limit = 0
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer uc.Close()
 
-	bundle, err := uc.ns(s, req.Namespace)
-	if err != nil {
-		apiError(w, err.Error(), http.StatusBadRequest)
+	bundle, ok := readBundle(w, s, uc, req.Namespace)
+	if !ok {
 		return
 	}
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
