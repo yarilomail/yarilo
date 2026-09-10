@@ -679,7 +679,7 @@ func (s *session) writeFlagsToStorage(pending []pendingStore) {
 		})
 	}
 	renameStart := time.Now()
-	results := mailbox.FlagsWritten(s.folderIdx(), s.folderBox(), s.folder.ID, s.folder.Name, writes)
+	results := s.folderMailbox().WriteFlags(s.folder, s.folder.Name, writes)
 	s.storeRenameMS = time.Since(renameStart).Milliseconds()
 
 	nameStart := time.Now()
@@ -1211,7 +1211,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	if refreshed := s.migrateNamesOnSelect(h, rel, f); refreshed != nil {
 		f = refreshed
 	}
-	if n, ferr := mailbox.FillSizelessRecords(h.idx, h.box, f); ferr != nil {
+	if n, ferr := h.mbox.FillSizeless(f); ferr != nil {
 		slog.Warn("imap: sizes not filled", "folder", rel, "err", ferr)
 	} else if n > 0 {
 		slog.Info("imap: records took the size their storage holds",
@@ -1253,7 +1253,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 
 	tGetMsgs := time.Now()
-	msgs, err := readMessages(h.idx, f.ID)
+	msgs, err := readMessages(h.mbox, f.ID)
 	slog.Debug("imap: select timing getmsgs_ms", "folder", rel, "getmsgs_ms", time.Since(tGetMsgs).Milliseconds(), "total_ms", time.Since(tSelect).Milliseconds())
 	if err != nil {
 		return nil, fmt.Errorf("imap: select getmsgs %s: %w", rel, err)
@@ -1549,7 +1549,7 @@ func (s *session) renameInbox(dest string) error {
 			InternalDate: m.InternalDate,
 			GUID:         guid,
 		}
-		if err := mailbox.RecordSaved(s.idx, s.box, destFolder.ID, dest, newFilename, nm); err != nil {
+		if err := s.mbox.RecordSaved(destFolder, dest, newFilename, nm); err != nil {
 			_ = s.box.Remove(dest, newFilename)
 			return fmt.Errorf("imap/rename-inbox record: %w", err)
 		}
@@ -2103,7 +2103,7 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	if refreshed := s.dboxHealIfCorrupt(h, rel, f); refreshed != nil {
 		f = refreshed
 	}
-	msgs, err := readMessages(h.idx, f.ID)
+	msgs, err := readMessages(h.mbox, f.ID)
 	if err != nil {
 		return nil, fmt.Errorf("imap: status getmsgs %s: %w", rel, err)
 	}
@@ -2259,7 +2259,7 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 		Flags: flagList, Keywords: kwList, Size: uint32(size), VSize: vsize,
 		InternalDate: internalDate, GUID: guid,
 	}
-	if err := mailbox.RecordSaved(h.idx, h.box, f.ID, rel, filename, m); err != nil {
+	if err := h.mbox.RecordSaved(f, rel, filename, m); err != nil {
 		_ = h.box.Remove(rel, filename)
 		return nil, fmt.Errorf("imap/append record: %w", err)
 	}
@@ -2384,7 +2384,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		return nil
 	}
 
-	current, err := readMessages(s.folderIdx(), s.folder.ID)
+	current, err := readMessages(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return nil
 	}
@@ -2691,7 +2691,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	// here — the per-message expunge events below supply "after", so an "under"
 	// crossing fires on a delete-only session regardless of SELECT-time seeding.
 	s.captureQuotaSnap()
-	refs := newBodyRefs(bodyNames(s.folderBox(), s.folder.Name, msgs))
+	refs := newBodyRefs(bodyNames(s.folderMailbox(), s.folder.Name, msgs))
 	// Each expunge shifts later sequence numbers down by one, so track and
 	// adjust seqNum as we go rather than using the static GetMessages index.
 	seqNum := uint32(len(msgs))
@@ -2798,7 +2798,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	// SAVE so the matcher sees a concrete UID list.
 	criteria = s.substituteSearchRes(criteria)
 
-	msgs, err := readMessages(s.folderIdx(), s.folder.ID)
+	msgs, err := readMessages(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -3068,7 +3068,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		return err
 	}
 	idx := s.folderIdx()
-	backendMsgs, err := readMessages(idx, s.folder.ID)
+	backendMsgs, err := readMessages(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return err
 	}
@@ -3251,7 +3251,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		if opts.RFC822Size {
 			// From where the driver keeps it: a maildir name carries it, a dbox
 			// record holds it (#1726).
-			size, vsize, serr := mailbox.MessageSize(s.folderBox(), s.folder.Name, m)
+			size, vsize, serr := s.folderMailbox().MessageSize(s.folder.Name, m)
 			if serr != nil {
 				// The number still goes out, from the record: the one attribute
 				// here with a second source, so a wrong answer is otherwise mute.
@@ -3623,7 +3623,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		return nil, err
 	}
 	srcIdx := s.folderIdx()
-	srcBox := s.folderBox()
+	srcMailbox := s.folderMailbox()
 	destH, destRel, destFolder, err := s.ensureFolderHandle(dest)
 	if err != nil {
 		return nil, tryCreate(err)
@@ -3656,7 +3656,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		if !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
 			continue
 		}
-		rc, fetchErr := mailbox.OpenMessage(srcBox, s.folder.Name, m)
+		rc, fetchErr := srcMailbox.OpenMessage(s.folder.Name, m)
 		if fetchErr != nil {
 			return nil, fmt.Errorf("imap/copy fetch: %w", fetchErr)
 		}
@@ -3682,7 +3682,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 			GUID:         guid,
 		}
 		tIndex := time.Now()
-		if err := mailbox.RecordSaved(destH.idx, destH.box, destFolder.ID, destRel, newFilename, nm); err != nil {
+		if err := destH.mbox.RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
 			_ = destH.box.Remove(destRel, newFilename)
 			return nil, fmt.Errorf("imap/copy record: %w", err)
 		}
@@ -3986,6 +3986,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	}
 	srcIdx := s.folderIdx()
 	srcBox := s.folderBox()
+	srcMailbox := s.folderMailbox()
 	destH, destRel, destFolder, err := s.ensureFolderHandle(dest)
 	if err != nil {
 		return tryCreate(err)
@@ -4034,7 +4035,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		tSave := time.Now()
 		if srcBox == destH.box {
 			var moveErr error
-			srcName, pathErr := mailbox.MessagePath(srcBox, s.folder.Name, m)
+			srcName, pathErr := srcMailbox.MessagePath(s.folder.Name, m)
 			if pathErr != nil {
 				return fmt.Errorf("imap/move path: %w", pathErr)
 			}
@@ -4045,7 +4046,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		} else {
 			// Cross-namespace: no shared storage to relocate within, so copy the
 			// body over and hand the source GUID to Save, which stores it verbatim.
-			rc, fetchErr := mailbox.OpenMessage(srcBox, s.folder.Name, m)
+			rc, fetchErr := srcMailbox.OpenMessage(s.folder.Name, m)
 			if fetchErr != nil {
 				return fmt.Errorf("imap/move fetch: %w", fetchErr)
 			}
@@ -4071,7 +4072,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 			GUID:         guid,
 		}
 		tIndex := time.Now()
-		if err := mailbox.RecordSaved(destH.idx, destH.box, destFolder.ID, destRel, newFilename, nm); err != nil {
+		if err := destH.mbox.RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
 			if srcBox == destH.box {
 				_, _, _ = srcBox.Move(destRel, s.folder.Name, newFilename, guid)
 			} else {
@@ -4336,12 +4337,12 @@ func newBodyRefs(names []string) bodyRefs {
 	return r
 }
 
-// bodyNames asks the driver what each record is called, which is the only place
-// a name comes from now (#1700).
-func bodyNames(box mailbox.UserMailbox, folder string, msgs []*mailbox.MessageMeta) []string {
+// bodyNames asks the box what each record is called, which is the only place a
+// name comes from now (#1700).
+func bodyNames(box *mailbox.Box, folder string, msgs []*mailbox.MessageMeta) []string {
 	out := make([]string, 0, len(msgs))
 	for _, m := range msgs {
-		if name, err := mailbox.MessagePath(box, folder, m); err == nil {
+		if name, err := box.MessagePath(folder, m); err == nil {
 			out = append(out, name)
 		}
 	}
@@ -4478,8 +4479,8 @@ type unlockedReader interface {
 // decides nothing on disk. Callers whose answer drives a write or a delete --
 // STORE, EXPUNGE, COPY, MOVE -- must keep using GetMessages, which is why this
 // is a separate function rather than a swap inside one (#1249).
-func readMessages(idx mailbox.UserIndex, folderID uint64) ([]*mailbox.MessageMeta, error) {
-	return mailbox.ReadMessages(idx, folderID, mailbox.SeqSet{})
+func readMessages(box *mailbox.Box, folderID uint64) ([]*mailbox.MessageMeta, error) {
+	return box.Messages(folderID, mailbox.SeqSet{})
 }
 
 // readVanished and readKeywords are the same contract for the other two reads

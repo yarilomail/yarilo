@@ -87,6 +87,24 @@ func (b *Box) FillResponseSizes(folder string, msgs []*MessageMeta) {
 	FillSizes(b.store, folder, msgs)
 }
 
+// WriteFlags settles flag changes in storage and marks those that did not
+// reach it: a change kept in the index alone leaves the store stale (#1601).
+func (b *Box) WriteFlags(f *Folder, folder string, writes []FlagWrite) []FlagWriteResult {
+	return FlagsWritten(b.index, b.store, f.ID, folder, writes)
+}
+
+// RecordSaved records a body already written into a folder — an APPEND, a
+// fileinto, a copy — settling its name before its record (#1745).
+func (b *Box) RecordSaved(f *Folder, folder, saved string, m *MessageMeta) error {
+	return RecordSaved(b.index, b.store, f.ID, folder, saved, m)
+}
+
+// MessageSize is both numbers a record reports, from the record or from the
+// driver when it carries none (#1726).
+func (b *Box) MessageSize(folder string, m *MessageMeta) (size, vsize uint32, err error) {
+	return MessageSize(b.store, folder, m)
+}
+
 // Messages reads records with the driver's fill-ins applied.
 func (b *Box) Messages(folderID uint64, set SeqSet) ([]*MessageMeta, error) {
 	return ReadMessages(b.index, folderID, set)
