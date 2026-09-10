@@ -115,5 +115,9 @@ func (s *Server) openSubsStore(w http.ResponseWriter, r *http.Request, readOnly 
 	)
 	// One owner of NFC: a subscription addresses the same folder a session
 	// created, and new records go in NFC (#1113).
-	return store, mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize), nil
+	folder := mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, readOnly, folder) {
+		return nil, "", errFolderNotFound
+	}
+	return store, folder, nil
 }

@@ -126,9 +126,7 @@ func TestRebuildMdboxRejected(t *testing.T) {
 	ts, _ := storageTestServerMdbox(t)
 	const user = "alice@example.com"
 
-	// Trigger Init + Folder creation via the existing folder/list
-	// path so the mdbox storage root exists before scan runs.
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/index/rebuild", "",
 		map[string]any{"user": user, "folder": "INBOX"})
@@ -142,7 +140,7 @@ func TestRebuildMdboxRejected(t *testing.T) {
 func TestStorageRebuildEndpointMdbox(t *testing.T) {
 	ts, _ := storageTestServerMdbox(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/index/rebuild-storage", "",
 		map[string]any{"user": user})
@@ -163,7 +161,7 @@ func TestStorageRebuildEndpointMdbox(t *testing.T) {
 func TestStorageRebuildEndpointRejectsNonMdbox(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/index/rebuild-storage", "",
 		map[string]any{"user": user})
@@ -178,7 +176,7 @@ func TestStorageRebuildEndpointRejectsNonMdbox(t *testing.T) {
 func TestOptimizeIsNoopOnEmptyLog(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/index/optimize", "",
 		map[string]any{"user": user, "folder": "INBOX"})

@@ -22,7 +22,7 @@ func TestACL_SetGetListDeleteRoundTrip(t *testing.T) {
 	const user = "alice@example.com"
 
 	// Trigger init so the user home + INBOX dir exist.
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	// SET an ACL on INBOX granting bob lr.
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
@@ -112,7 +112,7 @@ func TestACL_SetWithNegativeIdentifier(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
 
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, _ := doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
 		"user":   user,
@@ -159,7 +159,7 @@ func TestACL_SetRejectsInvalidRights(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
 
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, _ := doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
 		"user":   user,
@@ -177,7 +177,7 @@ func TestACL_GetMissingFolderReturnsEmpty(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
 
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	_, body := doJSON(t, ts, http.MethodPost, "/api/backend/acl/get", "", map[string]any{
 		"user":   user,
@@ -196,7 +196,7 @@ func TestACL_RebuildSeedsIndexFromFiles(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
 
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	// Seed the per-mailbox file via SET so the index is in sync.
 	doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
@@ -271,7 +271,7 @@ func TestACL_SetRefusesNamesIMAPWouldRefuse(t *testing.T) {
 func TestACL_SetStillAcceptsOrdinaryNames(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": "Sales"})
 
 	for _, folder := range []string{"INBOX", "Sales"} {
@@ -307,7 +307,7 @@ func treeSnapshot(t *testing.T, root string) string {
 func TestACL_RootIsAddressableAndNotByOmission(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	// Omitting the folder is still an error, not a grant on the root.
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
@@ -351,7 +351,7 @@ func TestACL_RootIsAddressableAndNotByOmission(t *testing.T) {
 func TestACL_MissingFolderIsRefusedAndCreatesNothing(t *testing.T) {
 	ts, root := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	const missing = "Slaes" // the typo the operator makes for "Sales"
 	cases := []struct {
@@ -414,7 +414,7 @@ func TestACL_MissingFolderIsRefusedAndCreatesNothing(t *testing.T) {
 func TestACL_RebuildReportsWhatItSkipped(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	// INBOX carries an ACL; Sent exists with none; the other two are typos.
 	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{
@@ -483,7 +483,7 @@ func TestACL_RebuildReportsWhatItSkipped(t *testing.T) {
 func TestACL_MaterialiseIsADryRunUnlessAsked(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": "Sales"})
 
 	// Root grants the administrator; the mailbox names only a peer — the state
@@ -581,7 +581,7 @@ func TestACL_SharedNamespaceMailboxIsReachable(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	// The mailbox is made the way a session makes it: the namespace location is
 	// the mail root. Creating it through the admin API instead would prove
@@ -627,7 +627,7 @@ func TestACL_SharedNamespaceMailboxIsReachable(t *testing.T) {
 func TestACL_ApplyChangesOneEntryServerSide(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	// The distinguishing case: an entry already on the folder, put there by a
 	// path the apply caller never saw. apply is told only about carol, yet bob
@@ -656,7 +656,7 @@ func TestACL_ApplyChangesOneEntryServerSide(t *testing.T) {
 func TestACL_ApplyModes(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	apply := func(mode, rights string) (int, []byte) {
 		return doJSON(t, ts, http.MethodPost, "/api/backend/acl/apply", "", map[string]any{
@@ -736,7 +736,7 @@ func aclIdentifiers(t *testing.T, ts *httptest.Server, user, folder string) map[
 func TestACL_OwnerNamingWritesRefusedButRemovable(t *testing.T) {
 	ts, root := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	// Seed owner residue directly on disk (the write paths now refuse to create it).
 	home := filepath.Join(root, "example.com", "alice")
@@ -794,7 +794,7 @@ func TestACL_RebuildSubsetMerges_AllReplaces(t *testing.T) {
 	setup := func(t *testing.T) *httptest.Server {
 		t.Helper()
 		ts, _ := storageTestServer(t)
-		doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+		materialiseHome(t, ts, user)
 		for _, f := range []string{"Keep", "Reseed"} {
 			doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": f})
 			doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{

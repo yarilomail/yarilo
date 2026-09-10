@@ -164,5 +164,8 @@ func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request, 
 	// One owner of NFC for all three special-use handlers, resolved here so
 	// none of them addresses a decomposed spelling of a folder (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, readOnly, req.Folder) {
+		return nil, nil, errFolderNotFound
+	}
 	return store, &req, nil
 }

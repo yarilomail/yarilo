@@ -185,7 +185,7 @@ func TestUserInfoExposesNamespacesAndHome(t *testing.T) {
 	if !resp.Namespaces[0].Exists {
 		// user/info does NOT auto-init — exists reflects the actual
 		// home dir state. Trigger init via a folder call first.
-		doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+		materialiseHome(t, ts, user)
 		_, body = doJSON(t, ts, http.MethodPost, "/api/backend/user/info", "", map[string]any{"user": user})
 		decodeJSONBody(t, body, &resp)
 		if !resp.Namespaces[0].Exists {

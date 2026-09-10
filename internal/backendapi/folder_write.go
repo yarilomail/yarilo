@@ -72,7 +72,7 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder required", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextDeferred(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -86,6 +86,9 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 	// One owner of NFC on the admin surface too, so a decomposed name from a
 	// tool addresses the same folder a client created (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, false, req.Folder) {
+		return
+	}
 
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -148,7 +151,7 @@ func (s *Server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "INBOX cannot be deleted", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextDeferred(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -162,6 +165,9 @@ func (s *Server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 	// One owner of NFC on the admin surface too, so a decomposed name from a
 	// tool addresses the same folder a client created (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, false, req.Folder) {
+		return
+	}
 
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -204,7 +210,7 @@ func (s *Server) handleFolderRename(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "rename of INBOX is not supported via backend-api", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextDeferred(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -218,6 +224,9 @@ func (s *Server) handleFolderRename(w http.ResponseWriter, r *http.Request) {
 
 	req.OldFolder = mailbox.NormalizeName(req.OldFolder, bundle.info.SkipNFCNormalize)
 	req.NewFolder = mailbox.NormalizeName(req.NewFolder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, false, req.OldFolder, req.NewFolder) {
+		return
+	}
 	srcExists, err := bundle.box.FolderExists(req.OldFolder)
 	if err != nil {
 		apiError(w, "src exists check: "+err.Error(), http.StatusInternalServerError)
@@ -266,7 +275,7 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder required", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextDeferred(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -280,6 +289,9 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 	// One owner of NFC on the admin surface too, so a decomposed name from a
 	// tool addresses the same folder a client created (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, false, req.Folder) {
+		return
+	}
 
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {

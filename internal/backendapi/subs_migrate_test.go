@@ -53,7 +53,7 @@ func TestSubsMigrate_FoldsIntoTheOwnersOwnFile(t *testing.T) {
 	root := t.TempDir()
 	ts := migrateServer(t, root)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	// Seed both historical names: the current one and the pre-#1159 path form.
 	store := filepath.Join(root, "alice", "Maildir")
@@ -110,7 +110,7 @@ func TestSubsMigrate_NothingToMigrate(t *testing.T) {
 	root := t.TempDir()
 	ts := migrateServer(t, root)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/subscriptions/migrate", "", map[string]any{
 		"user": user, "namespace": "user/%u",

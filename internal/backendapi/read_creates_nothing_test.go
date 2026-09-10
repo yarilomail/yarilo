@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// freshUser names an account nothing has created: a good name, no home.
+const freshUser = "fresh@example.com"
+
 // A diagnostic reads: none of these may bring an account into being, and a name
 // the layout cannot place is not an account at all (#1774).
 func TestAReadCreatesNothingOnDisk(t *testing.T) {
@@ -48,22 +51,81 @@ func TestAReadCreatesNothingOnDisk(t *testing.T) {
 }
 
 // A write checks what it was given before it makes anything: a folder name the
-// rules refuse leaves no account behind, on a name that is a perfectly good one.
+// rules refuse leaves no account behind, on a user name that is perfectly good.
 func TestARefusedFolderNameMaterialisesNothing(t *testing.T) {
-	for _, folder := range []string{".", "/", "..", "../elsewhere", "a/../b"} {
-		t.Run(folder, func(t *testing.T) {
+	writes := []struct {
+		name string
+		path string
+		body func(folder string) map[string]any
+	}{
+		{"acl set", "/api/backend/acl/set", func(f string) map[string]any {
+			return map[string]any{"user": freshUser, "folder": f,
+				"acl": []map[string]any{{"identifier": "bob@example.com", "rights": "lr"}}}
+		}},
+		{"folder create", "/api/backend/folder/create", func(f string) map[string]any {
+			return map[string]any{"user": freshUser, "folder": f}
+		}},
+		{"folder delete", "/api/backend/folder/delete", func(f string) map[string]any {
+			return map[string]any{"user": freshUser, "folder": f}
+		}},
+		{"folder expunge", "/api/backend/folder/expunge", func(f string) map[string]any {
+			return map[string]any{"user": freshUser, "folder": f}
+		}},
+		{"folder rename", "/api/backend/folder/rename", func(f string) map[string]any {
+			return map[string]any{"user": freshUser, "old_folder": f, "new_folder": "Work"}
+		}},
+		{"metadata set", "/api/backend/metadata/set", func(f string) map[string]any {
+			return map[string]any{"user": freshUser, "folder": f, "entry": "/private/comment", "value": "x"}
+		}},
+		{"specialuse set", "/api/backend/specialuse/set", func(f string) map[string]any {
+			return map[string]any{"user": freshUser, "folder": f, "attr": `\\Sent`}
+		}},
+		{"subscriptions add", "/api/backend/subscriptions/add", func(f string) map[string]any {
+			return map[string]any{"user": freshUser, "folder": f}
+		}},
+	}
+	for _, wr := range writes {
+		for _, folder := range []string{".", "/", "..", "../elsewhere", "a/../b"} {
+			t.Run(wr.name+" "+folder, func(t *testing.T) {
+				ts, root := storageTestServer(t)
+				before := treeSnapshot(t, root)
+				status, body := doJSON(t, ts, http.MethodPost, wr.path, "", wr.body(folder))
+				if status != http.StatusBadRequest {
+					t.Errorf("status=%d body=%s, want 400", status, body)
+				}
+				if after := treeSnapshot(t, root); after != before {
+					t.Errorf("a refused name left an account behind:\nbefore: %s\nafter:  %s", before, after)
+				}
+			})
+		}
+	}
+}
+
+// A write that names no folder has nothing to check and nothing to make: an
+// account that is not on disk is an answer, not a directory to create.
+func TestAWriteWithoutAFolderNameMaterialisesNothing(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		body map[string]any
+	}{
+		{"index rebuild-storage", "/api/backend/index/rebuild-storage", map[string]any{"user": freshUser}},
+		{"index optimize", "/api/backend/index/optimize", map[string]any{"user": freshUser, "all": true}},
+		{"index cache-purge", "/api/backend/index/cache-purge", map[string]any{"user": freshUser, "folder": "INBOX"}},
+		{"quota recalc", "/api/backend/quota/recalc", map[string]any{"user": freshUser}},
+		{"mdbox purge", "/api/backend/mdbox/purge", map[string]any{"user": freshUser}},
+		{"mdbox altmove", "/api/backend/mdbox/altmove", map[string]any{"user": freshUser}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
 			ts, root := storageTestServer(t)
 			before := treeSnapshot(t, root)
-			status, body := doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
-				"user":   "fresh@example.com",
-				"folder": folder,
-				"acl":    []map[string]any{{"identifier": "bob@example.com", "rights": "lr"}},
-			})
-			if status != http.StatusBadRequest {
-				t.Errorf("status=%d body=%s, want 400", status, body)
+			status, body := doJSON(t, ts, http.MethodPost, c.path, "", c.body)
+			if status == http.StatusOK {
+				t.Errorf("status=200 body=%s, want a refusal for an account with no home", body)
 			}
 			if after := treeSnapshot(t, root); after != before {
-				t.Errorf("a refused name left an account behind:\nbefore: %s\nafter:  %s", before, after)
+				t.Errorf("the write left an account behind:\nbefore: %s\nafter:  %s", before, after)
 			}
 		})
 	}
@@ -77,7 +139,7 @@ func TestAGoodFolderNameStillMaterialisesTheAccount(t *testing.T) {
 	// The folder does not exist yet, so the answer is 404 -- but the account it
 	// was asked about is now on disk, which is what the eager open used to do.
 	doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
-		"user":   "fresh@example.com",
+		"user":   freshUser,
 		"folder": "Work",
 		"acl":    []map[string]any{{"identifier": "bob@example.com", "rights": "lr"}},
 	})
@@ -106,7 +168,7 @@ func TestABareNameIsRefusedByAWriteToo(t *testing.T) {
 func TestAWriteStillCreatesTheHome(t *testing.T) {
 	ts, root := storageTestServer(t)
 	before := treeSnapshot(t, root)
-	materialiseHome(t, ts, "fresh@example.com")
+	materialiseHome(t, ts, freshUser)
 	if after := treeSnapshot(t, root); after == before {
 		t.Error("the tree is unchanged after a folder was created")
 	}

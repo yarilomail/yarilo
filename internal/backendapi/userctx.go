@@ -94,13 +94,35 @@ func (s *Server) openUserContextFor(username string, readOnly bool) (*userContex
 	if readOnly {
 		return s.openUserContextInner(username, openRead)
 	}
-	return s.openUserContextInner(username, openEager)
+	return s.openUserContextInner(username, openDeferred)
 }
 
 // openUserContextDeferred opens without Init, for a write entry point that
 // checks what it was given before it makes anything.
 func (s *Server) openUserContextDeferred(username string) (*userContext, error) {
 	return s.openUserContextInner(username, openDeferred)
+}
+
+// checkedMaterialise checks the names on a bundle that has touched no disk, and
+// only then brings the account into being (#1774).
+func checkedMaterialise(w http.ResponseWriter, b *nsBundle, readOnly bool, names ...string) bool {
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if err := mailbox.CheckName(b.box, name); err != nil {
+			apiError(w, err.Error(), http.StatusBadRequest)
+			return false
+		}
+	}
+	if readOnly {
+		return true
+	}
+	if err := b.materialise(); err != nil {
+		apiError(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	return true
 }
 
 // materialise brings the namespace into being, for a write entry point that has

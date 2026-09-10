@@ -261,6 +261,9 @@ func (s *Server) openMetadataContextReq(w http.ResponseWriter, r *http.Request, 
 	}
 	// One owner of NFC on the admin surface too (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, readOnly, req.Folder) {
+		return nil, nil, errFolderNotFound
+	}
 
 	scope := mailbox.AttrPrivate
 	if strings.EqualFold(req.Scope, "shared") {
