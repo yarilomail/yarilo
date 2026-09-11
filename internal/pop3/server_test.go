@@ -14,6 +14,8 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+
+	"github.com/yarilomail/yarilo/internal/loginproto"
 )
 
 // ---- mock auth ---------------------------------------------------------------
@@ -757,3 +759,34 @@ func TestSession_LockSession_RejectsConcurrent(t *testing.T) {
 }
 
 func (m *mockMailbox) Username() string { return "mock@example.com" }
+
+// A proxied session that cannot take the lock says so in its first line, with no
+// greeting in front of it: the proxy answers the client with that line (#1776).
+func TestARefusedProxiedSessionSpeaksFirst(t *testing.T) {
+	home := t.TempDir()
+	opts := newTestOpts(&mockAuth{users: map[string]string{"u@x": "p"}, home: home},
+		&mockMailbox{}, &mockIndex{})
+	opts.LockSession = true
+
+	// The first session holds the lock.
+	first, fr := newPOP3Session(t, opts)
+	login(t, first, fr, "u@x", "p")
+
+	c, s := net.Pipe()
+	t.Cleanup(func() { c.Close() }) //nolint:errcheck
+	deadline := time.Now().Add(5 * time.Second)
+	c.SetDeadline(deadline) //nolint:errcheck
+	s.SetDeadline(deadline) //nolint:errcheck
+	pc := &loginproto.PreambleConn{Conn: s, Username: "u@x", Home: home, SessionID: "sid-2"}
+	srv := New(opts)
+	go srv.newSession(pc).serve()
+
+	line, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read the backend's first line: %v", err)
+	}
+	got := strings.TrimRight(line, "\r\n")
+	if got != "-ERR [IN-USE] mailbox already in use, try again later" {
+		t.Errorf("the backend's first line is %q; the proxy answers the client with it", got)
+	}
+}
