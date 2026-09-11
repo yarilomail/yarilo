@@ -984,6 +984,15 @@ func (s *Server) handleConn(conn net.Conn) {
 	log.Info("login: session routed", "user", pre.username, "backend", backendAddr, "result", "ok")
 	s.incResult("ok")
 
+	// The backend declined after the preamble; its own answer is the reply to
+	// PASS/AUTH, where the protocol puts it (#1776).
+	if est.bs.refusal != "" {
+		io.WriteString(authConn, est.bs.refusal) //nolint:errcheck
+		log.Info("login: backend declined the session", "user", pre.username,
+			"backend", backendAddr, "result", "backend_declined")
+		s.incResult("backend_declined")
+		return
+	}
 	// Auth is confirmed — tell the client before entering proxy mode.
 	writeProtoAuthOK(authConn, s.opts.Protocol, pre.cmdTag, backendCaps)
 
@@ -1118,6 +1127,9 @@ type backendSession struct {
 	rd   *bufio.Reader
 	addr string
 	caps string
+	// refusal is the backend's own answer when it declined the session; the
+	// client gets it as the reply to PASS/AUTH.
+	refusal string
 }
 
 // openBackendSession dials a backend and brings the session up to the point
@@ -1189,7 +1201,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 	// echoed in the tagged OK. A backend that closes here (token VERIFY failed,
 	// or it is shutting down) must be reported, not silently dropped.
 	greetingStart := time.Now()
-	caps, gerr := readBackendGreeting(rd, s.opts.Protocol)
+	caps, refusal, gerr := readBackendGreeting(rd, s.opts.Protocol)
 	s.observePhase(phaseBackendPreamble, greetingStart)
 	if gerr != nil {
 		s.incResult("backend_rejected")
@@ -1221,7 +1233,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 	// bounded by it (handleConn clears deadlines again before proxying anyway).
 	conn.SetDeadline(time.Time{}) //nolint:errcheck
 	ok = true
-	return &backendSession{conn: conn, rd: rd, addr: addr, caps: caps}, nil
+	return &backendSession{conn: conn, rd: rd, addr: addr, caps: caps, refusal: refusal}, nil
 }
 
 // dialBackendWithReroute dials addr and, on a connect failure in director mode,
@@ -1697,12 +1709,14 @@ func dialBackend(addr string, tlsCfg *tls.Config) (net.Conn, error) {
 // processed. For IMAP it extracts and returns the post-auth capability list
 // from the "* PREAUTH [CAPABILITY ...]" line so the login pod can include it
 // verbatim in the tagged OK response sent to the client.
-func readBackendGreeting(rd *bufio.Reader, p Protocol) (caps string, err error) {
+//
+// refusal is the backend's own answer when it declined the session (#1776).
+func readBackendGreeting(rd *bufio.Reader, p Protocol) (caps, refusal string, err error) {
 	switch p {
 	case ProtocolIMAP, ProtocolIMAPS:
 		line, err := rd.ReadString('\n')
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		// Extract content of [CAPABILITY ...] if present.
 		if start := strings.Index(line, "[CAPABILITY "); start >= 0 {
@@ -1711,18 +1725,24 @@ func readBackendGreeting(rd *bufio.Reader, p Protocol) (caps string, err error) 
 				caps = line[start : start+end]
 			}
 		}
-		return caps, nil
+		return caps, "", nil
 	case ProtocolPOP3, ProtocolPOP3S:
-		_, err := rd.ReadString('\n')
-		return "", err
+		line, err := rd.ReadString('\n')
+		if err != nil {
+			return "", "", err
+		}
+		if strings.HasPrefix(line, "-ERR") {
+			return "", line, nil
+		}
+		return "", "", nil
 	case ProtocolSubmission, ProtocolSubmissions:
 		for {
 			line, err := rd.ReadString('\n')
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 			if len(line) < 4 || line[3] != '-' {
-				return "", nil
+				return "", "", nil
 			}
 		}
 	case ProtocolManageSieve:
@@ -1730,14 +1750,14 @@ func readBackendGreeting(rd *bufio.Reader, p Protocol) (caps string, err error) 
 		for {
 			line, err := rd.ReadString('\n')
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 			if strings.HasPrefix(line, "OK") {
-				return "", nil
+				return "", "", nil
 			}
 		}
 	}
-	return "", nil
+	return "", "", nil
 }
 
 // checkAllowNets reports whether clientIP is contained in any of the comma-separated
