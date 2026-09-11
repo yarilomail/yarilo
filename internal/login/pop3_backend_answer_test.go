@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // startPOP3Backend accepts a proxied session, reads the preamble, and answers
@@ -35,12 +37,8 @@ func startPOP3Backend(t *testing.T, first string) string {
 	return ln.Addr().String()
 }
 
-// The reply to PASS is the backend's own answer (#1776).
-//
-// The backend decides after the preamble whether the session exists at all --
-// a session lock it could not take -- and the client must read that where the
-// protocol puts it, not a success this pod invented and a refusal one command
-// later.
+// The reply to PASS is the backend's own answer, not a success this pod invented
+// with the refusal arriving one command later (#1776).
 func TestThePASSReplyIsTheBackendsOwnAnswer(t *testing.T) {
 	const refusal = "-ERR [IN-USE] mailbox already in use, try again later\r\n"
 	cases := []struct {
@@ -92,5 +90,47 @@ func TestThePASSReplyIsTheBackendsOwnAnswer(t *testing.T) {
 				t.Errorf("the reply to PASS starts with %q, which is the answer this pod made up", c.deny)
 			}
 		})
+	}
+}
+
+// One session, one result: a declined session is counted as declined and not
+// also as routed ok (#1776).
+func TestADeclinedSessionIsCountedOnce(t *testing.T) {
+	wardenAddr, _ := startWardenWithHandle(t)
+	s := &Server{
+		opts: Options{
+			Protocol:    ProtocolPOP3,
+			AuthAddr:    startOKAuth(t),
+			WardenAddr:  wardenAddr,
+			BackendAddr: startPOP3Backend(t, "-ERR [IN-USE] mailbox already in use, try again later\r\n"),
+		},
+		sessions: make(map[string][]*liveSession),
+	}
+	t.Cleanup(func() {
+		if s.wardenPool != nil {
+			s.wardenPool.Close()
+		}
+	})
+	proto := string(ProtocolPOP3)
+	okBefore := testutil.ToFloat64(resultTotal.WithLabelValues(proto, "ok"))
+	declinedBefore := testutil.ToFloat64(resultTotal.WithLabelValues(proto, "backend_declined"))
+
+	srv, cli := pipePair(t)
+	go s.handleConn(srv)
+	cli.SetDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
+	crd := bufio.NewReader(cli)
+	crd.ReadString('\n')                 //nolint:errcheck
+	cli.Write([]byte("USER alice\r\n"))  //nolint:errcheck
+	crd.ReadString('\n')                 //nolint:errcheck
+	cli.Write([]byte("PASS secret\r\n")) //nolint:errcheck
+	if _, err := crd.ReadString('\n'); err != nil {
+		t.Fatalf("read the PASS reply: %v", err)
+	}
+
+	if got := testutil.ToFloat64(resultTotal.WithLabelValues(proto, "ok")) - okBefore; got != 0 {
+		t.Errorf("a declined session moved result=ok by %v, want 0", got)
+	}
+	if got := testutil.ToFloat64(resultTotal.WithLabelValues(proto, "backend_declined")) - declinedBefore; got != 1 {
+		t.Errorf("result=backend_declined moved by %v, want 1", got)
 	}
 }

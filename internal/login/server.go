@@ -948,6 +948,16 @@ func (s *Server) handleConn(conn net.Conn) {
 		defer est.releaseWarden()
 	}
 
+	// Before the session is registered, announced or counted: a declined one is
+	// not up, and one session carries one result (#1776).
+	if est.bs.refusal != "" {
+		io.WriteString(authConn, est.bs.refusal) //nolint:errcheck
+		log.Info("login: backend declined the session", "user", pre.username,
+			"backend", backendAddr, "result", "backend_declined")
+		s.incResult("backend_declined")
+		return
+	}
+
 	// Register the session for kick support only once it is actually up — a
 	// bring-up that never completed has nothing to kick.
 	// Keyed by the identity the session acts as: a kick for the target must
@@ -984,15 +994,6 @@ func (s *Server) handleConn(conn net.Conn) {
 	log.Info("login: session routed", "user", pre.username, "backend", backendAddr, "result", "ok")
 	s.incResult("ok")
 
-	// The backend declined after the preamble; its own answer is the reply to
-	// PASS/AUTH, where the protocol puts it (#1776).
-	if est.bs.refusal != "" {
-		io.WriteString(authConn, est.bs.refusal) //nolint:errcheck
-		log.Info("login: backend declined the session", "user", pre.username,
-			"backend", backendAddr, "result", "backend_declined")
-		s.incResult("backend_declined")
-		return
-	}
 	// Auth is confirmed — tell the client before entering proxy mode.
 	writeProtoAuthOK(authConn, s.opts.Protocol, pre.cmdTag, backendCaps)
 
