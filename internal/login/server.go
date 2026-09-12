@@ -1497,9 +1497,6 @@ func (s *Server) syncSessions() {
 	wc.sessionSyncEnd()
 }
 
-// announceSession tells the director this session exists. Safe to repeat: the
-// director keys sessions by id, so a re-announcement after a reconnect
-// replaces the record rather than adding one.
 // announceSessionLocked writes SESSION-OPEN. The caller holds announceMu: an
 // announcement and the full-list reconciliation must not interleave, or a list
 // taken before this session existed could arrive after this line and erase it.
