@@ -117,15 +117,14 @@ func (s *session) serve() {
 	defer s.releaseLock()
 
 	s.setDeadline()
-	s.ok("yarilo POP3 server ready")
-
 	if s.state == statePreAuth {
-		// login pod already authenticated and discards this greeting;
-		// set up the mailbox without an extra wire response
+		// Before the greeting, as the IMAP path does: the proxy answers the
+		// client with this first line, so it must be the session's state (#1776).
 		if !s.completePreAuth() {
 			return
 		}
 	}
+	s.ok("yarilo POP3 server ready")
 
 	for s.state != stateDone {
 		line, err := s.readLine()
