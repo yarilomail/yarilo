@@ -233,12 +233,12 @@ type session struct {
 
 // folderMessageCount returns folder's current message count from the index
 // (the authoritative count backend). ok is false when the folder is unavailable.
-func folderMessageCount(idx quota.FolderVSizer, folder string) (int64, bool) {
-	f, err := idx.OpenFolder(folder, 0)
+func folderMessageCount(box mailbox.Box, vs quota.FolderVSizer, folder string) (int64, bool) {
+	f, err := box.Folder(folder, 0)
 	if err != nil {
 		return 0, false
 	}
-	_, msgs, err := idx.FolderVSize(f.ID)
+	_, msgs, err := vs.FolderVSize(f.ID)
 	if err != nil {
 		return 0, false
 	}
@@ -392,7 +392,7 @@ func (s *session) matchNamespace(folder string) *config.NamespaceConfig {
 // mailboxidexists (RFC 9042). It walks the user's selectable folders and matches
 // the requested id against each folder's stable GUID. Returns ("", false) when
 // no folder matches or the folder tree cannot be read.
-func (s *session) folderByMailboxID(rcptBox mailbox.UserMailbox, rcptIdx mailbox.UserIndex, id string) (string, bool) {
+func (s *session) folderByMailboxID(rcptBox mailbox.UserMailbox, rcptMbox mailbox.Box, id string) (string, bool) {
 	if id == "" {
 		return "", false
 	}
@@ -405,7 +405,7 @@ func (s *session) folderByMailboxID(rcptBox mailbox.UserMailbox, rcptIdx mailbox
 		if !e.Selectable {
 			continue
 		}
-		f, err := rcptIdx.OpenFolder(e.Name, 0)
+		f, err := rcptMbox.Folder(e.Name, 0)
 		if err != nil {
 			continue
 		}
@@ -421,7 +421,7 @@ func (s *session) folderByMailboxID(rcptBox mailbox.UserMailbox, rcptIdx mailbox
 // reads the same personal-namespace dict keys the IMAP server writes. Returns
 // ("", false, nil) when the dict is unconfigured, the entry name is malformed,
 // the folder is unknown, or the annotation is absent.
-func (s *session) mailboxMetadata(ctx context.Context, userInfo *mailbox.UserInfo, idx mailbox.UserIndex, mbox, annotation string) (string, bool, error) {
+func (s *session) mailboxMetadata(ctx context.Context, userInfo *mailbox.UserInfo, box mailbox.Box, mbox, annotation string) (string, bool, error) {
 	if s.opts.MetadataDict == nil {
 		return "", false, nil
 	}
@@ -429,7 +429,7 @@ func (s *session) mailboxMetadata(ctx context.Context, userInfo *mailbox.UserInf
 	if err != nil {
 		return "", false, nil
 	}
-	f, err := idx.OpenFolder(mbox, 0)
+	f, err := box.Folder(mbox, 0)
 	if err != nil {
 		return "", false, nil
 	}
@@ -439,7 +439,7 @@ func (s *session) mailboxMetadata(ctx context.Context, userInfo *mailbox.UserInf
 // serverMetadata reads a server-scoped IMAP METADATA annotation, backing the
 // servermetadata Sieve tests. Server-scope entries live under INBOX's GUID with
 // the vendor prefix, matching the IMAP server's key derivation.
-func (s *session) serverMetadata(ctx context.Context, userInfo *mailbox.UserInfo, idx mailbox.UserIndex, annotation string) (string, bool, error) {
+func (s *session) serverMetadata(ctx context.Context, userInfo *mailbox.UserInfo, box mailbox.Box, annotation string) (string, bool, error) {
 	if s.opts.MetadataDict == nil {
 		return "", false, nil
 	}
@@ -447,7 +447,7 @@ func (s *session) serverMetadata(ctx context.Context, userInfo *mailbox.UserInfo
 	if err != nil {
 		return "", false, nil
 	}
-	f, err := idx.OpenFolder("INBOX", 0)
+	f, err := box.Folder("INBOX", 0)
 	if err != nil {
 		return "", false, nil
 	}
@@ -468,7 +468,7 @@ func (s *session) lookupMetadata(ctx context.Context, userInfo *mailbox.UserInfo
 
 // deliveryTarget routes a folder through the recipient's namespaces: a denied
 // post right falls back to INBOX, and the personal store is never ACL-checked.
-func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.UserMailbox, rcptIdx mailbox.UserIndex, folder string, enforcePost bool) (mailbox.UserMailbox, mailbox.UserIndex, string, func()) {
+func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.UserMailbox, rcptMbox mailbox.Box, folder string, enforcePost bool) (mailbox.UserMailbox, mailbox.Box, string, func()) {
 	noop := func() {}
 	// One owner of NFC, here at the resolver, so a Sieve fileinto naming a
 	// folder in a decomposed form addresses the same directory the mail tree
@@ -476,13 +476,13 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	folder = mailbox.NormalizeName(folder, userInfo != nil && userInfo.SkipNFCNormalize)
 	ns := s.matchNamespace(folder)
 	if ns == nil {
-		return rcptBox, rcptIdx, folder, noop
+		return rcptBox, rcptMbox, folder, noop
 	}
 	loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
 	if err != nil || !ok {
 		slog.Warn("lmtp: namespace location parse failed, using personal store",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
-		return rcptBox, rcptIdx, folder, noop
+		return rcptBox, rcptMbox, folder, noop
 	}
 	rel := strings.TrimPrefix(folder, ns.Prefix)
 	if rel == "" {
@@ -492,12 +492,12 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	if err != nil {
 		slog.Warn("lmtp: namespace not usable, delivering to INBOX",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
-		return rcptBox, rcptIdx, "INBOX", noop
+		return rcptBox, rcptMbox, "INBOX", noop
 	}
 	if enforcePost && !s.postAllowed(ui, ns, rel) {
 		slog.Warn("lmtp: post right denied, falling back to INBOX",
 			"rcpt", userInfo.Username, "prefix", ns.Prefix, "folder", rel)
-		return rcptBox, rcptIdx, "INBOX", noop
+		return rcptBox, rcptMbox, "INBOX", noop
 	}
 	mb := s.opts.Mailbox
 	if f := s.opts.MailboxByDriver; f != nil && loc.Driver != "" {
@@ -508,10 +508,10 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 		slog.Warn("lmtp: namespace store init failed, using personal store",
 			"prefix", ns.Prefix, "err", err)
 		box.Close() //nolint:errcheck
-		return rcptBox, rcptIdx, folder, noop
+		return rcptBox, rcptMbox, folder, noop
 	}
 	idx := s.opts.Index.OpenUser(ui)
-	return box, idx, rel, func() {
+	return box, mailboxbase.Open(box, idx), rel, func() {
 		box.Close() //nolint:errcheck
 		idx.Close() //nolint:errcheck
 	}
@@ -607,6 +607,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		mboxBackend := mailbox.SelectPersonalBackend(s.opts.Mailbox, s.opts.MailboxByDriver, userInfo.Driver)
 		rcptBox := mboxBackend.OpenUser(userInfo)
 		rcptIdx := s.opts.Index.OpenUser(userInfo)
+		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx)
 		rcptBox.Init() //nolint:errcheck // idempotent; provisioned in rcptLocal
 
 		// Quota enforcement from the index (authoritative): reject when this
@@ -628,7 +629,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 			// Per-mailbox message-count cap is structural (independent of a
 			// quota_rule): reject when the target folder would reach the limit.
 			if mmc := s.opts.QuotaPolicy.MailboxMessageCount; mmc > 0 {
-				if cur, ok := folderMessageCount(rcptIdx, folder); ok && cur+1 >= mmc {
+				if cur, ok := folderMessageCount(rcptMbox, rcptIdx, folder); ok && cur+1 >= mmc {
 					slog.Warn("lmtp: delivery rejected: too many messages in mailbox", "rcpt", rcpt, "user", username, "folder", folder)
 					rcptBox.Close() //nolint:errcheck
 					rcptIdx.Close() //nolint:errcheck
@@ -687,18 +688,18 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				EnvTo:    rcpt,
 				MsgRaw:   msg,
 				FolderExists: func(_ context.Context, f string) (bool, error) {
-					box, _, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptIdx, f, false)
+					box, _, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptMbox, f, false)
 					defer closeTarget()
 					return box.FolderExists(rel)
 				},
 				MailboxByID: func(_ context.Context, id string) (string, bool) {
-					return s.folderByMailboxID(rcptBox, rcptIdx, id)
+					return s.folderByMailboxID(rcptBox, rcptMbox, id)
 				},
 				MailboxMetadata: func(ctx context.Context, mbox, annotation string) (string, bool, error) {
-					return s.mailboxMetadata(ctx, userInfo, rcptIdx, mbox, annotation)
+					return s.mailboxMetadata(ctx, userInfo, rcptMbox, mbox, annotation)
 				},
 				ServerMetadata: func(ctx context.Context, annotation string) (string, bool, error) {
-					return s.serverMetadata(ctx, userInfo, rcptIdx, annotation)
+					return s.serverMetadata(ctx, userInfo, rcptMbox, annotation)
 				},
 			}
 			// Sieve takes this user's script and duplicate locks; they announce the
@@ -737,13 +738,13 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 			// Route each delivery through the recipient's namespaces so a
 			// namespace-prefixed target (e.g. Sieve fileinto "Public/News")
 			// lands in that namespace's storage, not the recipient's own store.
-			tBox, tIdx, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptIdx, d.Folder, true)
+			tBox, tMbox, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptMbox, d.Folder, true)
 			if d.Create {
 				if err := tBox.Create(rel); err != nil {
 					slog.Warn("lmtp: create folder", "folder", d.Folder, "err", err)
 				}
 			}
-			uid, folder, guid, err := deliverOne(mailboxbase.Open(tBox, tIdx), rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), s.opts.Locker, username, s.from, d.Flags)
+			uid, folder, guid, err := deliverOne(tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), s.opts.Locker, username, s.from, d.Flags)
 			closeTarget()
 			if err != nil {
 				deliverErr = err

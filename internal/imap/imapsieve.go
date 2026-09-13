@@ -27,7 +27,7 @@ func (s *session) imapSieveScriptName(h *nsHandle, rel string, guid [16]byte) st
 	if vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, key); err == nil && found && len(vals) > 0 && len(vals[0]) > 0 {
 		return string(vals[0])
 	}
-	if inbox, err := s.primary.idx.OpenFolder("INBOX", uint32(time.Now().Unix())); err == nil {
+	if inbox, err := s.primary.mailbox().Folder("INBOX", uint32(time.Now().Unix())); err == nil {
 		skey := mailbox.ServerAttrKey(mailbox.AttrShared, inbox.GUID, imapSieveScriptAttr)
 		if vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, skey); err == nil && found && len(vals) > 0 && len(vals[0]) > 0 {
 			return string(vals[0])

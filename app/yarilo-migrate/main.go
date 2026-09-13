@@ -265,6 +265,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 	defer box.Close() //nolint:errcheck
 	idx := idxBE.OpenUser(info)
 	defer idx.Close() //nolint:errcheck
+	mbox := mailboxbase.Open(box, idx)
 
 	if err := box.Init(); err != nil {
 		return 0, 0, fmt.Errorf("migrate: init %s: %w", user, err)
@@ -289,7 +290,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 			if err := box.Create(name); err != nil {
 				return 0, 0, fmt.Errorf("create %s/%s: %w", user, name, err)
 			}
-			if _, err := idx.OpenFolder(name, uint32(os.Getpid())); err != nil {
+			if _, err := mbox.Folder(name, uint32(os.Getpid())); err != nil {
 				return 0, 0, fmt.Errorf("openfolder %s/%s: %w", user, name, err)
 			}
 			createdFolders[name] = true
@@ -311,7 +312,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		}
 		f, ok := folders[msg.Folder]
 		if !ok {
-			ff, err := idx.OpenFolder(msg.Folder, uint32(os.Getpid()))
+			ff, err := mbox.Folder(msg.Folder, uint32(os.Getpid()))
 			if err != nil {
 				return fmt.Errorf("openfolder %s/%s: %w", user, msg.Folder, err)
 			}
@@ -347,7 +348,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		}
 		// The uid is already ours, so the name is settled here rather than in an
 		// allocating cycle (#1704, #1700).
-		if err := mailboxbase.Open(box, idx).NameSaved(msg.Folder, filename, meta); err != nil {
+		if err := mbox.NameSaved(msg.Folder, filename, meta); err != nil {
 			return fmt.Errorf("name %s/%s: %w", user, msg.Folder, err)
 		}
 		if err := idx.AppendMessage(f.ID, meta); err != nil {

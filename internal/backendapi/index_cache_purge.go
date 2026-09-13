@@ -80,7 +80,7 @@ func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 		}
 		defer func() { _ = s.opts.Locker.Unlock(context.Background(), lk.ID) }()
 	}
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		apiError(w, "open folder: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -229,7 +229,7 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 	// Force a rebuild of each folder's aggregate from records, then sum.
 	names := mailbox.SelectableNames(folders)
 	for _, name := range names {
-		f, oerr := bundle.idx.OpenFolder(name, 0)
+		f, oerr := bundle.mbox.Folder(name, 0)
 		if oerr != nil {
 			continue
 		}

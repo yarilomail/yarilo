@@ -118,7 +118,7 @@ func (s *session) dboxHealIfCorrupt(h *nsHandle, rel string, f *mailbox.Folder) 
 		s.ftsNotify(f, true, uid)
 	}
 	slog.Info("imap: dbox reactive heal", "user", s.username(), "folder", rel, "expunged", len(expunged))
-	refreshed, err := h.idx.OpenFolder(rel, f.UIDValidity)
+	refreshed, err := h.mailbox().Folder(rel, f.UIDValidity)
 	if err != nil {
 		slog.Warn("imap: reopen after heal failed", "user", s.username(), "folder", rel, "err", err)
 		return nil
@@ -172,7 +172,7 @@ func (s *session) dboxRestoreIfIndexLost(h *nsHandle, rel string, f *mailbox.Fol
 		slog.Warn("imap: rebuild after index loss failed", "user", s.username(), "folder", rel, "err", err)
 		return nil
 	}
-	refreshed, err := h.idx.OpenFolder(rel, f.UIDValidity)
+	refreshed, err := h.mailbox().Folder(rel, f.UIDValidity)
 	if err != nil {
 		slog.Warn("imap: reopen after rebuild failed", "user", s.username(), "folder", rel, "err", err)
 		return nil

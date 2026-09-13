@@ -745,7 +745,7 @@ func (s *Service) evict(user string) {
 }
 
 func (s *Service) presentUIDs(h *userHandle, mbox fts.MailboxRef) (uids []uint32, maxUID, uidValidity uint32, err error) {
-	folder, err := h.idx.OpenFolder(mbox.Name, mbox.UIDValidity)
+	folder, err := h.mailboxOf().Folder(mbox.Name, mbox.UIDValidity)
 	if err != nil {
 		// A folder with no index yet holds no messages to compare against. The
 		// index backend runs with WithNoCreate (#993), so this is the normal
@@ -790,7 +790,7 @@ func (s *Service) runIndex(j job) error {
 	// authoritative current value — the Index/autoindex path often sends
 	// MailboxRef.UIDValidity=0, so the checkpoint compare must use the folder's
 	// own value, not the job's.
-	folder, err := h.idx.OpenFolder(j.mbox.Name, j.mbox.UIDValidity)
+	folder, err := h.mailboxOf().Folder(j.mbox.Name, j.mbox.UIDValidity)
 	if err != nil {
 		// Nothing indexed yet means nothing to index — see presentUIDs.
 		if errors.Is(err, os.ErrNotExist) {

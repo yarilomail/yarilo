@@ -634,7 +634,7 @@ func (s *session) authenticate(authzid, username, password string) (*protocol.Au
 }
 
 func (s *session) loadMailbox() error {
-	folder, err := s.box.Index().OpenFolder("INBOX", uint32(time.Now().Unix()))
+	folder, err := s.box.Folder("INBOX", uint32(time.Now().Unix()))
 	if err != nil {
 		slog.Error("pop3: open folder", "user", s.userInfo.Username, "err", err)
 		return err
@@ -650,7 +650,7 @@ func (s *session) loadMailbox() error {
 				slog.Warn("pop3: dbox reactive heal failed", "user", s.userInfo.Username, "err", herr)
 			} else if len(expunged) > 0 {
 				slog.Info("pop3: dbox reactive heal", "user", s.userInfo.Username, "expunged", len(expunged))
-				if refreshed, rerr := s.box.Index().OpenFolder("INBOX", 0); rerr == nil {
+				if refreshed, rerr := s.box.Folder("INBOX", 0); rerr == nil {
 					folder = refreshed
 				}
 			}

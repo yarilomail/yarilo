@@ -1200,7 +1200,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		return nil, err
 	}
 	tOpen := time.Now()
-	f, err := h.idx.OpenFolder(rel, uint32(time.Now().Unix()))
+	f, err := h.mailbox().Folder(rel, uint32(time.Now().Unix()))
 	if err != nil {
 		return nil, err
 	}
@@ -1519,7 +1519,7 @@ func (s *session) renameInbox(dest string) error {
 		return nameError(fmt.Errorf("imap/rename-inbox create: %w", err))
 	}
 	createFolderIndex(s.idx, dest, uint32(time.Now().Unix()))
-	srcFolder, err := s.idx.OpenFolder("INBOX", 0)
+	srcFolder, err := s.mbox.Folder("INBOX", 0)
 	if err != nil {
 		return err
 	}
@@ -1527,7 +1527,7 @@ func (s *session) renameInbox(dest string) error {
 	if err != nil {
 		return err
 	}
-	destFolder, err := s.idx.OpenFolder(dest, uint32(time.Now().Unix()))
+	destFolder, err := s.mbox.Folder(dest, uint32(time.Now().Unix()))
 	if err != nil {
 		return err
 	}
@@ -2095,7 +2095,7 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	// Reconcile out-of-band deliveries so STATUS (a common new-mail probe)
 	// reflects them without a prior SELECT.
 	s.reconcileFolder(h, rel)
-	f, err := h.idx.OpenFolder(rel, 0)
+	f, err := h.mailbox().Folder(rel, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -2368,7 +2368,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 
 	// Cheap modseq check — skip full scan when nothing changed and no
 	// pending expunges are waiting for an allowExpunge=true window.
-	refreshed, err := s.folderIdx().OpenFolder(s.folder.Name, s.folder.UIDValidity)
+	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)
 	if err != nil {
 		return nil
 	}
@@ -2663,7 +2663,7 @@ func (s *session) refreshIdleCount(w *imapserver.UpdateWriter) error {
 	if s.folder == nil {
 		return nil
 	}
-	refreshed, err := s.folderIdx().OpenFolder(s.folder.Name, s.folder.UIDValidity)
+	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)
 	if err != nil {
 		// Best-effort: report what we have. Authoritative state lives on disk
 		// and the next user command will re-read it.
@@ -3926,7 +3926,7 @@ func (s *session) metadataResolve(folder string) (*nsHandle, [16]byte, error) {
 			Text: "No such mailbox",
 		}
 	}
-	f, err := h.idx.OpenFolder(rel, uint32(time.Now().Unix()))
+	f, err := h.mailbox().Folder(rel, uint32(time.Now().Unix()))
 	if err != nil {
 		return nil, [16]byte{}, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Mailbox lookup failed: " + err.Error()}
 	}
@@ -4179,7 +4179,7 @@ func (s *session) ensureFolderHandle(name string) (*nsHandle, string, *mailbox.F
 	if !exists {
 		return nil, "", nil, errFolderNotFound
 	}
-	f, err := h.idx.OpenFolder(rel, uint32(time.Now().Unix()))
+	f, err := h.mailbox().Folder(rel, uint32(time.Now().Unix()))
 	if err != nil {
 		return nil, "", nil, err
 	}

@@ -73,7 +73,7 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request) {
 	// this boundary like every other: a decomposed name would address a
 	// different tree than the one that holds the message (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		apiError(w, "open folder: "+err.Error(), http.StatusBadRequest)
 		return

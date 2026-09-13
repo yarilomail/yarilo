@@ -70,7 +70,7 @@ func (s *Server) mailboxList(h *userHandle) ([]jmapcore.Mailbox, error) {
 			ids[e.Name] = containerID(e.Name)
 			continue
 		}
-		f, err := h.idx.OpenFolder(e.Name, 0)
+		f, err := h.mbox.Folder(e.Name, 0)
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", e.Name, err)
 		}

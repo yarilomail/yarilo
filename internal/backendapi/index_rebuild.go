@@ -100,7 +100,7 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 		defer func() { _ = s.opts.Locker.Unlock(context.Background(), lk.ID) }()
 	}
 
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("open folder: %w", err)
 	}
@@ -353,7 +353,7 @@ func (s *Server) optimizeFolder(ctx context.Context, req optimizeRequest) (*opti
 		}
 		defer func() { _ = s.opts.Locker.Unlock(context.Background(), lk.ID) }()
 	}
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("open folder: %w", err)
 	}

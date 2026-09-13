@@ -247,7 +247,7 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 
 	for _, name := range ordered {
 		st.Folders++
-		folder, ferr := idx.OpenFolder(name, 0)
+		folder, ferr := mbox.Folder(name, 0)
 		if ferr != nil {
 			return nil, fmt.Errorf("open %s: %w", name, ferr)
 		}
