@@ -121,12 +121,13 @@ func backfillUser(boxBE mailbox.MailboxBackend, idxBE mailbox.IndexBackend, reso
 		return fmt.Errorf("list folders: %w", err)
 	}
 	dryRun := o.DryRun
+	mbox := mailboxbase.Open(box, idx)
 	for _, e := range entries {
 		if !e.Selectable {
 			continue
 		}
 		st.Folders++
-		folder, err := idx.OpenFolder(e.Name, 0)
+		folder, err := mbox.Folder(e.Name, 0)
 		if err != nil {
 			return fmt.Errorf("open %s: %w", e.Name, err)
 		}
@@ -142,7 +143,7 @@ func backfillUser(boxBE mailbox.MailboxBackend, idxBE mailbox.IndexBackend, reso
 			slog.Info("would backfill", "user", user, "folder", e.Name)
 			continue
 		}
-		if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(box, idx), folder, e.Name); err != nil {
+		if err := idxrebuild.BackfillGUIDs(mbox, folder, e.Name); err != nil {
 			return fmt.Errorf("backfill %s: %w", e.Name, err)
 		}
 		st.Migrated++

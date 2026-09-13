@@ -24,10 +24,6 @@ func (s *session) quotaChanged() {
 // per-session cache before the index is re-summed. Enforcement bypasses it.
 const quotaCacheTTL = time.Second
 
-// countUsage returns the user's quota usage summed from the index (the
-// authoritative count backend): the aggregate virtual size + message count of
-// every personal-namespace folder. useCache serves a recent value for GETQUOTA
-// display bursts; enforcement passes false so decisions are always fresh.
 // usageAfterDelta answers the post-commit usage from the cached total plus the
 // change this session just made, when the cache is fresh enough to build on.
 //
@@ -63,8 +59,8 @@ func (s *session) usageAfterDelta(dBytes, dMessages int64) (quota.Usage, bool) {
 	return u, true
 }
 
-// countUsageFor is countUsage with the caller recorded: counting walks every
-// folder and locks each one, so a total without the caller answers nothing (#1634).
+// countUsageFor sums the account's usage from the index, naming the caller:
+// counting locks every folder, so a total without one answers nothing (#1634).
 func (s *session) countUsageFor(reason string, useCache bool) (quota.Usage, error) {
 	if s.box == nil || s.idx == nil {
 		return quota.Usage{}, nil
@@ -78,7 +74,7 @@ func (s *session) countUsageFor(reason string, useCache bool) (quota.Usage, erro
 	if err != nil {
 		return quota.Usage{}, err
 	}
-	u := quota.CountUsage(s.idx, mailbox.SelectableNames(entries), s.quotaLimits())
+	u := quota.CountUsage(s.mbox, s.idx, mailbox.SelectableNames(entries), s.quotaLimits())
 	s.quotaCacheUsage = u
 	s.quotaCacheAt = time.Now()
 	// Lazy quota_over_status: reconcile on the first quota operation. evalOverStatus
@@ -365,7 +361,7 @@ func (s *session) folderMessageCount(folder string) (int64, bool) {
 	if s.box == nil || s.idx == nil {
 		return 0, false
 	}
-	f, err := s.idx.OpenFolder(folder, 0)
+	f, err := s.mbox.Folder(folder, 0)
 	if err != nil {
 		return 0, false
 	}

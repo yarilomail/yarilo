@@ -63,7 +63,7 @@ func Run(cfg Config) (Report, error) {
 	defer uidx.Close() //nolint:errcheck
 	mbox := mailboxbase.Open(box, uidx)
 
-	folder, err := uidx.OpenFolder(benchMbox.Name, benchMbox.UIDValidity)
+	folder, err := mbox.Folder(benchMbox.Name, benchMbox.UIDValidity)
 	if err != nil {
 		return Report{}, fmt.Errorf("ftsbench: open folder: %w", err)
 	}

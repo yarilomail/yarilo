@@ -51,7 +51,7 @@ func (s *Server) emailState(h *userHandle) (string, error) {
 				continue
 			}
 		}
-		f, err := h.idx.OpenFolder(e.Name, 0)
+		f, err := h.mbox.Folder(e.Name, 0)
 		if err != nil {
 			return "", fmt.Errorf("jmap: open folder %q: %w", e.Name, err)
 		}
@@ -170,7 +170,7 @@ func (s *Server) folderMarks(h *userHandle) (folderMarks, error) {
 		if !e.Selectable {
 			continue
 		}
-		f, err := h.idx.OpenFolder(e.Name, 0)
+		f, err := h.mbox.Folder(e.Name, 0)
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", e.Name, err)
 		}

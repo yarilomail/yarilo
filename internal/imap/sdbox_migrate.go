@@ -27,7 +27,7 @@ func (s *session) migrateNamesOnSelect(h *nsHandle, rel string, f *mailbox.Folde
 	if n == 0 {
 		return nil
 	}
-	refreshed, err := h.idx.OpenFolder(rel, f.UIDValidity)
+	refreshed, err := h.mailbox().Folder(rel, f.UIDValidity)
 	if err != nil {
 		slog.Warn("imap: reopen after name migration failed", "folder", rel, "err", err)
 		return nil

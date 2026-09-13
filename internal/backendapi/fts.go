@@ -48,7 +48,7 @@ func (s *Server) ftsMailboxRef(uc *userContext, folder string) (fts.MailboxRef, 
 	if bundle == nil {
 		return fts.MailboxRef{}, errNoMailHome
 	}
-	f, err := bundle.idx.OpenFolder(folder, 0)
+	f, err := bundle.mbox.Folder(folder, 0)
 	if err != nil {
 		return fts.MailboxRef{}, err
 	}

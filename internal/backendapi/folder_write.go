@@ -303,7 +303,7 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		apiError(w, "open folder: "+err.Error(), http.StatusInternalServerError)
 		return

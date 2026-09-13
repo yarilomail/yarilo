@@ -178,7 +178,7 @@ func (s *Server) queryScope(h *userHandle, f *jmapcore.EmailFilter) (*queryScope
 	sort.Strings(names)
 
 	for _, name := range names {
-		folder, err := h.idx.OpenFolder(name, 0)
+		folder, err := h.mbox.Folder(name, 0)
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", name, err)
 		}

@@ -111,7 +111,7 @@ func (s *Server) handleFolderStats(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder not found", http.StatusNotFound)
 		return
 	}
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		apiError(w, "open folder: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -186,7 +186,7 @@ func (s *Server) folderInfoCommon(w http.ResponseWriter, r *http.Request) (*fold
 	if !exists {
 		return nil, http.StatusNotFound, errFolderNotFound
 	}
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}

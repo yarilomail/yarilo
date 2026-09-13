@@ -183,7 +183,7 @@ func (s *Server) setAltTierAllFolders(bundle *nsBundle, filenames []string, altT
 			continue
 		}
 		folder := entry.Name
-		f, ferr := bundle.idx.OpenFolder(folder, 0)
+		f, ferr := bundle.mbox.Folder(folder, 0)
 		if ferr != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("altmove/flag: open %q: %w", folder, ferr)

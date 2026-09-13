@@ -294,7 +294,7 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		folders := mailbox.SelectableNames(entries)
 		sort.Strings(folders)
 		for _, name := range folders {
-			f, err := bundle.idx.OpenFolder(name, 0)
+			f, err := bundle.mbox.Folder(name, 0)
 			if err != nil || f == nil {
 				continue
 			}

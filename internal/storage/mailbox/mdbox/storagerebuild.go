@@ -97,7 +97,7 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, restoreOrphans bool) (mail
 
 		// Phase 1: reset each folder to the records whose map_uid is still on disk.
 		for _, fe := range folders {
-			f, oerr := box.Index().OpenFolder(fe.Name, 0)
+			f, oerr := box.Folder(fe.Name, 0)
 			if oerr != nil {
 				return fmt.Errorf("mdbox/rebuild: open %q: %w", fe.Name, oerr)
 			}
@@ -121,7 +121,7 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, restoreOrphans bool) (mail
 		refCount := make(map[uint32]int, len(scanned))
 		reread := func() error {
 			for _, fe := range folders {
-				f, oerr := box.Index().OpenFolder(fe.Name, 0)
+				f, oerr := box.Folder(fe.Name, 0)
 				if oerr != nil {
 					return fmt.Errorf("mdbox/rebuild: reopen %q: %w", fe.Name, oerr)
 				}
@@ -247,7 +247,7 @@ func (u *userMailbox) openOrCreateFolder(box mailbox.Box, name string, cache map
 			return nil, fmt.Errorf("mdbox/rebuild: create restore target %q: %w", name, cerr)
 		}
 	}
-	f, err := box.Index().OpenFolder(name, 0)
+	f, err := box.Folder(name, 0)
 	if err != nil {
 		return nil, fmt.Errorf("mdbox/rebuild: open restore target %q: %w", name, err)
 	}

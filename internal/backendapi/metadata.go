@@ -299,7 +299,7 @@ func (s *Server) openMetadataContextReq(w http.ResponseWriter, r *http.Request, 
 		apiError(w, errFolderNotFound.Error(), http.StatusNotFound)
 		return nil, nil, errFolderNotFound
 	}
-	folder, err := bundle.idx.OpenFolder(target, 0)
+	folder, err := bundle.mbox.Folder(target, 0)
 	if err != nil {
 		uc.Close()
 		apiError(w, "open folder: "+err.Error(), http.StatusInternalServerError)

@@ -67,7 +67,7 @@ func (s *session) reconcileFolder(h *nsHandle, rel string) bool {
 	}
 	metricMaildirSync.WithLabelValues("scanned").Inc()
 	defer func() { metricMaildirSyncSeconds.Observe(time.Since(start).Seconds()) }()
-	f, err := h.idx.OpenFolder(rel, 0)
+	f, err := h.mailbox().Folder(rel, 0)
 	if err != nil {
 		slog.Warn("imap: reconcile open folder failed", "folder", rel, "err", err)
 		return false
@@ -96,7 +96,7 @@ func (s *session) maildirSyncOnSelect(h *nsHandle, rel string, f *mailbox.Folder
 	if !s.reconcileFolder(h, rel) {
 		return nil
 	}
-	refreshed, err := h.idx.OpenFolder(rel, f.UIDValidity)
+	refreshed, err := h.mailbox().Folder(rel, f.UIDValidity)
 	if err != nil {
 		slog.Warn("imap: reopen after sync failed", "folder", rel, "err", err)
 		return nil

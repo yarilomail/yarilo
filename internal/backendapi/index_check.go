@@ -66,7 +66,7 @@ func (s *Server) handleIndexCheck(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	out := indexCheckStats{User: req.User, Note: indexCheckNote(req.Fix, stored == nil)}
 	for _, e := range entries {
-		folder, oerr := bundle.idx.OpenFolder(e.Name, 0)
+		folder, oerr := bundle.mbox.Folder(e.Name, 0)
 		if oerr != nil {
 			if out.Failed == nil {
 				out.Failed = map[string]string{}
