@@ -1118,12 +1118,26 @@ func (s *session) writeFlagBatch(adds map[uint32][]string) int {
 			UID: m.UID, Filename: name, Flags: m.Flags, Keywords: m.Keywords,
 		})
 	}
-	s.box.WriteFlags(s.folder, "INBOX", writes)
-	if len(failed) > 0 {
-		slog.Error("pop3: flags not recorded", "user", s.userInfo.Username,
-			"uids", failed, "count", len(failed))
-	}
+	stored := s.box.WriteFlags(s.folder, "INBOX", writes)
+	s.reportFlagFailures("pop3: flags not recorded", failed, stored)
 	return applied
+}
+
+// reportFlagFailures names both halves in one line: what the index refused and
+// what the store did not take, the second being the case #1780 is about.
+func (s *session) reportFlagFailures(msg string, index []uint32, stored []mailbox.FlagWriteResult) {
+	notStored := make([]uint32, 0, len(stored))
+	for _, res := range stored {
+		if res.Err != nil {
+			notStored = append(notStored, res.UID)
+		}
+	}
+	if len(index) == 0 && len(notStored) == 0 {
+		return
+	}
+	slog.Error(msg, "user", s.userInfo.Username,
+		"index_refused", index, "store_refused", notStored,
+		"count", len(index)+len(notStored))
 }
 
 // clearSeenForLast drops \Seen from the whole mailbox, which is what LAST after
@@ -1150,11 +1164,8 @@ func (s *session) clearSeenForLast() {
 			UID: m.UID, Filename: name, Flags: m.Flags, Keywords: m.Keywords,
 		})
 	}
-	s.box.WriteFlags(s.folder, "INBOX", writes)
-	if len(failed) > 0 {
-		slog.Error("pop3: seen not cleared", "user", s.userInfo.Username,
-			"uids", failed, "count", len(failed))
-	}
+	stored := s.box.WriteFlags(s.folder, "INBOX", writes)
+	s.reportFlagFailures("pop3: seen not cleared", failed, stored)
 }
 
 func (s *session) expungeDeleted() int {

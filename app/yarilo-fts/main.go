@@ -51,7 +51,9 @@ func main() {
 	}
 
 	engine, err := ftsservice.BuildEngine(fc)
-	if err != nil {
+	// Without -tags flatcurve every branch of BuildEngine fails, by design: the
+	// untagged binary carries no engine and says so at startup.
+	if err != nil { //nolint:staticcheck // SA4023: always true in the untagged build
 		slog.Error("engine init failed", "err", err)
 		os.Exit(1)
 	}

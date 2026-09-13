@@ -103,10 +103,8 @@ func flagTrailer(name string) string {
 	return ""
 }
 
-// A flag a POP3 session sets reaches the name the maildir keeps it in (#1780).
-//
-// A maildir describes itself: a flag that stopped at our index is one the store
-// does not have, and a rebuild gives the message back unread.
+// A flag a POP3 session sets reaches the name the maildir keeps it in: a flag
+// that stopped at our index is one the store does not have (#1780).
 func TestAPOP3FlagReachesTheMaildirName(t *testing.T) {
 	cases := []struct {
 		name    string
