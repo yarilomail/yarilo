@@ -132,7 +132,7 @@ func (s *Server) userCountUsage(user, namespace string) (quota.Usage, quota.Limi
 			limits = quota.ParseRules(pui.QuotaRules)
 		}
 	}
-	return quota.CountUsage(bundle.idx, mailbox.SelectableNames(folders), limits), limits, nil
+	return quota.CountUsage(bundle.mbox, bundle.idx, mailbox.SelectableNames(folders), limits), limits, nil
 }
 
 type quotaShowResponse struct {
@@ -248,7 +248,7 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 			limits = quota.ParseRules(pui.QuotaRules)
 		}
 	}
-	u := quota.CountUsage(bundle.idx, names, limits)
+	u := quota.CountUsage(bundle.mbox, bundle.idx, names, limits)
 	apiJSON(w, quotaRecalcResponse{
 		User:         req.User,
 		StorageBytes: u.StorageBytes,

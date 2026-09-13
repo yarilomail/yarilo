@@ -242,18 +242,18 @@ type StorageWideRebuilder interface {
 //
 // Returns true only when it actually marked the folder, so a caller can gate its
 // own "already flagged" state without repeating the corruption classification.
-func MarkCorruptOnFetchErr(box any, idx UserIndex, folder string, err error) bool {
+func MarkCorruptOnFetchErr(b Box, folder string, err error) bool {
 	if err == nil || !errors.Is(err, ErrCorruptStorage) {
 		return false
 	}
-	if !CanReactiveHeal(box) {
+	if !CanReactiveHeal(b.Store()) {
 		return false
 	}
-	cm, ok := idx.(CorruptionMarker)
+	cm, ok := b.Index().(CorruptionMarker)
 	if !ok {
 		return false
 	}
-	f, oerr := idx.OpenFolder(folder, 0)
+	f, oerr := b.Folder(folder, 0)
 	if oerr != nil {
 		return false
 	}

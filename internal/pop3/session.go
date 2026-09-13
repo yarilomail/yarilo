@@ -896,7 +896,7 @@ func (s *session) fetchINBOX(m *mailbox.MessageMeta) (io.ReadCloser, error) {
 	rc, err := s.box.OpenMessage("INBOX", m)
 	// flag once per session: one mark heals every missing record on the
 	// next open, so a RETR loop over a corrupt mailbox pays no per-message cost
-	if err != nil && !s.markedCorrupt && mailbox.MarkCorruptOnFetchErr(s.box.Store(), s.box.Index(), "INBOX", err) {
+	if err != nil && !s.markedCorrupt && mailbox.MarkCorruptOnFetchErr(s.box, "INBOX", err) {
 		s.markedCorrupt = true
 	}
 	return rc, err

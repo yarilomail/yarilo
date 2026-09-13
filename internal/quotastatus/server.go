@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
@@ -184,12 +185,13 @@ func (s *Server) check(attrs map[string]string) string {
 	defer box.Close() //nolint:errcheck
 	idx := s.opts.Index.OpenUser(ui)
 	defer idx.Close() //nolint:errcheck
+	mbox := mailboxbase.Open(box, idx)
 	entries, lerr := box.ListFolders()
 	if lerr != nil {
 		slog.Warn("quotastatus: list folders failed", "user", username, "err", lerr)
 		return "DUNNO" // fail-open
 	}
-	u := quota.CountUsage(idx, mailbox.SelectableNames(entries), limits)
+	u := quota.CountUsage(mbox, idx, mailbox.SelectableNames(entries), limits)
 
 	var msgSize int64
 	if sz := strings.TrimSpace(attrs["size"]); sz != "" {

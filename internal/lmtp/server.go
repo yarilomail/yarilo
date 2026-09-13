@@ -648,7 +648,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 					// A folder no session has opened still sums its records, and
 					// a record that carries no size sums as nothing (#1728).
 					fillSizes(mailboxbase.Open(rcptBox, rcptIdx), mailbox.SelectableNames(entries))
-					u := quota.CountUsage(rcptIdx, mailbox.SelectableNames(entries), lim)
+					u := quota.CountUsage(rcptMbox, rcptIdx, mailbox.SelectableNames(entries), lim)
 					// Inbound delivery is grace-eligible (LMTP/LDA overshoot).
 					if quota.IsOverWithGrace(u, effLim, int64(len(msg)), 1, s.opts.QuotaPolicy.StorageGrace) {
 						slog.Warn("lmtp: delivery rejected: mailbox full", "rcpt", rcpt, "user", username)

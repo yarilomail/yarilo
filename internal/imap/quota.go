@@ -74,7 +74,7 @@ func (s *session) countUsageFor(reason string, useCache bool) (quota.Usage, erro
 	if err != nil {
 		return quota.Usage{}, err
 	}
-	u := quota.CountUsage(s.idx, mailbox.SelectableNames(entries), s.quotaLimits())
+	u := quota.CountUsage(s.mbox, s.idx, mailbox.SelectableNames(entries), s.quotaLimits())
 	s.quotaCacheUsage = u
 	s.quotaCacheAt = time.Now()
 	// Lazy quota_over_status: reconcile on the first quota operation. evalOverStatus

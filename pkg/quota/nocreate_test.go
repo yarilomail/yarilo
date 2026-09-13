@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
@@ -20,8 +22,12 @@ func TestCountUsageDoesNotIndexAnUnindexedFolder(t *testing.T) {
 
 	idx := file.New(file.WithNoCreate()).OpenUser(info)
 	t.Cleanup(func() { idx.Close() }) //nolint:errcheck
+	// The store is opened, never Init'd: this counts, it does not establish.
+	store := maildir.New().OpenUser(info)
+	t.Cleanup(func() { store.Close() }) //nolint:errcheck
+	mbox := mailboxbase.Open(store, idx)
 
-	usage := quota.CountUsage(idx, []string{"INBOX", "NeverIndexed"}, quota.Limits{})
+	usage := quota.CountUsage(mbox, idx, []string{"INBOX", "NeverIndexed"}, quota.Limits{})
 	if usage.StorageBytes != 0 || usage.Messages != 0 {
 		t.Errorf("usage = %+v, want zero for folders with no index", usage)
 	}
