@@ -236,3 +236,59 @@ func TestRsetClearsSeenAcrossTheMailbox(t *testing.T) {
 		t.Errorf("LAST after RSET is %q, want +OK 0", last)
 	}
 }
+
+// A name the store would not take is counted apart from a record the index
+// refused: the second is the ordinary failure, the first is #1780 itself.
+func TestAStoreThatRefusesTheNameIsCountedApart(t *testing.T) {
+	home := t.TempDir()
+	info := &mailbox.UserInfo{Username: "u@x", Home: home, Driver: "maildir"}
+	box := maildir.New().OpenUser(info)
+	defer box.Close() //nolint:errcheck
+	if err := box.Init(); err != nil {
+		t.Fatal(err)
+	}
+	idx := fileindex.New().OpenUser(info)
+	defer idx.Close() //nolint:errcheck
+	f, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := "From: a@b\r\nSubject: one\r\n\r\nbody\r\n"
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &mailbox.MessageMeta{Size: uint32(len(raw)), VSize: vsize, GUID: guid}
+	if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("setup: %d records, %v", len(msgs), err)
+	}
+
+	// The rename has nowhere to go: cur/ is readable but not writable.
+	cur := filepath.Join(home, "Maildir", "cur")
+	if err := os.Chmod(cur, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(cur, 0o700) }) //nolint:errcheck
+
+	s := &session{
+		box:      mailboxbase.Open(box, idx),
+		folder:   f,
+		msgs:     msgs,
+		userInfo: info,
+		srv:      &Server{opts: Options{}},
+	}
+	got := s.writeFlagBatch(map[uint32][]string{msgs[0].UID: {`\Seen`}})
+	if got.storeRefused != 1 {
+		t.Errorf("store_refused = %d, want 1: the name never took the flag", got.storeRefused)
+	}
+	if got.indexRefused != 0 {
+		t.Errorf("index_refused = %d, want 0: the record was written", got.indexRefused)
+	}
+	if got.applied != 1 {
+		t.Errorf("applied = %d, want 1", got.applied)
+	}
+}

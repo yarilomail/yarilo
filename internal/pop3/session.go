@@ -1023,7 +1023,7 @@ func (s *session) cmdLast() {
 // cmdQuit applies \Seen flags (unless NoFlagUpdates) and commits deletions.
 func (s *session) cmdQuit() {
 	tQuit := time.Now()
-	var seenCount, deletedCount int
+	var deletedCount int
 	// One batch for the session: \Seen for what was read, plus the deleted mark
 	// when deletion is a flag. A message being deleted is not marked read.
 	adds := make(map[uint32][]string, len(s.msgs))
@@ -1048,6 +1048,7 @@ func (s *session) cmdQuit() {
 	}
 
 	var errCount int
+	var flags flagBatchResult
 	if s.srv.opts.DeleteType == "flag" {
 		deletedFlag := s.srv.opts.DeletedFlag
 		if deletedFlag == "" {
@@ -1060,9 +1061,9 @@ func (s *session) cmdQuit() {
 			adds[s.msgs[i].UID] = append(adds[s.msgs[i].UID], deletedFlag)
 			deletedCount++
 		}
-		seenCount = s.writeFlagBatch(adds)
+		flags = s.writeFlagBatch(adds)
 	} else {
-		seenCount = s.writeFlagBatch(adds)
+		flags = s.writeFlagBatch(adds)
 		for _, del := range s.deleted {
 			if del {
 				deletedCount++
@@ -1077,7 +1078,8 @@ func (s *session) cmdQuit() {
 
 	slog.Debug("pop3: quit timing",
 		"user", s.userInfo.Username,
-		"seen_updates", seenCount, "deleted", deletedCount,
+		"seen_updates", flags.applied, "deleted", deletedCount,
+		"index_refused", flags.indexRefused, "store_refused", flags.storeRefused,
 		"total_ms", time.Since(tQuit).Milliseconds())
 
 	if errCount > 0 {
@@ -1088,15 +1090,23 @@ func (s *session) cmdQuit() {
 	s.state = stateDone
 }
 
+// flagBatchResult is what one settling pass did: what landed, and which half
+// refused the rest -- the store's refusal is the case #1780 is about.
+type flagBatchResult struct {
+	applied      int
+	indexRefused int
+	storeRefused int
+}
+
 // writeFlagBatch settles the session's flag changes: the index takes each, the
 // store takes them all at once -- one folder lock, and the name carries it (#1780).
-func (s *session) writeFlagBatch(adds map[uint32][]string) int {
+func (s *session) writeFlagBatch(adds map[uint32][]string) flagBatchResult {
+	var res flagBatchResult
 	if len(adds) == 0 {
-		return 0
+		return res
 	}
 	writes := make([]mailbox.FlagWrite, 0, len(adds))
 	failed := make([]uint32, 0)
-	applied := 0
 	for _, m := range s.msgs {
 		add, ok := adds[m.UID]
 		if !ok {
@@ -1109,7 +1119,7 @@ func (s *session) writeFlagBatch(adds map[uint32][]string) int {
 		for _, f := range add {
 			m.Flags = appendFlag(m.Flags, f)
 		}
-		applied++
+		res.applied++
 		name, err := s.box.MessagePath("INBOX", m)
 		if err != nil || name == "" {
 			continue
@@ -1119,13 +1129,13 @@ func (s *session) writeFlagBatch(adds map[uint32][]string) int {
 		})
 	}
 	stored := s.box.WriteFlags(s.folder, "INBOX", writes)
-	s.reportFlagFailures("pop3: flags not recorded", failed, stored)
-	return applied
+	res.indexRefused, res.storeRefused = s.reportFlagFailures("pop3: flags not recorded", failed, stored)
+	return res
 }
 
 // reportFlagFailures names both halves in one line: what the index refused and
 // what the store did not take, the second being the case #1780 is about.
-func (s *session) reportFlagFailures(msg string, index []uint32, stored []mailbox.FlagWriteResult) {
+func (s *session) reportFlagFailures(msg string, index []uint32, stored []mailbox.FlagWriteResult) (indexRefused, storeRefused int) {
 	notStored := make([]uint32, 0, len(stored))
 	for _, res := range stored {
 		if res.Err != nil {
@@ -1133,11 +1143,12 @@ func (s *session) reportFlagFailures(msg string, index []uint32, stored []mailbo
 		}
 	}
 	if len(index) == 0 && len(notStored) == 0 {
-		return
+		return 0, 0
 	}
 	slog.Error(msg, "user", s.userInfo.Username,
 		"index_refused", index, "store_refused", notStored,
 		"count", len(index)+len(notStored))
+	return len(index), len(notStored)
 }
 
 // clearSeenForLast drops \Seen from the whole mailbox, which is what LAST after
