@@ -803,6 +803,17 @@ func appendFlag(flags []string, flag string) []string {
 	return out
 }
 
+// hasFlagFold matches the way appendFlag and removeFlag compare: a flag name is
+// case-insensitive.
+func hasFlagFold(flags []string, flag string) bool {
+	for _, f := range flags {
+		if strings.EqualFold(f, flag) {
+			return true
+		}
+	}
+	return false
+}
+
 func removeFlag(flags []string, flag string) []string {
 	out := make([]string, 0, len(flags))
 	for _, f := range flags {
@@ -939,23 +950,13 @@ func (s *session) cmdDele(arg string) {
 
 func (s *session) cmdRset() {
 	tRset := time.Now()
+	// The session's own reads are forgotten either way; the mailbox-wide clear
+	// belongs to LAST, which has to report zero after a reset.
+	for i := range s.seenMsgs {
+		s.seenMsgs[i] = false
+	}
 	if s.srv.opts.EnableLast {
-		for i, seen := range s.seenMsgs {
-			if !seen {
-				continue
-			}
-			m := s.msgs[i]
-			// The flags in hand are from the login snapshot, which for POP3 is
-			// the whole session old. Clear the one flag rather than declare the
-			// set, or every change another session made meanwhile is dropped
-			// (#1250).
-			if err := s.box.Index().RemoveFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
-				slog.Error("pop3: rset remove seen", "uid", m.UID, "err", err)
-			} else {
-				m.Flags = removeFlag(m.Flags, `\Seen`)
-			}
-			s.seenMsgs[i] = false
-		}
+		s.clearSeenForLast()
 		s.lastMsg = 0
 	}
 	for i := range s.deleted {
@@ -1022,17 +1023,14 @@ func (s *session) cmdLast() {
 // cmdQuit applies \Seen flags (unless NoFlagUpdates) and commits deletions.
 func (s *session) cmdQuit() {
 	tQuit := time.Now()
-	var seenCount, deletedCount int
+	var deletedCount int
+	// One batch for the session: \Seen for what was read, plus the deleted mark
+	// when deletion is a flag. A message being deleted is not marked read.
+	adds := make(map[uint32][]string, len(s.msgs))
 	if !s.srv.opts.NoFlagUpdates {
 		for i, seen := range s.seenMsgs {
 			if seen && !s.deleted[i] {
-				m := s.msgs[i]
-				if err := s.box.Index().AddFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
-					slog.Error("pop3: set seen", "uid", m.UID, "err", err)
-				} else {
-					m.Flags = appendFlag(m.Flags, `\Seen`)
-					seenCount++
-				}
+				adds[s.msgs[i].UID] = []string{`\Seen`}
 			}
 		}
 	}
@@ -1050,6 +1048,7 @@ func (s *session) cmdQuit() {
 	}
 
 	var errCount int
+	var flags flagBatchResult
 	if s.srv.opts.DeleteType == "flag" {
 		deletedFlag := s.srv.opts.DeletedFlag
 		if deletedFlag == "" {
@@ -1059,15 +1058,12 @@ func (s *session) cmdQuit() {
 			if !del {
 				continue
 			}
-			m := s.msgs[i]
-			if err := s.box.Index().AddFlags(s.folder.ID, m.UID, []string{deletedFlag}, nil); err != nil {
-				slog.Error("pop3: flag deleted", "uid", m.UID, "err", err)
-				errCount++
-			} else {
-				deletedCount++
-			}
+			adds[s.msgs[i].UID] = append(adds[s.msgs[i].UID], deletedFlag)
+			deletedCount++
 		}
+		flags = s.writeFlagBatch(adds)
 	} else {
+		flags = s.writeFlagBatch(adds)
 		for _, del := range s.deleted {
 			if del {
 				deletedCount++
@@ -1082,7 +1078,8 @@ func (s *session) cmdQuit() {
 
 	slog.Debug("pop3: quit timing",
 		"user", s.userInfo.Username,
-		"seen_updates", seenCount, "deleted", deletedCount,
+		"seen_updates", flags.applied, "deleted", deletedCount,
+		"index_refused", flags.indexRefused, "store_refused", flags.storeRefused,
 		"total_ms", time.Since(tQuit).Milliseconds())
 
 	if errCount > 0 {
@@ -1091,6 +1088,95 @@ func (s *session) cmdQuit() {
 		s.ok("yarilo signing off")
 	}
 	s.state = stateDone
+}
+
+// flagBatchResult is what one settling pass did: what landed, and which half
+// refused the rest -- the store's refusal is the case #1780 is about.
+type flagBatchResult struct {
+	applied      int
+	indexRefused int
+	storeRefused int
+}
+
+// writeFlagBatch settles the session's flag changes: the index takes each, the
+// store takes them all at once -- one folder lock, and the name carries it (#1780).
+func (s *session) writeFlagBatch(adds map[uint32][]string) flagBatchResult {
+	var res flagBatchResult
+	if len(adds) == 0 {
+		return res
+	}
+	writes := make([]mailbox.FlagWrite, 0, len(adds))
+	failed := make([]uint32, 0)
+	for _, m := range s.msgs {
+		add, ok := adds[m.UID]
+		if !ok {
+			continue
+		}
+		if err := s.box.Index().AddFlags(s.folder.ID, m.UID, add, nil); err != nil {
+			failed = append(failed, m.UID)
+			continue
+		}
+		for _, f := range add {
+			m.Flags = appendFlag(m.Flags, f)
+		}
+		res.applied++
+		name, err := s.box.MessagePath("INBOX", m)
+		if err != nil || name == "" {
+			continue
+		}
+		writes = append(writes, mailbox.FlagWrite{
+			UID: m.UID, Filename: name, Flags: m.Flags, Keywords: m.Keywords,
+		})
+	}
+	stored := s.box.WriteFlags(s.folder, "INBOX", writes)
+	res.indexRefused, res.storeRefused = s.reportFlagFailures("pop3: flags not recorded", failed, stored)
+	return res
+}
+
+// reportFlagFailures names both halves in one line: what the index refused and
+// what the store did not take, the second being the case #1780 is about.
+func (s *session) reportFlagFailures(msg string, index []uint32, stored []mailbox.FlagWriteResult) (indexRefused, storeRefused int) {
+	notStored := make([]uint32, 0, len(stored))
+	for _, res := range stored {
+		if res.Err != nil {
+			notStored = append(notStored, res.UID)
+		}
+	}
+	if len(index) == 0 && len(notStored) == 0 {
+		return 0, 0
+	}
+	slog.Error(msg, "user", s.userInfo.Username,
+		"index_refused", index, "store_refused", notStored,
+		"count", len(index)+len(notStored))
+	return len(index), len(notStored)
+}
+
+// clearSeenForLast drops \Seen from the whole mailbox, which is what LAST after
+// RSET has to report zero (RFC 1460). Under pop3_enable_last only.
+func (s *session) clearSeenForLast() {
+	writes := make([]mailbox.FlagWrite, 0, len(s.msgs))
+	failed := make([]uint32, 0)
+	for _, m := range s.msgs {
+		if !hasFlagFold(m.Flags, `\Seen`) {
+			continue
+		}
+		// Clear the one flag rather than declare the set: the snapshot in hand
+		// is a session old, and another writer's changes are not ours to drop (#1250).
+		if err := s.box.Index().RemoveFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
+			failed = append(failed, m.UID)
+			continue
+		}
+		m.Flags = removeFlag(m.Flags, `\Seen`)
+		name, err := s.box.MessagePath("INBOX", m)
+		if err != nil || name == "" {
+			continue
+		}
+		writes = append(writes, mailbox.FlagWrite{
+			UID: m.UID, Filename: name, Flags: m.Flags, Keywords: m.Keywords,
+		})
+	}
+	stored := s.box.WriteFlags(s.folder, "INBOX", writes)
+	s.reportFlagFailures("pop3: seen not cleared", failed, stored)
 }
 
 func (s *session) expungeDeleted() int {
