@@ -53,10 +53,30 @@ func (b *RedisBackend) AtFront(ctx context.Context, resource, ticket string) (bo
 	return front[0] == ticket, nil
 }
 
+// dequeueScript removes a ticket and names whoever now stands first, so a
+// contender that gave up hands the turn on instead of leaving it to the timer.
+//
+//	KEYS[1] = queue key
+//	ARGV[1] = ticket
+var dequeueScript = redis.NewScript(`
+local removed = redis.call("ZREM", KEYS[1], ARGV[1])
+if removed == 0 then return "" end
+local next_up = redis.call("ZRANGE", KEYS[1], 0, 0)
+return next_up[1] or ""
+`)
+
 // Dequeue implements WaitQueue.
 func (b *RedisBackend) Dequeue(ctx context.Context, resource, ticket string) error {
-	if err := b.rdb.ZRem(ctx, b.queueKey(resource), ticket).Err(); err != nil {
+	res, err := dequeueScript.Run(ctx, b.rdb, []string{b.queueKey(resource)}, ticket).Result()
+	if err != nil {
 		return fmt.Errorf("locks/redis: dequeue: %w", err)
+	}
+	nextUp, _ := res.(string)
+	if nextUp == "" {
+		return nil
+	}
+	if err := b.rdb.Publish(ctx, b.wakeChannel(resource), nextUp).Err(); err != nil {
+		return fmt.Errorf("locks/redis: hand the turn on: %w", err)
 	}
 	return nil
 }
@@ -69,13 +89,13 @@ func (b *RedisBackend) wakeChannel(resource string) string {
 
 // Wakes implements WaitQueue. Every replica subscribes, so a release anywhere
 // reaches the contender waiting here.
-func (b *RedisBackend) Wakes(ctx context.Context, resource string) (<-chan struct{}, func(), error) {
+func (b *RedisBackend) Wakes(ctx context.Context, resource string) (<-chan string, func(), error) {
 	ps := b.rdb.Subscribe(ctx, b.wakeChannel(resource))
 	if _, err := ps.Receive(ctx); err != nil {
 		_ = ps.Close()
 		return nil, nil, fmt.Errorf("locks/redis: wakes: %w", err)
 	}
-	out := make(chan struct{}, 1)
+	out := make(chan string, 8)
 	done := make(chan struct{})
 	go func() {
 		defer close(out)
@@ -84,13 +104,13 @@ func (b *RedisBackend) Wakes(ctx context.Context, resource string) (<-chan struc
 			select {
 			case <-done:
 				return
-			case _, ok := <-msgs:
+			case msg, ok := <-msgs:
 				if !ok {
 					return
 				}
 				select {
-				case out <- struct{}{}:
-				default: // one pending signal is enough
+				case out <- msg.Payload:
+				default: // the contender is behind on turns that are not its own
 				}
 			}
 		}

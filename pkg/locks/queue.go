@@ -25,9 +25,9 @@ type WaitQueue interface {
 	// Dequeue takes ticket out of the line, wherever it stands.
 	Dequeue(ctx context.Context, resource, ticket string) error
 
-	// Wakes signals every time a lock on resource is released, wherever the
-	// holder was. Cancel releases whatever the backend holds for it.
-	Wakes(ctx context.Context, resource string) (signal <-chan struct{}, cancel func(), err error)
+	// Wakes names the ticket whose turn it is, wherever the holder was. The
+	// contender filters by its own, so a hand-off costs one round trip (#1824).
+	Wakes(ctx context.Context, resource string) (turns <-chan string, cancel func(), err error)
 }
 
 // queueing reports whether a backend carries the shared queue.

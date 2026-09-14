@@ -70,13 +70,10 @@ func (s *Server) handleLockWait(ctx context.Context, w io.Writer, fields []strin
 	backstop := time.NewTicker(lostWakeBackstop)
 	defer backstop.Stop()
 
+	// The first contender may try at once; afterwards a turn is named, and one
+	// that is not this ticket's costs nothing to ignore (#1824).
+	mine := ahead == 0
 	for {
-		mine, ferr := queue.AtFront(ctx, resource, ticket)
-		if ferr != nil {
-			s.logger.Error("locks: could not read the line", "resource", resource, "err", ferr)
-			_ = writeFields(w, respError, "internal")
-			return
-		}
 		if mine {
 			id, current, aerr := s.tryAcquire(ctx, resource, owner, site, ttl, shared)
 			switch {
@@ -109,9 +106,23 @@ func (s *Server) handleLockWait(ctx context.Context, w io.Writer, fields []strin
 			s.metrics.observeAcquire(time.Since(started).Seconds(), "busy")
 			_ = writeFields(w, respBusy, "", SiteUnknown)
 			return
-		case <-wakes:
+		case turn := <-wakes:
+			// An unnamed turn is "whoever is first", which only a backend
+			// that cannot name one sends.
+			mine = turn == ticket || turn == ""
 		case <-backstop.C:
-			s.metrics.incWaitBackstop()
+			// Asking the backend is the expensive half, so it is asked only
+			// here -- and counted only when a turn was owed and never came.
+			front, ferr := queue.AtFront(ctx, resource, ticket)
+			if ferr != nil {
+				s.logger.Error("locks: could not read the line", "resource", resource, "err", ferr)
+				_ = writeFields(w, respError, "internal")
+				return
+			}
+			if front {
+				s.metrics.incWaitBackstop()
+			}
+			mine = front
 		}
 	}
 }
