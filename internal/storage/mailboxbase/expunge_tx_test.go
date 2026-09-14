@@ -1,0 +1,139 @@
+package mailboxbase_test
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
+
+// End to end an EXPUNGE takes the folder once, and did before the transaction
+// too: the driver's hold is outer, so nested index writes are reentrant.
+func TestExpungingManyTakesTheFolderOnce(t *testing.T) {
+	const messages = 40
+
+	home := t.TempDir()
+	info := &mailbox.UserInfo{Username: "u@x.com", Home: home, Driver: "maildir"}
+	lk := &countingLocker{held: map[string]locks.HoldMode{}}
+	store := maildir.New(maildir.WithLocker(lk)).OpenUser(info)
+	idx := fileidx.New(fileidx.WithLocker(lk)).OpenUser(info)
+	t.Cleanup(func() { _ = store.Close(); _ = idx.Close() })
+	if err := store.Init(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mailboxbase.SetTestSyncTokens(8))
+
+	box := mailboxbase.Open(store, idx)
+	f, err := box.Folder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doomed := make([]*mailbox.MessageMeta, 0, messages)
+	for i := 0; i < messages; i++ {
+		uid, aerr := idx.AllocateUID(f.ID)
+		if aerr != nil {
+			t.Fatal(aerr)
+		}
+		body := fmt.Sprintf("From: a@b\r\nSubject: m%d\r\n\r\nbody\r\n", i)
+		saved, vsize, guid, serr := store.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		m := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+		if rerr := box.RecordDelivered(f, "INBOX", saved, m); rerr != nil {
+			t.Fatal(rerr)
+		}
+		doomed = append(doomed, m)
+	}
+
+	before := lk.locks
+	removed, failed, nerr := box.ExpungeMarked(f, "INBOX", doomed, nil)
+	if nerr != nil || failed != 0 || len(removed) != messages {
+		t.Fatalf("expunged %d, failed %d, err %v", len(removed), failed, nerr)
+	}
+	took := lk.locks - before
+	t.Logf("locks taken for %d messages: %d", messages, took)
+
+	if took > 4 {
+		t.Errorf("expunging %d messages took %d locks, want the command's own few", messages, took)
+	}
+
+	left, lerr := idx.GetMessages(f.ID, mailbox.SeqSet{})
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(left) != 0 {
+		t.Errorf("%d records survived the expunge", len(left))
+	}
+}
+
+// The index on its own, where the count is actually paid: an outer folder hold
+// makes both shapes read as one acquisition and proves nothing (#1827).
+var perMessage = false
+
+func TestTheIndexIsTakenOncePerTransaction(t *testing.T) {
+	const messages = 40
+
+	home := t.TempDir()
+	info := &mailbox.UserInfo{Username: "u@x.com", Home: home, Driver: "maildir"}
+	lk := &countingLocker{held: map[string]locks.HoldMode{}}
+	idx := fileidx.New(fileidx.WithLocker(lk)).OpenUser(info)
+	t.Cleanup(func() { _ = idx.Close() })
+
+	f, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uids := make([]uint32, 0, messages)
+	for i := 0; i < messages; i++ {
+		m := &mailbox.MessageMeta{Size: 10, VSize: 10}
+		if aerr := idx.AllocateAndAppend(f.ID, m); aerr != nil {
+			t.Fatal(aerr)
+		}
+		uids = append(uids, m.UID)
+	}
+
+	txi, isTx := idx.(mailbox.TxIndex)
+	if !isTx {
+		t.Fatalf("index %T is no TxIndex", idx)
+	}
+	tx, berr := txi.Begin(f.ID)
+	if berr != nil {
+		t.Fatalf("begin: %v", berr)
+	}
+	before := lk.locks
+	if perMessage {
+		for _, uid := range uids {
+			if eerr := idx.ExpungeMessage(f.ID, uid); eerr != nil {
+				t.Fatal(eerr)
+			}
+		}
+		tx.Rollback()
+	} else {
+		for _, uid := range uids {
+			tx.Expunge(uid)
+		}
+		if _, cerr := tx.Commit(); cerr != nil {
+			t.Fatal(cerr)
+		}
+	}
+	took := lk.locks - before
+	t.Logf("index locks for %d records in one transaction: %d", messages, took)
+	if took != 1 {
+		t.Errorf("one transaction over %d records took %d index locks, want 1", messages, took)
+	}
+
+	left, lerr := idx.GetMessages(f.ID, mailbox.SeqSet{})
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(left) != 0 {
+		t.Errorf("%d records survived the transaction", len(left))
+	}
+}

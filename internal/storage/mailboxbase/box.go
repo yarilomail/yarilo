@@ -190,8 +190,8 @@ func (b *Box) HoldFolder(folder, site string, fn func() error) error {
 	return h.HoldFolder(folder, site, fn)
 }
 
-// expungeEach reads the name, removes the record, then the body: a stop between
-// the last two leaves a file for the next rebuild, never a record with no file (#1690).
+// expungeEach reads the names, removes the records, then the bodies: a stop
+// between the last two leaves a file, never a record with no file (#1690).
 func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta, notify mailbox.ExpungeNotify, notifyErr *error) (removed []uint32, failed int) {
 	// Counted over every record in the folder, not only the doomed ones: a
 	// record that stays behind still names its body (#1693).
@@ -202,38 +202,74 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 		return nil, len(msgs)
 	}
 	refs := newBodyRefs(bodyNames(b.store, folder, all))
+
+	// Every name is read before any record goes: a driver named by uid reads
+	// it out of the record this command is about to remove (#1712).
+	type doomed struct {
+		msg  *mailbox.MessageMeta
+		name string
+		err  error
+	}
+	list := make([]doomed, 0, len(msgs))
 	for _, m := range msgs {
-		// The name before the record: a driver named by uid reads it out of
-		// the record this loop is about to remove (#1712).
 		name, nameErr := MessagePath(b.store, folder, m)
-		if err := b.index.ExpungeMessage(f.ID, m.UID); err != nil {
-			slog.Error("mailbox/expunge: record", "user", b.store.Username(),
-				"folder", folder, "uid", m.UID, "err", err)
-			failed++
-			continue
-		}
-		removed = append(removed, m.UID)
-		if testAfterRecordExpunged != nil {
-			testAfterRecordExpunged()
-		}
 		if nameErr != nil {
 			name = ""
 		}
-		switch refs.fate(name) {
+		list = append(list, doomed{msg: m, name: name, err: nameErr})
+	}
+
+	if tx, batched := mailbox.BeginTx(b.index, f.ID); batched {
+		defer tx.Rollback()
+		for _, d := range list {
+			tx.Expunge(d.msg.UID)
+		}
+		if _, cerr := tx.Commit(); cerr != nil {
+			slog.Error("mailbox/expunge: the records could not be removed, so no body was",
+				"user", b.store.Username(), "folder", folder, "err", cerr)
+			return nil, len(msgs)
+		}
+		for _, d := range list {
+			removed = append(removed, d.msg.UID)
+		}
+	} else {
+		for _, d := range list {
+			if err := b.index.ExpungeMessage(f.ID, d.msg.UID); err != nil {
+				slog.Error("mailbox/expunge: record", "user", b.store.Username(),
+					"folder", folder, "uid", d.msg.UID, "err", err)
+				failed++
+				continue
+			}
+			removed = append(removed, d.msg.UID)
+		}
+	}
+	if testAfterRecordExpunged != nil {
+		testAfterRecordExpunged()
+	}
+
+	gone := make(map[uint32]struct{}, len(removed))
+	for _, uid := range removed {
+		gone[uid] = struct{}{}
+	}
+	for _, d := range list {
+		if _, ok := gone[d.msg.UID]; !ok {
+			continue
+		}
+		switch refs.fate(d.name) {
 		case bodyNameless:
 			slog.Warn("mailbox/expunge: the record named no file; its body, if any, stays",
-				"user", b.store.Username(), "folder", folder, "uid", m.UID, "err", nameErr)
+				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "err", d.err)
 		case bodyShared:
 			slog.Warn("mailbox/expunge: the body stays, another record still names it",
-				"user", b.store.Username(), "folder", folder, "uid", m.UID, "file", name)
+				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "file", d.name)
 		case bodyFree:
-			if err := b.RemoveHeld(folder, name); err != nil {
+			if err := b.RemoveHeld(folder, d.name); err != nil {
 				slog.Error("mailbox/expunge: body", "user", b.store.Username(),
-					"folder", folder, "uid", m.UID, "file", name, "err", err)
+					"folder", folder, "uid", d.msg.UID, "file", d.name, "err", err)
 			}
 		}
 		if notify != nil {
-			if nerr := notify(m); nerr != nil {
+			if nerr := notify(d.msg); nerr != nil {
 				*notifyErr = nerr
 				return removed, failed
 			}

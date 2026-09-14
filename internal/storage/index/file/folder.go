@@ -1400,6 +1400,21 @@ func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
 		if err != nil {
 			return err
 		}
+		recs, eerr := fs.expungeLocked(uid, modseq)
+		if eerr != nil || len(recs) == 0 {
+			return eerr
+		}
+		return fs.appendMutLog(recs...)
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// expungeLocked removes one record and returns the log records the change
+// needs, so a transaction can write a command's worth of them at once (#1827).
+func (fs *folderState) expungeLocked(uid uint32, modseq uint64) ([][]byte, error) {
+	{
 		idx := -1
 		for i, rec := range fs.file.Records {
 			if rec.UID == uid {
@@ -1408,7 +1423,7 @@ func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
 			}
 		}
 		if idx < 0 {
-			return nil // already expunged
+			return nil, nil // already expunged
 		}
 		rec := fs.file.Records[idx]
 		if rec.Flags&mailindex.FlagSeen != 0 {
@@ -1440,16 +1455,13 @@ func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
 		msgGUID := decodeGUIDRec(rec.Ext[extNameGUID])
 		copy(expPayload[4:20], msgGUID[:])
 		le.PutUint64(expPayload[20:], modseq)
-		return fs.appendMutLog(
+		return [][]byte{
 			encLogRec(mailindex.TxTypeExpungeGUID, mailindex.TxExpungeProt, expPayload),
 			encU32Update(32, fs.file.Header.MessagesCount),
 			encU32Update(40, fs.file.Header.SeenMessagesCount),
 			encU32Update(44, fs.file.Header.DeletedMessagesCount),
-		)
-	}); err != nil {
-		return err
+		}, nil
 	}
-	return nil
 }
 
 // GetMessages returns every record whose UID falls in uids; empty uids
@@ -2495,20 +2507,30 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 // flushAppend persists a newly appended record and updates the names sidecar;
 // rec must be the last element of fs.file.Records. Caller holds fs.mu.
 func (fs *folderState) flushAppend(rec *mailindex.Record) error {
+	records, err := fs.appendLogRecords(rec)
+	if err != nil {
+		return err
+	}
+	return fs.appendMutLog(records...)
+}
+
+// appendLogRecords is what one append writes, so a transaction can hold a
+// command's worth and write them together (#1827).
+func (fs *folderState) appendLogRecords(rec *mailindex.Record) ([][]byte, error) {
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
 	if err != nil {
-		return fmt.Errorf("fileindex/append: layout: %w", err)
+		return nil, fmt.Errorf("fileindex/append: layout: %w", err)
 	}
 	appendPayload, err := mailindex.EncodeTxAppendPayload(layout, []*mailindex.Record{rec})
 	if err != nil {
-		return fmt.Errorf("fileindex/append: encode: %w", err)
+		return nil, fmt.Errorf("fileindex/append: encode: %w", err)
 	}
 	// Emit a TxModseqUpdate alongside the append, or a cross-process reader's
 	// applyLog never advances HighestModSeq from it -- only TxModseqUpdate
 	// feeds the header, not the append's own record-level modseq -- leaving it
 	// stale for other sessions and breaking CONDSTORE HIGHESTMODSEQ.
 	modseq := decodeModseqRec(rec.Ext[extNameModSeq])
-	return fs.appendMutLog(
+	return [][]byte{
 		encLogRec(mailindex.TxTypeAppend, 0, appendPayload),
 		encLogRec(mailindex.TxTypeModseqUpdate, 0, mailindex.EncodeTxModseqUpdatePayload([]mailindex.TxModseqUpdate{{
 			UID: rec.UID, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
@@ -2517,7 +2539,7 @@ func (fs *folderState) flushAppend(rec *mailindex.Record) error {
 		encU32Update(32, fs.file.Header.MessagesCount),
 		encU32Update(40, fs.file.Header.SeenMessagesCount),
 		encU32Update(44, fs.file.Header.DeletedMessagesCount),
-	)
+	}, nil
 }
 
 // ---- log file expunge tracking (legacy, pre-Phase-2.5) --------------------
