@@ -85,9 +85,8 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 			switch {
 			case aerr == nil:
 				s.metrics.observeAcquire(time.Since(started).Seconds(), "ok")
-				// A grant the caller never receives is a lock nobody will
-				// release: it stands until its TTL, and the line behind it
-				// waits that long (#1824).
+				// A grant nobody receives is a lock nobody releases, and it
+				// stands until its TTL (#1824).
 				if werr := writeFields(w, respOK, id); werr != nil {
 					if rerr := s.backend.Release(context.WithoutCancel(ctx), id); rerr != nil {
 						s.logger.Error("locks: the grant could not be delivered and the lock could not be released",
@@ -149,9 +148,8 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	}
 }
 
-// watchClose closes the returned channel when the peer goes away. Nothing is
-// sent on this connection while a wait is outstanding, so any read means the
-// caller is gone or is speaking out of turn; either way it stops waiting.
+// watchClose closes the returned channel when the peer goes away: nothing is
+// sent while a wait is outstanding, so any read ends it (#1824).
 func watchClose(conn net.Conn) <-chan struct{} {
 	gone := make(chan struct{})
 	go func() {

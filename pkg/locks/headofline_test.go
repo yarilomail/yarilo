@@ -38,9 +38,8 @@ func joinAndVanish(t *testing.T, addr, resource string) {
 	_ = conn.Close()
 }
 
-// A contender whose connection is gone must not hold the line. Its ticket lives
-// exactly as long as the connection that took it; the TTL is the backstop for a
-// server that died, not the ordinary path (#1824).
+// A contender whose connection is gone must not hold the line: its place lives
+// as long as the connection that took it (#1824).
 func TestAVanishedContenderDoesNotHoldTheLine(t *testing.T) {
 	backend := NewMemoryBackend()
 	t.Cleanup(func() { _ = backend.Close() })
