@@ -40,13 +40,13 @@ func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, loc
 	// body is written before it, outside the hold (#1706).
 	callID := deliverCallSeq.Add(1)
 	tSave := time.Now()
-	filename, vsize, guid, err := box.Store().Save(folder, bytes.NewReader(data), 0, size, flags, [16]byte{})
+	// Sieve names keywords as freely as system flags, and both the store and
+	// the record keep the two apart (#1605).
+	sysFlags, kws := mailbox.SplitStoredFlags(flags)
+	filename, vsize, guid, err := box.Store().Save(folder, bytes.NewReader(data), 0, size, sysFlags, kws, [16]byte{})
 	if err != nil {
 		return 0, *f, noGUID, fmt.Errorf("lmtp: save: %w", err)
 	}
-	// Sieve names keywords as freely as system flags, and the record keeps the
-	// two apart (#1605).
-	sysFlags, kws := mailbox.SplitStoredFlags(flags)
 	meta := &mailbox.MessageMeta{
 		Size:         uint32(size),
 		VSize:        vsize,

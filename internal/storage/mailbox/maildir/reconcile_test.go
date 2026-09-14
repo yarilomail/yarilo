@@ -252,7 +252,7 @@ func TestReconcile_SameBaseTwiceImportsOnce(t *testing.T) {
 
 func TestReconcile_RestampsZeroGUIDBehindCompleteMarker(t *testing.T) {
 	box, idx, folder := recSetup(t)
-	name, _, want, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, [16]byte{})
+	name, _, want, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

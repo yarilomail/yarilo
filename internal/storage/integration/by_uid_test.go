@@ -41,7 +41,7 @@ func TestAMessageIsFoundByItsUIDAfterAReopen(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := "From: a@b\r\n\r\n" + tc.driver + " body\r\n"
-			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +106,7 @@ func TestReadingByUIDWalksNothing(t *testing.T) {
 	}
 	body := "From: a@b\r\n\r\nx\r\n"
 	for i := 0; i < 5; i++ {
-		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}
@@ -171,7 +171,7 @@ func oldSidecarIsIgnored(t *testing.T, driver, indexDir string, openBox func(*ma
 		t.Fatal(err)
 	}
 	body := "From: a@b\r\n\r\nx\r\n"
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestTheSizeSurvivesAReopen(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := "From: a@b\r\n\r\nsize me\r\n"
-			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -283,7 +283,7 @@ func TestAnOldMdboxFolderAdoptsItsSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := "From: a@b\r\n\r\nold\r\n"
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestTheFolderWeLeaveHasTheReferenceShape(t *testing.T) {
 	}
 	body := "From: a@a.com\r\n\r\nsdbox body\r\n"
 	for i := 0; i < 2; i++ {
-		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}
@@ -457,7 +457,7 @@ func TestTheSizeIsWhatWasStoredNotWhatWasHandedOver(t *testing.T) {
 			}
 			// Three bare LFs, so the stored form is three bytes longer.
 			body := "From: a@b\n\nline one\n"
-			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -511,7 +511,7 @@ func TestANamelessMdboxRecordFindsItsKeyByGUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := "From: a@b\r\n\r\nlost name\r\n"
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

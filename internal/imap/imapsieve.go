@@ -130,14 +130,14 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 		slog.Warn("imapsieve: fileinto target", "folder", name, "err", err)
 		return
 	}
-	newFilename, vsize, guid, err := dh.box.Save(drel, bytes.NewReader(raw), 0, int64(len(raw)), flags, [16]byte{})
+	// Sieve setflag/addflag name keywords as freely as system flags, and both
+	// the store and the record keep the two apart (#1605).
+	sysFlags, kws := mailbox.SplitStoredFlags(flags)
+	newFilename, vsize, guid, err := dh.box.Save(drel, bytes.NewReader(raw), 0, int64(len(raw)), sysFlags, kws, [16]byte{})
 	if err != nil {
 		slog.Warn("imapsieve: fileinto save", "folder", name, "err", err)
 		return
 	}
-	// Sieve setflag/addflag name keywords as freely as system flags, and the
-	// record keeps the two apart (#1605).
-	sysFlags, kws := mailbox.SplitStoredFlags(flags)
 	nm := &mailbox.MessageMeta{
 		Flags: sysFlags, Keywords: kws, Size: uint32(len(raw)), VSize: vsize, InternalDate: time.Now(), GUID: guid,
 	}

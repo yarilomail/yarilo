@@ -34,7 +34,7 @@ func TestDriversRefuseToDestroyTheirOwnRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 			msg := "From: a@b\r\n\r\nkeep me\r\n"
-			if _, _, _, err := u.Save("Keep", strings.NewReader(msg), 1, int64(len(msg)), nil, [16]byte{}); err != nil {
+			if _, _, _, err := u.Save("Keep", strings.NewReader(msg), 1, int64(len(msg)), nil, nil, [16]byte{}); err != nil {
 				t.Fatal(err)
 			}
 			before := treeOf(t, home)

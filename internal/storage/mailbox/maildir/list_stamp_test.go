@@ -128,7 +128,7 @@ func TestASecondWriterKeepsTheRowTheFirstWrote(t *testing.T) {
 
 	const body = "From: a@b\r\nSubject: x\r\n\r\nbody\r\n"
 	save := func(u *userMailbox, uid uint32) string {
-		name, _, _, err := u.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		name, _, _, err := u.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -63,7 +63,7 @@ func TestAReconcileInsideADeliveryWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestAReconcileInsideASessionWindow(t *testing.T) {
 			name: "append",
 			save: func(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, f *mailbox.Folder) (string, *mailbox.MessageMeta) {
 				const body = "From: a@b\r\nSubject: append\r\n\r\nbody\r\n"
-				saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+				saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -115,7 +115,7 @@ func TestAReconcileInsideASessionWindow(t *testing.T) {
 				const body = "From: a@b\r\nSubject: copy\r\n\r\nbody\r\n"
 				// A copy is a save of the bytes the source handed over.
 				saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)),
-					[]string{`\Seen`}, [16]byte{})
+					[]string{`\Seen`}, nil, [16]byte{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -172,7 +172,7 @@ func TestAReconcileInsideAMoveWindow(t *testing.T) {
 	})
 
 	const body = "From: a@b\r\nSubject: move\r\n\r\nbody\r\n"
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

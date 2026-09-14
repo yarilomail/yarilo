@@ -332,11 +332,11 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		}
 		// Source GUID is preserved so EMAILID survives migration; zero means the
 		// source had none and the driver mints one.
-		filename, vsize, guid, err := box.Save(msg.Folder, msg.bodyReader(), 0, int64(len(msg.Body)), msg.Flags, msg.GUID)
+		flags, keywords := mailbox.SplitStoredFlags(msg.Flags)
+		filename, vsize, guid, err := box.Save(msg.Folder, msg.bodyReader(), 0, int64(len(msg.Body)), flags, keywords, msg.GUID)
 		if err != nil {
 			return fmt.Errorf("save %s/%s: %w", user, msg.Folder, err)
 		}
-		flags, keywords := splitFlags(msg.Flags)
 		meta := &mailbox.MessageMeta{
 			UID:          uid,
 			Flags:        flags,
@@ -370,22 +370,6 @@ func userDir(root, user string) string {
 		return filepath.Join(root, user[at+1:], user[:at])
 	}
 	return filepath.Join(root, user)
-}
-
-// splitFlags separates a source's one flag list into the two fields the index
-// keeps apart. Keywords are read from MessageMeta.Keywords alone, and anything
-// left in Flags that is not a system flag is dropped there without a word, so a
-// source that reports both in one list loses every keyword unless it is split
-// here. Same rule as IMAP STORE: a leading backslash means system flag.
-func splitFlags(all []string) (flags, keywords []string) {
-	for _, f := range all {
-		if strings.HasPrefix(f, `\`) {
-			flags = append(flags, f)
-		} else {
-			keywords = append(keywords, f)
-		}
-	}
-	return flags, keywords
 }
 
 // maildirFlags parses Maildir flag chars from a filename's ":2,<flags>" suffix.

@@ -124,7 +124,7 @@ func TestAReferenceBodyIsServedAsCRLF(t *testing.T) {
 func TestOurOwnMessageIsServedUnchanged(t *testing.T) {
 	_, mb, _ := newTestUser(t)
 	body := "From: y@y.com\r\nSubject: ours\r\n\r\nline one\r\nline two\r\n"
-	name, _, _, err := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{7})
+	name, _, _, err := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{7})
 	if err != nil {
 		t.Fatal(err)
 	}

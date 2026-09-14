@@ -46,7 +46,7 @@ func TestASyncDoesNotTakeTheRowOfARecordItHasNotSeen(t *testing.T) {
 	}
 
 	const body = "From: a@b\r\nSubject: stale view\r\n\r\nbody\r\n"
-	saved, vsize, guid, err := writer.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := writer.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestAnImportedFileKeepsTheUIDTheListGivesIt(t *testing.T) {
 	}
 
 	const body = "From: a@b\r\nSubject: keeps its uid\r\n\r\nbody\r\n"
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

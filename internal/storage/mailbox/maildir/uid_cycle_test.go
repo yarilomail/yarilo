@@ -59,7 +59,7 @@ func TestTheListCarriesAnAppendBeforeAnyReconcile(t *testing.T) {
 	}
 
 	// What an APPEND does, and nothing else: no reconcile anywhere near it.
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestAMoveIntoATakenNameIsRecordedUnderTheDestinationUID(t *testing.T) {
 	}
 
 	body := "From: a@b\r\n\r\nx\r\n"
-	src, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, 0, nil, [16]byte{})
+	src, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, 0, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestTheWriterRefusesARecordWithNoUID(t *testing.T) {
 	if err := box.Create("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	saved, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, [16]byte{})
+	saved, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestAFolderCostsOneReadOfTheList(t *testing.T) {
 	}
 	const n = 20
 	for i := 0; i < n; i++ {
-		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, [16]byte{})
+		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}

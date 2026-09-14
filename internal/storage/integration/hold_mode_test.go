@@ -25,7 +25,7 @@ func TestASharedHoldDoesNotSatisfyAWrite(t *testing.T) {
 	if err := mb.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	name, _, _, err := mb.Save("INBOX", strings.NewReader("body"), 1, 4, nil, [16]byte{})
+	name, _, _, err := mb.Save("INBOX", strings.NewReader("body"), 1, 4, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestAnOuterExclusiveHoldStillCarriesABatch(t *testing.T) {
 		if aerr != nil {
 			t.Fatal(aerr)
 		}
-		name, _, _, serr := mb.Save("INBOX", strings.NewReader("body"), uid, 4, nil, [16]byte{})
+		name, _, _, serr := mb.Save("INBOX", strings.NewReader("body"), uid, 4, nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}

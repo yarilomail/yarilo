@@ -73,7 +73,7 @@ func TestTheIndexTakesItsUIDValidityFromTheList(t *testing.T) {
 		{"a folder whose first messages arrived with no uid", func(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, home string) {
 			// Delivery that does not know a uid writes no record, so the list is
 			// born later, when the folder already holds mail.
-			if _, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, [16]byte{}); err != nil {
+			if _, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, nil, [16]byte{}); err != nil {
 				t.Fatal(err)
 			}
 			f, err := idx.OpenFolder("INBOX", 0)
@@ -83,7 +83,7 @@ func TestTheIndexTakesItsUIDValidityFromTheList(t *testing.T) {
 			reconcile(t, box, idx, f)
 		}},
 		{"a folder delivered into first", func(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, home string) {
-			if _, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, [16]byte{}); err != nil {
+			if _, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, nil, [16]byte{}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := idx.OpenFolder("INBOX", 0); err != nil {
@@ -290,7 +290,7 @@ func TestAHeldDotlockStopsTheWrite(t *testing.T) {
 	}
 	defer os.Remove(lock) //nolint:errcheck
 
-	name, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, [16]byte{})
+	name, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestTheListIsSyncedBeforeItIsRenamed(t *testing.T) {
 // caller takes.
 func saveAndAssign(t *testing.T, box mailbox.UserMailbox, folder, body string, uid uint32) string {
 	t.Helper()
-	name, _, _, err := box.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	name, _, _, err := box.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

@@ -122,7 +122,7 @@ func searchServer(t *testing.T, stub *stubFTS, maxConns, maxFolders int, folders
 			}
 		}
 		raw := "Subject: probe\r\nFrom: alice@example.com\r\n\r\n" + folders[name] + "\r\n"
-		fname, vsize, guid, err := box.Save(name, strings.NewReader(raw), 1, int64(len(raw)), nil, [16]byte{})
+		fname, vsize, guid, err := box.Save(name, strings.NewReader(raw), 1, int64(len(raw)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save %s: %v", name, err)
 		}
@@ -563,7 +563,7 @@ func rawMessageServer(t *testing.T, stub *stubFTS, raw string) *Server {
 	idx := file.New(file.WithLocker(locker))
 	ui := idx.OpenUser(info)
 
-	fname, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, [16]byte{})
+	fname, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

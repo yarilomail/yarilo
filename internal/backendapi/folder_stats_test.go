@@ -31,7 +31,7 @@ func statsServer(t *testing.T, be mailbox.MailboxBackend) (*httptest.Server, str
 	idx := file.New()
 	ui := idx.OpenUser(info)
 	raw := "Subject: t\r\n\r\nbody\r\n"
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

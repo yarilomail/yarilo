@@ -109,7 +109,7 @@ func (u *userMailbox) refileOrphan(box mailbox.Box, folder *mailbox.Folder, f gu
 	if rerr != nil {
 		return false, u.setAside(folder.Name, f.name, "no reader accepts it", rerr)
 	}
-	saved, vsize, guid, serr := u.Save(folder.Name, bytes.NewReader(raw), 0, int64(len(raw)), nil, f.guid)
+	saved, vsize, guid, serr := u.Save(folder.Name, bytes.NewReader(raw), 0, int64(len(raw)), nil, nil, f.guid)
 	if serr != nil {
 		return false, fmt.Errorf("sdbox/orphan: save %s: %w", f.name, serr)
 	}

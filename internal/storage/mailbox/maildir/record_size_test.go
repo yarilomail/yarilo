@@ -97,7 +97,7 @@ func TestADboxSizeIsNotReadFromTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := "From: a@b\r\n\r\nx\r\n"
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

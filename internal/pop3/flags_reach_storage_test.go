@@ -38,7 +38,7 @@ func maildirStandN(t *testing.T, opts func(*Options), n int) (Options, string) {
 	}
 	for i := 0; i < n; i++ {
 		raw := fmt.Sprintf("From: a@b\r\nSubject: msg %d\r\n\r\nbody\r\n", i+1)
-		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, [16]byte{})
+		saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}
@@ -254,7 +254,7 @@ func TestAStoreThatRefusesTheNameIsCountedApart(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := "From: a@b\r\nSubject: one\r\n\r\nbody\r\n"
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

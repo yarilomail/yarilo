@@ -18,7 +18,7 @@ func benchUser(b *testing.B, size int) (*userMailbox, string) {
 		b.Fatal(err)
 	}
 	msg := "From: a@a.com\r\nSubject: s\r\n\r\n" + strings.Repeat("x", size) + "\r\n"
-	fn, _, _, err := u.Save("INBOX", strings.NewReader(msg), 0, int64(len(msg)), nil, [16]byte{})
+	fn, _, _, err := u.Save("INBOX", strings.NewReader(msg), 0, int64(len(msg)), nil, nil, [16]byte{})
 	if err != nil {
 		b.Fatal(err)
 	}

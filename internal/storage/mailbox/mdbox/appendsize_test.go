@@ -35,7 +35,7 @@ func TestAppendingToAnOldFileUsesTheSizeItAnnounces(t *testing.T) {
 	// needed for the append itself, and the append is what this is about.
 	// Now deliver into it.
 	const second = "From: b@b.com\r\nSubject: new\r\n\r\nsecond\r\n"
-	fn, _, _, err := u.Save("INBOX", strings.NewReader(second), 0, int64(len(second)), nil, [16]byte{})
+	fn, _, _, err := u.Save("INBOX", strings.NewReader(second), 0, int64(len(second)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

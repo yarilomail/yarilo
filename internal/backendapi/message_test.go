@@ -59,7 +59,7 @@ func messageServerRaw(t *testing.T, msg string) (*httptest.Server, string, uint3
 		t.Fatalf("init: %v", err)
 	}
 	ui := idx.OpenUser(info)
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(msg), 1, int64(len(msg)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(msg), 1, int64(len(msg)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

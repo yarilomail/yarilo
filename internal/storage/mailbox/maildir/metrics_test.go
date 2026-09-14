@@ -30,7 +30,7 @@ func TestLockAcquisitionsAreCountedByCaller(t *testing.T) {
 
 	// The save itself: one acquisition. The list entry is written inside the
 	// caller's own hold of the same key, which the next row measures (#1700).
-	saved, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestNamingCostsNothingInsideACycleAndOneHoldOutside(t *testing.T) {
 	box, l := batchBox(t)
 	body := "From: a@b\r\n\r\nx\r\n"
 
-	saved, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestNamingCostsNothingInsideACycleAndOneHoldOutside(t *testing.T) {
 	}
 	inside := l.acquires.Load() - before
 
-	saved2, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved2, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

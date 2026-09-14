@@ -40,7 +40,7 @@ func TestEveryDriverTimesTheWriteSemaphore(t *testing.T) {
 
 			before := semSamples(t, name)
 			raw := "Subject: t\r\n\r\nbody\r\n"
-			if _, _, _, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, [16]byte{}); err != nil {
+			if _, _, _, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, nil, [16]byte{}); err != nil {
 				t.Fatalf("save: %v", err)
 			}
 			if got := semSamples(t, name); got == before {

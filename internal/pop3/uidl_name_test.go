@@ -41,7 +41,7 @@ func TestTheUIDLNameVariablesReadTheNameOnDisk(t *testing.T) {
 				t.Fatal(err)
 			}
 			raw := "From: a@b\r\n\r\nbody\r\n"
-			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, [16]byte{})
+			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, nil, [16]byte{})
 			if err != nil {
 				t.Fatal(err)
 			}

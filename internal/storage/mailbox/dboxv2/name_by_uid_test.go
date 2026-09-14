@@ -28,7 +28,7 @@ func TestASavedMessageIsNamedByItsUID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	saved, _, guid, err := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, [16]byte{})
+	saved, _, guid, err := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func saveNamed(t *testing.T, mb mailbox.UserMailbox, folder, body string, uid ui
 // saveNamedGUID is the same two steps, handing back what the save minted.
 func saveNamedGUID(t *testing.T, mb mailbox.UserMailbox, folder, body string, uid uint32, guid [16]byte) (string, uint32, [16]byte) {
 	t.Helper()
-	temp, vsize, g, err := mb.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, guid)
+	temp, vsize, g, err := mb.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, nil, guid)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestAGUIDNamedStoreIsMigrated(t *testing.T) {
 	// The old shape: the file named by its GUID, the index pointing at it.
 	var guids []string
 	for uid := uint32(1); uid <= 3; uid++ {
-		temp, vsize, guid, serr := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, [16]byte{})
+		temp, vsize, guid, serr := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}
@@ -245,7 +245,7 @@ func TestAnAppendTakesTheFolderKeyOnce(t *testing.T) {
 	rec.taken = nil
 	rec.mu.Unlock()
 
-	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, [16]byte{})
+	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestNoPathWritesAGUIDName(t *testing.T) {
 	}
 
 	// Saved.
-	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, [16]byte{})
+	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestOnlyAnOldTempIsSweptAway(t *testing.T) {
 	}
 	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
 
-	old, _, _, err := mb.Save("INBOX", strings.NewReader("old\n"), 0, 4, nil, [16]byte{})
+	old, _, _, err := mb.Save("INBOX", strings.NewReader("old\n"), 0, 4, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestOnlyAnOldTempIsSweptAway(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(dir, old), long, long); err != nil {
 		t.Fatal(err)
 	}
-	young, _, _, err := mb.Save("INBOX", strings.NewReader("young\n"), 0, 6, nil, [16]byte{})
+	young, _, _, err := mb.Save("INBOX", strings.NewReader("young\n"), 0, 6, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +511,7 @@ func TestANamelessRecordFindsItsBodyByGUID(t *testing.T) {
 	}
 	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
 
-	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("ghost\n"), 0, 6, nil, [16]byte{})
+	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("ghost\n"), 0, 6, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +558,7 @@ func TestAFolderMarkedByTheOlderPassIsWalkedAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
-	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("ghost\n"), 0, 6, nil, [16]byte{})
+	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("ghost\n"), 0, 6, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,7 +22,7 @@ func TestTheDebugRowNamesTheWriterAndBothSides(t *testing.T) {
 	box := openTestUser(t, t.TempDir())
 	u := box.(*userMailbox)
 	body := "From: a@b\r\n\r\nx\r\n"
-	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestTheDebugRowsAreSilentAtInfo(t *testing.T) {
 	box := openTestUser(t, t.TempDir())
 	u := box.(*userMailbox)
 	body := "From: a@b\r\n\r\nx\r\n"
-	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestTheWritePathOpensTheListOnceAtInfo(t *testing.T) {
 	box := openTestUser(t, t.TempDir())
 	u := box.(*userMailbox)
 	body := "From: a@b\r\n\r\nx\r\n"
-	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

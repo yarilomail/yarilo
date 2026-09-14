@@ -153,7 +153,7 @@ func TestAdoptedDboxRecordsAreFilled(t *testing.T) {
 	body := "From: a@b\r\n\r\nbody\r\n"
 	var want uint64
 	for i := 0; i < 3; i++ {
-		saved, _, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+		saved, _, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}

@@ -2222,7 +2222,7 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 	// (#1129). This is the invariant #1137's "stored -> OK" rests on, made
 	// explicit: OK only for a fully delivered literal.
 	counted := &countingReader{r: r}
-	filename, vsize, guid, err := h.box.Save(rel, counted, 0, size, mailbox.StoredFlags(flagList, kwList), [16]byte{})
+	filename, vsize, guid, err := h.box.Save(rel, counted, 0, size, flagList, kwList, [16]byte{})
 	if err != nil {
 		return nil, err
 	}
@@ -3683,7 +3683,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		tSave := time.Now()
 		// COPY yields a distinct message, so a fresh GUID is generated (RFC 8474);
 		// only MOVE preserves the source identity.
-		newFilename, vsize, guid, saveErr := destH.box.Save(destRel, bytes.NewReader(data), 0, int64(len(data)), mailbox.StoredFlags(m.Flags, m.Keywords), [16]byte{})
+		newFilename, vsize, guid, saveErr := destH.box.Save(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, [16]byte{})
 		if saveErr != nil {
 			return nil, fmt.Errorf("imap/copy save: %w", saveErr)
 		}
@@ -4071,7 +4071,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 				return fmt.Errorf("imap/move read: %w", readErr)
 			}
 			var saveErr error
-			newFilename, vsize, guid, saveErr = destH.box.Save(destRel, bytes.NewReader(data), 0, int64(len(data)), mailbox.StoredFlags(m.Flags, m.Keywords), m.GUID)
+			newFilename, vsize, guid, saveErr = destH.box.Save(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID)
 			if saveErr != nil {
 				return fmt.Errorf("imap/move save: %w", saveErr)
 			}

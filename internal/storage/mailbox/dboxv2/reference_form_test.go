@@ -41,7 +41,7 @@ func TestASavedMessageHasTheReferenceForm(t *testing.T) {
 	}
 	namer := mailbox.Driver(mb).(mailbox.UIDNamer)
 	for uid := uint32(1); uid <= 2; uid++ {
-		temp, _, _, err := mb.Save("INBOX", strings.NewReader("From: a@a.com\r\n\r\nbody\r\n"), 0, 0, nil, [16]byte{})
+		temp, _, _, err := mb.Save("INBOX", strings.NewReader("From: a@a.com\r\n\r\nbody\r\n"), 0, 0, nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatal(err)
 		}

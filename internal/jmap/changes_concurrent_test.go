@@ -121,7 +121,7 @@ func serverSharingItsLocker(t *testing.T) (*Server, string, *mailbox.UserInfo, l
 	idx := fileindex.New(fileindex.WithLocker(locker)).OpenUser(info)
 
 	flags := []string{`\Seen`}
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(setTestMessage), 1, int64(len(setTestMessage)), flags, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(setTestMessage), 1, int64(len(setTestMessage)), flags, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -164,7 +164,7 @@ func deliverAnother(info *mailbox.UserInfo, locker locks.Locker, uid uint32) (st
 	defer idx.Close() //nolint:errcheck
 
 	raw := fmt.Sprintf("Subject: delivered %d\r\n\r\nbody\r\n", uid)
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), uid, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), uid, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		return "", fmt.Errorf("save: %w", err)
 	}

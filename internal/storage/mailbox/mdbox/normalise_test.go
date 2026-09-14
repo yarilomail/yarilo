@@ -140,7 +140,7 @@ func TestAFetchThroughTheMapSurvivesTheRewrite(t *testing.T) {
 	_, u := healTestUser(t)
 	var names []string
 	for i, body := range []string{"first body\r\n", "second body\r\n", "third body\r\n"} {
-		name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, 0, nil, [16]byte{byte(i + 1)})
+		name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, 0, nil, nil, [16]byte{byte(i + 1)})
 		if err != nil {
 			t.Fatal(err)
 		}

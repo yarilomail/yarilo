@@ -289,7 +289,7 @@ func TestSaveGUIDAndMovePreservesIt(t *testing.T) {
 	for i := range want {
 		want[i] = byte(i + 1)
 	}
-	temp, _, got, err := mb.Save("INBOX", strings.NewReader("body\r\n"), 0, 6, nil, want)
+	temp, _, got, err := mb.Save("INBOX", strings.NewReader("body\r\n"), 0, 6, nil, nil, want)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

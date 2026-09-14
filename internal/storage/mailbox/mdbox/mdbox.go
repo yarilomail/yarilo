@@ -517,7 +517,7 @@ const driverName = "mdbox"
 // Save appends the record to the current m.<N> and registers it in the map,
 // returning the map_uid as the filename. Peers serialise on the map lock alone;
 // the folder lock is not taken, and the per-folder uid is ignored.
-func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
+func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	var noGUID [16]byte
 	whole := time.Now()
 	defer func() { mailboxmetrics.ObserveSave(driverName, time.Since(whole)) }()
@@ -917,7 +917,7 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 		if rerr != nil {
 			return fmt.Errorf("mdbox/move: read: %w", rerr)
 		}
-		name, _, saved, serr := u.Save(dstFolder, bytes.NewReader(body), 0, int64(len(body)), nil, outGUID)
+		name, _, saved, serr := u.Save(dstFolder, bytes.NewReader(body), 0, int64(len(body)), nil, nil, outGUID)
 		if serr != nil {
 			return fmt.Errorf("mdbox/move: save: %w", serr)
 		}
