@@ -218,16 +218,16 @@ func (c *folderCache) storeDirEntries(entries []os.DirEntry, mtime time.Time) {
 	c.entries, c.dirMtime = entries, mtime
 }
 
-// invalidateUIDs drops the cached list after a rewrite, so the next read takes
-// the file rather than the map it replaced.
-// invalidateDirEntries drops the cached listing, for a caller that has just
-// learnt it is stale.
+// invalidateDirEntries drops the cached listing and the mtime it was keyed by,
+// for a caller that has just learnt it is stale.
 func (c *folderCache) invalidateDirEntries() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries, c.dirMtime = nil, time.Time{}
 }
 
+// invalidateUIDs drops the cached list after a rewrite, so the next read takes
+// the file rather than the map it replaced.
 func (c *folderCache) invalidateUIDs() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -739,18 +739,26 @@ func (u *userMailbox) Remove(folder, filename string) error {
 	u.folderCacheFor(folder).invalidateDirEntries()
 	current, cerr := u.currentName(folder, maildirBase(filename))
 	if cerr != nil || current == filename {
-		metricRemoveMiss.Inc()
+		u.reportRemoveMiss(folder, filename, current, cerr)
 		return nil
 	}
 	if err := os.Remove(filepath.Join(dir, current)); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		metricRemoveMiss.Inc()
+		u.reportRemoveMiss(folder, filename, current, nil)
 		return nil
 	}
 	u.folderCacheFor(folder).invalidateDir()
 	return nil
+}
+
+// reportRemoveMiss names what the counter counted: a number with no line names
+// nobody, and this counter is how #1797 is read.
+func (u *userMailbox) reportRemoveMiss(folder, asked, shown string, err error) {
+	metricRemoveMiss.Inc()
+	slog.Warn("maildir: a removal found no file under either name",
+		"user", u.username, "folder", folder, "asked", asked, "listed", shown, "err", err)
 }
 
 func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
