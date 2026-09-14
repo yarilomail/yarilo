@@ -69,12 +69,42 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 			s.logger.Error("locks: accept failed", "err", err)
 			return fmt.Errorf("locks/server: accept: %w", err)
 		}
-		s.wg.Add(1)
+		if testBeforeHandlerAdd != nil {
+			testBeforeHandlerAdd()
+		}
+		if !s.addHandler() {
+			// Close has begun waiting; registering now would add to a
+			// WaitGroup whose Wait is already in flight, which panics.
+			_ = conn.Close()
+			continue
+		}
 		go func() {
 			defer s.wg.Done()
 			s.handleConn(ctx, conn)
 		}()
 	}
+}
+
+// addHandler registers one handler unless Close has started, so an Add can
+// never race the Wait it is already running.
+func (s *Server) addHandler() bool {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.wg.Add(1)
+	return true
+}
+
+// testBeforeHandlerAdd runs between accepting a connection and registering its
+// handler. Test seam: the window Close's Wait falls into.
+var testBeforeHandlerAdd func()
+
+// SetTestBeforeHandlerAdd arms that seam and returns a function disarming it.
+func SetTestBeforeHandlerAdd(fn func()) func() {
+	testBeforeHandlerAdd = fn
+	return func() { testBeforeHandlerAdd = nil }
 }
 
 // Close stops accepting new connections and waits for in-flight handlers to
