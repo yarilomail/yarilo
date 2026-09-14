@@ -17,7 +17,9 @@ spec:
           secretName: yarilo-internal-tls
       containers:
       - name: smoketest
-        image: ghcr.io/yarilomail/yarilo:2.3.175
+        # Moves with the chart's appVersion: pinned to a tag the registry no
+        # longer carries, the job failed to pull instead of smoke-testing.
+        image: ghcr.io/yarilomail/yarilo:2.3.327
         volumeMounts:
         - name: internal-tls
           mountPath: /tls

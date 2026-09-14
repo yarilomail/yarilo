@@ -55,9 +55,6 @@ func startTestServerIn(t *testing.T, dir string) *imapclient.Client {
 		Index:    idx,
 		Resolver: resolver,
 		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
-		// Production defaults this on, and the harness left it off, so the
-		// shared suite measured a server nobody runs (#1783).
-		MaildirSyncOnSelect: true,
 		SpecialUseDefaults: map[string]string{
 			"Sent":    `\Sent`,
 			"Drafts":  `\Drafts`,

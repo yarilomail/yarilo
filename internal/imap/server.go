@@ -203,12 +203,6 @@ type Options struct {
 	// WardenTLS optionally wraps the warden dialer with mTLS.
 	WardenTLS *tls.Config
 
-	// MaildirSyncOnSelect reconciles the index against the physical mailbox
-	// on SELECT/EXAMINE for drivers whose storage can change out of band
-	// (maildir). Index-authoritative drivers (dbox) do not implement
-	// ProactiveScan and ignore it.
-	MaildirSyncOnSelect bool
-
 	// DboxReactiveRebuild enables the sdbox/mdbox reactive auto-rebuild:
 	// a read hitting a missing/corrupt message flags the folder, and the
 	// next SELECT rebuilds its index from storage. Default true.
@@ -516,11 +510,6 @@ type session struct {
 
 	limitIP string
 	folder  *mailbox.Folder
-
-	// maildirSyncTokens overrides the process-wide maildir token cache. Nil in
-	// production — the cache outlives every session by design (#1248) — and set
-	// only by tests that need an isolated one.
-	maildirSyncTokens *syncTokenCache
 
 	// markedCorrupt records folders this session already flagged FSCKD so a
 	// FETCH over many corrupt messages marks once, not per message. Keyed
@@ -1205,12 +1194,6 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		return nil, err
 	}
 	slog.Debug("imap: select timing open_ms", "folder", rel, "open_ms", time.Since(tOpen).Milliseconds())
-	if refreshed := s.maildirSyncOnSelect(h, rel, f); refreshed != nil {
-		f = refreshed
-	}
-	if refreshed := s.migrateNamesOnSelect(h, rel, f); refreshed != nil {
-		f = refreshed
-	}
 	if n, ferr := h.mailbox().FillSizeless(f); ferr != nil {
 		slog.Warn("imap: sizes not filled", "folder", rel, "err", ferr)
 	} else if n > 0 {
@@ -2092,9 +2075,8 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	if err := s.requireRight(h, rel, mailbox.RightRead); err != nil {
 		return nil, err
 	}
-	// Reconcile out-of-band deliveries so STATUS (a common new-mail probe)
-	// reflects them without a prior SELECT.
-	s.reconcileFolder(h, rel)
+	// Opening settles the folder, so STATUS -- a common new-mail probe --
+	// reflects an out-of-band delivery without a prior SELECT.
 	f, err := h.mailbox().Folder(rel, 0)
 	if err != nil {
 		return nil, err
@@ -2358,14 +2340,11 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		return nil
 	}
 
-	// Reconcile out-of-band deliveries into the selected folder so an IDLE /
-	// NOOP client sees new mail. Token-gated, so a quiescent folder costs one
-	// stat. A change bumps HighestModSeq, which the modseq check below picks up
-	// and the diff loop turns into EXISTS / EXPUNGE updates.
-	if s.folderNS != nil {
-		s.reconcileFolder(s.folderNS, s.folder.Name)
-	}
-
+	// The reopen below settles the folder, so an IDLE / NOOP client sees an
+	// out-of-band delivery. Token-gated, so a quiescent folder costs one stat;
+	// a change bumps HighestModSeq, which the modseq check picks up and the
+	// diff loop turns into EXISTS / EXPUNGE updates.
+	//
 	// Cheap modseq check — skip full scan when nothing changed and no
 	// pending expunges are waiting for an allowExpunge=true window.
 	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)

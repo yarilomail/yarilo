@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
@@ -55,13 +57,16 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	if err := store.Init(); err != nil {
 		t.Fatal(err)
 	}
-	box := mailboxbase.Open(store, idx)
+	// The door a delivery uses: it adds a message and settles nothing, so the
+	// walk buys nothing and the hold it costs is the one this row counts.
+	box := mailboxbase.Open(store, idx, mailboxbase.SaveOnly())
 	if _, err := box.Folder("INBOX", 1); err != nil {
 		t.Fatal(err)
 	}
 
 	const raw = "From: a@b\r\nSubject: one hold\r\n\r\nbody\r\n"
 	lk.taken = 0
+	scansBefore := testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned"))
 	uid, _, _, err := deliverOne(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
 	if err != nil {
 		t.Fatalf("deliver: %v", err)
@@ -71,6 +76,9 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	}
 	if lk.taken != 1 {
 		t.Errorf("the delivery took the folder %d times, want 1", lk.taken)
+	}
+	if n := testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned")) - scansBefore; n != 0 {
+		t.Errorf("the delivery walked the folder %v times, want none", n)
 	}
 
 	// And the message is there, named, as any delivery must leave it.

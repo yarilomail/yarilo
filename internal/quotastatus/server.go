@@ -185,7 +185,9 @@ func (s *Server) check(attrs map[string]string) string {
 	defer box.Close() //nolint:errcheck
 	idx := s.opts.Index.OpenUser(ui)
 	defer idx.Close() //nolint:errcheck
-	mbox := mailboxbase.Open(box, idx)
+	// A policy service observes; it does not settle the mailbox it is asked
+	// about (#993).
+	mbox := mailboxbase.Open(box, idx, mailboxbase.ReadOnly())
 	entries, lerr := box.ListFolders()
 	if lerr != nil {
 		slog.Warn("quotastatus: list folders failed", "user", username, "err", lerr)

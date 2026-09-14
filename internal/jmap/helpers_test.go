@@ -82,16 +82,18 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 	return s, hex.EncodeToString(guid[:]), home
 }
 
-// removeMailFiles deletes every delivered message but leaves the index, so a
-// read of the message fails while the index still answers.
-func removeMailFiles(t *testing.T, home string) {
+// unreadableMailFiles takes read access off every delivered message, so a read
+// of the body fails while the index still answers.
+func unreadableMailFiles(t *testing.T, home string) {
 	t.Helper()
 	err := filepath.WalkDir(home, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
 		if strings.Contains(path, "/cur/") || strings.Contains(path, "/new/") {
-			return os.Remove(path)
+			// Unreadable, not gone: a reconcile on open would see a deletion
+			// and tombstone the record, which is not what these rows measure.
+			return os.Chmod(path, 0)
 		}
 		return nil
 	})
