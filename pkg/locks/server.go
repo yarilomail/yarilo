@@ -160,8 +160,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			s.handleLock(ctx, conn, fields, peer)
 		case cmdLockWait:
 			s.handleLockWait(ctx, conn, fields, peer, false)
+			return // the wait watched the connection; its reader is spent
 		case cmdLockSharedWait:
 			s.handleLockWait(ctx, conn, fields, peer, true)
+			return
 		case cmdLockShared:
 			s.handleLockShared(ctx, conn, fields, peer)
 		case cmdUnlock:

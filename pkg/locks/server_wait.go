@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net"
 	"time"
 )
 
@@ -15,7 +16,8 @@ const lostWakeBackstop = time.Second
 
 // handleLockWait answers when the lock is the caller's, not when the resource
 // happens to be free. The order is the backend's, shared by every replica (#1821).
-func (s *Server) handleLockWait(ctx context.Context, w io.Writer, fields []string, peer string, shared bool) {
+func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []string, peer string, shared bool) {
+	var w io.Writer = conn
 	if len(fields) != 6 {
 		_ = writeFields(w, respError, "bad_lock")
 		return
@@ -65,6 +67,10 @@ func (s *Server) handleLockWait(ctx context.Context, w io.Writer, fields []strin
 	}()
 	s.metrics.observeQueueDepth(ahead)
 
+	// A caller that is gone must stop waiting: a grant it never receives is a
+	// lock nobody releases, and the line behind it waits out the TTL (#1824).
+	gone := watchClose(conn)
+
 	deadline := time.Now().Add(limit)
 	started := time.Now()
 	backstop := time.NewTicker(lostWakeBackstop)
@@ -79,7 +85,18 @@ func (s *Server) handleLockWait(ctx context.Context, w io.Writer, fields []strin
 			switch {
 			case aerr == nil:
 				s.metrics.observeAcquire(time.Since(started).Seconds(), "ok")
-				_ = writeFields(w, respOK, id)
+				// A grant nobody receives is a lock nobody releases, and it
+				// stands until its TTL (#1824).
+				if werr := writeFields(w, respOK, id); werr != nil {
+					if rerr := s.backend.Release(context.WithoutCancel(ctx), id); rerr != nil {
+						s.logger.Error("locks: the grant could not be delivered and the lock could not be released",
+							"peer", peer, "resource", resource, "id", id, "write_err", werr, "err", rerr)
+					} else {
+						s.metrics.incUndeliveredGrant()
+						s.logger.Warn("locks: the grant could not be delivered, so the lock was released",
+							"peer", peer, "resource", resource, "id", id, "err", werr)
+					}
+				}
 				return
 			case errors.Is(aerr, ErrBusy):
 				s.metrics.incBusy()
@@ -96,6 +113,10 @@ func (s *Server) handleLockWait(ctx context.Context, w io.Writer, fields []strin
 			}
 		}
 		select {
+		case <-gone:
+			s.metrics.incCallerGone()
+			s.logger.Debug("locks: the caller left the line", "peer", peer, "resource", resource)
+			return
 		case <-ctx.Done():
 			_ = writeFields(w, respError, "cancelled")
 			return
@@ -125,6 +146,18 @@ func (s *Server) handleLockWait(ctx context.Context, w io.Writer, fields []strin
 			mine = front
 		}
 	}
+}
+
+// watchClose closes the returned channel when the peer goes away: nothing is
+// sent while a wait is outstanding, so any read ends it (#1824).
+func watchClose(conn net.Conn) <-chan struct{} {
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		var b [1]byte
+		_, _ = conn.Read(b[:])
+	}()
+	return gone
 }
 
 func (s *Server) tryAcquire(ctx context.Context, resource, owner, site string, ttl time.Duration, shared bool) (string, Holder, error) {
