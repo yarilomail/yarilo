@@ -30,7 +30,7 @@ func TestReconcile_UnlistedRecordIsRelinkedNotImported(t *testing.T) {
 		t.Fatalf("remove uidlist: %v", err)
 	}
 
-	st, err := box.ReconcileIndex(b, folder)
+	st, err := box.ReconcileIndex(b, idx, folder)
 	if err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}

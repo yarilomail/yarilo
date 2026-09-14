@@ -127,12 +127,12 @@ func TestTheIndexTakesItsUIDValidityFromTheList(t *testing.T) {
 func reconcile(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, f *mailbox.Folder) {
 	t.Helper()
 	syncer, ok := box.(interface {
-		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
 	if !ok {
 		t.Fatal("the maildir driver no longer reconciles")
 	}
-	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
+	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, idx), idx, f); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -191,9 +191,9 @@ func TestSizeKeysOnlyWhereTheNameLacksThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	syncer := box.(interface {
-		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
-	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, idx), f); err != nil {
+	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, idx), idx, f); err != nil {
 		t.Fatal(err)
 	}
 

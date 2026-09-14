@@ -94,7 +94,7 @@ func TestAForeignSdboxStoreIsAdopted(t *testing.T) {
 	// and a client that has them must keep them (#1573).
 	box := dboxv2.New().OpenUser(&mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "sdbox"})
 	defer box.Close() //nolint:errcheck
-	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(box, idx), f, "INBOX"); err != nil {
+	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(box, idx), idx, f, "INBOX"); err != nil {
 		t.Fatalf("guid backfill: %v", err)
 	}
 	msgs, err = idx.GetMessages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})

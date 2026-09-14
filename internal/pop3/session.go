@@ -642,11 +642,11 @@ func (s *session) loadMailbox() error {
 	// heal a corrupt-flagged dbox folder at login so a POP3-only mailbox
 	// does not stay broken waiting for an IMAP SELECT
 	if folder.Fsckd {
-		if rb, ok := mailbox.Driver(s.box.Store()).(mailbox.ReactiveHealer); ok {
+		{
 			// no FTS client here: expunged UIDs leave FTS ghost documents
 			// until the next rescan. Heal runs at most once per session
 			// (at login), so no retry bound is needed.
-			if expunged, herr := rb.HealCorruptFolder(s.box, folder); herr != nil {
+			if expunged, herr := s.box.HealCorrupt(folder); herr != nil {
 				slog.Warn("pop3: dbox reactive heal failed", "user", s.userInfo.Username, "err", herr)
 			} else if len(expunged) > 0 {
 				slog.Info("pop3: dbox reactive heal", "user", s.userInfo.Username, "expunged", len(expunged))
@@ -668,7 +668,7 @@ func (s *session) loadMailbox() error {
 	s.box.FillResponseSizes(folder.Name, msgs)
 	var savedUIDLs map[uint32]string
 	if s.srv.opts.SaveUIDL {
-		if saved, err := readPOP3UIDLs(s.box.Index(), folder.ID); err != nil {
+		if saved, err := s.box.POP3UIDLs(folder.ID); err != nil {
 			slog.Warn("pop3: load saved uidls", "user", s.userInfo.Username, "err", err)
 		} else {
 			savedUIDLs = saved
@@ -907,7 +907,7 @@ func (s *session) fetchINBOX(m *mailbox.MessageMeta) (io.ReadCloser, error) {
 	rc, err := s.box.OpenMessage("INBOX", m)
 	// flag once per session: one mark heals every missing record on the
 	// next open, so a RETR loop over a corrupt mailbox pays no per-message cost
-	if err != nil && !s.markedCorrupt && mailbox.MarkCorruptOnFetchErr(s.box, "INBOX", err) {
+	if err != nil && !s.markedCorrupt && s.box.MarkCorruptOnFetchErr("INBOX", err) {
 		s.markedCorrupt = true
 	}
 	return rc, err
@@ -1042,7 +1042,7 @@ func (s *session) cmdQuit() {
 				uidlMap[m.UID] = s.uidls[i]
 			}
 		}
-		if err := s.box.Index().SavePOP3UIDLs(s.folder.ID, uidlMap); err != nil {
+		if err := s.box.SavePOP3UIDLs(s.folder.ID, uidlMap); err != nil {
 			slog.Warn("pop3: save uidls", "user", s.userInfo.Username, "err", err)
 		}
 	}
@@ -1112,7 +1112,7 @@ func (s *session) writeFlagBatch(adds map[uint32][]string) flagBatchResult {
 		if !ok {
 			continue
 		}
-		if err := s.box.Index().AddFlags(s.folder.ID, m.UID, add, nil); err != nil {
+		if err := s.box.UpdateFlags(s.folder.ID, m.UID, mailbox.FlagsUpdate{Mode: mailbox.FlagsAdd, Flags: add}); err != nil {
 			failed = append(failed, m.UID)
 			continue
 		}
@@ -1162,7 +1162,7 @@ func (s *session) clearSeenForLast() {
 		}
 		// Clear the one flag rather than declare the set: the snapshot in hand
 		// is a session old, and another writer's changes are not ours to drop (#1250).
-		if err := s.box.Index().RemoveFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
+		if err := s.box.UpdateFlags(s.folder.ID, m.UID, mailbox.FlagsUpdate{Mode: mailbox.FlagsRemove, Flags: []string{`\Seen`}}); err != nil {
 			failed = append(failed, m.UID)
 			continue
 		}
@@ -1388,19 +1388,4 @@ func writeDotLines(w io.Writer, data []byte) {
 		w.Write(line)           //nolint:errcheck
 		w.Write([]byte("\r\n")) //nolint:errcheck
 	}
-}
-
-// unlockedReader is the optional capability an index has when its files can
-// prove their own freshness (see internal/storage/index/file). A read that only
-// answers this session skips the cross-process lock; a read whose answer
-// decides a write does not.
-type unlockedReader interface {
-	GetPOP3UIDLsUnlocked(folderID uint64) (map[uint32]string, error)
-}
-
-func readPOP3UIDLs(idx mailbox.UserIndex, folderID uint64) (map[uint32]string, error) {
-	if u, ok := idx.(unlockedReader); ok {
-		return u.GetPOP3UIDLsUnlocked(folderID)
-	}
-	return idx.GetPOP3UIDLs(folderID)
 }

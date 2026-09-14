@@ -1208,7 +1208,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 	// Mail stored before per-message GUIDs carries none, so stamp it once here.
 	// Not fatal: the folder stays pending and every other operation works.
-	if err := idxrebuild.BackfillGUIDs(h.mailbox(), f, rel); err != nil {
+	if err := idxrebuild.BackfillGUIDs(h.mailbox(), h.idx, f, rel); err != nil {
 		slog.Warn("imap: guid backfill failed", "folder", rel, "err", err)
 	}
 	s.folder = f

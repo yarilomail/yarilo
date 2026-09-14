@@ -57,7 +57,7 @@ func (s *Server) handleIndexCheck(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "list folders: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	stored, err := idxrebuild.StoredTails(bundle.mbox)
+	stored, err := idxrebuild.StoredTails(bundle.mbox, bundle.idx)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -74,7 +74,7 @@ func (s *Server) handleIndexCheck(w http.ResponseWriter, r *http.Request) {
 			out.Failed[e.Name] = oerr.Error()
 			continue
 		}
-		st, rerr := folderTailStats(bundle.mbox, folder, stored, req.Fix)
+		st, rerr := folderTailStats(bundle.mbox, bundle.idx, folder, stored, req.Fix)
 		if rerr != nil {
 			if out.Failed == nil {
 				out.Failed = map[string]string{}
@@ -99,12 +99,12 @@ func (s *Server) handleIndexCheck(w http.ResponseWriter, r *http.Request) {
 
 // folderTailStats counts without fix and repairs with it: an operator reads the
 // account before changing a byte in it.
-func folderTailStats(b mailbox.Box, folder *mailbox.Folder, stored map[uint32]mailbox.ScanRecord, fix bool) (idxrebuild.TailStats, error) {
+func folderTailStats(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder, stored map[uint32]mailbox.ScanRecord, fix bool) (idxrebuild.TailStats, error) {
 	if fix {
-		return idxrebuild.RepairShiftedTails(b, folder, stored)
+		return idxrebuild.RepairShiftedTails(b, idx, folder, stored)
 	}
 	var st idxrebuild.TailStats
-	msgs, err := b.Index().GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	msgs, err := b.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return st, err
 	}

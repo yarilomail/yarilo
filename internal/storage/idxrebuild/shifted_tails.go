@@ -25,7 +25,7 @@ type TailStats struct {
 
 // StoredTails keys a scan of the store by the storage key each message is named
 // by, so a repair reads the truth once per account rather than once per record.
-func StoredTails(b mailbox.Box) (map[uint32]mailbox.ScanRecord, error) {
+func StoredTails(b mailbox.Box, idx mailbox.UserIndex) (map[uint32]mailbox.ScanRecord, error) {
 	// On the driver: a storage-wide scan names no folder, and the validating
 	// wrapper the binaries build reads the empty name as the mailbox root.
 	driver := mailbox.Driver(b.Store())
@@ -50,13 +50,13 @@ func StoredTails(b mailbox.Box) (map[uint32]mailbox.ScanRecord, error) {
 
 // RepairShiftedTails rebuilds every shifted record's tail in one folder from
 // what the store holds, and reports what it checked, changed and left.
-func RepairShiftedTails(b mailbox.Box, folder *mailbox.Folder, stored map[uint32]mailbox.ScanRecord) (TailStats, error) {
+func RepairShiftedTails(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder, stored map[uint32]mailbox.ScanRecord) (TailStats, error) {
 	var stats TailStats
-	repairer, ok := b.Index().(mailbox.TailRepairer)
+	repairer, ok := idx.(mailbox.TailRepairer)
 	if !ok {
 		return stats, nil
 	}
-	msgs, err := b.Index().GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return stats, fmt.Errorf("idxrebuild/tails: %q: %w", folder.Name, err)
 	}

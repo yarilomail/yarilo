@@ -66,11 +66,11 @@ func syncCount(t *testing.T, result string) float64 {
 
 func messageCount(t *testing.T, b mailbox.Box) int {
 	t.Helper()
-	f, err := b.Index().OpenFolder("INBOX", 0)
+	f, err := b.(*mailboxbase.Box).Index().OpenFolder("INBOX", 0)
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	msgs, err := b.Index().GetMessages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	msgs, err := b.(*mailboxbase.Box).Index().GetMessages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		t.Fatalf("get messages: %v", err)
 	}

@@ -54,11 +54,11 @@ func TestARepairRebuildsAShiftedTailFromTheMessage(t *testing.T) {
 		t.Fatalf("the damaged record does not read as shifted: %+v", before[0])
 	}
 
-	stored, err := idxrebuild.StoredTails(box)
+	stored, err := idxrebuild.StoredTails(box, box.Index())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := idxrebuild.RepairShiftedTails(box, folder, stored)
+	st, err := idxrebuild.RepairShiftedTails(box, box.Index(), folder, stored)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +116,11 @@ func TestARepairLeavesHealthyRecordsAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	stored, err := idxrebuild.StoredTails(box)
+	stored, err := idxrebuild.StoredTails(box, box.Index())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := idxrebuild.RepairShiftedTails(box, folder, stored)
+	st, err := idxrebuild.RepairShiftedTails(box, box.Index(), folder, stored)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,11 +182,11 @@ func TestARepairLeavesASizeThatEqualsItsKeyAlone(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := idxrebuild.StoredTails(box)
+	stored, err := idxrebuild.StoredTails(box, box.Index())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := idxrebuild.RepairShiftedTails(box, folder, stored)
+	st, err := idxrebuild.RepairShiftedTails(box, box.Index(), folder, stored)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,11 +235,11 @@ func TestAShiftedRecordTheStoreCannotAnswerForIsCounted(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := idxrebuild.StoredTails(box)
+	stored, err := idxrebuild.StoredTails(box, box.Index())
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := idxrebuild.RepairShiftedTails(box, folder, stored)
+	st, err := idxrebuild.RepairShiftedTails(box, box.Index(), folder, stored)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,14 +277,14 @@ func TestTheScanReadsThroughTheBoxTheBinariesBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stored, err := idxrebuild.StoredTails(box)
+	stored, err := idxrebuild.StoredTails(box, box.Index())
 	if err != nil {
 		t.Fatalf("the scan through the wrapper: %v", err)
 	}
 	if len(stored) != 1 {
 		t.Fatalf("the scan returned %d messages, want 1 -- the account holds one", len(stored))
 	}
-	if _, err := idxrebuild.RepairShiftedTails(box, folder, stored); err != nil {
+	if _, err := idxrebuild.RepairShiftedTails(box, box.Index(), folder, stored); err != nil {
 		t.Fatalf("the pass through the wrapper: %v", err)
 	}
 }

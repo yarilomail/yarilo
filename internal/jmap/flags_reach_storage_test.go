@@ -41,12 +41,12 @@ func reconcile(t *testing.T, home string) {
 		t.Fatalf("open folder: %v", err)
 	}
 	syncer, ok := mailbox.Driver(box).(interface {
-		ReconcileIndex(mailbox.Box, *mailbox.Folder) (mailbox.SyncStats, error)
+		ReconcileIndex(mailbox.Box, mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
 	if !ok {
 		t.Fatal("the maildir driver does not reconcile")
 	}
-	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, ui), f); err != nil {
+	if _, err := syncer.ReconcileIndex(mailboxbase.Open(box, ui), ui, f); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 }
