@@ -138,8 +138,7 @@ jobs:
   prune:
     name: Prune old dev tags
     ## Its own job, so housekeeping that fails is red on its own and a build
-    ## whose image is already in the registry is not (#1808). The same action
-    ## ci.yml prunes with, so neither needs a tool on the runner.
+    ## whose image is already in the registry is not (#1808).
     needs: [build]
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux]
