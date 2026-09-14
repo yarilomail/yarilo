@@ -144,6 +144,14 @@ var listReads atomic.Int64
 // the list alone says nothing about how often the directory is walked (#1700).
 var dirReads atomic.Int64
 
+// scanStats counts the per-file reads a walk still has to make: a name the
+// walk has seen before is answered from the parsed set (#1800).
+var scanStats atomic.Int64
+
+// ScanStats returns the count, ResetScanStats zeroes it. Test seams.
+func ScanStats() int  { return int(scanStats.Load()) }
+func ResetScanStats() { scanStats.Store(0) }
+
 // ListReads and DirReads return the counts, the Reset pair zeroes them. Test seams.
 func ListReads() int  { return int(listReads.Load()) }
 func ResetListReads() { listReads.Store(0) }
