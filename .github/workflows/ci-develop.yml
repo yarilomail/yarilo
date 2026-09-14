@@ -146,19 +146,29 @@ jobs:
           # deleted; release tags and `latest` are never touched, and a version
           # that carries both a dev tag and something else is left alone
           # because deleting it would take the other name with it.
-          mapfile -t STALE < <(
-            gh api --paginate \
-              "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions" \
-              --jq '.[] | select(.metadata.container.tags | length > 0)
-                        | select(all(.metadata.container.tags[]; test("-dev\\.")))
-                        | "\(.id) \(.metadata.container.tags | join(","))"' \
-            | tail -n "+$((KEEP + 1))"
-          )
-          if [ "${#STALE[@]}" -eq 0 ]; then
+          # The tool first: without it the listing is empty, which is
+          # indistinguishable from having nothing to prune (#1808).
+          command -v gh >/dev/null || {
+            echo "::error::gh is not on this runner, so KEEP_DEV_TAGS applies to nothing"
+            exit 1
+          }
+          # Its own command, so a failed call fails the step: inside a process
+          # substitution the status is lost and mapfile reads an empty array.
+          LISTING=$(gh api --paginate \
+            "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions" \
+            --jq '.[] | select(.metadata.container.tags | length > 0)
+                      | select(all(.metadata.container.tags[]; test("-dev\\.")))
+                      | "\(.id) \(.metadata.container.tags | join(","))"')
+          COUNT=0
+          [ -n "$LISTING" ] && COUNT=$(printf '%s\n' "$LISTING" | wc -l | tr -d ' ')
+          echo "dev versions listed: ${COUNT}, keeping ${KEEP}"
+          STALE=""
+          [ "$COUNT" -gt "$KEEP" ] && STALE=$(printf '%s\n' "$LISTING" | tail -n "+$((KEEP + 1))")
+          if [ -z "$STALE" ]; then
             echo "nothing to prune"
             exit 0
           fi
-          for entry in "${STALE[@]}"; do
+          while IFS= read -r entry; do
             id="${entry%% *}"; tags="${entry#* }"
             if [ "${tags}" = "${FRESH}" ]; then
               echo "refusing to prune the image just built (${tags})"
@@ -168,4 +178,4 @@ jobs:
             gh api -X DELETE \
               "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions/${id}" ||
               echo "::warning::could not delete version ${id} (${tags})"
-          done
+          done <<< "$STALE"
