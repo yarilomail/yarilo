@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -448,6 +449,8 @@ type UserMailbox interface {
 	Create(folder string) error
 	Delete(folder string) error
 	Rename(oldName, newName string) error
+	// flags carries system flags and keywords in one list, built with
+	// StoredFlags; a driver that keeps flags in the name keeps both there.
 	Save(folder string, r io.Reader, uid uint32, size int64, flags []string, guid [16]byte) (name string, vsize uint32, outGUID [16]byte, err error)
 	// Move relocates one message between folders keeping its identity: the
 	// returned GUID equals guid (RFC 8474: MOVE must not change EMAILID).
@@ -661,4 +664,28 @@ type FlagWriteResult struct {
 // (#1623).
 type FlagWriterMulti interface {
 	WriteFlagsMulti(folder string, writes []FlagWrite) []FlagWriteResult
+}
+
+// StoredFlags is the one list Save takes: a store keeping flags in the name
+// keeps keywords there too. Three sites dropped them instead (#1783).
+func StoredFlags(flags, keywords []string) []string {
+	if len(keywords) == 0 {
+		return flags
+	}
+	out := make([]string, 0, len(flags)+len(keywords))
+	out = append(out, flags...)
+	return append(out, keywords...)
+}
+
+// SplitStoredFlags sorts one stored list back into the two fields MessageMeta
+// keeps apart (#1605).
+func SplitStoredFlags(all []string) (flags, keywords []string) {
+	for _, f := range all {
+		if strings.HasPrefix(f, `\`) {
+			flags = append(flags, f)
+		} else {
+			keywords = append(keywords, f)
+		}
+	}
+	return flags, keywords
 }

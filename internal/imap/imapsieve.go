@@ -135,8 +135,11 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 		slog.Warn("imapsieve: fileinto save", "folder", name, "err", err)
 		return
 	}
+	// Sieve setflag/addflag name keywords as freely as system flags, and the
+	// record keeps the two apart (#1605).
+	sysFlags, kws := mailbox.SplitStoredFlags(flags)
 	nm := &mailbox.MessageMeta{
-		Flags: flags, Size: uint32(len(raw)), VSize: vsize, InternalDate: time.Now(), GUID: guid,
+		Flags: sysFlags, Keywords: kws, Size: uint32(len(raw)), VSize: vsize, InternalDate: time.Now(), GUID: guid,
 	}
 	if err := dh.mailbox().RecordSaved(df, drel, newFilename, nm); err != nil {
 		_ = dh.box.Remove(drel, newFilename)

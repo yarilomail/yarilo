@@ -44,11 +44,15 @@ func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, loc
 	if err != nil {
 		return 0, *f, noGUID, fmt.Errorf("lmtp: save: %w", err)
 	}
+	// Sieve names keywords as freely as system flags, and the record keeps the
+	// two apart (#1605).
+	sysFlags, kws := mailbox.SplitStoredFlags(flags)
 	meta := &mailbox.MessageMeta{
 		Size:         uint32(size),
 		VSize:        vsize,
 		InternalDate: time.Now(),
-		Flags:        flags,
+		Flags:        sysFlags,
+		Keywords:     kws,
 		GUID:         guid,
 	}
 	tIndex := time.Now()

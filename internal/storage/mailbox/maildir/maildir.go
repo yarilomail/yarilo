@@ -1044,12 +1044,18 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (m
 		}
 		tracked := make(map[string]struct{}, len(existing))
 		var restamp map[uint32][16]byte
+		var relink []listEntry
 		var zeroGUID [16]byte
 		for _, m := range existing {
 			base, known := uidToBase[m.UID]
 			if !known {
-				// A record the list does not name opens nothing; left in place,
-				// since its file may be there unrecorded.
+				// The row is what was lost, so write it back: importing the
+				// file instead left the message there twice (#1785).
+				if b, found := guidOnDisk(m, onDisk, tracked); found {
+					relink = append(relink, listEntry{uid: m.UID, filename: onDisk[b].Filename})
+					tracked[b] = struct{}{}
+					continue
+				}
 				reportUnlisted(u.username, folder.Name, m.UID)
 				continue
 			}
@@ -1102,6 +1108,12 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (m
 			}
 		}
 
+		if len(relink) > 0 {
+			if _, err := u.recordUIDsLocked(folder.Name, relink); err != nil {
+				return err
+			}
+			st.Imported += len(relink)
+		}
 		for i := range scanned {
 			rec := &scanned[i]
 			if rec.Filename == "" {
@@ -1918,6 +1930,25 @@ func splitFlagsAndKeywords(all []string) (flags, keywords []string) {
 		}
 	}
 	return flags, keywords
+}
+
+// guidOnDisk finds the base holding an unlisted record's own identity. Zero
+// identity matches nothing -- it would pair with whatever file came first.
+func guidOnDisk(m *mailbox.MessageMeta, onDisk map[string]*mailbox.ScanRecord, tracked map[string]struct{}) (string, bool) {
+	var zero [16]byte
+	if m.GUID == zero {
+		return "", false
+	}
+	for base, rec := range onDisk {
+		if rec.GUID != m.GUID {
+			continue
+		}
+		if _, taken := tracked[base]; taken {
+			continue
+		}
+		return base, true
+	}
+	return "", false
 }
 
 // stillOnDisk reports whether a name the unlocked scan produced is still on
