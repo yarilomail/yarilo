@@ -168,6 +168,7 @@ jobs:
             echo "nothing to prune"
             exit 0
           fi
+          FAILED=""
           while IFS= read -r entry; do
             id="${entry%% *}"; tags="${entry#* }"
             if [ "${tags}" = "${FRESH}" ]; then
@@ -175,7 +176,15 @@ jobs:
               continue
             fi
             echo "pruning ${tags}"
-            gh api -X DELETE \
-              "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions/${id}" ||
+            if ! gh api -X DELETE \
+              "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions/${id}"; then
               echo "::warning::could not delete version ${id} (${tags})"
+              FAILED="${FAILED} ${id}"
+            fi
           done <<< "$STALE"
+          # A step that deleted nothing it was asked to must not be green: that
+          # is the retention setting describing what did not happen (#1808).
+          if [ -n "$FAILED" ]; then
+            echo "::error::could not delete:${FAILED}"
+            exit 1
+          fi
