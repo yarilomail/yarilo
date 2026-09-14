@@ -135,56 +135,23 @@ jobs:
             BUILD_VERSION=${{ steps.version.outputs.dev_tag }}
             BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
 
-      - name: Prune old dev tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          KEEP: ${{ env.KEEP_DEV_TAGS }}
-          FRESH: ${{ steps.version.outputs.dev_tag }}
-        run: |
-          set -euo pipefail
-          # Versions carrying a -dev. tag, newest first. Anything past KEEP is
-          # deleted; release tags and `latest` are never touched, and a version
-          # that carries both a dev tag and something else is left alone
-          # because deleting it would take the other name with it.
-          # The tool first: without it the listing is empty, which is
-          # indistinguishable from having nothing to prune (#1808).
-          command -v gh >/dev/null || {
-            echo "::error::gh is not on this runner, so KEEP_DEV_TAGS applies to nothing"
-            exit 1
-          }
-          # Its own command, so a failed call fails the step: inside a process
-          # substitution the status is lost and mapfile reads an empty array.
-          LISTING=$(gh api --paginate \
-            "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions" \
-            --jq '.[] | select(.metadata.container.tags | length > 0)
-                      | select(all(.metadata.container.tags[]; test("-dev\\.")))
-                      | "\(.id) \(.metadata.container.tags | join(","))"')
-          COUNT=0
-          [ -n "$LISTING" ] && COUNT=$(printf '%s\n' "$LISTING" | wc -l | tr -d ' ')
-          echo "dev versions listed: ${COUNT}, keeping ${KEEP}"
-          STALE=""
-          [ "$COUNT" -gt "$KEEP" ] && STALE=$(printf '%s\n' "$LISTING" | tail -n "+$((KEEP + 1))")
-          if [ -z "$STALE" ]; then
-            echo "nothing to prune"
-            exit 0
-          fi
-          FAILED=""
-          while IFS= read -r entry; do
-            id="${entry%% *}"; tags="${entry#* }"
-            if [ "${tags}" = "${FRESH}" ]; then
-              echo "refusing to prune the image just built (${tags})"
-              continue
-            fi
-            echo "pruning ${tags}"
-            if ! gh api -X DELETE \
-              "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions/${id}"; then
-              echo "::warning::could not delete version ${id} (${tags})"
-              FAILED="${FAILED} ${id}"
-            fi
-          done <<< "$STALE"
-          # A step that deleted nothing it was asked to must not be green: that
-          # is the retention setting describing what did not happen (#1808).
-          if [ -n "$FAILED" ]; then
-            echo "::error::could not delete:${FAILED}"
-            exit 1
-          fi
+  prune:
+    name: Prune old dev tags
+    ## Its own job, so housekeeping that fails is red on its own and a build
+    ## whose image is already in the registry is not (#1808).
+    needs: [build]
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux]
+    permissions:
+      packages: write
+    steps:
+      - name: Prune
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: yarilo
+          package-type: container
+          min-versions-to-keep: ${{ env.KEEP_DEV_TAGS }}
+          ## Releases and `latest` are never ours to delete: a version is
+          ## removed with every name it carries.
+          ignore-versions: '^(latest|\d+\.\d+\.\d+)$'
+          token: ${{ secrets.GITHUB_TOKEN }}
