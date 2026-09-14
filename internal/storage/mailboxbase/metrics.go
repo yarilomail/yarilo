@@ -10,8 +10,8 @@ import (
 var (
 	MetricReconcile = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "imap_maildir_sync_total",
-		Help: "Maildir reconcile decisions: scanned means cur/ and new/ were walked, skipped means the change token said nothing had changed.",
-	}, []string{"result"}) // scanned | skipped
+		Help: "Maildir reconcile decisions: scanned means the change token moved and cur/ and new/ were walked, scanned-untokened means there was no token to compare, skipped means the token said nothing had changed.",
+	}, []string{"result"}) // scanned | scanned-untokened | skipped
 
 	MetricReconcileSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "imap_maildir_sync_seconds",

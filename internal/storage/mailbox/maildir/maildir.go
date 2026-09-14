@@ -331,7 +331,9 @@ func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) 
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
 	defer cancel()
+	asked := time.Now()
 	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
+	metricLockWait.WithLabelValues(site).Observe(time.Since(asked).Seconds())
 	if err != nil {
 		return fmt.Errorf("maildir/lock %s: %w", folder, err)
 	}

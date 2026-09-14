@@ -41,6 +41,10 @@ type Client struct {
 	// available again. Cap = poolSize; starts with all-nil conns (lazy connect).
 	idle chan *connSlot
 
+	// noQueue is the server's answer to a waiting LOCK, remembered so the
+	// fallback to polling is paid once per client (#1821).
+	noQueue queueless
+
 	// holdsMu guards the holds map. Separate from the pool so HoldsResource is
 	// safe to call mid-roundtrip.
 	//
@@ -574,16 +578,59 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Acquire is Lock with blocking semantics: retries on ErrBusy with exponential
-// backoff (1ms → 100ms cap, small jitter) until ctx is cancelled or the lock is
-// taken. Returns the Lock on success, else the last underlying error.
+// Acquire is Lock with blocking semantics. The wait happens in the server, in
+// arrival order; against a server that does not queue it falls back to the
+// polling loop below (#1821).
 func Acquire(ctx context.Context, l Locker, resource, owner string, ttl time.Duration) (Lock, error) {
 	owner = CheckOwner(owner)
 	_ = CheckSite(ctx)
+	if lock, err, queued := acquireQueued(ctx, l, resource, owner, ttl, false, waitFailure); queued {
+		return lock, err
+	}
 	return acquireBlocking(ctx, resource, waitFailure, func() (Lock, error) {
 		return l.Lock(ctx, resource, owner, ttl)
 	})
 }
+
+// acquireQueued runs the queued acquisition when both the Locker and the server
+// support it. queued is false when the caller must fall back to polling.
+func acquireQueued(ctx context.Context, l Locker, resource, owner string, ttl time.Duration, shared bool, wrapWaitErr func(error) error) (Lock, error, bool) {
+	w, ok := l.(waitingLocker)
+	if !ok {
+		return Lock{}, nil, false
+	}
+	limit := defaultWaitLimit
+	if deadline, has := ctx.Deadline(); has {
+		if remaining := time.Until(deadline); remaining < limit {
+			limit = remaining
+		}
+	}
+	if limit <= 0 {
+		return Lock{}, wrapWaitErr(context.DeadlineExceeded), true
+	}
+	class := resourceClass(resource)
+	started := time.Now()
+	lock, err := w.LockWaiting(ctx, resource, owner, ttl, limit, shared)
+	if errors.Is(err, errNoQueue) {
+		return Lock{}, nil, false
+	}
+	clientAcquireAttempts.WithLabelValues(class).Observe(1)
+	clientAcquireWait.WithLabelValues(class).Observe(time.Since(started).Seconds())
+	if errors.Is(err, ErrBusy) {
+		clientGaveUp.WithLabelValues(class, attemptBucket(1)).Inc()
+		return Lock{}, wrapWaitErr(context.DeadlineExceeded), true
+	}
+	return lock, err, true
+}
+
+// waitingLocker is a Locker whose server answers when the lock is the caller's.
+type waitingLocker interface {
+	LockWaiting(ctx context.Context, resource, owner string, ttl, limit time.Duration, shared bool) (Lock, error)
+}
+
+// defaultWaitLimit caps how long the server may hold one request open. Callers
+// carry their own deadline; this is the ceiling for one that carries none.
+const defaultWaitLimit = 30 * time.Second
 
 // AcquireShared is LockShared with blocking semantics, mirroring Acquire. Use
 // it for read-path callers that must block only against an in-flight exclusive
@@ -594,6 +641,9 @@ func Acquire(ctx context.Context, l Locker, resource, owner string, ttl time.Dur
 func AcquireShared(ctx context.Context, l Locker, resource, owner string, ttl time.Duration) (Lock, error) {
 	owner = CheckOwner(owner)
 	_ = CheckSite(ctx)
+	if lock, err, queued := acquireQueued(ctx, l, resource, owner, ttl, true, func(err error) error { return err }); queued {
+		return lock, err
+	}
 	return acquireBlocking(ctx, resource, func(err error) error { return err }, func() (Lock, error) {
 		return l.LockShared(ctx, resource, owner, ttl)
 	})

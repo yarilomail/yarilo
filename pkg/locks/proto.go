@@ -58,6 +58,10 @@ const (
 	cmdEmit       = "EMIT"
 	cmdSubscribe  = "SUBSCRIBE"
 	cmdCounterInc = "COUNTER-INC"
+	// An older server answers ERROR unknown_command, which the client reads as
+	// "this one does not queue" and falls back to polling (#1821).
+	cmdLockWait       = "LOCK-WAIT"
+	cmdLockSharedWait = "LOCK-SHARED-WAIT"
 )
 
 // Responses sent by the server.
