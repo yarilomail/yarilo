@@ -17,10 +17,20 @@ import (
 
 // openBox is one account through both halves at once.
 func openBox(t *testing.T, user string) (*mailboxbase.Box, *mailbox.Folder) {
+	return openBoxLocked(t, user, nil)
+}
+
+// openBoxLocked builds the store with the lock client the deployment gives it,
+// which is where the lock comes from (#1794).
+func openBoxLocked(t *testing.T, user string, lk locks.Locker) (*mailboxbase.Box, *mailbox.Folder) {
 	t.Helper()
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: user, Home: home, Driver: "maildir"}
-	store := maildir.New().OpenUser(info)
+	var opts []maildir.Option
+	if lk != nil {
+		opts = append(opts, maildir.WithLocker(lk))
+	}
+	store := maildir.New(opts...).OpenUser(info)
 	idx := file.New().OpenUser(info)
 	t.Cleanup(func() { _ = store.Close(); _ = idx.Close() })
 	if err := store.Init(); err != nil {
@@ -132,12 +142,12 @@ func TestFillSizelessGivesRecordsTheSizeStorageHolds(t *testing.T) {
 	}
 }
 
-// A batch takes the folder once, not once per message: the count is the number
-// of round trips the service sees for one POP3 UPDATE (#1715).
+// A batch takes the folder once, not once per message (#1715), and the box is
+// opened plainly: the lock comes from the driver (#1794).
 func TestExpungeMarkedTakesTheFolderOnce(t *testing.T) {
-	box, f := openBox(t, "u4@example.com")
 	lk := &countingLocker{held: map[string]locks.HoldMode{}}
-	batched := mailboxbase.Open(box.Store(), box.Index(), mailboxbase.WithLocker(lk, "test/0/u4@example.com/s1"))
+	box, f := openBoxLocked(t, "u4@example.com", lk)
+	batched := mailboxbase.Open(box.Store(), box.Index())
 
 	msgs := make([]*mailbox.MessageMeta, 0, 3)
 	for i := 0; i < 3; i++ {
@@ -158,10 +168,12 @@ func TestExpungeMarkedTakesTheFolderOnce(t *testing.T) {
 	}
 
 	lk.locks = 0
-	removed, failed := batched.ExpungeMarked(f, "INBOX", msgs)
+	removed, failed, _ := batched.ExpungeMarked(f, "INBOX", msgs, nil)
 	if failed != 0 || len(removed) != 3 {
 		t.Fatalf("the batch removed %v and failed %d, want three removed", removed, failed)
 	}
+	// Zero is the failure this row exists for: a box opened with no option from
+	// the protocol must still hold, because the lock is the driver's (#1794).
 	if lk.locks != 1 {
 		t.Errorf("the batch took the folder %d times for 3 messages, want 1", lk.locks)
 	}
@@ -191,7 +203,7 @@ func TestExpungeMarkedWorksWithNoLocker(t *testing.T) {
 	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
-	removed, failed := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m})
+	removed, failed, _ := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m}, nil)
 	if failed != 0 || len(removed) != 1 {
 		t.Fatalf("removed %v, failed %d", removed, failed)
 	}
@@ -257,7 +269,7 @@ func TestTheRecordGoesBeforeTheBody(t *testing.T) {
 			rc.Close() //nolint:errcheck
 		}
 	})
-	removed, failed := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m})
+	removed, failed, _ := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m}, nil)
 	disarm()
 	if failed != 0 || len(removed) != 1 {
 		t.Fatalf("removed %v, failed %d", removed, failed)

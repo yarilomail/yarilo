@@ -4,6 +4,10 @@ import "io"
 
 // Box is one account's mail, both halves at once: a consumer asks it for a
 // message and never assembles the pair. Implemented with storage (#1715).
+// ExpungeNotify runs inside the hold once a message is gone, for what only the
+// protocol knows: its untagged response and its own bookkeeping.
+type ExpungeNotify func(m *MessageMeta) error
+
 type Box interface {
 	// Username is whose mail this is.
 	Username() string
@@ -35,8 +39,14 @@ type Box interface {
 	NameSaved(folder, saved string, m *MessageMeta) error
 	// WriteFlags settles flag changes in storage and marks those that did not.
 	WriteFlags(f *Folder, folder string, writes []FlagWrite) []FlagWriteResult
-	// ExpungeMarked removes messages and their records under one hold.
-	ExpungeMarked(f *Folder, folder string, msgs []*MessageMeta) (removed []uint32, failed int)
+	// ExpungeMarked removes messages and their records under one hold. A notify
+	// error stops the batch and comes back as notifyErr.
+	ExpungeMarked(f *Folder, folder string, msgs []*MessageMeta, notify ExpungeNotify) (removed []uint32, failed int, notifyErr error)
+	// HoldFolder runs fn under the storage's folder hold, for a caller whose
+	// own multi-step write must not be interleaved (#1794).
+	HoldFolder(folder, site string, fn func() error) error
+	// RemoveHeld unlinks a body inside a hold the caller already has.
+	RemoveHeld(folder, name string) error
 	// RemoveMessage unlinks a body, leaving the record to the caller.
 	RemoveMessage(folder string, m *MessageMeta) error
 

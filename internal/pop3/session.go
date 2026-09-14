@@ -597,7 +597,7 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	}
 
 	s.userInfo = userInfo
-	s.box = mailboxbase.Open(box, idx, mailboxbase.WithLocker(s.srv.opts.Locker, locks.Owner(userInfo.Username, userInfo.LockID())))
+	s.box = mailboxbase.Open(box, idx)
 
 	if err := s.loadMailbox(); err != nil {
 		// The whole login is rolled back, the session lock included: a retry on
@@ -1186,7 +1186,7 @@ func (s *session) expungeDeleted() int {
 			marked = append(marked, m)
 		}
 	}
-	removed, failed := s.box.ExpungeMarked(s.folder, "INBOX", marked)
+	removed, failed, _ := s.box.ExpungeMarked(s.folder, "INBOX", marked, nil)
 	if s.srv.opts.Locker != nil && s.userInfo != nil {
 		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

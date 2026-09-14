@@ -146,18 +146,24 @@ func (u *userMailbox) HealCorruptFolder(box mailbox.Box, folder *mailbox.Folder)
 // lock on locks.MailboxKey(user, folder). The HoldsResource short-circuit
 // handles the POP3 QUIT re-entrancy pattern.
 func (u *userMailbox) withMailboxLock(folder string, fn func() error) error {
+	return u.withMailboxLockSite(folder, "sdbox-folder", fn)
+}
+
+// withMailboxLockSite is the same with the reason recorded: an acquisition
+// from an expunge and one from a rebuild cost the same and mean opposites.
+func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.b.locker == nil {
 		return fn()
 	}
 	key := locks.MailboxKey(u.username, folder)
-	if held, err := locks.Reentrant(u.b.locker, key, "sdbox-folder", false); err != nil {
+	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
 		return fn()
 	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "sdbox-folder"), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
 	defer cancel()
 	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
 	if err != nil {
@@ -515,13 +521,26 @@ func corruptRead(op, path string, err error) error {
 
 // Remove unlinks the message file. Idempotent: a missing file is not an error.
 func (u *userMailbox) Remove(folder, filename string) error {
-	return u.withMailboxLock(folder, func() error {
-		path := filepath.Join(u.folderPath(folder), filename)
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("sdbox/remove: %w", err)
-		}
-		return nil
-	})
+	return u.withMailboxLock(folder, func() error { return u.removeLocked(folder, filename) })
+}
+
+// HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
+func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
+	return u.withMailboxLockSite(folder, site, fn)
+}
+
+// RemoveHeld unlinks inside a hold the caller already has: Remove takes the
+// same one, and it is not reentrant.
+func (u *userMailbox) RemoveHeld(folder, filename string) error {
+	return u.removeLocked(folder, filename)
+}
+
+func (u *userMailbox) removeLocked(folder, filename string) error {
+	path := filepath.Join(u.folderPath(folder), filename)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("sdbox/remove: %w", err)
+	}
+	return nil
 }
 
 // Copy hardlinks srcFilename into dstFolder under the destination's u.<dstUID>
