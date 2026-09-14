@@ -43,7 +43,7 @@ func (u *userMailbox) withMapLock(fn func() error) error {
 // never re-filed: untagged, lost mail and leak garbage look alike. Lock order is
 // map outer, folder inner -- the same order delivery takes, so there is no
 // inversion. QUIESCENCE REQUIRED -- only the map lock is held.
-func (u *userMailbox) RebuildStorage(box mailbox.Box, restoreOrphans bool) (mailbox.StorageRebuildStats, error) {
+func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, restoreOrphans bool) (mailbox.StorageRebuildStats, error) {
 	var stats mailbox.StorageRebuildStats
 
 	// Alt-mounted guard: a configured-but-unmounted alt tier would make every
@@ -101,7 +101,7 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, restoreOrphans bool) (mail
 			if oerr != nil {
 				return fmt.Errorf("mdbox/rebuild: open %q: %w", fe.Name, oerr)
 			}
-			dropped, rerr := u.resetFolderToPresent(box, f, present)
+			dropped, rerr := u.resetFolderToPresent(idx, f, present)
 			if rerr != nil {
 				return rerr
 			}
@@ -125,7 +125,7 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, restoreOrphans bool) (mail
 				if oerr != nil {
 					return fmt.Errorf("mdbox/rebuild: reopen %q: %w", fe.Name, oerr)
 				}
-				msgs, gerr := box.Index().GetMessages(f.ID, allMessages)
+				msgs, gerr := idx.GetMessages(f.ID, allMessages)
 				if gerr != nil {
 					return fmt.Errorf("mdbox/rebuild: reread %q: %w", fe.Name, gerr)
 				}
@@ -146,7 +146,7 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, restoreOrphans bool) (mail
 		// Phase 3, opt-in: tagged orphans go home; an untagged one is never
 		// re-filed.
 		if restoreOrphans {
-			restored, rerr := u.restoreTaggedOrphans(box, present, refCount)
+			restored, rerr := u.restoreTaggedOrphans(box, idx, present, refCount)
 			if rerr != nil {
 				return rerr
 			}
@@ -187,7 +187,7 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, restoreOrphans bool) (mail
 // restoreTaggedOrphans re-files every unreferenced message carrying an
 // orig-mailbox tag, through the same path a delivery takes so the folder's
 // aggregates stay right. Untagged records are left for purge.
-func (u *userMailbox) restoreTaggedOrphans(box mailbox.Box, present map[string]*mailbox.ScanRecord, refCount map[uint32]int) (int, error) {
+func (u *userMailbox) restoreTaggedOrphans(box mailbox.Box, idx mailbox.UserIndex, present map[string]*mailbox.ScanRecord, refCount map[uint32]int) (int, error) {
 	// Deterministic order so two runs restore identically.
 	fns := make([]string, 0, len(present))
 	for fn := range present {
@@ -220,7 +220,7 @@ func (u *userMailbox) restoreTaggedOrphans(box mailbox.Box, present map[string]*
 			InternalDate: rec.InternalDate,
 			GUID:         rec.GUID,
 		}
-		if err := box.Index().AllocateAndAppend(target.ID, nm); err != nil {
+		if err := idx.AllocateAndAppend(target.ID, nm); err != nil {
 			return restored, fmt.Errorf("mdbox/rebuild: restore %s into %q: %w", fn, rec.OrigMailbox, err)
 		}
 		refCount[uid]++
@@ -257,8 +257,8 @@ func (u *userMailbox) openOrCreateFolder(box mailbox.Box, name string, cache map
 
 // resetFolderToPresent drops the folder's records whose map_uid the scan did not
 // find, keeping everything else intact, and returns the dropped UIDs.
-func (u *userMailbox) resetFolderToPresent(box mailbox.Box, f *mailbox.Folder, present map[string]*mailbox.ScanRecord) ([]uint32, error) {
-	existing, err := box.Index().GetMessages(f.ID, allMessages)
+func (u *userMailbox) resetFolderToPresent(idx mailbox.UserIndex, f *mailbox.Folder, present map[string]*mailbox.ScanRecord) ([]uint32, error) {
+	existing, err := idx.GetMessages(f.ID, allMessages)
 	if err != nil {
 		return nil, fmt.Errorf("mdbox/rebuild: get messages %q: %w", f.Name, err)
 	}
@@ -273,7 +273,7 @@ func (u *userMailbox) resetFolderToPresent(box mailbox.Box, f *mailbox.Folder, p
 		rebuilt = append(rebuilt, mm)
 	}
 	sort.Slice(rebuilt, func(i, j int) bool { return rebuilt[i].UID < rebuilt[j].UID })
-	expunged, err := box.Index().ResetFolder(f.ID, rebuilt)
+	expunged, err := idx.ResetFolder(f.ID, rebuilt)
 	if err != nil {
 		return nil, fmt.Errorf("mdbox/rebuild: reset %q: %w", f.Name, err)
 	}

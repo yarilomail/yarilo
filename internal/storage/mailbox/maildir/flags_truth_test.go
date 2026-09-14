@@ -29,7 +29,7 @@ func TestTheNameTakesTheSeenFlagOffTheRecord(t *testing.T) {
 		UID: 1, Size: 5, VSize: 5, Flags: []string{`\Seen`},
 	})
 
-	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -65,7 +65,7 @@ func TestADirtyRecordKeepsItsFlagsUntilTheRenameLands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -81,7 +81,7 @@ func TestADirtyRecordKeepsItsFlagsUntilTheRenameLands(t *testing.T) {
 	if err := marker.SetFlagsDirty(folder.ID, 1, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ = idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
@@ -111,7 +111,7 @@ func TestARecordTheListDoesNotNameIsLeftAloneAndReported(t *testing.T) {
 	defer slog.SetDefault(prev)
 
 	for i := 0; i < 2; i++ {
-		if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), folder); err != nil {
+		if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
 			t.Fatal(err)
 		}
 	}

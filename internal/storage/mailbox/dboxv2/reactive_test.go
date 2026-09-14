@@ -78,7 +78,7 @@ func TestReactiveHealDropsVanishedPreservesRest(t *testing.T) {
 	}
 
 	rb := mb.(*userMailbox)
-	expunged, err := rb.HealCorruptFolder(mailboxbase.Open(mb, idx), folder)
+	expunged, err := rb.HealCorruptFolder(mailboxbase.Open(mb, idx), idx, folder)
 	if err != nil {
 		t.Fatalf("heal: %v", err)
 	}

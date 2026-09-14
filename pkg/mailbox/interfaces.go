@@ -158,7 +158,7 @@ type ReactiveHealer interface {
 	// HealCorruptFolder repairs folder and returns the UIDs it expunged (records
 	// whose backing message vanished), so the caller can invalidate their FTS
 	// documents.
-	HealCorruptFolder(box Box, folder *Folder) ([]uint32, error)
+	HealCorruptFolder(box Box, idx UserIndex, folder *Folder) ([]uint32, error)
 }
 
 // CanReactiveHeal reports whether box can self-heal corruption. Marking a folder
@@ -207,33 +207,7 @@ type StorageRebuildStats struct {
 // into its recorded home folder, never blindly adopted. The default leaves
 // unreferenced messages zero-ref for purge.
 type StorageWideRebuilder interface {
-	RebuildStorage(box Box, restoreOrphans bool) (StorageRebuildStats, error)
-}
-
-// MarkCorruptOnFetchErr flags folder for a heal when err wraps ErrCorruptStorage.
-// It resolves the folder ID via idx and records the marker if idx supports it,
-// else a no-op. box is the driver that produced err: the marker is persisted only
-// when the driver can heal it (CanReactiveHeal). Best-effort — any
-// resolution/marking error is swallowed.
-//
-// Returns true only when it actually marked the folder, so a caller can gate its
-// own "already flagged" state without repeating the corruption classification.
-func MarkCorruptOnFetchErr(b Box, folder string, err error) bool {
-	if err == nil || !errors.Is(err, ErrCorruptStorage) {
-		return false
-	}
-	if !CanReactiveHeal(b.Store()) {
-		return false
-	}
-	cm, ok := b.Index().(CorruptionMarker)
-	if !ok {
-		return false
-	}
-	f, oerr := b.Folder(folder, 0)
-	if oerr != nil {
-		return false
-	}
-	return cm.MarkFolderCorrupt(f.ID) == nil
+	RebuildStorage(box Box, idx UserIndex, restoreOrphans bool) (StorageRebuildStats, error)
 }
 
 // FormatObjectID renders a 16-byte GUID as the RFC 8474 object identifier used

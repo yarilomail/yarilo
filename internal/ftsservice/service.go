@@ -905,7 +905,7 @@ func (s *Service) runIndex(j job) error {
 				// Flag the folder for a reactive heal once per scan, not per
 				// message: a mailbox full of vanished files must not pay an
 				// OpenFolder+mark for each one.
-				if !marked && mailbox.MarkCorruptOnFetchErr(h.mailboxOf(), j.mbox.Name, err) {
+				if !marked && h.mailboxOf().MarkCorruptOnFetchErr(j.mbox.Name, err) {
 					marked = true
 				}
 			} else {

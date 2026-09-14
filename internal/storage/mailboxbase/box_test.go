@@ -416,3 +416,18 @@ func TestRecordSavedSettlesTheNameBeforeTheRecord(t *testing.T) {
 	}
 	_ = f
 }
+
+// The marker is gated: a driver that cannot heal must not have its folder
+// marked, or the folder is stranded FSCKD with nothing to clear it (#1715).
+func TestMarkCorruptOnFetchErrIsGated(t *testing.T) {
+	box, _ := openBox(t, "u9@example.com")
+	if box.MarkCorruptOnFetchErr("INBOX", mailbox.ErrCorruptStorage) {
+		t.Error("a maildir folder was marked; the driver cannot reactive-heal")
+	}
+	if box.MarkCorruptOnFetchErr("INBOX", nil) {
+		t.Error("a nil error marked the folder")
+	}
+	if box.MarkCorruptOnFetchErr("INBOX", errors.New("input/output error")) {
+		t.Error("a transient I/O error marked the folder")
+	}
+}

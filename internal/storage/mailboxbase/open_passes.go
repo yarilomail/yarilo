@@ -14,7 +14,7 @@ import (
 type proactiveSyncer interface {
 	ProactiveScan() bool
 	SyncToken(folder string) string
-	ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (mailbox.SyncStats, error)
+	ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error)
 }
 
 // indexDirNamer names where a folder's files live: one user's namespaces
@@ -119,7 +119,7 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	MetricReconcile.WithLabelValues("scanned").Inc()
 	// The walk is what costs; the counter says how often, never how long.
 	walked := time.Now()
-	st, err := ps.ReconcileIndex(b, f)
+	st, err := ps.ReconcileIndex(b, b.index, f)
 	MetricReconcileSeconds.Observe(time.Since(walked).Seconds())
 	if err != nil {
 		slog.Warn("mailbox/open: the reconcile did not finish",

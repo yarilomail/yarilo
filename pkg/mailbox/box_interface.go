@@ -37,6 +37,19 @@ type Box interface {
 	RecordSaved(f *Folder, folder, saved string, m *MessageMeta) error
 	// NameSaved settles the name of a body saved under a uid already held.
 	NameSaved(folder, saved string, m *MessageMeta) error
+	// UpdateFlags applies one delta to one message. A delta, not a set: the
+	// index resolves it against the record its own lock finds (#1250).
+	UpdateFlags(folderID uint64, uid uint32, upd FlagsUpdate) error
+	// POP3UIDLs returns the stable UIDLs an earlier session saved.
+	POP3UIDLs(folderID uint64) (map[uint32]string, error)
+	// SavePOP3UIDLs persists them, so the next session hands out the same ones.
+	SavePOP3UIDLs(folderID uint64, uidls map[uint32]string) error
+	// HealCorrupt repairs a folder a driver marked and returns the UIDs it
+	// expunged. Zero and nil error when the driver does not heal.
+	HealCorrupt(f *Folder) ([]uint32, error)
+	// MarkCorruptOnFetchErr flags this folder for a heal when err wraps
+	// ErrCorruptStorage, and reports whether it marked it.
+	MarkCorruptOnFetchErr(folder string, err error) bool
 	// WriteFlags settles flag changes in storage and marks those that did not.
 	WriteFlags(f *Folder, folder string, writes []FlagWrite) []FlagWriteResult
 	// ExpungeMarked removes messages and their records under one hold. A notify
@@ -53,7 +66,6 @@ type Box interface {
 	// Store and Index are the halves this arc has not moved yet. Every use is
 	// a consumer the series still owes a method (#1715).
 	Store() UserMailbox
-	Index() UserIndex
 
 	// Close releases both halves.
 	Close()
