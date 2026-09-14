@@ -19,7 +19,9 @@ func (b *Box) MarkCorruptOnFetchErr(folder string, err error) bool {
 	if !ok {
 		return false
 	}
-	f, oerr := b.Folder(folder, 0)
+	// Raw, not the settling open: a mark is not a session, and the store that
+	// just reported corruption is the last one to walk (#1715).
+	f, oerr := b.index.OpenFolder(folder, 0)
 	if oerr != nil {
 		return false
 	}
