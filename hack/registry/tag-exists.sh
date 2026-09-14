@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 # Answers whether an image tag is in the registry, for the check a rollout makes
-# before it pins one.
-#
-# ghcr serves an OCI image index. A manifest request that does not say it accepts
-# one is answered 404, not 406, so a check without Accept reports "missing" for
-# every tag we publish (#1807).
+# before it pins one (#1807).
 set -euo pipefail
 
 IMAGE="${IMAGE:-yarilomail/yarilo}"
@@ -21,6 +17,7 @@ if [ -z "$TOKEN" ]; then
   exit 3
 fi
 
+# ghcr answers a manifest request that does not accept an index with 404.
 ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json'
 CODE=$(curl -s -o /dev/null -w '%{http_code}' \
   -H "Authorization: Bearer ${TOKEN}" -H "Accept: ${ACCEPT}" \
