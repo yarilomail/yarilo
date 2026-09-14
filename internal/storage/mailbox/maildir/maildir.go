@@ -1018,8 +1018,6 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (m
 		}
 	}
 
-	u.sweepStaleTemps(folder.Name)
-
 	// The walk, holding nothing. A flag change renames only the part after
 	// ":2,", and everything here is keyed by the base name -- so the scan is
 	// sound about which messages exist and unsound about the flags they carry.

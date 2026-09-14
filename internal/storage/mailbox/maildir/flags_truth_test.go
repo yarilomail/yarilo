@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -128,9 +130,9 @@ func TestARecordTheListDoesNotNameIsLeftAloneAndReported(t *testing.T) {
 	}
 }
 
-// A folder an older build left with a sidecar loses it on the pass a SELECT
-// runs, and nothing is taken from it: the list is the mapping (#1700).
-func TestTheSidecarIsRemovedAndNothingTakenFromIt(t *testing.T) {
+// A record the list does not name stays nameless whatever sits beside the
+// index, and the counter moves (#1801).
+func TestANamelessRecordIsNotNamedFromASidecar(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, nil, [16]byte{})
 	if err != nil {
@@ -139,27 +141,31 @@ func TestTheSidecarIsRemovedAndNothingTakenFromIt(t *testing.T) {
 	if _, aerr := box.AssignUID("INBOX", name, 1); aerr != nil {
 		t.Fatalf("assign uid: %v", aerr)
 	}
-	recAppend(t, box, idx, folder, name, &mailbox.MessageMeta{UID: 1, Size: 5, VSize: 5})
-
+	// The record, with no row naming it.
+	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 7, Size: 5, VSize: 5}); err != nil {
+		t.Fatal(err)
+	}
 	dir := idx.(interface{ IndexDirFor(string) string }).IndexDirFor("INBOX")
-	sidecar := filepath.Join(dir, "yarilo.index.names")
-	if err := os.WriteFile(sidecar, []byte("1\tsomething-else\t9\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "yarilo.index.names"),
+		[]byte("7\t"+name+"\t5\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := box.MigrateUIDNames(mailboxbase.Open(box, idx), folder); err != nil {
+	ForgetReports()
+	was := testutil.ToFloat64(metricRecordWithoutRow)
+	if _, err := mailboxbase.Open(box, idx).Folder("INBOX", folder.UIDValidity); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
-		t.Errorf("the sidecar survived: %v", err)
+	if got := testutil.ToFloat64(metricRecordWithoutRow); got <= was {
+		t.Errorf("the nameless record was not reported: counter %v, was %v", got, was)
 	}
-	// And the message is still found, from the list rather than from the file
-	// that was just removed.
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	if len(msgs) != 1 {
-		t.Fatalf("the folder holds %d records", len(msgs))
-	}
-	if got := storedName(t, box, "INBOX", msgs[0]); got != name {
-		t.Errorf("uid 1 resolves to %q, want %q", got, name)
+	for _, m := range msgs {
+		if m.UID != 7 {
+			continue
+		}
+		if got, _ := box.RecordPath("INBOX", m); got != "" {
+			t.Errorf("uid 7 resolved to %q; the name came from the sidecar", got)
+		}
 	}
 }

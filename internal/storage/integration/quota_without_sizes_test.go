@@ -125,8 +125,16 @@ func TestAFlushKeepsTheSum(t *testing.T) {
 	if before != want {
 		t.Fatalf("the folder sums %d before the flush, want %d", before, want)
 	}
-	// A write that rewrites the base, which is where the sum was re-derived.
-	if err := idx.(mailbox.UIDNameMarker).MarkUIDNamed(f.ID); err != nil {
+	// A real write that rewrites the base, which is where the sum was
+	// re-derived: a marker would say the base moved without moving it.
+	uid, aerr := idx.AllocateUID(f.ID)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 1, VSize: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ExpungeMessage(f.ID, uid); err != nil {
 		t.Fatal(err)
 	}
 	if got := folderSum(t, idx, f); got != before {

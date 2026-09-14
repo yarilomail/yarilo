@@ -4,16 +4,13 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // Both passes run at the open, so every protocol settles the same mailbox:
 // from the IMAP SELECT alone, a POP3-only account saw neither (#1778, #1779).
-type uidNameMigrator interface {
-	MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
-}
-
 type proactiveSyncer interface {
 	ProactiveScan() bool
 	SyncToken(folder string) string
@@ -90,25 +87,18 @@ func (b *Box) tokenKey(folder string) string {
 // settle runs both passes a session owes a folder it just opened, and reports
 // whether either changed the record set.
 func (b *Box) settle(folder string, f *mailbox.Folder) bool {
-	changed := b.adoptNames(folder, f)
-	if b.reconcile(folder, f) {
-		changed = true
-	}
-	return changed
+	b.sweepTemps(folder)
+	return b.reconcile(folder, f)
 }
 
-func (b *Box) adoptNames(folder string, f *mailbox.Folder) bool {
-	m, ok := mailbox.Driver(b.store).(uidNameMigrator)
+// sweepTemps lets the driver clear what a save never published; the driver
+// takes its own hold, and only when its interval gate says there is work.
+func (b *Box) sweepTemps(folder string) {
+	sw, ok := mailbox.Driver(b.store).(mailbox.TempSweeper)
 	if !ok {
-		return false
+		return
 	}
-	n, err := m.MigrateUIDNames(b, f)
-	if err != nil {
-		slog.Warn("mailbox/open: the stored names did not move into the records",
-			"user", b.store.Username(), "folder", folder, "err", err)
-		return false
-	}
-	return n > 0
+	sw.SweepTemps(folder)
 }
 
 // reconcile skips the walk while the token is the one the last successful pass
@@ -127,7 +117,10 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 		}
 	}
 	MetricReconcile.WithLabelValues("scanned").Inc()
+	// The walk is what costs; the counter says how often, never how long.
+	walked := time.Now()
 	st, err := ps.ReconcileIndex(b, f)
+	MetricReconcileSeconds.Observe(time.Since(walked).Seconds())
 	if err != nil {
 		slog.Warn("mailbox/open: the reconcile did not finish",
 			"user", b.store.Username(), "folder", folder, "err", err)

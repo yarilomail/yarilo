@@ -8,7 +8,6 @@ import (
 	"time"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -41,150 +40,25 @@ func orphanFolder(t *testing.T, body string, age time.Duration) (mailbox.UserMai
 	return mb, idx, folder, dir, name
 }
 
-func migrateSdbox(t *testing.T, mb mailbox.UserMailbox, idx mailbox.UserIndex, f *mailbox.Folder) int {
-	t.Helper()
-	m, ok := mb.(interface {
-		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
-	})
-	if !ok {
-		t.Fatal("the sdbox driver cannot migrate the names it wrote")
-	}
-	n, err := m.MigrateUIDNames(mailboxbase.Open(mb, idx), f)
-	if err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	return n
-}
+// A save still in flight is left where it is: its caller names it within the
+// cycle, and taking it would take a live message (#1736).
+func TestASaveInFlightKeepsItsFile(t *testing.T) {
+	mb, _, folder, dir, name := orphanFolder(t, "in flight\n", time.Minute)
 
-// A save still in flight is left where it is, and the folder is not marked: its
-// own caller names it within the cycle, and the next pass finds it placed.
-func TestASaveInFlightHoldsTheMarkerAndKeepsItsFile(t *testing.T) {
-	mb, idx, folder, dir, name := orphanFolder(t, "in flight\n", time.Minute)
-
-	migrateSdbox(t, mb, idx, folder)
+	mb.(interface{ SweepTemps(string) }).SweepTemps(folder.Name)
 
 	if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 		t.Errorf("the file of a save in flight was taken: %v", err)
 	}
-	marker, ok := idx.(mailbox.UIDNameMarker)
-	if !ok {
-		t.Fatal("the index cannot answer for the pass")
-	}
-	if done, err := marker.UIDNamed(folder.ID); err != nil || done {
-		t.Errorf("the folder was marked with a save still in flight (done=%v, err=%v)", done, err)
-	}
 }
 
-// A body a crash left behind is filed as a message of its own, keeping the guid
-// its name carried, and the folder is then marked (#1718).
-func TestAnOrphanedBodyIsFiledAsAMessage(t *testing.T) {
-	const body = "From: a@b\r\n\r\norphan\r\n"
-	mb, idx, folder, dir, name := orphanFolder(t, body, 48*time.Hour)
-	wantGUID := strings.TrimPrefix(name, "u.")
+// And one old enough to be a crash's leftover is taken.
+func TestAStaleTempIsSwept(t *testing.T) {
+	mb, _, folder, dir, name := orphanFolder(t, "left behind\n", 48*time.Hour)
 
-	if n := migrateSdbox(t, mb, idx, folder); n != 1 {
-		t.Fatalf("the pass placed %d messages, want 1", n)
-	}
-	if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
-		t.Errorf("the orphan is still under its guid name: %v", err)
-	}
-	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(msgs) != 1 {
-		t.Fatalf("the folder holds %d records, want the orphan's own", len(msgs))
-	}
-	if got := guidHex(msgs[0].GUID); got != wantGUID {
-		t.Errorf("the record carries guid %s, the file carried %s", got, wantGUID)
-	}
-	rc, oerr := mailboxbase.OpenMessage(mb, "INBOX", msgs[0])
-	if oerr != nil {
-		t.Fatalf("the filed message cannot be read: %v", oerr)
-	}
-	defer rc.Close() //nolint:errcheck
-	marker := idx.(mailbox.UIDNameMarker)
-	if done, err := marker.UIDNamed(folder.ID); err != nil || !done {
-		t.Errorf("the folder was not marked with nothing left to place (done=%v, err=%v)", done, err)
-	}
-}
-
-// A body no reader accepts is set aside beside itself, never deleted: it is the
-// only copy, and what it is worth is the operator's to judge (#1718).
-func TestAnUnreadableOrphanIsSetAside(t *testing.T) {
-	mb, idx, folder, dir, name := orphanFolder(t, "unreadable\n", 48*time.Hour)
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("not a dbox record"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	when := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(filepath.Join(dir, name), when, when); err != nil {
-		t.Fatal(err)
-	}
-
-	migrateSdbox(t, mb, idx, folder)
+	mb.(interface{ SweepTemps(string) }).SweepTemps(folder.Name)
 
 	if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
-		t.Errorf("the unreadable body is still in the folder: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, name+".broken")); err != nil {
-		t.Errorf("the unreadable body was not set aside: %v", err)
-	}
-	marker := idx.(mailbox.UIDNameMarker)
-	if done, err := marker.UIDNamed(folder.ID); err != nil || !done {
-		t.Errorf("the folder was not marked with the body out of it (done=%v, err=%v)", done, err)
-	}
-}
-
-// A guid-named file whose guid a record already holds is a second copy of one
-// message, not an orphan: filing it would make two messages of one (#1718).
-func TestADuplicateBodyIsNotFiledAgain(t *testing.T) {
-	_, mb, home := newTestUser(t)
-	idx := fileidx.New().OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home})
-	defer idx.Close() //nolint:errcheck
-	folder, err := idx.OpenFolder("INBOX", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
-
-	const body = "From: a@b\r\n\r\ntwice\r\n"
-	saved, vsize, guid, serr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
-	if serr != nil {
-		t.Fatal(serr)
-	}
-	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if rerr := mailboxbase.RecordSaved(idx, mb, folder.ID, "INBOX", saved, m); rerr != nil {
-		t.Fatal(rerr)
-	}
-	// The same message a second time: a record a reader accepts, guid-named,
-	// old enough to be a leftover, with no record of its own.
-	twin, _, _, terr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, guid)
-	if terr != nil {
-		t.Fatal(terr)
-	}
-	dup := "u." + guidHex(guid)
-	if rerr := os.Rename(filepath.Join(dir, twin), filepath.Join(dir, dup)); rerr != nil {
-		t.Fatal(rerr)
-	}
-	when := time.Now().Add(-48 * time.Hour)
-	if terr := os.Chtimes(filepath.Join(dir, dup), when, when); terr != nil {
-		t.Fatal(terr)
-	}
-
-	migrateSdbox(t, mb, idx, folder)
-
-	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(msgs) != 1 {
-		t.Errorf("the folder holds %d messages, want the one it had", len(msgs))
-	}
-	if _, err := os.Stat(filepath.Join(dir, dup+".broken")); err != nil {
-		t.Errorf("the second copy was not set aside: %v", err)
-	}
-	marker := idx.(mailbox.UIDNameMarker)
-	if done, derr := marker.UIDNamed(folder.ID); derr != nil || !done {
-		t.Errorf("the folder was not marked with the copy out of the way (done=%v, err=%v)", done, derr)
+		t.Errorf("a stale temp survived the sweep: %v", err)
 	}
 }

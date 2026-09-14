@@ -1,31 +1,30 @@
-package maildir
+package dboxv2
 
 import (
 	"log/slog"
-	"path/filepath"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // SweepTemps removes what a save never published, at most once an hour per
-// folder (mailbox.TempSweeper).
+// folder: a rebuild never runs on a healthy account (#1801).
 func (u *userMailbox) SweepTemps(folder string) {
-	dir := filepath.Join(u.folderPath(folder), "tmp")
+	dir := u.folderPath(folder)
 	if !mailbox.SweepDue(dir) {
 		return
 	}
 	var removed []string
-	err := u.withMailboxLockSite(folder, lockSiteSweepTemps, func() error {
+	err := u.withMailboxLockSite(folder, "sweep-temps", func() error {
 		var serr error
 		removed, serr = mailbox.SweepStaleTemps(dir)
 		return serr
 	})
 	if err != nil {
-		slog.Warn("maildir: a stale temp could not be removed",
+		slog.Warn("sdbox: a stale temp could not be removed",
 			"user", u.username, "folder", folder, "err", err)
 	}
 	for _, name := range removed {
-		slog.Info("maildir: removed a save that never got a name",
+		slog.Info("sdbox: removed a save that never got a name",
 			"user", u.username, "folder", folder, "file", name)
 	}
 }

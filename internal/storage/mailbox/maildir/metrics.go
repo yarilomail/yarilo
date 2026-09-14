@@ -36,6 +36,7 @@ var metricRecordWithoutRow = promauto.NewCounter(prometheus.CounterOpts{
 
 const (
 	lockSiteSave           = "save"            // a delivery or APPEND
+	lockSiteSweepTemps     = "sweep-temps"     // clearing what a save never published
 	lockSiteWriteFlags     = "write-flags"     // one message's flags reaching its name
 	lockSiteWriteFlagsBulk = "write-flags-all" // a whole STORE's worth at once
 	lockSiteMove           = "move"            // between folders

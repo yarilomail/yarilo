@@ -10,7 +10,6 @@
 package file
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -20,7 +19,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -312,18 +310,6 @@ func (h *userHandle) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) 
 func (h *userHandle) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, error)) error {
 	return h.stamped(folderID).AllocateAndAppendNamed(folderID, m, name)
 }
-func (h *userHandle) AdoptStoredNames(folderID uint64, keyOf func(string, [16]byte) (uint32, bool)) error {
-	return h.stamped(folderID).AdoptStoredNames(folderID, keyOf)
-}
-func (h *userHandle) MarkUIDNamedPass(folderID uint64, pass uint32) error {
-	return h.stamped(folderID).MarkUIDNamedPass(folderID, pass)
-}
-func (h *userHandle) UIDNamed(folderID uint64) (bool, error) {
-	return h.stamped(folderID).UIDNamed(folderID)
-}
-func (h *userHandle) MarkUIDNamed(folderID uint64) error {
-	return h.stamped(folderID).MarkUIDNamed(folderID)
-}
 func (h *userHandle) UpdateFlags(folderID uint64, uid uint32, flags, keywords []string) error {
 	return h.stamped(folderID).UpdateFlags(folderID, uid, flags, keywords)
 }
@@ -340,12 +326,6 @@ func (h *userHandle) SetFlagsDirty(folderID uint64, uid uint32, dirty bool) erro
 	return h.stamped(folderID).SetFlagsDirty(folderID, uid, dirty)
 }
 func (h *userHandle) IndexDirFor(folder string) string { return h.ui.IndexDirFor(folder) }
-func (h *userHandle) ForgetStoredNames(folderID uint64) error {
-	return h.stamped(folderID).ForgetStoredNames(folderID)
-}
-func (h *userHandle) StoredNames(folderID uint64) (map[uint32]string, error) {
-	return h.stamped(folderID).StoredNames(folderID)
-}
 func (h *userHandle) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, error) {
 	return h.stamped(folderID).StampSizes(folderID, vsizes)
 }
@@ -1078,12 +1058,10 @@ func generateGUID() [16]byte {
 // On-disk filenames: yarilo writes the native names, and legacy canonical ones
 // are read once at OpenFolder and renamed in place.
 const (
-	IndexFileName            = "yarilo.index"
-	IndexLogFileName         = "yarilo.index.log"
-	IndexNamesFileName       = "yarilo.index.names"
-	LegacyIndexFileName      = "dovecot.index"
-	LegacyIndexLogFileName   = "dovecot.index.log"
-	LegacyIndexNamesFileName = "dovecot.index.names"
+	IndexFileName          = "yarilo.index"
+	IndexLogFileName       = "yarilo.index.log"
+	LegacyIndexFileName    = "dovecot.index"
+	LegacyIndexLogFileName = "dovecot.index.log"
 )
 
 func fileExists(path string) bool {
@@ -1094,7 +1072,6 @@ func fileExists(path string) bool {
 func indexPathFor(indexDir string) string { return filepath.Join(indexDir, IndexFileName) }
 
 // namesPath is the .names sidecar path for an index directory.
-func namesPath(indexDir string) string { return filepath.Join(indexDir, IndexNamesFileName) }
 
 // errForeignIndexPresent says the legacy-named index is another
 // implementation's. Not a failure: the caller's driver decides what it means.
@@ -1137,7 +1114,6 @@ func migrateLegacyFilenames(indexDir string) error {
 	pairs := []struct{ legacy, native string }{
 		{LegacyIndexFileName, IndexFileName},
 		{LegacyIndexLogFileName, IndexLogFileName},
-		{LegacyIndexNamesFileName, IndexNamesFileName},
 	}
 	for _, p := range pairs {
 		legacyPath := filepath.Join(indexDir, p.legacy)
@@ -1163,41 +1139,6 @@ func migrateLegacyFilenames(indexDir string) error {
 		}
 	}
 	return nil
-}
-
-// loadNames reads the .names sidecar an older build left: uid, name, and a size
-// the driver now answers for itself. A scan that stops early is an error.
-func loadNames(indexDir string) (map[uint32]string, error) {
-	names := map[uint32]string{}
-	f, err := os.Open(namesPath(indexDir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return names, nil
-		}
-		return names, fmt.Errorf("fileindex/names: open: %w", err)
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		tab1 := strings.IndexByte(line, '\t')
-		if tab1 < 0 {
-			continue
-		}
-		uid64, err := strconv.ParseUint(line[:tab1], 10, 32)
-		if err != nil {
-			continue
-		}
-		rest := line[tab1+1:]
-		if tab2 := strings.IndexByte(rest, '\t'); tab2 >= 0 {
-			rest = rest[:tab2]
-		}
-		names[uint32(uid64)] = rest
-	}
-	if err := sc.Err(); err != nil {
-		return names, fmt.Errorf("fileindex/names: read: %w", err)
-	}
-	return names, nil
 }
 
 // ensureLogStub writes an empty .log if none exists: the canonical reader fails

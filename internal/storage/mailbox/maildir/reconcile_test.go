@@ -326,7 +326,10 @@ func TestOnlyAnOldTempIsSwept(t *testing.T) {
 			if err := os.Chtimes(file, when, when); err != nil {
 				t.Fatal(err)
 			}
-			u.sweepStaleTemps("INBOX")
+			// Each row is about the age rule, not the interval gate, which
+			// has its own row below.
+			os.Remove(filepath.Join(tmp, mailbox.SweepStampName)) //nolint:errcheck
+			u.SweepTemps("INBOX")
 			_, err := os.Stat(file)
 			switch {
 			case tc.kept && err != nil:
@@ -335,5 +338,26 @@ func TestOnlyAnOldTempIsSwept(t *testing.T) {
 				t.Error("a save that died is still in tmp/")
 			}
 		})
+	}
+}
+
+// The gate is what bounds the cost: a folder swept a moment ago is not swept
+// again, and not held to find that out (#1801).
+func TestASweptFolderIsNotSweptAgain(t *testing.T) {
+	box, _, _ := recSetup(t)
+	tmp := filepath.Join(box.folderPath("INBOX"), "tmp")
+	box.SweepTemps("INBOX")
+
+	file := filepath.Join(tmp, "1700000002.M1P1_2.host,S=4,W=4:2,")
+	if err := os.WriteFile(file, []byte("body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(file, when, when); err != nil {
+		t.Fatal(err)
+	}
+	box.SweepTemps("INBOX")
+	if _, err := os.Stat(file); err != nil {
+		t.Errorf("a folder swept a moment ago was swept again: %v", err)
 	}
 }

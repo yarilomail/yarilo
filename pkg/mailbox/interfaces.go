@@ -94,12 +94,6 @@ type NamingAppender interface {
 	AllocateAndAppendNamed(folderID uint64, m *MessageMeta, name func(uid uint32) (string, error)) error
 }
 
-// StoredNameAdopter moves what a sidecar holds into the records: the caller
-// reads its own storage key out of each stored name.
-type StoredNameAdopter interface {
-	AdoptStoredNames(folderID uint64, keyOf func(name string, guid [16]byte) (uint32, bool)) error
-}
-
 // StaleTemp is when a body a save left behind stops meaning "in flight" and
 // starts meaning "died": one value, so every driver sweeps alike (#1736).
 const StaleTemp = 24 * time.Hour
@@ -143,29 +137,10 @@ type TailRepairer interface {
 	RepairRecordTails(folderID uint64, tails map[uint32]RecordTail) (int, error)
 }
 
-// StoredNameLister reads the names an older build kept beside the index. Read
-// once, by the pass that moves them into the driver's own store (#1726).
-type StoredNameLister interface {
-	StoredNames(folderID uint64) (map[uint32]string, error)
-}
-
 // FlagsDirtyMarker records that a message's flags have not reached storage. A
 // driver that keeps flags in the file name sets it when the rename fails.
 type FlagsDirtyMarker interface {
 	SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error
-}
-
-// StoredNameForgetter removes the sidecar an older build kept, for a driver
-// whose own store already is the mapping.
-type StoredNameForgetter interface {
-	ForgetStoredNames(folderID uint64) error
-}
-
-// UIDNameMarker answers, and records, whether a folder's message files already
-// carry the names their uids give them. In the index, not beside the mail.
-type UIDNameMarker interface {
-	UIDNamed(folderID uint64) (bool, error)
-	MarkUIDNamed(folderID uint64) error
 }
 
 type CorruptionMarker interface {
@@ -667,6 +642,12 @@ type FlagWriteResult struct {
 // (#1623).
 type FlagWriterMulti interface {
 	WriteFlagsMulti(folder string, writes []FlagWrite) []FlagWriteResult
+}
+
+// TempSweeper removes bodies a save never published, on a session open and
+// behind its own interval gate (#1801).
+type TempSweeper interface {
+	SweepTemps(folder string)
 }
 
 // FolderHolder runs fn under the driver's own folder hold. The lock belongs to
