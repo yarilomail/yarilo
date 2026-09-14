@@ -121,14 +121,6 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 	if err := u.stampLineage(fs); err != nil {
 		return nil, err
 	}
-	// One stat, and the lock only when there is a file to remove: this runs on
-	// every open of every folder.
-	if uidNamedLocked(fs) && sidecarExists(fs.indexDir) {
-		if err := u.withFolderLock(fs, fs.dropSidecarLocked); err != nil {
-			return nil, err
-		}
-	}
-
 	u.mu.Lock()
 	u.open[id] = fs
 	if u.byDir == nil {

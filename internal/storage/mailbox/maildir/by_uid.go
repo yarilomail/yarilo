@@ -127,7 +127,6 @@ func reportUnlisted(user, folder string, uid uint32) {
 // report is not answered by an earlier run's silence. Test seam.
 func ForgetReports() {
 	unlistedSaid.Range(func(k, _ any) bool { unlistedSaid.Delete(k); return true })
-	unplacedSaid.Range(func(k, _ any) bool { unplacedSaid.Delete(k); return true })
 }
 
 // SetTestFlagRenameDelay makes each flag rename sleep. Test seam for a caller

@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,100 +85,6 @@ func saveNamedGUID(t *testing.T, mb mailbox.UserMailbox, folder, body string, ui
 		t.Fatalf("assign uid %d: %v", uid, err)
 	}
 	return named, vsize, g
-}
-
-// A store this server wrote before #1704 is full of names the reference cannot
-// read; opening it renames them and the index follows.
-func TestAGUIDNamedStoreIsMigrated(t *testing.T) {
-	_, mb, home := newTestUser(t)
-	idx := fileidx.New().OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home})
-	defer idx.Close() //nolint:errcheck
-	folder, err := idx.OpenFolder("INBOX", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
-
-	// The old shape: the file named by its GUID, the index pointing at it.
-	var guids []string
-	for uid := uint32(1); uid <= 3; uid++ {
-		temp, vsize, guid, serr := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, nil, [16]byte{})
-		if serr != nil {
-			t.Fatal(serr)
-		}
-		old := "u." + guidHex(guid)
-		if rerr := os.Rename(filepath.Join(dir, temp), filepath.Join(dir, old)); rerr != nil {
-			t.Fatal(rerr)
-		}
-		guids = append(guids, old)
-		if aerr := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Size: 4, VSize: vsize, GUID: guid,
-		}); aerr != nil {
-			t.Fatal(aerr)
-		}
-	}
-
-	migrator, ok := mb.(interface {
-		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
-	})
-	if !ok {
-		t.Fatal("the sdbox driver cannot migrate the names it wrote")
-	}
-	n, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 3 {
-		t.Errorf("migrated %d messages, want 3", n)
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "yarilo.index") {
-			continue // the folder's index sits here too
-		}
-		got = append(got, e.Name())
-	}
-	sort.Strings(got)
-	if want := []string{"u.1", "u.2", "u.3"}; !equalStrings(got, want) {
-		t.Errorf("the folder holds %v, want %v -- a name the reference cannot read survived", got, want)
-	}
-	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The record keeps no name at all now: u.<uid> is what the driver answers.
-	for _, m := range msgs {
-		want := "u." + strconv.FormatUint(uint64(m.UID), 10)
-		if got, err := mailboxbase.MessagePath(mb, "INBOX", m); err != nil || got != want {
-			t.Errorf("uid %d resolves to %q (%v), want %q", m.UID, got, err, want)
-		}
-	}
-	for _, m := range msgs {
-		rc, ferr := mailboxbase.OpenMessage(mb, "INBOX", m)
-		if ferr != nil {
-			t.Errorf("uid %d: %v", m.UID, ferr)
-			continue
-		}
-		rc.Close() //nolint:errcheck
-	}
-	_ = guids
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // appendRecorder records what an APPEND takes and, on release, what the folder
@@ -369,7 +274,7 @@ func TestOnlyAnOldTempIsSweptAway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	long := time.Now().Add(-staleTemp - time.Hour)
+	long := time.Now().Add(-mailbox.StaleTemp - time.Hour)
 	if err := os.Chtimes(filepath.Join(dir, old), long, long); err != nil {
 		t.Fatal(err)
 	}
@@ -378,10 +283,7 @@ func TestOnlyAnOldTempIsSweptAway(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	migrator := mb.(interface {
-		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
-	})
-	if _, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil {
+	if _, err := mailboxbase.Open(mb, idx).Folder("INBOX", folder.UIDValidity); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, old)); !os.IsNotExist(err) {
@@ -390,63 +292,6 @@ func TestOnlyAnOldTempIsSweptAway(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, young)); err != nil {
 		t.Errorf("a save in flight was swept away: %v", err)
 	}
-}
-
-// A folder that has been through the pass is not read again: the migration is
-// one pass per folder, not work on every SELECT (#1704).
-func TestAMigratedFolderIsNotWalkedAgain(t *testing.T) {
-	home := t.TempDir()
-	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
-	rec := &appendRecorder{dir: dir}
-	info := &mailbox.UserInfo{Username: "alice@example.com", Home: home}
-	mb := New(WithLocker(rec)).OpenUser(info)
-	if err := mb.Init(); err != nil {
-		t.Fatal(err)
-	}
-	idx := fileidx.New().OpenUser(info)
-	defer idx.Close() //nolint:errcheck
-	folder, err := idx.OpenFolder("INBOX", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	saveNamed(t, mb, "INBOX", "msg\n", 1, [16]byte{})
-
-	migrator := mb.(interface {
-		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
-	})
-	if _, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil {
-		t.Fatal(err)
-	}
-
-	// Everything from here on is what a later SELECT does.
-	rec.mu.Lock()
-	rec.taken = nil
-	rec.mu.Unlock()
-	before := dirMTime(t, dir)
-
-	for i := 0; i < 3; i++ {
-		if n, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil || n != 0 {
-			t.Fatalf("pass %d: renamed %d, err %v -- a migrated folder has nothing to do", i, n, err)
-		}
-	}
-	rec.mu.Lock()
-	taken := append([]string(nil), rec.taken...)
-	rec.mu.Unlock()
-	if len(taken) != 0 {
-		t.Errorf("a migrated folder took %v on SELECT", taken)
-	}
-	if after := dirMTime(t, dir); !after.Equal(before) {
-		t.Errorf("the folder was written to on a SELECT: %v -> %v", before, after)
-	}
-}
-
-func dirMTime(t *testing.T, dir string) time.Time {
-	t.Helper()
-	st, err := os.Stat(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return st.ModTime()
 }
 
 // A move into a folder where that name is taken ends with the message under the
@@ -496,96 +341,5 @@ func TestAMoveIntoATakenNameEndsUnderTheDestinationUID(t *testing.T) {
 		t.Errorf("the moved message cannot be read: %v", ferr)
 	} else {
 		rc.Close() //nolint:errcheck
-	}
-}
-
-// A record that lost its name still names its file, by the GUID it carries.
-// The first pass skipped exactly these and orphaned their bodies (#1713).
-func TestANamelessRecordFindsItsBodyByGUID(t *testing.T) {
-	_, mb, home := newTestUser(t)
-	idx := fileidx.New().OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home})
-	defer idx.Close() //nolint:errcheck
-	folder, err := idx.OpenFolder("INBOX", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
-
-	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("ghost\n"), 0, 6, nil, nil, [16]byte{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := "u." + guidHex(guid)
-	if err := os.Rename(filepath.Join(dir, temp), filepath.Join(dir, old)); err != nil {
-		t.Fatal(err)
-	}
-	// The record an older build left behind: a guid, a size, and no name.
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: 1, Size: 6, VSize: vsize, GUID: guid,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	migrator := mb.(interface {
-		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
-	})
-	if _, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, old)); !os.IsNotExist(err) {
-		t.Errorf("the body is still under its old name: %v", err)
-	}
-	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rc, err := mailboxbase.OpenMessage(mb, "INBOX", msgs[0])
-	if err != nil {
-		t.Fatalf("the healed message cannot be read: %v", err)
-	}
-	rc.Close() //nolint:errcheck
-}
-
-// A folder the first pass already marked has to be walked again, or the bodies
-// it orphaned stay orphaned for good: the mark carries which pass ran (#1713).
-func TestAFolderMarkedByTheOlderPassIsWalkedAgain(t *testing.T) {
-	_, mb, home := newTestUser(t)
-	idx := fileidx.New().OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home})
-	defer idx.Close() //nolint:errcheck
-	folder, err := idx.OpenFolder("INBOX", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
-	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("ghost\n"), 0, 6, nil, nil, [16]byte{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := "u." + guidHex(guid)
-	if err := os.Rename(filepath.Join(dir, temp), filepath.Join(dir, old)); err != nil {
-		t.Fatal(err)
-	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: 1, Size: 6, VSize: vsize, GUID: guid,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// What the first pass left: the folder marked, the body orphaned.
-	marker := idx.(interface {
-		MarkUIDNamedPass(folderID uint64, pass uint32) error
-	})
-	if err := marker.MarkUIDNamedPass(folder.ID, 1); err != nil {
-		t.Fatal(err)
-	}
-
-	migrator := mb.(interface {
-		MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
-	})
-	if _, err := migrator.MigrateUIDNames(mailboxbase.Open(mb, idx), folder); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "u.1")); err != nil {
-		t.Errorf("a folder marked by the older pass was skipped, and the body stayed lost: %v", err)
 	}
 }
