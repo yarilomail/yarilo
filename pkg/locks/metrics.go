@@ -13,6 +13,8 @@ type Metrics struct {
 	renewFailed    prometheus.Counter
 	queueDepth     prometheus.Histogram
 	waitBackstop   prometheus.Counter
+	grantUndeliv   prometheus.Counter
+	callerGone     prometheus.Counter
 }
 
 // NewMetrics constructs and registers the metric set on r. If r is nil the
@@ -52,6 +54,20 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 			Help:        "Queued contenders re-checked the line on the timer because no release announcement arrived. Nonzero means announcements are being lost.",
 			ConstLabels: prometheus.Labels{"mode": mode},
 		}),
+		// A grant written to a caller that is gone. Released at once; counted
+		// because it means a session died mid-acquisition (#1824).
+		grantUndeliv: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "locks_grant_undelivered_total",
+			Help:        "Locks granted to a caller whose connection was gone, released immediately instead of standing until their TTL.",
+			ConstLabels: prometheus.Labels{"mode": mode},
+		}),
+		// A caller that left the line before its turn came. Ordinary when a
+		// session ends mid-command; the line must not wait for it (#1824).
+		callerGone: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "locks_caller_gone_total",
+			Help:        "Waiting LOCK requests abandoned because the caller's connection went away before its turn came.",
+			ConstLabels: prometheus.Labels{"mode": mode},
+		}),
 		renewFailed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name:        "yarilo_locks_renew_failed_total",
 			Help:        "Total RENEW requests rejected because the lock had already expired.",
@@ -60,7 +76,7 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 	}
 	// MustRegister is fine here — duplicate registration in tests is caught
 	// loud, and parameters above guarantee non-conflicting metric identity.
-	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed, m.queueDepth, m.waitBackstop)
+	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed, m.queueDepth, m.waitBackstop, m.grantUndeliv, m.callerGone)
 	return m
 }
 
@@ -83,6 +99,20 @@ func (m *Metrics) incWaitBackstop() {
 		return
 	}
 	m.waitBackstop.Inc()
+}
+
+func (m *Metrics) incUndeliveredGrant() {
+	if m == nil || m.grantUndeliv == nil {
+		return
+	}
+	m.grantUndeliv.Inc()
+}
+
+func (m *Metrics) incCallerGone() {
+	if m == nil || m.callerGone == nil {
+		return
+	}
+	m.callerGone.Inc()
 }
 
 func (m *Metrics) incBusy() {
