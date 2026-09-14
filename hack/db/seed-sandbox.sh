@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Seeds the sandbox matrix: u1-50 mdbox, u51-100 maildir, u101-150 sdbox.
-#
-# It owns those 150 rows and nothing else. Fixtures (static@, conv*, mda*) and
-# any account added by hand keep their rows: an upsert on username leaves what
-# the script did not write, where TRUNCATE deleted every sdbox account and put
-# none back (#1806).
+# Seeds the sandbox matrix: u1-50 mdbox, u51-100 maildir, u101-150 sdbox. It
+# owns those 150 rows and leaves every other account alone (#1806).
 #
 # Usage:
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml bash hack/db/seed-sandbox.sh
@@ -26,7 +22,12 @@ PLAIN_HASH=$(kubectl --kubeconfig="$KCFG" exec -n "$DB_NS" "$DB_POD" -- \
 
 echo "Ensuring quota_clone mapped table (quota) exists ..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-mysql_do < "$SCRIPT_DIR/quota-mapped.sql" 2>&1 | grep -v Warning || true
+QUOTA_OUT=$(mysql_do < "$SCRIPT_DIR/quota-mapped.sql" 2>&1) || {
+  echo "$QUOTA_OUT" >&2
+  echo "seed: the quota table step failed" >&2
+  exit 1
+}
+echo "$QUOTA_OUT" | grep -v Warning || true
 
 # range <mbtype> <maildir> <from> <to>
 range() {
@@ -74,11 +75,18 @@ if [ "$GOT" != "$WANT" ]; then
 fi
 echo "matrix: $GOT"
 
+# Failing here must not read as "no other rows", which is what an empty
+# listing looks like.
 echo "Rows this script does not own, left alone:"
-mysql_do -e "
+OTHERS=$(mysql_do -e "
 SELECT mbtype, COUNT(*) AS cnt FROM mailbox
 WHERE NOT (username REGEXP '^u[0-9]+@d00001[.]test\$'
   AND CAST(SUBSTRING_INDEX(SUBSTRING(username, 2), '@', 1) AS UNSIGNED) BETWEEN 1 AND 150)
-GROUP BY mbtype;" 2>&1 | grep -v Warning || true
+GROUP BY mbtype;" 2>&1) || {
+  echo "$OTHERS" >&2
+  echo "seed: could not list the rows it does not own" >&2
+  exit 1
+}
+echo "$OTHERS" | grep -v Warning || true
 
 echo "Done."
