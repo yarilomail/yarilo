@@ -47,6 +47,13 @@ var (
 		Help:    "Time releasing the cross-process folder lock, by mode and site. The second round trip an operation makes, and about as expensive as the first.",
 		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
 	}, []string{"mode", "site"})
+	// Held, not waited for: without it the wait says who queued and nothing
+	// says who made them queue (#1809).
+	metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "fileindex_lock_hold_seconds",
+		Help:    "Time one operation held the cross-process folder lock, by mode and site. Pairs with maildir_lock_hold_seconds: the two share the resource, so either alone understates what a folder queues behind.",
+		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
+	}, []string{"mode", "site"})
 	metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "fileindex_lock_acquired_total",
 		Help: "Cross-process folder locks acquired, by mode and by which path took it. Each acquisition is followed by a release, so an operation that takes the lock makes two round trips to the lock service.",

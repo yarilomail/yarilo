@@ -267,6 +267,25 @@ func (c *folderCache) invalidateDir() {
 	c.entries = nil
 }
 
+// forgetEntry drops one name from the cached listing and re-keys it to mtime.
+// Dropping the listing instead costs a full read per removal (#1809).
+func (c *folderCache) forgetEntry(name string, mtime time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		return
+	}
+	// A fresh slice: dirEntries hands the old one out, and a reader is walking
+	// it without this mutex.
+	kept := make([]os.DirEntry, 0, len(c.entries))
+	for _, e := range c.entries {
+		if e.Name() != name {
+			kept = append(kept, e)
+		}
+	}
+	c.entries, c.dirMtime = kept, mtime
+}
+
 // userMailbox is a per-session, per-user Maildir storage handle.
 type userMailbox struct {
 	b                *Backend
@@ -317,7 +336,11 @@ func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) 
 		return fmt.Errorf("maildir/lock %s: %w", folder, err)
 	}
 	metricLockAcquired.WithLabelValues(site).Inc()
-	defer func() { _ = u.b.locker.Unlock(ctx, lk.ID) }()
+	heldFrom := time.Now()
+	defer func() {
+		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
+		_ = u.b.locker.Unlock(ctx, lk.ID)
+	}()
 	return fn()
 }
 
@@ -515,7 +538,11 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB, site string, fn func
 			return fmt.Errorf("maildir/lock %s: %w", a, err)
 		}
 		metricLockAcquired.WithLabelValues(site).Inc()
-		defer func() { _ = u.b.locker.Unlock(ctx, lkA.ID) }()
+		heldFrom := time.Now()
+		defer func() {
+			metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
+			_ = u.b.locker.Unlock(ctx, lkA.ID)
+		}()
 	}
 	if a == b {
 		return fn()
@@ -531,7 +558,11 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB, site string, fn func
 			return fmt.Errorf("maildir/lock %s: %w", b, err)
 		}
 		metricLockAcquired.WithLabelValues(site).Inc()
-		defer func() { _ = u.b.locker.Unlock(ctx, lkB.ID) }()
+		heldFrom := time.Now()
+		defer func() {
+			metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
+			_ = u.b.locker.Unlock(ctx, lkB.ID)
+		}()
 	}
 	return fn()
 }
@@ -754,11 +785,17 @@ func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, err
 // Remove unlinks one message. A name that is not there is not "already gone":
 // the listing is re-read and the file taken under the name it wears (#1797).
 func (u *userMailbox) Remove(folder, filename string) error {
+	return u.removeFile(folder, filename, false)
+}
+
+// removeFile unlinks and then updates the cached listing. held says the folder
+// lock is ours: only then may the listing be re-keyed instead of dropped.
+func (u *userMailbox) removeFile(folder, filename string, held bool) error {
 	dir := filepath.Join(u.folderPath(folder), "cur")
 	err := os.Remove(filepath.Join(dir, filename))
 	switch {
 	case err == nil:
-		u.folderCacheFor(folder).invalidateDir()
+		u.afterRemoved(folder, dir, filename, held)
 		return nil
 	case !errors.Is(err, os.ErrNotExist):
 		return err
@@ -776,8 +813,23 @@ func (u *userMailbox) Remove(folder, filename string) error {
 		u.reportRemoveMiss(folder, filename, current, nil)
 		return nil
 	}
-	u.folderCacheFor(folder).invalidateDir()
+	u.afterRemoved(folder, dir, current, held)
 	return nil
+}
+
+// afterRemoved updates the cached listing after this process unlinked a file.
+// Only a holder may keep it (#1809).
+func (u *userMailbox) afterRemoved(folder, dir, filename string, held bool) {
+	if !held {
+		u.folderCacheFor(folder).invalidateDir()
+		return
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		u.folderCacheFor(folder).invalidateDirEntries()
+		return
+	}
+	u.folderCacheFor(folder).forgetEntry(filename, fi.ModTime())
 }
 
 // reportRemoveMiss names what the counter counted: a number with no line names
@@ -2137,8 +2189,12 @@ func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
 	return u.withMailboxLockSite(folder, site, fn)
 }
 
-// RemoveHeld is Remove: a maildir unlink takes no hold of its own, so it
-// composes inside one already taken.
+// The base falls back to Remove for a driver that does not implement it, which
+// would put the per-message read back without failing anything (#1809).
+var _ mailbox.HeldRemover = (*userMailbox)(nil)
+
+// RemoveHeld is Remove inside a hold the caller already took: a maildir unlink
+// takes none of its own, and the listing survives because nothing else writes.
 func (u *userMailbox) RemoveHeld(folder, filename string) error {
-	return u.Remove(folder, filename)
+	return u.removeFile(folder, filename, true)
 }

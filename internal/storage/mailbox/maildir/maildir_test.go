@@ -670,7 +670,7 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 	}
 }
 
-func TestList_ReadDirCacheInvalidatedAfterRemove(t *testing.T) {
+func TestList_ReadDirCacheStopsNamingARemovedFile(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
@@ -692,8 +692,12 @@ func TestList_ReadDirCacheInvalidatedAfterRemove(t *testing.T) {
 	if err := box.Remove("INBOX", fn); err != nil {
 		t.Fatal(err)
 	}
-	if c.entries != nil {
-		t.Error("readdir cache not invalidated after Remove")
+	// The state, not the mechanism: the cached listing may survive a removal,
+	// but it may not go on naming the file that was removed (#1809).
+	for _, e := range c.entries {
+		if e.Name() == fn {
+			t.Errorf("the cached listing still names %q after Remove", fn)
+		}
 	}
 
 	msgs, err := box.List("INBOX")
