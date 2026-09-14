@@ -132,6 +132,25 @@ type folderCache struct {
 	uidStamp listStamp
 	entries  []os.DirEntry
 	dirMtime time.Time
+	// scanned is one parsed record per filename: a change renames the file,
+	// so a name already read cannot have changed under it (#1800).
+	scanned map[string]mailbox.ScanRecord
+}
+
+// scanRecordFor returns the record parsed for this name on an earlier walk.
+func (c *folderCache) scanRecordFor(name string) (mailbox.ScanRecord, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rec, ok := c.scanned[name]
+	return rec, ok
+}
+
+// keepScanned replaces the parsed set with what this walk saw, so a name that
+// is gone stops being remembered.
+func (c *folderCache) keepScanned(recs map[string]mailbox.ScanRecord) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.scanned = recs
 }
 
 // snapshotUIDs returns the cached map when the uidlist has not moved. The map
@@ -887,6 +906,8 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 	_, _ = u.readUIDList(folder)
 	out := make([]mailbox.ScanRecord, 0, 128)
 	kwNames := u.keywordNames(folder)
+	cache := u.folderCacheFor(folder)
+	kept := make(map[string]mailbox.ScanRecord, 128)
 	for _, sub := range []string{"cur", "new"} {
 		dir := filepath.Join(u.folderPath(folder), sub)
 		entries, err := os.ReadDir(dir)
@@ -901,6 +922,14 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 				continue
 			}
 			name := e.Name()
+			// A name already parsed cannot have changed: flags and size live
+			// in it, and either moving renames the file (#1800).
+			if rec, ok := cache.scanRecordFor(name); ok {
+				kept[name] = rec
+				out = append(out, rec)
+				continue
+			}
+			scanStats.Add(1)
 			flags, keywords := decodeFlagsWith(name, kwNames)
 			phys, virt, hasPhys, _ := parseSizeInfo(name)
 			info, statErr := e.Info()
@@ -924,9 +953,11 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 				Keywords:     append([]string(nil), keywords...),
 				GUID:         u.guidFor(folder, name),
 			}
+			kept[name] = rec
 			out = append(out, rec)
 		}
 	}
+	cache.keepScanned(kept)
 	return out, nil
 }
 
