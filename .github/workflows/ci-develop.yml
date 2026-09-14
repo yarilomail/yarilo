@@ -136,29 +136,56 @@ jobs:
             BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
 
       - name: Prune old dev tags
+        # Housekeeping after the push: a runner that cannot prune must say so
+        # without failing a build whose image is already published (#1808).
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KEEP: ${{ env.KEEP_DEV_TAGS }}
           FRESH: ${{ steps.version.outputs.dev_tag }}
         run: |
           set -euo pipefail
-          # Versions carrying a -dev. tag, newest first. Anything past KEEP is
-          # deleted; release tags and `latest` are never touched, and a version
-          # that carries both a dev tag and something else is left alone
-          # because deleting it would take the other name with it.
-          # The tool first: without it the listing is empty, which is
-          # indistinguishable from having nothing to prune (#1808).
-          command -v gh >/dev/null || {
-            echo "::error::gh is not on this runner, so KEEP_DEV_TAGS applies to nothing"
-            exit 1
-          }
-          # Its own command, so a failed call fails the step: inside a process
-          # substitution the status is lost and mapfile reads an empty array.
-          LISTING=$(gh api --paginate \
-            "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions" \
-            --jq '.[] | select(.metadata.container.tags | length > 0)
-                      | select(all(.metadata.container.tags[]; test("-dev\\.")))
-                      | "\(.id) \(.metadata.container.tags | join(","))"')
+          for tool in curl python3; do
+            command -v "$tool" >/dev/null || {
+              echo "::error::$tool is not on this runner, so KEEP_DEV_TAGS applies to nothing"
+              exit 1
+            }
+          done
+
+          cat > /tmp/prune-filter.py <<'PY'
+          import json, sys
+          try:
+              page = json.load(sys.stdin)
+          except Exception as exc:
+              print("prune: cannot read the versions listing: %s" % exc, file=sys.stderr)
+              sys.exit(1)
+          for v in page:
+              tags = (v.get("metadata") or {}).get("container", {}).get("tags") or []
+              # Only versions whose every name is a dev tag: deleting one that
+              # also carries a release name or latest takes that name with it.
+              if tags and all("-dev." in t for t in tags):
+                  print("%s %s" % (v["id"], ",".join(tags)))
+          PY
+
+          API="https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions"
+          LISTING=""
+          page=1
+          while [ "$page" -le 20 ]; do
+            BODY=$(curl -fsS -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API}?per_page=100&page=${page}") || {
+              echo "::error::the versions listing could not be read (page ${page})"
+              exit 1
+            }
+            CHUNK=$(printf '%s' "$BODY" | python3 /tmp/prune-filter.py)
+            [ -z "$CHUNK" ] && break
+            LISTING="${LISTING}${CHUNK}
+          "
+            page=$((page + 1))
+          done
+          LISTING=$(printf '%s' "$LISTING" | sed '/^$/d')
+
           COUNT=0
           [ -n "$LISTING" ] && COUNT=$(printf '%s\n' "$LISTING" | wc -l | tr -d ' ')
           echo "dev versions listed: ${COUNT}, keeping ${KEEP}"
@@ -168,6 +195,7 @@ jobs:
             echo "nothing to prune"
             exit 0
           fi
+
           FAILED=""
           while IFS= read -r entry; do
             id="${entry%% *}"; tags="${entry#* }"
@@ -176,8 +204,10 @@ jobs:
               continue
             fi
             echo "pruning ${tags}"
-            if ! gh api -X DELETE \
-              "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions/${id}"; then
+            if ! curl -fsS -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API}/${id}" >/dev/null; then
               echo "::warning::could not delete version ${id} (${tags})"
               FAILED="${FAILED} ${id}"
             fi
