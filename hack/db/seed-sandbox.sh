@@ -60,13 +60,19 @@ SEED_OUT=$({ range mdbox mdbox 1 50; range maildir Maildir 51 100; range sdbox s
 echo "$SEED_OUT" | grep -v Warning || true
 
 # The assertion, not a printout: a count that merely prints reads like a normal
-# result when a format is missing (#1806).
+# result when a format is missing (#1806), and a query that never ran is not
+# a verdict about the matrix (#1817).
 echo "Verifying the matrix ..."
-GOT=$(mysql_do -N -B -e "
+RAW=$(mysql_do -N -B -e "
 SELECT CONCAT(mbtype, '=', COUNT(*)) FROM mailbox
 WHERE username REGEXP '^u[0-9]+@d00001[.]test\$'
   AND CAST(SUBSTRING_INDEX(SUBSTRING(username, 2), '@', 1) AS UNSIGNED) BETWEEN 1 AND 150
-GROUP BY mbtype ORDER BY mbtype;" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
+GROUP BY mbtype ORDER BY mbtype;" 2>&1) || {
+  echo "$RAW" >&2
+  echo "seed: the matrix query failed; nothing was verified" >&2
+  exit 1
+}
+GOT=$({ printf '%s' "$RAW" | grep -v Warning || true; } | tr '\n' ' ' | sed 's/ *$//')
 
 WANT="maildir=50 mdbox=50 sdbox=50"
 if [ "$GOT" != "$WANT" ]; then
