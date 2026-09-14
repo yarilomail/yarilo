@@ -11,15 +11,22 @@ import (
 	"time"
 )
 
-// waitStand is a server over a memory backend on a loopback listener, with a
-// client of its own.
-func waitStand(t *testing.T) *Client {
+// twoServerStand runs two servers over one backend, each with a client of its
+// own: the shape the chart deploys, where a queue per server is two queues.
+func twoServerStand(t *testing.T) (*Client, *Client) {
+	t.Helper()
+	backend := NewMemoryBackend()
+	t.Cleanup(func() { _ = backend.Close() })
+	return standOver(t, backend), standOver(t, backend)
+}
+
+func standOver(t *testing.T, backend Backend) *Client {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	srv := NewServer(NewMemoryBackend(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := NewServer(backend, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); _ = srv.Serve(ctx, ln) }()
@@ -36,11 +43,11 @@ func waitStand(t *testing.T) *Client {
 	return c
 }
 
-// Fifty contenders, each holding for 10ms. Queued, the longest wait is bounded
-// by the holds ahead of it; polling, it is bounded by the backoff step and the
-// draw a contender can keep losing (#1821).
+// Fifty contenders split across two servers over one backend, each holding
+// 10ms. Ordered, the longest wait is bounded by the holds ahead of it; drawn
+// for, by the backoff step and the draws a contender keeps losing (#1821).
 func TestAContenderWaitsForTheHoldsAheadOfItNotForABackoff(t *testing.T) {
-	c := waitStand(t)
+	first, second := twoServerStand(t)
 	const (
 		contenders = 50
 		hold       = 10 * time.Millisecond
@@ -53,6 +60,10 @@ func TestAContenderWaitsForTheHoldsAheadOfItNotForABackoff(t *testing.T) {
 	var longest time.Duration
 	var wg sync.WaitGroup
 	for i := 0; i < contenders; i++ {
+		c := first
+		if i%2 == 1 {
+			c = second
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -76,56 +87,87 @@ func TestAContenderWaitsForTheHoldsAheadOfItNotForABackoff(t *testing.T) {
 	}
 	wg.Wait()
 
-	// The holds ahead of the last contender, plus the round trip each handover
-	// costs. Measured: 0.55s queued, 2.18s polling.
+	t.Logf("longest wait: %v", longest)
 	ceiling := time.Duration(contenders)*hold + 700*time.Millisecond
 	if longest > ceiling {
 		t.Errorf("the longest wait was %v, want at most %v (the holds ahead of it)", longest, ceiling)
 	}
 }
 
-// A contender that gives up must not take the line with it: the one behind it
-// is woken, not left until its own deadline.
-func TestAbandoningTheFrontHandsTheTurnOn(t *testing.T) {
-	q := newWaitQueue()
-	first, _ := q.join("r")
-	second, depth := q.join("r")
-	if depth != 1 {
-		t.Fatalf("the second contender joined at depth %d, want 1", depth)
+// The order is the backend's, so two servers read one line: a contender that
+// joined first stands ahead of one that joined later through the other server.
+func TestTheLineIsOneAcrossServers(t *testing.T) {
+	backend := NewMemoryBackend()
+	defer func() { _ = backend.Close() }()
+	q, ok := queueing(backend)
+	if !ok {
+		t.Fatal("the memory backend carries no queue")
 	}
-	select {
-	case <-second.ready:
-		t.Fatal("the second contender was told to try while the first still stood")
-	default:
+	ctx := context.Background()
+
+	if ahead, err := q.Enqueue(ctx, "r", "first"); err != nil || ahead != 0 {
+		t.Fatalf("first joined at %d (err %v), want 0", ahead, err)
 	}
-	q.leave("r", first)
-	select {
-	case <-second.ready:
-	default:
-		t.Error("the second contender was not woken when the first left")
+	if ahead, err := q.Enqueue(ctx, "r", "second"); err != nil || ahead != 1 {
+		t.Fatalf("second joined at %d (err %v), want 1", ahead, err)
+	}
+	if mine, _ := q.AtFront(ctx, "r", "second"); mine {
+		t.Error("the second contender was told it was first")
+	}
+	if err := q.Dequeue(ctx, "r", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if mine, _ := q.AtFront(ctx, "r", "second"); !mine {
+		t.Error("the second contender was not moved up when the first left")
 	}
 }
 
-// An unlock wakes the front of the line, and only it: waking every contender
-// is the lottery this replaces.
-func TestAReleaseWakesTheFrontOfTheLine(t *testing.T) {
-	q := newWaitQueue()
-	front, _ := q.join("r")
-	<-front.ready // the first joiner may try at once
-	behind, _ := q.join("r")
+// A release reaches a contender that never spoke to the server the holder used.
+func TestAReleaseIsAnnouncedToEveryReplica(t *testing.T) {
+	backend := NewMemoryBackend()
+	defer func() { _ = backend.Close() }()
+	q, _ := queueing(backend)
+	ctx := context.Background()
 
-	q.wake("r")
-	select {
-	case <-front.ready:
-	default:
-		t.Error("the front was not woken by the release")
+	wakes, cancel, err := q.Wakes(ctx, "mailbox/u@x.com/INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+
+	id, _, err := backend.Acquire(ctx, "mailbox/u@x.com/INBOX", Owner("u@x.com", "s1"), "expunge", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Release(ctx, id); err != nil {
+		t.Fatal(err)
 	}
 	select {
-	case <-behind.ready:
-		t.Error("a contender behind the front was woken too")
-	default:
+	case <-wakes:
+	case <-time.After(2 * time.Second):
+		t.Error("the release was announced to nobody")
 	}
-	if got := q.depth("r"); got != 2 {
-		t.Errorf("depth = %d, want 2", got)
+}
+
+// A ticket whose contender died must not hold the line for the ones behind it.
+func TestAnAbandonedTicketAgesOutOfTheLine(t *testing.T) {
+	clock := time.Now()
+	backend := NewMemoryBackend(WithNow(func() time.Time { return clock }))
+	defer func() { _ = backend.Close() }()
+	q, _ := queueing(backend)
+	ctx := context.Background()
+
+	if _, err := q.Enqueue(ctx, "r", "gone"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Enqueue(ctx, "r", "behind"); err != nil {
+		t.Fatal(err)
+	}
+	if mine, _ := q.AtFront(ctx, "r", "behind"); mine {
+		t.Fatal("the second contender was at the front while the first stood")
+	}
+	clock = clock.Add(ticketTTL + time.Second)
+	if mine, _ := q.AtFront(ctx, "r", "behind"); !mine {
+		t.Error("an abandoned ticket still held the line")
 	}
 }

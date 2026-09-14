@@ -20,10 +20,16 @@ type MemoryBackend struct {
 	sharedRes map[string]map[string]struct{}     // resource → set of shared lockIDs
 	subs      map[string]map[chan Event]struct{} // resource → subscribers
 	counters  map[string]int64                   // persistent atomic counters by key
-	sweepInt  time.Duration
-	now       func() time.Time
-	stopOnce  sync.Once
-	stop      chan struct{}
+
+	// qmu guards the arrival queues. Its own mutex: a contender checks its
+	// place without blocking the holders it is waiting for.
+	qmu      sync.Mutex
+	queues   map[string][]queued
+	wakes    map[string]map[chan struct{}]struct{}
+	sweepInt time.Duration
+	now      func() time.Time
+	stopOnce sync.Once
+	stop     chan struct{}
 }
 
 type memLock struct {
@@ -58,6 +64,8 @@ func WithNow(now func() time.Time) MemoryBackendOption {
 func NewMemoryBackend(opts ...MemoryBackendOption) *MemoryBackend {
 	b := &MemoryBackend{
 		locks:     make(map[string]*memLock),
+		queues:    make(map[string][]queued),
+		wakes:     make(map[string]map[chan struct{}]struct{}),
 		byRes:     make(map[string]string),
 		sharedRes: make(map[string]map[string]struct{}),
 		subs:      make(map[string]map[chan Event]struct{}),
@@ -151,6 +159,7 @@ func (b *MemoryBackend) Release(_ context.Context, lockID string) error {
 	}
 	delete(b.locks, lockID)
 	b.releaseFromIndexLocked(l)
+	b.wakeLocked(l.Resource)
 	return nil
 }
 

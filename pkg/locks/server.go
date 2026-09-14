@@ -25,12 +25,6 @@ type Server struct {
 	closeMu sync.Mutex
 	closed  bool
 
-	// waits orders contenders per resource; granted maps a live lock back to
-	// its resource, which UNLOCK does not carry (#1821).
-	waits   *waitQueue
-	grantMu sync.Mutex
-	granted map[string]string
-
 	wg sync.WaitGroup
 }
 
@@ -49,8 +43,6 @@ func NewServer(backend Backend, logger *slog.Logger, metrics *Metrics) *Server {
 		logger:  logger,
 		metrics: metrics,
 		closing: make(chan struct{}),
-		waits:   newWaitQueue(),
-		granted: make(map[string]string),
 	}
 }
 
@@ -224,7 +216,6 @@ func (s *Server) handleLock(ctx context.Context, w io.Writer, fields []string, p
 	switch {
 	case err == nil:
 		s.metrics.observeAcquire(dur, "ok")
-		s.rememberGrant(id, resource)
 		s.logger.Debug("locks: acquired", "peer", peer, "resource", resource, "owner", owner, "site", site, "id", id, "dur_ms", dur*1000)
 		_ = writeFields(w, respOK, id)
 	case errors.Is(err, ErrBusy):
@@ -263,7 +254,6 @@ func (s *Server) handleLockShared(ctx context.Context, w io.Writer, fields []str
 	switch {
 	case err == nil:
 		s.metrics.observeAcquire(dur, "ok")
-		s.rememberGrant(id, resource)
 		s.logger.Debug("locks: acquired shared", "peer", peer, "resource", resource, "owner", owner, "site", site, "id", id, "dur_ms", dur*1000)
 		_ = writeFields(w, respOK, id)
 	case errors.Is(err, ErrBusy):
@@ -285,7 +275,6 @@ func (s *Server) handleUnlock(ctx context.Context, w io.Writer, fields []string,
 		return
 	}
 	lockID := fields[1]
-	resource := s.forgetGrant(lockID)
 	if err := s.backend.Release(ctx, lockID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			_ = writeFields(w, respNotFound)
@@ -294,9 +283,6 @@ func (s *Server) handleUnlock(ctx context.Context, w io.Writer, fields []string,
 		s.logger.Error("locks: release failed", "peer", peer, "err", err)
 		_ = writeFields(w, respError, "internal")
 		return
-	}
-	if resource != "" {
-		s.waits.wake(resource)
 	}
 	s.logger.Debug("locks: released", "peer", peer, "id", lockID)
 	_ = writeFields(w, respOK)
