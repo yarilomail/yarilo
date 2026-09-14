@@ -9,24 +9,38 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
+
+// counterNow reads a counter without a registry round trip.
+func counterNow(t *testing.T, c prometheus.Counter) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	return m.GetCounter().GetValue()
+}
 
 // twoServerStand runs two servers over one backend, each with a client of its
 // own: the shape the chart deploys, where a queue per server is two queues.
-func twoServerStand(t *testing.T) (*Client, *Client) {
+func twoServerStand(t *testing.T) (*Client, *Client, *Metrics) {
 	t.Helper()
 	backend := NewMemoryBackend()
 	t.Cleanup(func() { _ = backend.Close() })
-	return standOver(t, backend), standOver(t, backend)
+	m := NewMetrics(prometheus.NewRegistry(), "test")
+	return standOver(t, backend, m), standOver(t, backend, m), m
 }
 
-func standOver(t *testing.T, backend Backend) *Client {
+func standOver(t *testing.T, backend Backend, m *Metrics) *Client {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	srv := NewServer(backend, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	srv := NewServer(backend, slog.New(slog.NewTextHandler(io.Discard, nil)), m)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); _ = srv.Serve(ctx, ln) }()
@@ -43,11 +57,10 @@ func standOver(t *testing.T, backend Backend) *Client {
 	return c
 }
 
-// Fifty contenders split across two servers over one backend, each holding
-// 10ms. Ordered, the longest wait is bounded by the holds ahead of it; drawn
-// for, by the backoff step and the draws a contender keeps losing (#1821).
+// Fifty contenders across two servers over one backend, each holding 10ms:
+// ordered, the longest wait is the holds ahead of it, not a backoff (#1821).
 func TestAContenderWaitsForTheHoldsAheadOfItNotForABackoff(t *testing.T) {
-	first, second := twoServerStand(t)
+	first, second, metrics := twoServerStand(t)
 	const (
 		contenders = 50
 		hold       = 10 * time.Millisecond
@@ -88,6 +101,11 @@ func TestAContenderWaitsForTheHoldsAheadOfItNotForABackoff(t *testing.T) {
 	wg.Wait()
 
 	t.Logf("longest wait: %v", longest)
+	// A handover comes from the release announcement. The backstop exists for
+	// an announcement that was lost, and a healthy run never reaches it.
+	if got := counterNow(t, metrics.waitBackstop); got != 0 {
+		t.Errorf("the timer woke %v contenders; every handover should be announced", got)
+	}
 	ceiling := time.Duration(contenders)*hold + 700*time.Millisecond
 	if longest > ceiling {
 		t.Errorf("the longest wait was %v, want at most %v (the holds ahead of it)", longest, ceiling)

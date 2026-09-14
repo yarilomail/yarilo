@@ -578,9 +578,8 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Acquire is Lock with blocking semantics. The wait happens in the server, in
-// arrival order; against a server that does not queue it falls back to the
-// polling loop below (#1821).
+// Acquire is Lock with blocking semantics: the wait happens in the backend, in
+// arrival order, and falls back to the polling loop below (#1821).
 func Acquire(ctx context.Context, l Locker, resource, owner string, ttl time.Duration) (Lock, error) {
 	owner = CheckOwner(owner)
 	_ = CheckSite(ctx)

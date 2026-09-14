@@ -111,6 +111,7 @@ func (s *Server) handleLockWait(ctx context.Context, w io.Writer, fields []strin
 			return
 		case <-wakes:
 		case <-backstop.C:
+			s.metrics.incWaitBackstop()
 		}
 	}
 }
