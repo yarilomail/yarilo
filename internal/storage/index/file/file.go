@@ -818,8 +818,10 @@ func (u *userIndex) withDistLock(fs *folderState, shared bool, site string, fn f
 			slog.Debug("fileindex: lock wait",
 				"user", u.username, "folder", fs.folder, "shared", shared,
 				"lock_wait_ms", time.Since(t0).Milliseconds())
+			heldFrom := time.Now()
 			defer func() {
 				released := time.Now()
+				metricLockHold.WithLabelValues(mode, site).Observe(released.Sub(heldFrom).Seconds())
 				_ = u.b.locker.Unlock(ctx, lk.ID)
 				metricLockRelease.WithLabelValues(mode, site).Observe(time.Since(released).Seconds())
 			}()

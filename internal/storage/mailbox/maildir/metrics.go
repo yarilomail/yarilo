@@ -13,6 +13,14 @@ var metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Cross-process folder locks the maildir driver acquired, by the call that took it. Shares the resource with fileindex_lock_acquired_total; the sum of the two is what contends on one folder.",
 }, []string{"site"})
 
+// Held, not waited for: the cost a site imposes on the folder is the time it
+// keeps the lock, which no count of acquisitions carries (#1809).
+var metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "maildir_lock_hold_seconds",
+	Help:    "Time one call held the cross-process folder lock, by the call that took it. Pairs with fileindex_lock_hold_seconds on the same resource.",
+	Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
+}, []string{"site"})
+
 // metricImportRowRefused counts imports skipped because the list already names
 // the file under another uid: one message reported, not a batch lost (#1745).
 var metricImportRowRefused = promauto.NewCounter(prometheus.CounterOpts{
