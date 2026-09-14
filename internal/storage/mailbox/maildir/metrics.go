@@ -21,6 +21,14 @@ var metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
 }, []string{"site"})
 
+// The other half of the pair: what a site paid before it held anything. Held
+// and waited are different populations, and one number cannot carry both (#1821).
+var metricLockWait = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "maildir_lock_wait_seconds",
+	Help:    "Time a call waited to take the cross-process folder lock, by the call that asked. Pairs with maildir_lock_hold_seconds.",
+	Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
+}, []string{"site"})
+
 // metricImportRowRefused counts imports skipped because the list already names
 // the file under another uid: one message reported, not a batch lost (#1745).
 var metricImportRowRefused = promauto.NewCounter(prometheus.CounterOpts{

@@ -1,0 +1,101 @@
+package locks
+
+import (
+	"context"
+	"time"
+)
+
+// queued is one ticket and when it joined, so an abandoned one ages out the
+// way the shared queue's does.
+type queued struct {
+	ticket string
+	joined time.Time
+}
+
+// Enqueue implements WaitQueue.
+func (b *MemoryBackend) Enqueue(_ context.Context, resource, ticket string) (int, error) {
+	b.qmu.Lock()
+	defer b.qmu.Unlock()
+	line := b.pruneLocked(resource)
+	for i, entry := range line {
+		if entry.ticket == ticket {
+			return i, nil
+		}
+	}
+	b.queues[resource] = append(line, queued{ticket: ticket, joined: b.now()})
+	return len(line), nil
+}
+
+// AtFront implements WaitQueue. An empty line answers yes: a contender whose
+// ticket aged out should try, not wait for a turn nobody will hand it.
+func (b *MemoryBackend) AtFront(_ context.Context, resource, ticket string) (bool, error) {
+	b.qmu.Lock()
+	defer b.qmu.Unlock()
+	line := b.pruneLocked(resource)
+	if len(line) == 0 {
+		return true, nil
+	}
+	return line[0].ticket == ticket, nil
+}
+
+// Dequeue implements WaitQueue.
+func (b *MemoryBackend) Dequeue(_ context.Context, resource, ticket string) error {
+	b.qmu.Lock()
+	defer b.qmu.Unlock()
+	line := b.queues[resource]
+	for i, entry := range line {
+		if entry.ticket != ticket {
+			continue
+		}
+		b.queues[resource] = append(line[:i:i], line[i+1:]...)
+		break
+	}
+	if len(b.queues[resource]) == 0 {
+		delete(b.queues, resource)
+	}
+	return nil
+}
+
+// pruneLocked drops tickets older than the abandon window. Caller holds qmu.
+func (b *MemoryBackend) pruneLocked(resource string) []queued {
+	line := b.queues[resource]
+	cutoff := b.now().Add(-ticketTTL)
+	kept := line[:0]
+	for _, entry := range line {
+		if entry.joined.After(cutoff) {
+			kept = append(kept, entry)
+		}
+	}
+	b.queues[resource] = kept
+	return kept
+}
+
+// Wakes implements WaitQueue.
+func (b *MemoryBackend) Wakes(ctx context.Context, resource string) (<-chan struct{}, func(), error) {
+	ch := make(chan struct{}, 1)
+	b.mu.Lock()
+	if b.wakes[resource] == nil {
+		b.wakes[resource] = make(map[chan struct{}]struct{})
+	}
+	b.wakes[resource][ch] = struct{}{}
+	b.mu.Unlock()
+	return ch, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		delete(b.wakes[resource], ch)
+		if len(b.wakes[resource]) == 0 {
+			delete(b.wakes, resource)
+		}
+	}, nil
+}
+
+// wakeLocked signals every waiter on resource. Caller holds b.mu; one pending
+// signal is enough, so a full channel needs no second.
+func (b *MemoryBackend) wakeLocked(resource string) {
+	for ch := range b.wakes[resource] {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}

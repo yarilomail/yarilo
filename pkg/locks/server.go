@@ -158,6 +158,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		switch fields[0] {
 		case cmdLock:
 			s.handleLock(ctx, conn, fields, peer)
+		case cmdLockWait:
+			s.handleLockWait(ctx, conn, fields, peer, false)
+		case cmdLockSharedWait:
+			s.handleLockWait(ctx, conn, fields, peer, true)
 		case cmdLockShared:
 			s.handleLockShared(ctx, conn, fields, peer)
 		case cmdUnlock:

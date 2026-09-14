@@ -11,6 +11,8 @@ type Metrics struct {
 	acquireSeconds *prometheus.HistogramVec
 	busyTotal      prometheus.Counter
 	renewFailed    prometheus.Counter
+	queueDepth     prometheus.Histogram
+	waitBackstop   prometheus.Counter
 }
 
 // NewMetrics constructs and registers the metric set on r. If r is nil the
@@ -35,6 +37,21 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 			Help:        "Total LOCK requests refused because the resource was held.",
 			ConstLabels: prometheus.Labels{"mode": mode},
 		}),
+		// How many contenders a queued request found ahead of it: the number
+		// that says whether the wait is a queue or a lottery (#1821).
+		queueDepth: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:        "yarilo_locks_queue_depth",
+			Help:        "Contenders already queued on a resource when a waiting LOCK joined the line.",
+			Buckets:     prometheus.ExponentialBuckets(1, 2, 10), // 1 … 512
+			ConstLabels: prometheus.Labels{"mode": mode},
+		}),
+		// Every wake the backstop had to make instead of the release
+		// announcement. A healthy system reads zero here (#1821).
+		waitBackstop: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "locks_wait_backstop_total",
+			Help:        "Queued contenders re-checked the line on the timer because no release announcement arrived. Nonzero means announcements are being lost.",
+			ConstLabels: prometheus.Labels{"mode": mode},
+		}),
 		renewFailed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name:        "yarilo_locks_renew_failed_total",
 			Help:        "Total RENEW requests rejected because the lock had already expired.",
@@ -43,7 +60,7 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 	}
 	// MustRegister is fine here — duplicate registration in tests is caught
 	// loud, and parameters above guarantee non-conflicting metric identity.
-	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed)
+	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed, m.queueDepth, m.waitBackstop)
 	return m
 }
 
@@ -52,6 +69,20 @@ func (m *Metrics) observeAcquire(seconds float64, result string) {
 		return
 	}
 	m.acquireSeconds.WithLabelValues(result).Observe(seconds)
+}
+
+func (m *Metrics) observeQueueDepth(depth int) {
+	if m == nil || m.queueDepth == nil {
+		return
+	}
+	m.queueDepth.Observe(float64(depth))
+}
+
+func (m *Metrics) incWaitBackstop() {
+	if m == nil || m.waitBackstop == nil {
+		return
+	}
+	m.waitBackstop.Inc()
 }
 
 func (m *Metrics) incBusy() {

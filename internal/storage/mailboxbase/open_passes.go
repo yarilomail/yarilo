@@ -116,7 +116,13 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 			return false
 		}
 	}
-	MetricReconcile.WithLabelValues("scanned").Inc()
+	// Why it walks, not only how often: a folder whose driver gives no token
+	// walks every open, and it counts apart from one whose token moved (#1821).
+	if token == "" {
+		MetricReconcile.WithLabelValues("scanned-untokened").Inc()
+	} else {
+		MetricReconcile.WithLabelValues("scanned").Inc()
+	}
 	// The walk is what costs; the counter says how often, never how long.
 	walked := time.Now()
 	st, err := ps.ReconcileIndex(b, b.index, f)
