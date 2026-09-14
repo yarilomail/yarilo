@@ -38,7 +38,7 @@ func threadServerIn(t *testing.T, raws []string) (net.Conn, *bufio.Reader, strin
 	ui := fileindex.New().OpenUser(info)
 	for i, raw := range raws {
 		uid := uint32(i + 1)
-		name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), uid, int64(len(raw)), nil, [16]byte{})
+		name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), uid, int64(len(raw)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}

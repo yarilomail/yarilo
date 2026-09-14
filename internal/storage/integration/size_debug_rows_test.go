@@ -127,7 +127,7 @@ func TestTheStampingRowNamesWhatItFilled(t *testing.T) {
 		t.Fatal(err)
 	}
 	const body = "From: a@b\r\nSubject: stamped\r\n\r\nbody\r\n"
-	saved, _, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, _, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

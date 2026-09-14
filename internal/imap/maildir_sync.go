@@ -84,7 +84,8 @@ func (s *session) reconcileFolder(h *nsHandle, rel string) bool {
 		return false
 	}
 	slog.Info("imap: maildir reconcile", "folder", rel,
-		"imported", st.Imported, "expunged", st.Expunged, "updated", st.Updated)
+		"imported", st.Imported, "expunged", st.Expunged, "updated", st.Updated,
+		"relinked", st.Relinked)
 	return true
 }
 

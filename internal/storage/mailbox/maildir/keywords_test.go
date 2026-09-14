@@ -99,7 +99,7 @@ func TestFlagsAndKeywordsReachTheFilename(t *testing.T) {
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
 	}
-	name, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, [16]byte{})
+	name, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestKeywordLettersAreFolderLocalAndNeverRenumbered(t *testing.T) {
 
 	// Folder A learns $One first, folder B learns $Two first.
 	save := func(folder string) string {
-		name, _, _, err := box.Save(folder, strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, [16]byte{})
+		name, _, _, err := box.Save(folder, strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -264,7 +264,7 @@ func TestANewKeywordTakesTheFirstFreeLetter(t *testing.T) {
 
 	box := maildir.New().OpenUser(&mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"})
 	defer box.Close() //nolint:errcheck
-	name, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, [16]byte{})
+	name, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -371,6 +372,9 @@ type SyncStats struct {
 	Imported int
 	Expunged int
 	Updated  int
+	// Relinked counts records whose list row was written back rather than
+	// their message being imported a second time (#1785).
+	Relinked int
 	Changed  bool
 }
 
@@ -448,7 +452,9 @@ type UserMailbox interface {
 	Create(folder string) error
 	Delete(folder string) error
 	Rename(oldName, newName string) error
-	Save(folder string, r io.Reader, uid uint32, size int64, flags []string, guid [16]byte) (name string, vsize uint32, outGUID [16]byte, err error)
+	// flags holds only system flags and keywords only keywords, the way a
+	// record keeps them (#1605). A driver keeping flags in the name keeps both.
+	Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (name string, vsize uint32, outGUID [16]byte, err error)
 	// Move relocates one message between folders keeping its identity: the
 	// returned GUID equals guid (RFC 8474: MOVE must not change EMAILID).
 	// Source and destination lock in name order, so a concurrent A->B / B->A
@@ -661,4 +667,17 @@ type FlagWriteResult struct {
 // (#1623).
 type FlagWriterMulti interface {
 	WriteFlagsMulti(folder string, writes []FlagWrite) []FlagWriteResult
+}
+
+// SplitStoredFlags sorts one stored list back into the two fields MessageMeta
+// keeps apart (#1605).
+func SplitStoredFlags(all []string) (flags, keywords []string) {
+	for _, f := range all {
+		if strings.HasPrefix(f, `\`) {
+			flags = append(flags, f)
+		} else {
+			keywords = append(keywords, f)
+		}
+	}
+	return flags, keywords
 }

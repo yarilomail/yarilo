@@ -264,7 +264,7 @@ func (a *adminUserContext) deliver(t *testing.T, body string) {
 	if err != nil {
 		t.Fatalf("allocateUID: %v", err)
 	}
-	filename, vsize, guid, err := a.box.Save("INBOX", io.NopCloser(bytes.NewBufferString(body)), uid, int64(len(body)), nil, [16]byte{})
+	filename, vsize, guid, err := a.box.Save("INBOX", io.NopCloser(bytes.NewBufferString(body)), uid, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestOptimizeAllFoldsTheMdboxMap(t *testing.T) {
 		if uerr != nil {
 			t.Fatalf("allocate uid: %v", uerr)
 		}
-		filename, _, _, serr := box.Save("INBOX", io.NopCloser(bytes.NewBufferString(body)), uid, int64(len(body)), nil, [16]byte{})
+		filename, _, _, serr := box.Save("INBOX", io.NopCloser(bytes.NewBufferString(body)), uid, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatalf("save: %v", serr)
 		}

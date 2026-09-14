@@ -25,7 +25,7 @@ func orphanFolder(t *testing.T, body string, age time.Duration) (mailbox.UserMai
 	}
 	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
 
-	temp, _, guid, serr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	temp, _, guid, serr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if serr != nil {
 		t.Fatal(serr)
 	}
@@ -148,7 +148,7 @@ func TestADuplicateBodyIsNotFiledAgain(t *testing.T) {
 	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
 
 	const body = "From: a@b\r\n\r\ntwice\r\n"
-	saved, vsize, guid, serr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, serr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if serr != nil {
 		t.Fatal(serr)
 	}
@@ -158,7 +158,7 @@ func TestADuplicateBodyIsNotFiledAgain(t *testing.T) {
 	}
 	// The same message a second time: a record a reader accepts, guid-named,
 	// old enough to be a leftover, with no record of its own.
-	twin, _, _, terr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, guid)
+	twin, _, _, terr := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, guid)
 	if terr != nil {
 		t.Fatal(terr)
 	}

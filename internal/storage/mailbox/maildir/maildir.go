@@ -492,7 +492,7 @@ const driverName = "maildir"
 
 // Save streams r into tmp/ then renames into cur/. A maildir name carries no
 // uid, so the mapping is appended to the uidlist sidecar for later resolution.
-func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flags []string, guid [16]byte) (string, uint32, [16]byte, error) {
+func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	whole := time.Now()
 	defer func() { mailboxmetrics.ObserveSave(driverName, time.Since(whole)) }()
 
@@ -531,16 +531,14 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 		return "", 0, noGUID, err
 	}
 
-	// Keywords go into the name too, and into the folder's keyword file, so a
-	// message delivered with one is described by the store rather than only by
-	// our index (#1601). The lock is already held by the caller of Save.
-	sys, kw := splitFlagsAndKeywords(flags)
-	letters, kerr := u.keywordLetters(folder, kw)
+	// Keywords go into the name and the folder's keyword file, so the store
+	// describes the message rather than only our index (#1601).
+	letters, kerr := u.keywordLetters(folder, keywords)
 	if kerr != nil {
 		os.Remove(tmpPath) //nolint:errcheck
 		return "", 0, noGUID, kerr
 	}
-	flagStr := encodeFlags(sys) + letters
+	flagStr := encodeFlags(flags) + letters
 	// ,S=<phys>,W=<virt> before :2,<flags> so List() reports both sizes
 	// without reading the body.
 	finalName := fmt.Sprintf("%s,S=%d,W=%d:2,%s", basename, sc.phys, sc.phys+sc.lfNoCR, flagStr)
@@ -1044,12 +1042,28 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (m
 		}
 		tracked := make(map[string]struct{}, len(existing))
 		var restamp map[uint32][16]byte
+		var relink []listEntry
 		var zeroGUID [16]byte
+		// Once for the pass: an unlisted record is looked up by identity, and
+		// a scan of the whole map per record is quadratic on a big folder.
+		baseByGUID := make(map[[16]byte]string, len(onDisk))
+		for base, rec := range onDisk {
+			if rec.GUID != zeroGUID {
+				baseByGUID[rec.GUID] = base
+			}
+		}
 		for _, m := range existing {
 			base, known := uidToBase[m.UID]
 			if !known {
-				// A record the list does not name opens nothing; left in place,
-				// since its file may be there unrecorded.
+				// The row is what was lost, so write it back: importing the
+				// file instead left the message there twice (#1785).
+				if b, found := unlistedBase(m, baseByGUID, tracked); found {
+					relink = append(relink, listEntry{uid: m.UID, filename: onDisk[b].Filename})
+					tracked[b] = struct{}{}
+					slog.Info("maildir: the list stopped naming this record, and its own message is on disk; the row is written back",
+						"user", u.username, "folder", folder.Name, "uid", m.UID, "base", b)
+					continue
+				}
 				reportUnlisted(u.username, folder.Name, m.UID)
 				continue
 			}
@@ -1102,6 +1116,12 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (m
 			}
 		}
 
+		if len(relink) > 0 {
+			if _, err := u.recordUIDsLocked(folder.Name, relink); err != nil {
+				return err
+			}
+			st.Relinked += len(relink)
+		}
 		for i := range scanned {
 			rec := &scanned[i]
 			if rec.Filename == "" {
@@ -1191,7 +1211,7 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (m
 		}
 		return nil
 	})
-	st.Changed = st.Imported > 0 || st.Expunged > 0 || st.Updated > 0
+	st.Changed = st.Imported > 0 || st.Expunged > 0 || st.Updated > 0 || st.Relinked > 0
 	return st, err
 }
 
@@ -1906,18 +1926,21 @@ func (u *userMailbox) UIDFor(folder, filename string) (uint32, bool) {
 	return uid, ok
 }
 
-// splitFlagsAndKeywords separates a caller's one list into the two the name
-// records differently: system flags as their own letters, keywords through the
-// folder's keyword file.
-func splitFlagsAndKeywords(all []string) (flags, keywords []string) {
-	for _, f := range all {
-		if strings.HasPrefix(f, `\`) {
-			flags = append(flags, f)
-		} else {
-			keywords = append(keywords, f)
-		}
+// unlistedBase finds the base holding an unlisted record's own identity. Zero
+// identity matches nothing -- it would pair with whatever file came first.
+func unlistedBase(m *mailbox.MessageMeta, baseByGUID map[[16]byte]string, tracked map[string]struct{}) (string, bool) {
+	var zero [16]byte
+	if m.GUID == zero {
+		return "", false
 	}
-	return flags, keywords
+	base, ok := baseByGUID[m.GUID]
+	if !ok {
+		return "", false
+	}
+	if _, taken := tracked[base]; taken {
+		return "", false
+	}
+	return base, true
 }
 
 // stillOnDisk reports whether a name the unlocked scan produced is still on

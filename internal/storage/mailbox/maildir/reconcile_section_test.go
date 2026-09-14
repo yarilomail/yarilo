@@ -213,7 +213,7 @@ func TestTheFolderCacheIsSafeWithoutTheMailboxLock(t *testing.T) {
 			// that file is what the cache holds, and a writer that only drops
 			// message files never makes the cache write anything.
 			body := "From: a@b\r\n\r\nx\r\n"
-			_, _, _, _ = box.Save("INBOX", strings.NewReader(body), uint32(i+2), int64(len(body)), nil, [16]byte{})
+			_, _, _, _ = box.Save("INBOX", strings.NewReader(body), uint32(i+2), int64(len(body)), nil, nil, [16]byte{})
 		}
 	}()
 
@@ -261,7 +261,7 @@ func TestTheCachedUIDMapIsNotWrittenIntoAfterItEscapes(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 300; i++ {
-			_, _, _, _ = box.Save("INBOX", strings.NewReader(body), uint32(i+2), int64(len(body)), nil, [16]byte{})
+			_, _, _, _ = box.Save("INBOX", strings.NewReader(body), uint32(i+2), int64(len(body)), nil, nil, [16]byte{})
 		}
 	}()
 	go func() {

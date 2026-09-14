@@ -169,7 +169,7 @@ func TestGUIDReachesIndex(t *testing.T) {
 		t.Fatalf("allocate: %v", err)
 	}
 	body := "Subject: t\r\n\r\nbody\r\n"
-	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestGUIDReachesIndex(t *testing.T) {
 // saveAndName performs the two steps a save takes: the body, then the name a
 // uid gives it for a driver named that way.
 func saveAndName(mb mailbox.UserMailbox, folder, body string, uid uint32, guid [16]byte) (string, [16]byte, error) {
-	temp, _, g, err := mb.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, guid)
+	temp, _, g, err := mb.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, nil, guid)
 	if err != nil {
 		return "", g, err
 	}

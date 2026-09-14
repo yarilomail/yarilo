@@ -28,7 +28,7 @@ func sdboxWithMail(t *testing.T, n int) (*mailbox.UserInfo, mailbox.UserMailbox,
 	}
 	for i := 0; i < n; i++ {
 		body := "From: a@b\r\nSubject: s\r\n\r\nbody\r\n"
-		temp, _, _, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+		temp, _, _, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}

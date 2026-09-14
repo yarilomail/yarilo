@@ -37,7 +37,7 @@ func stageLegacyFolder(t *testing.T, n int) (mailbox.UserMailbox, mailbox.UserIn
 			t.Fatalf("allocate: %v", err)
 		}
 		body := fmt.Sprintf("Subject: m%d\r\n\r\nbody\r\n", i)
-		name, vsize, _, err := mb.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		name, vsize, _, err := mb.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}

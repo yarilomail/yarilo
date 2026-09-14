@@ -51,7 +51,7 @@ func seedAccount(t *testing.T, root, user string) *mailbox.UserInfo {
 			_ = box.Create(m.folder)
 		}
 		uid[m.folder]++
-		name, vsize, guid, err := box.Save(m.folder, strings.NewReader(m.raw), uid[m.folder], int64(len(m.raw)), nil, [16]byte{})
+		name, vsize, guid, err := box.Save(m.folder, strings.NewReader(m.raw), uid[m.folder], int64(len(m.raw)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -294,7 +294,7 @@ func TestMessagesWithoutAGuidAreSkippedNotMerged(t *testing.T) {
 	}
 	box := maildir.New().OpenUser(info)
 	raw := "Message-ID: <noguid@x>\r\nSubject: Old\r\n\r\nbody\r\n"
-	name, vsize, _, err := box.Save("INBOX", strings.NewReader(raw), 99, int64(len(raw)), nil, [16]byte{})
+	name, vsize, _, err := box.Save("INBOX", strings.NewReader(raw), 99, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 	}
 	idx := fileindex.New().OpenUser(&info)
 	raw := "Message-ID: <a@x>\r\nSubject: Plan\r\n\r\nbody\r\n"
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

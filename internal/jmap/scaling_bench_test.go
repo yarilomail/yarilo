@@ -69,7 +69,7 @@ func benchServerSized(b *testing.B, folders, messagesPerFolder, bodyBytes int) *
 			b.Fatalf("open %s: %v", name, err)
 		}
 		for uid := 1; uid <= messagesPerFolder; uid++ {
-			fname, vsize, guid, serr := box.Save(name, strings.NewReader(body), uint32(uid), int64(len(body)), nil, [16]byte{})
+			fname, vsize, guid, serr := box.Save(name, strings.NewReader(body), uint32(uid), int64(len(body)), nil, nil, [16]byte{})
 			if serr != nil {
 				b.Fatalf("save: %v", serr)
 			}

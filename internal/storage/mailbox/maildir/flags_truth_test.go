@@ -16,7 +16,7 @@ import (
 // takes \Seen off the record, where we used to keep the index's answer (#1700).
 func TestTheNameTakesTheSeenFlagOffTheRecord(t *testing.T) {
 	box, idx, folder := recSetup(t)
-	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, [16]byte{})
+	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestTheNameTakesTheSeenFlagOffTheRecord(t *testing.T) {
 // record dirty, and a sync leaves it alone until the write lands (#1700).
 func TestADirtyRecordKeepsItsFlagsUntilTheRenameLands(t *testing.T) {
 	box, idx, folder := recSetup(t)
-	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, [16]byte{})
+	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestADirtyRecordKeepsItsFlagsUntilTheRenameLands(t *testing.T) {
 func TestARecordTheListDoesNotNameIsLeftAloneAndReported(t *testing.T) {
 	ForgetReports()
 	box, idx, folder := recSetup(t)
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, [16]byte{}); err != nil {
+	if _, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, nil, [16]byte{}); err != nil {
 		t.Fatal(err)
 	}
 	// Recorded in the index and nowhere else: no list entry for this uid.
@@ -132,7 +132,7 @@ func TestARecordTheListDoesNotNameIsLeftAloneAndReported(t *testing.T) {
 // runs, and nothing is taken from it: the list is the mapping (#1700).
 func TestTheSidecarIsRemovedAndNothingTakenFromIt(t *testing.T) {
 	box, idx, folder := recSetup(t)
-	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, [16]byte{})
+	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

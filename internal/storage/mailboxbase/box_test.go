@@ -43,7 +43,7 @@ func TestRecordDeliveredNamesTheMessageBeforeRecordingIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, vsize, guid, err := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, err := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestFillSizelessGivesRecordsTheSizeStorageHolds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, _, guid, err := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	saved, _, guid, err := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestExpungeMarkedTakesTheFolderOnce(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}
@@ -183,7 +183,7 @@ func TestExpungeMarkedWorksWithNoLocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 	if serr != nil {
 		t.Fatal(serr)
 	}
@@ -229,7 +229,7 @@ func TestTheRecordGoesBeforeTheBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 	if serr != nil {
 		t.Fatal(serr)
 	}
@@ -303,7 +303,7 @@ func TestTheSizeToldIsTheSizeOfTheBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, _, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	saved, _, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 	if serr != nil {
 		t.Fatal(serr)
 	}
@@ -334,7 +334,7 @@ func TestWriteFlagsSettlesInStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, serr := box.Store().Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 	if serr != nil {
 		t.Fatal(serr)
 	}
@@ -387,7 +387,7 @@ func TestRecordSavedSettlesTheNameBeforeTheRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	const body = "From: a@b\r\nSubject: copied\r\n\r\nbody\r\n"
-	saved, vsize, guid, serr := box.Store().Save("Archive", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, serr := box.Store().Save("Archive", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if serr != nil {
 		t.Fatal(serr)
 	}

@@ -44,7 +44,7 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 	ui := idx.OpenUser(info)
 
 	flags := []string{`\Seen`}
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), flags, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), flags, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

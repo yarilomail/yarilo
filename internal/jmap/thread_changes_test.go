@@ -66,7 +66,7 @@ func newThreadedServer(t *testing.T) *threadedServer {
 func (ts *threadedServer) deliver(t *testing.T, raw string) string {
 	t.Helper()
 	ts.uid++
-	name, vsize, guid, err := ts.box.Save("INBOX", strings.NewReader(raw), ts.uid, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := ts.box.Save("INBOX", strings.NewReader(raw), ts.uid, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

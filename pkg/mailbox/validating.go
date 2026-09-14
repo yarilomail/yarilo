@@ -74,11 +74,11 @@ func (v *validatingUser) Rename(oldName, newName string) error {
 	return v.inner.Rename(oldName, newName)
 }
 
-func (v *validatingUser) Save(folder string, r io.Reader, uid uint32, size int64, flags []string, guid [16]byte) (string, uint32, [16]byte, error) {
+func (v *validatingUser) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	if err := v.check(folder); err != nil {
 		return "", 0, [16]byte{}, err
 	}
-	return v.inner.Save(folder, r, uid, size, flags, guid)
+	return v.inner.Save(folder, r, uid, size, flags, keywords, guid)
 }
 
 func (v *validatingUser) Move(srcFolder, dstFolder, filename string, guid [16]byte) (string, [16]byte, error) {

@@ -30,7 +30,7 @@ func TestARepairRebuildsAShiftedTailFromTheMessage(t *testing.T) {
 	}
 
 	const body = "Subject: one\r\n\r\nthe message itself\r\n"
-	name, vsize, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	name, vsize, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestARepairLeavesHealthyRecordsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, body := range []string{"Subject: a\r\n\r\none\r\n", "Subject: b\r\n\r\ntwo\r\n"} {
-		name, vsize, guid, serr := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+		name, vsize, guid, serr := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}
@@ -168,7 +168,7 @@ func TestARepairLeavesASizeThatEqualsItsKeyAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	const body = "Subject: one\r\n\r\nthe message itself\r\n"
-	name, _, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	name, _, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestAShiftedRecordTheStoreCannotAnswerForIsCounted(t *testing.T) {
 		t.Fatal(err)
 	}
 	const body = "Subject: one\r\n\r\nthe message itself\r\n"
-	name, _, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	name, _, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestTheScanReadsThroughTheBoxTheBinariesBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	const body = "Subject: one\r\n\r\nthe message itself\r\n"
-	name, vsize, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	name, vsize, guid, err := store.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

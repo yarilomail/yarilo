@@ -170,7 +170,7 @@ func vsizeFixture(t *testing.T, user string, n int) (mailbox.UserMailbox, mailbo
 	}
 	for i := 0; i < n; i++ {
 		body := fmt.Sprintf("From: a@b\r\nSubject: m%d\r\n\r\nbody %d\r\n", i, i)
-		saved, _, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+		saved, _, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatal(serr)
 		}

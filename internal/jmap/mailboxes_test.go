@@ -73,7 +73,7 @@ func storedServer(t *testing.T) *Server {
 func deliver(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, folder string, uid uint32, flags []string) {
 	t.Helper()
 	body := "Subject: test\r\n\r\nbody\r\n"
-	name, vsize, guid, err := box.Save(folder, strings.NewReader(body), uid, int64(len(body)), flags, [16]byte{})
+	name, vsize, guid, err := box.Save(folder, strings.NewReader(body), uid, int64(len(body)), flags, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}

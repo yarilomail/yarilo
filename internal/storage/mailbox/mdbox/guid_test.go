@@ -27,7 +27,7 @@ func TestGUIDIndexed(t *testing.T) {
 	u := openTestUserMailbox(t, home)
 
 	body := "From: a@a.com\r\nSubject: guid-test\r\n\r\nbody\r\n"
-	filename, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	filename, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestGUIDPreservedAfterPurge(t *testing.T) {
 	}
 	filenames := make([]string, len(bodies))
 	for i, b := range bodies {
-		fn, _, _, err := u.Save("INBOX", strings.NewReader(b), 0, int64(len(b)), nil, [16]byte{})
+		fn, _, _, err := u.Save("INBOX", strings.NewReader(b), 0, int64(len(b)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("Save[%d]: %v", i, err)
 		}
@@ -142,7 +142,7 @@ func TestLookupByGUID_ZeroReturnsNotFound(t *testing.T) {
 	u := openTestUserMailbox(t, home)
 
 	body := "From: a@a.com\r\n\r\nsome body\r\n"
-	u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{}) //nolint:errcheck
+	u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{}) //nolint:errcheck
 
 	m, _ := u.openMap()
 	_, ok, err := m.LookupByGUID([16]byte{})
@@ -159,7 +159,7 @@ func TestGUIDInRebuildScan(t *testing.T) {
 	u := openTestUserMailbox(t, home)
 
 	body := "From: a@a.com\r\n\r\nrebuild body\r\n"
-	filename, _, _, _ := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	filename, _, _, _ := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 
 	recs, err := u.Scan("INBOX")
 	if err != nil {
@@ -204,7 +204,7 @@ func TestMovePreservesGUID(t *testing.T) {
 	u := openTestUserMailbox(t, home)
 
 	body := "From: a@a.com\r\nSubject: move\r\n\r\nbody\r\n"
-	filename, _, guid, err := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	filename, _, guid, err := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}

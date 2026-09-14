@@ -69,7 +69,7 @@ func Run(cfg Config) (Report, error) {
 	}
 	metas := make([]*mailbox.MessageMeta, 0, len(corpus.Messages))
 	for _, m := range corpus.Messages {
-		name, vsize, guid, err := box.Save(benchMbox.Name, bytes.NewReader(m.Raw), m.UID, int64(len(m.Raw)), nil, [16]byte{})
+		name, vsize, guid, err := box.Save(benchMbox.Name, bytes.NewReader(m.Raw), m.UID, int64(len(m.Raw)), nil, nil, [16]byte{})
 		if err != nil {
 			return Report{}, fmt.Errorf("ftsbench: save uid %d: %w", m.UID, err)
 		}

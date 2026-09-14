@@ -334,7 +334,7 @@ const driverName = "sdbox"
 // UserIndex.AppendMessage. flags are ignored — sdbox delegates flag storage to
 // the index. A zero guid is generated here; a non-zero one is stored verbatim so
 // EMAILID survives COPY/MOVE. The effective GUID is returned.
-func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
+func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	whole := time.Now()
 	defer func() { mailboxmetrics.ObserveSave(driverName, time.Since(whole)) }()
 

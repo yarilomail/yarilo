@@ -153,7 +153,7 @@ func TestTwoProcessAppendNoUIDCollision(t *testing.T) {
 					// 2. Save the body, then record it against the reserved uid.
 					content := strings.NewReader("hello from p" +
 						strconv.Itoa(pid) + ":g" + strconv.Itoa(gid) + ":k" + strconv.Itoa(k))
-					filename, _, _, err := mb.Save("INBOX", content, 0, 0, nil, [16]byte{})
+					filename, _, _, err := mb.Save("INBOX", content, 0, 0, nil, nil, [16]byte{})
 					if err != nil {
 						errCh <- err
 						return

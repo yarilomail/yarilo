@@ -70,7 +70,7 @@ func TestNoRecordIsOlderThanItsRow(t *testing.T) {
 	for round := 0; round < 4; round++ {
 		for i := 0; i < 5; i++ {
 			body := fmt.Sprintf("From: a@b\r\nSubject: append %d-%d\r\n\r\nbody\r\n", round, i)
-			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+			saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +131,7 @@ func TestARefusedRowSkipsOneMessageNotTheBatch(t *testing.T) {
 
 	// One ordinary save so the list exists before another writer touches it.
 	const body = "From: a@b\r\nSubject: first\r\n\r\nbody\r\n"
-	saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	saved, vsize, guid, serr := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if serr != nil {
 		t.Fatal(serr)
 	}

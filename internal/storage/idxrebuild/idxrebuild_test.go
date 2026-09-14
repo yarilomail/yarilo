@@ -41,12 +41,12 @@ func TestRebuildFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keep, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
+	keep, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	publish(t, box, "INBOX", keep, 1)
-	gone, _, goneGUID, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, [16]byte{})
+	gone, _, goneGUID, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,12 +116,12 @@ func TestExpungeMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keep, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, [16]byte{})
+	keep, _, keepGUID, err := box.Save("INBOX", strings.NewReader("a\n"), 1, 2, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	publish(t, box, "INBOX", keep, 1)
-	gone, _, goneGUID, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, [16]byte{})
+	gone, _, goneGUID, err := box.Save("INBOX", strings.NewReader("b\n"), 2, 2, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestARebuildRefilesAFileWhoseRecordWasExpunged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, _, guid, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, [16]byte{})
+	name, _, guid, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

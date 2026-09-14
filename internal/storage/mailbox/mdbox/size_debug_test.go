@@ -87,7 +87,7 @@ func TestTheStorageSizeRowNamesTheFrameItRead(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	u := openTestUserMailbox(t, home)
 	body := "From: a@a.com\r\nSubject: sized\r\n\r\nbody\r\n"
-	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestTheStorageSizeRowCostsNothingAtInfo(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	u := openTestUserMailbox(t, home)
 	body := "From: a@a.com\r\nSubject: sized\r\n\r\nbody\r\n"
-	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, [16]byte{})
+	name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

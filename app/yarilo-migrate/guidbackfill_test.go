@@ -38,7 +38,7 @@ func stageStore(t *testing.T, n int) (root, user string) {
 			t.Fatalf("allocate: %v", err)
 		}
 		body := fmt.Sprintf("Subject: m%d\r\n\r\nbody\r\n", i)
-		name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -241,7 +241,7 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 			t.Fatalf("allocate: %v", err)
 		}
 		body := fmt.Sprintf("Subject: m%d\r\n\r\nbody\r\n", i)
-		name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -433,7 +433,7 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 		t.Fatalf("allocate: %v", err)
 	}
 	body := "Subject: t\r\n\r\nbody\r\n"
-	name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, zero)
+	name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, zero)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 				t.Fatalf("allocate: %v", err)
 			}
 			body := "Subject: t\r\n\r\nbody\r\n"
-			name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, zero)
+			name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, zero)
 			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
