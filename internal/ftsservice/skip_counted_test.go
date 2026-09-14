@@ -17,7 +17,7 @@ import (
 // removeStoredMessages deletes the mail files under root, leaving the index
 // entries behind: the shape of a mount that went away, and the only way to
 // make a read fail without stubbing the storage.
-func removeStoredMessages(t *testing.T, root string) int {
+func unreadableStoredMessages(t *testing.T, root string) int {
 	t.Helper()
 	removed := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -25,7 +25,9 @@ func removeStoredMessages(t *testing.T, root string) int {
 			return nil
 		}
 		if strings.Contains(path, "/cur/") || strings.Contains(path, "/new/") {
-			if rerr := os.Remove(path); rerr == nil {
+			// Unreadable, not gone: a tombstoned record is not a message the
+			// indexer skipped.
+			if rerr := os.Chmod(path, 0); rerr == nil {
 				removed++
 			}
 		}
@@ -50,8 +52,8 @@ func TestSkippedMessageIsCounted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := removeStoredMessages(t, info.Home); n == 0 {
-		t.Fatal("no message files were removed, so no read can fail")
+	if n := unreadableStoredMessages(t, info.Home); n == 0 {
+		t.Fatal("no message file was made unreadable, so no read can fail")
 	}
 
 	// The level is part of the decision, not presentation: a skip at Debug is

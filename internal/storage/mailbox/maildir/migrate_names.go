@@ -31,9 +31,19 @@ func (u *userMailbox) MigrateUIDNames(box mailbox.Box, folder *mailbox.Folder) (
 	stored := u.storedNames(box, folder)
 
 	placed := 0
+	alreadyDone := false
 	var unresolved []uint32
 	vsizes := map[uint32]uint32{}
 	err = u.withMailboxLockSite(folder.Name, lockSiteMigrateNames, func() error {
+		// The read above was lock-free, so the pass may have finished between
+		// it and this hold; the marker decides again, here (#1778).
+		switch done, derr := marker.UIDNamed(folder.ID); {
+		case derr != nil:
+			return fmt.Errorf("maildir/migrate: re-read marker %q: %w", folder.Name, derr)
+		case done:
+			alreadyDone = true
+			return nil
+		}
 		known, kerr := u.basesByUID(folder.Name)
 		if kerr != nil {
 			return kerr
@@ -76,6 +86,9 @@ func (u *userMailbox) MigrateUIDNames(box mailbox.Box, folder *mailbox.Folder) (
 	})
 	if err != nil {
 		return placed, err
+	}
+	if alreadyDone {
+		return 0, nil
 	}
 	for _, uid := range unresolved {
 		reportUnplaced(u.username, folder.Name, uid)

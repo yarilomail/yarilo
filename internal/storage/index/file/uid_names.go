@@ -18,10 +18,11 @@ const (
 	uidNamesPass = 3
 )
 
-// UIDNamed answers from the header a folder open already read.
+// UIDNamed answers without taking the folder: the marker only goes false to
+// true, and the caller re-checks under its own hold (#1778).
 func (u *userIndex) UIDNamed(folderID uint64) (bool, error) {
 	var done bool
-	err := u.withFolderRO(folderID, func(fs *folderState) error {
+	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
 		done = uidNamedLocked(fs)
 		return nil
 	})

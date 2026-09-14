@@ -286,6 +286,18 @@ func TestEmailQueryTrustsDefiniteResults(t *testing.T) {
 	}
 }
 
+// waitForPeak blocks until that many lookups have been in flight at once.
+func waitForPeak(t *testing.T, stub *stubFTS, want int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for stub.concurrentPeak() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d lookups ever overlapped, want %d", stub.concurrentPeak(), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // One request takes at most half the pool, so a second request always has
 // connections left rather than being refused by a queue of our own making.
 func TestEmailQueryFanOutIsBounded(t *testing.T) {
@@ -298,8 +310,9 @@ func TestEmailQueryFanOutIsBounded(t *testing.T) {
 		defer close(done)
 		emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"}}`)
 	}()
-	// Let the first wave pile up against the hold, then release.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the wave rather than sleeping for it: the work before a lookup
+	// is not fixed, and a margin that fits today measures the machine.
+	waitForPeak(t, stub, 2)
 	close(stub.hold)
 	<-done
 

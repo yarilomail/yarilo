@@ -37,10 +37,19 @@ type Backend struct {
 	locker   locks.Locker
 	writeSem chan struct{} // nil = unlimited
 	listUTF8 bool          // true = UTF-8 on disk (default); false = modified-UTF-7
+	// proactiveScan is maildir_sync_on_select: whether opening a folder
+	// reconciles the index against cur/ and new/. Default on.
+	proactiveScan bool
 }
 
 // Option configures a Backend at construction time.
 type Option func(*Backend)
+
+// WithProactiveScan carries maildir_sync_on_select: turned off, the folder is
+// served from the index alone.
+func WithProactiveScan(on bool) Option {
+	return func(b *Backend) { b.proactiveScan = on }
+}
 
 // WithLocker wires a lock client in: every shared-file write then takes the
 // cross-process X lock. Nil keeps the in-process mutex only.
@@ -71,9 +80,10 @@ func New(opts ...Option) *Backend {
 		hostname = "localhost"
 	}
 	b := &Backend{
-		hostname: hostname,
-		pid:      os.Getpid(),
-		listUTF8: true,
+		hostname:      hostname,
+		pid:           os.Getpid(),
+		listUTF8:      true,
+		proactiveScan: true,
 	}
 	for _, opt := range opts {
 		opt(b)
@@ -885,8 +895,9 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 func (u *userMailbox) Close() error { return nil }
 
 // ProactiveScan says the store changes out of band -- an MDA into new/, another
-// MUA renaming for flags -- so SELECT must scan. The dbox drivers say no.
-func (u *userMailbox) ProactiveScan() bool { return true }
+// MUA renaming for flags -- so opening a folder must scan. The dbox drivers say
+// no, and maildir_sync_on_select says whether this deployment wants it.
+func (u *userMailbox) ProactiveScan() bool { return u.b.proactiveScan }
 
 // guidFor returns the message GUID for a stored file: the explicit uidlist
 // override when one exists, else the name-derived value. Never zero.

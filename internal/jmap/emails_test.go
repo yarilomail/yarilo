@@ -280,7 +280,7 @@ func utf8Valid(s string) bool {
 // file. A request that needs the body must fail on the same store.
 func TestEmailGetDoesNotOpenTheMessageForIndexOnlyProperties(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
-	removeMailFiles(t, home)
+	unreadableMailFiles(t, home)
 
 	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
 		"properties":["id","mailboxIds","keywords","size","receivedAt"]}`)
@@ -305,7 +305,7 @@ func TestEmailGetDoesNotOpenTheMessageForIndexOnlyProperties(t *testing.T) {
 // envelope yet: the cache is an optimisation, not a second source of truth.
 func TestEmailGetOpensTheMessageForEnvelopeProperties(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
-	removeMailFiles(t, home)
+	unreadableMailFiles(t, home)
 
 	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","subject"]}`)
 	if notFound, _ := got["notFound"].([]any); len(notFound) != 1 {

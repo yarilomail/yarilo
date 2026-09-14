@@ -1006,7 +1006,10 @@ func (e *buildError) Unwrap() error { return e.err }
 // log line beside it.
 func skipReason(err error) string {
 	switch {
-	case errors.Is(err, mailbox.ErrCorruptStorage), errors.Is(err, os.ErrNotExist):
+	case errors.Is(err, mailbox.ErrCorruptStorage), errors.Is(err, os.ErrNotExist),
+		errors.Is(err, os.ErrPermission):
+		// A body the process may not open is a body it did not read, and an
+		// operator watching reason=read is watching for exactly that.
 		return "read"
 	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
 		return "read"

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // changesCall posts one Foo/changes and returns either the response or the
@@ -181,6 +182,31 @@ func TestEmailChangesRefusesMoreThanMaxChanges(t *testing.T) {
 // absence is not the same thing: a client that only sees a message stop being
 // listed never learns it was deleted, and a client polling /changes does not
 // list anything at all.
+// destroyMessage deletes a message the way the only writer that deletes one
+// does: the record and its body, not the record alone (#1778).
+func destroyMessage(t *testing.T, h *userHandle, folderID uint64, uid uint32) {
+	t.Helper()
+	msgs, err := h.idx.GetMessages(folderID, mailbox.SeqSet{})
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	for _, m := range msgs {
+		if m.UID != uid {
+			continue
+		}
+		name, nerr := h.mbox.MessagePath("INBOX", m)
+		if nerr != nil {
+			t.Fatalf("name the message: %v", nerr)
+		}
+		if err := h.box.Remove("INBOX", name); err != nil {
+			t.Fatalf("remove body: %v", err)
+		}
+	}
+	if err := h.idx.ExpungeMessage(folderID, uid); err != nil {
+		t.Fatalf("expunge: %v", err)
+	}
+}
+
 func TestEmailChangesReportsDestroyedByID(t *testing.T) {
 	s, id, _ := storedServerWithMessageAt(t, setTestMessage, 0)
 	since := emailStateOf(t, s)
@@ -190,9 +216,7 @@ func TestEmailChangesReportsDestroyedByID(t *testing.T) {
 	if err != nil || len(marks) == 0 {
 		t.Fatalf("folder marks: %v %v", marks, err)
 	}
-	if err := h.idx.ExpungeMessage(marks[0].folder.ID, 1); err != nil {
-		t.Fatalf("expunge: %v", err)
-	}
+	destroyMessage(t, h, marks[0].folder.ID, 1)
 
 	payload, errType := changesCall(t, s, "Email/changes",
 		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))

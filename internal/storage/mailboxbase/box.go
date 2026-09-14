@@ -19,7 +19,22 @@ type Box struct {
 	index  mailbox.UserIndex
 	locker locks.Locker
 	owner  string
+	// mode is what an open owes the folder: settle, read, or only add (#1778).
+	mode openMode
 }
+
+// openMode is what a box's Folder does besides opening the index.
+type openMode uint8
+
+const (
+	// openSession settles the folder; the other two do not.
+	openSession openMode = iota
+	// openReadOnly writes nothing at all.
+	openReadOnly
+	// openSaveOnly is a delivery: the save writes its own row, so the walk
+	// buys nothing and costs a hold (#1706).
+	openSaveOnly
+)
 
 // Open pairs the two halves of one account.
 func Open(store mailbox.UserMailbox, index mailbox.UserIndex, opts ...BoxOption) *Box {
@@ -40,9 +55,26 @@ func (b *Box) Index() mailbox.UserIndex { return b.index }
 // Username is whose mail this is.
 func (b *Box) Username() string { return b.store.Username() }
 
-// Folder opens one folder's index.
+// Folder opens one folder's index, settling what the store holds first. Only a
+// session open settles; the other modes read the folder as it is.
 func (b *Box) Folder(name string, uidValidity uint32) (*mailbox.Folder, error) {
-	return b.index.OpenFolder(name, uidValidity)
+	f, err := b.index.OpenFolder(name, uidValidity)
+	if err != nil || b.mode != openSession {
+		return f, err
+	}
+	if !b.settle(name, f) {
+		return f, nil
+	}
+	// The record set moved, so the handle in hand is stale: UIDNEXT and
+	// HIGHESTMODSEQ are what the caller reports.
+	refreshed, rerr := b.index.OpenFolder(name, f.UIDValidity)
+	if rerr != nil {
+		// The handle in hand describes a folder that no longer exists; handing
+		// it back would have the caller report a stale UIDNEXT as its own.
+		return nil, fmt.Errorf("mailbox/open: %s reopen %q after settling: %w",
+			b.store.Username(), name, rerr)
+	}
+	return refreshed, nil
 }
 
 // RecordDelivered records a saved body: the name reaches storage first, so a
@@ -132,6 +164,18 @@ func WithLocker(l locks.Locker, owner string) BoxOption {
 
 // BoxOption tunes a box at Open time.
 type BoxOption func(*Box)
+
+// ReadOnly opens folders as they are: no adoption, no reconcile, nothing
+// written. For a diagnostic, which reads an account and does not settle it.
+func ReadOnly() BoxOption {
+	return func(b *Box) { b.mode = openReadOnly }
+}
+
+// SaveOnly opens folders for a delivery: it adds a message and settles nothing,
+// so the account is adopted at its first session instead (#1778).
+func SaveOnly() BoxOption {
+	return func(b *Box) { b.mode = openSaveOnly }
+}
 
 // ExpungeMarked removes messages under one hold: taking the key per message
 // lets another writer in between two removals. One failure is not the batch's.

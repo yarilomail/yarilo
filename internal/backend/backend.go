@@ -327,7 +327,6 @@ func New(cfg *config.Config) (*Server, error) {
 			SharedDict:           sharedDict,
 			SieveEngine:          sieveEngine,
 			IMAPQuota:            cfg.Protocol.IMAP.IMAPQuota,
-			MaildirSyncOnSelect:  cfg.Storage.MaildirSyncOnSelect,
 			DboxReactiveRebuild:  cfg.Storage.DboxReactiveRebuild,
 			QuotaEngine:          cfg.Quota.Enabled,
 			QuotaName:            cfg.Quota.Name,

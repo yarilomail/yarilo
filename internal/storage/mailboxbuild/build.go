@@ -55,7 +55,8 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 			mapLogRotation(sc))
 	default:
 		return maildir.New(maildir.WithLocker(locker), maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
-			maildir.WithListUTF8(sc.MailboxListUTF8))
+			maildir.WithListUTF8(sc.MailboxListUTF8),
+			maildir.WithProactiveScan(sc.MaildirSyncOnSelect))
 	}
 }
 

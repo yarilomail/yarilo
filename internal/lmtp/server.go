@@ -511,7 +511,7 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 		return rcptBox, rcptMbox, folder, noop
 	}
 	idx := s.opts.Index.OpenUser(ui)
-	return box, mailboxbase.Open(box, idx), rel, func() {
+	return box, mailboxbase.Open(box, idx, mailboxbase.SaveOnly()), rel, func() {
 		box.Close() //nolint:errcheck
 		idx.Close() //nolint:errcheck
 	}
@@ -607,7 +607,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		mboxBackend := mailbox.SelectPersonalBackend(s.opts.Mailbox, s.opts.MailboxByDriver, userInfo.Driver)
 		rcptBox := mboxBackend.OpenUser(userInfo)
 		rcptIdx := s.opts.Index.OpenUser(userInfo)
-		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx)
+		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly())
 		rcptBox.Init() //nolint:errcheck // idempotent; provisioned in rcptLocal
 
 		// Quota enforcement from the index (authoritative): reject when this
@@ -647,7 +647,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 					entries, _ := rcptBox.ListFolders()
 					// A folder no session has opened still sums its records, and
 					// a record that carries no size sums as nothing (#1728).
-					fillSizes(mailboxbase.Open(rcptBox, rcptIdx), mailbox.SelectableNames(entries))
+					fillSizes(mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly()), mailbox.SelectableNames(entries))
 					u := quota.CountUsage(rcptMbox, rcptIdx, mailbox.SelectableNames(entries), lim)
 					// Inbound delivery is grace-eligible (LMTP/LDA overshoot).
 					if quota.IsOverWithGrace(u, effLim, int64(len(msg)), 1, s.opts.QuotaPolicy.StorageGrace) {

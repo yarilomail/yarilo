@@ -57,18 +57,6 @@ var commandBuckets = []float64{
 // change token, so in principle a folder nobody touched costs a stat and
 // nothing else; if skips stay at zero under a workload that re-selects
 // unchanged folders, the gate is not reaching the case it was built for.
-var (
-	metricMaildirSyncSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name:    "imap_maildir_sync_seconds",
-		Help:    "Time one maildir proactive reconcile took, from computing the change token through the index update.",
-		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 11), // 100us .. ~100s
-	})
-	metricMaildirSync = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "imap_maildir_sync_total",
-		Help: "Maildir reconcile decisions: scanned means cur/ and new/ were walked, skipped means the change token said nothing had changed.",
-	}, []string{"result"}) // scanned | skipped
-)
-
 // metricUnreadable counts messages a command answered short because it could
 // not read them. The event is one event -- the server answered with less than
 // it knows, and nothing in the answer says so (#1283) -- so it is one series

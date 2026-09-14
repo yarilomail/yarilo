@@ -325,7 +325,7 @@ func (s *Server) mailboxForUser(pui *protocol.UserInfo) mailbox.MailboxBackend {
 // non-nil (per-user driver selection); nil falls back to the per-namespace or
 // global default. Init runs to materialise the on-disk root.
 func (s *Server) openNS(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend) (*nsBundle, error) {
-	return s.openNSInner(spec, ui, mb, false)
+	return s.openNSInner(spec, ui, mb, openEager)
 }
 
 // openNSReadOnly is like openNS but skips Init so no directories are created.
@@ -337,16 +337,16 @@ func (s *Server) openNSReadOnly(spec config.NamespaceConfig, ui *mailbox.UserInf
 			return nil, nil
 		}
 	}
-	return s.openNSInner(spec, ui, mb, true)
+	return s.openNSInner(spec, ui, mb, openRead)
 }
 
 // openNSDeferred opens a namespace without Init: the bundle a write validates on
 // before it materialises anything, since the name rules need no disk.
 func (s *Server) openNSDeferred(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend) (*nsBundle, error) {
-	return s.openNSInner(spec, ui, mb, true)
+	return s.openNSInner(spec, ui, mb, openDeferred)
 }
 
-func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend, skipInit bool) (*nsBundle, error) {
+func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend, mode openMode) (*nsBundle, error) {
 	if mb == nil {
 		mb = s.mailboxBackendFor(spec, ui)
 	}
@@ -357,18 +357,24 @@ func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, 
 		return nil, fmt.Errorf("backendapi: no index backend wired")
 	}
 	box := mb.OpenUser(ui)
-	if !skipInit {
+	if mode == openEager {
 		if err := box.Init(); err != nil {
 			return nil, fmt.Errorf("mailbox init: %w", err)
 		}
 	}
 	idx := s.opts.Index.OpenUser(ui)
+	// A read settles nothing: the adoption and the reconcile belong to a
+	// session that owns the mailbox, not to a diagnostic reading it (#1774).
+	var boxOpts []mailboxbase.BoxOption
+	if mode == openRead {
+		boxOpts = append(boxOpts, mailboxbase.ReadOnly())
+	}
 	bundle := &nsBundle{
 		spec:     spec,
 		info:     ui,
 		box:      box,
 		idx:      idx,
-		mbox:     mailboxbase.Open(box, idx),
+		mbox:     mailboxbase.Open(box, idx, boxOpts...),
 		location: ui.Home,
 	}
 	return bundle, nil
