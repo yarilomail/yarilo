@@ -2340,11 +2340,9 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		return nil
 	}
 
-	// The reopen below settles the folder, so an IDLE / NOOP client sees an
-	// out-of-band delivery. Token-gated, so a quiescent folder costs one stat;
-	// a change bumps HighestModSeq, which the modseq check picks up and the
-	// diff loop turns into EXISTS / EXPUNGE updates.
-	//
+	// The reopen settles the folder, so an IDLE / NOOP client sees an
+	// out-of-band delivery (#1779).
+
 	// Cheap modseq check — skip full scan when nothing changed and no
 	// pending expunges are waiting for an allowExpunge=true window.
 	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)

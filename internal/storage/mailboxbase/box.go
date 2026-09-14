@@ -19,8 +19,7 @@ type Box struct {
 	index  mailbox.UserIndex
 	locker locks.Locker
 	owner  string
-	// mode says what an open owes the folder: a session settles it, a
-	// diagnostic reads it (#1774), a delivery only adds to it (#1778).
+	// mode is what an open owes the folder: settle, read, or only add (#1778).
 	mode openMode
 }
 
@@ -56,9 +55,8 @@ func (b *Box) Index() mailbox.UserIndex { return b.index }
 // Username is whose mail this is.
 func (b *Box) Username() string { return b.store.Username() }
 
-// Folder opens one folder's index, settling what the store holds first: the
-// stored names move into the records and a self-describing store is reconciled.
-// Only a session open settles: the other modes read the folder as it is.
+// Folder opens one folder's index, settling what the store holds first. Only a
+// session open settles; the other modes read the folder as it is.
 func (b *Box) Folder(name string, uidValidity uint32) (*mailbox.Folder, error) {
 	f, err := b.index.OpenFolder(name, uidValidity)
 	if err != nil || b.mode != openSession {
@@ -71,7 +69,10 @@ func (b *Box) Folder(name string, uidValidity uint32) (*mailbox.Folder, error) {
 	// HIGHESTMODSEQ are what the caller reports.
 	refreshed, rerr := b.index.OpenFolder(name, f.UIDValidity)
 	if rerr != nil {
-		return f, nil
+		// The handle in hand describes a folder that no longer exists; handing
+		// it back would have the caller report a stale UIDNEXT as its own.
+		return nil, fmt.Errorf("mailbox/open: %s reopen %q after settling: %w",
+			b.store.Username(), name, rerr)
 	}
 	return refreshed, nil
 }

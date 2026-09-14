@@ -8,10 +8,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A maildir describes itself, and a store written before the record carried its
-// own key keeps the key beside the index. Both are settled when the folder is
-// opened, so every protocol sees the same mailbox: called from the IMAP SELECT
-// alone, a POP3-only account saw neither (#1778, #1779).
+// Both passes run at the open, so every protocol settles the same mailbox:
+// from the IMAP SELECT alone, a POP3-only account saw neither (#1778, #1779).
 type uidNameMigrator interface {
 	MigrateUIDNames(mailbox.Box, *mailbox.Folder) (int, error)
 }
@@ -22,28 +20,19 @@ type proactiveSyncer interface {
 	ReconcileIndex(box mailbox.Box, folder *mailbox.Folder) (mailbox.SyncStats, error)
 }
 
-// indexDirNamer is the index's own name for where a folder's files live, which
-// is what the token cache is keyed by: one user's namespaces resolve to
-// different directories, and their tokens must not be each other's.
+// indexDirNamer names where a folder's files live: one user's namespaces
+// resolve to different directories, and their tokens are not each other's.
 type indexDirNamer interface {
 	IndexDirFor(folder string) string
 }
 
-// syncTokenCache remembers the change token of the last successful reconcile,
-// for the life of the process (#1248): a session-scoped cache is invalidated by
-// the client's login pattern rather than by the data changing, so it misses the
-// case it exists for -- a client that reconnects per cycle arrives warm at
-// nothing and walks the directory every time.
-//
-// The token is its own proof: every open recomputes it and compares, so a
-// cached value is a starting point, not an answer, and a stale one costs an
-// extra reconcile. Deliberately no TTL.
+// syncTokenCache holds the last reconcile's token for the life of the process:
+// a session-scoped one is invalidated by the login pattern, not the data (#1248).
 type syncTokenCache struct {
 	mu     sync.Mutex
 	tokens map[string]string
-	// maxEntries bounds the map. Overflow drops it whole rather than evicting
-	// by age: the entries carry no age, and rebuilding one costs a reconcile
-	// that would have happened anyway.
+	// maxEntries bounds the map; overflow drops it whole, since the entries
+	// carry no age and rebuilding one costs a reconcile.
 	maxEntries int
 }
 
@@ -89,9 +78,8 @@ func (b *Box) tokenKey(folder string) string {
 	return strings.Join([]string{b.store.Username(), dir, folder}, "\x00")
 }
 
-// settle runs the passes a session owes a folder it has just opened: the stored
-// names move into the records, and a self-describing store is reconciled
-// against the index. Reports whether either changed the record set.
+// settle runs both passes a session owes a folder it just opened, and reports
+// whether either changed the record set.
 func (b *Box) settle(folder string, f *mailbox.Folder) bool {
 	changed := b.adoptNames(folder, f)
 	if b.reconcile(folder, f) {
@@ -114,9 +102,8 @@ func (b *Box) adoptNames(folder string, f *mailbox.Folder) bool {
 	return n > 0
 }
 
-// reconcile skips the walk while the store's token is the one the last
-// successful pass saw. The token is cached only on success, so a scan or lock
-// failure does not wedge the folder into a permanent skip.
+// reconcile skips the walk while the token is the one the last successful pass
+// saw; caching only on success keeps a failure from wedging a permanent skip.
 func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	ps, ok := mailbox.Driver(b.store).(proactiveSyncer)
 	if !ok || !ps.ProactiveScan() {

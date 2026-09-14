@@ -45,9 +45,8 @@ type Backend struct {
 // Option configures a Backend at construction time.
 type Option func(*Backend)
 
-// WithProactiveScan carries maildir_sync_on_select: a deployment that does not
-// want the walk turns it off, and the folder is then served from the index
-// alone.
+// WithProactiveScan carries maildir_sync_on_select: turned off, the folder is
+// served from the index alone.
 func WithProactiveScan(on bool) Option {
 	return func(b *Backend) { b.proactiveScan = on }
 }

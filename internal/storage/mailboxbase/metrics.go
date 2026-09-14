@@ -5,9 +5,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// The names are the ones the reconcile has always carried. It is no longer an
-// IMAP-only pass, so they no longer describe where it runs; renaming a series
-// is a decision of its own and is not taken here.
+// The names the reconcile has always carried. It is no longer IMAP-only, and
+// renaming a series is a decision of its own, not taken here.
 var (
 	MetricReconcile = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "imap_maildir_sync_total",

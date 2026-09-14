@@ -38,9 +38,8 @@ func gateSetup(t *testing.T) (mailbox.Box, string) {
 	return mailboxbase.Open(box, idx), filepath.Join(info.Home, "Maildir")
 }
 
-// settle backdates cur/ and new/ to a fixed instant. Without it every token
-// carries the same-second dirty nonce -- a folder written by the test itself is
-// always "changed" -- and the gate could never be observed holding.
+// settle backdates cur/ and new/: without it every token carries the
+// same-second dirty nonce and the gate could never be observed holding.
 func settle(t *testing.T, inbox string, at time.Time) {
 	t.Helper()
 	for _, sub := range []string{"cur", "new"} {
@@ -50,9 +49,8 @@ func settle(t *testing.T, inbox string, at time.Time) {
 	}
 }
 
-// deliverOutOfBand drops a file into cur/ the way a second MUA does, then
-// backdates the directory to a distinct settled instant: the scan that follows
-// is provoked by the moved mtime, not by the same-second dirty rule.
+// deliverOutOfBand drops a file into cur/ as a second MUA does, backdated so
+// the scan that follows is provoked by the moved mtime, not the dirty rule.
 func deliverOutOfBand(t *testing.T, inbox, name string, at time.Time) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(inbox, "cur", name), []byte("Subject: x\r\n\r\nbody\r\n"), 0o600); err != nil {
@@ -79,11 +77,8 @@ func messageCount(t *testing.T, b mailbox.Box) int {
 	return len(msgs)
 }
 
-// The pair the gate has to get right, both counters pinned in both directions:
-// an untouched folder must cost no walk however often it is opened, and a file
-// that appeared out of band must still be picked up. Either half alone is
-// satisfiable by a broken gate -- one by never scanning, the other by always
-// scanning (#1265).
+// Both halves pinned: an untouched folder costs no walk, an out-of-band file is
+// still picked up. Either alone is satisfiable by a broken gate (#1265).
 func TestTheGateScansOnlyWhenTheFolderChanged(t *testing.T) {
 	settled := time.Unix(1700000000, 0)
 
@@ -142,9 +137,7 @@ func TestTheGateScansOnlyWhenTheFolderChanged(t *testing.T) {
 	}
 }
 
-// The quiet case at workload length: N opens of a folder nobody touched must
-// cost N stats and zero walks. A gate that holds once and then lets go -- a
-// token overwritten with a nonce, a cache keyed by something that varies --
+// The quiet case at workload length: a gate that holds once and then lets go
 // passes the single-pass check and fails here.
 func TestTheGateHoldsAcrossManyQuietOpens(t *testing.T) {
 	const opens = 20

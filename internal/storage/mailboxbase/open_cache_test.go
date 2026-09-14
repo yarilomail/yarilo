@@ -22,10 +22,8 @@ func reopen(t *testing.T, home string) mailbox.Box {
 	return mailboxbase.Open(box, idx)
 }
 
-// The case the cache is for: a client that logs in per cycle. A session-scoped
-// cache walks cur/ and new/ on the first open of every session, so the gate
-// never reaches a workload that reconnects -- every benchmark run and every
-// phone (#1248).
+// The case the cache is for: a client that logs in per cycle, which a
+// session-scoped cache never gates at all (#1248).
 func TestAFreshBoxReusesTheProcessCache(t *testing.T) {
 	b, inbox := gateSetup(t)
 	settle(t, inbox, time.Unix(1700000000, 0))
@@ -49,9 +47,8 @@ func TestAFreshBoxReusesTheProcessCache(t *testing.T) {
 	}
 }
 
-// The other direction: a longer-lived cache must not outlive the truth. A file
-// that appeared out of band between two logins is still picked up, because the
-// token -- not the cache entry -- is what decides.
+// The other direction: a file that appeared between two logins is still picked
+// up, because the token and not the cache entry decides.
 func TestAFreshBoxStillSeesOutOfBandDelivery(t *testing.T) {
 	settled := time.Unix(1700000000, 0)
 	b, inbox := gateSetup(t)

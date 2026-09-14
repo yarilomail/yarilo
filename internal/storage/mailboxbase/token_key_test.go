@@ -9,10 +9,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// One process serves many accounts, and two of them may hold the same folder
-// name at different storage roots. A key that did not tell them apart would let
-// one account's token answer for another's folder -- a skip of a scan that was
-// never proven.
+// Two accounts may hold the same folder name at different roots: a key that
+// cannot tell them apart skips a scan that was never proven.
 func TestTheTokenKeyKeepsAccountsAndFoldersApart(t *testing.T) {
 	root := t.TempDir()
 	boxFor := func(user, home string) *Box {
@@ -49,9 +47,8 @@ func TestTheTokenKeyKeepsAccountsAndFoldersApart(t *testing.T) {
 	}
 }
 
-// Overflow drops the map rather than expiring entries by age. The bound has to
-// cost a scan, never a wrong skip: after the drop the folder is walked again,
-// and nothing is served from a cleared cache.
+// Overflow drops the map rather than expiring by age: the bound must cost a
+// scan, never a wrong skip.
 func TestCacheOverflowCostsAScanNotCorrectness(t *testing.T) {
 	c := &syncTokenCache{maxEntries: 4}
 	c.put("a", "t")
