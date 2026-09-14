@@ -69,6 +69,15 @@ func SetTestSyncTokens(c int) func() {
 	return func() { syncTokens = prev }
 }
 
+// indexDir is where this folder's index lives, which is what tells two accounts
+// of the same name apart in a log (#1673).
+func (b *Box) indexDir(folder string) string {
+	if n, ok := b.index.(indexDirNamer); ok {
+		return n.IndexDirFor(folder)
+	}
+	return ""
+}
+
 // tokenKey identifies one folder of one account's storage.
 func (b *Box) tokenKey(folder string) string {
 	dir := ""
@@ -129,7 +138,7 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 		return false
 	}
 	slog.Info("mailbox/open: the folder took what the store holds",
-		"user", b.store.Username(), "folder", folder,
+		"user", b.store.Username(), "folder", folder, "index_dir", b.indexDir(folder),
 		"imported", st.Imported, "expunged", st.Expunged, "updated", st.Updated,
 		"relinked", st.Relinked)
 	return true

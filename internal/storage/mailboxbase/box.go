@@ -193,7 +193,15 @@ func (b *Box) HoldFolder(folder, site string, fn func() error) error {
 // expungeEach reads the name, removes the record, then the body: a stop between
 // the last two leaves a file for the next rebuild, never a record with no file (#1690).
 func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta, notify mailbox.ExpungeNotify, notifyErr *error) (removed []uint32, failed int) {
-	refs := newBodyRefs(bodyNames(b.store, folder, msgs))
+	// Counted over every record in the folder, not only the doomed ones: a
+	// record that stays behind still names its body (#1693).
+	all, aerr := ReadMessages(b.index, f.ID, mailbox.SeqSet{})
+	if aerr != nil {
+		slog.Error("mailbox/expunge: the folder's records could not be read, so nothing was removed",
+			"user", b.store.Username(), "folder", folder, "err", aerr)
+		return nil, len(msgs)
+	}
+	refs := newBodyRefs(bodyNames(b.store, folder, all))
 	for _, m := range msgs {
 		// The name before the record: a driver named by uid reads it out of
 		// the record this loop is about to remove (#1712).
