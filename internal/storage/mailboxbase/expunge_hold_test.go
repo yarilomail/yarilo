@@ -68,7 +68,7 @@ func TestAnOpenCannotEnterTheExpungeWindow(t *testing.T) {
 		}
 	}()
 
-	removed, failed := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m})
+	removed, failed, _ := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m}, nil)
 	if len(removed) != 1 || failed != 0 {
 		t.Fatalf("expunge removed %v, failed %d", removed, failed)
 	}

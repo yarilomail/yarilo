@@ -168,7 +168,7 @@ func TestExpungeMarkedTakesTheFolderOnce(t *testing.T) {
 	}
 
 	lk.locks = 0
-	removed, failed := batched.ExpungeMarked(f, "INBOX", msgs)
+	removed, failed, _ := batched.ExpungeMarked(f, "INBOX", msgs, nil)
 	if failed != 0 || len(removed) != 3 {
 		t.Fatalf("the batch removed %v and failed %d, want three removed", removed, failed)
 	}
@@ -203,7 +203,7 @@ func TestExpungeMarkedWorksWithNoLocker(t *testing.T) {
 	if err := box.RecordDelivered(f, "INBOX", saved, m); err != nil {
 		t.Fatal(err)
 	}
-	removed, failed := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m})
+	removed, failed, _ := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m}, nil)
 	if failed != 0 || len(removed) != 1 {
 		t.Fatalf("removed %v, failed %d", removed, failed)
 	}
@@ -269,7 +269,7 @@ func TestTheRecordGoesBeforeTheBody(t *testing.T) {
 			rc.Close() //nolint:errcheck
 		}
 	})
-	removed, failed := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m})
+	removed, failed, _ := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m}, nil)
 	disarm()
 	if failed != 0 || len(removed) != 1 {
 		t.Fatalf("removed %v, failed %d", removed, failed)

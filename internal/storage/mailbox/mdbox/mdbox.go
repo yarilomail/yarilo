@@ -344,16 +344,22 @@ func (u *userMailbox) openMap() (*mdboxmap.Map, error) {
 // (Create/Delete/Rename). Save/Fetch/Remove instead go through the map lock
 // taken inside mdboxmap.
 func (u *userMailbox) withMailboxLock(folder string, fn func() error) error {
+	return u.withMailboxLockSite(folder, "mdbox-folder", fn)
+}
+
+// withMailboxLockSite is the same with the reason recorded: an acquisition
+// from an expunge and one from a rebuild cost the same and mean opposites.
+func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) error {
 	if u.b.locker == nil {
 		return fn()
 	}
 	key := locks.MailboxKey(u.username, folder)
-	if held, err := locks.Reentrant(u.b.locker, key, "mdbox-folder", false); err != nil {
+	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
 		return fn()
 	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "mdbox-folder"), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
 	defer cancel()
 	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
 	if err != nil {
@@ -1208,8 +1214,8 @@ func logOtherHeaderSize(file string, offset uint32, announced, actual int) {
 func (u *userMailbox) Username() string { return u.username }
 
 // HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
-func (u *userMailbox) HoldFolder(folder, _ string, fn func() error) error {
-	return u.withMailboxLock(folder, fn)
+func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
+	return u.withMailboxLockSite(folder, site, fn)
 }
 
 // RemoveHeld is Remove: it changes a refcount in the map and takes no folder

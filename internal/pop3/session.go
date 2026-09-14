@@ -1186,7 +1186,7 @@ func (s *session) expungeDeleted() int {
 			marked = append(marked, m)
 		}
 	}
-	removed, failed := s.box.ExpungeMarked(s.folder, "INBOX", marked)
+	removed, failed, _ := s.box.ExpungeMarked(s.folder, "INBOX", marked, nil)
 	if s.srv.opts.Locker != nil && s.userInfo != nil {
 		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -167,17 +167,17 @@ func SaveOnly() BoxOption {
 
 // ExpungeMarked removes messages under one hold: a folder opened between a
 // record and its body holds a file the reconcile imports back (#1794).
-func (b *Box) ExpungeMarked(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta) (removed []uint32, failed int) {
-	err := b.HoldFolder(folder, "expunge-batch", func() error {
-		removed, failed = b.expungeEach(f, folder, msgs)
+func (b *Box) ExpungeMarked(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta, notify mailbox.ExpungeNotify) (removed []uint32, failed int, notifyErr error) {
+	err := b.HoldFolder(folder, "expunge", func() error {
+		removed, failed = b.expungeEach(f, folder, msgs, notify, &notifyErr)
 		return nil
 	})
 	if err != nil {
 		slog.Error("mailbox/expunge: the folder could not be held, so nothing was removed",
 			"user", b.store.Username(), "folder", folder, "err", err)
-		return nil, len(msgs)
+		return nil, len(msgs), notifyErr
 	}
-	return removed, failed
+	return removed, failed, notifyErr
 }
 
 // HoldFolder runs fn under the storage's own folder hold: an option each
@@ -192,7 +192,8 @@ func (b *Box) HoldFolder(folder, site string, fn func() error) error {
 
 // expungeEach reads the name, removes the record, then the body: a stop between
 // the last two leaves a file for the next rebuild, never a record with no file (#1690).
-func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta) (removed []uint32, failed int) {
+func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta, notify mailbox.ExpungeNotify, notifyErr *error) (removed []uint32, failed int) {
+	refs := newBodyRefs(bodyNames(b.store, folder, msgs))
 	for _, m := range msgs {
 		// The name before the record: a driver named by uid reads it out of
 		// the record this loop is about to remove (#1712).
@@ -207,14 +208,27 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 		if testAfterRecordExpunged != nil {
 			testAfterRecordExpunged()
 		}
-		if nameErr != nil || name == "" {
+		if nameErr != nil {
+			name = ""
+		}
+		switch refs.fate(name) {
+		case bodyNameless:
 			slog.Warn("mailbox/expunge: the record named no file; its body, if any, stays",
 				"user", b.store.Username(), "folder", folder, "uid", m.UID, "err", nameErr)
-			continue
+		case bodyShared:
+			slog.Warn("mailbox/expunge: the body stays, another record still names it",
+				"user", b.store.Username(), "folder", folder, "uid", m.UID, "file", name)
+		case bodyFree:
+			if err := b.RemoveHeld(folder, name); err != nil {
+				slog.Error("mailbox/expunge: body", "user", b.store.Username(),
+					"folder", folder, "uid", m.UID, "file", name, "err", err)
+			}
 		}
-		if err := b.RemoveHeld(folder, name); err != nil {
-			slog.Error("mailbox/expunge: body", "user", b.store.Username(),
-				"folder", folder, "uid", m.UID, "file", name, "err", err)
+		if notify != nil {
+			if nerr := notify(m); nerr != nil {
+				*notifyErr = nerr
+				return removed, failed
+			}
 		}
 	}
 	return removed, failed

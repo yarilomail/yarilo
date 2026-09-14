@@ -2668,72 +2668,41 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	// here — the per-message expunge events below supply "after", so an "under"
 	// crossing fires on a delete-only session regardless of SELECT-time seeding.
 	s.captureQuotaSnap()
-	refs := newBodyRefs(bodyNames(s.folderMailbox(), s.folder.Name, msgs))
-	// Each expunge shifts later sequence numbers down by one, so track and
-	// adjust seqNum as we go rather than using the static GetMessages index.
+
+	// Highest sequence number first, so removing one does not shift those still
+	// to come; the base owns the order and the shared-body rule (#1794).
+	seqOf := make(map[uint32]uint32, len(msgs))
+	var doomed []*mailbox.MessageMeta
 	seqNum := uint32(len(msgs))
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if hasFlag(m.Flags, `\Deleted`) &&
+			(uids == nil || uids.Contains(imaplib.UID(m.UID))) {
+			seqOf[m.UID] = seqNum
+			doomed = append(doomed, m)
+		}
+		seqNum--
+	}
+
 	var expunge_count int
-	// One hold over the command: a folder opened between a record and its body
-	// holds a file no record names, which the reconcile imports back (#1794).
-	var writeErr error
-	holdErr := s.folderMailbox().HoldFolder(s.folder.Name, "imap-expunge", func() error {
-		for i := len(msgs) - 1; i >= 0; i-- {
-			m := msgs[i]
-			if !hasFlag(m.Flags, `\Deleted`) {
-				seqNum--
-				continue
-			}
-			if uids != nil && !uids.Contains(imaplib.UID(m.UID)) {
-				seqNum--
-				continue
-			}
-			// The name before the record: a driver named by uid reads it out of the
-			// record this loop is about to remove (#1700).
-			storedName, pathErr := s.folderMailbox().MessagePath(s.folder.Name, m)
-			// Index first: no reader may see a record whose file is already gone. A
-			// crash here leaves a file the next rebuild re-files with a new UID.
-			idx.ExpungeMessage(s.folder.ID, m.UID) //nolint:errcheck
-			switch refs.fate(storedName) {
-			case bodyNameless:
-				slog.Warn("imap: expunge of a record with no filename; its body, if any, is left behind",
-					"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID)
-			case bodyShared:
-				slog.Warn("imap: expunge kept the body, another record still points at it",
-					"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", storedName)
-			case bodyFree:
-				if pathErr != nil {
-					// One line for one fact: the body stays because the record
-					// could not name it, not because the unlink failed.
-					slog.Warn("imap: expunge could not name the message; its body is left behind",
-						"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "err", pathErr)
-					break
-				}
-				if rerr := s.folderMailbox().RemoveHeld(s.folder.Name, storedName); rerr != nil {
-					slog.Warn("imap: expunge storage remove failed (the record is already gone; the file is an orphan until a rebuild)",
-						"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", storedName, "err", rerr)
-				}
-			}
+	_, _, notifyErr := s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed,
+		func(m *mailbox.MessageMeta) error {
 			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m))
 			s.statsExpunged++
 			expunge_count++
-			if err := w.WriteExpunge(seqNum); err != nil {
-				writeErr = err
-				return nil
+			seq := seqOf[m.UID]
+			if err := w.WriteExpunge(seq); err != nil {
+				return err
 			}
 			// Remove from knownMsgs so Poll does not re-deliver this expunge.
-			kIdx := int(seqNum) - 1
+			kIdx := int(seq) - 1
 			if kIdx >= 0 && kIdx < len(s.knownMsgs) {
 				s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
 			}
-			seqNum--
-		}
-		return nil
-	})
-	if holdErr != nil {
-		return holdErr
-	}
-	if writeErr != nil {
-		return writeErr
+			return nil
+		})
+	if notifyErr != nil {
+		return notifyErr
 	}
 	slog.Debug("imap: expunge timing",
 		"user", s.userInfo.Username, "folder", s.folder.Name,
@@ -4323,61 +4292,6 @@ func virtualSizeFromRaw(raw []byte) uint32 {
 		}
 	}
 	return n
-}
-
-// bodyRefs counts how many index records name each file. Mailboxes damaged
-// before the reconcile guard hold several records for one file, and unlinking
-// on the first expunge would strip the body from the ones still live.
-type bodyRefs map[string]int
-
-// newBodyRefs counts how many records point at each body: two records naming
-// one file must not both unlink it.
-func newBodyRefs(names []string) bodyRefs {
-	r := make(bodyRefs, len(names))
-	for _, n := range names {
-		if n != "" {
-			r[n]++
-		}
-	}
-	return r
-}
-
-// bodyNames asks the box what each record is called, which is the only place a
-// name comes from now (#1700).
-func bodyNames(box mailbox.Box, folder string, msgs []*mailbox.MessageMeta) []string {
-	out := make([]string, 0, len(msgs))
-	for _, m := range msgs {
-		if name, err := box.MessagePath(folder, m); err == nil {
-			out = append(out, name)
-		}
-	}
-	return out
-}
-
-// bodyFate is what an expunge does with the record's body.
-type bodyFate int
-
-const (
-	// bodyNameless: the record carries no filename, so there is nothing to free
-	// and nothing referring to anything (#1693).
-	bodyNameless bodyFate = iota
-	// bodyShared: another record still names this file.
-	bodyShared
-	// bodyFree: this was the last record naming it.
-	bodyFree
-)
-
-// fate drops one reference and says what to do with the body. The three cases
-// were two before, and an empty name read as "another record points at it".
-func (r bodyRefs) fate(filename string) bodyFate {
-	if filename == "" {
-		return bodyNameless
-	}
-	r[filename]--
-	if r[filename] <= 0 {
-		return bodyFree
-	}
-	return bodyShared
 }
 
 func numSetContains(numSet imaplib.NumSet, seqNum uint32, uid imaplib.UID) bool {
