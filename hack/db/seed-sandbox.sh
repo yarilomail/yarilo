@@ -59,9 +59,8 @@ SEED_OUT=$({ range mdbox mdbox 1 50; range maildir Maildir 51 100; range sdbox s
 }
 echo "$SEED_OUT" | grep -v Warning || true
 
-# The assertion, not a printout: a count that merely prints reads like a normal
-# result when a format is missing (#1806), and a query that never ran is not
-# a verdict about the matrix (#1817).
+# Assert, do not print: a printed count reads normal when a format is missing
+# (#1806), and a query that never ran is no verdict about the matrix (#1817).
 echo "Verifying the matrix ..."
 RAW=$(mysql_do -N -B -e "
 SELECT CONCAT(mbtype, '=', COUNT(*)) FROM mailbox
