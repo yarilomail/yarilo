@@ -206,6 +206,12 @@ func (c *folderCache) dirEntries(mtime time.Time) ([]os.DirEntry, bool) {
 	return nil, false
 }
 
+// dirSettleWindow is the resolution mtime is kept at.
+const dirSettleWindow = time.Second
+
+// settled reports whether a directory's mtime stands for its contents (#1797).
+func settled(mtime time.Time) bool { return time.Since(mtime) >= dirSettleWindow }
+
 func (c *folderCache) storeDirEntries(entries []os.DirEntry, mtime time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -214,6 +220,14 @@ func (c *folderCache) storeDirEntries(entries []os.DirEntry, mtime time.Time) {
 
 // invalidateUIDs drops the cached list after a rewrite, so the next read takes
 // the file rather than the map it replaced.
+// invalidateDirEntries drops the cached listing, for a caller that has just
+// learnt it is stale.
+func (c *folderCache) invalidateDirEntries() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries, c.dirMtime = nil, time.Time{}
+}
+
 func (c *folderCache) invalidateUIDs() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -710,14 +724,30 @@ func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, err
 	return f, nil
 }
 
+// Remove unlinks one message. A name that is not there is not "already gone":
+// the listing is re-read and the file taken under the name it wears (#1797).
 func (u *userMailbox) Remove(folder, filename string) error {
-	p := filepath.Join(u.folderPath(folder), "cur", filename)
-	err := os.Remove(p)
-	if errors.Is(err, os.ErrNotExist) {
+	dir := filepath.Join(u.folderPath(folder), "cur")
+	err := os.Remove(filepath.Join(dir, filename))
+	switch {
+	case err == nil:
+		u.folderCacheFor(folder).invalidateDir()
+		return nil
+	case !errors.Is(err, os.ErrNotExist):
+		return err
+	}
+	u.folderCacheFor(folder).invalidateDirEntries()
+	current, cerr := u.currentName(folder, maildirBase(filename))
+	if cerr != nil || current == filename {
+		metricRemoveMiss.Inc()
 		return nil
 	}
-	if err != nil {
-		return err
+	if err := os.Remove(filepath.Join(dir, current)); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		metricRemoveMiss.Inc()
+		return nil
 	}
 	u.folderCacheFor(folder).invalidateDir()
 	return nil
@@ -1289,7 +1319,7 @@ func (u *userMailbox) SyncToken(folder string) string {
 		}
 		mt := fi.ModTime()
 		fmt.Fprintf(&b, "%s=%d/%d;", sub, mt.UnixNano(), fi.Size())
-		if now.Sub(mt) < time.Second {
+		if !settled(mt) {
 			dirty = true
 		}
 	}

@@ -20,6 +20,13 @@ var metricImportRowRefused = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Reconcile imports skipped because the list names the file under another uid. The message stays with its owner; nothing is written for the skipped one.",
 })
 
+// metricRemoveMiss counts removals that found no file even after re-reading the
+// listing: the message was already gone. Zero is the expected reading (#1797).
+var metricRemoveMiss = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "maildir_remove_miss_total",
+	Help: "Removals that found no file under the name given or the name the listing now shows. Each is a message something else removed first.",
+})
+
 // metricRecordWithoutRow counts records met with no row in the list, deduped
 // per record per process. Zero is the expected reading (#1745).
 var metricRecordWithoutRow = promauto.NewCounter(prometheus.CounterOpts{
