@@ -38,10 +38,11 @@ func (b *MemoryBackend) AtFront(_ context.Context, resource, ticket string) (boo
 	return line[0].ticket == ticket, nil
 }
 
-// Dequeue implements WaitQueue.
+// Dequeue implements WaitQueue. Leaving names whoever now stands first, so a
+// contender that gave up hands the turn on instead of leaving it to the timer.
 func (b *MemoryBackend) Dequeue(_ context.Context, resource, ticket string) error {
 	b.qmu.Lock()
-	defer b.qmu.Unlock()
+	var nextUp string
 	line := b.queues[resource]
 	for i, entry := range line {
 		if entry.ticket != ticket {
@@ -50,8 +51,16 @@ func (b *MemoryBackend) Dequeue(_ context.Context, resource, ticket string) erro
 		b.queues[resource] = append(line[:i:i], line[i+1:]...)
 		break
 	}
-	if len(b.queues[resource]) == 0 {
+	if left := b.queues[resource]; len(left) == 0 {
 		delete(b.queues, resource)
+	} else {
+		nextUp = left[0].ticket
+	}
+	b.qmu.Unlock()
+	if nextUp != "" {
+		b.mu.Lock()
+		b.handOver(resource, nextUp)
+		b.mu.Unlock()
 	}
 	return nil
 }
@@ -71,11 +80,11 @@ func (b *MemoryBackend) pruneLocked(resource string) []queued {
 }
 
 // Wakes implements WaitQueue.
-func (b *MemoryBackend) Wakes(ctx context.Context, resource string) (<-chan struct{}, func(), error) {
-	ch := make(chan struct{}, 1)
+func (b *MemoryBackend) Wakes(ctx context.Context, resource string) (<-chan string, func(), error) {
+	ch := make(chan string, 8)
 	b.mu.Lock()
 	if b.wakes[resource] == nil {
-		b.wakes[resource] = make(map[chan struct{}]struct{})
+		b.wakes[resource] = make(map[chan string]struct{})
 	}
 	b.wakes[resource][ch] = struct{}{}
 	b.mu.Unlock()
@@ -89,12 +98,24 @@ func (b *MemoryBackend) Wakes(ctx context.Context, resource string) (<-chan stru
 	}, nil
 }
 
-// wakeLocked signals every waiter on resource. Caller holds b.mu; one pending
-// signal is enough, so a full channel needs no second.
+// wakeLocked names whoever now stands first on resource. Caller holds b.mu.
 func (b *MemoryBackend) wakeLocked(resource string) {
+	b.qmu.Lock()
+	line := b.queues[resource]
+	var nextUp string
+	if len(line) > 0 {
+		nextUp = line[0].ticket
+	}
+	b.qmu.Unlock()
+	b.handOver(resource, nextUp)
+}
+
+// handOver names the turn on every listener's channel; each filters by its own
+// ticket. Caller holds b.mu.
+func (b *MemoryBackend) handOver(resource, ticket string) {
 	for ch := range b.wakes[resource] {
 		select {
-		case ch <- struct{}{}:
+		case ch <- ticket:
 		default:
 		}
 	}

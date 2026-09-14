@@ -205,7 +205,8 @@ else
   end
 end
 redis.call("DEL", KEYS[1])
-return {1, resource}
+local next_up = redis.call("ZRANGE", ARGV[2] .. "q:" .. resource, 0, 0)
+return {1, resource, next_up[1] or ""}
 `)
 
 // renewScript extends the TTL, routing to the exclusive resource index or
@@ -312,13 +313,14 @@ func (b *RedisBackend) Release(ctx context.Context, lockID string) error {
 		return fmt.Errorf("locks/redis: release: %w", err)
 	}
 	fields, _ := res.([]interface{})
-	if len(fields) != 2 {
+	if len(fields) != 3 {
 		return ErrNotFound
 	}
 	resource, _ := fields[1].(string)
+	nextUp, _ := fields[2].(string)
 	// Every replica hears it, not only the one the holder was connected to:
 	// a contender waiting elsewhere is woken by this and nothing else (#1821).
-	if err := b.rdb.Publish(ctx, b.wakeChannel(resource), "").Err(); err != nil {
+	if err := b.rdb.Publish(ctx, b.wakeChannel(resource), nextUp).Err(); err != nil {
 		return fmt.Errorf("locks/redis: announce release: %w", err)
 	}
 	return nil

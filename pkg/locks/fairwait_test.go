@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,12 +27,29 @@ func counterNow(t *testing.T, c prometheus.Counter) float64 {
 
 // twoServerStand runs two servers over one backend, each with a client of its
 // own: the shape the chart deploys, where a queue per server is two queues.
-func twoServerStand(t *testing.T) (*Client, *Client, *Metrics) {
+func twoServerStand(t *testing.T) (*Client, *Client, *Metrics, *countingBackend) {
 	t.Helper()
-	backend := NewMemoryBackend()
+	backend := &countingBackend{MemoryBackend: NewMemoryBackend()}
 	t.Cleanup(func() { _ = backend.Close() })
 	m := NewMetrics(prometheus.NewRegistry(), "test")
-	return standOver(t, backend, m), standOver(t, backend, m), m
+	return standOver(t, backend, m), standOver(t, backend, m), m, backend
+}
+
+// countingBackend counts what a hand-off costs: every round trip a waiting
+// contender makes, whether to read the line or to try the lock.
+type countingBackend struct {
+	*MemoryBackend
+	calls atomic.Int64
+}
+
+func (b *countingBackend) AtFront(ctx context.Context, resource, ticket string) (bool, error) {
+	b.calls.Add(1)
+	return b.MemoryBackend.AtFront(ctx, resource, ticket)
+}
+
+func (b *countingBackend) Acquire(ctx context.Context, resource, owner, site string, ttl time.Duration) (string, Holder, error) {
+	b.calls.Add(1)
+	return b.MemoryBackend.Acquire(ctx, resource, owner, site, ttl)
 }
 
 func standOver(t *testing.T, backend Backend, m *Metrics) *Client {
@@ -60,7 +78,7 @@ func standOver(t *testing.T, backend Backend, m *Metrics) *Client {
 // Fifty contenders across two servers over one backend, each holding 10ms:
 // ordered, the longest wait is the holds ahead of it, not a backoff (#1821).
 func TestAContenderWaitsForTheHoldsAheadOfItNotForABackoff(t *testing.T) {
-	first, second, metrics := twoServerStand(t)
+	first, second, metrics, backend := twoServerStand(t)
 	const (
 		contenders = 50
 		hold       = 10 * time.Millisecond
@@ -104,8 +122,14 @@ func TestAContenderWaitsForTheHoldsAheadOfItNotForABackoff(t *testing.T) {
 	// A handover comes from the release announcement. The backstop exists for
 	// an announcement that was lost, and a healthy run never reaches it.
 	if got := counterNow(t, metrics.waitBackstop); got != 0 {
-		t.Errorf("the timer woke %v contenders; every handover should be announced", got)
+		t.Errorf("the timer woke %v contenders that were already first; a handover was owed and never came", got)
 	}
+	// A hand-off names the next ticket, so a contender whose turn it is not
+	// ignores the message without asking the backend anything.
+	if got := backend.calls.Load(); got > 2*contenders {
+		t.Errorf("%d backend round trips for %d hand-offs; a named hand-off costs one, not one per waiter", got, contenders)
+	}
+	t.Logf("backend round trips: %d", backend.calls.Load())
 	ceiling := time.Duration(contenders)*hold + 700*time.Millisecond
 	if longest > ceiling {
 		t.Errorf("the longest wait was %v, want at most %v (the holds ahead of it)", longest, ceiling)
