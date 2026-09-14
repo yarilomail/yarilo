@@ -104,3 +104,43 @@ func hasFlagName(flags []string, want string) bool {
 	}
 	return false
 }
+
+// A GUID override written between two walks reaches the second: it renames
+// nothing, so a record reused whole would keep the derived value (#1800).
+func TestAnOverrideBetweenWalksReachesTheSecond(t *testing.T) {
+	box, _, _ := recSetup(t)
+	const body = "From: a@b\r\nSubject: x\r\n\r\nbody\r\n"
+	name, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", name, 1); aerr != nil {
+		t.Fatal(aerr)
+	}
+	first, err := box.Scan("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived := first[0].GUID
+
+	// The override an import or a backfill writes, with the file untouched.
+	var pinned [16]byte
+	copy(pinned[:], []byte("0123456789abcdef"))
+	if werr := box.withMailboxLockSite("INBOX", "test", func() error {
+		return box.appendUIDListLocked("INBOX", 1, name, true, pinned)
+	}); werr != nil {
+		t.Fatal(werr)
+	}
+	box.folderCacheFor("INBOX").invalidateUIDs()
+
+	second, err := box.Scan("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second[0].GUID == derived {
+		t.Error("the second walk kept the derived GUID; the override never reached it")
+	}
+	if second[0].GUID != pinned {
+		t.Errorf("the second walk reports %x, want the pinned %x", second[0].GUID, pinned)
+	}
+}

@@ -132,25 +132,33 @@ type folderCache struct {
 	uidStamp listStamp
 	entries  []os.DirEntry
 	dirMtime time.Time
-	// scanned is one parsed record per filename: a change renames the file,
-	// so a name already read cannot have changed under it (#1800).
-	scanned map[string]mailbox.ScanRecord
+	// scanned holds what a stat gave for a filename. Only that: a change
+	// renames the file, so these cannot move under a name (#1800).
+	scanned map[string]scanFacts
 }
 
-// scanRecordFor returns the record parsed for this name on an earlier walk.
-func (c *folderCache) scanRecordFor(name string) (mailbox.ScanRecord, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	rec, ok := c.scanned[name]
-	return rec, ok
+// scanFacts is what one walk had to read the file for. The rest is derived
+// every walk: a keyword file or a list override changes no filename.
+type scanFacts struct {
+	size  uint32
+	vsize uint32
+	date  time.Time
 }
 
-// keepScanned replaces the parsed set with what this walk saw, so a name that
-// is gone stops being remembered.
-func (c *folderCache) keepScanned(recs map[string]mailbox.ScanRecord) {
+// scanFactsFor returns what an earlier walk read for this name.
+func (c *folderCache) scanFactsFor(name string) (scanFacts, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.scanned = recs
+	f, ok := c.scanned[name]
+	return f, ok
+}
+
+// keepScanned replaces the read set with what this walk saw, so a name that is
+// gone stops being remembered.
+func (c *folderCache) keepScanned(facts map[string]scanFacts) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.scanned = facts
 }
 
 // snapshotUIDs returns the cached map when the uidlist has not moved. The map
@@ -907,7 +915,7 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 	out := make([]mailbox.ScanRecord, 0, 128)
 	kwNames := u.keywordNames(folder)
 	cache := u.folderCacheFor(folder)
-	kept := make(map[string]mailbox.ScanRecord, 128)
+	kept := make(map[string]scanFacts, 128)
 	for _, sub := range []string{"cur", "new"} {
 		dir := filepath.Join(u.folderPath(folder), sub)
 		entries, err := os.ReadDir(dir)
@@ -922,39 +930,35 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 				continue
 			}
 			name := e.Name()
-			// A name already parsed cannot have changed: flags and size live
-			// in it, and either moving renames the file (#1800).
-			if rec, ok := cache.scanRecordFor(name); ok {
-				kept[name] = rec
-				out = append(out, rec)
-				continue
+			facts, known := cache.scanFactsFor(name)
+			if !known {
+				scanStats.Add(1)
+				phys, virt, hasPhys, _ := parseSizeInfo(name)
+				info, statErr := e.Info()
+				switch {
+				case hasPhys:
+					facts.size = phys
+				case statErr == nil:
+					facts.size = uint32(info.Size())
+				}
+				facts.vsize = virt
+				if statErr == nil {
+					facts.date = info.ModTime()
+				}
 			}
-			scanStats.Add(1)
+			kept[name] = facts
+			// Derived every walk: the keyword file and the list's overrides
+			// change without renaming anything.
 			flags, keywords := decodeFlagsWith(name, kwNames)
-			phys, virt, hasPhys, _ := parseSizeInfo(name)
-			info, statErr := e.Info()
-			var sz uint32
-			var mtime time.Time
-			switch {
-			case hasPhys:
-				sz = phys
-			case statErr == nil:
-				sz = uint32(info.Size())
-			}
-			if statErr == nil {
-				mtime = info.ModTime()
-			}
-			rec := mailbox.ScanRecord{
+			out = append(out, mailbox.ScanRecord{
 				Filename:     name,
-				Size:         sz,
-				VSize:        virt,
-				InternalDate: mtime,
+				Size:         facts.size,
+				VSize:        facts.vsize,
+				InternalDate: facts.date,
 				Flags:        append([]string(nil), flags...),
 				Keywords:     append([]string(nil), keywords...),
 				GUID:         u.guidFor(folder, name),
-			}
-			kept[name] = rec
-			out = append(out, rec)
+			})
 		}
 	}
 	cache.keepScanned(kept)
