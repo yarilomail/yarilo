@@ -2060,3 +2060,14 @@ func (u *userMailbox) reconcileIsClean(box mailbox.Box, folder *mailbox.Folder, 
 
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
+
+// HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
+func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
+	return u.withMailboxLockSite(folder, site, fn)
+}
+
+// RemoveHeld is Remove: a maildir unlink takes no hold of its own, so it
+// composes inside one already taken.
+func (u *userMailbox) RemoveHeld(folder, filename string) error {
+	return u.Remove(folder, filename)
+}

@@ -515,13 +515,26 @@ func corruptRead(op, path string, err error) error {
 
 // Remove unlinks the message file. Idempotent: a missing file is not an error.
 func (u *userMailbox) Remove(folder, filename string) error {
-	return u.withMailboxLock(folder, func() error {
-		path := filepath.Join(u.folderPath(folder), filename)
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("sdbox/remove: %w", err)
-		}
-		return nil
-	})
+	return u.withMailboxLock(folder, func() error { return u.removeLocked(folder, filename) })
+}
+
+// HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
+func (u *userMailbox) HoldFolder(folder, _ string, fn func() error) error {
+	return u.withMailboxLock(folder, fn)
+}
+
+// RemoveHeld unlinks inside a hold the caller already has: Remove takes the
+// same one, and it is not reentrant.
+func (u *userMailbox) RemoveHeld(folder, filename string) error {
+	return u.removeLocked(folder, filename)
+}
+
+func (u *userMailbox) removeLocked(folder, filename string) error {
+	path := filepath.Join(u.folderPath(folder), filename)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("sdbox/remove: %w", err)
+	}
+	return nil
 }
 
 // Copy hardlinks srcFilename into dstFolder under the destination's u.<dstUID>

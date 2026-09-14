@@ -50,6 +50,11 @@ func (m *mockMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 }
 func (m *mockMailbox) List(_ string) ([]*mailbox.MessageMeta, error) { return nil, nil }
 func (m *mockMailbox) Remove(_, _ string) error                      { return nil }
+func (m *mockMailbox) RemoveHeld(_, _ string) error                  { return nil }
+
+// HoldFolder: a double holds nothing, but it must answer, or the base reads it
+// as storage that cannot be held and refuses the write (#1794).
+func (m *mockMailbox) HoldFolder(_, _ string, fn func() error) error { return fn() }
 func (m *mockMailbox) Save(_ string, _ io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	return "", 0, guid, nil
 }

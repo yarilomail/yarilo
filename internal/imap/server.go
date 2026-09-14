@@ -2673,54 +2673,67 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	// adjust seqNum as we go rather than using the static GetMessages index.
 	seqNum := uint32(len(msgs))
 	var expunge_count int
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if !hasFlag(m.Flags, `\Deleted`) {
-			seqNum--
-			continue
-		}
-		if uids != nil && !uids.Contains(imaplib.UID(m.UID)) {
-			seqNum--
-			continue
-		}
-		// The name before the record: a driver named by uid reads it out of the
-		// record this loop is about to remove (#1700).
-		storedName, pathErr := s.folderMailbox().MessagePath(s.folder.Name, m)
-		// Index first: no reader may see a record whose file is already gone. A
-		// crash here leaves a file the next rebuild re-files with a new UID.
-		idx.ExpungeMessage(s.folder.ID, m.UID) //nolint:errcheck
-		switch refs.fate(storedName) {
-		case bodyNameless:
-			slog.Warn("imap: expunge of a record with no filename; its body, if any, is left behind",
-				"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID)
-		case bodyShared:
-			slog.Warn("imap: expunge kept the body, another record still points at it",
-				"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", storedName)
-		case bodyFree:
-			if pathErr != nil {
-				// One line for one fact: the body stays because the record
-				// could not name it, not because the unlink failed.
-				slog.Warn("imap: expunge could not name the message; its body is left behind",
-					"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "err", pathErr)
-				break
+	// One hold over the command: a folder opened between a record and its body
+	// holds a file no record names, which the reconcile imports back (#1794).
+	var writeErr error
+	holdErr := s.folderMailbox().HoldFolder(s.folder.Name, "imap-expunge", func() error {
+		for i := len(msgs) - 1; i >= 0; i-- {
+			m := msgs[i]
+			if !hasFlag(m.Flags, `\Deleted`) {
+				seqNum--
+				continue
 			}
-			if rerr := s.folderBox().Remove(s.folder.Name, storedName); rerr != nil {
-				slog.Warn("imap: expunge storage remove failed (the record is already gone; the file is an orphan until a rebuild)",
-					"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", storedName, "err", rerr)
+			if uids != nil && !uids.Contains(imaplib.UID(m.UID)) {
+				seqNum--
+				continue
 			}
+			// The name before the record: a driver named by uid reads it out of the
+			// record this loop is about to remove (#1700).
+			storedName, pathErr := s.folderMailbox().MessagePath(s.folder.Name, m)
+			// Index first: no reader may see a record whose file is already gone. A
+			// crash here leaves a file the next rebuild re-files with a new UID.
+			idx.ExpungeMessage(s.folder.ID, m.UID) //nolint:errcheck
+			switch refs.fate(storedName) {
+			case bodyNameless:
+				slog.Warn("imap: expunge of a record with no filename; its body, if any, is left behind",
+					"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID)
+			case bodyShared:
+				slog.Warn("imap: expunge kept the body, another record still points at it",
+					"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", storedName)
+			case bodyFree:
+				if pathErr != nil {
+					// One line for one fact: the body stays because the record
+					// could not name it, not because the unlink failed.
+					slog.Warn("imap: expunge could not name the message; its body is left behind",
+						"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "err", pathErr)
+					break
+				}
+				if rerr := s.folderMailbox().RemoveHeld(s.folder.Name, storedName); rerr != nil {
+					slog.Warn("imap: expunge storage remove failed (the record is already gone; the file is an orphan until a rebuild)",
+						"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "file", storedName, "err", rerr)
+				}
+			}
+			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m))
+			s.statsExpunged++
+			expunge_count++
+			if err := w.WriteExpunge(seqNum); err != nil {
+				writeErr = err
+				return nil
+			}
+			// Remove from knownMsgs so Poll does not re-deliver this expunge.
+			kIdx := int(seqNum) - 1
+			if kIdx >= 0 && kIdx < len(s.knownMsgs) {
+				s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
+			}
+			seqNum--
 		}
-		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m))
-		s.statsExpunged++
-		expunge_count++
-		if err := w.WriteExpunge(seqNum); err != nil {
-			return err
-		}
-		// Remove from knownMsgs so Poll does not re-deliver this expunge.
-		kIdx := int(seqNum) - 1
-		if kIdx >= 0 && kIdx < len(s.knownMsgs) {
-			s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
-		}
-		seqNum--
+		return nil
+	})
+	if holdErr != nil {
+		return holdErr
+	}
+	if writeErr != nil {
+		return writeErr
 	}
 	slog.Debug("imap: expunge timing",
 		"user", s.userInfo.Username, "folder", s.folder.Name,

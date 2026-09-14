@@ -1206,3 +1206,14 @@ func logOtherHeaderSize(file string, offset uint32, announced, actual int) {
 
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
+
+// HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
+func (u *userMailbox) HoldFolder(folder, _ string, fn func() error) error {
+	return u.withMailboxLock(folder, fn)
+}
+
+// RemoveHeld is Remove: it changes a refcount in the map and takes no folder
+// hold of its own.
+func (u *userMailbox) RemoveHeld(folder, filename string) error {
+	return u.Remove(folder, filename)
+}

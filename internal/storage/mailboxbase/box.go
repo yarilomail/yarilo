@@ -1,24 +1,18 @@
 package mailboxbase
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
-	"time"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
-
-	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
 // Box is the shared base every driver's mailbox embeds: the rules that need the
 // store and the index together live here, once (#1715).
 type Box struct {
-	store  mailbox.UserMailbox
-	index  mailbox.UserIndex
-	locker locks.Locker
-	owner  string
+	store mailbox.UserMailbox
+	index mailbox.UserIndex
 	// mode is what an open owes the folder: settle, read, or only add (#1778).
 	mode openMode
 }
@@ -156,12 +150,6 @@ func (b *Box) Messages(folderID uint64, set mailbox.SeqSet) ([]*mailbox.MessageM
 	return ReadMessages(b.index, folderID, set)
 }
 
-// WithLocker gives the box the cross-process lock client, so a rule needing one
-// hold over many messages has one to take.
-func WithLocker(l locks.Locker, owner string) BoxOption {
-	return func(b *Box) { b.locker, b.owner = l, owner }
-}
-
 // BoxOption tunes a box at Open time.
 type BoxOption func(*Box)
 
@@ -177,23 +165,29 @@ func SaveOnly() BoxOption {
 	return func(b *Box) { b.mode = openSaveOnly }
 }
 
-// ExpungeMarked removes messages under one hold: taking the key per message
-// lets another writer in between two removals. One failure is not the batch's.
+// ExpungeMarked removes messages under one hold: a folder opened between a
+// record and its body holds a file the reconcile imports back (#1794).
 func (b *Box) ExpungeMarked(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta) (removed []uint32, failed int) {
-	if b.locker == nil {
-		return b.expungeEach(f, folder, msgs)
-	}
-	key := locks.MailboxKey(b.store.Username(), folder)
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "pop3-batch"), 35*time.Second)
-	defer cancel()
-	lk, err := locks.Acquire(ctx, b.locker, key, b.owner, 30*time.Second)
+	err := b.HoldFolder(folder, "expunge-batch", func() error {
+		removed, failed = b.expungeEach(f, folder, msgs)
+		return nil
+	})
 	if err != nil {
-		slog.Error("mailbox/expunge: the batch could not take the folder; falling back to one hold per message",
+		slog.Error("mailbox/expunge: the folder could not be held, so nothing was removed",
 			"user", b.store.Username(), "folder", folder, "err", err)
-		return b.expungeEach(f, folder, msgs)
+		return nil, len(msgs)
 	}
-	defer func() { _ = b.locker.Unlock(ctx, lk.ID) }()
-	return b.expungeEach(f, folder, msgs)
+	return removed, failed
+}
+
+// HoldFolder runs fn under the storage's own folder hold: an option each
+// protocol passes is one the next protocol forgets (#1794).
+func (b *Box) HoldFolder(folder, site string, fn func() error) error {
+	h, ok := mailbox.Driver(b.store).(mailbox.FolderHolder)
+	if !ok {
+		return fmt.Errorf("mailbox/hold: %T cannot hold a folder", mailbox.Driver(b.store))
+	}
+	return h.HoldFolder(folder, site, fn)
 }
 
 // expungeEach reads the name, removes the record, then the body: a stop between
@@ -218,7 +212,7 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 				"user", b.store.Username(), "folder", folder, "uid", m.UID, "err", nameErr)
 			continue
 		}
-		if err := b.store.Remove(folder, name); err != nil {
+		if err := b.RemoveHeld(folder, name); err != nil {
 			slog.Error("mailbox/expunge: body", "user", b.store.Username(),
 				"folder", folder, "uid", m.UID, "file", name, "err", err)
 		}
@@ -251,3 +245,12 @@ func (b *Box) Close() {
 }
 
 var _ mailbox.Box = (*Box)(nil)
+
+// RemoveHeld unlinks a body while this folder is held: a driver whose Remove
+// takes the same hold cannot be called from inside one (#1794).
+func (b *Box) RemoveHeld(folder, name string) error {
+	if r, ok := mailbox.Driver(b.store).(mailbox.HeldRemover); ok {
+		return r.RemoveHeld(folder, name)
+	}
+	return b.store.Remove(folder, name)
+}

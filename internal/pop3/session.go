@@ -597,7 +597,7 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	}
 
 	s.userInfo = userInfo
-	s.box = mailboxbase.Open(box, idx, mailboxbase.WithLocker(s.srv.opts.Locker, locks.Owner(userInfo.Username, userInfo.LockID())))
+	s.box = mailboxbase.Open(box, idx)
 
 	if err := s.loadMailbox(); err != nil {
 		// The whole login is rolled back, the session lock included: a retry on

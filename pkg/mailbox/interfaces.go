@@ -669,6 +669,18 @@ type FlagWriterMulti interface {
 	WriteFlagsMulti(folder string, writes []FlagWrite) []FlagWriteResult
 }
 
+// FolderHolder runs fn under the driver's own folder hold. The lock belongs to
+// the storage, not to the protocol that opened it (#1794).
+type FolderHolder interface {
+	HoldFolder(folder, site string, fn func() error) error
+}
+
+// HeldRemover unlinks a body whose folder the caller already holds, for a
+// driver whose Remove takes that hold itself and cannot be nested.
+type HeldRemover interface {
+	RemoveHeld(folder, filename string) error
+}
+
 // SplitStoredFlags sorts one stored list back into the two fields MessageMeta
 // keeps apart (#1605).
 func SplitStoredFlags(all []string) (flags, keywords []string) {

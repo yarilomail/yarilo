@@ -37,6 +37,11 @@ type Box interface {
 	WriteFlags(f *Folder, folder string, writes []FlagWrite) []FlagWriteResult
 	// ExpungeMarked removes messages and their records under one hold.
 	ExpungeMarked(f *Folder, folder string, msgs []*MessageMeta) (removed []uint32, failed int)
+	// HoldFolder runs fn under the storage's folder hold, for a caller whose
+	// own multi-step write must not be interleaved (#1794).
+	HoldFolder(folder, site string, fn func() error) error
+	// RemoveHeld unlinks a body inside a hold the caller already has.
+	RemoveHeld(folder, name string) error
 	// RemoveMessage unlinks a body, leaving the record to the caller.
 	RemoveMessage(folder string, m *MessageMeta) error
 
