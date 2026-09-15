@@ -297,9 +297,8 @@ func TestAHandOffSurvivesABurstOfOtherTurns(t *testing.T) {
 	}
 }
 
-// The queue is a right, not a notification: a contender that is not at the head
-// does not get the lock even when the resource is free, so the head cannot be
-// overtaken by whoever wakes first (#1809).
+// The queue is a right, not a notification: only its head takes the lock, even
+// when the resource is free (#1809).
 func TestOnlyTheHeadOfTheQueueMayTakeTheLock(t *testing.T) {
 	backend := NewMemoryBackend()
 	t.Cleanup(func() { _ = backend.Close() })
