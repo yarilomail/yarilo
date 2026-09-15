@@ -388,10 +388,6 @@ components:
       key_prefix: "yarilo-sb:warden:"
       channel_prefix: "yarilo-sb:warden:events:"
   locks:
-    client:
-      ## One lease per account instead of a lock per command (#1840): the
-      ## measurement the decision rests on runs with this on.
-      user_lease: true
     internalTLS:
       enabled: true
       secretName: yarilo-internal-tls
