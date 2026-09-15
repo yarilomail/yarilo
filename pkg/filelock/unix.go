@@ -11,9 +11,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// pollInterval is how often a blocked taker retries. fcntl's blocking form
-// would be one syscall, but it cannot be cancelled, and a writer that waits
-// for ever on a wedged mount is worse than one that gives up (#1840).
+// pollInterval is how often a blocked taker retries: the blocking form cannot
+// be cancelled, and a writer waiting for ever on a wedged mount is worse.
 const pollInterval = 2 * time.Millisecond
 
 func lockFD(f *os.File, method Method, wait time.Duration) error {

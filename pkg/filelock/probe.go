@@ -12,9 +12,8 @@ import (
 // take one lock and say whether it got it.
 const probeEnv = "YARILO_FILELOCK_PROBE"
 
-// ProbeMain runs the child half of Verify and reports whether it ran. Every
-// binary that verifies a volume calls it first thing in main: without it the
-// child would start a server instead of answering (#1840).
+// ProbeMain runs the child half of Verify. Called first thing in main, or the
+// child starts a server instead of answering (#1840).
 func ProbeMain() bool {
 	spec := os.Getenv(probeEnv)
 	if spec == "" {

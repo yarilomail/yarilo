@@ -116,9 +116,8 @@ func (h *Hold) Release() error {
 	return cerr
 }
 
-// Verify asks the volume at startup whether it excludes a second writer: a
-// mount with no lock daemon answers ENOLCK or admits both, and learning that
-// while serving mail means learning it as loss (#1840).
+// Verify asks the volume at startup whether it excludes a second writer:
+// learning otherwise while serving mail means learning it as loss (#1840).
 func Verify(dir string, method Method) error {
 	probe := filepath.Join(dir, ".yarilo-lock-probe")
 	defer func() { _ = os.Remove(probe) }()

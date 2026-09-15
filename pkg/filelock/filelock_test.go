@@ -94,9 +94,8 @@ func TestParseNamesTheTransport(t *testing.T) {
 	}
 }
 
-// A reader opening and closing the same file must not drop the writer's lock.
-// A POSIX record lock does exactly that -- it belongs to the process and goes
-// on any close -- which is why flock is the default (#1840).
+// A reader's open and close must not drop the writer's lock. A POSIX record
+// lock does exactly that, which is why flock is the default (#1840).
 func TestAnUnrelatedCloseDoesNotDropTheLock(t *testing.T) {
 	for _, tc := range []struct {
 		method Method
