@@ -20,9 +20,11 @@ func (u *userIndex) Begin(folderID uint64) (mailbox.IndexTx, error) {
 
 // txOp is one queued change. The kind decides which fields carry meaning.
 type txOp struct {
-	kind txKind
-	uid  uint32
-	meta *mailbox.MessageMeta
+	kind     txKind
+	uid      uint32
+	meta     *mailbox.MessageMeta
+	flags    []string
+	keywords []string
 }
 
 type txKind uint8
@@ -30,6 +32,7 @@ type txKind uint8
 const (
 	opExpunge txKind = iota
 	opAppend
+	opUpdateFlags
 )
 
 // indexTx accumulates one command's changes. Queueing touches nothing on disk.
@@ -46,6 +49,10 @@ func (t *indexTx) Expunge(uid uint32) {
 
 func (t *indexTx) Append(m *mailbox.MessageMeta) {
 	t.ops = append(t.ops, txOp{kind: opAppend, meta: m})
+}
+
+func (t *indexTx) UpdateFlags(uid uint32, flags, keywords []string) {
+	t.ops = append(t.ops, txOp{kind: opUpdateFlags, uid: uid, flags: flags, keywords: keywords})
 }
 
 func (t *indexTx) Rollback() { t.done = true }
@@ -106,16 +113,14 @@ func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byt
 			return nil, err
 		}
 		return fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+	case opUpdateFlags:
+		return fs.writeFlagsLocked(op.uid, op.flags, op.keywords, flagsReplace, modseq)
 	}
 	return nil, fmt.Errorf("fileindex/tx: unknown operation %d", op.kind)
 }
-
-var _ mailbox.TxIndex = (*userIndex)(nil)
 
 // Begin on the session handle stamps the folder the way every other write does,
 // then opens the transaction on the shared index beneath it.
 func (h *userHandle) Begin(folderID uint64) (mailbox.IndexTx, error) {
 	return h.stamped(folderID).Begin(folderID)
 }
-
-var _ mailbox.TxIndex = (*userHandle)(nil)

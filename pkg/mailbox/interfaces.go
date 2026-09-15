@@ -438,6 +438,9 @@ type IndexBackend interface {
 // All folder IDs are local to this handle — they must not be shared across handles.
 type UserIndex interface {
 	OpenFolder(folder string, uidValidity uint32) (*Folder, error)
+	// Begin opens a transaction on one folder: changes are queued against a
+	// view and written once, under one hold (#1827).
+	Begin(folderID uint64) (IndexTx, error)
 	SaveFolder(f *Folder) error
 	AppendMessage(folderID uint64, m *MessageMeta) error
 	// AllocateUID atomically reserves and persists the folder's next UID under the

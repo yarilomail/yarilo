@@ -219,29 +219,23 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 		list = append(list, doomed{msg: m, name: name, err: nameErr})
 	}
 
-	if tx, batched := mailbox.BeginTx(b.index, f.ID); batched {
-		defer tx.Rollback()
-		for _, d := range list {
-			tx.Expunge(d.msg.UID)
-		}
-		if _, cerr := tx.Commit(); cerr != nil {
-			slog.Error("mailbox/expunge: the records could not be removed, so no body was",
-				"user", b.store.Username(), "folder", folder, "err", cerr)
-			return nil, len(msgs)
-		}
-		for _, d := range list {
-			removed = append(removed, d.msg.UID)
-		}
-	} else {
-		for _, d := range list {
-			if err := b.index.ExpungeMessage(f.ID, d.msg.UID); err != nil {
-				slog.Error("mailbox/expunge: record", "user", b.store.Username(),
-					"folder", folder, "uid", d.msg.UID, "err", err)
-				failed++
-				continue
-			}
-			removed = append(removed, d.msg.UID)
-		}
+	tx, terr := b.index.Begin(f.ID)
+	if terr != nil {
+		slog.Error("mailbox/expunge: the folder could not be opened for writing, so nothing was removed",
+			"user", b.store.Username(), "folder", folder, "err", terr)
+		return nil, len(msgs)
+	}
+	defer tx.Rollback()
+	for _, d := range list {
+		tx.Expunge(d.msg.UID)
+	}
+	if _, cerr := tx.Commit(); cerr != nil {
+		slog.Error("mailbox/expunge: the records could not be removed, so no body was",
+			"user", b.store.Username(), "folder", folder, "err", cerr)
+		return nil, len(msgs)
+	}
+	for _, d := range list {
+		removed = append(removed, d.msg.UID)
 	}
 	if testAfterRecordExpunged != nil {
 		testAfterRecordExpunged()

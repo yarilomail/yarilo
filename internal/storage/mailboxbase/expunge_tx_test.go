@@ -99,11 +99,7 @@ func TestTheIndexIsTakenOncePerTransaction(t *testing.T) {
 		uids = append(uids, m.UID)
 	}
 
-	txi, isTx := idx.(mailbox.TxIndex)
-	if !isTx {
-		t.Fatalf("index %T is no TxIndex", idx)
-	}
-	tx, berr := txi.Begin(f.ID)
+	tx, berr := idx.Begin(f.ID)
 	if berr != nil {
 		t.Fatalf("begin: %v", berr)
 	}
@@ -135,5 +131,63 @@ func TestTheIndexIsTakenOncePerTransaction(t *testing.T) {
 	}
 	if len(left) != 0 {
 		t.Errorf("%d records survived the transaction", len(left))
+	}
+}
+
+// A command's worth of flag changes is one transaction, so a STORE over N
+// messages takes the index once (#1827).
+func TestFlagChangesTakeTheIndexOncePerTransaction(t *testing.T) {
+	const messages = 40
+
+	home := t.TempDir()
+	info := &mailbox.UserInfo{Username: "u@x.com", Home: home, Driver: "maildir"}
+	lk := &countingLocker{held: map[string]locks.HoldMode{}}
+	idx := fileidx.New(fileidx.WithLocker(lk)).OpenUser(info)
+	t.Cleanup(func() { _ = idx.Close() })
+
+	f, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uids := make([]uint32, 0, messages)
+	for i := 0; i < messages; i++ {
+		m := &mailbox.MessageMeta{Size: 10, VSize: 10}
+		if aerr := idx.AllocateAndAppend(f.ID, m); aerr != nil {
+			t.Fatal(aerr)
+		}
+		uids = append(uids, m.UID)
+	}
+
+	tx, berr := idx.Begin(f.ID)
+	if berr != nil {
+		t.Fatal(berr)
+	}
+	before := lk.locks
+	for _, uid := range uids {
+		tx.UpdateFlags(uid, []string{`\Seen`}, nil)
+	}
+	if _, cerr := tx.Commit(); cerr != nil {
+		t.Fatal(cerr)
+	}
+	took := lk.locks - before
+	t.Logf("index locks for %d flag changes in one transaction: %d", messages, took)
+	if took != 1 {
+		t.Errorf("one transaction over %d flag changes took %d index locks, want 1", messages, took)
+	}
+
+	msgs, gerr := idx.GetMessages(f.ID, mailbox.SeqSet{})
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	for _, m := range msgs {
+		var seen bool
+		for _, fl := range m.Flags {
+			if fl == `\Seen` {
+				seen = true
+			}
+		}
+		if !seen {
+			t.Fatalf("uid %d did not take the flag the transaction wrote", m.UID)
+		}
 	}
 }

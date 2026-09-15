@@ -11,6 +11,9 @@ type IndexTx interface {
 	// same hold, and written back into m.
 	Append(m *MessageMeta)
 
+	// UpdateFlags replaces the absolute flag and keyword set for uid.
+	UpdateFlags(uid uint32, flags, keywords []string)
+
 	// Commit writes everything queued, or nothing. The modseq it reports is
 	// the folder's after the write.
 	Commit() (modseq uint64, err error)
@@ -18,24 +21,4 @@ type IndexTx interface {
 	// Rollback discards the transaction. Safe after Commit, where it does
 	// nothing, so a deferred Rollback is the ordinary shape.
 	Rollback()
-}
-
-// TxIndex is a UserIndex that can open a transaction. The per-message methods
-// remain a transaction of one operation, so there is no second contract.
-type TxIndex interface {
-	Begin(folderID uint64) (IndexTx, error)
-}
-
-// BeginTx opens a transaction on idx, for a caller holding the interface rather
-// than the implementation.
-func BeginTx(idx UserIndex, folderID uint64) (IndexTx, bool) {
-	tx, ok := idx.(TxIndex)
-	if !ok {
-		return nil, false
-	}
-	t, err := tx.Begin(folderID)
-	if err != nil {
-		return nil, false
-	}
-	return t, true
 }

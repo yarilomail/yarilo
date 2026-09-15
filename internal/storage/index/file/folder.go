@@ -1184,6 +1184,18 @@ func (u *userIndex) writeFlags(folderID uint64, uid uint32, flags, keywords []st
 		if err != nil {
 			return err
 		}
+		recs, werr := fs.writeFlagsLocked(uid, flags, keywords, mode, modseq)
+		if werr != nil {
+			return werr
+		}
+		return fs.appendMutLog(recs...)
+	})
+}
+
+// writeFlagsLocked is the in-memory half of a flag write, returning the log
+// records it needs so a transaction can carry a command's worth (#1827).
+func (fs *folderState) writeFlagsLocked(uid uint32, flags, keywords []string, mode flagWriteMode, modseq uint64) ([][]byte, error) {
+	{
 		// The record's own keywords under the lock: Add/Remove fold into them,
 		// so one set since the caller's read is not dropped.
 		var have []string
@@ -1201,11 +1213,11 @@ func (u *userIndex) writeFlags(folderID uint64, uid uint32, flags, keywords []st
 		}
 		kwBits, kwReg, err := keywordsBitmaskFor(fs.keywords, keywords)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		fs.keywords = kwReg
 		if err := fs.persistKeywordRegistry(); err != nil {
-			return err
+			return nil, err
 		}
 		newFlags := mailindex.MailFlag(imapFlagsToIndex(flags))
 		for _, rec := range fs.file.Records {
@@ -1255,8 +1267,8 @@ func (u *userIndex) writeFlags(folderID uint64, uid uint32, flags, keywords []st
 			encU32Update(40, fs.file.Header.SeenMessagesCount),
 			encU32Update(44, fs.file.Header.DeletedMessagesCount),
 		)
-		return fs.appendMutLog(recs...)
-	})
+		return recs, nil
+	}
 }
 
 // MarkFolderCorrupt persists the FSCKD header flag (header offset 20) so
