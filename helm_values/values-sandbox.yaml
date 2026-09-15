@@ -138,17 +138,10 @@ image:
   ## rather than a staleness risk (#1217).
   pullPolicy: IfNotPresent
 
-## Info everywhere, debug only where the uidlist rows are written and read:
-## cluster-wide debug rotates away the window being investigated (#1739).
+## Info everywhere, as production runs: a debug line per uidlist read was ~4% of
+## the imap process's CPU, and the storage it weighs is the one being measured
+## against a control that logs less (#1846).
 logLevel: info
-logLevelOverrides:
-  yarilo-imap: debug
-  ## The hand-off trace (#1809) lives at debug and is read per acquisition.
-  yarilo-locks: debug
-  yarilo-lmtp: debug
-  yarilo-fts: debug
-  yarilo-jmap: debug
-  yarilo-jmap-login: debug
 
 service:
   type: LoadBalancer
