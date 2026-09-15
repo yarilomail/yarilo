@@ -95,6 +95,53 @@ type mockIndex struct {
 }
 
 func (m *mockIndex) OpenUser(_ *mailbox.UserInfo) mailbox.UserIndex { return m }
+
+// Begin queues against the same maps the per-message methods write, so the
+// double keeps one behaviour rather than two.
+func (m *mockIndex) Begin(folderID uint64) (mailbox.IndexTx, error) {
+	return &mockTx{idx: m, folderID: folderID}, nil
+}
+
+type mockTx struct {
+	idx      *mockIndex
+	folderID uint64
+	expunge  []uint32
+	appends  []*mailbox.MessageMeta
+	flags    []mockFlagOp
+}
+
+type mockFlagOp struct {
+	uid uint32
+	upd mailbox.FlagsUpdate
+}
+
+func (t *mockTx) Expunge(uid uint32)            { t.expunge = append(t.expunge, uid) }
+func (t *mockTx) Append(m *mailbox.MessageMeta) { t.appends = append(t.appends, m) }
+func (t *mockTx) UpdateFlags(uid uint32, upd mailbox.FlagsUpdate) {
+	t.flags = append(t.flags, mockFlagOp{uid: uid, upd: upd})
+}
+func (t *mockTx) Rollback() {}
+
+func (t *mockTx) Commit() (mailbox.TxResult, error) {
+	var out mailbox.TxResult
+	for _, uid := range t.expunge {
+		if err := t.idx.ExpungeMessage(t.folderID, uid); err != nil {
+			return out, err
+		}
+	}
+	for _, m := range t.appends {
+		if err := t.idx.AppendMessage(t.folderID, m); err != nil {
+			return out, err
+		}
+	}
+	for _, f := range t.flags {
+		if err := t.idx.UpdateFlags(t.folderID, f.uid, f.upd.Flags, f.upd.Keywords); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
 func (m *mockIndex) OpenFolder(folder string, uv uint32) (*mailbox.Folder, error) {
 	return &mailbox.Folder{ID: 1, Name: folder, UIDValidity: uv}, nil
 }
@@ -107,9 +154,6 @@ func (m *mockIndex) UpdateFlags(_ uint64, _ uint32, _, _ []string) error      { 
 func (m *mockIndex) AddFlags(_ uint64, _ uint32, _, _ []string) error         { return nil }
 func (m *mockIndex) RemoveFlags(_ uint64, _ uint32, _, _ []string) error      { return nil }
 func (m *mockIndex) UpdateFilename(_ uint64, _ uint32, _ string) error        { return nil }
-func (m *mockIndex) UpdateFlagsMulti(_ uint64, _ map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
-	return nil, nil
-}
 func (m *mockIndex) GetMessages(_ uint64, _ mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
 	return m.msgs, nil
 }

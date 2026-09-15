@@ -79,7 +79,7 @@ func keywordsOfUID(t *testing.T, idx mailbox.UserIndex, folderID uint64, uid uin
 	return msgs[0].Keywords
 }
 
-// The batch path is the one IMAP STORE actually takes (UpdateFlagsMulti), so
+// The batch path is the one IMAP STORE actually takes (a transaction), so
 // it gets its own row: a fix applied to the single-message path only would
 // leave the deployed path exactly as broken as before.
 func TestKeywordSetThroughTheBatchPathIsVisibleToAnotherHandle(t *testing.T) {
@@ -98,7 +98,7 @@ func TestKeywordSetThroughTheBatchPathIsVisibleToAnotherHandle(t *testing.T) {
 	}
 
 	const custom = "$smokelabel"
-	if _, err := writer.UpdateFlagsMulti(wf.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, writer, wf.ID, map[uint32]mailbox.FlagsUpdate{
 		m.UID: {Mode: mailbox.FlagsAdd, Flags: []string{`\Seen`}, Keywords: []string{custom}},
 	}); err != nil {
 		t.Fatalf("update flags multi: %v", err)
@@ -137,7 +137,7 @@ func TestFlagOnlyStoreDoesNotRewriteTheBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat base: %v", err)
 	}
-	if _, err := idx.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, idx, f.ID, map[uint32]mailbox.FlagsUpdate{
 		m.UID: {Mode: mailbox.FlagsAdd, Flags: []string{`\Seen`}},
 	}); err != nil {
 		t.Fatalf("update flags multi: %v", err)

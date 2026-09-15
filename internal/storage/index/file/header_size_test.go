@@ -48,7 +48,7 @@ func TestKeywordRegistryOfEitherParityFlushes(t *testing.T) {
 				t.Fatalf("append: %v", err)
 			}
 			for _, kw := range tc.names {
-				if _, err := idx.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+				if _, err := updateFlagsMulti(t, idx, f.ID, map[uint32]mailbox.FlagsUpdate{
 					m.UID: {Mode: mailbox.FlagsAdd, Keywords: []string{kw}},
 				}); err != nil {
 					t.Fatalf("store %q: %v", kw, err)

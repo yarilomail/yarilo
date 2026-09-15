@@ -3478,8 +3478,16 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	// Pass 2: single lock/reload/flush for all flag updates.
 	var results map[uint32]mailbox.FlagsResult
 	if len(batchUpdates) > 0 {
-		var err error
-		results, err = idx.UpdateFlagsMulti(s.folder.ID, batchUpdates)
+		tx, terr := idx.Begin(s.folder.ID)
+		if terr != nil {
+			return dependencyError(terr)
+		}
+		defer tx.Rollback()
+		for uid, upd := range batchUpdates {
+			tx.UpdateFlags(uid, upd)
+		}
+		out, err := tx.Commit()
+		results = out.Flags
 		if err != nil {
 			// Classified before it leaves: an unwrapped error becomes
 			// NO [SERVERBUG] in the library, which tells the client this

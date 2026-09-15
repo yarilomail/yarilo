@@ -277,7 +277,7 @@ type FolderStamp struct {
 }
 
 // FlagsUpdate carries the new flag and keyword sets for one message in a
-// batch UpdateFlagsMulti call.
+// batch, as one transaction.
 type FlagsUpdate struct {
 	Flags    []string
 	Keywords []string
@@ -438,6 +438,9 @@ type IndexBackend interface {
 // All folder IDs are local to this handle — they must not be shared across handles.
 type UserIndex interface {
 	OpenFolder(folder string, uidValidity uint32) (*Folder, error)
+	// Begin opens a transaction on one folder: changes are queued against a
+	// view and written once, under one hold (#1827).
+	Begin(folderID uint64) (IndexTx, error)
 	SaveFolder(f *Folder) error
 	AppendMessage(folderID uint64, m *MessageMeta) error
 	// AllocateUID atomically reserves and persists the folder's next UID under the
@@ -463,9 +466,6 @@ type UserIndex interface {
 	// through UpdateFlags means sending the whole remaining set, which is a set
 	// the caller read earlier.
 	RemoveFlags(folderID uint64, uid uint32, flags, keywords []string) error
-	// UpdateFlagsMulti replaces flags+keywords for a batch of UIDs in a
-	// single lock/reload/flush cycle. Returns the new modseq per UID.
-	UpdateFlagsMulti(folderID uint64, updates map[uint32]FlagsUpdate) (map[uint32]FlagsResult, error)
 	// SetAltTier sets or clears the AltTier marker (FlagBackend) for every record
 	// whose storage key matches one of the supplied names, under the
 	// folder's cross-process mailbox lock. Called by the altmove API after

@@ -306,12 +306,14 @@ func (b *raceBackend) OpenUser(info *mailbox.UserInfo) mailbox.UserIndex {
 	return idx
 }
 
-func (i *raceIndex) UpdateFlagsMulti(folderID uint64, updates map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
+// Begin is where the race is injected now that a flag batch is a transaction:
+// the other session writes between this call and the commit.
+func (i *raceIndex) Begin(folderID uint64) (mailbox.IndexTx, error) {
 	if !i.parent.once {
 		i.parent.once = true
 		i.parent.inject(i.UserIndex)
 	}
-	return i.UserIndex.UpdateFlagsMulti(folderID, updates)
+	return i.UserIndex.Begin(folderID)
 }
 
 // The lost-update the store closed for IMAP (#1282), asked of JMAP: another
@@ -366,7 +368,7 @@ func TestEmailSetPatchDoesNotEraseAConcurrentKeyword(t *testing.T) {
 				if err != nil {
 					t.Fatalf("concurrent open: %v", err)
 				}
-				if _, err := other.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+				if _, err := writeFlagBatch(other, f.ID, map[uint32]mailbox.FlagsUpdate{
 					1: {Mode: mailbox.FlagsAdd, Flags: []string{`\Flagged`}},
 				}); err != nil {
 					t.Fatalf("concurrent store: %v", err)
