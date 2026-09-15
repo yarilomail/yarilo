@@ -1096,9 +1096,8 @@ type LocksClientConfig struct {
 	Mode      string   `koanf:"mode"`      // remote | embedded | ""
 	Endpoints []string `koanf:"endpoints"` // remote: ["yarilo-locks.svc:9104", ...]
 	Socket    string   `koanf:"socket"`    // embedded: /run/yarilo/locks.sock
-	// UserLease serialises an account in process under one lease taken from
-	// the service, instead of one acquisition per command (#1840). Off until
-	// the stand says what it is worth.
+	// UserLease serialises an account in process under one lease from the
+	// service instead of one acquisition per command (#1840).
 	UserLease bool `koanf:"locks_client_user_lease"`
 	// StartupWaitSeconds is how long a component keeps retrying the first
 	// connection before giving up. Pod start order is not guaranteed and the
