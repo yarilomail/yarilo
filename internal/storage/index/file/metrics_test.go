@@ -62,6 +62,12 @@ func TestReadPartsFitInsideTheWhole(t *testing.T) {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
+	// The fallback: the only read that still has a lock part to time (#1809).
+	fsParts := ui.open[f.ID]
+	fsParts.mu.Lock()
+	fsParts.lineage = lineageHdr{}
+	fsParts.mu.Unlock()
+
 	whole, wholeCount := histSum(t, metricReadSeconds)
 	lock, lockCount := histVecSum(t, metricReadPart, "lock")
 	reload, reloadCount := histVecSum(t, metricReadPart, "reload")
@@ -124,7 +130,7 @@ func sharedAcquisitions(t *testing.T) float64 {
 	t.Helper()
 	var total float64
 	// Shared acquisitions only: no write site takes a shared lock.
-	for _, site := range []string{lockSiteOpenProbe, lockSiteFallback, lockSiteRead} {
+	for _, site := range []string{lockSiteOpenProbe, lockSiteFallback} {
 		total += counterVecValue(t, metricLockAcquired, "shared", site)
 	}
 	return total
@@ -178,13 +184,19 @@ func TestTheLockPartCoversTheRelease(t *testing.T) {
 
 	lockBefore, _ := histVecSum(t, metricReadPart, "lock")
 	wholeBefore, _ := histSum(t, metricReadSeconds)
-	releaseBefore, releaseCountBefore := histVecSum2(t, metricLockRelease, "shared", lockSiteRead)
+	releaseBefore, releaseCountBefore := histVecSum2(t, metricLockRelease, "shared", lockSiteFallback)
 
 	// On its own goroutine: the lock client tracks holds per goroutine, so a
 	// read issued from the one that just created the folder could take the
 	// re-entrant path and never touch the lock service — measuring nothing and
 	// passing. A session's reads come from their own goroutine anyway.
 	done := make(chan error, 1)
+	// The fallback is the only locked read left, so that is what the timing
+	// parts are measured on (#1809).
+	fsFallback := ui.open[f.ID]
+	fsFallback.mu.Lock()
+	fsFallback.lineage = lineageHdr{}
+	fsFallback.mu.Unlock()
 	go func() {
 		_, gerr := ui.GetMessages(f.ID, mailbox.SeqSet{})
 		done <- gerr
@@ -195,7 +207,7 @@ func TestTheLockPartCoversTheRelease(t *testing.T) {
 
 	lockAfter, _ := histVecSum(t, metricReadPart, "lock")
 	wholeAfter, _ := histSum(t, metricReadSeconds)
-	releaseAfter, releaseCountAfter := histVecSum2(t, metricLockRelease, "shared", lockSiteRead)
+	releaseAfter, releaseCountAfter := histVecSum2(t, metricLockRelease, "shared", lockSiteFallback)
 
 	lockPart := lockAfter - lockBefore
 	whole := wholeAfter - wholeBefore
@@ -250,8 +262,18 @@ func TestUnlockedReadsMakeNoRoundTrip(t *testing.T) {
 	if got := run(func() error { _, e := ui.GetMessagesUnlocked(f.ID, mailbox.SeqSet{}); return e }); got != 0 {
 		t.Errorf("an unlocked read took %v lock acquisitions", got)
 	}
+	if got := run(func() error { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); return e }); got != 0 {
+		t.Errorf("a read took %v lock acquisitions; a reader takes none (#1809)", got)
+	}
+
+	// The one read that still locks: a folder with nothing to prove its
+	// freshness with falls back, and the weaker file keeps the stronger rule.
+	fsFall := ui.open[f.ID]
+	fsFall.mu.Lock()
+	fsFall.lineage = lineageHdr{}
+	fsFall.mu.Unlock()
 	if got := run(func() error { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); return e }); got == 0 {
-		t.Error("a locked read took none — the two paths are the same path")
+		t.Error("a folder that cannot prove its freshness read without the lock")
 	}
 }
 
@@ -306,16 +328,14 @@ func TestReadersTakeTheLockTheirClassificationSays(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		read      func() error
-		wantLocks bool
+		name string
+		read func() error
 	}{
-		{"messages, answering a client", func() error { _, e := ui.GetMessagesUnlocked(f.ID, mailbox.SeqSet{}); return e }, false},
-		{"vanished, answering a client", func() error { _, e := ui.VanishedUnlocked(f.ID, 0); return e }, false},
-		{"keywords, answering a client", func() error { _, e := ui.KeywordsUnlocked(f.ID); return e }, false},
-		{"messages, deciding a write", func() error { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); return e }, true},
-		{"vanished, deciding a write", func() error { _, e := ui.Vanished(f.ID, 0); return e }, true},
-		{"keywords, deciding a write", func() error { _, e := ui.Keywords(f.ID); return e }, true},
+		{"messages", func() error { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); return e }},
+		{"vanished", func() error { _, e := ui.Vanished(f.ID, 0); return e }},
+		{"keywords", func() error { _, e := ui.Keywords(f.ID); return e }},
+		{"sizeless uids", func() error { _, e := ui.SizelessUIDs(f.ID); return e }},
+		{"pop3 uidls", func() error { _, e := ui.pop3UIDLs(f.ID); return e }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -328,12 +348,8 @@ func TestReadersTakeTheLockTheirClassificationSays(t *testing.T) {
 			if err := <-done; err != nil {
 				t.Fatalf("read: %v", err)
 			}
-			got := sharedAcquisitions(t) - before
-			if tc.wantLocks && got == 0 {
-				t.Error("no round trip taken by a read whose answer decides a write")
-			}
-			if !tc.wantLocks && got != 0 {
-				t.Errorf("%v round trips taken by a read that only answers a client", got)
+			if got := sharedAcquisitions(t) - before; got != 0 {
+				t.Errorf("%v round trips taken by a read; a reader takes no lock (#1809)", got)
 			}
 		})
 	}
@@ -394,14 +410,14 @@ func TestEachLockSiteIsReachedFromItsOwnPath(t *testing.T) {
 		t.Error("re-opening a folder went to the lock service")
 	}
 
-	// A read that is locked on purpose.
-	readBefore := site("shared", lockSiteRead)
+	// A read takes no lock at all: the files prove their own freshness (#1809).
+	readBefore := site("shared", lockSiteFallback)
 	go func() { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); done <- e }()
 	if err := <-done; err != nil {
-		t.Fatalf("locked read: %v", err)
+		t.Fatalf("read: %v", err)
 	}
-	if site("shared", lockSiteRead) == readBefore {
-		t.Error("a deliberately locked read was not counted as one")
+	if site("shared", lockSiteFallback) != readBefore {
+		t.Error("a read on a folder that can prove its freshness went to the lock service")
 	}
 
 	// A read that wanted the lock-free path and has nothing to prove freshness
@@ -418,7 +434,7 @@ func TestEachLockSiteIsReachedFromItsOwnPath(t *testing.T) {
 	if site("shared", lockSiteFallback) == fallbackBefore {
 		t.Error("a fallback read was not counted apart from a deliberate one")
 	}
-	if site("shared", lockSiteRead) != readBefore+1 {
-		t.Error("the fallback was counted as a deliberately locked read")
+	if site("shared", lockSiteFallback) != fallbackBefore+1 {
+		t.Error("the fallback took more than the one acquisition it needs")
 	}
 }

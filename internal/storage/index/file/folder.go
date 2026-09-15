@@ -958,7 +958,7 @@ func (u *userIndex) RecomputeVSize(folderID uint64) error {
 // decodes as pending, which is exactly the set still carrying zero GUIDs.
 func (u *userIndex) GUIDBackfillNeeded(folderID uint64) (bool, error) {
 	var need bool
-	err := u.withFolderRO(folderID, func(fs *folderState) error {
+	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
 		ext := findExt(fs.file.Extensions, extNameGUID)
 		need = ext == nil || decodeGUIDHdr(ext.HdrData) != guidStateComplete
 		return nil
@@ -1479,23 +1479,19 @@ func (fs *folderState) expungeLocked(uid uint32, modseq uint64) ([][]byte, error
 // GetMessages returns every record whose UID falls in uids; empty uids
 // means all records. Output is sorted by UID ascending.
 func (u *userIndex) GetMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
-	return u.getMessages(folderID, uids, false)
+	return u.getMessages(folderID, uids)
 }
 
 // GetMessagesUnlocked answers without the cross-process lock where the files
 // prove their own consistency: for readers answering a client and deciding
 // nothing. A caller driving a write or delete must use GetMessages (#1249).
 func (u *userIndex) GetMessagesUnlocked(folderID uint64, uids mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
-	return u.getMessages(folderID, uids, true)
+	return u.getMessages(folderID, uids)
 }
 
-func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet, unlocked bool) ([]*mailbox.MessageMeta, error) {
+func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
 	var out []*mailbox.MessageMeta
-	read := u.withFolderRO
-	if unlocked {
-		read = u.withFolderROUnlocked
-	}
-	err := read(folderID, func(fs *folderState) error {
+	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
 		for _, rec := range fs.file.Records {
 			if !seqSetContains(uids, rec.UID) {
 				continue
@@ -1557,22 +1553,18 @@ func (u *userIndex) NextModSeq(folderID uint64) (uint64, error) {
 // Vanished returns every UID expunged with modseq above sinceModSeq, driving
 // the QRESYNC VANISHED response (RFC 7162).
 func (u *userIndex) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	return u.vanished(folderID, sinceModSeq, false)
+	return u.vanished(folderID, sinceModSeq)
 }
 
 // VanishedUnlocked is Vanished for a caller whose answer goes to the client and
 // decides nothing on disk — QRESYNC on SELECT, CHANGEDSINCE on FETCH (#1249).
 func (u *userIndex) VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	return u.vanished(folderID, sinceModSeq, true)
+	return u.vanished(folderID, sinceModSeq)
 }
 
-func (u *userIndex) vanished(folderID uint64, sinceModSeq uint64, unlocked bool) ([]uint32, error) {
+func (u *userIndex) vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
 	var out []uint32
-	read := u.withFolderRO
-	if unlocked {
-		read = u.withFolderROUnlocked
-	}
-	err := read(folderID, func(fs *folderState) error {
+	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
 		uids, err := scanExpungesSince(fs.indexPath, sinceModSeq)
 		if err != nil {
 			return err
@@ -1585,22 +1577,18 @@ func (u *userIndex) vanished(folderID uint64, sinceModSeq uint64, unlocked bool)
 
 // Keywords returns the current keyword registry.
 func (u *userIndex) Keywords(folderID uint64) ([]string, error) {
-	return u.keywords(folderID, false)
+	return u.keywords(folderID)
 }
 
 // KeywordsUnlocked is Keywords for SELECT: a keyword declared a moment later
 // appears on the next command, the staleness the protocol accepts (#1249).
 func (u *userIndex) KeywordsUnlocked(folderID uint64) ([]string, error) {
-	return u.keywords(folderID, true)
+	return u.keywords(folderID)
 }
 
-func (u *userIndex) keywords(folderID uint64, unlocked bool) ([]string, error) {
+func (u *userIndex) keywords(folderID uint64) ([]string, error) {
 	var out []string
-	read := u.withFolderRO
-	if unlocked {
-		read = u.withFolderROUnlocked
-	}
-	err := read(folderID, func(fs *folderState) error {
+	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
 		out = append([]string(nil), fs.keywords.Names...)
 		return nil
 	})
@@ -2613,7 +2601,7 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) 
 // CachePairIdentity returns the index identity and the reset_id a valid cache
 // must carry; ok is false when the index predates the extension.
 func (u *userIndex) CachePairIdentity(folderID uint64) (indexID, resetID uint32, ok bool, err error) {
-	err = u.withFolderRO(folderID, func(fs *folderState) error {
+	err = u.withFolderROUnlocked(folderID, func(fs *folderState) error {
 		indexID = fs.file.Header.IndexID
 		if ext := findExt(fs.file.Extensions, extNameCache); ext != nil {
 			resetID = ext.ResetID
@@ -2628,7 +2616,7 @@ func (u *userIndex) CachePairIdentity(folderID uint64) (indexID, resetID uint32,
 // yarilo.index in the folder's index directory.
 func (u *userIndex) CachePath(folderID uint64) (string, error) {
 	var path string
-	err := u.withFolderRO(folderID, func(fs *folderState) error {
+	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
 		path = filepath.Join(fs.indexDir, mailindex.CacheFileName)
 		return nil
 	})

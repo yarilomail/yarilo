@@ -84,7 +84,6 @@ var (
 const (
 	lockSiteOpenProbe = "open-probe"      // opening or repairing a folder
 	lockSiteFallback  = "reload-fallback" // an unlocked read with nothing to prove freshness with
-	lockSiteRead      = "read"            // a read that is locked on purpose: its answer decides a write
 
 	// The callers of that mutation, so a total can be attributed (#1827).
 	lockSiteTransaction  = "transaction"
