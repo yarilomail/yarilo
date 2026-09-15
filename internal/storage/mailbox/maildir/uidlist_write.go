@@ -177,15 +177,41 @@ func measureSizes(path string) (psize, vsize uint32, err error) {
 	return c.phys, c.phys + c.lfNoCR, nil
 }
 
-// writeUIDList rewrites the whole file: a temp, synced, then renamed under the
-// dotlock. The header's next uid is recomputed, so none is handed out twice.
-func (u *userMailbox) writeUIDList(folder string, l *uidList) error {
+// withUIDList holds the list for one row: read, change, write. The lock spans
+// all three, or two processes each append to the copy they read (#1840).
+func (u *userMailbox) withUIDList(folder, site string, fn func(l *uidList) error) error {
 	path := u.uidListPath(folder)
 	unlock, err := u.dotlock(path)
 	if err != nil {
 		return err
 	}
-	defer unlock()
+	heldFrom := time.Now()
+	defer func() {
+		unlock()
+		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
+	}()
+	metricLockAcquired.WithLabelValues(site).Inc()
+	if err := u.ensureUIDListLocked(folder); err != nil {
+		return err
+	}
+	l, err := readUIDListFile(path)
+	if err != nil {
+		return fmt.Errorf("maildir/uidlist: read: %w", err)
+	}
+	if l.torn {
+		u.reportTornUIDList(folder, path, l)
+	}
+	if err := fn(l); err != nil {
+		return err
+	}
+	return u.writeUIDListLocked(folder, l)
+}
+
+// writeUIDListLocked rewrites the whole file: a temp, synced, then renamed.
+// Caller holds the list. The header's next uid is recomputed, so none is
+// handed out twice.
+func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
+	path := u.uidListPath(folder)
 
 	next := l.nextUID
 	for _, rec := range l.records {
@@ -283,55 +309,51 @@ type listEntry struct {
 // recordUIDsLocked writes a batch of rows in one rewrite and returns the uids
 // it refused: a base already listed under another uid keeps its owner (#1745).
 func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) ([]uint32, error) {
-	if err := u.ensureUIDListLocked(folder); err != nil {
-		return nil, err
-	}
-	path := u.uidListPath(folder)
-	l, err := readUIDListFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("maildir/uidlist: read: %w", err)
-	}
-	if l.torn {
-		u.reportTornUIDList(folder, path, l)
-	}
-	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
-	if listDebug() {
-		beforeMod, beforeSize = u.listStat(folder)
-	}
-	at := make(map[string]int, len(l.records))
-	for i, rec := range l.records {
-		at[rec.base] = i
-	}
 	var taken []uint32
-	for _, e := range entries {
-		base := maildirBase(e.filename)
-		if i, ok := at[base]; ok && l.records[i].uid != e.uid {
-			taken = append(taken, e.uid)
-			continue
+	var uids []uint32
+	var written *uidList
+	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
+	err := u.withUIDList(folder, lockSiteReconcileApply, func(l *uidList) error {
+		beforeRows = len(l.records)
+		if listDebug() {
+			beforeMod, beforeSize = u.listStat(folder)
 		}
-		rec := uidRecord{uid: e.uid, base: base}
-		if !nameCarriesSizes(base) {
-			psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", e.filename))
-			if merr == nil {
-				rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
+		at := make(map[string]int, len(l.records))
+		for i, rec := range l.records {
+			at[rec.base] = i
+		}
+		for _, e := range entries {
+			base := maildirBase(e.filename)
+			if i, ok := at[base]; ok && l.records[i].uid != e.uid {
+				taken = append(taken, e.uid)
+				continue
 			}
+			rec := uidRecord{uid: e.uid, base: base}
+			if !nameCarriesSizes(base) {
+				psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", e.filename))
+				if merr == nil {
+					rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
+				}
+			}
+			if i, ok := at[base]; ok {
+				l.records[i] = rec
+				continue
+			}
+			at[base] = len(l.records)
+			l.records = append(l.records, rec)
 		}
-		if i, ok := at[base]; ok {
-			l.records[i] = rec
-			continue
+		uids = make([]uint32, 0, len(entries))
+		for _, e := range entries {
+			uids = append(uids, e.uid)
 		}
-		at[base] = len(l.records)
-		l.records = append(l.records, rec)
-	}
-	if err := u.writeUIDList(folder, l); err != nil {
+		written = l
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-	uids := make([]uint32, 0, len(entries))
-	for _, e := range entries {
-		uids = append(uids, e.uid)
 	}
 	u.debugListWrite("reconcile-import", folder, uids, "", beforeRows, beforeMod, beforeSize)
-	u.adoptWritten(folder, l)
+	u.adoptWritten(folder, written)
 	return taken, nil
 }
 
@@ -350,7 +372,7 @@ func (u *userMailbox) ensureUIDListLocked(folder string) error {
 	if err := os.MkdirAll(u.controlFolderPath(folder), 0o700); err != nil {
 		return fmt.Errorf("maildir/uidlist: mkdir control: %w", err)
 	}
-	return u.writeUIDList(folder, &uidList{})
+	return u.writeUIDListLocked(folder, &uidList{})
 }
 
 // SetTestWriteSeams points the durability call and the pre-rename hook at a

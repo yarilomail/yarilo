@@ -88,7 +88,7 @@ func TestASessionTakesEveryLockUnderOneName(t *testing.T) {
 		// The locker goes into the storage backends too, not only the session's
 		// own stores: without it the driver and the index take no lock at all
 		// and this test saw one spelling out of three (#1652).
-		Mailbox:  maildir.New(maildir.WithLocker(rec)),
+		Mailbox:  maildir.New(),
 		Index:    file.New(file.WithLocker(rec)),
 		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
 		Auth:     &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"},
@@ -192,7 +192,7 @@ func TestASessionWithoutAPreambleIDStillNamesItself(t *testing.T) {
 	// No SetTestSessionID: this is the production shape of a connection whose
 	// proxy carried no id, which is what the field showed 942 times.
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(maildir.WithLocker(rec)),
+		Mailbox:  maildir.New(),
 		Index:    file.New(file.WithLocker(rec)),
 		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
 		Auth:     &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"},

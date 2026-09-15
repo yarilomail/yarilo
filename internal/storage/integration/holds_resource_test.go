@@ -32,7 +32,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 
 	home := t.TempDir()
 	user := &mailbox.UserInfo{Username: "carol@example.com", Home: home}
-	mb := maildir.New(maildir.WithLocker(lk)).OpenUser(user)
+	mb := maildir.New().OpenUser(user)
 	idx := file.New(file.WithLocker(lk)).OpenUser(user)
 	t.Cleanup(func() { _ = idx.Close() })
 	if err := mb.Init(); err != nil {

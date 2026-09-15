@@ -38,6 +38,7 @@ import (
 	authclient "github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -1176,13 +1177,24 @@ func BuildMailbox(cfg config.StorageConfig, locker locks.Locker) mailbox.Mailbox
 	return buildMailbox(cfg, locker)
 }
 
+// indexLockMethod reads the configured transport; an unknown one is refused at
+// startup by VerifyVolume, so here it falls back rather than failing a write.
+func indexLockMethod(cfg config.StorageConfig) filelock.Method {
+	m, err := filelock.Parse(cfg.LockMethod)
+	if err != nil {
+		return filelock.MethodFlock
+	}
+	return m
+}
+
 // IndexOptions builds the file-index options from a storage config, so every
 // binary that opens an index rotates its logs by the same triple. Exported for
 // the standalone binaries that construct their own index (yarilo-jmap).
 func IndexOptions(cfg config.StorageConfig, locker locks.Locker) []file.Option {
 	// The same encoding the mailbox backends get. The two trees spell a folder
 	// the same way or neither finds the other's (#1586).
-	opts := []file.Option{file.WithLocker(locker), file.WithListUTF8(cfg.MailboxListUTF8)}
+	opts := []file.Option{file.WithLocker(locker), file.WithListUTF8(cfg.MailboxListUTF8),
+		file.WithLockMethod(indexLockMethod(cfg))}
 	// Any of the three, not all three. Gating the whole triple on min_size
 	// meant an operator could set the age or the ceiling alone, see the key in
 	// the rendered config, and have it do nothing -- accepted and inert, which
@@ -1385,7 +1397,7 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 			return nil, fmt.Errorf("locks_client.socket is required for embedded mode")
 		}
 		c, err := locks.NewClientWaiting(ctx, locks.DialUnix(lc.Socket), lc.StartupWait())
-		return leased(cfg, c, err)
+		return c, err
 	case "remote":
 		if len(lc.Endpoints) == 0 {
 			return nil, fmt.Errorf("locks_client.endpoints must list at least one host:port for remote mode")
@@ -1396,12 +1408,12 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 				return nil, fmt.Errorf("locks_client mtls: %w", err)
 			}
 			c, cerr := locks.NewClientWaiting(ctx, locks.DialTLS(lc.Endpoints[0], tlsCfg), lc.StartupWait())
-			return leased(cfg, c, cerr)
+			return c, cerr
 		}
 		// Single-endpoint connect for now; failover across Endpoints is a
 		// follow-up (custom Dialer iterating the list until first success).
 		c, cerr := locks.NewClientWaiting(ctx, locks.DialTCP(lc.Endpoints[0]), lc.StartupWait())
-		return leased(cfg, c, cerr)
+		return c, cerr
 	default:
 		return nil, fmt.Errorf("locks_client: unknown mode %q (want remote | embedded | \"\")", lc.Mode)
 	}
@@ -1455,13 +1467,4 @@ func languagesOrDefault(xs []string) []string {
 func buildPassdbs(entries []config.PassdbEntry) ([]protocol.Passdb, error) {
 	dbs, _, err := passdbs.Build(entries)
 	return dbs, err
-}
-
-// leased wraps a lock client so an account is serialised in process under one
-// lease, when the deployment asks for it (#1840).
-func leased(cfg *config.Config, c locks.Locker, err error) (locks.Locker, error) {
-	if err != nil || c == nil || !cfg.LocksClient.UserLease {
-		return c, err
-	}
-	return locks.NewLeased(c, locks.Owner(cfg.Hostname, "lease")), nil
 }

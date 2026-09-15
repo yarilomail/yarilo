@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -114,6 +115,7 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 		volatileDir: u.folderVolatileDir(folder),
 		traceID:     traceID,
 		intent:      intent,
+		lockMethod:  u.b.lockMethod,
 	}
 	if err := u.loadOrInit(fs, uidValidity); err != nil {
 		return nil, err
@@ -675,6 +677,16 @@ func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folder
 		return fmt.Errorf("fileindex: folder %d not open", folderID)
 	}
 	return u.withFolderLockSite(fs, site, func() error {
+		// The journal is held across the reload as well as the write: a uid is
+		// read from the base and handed out, and two processes that read it
+		// unheld hand out the same one (#1840). A refresh only reads.
+		if site != lockSiteRefresh {
+			release, err := fs.holdJournal(site)
+			if err != nil {
+				return err
+			}
+			defer release()
+		}
 		if err := fs.reload(); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -2095,6 +2107,33 @@ func encU32Update(offset uint16, v uint32) []byte {
 		mailindex.EncodeTxHeaderUpdatePayload(mailindex.TxHeaderUpdate{Offset: offset, Data: data}))
 }
 
+// holdJournal excludes another process from the journal for one cycle. It is
+// re-entrant within the cycle: the append inside a held cycle takes no second
+// lock, which the kernel would not grant it twice anyway (#1840).
+func (fs *folderState) holdJournal(site string) (func(), error) {
+	if fs.journalHeld {
+		return func() {}, nil
+	}
+	h, err := filelock.Take(fs.indexPath+".log", fs.lockMethod, mutLogLockWait)
+	if err != nil {
+		return nil, fmt.Errorf("fileindex/journal: lock: %w", err)
+	}
+	fs.journalHeld = true
+	metricLockAcquired.WithLabelValues("exclusive", site).Inc()
+	heldFrom := time.Now()
+	return func() {
+		fs.journalHeld = false
+		if rerr := h.Release(); rerr != nil {
+			slog.Warn("fileindex: releasing the journal lock", "folder", fs.folder, "err", rerr)
+		}
+		metricLockHold.WithLabelValues("exclusive", site).Observe(time.Since(heldFrom).Seconds())
+	}, nil
+}
+
+// mutLogLockWait bounds a writer's wait for the journal: the hold is one
+// write(2), so a longer wait is a wedged mount, not a queue (#1840).
+var mutLogLockWait = 10 * time.Second
+
 // appendMutLog writes pre-encoded tx records wrapped in a BOUNDARY, atomic on
 // recovery. Caller holds fs.mu; closeFDs() runs before the log is replaced.
 func (fs *folderState) appendMutLog(records ...[]byte) error {
@@ -2136,7 +2175,15 @@ func (fs *folderState) appendMutLog(records ...[]byte) error {
 	for _, rec := range records {
 		buf = append(buf, rec...)
 	}
-	if _, err := fs.logFD.Write(buf); err != nil {
+	// The hold is one group: O_APPEND alone orders bytes, it does not keep two
+	// processes' groups from interleaving inside one record (#1840).
+	release, err := fs.holdJournal("mutlog-append")
+	if err != nil {
+		return err
+	}
+	_, err = fs.logFD.Write(buf)
+	release()
+	if err != nil {
 		_ = fs.logFD.Close()
 		fs.logFD = nil
 		return fmt.Errorf("fileindex/mutlog: write: %w", err)

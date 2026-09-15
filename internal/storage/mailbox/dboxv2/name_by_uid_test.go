@@ -128,27 +128,22 @@ func (l *appendRecorder) IncrementCounter(context.Context, string, int64) (int64
 	return 0, nil
 }
 
-// One APPEND takes the folder's key once, and by the time it is released the
-// message already wears the name its uid gives it (#1704).
-func TestAnAppendTakesTheFolderKeyOnce(t *testing.T) {
+// An APPEND leaves the message wearing the name its uid gives it: a store that
+// named it anything else is one the reference cannot read (#1704).
+func TestAnAppendNamesTheMessageByItsUID(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
-	rec := &appendRecorder{dir: dir}
 	info := &mailbox.UserInfo{Username: "alice@example.com", Home: home}
-	mb := New(WithLocker(rec)).OpenUser(info)
+	mb := New().OpenUser(info)
 	if err := mb.Init(); err != nil {
 		t.Fatal(err)
 	}
-	idx := fileidx.New(fileidx.WithLocker(rec)).OpenUser(info)
+	idx := fileidx.New().OpenUser(info)
 	defer idx.Close() //nolint:errcheck
 	folder, err := idx.OpenFolder("INBOX", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	rec.mu.Lock()
-	rec.taken = nil
-	rec.mu.Unlock()
 
 	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, nil, [16]byte{})
 	if err != nil {
@@ -159,25 +154,23 @@ func TestAnAppendTakesTheFolderKeyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key := locks.MailboxKey("alice@example.com", "INBOX")
-	got := 0
-	for _, r := range rec.taken {
-		if r == key {
-			got++
-		}
-	}
-	if got != 1 {
-		t.Errorf("the append took %q %d times, want once: %v", key, got, rec.taken)
-	}
 	want := "u." + strconv.FormatUint(uint64(m.UID), 10)
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
 	found := false
-	for _, n := range rec.atFree {
+	for _, n := range names {
 		if n == want {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("at release the folder held %v, and none of it is %s", rec.atFree, want)
+		t.Errorf("the folder holds %v, and none of it is %s", names, want)
 	}
 }
 

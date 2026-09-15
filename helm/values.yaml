@@ -1141,9 +1141,6 @@ components:
 
     ## client — the side every other component uses to reach yarilo-locks.
     client:
-      ## Serialise an account in process under one lease taken from the service,
-      ## instead of one acquisition per command (#1840). Off until measured.
-      user_lease: false
       ## Seconds a component waits for the lock service on its first connection
       ## before giving up. Pod start order is not guaranteed and locks is its
       ## own deployment, so "not up yet" is ordinary and exiting on it costs a

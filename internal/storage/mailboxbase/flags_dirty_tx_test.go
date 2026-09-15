@@ -46,7 +46,7 @@ func TestDirtyMarksTakeTheIndexOncePerCommand(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u@x.com", Home: home, Driver: "maildir"}
 	lk := &countingLocker{held: map[string]locks.HoldMode{}}
-	store := maildir.New(maildir.WithLocker(lk)).OpenUser(info)
+	store := maildir.New().OpenUser(info)
 	idx := fileidx.New(fileidx.WithLocker(lk)).OpenUser(info)
 	t.Cleanup(func() { _ = store.Close(); _ = idx.Close() })
 	if err := store.Init(); err != nil {
@@ -82,9 +82,9 @@ func TestDirtyMarksTakeTheIndexOncePerCommand(t *testing.T) {
 	refused := map[uint32]struct{}{writes[3].UID: {}, writes[17].UID: {}}
 	refusing := &refusingStore{UserMailbox: store, refuse: refused}
 
-	before := lk.locks
+	before := journalHolds(t)
 	results := mailboxbase.FlagsWritten(idx, refusing, f.ID, "INBOX", writes)
-	took := lk.locks - before
+	took := journalHolds(t) - before
 	t.Logf("locks taken recording %d flag writes: %d", messages, took)
 	if len(results) != messages {
 		t.Fatalf("recorded %d results, want %d", len(results), messages)

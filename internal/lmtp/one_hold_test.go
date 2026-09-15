@@ -2,57 +2,45 @@ package lmtp
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// countingLocker counts the acquisitions the lock service would see.
-type countingLocker struct {
-	locks.Locker
-	taken int
-	held  map[string]locks.HoldMode
+// journalHolds sums the file locks the index has taken, from the default
+// registry: the count lives in another package, the number is the same one.
+func journalHolds(t *testing.T) float64 {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0.0
+	for _, f := range fams {
+		if f.GetName() != "fileindex_lock_acquired_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			total += m.GetCounter().GetValue()
+		}
+	}
+	return total
 }
 
-func (l *countingLocker) Lock(_ context.Context, resource, owner string, _ time.Duration) (locks.Lock, error) {
-	l.taken++
-	l.held[resource] = locks.HoldExclusive
-	return locks.Lock{ID: resource, Resource: resource, Owner: owner}, nil
-}
-
-func (l *countingLocker) LockShared(ctx context.Context, resource, owner string, ttl time.Duration) (locks.Lock, error) {
-	return l.Lock(ctx, resource, owner, ttl)
-}
-
-func (l *countingLocker) Unlock(_ context.Context, id string) error {
-	delete(l.held, id)
-	return nil
-}
-
-func (l *countingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
-	m, ok := l.held[resource]
-	return m, ok
-}
-
-func (l *countingLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
-
-// A delivery takes the folder once: it took it three times — uid, modseq,
-// record — with two windows between them (#1706).
+// A delivery holds the journal once: it took the folder three times -- uid,
+// modseq, record -- with two windows between them (#1706, #1840).
 func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}
-	lk := &countingLocker{held: map[string]locks.HoldMode{}}
-	store := maildir.New(maildir.WithLocker(lk)).OpenUser(info)
-	idx := file.New(file.WithLocker(lk)).OpenUser(info)
+	store := maildir.New().OpenUser(info)
+	idx := file.New().OpenUser(info)
 	t.Cleanup(func() { _ = store.Close(); _ = idx.Close() })
 	if err := store.Init(); err != nil {
 		t.Fatal(err)
@@ -65,7 +53,7 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	}
 
 	const raw = "From: a@b\r\nSubject: one hold\r\n\r\nbody\r\n"
-	lk.taken = 0
+	before := journalHolds(t)
 	scansBefore := testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned"))
 	uid, _, _, err := deliverOne(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
 	if err != nil {
@@ -74,8 +62,8 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	if uid == 0 {
 		t.Fatal("the delivery reported uid 0")
 	}
-	if lk.taken != 1 {
-		t.Errorf("the delivery took the folder %d times, want 1", lk.taken)
+	if got := journalHolds(t) - before; got != 1 {
+		t.Errorf("the delivery held the journal %v times, want 1", got)
 	}
 	if n := testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned")) - scansBefore; n != 0 {
 		t.Errorf("the delivery walked the folder %v times, want none", n)

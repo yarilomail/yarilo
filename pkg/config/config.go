@@ -1096,9 +1096,6 @@ type LocksClientConfig struct {
 	Mode      string   `koanf:"mode"`      // remote | embedded | ""
 	Endpoints []string `koanf:"endpoints"` // remote: ["yarilo-locks.svc:9104", ...]
 	Socket    string   `koanf:"socket"`    // embedded: /run/yarilo/locks.sock
-	// UserLease serialises an account in process under one lease from the
-	// service instead of one acquisition per command (#1840).
-	UserLease bool `koanf:"locks_client_user_lease"`
 	// StartupWaitSeconds bounds the first wait for the lock service. Zero
 	// selects the default; negative disables waiting (#1350).
 	StartupWaitSeconds int `koanf:"locks_client_startup_wait"`

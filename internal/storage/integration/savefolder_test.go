@@ -38,7 +38,7 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 
 	// Two "processes" pointing at the same on-disk maildir + index.
 	lkA := dialLocker()
-	mbA := maildir.New(maildir.WithLocker(lkA)).OpenUser(user)
+	mbA := maildir.New().OpenUser(user)
 	ixA := file.New(file.WithLocker(lkA)).OpenUser(user)
 	t.Cleanup(func() { _ = ixA.Close() })
 	if err := mbA.Init(); err != nil {
@@ -46,7 +46,7 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 	}
 
 	lkB := dialLocker()
-	_ = maildir.New(maildir.WithLocker(lkB)).OpenUser(user) // process B does not write via maildir in this scenario
+	_ = maildir.New().OpenUser(user) // process B does not write via maildir in this scenario
 	ixB := file.New(file.WithLocker(lkB)).OpenUser(user)
 	t.Cleanup(func() { _ = ixB.Close() })
 

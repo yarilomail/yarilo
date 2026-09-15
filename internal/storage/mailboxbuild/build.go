@@ -46,6 +46,16 @@ func VerifyVolume(sc config.StorageConfig) error {
 	return nil
 }
 
+// lockMethod reads the configured transport; VerifyVolume has already refused
+// an unknown one at startup, so here it falls back rather than failing a write.
+func lockMethod(sc config.StorageConfig) filelock.Method {
+	m, err := filelock.Parse(sc.LockMethod)
+	if err != nil {
+		return filelock.MethodFlock
+	}
+	return m
+}
+
 func ByDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailbox.MailboxBackend {
 	// Every binary builds its backend here, so wrapping at this point is what
 	// makes folder-name validation unbypassable: IMAP, LMTP (Sieve fileinto
@@ -75,9 +85,10 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 			mdbox.WithMapFormat(sc.MdboxMapFormat),
 			mapLogRotation(sc))
 	default:
-		return maildir.New(maildir.WithLocker(locker), maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
+		return maildir.New(maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			maildir.WithListUTF8(sc.MailboxListUTF8),
-			maildir.WithProactiveScan(sc.MaildirSyncOnSelect))
+			maildir.WithProactiveScan(sc.MaildirSyncOnSelect),
+			maildir.WithLockMethod(lockMethod(sc)))
 	}
 }
 

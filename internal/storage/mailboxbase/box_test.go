@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/yarilomail/yarilo/pkg/locks"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
@@ -26,11 +27,7 @@ func openBoxLocked(t *testing.T, user string, lk locks.Locker) (*mailboxbase.Box
 	t.Helper()
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: user, Home: home, Driver: "maildir"}
-	var opts []maildir.Option
-	if lk != nil {
-		opts = append(opts, maildir.WithLocker(lk))
-	}
-	store := maildir.New(opts...).OpenUser(info)
+	store := maildir.New().OpenUser(info)
 	idx := file.New().OpenUser(info)
 	t.Cleanup(func() { _ = store.Close(); _ = idx.Close() })
 	if err := store.Init(); err != nil {
@@ -167,15 +164,15 @@ func TestExpungeMarkedTakesTheFolderOnce(t *testing.T) {
 		msgs = append(msgs, m)
 	}
 
-	lk.locks = 0
+	before := journalHolds(t)
 	removed, failed, _ := batched.ExpungeMarked(f, "INBOX", msgs, nil)
 	if failed != 0 || len(removed) != 3 {
 		t.Fatalf("the batch removed %v and failed %d, want three removed", removed, failed)
 	}
 	// Zero is the failure this row exists for: a box opened with no option from
 	// the protocol must still hold, because the lock is the driver's (#1794).
-	if lk.locks != 1 {
-		t.Errorf("the batch took the folder %d times for 3 messages, want 1", lk.locks)
+	if got := journalHolds(t) - before; got != 1 {
+		t.Errorf("the batch held the journal %d times for 3 messages, want 1", got)
 	}
 	left, err := box.Index().GetMessages(f.ID, mailbox.SeqSet{})
 	if err != nil {
@@ -430,4 +427,24 @@ func TestMarkCorruptOnFetchErrIsGated(t *testing.T) {
 	if box.MarkCorruptOnFetchErr("INBOX", errors.New("input/output error")) {
 		t.Error("a transient I/O error marked the folder")
 	}
+}
+
+// journalHolds sums the file locks the index has taken: the count lives in
+// another package, the number is the same one.
+func journalHolds(t *testing.T) int {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0.0
+	for _, f := range fams {
+		if f.GetName() != "fileindex_lock_acquired_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			total += m.GetCounter().GetValue()
+		}
+	}
+	return int(total)
 }
