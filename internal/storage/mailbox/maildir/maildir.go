@@ -24,6 +24,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -35,8 +36,10 @@ type Backend struct {
 	pid      int
 	counter  atomic.Uint64
 	locker   locks.Locker
-	writeSem chan struct{} // nil = unlimited
-	listUTF8 bool          // true = UTF-8 on disk (default); false = modified-UTF-7
+	// lockMethod is how a write to a shared file excludes another writer.
+	lockMethod filelock.Method
+	writeSem   chan struct{} // nil = unlimited
+	listUTF8   bool          // true = UTF-8 on disk (default); false = modified-UTF-7
 	// proactiveScan is maildir_sync_on_select: whether opening a folder
 	// reconciles the index against cur/ and new/. Default on.
 	proactiveScan bool
@@ -49,6 +52,12 @@ type Option func(*Backend)
 // served from the index alone.
 func WithProactiveScan(on bool) Option {
 	return func(b *Backend) { b.proactiveScan = on }
+}
+
+// WithLockMethod chooses the transport for the locks this driver takes on
+// shared files: flock by default (#1840).
+func WithLockMethod(m filelock.Method) Option {
+	return func(b *Backend) { b.lockMethod = m }
 }
 
 // WithLocker wires a lock client in: every shared-file write then takes the
@@ -82,6 +91,7 @@ func New(opts ...Option) *Backend {
 	b := &Backend{
 		hostname:      hostname,
 		pid:           os.Getpid(),
+		lockMethod:    filelock.MethodFlock,
 		listUTF8:      true,
 		proactiveScan: true,
 	}

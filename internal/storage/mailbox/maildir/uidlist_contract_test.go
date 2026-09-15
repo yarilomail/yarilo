@@ -8,10 +8,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -276,7 +278,7 @@ func TestATornListIsRewrittenAndSaidOutLoud(t *testing.T) {
 
 // The dotlock is what a foreign writer watches for: ours is the lock service,
 // and a process that does not speak to it sees only this file (#1701).
-func TestAHeldDotlockStopsTheWrite(t *testing.T) {
+func TestAHeldUIDListStopsTheWrite(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}
 	box := maildir.New().OpenUser(info)
@@ -284,11 +286,13 @@ func TestAHeldDotlockStopsTheWrite(t *testing.T) {
 	if err := box.Create("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	lock := filepath.Join(home, "Maildir", maildir.UIDListFileName+".lock")
-	if err := os.WriteFile(lock, nil, 0o600); err != nil {
-		t.Fatal(err)
+	// The lock is on the list itself now, not on a name beside it (#1840).
+	defer maildir.SetUIDListLockWait(200 * time.Millisecond)()
+	held, lerr := filelock.Take(filepath.Join(home, "Maildir", maildir.UIDListFileName), filelock.MethodFlock, time.Second)
+	if lerr != nil {
+		t.Fatal(lerr)
 	}
-	defer os.Remove(lock) //nolint:errcheck
+	defer func() { _ = held.Release() }()
 
 	name, _, _, err := box.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, nil, [16]byte{})
 	if err != nil {
@@ -298,8 +302,8 @@ func TestAHeldDotlockStopsTheWrite(t *testing.T) {
 	if err == nil {
 		t.Fatal("the list was written while another writer held the lock")
 	}
-	if !strings.Contains(err.Error(), "held by another process") {
-		t.Errorf("the error does not name the holder: %v", err)
+	if !strings.Contains(err.Error(), "is held") {
+		t.Errorf("the error does not say the list is held: %v", err)
 	}
 }
 

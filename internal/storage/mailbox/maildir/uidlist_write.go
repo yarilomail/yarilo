@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/yarilomail/yarilo/pkg/filelock"
 )
 
 // dotlockSuffix names the lock file beside the list. Ours is the lock service,
@@ -248,29 +250,20 @@ var (
 // dotlock takes the lock file beside the list with O_EXCL and returns its
 // release. A stale one older than staleDotlock is removed, not waited on.
 func (u *userMailbox) dotlock(path string) (func(), error) {
-	lock := path + dotlockSuffix
-	for attempt := 0; ; attempt++ {
-		f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err == nil {
-			f.Close()                              //nolint:errcheck
-			return func() { os.Remove(lock) }, nil //nolint:errcheck
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("maildir/uidlist: dotlock: %w", err)
-		}
-		st, serr := os.Stat(lock)
-		if serr == nil && time.Since(st.ModTime()) > staleDotlock {
-			slog.Warn("maildir: removing a stale uidlist lock",
-				"file", lock, "age_s", int(time.Since(st.ModTime()).Seconds()))
-			os.Remove(lock) //nolint:errcheck
-			continue
-		}
-		if attempt >= dotlockAttempts {
-			return nil, fmt.Errorf("maildir/uidlist: %s held by another process", lock)
-		}
-		time.Sleep(dotlockRetry)
+	h, err := filelock.Take(path, u.b.lockMethod, uidListLockWait)
+	if err != nil {
+		return nil, fmt.Errorf("maildir/uidlist: %w", err)
 	}
+	return func() {
+		if rerr := h.Release(); rerr != nil {
+			slog.Warn("maildir: releasing the uidlist lock", "file", path, "err", rerr)
+		}
+	}, nil
 }
+
+// uidListLockWait bounds a writer's wait for the list: the hold is one append
+// and an fsync, so a wait past this is a wedged mount, not a queue (#1840).
+var uidListLockWait = 10 * time.Second
 
 const (
 	// staleDotlock is when a lock file stops meaning "someone is writing" and
