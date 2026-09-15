@@ -35,28 +35,16 @@ var (
 		Buckets: prometheus.ExponentialBuckets(0.00001, 4, 11),
 	}, []string{"part"})
 
-	// The lock is its own question as well as a part of the read: it is the one
-	// place a read leaves the process. The reference takes a local fcntl here.
-	metricLockWait = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "fileindex_lock_wait_seconds",
-		Help:    "Time an index operation waited for the cross-process folder lock, by mode and by which path took it.",
-		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10), // 100us .. ~26s
-	}, []string{"mode", "site"})
-	metricLockRelease = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "fileindex_lock_release_seconds",
-		Help:    "Time releasing the cross-process folder lock, by mode and site. The second round trip an operation makes, and about as expensive as the first.",
-		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
-	}, []string{"mode", "site"})
 	// Held, not waited for: without it the wait says who queued and nothing
 	// says who made them queue (#1809).
 	metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "fileindex_lock_hold_seconds",
-		Help:    "Time one operation held the cross-process folder lock, by mode and site. Pairs with maildir_lock_hold_seconds: the two share the resource, so either alone understates what a folder queues behind.",
+		Help:    "Time one write cycle held the folder journal on the volume, by mode and site. Pairs with maildir_lock_hold_seconds, which measures the uidlist.",
 		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
 	}, []string{"mode", "site"})
 	metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "fileindex_lock_acquired_total",
-		Help: "Cross-process folder locks acquired, by mode and by the call that took it. Each acquisition is followed by a release, so an operation that takes the lock makes two round trips to the lock service.",
+		Help: "Journal locks taken on the volume, by mode and by the call that took it. A cycle takes one whatever it appends; a read takes none.",
 	}, []string{"mode", "site"}) // shared | exclusive × read | open-probe | reload-fallback | transaction | expunge | append | write-flags | ...
 	metricReload = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "fileindex_reload_total",
@@ -66,10 +54,6 @@ var (
 		Name: "fileindex_lineage_stamped_total",
 		Help: "Folder indexes given a lineage on first open because they were written before the extension. Expected to rise once per folder after an upgrade and stay flat afterwards; two pods racing the same first open can each stamp it, so a folder may count twice.",
 	})
-	metricLockReentrant = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "fileindex_lock_reentrant_total",
-		Help: "Index operations that already held the folder lock, by mode and site. No round trip was made.",
-	}, []string{"mode", "site"})
 )
 
 // The sites a folder lock can be taken from. Named rather than free-form so
@@ -117,14 +101,6 @@ const (
 	lockSiteVanishedGuids   = "vanished-guids"
 	lockSiteWriteFlags      = "write-flags"
 )
-
-// lockMode names the label so a caller cannot pass "true" and mean shared.
-func lockMode(shared bool) string {
-	if shared {
-		return "shared"
-	}
-	return "exclusive"
-}
 
 // observeReadPart records one named part of a read. Guarded by the caller
 // knowing it is inside a read: the same functions are reached from write paths,

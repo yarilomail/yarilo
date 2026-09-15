@@ -108,7 +108,7 @@ func TestTwoProcessAppendNoUIDCollision(t *testing.T) {
 	procPair := make([]proc, procs)
 	for i := 0; i < procs; i++ {
 		lk := dialLocker()
-		mbBackend := maildir.New(maildir.WithLocker(lk))
+		mbBackend := maildir.New()
 		ixBackend := file.New(file.WithLocker(lk))
 		mb := mbBackend.OpenUser(user)
 		if err := mb.Init(); err != nil {

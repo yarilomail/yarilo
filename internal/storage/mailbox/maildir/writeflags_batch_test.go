@@ -1,66 +1,34 @@
 package maildir
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// countingLocker records how many times a resource is actually acquired, which
-// is the number this change exists to bring down.
-type countingLocker struct {
-	locks.Locker
-	acquires atomic.Int64
-	held     map[string]bool
-}
-
-func (l *countingLocker) Lock(ctx context.Context, resource, owner string, ttl time.Duration) (locks.Lock, error) {
-	l.acquires.Add(1)
-	if l.held == nil {
-		l.held = map[string]bool{}
-	}
-	l.held[resource] = true
-	return locks.Lock{ID: resource, Resource: resource, Owner: owner}, nil
-}
-
-func (l *countingLocker) Unlock(ctx context.Context, id string) error {
-	delete(l.held, id)
-	return nil
-}
-
-func (l *countingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
-	return heldMode(l.held[resource])
-}
-
-func batchBox(t *testing.T) (*userMailbox, *countingLocker) {
+func batchBox(t *testing.T) *userMailbox {
 	t.Helper()
 	root := t.TempDir()
 	const user = "u@x.com"
-	l := &countingLocker{}
 	info := &mailbox.UserInfo{Username: user, Home: testHome(root, user)}
-	box := New(WithLocker(l)).OpenUser(info).(*userMailbox)
+	box := New().OpenUser(info).(*userMailbox)
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
 	}
 	if err := box.Create("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	return box, l
+	return box
 }
 
-// One STORE, one acquisition of the folder lock.
-//
-// Per message it was one each: a command over 200 messages took the
-// cross-process lock 200 times, and under a second path holding the same lock
-// -- a SELECT's reconcile -- that is what produced the stalls (#1623).
-func TestABatchTakesTheFolderLockOnce(t *testing.T) {
-	box, l := batchBox(t)
+// A STORE takes no lock at all: it renames the files it names, and a rename
+// excludes nobody -- two sessions storing different messages never wait (#1840).
+func TestAStoreTakesNoLock(t *testing.T) {
+	box := batchBox(t)
 	const n = 20
 	writes := make([]mailbox.FlagWrite, 0, n)
 	for i := 0; i < n; i++ {
@@ -70,12 +38,10 @@ func TestABatchTakesTheFolderLockOnce(t *testing.T) {
 			UID: uint32(i + 1), Filename: name, Flags: []string{`\Seen`}, Keywords: []string{"$Important"},
 		})
 	}
-	before := l.acquires.Load()
+	before := holdsTaken(t)
 	results := box.WriteFlagsMulti("INBOX", writes)
-	got := l.acquires.Load() - before
-
-	if got != 1 {
-		t.Errorf("the batch took the folder lock %d times, want 1", got)
+	if got := holdsTaken(t) - before; got != 0 {
+		t.Errorf("the batch took a file lock %d times, want 0", got)
 	}
 	if len(results) != n {
 		t.Fatalf("got %d results for %d writes", len(results), n)
@@ -90,13 +56,23 @@ func TestABatchTakesTheFolderLockOnce(t *testing.T) {
 	}
 }
 
+// holdsTaken sums the file locks this package has taken, across every site.
+func holdsTaken(t *testing.T) int {
+	t.Helper()
+	total := 0.0
+	for _, site := range []string{lockSiteSave, lockSiteReconcileApply} {
+		total += testutil.ToFloat64(metricLockAcquired.WithLabelValues(site))
+	}
+	return int(total)
+}
+
 // The keyword file is read once for the batch, not once per message.
 //
 // The lock was the expensive half and is fixed by the batch; this is the other
 // half, and it is the one a comment can claim without the code doing it. Counted
 // by watching the file itself: every open of it is a read (#1623).
 func TestABatchReadsTheKeywordFileOnce(t *testing.T) {
-	box, _ := batchBox(t)
+	box := batchBox(t)
 	const n = 12
 	writes := make([]mailbox.FlagWrite, 0, n)
 	for i := 0; i < n; i++ {
@@ -136,7 +112,7 @@ func TestABatchReadsTheKeywordFileOnce(t *testing.T) {
 
 // A message whose file is gone does not take the rest of the batch with it.
 func TestABatchWithOneMissingFileWritesTheRest(t *testing.T) {
-	box, _ := batchBox(t)
+	box := batchBox(t)
 	names := []string{
 		"1700000001.M1Pa.host:2,",
 		"1700000002.M1Pb.host:2,",
@@ -173,12 +149,4 @@ func TestABatchWithOneMissingFileWritesTheRest(t *testing.T) {
 func onKeywordFileRead(fn func(path string)) func() {
 	keywordFileRead = fn
 	return func() { keywordFileRead = nil }
-}
-
-// heldMode answers HoldsResource for a fake tracking holds as a bool set.
-func heldMode(held bool) (locks.HoldMode, bool) {
-	if held {
-		return locks.HoldExclusive, true
-	}
-	return locks.HoldNone, false
 }

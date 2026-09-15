@@ -5,27 +5,18 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// The driver's half of the folder lock, by the call that took it. The index
-// publishes the other half on the same resource, so either alone reads as the
-// whole (#1630). Sites are named by role, so moving a call keeps the number.
+// The driver's half of the exclusion, by the call that took it: the uidlist
+// here, the journal in the index (#1840). Sites are named by role.
 var metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_lock_acquired_total",
-	Help: "Cross-process folder locks the maildir driver acquired, by the call that took it. Shares the resource with fileindex_lock_acquired_total; the sum of the two is what contends on one folder.",
+	Help: "Locks the maildir driver took on the uidlist, by the call that took it. A store, a rename and a read take none.",
 }, []string{"site"})
 
 // Held, not waited for: the cost a site imposes on the folder is the time it
 // keeps the lock, which no count of acquisitions carries (#1809).
 var metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Name:    "maildir_lock_hold_seconds",
-	Help:    "Time one call held the cross-process folder lock, by the call that took it. Pairs with fileindex_lock_hold_seconds on the same resource.",
-	Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
-}, []string{"site"})
-
-// The other half of the pair: what a site paid before it held anything. Held
-// and waited are different populations, and one number cannot carry both (#1821).
-var metricLockWait = promauto.NewHistogramVec(prometheus.HistogramOpts{
-	Name:    "maildir_lock_wait_seconds",
-	Help:    "Time a call waited to take the cross-process folder lock, by the call that asked. Pairs with maildir_lock_hold_seconds.",
+	Help:    "Time one call held the uidlist, by the call that took it. Pairs with fileindex_lock_hold_seconds, which measures the journal.",
 	Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
 }, []string{"site"})
 

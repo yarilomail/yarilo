@@ -112,15 +112,14 @@ func TestFlagsAreNotWrittenFromANameThatMovedOn(t *testing.T) {
 	}
 }
 
-// recSetupLocked is recSetup with a locker wired, so acquisitions can be
-// counted.
+// recSetupLocked is recSetup for the rows that count file-lock holds.
 func recSetupLocked(t *testing.T) (*userMailbox, mailbox.UserIndex, *mailbox.Folder) {
 	t.Helper()
 	root := t.TempDir()
 	const user = "u@x.com"
 	home := testHome(root, user)
 	info := &mailbox.UserInfo{Username: user, Home: home}
-	box := New(WithLocker(&countingLocker{})).OpenUser(info).(*userMailbox)
+	box := New().OpenUser(info).(*userMailbox)
 	if err := box.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -149,7 +148,7 @@ func hasFlagIn(all []string, want string) bool {
 // once means one renames and the other finds the source gone: that is the
 // migration having happened, not a folder that cannot be read.
 func TestTheLegacyUIDListMigrationToleratesLosingTheRace(t *testing.T) {
-	box, _ := batchBox(t)
+	box := batchBox(t)
 	legacy := filepath.Join(box.folderPath("INBOX"), LegacyUIDListFileName)
 	if err := os.WriteFile(legacy, []byte("3 V1 N1 G0\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -195,7 +194,7 @@ func TestTheLegacyUIDListMigrationToleratesLosingTheRace(t *testing.T) {
 // directory moves under them, so the test keeps delivering while it scans --
 // otherwise it asserts a property nobody exercised.
 func TestTheFolderCacheIsSafeWithoutTheMailboxLock(t *testing.T) {
-	box, _ := batchBox(t)
+	box := batchBox(t)
 	deliverToCur(t, box, "1700000001.M1Pa.host:2,", "From: a@b\r\n\r\nx\r\n")
 
 	done := make(chan struct{})
@@ -245,7 +244,7 @@ func TestTheFolderCacheIsSafeWithoutTheMailboxLock(t *testing.T) {
 // never caches, nothing is shared, and the test passes without proving
 // anything -- which is how the first version of it read.
 func TestTheCachedUIDMapIsNotWrittenIntoAfterItEscapes(t *testing.T) {
-	box, _ := batchBox(t)
+	box := batchBox(t)
 	body := "From: a@b\r\n\r\nx\r\n"
 	saveAndRecord(t, box, "INBOX", body, 1, nil)
 	m, err := box.readUIDList("INBOX")
@@ -296,13 +295,12 @@ func TestAReconcileWithNothingInNewTakesTheLockOnce(t *testing.T) {
 	movePhaseProbe = func(taken bool) { moveTaken = taken }
 	defer func() { movePhaseProbe = nil }()
 
-	l := box.b.locker.(*countingLocker)
-	before := l.acquires.Load()
+	before := holdsTaken(t)
 	st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := l.acquires.Load() - before
+	got := holdsTaken(t) - before
 
 	if st.Imported != 1 {
 		t.Fatalf("the pass imported %d messages, want 1 -- it must have work to do", st.Imported)
@@ -449,13 +447,12 @@ func TestAPollOfAnUnchangedFolderTakesNoLock(t *testing.T) {
 	cleanProbe = func(n int) { compared = n }
 	defer func() { cleanProbe = nil }()
 
-	l := box.b.locker.(*countingLocker)
-	before := l.acquires.Load()
+	before := holdsTaken(t)
 	st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := l.acquires.Load() - before; got != 0 {
+	if got := holdsTaken(t) - before; got != 0 {
 		t.Errorf("a poll of an unchanged folder took the lock %d times, want 0", got)
 	}
 	if compared == 0 {
@@ -466,8 +463,8 @@ func TestAPollOfAnUnchangedFolderTakesNoLock(t *testing.T) {
 	}
 }
 
-// The mirror: each of the three differences takes the lock.
-func TestEachDifferenceStillTakesTheLock(t *testing.T) {
+// The mirror: each of the three differences is applied.
+func TestEachDifferenceIsStillApplied(t *testing.T) {
 	cases := []struct {
 		name  string
 		apply func(t *testing.T, box *userMailbox, cur, name string)
@@ -505,13 +502,12 @@ func TestEachDifferenceStillTakesTheLock(t *testing.T) {
 			cur := filepath.Join(box.folderPath("INBOX"), "cur")
 			tc.apply(t, box, cur, storedName(t, box, "INBOX", msgs[0]))
 
-			l := box.b.locker.(*countingLocker)
-			before := l.acquires.Load()
-			if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
+			st, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if got := l.acquires.Load() - before; got == 0 {
-				t.Error("the difference was skipped: the lock was never taken")
+			if !st.Changed {
+				t.Errorf("the difference was skipped: the pass reported %+v", st)
 			}
 		})
 	}

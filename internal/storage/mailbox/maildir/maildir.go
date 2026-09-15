@@ -5,7 +5,6 @@ package maildir
 
 import (
 	"bufio"
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -34,9 +34,10 @@ type Backend struct {
 	hostname string
 	pid      int
 	counter  atomic.Uint64
-	locker   locks.Locker
-	writeSem chan struct{} // nil = unlimited
-	listUTF8 bool          // true = UTF-8 on disk (default); false = modified-UTF-7
+	// lockMethod is how a write to a shared file excludes another writer.
+	lockMethod filelock.Method
+	writeSem   chan struct{} // nil = unlimited
+	listUTF8   bool          // true = UTF-8 on disk (default); false = modified-UTF-7
 	// proactiveScan is maildir_sync_on_select: whether opening a folder
 	// reconciles the index against cur/ and new/. Default on.
 	proactiveScan bool
@@ -51,10 +52,10 @@ func WithProactiveScan(on bool) Option {
 	return func(b *Backend) { b.proactiveScan = on }
 }
 
-// WithLocker wires a lock client in: every shared-file write then takes the
-// cross-process X lock. Nil keeps the in-process mutex only.
-func WithLocker(l locks.Locker) Option {
-	return func(b *Backend) { b.locker = l }
+// WithLockMethod chooses the transport for the locks this driver takes on
+// shared files: flock by default (#1840).
+func WithLockMethod(m filelock.Method) Option {
+	return func(b *Backend) { b.lockMethod = m }
 }
 
 // WithMaxConcurrentWrites caps the number of concurrent Save() calls.
@@ -82,6 +83,7 @@ func New(opts ...Option) *Backend {
 	b := &Backend{
 		hostname:      hostname,
 		pid:           os.Getpid(),
+		lockMethod:    filelock.MethodFlock,
 		listUTF8:      true,
 		proactiveScan: true,
 	}
@@ -172,6 +174,29 @@ func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
 	return nil, false
 }
 
+// addUID adds one row, but only to a map that is still the list it was loaded
+// from: a stale map gains a row and keeps claiming to be whole (#1739).
+func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID bool, stamp listStamp) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.uidMap == nil {
+		c.uidStamp = listStamp{}
+		return
+	}
+	c.uidMap[base] = uid
+	if c.byUID == nil {
+		c.byUID = map[uint32]string{}
+	}
+	c.byUID[uid] = base
+	if hasGUID {
+		if c.guidMap == nil {
+			c.guidMap = map[string][16]byte{}
+		}
+		c.guidMap[base] = guid
+	}
+	c.uidStamp = stamp
+}
+
 func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, stamp listStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -180,6 +205,32 @@ func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, 
 	for base, uid := range m {
 		c.byUID[uid] = base
 	}
+}
+
+// listCanTakeRow says the cache is sure the list does not name this file yet.
+// Unsure is answered no: a second row for one name is a message with two uids.
+func (u *userMailbox) listCanTakeRow(folder, base string) bool {
+	st := u.listStampNow(folder)
+	if st == (listStamp{}) {
+		return false
+	}
+	m, ok := u.folderCacheFor(folder).snapshotUIDs(st)
+	if !ok {
+		return false
+	}
+	_, known := m[base]
+	return !known
+}
+
+// adoptRow adds one written row to the cache under the list's new stamp:
+// re-reading the whole list to learn one name is what made a save O(n) (#1840).
+func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, hasGUID bool) {
+	fi, err := os.Stat(u.uidListPath(folder))
+	if err != nil {
+		u.folderCacheFor(folder).invalidateUIDs()
+		return
+	}
+	u.folderCacheFor(folder).addUID(base, uid, guid, hasGUID, stampOf(fi))
 }
 
 // adoptWritten makes the cache the content just written: a map merged into an
@@ -299,7 +350,7 @@ type userMailbox struct {
 	username         string
 	owner            string     // <process>/<pid>/<user> — passed to yarilo-locks for BUSY diagnostics
 	listUTF8         bool       // mirrors Backend.listUTF8
-	mu               sync.Mutex // in-process fast-path; cross-process barrier is b.locker
+	mu               sync.Mutex // orders this pod's sessions; other processes are excluded at the file
 	cacheMu          sync.Mutex // guards cache; the scan reaches it holding no mailbox lock
 	// inSection is non-zero while a reconcile's apply phase holds the folder
 	// lock; the filesystem calls made there are counted (#1626).
@@ -312,37 +363,11 @@ type userMailbox struct {
 	pending map[string][16]byte
 }
 
-// withMailboxLockSite takes the in-process mutex then the cross-process lock,
-// recording which call took it: this driver and the index share the key, so a
-// total without the caller says nothing about which to change (#1630).
-func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) error {
+// withMailboxLockSite serialises this pod's own sessions. A second process is
+// excluded at the uidlist row and the journal group, not per command (#1840).
+func (u *userMailbox) withMailboxLockSite(_, _ string, fn func() error) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.b.locker == nil {
-		return fn()
-	}
-	key := locks.MailboxKey(u.username, folder)
-	// An outer scope already holds it for a batch (POP3 QUIT, multi-message
-	// EXPUNGE): acquiring again is a same-owner BUSY loop.
-	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
-		return err
-	} else if held != locks.HoldNone {
-		return fn()
-	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
-	defer cancel()
-	asked := time.Now()
-	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
-	metricLockWait.WithLabelValues(site).Observe(time.Since(asked).Seconds())
-	if err != nil {
-		return fmt.Errorf("maildir/lock %s: %w", folder, err)
-	}
-	metricLockAcquired.WithLabelValues(site).Inc()
-	heldFrom := time.Now()
-	defer func() {
-		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
-		_ = u.b.locker.Unlock(ctx, lk.ID)
-	}()
 	return fn()
 }
 
@@ -516,56 +541,11 @@ func (u *userMailbox) Rename(oldName, newName string) error {
 	})
 }
 
-// withTwoMailboxLocks takes both per-folder X locks in lexicographic order.
-// Same ordering as the index side so a Rename rippling through both backends
-// cannot deadlock.
-func (u *userMailbox) withTwoMailboxLocks(folderA, folderB, site string, fn func() error) error {
-	if u.b.locker == nil {
-		return fn()
-	}
-	a, b := folderA, folderB
-	if a > b {
-		a, b = b, a
-	}
-	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
-	defer cancel()
-	heldA, herr := locks.Reentrant(u.b.locker, keyA, site, false)
-	if herr != nil {
-		return herr
-	}
-	if heldA == locks.HoldNone {
-		lkA, err := locks.Acquire(ctx, u.b.locker, keyA, u.owner, 30*time.Second)
-		if err != nil {
-			return fmt.Errorf("maildir/lock %s: %w", a, err)
-		}
-		metricLockAcquired.WithLabelValues(site).Inc()
-		heldFrom := time.Now()
-		defer func() {
-			metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
-			_ = u.b.locker.Unlock(ctx, lkA.ID)
-		}()
-	}
-	if a == b {
-		return fn()
-	}
-	keyB := locks.MailboxKey(u.username, b)
-	heldB, herr := locks.Reentrant(u.b.locker, keyB, site, false)
-	if herr != nil {
-		return herr
-	}
-	if heldB == locks.HoldNone {
-		lkB, err := locks.Acquire(ctx, u.b.locker, keyB, u.owner, 30*time.Second)
-		if err != nil {
-			return fmt.Errorf("maildir/lock %s: %w", b, err)
-		}
-		metricLockAcquired.WithLabelValues(site).Inc()
-		heldFrom := time.Now()
-		defer func() {
-			metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
-			_ = u.b.locker.Unlock(ctx, lkB.ID)
-		}()
-	}
+// withTwoMailboxLocks is the one-folder hold: both folders belong to one user,
+// and within a pod one mutex orders every session's writes to them (#1840).
+func (u *userMailbox) withTwoMailboxLocks(_, _, _ string, fn func() error) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return fn()
 }
 
@@ -705,21 +685,6 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 	if uid == 0 {
 		return fmt.Errorf("maildir/uidlist: refusing a record with no uid for %q", filename)
 	}
-	if err := u.ensureUIDListLocked(folder); err != nil {
-		return err
-	}
-	path := u.uidListPath(folder)
-	l, err := readUIDListFile(path)
-	if err != nil {
-		return fmt.Errorf("maildir/uidlist: read: %w", err)
-	}
-	if l.torn {
-		u.reportTornUIDList(folder, path, l)
-	}
-	beforeRows, beforeMod, beforeSize := len(l.records), int64(0), int64(0)
-	if listDebug() {
-		beforeMod, beforeSize = u.listStat(folder)
-	}
 	base := maildirBase(filename)
 	rec := uidRecord{uid: uid, base: base, guid: guid, hasGUID: guidOverride}
 	if !nameCarriesSizes(base) {
@@ -730,22 +695,43 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 			rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
 		}
 	}
-	replaced := false
-	for i := range l.records {
-		if l.records[i].base == base {
-			l.records[i], replaced = rec, true
-			break
+	// The ordinary case is a name the list has never seen: one line at the end
+	// of the file, held for that write alone (#1840).
+	if u.listCanTakeRow(folder, base) {
+		appended, aerr := u.appendUIDRow(folder, lockSiteSave, rec)
+		if aerr != nil {
+			return aerr
+		}
+		if appended {
+			u.adoptRow(folder, base, uid, guid, guidOverride)
+			return nil
 		}
 	}
-	if !replaced {
-		l.records = append(l.records, rec)
-	}
-	if err := u.writeUIDList(folder, l); err != nil {
+	var written *uidList
+	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
+	err := u.withUIDList(folder, lockSiteSave, func(l *uidList) error {
+		beforeRows = len(l.records)
+		if listDebug() {
+			beforeMod, beforeSize = u.listStat(folder)
+		}
+		replaced := false
+		for i := range l.records {
+			if l.records[i].base == base {
+				l.records[i], replaced = rec, true
+				break
+			}
+		}
+		if !replaced {
+			l.records = append(l.records, rec)
+		}
+		written = l
+		return nil
+	})
+	if err != nil {
 		return err
 	}
-
 	u.debugListWrite("assign", folder, []uint32{uid}, base, beforeRows, beforeMod, beforeSize)
-	u.adoptWritten(folder, l)
+	u.adoptWritten(folder, written)
 	return nil
 }
 

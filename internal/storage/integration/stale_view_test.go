@@ -19,7 +19,7 @@ func TestASyncDoesNotTakeTheRowOfARecordItHasNotSeen(t *testing.T) {
 	dial := embeddedLocks(t)
 	locker := dial()
 
-	writer := maildir.New(maildir.WithLocker(locker)).OpenUser(info)
+	writer := maildir.New().OpenUser(info)
 	defer writer.Close() //nolint:errcheck
 	if err := writer.Init(); err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestASyncDoesNotTakeTheRowOfARecordItHasNotSeen(t *testing.T) {
 
 	// The other session, opened before the append: its view of the folder is
 	// what a second pod holds while the first is still writing.
-	syncBox := maildir.New(maildir.WithLocker(locker)).OpenUser(info)
+	syncBox := maildir.New().OpenUser(info)
 	defer syncBox.Close() //nolint:errcheck
 	syncIdx := indexfile.New(indexfile.WithLocker(locker)).OpenUser(info)
 	defer syncIdx.Close() //nolint:errcheck

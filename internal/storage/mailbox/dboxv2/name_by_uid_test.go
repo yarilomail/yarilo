@@ -1,18 +1,15 @@
 package dboxv2
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -88,67 +85,22 @@ func saveNamedGUID(t *testing.T, mb mailbox.UserMailbox, folder, body string, ui
 }
 
 // appendRecorder records what an APPEND takes and, on release, what the folder
-// then holds: the two together say whether the name was settled inside.
-type appendRecorder struct {
-	mu     sync.Mutex
-	taken  []string
-	atFree []string
-	dir    string
-}
-
-func (l *appendRecorder) Lock(_ context.Context, resource, _ string, _ time.Duration) (locks.Lock, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.taken = append(l.taken, resource)
-	return locks.Lock{ID: resource, Resource: resource}, nil
-}
-
-func (l *appendRecorder) LockShared(ctx context.Context, r, o string, ttl time.Duration) (locks.Lock, error) {
-	return l.Lock(ctx, r, o, ttl)
-}
-
-func (l *appendRecorder) Unlock(_ context.Context, _ string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	entries, _ := os.ReadDir(l.dir)
-	l.atFree = nil
-	for _, e := range entries {
-		l.atFree = append(l.atFree, e.Name())
-	}
-	return nil
-}
-func (l *appendRecorder) Renew(context.Context, string, time.Duration) error { return nil }
-func (l *appendRecorder) HoldsResource(string) (locks.HoldMode, bool)        { return locks.HoldNone, false }
-func (l *appendRecorder) Close() error                                       { return nil }
-func (l *appendRecorder) Subscribe(context.Context, string) (<-chan locks.Event, error) {
-	return nil, nil
-}
-func (l *appendRecorder) Emit(context.Context, string, locks.EventType, string) error { return nil }
-func (l *appendRecorder) IncrementCounter(context.Context, string, int64) (int64, error) {
-	return 0, nil
-}
-
-// One APPEND takes the folder's key once, and by the time it is released the
-// message already wears the name its uid gives it (#1704).
-func TestAnAppendTakesTheFolderKeyOnce(t *testing.T) {
+// An APPEND leaves the message wearing the name its uid gives it: a store that
+// named it anything else is one the reference cannot read (#1704).
+func TestAnAppendNamesTheMessageByItsUID(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "sdbox", "mailboxes", "INBOX", "dbox-Mails")
-	rec := &appendRecorder{dir: dir}
 	info := &mailbox.UserInfo{Username: "alice@example.com", Home: home}
-	mb := New(WithLocker(rec)).OpenUser(info)
+	mb := New().OpenUser(info)
 	if err := mb.Init(); err != nil {
 		t.Fatal(err)
 	}
-	idx := fileidx.New(fileidx.WithLocker(rec)).OpenUser(info)
+	idx := fileidx.New().OpenUser(info)
 	defer idx.Close() //nolint:errcheck
 	folder, err := idx.OpenFolder("INBOX", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	rec.mu.Lock()
-	rec.taken = nil
-	rec.mu.Unlock()
 
 	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader("msg\n"), 0, 4, nil, nil, [16]byte{})
 	if err != nil {
@@ -159,25 +111,23 @@ func TestAnAppendTakesTheFolderKeyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key := locks.MailboxKey("alice@example.com", "INBOX")
-	got := 0
-	for _, r := range rec.taken {
-		if r == key {
-			got++
-		}
-	}
-	if got != 1 {
-		t.Errorf("the append took %q %d times, want once: %v", key, got, rec.taken)
-	}
 	want := "u." + strconv.FormatUint(uint64(m.UID), 10)
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
 	found := false
-	for _, n := range rec.atFree {
+	for _, n := range names {
 		if n == want {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("at release the folder held %v, and none of it is %s", rec.atFree, want)
+		t.Errorf("the folder holds %v, and none of it is %s", names, want)
 	}
 }
 

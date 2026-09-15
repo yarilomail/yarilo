@@ -617,6 +617,8 @@ data:
     {{- end }}
     {{- if $storage }}
     storage:
+      ## How a write to a shared file excludes another writer (#1840).
+      storage_lock_method: {{ $storage.storage_lock_method | default "flock" | quote }}
       {{- if $storage.mail_driver }}
       mail_driver: {{ $storage.mail_driver | quote }}
       {{- end }}
@@ -913,7 +915,6 @@ data:
       ## still fails loudly. Negative disables waiting.
       locks_client_startup_wait: {{ .Values.components.locks.client.startup_wait | default 30 | int64 }}
       ## One lease per account instead of one acquisition per command (#1840).
-      locks_client_user_lease: {{ .Values.components.locks.client.user_lease | default false }}
     {{- end }}
 
     ## How components talk to the yarilo-auth MASTER listener (userdb lookups).

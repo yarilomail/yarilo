@@ -20,7 +20,7 @@ func TestExpungingManyTakesTheFolderOnce(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u@x.com", Home: home, Driver: "maildir"}
 	lk := &countingLocker{held: map[string]locks.HoldMode{}}
-	store := maildir.New(maildir.WithLocker(lk)).OpenUser(info)
+	store := maildir.New().OpenUser(info)
 	idx := fileidx.New(fileidx.WithLocker(lk)).OpenUser(info)
 	t.Cleanup(func() { _ = store.Close(); _ = idx.Close() })
 	if err := store.Init(); err != nil {
@@ -52,12 +52,12 @@ func TestExpungingManyTakesTheFolderOnce(t *testing.T) {
 		doomed = append(doomed, m)
 	}
 
-	before := lk.locks
+	before := journalHolds(t)
 	removed, failed, nerr := box.ExpungeMarked(f, "INBOX", doomed, nil)
 	if nerr != nil || failed != 0 || len(removed) != messages {
 		t.Fatalf("expunged %d, failed %d, err %v", len(removed), failed, nerr)
 	}
-	took := lk.locks - before
+	took := journalHolds(t) - before
 	t.Logf("locks taken for %d messages: %d", messages, took)
 
 	if took > 4 {
@@ -103,7 +103,7 @@ func TestTheIndexIsTakenOncePerTransaction(t *testing.T) {
 	if berr != nil {
 		t.Fatalf("begin: %v", berr)
 	}
-	before := lk.locks
+	before := journalHolds(t)
 	if perMessage {
 		for _, uid := range uids {
 			if eerr := idx.ExpungeMessage(f.ID, uid); eerr != nil {
@@ -119,7 +119,7 @@ func TestTheIndexIsTakenOncePerTransaction(t *testing.T) {
 			t.Fatal(cerr)
 		}
 	}
-	took := lk.locks - before
+	took := journalHolds(t) - before
 	t.Logf("index locks for %d records in one transaction: %d", messages, took)
 	if took != 1 {
 		t.Errorf("one transaction over %d records took %d index locks, want 1", messages, took)
@@ -162,14 +162,14 @@ func TestFlagChangesTakeTheIndexOncePerTransaction(t *testing.T) {
 	if berr != nil {
 		t.Fatal(berr)
 	}
-	before := lk.locks
+	before := journalHolds(t)
 	for _, uid := range uids {
 		tx.UpdateFlags(uid, mailbox.FlagsUpdate{Mode: mailbox.FlagsSet, Flags: []string{`\Seen`}})
 	}
 	if _, cerr := tx.Commit(); cerr != nil {
 		t.Fatal(cerr)
 	}
-	took := lk.locks - before
+	took := journalHolds(t) - before
 	t.Logf("index locks for %d flag changes in one transaction: %d", messages, took)
 	if took != 1 {
 		t.Errorf("one transaction over %d flag changes took %d index locks, want 1", messages, took)

@@ -1,14 +1,11 @@
 package file
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -17,19 +14,6 @@ func histSum(t *testing.T, h prometheus.Histogram) (float64, uint64) {
 	var m dto.Metric
 	if err := h.(prometheus.Metric).Write(&m); err != nil {
 		t.Fatalf("write metric: %v", err)
-	}
-	return m.GetHistogram().GetSampleSum(), m.GetHistogram().GetSampleCount()
-}
-
-func histVecSum2(t *testing.T, v *prometheus.HistogramVec, labels ...string) (float64, uint64) {
-	t.Helper()
-	h, err := v.GetMetricWithLabelValues(labels...)
-	if err != nil {
-		t.Fatalf("get %v: %v", labels, err)
-	}
-	var m dto.Metric
-	if err := h.(prometheus.Metric).Write(&m); err != nil {
-		t.Fatalf("write %v: %v", labels, err)
 	}
 	return m.GetHistogram().GetSampleSum(), m.GetHistogram().GetSampleCount()
 }
@@ -149,164 +133,6 @@ func counterVecValue(t *testing.T, v *prometheus.CounterVec, labels ...string) f
 	return m.GetCounter().GetValue()
 }
 
-// slowUnlockLocker makes the release cost something measurable. It stands in
-// for what the profile of a real deployment showed: releasing the lock is a
-// second round trip to the lock service, about as expensive as taking it.
-type slowUnlockLocker struct {
-	locks.Locker
-	delay time.Duration
-}
-
-func (l slowUnlockLocker) Unlock(ctx context.Context, id string) error {
-	time.Sleep(l.delay)
-	return l.Locker.Unlock(ctx, id)
-}
-
-// Every trip to the lock service belongs to the lock part — the acquisition and
-// the release both. The release happens in a defer as the locked span ends, so
-// timing only the acquisition leaves it in the remainder, where it is a cost
-// with a known name sitting in the bucket reserved for costs without one.
-func TestTheLockPartCoversTheRelease(t *testing.T) {
-	const releaseDelay = 40 * time.Millisecond
-
-	dial := raceTestLockServer(t)
-	locker := slowUnlockLocker{Locker: dial(), delay: releaseDelay}
-	root := t.TempDir()
-	home := testHome(root, "carol@example.com")
-	ui := New(WithLocker(locker)).OpenUser(&mailbox.UserInfo{
-		Username: "carol@example.com", Home: home,
-	}).(*userHandle).ui
-
-	f, err := ui.OpenFolder("INBOX", 42, "")
-	if err != nil {
-		t.Fatalf("OpenFolder: %v", err)
-	}
-
-	lockBefore, _ := histVecSum(t, metricReadPart, "lock")
-	wholeBefore, _ := histSum(t, metricReadSeconds)
-	releaseBefore, releaseCountBefore := histVecSum2(t, metricLockRelease, "shared", lockSiteFallback)
-
-	// On its own goroutine: the lock client tracks holds per goroutine, so a
-	// read issued from the one that just created the folder could take the
-	// re-entrant path and never touch the lock service — measuring nothing and
-	// passing. A session's reads come from their own goroutine anyway.
-	done := make(chan error, 1)
-	// The fallback is the only locked read left, so that is what the timing
-	// parts are measured on (#1809).
-	fsFallback := ui.open[f.ID]
-	fsFallback.mu.Lock()
-	fsFallback.lineage = lineageHdr{}
-	fsFallback.mu.Unlock()
-	go func() {
-		_, gerr := ui.GetMessages(f.ID, mailbox.SeqSet{})
-		done <- gerr
-	}()
-	if err := <-done; err != nil {
-		t.Fatalf("GetMessages: %v", err)
-	}
-
-	lockAfter, _ := histVecSum(t, metricReadPart, "lock")
-	wholeAfter, _ := histSum(t, metricReadSeconds)
-	releaseAfter, releaseCountAfter := histVecSum2(t, metricLockRelease, "shared", lockSiteFallback)
-
-	lockPart := lockAfter - lockBefore
-	whole := wholeAfter - wholeBefore
-	if lockPart < releaseDelay.Seconds() {
-		t.Errorf("the lock part is %.4fs for a read whose release alone took %.4fs: the release is falling into the remainder",
-			lockPart, releaseDelay.Seconds())
-	}
-	if lockPart > whole {
-		t.Errorf("the lock part (%.4fs) exceeds the whole read (%.4fs)", lockPart, whole)
-	}
-	if releaseCountAfter == releaseCountBefore {
-		t.Error("the release was not timed on its own")
-	}
-	if releaseAfter-releaseBefore < releaseDelay.Seconds() {
-		t.Errorf("the release histogram recorded %.4fs for a %.4fs release", releaseAfter-releaseBefore, releaseDelay.Seconds())
-	}
-}
-
-// The point of the whole exercise, as a number: a read that only answers a
-// client must stop going to the lock service, and a read whose answer decides a
-// write must keep going. The counter is the assertion — timing would pass on a
-// fast enough lock service and prove nothing.
-func TestUnlockedReadsMakeNoRoundTrip(t *testing.T) {
-	dial := raceTestLockServer(t)
-	root := t.TempDir()
-	home := testHome(root, "dave@example.com")
-	ui := New(WithLocker(dial())).OpenUser(&mailbox.UserInfo{
-		Username: "dave@example.com", Home: home,
-	}).(*userHandle).ui
-
-	f, err := ui.OpenFolder("INBOX", 42, "")
-	if err != nil {
-		t.Fatalf("OpenFolder: %v", err)
-	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
-		t.Fatalf("AppendMessage: %v", err)
-	}
-
-	run := func(read func() error) float64 {
-		before := sharedAcquisitions(t)
-		done := make(chan error, 1)
-		// Own goroutine: the lock client tracks holds per goroutine, so a read
-		// from the one that just wrote could take the re-entrant path and
-		// measure nothing while passing.
-		go func() { done <- read() }()
-		if err := <-done; err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		return sharedAcquisitions(t) - before
-	}
-
-	if got := run(func() error { _, e := ui.GetMessagesUnlocked(f.ID, mailbox.SeqSet{}); return e }); got != 0 {
-		t.Errorf("an unlocked read took %v lock acquisitions", got)
-	}
-	if got := run(func() error { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); return e }); got != 0 {
-		t.Errorf("a read took %v lock acquisitions; a reader takes none (#1809)", got)
-	}
-
-	// The one read that still locks: a folder with nothing to prove its
-	// freshness with falls back, and the weaker file keeps the stronger rule.
-	fsFall := ui.open[f.ID]
-	fsFall.mu.Lock()
-	fsFall.lineage = lineageHdr{}
-	fsFall.mu.Unlock()
-	if got := run(func() error { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); return e }); got == 0 {
-		t.Error("a folder that cannot prove its freshness read without the lock")
-	}
-}
-
-// Without the pairing there is nothing to stand on, so the unlocked entry point
-// must behave as the locked one. The weaker file keeps the stronger guarantee.
-func TestAnIndexWithoutLineageStaysLocked(t *testing.T) {
-	dial := raceTestLockServer(t)
-	root := t.TempDir()
-	home := testHome(root, "erin@example.com")
-	ui := New(WithLocker(dial())).OpenUser(&mailbox.UserInfo{
-		Username: "erin@example.com", Home: home,
-	}).(*userHandle).ui
-
-	f, err := ui.OpenFolder("INBOX", 42, "")
-	if err != nil {
-		t.Fatalf("OpenFolder: %v", err)
-	}
-	fs := ui.open[f.ID]
-	fs.mu.Lock()
-	fs.lineage = lineageHdr{} // as an index written before the extension reads
-	fs.mu.Unlock()
-
-	before := sharedAcquisitions(t)
-	done := make(chan error, 1)
-	go func() { _, e := ui.GetMessagesUnlocked(f.ID, mailbox.SeqSet{}); done <- e }()
-	if err := <-done; err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if sharedAcquisitions(t) == before {
-		t.Error("a folder with no lineage was read without the lock")
-	}
-}
-
 // Every reader that only answers a client must take zero round trips, and every
 // reader whose answer decides a write must still take them. Enumerated rather
 // than sampled: the classification in #1249 is the deliverable, and a table is
@@ -364,77 +190,29 @@ func counterValue(t *testing.T, c prometheus.Counter) float64 {
 	return m.GetCounter().GetValue()
 }
 
-// Each site has to be reachable from its own path, or the label answers a
-// question nobody asked. The one that matters is reload-fallback against
-// open-probe: the first says the migration has not reached this folder, the
-// second says a folder was opened. They cost the same and mean opposite things,
-// which is exactly why counting them together explained nothing.
-func TestEachLockSiteIsReachedFromItsOwnPath(t *testing.T) {
-	dial := raceTestLockServer(t)
+// A write cycle holds the journal once, however many records it appends: the
+// kernel lock is not re-entrant, so a second take would deadlock (#1840).
+func TestAWriteCycleHoldsTheJournalOnce(t *testing.T) {
 	root := t.TempDir()
-	home := testHome(root, "iris@example.com")
-	ui := New(WithLocker(dial())).OpenUser(&mailbox.UserInfo{
-		Username: "iris@example.com", Home: home,
-	}).(*userHandle).ui
-
-	site := func(mode, s string) float64 { return counterVecValue(t, metricLockAcquired, mode, s) }
-
+	ui := openIdx(root, "gina@example.com")
 	f, err := ui.OpenFolder("INBOX", 42, "")
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	done := make(chan error, 1)
-
-	// A write, under the name its own path carries (#1827).
-	writeBefore := site("exclusive", lockSiteAppend)
-	go func() {
-		done <- ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10})
-	}()
-	if err := <-done; err != nil {
+	before := exclusiveAcquisitions()
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
-	if site("exclusive", lockSiteAppend) == writeBefore {
-		t.Error("an append took no exclusive lock under its own name")
+	if got := exclusiveAcquisitions() - before; got != 1 {
+		t.Errorf("one append held the journal %v times, want 1", got)
 	}
 
-	// Opening a folder this handle already has open takes no lock at all since
-	// #1639: the site is reached by a first open or a repair, which are writes.
-	// Asserted here so the shared series is known to be empty on purpose rather
-	// than by an accident nobody noticed.
-	probeBefore := site("shared", lockSiteOpenProbe)
-	go func() { _, e := ui.OpenFolder("INBOX", 42, ""); done <- e }()
-	if err := <-done; err != nil {
-		t.Fatalf("second open: %v", err)
+	// And a read holds nothing at all.
+	before = exclusiveAcquisitions()
+	if _, err := ui.GetMessages(f.ID, mailbox.SeqSet{}); err != nil {
+		t.Fatalf("GetMessages: %v", err)
 	}
-	if site("shared", lockSiteOpenProbe) != probeBefore {
-		t.Error("re-opening a folder went to the lock service")
-	}
-
-	// A read takes no lock at all: the files prove their own freshness (#1809).
-	readBefore := site("shared", lockSiteFallback)
-	go func() { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); done <- e }()
-	if err := <-done; err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if site("shared", lockSiteFallback) != readBefore {
-		t.Error("a read on a folder that can prove its freshness went to the lock service")
-	}
-
-	// A read that wanted the lock-free path and has nothing to prove freshness
-	// with: the folder as it looks before the migration reaches it.
-	fs := ui.open[f.ID]
-	fs.mu.Lock()
-	fs.lineage = lineageHdr{}
-	fs.mu.Unlock()
-	fallbackBefore := site("shared", lockSiteFallback)
-	go func() { _, e := ui.GetMessagesUnlocked(f.ID, mailbox.SeqSet{}); done <- e }()
-	if err := <-done; err != nil {
-		t.Fatalf("fallback read: %v", err)
-	}
-	if site("shared", lockSiteFallback) == fallbackBefore {
-		t.Error("a fallback read was not counted apart from a deliberate one")
-	}
-	if site("shared", lockSiteFallback) != fallbackBefore+1 {
-		t.Error("the fallback took more than the one acquisition it needs")
+	if got := exclusiveAcquisitions() - before; got != 0 {
+		t.Errorf("a read held the journal %v times, want 0", got)
 	}
 }

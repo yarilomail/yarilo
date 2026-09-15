@@ -97,24 +97,28 @@ func holdSamples(t *testing.T, site string) uint64 {
 	return m.GetHistogram().GetSampleCount()
 }
 
-// How long a site holds the lock is its cost to every other session on that
+// How long a site holds the list is its cost to every other session on that
 // folder, and a count of acquisitions does not carry it (#1809).
 func TestAHoldIsTimedUnderTheSiteThatTookIt(t *testing.T) {
-	box, _ := batchBox(t)
-	const site = "expunge"
-	before := holdSamples(t, site)
-	beforeSave := holdSamples(t, lockSiteSave)
+	box := batchBox(t)
+	before := holdSamples(t, lockSiteSave)
+	beforeApply := holdSamples(t, lockSiteReconcileApply)
 
-	if err := box.HoldFolder("INBOX", site, func() error { return nil }); err != nil {
+	body := "From: a@b\r\n\r\nx\r\n"
+	saved, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := holdSamples(t, site); got != before+1 {
-		t.Errorf("one hold recorded %d samples under %q, want %d", got-before, site, 1)
+	if _, aerr := box.AssignUID("INBOX", saved, 1); aerr != nil {
+		t.Fatal(aerr)
+	}
+	if got := holdSamples(t, lockSiteSave); got != before+1 {
+		t.Errorf("one hold recorded %d samples under %q, want 1", got-before, lockSiteSave)
 	}
 
 	// And under the site that took it, not under one name for all of them.
-	if got := holdSamples(t, lockSiteSave); got != beforeSave {
-		t.Errorf("a hold taken for %q was also recorded under %q", site, lockSiteSave)
+	if got := holdSamples(t, lockSiteReconcileApply); got != beforeApply {
+		t.Errorf("a hold taken for %q was also recorded under %q", lockSiteSave, lockSiteReconcileApply)
 	}
 }
 

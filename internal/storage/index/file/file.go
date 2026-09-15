@@ -10,7 +10,6 @@
 package file
 
 import (
-	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -29,6 +28,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/internal/userstate/folders"
 	"github.com/yarilomail/yarilo/internal/userstate/uidvalidity"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -106,6 +106,9 @@ func copySidecarTmp(src, dst string) error {
 type Backend struct {
 	locker locks.Locker
 
+	// lockMethod is how a journal append excludes another process's append.
+	lockMethod filelock.Method
+
 	// listUTF8 is the on-disk folder name encoding, mirroring the mailbox
 	// backends' option of the same name. Default true, as theirs is.
 	listUTF8 bool
@@ -140,6 +143,11 @@ func WithLocker(l locks.Locker) Option {
 	return func(b *Backend) { b.locker = l }
 }
 
+// WithLockMethod picks the file-lock transport used around a journal append.
+func WithLockMethod(m filelock.Method) Option {
+	return func(b *Backend) { b.lockMethod = m }
+}
+
 // WithListUTF8 sets the on-disk name encoding; it must match the mailbox
 // backend's, or the two trees spell a folder differently (#1586).
 func WithListUTF8(v bool) Option { return func(b *Backend) { b.listUTF8 = v } }
@@ -170,6 +178,7 @@ func WithLogCompaction(minBytes, maxBytes int64, minAge time.Duration) Option {
 func New(opts ...Option) *Backend {
 	b := &Backend{
 		listUTF8:           true,
+		lockMethod:         filelock.MethodFlock,
 		users:              make(map[string]*refUserIndex),
 		logCompactMinBytes: defaultLogCompactMinBytes,
 		logCompactMaxBytes: defaultLogCompactMaxBytes,
@@ -503,6 +512,12 @@ type folderState struct {
 	// closeFDs() before anything that replaces the file on disk.
 	logFD *os.File
 
+	// lockMethod is the transport for the lock held over a journal append.
+	lockMethod filelock.Method
+	// journalHeld says this cycle already holds the journal; the kernel lock
+	// is not re-entrant and fs.mu already orders this process (#1840).
+	journalHeld bool
+
 	// dboxHdr is the folder GUID + flags from the dbox-hdr ext.
 	hdr dboxHdr
 
@@ -768,100 +783,15 @@ func (u *userIndex) withFolderLockSite(fs *folderState, site string, fn func() e
 	})
 }
 
-// withDistLock runs fn while holding the cross-process index lock for fs.folder.
-// It acquires the lock BEFORE fn touches fs.mu so a slow lock-wait (up to 35 s)
-// does not block concurrent readers that only need fs.mu.RLock(). The
-// HoldsResource() shortcut keeps it re-entrant: an outer caller that already
-// holds the key (the POP3 QUIT pattern, or withFolderRO nested inside a locked
-// write) runs fn without re-acquiring, so it cannot deadlock against itself.
-// When no locker is wired (tests) fn runs unguarded.
-//
-// shared selects a shared (read) lock instead of the default exclusive one:
-// multiple shared holders run concurrently, blocking only against an in-flight
-// exclusive writer.
-func (u *userIndex) withDistLock(fs *folderState, shared bool, site string, fn func() error) error {
-	if u.b.locker != nil {
-		mode := lockMode(shared)
-		key := locks.MailboxKey(u.username, fs.folder)
-		held, herr := locks.Reentrant(u.b.locker, key, site, shared)
-		if herr != nil {
-			return herr
-		}
-		if held == locks.HoldNone {
-			ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
-			defer cancel()
-			t0 := time.Now()
-			var lk locks.Lock
-			var err error
-			owner := fs.lockOwner(u.owner)
-			if shared {
-				lk, err = locks.AcquireShared(ctx, u.b.locker, key, owner, 30*time.Second)
-			} else {
-				lk, err = locks.Acquire(ctx, u.b.locker, key, owner, 30*time.Second)
-			}
-			metricLockWait.WithLabelValues(mode, site).Observe(time.Since(t0).Seconds())
-			metricLockAcquired.WithLabelValues(mode, site).Inc()
-			if err != nil {
-				return fmt.Errorf("fileindex/lock %s: %w", fs.folder, err)
-			}
-			slog.Debug("fileindex: lock wait",
-				"user", u.username, "folder", fs.folder, "shared", shared,
-				"lock_wait_ms", time.Since(t0).Milliseconds())
-			heldFrom := time.Now()
-			defer func() {
-				released := time.Now()
-				metricLockHold.WithLabelValues(mode, site).Observe(released.Sub(heldFrom).Seconds())
-				_ = u.b.locker.Unlock(ctx, lk.ID)
-				metricLockRelease.WithLabelValues(mode, site).Observe(time.Since(released).Seconds())
-			}()
-		} else {
-			// Counted under the mode held, not the one asked for: they
-			// differ whenever a read runs inside a write (#1741).
-			metricLockReentrant.WithLabelValues(string(held), site).Inc()
-		}
-	}
+// withDistLock takes no network lock: a second process is excluded where it
+// writes, and fs.mu orders this pod's own sessions (#1840).
+func (u *userIndex) withDistLock(_ *folderState, _ bool, _ string, fn func() error) error {
 	return fn()
 }
 
-// withTwoFolderLocks acquires both X locks in lexicographic order, so a rename
-// cannot deadlock against another rename or a multi-folder driver operation.
-func (u *userIndex) withTwoFolderLocks(folderA, folderB string, fn func() error) error {
-	if u.b.locker == nil {
-		return fn()
-	}
-	a, b := folderA, folderB
-	if a > b {
-		a, b = b, a
-	}
-	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), lockSiteRename), 35*time.Second)
-	defer cancel()
-	heldA, herr := locks.Reentrant(u.b.locker, keyA, lockSiteRename, false)
-	if herr != nil {
-		return herr
-	}
-	if heldA == locks.HoldNone {
-		lkA, err := locks.Acquire(ctx, u.b.locker, keyA, u.owner, 30*time.Second)
-		if err != nil {
-			return fmt.Errorf("fileindex/lock %s: %w", a, err)
-		}
-		defer func() { _ = u.b.locker.Unlock(ctx, lkA.ID) }()
-	}
-	if a == b {
-		return fn()
-	}
-	keyB := locks.MailboxKey(u.username, b)
-	heldB, herr := locks.Reentrant(u.b.locker, keyB, lockSiteRename, false)
-	if herr != nil {
-		return herr
-	}
-	if heldB == locks.HoldNone {
-		lkB, err := locks.Acquire(ctx, u.b.locker, keyB, u.owner, 30*time.Second)
-		if err != nil {
-			return fmt.Errorf("fileindex/lock %s: %w", b, err)
-		}
-		defer func() { _ = u.b.locker.Unlock(ctx, lkB.ID) }()
-	}
+// withTwoFolderLocks keeps the call shape for a rename; the exclusion it once
+// provided is now taken at each file that is written (#1840).
+func (u *userIndex) withTwoFolderLocks(_, _ string, fn func() error) error {
 	return fn()
 }
 

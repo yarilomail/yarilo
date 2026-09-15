@@ -76,7 +76,7 @@ func TestADeliveryNamesItself(t *testing.T) {
 			ReadTimeout:       5,
 			WriteTimeout:      5,
 		},
-		Mailbox:  maildir.New(maildir.WithLocker(rec)),
+		Mailbox:  maildir.New(),
 		Index:    fileindex.New(fileindex.WithLocker(rec)),
 		Locker:   rec,
 		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},

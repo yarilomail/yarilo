@@ -169,6 +169,9 @@ backend_register:
     - managesieve
 
 storage:
+  ## How a write to a shared file excludes another writer: flock (default),
+  ## fcntl for NFS with NLM, or dotlock where the lock daemon is not trusted.
+  storage_lock_method: flock
   mail_driver: maildir
   maildir_root: /var/mail/vhosts
   mail_home: "%d/%u"
@@ -1138,9 +1141,6 @@ components:
 
     ## client — the side every other component uses to reach yarilo-locks.
     client:
-      ## Serialise an account in process under one lease taken from the service,
-      ## instead of one acquisition per command (#1840). Off until measured.
-      user_lease: false
       ## Seconds a component waits for the lock service on its first connection
       ## before giving up. Pod start order is not guaranteed and locks is its
       ## own deployment, so "not up yet" is ordinary and exiting on it costs a

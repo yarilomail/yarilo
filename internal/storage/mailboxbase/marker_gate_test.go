@@ -25,7 +25,7 @@ func TestASettledFolderIsOpenedWithoutTakingIt(t *testing.T) {
 	root := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u@x.com", Home: filepath.Join(root, "x.com", "u")}
 	lk := &countingLocker{held: map[string]locks.HoldMode{}}
-	store := maildir.New(maildir.WithLocker(lk)).OpenUser(info)
+	store := maildir.New().OpenUser(info)
 	idx := fileidx.New(fileidx.WithLocker(lk)).OpenUser(info)
 	t.Cleanup(func() { _ = store.Close(); _ = idx.Close() })
 	if err := store.Init(); err != nil {
@@ -49,11 +49,11 @@ func TestASettledFolderIsOpenedWithoutTakingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lk.locks = 0
+	before := journalHolds(t)
 	if _, err := box.Folder("INBOX", 1); err != nil {
 		t.Fatal(err)
 	}
-	if lk.locks != 0 {
-		t.Errorf("opening a settled folder took it %d times, want none", lk.locks)
+	if got := journalHolds(t) - before; got != 0 {
+		t.Errorf("opening a settled folder held the journal %d times, want none", got)
 	}
 }

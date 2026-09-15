@@ -9,6 +9,8 @@
 package mailboxbuild
 
 import (
+	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
 	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
@@ -25,6 +28,34 @@ import (
 // ByDriver constructs a MailboxBackend for the named driver from sc, applying
 // every configured tunable. Unknown/empty drivers default to maildir so an
 // operator typo does not crash startup.
+// VerifyVolume proves the mail volume excludes a second writer with the
+// configured method, before this process serves anything (#1840).
+func VerifyVolume(sc config.StorageConfig) error {
+	method, err := filelock.Parse(sc.LockMethod)
+	if err != nil {
+		return err
+	}
+	root := sc.MaildirRoot
+	if root == "" {
+		root = "/var/mail/vhosts"
+	}
+	if err := filelock.Verify(root, method); err != nil {
+		return fmt.Errorf("storage: the mail volume at %s does not arbitrate %s locks: %w", root, method, err)
+	}
+	slog.Info("storage: the mail volume excludes a second writer", "root", root, "method", method)
+	return nil
+}
+
+// lockMethod reads the configured transport; VerifyVolume has already refused
+// an unknown one at startup, so here it falls back rather than failing a write.
+func lockMethod(sc config.StorageConfig) filelock.Method {
+	m, err := filelock.Parse(sc.LockMethod)
+	if err != nil {
+		return filelock.MethodFlock
+	}
+	return m
+}
+
 func ByDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailbox.MailboxBackend {
 	// Every binary builds its backend here, so wrapping at this point is what
 	// makes folder-name validation unbypassable: IMAP, LMTP (Sieve fileinto
@@ -54,9 +85,10 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 			mdbox.WithMapFormat(sc.MdboxMapFormat),
 			mapLogRotation(sc))
 	default:
-		return maildir.New(maildir.WithLocker(locker), maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
+		return maildir.New(maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			maildir.WithListUTF8(sc.MailboxListUTF8),
-			maildir.WithProactiveScan(sc.MaildirSyncOnSelect))
+			maildir.WithProactiveScan(sc.MaildirSyncOnSelect),
+			maildir.WithLockMethod(lockMethod(sc)))
 	}
 }
 
