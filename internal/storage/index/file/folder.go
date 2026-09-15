@@ -2222,20 +2222,20 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if lg.f == nil || !lg.ok {
 		return fromOffset, nil // absent, empty or unreadable log
 	}
-	f := lg.f
 	if lh := lg.hdr; lh.IndexID != fs.file.Header.IndexID {
 		// Log belongs to a different (deleted/recreated) mailbox at this
 		// path; caller flushes a fresh base + empty log.
 		return fromOffset, errLogIndexIDMismatch
 	}
-	// Seek explicitly rather than inheriting the descriptor's position; zero
-	// still means "full replay" below, where it gates the torn-tail truncate.
+	// The tail is read once. Record-at-a-time reads cost two syscalls per
+	// record, and a folder's journal reaches ~128 KB between folds (#1846).
 	start := int64(mailindex.LogHeaderSize)
 	if fromOffset > start {
 		start = fromOffset
 	}
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return fromOffset, fmt.Errorf("fileindex/applylog: seek: %w", err)
+	tail, err := readTail(lg.ra, start, lg.size)
+	if err != nil {
+		return fromOffset, err
 	}
 
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
@@ -2248,7 +2248,6 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	// wire format defines it: the record itself carries no name.
 	var lastIntro string
 	le := binary.LittleEndian
-	hdrBuf := make([]byte, 8)
 
 	// Absolute offsets; committedEnd follows the last complete BOUNDARY, so a
 	// torn trailing group stays out of the confirmed return.
@@ -2262,27 +2261,24 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 
 	for {
 		recStart := filePos
-		n, err := io.ReadFull(f, hdrBuf)
-		filePos += int64(n)
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		at := recStart - start
+		if at+8 > int64(len(tail)) {
 			break
-		} else if err != nil {
-			return committedEnd, fmt.Errorf("fileindex/applylog: read hdr: %w", err)
 		}
-		txHdr, err := mailindex.DecodeTxHeader(hdrBuf)
+		txHdr, err := mailindex.DecodeTxHeader(tail[at : at+8])
 		if err != nil {
 			break // torn write — stop here
 		}
+		filePos += 8
 		payloadLen := int(txHdr.Size) - 8
 		if payloadLen < 0 {
 			break
 		}
-		payload := make([]byte, payloadLen)
-		n, err = io.ReadFull(f, payload)
-		filePos += int64(n)
-		if err != nil {
+		if at+8+int64(payloadLen) > int64(len(tail)) {
 			break
 		}
+		payload := tail[at+8 : at+8+int64(payloadLen)]
+		filePos += int64(payloadLen)
 
 		kind := txHdr.Type.Kind()
 
@@ -2291,12 +2287,24 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				txEnd := recStart + int64(le.Uint32(payload))
 				// Asked of the file now, not of the size taken at open: a
 				// group still being closed waits for the next pass (#1833).
-				whole, perr := readableThrough(f, txEnd, filePos)
+				whole, perr := readableThrough(lg.ra, int64(len(tail)), start, txEnd)
 				if perr != nil {
 					return committedEnd, perr
 				}
 				if !whole {
 					break
+				}
+				// Whole on disk but past what this pass read: take the
+				// rest, or committedEnd outruns the records (#1833).
+				if txEnd-start > int64(len(tail)) {
+					more, merr := readTail(lg.ra, start+int64(len(tail)), txEnd)
+					if merr != nil {
+						return committedEnd, merr
+					}
+					tail = append(tail, more...)
+					if txEnd-start > int64(len(tail)) {
+						break // it shrank under us; the next pass retries
+					}
 				}
 				committedEnd = txEnd
 			}
@@ -2548,17 +2556,12 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	// Truncate any partial tail after the last complete BOUNDARY, only on full
 	// replay (fromOffset==0) -- incremental appends are always complete.
 	//
-	// Compared against filePos, how far THIS pass actually read and failed to
-	// parse, never a fresh os.Stat: this runs unlocked, and a concurrent
-	// writer's appendMutLog can complete a fully valid write in the gap
-	// between this loop hitting EOF and a separate stat, which would then see
-	// the writer's legitimate growth as "beyond what we read" and truncate it
-	// away. filePos makes the decision a pure function of bytes this call
-	// itself could not parse, so it can never chop off data written after.
-	if fromOffset == 0 && committedEnd > 0 && filePos > committedEnd {
+	// Against the end of the tail THIS pass read, never a fresh os.Stat: a
+	// writer's valid append in the gap would otherwise be truncated away.
+	if fromOffset == 0 && committedEnd > 0 && start+int64(len(tail)) > committedEnd {
 		logPath := fs.indexPath + ".log"
 		slog.Debug("fileindex: truncating partial log tail",
-			"folder", fs.folder, "read_size", filePos, "truncate_to", committedEnd)
+			"folder", fs.folder, "read_size", start+int64(len(tail)), "truncate_to", committedEnd)
 		_ = os.Truncate(logPath, committedEnd)
 	}
 	// committedEnd, not filePos: an incremental read neither truncates a partial
@@ -2948,15 +2951,14 @@ const indexPkgPath = "github.com/yarilomail/yarilo/internal/storage/index/file."
 
 // readableThrough reports whether the file holds every byte up to end, leaving
 // the descriptor where it found it (#1833).
-func readableThrough(f *os.File, end, resume int64) (bool, error) {
-	if end <= resume {
+func readableThrough(ra io.ReaderAt, have, start, end int64) (bool, error) {
+	if end-start <= have {
 		return true, nil
 	}
+	// Past what this pass read: the group is still being closed, so ask the
+	// file rather than the buffer (#1833).
 	var one [1]byte
-	_, err := f.ReadAt(one[:], end-1)
-	if _, serr := f.Seek(resume, io.SeekStart); serr != nil {
-		return false, fmt.Errorf("fileindex/applylog: restore position: %w", serr)
-	}
+	_, err := ra.ReadAt(one[:], end-1)
 	if err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return false, nil
@@ -2964,4 +2966,18 @@ func readableThrough(f *os.File, end, resume int64) (bool, error) {
 		return false, fmt.Errorf("fileindex/applylog: probe group end: %w", err)
 	}
 	return true, nil
+}
+
+// readTail reads [from, size) in one go. A size the caller took earlier is a
+// floor, not a limit: a concurrent append past it is read by the next pass.
+func readTail(ra io.ReaderAt, from, size int64) ([]byte, error) {
+	if size <= from {
+		return nil, nil
+	}
+	buf := make([]byte, size-from)
+	n, err := ra.ReadAt(buf, from)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, fmt.Errorf("fileindex/applylog: read tail: %w", err)
+	}
+	return buf[:n], nil
 }

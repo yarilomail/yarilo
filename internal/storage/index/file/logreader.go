@@ -2,6 +2,7 @@ package file
 
 import (
 	"errors"
+	"io"
 	"os"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
@@ -20,6 +21,9 @@ type logReader struct {
 	hdr  mailindex.LogHeader
 	ok   bool // a header was read; false for absent, empty or unreadable
 	size int64
+	// ra is every read of the body, so a test counting reads counts the ones
+	// the replay actually makes (#1846).
+	ra io.ReaderAt
 }
 
 func openLogRead(indexPath string) (*logReader, error) {
@@ -32,6 +36,7 @@ func openLogRead(indexPath string) (*logReader, error) {
 		return lg, err
 	}
 	lg.f = f
+	lg.ra = f
 	st, serr := f.Stat()
 	if serr != nil {
 		_ = f.Close()
