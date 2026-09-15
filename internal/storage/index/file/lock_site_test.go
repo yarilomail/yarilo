@@ -6,8 +6,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// Each write names the call that made it. A total labelled "write" says how
-// many acquisitions there were and nothing about which to change (#1827).
+// Each write names the call that made it, and no mutation is left unnamed:
+// there is no siteless wrapper to reach one through (#1827).
 func TestAWriteIsCountedUnderItsOwnCaller(t *testing.T) {
 	dial := raceTestLockServer(t)
 	root := t.TempDir()
@@ -46,15 +46,15 @@ func TestAWriteIsCountedUnderItsOwnCaller(t *testing.T) {
 	}
 	for _, tc := range cases {
 		before := at(tc.site)
-		anon := at(lockSiteWrite)
+		other := at(lockSiteTestWrite)
 		if rerr := tc.run(); rerr != nil {
 			t.Fatalf("%s: %v", tc.site, rerr)
 		}
 		if got := at(tc.site) - before; got != 1 {
 			t.Errorf("%s moved its own counter by %v, want 1", tc.site, got)
 		}
-		if got := at(lockSiteWrite) - anon; got != 0 {
-			t.Errorf("%s was also counted as an unnamed write %v times", tc.site, got)
+		if got := at(lockSiteTestWrite) - other; got != 0 {
+			t.Errorf("%s was also counted under another name %v times", tc.site, got)
 		}
 	}
 }

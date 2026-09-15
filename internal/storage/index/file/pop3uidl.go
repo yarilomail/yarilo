@@ -70,7 +70,7 @@ func (u *userIndex) pop3UIDLs(folderID uint64, unlocked bool) (map[uint32]string
 // covers concurrent writers; the rename publishes the new
 // state to readers.
 func (u *userIndex) SavePOP3UIDLs(folderID uint64, uidls map[uint32]string) error {
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSitePop3Uidl, func(fs *folderState) error {
 		path := filepath.Join(fs.indexDir, "pop3.uidl")
 		tmp := path + ".tmp"
 		f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)

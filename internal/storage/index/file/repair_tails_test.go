@@ -21,7 +21,7 @@ func TestARepairedGuidReachesABasePredatingTheField(t *testing.T) {
 	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10, MapUID: 15014}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.withFolder(f.ID, func(fs *folderState) error { return fs.flush() }); err != nil {
+	if err := a.withFolderSite(f.ID, lockSiteTestWrite, func(fs *folderState) error { return fs.flush() }); err != nil {
 		t.Fatal(err)
 	}
 	a.Close() //nolint:errcheck
@@ -80,7 +80,7 @@ func TestATornExtensionIntroStopsTheLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Half an intro: framed as a whole record, too short to name its extension.
-	if err := a.withFolder(f.ID, func(fs *folderState) error {
+	if err := a.withFolderSite(f.ID, lockSiteTestWrite, func(fs *folderState) error {
 		return fs.appendMutLog(encLogRec(mailindex.TxTypeExtIntro, 0, make([]byte, 8)))
 	}); err != nil {
 		t.Fatal(err)

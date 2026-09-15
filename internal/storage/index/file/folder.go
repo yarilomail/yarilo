@@ -144,7 +144,7 @@ func (u *userIndex) stampLineage(fs *folderState) error {
 	if known {
 		return nil
 	}
-	return u.withFolderLock(fs, func() error {
+	return u.withFolderLockSite(fs, lockSiteStampLineage, func() error {
 		// Re-check under the lock: a racer may have stamped it, and a second
 		// flush would rewrite a base nobody needed rewritten.
 		if fs.lineage.Lineage != lineageUnknown {
@@ -302,7 +302,7 @@ func (u *userIndex) readBase(fs *folderState) error {
 		if errors.Is(applyErr, errLogIndexIDMismatch) {
 			// Log belongs to a deleted/recreated mailbox; reset it under the
 			// distributed lock so concurrent writers don't race the truncate.
-			if lockErr := u.withFolderLock(fs, func() error {
+			if lockErr := u.withFolderLockSite(fs, lockSiteResetLog, func() error {
 				slog.Warn("fileindex: discarding log with mismatched IndexID on open",
 					"folder", fs.folder)
 				fs.closeFDs()
@@ -665,10 +665,6 @@ func (fs *folderState) flush() error {
 
 // withFolder locks folderID's state, reloads and runs fn against the freshest
 // committed state. A missing file is swallowed so the caller can createFresh.
-func (u *userIndex) withFolder(folderID uint64, fn func(*folderState) error) error {
-	return u.withFolderSite(folderID, lockSiteWrite, fn)
-}
-
 // withFolderSite is withFolder with the caller recorded: a total naming no
 // caller says how many acquisitions there were, not which to change (#1827).
 func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folderState) error) error {

@@ -8,7 +8,7 @@ import (
 // quota aggregate: a recovered folder counted as empty otherwise (#1728).
 func (u *userIndex) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, error) {
 	stamped := 0
-	err := u.withFolder(folderID, func(fs *folderState) error {
+	err := u.withFolderSite(folderID, lockSiteStampSizes, func(fs *folderState) error {
 		if err := fs.ensureVsizeExtLocked(); err != nil {
 			return err
 		}

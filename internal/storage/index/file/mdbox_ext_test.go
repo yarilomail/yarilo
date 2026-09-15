@@ -156,7 +156,7 @@ func TestASecondReaderDecodesARecordAppendedBeforeAnyBaseRewrite(t *testing.T) {
 	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.withFolder(f.ID, func(fs *folderState) error { return fs.flush() }); err != nil {
+	if err := a.withFolderSite(f.ID, lockSiteTestWrite, func(fs *folderState) error { return fs.flush() }); err != nil {
 		t.Fatal(err)
 	}
 	a.Close() //nolint:errcheck
@@ -224,7 +224,7 @@ func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 	if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.withFolder(f.ID, func(fs *folderState) error { return fs.flush() }); err != nil {
+	if err := a.withFolderSite(f.ID, lockSiteTestWrite, func(fs *folderState) error { return fs.flush() }); err != nil {
 		t.Fatal(err)
 	}
 	a.Close() //nolint:errcheck
@@ -246,7 +246,7 @@ func TestAnOlderIndexTakesTheMdboxExtension(t *testing.T) {
 	}
 	// The base itself, not the state in hand: a refused rewrite leaves the
 	// folder serving from memory and the disk unchanged.
-	if err := b.withFolder(fb.ID, func(fs *folderState) error { return fs.flush() }); err != nil {
+	if err := b.withFolderSite(fb.ID, lockSiteTestWrite, func(fs *folderState) error { return fs.flush() }); err != nil {
 		t.Fatalf("flush after the field was declared: %v", err)
 	}
 	b.Close() //nolint:errcheck

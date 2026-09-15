@@ -85,10 +85,19 @@ const (
 	lockSiteOpenProbe = "open-probe"      // opening or repairing a folder
 	lockSiteFallback  = "reload-fallback" // an unlocked read with nothing to prove freshness with
 	lockSiteRead      = "read"            // a read that is locked on purpose: its answer decides a write
-	lockSiteWrite     = "write"           // a mutation with no caller named
 
 	// The callers of that mutation, so a total can be attributed (#1827).
-	lockSiteTransaction     = "transaction"
+	lockSiteTransaction  = "transaction"
+	lockSiteFlagsDirty   = "flags-dirty"
+	lockSiteRefresh      = "refresh"
+	lockSitePop3Uidl     = "pop3-uidl"
+	lockSiteRepairTails  = "repair-tails"
+	lockSiteStampSizes   = "stamp-sizes"
+	lockSiteRename       = "rename"
+	lockSiteStampLineage = "stamp-lineage"
+	lockSiteResetLog     = "reset-log"
+	// Only a test reaches the index without a caller of its own.
+	lockSiteTestWrite       = "test-write"
 	lockSiteAdoptUidSpace   = "adopt-uid-space"
 	lockSiteAllocateUid     = "allocate-uid"
 	lockSiteAppend          = "append"

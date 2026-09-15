@@ -123,7 +123,8 @@ func TestReadsCountTheirLockRoundTrips(t *testing.T) {
 func sharedAcquisitions(t *testing.T) float64 {
 	t.Helper()
 	var total float64
-	for _, site := range []string{lockSiteOpenProbe, lockSiteFallback, lockSiteRead, lockSiteWrite} {
+	// Shared acquisitions only: no write site takes a shared lock.
+	for _, site := range []string{lockSiteOpenProbe, lockSiteFallback, lockSiteRead} {
 		total += counterVecValue(t, metricLockAcquired, "shared", site)
 	}
 	return total
