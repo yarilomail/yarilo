@@ -11,9 +11,8 @@ type IndexTx interface {
 	// same hold, and written back into m.
 	Append(m *MessageMeta)
 
-	// UpdateFlags queues one message's flag change, replacing, adding or
-	// removing as upd says. The resulting set is resolved at commit against the
-	// record as the hold finds it, and reported in TxResult.
+	// UpdateFlags queues one message's flag change. The resulting set is
+	// resolved at commit against the record the hold finds, and reported back.
 	UpdateFlags(uid uint32, upd FlagsUpdate)
 
 	// Commit writes everything queued, or nothing.
@@ -24,9 +23,8 @@ type IndexTx interface {
 	Rollback()
 }
 
-// TxResult is what a committed transaction reports: the folder's modseq after
-// the write, and the settled flags of every message it changed — which a delta
-// is only known by afterwards.
+// TxResult is the folder's modseq after the write and the settled flags of
+// every message the transaction changed, which a delta is known by only then.
 type TxResult struct {
 	ModSeq uint64
 	Flags  map[uint32]FlagsResult
