@@ -108,6 +108,7 @@ type mockTx struct {
 	expunge  []uint32
 	appends  []*mailbox.MessageMeta
 	flags    []mockFlagOp
+	dirty    []uint32
 }
 
 type mockFlagOp struct {
@@ -119,6 +120,9 @@ func (t *mockTx) Expunge(uid uint32)            { t.expunge = append(t.expunge, 
 func (t *mockTx) Append(m *mailbox.MessageMeta) { t.appends = append(t.appends, m) }
 func (t *mockTx) UpdateFlags(uid uint32, upd mailbox.FlagsUpdate) {
 	t.flags = append(t.flags, mockFlagOp{uid: uid, upd: upd})
+}
+func (t *mockTx) MarkDirty(uid uint32, dirty bool) {
+	t.dirty = append(t.dirty, uid)
 }
 func (t *mockTx) Rollback() {}
 

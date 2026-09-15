@@ -20,10 +20,11 @@ func (u *userIndex) Begin(folderID uint64) (mailbox.IndexTx, error) {
 
 // txOp is one queued change. The kind decides which fields carry meaning.
 type txOp struct {
-	kind txKind
-	uid  uint32
-	meta *mailbox.MessageMeta
-	upd  mailbox.FlagsUpdate
+	kind  txKind
+	uid   uint32
+	meta  *mailbox.MessageMeta
+	upd   mailbox.FlagsUpdate
+	dirty bool
 }
 
 type txKind uint8
@@ -32,6 +33,7 @@ const (
 	opExpunge txKind = iota
 	opAppend
 	opUpdateFlags
+	opMarkDirty
 )
 
 // indexTx accumulates one command's changes. Queueing touches nothing on disk.
@@ -52,6 +54,10 @@ func (t *indexTx) Append(m *mailbox.MessageMeta) {
 
 func (t *indexTx) UpdateFlags(uid uint32, upd mailbox.FlagsUpdate) {
 	t.ops = append(t.ops, txOp{kind: opUpdateFlags, uid: uid, upd: upd})
+}
+
+func (t *indexTx) MarkDirty(uid uint32, dirty bool) {
+	t.ops = append(t.ops, txOp{kind: opMarkDirty, uid: uid, dirty: dirty})
 }
 
 func (t *indexTx) Rollback() { t.done = true }
@@ -129,6 +135,8 @@ func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byt
 			return nil, err
 		}
 		return fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+	case opMarkDirty:
+		return fs.markDirtyLocked(op.uid, op.dirty)
 	}
 	return nil, fmt.Errorf("fileindex/tx: unknown operation %d", op.kind)
 }

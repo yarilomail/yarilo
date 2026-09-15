@@ -33,14 +33,27 @@ func FlagsWritten(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint6
 	default:
 		return nil
 	}
-	dirt, marks := idx.(mailbox.FlagsDirtyMarker)
+	// One transaction for the command's marks: a call per message took the
+	// index lock per message, which was 1633 of 3318 acquisitions (#1809).
+	tx, terr := idx.Begin(folderID)
+	if terr != nil {
+		slog.Warn("mailbox: could not open the index to record which flags landed",
+			"folder", folder, "err", terr)
+	}
 	for _, res := range results {
 		if res.Err != nil {
 			slog.Warn("mailbox: could not record flags in storage",
 				"folder", folder, "uid", res.UID, "err", res.Err)
 		}
-		if marks {
-			_ = dirt.SetFlagsDirty(folderID, res.UID, res.Err != nil)
+		if terr == nil {
+			tx.MarkDirty(res.UID, res.Err != nil)
+		}
+	}
+	if terr == nil {
+		defer tx.Rollback()
+		if _, cerr := tx.Commit(); cerr != nil {
+			slog.Warn("mailbox: could not record which flags landed",
+				"folder", folder, "err", cerr)
 		}
 	}
 	return results
