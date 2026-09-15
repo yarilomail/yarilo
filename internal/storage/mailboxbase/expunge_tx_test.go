@@ -53,7 +53,7 @@ func TestExpungingManyTakesTheFolderOnce(t *testing.T) {
 	}
 
 	before := journalHolds(t)
-	removed, failed, nerr := box.ExpungeMarked(f, "INBOX", doomed, nil)
+	removed, failed, nerr := box.ExpungeMarked(f, "INBOX", doomed)
 	if nerr != nil || failed != 0 || len(removed) != messages {
 		t.Fatalf("expunged %d, failed %d, err %v", len(removed), failed, nerr)
 	}

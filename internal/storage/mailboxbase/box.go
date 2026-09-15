@@ -165,19 +165,19 @@ func SaveOnly() BoxOption {
 	return func(b *Box) { b.mode = openSaveOnly }
 }
 
-// ExpungeMarked removes messages under one hold: a folder opened between a
-// record and its body holds a file the reconcile imports back (#1794).
-func (b *Box) ExpungeMarked(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta, notify mailbox.ExpungeNotify) (removed []uint32, failed int, notifyErr error) {
-	err := b.HoldFolder(folder, "expunge", func() error {
-		removed, failed = b.expungeEach(f, folder, msgs, notify, &notifyErr)
+// ExpungeMarked removes messages under one hold and returns what went: a call
+// out of the hold re-enters it and waits on itself (#1794, #1853).
+func (b *Box) ExpungeMarked(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta) (removed []*mailbox.MessageMeta, failed int, err error) {
+	herr := b.HoldFolder(folder, "expunge", func() error {
+		removed, failed = b.expungeEach(f, folder, msgs)
 		return nil
 	})
-	if err != nil {
+	if herr != nil {
 		slog.Error("mailbox/expunge: the folder could not be held, so nothing was removed",
-			"user", b.store.Username(), "folder", folder, "err", err)
-		return nil, len(msgs), notifyErr
+			"user", b.store.Username(), "folder", folder, "err", herr)
+		return nil, len(msgs), herr
 	}
-	return removed, failed, notifyErr
+	return removed, failed, nil
 }
 
 // HoldFolder runs fn under the storage's own folder hold: an option each
@@ -192,7 +192,7 @@ func (b *Box) HoldFolder(folder, site string, fn func() error) error {
 
 // expungeEach reads the names, removes the records, then the bodies: a stop
 // between the last two leaves a file, never a record with no file (#1690).
-func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta, notify mailbox.ExpungeNotify, notifyErr *error) (removed []uint32, failed int) {
+func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta) (removed []*mailbox.MessageMeta, failed int) {
 	// Counted over every record in the folder, not only the doomed ones: a
 	// record that stays behind still names its body (#1693).
 	all, aerr := ReadMessages(b.index, f.ID, mailbox.SeqSet{})
@@ -235,20 +235,13 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 		return nil, len(msgs)
 	}
 	for _, d := range list {
-		removed = append(removed, d.msg.UID)
+		removed = append(removed, d.msg)
 	}
 	if testAfterRecordExpunged != nil {
 		testAfterRecordExpunged()
 	}
 
-	gone := make(map[uint32]struct{}, len(removed))
-	for _, uid := range removed {
-		gone[uid] = struct{}{}
-	}
 	for _, d := range list {
-		if _, ok := gone[d.msg.UID]; !ok {
-			continue
-		}
 		switch refs.fate(d.name) {
 		case bodyNameless:
 			slog.Warn("mailbox/expunge: the record named no file; its body, if any, stays",
@@ -260,12 +253,6 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 			if err := b.RemoveHeld(folder, d.name); err != nil {
 				slog.Error("mailbox/expunge: body", "user", b.store.Username(),
 					"folder", folder, "uid", d.msg.UID, "file", d.name, "err", err)
-			}
-		}
-		if notify != nil {
-			if nerr := notify(d.msg); nerr != nil {
-				*notifyErr = nerr
-				return removed, failed
 			}
 		}
 	}
