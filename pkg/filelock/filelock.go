@@ -4,11 +4,57 @@ package filelock
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
+
+// metricFallback counts the volumes that refused the configured method. A
+// nonzero value is a deployment running on dotlock without asking for it.
+var metricFallback = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "filelock_method_fallback_total",
+	Help: "Volumes whose kernel refused the configured lock method, counted once per volume. Writes there are held by dotlock instead.",
+}, []string{"method"})
+
+// refused remembers the volumes that answered "not supported", by device: the
+// refusal belongs to the mount, and every later hold on it is a dotlock (#1850).
+var (
+	refusedMu sync.Mutex
+	refused   = map[uint64]bool{}
+)
+
+func volumeRefused(path string) bool {
+	dev, ok := deviceOf(path)
+	if !ok {
+		return false
+	}
+	refusedMu.Lock()
+	defer refusedMu.Unlock()
+	return refused[dev]
+}
+
+func reportFallback(path string, method Method) {
+	dev, ok := deviceOf(path)
+	seen := false
+	if ok {
+		refusedMu.Lock()
+		seen = refused[dev]
+		refused[dev] = true
+		refusedMu.Unlock()
+	}
+	if seen {
+		return
+	}
+	metricFallback.WithLabelValues(string(method)).Inc()
+	slog.Warn("filelock: the volume refuses the configured lock method; writes here are held by dotlock",
+		"volume", filepath.Dir(path), "method", method,
+		"remedy", "set storage_lock_method: dotlock for an NFS mount without lockd")
+}
 
 // Method names the transport. flock is the default: a POSIX record lock dies
 // on any close of that file in the process, and readers close it (#1840).
@@ -72,7 +118,16 @@ func Take(path string, method Method, wait time.Duration) (*Hold, error) {
 		}
 		time.Sleep(pollInterval)
 	}
+	// A volume that has refused once keeps the method it was given: mixing
+	// the two on one file holds path.lock against a sibling's flock (#1850).
+	if volumeRefused(path) {
+		method = MethodDotlock
+	}
 	h, err := takeShared(path, method, time.Until(deadline))
+	if unsupported(err) {
+		reportFallback(path, method)
+		h, err = takeShared(path, MethodDotlock, time.Until(deadline))
+	}
 	if err != nil {
 		local.Unlock()
 		return nil, err
@@ -114,28 +169,4 @@ func (h *Hold) Release() error {
 		return err
 	}
 	return cerr
-}
-
-// Verify asks the volume at startup whether it excludes a second writer:
-// learning otherwise while serving mail means learning it as loss (#1840).
-func Verify(dir string, method Method) error {
-	probe := filepath.Join(dir, ".yarilo-lock-probe")
-	defer func() { _ = os.Remove(probe) }()
-
-	first, err := takeShared(probe, method, 2*time.Second)
-	if err != nil {
-		return fmt.Errorf("filelock/verify: %s cannot take a %s lock in %s: %w", probe, method, dir, err)
-	}
-	defer func() { _ = first.Release() }()
-
-	// Asked of another process, because that is the only one whose answer
-	// means anything for a lock the kernel keeps per process.
-	taken, perr := askAnotherProcess(probe, method)
-	if perr != nil {
-		return perr
-	}
-	if taken {
-		return fmt.Errorf("filelock/verify: %s admitted two writers at once in %s: the volume does not arbitrate this method", method, dir)
-	}
-	return nil
 }

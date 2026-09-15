@@ -1,12 +1,34 @@
 package filelock
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"golang.org/x/sys/unix"
 )
+
+// refuseMethod makes the kernel answer as a volume with no lock daemon does.
+func refuseMethod(err error) func() {
+	prev := tryLockFn
+	tryLockFn = func(*os.File, Method) error { return err }
+	return func() { tryLockFn = prev }
+}
+
+// forgetRefusals drops what earlier rows learned about this stand's device, so
+// one row's refusal is not another's starting state.
+func forgetRefusals() {
+	refusedMu.Lock()
+	refused = map[uint64]bool{}
+	refusedMu.Unlock()
+}
 
 // Every transport serialises writers on one file: that is the whole contract.
 func TestATransportAdmitsOneWriterAtATime(t *testing.T) {
@@ -137,28 +159,118 @@ func TestAnUnrelatedCloseDoesNotDropTheLock(t *testing.T) {
 	}
 }
 
-// The volume is asked at startup, not trusted: a mount that admits two writers
-// is found before anything is served (#1840).
-func TestVerifyProvesTheVolumeArbitrates(t *testing.T) {
+// A volume that refuses the configured method is served by dotlock rather than
+// refusing the write, and the exclusion still holds (#1850).
+func TestAVolumeThatRefusesTheMethodFallsBackToDotlock(t *testing.T) {
+	forgetRefusals()
+	defer forgetRefusals()
 	dir := t.TempDir()
-	for _, m := range []Method{MethodFlock, MethodFcntl, MethodDotlock} {
-		if err := Verify(dir, m); err != nil {
-			t.Errorf("%s: %v", m, err)
-		}
-		if _, err := os.Stat(filepath.Join(dir, ".yarilo-lock-probe")); !os.IsNotExist(err) {
-			t.Errorf("%s left its probe behind", m)
-		}
+	path := filepath.Join(dir, "list")
+
+	restore := refuseMethod(unix.ENOLCK)
+	defer restore()
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+	before := testutil.ToFloat64(metricFallback.WithLabelValues(string(MethodFlock)))
+
+	h, err := Take(path, MethodFlock, time.Second)
+	if err != nil {
+		t.Fatalf("take: %v", err)
 	}
-	if err := Verify(filepath.Join(dir, "nope"), MethodFlock); err == nil {
-		t.Error("a directory that is not there passed the check")
+	if h.method != MethodDotlock {
+		t.Fatalf("the hold is %q, want dotlock", h.method)
+	}
+	if _, serr := os.Stat(path + ".lock"); serr != nil {
+		t.Errorf("no dotlock file beside %s: %v", path, serr)
+	}
+
+	// Still exclusive: a second taker waits rather than being handed the file.
+	second := make(chan error, 1)
+	go func() {
+		h2, err2 := Take(path, MethodFlock, 200*time.Millisecond)
+		if h2 != nil {
+			_ = h2.Release()
+		}
+		second <- err2
+	}()
+	select {
+	case err2 := <-second:
+		if !errors.Is(err2, ErrBusy) {
+			t.Errorf("the second taker got %v, want ErrBusy", err2)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the second taker neither waited nor gave up")
+	}
+	_ = h.Release()
+
+	if got := testutil.ToFloat64(metricFallback.WithLabelValues(string(MethodFlock))) - before; got != 1 {
+		t.Errorf("the fallback was counted %v times, want 1", got)
+	}
+	line := logged.String()
+	for _, want := range []string{"dotlock", "storage_lock_method"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the warning %q does not name %q", line, want)
+		}
 	}
 }
 
-// TestMain answers the probe when Verify's child asks, and runs the tests
-// otherwise: the child is this binary, told to take one lock (#1840).
-func TestMain(m *testing.M) {
-	if ProbeMain() {
-		return
+// One line per volume, not per directory: a maildir folder is a directory and
+// there are thousands of them on one mount (#1850).
+func TestTheWarningIsOncePerVolume(t *testing.T) {
+	forgetRefusals()
+	defer forgetRefusals()
+	root := t.TempDir()
+	restore := refuseMethod(unix.ENOLCK)
+	defer restore()
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+	before := testutil.ToFloat64(metricFallback.WithLabelValues(string(MethodFlock)))
+
+	// Two folders, two directories, one device.
+	for _, folder := range []string{"INBOX", "Sent"} {
+		dir := filepath.Join(root, folder)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		h, err := Take(filepath.Join(dir, "list"), MethodFlock, time.Second)
+		if err != nil {
+			t.Fatalf("take in %s: %v", folder, err)
+		}
+		_ = h.Release()
 	}
-	os.Exit(m.Run())
+	if got := strings.Count(logged.String(), "refuses the configured lock method"); got != 1 {
+		t.Errorf("two directories on one volume logged %d warnings, want 1", got)
+	}
+	if got := testutil.ToFloat64(metricFallback.WithLabelValues(string(MethodFlock))) - before; got != 1 {
+		t.Errorf("the fallback was counted %v times, want 1", got)
+	}
+}
+
+// A volume that refused once keeps dotlock: a process alternating methods
+// holds path.lock against a sibling's flock on path (#1850).
+func TestAVolumeThatRefusedOnceStaysOnDotlock(t *testing.T) {
+	forgetRefusals()
+	defer forgetRefusals()
+	dir := t.TempDir()
+
+	restore := refuseMethod(unix.ENOLCK)
+	first, err := Take(filepath.Join(dir, "a"), MethodFlock, time.Second)
+	if err != nil {
+		t.Fatalf("take: %v", err)
+	}
+	_ = first.Release()
+	restore() // the kernel would grant flock again
+
+	second, err := Take(filepath.Join(dir, "b"), MethodFlock, time.Second)
+	if err != nil {
+		t.Fatalf("take after the refusal: %v", err)
+	}
+	defer second.Release() //nolint:errcheck
+	if second.method != MethodDotlock {
+		t.Errorf("the hold after a refused volume is %q, want dotlock", second.method)
+	}
 }
