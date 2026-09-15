@@ -213,3 +213,28 @@ func TestAnAbandonedTicketAgesOutOfTheLine(t *testing.T) {
 		t.Error("an abandoned ticket still held the line")
 	}
 }
+
+// A hold that ends by TTL announces nothing, so the next contender waits for
+// its timer. Counted apart from a hand-off that was lost (#1809).
+func TestALockThatExpiredIsCountedApartFromALostHandOff(t *testing.T) {
+	backend := NewMemoryBackend(WithSweepInterval(5 * time.Millisecond))
+	t.Cleanup(func() { _ = backend.Close() })
+	m := NewMetrics(prometheus.NewRegistry(), "test")
+	client := standOver(t, backend, m)
+
+	ctx := WithSite(context.Background(), "expunge")
+	lk, err := Acquire(ctx, client, "mailbox/u@x.com/INBOX", Owner("u@x.com", "s1"), 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := counterNow(t, m.expiredUnrel)
+
+	// Past the TTL, so the release finds nothing to release.
+	time.Sleep(200 * time.Millisecond)
+	if uerr := client.Unlock(ctx, lk.ID); uerr == nil {
+		t.Fatal("unlocking an expired lock reported success")
+	}
+	if got := counterNow(t, m.expiredUnrel) - before; got != 1 {
+		t.Errorf("an expired hold was counted %v times, want 1", got)
+	}
+}

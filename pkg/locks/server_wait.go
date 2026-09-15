@@ -52,8 +52,9 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 		return
 	}
 	defer unsubscribe()
-
 	ticket := newTicket()
+	s.trace(ticket, resource, "subscribe", peer)
+
 	ahead, err := queue.Enqueue(ctx, resource, ticket)
 	if err != nil {
 		s.logger.Error("locks: could not join the line", "peer", peer, "resource", resource, "err", err)
@@ -65,6 +66,7 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 			s.logger.Warn("locks: could not leave the line", "resource", resource, "err", derr)
 		}
 	}()
+	s.trace(ticket, resource, "join", peer, "ahead", ahead)
 	s.metrics.observeQueueDepth(ahead)
 
 	// A caller that is gone must stop waiting: a grant it never receives is a
@@ -79,11 +81,14 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	// The first contender may try at once; afterwards a turn is named, and one
 	// that is not this ticket's costs nothing to ignore (#1824).
 	mine := ahead == 0
+	woken := false
 	for {
 		if mine {
+			s.trace(ticket, resource, "try", peer)
 			id, current, aerr := s.tryAcquire(ctx, resource, owner, site, ttl, shared)
 			switch {
 			case aerr == nil:
+				s.trace(ticket, resource, "result", peer, "granted", true, "after_backstop", woken)
 				s.metrics.observeAcquire(time.Since(started).Seconds(), "ok")
 				// A grant nobody receives is a lock nobody releases, and it
 				// stands until its TTL (#1824).
@@ -128,6 +133,7 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 			_ = writeFields(w, respBusy, "", SiteUnknown)
 			return
 		case turn := <-wakes:
+			s.trace(ticket, resource, "received", peer, "turn", turn)
 			// An unnamed turn is "whoever is first", which only a backend
 			// that cannot name one sends.
 			mine = turn == ticket || turn == ""
@@ -142,6 +148,8 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 			}
 			if front {
 				s.metrics.incWaitBackstop()
+				woken = true
+				s.trace(ticket, resource, "backstop", peer)
 			}
 			mine = front
 		}
@@ -158,6 +166,13 @@ func watchClose(conn net.Conn) <-chan struct{} {
 		_, _ = conn.Read(b[:])
 	}()
 	return gone
+}
+
+// trace names one acquisition at each step, so a slow one can be stitched
+// together from the log by its ticket (#1809).
+func (s *Server) trace(ticket, resource, step, peer string, kv ...any) {
+	args := append([]any{"ticket", ticket, "resource", resource, "step", step, "peer", peer}, kv...)
+	s.logger.Debug("locks: hand-off", args...)
 }
 
 func (s *Server) tryAcquire(ctx context.Context, resource, owner, site string, ttl time.Duration, shared bool) (string, Holder, error) {
