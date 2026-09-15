@@ -1,17 +1,17 @@
-// Package filelock takes the lock the kernel keeps on a file, which is what
-// arbitrates writers on one volume — between threads, between the pod's
-// protocol processes, and across hosts over NFS (#1840).
+// Package filelock takes the kernel's lock on a file: what arbitrates writers
+// on one volume, between processes and across hosts (#1840).
 package filelock
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
 
-// Method names the transport. fcntl is the default and the one that works
-// through NFS; dotlock is for a mount whose lock daemon is not trusted.
+// Method names the transport. flock is the default: a POSIX record lock dies
+// on any close of that file in the process, and readers close it (#1840).
 type Method string
 
 const (
@@ -20,13 +20,13 @@ const (
 	MethodDotlock Method = "dotlock"
 )
 
-// Parse reads the configured method, defaulting to fcntl.
+// Parse reads the configured method, defaulting to flock.
 func Parse(s string) (Method, error) {
 	switch Method(s) {
-	case "", MethodFcntl:
-		return MethodFcntl, nil
-	case MethodFlock:
+	case "", MethodFlock:
 		return MethodFlock, nil
+	case MethodFcntl:
+		return MethodFcntl, nil
 	case MethodDotlock:
 		return MethodDotlock, nil
 	}
@@ -41,9 +41,8 @@ type Hold struct {
 	local  *sync.Mutex
 }
 
-// local serialises this process's own writers. A POSIX record lock belongs to
-// the process, not to the descriptor, so the kernel arbitrates between
-// processes and nothing arbitrates between our goroutines (#1840).
+// local serialises this process's own writers: the kernel arbitrates between
+// processes, and nothing arbitrates between our goroutines (#1840).
 var (
 	localMu sync.Mutex
 	locals  = map[string]*sync.Mutex{}
@@ -60,9 +59,8 @@ func localFor(path string) *sync.Mutex {
 	return m
 }
 
-// Take blocks until the lock on path is this process's, or wait elapses. The
-// file is created if it is not there: the lock is on the name, and a writer
-// that finds no file still needs somewhere to wait.
+// Take blocks until the lock on path is ours, or wait elapses. The file is
+// created if absent: a writer that finds none still needs somewhere to wait.
 func Take(path string, method Method, wait time.Duration) (*Hold, error) {
 	deadline := time.Now().Add(wait)
 	local := localFor(path)
@@ -116,4 +114,29 @@ func (h *Hold) Release() error {
 		return err
 	}
 	return cerr
+}
+
+// Verify asks the volume at startup whether it locks at all: a mount with no
+// lock daemon answers ENOLCK, and learning that while serving mail means
+// learning it as loss. Exclusion is proven only where one process can prove
+// it: a POSIX record lock belongs to the process (#1840).
+func Verify(dir string, method Method) error {
+	probe := filepath.Join(dir, ".yarilo-lock-probe")
+	defer func() { _ = os.Remove(probe) }()
+
+	first, err := takeShared(probe, method, 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("filelock/verify: %s cannot take a %s lock in %s: %w", probe, method, dir, err)
+	}
+	defer func() { _ = first.Release() }()
+
+	if method == MethodFcntl {
+		return nil
+	}
+	second, serr := takeShared(probe, method, 200*time.Millisecond)
+	if serr == nil {
+		_ = second.Release()
+		return fmt.Errorf("filelock/verify: %s admitted two writers at once in %s: the volume does not arbitrate this method", method, dir)
+	}
+	return nil
 }

@@ -83,7 +83,7 @@ func TestAReleasedDotlockLeavesNoFile(t *testing.T) {
 }
 
 func TestParseNamesTheTransport(t *testing.T) {
-	for in, want := range map[string]Method{"": MethodFcntl, "fcntl": MethodFcntl, "flock": MethodFlock, "dotlock": MethodDotlock} {
+	for in, want := range map[string]Method{"": MethodFlock, "fcntl": MethodFcntl, "flock": MethodFlock, "dotlock": MethodDotlock} {
 		got, err := Parse(in)
 		if err != nil || got != want {
 			t.Errorf("Parse(%q) = %q, %v; want %q", in, got, err, want)
@@ -91,5 +91,66 @@ func TestParseNamesTheTransport(t *testing.T) {
 	}
 	if _, err := Parse("posix"); err == nil {
 		t.Error("an unknown transport was accepted")
+	}
+}
+
+// A reader opening and closing the same file must not drop the writer's lock.
+// A POSIX record lock does exactly that -- it belongs to the process and goes
+// on any close -- which is why flock is the default (#1840).
+func TestAnUnrelatedCloseDoesNotDropTheLock(t *testing.T) {
+	for _, tc := range []struct {
+		method Method
+		keeps  bool
+	}{
+		{MethodFlock, true},
+		{MethodFcntl, false},
+	} {
+		t.Run(string(tc.method), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "uidlist")
+			held, err := takeShared(path, tc.method, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = held.Release() }()
+
+			// What a reader does: open the file, read nothing, close it.
+			rf, oerr := os.Open(path)
+			if oerr != nil {
+				t.Fatal(oerr)
+			}
+			_ = rf.Close()
+
+			// takeShared skips the in-process mutex, so this asks the kernel
+			// the same question another process would.
+			second, serr := takeShared(path, tc.method, 100*time.Millisecond)
+			if second != nil {
+				_ = second.Release()
+			}
+			stillHeld := serr != nil
+			if stillHeld != tc.keeps {
+				if tc.keeps {
+					t.Errorf("%s lost the lock to a reader's close", tc.method)
+				} else {
+					t.Errorf("%s kept the lock through a close; the default could be either", tc.method)
+				}
+			}
+		})
+	}
+}
+
+// The volume is asked at startup, not trusted: a mount that admits two writers
+// is found before anything is served (#1840).
+func TestVerifyProvesTheVolumeArbitrates(t *testing.T) {
+	dir := t.TempDir()
+	for _, m := range []Method{MethodFlock, MethodFcntl, MethodDotlock} {
+		if err := Verify(dir, m); err != nil {
+			t.Errorf("%s: %v", m, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".yarilo-lock-probe")); !os.IsNotExist(err) {
+			t.Errorf("%s left its probe behind", m)
+		}
+	}
+	if err := Verify(filepath.Join(dir, "nope"), MethodFlock); err == nil {
+		t.Error("a directory that is not there passed the check")
 	}
 }
