@@ -57,6 +57,11 @@ spec:
         - -imap-host=yarilo-imap-login
         - -lmtp-login-host=yarilo-lmtp-login
         - -imap-port=993
+        # The login itself: the host and port were given and the identity was
+        # not, so the row skipped on every run of this job (#1855).
+        - -imap-user=u1@d00001.test
+        - -imap-pass=Yarilo!test1
+        - -lmtp-login
         - -insecure=true
         - -timeout=20s
         - -telemetry=http://yarilo-imap-login-telemetry:8080
@@ -86,6 +91,8 @@ spec:
         - -quota-pass=Yarilo!test1
         - -acl-user=u1@d00001.test
         - -acl-pass=Yarilo!test1
+        # The disclosure row stays off: it creates a mailbox under Public/ and
+        # is refused NOPERM 'k' (#1858).
         - -envelope-user=u1@d00001.test
         - -envelope-pass=Yarilo!test1
         - -fts-user=u1@d00001.test
