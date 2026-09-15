@@ -171,7 +171,11 @@ func TestAReleaseIsAnnouncedToEveryReplica(t *testing.T) {
 	q, _ := queueing(backend)
 	ctx := context.Background()
 
-	wakes, cancel, err := q.Wakes(ctx, "mailbox/u@x.com/INBOX")
+	// Queued, so the release names this ticket and the subscription passes it.
+	if _, eerr := q.Enqueue(ctx, "mailbox/u@x.com/INBOX", "waiter"); eerr != nil {
+		t.Fatal(eerr)
+	}
+	wakes, cancel, err := q.Wakes(ctx, "mailbox/u@x.com/INBOX", "waiter")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,5 +240,59 @@ func TestALockThatExpiredIsCountedApartFromALostHandOff(t *testing.T) {
 	}
 	if got := counterNow(t, m.expiredUnrel) - before; got != 1 {
 		t.Errorf("an expired hold was counted %v times, want 1", got)
+	}
+}
+
+// Other tickets' turns may be dropped without limit; this one's never is, or
+// the contender at the head waits out its deadline on the timer (#1809).
+func TestAHandOffSurvivesABurstOfOtherTurns(t *testing.T) {
+	backend := NewMemoryBackend()
+	t.Cleanup(func() { _ = backend.Close() })
+	m := NewMetrics(prometheus.NewRegistry(), "test")
+	client := standOver(t, backend, m)
+
+	const resource = "mailbox/u@x.com/INBOX"
+	ctx := WithSite(context.Background(), "expunge")
+
+	// The lock is held, so the contender queues at the head and waits.
+	held, err := Acquire(ctx, client, resource, Owner("u@x.com", "holder"), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := make(chan error, 1)
+	go func() {
+		lk, aerr := Acquire(ctx, client, resource, Owner("u@x.com", "waiter"), 30*time.Second)
+		if aerr == nil {
+			_ = client.Unlock(ctx, lk.ID)
+		}
+		got <- aerr
+	}()
+
+	// Turns for tickets nobody is waiting on, far more than any buffer holds.
+	q, _ := queueing(backend)
+	for i := 0; i < 500; i++ {
+		if _, eerr := q.Enqueue(ctx, resource, fmt.Sprintf("ghost%d", i)); eerr != nil {
+			t.Fatal(eerr)
+		}
+		if derr := q.Dequeue(ctx, resource, fmt.Sprintf("ghost%d", i)); derr != nil {
+			t.Fatal(derr)
+		}
+	}
+
+	backstopBefore := counterNow(t, m.waitBackstop)
+	if uerr := client.Unlock(ctx, held.ID); uerr != nil {
+		t.Fatal(uerr)
+	}
+	select {
+	case aerr := <-got:
+		if aerr != nil {
+			t.Fatalf("the contender at the head did not get its turn: %v", aerr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the contender at the head never got its turn")
+	}
+	if n := counterNow(t, m.waitBackstop) - backstopBefore; n != 0 {
+		t.Errorf("the hand-off came from the timer %v times; it was announced", n)
 	}
 }

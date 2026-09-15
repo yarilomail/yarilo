@@ -45,14 +45,14 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 
 	// The subscription comes before the place in line: a release between the
 	// two would otherwise be announced to nobody and waited out in full.
-	wakes, unsubscribe, err := queue.Wakes(ctx, resource)
+	ticket := newTicket()
+	wakes, unsubscribe, err := queue.Wakes(ctx, resource, ticket)
 	if err != nil {
 		s.logger.Error("locks: could not listen for releases", "peer", peer, "resource", resource, "err", err)
 		_ = writeFields(w, respError, "internal")
 		return
 	}
 	defer unsubscribe()
-	ticket := newTicket()
 	s.trace(ticket, resource, "subscribe", peer)
 
 	ahead, err := queue.Enqueue(ctx, resource, ticket)
@@ -132,11 +132,11 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 			s.metrics.observeAcquire(time.Since(started).Seconds(), "busy")
 			_ = writeFields(w, respBusy, "", SiteUnknown)
 			return
-		case turn := <-wakes:
-			s.trace(ticket, resource, "received", peer, "turn", turn)
-			// An unnamed turn is "whoever is first", which only a backend
-			// that cannot name one sends.
-			mine = turn == ticket || turn == ""
+		case <-wakes:
+			// The subscription only passes this ticket's own turn, so a signal
+			// here is it (#1809).
+			s.trace(ticket, resource, "received", peer)
+			mine = true
 		case <-backstop.C:
 			// Asking the backend is the expensive half, so it is asked only
 			// here -- and counted only when a turn was owed and never came.

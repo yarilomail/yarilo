@@ -89,13 +89,15 @@ func (b *RedisBackend) wakeChannel(resource string) string {
 
 // Wakes implements WaitQueue. Every replica subscribes, so a release anywhere
 // reaches the contender waiting here.
-func (b *RedisBackend) Wakes(ctx context.Context, resource string) (<-chan string, func(), error) {
+func (b *RedisBackend) Wakes(ctx context.Context, resource, ticket string) (<-chan struct{}, func(), error) {
 	ps := b.rdb.Subscribe(ctx, b.wakeChannel(resource))
 	if _, err := ps.Receive(ctx); err != nil {
 		_ = ps.Close()
 		return nil, nil, fmt.Errorf("locks/redis: wakes: %w", err)
 	}
-	out := make(chan string, 8)
+	// One slot: a hand-off names a ticket once, and a pending signal already
+	// says what a second would.
+	out := make(chan struct{}, 1)
 	done := make(chan struct{})
 	go func() {
 		defer close(out)
@@ -108,9 +110,14 @@ func (b *RedisBackend) Wakes(ctx context.Context, resource string) (<-chan strin
 				if !ok {
 					return
 				}
+				// Filtered here, not at the far end: dropping a message that
+				// names this ticket is the hand-off lost (#1809).
+				if msg.Payload != "" && msg.Payload != ticket {
+					continue
+				}
 				select {
-				case out <- msg.Payload:
-				default: // the contender is behind on turns that are not its own
+				case out <- struct{}{}:
+				default: // one pending signal is enough
 				}
 			}
 		}
