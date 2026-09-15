@@ -764,7 +764,12 @@ func (u *userIndex) withFolderROSite(folderID uint64, site string, fn func(*fold
 // withFolderLock runs fn under the cross-process index lock. The HoldsResource()
 // shortcut keeps an outer holder's per-message calls from deadlocking on it.
 func (u *userIndex) withFolderLock(fs *folderState, fn func() error) error {
-	return u.withDistLock(fs, false, lockSiteWrite, func() error {
+	return u.withFolderLockSite(fs, lockSiteWrite, fn)
+}
+
+// withFolderLockSite is withFolderLock with the caller recorded.
+func (u *userIndex) withFolderLockSite(fs *folderState, site string, fn func() error) error {
+	return u.withDistLock(fs, false, site, func() error {
 		fs.mu.Lock()
 		defer fs.mu.Unlock()
 		t1 := time.Now()
