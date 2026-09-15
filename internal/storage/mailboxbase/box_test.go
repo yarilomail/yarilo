@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/yarilomail/yarilo/pkg/locks"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"

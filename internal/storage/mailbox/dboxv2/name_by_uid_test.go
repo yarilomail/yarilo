@@ -1,18 +1,15 @@
 package dboxv2
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -88,46 +85,6 @@ func saveNamedGUID(t *testing.T, mb mailbox.UserMailbox, folder, body string, ui
 }
 
 // appendRecorder records what an APPEND takes and, on release, what the folder
-// then holds: the two together say whether the name was settled inside.
-type appendRecorder struct {
-	mu     sync.Mutex
-	taken  []string
-	atFree []string
-	dir    string
-}
-
-func (l *appendRecorder) Lock(_ context.Context, resource, _ string, _ time.Duration) (locks.Lock, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.taken = append(l.taken, resource)
-	return locks.Lock{ID: resource, Resource: resource}, nil
-}
-
-func (l *appendRecorder) LockShared(ctx context.Context, r, o string, ttl time.Duration) (locks.Lock, error) {
-	return l.Lock(ctx, r, o, ttl)
-}
-
-func (l *appendRecorder) Unlock(_ context.Context, _ string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	entries, _ := os.ReadDir(l.dir)
-	l.atFree = nil
-	for _, e := range entries {
-		l.atFree = append(l.atFree, e.Name())
-	}
-	return nil
-}
-func (l *appendRecorder) Renew(context.Context, string, time.Duration) error { return nil }
-func (l *appendRecorder) HoldsResource(string) (locks.HoldMode, bool)        { return locks.HoldNone, false }
-func (l *appendRecorder) Close() error                                       { return nil }
-func (l *appendRecorder) Subscribe(context.Context, string) (<-chan locks.Event, error) {
-	return nil, nil
-}
-func (l *appendRecorder) Emit(context.Context, string, locks.EventType, string) error { return nil }
-func (l *appendRecorder) IncrementCounter(context.Context, string, int64) (int64, error) {
-	return 0, nil
-}
-
 // An APPEND leaves the message wearing the name its uid gives it: a store that
 // named it anything else is one the reference cannot read (#1704).
 func TestAnAppendNamesTheMessageByItsUID(t *testing.T) {

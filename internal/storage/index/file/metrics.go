@@ -102,14 +102,6 @@ const (
 	lockSiteWriteFlags      = "write-flags"
 )
 
-// lockMode names the label so a caller cannot pass "true" and mean shared.
-func lockMode(shared bool) string {
-	if shared {
-		return "shared"
-	}
-	return "exclusive"
-}
-
 // observeReadPart records one named part of a read. Guarded by the caller
 // knowing it is inside a read: the same functions are reached from write paths,
 // where there is no whole for a part to sit inside, and a part counted outside

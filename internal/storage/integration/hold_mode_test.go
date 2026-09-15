@@ -49,47 +49,6 @@ func TestTheReentrantCounterNamesTheModeHeld(t *testing.T) {
 	}
 }
 
-// acquireCount is how many blocking acquisitions were made on one resource
-// class, counted at the client: an attempt that blocks is counted too.
-func acquireCount(t *testing.T, class string) float64 {
-	t.Helper()
-	return sumMetric(t, "yarilo_locks_acquire_wait_seconds", "resource", class)
-}
-
-// counterValue reads one counter, summed over every series carrying label=value.
-func counterValue(t *testing.T, name, label, value string) float64 {
-	t.Helper()
-	return sumMetric(t, name, label, value)
-}
-
-func sumMetric(t *testing.T, name, label, value string) float64 {
-	t.Helper()
-	families, err := prometheus.DefaultGatherer.Gather()
-	if err != nil {
-		t.Fatalf("gather: %v", err)
-	}
-	var total float64
-	for _, f := range families {
-		if f.GetName() != name {
-			continue
-		}
-		for _, m := range f.GetMetric() {
-			for _, l := range m.GetLabel() {
-				if l.GetName() != label || l.GetValue() != value {
-					continue
-				}
-				if h := m.GetHistogram(); h != nil {
-					total += float64(h.GetSampleCount())
-				}
-				if c := m.GetCounter(); c != nil {
-					total += c.GetValue()
-				}
-			}
-		}
-	}
-	return total
-}
-
 // reentrantCount reads fileindex_lock_reentrant_total for one mode, over every
 // site.
 func reentrantCount(t *testing.T, mode string) float64 {

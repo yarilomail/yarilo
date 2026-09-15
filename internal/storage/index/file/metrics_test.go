@@ -18,19 +18,6 @@ func histSum(t *testing.T, h prometheus.Histogram) (float64, uint64) {
 	return m.GetHistogram().GetSampleSum(), m.GetHistogram().GetSampleCount()
 }
 
-func histVecSum2(t *testing.T, v *prometheus.HistogramVec, labels ...string) (float64, uint64) {
-	t.Helper()
-	h, err := v.GetMetricWithLabelValues(labels...)
-	if err != nil {
-		t.Fatalf("get %v: %v", labels, err)
-	}
-	var m dto.Metric
-	if err := h.(prometheus.Metric).Write(&m); err != nil {
-		t.Fatalf("write %v: %v", labels, err)
-	}
-	return m.GetHistogram().GetSampleSum(), m.GetHistogram().GetSampleCount()
-}
-
 func histVecSum(t *testing.T, v *prometheus.HistogramVec, label string) (float64, uint64) {
 	t.Helper()
 	h, err := v.GetMetricWithLabelValues(label)

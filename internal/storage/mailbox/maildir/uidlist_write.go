@@ -18,10 +18,6 @@ import (
 	"github.com/yarilomail/yarilo/pkg/filelock"
 )
 
-// dotlockSuffix names the lock file beside the list. Ours is the lock service,
-// but a foreign process watches for this one and nothing else.
-const dotlockSuffix = ".lock"
-
 // uidRecord is one list entry. Sizes are carried only when the name does not
 // already spell them, which is the rule the reference writes by.
 type uidRecord struct {
@@ -334,15 +330,6 @@ func (u *userMailbox) dotlock(path string) (func(), error) {
 // uidListLockWait bounds a writer's wait for the list: the hold is one append
 // and an fsync, so a wait past this is a wedged mount, not a queue (#1840).
 var uidListLockWait = 10 * time.Second
-
-const (
-	// staleDotlock is when a lock file stops meaning "someone is writing" and
-	// starts meaning "someone died".
-	staleDotlock = 2 * time.Minute
-	// dotlockAttempts x dotlockRetry bounds the wait for a live writer.
-	dotlockAttempts = 100
-	dotlockRetry    = 20 * time.Millisecond
-)
 
 // listEntry is one uid the caller has just assigned to a name.
 type listEntry struct {
