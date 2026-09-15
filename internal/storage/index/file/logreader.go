@@ -26,6 +26,9 @@ type logReader struct {
 	ra io.ReaderAt
 }
 
+// wrapLogReads lets a row count the reads a scan makes on its own descriptor.
+var wrapLogReads func(io.ReaderAt) io.ReaderAt
+
 func openLogRead(indexPath string) (*logReader, error) {
 	lg := &logReader{}
 	f, err := os.Open(indexPath + ".log")
@@ -37,6 +40,9 @@ func openLogRead(indexPath string) (*logReader, error) {
 	}
 	lg.f = f
 	lg.ra = f
+	if wrapLogReads != nil {
+		lg.ra = wrapLogReads(f)
+	}
 	st, serr := f.Stat()
 	if serr != nil {
 		_ = f.Close()

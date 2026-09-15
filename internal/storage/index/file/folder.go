@@ -1958,105 +1958,65 @@ func decodeKeywordsRec(b []byte) uint32 {
 // scanExpungesSince returns the UIDs from every TxTypeExpungeGUID record whose
 // embedded modseq is above sinceModSeq.
 func scanExpungesSince(indexPath string, sinceModSeq uint64) ([]uint32, error) {
-	logPath := indexPath + ".log"
-	f, err := os.Open(logPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("fileindex/log scan: open: %w", err)
-	}
-	defer f.Close()
-	if _, err := mailindex.DecodeLogHeader(f); err != nil {
-		// Treat header errors as an empty log.
-		return nil, nil //nolint:nilerr
-	}
 	var out []uint32
-	hdrBuf := make([]byte, 8)
-	for {
-		_, err := io.ReadFull(f, hdrBuf)
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			break
-		}
-		if err != nil {
-			return out, fmt.Errorf("fileindex/log scan: read hdr: %w", err)
-		}
-		txHdr, err := mailindex.DecodeTxHeader(hdrBuf)
-		if err != nil {
-			break // torn write; subsequent records are unrecoverable
-		}
-		payloadLen := int(txHdr.Size) - 8
-		if payloadLen < 0 {
-			break
-		}
-		payload := make([]byte, payloadLen)
-		if _, err := io.ReadFull(f, payload); err != nil {
-			break
-		}
-		if txHdr.Type.Kind() != mailindex.TxTypeExpungeGUID|mailindex.TxType(mailindex.TxExpungeProt) {
-			continue
-		}
-		if len(payload) < 28 {
-			continue
-		}
-		uid := binary.LittleEndian.Uint32(payload[0:])
-		modseq := binary.LittleEndian.Uint64(payload[20:])
-		if modseq > sinceModSeq {
-			out = append(out, uid)
-		}
-	}
-	return out, nil
+	err := scanExpungeRecords(indexPath, sinceModSeq, func(uid uint32, _ [16]byte) {
+		out = append(out, uid)
+	})
+	return out, err
 }
 
-// scanExpungedGUIDsSince reads the record's other half, the message GUID --
-// the only place identity survives once the message is gone (#1216).
+// scanExpungedGUIDsSince is scanExpungesSince reading the other half of the
+// record: the GUID a QRESYNC client names its message by.
 func scanExpungedGUIDsSince(indexPath string, sinceModSeq uint64) ([][16]byte, error) {
-	logPath := indexPath + ".log"
-	f, err := os.Open(logPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("fileindex/log scan: open: %w", err)
-	}
-	defer f.Close() //nolint:errcheck
-	if _, err := mailindex.DecodeLogHeader(f); err != nil {
-		return nil, nil //nolint:nilerr
-	}
 	var out [][16]byte
-	hdrBuf := make([]byte, 8)
-	for {
-		if _, err := io.ReadFull(f, hdrBuf); err != nil {
+	err := scanExpungeRecords(indexPath, sinceModSeq, func(_ uint32, guid [16]byte) {
+		out = append(out, guid)
+	})
+	return out, err
+}
+
+// scanExpungeRecords walks the journal in one read, handing every expunge above
+// sinceModSeq to fn: it runs on every VANISHED and QRESYNC reconnect (#1849).
+func scanExpungeRecords(indexPath string, sinceModSeq uint64, fn func(uint32, [16]byte)) error {
+	lg, err := openLogRead(indexPath)
+	if err != nil {
+		return fmt.Errorf("fileindex/log scan: open: %w", err)
+	}
+	defer lg.close()
+	if lg.f == nil || !lg.ok {
+		return nil // absent, empty or unreadable log
+	}
+	start := int64(mailindex.LogHeaderSize)
+	tail, terr := readTail(lg.ra, start, lg.size)
+	if terr != nil {
+		return terr
+	}
+
+	le := binary.LittleEndian
+	want := mailindex.TxTypeExpungeGUID | mailindex.TxType(mailindex.TxExpungeProt)
+	for at := int64(0); at+8 <= int64(len(tail)); {
+		txHdr, derr := mailindex.DecodeTxHeader(tail[at : at+8])
+		if derr != nil {
+			break // torn write; what follows it cannot be read
+		}
+		payloadLen := int64(txHdr.Size) - 8
+		if payloadLen < 0 || at+8+payloadLen > int64(len(tail)) {
 			break
 		}
-		txHdr, err := mailindex.DecodeTxHeader(hdrBuf)
-		if err != nil {
-			break
-		}
-		payloadLen := int(txHdr.Size) - 8
-		if payloadLen < 0 {
-			break
-		}
-		payload := make([]byte, payloadLen)
-		if _, err := io.ReadFull(f, payload); err != nil {
-			break
-		}
-		if txHdr.Type.Kind() != mailindex.TxTypeExpungeGUID|mailindex.TxType(mailindex.TxExpungeProt) {
+		payload := tail[at+8 : at+8+payloadLen]
+		at += 8 + payloadLen
+		if txHdr.Type.Kind() != want {
 			continue
 		}
-		if len(payload) < 28 {
-			// The 20-byte form carries no modseq, so it cannot be placed in
-			// time; skipping it is what the UID scan does with the same record.
-			continue
-		}
-		if binary.LittleEndian.Uint64(payload[20:]) <= sinceModSeq {
+		// The 20-byte form carries no modseq, so it cannot be placed in time.
+		if len(payload) < 28 || le.Uint64(payload[20:]) <= sinceModSeq {
 			continue
 		}
 		var guid [16]byte
 		copy(guid[:], payload[4:20])
-		out = append(out, guid)
+		fn(le.Uint32(payload[0:]), guid)
 	}
-	return out, nil
+	return nil
 }
 
 // ---- mutation log (Phase 2.5) --------------------------------
