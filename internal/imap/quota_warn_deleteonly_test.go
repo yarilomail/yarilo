@@ -33,6 +33,13 @@ func (s *quotaAuthStub) Authenticate(username, password, _, _ string) (*protocol
 
 func startQuotaWarnServer(t *testing.T, dir string, mb mailbox.MailboxBackend, withWarn bool) *imapclient.Client {
 	t.Helper()
+	return startQuotaWarnServerWithHandler(t, dir, mb, withWarn, nil)
+}
+
+// startQuotaWarnServerWithHandler is the same stand with the client's
+// unilateral responses visible, for a row that asserts what it was told.
+func startQuotaWarnServerWithHandler(t *testing.T, dir string, mb mailbox.MailboxBackend, withWarn bool, h *imapclient.UnilateralDataHandler) *imapclient.Client {
+	t.Helper()
 	opts := imapserver.Options{
 		Mailbox:  mb,
 		Index:    file.New(),
@@ -59,7 +66,11 @@ func startQuotaWarnServer(t *testing.T, dir string, mb mailbox.MailboxBackend, w
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close() })
-	c := imapclient.New(conn, nil)
+	var copts *imapclient.Options
+	if h != nil {
+		copts = &imapclient.Options{UnilateralDataHandler: h}
+	}
+	c := imapclient.New(conn, copts)
 	if err := c.WaitGreeting(); err != nil {
 		t.Fatal(err)
 	}

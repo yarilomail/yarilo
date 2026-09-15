@@ -1186,14 +1186,14 @@ func (s *session) expungeDeleted() int {
 			marked = append(marked, m)
 		}
 	}
-	removed, failed, _ := s.box.ExpungeMarked(s.folder, "INBOX", marked, nil)
+	removed, failed, _ := s.box.ExpungeMarked(s.folder, "INBOX", marked)
 	if s.srv.opts.Locker != nil && s.userInfo != nil {
 		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		for _, uid := range removed {
+		for _, m := range removed {
 			// Best-effort: an IDLE session on a sibling pod wakes on this.
-			_ = s.srv.opts.Locker.Emit(ctx, key, locks.EventExpunged, strconv.FormatUint(uint64(uid), 10))
+			_ = s.srv.opts.Locker.Emit(ctx, key, locks.EventExpunged, strconv.FormatUint(uint64(m.UID), 10))
 		}
 	}
 	return failed

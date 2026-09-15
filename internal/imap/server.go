@@ -2684,25 +2684,27 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		seqNum--
 	}
 
+	removed, _, herr := s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed)
+	if herr != nil {
+		return herr
+	}
+	// Outside the hold, in the order the hold removed them: the quota count
+	// re-opens the folder, and a folder re-opened under its own hold waits on
+	// itself for ever (#1853).
 	var expunge_count int
-	_, _, notifyErr := s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed,
-		func(m *mailbox.MessageMeta) error {
-			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m))
-			s.statsExpunged++
-			expunge_count++
-			seq := seqOf[m.UID]
-			if err := w.WriteExpunge(seq); err != nil {
-				return err
-			}
-			// Remove from knownMsgs so Poll does not re-deliver this expunge.
-			kIdx := int(seq) - 1
-			if kIdx >= 0 && kIdx < len(s.knownMsgs) {
-				s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
-			}
-			return nil
-		})
-	if notifyErr != nil {
-		return notifyErr
+	for _, m := range removed {
+		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m))
+		s.statsExpunged++
+		expunge_count++
+		seq := seqOf[m.UID]
+		if err := w.WriteExpunge(seq); err != nil {
+			return err
+		}
+		// Remove from knownMsgs so Poll does not re-deliver this expunge.
+		kIdx := int(seq) - 1
+		if kIdx >= 0 && kIdx < len(s.knownMsgs) {
+			s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
+		}
 	}
 	slog.Debug("imap: expunge timing",
 		"user", s.userInfo.Username, "folder", s.folder.Name,
