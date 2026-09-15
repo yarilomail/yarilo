@@ -15,6 +15,10 @@ type IndexTx interface {
 	// resolved at commit against the record the hold finds, and reported back.
 	UpdateFlags(uid uint32, upd FlagsUpdate)
 
+	// MarkDirty flags a record whose flags did not reach storage, or clears
+	// the mark. Part of the flag update, not a write after it (#1809).
+	MarkDirty(uid uint32, dirty bool)
+
 	// Commit writes everything queued, or nothing.
 	Commit() (TxResult, error)
 
