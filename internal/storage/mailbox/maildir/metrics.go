@@ -5,9 +5,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// The driver's half of the exclusion, by the call that took it: this one holds
-// the uidlist, the index holds its journal (#1840). Sites are named by role, so
-// moving a call keeps the number.
+// The driver's half of the exclusion, by the call that took it: the uidlist
+// here, the journal in the index (#1840). Sites are named by role.
 var metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_lock_acquired_total",
 	Help: "Locks the maildir driver took on the uidlist, by the call that took it. A store, a rename and a read take none.",

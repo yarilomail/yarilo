@@ -684,9 +684,8 @@ func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folder
 		return fmt.Errorf("fileindex: folder %d not open", folderID)
 	}
 	return u.withFolderLockSite(fs, site, func() error {
-		// The journal is held across the reload as well as the write: a uid is
-		// read from the base and handed out, and two processes that read it
-		// unheld hand out the same one (#1840). A refresh only reads.
+		// The reload is inside the hold: two processes that read NextUID unheld
+		// hand out the same uid (#1840). A refresh only reads.
 		if site != lockSiteRefresh {
 			release, err := fs.holdJournal(site)
 			if err != nil {
@@ -2114,9 +2113,8 @@ func encU32Update(offset uint16, v uint32) []byte {
 		mailindex.EncodeTxHeaderUpdatePayload(mailindex.TxHeaderUpdate{Offset: offset, Data: data}))
 }
 
-// holdJournal excludes another process from the journal for one cycle, through
-// a lock file beside it: locking the journal itself would create it empty
-// before the base exists. Re-entrant within the cycle (#1840).
+// holdJournal excludes another process for one cycle. The lock file sits beside
+// the journal: locking it would create it empty before the base exists (#1840).
 func (fs *folderState) holdJournal(site string) (func(), error) {
 	if fs.journalHeld {
 		return func() {}, nil

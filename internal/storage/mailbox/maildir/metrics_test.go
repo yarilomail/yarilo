@@ -9,9 +9,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A hold is counted under the call that took it, and only the calls that write
-// a shared file take one: a create, a flag write and a folder move each rename
-// or make a directory, which excludes nobody (#1840).
+// Only a call that writes a shared file takes a hold: a create, a flag write
+// and a move each rename or mkdir, which excludes nobody (#1840).
 func TestLockAcquisitionsAreCountedByCaller(t *testing.T) {
 	box := batchBox(t)
 	body := "From: a@b\r\n\r\nx\r\n"

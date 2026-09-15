@@ -62,9 +62,8 @@ func TestTwoSessionsStoreWithoutWaiting(t *testing.T) {
 	}
 }
 
-// Two processes appending at once give out distinct uids and leave a list that
-// still names every message: without the hold over read-change-write both read
-// the same list and one row is lost (#1840).
+// Two processes appending at once keep every row: without the hold over
+// read-change-write both read the same list and one row is lost (#1840).
 func TestTwoProcessAppendsKeepEveryRow(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u2@example.com", Home: home}
@@ -270,9 +269,8 @@ func fileLockHolds(t *testing.T) int {
 	return int(total)
 }
 
-// A delivery lands while a session of the same user holds the folder open, and
-// the session sees it on its next look: nothing waits on a lease the other
-// process took (#1840, #1841).
+// A delivery lands while a session of the same user has the folder open and
+// reaches it: nothing waits on a lease the other process took (#1840, #1841).
 func TestADeliveryReachesAnOpenSession(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u4@example.com", Home: home}

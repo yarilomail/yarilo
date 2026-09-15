@@ -363,9 +363,8 @@ type userMailbox struct {
 	pending map[string][16]byte
 }
 
-// withMailboxLockSite serialises this pod's own sessions on the folder. A
-// second process is excluded where it writes -- the uidlist row and the index
-// journal group -- not by a network lock per command (#1840).
+// withMailboxLockSite serialises this pod's own sessions. A second process is
+// excluded at the uidlist row and the journal group, not per command (#1840).
 func (u *userMailbox) withMailboxLockSite(_, _ string, fn func() error) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()

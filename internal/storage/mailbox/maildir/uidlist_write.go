@@ -41,9 +41,8 @@ type uidList struct {
 }
 
 // readUIDListFile parses the whole file. A line that parses adds a record; the
-// first that does not ends the list and marks it torn. The next uid is taken
-// from the rows as well as the header: rows are appended without rewriting the
-// header, so the header alone can name a uid already handed out (#1840).
+// first that does not ends the list and marks it torn. The next uid comes from
+// the rows too: an appended row leaves the header behind it (#1840).
 func readUIDListFile(path string) (*uidList, error) {
 	listParses.Add(1)
 	f, err := os.Open(path)
@@ -180,10 +179,8 @@ func measureSizes(path string) (psize, vsize uint32, err error) {
 	return c.phys, c.phys + c.lfNoCR, nil
 }
 
-// appendUIDRow puts one row at the end of the list under its own hold: the
-// write is a line, not a rewrite of every row the folder ever had (#1840).
-// It reports false when the list cannot take a row blind -- no list yet, or
-// the name is already in it -- and the caller rewrites instead.
+// appendUIDRow writes one line at the end of the list under its own hold, and
+// reports false when the list cannot take a row blind (#1840).
 func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, error) {
 	path := u.uidListPath(folder)
 	unlock, err := u.dotlock(path)
@@ -248,8 +245,7 @@ func (u *userMailbox) withUIDList(folder, site string, fn func(l *uidList) error
 }
 
 // writeUIDListLocked rewrites the whole file: a temp, synced, then renamed.
-// Caller holds the list. The header's next uid is recomputed, so none is
-// handed out twice.
+// Caller holds the list; the header's next uid is recomputed.
 func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
 	path := u.uidListPath(folder)
 

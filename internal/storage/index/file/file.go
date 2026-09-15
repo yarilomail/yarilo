@@ -783,9 +783,8 @@ func (u *userIndex) withFolderLockSite(fs *folderState, site string, fn func() e
 	})
 }
 
-// withDistLock no longer takes a network lock: a second process is excluded
-// where it writes -- one journal group at a time -- and fs.mu orders this
-// pod's own sessions (#1840).
+// withDistLock takes no network lock: a second process is excluded where it
+// writes, and fs.mu orders this pod's own sessions (#1840).
 func (u *userIndex) withDistLock(_ *folderState, _ bool, _ string, fn func() error) error {
 	return fn()
 }

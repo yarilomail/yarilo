@@ -191,8 +191,7 @@ func counterValue(t *testing.T, c prometheus.Counter) float64 {
 }
 
 // A write cycle holds the journal once, however many records it appends: the
-// kernel lock is not re-entrant, so a second take inside the cycle would not
-// be a count but a deadlock (#1840).
+// kernel lock is not re-entrant, so a second take would deadlock (#1840).
 func TestAWriteCycleHoldsTheJournalOnce(t *testing.T) {
 	root := t.TempDir()
 	ui := openIdx(root, "gina@example.com")
