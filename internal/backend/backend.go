@@ -86,6 +86,11 @@ func (s *Server) startReadyFile(ctx context.Context, proto string) {
 
 // New creates and wires all components according to cfg.
 func New(cfg *config.Config) (*Server, error) {
+	// Before anything is served: learning that the volume admits a second
+	// writer while carrying mail means learning it as loss (#1840).
+	if err := mailboxbuild.VerifyVolume(cfg.Storage); err != nil {
+		return nil, fmt.Errorf("backend: %w", err)
+	}
 	// ---- auth ----
 	passdbs, err := buildPassdbs(cfg.Auth.Passdb)
 	if err != nil {

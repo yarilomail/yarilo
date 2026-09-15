@@ -20,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/jmap"
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/internal/telemetry"
 	"github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/build"
@@ -208,6 +209,11 @@ func parseCIDRs(ss []string) []*net.IPNet {
 // buildStorage wires the per-user mail access. Every dependency here is one the
 // session protocols already use, so JMAP reads exactly what IMAP would.
 func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error) {
+	// The same check the session servers make: a volume that admits a second
+	// writer is learned about here, not as loss (#1840).
+	if err := mailboxbuild.VerifyVolume(cfg.Storage); err != nil {
+		return nil, err
+	}
 	locker, err := buildLocker(cfg, intTLS)
 	if err != nil {
 		return nil, err
