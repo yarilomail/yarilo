@@ -91,9 +91,8 @@ spec:
         - -quota-pass=Yarilo!test1
         - -acl-user=u1@d00001.test
         - -acl-pass=Yarilo!test1
-        # The disclosure row stays off until Public/ grants a normal account
-        # the create right: enabling it fails on NOPERM 'k', which is the
-        # stand's ACLs, not the check (#1855).
+        # The disclosure row stays off: it creates a mailbox under Public/ and
+        # is refused NOPERM 'k' (#1858).
         - -envelope-user=u1@d00001.test
         - -envelope-pass=Yarilo!test1
         - -fts-user=u1@d00001.test
