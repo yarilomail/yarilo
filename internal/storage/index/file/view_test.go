@@ -145,13 +145,8 @@ func TestAReaderSeesAWholeSetAcrossABaseRewrite(t *testing.T) {
 }
 
 // A transaction whose boundary promises more than the file holds is not a
-// state anything may read. RED on purpose: the rule is not implemented -- the
-// replay applies records as they decode and the boundary only bookkeeps the
-// offset, so a group cut short is served. The first attempt at enforcing it
-// (skip a group whose end exceeds the size the log was opened at) cost live
-// appends their records, because that size is a snapshot of a file a writer is
-// still extending. Staging a group and committing it at its boundary is the
-// shape that works, and it is not written yet (#1831).
+// state anything may read: the group is applied only once the file holds it
+// all, and otherwise waits for the writer to close it (#1833).
 func TestATransactionPastTheLastBoundaryIsNotRead(t *testing.T) {
 	dial := raceTestLockServer(t)
 	root := t.TempDir()

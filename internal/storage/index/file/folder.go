@@ -2236,7 +2236,17 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 
 		if kind == mailindex.TxTypeBoundary {
 			if len(payload) >= 4 {
-				committedEnd = recStart + int64(le.Uint32(payload))
+				txEnd := recStart + int64(le.Uint32(payload))
+				// Asked of the file now, not of the size taken at open: a
+				// group still being closed waits for the next pass (#1833).
+				whole, perr := readableThrough(f, txEnd, filePos)
+				if perr != nil {
+					return committedEnd, perr
+				}
+				if !whole {
+					break
+				}
+				committedEnd = txEnd
 			}
 			continue
 		}
@@ -2883,3 +2893,23 @@ func callingSite() string {
 
 // indexPkgPath is this package, matched as a prefix of a frame's function name.
 const indexPkgPath = "github.com/yarilomail/yarilo/internal/storage/index/file."
+
+// readableThrough reports whether the file holds every byte up to end, leaving
+// the descriptor where it found it (#1833).
+func readableThrough(f *os.File, end, resume int64) (bool, error) {
+	if end <= resume {
+		return true, nil
+	}
+	var one [1]byte
+	_, err := f.ReadAt(one[:], end-1)
+	if _, serr := f.Seek(resume, io.SeekStart); serr != nil {
+		return false, fmt.Errorf("fileindex/applylog: restore position: %w", serr)
+	}
+	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return false, nil
+		}
+		return false, fmt.Errorf("fileindex/applylog: probe group end: %w", err)
+	}
+	return true, nil
+}
