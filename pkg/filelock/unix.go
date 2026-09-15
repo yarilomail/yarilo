@@ -59,7 +59,7 @@ func deviceOf(path string) (uint64, bool) {
 	if err := unix.Stat(filepath.Dir(path), &st); err != nil {
 		return 0, false
 	}
-	return uint64(st.Dev), true
+	return uint64(st.Dev), true //nolint:unconvert // st.Dev is int32 on darwin
 }
 
 // unsupported says the kernel refuses this method on this volume, whatever the
