@@ -1,12 +1,10 @@
 package file
 
 import (
-	"encoding/binary"
 	"os"
 	"sync"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -146,9 +144,15 @@ func TestAReaderSeesAWholeSetAcrossABaseRewrite(t *testing.T) {
 	wg.Wait()
 }
 
-// A half-written record after the last boundary is not a state anything may
-// read: the reader answers from the boundary, not from the torn tail (#1831).
-func TestATornTailIsNotRead(t *testing.T) {
+// A transaction whose boundary promises more than the file holds is not a
+// state anything may read. RED on purpose: the rule is not implemented -- the
+// replay applies records as they decode and the boundary only bookkeeps the
+// offset, so a group cut short is served. The first attempt at enforcing it
+// (skip a group whose end exceeds the size the log was opened at) cost live
+// appends their records, because that size is a snapshot of a file a writer is
+// still extending. Staging a group and committing it at its boundary is the
+// shape that works, and it is not written yet (#1831).
+func TestATransactionPastTheLastBoundaryIsNotRead(t *testing.T) {
 	dial := raceTestLockServer(t)
 	root := t.TempDir()
 	home := testHome(root, "iris@example.com")
@@ -160,44 +164,64 @@ func TestATornTailIsNotRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	tx, terr := ui.Begin(f.ID)
-	if terr != nil {
-		t.Fatal(terr)
+	commit := func(from, to uint32) {
+		t.Helper()
+		tx, terr := ui.Begin(f.ID)
+		if terr != nil {
+			t.Fatal(terr)
+		}
+		for uid := from; uid <= to; uid++ {
+			tx.Append(&mailbox.MessageMeta{UID: uid, Size: 10})
+		}
+		if _, cerr := tx.Commit(); cerr != nil {
+			t.Fatal(cerr)
+		}
 	}
-	for i := 1; i <= 5; i++ {
-		tx.Append(&mailbox.MessageMeta{UID: uint32(i), Size: 10})
-	}
-	if _, cerr := tx.Commit(); cerr != nil {
-		t.Fatal(cerr)
-	}
-	whole, gerr := ui.GetMessages(f.ID, mailbox.SeqSet{})
+	commit(1, 5)
+	settled, gerr := ui.GetMessages(f.ID, mailbox.SeqSet{})
 	if gerr != nil {
 		t.Fatal(gerr)
 	}
-	if len(whole) != 5 {
-		t.Fatalf("the committed transaction reads as %d records, want 5", len(whole))
+	if len(settled) != 5 {
+		t.Fatalf("the first transaction reads as %d records, want 5", len(settled))
 	}
 
-	// A record header claiming more bytes than the file holds: what a crash
-	// between the write and its completion leaves behind.
 	fs := ui.open[f.ID]
-	lf, oerr := os.OpenFile(fs.indexPath+".log", os.O_WRONLY|os.O_APPEND, 0o600)
-	if oerr != nil {
-		t.Fatal(oerr)
-	}
-	torn := make([]byte, 8)
-	binary.LittleEndian.PutUint32(torn[0:], 4096)
-	binary.LittleEndian.PutUint32(torn[4:], uint32(mailindex.TxTypeAppend))
-	if _, werr := lf.Write(append(torn, 0x01, 0x02, 0x03)); werr != nil {
-		t.Fatal(werr)
-	}
-	_ = lf.Close()
+	logPath := fs.indexPath + ".log"
+	sizeBefore := func() int64 {
+		st, serr := os.Stat(logPath)
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		return st.Size()
+	}()
 
-	after, aerr := ui.GetMessages(f.ID, mailbox.SeqSet{})
-	if aerr != nil {
-		t.Fatalf("read over a torn tail: %v", aerr)
+	// A second transaction, then the file cut short of what its boundary
+	// promises: the crash between the write reaching the page cache and the
+	// whole of it reaching disk.
+	commit(6, 10)
+	if full, ferr := ui.GetMessages(f.ID, mailbox.SeqSet{}); ferr != nil || len(full) != 10 {
+		t.Fatalf("before the cut the folder reads as %d records (err %v), want 10 — the trap would prove nothing", len(full), ferr)
 	}
-	if len(after) != len(whole) {
-		t.Errorf("a torn tail changed the answer from %d records to %d", len(whole), len(after))
+	// Four bytes short of the whole: the boundary and all but the last of its
+	// sub-records are on disk, and the boundary promises what is missing.
+	after, serr := os.Stat(logPath)
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	cut := after.Size() - 4
+	if cut <= sizeBefore {
+		t.Fatalf("the second transaction wrote %d bytes; too few to cut inside", after.Size()-sizeBefore)
+	}
+	if terr := os.Truncate(logPath, cut); terr != nil {
+		t.Fatal(terr)
+	}
+
+	got, aerr := ui.GetMessages(f.ID, mailbox.SeqSet{})
+	if aerr != nil {
+		t.Fatalf("read over an incomplete transaction: %v", aerr)
+	}
+	if len(got) != 5 {
+		t.Errorf("a transaction whose boundary is not met reads as %d records, want the 5 that were committed", len(got))
 	}
 }
