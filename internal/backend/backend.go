@@ -1384,7 +1384,8 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 		if lc.Socket == "" {
 			return nil, fmt.Errorf("locks_client.socket is required for embedded mode")
 		}
-		return locks.NewClientWaiting(ctx, locks.DialUnix(lc.Socket), lc.StartupWait())
+		c, err := locks.NewClientWaiting(ctx, locks.DialUnix(lc.Socket), lc.StartupWait())
+		return leased(cfg, c, err)
 	case "remote":
 		if len(lc.Endpoints) == 0 {
 			return nil, fmt.Errorf("locks_client.endpoints must list at least one host:port for remote mode")
@@ -1394,11 +1395,13 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 			if err != nil {
 				return nil, fmt.Errorf("locks_client mtls: %w", err)
 			}
-			return locks.NewClientWaiting(ctx, locks.DialTLS(lc.Endpoints[0], tlsCfg), lc.StartupWait())
+			c, cerr := locks.NewClientWaiting(ctx, locks.DialTLS(lc.Endpoints[0], tlsCfg), lc.StartupWait())
+			return leased(cfg, c, cerr)
 		}
 		// Single-endpoint connect for now; failover across Endpoints is a
 		// follow-up (custom Dialer iterating the list until first success).
-		return locks.NewClientWaiting(ctx, locks.DialTCP(lc.Endpoints[0]), lc.StartupWait())
+		c, cerr := locks.NewClientWaiting(ctx, locks.DialTCP(lc.Endpoints[0]), lc.StartupWait())
+		return leased(cfg, c, cerr)
 	default:
 		return nil, fmt.Errorf("locks_client: unknown mode %q (want remote | embedded | \"\")", lc.Mode)
 	}
@@ -1452,4 +1455,13 @@ func languagesOrDefault(xs []string) []string {
 func buildPassdbs(entries []config.PassdbEntry) ([]protocol.Passdb, error) {
 	dbs, _, err := passdbs.Build(entries)
 	return dbs, err
+}
+
+// leased wraps a lock client so an account is serialised in process under one
+// lease, when the deployment asks for it (#1840).
+func leased(cfg *config.Config, c locks.Locker, err error) (locks.Locker, error) {
+	if err != nil || c == nil || !cfg.LocksClient.UserLease {
+		return c, err
+	}
+	return locks.NewLeased(c, locks.Owner(cfg.Hostname, "lease")), nil
 }
