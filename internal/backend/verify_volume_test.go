@@ -7,9 +7,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 )
 
-// A server does not start on a volume whose exclusion it has not proven: the
-// alternative is learning it while carrying mail, which is learning it as
-// loss (#1840).
+// A server does not start on a volume whose exclusion it has not proven:
+// the alternative is learning it while carrying mail (#1840).
 func TestAServerRefusesAnUnprovenVolume(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.MaildirRoot = t.TempDir()
