@@ -3,9 +3,13 @@ package locks
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // UserKey is the lease a pod holds on one account: everything belonging to that
@@ -16,13 +20,8 @@ func UserKey(user string) string { return "user:" + user }
 // Renewed at a third of it, the way every other hold in this package is.
 const leaseTTL = 30 * time.Second
 
-// Leased serialises an account's resources in process, under one lease taken
-// from the service per account rather than one acquisition per command (#1840).
-//
-// A cycle through the service costs 46ms end to end, and fifty sessions on one
-// folder pay it in turn; the same serialisation in process costs microseconds.
-// What the service still provides is the thing that is genuinely between pods:
-// only one pod holds the account at a time.
+// Leased serialises an account in process under one lease from the service,
+// which still says which pod holds that account (#1840).
 type Leased struct {
 	inner Locker
 	owner string
@@ -33,7 +32,17 @@ type Leased struct {
 	byID   map[string]*heldLock
 }
 
+// leaseLost counts accounts whose lease could not be renewed: a local hold is
+// only lawful under a live lease, so the account stops being written here.
+var leaseLost = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "locks_lease_lost_total",
+	Help: "Account leases lost to a failed renewal. Holds for that account are refused until it is taken again; nonzero means a pod stopped serving accounts it had.",
+})
+
 type lease struct {
+	// dead is set when renewal failed: the service no longer holds this
+	// account, so nothing here may serialise it (#1840).
+	dead bool
 	// ready is closed when the lease is taken or has failed: the first caller
 	// takes it and the rest wait on its result, not on the lock (#1840).
 	ready  chan struct{}
@@ -84,13 +93,23 @@ func accountOf(resource string) (string, bool) {
 func (l *Leased) Lock(ctx context.Context, resource, owner string, ttl time.Duration) (Lock, error) {
 	account, ok := accountOf(resource)
 	if !ok {
-		return l.inner.Lock(ctx, resource, owner, ttl)
+		// Not a silent fall-through to one acquisition per command: a key
+		// shape nobody taught this is a programming error (#1840).
+		return Lock{}, fmt.Errorf("locks/lease: %q names no account", resource)
 	}
 	if err := l.hold(ctx, account); err != nil {
 		return Lock{}, err
 	}
 	m := l.mutexFor(resource)
 	m.Lock()
+	l.mu.Lock()
+	dead := l.leases[account] == nil || l.leases[account].dead
+	l.mu.Unlock()
+	if dead {
+		m.Unlock()
+		l.release(account)
+		return Lock{}, fmt.Errorf("locks/lease: %s: the lease is lost: %w", account, ErrUnavailable)
+	}
 
 	id, err := randID()
 	if err != nil {
@@ -145,7 +164,16 @@ func (l *Leased) IncrementCounter(ctx context.Context, key string, delta int64) 
 	return l.inner.IncrementCounter(ctx, key, delta)
 }
 
+// HoldsResource answers from the holds this process took: a re-entry told
+// "not held" blocks for ever on a mutex that is not reentrant (#1741).
 func (l *Leased) HoldsResource(resource string) (HoldMode, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, h := range l.byID {
+		if h.resource == resource {
+			return HoldExclusive, true
+		}
+	}
 	return l.inner.HoldsResource(resource)
 }
 
@@ -173,9 +201,15 @@ func (l *Leased) hold(ctx context.Context, account string) error {
 		}
 		l.mu.Unlock()
 		<-ls.ready
-		if ls.err != nil {
+		l.mu.Lock()
+		err, dead := ls.err, ls.dead
+		l.mu.Unlock()
+		if err != nil || dead {
 			l.release(account)
-			return ls.err
+			if dead {
+				return fmt.Errorf("locks/lease: %s: the lease is lost: %w", account, ErrUnavailable)
+			}
+			return err
 		}
 		return nil
 	}
@@ -193,7 +227,7 @@ func (l *Leased) hold(ctx context.Context, account string) error {
 		return ls.err
 	}
 	renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	go l.renew(renewCtx, lk.ID)
+	go l.renew(renewCtx, account, lk.ID)
 
 	l.mu.Lock()
 	ls.id, ls.cancel = lk.ID, cancel
@@ -236,7 +270,7 @@ func (l *Leased) expire(account string) {
 	_ = l.inner.Unlock(context.Background(), ls.id)
 }
 
-func (l *Leased) renew(ctx context.Context, id string) {
+func (l *Leased) renew(ctx context.Context, account, id string) {
 	t := time.NewTicker(leaseTTL / 3)
 	defer t.Stop()
 	for {
@@ -245,10 +279,25 @@ func (l *Leased) renew(ctx context.Context, id string) {
 			return
 		case <-t.C:
 			if err := l.inner.Renew(ctx, id, leaseTTL); err != nil {
+				l.lost(account, id, err)
 				return
 			}
 		}
 	}
+}
+
+// lost marks the account unwritable here: the service stopped holding it, so
+// another pod may have taken it and the mutexes serialise nothing (#1840).
+func (l *Leased) lost(account, id string, err error) {
+	l.mu.Lock()
+	ls, ok := l.leases[account]
+	if ok {
+		ls.dead = true
+	}
+	l.mu.Unlock()
+	leaseLost.Inc()
+	slog.Error("locks/lease: the account lease could not be renewed; this pod stops holding it",
+		"account", account, "lease", id, "err", err)
 }
 
 var _ Locker = (*Leased)(nil)

@@ -131,3 +131,77 @@ func TestConcurrentCallersTakeOneLeaseAndDoNotBlock(t *testing.T) {
 		t.Errorf("the account was leased %d times, want 1", got)
 	}
 }
+
+// A hold is lawful only under a live lease: when renewal fails the account is
+// no longer this pod's, and the mutexes here serialise nothing (#1840).
+func TestAHoldIsRefusedOnceTheLeaseIsLost(t *testing.T) {
+	backend := NewMemoryBackend()
+	t.Cleanup(func() { _ = backend.Close() })
+	client := standOver(t, backend, nil)
+	l := NewLeased(client, Owner("pod-a", "lease"))
+
+	ctx := WithSite(context.Background(), "expunge")
+	const account = "u@x.com"
+	lk, err := l.Lock(ctx, MailboxKey(account, "INBOX"), Owner(account, "s1"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uerr := l.Unlock(ctx, lk.ID); uerr != nil {
+		t.Fatal(uerr)
+	}
+
+	l.lost(account, "lease-id", fmt.Errorf("renew failed"))
+
+	if _, err := l.Lock(ctx, MailboxKey(account, "INBOX"), Owner(account, "s2"), time.Minute); err == nil {
+		t.Error("a hold was taken on an account whose lease is lost")
+	}
+}
+
+// A re-entry under the lease must not block: the holds are in process, and the
+// service cannot answer for them (#1741).
+func TestAReEntryUnderTheLeaseDoesNotBlock(t *testing.T) {
+	backend := NewMemoryBackend()
+	t.Cleanup(func() { _ = backend.Close() })
+	client := standOver(t, backend, nil)
+	l := NewLeased(client, Owner("pod-a", "lease"))
+
+	ctx := WithSite(context.Background(), "expunge")
+	key := MailboxKey("u@x.com", "INBOX")
+	lk, err := l.Lock(ctx, key, Owner("u@x.com", "s1"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Unlock(ctx, lk.ID) }()
+
+	mode, held := l.HoldsResource(key)
+	if !held || mode != HoldExclusive {
+		t.Fatalf("the hold this process took reads as %q/%v", mode, held)
+	}
+	if got, err := Reentrant(l, key, "expunge", false); err != nil || got != HoldExclusive {
+		t.Errorf("a re-entry saw %q (err %v), want the hold it already has", got, err)
+	}
+}
+
+// Two pods do not hold one account at once: that is what the service is for.
+func TestASecondPodWaitsForTheAccount(t *testing.T) {
+	backend := NewMemoryBackend()
+	t.Cleanup(func() { _ = backend.Close() })
+	a := NewLeased(standOver(t, backend, nil), Owner("pod-a", "lease"))
+	b := NewLeased(standOver(t, backend, nil), Owner("pod-b", "lease"))
+
+	ctx := WithSite(context.Background(), "expunge")
+	key := MailboxKey("u@x.com", "INBOX")
+	held, err := a.Lock(ctx, key, Owner("u@x.com", "s1"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	short, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	if _, berr := b.Lock(short, key, Owner("u@x.com", "s2"), time.Minute); berr == nil {
+		t.Error("a second pod took an account the first still leases")
+	}
+	if uerr := a.Unlock(ctx, held.ID); uerr != nil {
+		t.Fatal(uerr)
+	}
+}
