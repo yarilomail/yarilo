@@ -279,6 +279,10 @@ func (s *Server) handleUnlock(ctx context.Context, w io.Writer, fields []string,
 	lockID := fields[1]
 	if err := s.backend.Release(ctx, lockID); err != nil {
 		if errors.Is(err, ErrNotFound) {
+			// The holder came to release a lock that was already gone: it
+			// expired, so nothing announced the resource as free (#1809).
+			s.metrics.incExpiredUnreleased()
+			s.logger.Debug("locks: released a lock that had already expired", "peer", peer, "id", lockID)
 			_ = writeFields(w, respNotFound)
 			return
 		}

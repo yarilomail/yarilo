@@ -15,6 +15,7 @@ type Metrics struct {
 	waitBackstop   prometheus.Counter
 	grantUndeliv   prometheus.Counter
 	callerGone     prometheus.Counter
+	expiredUnrel   prometheus.Counter
 }
 
 // NewMetrics constructs and registers the metric set on r. If r is nil the
@@ -68,6 +69,13 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 			Help:        "Waiting LOCK requests abandoned because the caller's connection went away before its turn came.",
 			ConstLabels: prometheus.Labels{"mode": mode},
 		}),
+		// A hold that ended by TTL rather than by release: nothing announced
+		// the resource, so the next contender waits for its timer (#1809).
+		expiredUnrel: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "locks_expired_unreleased_total",
+			Help:        "Locks whose holder came to release them after they had already expired. Each one is a hand-off nobody could publish.",
+			ConstLabels: prometheus.Labels{"mode": mode},
+		}),
 		renewFailed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name:        "yarilo_locks_renew_failed_total",
 			Help:        "Total RENEW requests rejected because the lock had already expired.",
@@ -76,7 +84,7 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 	}
 	// MustRegister is fine here — duplicate registration in tests is caught
 	// loud, and parameters above guarantee non-conflicting metric identity.
-	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed, m.queueDepth, m.waitBackstop, m.grantUndeliv, m.callerGone)
+	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed, m.queueDepth, m.waitBackstop, m.grantUndeliv, m.callerGone, m.expiredUnrel)
 	return m
 }
 
@@ -113,6 +121,13 @@ func (m *Metrics) incCallerGone() {
 		return
 	}
 	m.callerGone.Inc()
+}
+
+func (m *Metrics) incExpiredUnreleased() {
+	if m == nil || m.expiredUnrel == nil {
+		return
+	}
+	m.expiredUnrel.Inc()
 }
 
 func (m *Metrics) incBusy() {
