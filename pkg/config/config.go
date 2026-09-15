@@ -1099,15 +1099,8 @@ type LocksClientConfig struct {
 	// UserLease serialises an account in process under one lease from the
 	// service instead of one acquisition per command (#1840).
 	UserLease bool `koanf:"locks_client_user_lease"`
-	// StartupWaitSeconds is how long a component keeps retrying the first
-	// connection before giving up. Pod start order is not guaranteed and the
-	// lock service is a separate deployment, so "not up yet" is ordinary;
-	// exiting on it costs a restart and, worse, spends the RESTARTS counter
-	// every rollout is judged by (#1350).
-	//
-	// Bounded rather than infinite: a genuinely wrong endpoint must still fail
-	// loudly instead of retrying for ever behind a healthy-looking pod. Zero
-	// selects the default; negative disables waiting.
+	// StartupWaitSeconds bounds the first wait for the lock service. Zero
+	// selects the default; negative disables waiting (#1350).
 	StartupWaitSeconds int `koanf:"locks_client_startup_wait"`
 }
 
@@ -1118,11 +1111,8 @@ const DefaultAuthStartupWait = 30 * time.Second
 // on the first connection.
 const DefaultLocksStartupWait = 30 * time.Second
 
-// StartupWait resolves the configured window.
 // StartupWait is how long a process waits at startup for auth to answer. Zero
-// selects the default; negative turns the waiting off. Written once here, as
-// the locks knob is, so the two startup waits read the same way and neither
-// grows its own idea of what zero means.
+// selects the default; negative turns the waiting off.
 func (c AuthServiceConfig) StartupWait() time.Duration {
 	switch {
 	case c.StartupWaitSeconds == 0:
