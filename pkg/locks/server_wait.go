@@ -84,8 +84,10 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	woken := false
 	for {
 		if mine {
-			s.trace(ticket, resource, "try", peer)
 			id, current, aerr := s.tryAcquire(ctx, resource, owner, site, ttl, shared)
+			// The refusal names who holds it, so the trace says who takes the
+			// lock out from under the head of the queue (#1809).
+			s.trace(ticket, resource, "try", peer, "held_by", current.Owner, "held_site", current.Site)
 			switch {
 			case aerr == nil:
 				s.trace(ticket, resource, "result", peer, "granted", true, "after_backstop", woken)
