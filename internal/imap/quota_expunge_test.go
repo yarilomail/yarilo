@@ -25,6 +25,14 @@ import (
 // gives it.
 func startCloningServer(t *testing.T, dir string) (*imapclient.Client, dict.Dict) {
 	t.Helper()
+	c, d, _ := startCloningServerAt(t, dir)
+	return c, d
+}
+
+// startCloningServerAt is the same stand, handing back a dialer so a row can
+// bring a second session that has counted nothing.
+func startCloningServerAt(t *testing.T, dir string) (*imapclient.Client, dict.Dict, func(*testing.T) *imapclient.Client) {
+	t.Helper()
 	d, err := memory.New(dict.Config{Driver: "memory"})
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +64,23 @@ func startCloningServer(t *testing.T, dir string) (*imapclient.Client, dict.Dict
 	if err := c.Login("user@test.com", "testpass").Wait(); err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	return c, d
+	dial := func(t *testing.T) *imapclient.Client {
+		t.Helper()
+		conn2, derr := net.Dial("tcp", ln.Addr().String())
+		if derr != nil {
+			t.Fatal(derr)
+		}
+		t.Cleanup(func() { conn2.Close() })
+		c2 := imapclient.New(conn2, nil)
+		if werr := c2.WaitGreeting(); werr != nil {
+			t.Fatal(werr)
+		}
+		if lerr := c2.Login("user@test.com", "testpass").Wait(); lerr != nil {
+			t.Fatalf("login: %v", lerr)
+		}
+		return c2
+	}
+	return c, d, dial
 }
 
 func appendOne(t *testing.T, c *imapclient.Client, subject string) {

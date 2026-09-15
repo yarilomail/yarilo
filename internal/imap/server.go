@@ -2689,8 +2689,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		return herr
 	}
 	// Outside the hold, in the order the hold removed them: the quota count
-	// re-opens the folder, and a folder re-opened under its own hold waits on
-	// itself for ever (#1853).
+	// re-opens the folder, and that asks for the hold again (#1853).
 	var expunge_count int
 	for _, m := range removed {
 		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m))

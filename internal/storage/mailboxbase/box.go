@@ -165,10 +165,8 @@ func SaveOnly() BoxOption {
 	return func(b *Box) { b.mode = openSaveOnly }
 }
 
-// ExpungeMarked removes messages under one hold: a folder opened between a
-// record and its body holds a file the reconcile imports back (#1794). It
-// returns what went, for the caller to tell anyone outside the hold: a call
-// out of the hold re-enters it and the session waits on itself (#1853).
+// ExpungeMarked removes messages under one hold and returns what went: a call
+// out of the hold re-enters it and waits on itself (#1794, #1853).
 func (b *Box) ExpungeMarked(f *mailbox.Folder, folder string, msgs []*mailbox.MessageMeta) (removed []*mailbox.MessageMeta, failed int, err error) {
 	herr := b.HoldFolder(folder, "expunge", func() error {
 		removed, failed = b.expungeEach(f, folder, msgs)
