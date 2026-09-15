@@ -1187,6 +1187,16 @@ func indexLockMethod(cfg config.StorageConfig) filelock.Method {
 	return m
 }
 
+// indexFsync reads the configured durability for index writes; an unknown name
+// falls back to the default rather than refusing to serve.
+func indexFsync(cfg config.StorageConfig) mailbox.FsyncMode {
+	m, err := mailbox.ParseFsyncMode(cfg.MailFsync)
+	if err != nil {
+		return mailbox.FsyncOptimized
+	}
+	return m
+}
+
 // IndexOptions builds the file-index options from a storage config, so every
 // binary that opens an index rotates its logs by the same triple. Exported for
 // the standalone binaries that construct their own index (yarilo-jmap).
@@ -1194,7 +1204,7 @@ func IndexOptions(cfg config.StorageConfig, locker locks.Locker) []file.Option {
 	// The same encoding the mailbox backends get. The two trees spell a folder
 	// the same way or neither finds the other's (#1586).
 	opts := []file.Option{file.WithLocker(locker), file.WithListUTF8(cfg.MailboxListUTF8),
-		file.WithLockMethod(indexLockMethod(cfg))}
+		file.WithLockMethod(indexLockMethod(cfg)), file.WithFsync(indexFsync(cfg))}
 	// Any of the three, not all three. Gating the whole triple on min_size
 	// meant an operator could set the age or the ceiling alone, see the key in
 	// the rendered config, and have it do nothing -- accepted and inert, which

@@ -61,7 +61,9 @@ type Backend struct {
 	locker         locks.Locker
 	altStorageTmpl string        // base path template for cold-storage tier; "" = disabled
 	writeSem       chan struct{} // nil = unlimited
-	listUTF8       bool
+	// fsync says what reaches the disk before a delivery is answered (#1847).
+	fsync    mailbox.FsyncMode
+	listUTF8 bool
 
 	// rotateSize is the per-m.<N> size cap before Save rolls to a fresh file_id
 	// (mdbox_rotate_size). 0 selects defaultRotateSize (10 MiB default).
@@ -99,6 +101,11 @@ func (b *Backend) clock() time.Time {
 
 // Option configures a Backend at construction time.
 type Option func(*Backend)
+
+// WithFsync sets what a delivery makes durable before it is acknowledged.
+func WithFsync(m mailbox.FsyncMode) Option {
+	return func(b *Backend) { b.fsync = m }
+}
 
 // WithLocker wires a yarilo-locks client into the backend. Lock order on every
 // mutation path (Save, Remove, Copy): MdboxMapKey(user) then
@@ -174,7 +181,8 @@ func WithPreallocate(v bool) Option { return func(b *Backend) { b.preallocate = 
 
 // New constructs a Backend.
 func New(opts ...Option) *Backend {
-	b := &Backend{listUTF8: true}
+	b := &Backend{
+		fsync: mailbox.FsyncOptimized, listUTF8: true}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -643,6 +651,14 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 	if werr != nil {
 		f.Close()
 		return "", 0, noGUID, fmt.Errorf("mdbox/save: write record: %w", werr)
+	}
+	// Before the map names it, and so before the delivery is answered: the map
+	// entry would otherwise point at bytes a crash never wrote (#1847).
+	if u.b.fsync.SyncsBody() {
+		if serr := f.Sync(); serr != nil {
+			f.Close() //nolint:errcheck
+			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync m.%d: %w", fileID, serr)
+		}
 	}
 	// Close is its own part: on a networked filesystem this is where the
 	// write is actually paid for, and folding it into the write above would

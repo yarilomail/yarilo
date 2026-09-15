@@ -206,6 +206,9 @@ func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, er
 	if _, werr := f.WriteString(rec.String() + "\n"); werr != nil {
 		return false, fmt.Errorf("maildir/uidlist: append row: %w", werr)
 	}
+	if !u.b.fsync.SyncsList() {
+		return true, nil
+	}
 	// Synced under the hold: the row is what tells the next reader this file
 	// already has a uid, and a lost row hands the same name a second one.
 	if serr := syncFile(f); serr != nil {
@@ -283,10 +286,12 @@ func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
 	}
 	// Synced before the rename: a crash in between otherwise leaves a list of
 	// zero length, and every file behind it takes a fresh uid.
-	if err := syncFile(f); err != nil {
-		f.Close()      //nolint:errcheck
-		os.Remove(tmp) //nolint:errcheck
-		return fmt.Errorf("maildir/uidlist: sync: %w", err)
+	if u.b.fsync.SyncsList() {
+		if err := syncFile(f); err != nil {
+			f.Close()      //nolint:errcheck
+			os.Remove(tmp) //nolint:errcheck
+			return fmt.Errorf("maildir/uidlist: sync: %w", err)
+		}
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmp) //nolint:errcheck
@@ -481,3 +486,18 @@ var listParses atomic.Int64
 // ListParses returns the count, ResetListParses zeroes it. Test seams.
 func ListParses() int  { return int(listParses.Load()) }
 func ResetListParses() { listParses.Store(0) }
+
+// syncDir flushes a directory entry, so a file published into it is found
+// again after a crash. Test seam: the row counts the call, not the effect.
+var syncDir = func(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	serr := d.Sync()
+	cerr := d.Close()
+	if serr != nil {
+		return serr
+	}
+	return cerr
+}
