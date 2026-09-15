@@ -149,14 +149,16 @@ type Backend interface {
 	// Acquire attempts to take the exclusive lock. Returns the new lock ID on
 	// success. On contention (an exclusive OR a shared holder already present),
 	// returns ErrBusy with currentOwner populated.
-	Acquire(ctx context.Context, resource, owner, site string, ttl time.Duration) (lockID string, current Holder, err error)
+	// ticket is the caller's place in the queue: the lock is granted only to
+	// the head, and a caller with no ticket is refused while anyone waits (#1809).
+	Acquire(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration) (lockID string, current Holder, err error)
 
 	// AcquireShared attempts to take a shared (read) lock (#671). Multiple
 	// shared holders may coexist on the same resource; it fails with ErrBusy
 	// only when an exclusive lock is currently held. Release/Renew use the
 	// same lock-ID space as Acquire — implementations must track each lock
 	// ID's kind (exclusive/shared) internally so those calls stay symmetric.
-	AcquireShared(ctx context.Context, resource, owner, site string, ttl time.Duration) (lockID string, current Holder, err error)
+	AcquireShared(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration) (lockID string, current Holder, err error)
 
 	// Release deletes the lock. Returns ErrNotFound if the lock does not
 	// exist anymore (expired or already released).

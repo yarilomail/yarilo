@@ -66,10 +66,10 @@ func siteTestBackend(t *testing.T) *MemoryBackend {
 func TestARefusalNamesTheHoldersSite(t *testing.T) {
 	b := siteTestBackend(t)
 	ctx := context.Background()
-	if _, _, err := b.Acquire(ctx, "mbox:u:INBOX", "p/1/u/s1", "write", time.Minute); err != nil {
+	if _, _, err := b.Acquire(ctx, "mbox:u:INBOX", "p/1/u/s1", "write", "", time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	_, current, err := b.Acquire(ctx, "mbox:u:INBOX", "p/2/u/s2", "read", time.Minute)
+	_, current, err := b.Acquire(ctx, "mbox:u:INBOX", "p/2/u/s2", "read", "", time.Minute)
 	if !errors.Is(err, ErrBusy) {
 		t.Fatalf("second acquisition returned %v, want ErrBusy", err)
 	}
@@ -89,11 +89,11 @@ func TestTwoHoldersInTurnEachNameTheirOwnSite(t *testing.T) {
 	ctx := context.Background()
 
 	for _, want := range []string{"write", "open-probe"} {
-		id, _, err := b.Acquire(ctx, "mbox:u:INBOX", "p/1/u/"+want, want, time.Minute)
+		id, _, err := b.Acquire(ctx, "mbox:u:INBOX", "p/1/u/"+want, want, "", time.Minute)
 		if err != nil {
 			t.Fatalf("holder %q: %v", want, err)
 		}
-		_, current, err := b.Acquire(ctx, "mbox:u:INBOX", "p/2/u/waiter", "read", time.Minute)
+		_, current, err := b.Acquire(ctx, "mbox:u:INBOX", "p/2/u/waiter", "read", "", time.Minute)
 		if !errors.Is(err, ErrBusy) {
 			t.Fatalf("waiter against holder %q returned %v, want ErrBusy", want, err)
 		}
@@ -110,10 +110,10 @@ func TestTwoHoldersInTurnEachNameTheirOwnSite(t *testing.T) {
 func TestASharedHoldersSiteIsReported(t *testing.T) {
 	b := siteTestBackend(t)
 	ctx := context.Background()
-	if _, _, err := b.AcquireShared(ctx, "mbox:u:INBOX", "p/1/u/r1", "read", time.Minute); err != nil {
+	if _, _, err := b.AcquireShared(ctx, "mbox:u:INBOX", "p/1/u/r1", "read", "", time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	_, current, err := b.Acquire(ctx, "mbox:u:INBOX", "p/2/u/w", "write", time.Minute)
+	_, current, err := b.Acquire(ctx, "mbox:u:INBOX", "p/2/u/w", "write", "", time.Minute)
 	if !errors.Is(err, ErrBusy) {
 		t.Fatalf("writer returned %v, want ErrBusy", err)
 	}

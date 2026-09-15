@@ -47,9 +47,9 @@ func (b *countingBackend) AtFront(ctx context.Context, resource, ticket string) 
 	return b.MemoryBackend.AtFront(ctx, resource, ticket)
 }
 
-func (b *countingBackend) Acquire(ctx context.Context, resource, owner, site string, ttl time.Duration) (string, Holder, error) {
+func (b *countingBackend) Acquire(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration) (string, Holder, error) {
 	b.calls.Add(1)
-	return b.MemoryBackend.Acquire(ctx, resource, owner, site, ttl)
+	return b.MemoryBackend.Acquire(ctx, resource, owner, site, ticket, ttl)
 }
 
 func standOver(t *testing.T, backend Backend, m *Metrics) *Client {
@@ -181,7 +181,7 @@ func TestAReleaseIsAnnouncedToEveryReplica(t *testing.T) {
 	}
 	defer cancel()
 
-	id, _, err := backend.Acquire(ctx, "mailbox/u@x.com/INBOX", Owner("u@x.com", "s1"), "expunge", time.Minute)
+	id, _, err := backend.Acquire(ctx, "mailbox/u@x.com/INBOX", Owner("u@x.com", "s1"), "expunge", "waiter", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,5 +294,39 @@ func TestAHandOffSurvivesABurstOfOtherTurns(t *testing.T) {
 	}
 	if n := counterNow(t, m.waitBackstop) - backstopBefore; n != 0 {
 		t.Errorf("the hand-off came from the timer %v times; it was announced", n)
+	}
+}
+
+// The queue is a right, not a notification: a contender that is not at the head
+// does not get the lock even when the resource is free, so the head cannot be
+// overtaken by whoever wakes first (#1809).
+func TestOnlyTheHeadOfTheQueueMayTakeTheLock(t *testing.T) {
+	backend := NewMemoryBackend()
+	t.Cleanup(func() { _ = backend.Close() })
+	q, _ := queueing(backend)
+	ctx := context.Background()
+
+	const resource = "mbox:u@x.com:INBOX"
+	if _, err := q.Enqueue(ctx, resource, "head"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Enqueue(ctx, resource, "behind"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The resource is free, and the one behind tries first.
+	if _, _, err := backend.Acquire(ctx, resource, Owner("u@x.com", "s2"), "expunge", "behind", time.Minute); err == nil {
+		t.Fatal("a contender that is not at the head took a free lock")
+	}
+	// A caller with no ticket is refused for the same reason.
+	if _, _, err := backend.Acquire(ctx, resource, Owner("u@x.com", "s3"), "expunge", "", time.Minute); err == nil {
+		t.Fatal("a caller with no ticket took a lock someone was queued for")
+	}
+	id, _, err := backend.Acquire(ctx, resource, Owner("u@x.com", "s1"), "expunge", "head", time.Minute)
+	if err != nil {
+		t.Fatalf("the head was refused its own lock: %v", err)
+	}
+	if err := backend.Release(ctx, id); err != nil {
+		t.Fatal(err)
 	}
 }

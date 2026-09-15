@@ -83,13 +83,16 @@ func NewMemoryBackend(opts ...MemoryBackendOption) *MemoryBackend {
 
 // Acquire implements Backend. Fails if the resource has an exclusive
 // holder OR any shared holder — exclusive is exclusive against everyone.
-func (b *MemoryBackend) Acquire(_ context.Context, resource, owner, site string, ttl time.Duration) (string, Holder, error) {
+func (b *MemoryBackend) Acquire(_ context.Context, resource, owner, site, ticket string, ttl time.Duration) (string, Holder, error) {
 	if resource == "" || owner == "" {
 		return "", Holder{}, fmt.Errorf("locks/memory: resource and owner must be non-empty")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.expireLocked()
+	if _, blocked := b.queuedAhead(resource, ticket); blocked {
+		return "", Holder{Site: "queued"}, ErrBusy
+	}
 	if existing, held := b.byRes[resource]; held {
 		return "", Holder{Owner: b.locks[existing].Owner, Site: b.locks[existing].Site}, ErrBusy
 	}
@@ -119,7 +122,7 @@ func (b *MemoryBackend) Acquire(_ context.Context, resource, owner, site string,
 
 // AcquireShared implements Backend. Multiple shared holders may coexist on
 // the same resource; only an exclusive holder blocks it.
-func (b *MemoryBackend) AcquireShared(_ context.Context, resource, owner, site string, ttl time.Duration) (string, Holder, error) {
+func (b *MemoryBackend) AcquireShared(_ context.Context, resource, owner, site, ticket string, ttl time.Duration) (string, Holder, error) {
 	if resource == "" || owner == "" {
 		return "", Holder{}, fmt.Errorf("locks/memory: resource and owner must be non-empty")
 	}
