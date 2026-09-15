@@ -25,7 +25,7 @@ type MemoryBackend struct {
 	// place without blocking the holders it is waiting for.
 	qmu      sync.Mutex
 	queues   map[string][]queued
-	wakes    map[string]map[chan string]struct{}
+	wakes    map[string]map[chan struct{}]string
 	sweepInt time.Duration
 	now      func() time.Time
 	stopOnce sync.Once
@@ -65,7 +65,7 @@ func NewMemoryBackend(opts ...MemoryBackendOption) *MemoryBackend {
 	b := &MemoryBackend{
 		locks:     make(map[string]*memLock),
 		queues:    make(map[string][]queued),
-		wakes:     make(map[string]map[chan string]struct{}),
+		wakes:     make(map[string]map[chan struct{}]string),
 		byRes:     make(map[string]string),
 		sharedRes: make(map[string]map[string]struct{}),
 		subs:      make(map[string]map[chan Event]struct{}),

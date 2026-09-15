@@ -80,13 +80,13 @@ func (b *MemoryBackend) pruneLocked(resource string) []queued {
 }
 
 // Wakes implements WaitQueue.
-func (b *MemoryBackend) Wakes(ctx context.Context, resource string) (<-chan string, func(), error) {
-	ch := make(chan string, 8)
+func (b *MemoryBackend) Wakes(ctx context.Context, resource, ticket string) (<-chan struct{}, func(), error) {
+	ch := make(chan struct{}, 1)
 	b.mu.Lock()
 	if b.wakes[resource] == nil {
-		b.wakes[resource] = make(map[chan string]struct{})
+		b.wakes[resource] = make(map[chan struct{}]string)
 	}
-	b.wakes[resource][ch] = struct{}{}
+	b.wakes[resource][ch] = ticket
 	b.mu.Unlock()
 	return ch, func() {
 		b.mu.Lock()
@@ -110,13 +110,15 @@ func (b *MemoryBackend) wakeLocked(resource string) {
 	b.handOver(resource, nextUp)
 }
 
-// handOver names the turn on every listener's channel; each filters by its own
-// ticket. Caller holds b.mu.
+// handOver signals the listener whose ticket this turn names. Caller holds b.mu.
 func (b *MemoryBackend) handOver(resource, ticket string) {
-	for ch := range b.wakes[resource] {
+	for ch, want := range b.wakes[resource] {
+		if ticket != "" && want != ticket {
+			continue
+		}
 		select {
-		case ch <- ticket:
-		default:
+		case ch <- struct{}{}:
+		default: // one pending signal is enough
 		}
 	}
 }
