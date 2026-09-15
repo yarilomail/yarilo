@@ -116,10 +116,9 @@ func (h *Hold) Release() error {
 	return cerr
 }
 
-// Verify asks the volume at startup whether it locks at all: a mount with no
-// lock daemon answers ENOLCK, and learning that while serving mail means
-// learning it as loss. Exclusion is proven only where one process can prove
-// it: a POSIX record lock belongs to the process (#1840).
+// Verify asks the volume at startup whether it excludes a second writer: a
+// mount with no lock daemon answers ENOLCK or admits both, and learning that
+// while serving mail means learning it as loss (#1840).
 func Verify(dir string, method Method) error {
 	probe := filepath.Join(dir, ".yarilo-lock-probe")
 	defer func() { _ = os.Remove(probe) }()
@@ -130,12 +129,13 @@ func Verify(dir string, method Method) error {
 	}
 	defer func() { _ = first.Release() }()
 
-	if method == MethodFcntl {
-		return nil
+	// Asked of another process, because that is the only one whose answer
+	// means anything for a lock the kernel keeps per process.
+	taken, perr := askAnotherProcess(probe, method)
+	if perr != nil {
+		return perr
 	}
-	second, serr := takeShared(probe, method, 200*time.Millisecond)
-	if serr == nil {
-		_ = second.Release()
+	if taken {
 		return fmt.Errorf("filelock/verify: %s admitted two writers at once in %s: the volume does not arbitrate this method", method, dir)
 	}
 	return nil

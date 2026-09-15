@@ -154,3 +154,12 @@ func TestVerifyProvesTheVolumeArbitrates(t *testing.T) {
 		t.Error("a directory that is not there passed the check")
 	}
 }
+
+// TestMain answers the probe when Verify's child asks, and runs the tests
+// otherwise: the child is this binary, told to take one lock (#1840).
+func TestMain(m *testing.M) {
+	if ProbeMain() {
+		return
+	}
+	os.Exit(m.Run())
+}
