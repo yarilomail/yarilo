@@ -1294,9 +1294,8 @@ func (u *userIndex) ClearFolderCorrupt(folderID uint64) error {
 	})
 }
 
-// flagsMultiLocked applies a batch of flag changes, bumping each UID's modseq
-// so CONDSTORE can pinpoint what changed, and returns the log records the batch
-// needs. Caller holds the folder (#1827).
+// flagsMultiLocked applies a batch of flag changes and returns its log records,
+// bumping each UID's own modseq, which is what CONDSTORE addresses (#1827).
 func (fs *folderState) flagsMultiLocked(updates map[uint32]mailbox.FlagsUpdate, result map[uint32]mailbox.FlagsResult) ([][]byte, error) {
 	{
 		// Collect all unique keyword sets across the batch to register them first.
