@@ -688,18 +688,19 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 		// not a read that wanted the lock.
 		return u.withFolderROSite(folderID, lockSiteFallback, fn)
 	}
+	// The reader's own view: the shared base image plus its own replay of the
+	// log tail. Nothing here writes what another session reads (#647, #1809).
 	reloadStart := time.Now()
-	fs.mu.Lock()
-	err := fs.reload()
-	fs.mu.Unlock()
+	view, err := fs.readSnapshot()
 	observeReadPart("reload", time.Since(reloadStart))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fn(fs)
+		}
 		return err
 	}
 	buildStart := time.Now()
-	fs.mu.RLock()
-	defer fs.mu.RUnlock()
-	ferr := fn(fs)
+	ferr := fn(view)
 	observeReadPart("build", time.Since(buildStart))
 	return ferr
 }
@@ -712,18 +713,8 @@ func (fs *folderState) canReadUnlocked() bool {
 	return fs.lineage.Lineage != lineageUnknown
 }
 
-// withFolderRO reloads the folder state under a SHARED distributed lock, then
-// runs read-only fn against the settled in-memory snapshot. The lock keeps it
-// from interleaving with another process's lock-holding compaction and loading
-// a torn view into the shared folderState, which every later locked write would
-// then trust as a baseline, regressing NextUID. Shared holders run concurrently
-// and block only against an in-flight exclusive writer.
-func (u *userIndex) withFolderRO(folderID uint64, fn func(*folderState) error) error {
-	return u.withFolderROSite(folderID, lockSiteRead, fn)
-}
-
-// withFolderROSite is withFolderRO with the reason recorded: an acquisition
-// from an open and one from an unprovable read cost the same and mean opposites.
+// withFolderROSite reads under a SHARED distributed lock. The one caller left
+// is the fallback for an index that cannot prove its own freshness (#1809).
 func (u *userIndex) withFolderROSite(folderID uint64, site string, fn func(*folderState) error) error {
 	whole := time.Now()
 	defer func() { metricReadSeconds.Observe(time.Since(whole).Seconds()) }()

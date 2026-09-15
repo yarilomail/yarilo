@@ -22,20 +22,16 @@ import (
 // the session's own view, and deletions later address UIDs from that view
 // rather than positions in a fresh index (#1249).
 func (u *userIndex) GetPOP3UIDLsUnlocked(folderID uint64) (map[uint32]string, error) {
-	return u.pop3UIDLs(folderID, true)
+	return u.pop3UIDLs(folderID)
 }
 
 func (u *userIndex) GetPOP3UIDLs(folderID uint64) (map[uint32]string, error) {
-	return u.pop3UIDLs(folderID, false)
+	return u.pop3UIDLs(folderID)
 }
 
-func (u *userIndex) pop3UIDLs(folderID uint64, unlocked bool) (map[uint32]string, error) {
+func (u *userIndex) pop3UIDLs(folderID uint64) (map[uint32]string, error) {
 	var out map[uint32]string
-	read := u.withFolderRO
-	if unlocked {
-		read = u.withFolderROUnlocked
-	}
-	err := read(folderID, func(fs *folderState) error {
+	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
 		path := filepath.Join(fs.indexDir, "pop3.uidl")
 		f, err := os.Open(path)
 		if errors.Is(err, os.ErrNotExist) {

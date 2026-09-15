@@ -82,13 +82,15 @@ func TestTheReentrantCounterNamesTheModeHeld(t *testing.T) {
 	}
 	defer func() { _ = lk.Unlock(ctx, outer.ID) }()
 
+	// A read does not enter the hold at all now: it reads its own view and
+	// takes nothing, so there is no re-entry to name (#1809).
 	beforeX := reentrantCount(t, "exclusive")
 	beforeS := reentrantCount(t, "shared")
 	if _, err := idx.GUIDBackfillNeeded(folder.ID); err != nil {
 		t.Fatalf("read under the write hold: %v", err)
 	}
-	if got := reentrantCount(t, "exclusive") - beforeX; got < 1 {
-		t.Errorf("the read under an exclusive hold counted %v exclusive re-entries, want at least 1", got)
+	if got := reentrantCount(t, "exclusive") - beforeX; got != 0 {
+		t.Errorf("the read under an exclusive hold counted %v re-entries; it takes no lock", got)
 	}
 	if got := reentrantCount(t, "shared") - beforeS; got != 0 {
 		t.Errorf("the read counted %v shared re-entries; no shared lock was ever taken", got)
