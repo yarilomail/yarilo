@@ -20,11 +20,10 @@ func (u *userIndex) Begin(folderID uint64) (mailbox.IndexTx, error) {
 
 // txOp is one queued change. The kind decides which fields carry meaning.
 type txOp struct {
-	kind     txKind
-	uid      uint32
-	meta     *mailbox.MessageMeta
-	flags    []string
-	keywords []string
+	kind txKind
+	uid  uint32
+	meta *mailbox.MessageMeta
+	upd  mailbox.FlagsUpdate
 }
 
 type txKind uint8
@@ -51,35 +50,52 @@ func (t *indexTx) Append(m *mailbox.MessageMeta) {
 	t.ops = append(t.ops, txOp{kind: opAppend, meta: m})
 }
 
-func (t *indexTx) UpdateFlags(uid uint32, flags, keywords []string) {
-	t.ops = append(t.ops, txOp{kind: opUpdateFlags, uid: uid, flags: flags, keywords: keywords})
+func (t *indexTx) UpdateFlags(uid uint32, upd mailbox.FlagsUpdate) {
+	t.ops = append(t.ops, txOp{kind: opUpdateFlags, uid: uid, upd: upd})
 }
 
 func (t *indexTx) Rollback() { t.done = true }
 
 // Commit writes every queued change, or none: the records reach the log in one
 // append, so a torn transaction cannot be read back.
-func (t *indexTx) Commit() (uint64, error) {
+func (t *indexTx) Commit() (mailbox.TxResult, error) {
+	var out mailbox.TxResult
 	if t.done {
-		return 0, fmt.Errorf("fileindex/tx: already finished")
+		return out, fmt.Errorf("fileindex/tx: already finished")
 	}
 	t.done = true
 	if len(t.ops) == 0 {
-		return 0, nil
+		return out, nil
 	}
-	var modseq uint64
 	err := t.idx.withFolder(t.folderID, func(fs *folderState) error {
 		var err error
-		// One bump for the command, not one per message: the modseq a client
-		// is told is the folder's after the whole change.
-		modseq, err = fs.bumpModSeqHeader()
+		out.ModSeq, err = fs.bumpModSeqHeader()
 		if err != nil {
 			return err
 		}
 		var records [][]byte
+		// Flag changes go as one batch: each message keeps its own modseq,
+		// which is what CONDSTORE addresses them by.
+		flags := make(map[uint32]mailbox.FlagsUpdate)
+		for i := range t.ops {
+			if t.ops[i].kind == opUpdateFlags {
+				flags[t.ops[i].uid] = t.ops[i].upd
+			}
+		}
+		if len(flags) > 0 {
+			out.Flags = make(map[uint32]mailbox.FlagsResult, len(flags))
+			recs, ferr := fs.flagsMultiLocked(flags, out.Flags)
+			if ferr != nil {
+				return ferr
+			}
+			records = append(records, recs...)
+		}
 		for i := range t.ops {
 			op := &t.ops[i]
-			recs, oerr := t.applyLocked(fs, op, modseq)
+			if op.kind == opUpdateFlags {
+				continue
+			}
+			recs, oerr := t.applyLocked(fs, op, out.ModSeq)
 			if oerr != nil {
 				return oerr
 			}
@@ -91,9 +107,9 @@ func (t *indexTx) Commit() (uint64, error) {
 		return fs.appendMutLog(records...)
 	})
 	if err != nil {
-		return 0, err
+		return mailbox.TxResult{}, err
 	}
-	return modseq, nil
+	return out, nil
 }
 
 func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byte, error) {
@@ -113,8 +129,6 @@ func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byt
 			return nil, err
 		}
 		return fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
-	case opUpdateFlags:
-		return fs.writeFlagsLocked(op.uid, op.flags, op.keywords, flagsReplace, modseq)
 	}
 	return nil, fmt.Errorf("fileindex/tx: unknown operation %d", op.kind)
 }

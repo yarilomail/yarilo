@@ -104,7 +104,7 @@ func TestReconcile_AStoreAfterAdoptionKeepsTheKeywordLetters(t *testing.T) {
 
 	// What a STORE +FLAGS (\Seen) does: the index resolves the new set, the
 	// driver writes that set to the filename.
-	res, err := idx.UpdateFlagsMulti(folder.ID, map[uint32]mailbox.FlagsUpdate{
+	res, err := writeFlagsTx(t, idx, folder.ID, map[uint32]mailbox.FlagsUpdate{
 		m.UID: {Flags: []string{`\Seen`}, Mode: mailbox.FlagsAdd},
 	})
 	if err != nil {
@@ -138,4 +138,22 @@ func hasString(all []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// writeFlagsTx is a batch of flag changes as one transaction (#1827).
+func writeFlagsTx(t *testing.T, idx mailbox.UserIndex, folderID uint64, updates map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
+	t.Helper()
+	tx, err := idx.Begin(folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	for uid, upd := range updates {
+		tx.UpdateFlags(uid, upd)
+	}
+	out, cerr := tx.Commit()
+	if cerr != nil {
+		return nil, cerr
+	}
+	return out.Flags, nil
 }

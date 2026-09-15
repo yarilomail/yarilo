@@ -164,7 +164,7 @@ func TestFlagChangesTakeTheIndexOncePerTransaction(t *testing.T) {
 	}
 	before := lk.locks
 	for _, uid := range uids {
-		tx.UpdateFlags(uid, []string{`\Seen`}, nil)
+		tx.UpdateFlags(uid, mailbox.FlagsUpdate{Mode: mailbox.FlagsSet, Flags: []string{`\Seen`}})
 	}
 	if _, cerr := tx.Commit(); cerr != nil {
 		t.Fatal(cerr)

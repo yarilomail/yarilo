@@ -1294,11 +1294,11 @@ func (u *userIndex) ClearFolderCorrupt(folderID uint64) error {
 	})
 }
 
-// UpdateFlagsMulti replaces a batch's flags in one lock/reload/flush cycle,
-// bumping each UID's modseq so CONDSTORE can pinpoint what changed.
-func (u *userIndex) UpdateFlagsMulti(folderID uint64, updates map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
-	result := make(map[uint32]mailbox.FlagsResult, len(updates))
-	err := u.withFolder(folderID, func(fs *folderState) error {
+// flagsMultiLocked applies a batch of flag changes, bumping each UID's modseq
+// so CONDSTORE can pinpoint what changed, and returns the log records the batch
+// needs. Caller holds the folder (#1827).
+func (fs *folderState) flagsMultiLocked(updates map[uint32]mailbox.FlagsUpdate, result map[uint32]mailbox.FlagsResult) ([][]byte, error) {
+	{
 		// Collect all unique keyword sets across the batch to register them first.
 		allKWs := make([]string, 0)
 		seen := make(map[string]struct{})
@@ -1313,11 +1313,11 @@ func (u *userIndex) UpdateFlagsMulti(folderID uint64, updates map[uint32]mailbox
 		if len(allKWs) > 0 {
 			_, kwReg, err := keywordsBitmaskFor(fs.keywords, allKWs)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			fs.keywords = kwReg
 			if err := fs.persistKeywordRegistry(); err != nil {
-				return err
+				return nil, err
 			}
 		}
 
@@ -1331,7 +1331,7 @@ func (u *userIndex) UpdateFlagsMulti(folderID uint64, updates map[uint32]mailbox
 			}
 			modseq, err := fs.bumpModSeqHeader()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			// Add/Remove name only what changes, so the set is resolved here
 			// against the held record -- the caller's would be as old as its read.
@@ -1344,7 +1344,7 @@ func (u *userIndex) UpdateFlagsMulti(folderID uint64, updates map[uint32]mailbox
 			}
 			kwBits, kwReg2, err := keywordsBitmaskFor(fs.keywords, kwWanted)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			fs.keywords = kwReg2
 			newFlags := mailindex.MailFlag(imapFlagsToIndex(upd.Flags))
@@ -1388,7 +1388,7 @@ func (u *userIndex) UpdateFlagsMulti(folderID uint64, updates map[uint32]mailbox
 			})
 		}
 		if len(modseqUpdates) == 0 {
-			return nil
+			return nil, nil
 		}
 		recs := []([]byte){
 			encLogRec(mailindex.TxTypeModseqUpdate, 0, mailindex.EncodeTxModseqUpdatePayload(modseqUpdates)),
@@ -1399,9 +1399,8 @@ func (u *userIndex) UpdateFlagsMulti(folderID uint64, updates map[uint32]mailbox
 			encU32Update(40, fs.file.Header.SeenMessagesCount),
 			encU32Update(44, fs.file.Header.DeletedMessagesCount),
 		)
-		return fs.appendMutLog(recs...)
-	})
-	return result, err
+		return recs, nil
+	}
 }
 
 // ExpungeMessage writes a TxTypeExpungeGUID log entry and drops the in-memory

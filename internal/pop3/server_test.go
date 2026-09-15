@@ -111,34 +111,35 @@ type mockTx struct {
 }
 
 type mockFlagOp struct {
-	uid             uint32
-	flags, keywords []string
+	uid uint32
+	upd mailbox.FlagsUpdate
 }
 
 func (t *mockTx) Expunge(uid uint32)            { t.expunge = append(t.expunge, uid) }
 func (t *mockTx) Append(m *mailbox.MessageMeta) { t.appends = append(t.appends, m) }
-func (t *mockTx) UpdateFlags(uid uint32, flags, keywords []string) {
-	t.flags = append(t.flags, mockFlagOp{uid: uid, flags: flags, keywords: keywords})
+func (t *mockTx) UpdateFlags(uid uint32, upd mailbox.FlagsUpdate) {
+	t.flags = append(t.flags, mockFlagOp{uid: uid, upd: upd})
 }
 func (t *mockTx) Rollback() {}
 
-func (t *mockTx) Commit() (uint64, error) {
+func (t *mockTx) Commit() (mailbox.TxResult, error) {
+	var out mailbox.TxResult
 	for _, uid := range t.expunge {
 		if err := t.idx.ExpungeMessage(t.folderID, uid); err != nil {
-			return 0, err
+			return out, err
 		}
 	}
 	for _, m := range t.appends {
 		if err := t.idx.AppendMessage(t.folderID, m); err != nil {
-			return 0, err
+			return out, err
 		}
 	}
 	for _, f := range t.flags {
-		if err := t.idx.UpdateFlags(t.folderID, f.uid, f.flags, f.keywords); err != nil {
-			return 0, err
+		if err := t.idx.UpdateFlags(t.folderID, f.uid, f.upd.Flags, f.upd.Keywords); err != nil {
+			return out, err
 		}
 	}
-	return 0, nil
+	return out, nil
 }
 
 func (m *mockIndex) OpenFolder(folder string, uv uint32) (*mailbox.Folder, error) {
@@ -153,9 +154,6 @@ func (m *mockIndex) UpdateFlags(_ uint64, _ uint32, _, _ []string) error      { 
 func (m *mockIndex) AddFlags(_ uint64, _ uint32, _, _ []string) error         { return nil }
 func (m *mockIndex) RemoveFlags(_ uint64, _ uint32, _, _ []string) error      { return nil }
 func (m *mockIndex) UpdateFilename(_ uint64, _ uint32, _ string) error        { return nil }
-func (m *mockIndex) UpdateFlagsMulti(_ uint64, _ map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
-	return nil, nil
-}
 func (m *mockIndex) GetMessages(_ uint64, _ mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
 	return m.msgs, nil
 }

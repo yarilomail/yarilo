@@ -118,7 +118,7 @@ func TestStateCacheInvalidatesWhenTheLogShrinks(t *testing.T) {
 		t.Fatalf("folder marks: %v %v", marks, err)
 	}
 	// A change, so the log carries something, then the fold that takes it away.
-	if _, err := warm.idx.UpdateFlagsMulti(marks[0].folder.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := writeFlagBatch(warm.idx, marks[0].folder.ID, map[uint32]mailbox.FlagsUpdate{
 		1: {Mode: mailbox.FlagsAdd, Keywords: []string{"$cachetest"}},
 	}); err != nil {
 		t.Fatalf("store: %v", err)

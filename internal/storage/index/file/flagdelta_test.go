@@ -134,11 +134,11 @@ func TestBatchDeltasKeepAConcurrentChange(t *testing.T) {
 	}
 
 	// STORE +FLAGS (\Seen $Work)
-	res, err := ui.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+	res, err := updateFlagsMulti(t, ui, f.ID, map[uint32]mailbox.FlagsUpdate{
 		1: {Flags: []string{`\Seen`}, Keywords: []string{"$Work"}, Mode: mailbox.FlagsAdd},
 	})
 	if err != nil {
-		t.Fatalf("UpdateFlagsMulti: %v", err)
+		t.Fatalf("flag batch: %v", err)
 	}
 
 	flags, keywords := flagsOf(t, ui, f.ID, 1)
@@ -164,10 +164,10 @@ func TestBatchDeltasKeepAConcurrentChange(t *testing.T) {
 	}
 
 	// -FLAGS removes only what it names.
-	if _, err := ui.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, ui, f.ID, map[uint32]mailbox.FlagsUpdate{
 		1: {Flags: []string{`\Seen`}, Keywords: []string{"$Work"}, Mode: mailbox.FlagsRemove},
 	}); err != nil {
-		t.Fatalf("UpdateFlagsMulti remove: %v", err)
+		t.Fatalf("flag batch remove: %v", err)
 	}
 	flags, keywords = flagsOf(t, ui, f.ID, 1)
 	if slices.Contains(flags, `\Seen`) || slices.Contains(keywords, "$Work") {
@@ -179,10 +179,10 @@ func TestBatchDeltasKeepAConcurrentChange(t *testing.T) {
 
 	// And the absolute form still does what it says, so the two modes are
 	// distinguishable in the suite.
-	if _, err := ui.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, ui, f.ID, map[uint32]mailbox.FlagsUpdate{
 		1: {Flags: staleFlags, Keywords: staleKeywords},
 	}); err != nil {
-		t.Fatalf("UpdateFlagsMulti set: %v", err)
+		t.Fatalf("flag batch set: %v", err)
 	}
 	flags, keywords = flagsOf(t, ui, f.ID, 1)
 	if slices.Contains(flags, `\Flagged`) || slices.Contains(keywords, "$Important") {

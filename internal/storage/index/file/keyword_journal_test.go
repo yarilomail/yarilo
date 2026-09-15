@@ -41,7 +41,7 @@ func TestKeywordStoreDoesNotRewriteTheBase(t *testing.T) {
 
 	// A keyword the registry has never seen: the case that used to rewrite the
 	// base twice over, once for the bit and once for the new name.
-	if _, err := idx.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, idx, f.ID, map[uint32]mailbox.FlagsUpdate{
 		m.UID: {Mode: mailbox.FlagsAdd, Keywords: []string{"$Fresh"}},
 	}); err != nil {
 		t.Fatalf("update flags multi: %v", err)
@@ -130,7 +130,7 @@ func TestKeywordJournalReplayMatchesTheWriter(t *testing.T) {
 	}
 	var want mailbox.FlagsResult
 	for i, upd := range steps {
-		res, updErr := idx.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{m.UID: upd})
+		res, updErr := updateFlagsMulti(t, idx, f.ID, map[uint32]mailbox.FlagsUpdate{m.UID: upd})
 		if updErr != nil {
 			t.Fatalf("step %d: %v", i, updErr)
 		}
@@ -181,12 +181,12 @@ func TestKeywordResetIsJournalledAndReplayed(t *testing.T) {
 	if err := idx.AllocateAndAppend(f.ID, m); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	if _, err := idx.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, idx, f.ID, map[uint32]mailbox.FlagsUpdate{
 		m.UID: {Mode: mailbox.FlagsAdd, Keywords: []string{"$A", "$B", "$C"}},
 	}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if _, err := idx.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, idx, f.ID, map[uint32]mailbox.FlagsUpdate{
 		m.UID: {Mode: mailbox.FlagsSet, Keywords: nil},
 	}); err != nil {
 		t.Fatalf("clear: %v", err)
@@ -240,13 +240,13 @@ func TestKeywordBitsAreNotPortableButNamesAre(t *testing.T) {
 	if err := other.AllocateAndAppend(f2.ID, &mailbox.MessageMeta{Size: 10}); err != nil {
 		t.Fatalf("second append: %v", err)
 	}
-	if _, err := other.UpdateFlagsMulti(f2.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, other, f2.ID, map[uint32]mailbox.FlagsUpdate{
 		2: {Mode: mailbox.FlagsAdd, Keywords: []string{"$Second"}},
 	}); err != nil {
 		t.Fatalf("second store: %v", err)
 	}
 
-	if _, err := idx.UpdateFlagsMulti(f.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := updateFlagsMulti(t, idx, f.ID, map[uint32]mailbox.FlagsUpdate{
 		m.UID: {Mode: mailbox.FlagsAdd, Keywords: []string{"$First"}},
 	}); err != nil {
 		t.Fatalf("first store: %v", err)
