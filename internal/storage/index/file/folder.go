@@ -2222,7 +2222,6 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if lg.f == nil || !lg.ok {
 		return fromOffset, nil // absent, empty or unreadable log
 	}
-	f := lg.f
 	if lh := lg.hdr; lh.IndexID != fs.file.Header.IndexID {
 		// Log belongs to a different (deleted/recreated) mailbox at this
 		// path; caller flushes a fresh base + empty log.
@@ -2234,7 +2233,7 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if fromOffset > start {
 		start = fromOffset
 	}
-	tail, err := readTail(f, start, lg.size)
+	tail, err := readTail(lg.ra, start, lg.size)
 	if err != nil {
 		return fromOffset, err
 	}
@@ -2288,12 +2287,24 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				txEnd := recStart + int64(le.Uint32(payload))
 				// Asked of the file now, not of the size taken at open: a
 				// group still being closed waits for the next pass (#1833).
-				whole, perr := readableThrough(f, tail, start, txEnd)
+				whole, perr := readableThrough(lg.ra, int64(len(tail)), start, txEnd)
 				if perr != nil {
 					return committedEnd, perr
 				}
 				if !whole {
 					break
+				}
+				// Whole on disk but past what this pass read: take the
+				// rest, or committedEnd outruns the records (#1833).
+				if txEnd-start > int64(len(tail)) {
+					more, merr := readTail(lg.ra, start+int64(len(tail)), txEnd)
+					if merr != nil {
+						return committedEnd, merr
+					}
+					tail = append(tail, more...)
+					if txEnd-start > int64(len(tail)) {
+						break // it shrank under us; the next pass retries
+					}
 				}
 				committedEnd = txEnd
 			}
@@ -2545,10 +2556,8 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	// Truncate any partial tail after the last complete BOUNDARY, only on full
 	// replay (fromOffset==0) -- incremental appends are always complete.
 	//
-	// Compared against the end of the tail THIS pass read, never a fresh
-	// os.Stat: this runs unlocked, and a writer completing a valid append in
-	// the gap would otherwise read as "beyond what we read" and be truncated
-	// away.
+	// Against the end of the tail THIS pass read, never a fresh os.Stat: a
+	// writer's valid append in the gap would otherwise be truncated away.
 	if fromOffset == 0 && committedEnd > 0 && start+int64(len(tail)) > committedEnd {
 		logPath := fs.indexPath + ".log"
 		slog.Debug("fileindex: truncating partial log tail",
@@ -2942,14 +2951,14 @@ const indexPkgPath = "github.com/yarilomail/yarilo/internal/storage/index/file."
 
 // readableThrough reports whether the file holds every byte up to end, leaving
 // the descriptor where it found it (#1833).
-func readableThrough(f *os.File, tail []byte, start, end int64) (bool, error) {
-	if end-start <= int64(len(tail)) {
+func readableThrough(ra io.ReaderAt, have, start, end int64) (bool, error) {
+	if end-start <= have {
 		return true, nil
 	}
 	// Past what this pass read: the group is still being closed, so ask the
 	// file rather than the buffer (#1833).
 	var one [1]byte
-	_, err := f.ReadAt(one[:], end-1)
+	_, err := ra.ReadAt(one[:], end-1)
 	if err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return false, nil
@@ -2959,20 +2968,14 @@ func readableThrough(f *os.File, tail []byte, start, end int64) (bool, error) {
 	return true, nil
 }
 
-// logRead counts reads of the journal for the row that measures them.
-var logRead func()
-
 // readTail reads [from, size) in one go. A size the caller took earlier is a
 // floor, not a limit: a concurrent append past it is read by the next pass.
-func readTail(f *os.File, from, size int64) ([]byte, error) {
-	if logRead != nil {
-		logRead()
-	}
+func readTail(ra io.ReaderAt, from, size int64) ([]byte, error) {
 	if size <= from {
 		return nil, nil
 	}
 	buf := make([]byte, size-from)
-	n, err := f.ReadAt(buf, from)
+	n, err := ra.ReadAt(buf, from)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, fmt.Errorf("fileindex/applylog: read tail: %w", err)
 	}
