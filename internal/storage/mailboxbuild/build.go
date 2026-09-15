@@ -9,8 +9,6 @@
 package mailboxbuild
 
 import (
-	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -28,26 +26,8 @@ import (
 // ByDriver constructs a MailboxBackend for the named driver from sc, applying
 // every configured tunable. Unknown/empty drivers default to maildir so an
 // operator typo does not crash startup.
-// VerifyVolume proves the mail volume excludes a second writer with the
-// configured method, before this process serves anything (#1840).
-func VerifyVolume(sc config.StorageConfig) error {
-	method, err := filelock.Parse(sc.LockMethod)
-	if err != nil {
-		return err
-	}
-	root := sc.MaildirRoot
-	if root == "" {
-		root = "/var/mail/vhosts"
-	}
-	if err := filelock.Verify(root, method); err != nil {
-		return fmt.Errorf("storage: the mail volume at %s does not arbitrate %s locks: %w", root, method, err)
-	}
-	slog.Info("storage: the mail volume excludes a second writer", "root", root, "method", method)
-	return nil
-}
-
-// lockMethod reads the configured transport; VerifyVolume has already refused
-// an unknown one at startup, so here it falls back rather than failing a write.
+// lockMethod reads the configured transport; an unknown name falls back to the
+// default rather than failing every write on it.
 func lockMethod(sc config.StorageConfig) filelock.Method {
 	m, err := filelock.Parse(sc.LockMethod)
 	if err != nil {

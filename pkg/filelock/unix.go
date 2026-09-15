@@ -18,7 +18,7 @@ const pollInterval = 2 * time.Millisecond
 func lockFD(f *os.File, method Method, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
 	for {
-		err := tryLock(f, method)
+		err := tryLockFn(f, method)
 		if err == nil {
 			return nil
 		}
@@ -31,6 +31,9 @@ func lockFD(f *os.File, method Method, wait time.Duration) error {
 		time.Sleep(pollInterval)
 	}
 }
+
+// tryLockFn is the seam a row uses to make the kernel refuse the method.
+var tryLockFn = tryLock
 
 func tryLock(f *os.File, method Method) error {
 	if method == MethodFlock {
@@ -46,6 +49,12 @@ func unlockFD(f *os.File, method Method) error {
 	}
 	lk := &unix.Flock_t{Type: unix.F_UNLCK, Whence: 0, Start: 0, Len: 0}
 	return unix.FcntlFlock(f.Fd(), unix.F_SETLK, lk)
+}
+
+// unsupported says the kernel refuses this method on this volume, whatever the
+// file: NFS without a lock daemon answers so to every caller on the mount.
+func unsupported(err error) bool {
+	return errors.Is(err, unix.ENOLCK) || errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, unix.ENOTSUP)
 }
 
 // ErrBusy is returned when the lock could not be taken within the wait.

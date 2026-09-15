@@ -86,11 +86,6 @@ func (s *Server) startReadyFile(ctx context.Context, proto string) {
 
 // New creates and wires all components according to cfg.
 func New(cfg *config.Config) (*Server, error) {
-	// Before anything is served: learning that the volume admits a second
-	// writer while carrying mail means learning it as loss (#1840).
-	if err := mailboxbuild.VerifyVolume(cfg.Storage); err != nil {
-		return nil, fmt.Errorf("backend: %w", err)
-	}
 	// ---- auth ----
 	passdbs, err := buildPassdbs(cfg.Auth.Passdb)
 	if err != nil {
@@ -1182,8 +1177,8 @@ func BuildMailbox(cfg config.StorageConfig, locker locks.Locker) mailbox.Mailbox
 	return buildMailbox(cfg, locker)
 }
 
-// indexLockMethod reads the configured transport; an unknown one is refused at
-// startup by VerifyVolume, so here it falls back rather than failing a write.
+// indexLockMethod reads the configured transport; an unknown name falls back to
+// the default rather than failing every write on it.
 func indexLockMethod(cfg config.StorageConfig) filelock.Method {
 	m, err := filelock.Parse(cfg.LockMethod)
 	if err != nil {

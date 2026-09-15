@@ -13,7 +13,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/backend"
 	"github.com/yarilomail/yarilo/pkg/build"
 	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/logging"
 )
 
@@ -21,12 +20,6 @@ import (
 
 func main() {
 	logging.Setup("imap")
-
-	// The child half of the volume check, before anything else: it must answer
-	// and exit, not start a server (#1840).
-	if filelock.ProbeMain() {
-		return
-	}
 
 	cfgPath := os.Getenv("CONFIG")
 	if cfgPath == "" {
