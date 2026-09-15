@@ -122,3 +122,16 @@ func (b *MemoryBackend) handOver(resource, ticket string) {
 		}
 	}
 }
+
+// queuedAhead reports whether someone else holds the head of the queue: a
+// caller with no ticket waits behind anyone who has one (#1809).
+func (b *MemoryBackend) queuedAhead(resource, ticket string) (string, bool) {
+	b.qmu.Lock()
+	defer b.qmu.Unlock()
+	line := b.pruneLocked(resource)
+	if len(line) == 0 {
+		return "", false
+	}
+	head := line[0].ticket
+	return head, head != ticket
+}

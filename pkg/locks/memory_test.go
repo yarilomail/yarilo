@@ -15,7 +15,7 @@ func TestMemoryBackendTTLExpiry(t *testing.T) {
 	defer b.Close()
 	ctx := context.Background()
 
-	id, _, err := b.Acquire(ctx, "r1", "o1", "write", time.Second)
+	id, _, err := b.Acquire(ctx, "r1", "o1", "write", "", time.Second)
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestMemoryBackendTTLExpiry(t *testing.T) {
 		t.Fatalf("expected ErrExpired after sweep, got %v", err)
 	}
 	// Resource is free; a new owner can acquire.
-	_, _, err = b.Acquire(ctx, "r1", "o2", "write", time.Second)
+	_, _, err = b.Acquire(ctx, "r1", "o2", "write", "", time.Second)
 	if err != nil {
 		t.Fatalf("re-acquire: %v", err)
 	}
@@ -38,11 +38,11 @@ func TestMemoryBackendBusyReturnsCurrentOwner(t *testing.T) {
 	b := NewMemoryBackend()
 	defer b.Close()
 	ctx := context.Background()
-	_, _, err := b.Acquire(ctx, "r", "alice", "write", time.Minute)
+	_, _, err := b.Acquire(ctx, "r", "alice", "write", "", time.Minute)
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	_, current, err := b.Acquire(ctx, "r", "bob", "write", time.Minute)
+	_, current, err := b.Acquire(ctx, "r", "bob", "write", "", time.Minute)
 	if !errors.Is(err, ErrBusy) {
 		t.Fatalf("expected ErrBusy, got %v", err)
 	}
@@ -62,10 +62,10 @@ func TestMemoryBackendReleaseNotFound(t *testing.T) {
 func TestMemoryBackendRejectsEmptyArgs(t *testing.T) {
 	b := NewMemoryBackend()
 	defer b.Close()
-	if _, _, err := b.Acquire(context.Background(), "", "test.bin/1/alice@example.com/sess1", "write", time.Second); err == nil {
+	if _, _, err := b.Acquire(context.Background(), "", "test.bin/1/alice@example.com/sess1", "write", "", time.Second); err == nil {
 		t.Fatal("expected error for empty resource")
 	}
-	if _, _, err := b.Acquire(context.Background(), "r", "", "write", time.Second); err == nil {
+	if _, _, err := b.Acquire(context.Background(), "r", "", "write", "", time.Second); err == nil {
 		t.Fatal("expected error for empty owner")
 	}
 }

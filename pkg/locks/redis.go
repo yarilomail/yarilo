@@ -124,6 +124,12 @@ end
 //
 //	returns {"OK"} on success, or {"BUSY", <current_owner>} on contention.
 var acquireScript = redis.NewScript(luaParseValue + `
+-- The queue is a right: only its head may take the lock, and a caller with no
+-- ticket waits behind anyone who has one (#1809).
+local head = redis.call("ZRANGE", KEYS[4], 0, 0)
+if head[1] and head[1] ~= ARGV[5] then
+  return {"BUSY", "", "queued"}
+end
 local existing = redis.call("GET", KEYS[1])
 if existing then
   local v = redis.call("GET", KEYS[1] .. ":val")
@@ -167,6 +173,10 @@ return {"OK"}
 //
 //	returns {"OK"} on success, or {"BUSY", <current_owner>} on contention.
 var acquireSharedScript = redis.NewScript(luaParseValue + `
+local head = redis.call("ZRANGE", KEYS[4], 0, 0)
+if head[1] and head[1] ~= ARGV[5] then
+  return {"BUSY", "", "queued"}
+end
 local existing = redis.call("GET", KEYS[1])
 if existing then
   local v = redis.call("GET", KEYS[1] .. ":val")
@@ -241,7 +251,7 @@ return 1
 `)
 
 // Acquire implements Backend.
-func (b *RedisBackend) Acquire(ctx context.Context, resource, owner, site string, ttl time.Duration) (string, Holder, error) {
+func (b *RedisBackend) Acquire(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration) (string, Holder, error) {
 	if resource == "" || owner == "" {
 		return "", Holder{}, fmt.Errorf("locks/redis: resource and owner must be non-empty")
 	}
@@ -250,8 +260,8 @@ func (b *RedisBackend) Acquire(ctx context.Context, resource, owner, site string
 		return "", Holder{}, fmt.Errorf("locks/redis: generate id: %w", err)
 	}
 	res, err := acquireScript.Run(ctx, b.rdb,
-		[]string{b.resKey(resource), b.lockKey(id), b.sharedKey(resource)},
-		id, lockValue(resource, owner, "x", site), ttl.Milliseconds(), b.keyPrefix,
+		[]string{b.resKey(resource), b.lockKey(id), b.sharedKey(resource), b.queueKey(resource)},
+		id, lockValue(resource, owner, "x", site), ttl.Milliseconds(), b.keyPrefix, ticket,
 	).Result()
 	if err != nil {
 		return "", Holder{}, fmt.Errorf("locks/redis: acquire: %w", err)
@@ -260,7 +270,7 @@ func (b *RedisBackend) Acquire(ctx context.Context, resource, owner, site string
 }
 
 // AcquireShared implements Backend.
-func (b *RedisBackend) AcquireShared(ctx context.Context, resource, owner, site string, ttl time.Duration) (string, Holder, error) {
+func (b *RedisBackend) AcquireShared(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration) (string, Holder, error) {
 	if resource == "" || owner == "" {
 		return "", Holder{}, fmt.Errorf("locks/redis: resource and owner must be non-empty")
 	}
@@ -269,8 +279,8 @@ func (b *RedisBackend) AcquireShared(ctx context.Context, resource, owner, site 
 		return "", Holder{}, fmt.Errorf("locks/redis: generate id: %w", err)
 	}
 	res, err := acquireSharedScript.Run(ctx, b.rdb,
-		[]string{b.resKey(resource), b.lockKey(id), b.sharedKey(resource)},
-		id, lockValue(resource, owner, "s", site), ttl.Milliseconds(),
+		[]string{b.resKey(resource), b.lockKey(id), b.sharedKey(resource), b.queueKey(resource)},
+		id, lockValue(resource, owner, "s", site), ttl.Milliseconds(), b.keyPrefix, ticket,
 	).Result()
 	if err != nil {
 		return "", Holder{}, fmt.Errorf("locks/redis: acquire shared: %w", err)

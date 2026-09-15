@@ -213,7 +213,7 @@ func (s *Server) handleLock(ctx context.Context, w io.Writer, fields []string, p
 		return
 	}
 	start := time.Now()
-	id, current, err := s.backend.Acquire(ctx, resource, owner, site, ttl)
+	id, current, err := s.backend.Acquire(ctx, resource, owner, site, "", ttl)
 	dur := time.Since(start).Seconds()
 	switch {
 	case err == nil:
@@ -251,7 +251,7 @@ func (s *Server) handleLockShared(ctx context.Context, w io.Writer, fields []str
 		return
 	}
 	start := time.Now()
-	id, current, err := s.backend.AcquireShared(ctx, resource, owner, site, ttl)
+	id, current, err := s.backend.AcquireShared(ctx, resource, owner, site, "", ttl)
 	dur := time.Since(start).Seconds()
 	switch {
 	case err == nil:

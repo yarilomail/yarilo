@@ -84,7 +84,7 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	woken := false
 	for {
 		if mine {
-			id, current, aerr := s.tryAcquire(ctx, resource, owner, site, ttl, shared)
+			id, current, aerr := s.tryAcquire(ctx, resource, owner, site, ticket, ttl, shared)
 			// The refusal names who holds it, so the trace says who takes the
 			// lock out from under the head of the queue (#1809).
 			s.trace(ticket, resource, "try", peer, "held_by", current.Owner, "held_site", current.Site)
@@ -177,11 +177,11 @@ func (s *Server) trace(ticket, resource, step, peer string, kv ...any) {
 	s.logger.Debug("locks: hand-off", args...)
 }
 
-func (s *Server) tryAcquire(ctx context.Context, resource, owner, site string, ttl time.Duration, shared bool) (string, Holder, error) {
+func (s *Server) tryAcquire(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration, shared bool) (string, Holder, error) {
 	if shared {
-		return s.backend.AcquireShared(ctx, resource, owner, site, ttl)
+		return s.backend.AcquireShared(ctx, resource, owner, site, ticket, ttl)
 	}
-	return s.backend.Acquire(ctx, resource, owner, site, ttl)
+	return s.backend.Acquire(ctx, resource, owner, site, ticket, ttl)
 }
 
 // newTicket names one place in line. Random rather than sequential: the order
