@@ -143,6 +143,8 @@ image:
 logLevel: info
 logLevelOverrides:
   yarilo-imap: debug
+  ## The hand-off trace (#1809) lives at debug and is read per acquisition.
+  yarilo-locks: debug
   yarilo-lmtp: debug
   yarilo-fts: debug
   yarilo-jmap: debug
