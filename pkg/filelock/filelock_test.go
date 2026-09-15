@@ -22,6 +22,14 @@ func refuseMethod(err error) func() {
 	return func() { tryLockFn = prev }
 }
 
+// forgetRefusals drops what earlier rows learned about this stand's device, so
+// one row's refusal is not another's starting state.
+func forgetRefusals() {
+	refusedMu.Lock()
+	refused = map[uint64]bool{}
+	refusedMu.Unlock()
+}
+
 // Every transport serialises writers on one file: that is the whole contract.
 func TestATransportAdmitsOneWriterAtATime(t *testing.T) {
 	for _, method := range []Method{MethodFcntl, MethodFlock, MethodDotlock} {
@@ -154,6 +162,8 @@ func TestAnUnrelatedCloseDoesNotDropTheLock(t *testing.T) {
 // A volume that refuses the configured method is served by dotlock rather than
 // refusing the write, and the exclusion still holds (#1850).
 func TestAVolumeThatRefusesTheMethodFallsBackToDotlock(t *testing.T) {
+	forgetRefusals()
+	defer forgetRefusals()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "list")
 
@@ -206,25 +216,61 @@ func TestAVolumeThatRefusesTheMethodFallsBackToDotlock(t *testing.T) {
 	}
 }
 
-// One line per volume, not per write: a mount that refuses every call would
-// otherwise fill the log with the same sentence (#1850).
+// One line per volume, not per directory: a maildir folder is a directory and
+// there are thousands of them on one mount (#1850).
 func TestTheWarningIsOncePerVolume(t *testing.T) {
-	dir := t.TempDir()
+	forgetRefusals()
+	defer forgetRefusals()
+	root := t.TempDir()
 	restore := refuseMethod(unix.ENOLCK)
 	defer restore()
 	var logged bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	defer slog.SetDefault(prev)
+	before := testutil.ToFloat64(metricFallback.WithLabelValues(string(MethodFlock)))
 
-	for _, name := range []string{"a", "b"} {
-		h, err := Take(filepath.Join(dir, name), MethodFlock, time.Second)
+	// Two folders, two directories, one device.
+	for _, folder := range []string{"INBOX", "Sent"} {
+		dir := filepath.Join(root, folder)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		h, err := Take(filepath.Join(dir, "list"), MethodFlock, time.Second)
 		if err != nil {
-			t.Fatalf("take %s: %v", name, err)
+			t.Fatalf("take in %s: %v", folder, err)
 		}
 		_ = h.Release()
 	}
 	if got := strings.Count(logged.String(), "refuses the configured lock method"); got != 1 {
-		t.Errorf("two refused calls on one volume logged %d warnings, want 1", got)
+		t.Errorf("two directories on one volume logged %d warnings, want 1", got)
+	}
+	if got := testutil.ToFloat64(metricFallback.WithLabelValues(string(MethodFlock))) - before; got != 1 {
+		t.Errorf("the fallback was counted %v times, want 1", got)
+	}
+}
+
+// A volume that refused once keeps dotlock: a process alternating methods
+// holds path.lock against a sibling's flock on path (#1850).
+func TestAVolumeThatRefusedOnceStaysOnDotlock(t *testing.T) {
+	forgetRefusals()
+	defer forgetRefusals()
+	dir := t.TempDir()
+
+	restore := refuseMethod(unix.ENOLCK)
+	first, err := Take(filepath.Join(dir, "a"), MethodFlock, time.Second)
+	if err != nil {
+		t.Fatalf("take: %v", err)
+	}
+	_ = first.Release()
+	restore() // the kernel would grant flock again
+
+	second, err := Take(filepath.Join(dir, "b"), MethodFlock, time.Second)
+	if err != nil {
+		t.Fatalf("take after the refusal: %v", err)
+	}
+	defer second.Release() //nolint:errcheck
+	if second.method != MethodDotlock {
+		t.Errorf("the hold after a refused volume is %q, want dotlock", second.method)
 	}
 }

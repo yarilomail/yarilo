@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -49,6 +50,16 @@ func unlockFD(f *os.File, method Method) error {
 	}
 	lk := &unix.Flock_t{Type: unix.F_UNLCK, Whence: 0, Start: 0, Len: 0}
 	return unix.FcntlFlock(f.Fd(), unix.F_SETLK, lk)
+}
+
+// deviceOf names the mount a path lives on. A refusal belongs to the device:
+// every directory on it answers the same, and there are thousands of them.
+func deviceOf(path string) (uint64, bool) {
+	var st unix.Stat_t
+	if err := unix.Stat(filepath.Dir(path), &st); err != nil {
+		return 0, false
+	}
+	return uint64(st.Dev), true
 }
 
 // unsupported says the kernel refuses this method on this volume, whatever the

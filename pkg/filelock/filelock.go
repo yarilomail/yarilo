@@ -21,25 +21,39 @@ var metricFallback = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Volumes whose kernel refused the configured lock method, counted once per volume. Writes there are held by dotlock instead.",
 }, []string{"method"})
 
-// reported remembers the volumes already named, so a mount that refuses every
-// call is one line in the log, not one per write.
+// refused remembers the volumes that answered "not supported", by device: the
+// refusal belongs to the mount, and every later hold on it is a dotlock (#1850).
 var (
-	reportedMu sync.Mutex
-	reported   = map[string]bool{}
+	refusedMu sync.Mutex
+	refused   = map[uint64]bool{}
 )
 
+func volumeRefused(path string) bool {
+	dev, ok := deviceOf(path)
+	if !ok {
+		return false
+	}
+	refusedMu.Lock()
+	defer refusedMu.Unlock()
+	return refused[dev]
+}
+
 func reportFallback(path string, method Method) {
-	dir := filepath.Dir(path)
-	reportedMu.Lock()
-	seen := reported[dir]
-	reported[dir] = true
-	reportedMu.Unlock()
+	dev, ok := deviceOf(path)
+	seen := false
+	if ok {
+		refusedMu.Lock()
+		seen = refused[dev]
+		refused[dev] = true
+		refusedMu.Unlock()
+	}
 	if seen {
 		return
 	}
 	metricFallback.WithLabelValues(string(method)).Inc()
 	slog.Warn("filelock: the volume refuses the configured lock method; writes here are held by dotlock",
-		"volume", dir, "method", method, "remedy", "set storage_lock_method: dotlock for an NFS mount without lockd")
+		"volume", filepath.Dir(path), "method", method,
+		"remedy", "set storage_lock_method: dotlock for an NFS mount without lockd")
 }
 
 // Method names the transport. flock is the default: a POSIX record lock dies
@@ -104,11 +118,13 @@ func Take(path string, method Method, wait time.Duration) (*Hold, error) {
 		}
 		time.Sleep(pollInterval)
 	}
+	// A volume that has refused once keeps the method it was given: mixing
+	// the two on one file holds path.lock against a sibling's flock (#1850).
+	if volumeRefused(path) {
+		method = MethodDotlock
+	}
 	h, err := takeShared(path, method, time.Until(deadline))
 	if unsupported(err) {
-		// The volume, not the call: an NFS mount without a lock daemon
-		// answers this to every process on it, so they all move together and
-		// the write stays exclusive on O_EXCL alone (#1850).
 		reportFallback(path, method)
 		h, err = takeShared(path, MethodDotlock, time.Until(deadline))
 	}
