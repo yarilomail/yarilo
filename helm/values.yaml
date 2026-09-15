@@ -169,6 +169,9 @@ backend_register:
     - managesieve
 
 storage:
+  ## How a write to a shared file excludes another writer: flock (default),
+  ## fcntl for NFS with NLM, or dotlock where the lock daemon is not trusted.
+  storage_lock_method: flock
   mail_driver: maildir
   maildir_root: /var/mail/vhosts
   mail_home: "%d/%u"

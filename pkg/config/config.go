@@ -2222,6 +2222,9 @@ type StorageConfig struct {
 	// Canonical spelling; "mailbox" is the pre-beta alias.
 	MailDriver  string `koanf:"mail_driver"`
 	MaildirRoot string `koanf:"maildir_root"`
+	// LockMethod is how a write to a shared file excludes another writer:
+	// flock (default), fcntl or dotlock (#1840).
+	LockMethod string `koanf:"storage_lock_method"`
 	// MailHome is the per-user home template (%u/%n/%d/%h). Canonical
 	// spelling; "mail_home_template" is the pre-beta alias.
 	MailHome      string `koanf:"mail_home"`
