@@ -2224,7 +2224,7 @@ type StorageConfig struct {
 	LockMethod string `koanf:"storage_lock_method"`
 	// MailFsync is what reaches the disk before a delivery is acknowledged:
 	// never, optimized (default, the body) or always (#1847).
-	MailFsync string `koanf:"storage_mail_fsync"`
+	MailFsync string `koanf:"mail_fsync"`
 	// MailHome is the per-user home template (%u/%n/%d/%h). Canonical
 	// spelling; "mail_home_template" is the pre-beta alias.
 	MailHome      string `koanf:"mail_home"`
