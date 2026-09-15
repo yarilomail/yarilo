@@ -9,24 +9,19 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 )
 
-// baseImage is one version of a folder's base file, parsed once and never
-// written to again. Compaction replaces the file, which makes a new image;
-// a reader holding the old one keeps reading it (#1809).
+// baseImage is one version of a base file, parsed once and never written to
+// again: compaction makes a new image, old readers keep the old one (#1809).
 type baseImage struct {
 	file     *mailindex.File
 	keywords keywordsHdr
 	lineage  lineageHdr
-	// logEnd is the log offset this base already absorbed, where a reader's
-	// own replay starts.
-	logEnd int64
-	ident  os.FileInfo
-	size   int64
-	mod    time.Time
+	ident    os.FileInfo
+	size     int64
+	mod      time.Time
 }
 
-// baseImages keeps the parsed image for a base file, so concurrent readers of
-// one version parse it once between them. Keyed by path; the identity check
-// decides whether the entry still describes the file on disk.
+// baseImages keeps one parse per base version, shared between readers. Keyed
+// by path; the identity check says whether it still describes the file.
 var baseImages sync.Map // indexPath -> *baseImage
 
 // imageFor returns the parsed base for the file at fs.indexPath as it is now.
@@ -37,8 +32,8 @@ func imageFor(fs *folderState) (*baseImage, error) {
 		return nil, err
 	}
 	if cached, ok := baseImages.Load(fs.indexPath); ok {
-		img := cached.(*baseImage)
-		if img.ident != nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
+		img, _ := cached.(*baseImage)
+		if img != nil && img.ident != nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
 			return img, nil
 		}
 	}
@@ -46,8 +41,7 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if err != nil {
 		return nil, asCorrupt(fs.folder, err)
 	}
-	// Identity taken after the read, and only trusted when it still matches
-	// the stat that chose this parse: a compaction in between makes a new
+	// Identity taken after the read: a compaction in between makes a new
 	// image rather than a mislabelled one.
 	after, serr := os.Stat(fs.indexPath)
 	if serr != nil {
@@ -68,9 +62,8 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	return img, nil
 }
 
-// readSnapshot builds this reader's own view: the shared base image plus the
-// log tail up to the last transaction boundary, replayed into private memory.
-// A torn record after that boundary is not a state anything may read (#1831).
+// readSnapshot is this reader's own view: the shared base image plus the log
+// tail replayed into private memory, up to the last whole group (#1833).
 func (fs *folderState) readSnapshot() (*folderState, error) {
 	img, err := imageFor(fs)
 	if err != nil {
@@ -126,9 +119,8 @@ func (fs *folderState) readSnapshot() (*folderState, error) {
 	if rerr := view.refreshExtState(); rerr != nil {
 		return nil, rerr
 	}
-	// The aggregate the base wrote is kept when the recount finds no sizes at
-	// all: records carrying none are counted and add nothing, so a recount
-	// would answer zero for a folder whose size is known (#1728).
+	// A recount that finds no sizes at all does not replace an aggregate the
+	// base already knows: records carrying none add nothing (#1728).
 	fromHeader := view.vsize
 	view.ensureVsizeLocked()
 	if view.vsize.Vsize == 0 && fromHeader.Vsize > 0 {

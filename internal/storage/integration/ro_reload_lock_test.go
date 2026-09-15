@@ -10,15 +10,9 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// TestReadPathSerializesAgainstConcurrentLockHolder is the #647 regression:
-// withFolderRO's reload must be serialized against writers via the same
-// cross-process lock the write path takes. Before the fix the read path took
-// only the in-process fs.mu and could interleave with another process's
-// lock-holding compaction, poisoning the shared in-memory header (NextUID
-// regression). Two clients on one embedded lock server stand in for two pods:
-// client B holds the folder's X lock (an in-progress compaction), and a
-// read-only op on the index wired to client A must block until B releases.
-func TestReadPathSerializesAgainstConcurrentLockHolder(t *testing.T) {
+// The #647 hazard, asserted as the property rather than the lock that used to
+// provide it: a read cannot poison state it never writes (#1809).
+func TestAReadCannotPoisonWhatItNeverWrites(t *testing.T) {
 	sock := holdsTestSocket(t)
 	clientA := newHoldsClient(t, sock)
 	clientB := newHoldsClient(t, sock)
@@ -54,11 +48,8 @@ func TestReadPathSerializesAgainstConcurrentLockHolder(t *testing.T) {
 		t.Fatalf("client B holds %q/%v after an exclusive Lock", mode, ok)
 	}
 
-	// A read runs through while B holds the key: it builds its own view and
-	// writes nothing another session reads, so there is nothing to serialise
-	// against. What #647 was about -- a reload poisoning the shared state a
-	// later locked write trusts -- is prevented by construction now, and the
-	// NextUID regression it caused is guarded by its own row (#1809).
+	// A read runs through while B holds the key: it writes nothing another
+	// session reads, so there is nothing to serialise against (#647, #1809).
 	done := make(chan error, 1)
 	started := make(chan struct{})
 	go func() {

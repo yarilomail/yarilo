@@ -144,9 +144,8 @@ func TestAReaderSeesAWholeSetAcrossABaseRewrite(t *testing.T) {
 	wg.Wait()
 }
 
-// A transaction whose boundary promises more than the file holds is not a
-// state anything may read: the group is applied only once the file holds it
-// all, and otherwise waits for the writer to close it (#1833).
+// A group whose boundary promises more than the file holds is not applied: it
+// waits for the writer to close it (#1833).
 func TestATransactionPastTheLastBoundaryIsNotRead(t *testing.T) {
 	dial := raceTestLockServer(t)
 	root := t.TempDir()
@@ -192,8 +191,7 @@ func TestATransactionPastTheLastBoundaryIsNotRead(t *testing.T) {
 	}()
 
 	// A second transaction, then the file cut short of what its boundary
-	// promises: the crash between the write reaching the page cache and the
-	// whole of it reaching disk.
+	// promises: a crash with only part of the write on disk.
 	commit(6, 10)
 	if full, ferr := ui.GetMessages(f.ID, mailbox.SeqSet{}); ferr != nil || len(full) != 10 {
 		t.Fatalf("before the cut the folder reads as %d records (err %v), want 10 — the trap would prove nothing", len(full), ferr)
