@@ -215,6 +215,13 @@ func (u *userIndex) loadOrInit(fs *folderState, uidValidity uint32) error {
 // loadOrInitMissing handles ErrNotExist under the lock: two openers can both see
 // it unlocked, and without the re-stat the loser's createFresh resets NextUID.
 func (u *userIndex) loadOrInitMissing(fs *folderState, uidValidity uint32) error {
+	// A first open is held on the volume: two processes that both find no index
+	// each create one, and the later flush resets NextUID to 1 (#644, #1840).
+	release, err := fs.holdJournal(lockSiteOpenProbe)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return u.withDistLock(fs, false, lockSiteOpenProbe, func() error {
 		st, err := os.Stat(fs.indexPath)
 		switch {
@@ -2107,14 +2114,14 @@ func encU32Update(offset uint16, v uint32) []byte {
 		mailindex.EncodeTxHeaderUpdatePayload(mailindex.TxHeaderUpdate{Offset: offset, Data: data}))
 }
 
-// holdJournal excludes another process from the journal for one cycle. It is
-// re-entrant within the cycle: the append inside a held cycle takes no second
-// lock, which the kernel would not grant it twice anyway (#1840).
+// holdJournal excludes another process from the journal for one cycle, through
+// a lock file beside it: locking the journal itself would create it empty
+// before the base exists. Re-entrant within the cycle (#1840).
 func (fs *folderState) holdJournal(site string) (func(), error) {
 	if fs.journalHeld {
 		return func() {}, nil
 	}
-	h, err := filelock.Take(fs.indexPath+".log", fs.lockMethod, mutLogLockWait)
+	h, err := filelock.Take(fs.indexPath+".lock", fs.lockMethod, mutLogLockWait)
 	if err != nil {
 		return nil, fmt.Errorf("fileindex/journal: lock: %w", err)
 	}

@@ -174,6 +174,29 @@ func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
 	return nil, false
 }
 
+// addUID adds one row, but only to a map that is still the list it was loaded
+// from: a stale map gains a row and keeps claiming to be whole (#1739).
+func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID bool, stamp listStamp) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.uidMap == nil {
+		c.uidStamp = listStamp{}
+		return
+	}
+	c.uidMap[base] = uid
+	if c.byUID == nil {
+		c.byUID = map[uint32]string{}
+	}
+	c.byUID[uid] = base
+	if hasGUID {
+		if c.guidMap == nil {
+			c.guidMap = map[string][16]byte{}
+		}
+		c.guidMap[base] = guid
+	}
+	c.uidStamp = stamp
+}
+
 func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, stamp listStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -182,6 +205,32 @@ func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, 
 	for base, uid := range m {
 		c.byUID[uid] = base
 	}
+}
+
+// listCanTakeRow says the cache is sure the list does not name this file yet.
+// Unsure is answered no: a second row for one name is a message with two uids.
+func (u *userMailbox) listCanTakeRow(folder, base string) bool {
+	st := u.listStampNow(folder)
+	if st == (listStamp{}) {
+		return false
+	}
+	m, ok := u.folderCacheFor(folder).snapshotUIDs(st)
+	if !ok {
+		return false
+	}
+	_, known := m[base]
+	return !known
+}
+
+// adoptRow adds one written row to the cache under the list's new stamp:
+// re-reading the whole list to learn one name is what made a save O(n) (#1840).
+func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, hasGUID bool) {
+	fi, err := os.Stat(u.uidListPath(folder))
+	if err != nil {
+		u.folderCacheFor(folder).invalidateUIDs()
+		return
+	}
+	u.folderCacheFor(folder).addUID(base, uid, guid, hasGUID, stampOf(fi))
 }
 
 // adoptWritten makes the cache the content just written: a map merged into an
@@ -638,22 +687,33 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 		return fmt.Errorf("maildir/uidlist: refusing a record with no uid for %q", filename)
 	}
 	base := maildirBase(filename)
+	rec := uidRecord{uid: uid, base: base, guid: guid, hasGUID: guidOverride}
+	if !nameCarriesSizes(base) {
+		// Measured from the file, never copied from another record: a number
+		// carried over could be the zero that was never measured (#1701).
+		psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", filename))
+		if merr == nil {
+			rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
+		}
+	}
+	// The ordinary case is a name the list has never seen: one line at the end
+	// of the file, held for that write alone (#1840).
+	if u.listCanTakeRow(folder, base) {
+		appended, aerr := u.appendUIDRow(folder, lockSiteSave, rec)
+		if aerr != nil {
+			return aerr
+		}
+		if appended {
+			u.adoptRow(folder, base, uid, guid, guidOverride)
+			return nil
+		}
+	}
 	var written *uidList
 	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
 	err := u.withUIDList(folder, lockSiteSave, func(l *uidList) error {
 		beforeRows = len(l.records)
 		if listDebug() {
 			beforeMod, beforeSize = u.listStat(folder)
-		}
-		rec := uidRecord{uid: uid, base: base, guid: guid, hasGUID: guidOverride}
-		if !nameCarriesSizes(base) {
-			// Measured from the file, never copied from another record: a
-			// number carried over could be the zero that was never measured
-			// (#1701).
-			psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", filename))
-			if merr == nil {
-				rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
-			}
 		}
 		replaced := false
 		for i := range l.records {

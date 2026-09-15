@@ -45,7 +45,9 @@ type uidList struct {
 }
 
 // readUIDListFile parses the whole file. A line that parses adds a record; the
-// first that does not ends the list and marks it torn.
+// first that does not ends the list and marks it torn. The next uid is taken
+// from the rows as well as the header: rows are appended without rewriting the
+// header, so the header alone can name a uid already handed out (#1840).
 func readUIDListFile(path string) (*uidList, error) {
 	listParses.Add(1)
 	f, err := os.Open(path)
@@ -78,6 +80,11 @@ func readUIDListFile(path string) (*uidList, error) {
 		// A line past the scanner's limit is torn in the same sense: what
 		// follows it cannot be reached.
 		l.torn = true
+	}
+	for _, rec := range l.records {
+		if rec.uid >= l.nextUID {
+			l.nextUID = rec.uid + 1
+		}
 	}
 	return l, nil
 }
@@ -175,6 +182,43 @@ func measureSizes(path string) (psize, vsize uint32, err error) {
 		return 0, 0, err
 	}
 	return c.phys, c.phys + c.lfNoCR, nil
+}
+
+// appendUIDRow puts one row at the end of the list under its own hold: the
+// write is a line, not a rewrite of every row the folder ever had (#1840).
+// It reports false when the list cannot take a row blind -- no list yet, or
+// the name is already in it -- and the caller rewrites instead.
+func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, error) {
+	path := u.uidListPath(folder)
+	unlock, err := u.dotlock(path)
+	if err != nil {
+		return false, err
+	}
+	heldFrom := time.Now()
+	defer func() {
+		unlock()
+		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
+	}()
+	metricLockAcquired.WithLabelValues(site).Inc()
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return false, nil // no list yet: the caller writes one whole
+	}
+	defer f.Close() //nolint:errcheck
+	st, serr := f.Stat()
+	if serr != nil || st.Size() == 0 {
+		return false, nil
+	}
+	if _, werr := f.WriteString(rec.String() + "\n"); werr != nil {
+		return false, fmt.Errorf("maildir/uidlist: append row: %w", werr)
+	}
+	// Synced under the hold: the row is what tells the next reader this file
+	// already has a uid, and a lost row hands the same name a second one.
+	if serr := syncFile(f); serr != nil {
+		return false, fmt.Errorf("maildir/uidlist: sync row: %w", serr)
+	}
+	return true, nil
 }
 
 // withUIDList holds the list for one row: read, change, write. The lock spans
