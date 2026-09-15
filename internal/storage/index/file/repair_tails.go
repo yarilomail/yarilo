@@ -13,7 +13,7 @@ func (u *userIndex) RepairRecordTails(folderID uint64, tails map[uint32]mailbox.
 		return 0, nil
 	}
 	repaired := 0
-	err := u.withFolder(folderID, func(fs *folderState) error {
+	err := u.withFolderSite(folderID, lockSiteRepairTails, func(fs *folderState) error {
 		if err := fs.ensureVsizeExtLocked(); err != nil {
 			return err
 		}

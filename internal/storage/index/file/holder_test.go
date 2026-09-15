@@ -48,13 +48,13 @@ func TestASecondSessionLocksUnderItsOwnName(t *testing.T) {
 	// A flag write, not an append: STORE is the path the field showed (405 BUSY
 	// on INBOX went through it), and it is one of the verbs that carried no
 	// stamp of its own -- so a future verb that skips the stamp reddens here.
-	before := counterVal(t, metricLockAcquired, "exclusive", lockSiteWrite)
+	before := counterVal(t, metricLockAcquired, "exclusive", lockSiteWriteFlags)
 	if err := second.UpdateFlags(g.ID, 1, []string{"\\Seen"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// The write has to have gone to the service, or the name it announced was
 	// never sent and this asserts nothing.
-	if got := counterVal(t, metricLockAcquired, "exclusive", lockSiteWrite) - before; got != 1 {
+	if got := counterVal(t, metricLockAcquired, "exclusive", lockSiteWriteFlags) - before; got != 1 {
 		t.Fatalf("the second session's flag write took %v exclusive acquisitions, want 1", got)
 	}
 

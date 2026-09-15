@@ -56,8 +56,8 @@ var (
 	}, []string{"mode", "site"})
 	metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "fileindex_lock_acquired_total",
-		Help: "Cross-process folder locks acquired, by mode and by which path took it. Each acquisition is followed by a release, so an operation that takes the lock makes two round trips to the lock service.",
-	}, []string{"mode", "site"}) // shared | exclusive × open-probe | reload-fallback | read | write
+		Help: "Cross-process folder locks acquired, by mode and by the call that took it. Each acquisition is followed by a release, so an operation that takes the lock makes two round trips to the lock service.",
+	}, []string{"mode", "site"}) // shared | exclusive × read | open-probe | reload-fallback | transaction | expunge | append | write-flags | ...
 	metricReload = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "fileindex_reload_total",
 		Help: "Folder freshness checks by outcome: adopt means a rewritten base was proven to hold what memory already held and its records were not read.",
@@ -85,7 +85,38 @@ const (
 	lockSiteOpenProbe = "open-probe"      // opening or repairing a folder
 	lockSiteFallback  = "reload-fallback" // an unlocked read with nothing to prove freshness with
 	lockSiteRead      = "read"            // a read that is locked on purpose: its answer decides a write
-	lockSiteWrite     = "write"           // a mutation
+
+	// The callers of that mutation, so a total can be attributed (#1827).
+	lockSiteTransaction  = "transaction"
+	lockSiteFlagsDirty   = "flags-dirty"
+	lockSiteRefresh      = "refresh"
+	lockSitePop3Uidl     = "pop3-uidl"
+	lockSiteRepairTails  = "repair-tails"
+	lockSiteStampSizes   = "stamp-sizes"
+	lockSiteRename       = "rename"
+	lockSiteStampLineage = "stamp-lineage"
+	lockSiteResetLog     = "reset-log"
+	// Only a test reaches the index without a caller of its own.
+	lockSiteTestWrite       = "test-write"
+	lockSiteAdoptUidSpace   = "adopt-uid-space"
+	lockSiteAllocateUid     = "allocate-uid"
+	lockSiteAppend          = "append"
+	lockSiteCacheExtension  = "cache-extension"
+	lockSiteCacheGeneration = "cache-generation"
+	lockSiteCacheOffsets    = "cache-offsets"
+	lockSiteCachePurge      = "cache-purge"
+	lockSiteExpunge         = "expunge"
+	lockSiteExpungeFloor    = "expunge-floor"
+	lockSiteMarkCorrupt     = "mark-corrupt"
+	lockSiteNextModseq      = "next-modseq"
+	lockSiteOptimize        = "optimize"
+	lockSiteRecomputeVsize  = "recompute-vsize"
+	lockSiteResetFolder     = "reset-folder"
+	lockSiteSaveFolder      = "save-folder"
+	lockSiteSetAltTier      = "set-alt-tier"
+	lockSiteSetGuids        = "set-guids"
+	lockSiteVanishedGuids   = "vanished-guids"
+	lockSiteWriteFlags      = "write-flags"
 )
 
 // lockMode names the label so a caller cannot pass "true" and mean shared.

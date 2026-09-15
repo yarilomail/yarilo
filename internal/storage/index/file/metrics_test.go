@@ -123,7 +123,8 @@ func TestReadsCountTheirLockRoundTrips(t *testing.T) {
 func sharedAcquisitions(t *testing.T) float64 {
 	t.Helper()
 	var total float64
-	for _, site := range []string{lockSiteOpenProbe, lockSiteFallback, lockSiteRead, lockSiteWrite} {
+	// Shared acquisitions only: no write site takes a shared lock.
+	for _, site := range []string{lockSiteOpenProbe, lockSiteFallback, lockSiteRead} {
 		total += counterVecValue(t, metricLockAcquired, "shared", site)
 	}
 	return total
@@ -368,16 +369,16 @@ func TestEachLockSiteIsReachedFromItsOwnPath(t *testing.T) {
 	}
 	done := make(chan error, 1)
 
-	// A write.
-	writeBefore := site("exclusive", lockSiteWrite)
+	// A write, under the name its own path carries (#1827).
+	writeBefore := site("exclusive", lockSiteAppend)
 	go func() {
 		done <- ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10})
 	}()
 	if err := <-done; err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
-	if site("exclusive", lockSiteWrite) == writeBefore {
-		t.Error("a write took no exclusive lock")
+	if site("exclusive", lockSiteAppend) == writeBefore {
+		t.Error("an append took no exclusive lock under its own name")
 	}
 
 	// Opening a folder this handle already has open takes no lock at all since

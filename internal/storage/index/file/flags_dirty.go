@@ -8,7 +8,7 @@ import (
 // SetFlagsDirty marks a record whose flags have not reached storage (#1700).
 // Journalled: a mark in the base alone is erased by the log replayed over it.
 func (u *userIndex) SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error {
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteFlagsDirty, func(fs *folderState) error {
 		for _, rec := range fs.file.Records {
 			if rec.UID != uid {
 				continue

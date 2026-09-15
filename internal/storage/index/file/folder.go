@@ -144,7 +144,7 @@ func (u *userIndex) stampLineage(fs *folderState) error {
 	if known {
 		return nil
 	}
-	return u.withFolderLock(fs, func() error {
+	return u.withFolderLockSite(fs, lockSiteStampLineage, func() error {
 		// Re-check under the lock: a racer may have stamped it, and a second
 		// flush would rewrite a base nobody needed rewritten.
 		if fs.lineage.Lineage != lineageUnknown {
@@ -302,7 +302,7 @@ func (u *userIndex) readBase(fs *folderState) error {
 		if errors.Is(applyErr, errLogIndexIDMismatch) {
 			// Log belongs to a deleted/recreated mailbox; reset it under the
 			// distributed lock so concurrent writers don't race the truncate.
-			if lockErr := u.withFolderLock(fs, func() error {
+			if lockErr := u.withFolderLockSite(fs, lockSiteResetLog, func() error {
 				slog.Warn("fileindex: discarding log with mismatched IndexID on open",
 					"folder", fs.folder)
 				fs.closeFDs()
@@ -665,14 +665,16 @@ func (fs *folderState) flush() error {
 
 // withFolder locks folderID's state, reloads and runs fn against the freshest
 // committed state. A missing file is swallowed so the caller can createFresh.
-func (u *userIndex) withFolder(folderID uint64, fn func(*folderState) error) error {
+// withFolderSite is withFolder with the caller recorded: a total naming no
+// caller says how many acquisitions there were, not which to change (#1827).
+func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folderState) error) error {
 	u.mu.Lock()
 	fs, ok := u.open[folderID]
 	u.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("fileindex: folder %d not open", folderID)
 	}
-	return u.withFolderLock(fs, func() error {
+	return u.withFolderLockSite(fs, site, func() error {
 		if err := fs.reload(); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -880,7 +882,7 @@ func (fs *folderState) applyLogTail(lg *logReader) error {
 // SaveFolder persists header-level mutations from f. Record-state changes are
 // ignored; callers use AppendMessage, UpdateFlags or ExpungeMessage.
 func (u *userIndex) SaveFolder(f *mailbox.Folder) error {
-	return u.withFolder(f.ID, func(fs *folderState) error {
+	return u.withFolderSite(f.ID, lockSiteSaveFolder, func(fs *folderState) error {
 		return fs.flush()
 	})
 }
@@ -892,7 +894,7 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 	if uidValidity == 0 {
 		return fmt.Errorf("fileindex/adopt: uid validity 0")
 	}
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteAdoptUidSpace, func(fs *folderState) error {
 		if len(fs.file.Records) > 0 {
 			return fmt.Errorf("fileindex/adopt: folder %q holds %d messages: %w",
 				fs.folder, len(fs.file.Records), mailbox.ErrUIDSpaceInUse)
@@ -911,7 +913,7 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 // AppendMessage records m as a new on-disk record; m.UID must already be
 // assigned, by AllocateUID or by an external authority.
 func (u *userIndex) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error {
-	if err := u.withFolder(folderID, func(fs *folderState) error {
+	if err := u.withFolderSite(folderID, lockSiteAppend, func(fs *folderState) error {
 		// next_uid_before exposes a UID-reuse race: a commit below it means the
 		// counter advanced past this UID since AllocateUID ran.
 		slog.Debug("fileindex: committing pre-allocated uid", "trace_id", fs.traceID,
@@ -945,7 +947,7 @@ func (u *userIndex) FolderVSize(folderID uint64) (bytes uint64, messages uint32,
 // RecomputeVSize rebuilds the hdr-vsize aggregate from the per-record extension
 // and persists it -- the admin path for a corrupt one; normal reads self-heal.
 func (u *userIndex) RecomputeVSize(folderID uint64) error {
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteRecomputeVsize, func(fs *folderState) error {
 		fs.recalcVsizeLocked()
 		fs.persistVsizeLocked()
 		return fs.flush()
@@ -968,7 +970,7 @@ func (u *userIndex) GUIDBackfillNeeded(folderID uint64) (bool, error) {
 // complete, leaving existing ones alone -- so an interrupted pass resumes.
 func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 	var zero [16]byte
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteSetGuids, func(fs *folderState) error {
 		// An index written before the extension existed needs it added first;
 		// existing records gain 16 zero bytes on the next write.
 		if err := fs.declareRecordExtLocked(extNameGUID, encodeGUIDHdr(guidStatePending),
@@ -1001,7 +1003,7 @@ func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 // One cross-process lock covers the read-modify-write window.
 func (u *userIndex) AllocateUID(folderID uint64) (uint32, error) {
 	var assigned uint32
-	err := u.withFolder(folderID, func(fs *folderState) error {
+	err := u.withFolderSite(folderID, lockSiteAllocateUid, func(fs *folderState) error {
 		uid := fs.file.Header.NextUID
 		if uid == 0 {
 			uid = 1
@@ -1019,7 +1021,7 @@ func (u *userIndex) AllocateUID(folderID uint64) (uint32, error) {
 func (u *userIndex) AllocateUIDWithModSeq(folderID uint64) (uint32, uint64, error) {
 	var uid uint32
 	var modseq uint64
-	err := u.withFolder(folderID, func(fs *folderState) error {
+	err := u.withFolderSite(folderID, lockSiteAllocateUid, func(fs *folderState) error {
 		next := fs.file.Header.NextUID
 		if next == 0 {
 			next = 1
@@ -1043,7 +1045,7 @@ func (u *userIndex) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) e
 // AllocateAndAppendNamed settles the name inside the cycle that hands out the
 // uid: a second cycle would take the folder key twice for one APPEND (#1704).
 func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, error)) error {
-	if err := u.withFolder(folderID, func(fs *folderState) error {
+	if err := u.withFolderSite(folderID, lockSiteAppend, func(fs *folderState) error {
 		next := fs.file.Header.NextUID
 		if next == 0 {
 			next = 1
@@ -1179,7 +1181,7 @@ const (
 // writeFlags is the shared body: replace the flag set, union with it, or
 // subtract from it.
 func (u *userIndex) writeFlags(folderID uint64, uid uint32, flags, keywords []string, mode flagWriteMode) error {
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteWriteFlags, func(fs *folderState) error {
 		modseq, err := fs.bumpModSeqHeader()
 		if err != nil {
 			return err
@@ -1274,7 +1276,7 @@ func (fs *folderState) writeFlagsLocked(uid uint32, flags, keywords []string, mo
 // MarkFolderCorrupt persists the FSCKD header flag (header offset 20) so
 // the next open triggers a reactive rebuild. Idempotent.
 func (u *userIndex) MarkFolderCorrupt(folderID uint64) error {
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteMarkCorrupt, func(fs *folderState) error {
 		if fs.file.Header.Flags&mailindex.HdrFlagFsckd != 0 {
 			return nil
 		}
@@ -1285,7 +1287,7 @@ func (u *userIndex) MarkFolderCorrupt(folderID uint64) error {
 
 // ClearFolderCorrupt clears the FSCKD marker after a successful rebuild.
 func (u *userIndex) ClearFolderCorrupt(folderID uint64) error {
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteMarkCorrupt, func(fs *folderState) error {
 		if fs.file.Header.Flags&mailindex.HdrFlagFsckd == 0 {
 			return nil
 		}
@@ -1405,7 +1407,7 @@ func (fs *folderState) flagsMultiLocked(updates map[uint32]mailbox.FlagsUpdate, 
 // ExpungeMessage writes a TxTypeExpungeGUID log entry and drops the in-memory
 // record; Vanished reads those entries later to satisfy QRESYNC.
 func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
-	if err := u.withFolder(folderID, func(fs *folderState) error {
+	if err := u.withFolderSite(folderID, lockSiteExpunge, func(fs *folderState) error {
 		modseq, err := fs.bumpModSeqHeader()
 		if err != nil {
 			return err
@@ -1539,7 +1541,7 @@ func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet, unlocked b
 // by CONDSTORE writers that claim a modseq before writing the change.
 func (u *userIndex) NextModSeq(folderID uint64) (uint64, error) {
 	var out uint64
-	err := u.withFolder(folderID, func(fs *folderState) error {
+	err := u.withFolderSite(folderID, lockSiteNextModseq, func(fs *folderState) error {
 		v, err := fs.bumpModSeqHeader()
 		if err != nil {
 			return err
@@ -1613,7 +1615,7 @@ func (u *userIndex) keywords(folderID uint64, unlocked bool) ([]string, error) {
 // nothing leaves the header untouched, with nothing to signal QRESYNC.
 func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta) ([]uint32, error) {
 	var expunged []uint32
-	err := u.withFolder(folderID, func(fs *folderState) error {
+	err := u.withFolderSite(folderID, lockSiteResetFolder, func(fs *folderState) error {
 		highest, err := fs.highestModSeq()
 		if err != nil {
 			return err
@@ -1731,7 +1733,7 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 	for _, f := range filenames {
 		set[f] = struct{}{}
 	}
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteSetAltTier, func(fs *folderState) error {
 		changed := false
 		for _, rec := range fs.file.Records {
 			mapUID, _ := decodeMdboxRec(rec.Ext[extNameMdbox])
@@ -1758,7 +1760,7 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 // OptimizeIndex folds pending log records into the base and truncates it, so
 // Vanished(since) is then empty below the current highest.
 func (u *userIndex) OptimizeIndex(folderID uint64) error {
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteOptimize, func(fs *folderState) error {
 		if err := fs.stampExpungeFloorLocked(); err != nil {
 			return err
 		}
@@ -1781,7 +1783,7 @@ func (u *userIndex) OptimizeIndex(folderID uint64) error {
 // GUID, dropped rather than handed out as an id naming no message.
 func (u *userIndex) VanishedGUIDs(folderID uint64, sinceModSeq uint64) (guids [][16]byte, complete bool, err error) {
 	complete = true
-	err = u.withFolder(folderID, func(fs *folderState) error {
+	err = u.withFolderSite(folderID, lockSiteVanishedGuids, func(fs *folderState) error {
 		found, scanErr := scanExpungedGUIDsSince(fs.indexPath, sinceModSeq)
 		if scanErr != nil {
 			return scanErr
@@ -1820,7 +1822,7 @@ func (u *userIndex) FolderStamp(folder string) (mailbox.FolderStamp, error) {
 // (#1216).
 func (u *userIndex) ExpungeFloor(folderID uint64) (uint64, error) {
 	var floor uint64
-	err := u.withFolder(folderID, func(fs *folderState) error {
+	err := u.withFolderSite(folderID, lockSiteExpungeFloor, func(fs *folderState) error {
 		floor = fs.expungeFloorLocked()
 		return nil
 	})
@@ -2589,7 +2591,7 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) 
 	if len(offsets) == 0 {
 		return nil
 	}
-	return u.withFolder(folderID, func(fs *folderState) error {
+	return u.withFolderSite(folderID, lockSiteCacheOffsets, func(fs *folderState) error {
 		if err := fs.declareRecordExtLocked(extNameCache, nil,
 			cacheRecSize, 4, fs.file.Header.UIDValidity); err != nil {
 			return err
@@ -2640,7 +2642,7 @@ func (u *userIndex) CachePath(folderID uint64) (string, error) {
 // so no directory fsync is needed -- a generation back from the dead
 // invalidates itself.
 func (u *userIndex) PurgeCache(folderID uint64) (carried int, reclaimed int64, err error) {
-	err = u.withFolder(folderID, func(fs *folderState) error {
+	err = u.withFolderSite(folderID, lockSiteCachePurge, func(fs *folderState) error {
 		ext := findExt(fs.file.Extensions, extNameCache)
 		if ext == nil {
 			return nil // nothing was ever cached
@@ -2737,7 +2739,7 @@ func abandonCacheGeneration(fs *folderState) (uint32, error) {
 // new file_seq, for callers that had to discard the file (#1184).
 func (u *userIndex) BumpCacheGeneration(folderID uint64) (uint32, error) {
 	var seq uint32
-	err := u.withFolder(folderID, func(fs *folderState) error {
+	err := u.withFolderSite(folderID, lockSiteCacheGeneration, func(fs *folderState) error {
 		var berr error
 		seq, berr = abandonCacheGeneration(fs)
 		return berr
@@ -2750,7 +2752,7 @@ func (u *userIndex) BumpCacheGeneration(folderID uint64) (uint32, error) {
 // gain one: the only other add sits behind a write that needs the extension to
 // be reachable already (#1184).
 func (u *userIndex) EnsureCacheExtension(folderID uint64) (indexID, resetID uint32, err error) {
-	err = u.withFolder(folderID, func(fs *folderState) error {
+	err = u.withFolderSite(folderID, lockSiteCacheExtension, func(fs *folderState) error {
 		if findExt(fs.file.Extensions, extNameCache) == nil {
 			// From the clock, not UIDValidity: a file left at this path by an
 			// earlier life must not match the generation we are creating.

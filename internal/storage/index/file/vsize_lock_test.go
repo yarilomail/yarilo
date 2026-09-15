@@ -3,15 +3,30 @@ package file
 import (
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
+// exclusiveAcquisitions sums every site there is, gathered rather than listed:
+// a list goes stale the moment a site is added, and the test goes blind (#1827).
 func exclusiveAcquisitions() float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		return 0
+	}
 	total := 0.0
-	for _, site := range []string{lockSiteOpenProbe, lockSiteRead, lockSiteWrite, lockSiteFallback} {
-		total += testutil.ToFloat64(metricLockAcquired.WithLabelValues("exclusive", site))
+	for _, f := range families {
+		if f.GetName() != "fileindex_lock_acquired_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "mode" && l.GetValue() == "exclusive" {
+					total += m.GetCounter().GetValue()
+				}
+			}
+		}
 	}
 	return total
 }

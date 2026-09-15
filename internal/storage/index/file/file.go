@@ -763,8 +763,9 @@ func (u *userIndex) withFolderROSite(folderID uint64, site string, fn func(*fold
 
 // withFolderLock runs fn under the cross-process index lock. The HoldsResource()
 // shortcut keeps an outer holder's per-message calls from deadlocking on it.
-func (u *userIndex) withFolderLock(fs *folderState, fn func() error) error {
-	return u.withDistLock(fs, false, lockSiteWrite, func() error {
+// withFolderLockSite is withFolderLock with the caller recorded.
+func (u *userIndex) withFolderLockSite(fs *folderState, site string, fn func() error) error {
+	return u.withDistLock(fs, false, site, func() error {
 		fs.mu.Lock()
 		defer fs.mu.Unlock()
 		t1 := time.Now()
@@ -842,9 +843,9 @@ func (u *userIndex) withTwoFolderLocks(folderA, folderB string, fn func() error)
 		a, b = b, a
 	}
 	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), lockSiteWrite), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), lockSiteRename), 35*time.Second)
 	defer cancel()
-	heldA, herr := locks.Reentrant(u.b.locker, keyA, lockSiteWrite, false)
+	heldA, herr := locks.Reentrant(u.b.locker, keyA, lockSiteRename, false)
 	if herr != nil {
 		return herr
 	}
@@ -859,7 +860,7 @@ func (u *userIndex) withTwoFolderLocks(folderA, folderB string, fn func() error)
 		return fn()
 	}
 	keyB := locks.MailboxKey(u.username, b)
-	heldB, herr := locks.Reentrant(u.b.locker, keyB, lockSiteWrite, false)
+	heldB, herr := locks.Reentrant(u.b.locker, keyB, lockSiteRename, false)
 	if herr != nil {
 		return herr
 	}

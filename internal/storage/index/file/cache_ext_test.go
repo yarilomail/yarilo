@@ -125,7 +125,7 @@ func TestEnsureCacheExtensionOnAnIndexThatPredatesIt(t *testing.T) {
 	}
 
 	// Rewrite the index the way a version before the extension wrote it.
-	if err := ui.withFolder(f.ID, func(fs *folderState) error {
+	if err := ui.withFolderSite(f.ID, lockSiteTestWrite, func(fs *folderState) error {
 		kept := fs.file.Extensions[:0]
 		for _, ext := range fs.file.Extensions {
 			if ext.Name != extNameCache {

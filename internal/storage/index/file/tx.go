@@ -67,7 +67,7 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 	if len(t.ops) == 0 {
 		return out, nil
 	}
-	err := t.idx.withFolder(t.folderID, func(fs *folderState) error {
+	err := t.idx.withFolderSite(t.folderID, lockSiteTransaction, func(fs *folderState) error {
 		var err error
 		out.ModSeq, err = fs.bumpModSeqHeader()
 		if err != nil {
