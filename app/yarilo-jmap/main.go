@@ -167,6 +167,9 @@ func main() {
 		SnippetMaxChars:   cfg.Protocol.JMAP.SnippetMaxChars,
 		MaxBodyValueBytes: uint32(cfg.Protocol.JMAP.MaxBodyValueBytes), //nolint:gosec // config-bounded
 		QueryMaxLimit:     uint(cfg.Protocol.JMAP.QueryMaxLimit),       //nolint:gosec // config-bounded
+		QuotaPolicy:       cfg.Quota.QuotaPolicy(),
+		QuotaName:         cfg.Quota.Name,
+		QuotaEnabled:      cfg.Quota.Enabled,
 	})
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {

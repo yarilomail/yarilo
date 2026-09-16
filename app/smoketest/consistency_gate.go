@@ -120,15 +120,9 @@ func registerConsistency(checks *[]check) {
 		func() error { return checkConsistencyQuota(imapUser) },
 		imap, admin)
 
-	// JMAP has no quota surface yet (urn:ietf:params:jmap:quota is not
-	// implemented). The row exists so that absence is reported every run
-	// instead of being a pair nobody remembers is missing; when the extension
-	// lands, this becomes a check.
-	jmapQuota := surfaceState{surface: "jmap quota", present: false,
-		needs: "urn:ietf:params:jmap:quota, not implemented yet"}
 	row("consistency imap<->jmap quota numbers",
-		func() error { return fmt.Errorf("unreachable: the jmap quota surface does not exist") },
-		imap, jmapQuota)
+		func() error { return checkConsistencyQuotaJMAP(imapUser) },
+		imap, jmap)
 
 	sieve := surfaceState{surface: surfManageSieve, present: *flagManageSieve && *flagManageSieveUser != "",
 		needs: "-managesieve and -managesieve-user"}
