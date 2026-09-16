@@ -1,7 +1,5 @@
-// yarilo-submission is the SMTP submission proxy for the yarilo mail server.
-// It accepts client connections on port 587 (STARTTLS) and port 465 (implicit TLS),
-// authenticates via the configured passdb chain, and relays mail to the upstream MTA.
-// No mailbox access — purely a proxy between mail clients and the upstream MTA.
+// yarilo-submission is the SMTP submission proxy: it authenticates the client
+// on 587/465 and relays to the upstream MTA, opening no mailbox.
 package main
 
 import (
@@ -18,8 +16,8 @@ import (
 
 	"github.com/emersion/go-sasl"
 
+	"github.com/yarilomail/yarilo/internal/auth/passdbs"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	submsvr "github.com/yarilomail/yarilo/internal/submission"
 	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
@@ -56,23 +54,12 @@ func main() {
 		"telemetry", telemetry.Addr(cfg.Telemetry.Listen), // resolved (honours TELEMETRY_LISTEN)
 	)
 
-	// ---- auth chain ----
-	var dbs []protocol.Passdb
-	for _, entry := range cfg.Auth.Passdb {
-		db, err := authsql.New(authsql.Config{
-			Driver:            entry.Driver,
-			DSN:               entry.DSN,
-			PasswordQuery:     entry.PasswordQuery,
-			UserQuery:         entry.UserQuery,
-			IterateQuery:      entry.IterateQuery,
-			DefaultPassScheme: entry.DefaultPassScheme,
-			SkipSchema:        entry.SkipSchema,
-		})
-		if err != nil {
-			slog.Error("passdb init failed", "driver", entry.Driver, "err", err)
-			os.Exit(1)
-		}
-		dbs = append(dbs, db)
+	// The shared builder: a loop of its own handed every driver to the SQL
+	// constructor and killed the process at start (#1861).
+	dbs, _, err := passdbs.Build(cfg.Auth.Passdb)
+	if err != nil {
+		slog.Error("passdb init failed", "err", err)
+		os.Exit(1)
 	}
 
 	authCache := protocol.NewCache(
@@ -84,22 +71,10 @@ func main() {
 		protocol.WithAuthenticatorCache(authCache),
 	}
 	if cfg.Auth.MasterUsers.Enabled {
-		var masterdbs []protocol.Passdb
-		for _, entry := range cfg.Auth.MasterUsers.Masterdb {
-			db, err := authsql.New(authsql.Config{
-				Driver:            entry.Driver,
-				DSN:               entry.DSN,
-				PasswordQuery:     entry.PasswordQuery,
-				UserQuery:         entry.UserQuery,
-				IterateQuery:      entry.IterateQuery,
-				DefaultPassScheme: entry.DefaultPassScheme,
-				SkipSchema:        entry.SkipSchema,
-			})
-			if err != nil {
-				slog.Error("masterdb init failed", "driver", entry.Driver, "err", err)
-				os.Exit(1)
-			}
-			masterdbs = append(masterdbs, db)
+		masterdbs, _, merr := passdbs.Build(cfg.Auth.MasterUsers.Masterdb)
+		if merr != nil {
+			slog.Error("masterdb init failed", "err", merr)
+			os.Exit(1)
 		}
 		authOpts = append(authOpts,
 			protocol.WithAuthenticatorMasterUsers(true),
@@ -157,10 +132,8 @@ func main() {
 
 	go runTelemetry(cfg.Telemetry)
 
-	// Publish this protocol container's readiness into the co-located pod's
-	// shared directory (#788); the yarilo-backend-reg sidecar gates the pod's
-	// director heartbeat on it. Ready = listeners bound (a relay proxy has no
-	// wedge-prone data path). No-op when readiness_dir is unset.
+	// The sidecar gates the pod's director heartbeat on this file (#788); a
+	// relay proxy is ready once its listeners are bound.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var ready atomic.Bool
@@ -212,11 +185,8 @@ func main() {
 	slog.Info("yarilo-submission stopped")
 }
 
-// chainAuth adapts protocol.Authenticator to submission.Authenticator.
-// go-smtp's auth surface speaks (username, password) → error rather
-// than the richer AuthResponse / Fields shape; this wrapper discards
-// everything except the "did the chain accept these credentials"
-// decision.
+// chainAuth adapts protocol.Authenticator to submission.Authenticator: the
+// wire surface takes (username, password) and wants only the verdict.
 type chainAuth struct{ c protocol.Authenticator }
 
 func (a chainAuth) AuthPlain(username, password string) error {
@@ -230,11 +200,8 @@ func (a chainAuth) AuthPlain(username, password string) error {
 	return nil
 }
 
-// AuthPlainMaster forwards SASL PLAIN responses carrying a
-// non-empty authzid through the master-user flow. When the
-// wrapped chain does not implement protocol.MasterAuthenticator
-// (master-users disabled in config) the call fails opaquely so
-// the wire reply matches a wrong-password rejection.
+// AuthPlainMaster takes a non-empty authzid through the master-user flow; a
+// chain without it fails opaquely, so the wire reply matches a wrong password.
 func (a chainAuth) AuthPlainMaster(authzid, authid, password string) error {
 	master, ok := a.c.(protocol.MasterAuthenticator)
 	if !ok {
@@ -250,9 +217,8 @@ func (a chainAuth) AuthPlainMaster(authzid, authid, password string) error {
 	return nil
 }
 
-// LookupSCRAMSha256 forwards the lookup to the underlying chain.
-// Returning (nil, nil) when the chain has no SCRAM support keeps
-// EHLO advertisement gated correctly.
+// LookupSCRAMSha256 forwards to the chain; (nil, nil) from one without SCRAM
+// is what keeps the mechanism out of EHLO.
 func (a chainAuth) LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error) {
 	lookup, ok := a.c.(protocol.SCRAMSha256Lookup)
 	if !ok {
@@ -293,11 +259,8 @@ func firstActive(svcs ...*config.ServiceConfig) *config.ServiceConfig {
 }
 
 func runTelemetry(cfg config.TelemetryConfig) {
-	// One shared implementation for /healthz, /readyz, /metrics and
-	// /debug/loglevel. No Checks yet: this component's /readyz was an
-	// unconditional 200 before unification, and turning that into a real
-	// condition is a behaviour change, not a refactor — see the readiness issue
-	// for the per-component conditions.
+	// No Checks yet: /readyz answered an unconditional 200 before this was
+	// shared, and giving it a real condition is a behaviour change.
 	tel := telemetry.NewWithOptions(telemetry.Options{
 		Addr: telemetry.Addr(cfg.Listen),
 		Pprof: telemetry.PprofOptions{
