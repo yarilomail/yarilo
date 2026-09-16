@@ -673,6 +673,13 @@ components:
   manageSieve:
     enabled: true
 
+  ## The submission path was never on the stand: the component could not start
+  ## (#1861, #1863), so its smoke checks skipped (#1855).
+  submission:
+    enabled: true
+  submissionLogin:
+    enabled: true
+
   ## JMAP backend — one more container in the co-located pod, reached only by
   ## jmapLogin. internalTLS is on cluster-wide here, so the peer certificate is
   ## the trust anchor and xclient stays off.

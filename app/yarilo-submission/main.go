@@ -54,6 +54,10 @@ func main() {
 		"telemetry", telemetry.Addr(cfg.Telemetry.Listen), // resolved (honours TELEMETRY_LISTEN)
 	)
 
+	// One listener per session binary; the login proxy holds the client
+	// certificate this process must not read (#1863).
+	config.KeepOnlySessionListener(cfg, config.RoleSubmission)
+
 	// The shared builder: a loop of its own handed every driver to the SQL
 	// constructor and killed the process at start (#1861).
 	dbs, _, err := passdbs.Build(cfg.Auth.Passdb)
@@ -90,14 +94,12 @@ func main() {
 	}
 
 	// ---- TLS ----
-	var extTLS *tls.Config
-	if cfg.General.SSL.SSLServerCert != "" && cfg.General.SSL.SSLServerKey != "" {
-		extTLS, err = config.BuildTLSConfig(cfg.General.SSL)
-		if err != nil {
-			slog.Error("TLS config failed", "err", err)
-			os.Exit(1)
-		}
-		extTLS.NextProtos = []string{"smtp"}
+	// Only for the listener that terminates it: behind submission-login the
+	// certificate lives in the login pod and this path does not exist (#1863).
+	extTLS, err := config.ListenerTLS(cfg, cfg.Services.Submissions, "smtp")
+	if err != nil {
+		slog.Error("TLS config failed", "err", err)
+		os.Exit(1)
 	}
 
 	haproxyNets := parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks)
