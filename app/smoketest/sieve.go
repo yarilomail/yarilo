@@ -181,11 +181,26 @@ func deliveryGreeting() string {
 	return "EHLO smoketest"
 }
 
+// lmtpSend delivers and requires the reply to the final dot to be 250: a
+// refusal read as a send blames the reader that waits for the message (#1870).
 func lmtpSend(id, from, to, subject, body string) error {
+	resp, err := lmtpDeliver(id, from, to, subject, body)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resp, "250") {
+		return fmt.Errorf("end-of-data: %s", resp)
+	}
+	return nil
+}
+
+// lmtpDeliver returns the reply to the final dot, for a caller that expects a
+// refusal and must read its code.
+func lmtpDeliver(id, from, to, subject, body string) (string, error) {
 	addr := net.JoinHostPort(deliveryHost(), *flagDeliveryPort)
 	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
 	if err != nil {
-		return fmt.Errorf("connect %s: %w", addr, err)
+		return "", fmt.Errorf("connect %s: %w", addr, err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
@@ -210,30 +225,31 @@ func lmtpSend(id, from, to, subject, body string) error {
 	}
 
 	if _, err := readResp(); err != nil {
-		return fmt.Errorf("greeting: %w", err)
+		return "", fmt.Errorf("greeting: %w", err)
 	}
 	if resp, err := cmd(deliveryGreeting()); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("%s: %s %v", deliveryGreeting(), resp, err)
+		return "", fmt.Errorf("%s: %s %v", deliveryGreeting(), resp, err)
 	}
 	if resp, err := cmd("MAIL FROM:<" + from + ">"); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("MAIL FROM: %s %v", resp, err)
+		return "", fmt.Errorf("MAIL FROM: %s %v", resp, err)
 	}
 	if resp, err := cmd("RCPT TO:<" + to + ">"); err != nil {
-		return fmt.Errorf("RCPT TO: %w", err)
+		return "", fmt.Errorf("RCPT TO: %w", err)
 	} else if !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("RCPT TO: %s", resp)
+		return "", fmt.Errorf("RCPT TO: %s", resp)
 	}
 	if resp, err := cmd("DATA"); err != nil || !strings.HasPrefix(resp, "354") {
-		return fmt.Errorf("DATA: %s %v", resp, err)
+		return "", fmt.Errorf("DATA: %s %v", resp, err)
 	}
 	ts := time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 +0000")
 	fmt.Fprintf(conn, "Message-ID: <%s>\r\nDate: %s\r\nFrom: <%s>\r\nTo: <%s>\r\nSubject: %s\r\n\r\n%s\r\n.\r\n",
 		id, ts, from, to, subject, body)
-	if _, err := readResp(); err != nil {
-		return fmt.Errorf("end-of-data: %w", err)
+	final, err := readResp()
+	if err != nil {
+		return "", fmt.Errorf("end-of-data: %w", err)
 	}
 	cmd("QUIT") //nolint:errcheck
-	return nil
+	return final, nil
 }
 
 // ── minimal IMAP4rev1 client ───────────────────────────────────────────────
@@ -411,6 +427,28 @@ func sieveInject(script, from, to, id, subject, body string) error {
 	}
 	err := lmtpSend(id, from, to, subject, body)
 	return err
+}
+
+// sieveInjectRefused runs a script that refuses the delivery and returns the
+// reply to the dot. LMTP answers 550 5.7.1 there; an MX accepts and bounces.
+func sieveInjectRefused(script, from, to, id, subject, body string) error {
+	if err := msieveSetActive(script); err != nil {
+		return fmt.Errorf("msieve: %w", err)
+	}
+	resp, err := lmtpDeliver(id, from, to, subject, body)
+	if err != nil {
+		return err
+	}
+	if *flagDeliveryProto != "lmtp" {
+		if !strings.HasPrefix(resp, "250") {
+			return fmt.Errorf("end-of-data: %s, want 250 from an MX", resp)
+		}
+		return nil
+	}
+	if !strings.HasPrefix(resp, "550 5.7.1") {
+		return fmt.Errorf("end-of-data: %s, want 550 5.7.1", resp)
+	}
+	return nil
 }
 
 func createFolder(user, pass, folder string) error {
@@ -692,10 +730,10 @@ func testSieveVariables(user, pass, to string) error {
 func testSieveReject(user, pass, to string) error {
 	subject := "reject-" + uniqueID()
 	script := "require \"reject\";\nreject \"smoke test reject\";\n"
-	if err := sieveInject(script, "", to, uniqueID(), subject, "body"); err != nil {
-		return err
+	if err := sieveInjectRefused(script, "", to, uniqueID(), subject, "body"); err != nil {
+		return fmt.Errorf("reject: %w", err)
 	}
-	// MX accepts (250), rejection happens async — message must NOT land in INBOX
+	// The refusal is asserted above; nothing may land either way.
 	time.Sleep(5 * time.Second)
 	if err := checkAbsentInInbox(user, pass, subject); err != nil {
 		return fmt.Errorf("reject: %w", err)
@@ -706,10 +744,10 @@ func testSieveReject(user, pass, to string) error {
 func testSieveEreject(user, pass, to string) error {
 	subject := "ereject-" + uniqueID()
 	script := "require \"ereject\";\nereject \"smoke test ereject\";\n"
-	if err := sieveInject(script, "", to, uniqueID(), subject, "body"); err != nil {
-		return err
+	if err := sieveInjectRefused(script, "", to, uniqueID(), subject, "body"); err != nil {
+		return fmt.Errorf("ereject: %w", err)
 	}
-	// same as reject: single check after wait
+	// same as reject: the code is asserted above, the absence here.
 	time.Sleep(5 * time.Second)
 	if err := checkAbsentInInbox(user, pass, subject); err != nil {
 		return fmt.Errorf("ereject: %w", err)
@@ -1041,10 +1079,23 @@ func checkSieve() error {
 // lmtpSendRaw injects a complete raw message (headers + body) via LMTP, for
 // tests that need custom headers (Content-Type multipart, X-Spam-Score, ...).
 func lmtpSendRaw(from, to, raw string) error {
+	resp, err := lmtpDeliverRaw(from, to, raw)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resp, "250") {
+		return fmt.Errorf("end-of-data: %s", resp)
+	}
+	return nil
+}
+
+// lmtpDeliverRaw is lmtpSendRaw without the verdict: it returns the reply to
+// the final dot.
+func lmtpDeliverRaw(from, to, raw string) (string, error) {
 	addr := net.JoinHostPort(deliveryHost(), *flagDeliveryPort)
 	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
 	if err != nil {
-		return fmt.Errorf("connect %s: %w", addr, err)
+		return "", fmt.Errorf("connect %s: %w", addr, err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
@@ -1064,26 +1115,27 @@ func lmtpSendRaw(from, to, raw string) error {
 	}
 	cmd := func(c string) (string, error) { fmt.Fprintf(conn, "%s\r\n", c); return readResp() }
 	if _, err := readResp(); err != nil {
-		return fmt.Errorf("greeting: %w", err)
+		return "", fmt.Errorf("greeting: %w", err)
 	}
 	if resp, err := cmd(deliveryGreeting()); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("%s: %s %v", deliveryGreeting(), resp, err)
+		return "", fmt.Errorf("%s: %s %v", deliveryGreeting(), resp, err)
 	}
 	if resp, err := cmd("MAIL FROM:<" + from + ">"); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("MAIL FROM: %s %v", resp, err)
+		return "", fmt.Errorf("MAIL FROM: %s %v", resp, err)
 	}
 	if resp, err := cmd("RCPT TO:<" + to + ">"); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("RCPT TO: %s %v", resp, err)
+		return "", fmt.Errorf("RCPT TO: %s %v", resp, err)
 	}
 	if resp, err := cmd("DATA"); err != nil || !strings.HasPrefix(resp, "354") {
-		return fmt.Errorf("DATA: %s %v", resp, err)
+		return "", fmt.Errorf("DATA: %s %v", resp, err)
 	}
 	fmt.Fprintf(conn, "%s\r\n.\r\n", raw)
-	if _, err := readResp(); err != nil {
-		return fmt.Errorf("end-of-data: %w", err)
+	final, err := readResp()
+	if err != nil {
+		return "", fmt.Errorf("end-of-data: %w", err)
 	}
 	cmd("QUIT") //nolint:errcheck
-	return nil
+	return final, nil
 }
 
 func joined(lines []string) string { return strings.Join(lines, "\n") }

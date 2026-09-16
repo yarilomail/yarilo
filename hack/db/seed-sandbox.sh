@@ -145,15 +145,12 @@ deliver_filler() {
 # said: a read swallowed under pipefail kills the seed with no line naming it.
 usage_bytes() {
   local out
-  out=$(kube exec "$BACKEND_POD" -c yarilo-backend-api -- yarctl backend quota show "$1" 2>&1) || {
+  out=$(kube exec "$BACKEND_POD" -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>&1) || {
     printf '%s\n' "$out" >&2
     return 1
   }
-  printf '%s\n' "$out" | awk '/STORAGE/ {
-      v = substr($0, 24, 12); gsub(/^ +| +$/, "", v);
-      n = v; sub(/ .*/, "", n); u = v; sub(/^[0-9.]+ ?/, "", u);
-      m = (u == "KiB") ? 1024 : (u == "MiB") ? 1048576 : (u == "GiB") ? 1073741824 : 1;
-      printf "%d\n", n * m; exit }'
+  # storage_value is KiB, as the endpoint reports it.
+  printf '%s\n' "$out" | awk -F'[:,]' '/"storage_value"/ { gsub(/[^0-9-]/, "", $2); printf "%d\n", $2 * 1024; exit }'
 }
 
 echo "Filling $OVER_USER past $OVER_LIMIT bytes ..."
