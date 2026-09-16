@@ -141,23 +141,26 @@ deliver_filler() {
   } | kube exec -i "$BACKEND_POD" -c yarilo-imap -- nc -w 10 "$LMTP_HOST" "$LMTP_PORT" 2>&1
 }
 
-# usage_bytes reads the storage usage back as a number. Inbound delivery is
-# grace-eligible (10M by default), so the stop condition is the state, not a refusal.
+# usage_bytes prints the storage usage as a number, or fails with what yarctl
+# said: a read swallowed under pipefail kills the seed with no line naming it.
 usage_bytes() {
-  kube exec "$BACKEND_POD" -c yarilo-backend-api -- yarctl backend quota show "$1" 2>/dev/null \
-    | awk '/STORAGE/ {
-        v = substr($0, 24, 12); gsub(/^ +| +$/, "", v);
-        n = v; sub(/ .*/, "", n); u = v; sub(/^[0-9.]+ ?/, "", u);
-        m = (u == "KiB") ? 1024 : (u == "MiB") ? 1048576 : (u == "GiB") ? 1073741824 : 1;
-        printf "%d\n", n * m; exit }'
+  local out
+  out=$(kube exec "$BACKEND_POD" -c yarilo-backend-api -- yarctl backend quota show "$1" 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  printf '%s\n' "$out" | awk '/STORAGE/ {
+      v = substr($0, 24, 12); gsub(/^ +| +$/, "", v);
+      n = v; sub(/ .*/, "", n); u = v; sub(/^[0-9.]+ ?/, "", u);
+      m = (u == "KiB") ? 1024 : (u == "MiB") ? 1048576 : (u == "GiB") ? 1073741824 : 1;
+      printf "%d\n", n * m; exit }'
 }
 
 echo "Filling $OVER_USER past $OVER_LIMIT bytes ..."
-HAVE=$(usage_bytes "$OVER_USER")
-if [ -z "$HAVE" ]; then
-  echo "seed: could not read the usage of $OVER_USER; nothing was filled" >&2
-  exit 1
-fi
+# Before the first delivery the mailbox does not exist yet, and no usage is not
+# a broken read; after one it is, and the loop below says so.
+HAVE=$(usage_bytes "$OVER_USER") || HAVE=0
+[ -n "$HAVE" ] || HAVE=0
 i=0
 while [ "$HAVE" -le "$OVER_LIMIT" ] && [ "$i" -lt "$FILL_TRIES" ]; do
   i=$((i + 1))
@@ -166,12 +169,21 @@ while [ "$HAVE" -le "$OVER_LIMIT" ] && [ "$i" -lt "$FILL_TRIES" ]; do
     echo "seed: the LMTP session to $LMTP_HOST:$LMTP_PORT failed" >&2
     exit 1
   }
-  if ! printf '%s' "$TRANSCRIPT" | grep -q '^250 '; then
-    echo "$TRANSCRIPT" >&2
-    echo "seed: filler delivery $i was not accepted" >&2
+  # The reply to the final dot, not any 250 in the session: LHLO, MAIL and RCPT
+  # answer 250 too, so a refused delivery passes a transcript-wide match.
+  STATUS=$(printf '%s' "$TRANSCRIPT" | grep -E '^[0-9]{3} ' | grep -v '^221 ' | tail -1)
+  case "$STATUS" in
+    250\ *) ;;
+    *)
+      echo "$TRANSCRIPT" >&2
+      echo "seed: filler delivery $i was answered [$STATUS], want 250" >&2
+      exit 1
+      ;;
+  esac
+  HAVE=$(usage_bytes "$OVER_USER") || {
+    echo "seed: the usage of $OVER_USER could not be read back after delivery $i" >&2
     exit 1
-  fi
-  HAVE=$(usage_bytes "$OVER_USER")
+  }
 done
 
 if [ "$HAVE" -le "$OVER_LIMIT" ]; then
