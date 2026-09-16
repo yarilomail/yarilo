@@ -16,6 +16,7 @@ import (
 
 	"github.com/emersion/go-sasl"
 
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/internal/auth/passdbs"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
@@ -225,6 +226,19 @@ func New(cfg *config.Config) (*Server, error) {
 		authTLS = t
 	}
 
+	// One relay per process: the mechanism list travels in its handshake, so a
+	// client per session would make that the commonest request (#1733).
+	var authRelay *authrelay.Client
+	if authAddr != "" {
+		relay, rerr := authrelay.Dial(authAddr, authTLS)
+		if rerr != nil {
+			slog.Warn("backend: auth relay unavailable, sasl runs in-process until it returns",
+				"addr", authAddr, "err", rerr)
+		} else {
+			authRelay = relay
+		}
+	}
+
 	// One master-protocol pool for the whole process, shared by every
 	// protocol's session handshake. Each handshake resolves the user's storage
 	// identity, and it used to dial for it: 2.6ms of connection for 0.3ms of
@@ -303,6 +317,7 @@ func New(cfg *config.Config) (*Server, error) {
 			UserdbLookup:       ownerUserdbLookup(masterAddr, authTLS, resolver),
 			Threads:            threadCache,
 			Auth:               authChain,
+			AuthRelay:          authRelay,
 			ProxyProtocol:      primary.HAProxy,
 			HAProxyTimeout:     haproxyTimeout,
 			HAProxyTrustedNets: haproxyNets,
@@ -383,6 +398,7 @@ func New(cfg *config.Config) (*Server, error) {
 			Index:              idx,
 			Resolver:           resolver,
 			Auth:               authChain,
+			AuthRelay:          authRelay,
 			ProxyProtocol:      primary.HAProxy,
 			HAProxyTimeout:     haproxyTimeout,
 			HAProxyTrustedNets: haproxyNets,
@@ -435,6 +451,7 @@ func New(cfg *config.Config) (*Server, error) {
 			TLSConfig:      submissionTLS,
 			Config:         cfg.Protocol.Submission,
 			Auth:           chainAuth{authChain},
+			AuthRelay:      authRelay,
 			Proxy:          submissionProxy,
 			FailureDelay:   time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 		})

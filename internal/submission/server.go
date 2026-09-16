@@ -10,12 +10,14 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 	proxyproto "github.com/pires/go-proxyproto"
 
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/internal/auth/scram"
 	"github.com/yarilomail/yarilo/internal/loginproto"
@@ -67,7 +69,10 @@ type Options struct {
 	// Protocol-level settings.
 	Config config.SubmissionProtocolConfig
 	Auth   Authenticator
-	Proxy  *proxy.Submission
+	// AuthRelay carries a SASL exchange to yarilo-auth, which runs the
+	// mechanism. Nil leaves the in-process chain, until the cut (#1733).
+	AuthRelay *authrelay.Client
+	Proxy     *proxy.Submission
 
 	// FailureDelay delays surfacing an auth failure by this duration, equalising
 	// wall-clock across failure causes so timing carries no signal. Zero disables.
@@ -268,19 +273,70 @@ func (s *session) AuthMechanisms() []string {
 		out = append(out, sasl.OAuthBearer)
 		out = append(out, sasl.XOAuth2)
 	}
-	if _, ok := s.srv.opts.Auth.(SCRAMSha256LookupAuthenticator); ok {
-		out = append(out, sasl.ScramSha256)
-		if s.tlsExporter() != nil {
-			out = append(out, sasl.ScramSha256Plus)
+	for _, mech := range s.scramMechanisms() {
+		if strings.HasSuffix(mech, "-PLUS") && s.tlsExporter() == nil {
+			continue
 		}
-	}
-	if _, ok := s.srv.opts.Auth.(SCRAMSha1LookupAuthenticator); ok {
-		out = append(out, sasl.ScramSha1)
-		if s.tlsExporter() != nil {
-			out = append(out, sasl.ScramSha1Plus)
-		}
+		out = append(out, mech)
 	}
 	return out
+}
+
+// scramMechanisms names what SCRAM this session can offer: the service's list
+// when a relay is configured, the chain's own until the cut (#1733).
+func (s *session) scramMechanisms() []string {
+	if relay := s.srv.opts.AuthRelay; relay != nil {
+		var out []string
+		for _, mech := range relay.Mechanisms() {
+			if strings.HasPrefix(mech, "SCRAM-") {
+				out = append(out, mech)
+			}
+		}
+		return out
+	}
+	var out []string
+	if _, ok := s.srv.opts.Auth.(SCRAMSha256LookupAuthenticator); ok {
+		out = append(out, sasl.ScramSha256, sasl.ScramSha256Plus)
+	}
+	if _, ok := s.srv.opts.Auth.(SCRAMSha1LookupAuthenticator); ok {
+		out = append(out, sasl.ScramSha1, sasl.ScramSha1Plus)
+	}
+	return out
+}
+
+// scramServer runs the mechanism through the service when a relay is set.
+func (s *session) scramServer(mech string) (sasl.Server, error) {
+	var cb []byte
+	if strings.HasSuffix(mech, "-PLUS") {
+		if cb = s.tlsExporter(); cb == nil {
+			return nil, goSmtp.ErrAuthUnknownMechanism
+		}
+	}
+	if relay := s.srv.opts.AuthRelay; relay != nil {
+		srv := authrelay.NewRelayServer(relay, mech, "smtp", s.remoteIP.String(), s.sid, cb)
+		srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeSCRAMLogin(res.Username) }
+		return srv, nil
+	}
+	switch mech {
+	case sasl.ScramSha256, sasl.ScramSha256Plus:
+		lookup, ok := s.srv.opts.Auth.(SCRAMSha256LookupAuthenticator)
+		if !ok {
+			return nil, goSmtp.ErrAuthUnknownMechanism
+		}
+		if cb != nil {
+			return scram.NewSha256Plus(scramLookupShim{lookup}, cb, s.completeSCRAMLogin), nil
+		}
+		return scram.NewSha256(scramLookupShim{lookup}, s.completeSCRAMLogin), nil
+	default:
+		lookup, ok := s.srv.opts.Auth.(SCRAMSha1LookupAuthenticator)
+		if !ok {
+			return nil, goSmtp.ErrAuthUnknownMechanism
+		}
+		if cb != nil {
+			return scram.NewSha1Plus(scramSha1LookupShim{lookup}, cb, s.completeSCRAMLogin), nil
+		}
+		return scram.NewSha1(scramSha1LookupShim{lookup}, s.completeSCRAMLogin), nil
+	}
 }
 
 // scramLookupShim adapts the submission-side SCRAMSha256LookupAuthenticator to
@@ -353,38 +409,8 @@ func (s *session) Auth(mech string) (sasl.Server, error) {
 			return nil, goSmtp.ErrAuthUnknownMechanism
 		}
 		return oauth2.NewXOAuth2SASLServer(s.authXOAuth2SASL), nil
-	case sasl.ScramSha256:
-		lookup, ok := s.srv.opts.Auth.(SCRAMSha256LookupAuthenticator)
-		if !ok {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		return scram.NewSha256(scramLookupShim{lookup}, s.completeSCRAMLogin), nil
-	case sasl.ScramSha256Plus:
-		lookup, ok := s.srv.opts.Auth.(SCRAMSha256LookupAuthenticator)
-		if !ok {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		cb := s.tlsExporter()
-		if cb == nil {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		return scram.NewSha256Plus(scramLookupShim{lookup}, cb, s.completeSCRAMLogin), nil
-	case sasl.ScramSha1:
-		lookup, ok := s.srv.opts.Auth.(SCRAMSha1LookupAuthenticator)
-		if !ok {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		return scram.NewSha1(scramSha1LookupShim{lookup}, s.completeSCRAMLogin), nil
-	case sasl.ScramSha1Plus:
-		lookup, ok := s.srv.opts.Auth.(SCRAMSha1LookupAuthenticator)
-		if !ok {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		cb := s.tlsExporter()
-		if cb == nil {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		return scram.NewSha1Plus(scramSha1LookupShim{lookup}, cb, s.completeSCRAMLogin), nil
+	case sasl.ScramSha256, sasl.ScramSha256Plus, sasl.ScramSha1, sasl.ScramSha1Plus:
+		return s.scramServer(mech)
 	}
 	return nil, goSmtp.ErrAuthUnknownMechanism
 }
