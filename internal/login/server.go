@@ -951,10 +951,12 @@ func (s *Server) handleConn(conn net.Conn) {
 	// Before the session is registered, announced or counted: a declined one is
 	// not up, and one session carries one result (#1776).
 	if est.bs.refusal != "" {
+		// Counted before the client is told: the reply is what a watcher waits
+		// on, and a counter raised after it cannot be waited on (#1826).
+		s.incResult("backend_declined")
 		io.WriteString(authConn, est.bs.refusal) //nolint:errcheck
 		log.Info("login: backend declined the session", "user", pre.username,
 			"backend", backendAddr, "result", "backend_declined")
-		s.incResult("backend_declined")
 		return
 	}
 
