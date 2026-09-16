@@ -201,9 +201,8 @@ func backendAPIToken() string {
 	return os.Getenv("YARILO_ADMIN_TOKEN")
 }
 
-// Row: the quota numbers agree between IMAP and JMAP. Both read the same count
-// of the same account; the units differ (RFC 9208 counts kibibytes, RFC 9425
-// octets) and are converted at read time, which is a rendering, not a fact.
+// Row: the quota numbers agree between IMAP and JMAP. The units differ (RFC
+// 9208 kibibytes, RFC 9425 octets); converting is a rendering, not a fact.
 func checkConsistencyQuotaJMAP(user string) error {
 	left, err := imapReadQuota(user)
 	if err != nil {

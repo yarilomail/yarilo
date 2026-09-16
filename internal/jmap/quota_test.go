@@ -246,3 +246,42 @@ func TestTheReportedLimitIsTheScaledOne(t *testing.T) {
 		t.Errorf("hardLimit = %v, want the scaled 5 MiB", q["hardLimit"])
 	}
 }
+
+// RFC 9425 §4.3 gives Quota/changes an updatedProperties argument. Null is the
+// value when the server narrows nothing; absent is a response short an argument.
+func TestQuotaChangesCarriesUpdatedProperties(t *testing.T) {
+	s, _ := quotaServer(t, []string{"*:storage=10M"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
+	got := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testUser+`","sinceState":"q-0-0-10485760-0"}`)
+	value, present := got["updatedProperties"]
+	if !present {
+		t.Fatalf("updatedProperties is absent from %v", got)
+	}
+	if value != nil {
+		t.Errorf("updatedProperties = %v, want null", value)
+	}
+}
+
+// The filter of RFC 9425 §4.4 is name, scope, resourceType and type. A filter
+// naming anything else is refused, not answered with an unfiltered list.
+func TestTheQuotaFilterIsTheOneTheRFCDefines(t *testing.T) {
+	s, _ := quotaServer(t, []string{"*:storage=10M:messages=100"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
+
+	one := quotaCall(t, s, "Quota/query", `{"accountId":"`+testUser+`","filter":{"resourceType":"count"}}`)
+	ids, _ := one["ids"].([]any)
+	if len(ids) != 1 || ids[0] != "count" {
+		t.Errorf("filtered ids = %v, want [count]", one["ids"])
+	}
+
+	byType := quotaCall(t, s, "Quota/query", `{"accountId":"`+testUser+`","filter":{"type":"Mail"}}`)
+	if ids, _ := byType["ids"].([]any); len(ids) != 2 {
+		t.Errorf("type=Mail ids = %v, want both roots", byType["ids"])
+	}
+
+	unknown := quotaCall(t, s, "Quota/query", `{"accountId":"`+testUser+`","filter":{"types":["Mail"]}}`)
+	if unknown["__name"] != "error" {
+		t.Fatalf("a filter naming an unknown field answered %v: %v", unknown["__name"], unknown)
+	}
+	if unknown["type"] != "unsupportedFilter" {
+		t.Errorf("type = %v, want unsupportedFilter", unknown["type"])
+	}
+}

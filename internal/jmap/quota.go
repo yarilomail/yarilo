@@ -38,9 +38,8 @@ func (s *Server) quotaRegistry(lazy *lazyStore, accountID string) jmapcore.Regis
 	}
 }
 
-// quotaObjects answers the account's Quota objects and the state they are in.
-// The numbers come from the count IMAP GETQUOTA reads, because a second
-// accounting is a second answer to one question (#1856).
+// quotaObjects answers the account's Quota objects and their state, from the
+// count GETQUOTA reads: a second accounting answers one question twice (#1856).
 func (s *Server) quotaObjects(h *userHandle) ([]jmapcore.Quota, string, error) {
 	limits := s.opts.QuotaPolicy.Scale(quotaRulesOf(h))
 	entries, err := h.box.ListFolders()
@@ -201,7 +200,9 @@ func (s *Server) quotaChanges(_ context.Context, h *userHandle, accountID string
 	if err != nil {
 		return nil, storeFailure("Quota/changes failed", accountID, err)
 	}
-	resp := &jmapcore.ChangesResponse{
+	// updatedProperties stays null: the server does not narrow a change to a
+	// property list, and an empty list would claim nothing changed (§4.3).
+	resp := &jmapcore.QuotaChangesResponse{
 		AccountID: accountID, OldState: req.SinceState, NewState: state,
 		Created: []string{}, Updated: []string{}, Destroyed: []string{},
 	}
@@ -268,19 +269,16 @@ func parseQuotaState(state string) (quota.Usage, quota.Limits, bool) {
 func (s *Server) quotaQuery(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req struct {
 		jmapcore.QueryRequest
-		Filter *struct {
-			Name         *string  `json:"name"`
-			Scope        *string  `json:"scope"`
-			ResourceType *string  `json:"resourceType"`
-			Type         *string  `json:"type"`
-			Types        []string `json:"types"`
-		} `json:"filter"`
-		Sort []jmapcore.Comparator `json:"sort"`
+		Filter *quotaFilter          `json:"filter"`
+		Sort   []jmapcore.Comparator `json:"sort"`
 	}
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
+		return nil, merr
+	}
+	if merr := checkQuotaFilter(args); merr != nil {
 		return nil, merr
 	}
 	all, state, err := s.quotaObjects(h)
@@ -316,6 +314,33 @@ func (s *Server) quotaQuery(_ context.Context, h *userHandle, accountID string, 
 	}, nil
 }
 
+// quotaFilter is the filter of RFC 9425 §4.4, whole: a condition naming
+// anything else is refused, since matching everything looks like it worked.
+type quotaFilter struct {
+	Name         *string `json:"name"`
+	Scope        *string `json:"scope"`
+	ResourceType *string `json:"resourceType"`
+	Type         *string `json:"type"`
+}
+
+func checkQuotaFilter(args json.RawMessage) *jmapcore.MethodError {
+	var probe struct {
+		Filter map[string]json.RawMessage `json:"filter"`
+	}
+	if err := json.Unmarshal(args, &probe); err != nil {
+		return &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
+	}
+	for name := range probe.Filter {
+		switch name {
+		case "name", "scope", "resourceType", "type":
+		default:
+			return &jmapcore.MethodError{Type: jmapcore.ErrUnsupportedFilter,
+				Description: fmt.Sprintf("filter condition %q is not one RFC 9425 defines", name)}
+		}
+	}
+	return nil
+}
+
 func hasType(q jmapcore.Quota, want string) bool {
 	for _, t := range q.Types {
 		if t == want {
@@ -327,7 +352,7 @@ func hasType(q jmapcore.Quota, want string) bool {
 
 // quotaQueryChanges answers rather than refusing, unlike the Mailbox and Email
 // ones: this result set is the account's roots, which the state already names.
-func (s *Server) quotaQueryChanges(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) quotaQueryChanges(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req struct {
 		AccountID       string `json:"accountId"`
 		SinceQueryState string `json:"sinceQueryState"`
@@ -349,7 +374,6 @@ func (s *Server) quotaQueryChanges(ctx context.Context, h *userHandle, accountID
 	if err != nil {
 		return nil, storeFailure("Quota/queryChanges failed", accountID, err)
 	}
-	_ = ctx
 	added := []jmapcore.AddedItem{}
 	removed := quotaIDsGone(all, oldLimits)
 	if removed == nil {

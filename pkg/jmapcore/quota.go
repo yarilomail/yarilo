@@ -1,8 +1,7 @@
 package jmapcore
 
-// CapQuota is the quota capability of RFC 9425. The session-level object is
-// empty; per-account it carries nothing either, so a client reads the Quota
-// objects themselves for limits.
+// CapQuota is the quota capability of RFC 9425. Its object is empty: the limits
+// live in the Quota objects, not in the capability.
 const CapQuota = "urn:ietf:params:jmap:quota"
 
 // Quota is the Quota object of RFC 9425 §1.3. Field order follows the RFC so a
@@ -49,4 +48,17 @@ type QueryChangesResponse struct {
 	NewQueryState string      `json:"newQueryState"`
 	Removed       []string    `json:"removed"`
 	Added         []AddedItem `json:"added"`
+}
+
+// QuotaChangesResponse is Quota/changes (RFC 9425 §4.3): the shared changes
+// arguments plus updatedProperties, which is null when the server names none.
+type QuotaChangesResponse struct {
+	AccountID         string    `json:"accountId"`
+	OldState          string    `json:"oldState"`
+	NewState          string    `json:"newState"`
+	HasMoreChanges    bool      `json:"hasMoreChanges"`
+	Created           []string  `json:"created"`
+	Updated           []string  `json:"updated"`
+	Destroyed         []string  `json:"destroyed"`
+	UpdatedProperties *[]string `json:"updatedProperties"`
 }
