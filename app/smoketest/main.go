@@ -882,9 +882,8 @@ func smtpEHLO(conn net.Conn) (map[string]bool, error) {
 	return caps, nil
 }
 
-// addEHLOCap records a capability line under its own name and under the name
-// plus each parameter: "AUTH PLAIN LOGIN" answers for "AUTH" and "AUTH PLAIN"
-// as RFC 5321 means it, and a whole-line key answered for neither (#1855).
+// addEHLOCap records a line under its name and under name + each parameter:
+// "AUTH PLAIN LOGIN" answers for "AUTH" and "AUTH PLAIN" (#1855).
 func addEHLOCap(caps map[string]bool, line string) {
 	caps[line] = true
 	fields := strings.Fields(line)

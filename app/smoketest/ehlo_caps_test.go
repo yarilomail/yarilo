@@ -2,9 +2,8 @@ package main
 
 import "testing"
 
-// A capability line carries its parameters: the server answers
-// "250-AUTH PLAIN LOGIN", and a check asking for "AUTH PLAIN" must find it.
-// Keyed by the whole line, it found neither and failed a correct server (#1855).
+// A capability line carries its parameters: "250-AUTH PLAIN LOGIN" must answer
+// for "AUTH PLAIN", which a whole-line key never did (#1855).
 func TestEHLOCapabilitiesCarryTheirParameters(t *testing.T) {
 	caps := map[string]bool{}
 	for _, line := range []string{"probe Hello", "AUTH PLAIN LOGIN", "XCLIENT ADDR PORT", "8BITMIME"} {
