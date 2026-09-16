@@ -62,12 +62,8 @@ func (f *fakePOP3) serve() {
 	}
 }
 
-// enter and leave count the sessions on the maildrop, so an overlap is caught
-// here rather than by a server refusing it in production (#1734).
-//
-// A connection that arrives while the previous one is still being reaped is not
-// an overlap: the client closed, and this goroutine has not yet seen the EOF.
-// It waits for the count to fall, and calls it an overlap only if it does not.
+// enter and leave count the sessions on the maildrop (#1734). A connection
+// arriving while the previous one is reaped is not an overlap: it waits.
 func (f *fakePOP3) enter() bool {
 	deadline := time.Now().Add(2 * time.Second)
 	for {

@@ -9,16 +9,11 @@ import (
 	"testing"
 )
 
-// Every binary that authenticates builds its chain here (#1861).
-//
-// yarilo-submission had a loop of its own that handed every entry to the SQL
-// constructor, so a chain carrying static — which every other component
-// accepts — killed it at startup. One config serves the whole release; a
-// second reading of it is a component that refuses what its siblings allow.
-// driverConstructors names every constructor passdbs.Build owns, by package: a
-// list that knows only SQL guards only SQL (#1861). OAuth2 is not here -- it is
-// built apart on purpose, so SQL never sees a bearer token. A new driver
-// belongs in Build and in this list together.
+// Every binary builds its chain here: one config serves the release, and a
+// second reading of it refuses what the siblings allow (#1861).
+
+// driverConstructors names every constructor passdbs.Build owns, by package.
+// OAuth2 is not here: it is built apart so SQL never sees a bearer token.
 var driverConstructors = map[string]string{
 	"github.com/yarilomail/yarilo/internal/auth/sql":        "New",
 	"github.com/yarilomail/yarilo/internal/auth/passwdfile": "New",
@@ -26,11 +21,16 @@ var driverConstructors = map[string]string{
 }
 
 func TestNoBinaryBuildsItsOwnPassdbChain(t *testing.T) {
-	mains, err := filepath.Glob("../../../app/*/main.go")
-	if err != nil || len(mains) == 0 {
+	// Every file of every binary, not only main.go: a chain built in a second
+	// file of the same package walks past a guard that reads one name.
+	sources, err := filepath.Glob("../../../app/*/*.go")
+	if err != nil || len(sources) == 0 {
 		t.Fatalf("no binaries found: %v", err)
 	}
-	for _, path := range mains {
+	for _, path := range sources {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
 		fset := token.NewFileSet()
 		f, perr := parser.ParseFile(fset, path, nil, 0)
 		if perr != nil {
