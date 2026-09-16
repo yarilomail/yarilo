@@ -31,10 +31,13 @@ func watchSyncs(t *testing.T) *syncLog {
 	return l
 }
 
-func (l *syncLog) count(substr string) int {
+// inDir counts the synced files whose directory is exactly dir: a substring
+// match also counts the test's own temp root, which on a Linux runner is
+// itself under /tmp (#1847).
+func (l *syncLog) inDir(dir string) int {
 	n := 0
 	for _, p := range l.files {
-		if strings.Contains(p, substr) {
+		if filepath.Dir(p) == dir {
 			n++
 		}
 	}
@@ -77,16 +80,17 @@ func TestOptimizedSyncsTheBodyBeforeItIsPublished(t *testing.T) {
 	l := watchSyncs(t)
 	saveOne(t, box, 1)
 
-	if got := l.count("/tmp/"); got != 1 {
-		t.Errorf("the body was synced %d times, want 1", got)
+	tmpDir := filepath.Join(box.folderPath("INBOX"), "tmp")
+	if got := l.inDir(tmpDir); got != 1 {
+		t.Errorf("the body was synced %d times, want 1: %v", got, l.files)
 	}
 	if got := len(l.dirs); got != 0 {
 		t.Errorf("optimized synced %d directories, want none: %v", got, l.dirs)
 	}
 	// The order is the property: a sync after the name is a sync after the
 	// client has been told.
-	if len(l.files) == 0 || !strings.Contains(l.files[0], "/tmp/") {
-		t.Errorf("the first sync was %v, want the body in tmp/", l.files)
+	if len(l.files) == 0 || filepath.Dir(l.files[0]) != tmpDir {
+		t.Errorf("the first sync was %v, want the body in %s", l.files, tmpDir)
 	}
 }
 
