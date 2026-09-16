@@ -2,9 +2,8 @@ package config
 
 import "testing"
 
-// A session binary keeps the listener it serves and drops the rest, the
-// TLS-terminating ones included: the certificate lives in the login pod, and a
-// backend that reads it dies on a file it was never given (#1863).
+// A session binary keeps the listener it serves and drops the rest: the
+// certificate lives in the login pod, not here (#1863).
 func TestASessionBinaryKeepsOnlyItsOwnListener(t *testing.T) {
 	on := func() *ServiceConfig { return &ServiceConfig{Enabled: true} }
 	full := func() *Config {

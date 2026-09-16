@@ -15,12 +15,7 @@ const (
 )
 
 // KeepOnlySessionListener leaves the listener this binary serves and drops the
-// rest, the TLS-terminating ones included: the login proxy in front holds the
-// client certificate, and a backend that reads general.ssl dies on a file it
-// was never given (#1863).
-//
-// One function rather than the same seven assignments in five main.go files:
-// the fifth binary did not have them, which is how this was found.
+// rest: the login proxy in front holds the client certificate (#1863).
 func KeepOnlySessionListener(cfg *Config, role SessionRole) {
 	s := &cfg.Services
 	all := []**ServiceConfig{&s.IMAP, &s.IMAPS, &s.POP3, &s.POP3S, &s.LMTP,
@@ -51,9 +46,8 @@ func KeepOnlySessionListener(cfg *Config, role SessionRole) {
 	}
 }
 
-// ListenerTLS builds the server TLS for one listener, or nothing when that
-// listener is not served here: a process behind a login proxy has no
-// certificate to read, and reading one it was never given is fatal (#1863).
+// ListenerTLS builds server TLS for a listener that terminates it, and nothing
+// for one this process does not serve (#1863).
 func ListenerTLS(cfg *Config, svc *ServiceConfig, alpn ...string) (*tls.Config, error) {
 	if !svc.Active() {
 		return nil, nil

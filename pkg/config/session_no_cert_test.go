@@ -2,9 +2,8 @@ package config
 
 import "testing"
 
-// The config every component shares names a certificate the login pods mount
-// and the backends do not. A session binary must not read it: submission did,
-// and died at startup on a deployment its siblings served (#1863).
+// The shared config names a certificate only the login pods mount; a session
+// binary that reads it dies where its siblings run (#1863).
 func TestASessionBinaryAsksForNoCertificateItCannotHave(t *testing.T) {
 	cfg := &Config{}
 	cfg.General.SSL.SSLServerCert = "/etc/yarilo/tls/tls.crt" // mounted in the login pod only
