@@ -125,3 +125,72 @@ func TestTheProxyProbeSenderSharesTheRecipientDomain(t *testing.T) {
 		}
 	}
 }
+
+// fakeProxyReader answers like a PROXY listener that parses: it reads the
+// header, refuses one whose fields are not addresses, then speaks SMTP.
+func fakeProxyReader(t *testing.T) (host, port string, got chan string) {
+	t.Helper()
+	got = make(chan string, 4)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close() //nolint:errcheck
+				r := bufio.NewReader(conn)
+				header, err := r.ReadString('\n')
+				if err != nil {
+					return
+				}
+				got <- strings.TrimRight(header, "\r\n")
+				fields := strings.Fields(header)
+				if len(fields) < 6 || net.ParseIP(fields[2]) == nil || net.ParseIP(fields[3]) == nil {
+					return // the parser hangs up, as Postfix does
+				}
+				fmt.Fprintf(conn, "220 fake-proxy ESMTP\r\n") //nolint:errcheck
+			}()
+		}
+	}()
+	host, port, err = net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split addr: %v", err)
+	}
+	return host, port, got
+}
+
+// The header carries addresses in both fields even when the listener was named
+// by hostname: a parser refuses anything else and the row reddens over nothing.
+func TestTheProxyHeaderCarriesAddressesNotNames(t *testing.T) {
+	host, port, got := fakeProxyReader(t)
+
+	oldMX, oldPort, oldProxyPort := *flagSMTPMXHost, *flagSMTPMXPort, *flagProxyPort
+	t.Cleanup(func() { *flagSMTPMXHost, *flagSMTPMXPort, *flagProxyPort = oldMX, oldPort, oldProxyPort })
+	// A name that resolves to the listener, which is what the job passes.
+	*flagSMTPMXHost, *flagSMTPMXPort, *flagProxyPort = "localhost", port, port
+	_ = host
+
+	_ = checkSMTPProxyProtocol() // the delivery cannot finish against this fake
+
+	select {
+	case header := <-got:
+		fields := strings.Fields(header)
+		if len(fields) < 6 {
+			t.Fatalf("header %q has %d fields, want 6", header, len(fields))
+		}
+		if net.ParseIP(fields[2]) == nil {
+			t.Errorf("source field %q is not an IP (header %q)", fields[2], header)
+		}
+		if net.ParseIP(fields[3]) == nil {
+			t.Errorf("destination field %q is not an IP (header %q)", fields[3], header)
+		}
+	default:
+		t.Fatal("the listener saw no PROXY header")
+	}
+}

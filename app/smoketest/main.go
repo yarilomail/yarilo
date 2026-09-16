@@ -831,21 +831,27 @@ func checkSMTPProxyProtocol() error {
 	if port == "" {
 		port = *flagSMTPMXPort
 	}
-	// A documentation-range address (RFC 5737), so what the server records can
-	// only have come from the header.
-	const claimed = "203.0.113.7"
 	marker := "xproxy-" + uniqueID()
 
+	// tcp4, so the header's family is the connection's: a v6 client reaching a
+	// v4 listener can only guess at the address the server saw.
 	addr := net.JoinHostPort(mxHost(), port)
 	dialer := &net.Dialer{Timeout: *flagTimeout}
-	conn, err := dialer.Dial("tcp", addr)
+	conn, err := dialer.Dial("tcp4", addr)
 	if err != nil {
 		return fmt.Errorf("connect %s: %w", addr, err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
 
-	fmt.Fprintf(conn, "PROXY TCP4 %s %s 12345 %s\r\n", claimed, mxHost(), port)
+	// Both fields are addresses, never names: PROXY v1 carries addresses, and a
+	// header a parser refuses is a red row about nothing.
+	local, lerr := proxyAddrOf(conn.RemoteAddr())
+	if lerr != nil {
+		return fmt.Errorf("PROXY: %w", lerr)
+	}
+	const claimed = "203.0.113.7" // RFC 5737: only the header can put it there
+	fmt.Fprintf(conn, "PROXY TCP4 %s %s 12345 %s\r\n", claimed, local, port)
 	banner, err := readLine(conn)
 	if err != nil {
 		return fmt.Errorf("PROXY: read banner: %w", err)
@@ -867,6 +873,19 @@ func checkSMTPProxyProtocol() error {
 		return fmt.Errorf("PROXY: the delivered message records no %s in Received: %s", claimed, received)
 	}
 	return nil
+}
+
+// proxyAddrOf takes the address side of a dialled peer, which is what the
+// header's destination field is.
+func proxyAddrOf(addr net.Addr) (string, error) {
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return "", fmt.Errorf("the connected address %q is not host:port: %w", addr, err)
+	}
+	if net.ParseIP(host) == nil {
+		return "", fmt.Errorf("the connected address %q is not an IP", host)
+	}
+	return host, nil
 }
 
 // proxyProbeSender is a sender in the recipient's own domain: an MX worth the
