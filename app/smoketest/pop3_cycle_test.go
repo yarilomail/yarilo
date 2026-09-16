@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakePOP3 is a maildrop that answers correctly unless a test bends one answer.
@@ -63,14 +64,30 @@ func (f *fakePOP3) serve() {
 
 // enter and leave count the sessions on the maildrop, so an overlap is caught
 // here rather than by a server refusing it in production (#1734).
+//
+// A connection that arrives while the previous one is still being reaped is not
+// an overlap: the client closed, and this goroutine has not yet seen the EOF.
+// It waits for the count to fall, and calls it an overlap only if it does not.
 func (f *fakePOP3) enter() bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		f.mu.Lock()
+		if f.open == 0 {
+			f.open++
+			f.mu.Unlock()
+			return true
+		}
+		f.mu.Unlock()
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.open > 0 {
-		f.overlapped = true
-		if f.oneAtATime {
-			return false
-		}
+	f.overlapped = true
+	if f.oneAtATime {
+		return false
 	}
 	f.open++
 	return true
