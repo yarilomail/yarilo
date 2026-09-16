@@ -110,3 +110,18 @@ func TestTheMXHostFallsBackToTheSMTPHostThenTheHost(t *testing.T) {
 		t.Errorf("mxHost() = %q, want the -smtp-mx-host value", got)
 	}
 }
+
+// The probe's sender lives in the recipient's domain: an MX refuses a sender
+// whose domain does not resolve, and test.invalid never does.
+func TestTheProxyProbeSenderSharesTheRecipientDomain(t *testing.T) {
+	rows := []struct{ rcpt, want string }{
+		{"u1@d00001.test", "proxy-probe@d00001.test"},
+		{"user@sub.example.org", "proxy-probe@sub.example.org"},
+		{"no-at-sign", "no-at-sign"},
+	}
+	for _, row := range rows {
+		if got := proxyProbeSender(row.rcpt); got != row.want {
+			t.Errorf("proxyProbeSender(%q) = %q, want %q", row.rcpt, got, row.want)
+		}
+	}
+}

@@ -100,6 +100,9 @@ spec:
         - -smtp-mx-host=relay-mx.yarilo-relay
         - -smtp-mx-port=25
         - -xclient
+        - -xclient-port=10024
+        - -proxy-protocol
+        - -proxy-protocol-port=10025
         - -quota-over-user=over@d00001.test
         - -quota-over-pass=Yarilo!test1
         - -acl-user=u1@d00001.test
