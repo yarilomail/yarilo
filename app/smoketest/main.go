@@ -267,7 +267,7 @@ func register() []check {
 	want("telemetry", telemetry, "telemetry /healthz", "needs -telemetry", checkHealth)
 	want("telemetry", telemetry, "telemetry /readyz", "needs -telemetry", checkReady)
 	want("smtp", *flagSMTPMX, "smtp MX EHLO", "needs -smtp-mx", checkSMTPMX)
-	want("smtp", *flagSMTPSub, "smtp submission EHLO+STARTTLS", "needs -smtp-submission", checkSMTPSubmission)
+	want("smtp", *flagSMTPSub, "smtp submission EHLO+STARTTLS", "needs -smtp-sub", checkSMTPSubmission)
 	want("smtp", *flagProxyProtocol, "smtp MX PROXY protocol", "needs -proxy-protocol", checkSMTPProxyProtocol)
 	want("smtp", *flagXClient, "smtp MX XCLIENT cap", "needs -xclient", checkSMTPXClient)
 	want("pop3s", *flagPOP3S, "pop3s CAPA", "needs -pop3s", checkPOP3S)
