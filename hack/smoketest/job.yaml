@@ -96,8 +96,11 @@ spec:
         - -quota-pass=Yarilo!test1
         - -acl-user=u1@d00001.test
         - -acl-pass=Yarilo!test1
-        # The disclosure row stays off: it creates a mailbox under Public/ and
-        # is refused NOPERM 'k' (#1858).
+        # The owner-templated namespace, not Public/: the owner creates in its
+        # own store and the peer reaches it through user/<owner>/ (#1858).
+        - -acl-peer-user=u2@d00001.test
+        - -acl-peer-pass=Yarilo!test1
+        - -acl-shared-prefix=user/u1@d00001.test/
         - -envelope-user=u1@d00001.test
         - -envelope-pass=Yarilo!test1
         - -fts-user=u1@d00001.test
