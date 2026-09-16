@@ -94,6 +94,12 @@ spec:
         - -static-pass=$(YARILO_STATIC_PASSWORD)
         - -quota-user=u1@d00001.test
         - -quota-pass=Yarilo!test1
+        # The MX runs in its own namespace: inbound mail is not this release's
+        # submission host, so it carries its own address (#1855).
+        - -smtp-mx
+        - -smtp-mx-host=relay-mx.yarilo-relay
+        - -smtp-mx-port=25
+        - -xclient
         - -quota-over-user=over@d00001.test
         - -quota-over-pass=Yarilo!test1
         - -acl-user=u1@d00001.test

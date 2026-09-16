@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,7 @@ var (
 	flagIMAPSPort       = flag.String("imap-port", "993", "IMAPS port (used by sieve verify step)")
 	flagPOP3SPort       = flag.String("pop3s-port", "995", "POP3S port")
 	flagSMTPMXPort      = flag.String("smtp-mx-port", "25", "SMTP MX port")
+	flagSMTPMXHost      = flag.String("smtp-mx-host", "", "hostname of the inbound MX (defaults to -smtp-host, then -host)")
 	flagSMTPSubPort     = flag.String("smtp-sub-port", "587", "SMTP submission port")
 	flagLMTPLoginPort   = flag.String("lmtp-login-port", "24", "yarilo-lmtp-login port")
 	flagManageSievePort = flag.String("managesieve-port", "4190", "ManageSieve port")
@@ -202,6 +204,15 @@ func imapHost() string {
 func deliveryHost() string {
 	if *flagDeliveryHost != "" {
 		return *flagDeliveryHost
+	}
+	return smtpHost()
+}
+
+// mxHost is the inbound listener, which is a different host from submission
+// whenever the MX runs outside this release's namespace.
+func mxHost() string {
+	if *flagSMTPMXHost != "" {
+		return *flagSMTPMXHost
 	}
 	return smtpHost()
 }
@@ -723,8 +734,10 @@ func checkLMTPLogin() error {
 
 // ---- SMTP MX (port 25) ---------------------------------------------------
 
+// checkSMTPMX verifies the inbound listener answers EHLO, offers STARTTLS and
+// keeps AUTH off the cleartext session: an MX takes mail, it does not log in.
 func checkSMTPMX() error {
-	conn, err := smtpDial(net.JoinHostPort(*flagHost, *flagSMTPMXPort), false)
+	conn, err := smtpDial(net.JoinHostPort(mxHost(), *flagSMTPMXPort), false)
 	if err != nil {
 		return err
 	}
@@ -734,9 +747,27 @@ func checkSMTPMX() error {
 	if err != nil {
 		return err
 	}
-	_ = caps
+	if !caps["STARTTLS"] {
+		return fmt.Errorf("MX EHLO does not advertise STARTTLS: %v", capNames(caps))
+	}
+	for name := range caps {
+		if strings.HasPrefix(name, "AUTH") {
+			return fmt.Errorf("MX EHLO advertises %q before STARTTLS", name)
+		}
+	}
 	smtpQuit(conn)
 	return nil
+}
+
+// capNames names what was advertised, so a missing capability is read against
+// the list that was there.
+func capNames(caps map[string]bool) []string {
+	names := make([]string, 0, len(caps))
+	for name := range caps {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // checkSMTPSubmission verifies the submission port:
@@ -794,7 +825,7 @@ func checkSMTPSubmission() error {
 // and verifies the server responds with 220.
 // Only run when -proxy-protocol flag is set (requires proxy_protocol: true in config).
 func checkSMTPProxyProtocol() error {
-	addr := net.JoinHostPort(smtpHost(), *flagSMTPMXPort)
+	addr := net.JoinHostPort(mxHost(), *flagSMTPMXPort)
 	dialer := &net.Dialer{Timeout: *flagTimeout}
 	conn, err := dialer.Dial("tcp", addr)
 	if err != nil {
@@ -804,7 +835,7 @@ func checkSMTPProxyProtocol() error {
 	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
 
 	// Send HAProxy PROXY header with a fake source IP.
-	fmt.Fprintf(conn, "PROXY TCP4 203.0.113.1 %s 12345 25\r\n", smtpHost())
+	fmt.Fprintf(conn, "PROXY TCP4 203.0.113.1 %s 12345 25\r\n", mxHost())
 
 	// Expect normal SMTP banner.
 	banner, err := readLine(conn)
@@ -820,7 +851,7 @@ func checkSMTPProxyProtocol() error {
 // checkSMTPXClient connects to MX and verifies EHLO advertises XCLIENT.
 // Only run when -xclient flag is set (requires xclient: true in config).
 func checkSMTPXClient() error {
-	conn, err := smtpDial(net.JoinHostPort(*flagHost, *flagSMTPMXPort), false)
+	conn, err := smtpDial(net.JoinHostPort(mxHost(), *flagSMTPMXPort), false)
 	if err != nil {
 		return err
 	}
