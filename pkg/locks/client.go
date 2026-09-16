@@ -41,10 +41,6 @@ type Client struct {
 	// available again. Cap = poolSize; starts with all-nil conns (lazy connect).
 	idle chan *connSlot
 
-	// noQueue is the server's answer to a waiting LOCK, remembered so the
-	// fallback to polling is paid once per client (#1821).
-	noQueue queueless
-
 	// holdsMu guards the holds map. Separate from the pool so HoldsResource is
 	// safe to call mid-roundtrip.
 	//
@@ -610,9 +606,6 @@ func acquireQueued(ctx context.Context, l Locker, resource, owner string, ttl ti
 	class := resourceClass(resource)
 	started := time.Now()
 	lock, err := w.LockWaiting(ctx, resource, owner, ttl, limit, shared)
-	if errors.Is(err, errNoQueue) {
-		return Lock{}, nil, false
-	}
 	clientAcquireAttempts.WithLabelValues(class).Observe(1)
 	clientAcquireWait.WithLabelValues(class).Observe(time.Since(started).Seconds())
 	if errors.Is(err, ErrBusy) {

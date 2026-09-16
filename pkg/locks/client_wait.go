@@ -2,27 +2,14 @@ package locks
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
-	"sync/atomic"
 	"time"
 )
-
-// errNoQueue is the server saying it does not queue; the caller polls instead.
-var errNoQueue = errors.New("locks/client: server does not queue waiters")
-
-// queueless remembers that answer per client, so the fallback is paid once and
-// not on every acquisition against an older server.
-type queueless struct{ known atomic.Bool }
 
 // LockWaiting is answered when the lock is ours. On a connection of its own: a
 // held-open request in the pool would starve the UNLOCK that ends its wait.
 func (c *Client) LockWaiting(ctx context.Context, resource, owner string, ttl, limit time.Duration, shared bool) (Lock, error) {
-	if c.noQueue.known.Load() {
-		return Lock{}, errNoQueue
-	}
 	owner = CheckOwner(owner)
 	ttlStr, err := formatTTL(ttl)
 	if err != nil {
@@ -63,8 +50,9 @@ func (c *Client) LockWaiting(ctx context.Context, resource, owner string, ttl, l
 		return Lock{Resource: resource, Owner: current, Site: site}, ErrBusy
 	case respError:
 		if len(resp) > 1 && resp[1] == "unknown_command" {
-			c.fallBackToPolling(addr)
-			return Lock{}, errNoQueue
+			// Loudly, not by polling: server and client ship in one image, so a
+			// server that cannot queue is a rollout that did not finish (#1823).
+			return Lock{}, fmt.Errorf("locks/client: server %s does not queue waiters: %w", addr, ErrProtocol)
 		}
 		return Lock{}, fmt.Errorf("locks/client: server error: %s", strings.Join(resp[1:], " "))
 	}
@@ -76,15 +64,6 @@ func holdKind(shared bool) HoldMode {
 		return HoldShared
 	}
 	return HoldExclusive
-}
-
-// fallBackToPolling records a server too old to queue. Transitional: server and
-// client ship in one image, so this can only be a peer left from a rollout (#1823).
-func (c *Client) fallBackToPolling(addr string) {
-	c.noQueue.known.Store(true)
-	clientQueueUnsupported.Inc()
-	slog.Warn("locks/client: this server does not queue waiters, falling back to polling for the life of this client",
-		"server", addr, "issue", "#1823")
 }
 
 // soloExchange runs one command on a connection opened for it and closed after,
