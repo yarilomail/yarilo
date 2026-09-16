@@ -36,14 +36,9 @@ func main() {
 		"telemetry", cfg.Telemetry.Listen,
 	)
 
-	// POP3 session binary — TLS is terminated at yarilo-pop3-login.
-	// Disable TLS-requiring and unrelated service listeners.
-	cfg.Services.IMAPS = nil
-	cfg.Services.IMAP = nil
-	cfg.Services.POP3S = nil
-	cfg.Services.LMTP = nil
-	cfg.Services.Submission = nil
-	cfg.Services.Submissions = nil
+	// One listener per session binary; the login proxy holds the client
+	// certificate this process must not read (#1863).
+	config.KeepOnlySessionListener(cfg, config.RolePOP3)
 
 	srv, err := backend.New(cfg)
 	if err != nil {
