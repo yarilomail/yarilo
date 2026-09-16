@@ -757,9 +757,8 @@ func checkSMTPSubmission() error {
 	if !caps["STARTTLS"] {
 		return fmt.Errorf("submission port did not advertise STARTTLS")
 	}
-	if !caps["AUTH PLAIN"] {
-		return fmt.Errorf("submission port did not advertise AUTH PLAIN")
-	}
+	// AUTH before STARTTLS is lawful only with cleartext auth allowed, which
+	// this check cannot see; the upgrade below settles it (#1855).
 
 	// Perform STARTTLS upgrade.
 	fmt.Fprintf(conn, "STARTTLS\r\n")
