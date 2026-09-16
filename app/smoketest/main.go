@@ -870,20 +870,31 @@ func smtpEHLO(conn net.Conn) (map[string]bool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("EHLO read: %w", err)
 		}
-		// strip "250-" or "250 " prefix
-		cap := ""
-		if strings.HasPrefix(line, "250-") {
-			cap = line[4:]
-		} else if strings.HasPrefix(line, "250 ") {
-			cap = line[4:]
-			caps[cap] = true
-			break
-		} else {
+		last := strings.HasPrefix(line, "250 ")
+		if !last && !strings.HasPrefix(line, "250-") {
 			return nil, fmt.Errorf("EHLO unexpected: %q", line)
 		}
-		caps[cap] = true
+		addEHLOCap(caps, line[4:])
+		if last {
+			break
+		}
 	}
 	return caps, nil
+}
+
+// addEHLOCap records a line under its name and under name + each parameter:
+// "AUTH PLAIN LOGIN" answers for "AUTH" and "AUTH PLAIN" (#1855).
+func addEHLOCap(caps map[string]bool, line string) {
+	caps[line] = true
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return
+	}
+	name := strings.ToUpper(fields[0])
+	caps[name] = true
+	for _, param := range fields[1:] {
+		caps[name+" "+strings.ToUpper(param)] = true
+	}
 }
 
 func smtpQuit(conn net.Conn) {
