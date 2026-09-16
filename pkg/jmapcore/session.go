@@ -88,9 +88,12 @@ var CollationAlgorithms = []string{"i;ascii-numeric", "i;ascii-casemap", "i;octe
 func BuildSession(lim Limits, username string) *Session {
 	base := strings.TrimRight(lim.BaseURL, "/")
 	account := Account{
-		Name:                username,
-		IsPersonal:          true,
-		AccountCapabilities: map[string]any{CapMail: MailCapabilityFor()},
+		Name:       username,
+		IsPersonal: true,
+		AccountCapabilities: map[string]any{
+			CapMail:  MailCapabilityFor(),
+			CapQuota: map[string]any{},
+		},
 	}
 	return &Session{
 		Capabilities: map[string]any{
@@ -98,9 +101,12 @@ func BuildSession(lim Limits, username string) *Session {
 			// Mail is advertised at the session level with an empty object;
 			// the per-account limits live in accountCapabilities.
 			CapMail: map[string]any{},
+			// RFC 9425 defines no properties for it; the limits live in the
+			// Quota objects, not in the capability.
+			CapQuota: map[string]any{},
 		},
 		Accounts:        map[string]Account{username: account},
-		PrimaryAccounts: map[string]string{CapMail: username},
+		PrimaryAccounts: map[string]string{CapMail: username, CapQuota: username},
 		Username:        username,
 		APIURL:          base + "/jmap/api/",
 		DownloadURL:     base + "/jmap/download/{accountId}/{blobId}/{name}?accept={type}",

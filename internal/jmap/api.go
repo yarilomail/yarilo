@@ -15,7 +15,7 @@ const apiPath = "/jmap/api/"
 // "using" is checked against, and it is passed to jmapcore rather than read
 // there.
 func declaredCapabilities() []string {
-	return []string{jmapcore.CapCore, jmapcore.CapMail}
+	return []string{jmapcore.CapCore, jmapcore.CapMail, jmapcore.CapQuota}
 }
 
 // registry is the method set for one request. It is built per request because
@@ -25,6 +25,9 @@ func (s *Server) registry(lazy *lazyStore, accountID string) jmapcore.Registry {
 	reg := jmapcore.CoreRegistry()
 	if lazy.storage != nil {
 		for name, entry := range s.mailboxRegistry(lazy, accountID) {
+			reg[name] = entry
+		}
+		for name, entry := range s.quotaRegistry(lazy, accountID) {
 			reg[name] = entry
 		}
 	}

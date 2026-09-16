@@ -717,8 +717,8 @@ type InternalTLSConfig struct {
 // (protocol.imap.imap_quota), which only exposes GETQUOTA.
 type QuotaConfig struct {
 	Enabled bool `koanf:"enabled"`
-	// Name is the quota-root name surfaced in IMAP GETQUOTA / GETQUOTAROOT.
-	// Empty falls back to "User quota".
+	// Name is the quota-root name surfaced to clients: IMAP GETQUOTA and the
+	// JMAP Quota objects. Empty falls back to "User quota".
 	Name string `koanf:"quota_name"`
 	// ExceededMessage is the text returned when a save is rejected for being
 	// over quota (IMAP OVERQUOTA, LMTP 452, quota-status). Empty uses a default.
