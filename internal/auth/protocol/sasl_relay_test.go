@@ -427,3 +427,84 @@ func TestAScramAuthzidDoesNotImpersonate(t *testing.T) {
 		t.Errorf("reply %q names neither the authenticating user nor a refusal", line)
 	}
 }
+
+// A conversation nobody finishes must not be kept: the relay's connection is
+// one per mail process, so what is held on it is held for that process's life.
+func TestAnAbandonedExchangeIsDropped(t *testing.T) {
+	live := newExchanges()
+	clock := time.Now()
+	live.now = func() time.Time { return clock }
+
+	// Put and walk away: nothing touches it again, which is the case the
+	// deadline exists for. Taking it first would reset that deadline.
+	live.put("1", &saslExchange{mech: MechScramSha256})
+	clock = clock.Add(SASLExchangeTTL + time.Second)
+
+	if _, ok := live.take("1"); ok {
+		t.Error("an abandoned exchange survived its deadline")
+	}
+	if n := len(live.m); n != 0 {
+		t.Errorf("%d exchanges left in the map, want none", n)
+	}
+}
+
+// A conversation that is still fresh is still there: the deadline must not eat
+// the ones being stepped through.
+func TestAFreshExchangeIsKept(t *testing.T) {
+	live := newExchanges()
+	clock := time.Now()
+	live.now = func() time.Time { return clock }
+
+	live.put("1", &saslExchange{mech: MechScramSha256})
+	clock = clock.Add(SASLExchangeTTL / 2)
+	if _, ok := live.take("1"); !ok {
+		t.Error("a conversation inside its deadline was dropped")
+	}
+}
+
+// Stepping through a conversation keeps it alive: the deadline is aimed at a
+// client that walked away, not at one that is slow.
+func TestSteppingExtendsTheDeadline(t *testing.T) {
+	live := newExchanges()
+	clock := time.Now()
+	live.now = func() time.Time { return clock }
+
+	live.put("1", &saslExchange{mech: MechScramSha256})
+	for i := 0; i < 5; i++ {
+		clock = clock.Add(SASLExchangeTTL - time.Second)
+		if _, ok := live.take("1"); !ok {
+			t.Fatalf("a conversation still being stepped was dropped at round %d", i)
+		}
+	}
+}
+
+// A late CONT for a dropped conversation is told so by name, rather than being
+// answered as if the exchange were still open.
+func TestALateContinuationSaysThereIsNoExchange(t *testing.T) {
+	srv := NewServer(scramChain(t, "alice", "hunter2"))
+	r := newRelaySession(t, srv)
+	line := r.cont([]byte("c=biws,r=nonce,p=proof"))
+	if !strings.HasPrefix(line, "FAIL\t") {
+		t.Fatalf("answered %q, want FAIL", line)
+	}
+	if !strings.Contains(line, "no-such-exchange") {
+		t.Errorf("reply %q does not say the exchange is gone", line)
+	}
+}
+
+// CANCEL frees the id at once, so an aborted AUTHENTICATE does not wait out
+// the deadline.
+func TestCancelFreesTheExchange(t *testing.T) {
+	srv := NewServer(scramChain(t, "alice", "hunter2"))
+	d := newScramClientDriver(MechScramSha256, "alice", "hunter2", nil)
+	r := newRelaySession(t, srv)
+	if line := r.begin(MechScramSha256, d.clientFirst(), nil); !strings.HasPrefix(line, "CONT\t") {
+		t.Fatalf("the exchange did not start: %q", line)
+	}
+	fmt.Fprintf(r.conn, "CANCEL\t%s\n", r.id)
+
+	line := r.cont([]byte("c=biws,r=nonce,p=proof"))
+	if !strings.Contains(line, "no-such-exchange") {
+		t.Errorf("after CANCEL the exchange answered %q, want no-such-exchange", line)
+	}
+}

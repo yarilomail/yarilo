@@ -187,10 +187,13 @@ type session struct {
 	srv      *Server
 	conn     *goSmtp.Conn
 	remoteIP net.IP
-	username string // set from preamble for pre-authenticated sessions
-	sid      string // cross-service correlation ID from login-proxy
-	from     string
-	rcpts    []string
+	// liveRelay is a relayed SASL exchange this session started; cancelled on
+	// teardown so an aborted AUTH frees the service's half at once.
+	liveRelay *authrelay.RelayServer
+	username  string // set from preamble for pre-authenticated sessions
+	sid       string // cross-service correlation ID from login-proxy
+	from      string
+	rcpts     []string
 }
 
 func (s *session) Reset() {
@@ -201,6 +204,7 @@ func (s *session) Reset() {
 
 func (s *session) Logout() error {
 	slog.Debug("submission: command", "sid", s.sid, "cmd", "QUIT")
+	s.cancelRelay()
 	return nil
 }
 
@@ -282,6 +286,16 @@ func (s *session) AuthMechanisms() []string {
 	return out
 }
 
+// cancelRelay abandons a relayed exchange this session started and did not
+// finish. Idempotent, so the teardown path may always call it.
+func (s *session) cancelRelay() {
+	if s.liveRelay == nil {
+		return
+	}
+	s.liveRelay.Cancel()
+	s.liveRelay = nil
+}
+
 // scramMechanisms names what SCRAM this session can offer: the service's list
 // when a relay is configured, the chain's own until the cut (#1733).
 func (s *session) scramMechanisms() []string {
@@ -313,8 +327,12 @@ func (s *session) scramServer(mech string) (sasl.Server, error) {
 		}
 	}
 	if relay := s.srv.opts.AuthRelay; relay != nil {
+		// Held so an AUTH the client aborts frees the service's half at once,
+		// rather than waiting out its deadline there (#1733).
+		s.cancelRelay()
 		srv := authrelay.NewRelayServer(relay, mech, "smtp", s.remoteIP.String(), s.sid, cb)
 		srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeSCRAMLogin(res.Username) }
+		s.liveRelay = srv
 		return srv, nil
 	}
 	switch mech {

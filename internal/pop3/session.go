@@ -333,6 +333,11 @@ func (s *session) handleSASLScram(parts []string, plus bool, b scramBuilder) {
 		saslSrv = b.nonPlus(onSuccess)
 	}
 
+	// An exchange the client abandons frees the service's half at once, rather
+	// than waiting out its deadline there (#1733).
+	if relayed, ok := saslSrv.(*authrelay.RelayServer); ok {
+		defer relayed.Cancel()
+	}
 	if err := s.driveSASL(parts, saslSrv); err != nil {
 		if d := s.srv.opts.FailureDelay; d > 0 {
 			time.Sleep(d)

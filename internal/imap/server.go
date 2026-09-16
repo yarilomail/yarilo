@@ -504,6 +504,9 @@ type session struct {
 	imapConn *imapserver.Conn
 	userInfo *mailbox.UserInfo
 	sid      string // cross-service correlation ID from login-proxy
+	// liveRelay is a relayed SASL exchange this session started; cancelled on
+	// teardown so an aborted AUTHENTICATE frees the service's half at once.
+	liveRelay *authrelay.RelayServer
 	// box / idx / subs alias the personal namespace handle
 	// (s.primary.box / .idx / .subs). Cross-namespace ops route through
 	// s.dispatch() and use the resulting handle instead.
@@ -790,6 +793,7 @@ func (s *session) emitMailboxList(eventType locks.EventType, payload string) {
 }
 
 func (s *session) Close() error {
+	s.cancelRelay()
 	s.cloneFlushFinal()
 	s.stopNotifyWatch()
 	if s.srv.opts.ConnLimit != nil && s.userInfo != nil {
@@ -937,6 +941,16 @@ func (s *session) Authenticate(mech string) (sasl.Server, error) {
 // completeSCRAMLogin is the OnSuccess hook for SCRAM adapters; the SASL
 // server has already verified the user, this runs the regular post-auth
 // setup.
+// cancelRelay abandons a relayed exchange this session started and did not
+// finish. Idempotent, so the teardown path may always call it.
+func (s *session) cancelRelay() {
+	if s.liveRelay == nil {
+		return
+	}
+	s.liveRelay.Cancel()
+	s.liveRelay = nil
+}
+
 // verifyBearer validates a bearer token. Through the service when a relay is
 // configured: a token checked in two places is two places to keep in step.
 func (s *session) verifyBearer(username, token string) (*protocol.AuthResponse, error) {
@@ -962,8 +976,12 @@ func (s *session) scramServer(mech string) (sasl.Server, error) {
 		}
 	}
 	if relay := s.srv.opts.AuthRelay; relay != nil {
+		// Held so an AUTHENTICATE the client aborts frees the service's half at
+		// once, rather than waiting out its deadline there (#1733).
+		s.cancelRelay()
 		srv := authrelay.NewRelayServer(relay, mech, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID(), cb)
 		srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeSCRAMLogin(res.Username) }
+		s.liveRelay = srv
 		return srv, nil
 	}
 	switch mech {

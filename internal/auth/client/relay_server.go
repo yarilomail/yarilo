@@ -12,7 +12,8 @@ type RelayServer struct {
 	session  string
 	cbind    []byte
 
-	x *SASLExchange
+	x    *SASLExchange
+	done bool
 	// Result is the service's verdict once the exchange finishes.
 	Result *AuthResult
 	// OnSuccess runs after a clean finish; a non-nil return fails the login.
@@ -34,11 +35,13 @@ func (r *RelayServer) Next(response []byte) (challenge []byte, done bool, err er
 		step, err = r.x.Next(response)
 	}
 	if err != nil {
+		r.done = true
 		return nil, true, err
 	}
 	if !step.Done {
 		return step.Challenge, false, nil
 	}
+	r.done = true
 	r.Result = step.Result
 	if step.Result == nil {
 		return nil, true, fmt.Errorf("auth/relay: the service returned no verdict")
@@ -51,4 +54,14 @@ func (r *RelayServer) Next(response []byte) (challenge []byte, done bool, err er
 	// The server-final message travels with the verdict, so a client that
 	// verifies the server signature still gets it.
 	return step.Final, true, nil
+}
+
+// Cancel frees a conversation the mail client abandoned, so the service does
+// not hold its half until the deadline. Safe to call on a finished exchange.
+func (r *RelayServer) Cancel() {
+	if r.x == nil || r.done {
+		return
+	}
+	r.done = true
+	r.x.Cancel()
 }

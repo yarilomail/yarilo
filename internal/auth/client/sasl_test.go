@@ -12,9 +12,9 @@ import (
 
 // countingAuthServer answers a relayed SCRAM exchange and counts what it was
 // asked: connections, handshakes and commands, each on its own.
-func countingAuthServer(t *testing.T, mechs []string) (addr string, conns, handshakes, auths *atomic.Int64) {
+func countingAuthServer(t *testing.T, mechs []string) (addr string, conns, handshakes, auths, cancels *atomic.Int64) {
 	t.Helper()
-	conns, handshakes, auths = &atomic.Int64{}, &atomic.Int64{}, &atomic.Int64{}
+	conns, handshakes, auths, cancels = &atomic.Int64{}, &atomic.Int64{}, &atomic.Int64{}, &atomic.Int64{}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -51,19 +51,22 @@ func countingAuthServer(t *testing.T, mechs []string) (addr string, conns, hands
 					case "CONT":
 						fmt.Fprintf(c, "OK\t%s\tuser=alice\tresp=%s\n", fields[1],
 							base64.StdEncoding.EncodeToString([]byte("v=signature"))) //nolint:errcheck
+					case "CANCEL":
+						cancels.Add(1)
+						fmt.Fprintf(c, "OK\t%s\n", fields[1]) //nolint:errcheck
 					}
 				}
 			}()
 		}
 	}()
-	return ln.Addr().String(), conns, handshakes, auths
+	return ln.Addr().String(), conns, handshakes, auths, cancels
 }
 
 // The list a session advertises comes from the handshake and is read once, for
 // the life of the connection: re-reading it per login would double the traffic
 // the service carries under a login storm (#1733).
 func TestTheMechanismListIsReadOncePerConnection(t *testing.T) {
-	addr, conns, handshakes, auths := countingAuthServer(t, []string{"PLAIN", "LOGIN", "SCRAM-SHA-256"})
+	addr, conns, handshakes, auths, _ := countingAuthServer(t, []string{"PLAIN", "LOGIN", "SCRAM-SHA-256"})
 	c, err := Dial(addr, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -102,5 +105,27 @@ func TestTheMechanismListIsReadOncePerConnection(t *testing.T) {
 	}
 	if got, want := auths.Load(), int64(logins); got != want {
 		t.Errorf("%d logins cost %d AUTH commands, want %d", logins, got, want)
+	}
+}
+
+// An abandoned exchange is cancelled by the session, so the service frees the
+// id at once instead of holding it until the deadline (#1733).
+func TestAnAbandonedRelayIsCancelled(t *testing.T) {
+	addr, _, _, _, cancels := countingAuthServer(t, []string{"SCRAM-SHA-256"})
+	c, err := Dial(addr, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close() //nolint:errcheck
+
+	srv := NewRelayServer(c, "SCRAM-SHA-256", "imap", "", "s1", nil)
+	if _, _, nerr := srv.Next([]byte("n,,n=alice,r=nonce")); nerr != nil {
+		t.Fatalf("first step: %v", nerr)
+	}
+	srv.Cancel()
+	srv.Cancel() // idempotent: a teardown path may always call it
+
+	if n := cancels.Load(); n != 1 {
+		t.Errorf("the service saw %d CANCEL commands, want exactly one", n)
 	}
 }

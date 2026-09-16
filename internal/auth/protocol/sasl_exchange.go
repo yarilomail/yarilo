@@ -27,6 +27,8 @@ const (
 // keyed by the request id the session chose.
 type saslExchange struct {
 	mech string
+	// deadline is when this conversation is dropped unfinished.
+	deadline time.Time
 	// server runs the mechanism; username is filled by the lookup closure, the
 	// only place the name appears before the exchange finishes.
 	server   sasl.Server
@@ -36,25 +38,54 @@ type saslExchange struct {
 	session  string
 }
 
+// SASLExchangeTTL bounds how long an unfinished conversation is kept. A client
+// that walks away must not leave the service holding its half: the relay's
+// connection is one per mail process, so state kept on it is kept for the
+// life of that process (#1733).
+const SASLExchangeTTL = 30 * time.Second
+
 // exchanges holds the in-flight conversations of one connection. A conversation
 // spans several commands, so it cannot live in a handler's stack.
 type exchanges struct {
-	mu sync.Mutex
-	m  map[string]*saslExchange
+	mu  sync.Mutex
+	m   map[string]*saslExchange
+	ttl time.Duration
+	now func() time.Time
 }
 
-func newExchanges() *exchanges { return &exchanges{m: map[string]*saslExchange{}} }
+func newExchanges() *exchanges {
+	return &exchanges{m: map[string]*saslExchange{}, ttl: SASLExchangeTTL, now: time.Now}
+}
 
 func (e *exchanges) put(id string, x *saslExchange) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	x.deadline = e.now().Add(e.ttl)
+	e.expireLocked()
 	e.m[id] = x
 }
 
+// expireLocked drops conversations past their deadline. Done on every touch
+// rather than by a sweeper: the map is small and the cost is bounded by it.
+func (e *exchanges) expireLocked() {
+	now := e.now()
+	for id, x := range e.m {
+		if now.After(x.deadline) {
+			delete(e.m, id)
+		}
+	}
+}
+
+// take returns a live conversation and extends it: a client still stepping
+// through one is not the client this deadline is aimed at.
 func (e *exchanges) take(id string) (*saslExchange, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.expireLocked()
 	x, ok := e.m[id]
+	if ok {
+		x.deadline = e.now().Add(e.ttl)
+	}
 	return x, ok
 }
 
