@@ -9,7 +9,6 @@
 package mailboxbuild
 
 import (
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -27,24 +26,17 @@ import (
 // ByDriver constructs a MailboxBackend for the named driver from sc, applying
 // every configured tunable. Unknown/empty drivers default to maildir so an
 // operator typo does not crash startup.
-// fsyncMode reads the configured durability; an unknown name falls back to the
-// default rather than refusing to serve.
+// fsyncMode reads the configured durability. Config refuses an unknown name at
+// load, so this cannot be reached with one (#1847).
 func fsyncMode(sc config.StorageConfig) mailbox.FsyncMode {
-	m, err := mailbox.ParseFsyncMode(sc.MailFsync)
-	if err != nil {
-		slog.Warn("storage: unknown mail_fsync, using optimized", "value", sc.MailFsync)
-		return mailbox.FsyncOptimized
-	}
+	m, _ := mailbox.ParseFsyncMode(sc.MailFsync)
 	return m
 }
 
-// lockMethod reads the configured transport; an unknown name falls back to the
-// default rather than failing every write on it.
+// lockMethod reads the configured transport. Config refuses an unknown name at
+// load, so this cannot be reached with one.
 func lockMethod(sc config.StorageConfig) filelock.Method {
-	m, err := filelock.Parse(sc.LockMethod)
-	if err != nil {
-		return filelock.MethodFlock
-	}
+	m, _ := filelock.Parse(sc.LockMethod)
 	return m
 }
 

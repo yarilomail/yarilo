@@ -1177,23 +1177,17 @@ func BuildMailbox(cfg config.StorageConfig, locker locks.Locker) mailbox.Mailbox
 	return buildMailbox(cfg, locker)
 }
 
-// indexLockMethod reads the configured transport; an unknown name falls back to
-// the default rather than failing every write on it.
+// indexLockMethod reads the configured transport. Config refuses an unknown
+// name at load, so this cannot be reached with one.
 func indexLockMethod(cfg config.StorageConfig) filelock.Method {
-	m, err := filelock.Parse(cfg.LockMethod)
-	if err != nil {
-		return filelock.MethodFlock
-	}
+	m, _ := filelock.Parse(cfg.LockMethod)
 	return m
 }
 
-// indexFsync reads the configured durability for index writes; an unknown name
-// falls back to the default rather than refusing to serve.
+// indexFsync reads the configured durability for index writes. Config refuses
+// an unknown name at load, so this cannot be reached with one (#1847).
 func indexFsync(cfg config.StorageConfig) mailbox.FsyncMode {
-	m, err := mailbox.ParseFsyncMode(cfg.MailFsync)
-	if err != nil {
-		return mailbox.FsyncOptimized
-	}
+	m, _ := mailbox.ParseFsyncMode(cfg.MailFsync)
 	return m
 }
 

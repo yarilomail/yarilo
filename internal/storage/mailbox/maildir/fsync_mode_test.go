@@ -32,8 +32,7 @@ func watchSyncs(t *testing.T) *syncLog {
 }
 
 // inDir counts the synced files whose directory is exactly dir: a substring
-// match also counts the test's own temp root, which on a Linux runner is
-// itself under /tmp (#1847).
+// match also counts the runner's own temp root, which lives under /tmp (#1847).
 func (l *syncLog) inDir(dir string) int {
 	n := 0
 	for _, p := range l.files {

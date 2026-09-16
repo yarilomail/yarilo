@@ -14,6 +14,7 @@ import (
 	"github.com/knadh/koanf/v2"
 
 	"github.com/yarilomail/yarilo/pkg/build"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
@@ -2873,6 +2874,14 @@ func (cfg *Config) validate() error {
 		return err
 	}
 	cfg.FTS.DetectionSampleBytes = int(dsb)
+	// A typo in a durability or an exclusion setting must refuse the start, not
+	// be replaced by a default nobody asked for (#1847).
+	if _, err := mailbox.ParseFsyncMode(cfg.Storage.MailFsync); err != nil {
+		return fmt.Errorf("config: storage.mail_fsync: %w", err)
+	}
+	if _, err := filelock.Parse(cfg.Storage.LockMethod); err != nil {
+		return fmt.Errorf("config: storage.storage_lock_method: %w", err)
+	}
 	return nil
 }
 

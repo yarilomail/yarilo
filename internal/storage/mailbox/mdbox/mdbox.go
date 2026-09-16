@@ -614,6 +614,9 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 		return "", 0, noGUID, fmt.Errorf("mdbox/save: stat handle: %w", err)
 	}
 	offset := uint32(st.Size())
+	// A file this save created is a directory entry a crash can lose, and the
+	// map would then name a file that is not there (#1847).
+	createdFile := offset == 0
 	mailboxmetrics.ObserveSavePart(driverName, "open", time.Since(tOpen))
 
 	// The file decides the header size, not this binary: a 30-byte header in
@@ -655,9 +658,15 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 	// Before the map names it, and so before the delivery is answered: the map
 	// entry would otherwise point at bytes a crash never wrote (#1847).
 	if u.b.fsync.SyncsBody() {
-		if serr := f.Sync(); serr != nil {
+		if serr := syncFile(f); serr != nil {
 			f.Close() //nolint:errcheck
 			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync m.%d: %w", fileID, serr)
+		}
+	}
+	if createdFile && u.b.fsync.SyncsDir() {
+		if serr := syncDir(u.storagePath()); serr != nil {
+			f.Close() //nolint:errcheck
+			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync storage dir: %w", serr)
 		}
 	}
 	// Close is its own part: on a networked filesystem this is where the
@@ -671,6 +680,9 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 	}
 
 	tMap := time.Now()
+	if afterMapAppend != nil {
+		afterMapAppend()
+	}
 	mapUID, err := m.AppendRecord(fileID, offset, recLen, guid)
 	mailboxmetrics.ObserveSavePart(driverName, "map", time.Since(tMap))
 	if err != nil {
@@ -1239,3 +1251,25 @@ func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
 func (u *userMailbox) RemoveHeld(folder, filename string) error {
 	return u.Remove(folder, filename)
 }
+
+// afterMapAppend marks where the map takes the record, for the row that
+// asserts the sync came first.
+var afterMapAppend func()
+
+// syncFile and syncDir are the durability calls. Test seams: a row counts the
+// call, and the order it came in.
+var (
+	syncFile = (*os.File).Sync
+	syncDir  = func(dir string) error {
+		d, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		serr := d.Sync()
+		cerr := d.Close()
+		if serr != nil {
+			return serr
+		}
+		return cerr
+	}
+)
