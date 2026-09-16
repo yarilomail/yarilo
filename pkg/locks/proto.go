@@ -58,8 +58,8 @@ const (
 	cmdEmit       = "EMIT"
 	cmdSubscribe  = "SUBSCRIBE"
 	cmdCounterInc = "COUNTER-INC"
-	// An older server answers ERROR unknown_command, which the client reads as
-	// "this one does not queue" and falls back to polling (#1821).
+	// A server answering ERROR unknown_command here is one a rollout left
+	// behind: the client fails rather than polls (#1823).
 	cmdLockWait       = "LOCK-WAIT"
 	cmdLockSharedWait = "LOCK-SHARED-WAIT"
 )
