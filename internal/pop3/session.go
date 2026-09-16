@@ -22,6 +22,7 @@ import (
 
 	"github.com/emersion/go-sasl"
 
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/auth/scram"
@@ -240,31 +241,63 @@ func (s *session) cmdSASLAuth(arg string) {
 // scramBuilder wires one digest family (SHA-1 or SHA-256) for handleSASLScram.
 type scramBuilder struct {
 	supported bool
-	nonPlus   func(onSuccess func(string) error) *scram.Session
-	plus      func(cb []byte, onSuccess func(string) error) *scram.Session
+	nonPlus   func(onSuccess func(string) error) sasl.Server
+	plus      func(cb []byte, onSuccess func(string) error) sasl.Server
 }
 
 func (s *session) scramSha256Builder() scramBuilder {
+	if b, ok := s.relayBuilder(sasl.ScramSha256, sasl.ScramSha256Plus); ok {
+		return b
+	}
 	lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup)
 	if !ok {
 		return scramBuilder{}
 	}
 	return scramBuilder{
 		supported: true,
-		nonPlus:   func(f func(string) error) *scram.Session { return scram.NewSha256(lookup, f) },
-		plus:      func(cb []byte, f func(string) error) *scram.Session { return scram.NewSha256Plus(lookup, cb, f) },
+		nonPlus:   func(f func(string) error) sasl.Server { return scram.NewSha256(lookup, f) },
+		plus:      func(cb []byte, f func(string) error) sasl.Server { return scram.NewSha256Plus(lookup, cb, f) },
 	}
 }
 
+// relayBuilder runs the mechanism in the auth service when a relay is
+// configured, and says so: the session then holds no verifier at all (#1733).
+func (s *session) relayBuilder(mech, plusMech string) (scramBuilder, bool) {
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return scramBuilder{}, false
+	}
+	announced := map[string]bool{}
+	for _, m := range relay.Mechanisms() {
+		announced[m] = true
+	}
+	if !announced[mech] {
+		return scramBuilder{}, false
+	}
+	build := func(m string, cb []byte, f func(string) error) sasl.Server {
+		srv := authrelay.NewRelayServer(relay, m, "pop3", s.remoteIP.String(), s.sid, cb)
+		srv.OnSuccess = func(res *authrelay.AuthResult) error { return f(res.Username) }
+		return srv
+	}
+	return scramBuilder{
+		supported: true,
+		nonPlus:   func(f func(string) error) sasl.Server { return build(mech, nil, f) },
+		plus:      func(cb []byte, f func(string) error) sasl.Server { return build(plusMech, cb, f) },
+	}, true
+}
+
 func (s *session) scramSha1Builder() scramBuilder {
+	if b, ok := s.relayBuilder(sasl.ScramSha1, sasl.ScramSha1Plus); ok {
+		return b
+	}
 	lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup)
 	if !ok {
 		return scramBuilder{}
 	}
 	return scramBuilder{
 		supported: true,
-		nonPlus:   func(f func(string) error) *scram.Session { return scram.NewSha1(lookup, f) },
-		plus:      func(cb []byte, f func(string) error) *scram.Session { return scram.NewSha1Plus(lookup, cb, f) },
+		nonPlus:   func(f func(string) error) sasl.Server { return scram.NewSha1(lookup, f) },
+		plus:      func(cb []byte, f func(string) error) sasl.Server { return scram.NewSha1Plus(lookup, cb, f) },
 	}
 }
 
@@ -293,13 +326,18 @@ func (s *session) handleSASLScram(parts []string, plus bool, b scramBuilder) {
 		completed = true
 		return nil
 	}
-	var saslSrv *scram.Session
+	var saslSrv sasl.Server
 	if plus {
 		saslSrv = b.plus(cb, onSuccess)
 	} else {
 		saslSrv = b.nonPlus(onSuccess)
 	}
 
+	// An exchange the client abandons frees the service's half at once, rather
+	// than waiting out its deadline there (#1733).
+	if relayed, ok := saslSrv.(*authrelay.RelayServer); ok {
+		defer relayed.Cancel()
+	}
 	if err := s.driveSASL(parts, saslSrv); err != nil {
 		if d := s.srv.opts.FailureDelay; d > 0 {
 			time.Sleep(d)

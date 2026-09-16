@@ -107,6 +107,9 @@ type Client struct {
 	gen     uint64        // bumped on every successful dial
 	ready   chan struct{} // non-nil while reconnecting; closed on success
 	pending map[string]chan string
+	// mechs is what the service announced it can run; a session advertises
+	// this list rather than what it could run itself (#1733).
+	mechs []string
 
 	// done is closed by Close so the redial loop wakes from its backoff and
 	// exits.
@@ -531,24 +534,29 @@ func (c *Client) dial() (net.Conn, *bufio.Reader, error) {
 		return nil, nil, fmt.Errorf("auth/client: dial %s: %w", c.addr, err)
 	}
 	rd := bufio.NewReader(raw)
-	if err := handshake(raw, rd); err != nil {
+	mechs, err := handshake(raw, rd)
+	if err != nil {
 		_ = raw.Close()
 		return nil, nil, err
 	}
+	c.mu.Lock()
+	c.mechs = mechs
+	c.mu.Unlock()
 	return raw, rd, nil
 }
 
 // handshake exchanges VERSION lines. Runs before readLoop starts, so the
 // id-less banner is never seen by the demultiplexer.
-func handshake(conn net.Conn, rd *bufio.Reader) error {
+func handshake(conn net.Conn, rd *bufio.Reader) ([]string, error) {
 	if _, err := fmt.Fprintln(conn, "VERSION\t1\t0"); err != nil {
-		return fmt.Errorf("auth/client: handshake write: %w", err)
+		return nil, fmt.Errorf("auth/client: handshake write: %w", err)
 	}
 	gotVersion := false
+	var mechs []string
 	for {
 		line, err := rd.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("auth/client: handshake read: %w", err)
+			return nil, fmt.Errorf("auth/client: handshake read: %w", err)
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if strings.HasPrefix(line, "VERSION\t") {
@@ -558,12 +566,18 @@ func handshake(conn net.Conn, rd *bufio.Reader) error {
 		if line == "DONE" {
 			break
 		}
-		// MECH, SPID, CUID, COOKIE — skip
+		if strings.HasPrefix(line, "MECH\t") {
+			if f := strings.Split(line, "\t"); len(f) > 1 {
+				mechs = append(mechs, f[1])
+			}
+			continue
+		}
+		// SPID, CUID, COOKIE — skip
 	}
 	if !gotVersion {
-		return fmt.Errorf("auth/client: handshake: no VERSION received")
+		return nil, fmt.Errorf("auth/client: handshake: no VERSION received")
 	}
-	return nil
+	return mechs, nil
 }
 
 func parseAuthResponse(line string) (*AuthResult, error) {

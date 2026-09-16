@@ -23,6 +23,7 @@ import (
 	"github.com/emersion/go-sasl"
 	proxyproto "github.com/pires/go-proxyproto"
 
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/auth/scram"
@@ -90,6 +91,9 @@ type Options struct {
 	// Zero disables.
 	FailureDelay time.Duration
 
+	// AuthRelay carries a SASL exchange to yarilo-auth, which runs the
+	// mechanism. Nil leaves the in-process chain, until the cut (#1733).
+	AuthRelay *authrelay.Client
 	// OAuth2Enabled advertises OAUTHBEARER/XOAUTH2. Set when at least one
 	// OAuth provider is configured; otherwise the mechs are never
 	// advertised against a deployment that cannot validate tokens.
@@ -500,6 +504,9 @@ type session struct {
 	imapConn *imapserver.Conn
 	userInfo *mailbox.UserInfo
 	sid      string // cross-service correlation ID from login-proxy
+	// liveRelay is a relayed SASL exchange this session started; cancelled on
+	// teardown so an aborted AUTHENTICATE frees the service's half at once.
+	liveRelay *authrelay.RelayServer
 	// box / idx / subs alias the personal namespace handle
 	// (s.primary.box / .idx / .subs). Cross-namespace ops route through
 	// s.dispatch() and use the resulting handle instead.
@@ -786,6 +793,7 @@ func (s *session) emitMailboxList(eventType locks.EventType, payload string) {
 }
 
 func (s *session) Close() error {
+	s.cancelRelay()
 	s.cloneFlushFinal()
 	s.stopNotifyWatch()
 	if s.srv.opts.ConnLimit != nil && s.userInfo != nil {
@@ -863,17 +871,36 @@ func (s *session) AuthenticateMechanisms() []string {
 		out = append(out, sasl.OAuthBearer)
 		out = append(out, sasl.XOAuth2)
 	}
-	if _, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup); ok {
-		out = append(out, sasl.ScramSha256)
-		if s.tlsExporter() != nil {
-			out = append(out, sasl.ScramSha256Plus)
+	// The service says which SCRAM mechanisms exist, because it runs them: a
+	// session that answered from its own chain would advertise what it cannot
+	// relay once the chain is gone (#1733).
+	for _, mech := range s.relayMechanisms() {
+		if strings.HasSuffix(mech, "-PLUS") && s.tlsExporter() == nil {
+			continue
 		}
+		out = append(out, mech)
+	}
+	return out
+}
+
+// relayMechanisms are the SCRAM mechanisms the auth service announced. Without
+// a relay the session keeps answering from its own chain until the cut.
+func (s *session) relayMechanisms() []string {
+	if relay := s.srv.opts.AuthRelay; relay != nil {
+		var out []string
+		for _, mech := range relay.Mechanisms() {
+			if strings.HasPrefix(mech, "SCRAM-") {
+				out = append(out, mech)
+			}
+		}
+		return out
+	}
+	var out []string
+	if _, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup); ok {
+		out = append(out, sasl.ScramSha256, sasl.ScramSha256Plus)
 	}
 	if _, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup); ok {
-		out = append(out, sasl.ScramSha1)
-		if s.tlsExporter() != nil {
-			out = append(out, sasl.ScramSha1Plus)
-		}
+		out = append(out, sasl.ScramSha1, sasl.ScramSha1Plus)
 	}
 	return out
 }
@@ -902,52 +929,8 @@ func (s *session) Authenticate(mech string) (sasl.Server, error) {
 			}
 		}
 		return oauth2.NewXOAuth2SASLServer(s.authenticateXOAuth2), nil
-	case sasl.ScramSha256:
-		lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup)
-		if !ok {
-			return nil, &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo, Text: "SASL mechanism not supported",
-			}
-		}
-		return scram.NewSha256(lookup, s.completeSCRAMLogin), nil
-	case sasl.ScramSha256Plus:
-		lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup)
-		if !ok {
-			return nil, &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo, Text: "SASL mechanism not supported",
-			}
-		}
-		cb := s.tlsExporter()
-		if cb == nil {
-			return nil, &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo,
-				Text: "Channel binding unavailable",
-			}
-		}
-		return scram.NewSha256Plus(lookup, cb, s.completeSCRAMLogin), nil
-	case sasl.ScramSha1:
-		lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup)
-		if !ok {
-			return nil, &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo, Text: "SASL mechanism not supported",
-			}
-		}
-		return scram.NewSha1(lookup, s.completeSCRAMLogin), nil
-	case sasl.ScramSha1Plus:
-		lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup)
-		if !ok {
-			return nil, &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo, Text: "SASL mechanism not supported",
-			}
-		}
-		cb := s.tlsExporter()
-		if cb == nil {
-			return nil, &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo,
-				Text: "Channel binding unavailable",
-			}
-		}
-		return scram.NewSha1Plus(lookup, cb, s.completeSCRAMLogin), nil
+	case sasl.ScramSha256, sasl.ScramSha256Plus, sasl.ScramSha1, sasl.ScramSha1Plus:
+		return s.scramServer(mech)
 	}
 	return nil, &imaplib.Error{
 		Type: imaplib.StatusResponseTypeNo,
@@ -958,6 +941,71 @@ func (s *session) Authenticate(mech string) (sasl.Server, error) {
 // completeSCRAMLogin is the OnSuccess hook for SCRAM adapters; the SASL
 // server has already verified the user, this runs the regular post-auth
 // setup.
+// cancelRelay abandons a relayed exchange this session started and did not
+// finish. Idempotent, so the teardown path may always call it.
+func (s *session) cancelRelay() {
+	if s.liveRelay == nil {
+		return
+	}
+	s.liveRelay.Cancel()
+	s.liveRelay = nil
+}
+
+// verifyBearer validates a bearer token. Through the service when a relay is
+// configured: a token checked in two places is two places to keep in step.
+func (s *session) verifyBearer(username, token string) (*protocol.AuthResponse, error) {
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return s.srv.opts.Auth.Authenticate(username, token, "imap", remoteIP(s.imapConn.NetConn()))
+	}
+	res, err := relay.Authenticate(username, token, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID())
+	if err != nil {
+		return nil, err
+	}
+	return &protocol.AuthResponse{Result: protocol.AuthOK, Username: res.Username}, nil
+}
+
+// scramServer runs a SCRAM mechanism: through the auth service when a relay is
+// configured, from the in-process chain until the cut removes it (#1733).
+func (s *session) scramServer(mech string) (sasl.Server, error) {
+	unsupported := &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "SASL mechanism not supported"}
+	var cb []byte
+	if strings.HasSuffix(mech, "-PLUS") {
+		if cb = s.tlsExporter(); cb == nil {
+			return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Channel binding unavailable"}
+		}
+	}
+	if relay := s.srv.opts.AuthRelay; relay != nil {
+		// Held so an AUTHENTICATE the client aborts frees the service's half at
+		// once, rather than waiting out its deadline there (#1733).
+		s.cancelRelay()
+		srv := authrelay.NewRelayServer(relay, mech, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID(), cb)
+		srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeSCRAMLogin(res.Username) }
+		s.liveRelay = srv
+		return srv, nil
+	}
+	switch mech {
+	case sasl.ScramSha256, sasl.ScramSha256Plus:
+		lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup)
+		if !ok {
+			return nil, unsupported
+		}
+		if cb != nil {
+			return scram.NewSha256Plus(lookup, cb, s.completeSCRAMLogin), nil
+		}
+		return scram.NewSha256(lookup, s.completeSCRAMLogin), nil
+	default:
+		lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup)
+		if !ok {
+			return nil, unsupported
+		}
+		if cb != nil {
+			return scram.NewSha1Plus(lookup, cb, s.completeSCRAMLogin), nil
+		}
+		return scram.NewSha1(lookup, s.completeSCRAMLogin), nil
+	}
+}
+
 func (s *session) completeSCRAMLogin(username string) error {
 	return s.completeLogin(&protocol.AuthResponse{
 		Result:   protocol.AuthOK,
@@ -991,7 +1039,7 @@ func (s *session) tlsExporter() []byte {
 // Authenticate call. Wire-shape concerns (GS2 parsing, RFC 7628 JSON
 // error blob) live inside go-sasl.
 func (s *session) authenticateOAuthBearer(opts sasl.OAuthBearerOptions) *sasl.OAuthBearerError {
-	res, err := s.srv.opts.Auth.Authenticate(opts.Username, opts.Token, "imap", remoteIP(s.imapConn.NetConn()))
+	res, err := s.verifyBearer(opts.Username, opts.Token)
 	if err != nil || res == nil || res.Result != protocol.AuthOK {
 		s.delayFailure()
 		return &sasl.OAuthBearerError{
@@ -1011,7 +1059,7 @@ func (s *session) authenticateOAuthBearer(opts sasl.OAuthBearerOptions) *sasl.OA
 // authenticateXOAuth2 is the XOAUTH2 callback. Same token validation
 // path as OAUTHBEARER; only the wire format differs.
 func (s *session) authenticateXOAuth2(opts sasl.XOAuth2Options) *sasl.OAuthBearerError {
-	res, err := s.srv.opts.Auth.Authenticate(opts.Username, opts.Token, "imap", remoteIP(s.imapConn.NetConn()))
+	res, err := s.verifyBearer(opts.Username, opts.Token)
 	if err != nil || res == nil || res.Result != protocol.AuthOK {
 		s.delayFailure()
 		return &sasl.OAuthBearerError{

@@ -1001,12 +1001,19 @@ func (s *Server) handleConn(conn net.Conn) {
 		limit = DefaultMaxConcurrentRequests
 	}
 	sem := make(chan struct{}, limit)
+	// One conversation spans several commands, so it cannot live in a handler.
+	live := newExchanges()
 
 	// Server → Client handshake. Written before any handler exists, so the
 	// plain conn is safe here.
 	fmt.Fprintf(conn, "VERSION\t%d\t%d\n", majorVer, minorVer)
 	fmt.Fprintf(conn, "MECH\tPLAIN\tplaintext\n")
 	fmt.Fprintf(conn, "MECH\tLOGIN\tplaintext\n")
+	// The list a session advertises is this one: a mechanism it cannot relay is
+	// one a client would meet only after choosing it (#1733).
+	for _, mech := range s.scramMechanisms() {
+		fmt.Fprintf(conn, "MECH\t%s\tactive\n", mech)
+	}
 	fmt.Fprintf(conn, "SPID\t%d\n", s.pid)
 	fmt.Fprintf(conn, "CUID\t%d\n", cuid)
 	fmt.Fprintf(conn, "COOKIE\t%s\n", s.cookie)
@@ -1042,15 +1049,25 @@ func (s *Server) handleConn(conn net.Conn) {
 				defer func() { <-sem }()
 				start := time.Now()
 				if verb == "AUTH" {
-					observeRequest("AUTH", s.handleAuth(sc, args), start)
+					observeRequest("AUTH", s.handleAuth(sc, live, args), start)
 					return
 				}
 				observeRequest("VERIFY", s.handleVerify(sc, args), start)
 			}()
 		case "CONT":
-			// SASL continuation — not needed for PLAIN
+			args := fields
+			sem <- struct{}{}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				start := time.Now()
+				observeRequest("CONT", s.handleContinue(sc, live, args), start)
+			}()
 		case "CANCEL":
-			// cancel pending auth
+			if len(fields) > 1 {
+				live.drop(fields[1])
+			}
 		}
 	}
 }
@@ -1088,14 +1105,14 @@ func connRemoteIP(conn net.Conn) string {
 // for it ("ok" | "fail" | "tempfail" | "bad_request"). The label is returned
 // rather than observed here so the caller times the whole verb, including the
 // deliberate delays this function applies.
-func (s *Server) handleAuth(conn net.Conn, fields []string) string {
+func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) string {
 	if len(fields) < 3 {
 		return "bad_request"
 	}
 	id := fields[1]
 	mech := fields[2]
 
-	var service, resp, ripAttr, sessionID string
+	var service, resp, ripAttr, sessionID, cbind string
 	for _, f := range fields[3:] {
 		switch {
 		case strings.HasPrefix(f, "service="):
@@ -1106,7 +1123,12 @@ func (s *Server) handleAuth(conn net.Conn, fields []string) string {
 			ripAttr = strings.TrimPrefix(f, "rip=")
 		case strings.HasPrefix(f, "session="):
 			sessionID = strings.TrimPrefix(f, "session=")
+		case strings.HasPrefix(f, "cbind="):
+			cbind = strings.TrimPrefix(f, "cbind=")
 		}
+	}
+	if isSCRAM(mech) {
+		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, sessionID)
 	}
 	_ = service
 
