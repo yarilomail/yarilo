@@ -36,8 +36,10 @@ type Backend struct {
 	counter  atomic.Uint64
 	// lockMethod is how a write to a shared file excludes another writer.
 	lockMethod filelock.Method
-	writeSem   chan struct{} // nil = unlimited
-	listUTF8   bool          // true = UTF-8 on disk (default); false = modified-UTF-7
+	// fsync says what reaches the disk before a delivery is answered (#1847).
+	fsync    mailbox.FsyncMode
+	writeSem chan struct{} // nil = unlimited
+	listUTF8 bool          // true = UTF-8 on disk (default); false = modified-UTF-7
 	// proactiveScan is maildir_sync_on_select: whether opening a folder
 	// reconciles the index against cur/ and new/. Default on.
 	proactiveScan bool
@@ -56,6 +58,11 @@ func WithProactiveScan(on bool) Option {
 // shared files: flock by default (#1840).
 func WithLockMethod(m filelock.Method) Option {
 	return func(b *Backend) { b.lockMethod = m }
+}
+
+// WithFsync sets what a delivery makes durable before it is acknowledged.
+func WithFsync(m mailbox.FsyncMode) Option {
+	return func(b *Backend) { b.fsync = m }
 }
 
 // WithMaxConcurrentWrites caps the number of concurrent Save() calls.
@@ -84,6 +91,7 @@ func New(opts ...Option) *Backend {
 		hostname:      hostname,
 		pid:           os.Getpid(),
 		lockMethod:    filelock.MethodFlock,
+		fsync:         mailbox.FsyncOptimized,
 		listUTF8:      true,
 		proactiveScan: true,
 	}
@@ -589,6 +597,15 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 		f.Close()
 		os.Remove(tmpPath)
 		return "", 0, noGUID, fmt.Errorf("maildir: write: %w", err)
+	}
+	// Before the name, not after: the answer to the client follows this, and a
+	// node that loses power in between answered for bytes it does not have.
+	if u.b.fsync.SyncsBody() {
+		if serr := syncFile(f); serr != nil {
+			f.Close()          //nolint:errcheck
+			os.Remove(tmpPath) //nolint:errcheck
+			return "", 0, noGUID, fmt.Errorf("maildir: sync body: %w", serr)
+		}
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmpPath)

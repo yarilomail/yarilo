@@ -60,6 +60,12 @@ func (u *userMailbox) publishFromTemp(folder, filename string) error {
 	if err := os.Rename(src, filepath.Join(dir, "cur", filename)); err != nil {
 		return fmt.Errorf("maildir/assign: publish %q: %w", filename, err)
 	}
+	// The entry, not the file: a crash here loses the name, not the bytes.
+	if u.b.fsync.SyncsDir() {
+		if err := syncDir(filepath.Join(dir, "cur")); err != nil {
+			return fmt.Errorf("maildir/assign: sync cur: %w", err)
+		}
+	}
 	u.folderCacheFor(folder).invalidateDir()
 	return nil
 }

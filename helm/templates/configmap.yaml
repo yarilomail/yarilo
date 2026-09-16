@@ -619,6 +619,7 @@ data:
     storage:
       ## How a write to a shared file excludes another writer (#1840).
       storage_lock_method: {{ $storage.storage_lock_method | default "flock" | quote }}
+      mail_fsync: {{ $storage.mail_fsync | default "optimized" | quote }}
       {{- if $storage.mail_driver }}
       mail_driver: {{ $storage.mail_driver | quote }}
       {{- end }}

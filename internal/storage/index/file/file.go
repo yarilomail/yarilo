@@ -108,6 +108,8 @@ type Backend struct {
 
 	// lockMethod is how a journal append excludes another process's append.
 	lockMethod filelock.Method
+	// fsync says what reaches the disk before a write returns (#1847).
+	fsync mailbox.FsyncMode
 
 	// listUTF8 is the on-disk folder name encoding, mirroring the mailbox
 	// backends' option of the same name. Default true, as theirs is.
@@ -148,6 +150,11 @@ func WithLockMethod(m filelock.Method) Option {
 	return func(b *Backend) { b.lockMethod = m }
 }
 
+// WithFsync sets whether an index write is made durable before it returns.
+func WithFsync(m mailbox.FsyncMode) Option {
+	return func(b *Backend) { b.fsync = m }
+}
+
 // WithListUTF8 sets the on-disk name encoding; it must match the mailbox
 // backend's, or the two trees spell a folder differently (#1586).
 func WithListUTF8(v bool) Option { return func(b *Backend) { b.listUTF8 = v } }
@@ -179,6 +186,7 @@ func New(opts ...Option) *Backend {
 	b := &Backend{
 		listUTF8:           true,
 		lockMethod:         filelock.MethodFlock,
+		fsync:              mailbox.FsyncOptimized,
 		users:              make(map[string]*refUserIndex),
 		logCompactMinBytes: defaultLogCompactMinBytes,
 		logCompactMaxBytes: defaultLogCompactMaxBytes,
@@ -514,6 +522,8 @@ type folderState struct {
 
 	// lockMethod is the transport for the lock held over a journal append.
 	lockMethod filelock.Method
+	// fsync says whether a journal append is made durable before it returns.
+	fsync mailbox.FsyncMode
 	// journalHeld says this cycle already holds the journal; the kernel lock
 	// is not re-entrant and fs.mu already orders this process (#1840).
 	journalHeld bool

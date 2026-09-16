@@ -1177,13 +1177,17 @@ func BuildMailbox(cfg config.StorageConfig, locker locks.Locker) mailbox.Mailbox
 	return buildMailbox(cfg, locker)
 }
 
-// indexLockMethod reads the configured transport; an unknown name falls back to
-// the default rather than failing every write on it.
+// indexLockMethod reads the configured transport. Config refuses an unknown
+// name at load, so this cannot be reached with one.
 func indexLockMethod(cfg config.StorageConfig) filelock.Method {
-	m, err := filelock.Parse(cfg.LockMethod)
-	if err != nil {
-		return filelock.MethodFlock
-	}
+	m, _ := filelock.Parse(cfg.LockMethod)
+	return m
+}
+
+// indexFsync reads the configured durability for index writes. Config refuses
+// an unknown name at load, so this cannot be reached with one (#1847).
+func indexFsync(cfg config.StorageConfig) mailbox.FsyncMode {
+	m, _ := mailbox.ParseFsyncMode(cfg.MailFsync)
 	return m
 }
 
@@ -1194,7 +1198,7 @@ func IndexOptions(cfg config.StorageConfig, locker locks.Locker) []file.Option {
 	// The same encoding the mailbox backends get. The two trees spell a folder
 	// the same way or neither finds the other's (#1586).
 	opts := []file.Option{file.WithLocker(locker), file.WithListUTF8(cfg.MailboxListUTF8),
-		file.WithLockMethod(indexLockMethod(cfg))}
+		file.WithLockMethod(indexLockMethod(cfg)), file.WithFsync(indexFsync(cfg))}
 	// Any of the three, not all three. Gating the whole triple on min_size
 	// meant an operator could set the age or the ceiling alone, see the key in
 	// the rendered config, and have it do nothing -- accepted and inert, which

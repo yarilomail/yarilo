@@ -116,6 +116,7 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 		traceID:     traceID,
 		intent:      intent,
 		lockMethod:  u.b.lockMethod,
+		fsync:       u.b.fsync,
 	}
 	if err := u.loadOrInit(fs, uidValidity); err != nil {
 		return nil, err
@@ -2147,6 +2148,9 @@ func (fs *folderState) appendMutLog(records ...[]byte) error {
 		return err
 	}
 	_, err = fs.logFD.Write(buf)
+	if err == nil && fs.fsync.SyncsIndex() {
+		err = fs.logFD.Sync()
+	}
 	release()
 	if err != nil {
 		_ = fs.logFD.Close()

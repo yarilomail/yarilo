@@ -26,13 +26,17 @@ import (
 // ByDriver constructs a MailboxBackend for the named driver from sc, applying
 // every configured tunable. Unknown/empty drivers default to maildir so an
 // operator typo does not crash startup.
-// lockMethod reads the configured transport; an unknown name falls back to the
-// default rather than failing every write on it.
+// fsyncMode reads the configured durability. Config refuses an unknown name at
+// load, so this cannot be reached with one (#1847).
+func fsyncMode(sc config.StorageConfig) mailbox.FsyncMode {
+	m, _ := mailbox.ParseFsyncMode(sc.MailFsync)
+	return m
+}
+
+// lockMethod reads the configured transport. Config refuses an unknown name at
+// load, so this cannot be reached with one.
 func lockMethod(sc config.StorageConfig) filelock.Method {
-	m, err := filelock.Parse(sc.LockMethod)
-	if err != nil {
-		return filelock.MethodFlock
-	}
+	m, _ := filelock.Parse(sc.LockMethod)
 	return m
 }
 
@@ -57,6 +61,7 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 			dboxv2.WithListUTF8(sc.MailboxListUTF8))
 	case "mdbox":
 		return mdbox.New(mdbox.WithLocker(locker), mdbox.WithAltStorage(sc.MailAltPath),
+			mdbox.WithFsync(fsyncMode(sc)),
 			mdbox.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			mdbox.WithListUTF8(sc.MailboxListUTF8),
 			mdbox.WithRotateSize(uint32(quota.ParseSize(sc.MdboxRotateSize))),
@@ -68,7 +73,8 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 		return maildir.New(maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			maildir.WithListUTF8(sc.MailboxListUTF8),
 			maildir.WithProactiveScan(sc.MaildirSyncOnSelect),
-			maildir.WithLockMethod(lockMethod(sc)))
+			maildir.WithLockMethod(lockMethod(sc)),
+			maildir.WithFsync(fsyncMode(sc)))
 	}
 }
 
