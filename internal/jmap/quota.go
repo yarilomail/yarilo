@@ -226,9 +226,7 @@ func (s *Server) quotaChanges(_ context.Context, h *userHandle, accountID string
 			resp.Updated = trimID(resp.Updated, q.ID)
 		}
 	}
-	for _, id := range quotaIDsGone(all, oldLimits) {
-		resp.Destroyed = append(resp.Destroyed, id)
-	}
+	resp.Destroyed = append(resp.Destroyed, quotaIDsGone(all, oldLimits)...)
 	return resp, nil
 }
 
