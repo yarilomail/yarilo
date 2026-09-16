@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,9 @@ var (
 	flagIMAPSPort       = flag.String("imap-port", "993", "IMAPS port (used by sieve verify step)")
 	flagPOP3SPort       = flag.String("pop3s-port", "995", "POP3S port")
 	flagSMTPMXPort      = flag.String("smtp-mx-port", "25", "SMTP MX port")
+	flagSMTPMXHost      = flag.String("smtp-mx-host", "", "hostname of the inbound MX (defaults to -smtp-host, then -host)")
+	flagProxyPort       = flag.String("proxy-protocol-port", "", "MX port that requires a PROXY header (defaults to -smtp-mx-port)")
+	flagXClientPort     = flag.String("xclient-port", "", "MX port that offers XCLIENT (defaults to -smtp-mx-port)")
 	flagSMTPSubPort     = flag.String("smtp-sub-port", "587", "SMTP submission port")
 	flagLMTPLoginPort   = flag.String("lmtp-login-port", "24", "yarilo-lmtp-login port")
 	flagManageSievePort = flag.String("managesieve-port", "4190", "ManageSieve port")
@@ -202,6 +206,15 @@ func imapHost() string {
 func deliveryHost() string {
 	if *flagDeliveryHost != "" {
 		return *flagDeliveryHost
+	}
+	return smtpHost()
+}
+
+// mxHost is the inbound listener, which is a different host from submission
+// whenever the MX runs outside this release's namespace.
+func mxHost() string {
+	if *flagSMTPMXHost != "" {
+		return *flagSMTPMXHost
 	}
 	return smtpHost()
 }
@@ -723,8 +736,10 @@ func checkLMTPLogin() error {
 
 // ---- SMTP MX (port 25) ---------------------------------------------------
 
+// checkSMTPMX verifies the inbound listener answers EHLO, offers STARTTLS and
+// keeps AUTH off the cleartext session: an MX takes mail, it does not log in.
 func checkSMTPMX() error {
-	conn, err := smtpDial(net.JoinHostPort(*flagHost, *flagSMTPMXPort), false)
+	conn, err := smtpDial(net.JoinHostPort(mxHost(), *flagSMTPMXPort), false)
 	if err != nil {
 		return err
 	}
@@ -734,9 +749,27 @@ func checkSMTPMX() error {
 	if err != nil {
 		return err
 	}
-	_ = caps
+	if !caps["STARTTLS"] {
+		return fmt.Errorf("MX EHLO does not advertise STARTTLS: %v", capNames(caps))
+	}
+	for name := range caps {
+		if strings.HasPrefix(name, "AUTH") {
+			return fmt.Errorf("MX EHLO advertises %q before STARTTLS", name)
+		}
+	}
 	smtpQuit(conn)
 	return nil
+}
+
+// capNames names what was advertised, so a missing capability is read against
+// the list that was there.
+func capNames(caps map[string]bool) []string {
+	names := make([]string, 0, len(caps))
+	for name := range caps {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // checkSMTPSubmission verifies the submission port:
@@ -794,19 +827,31 @@ func checkSMTPSubmission() error {
 // and verifies the server responds with 220.
 // Only run when -proxy-protocol flag is set (requires proxy_protocol: true in config).
 func checkSMTPProxyProtocol() error {
-	addr := net.JoinHostPort(smtpHost(), *flagSMTPMXPort)
+	port := *flagProxyPort
+	if port == "" {
+		port = *flagSMTPMXPort
+	}
+	marker := "xproxy-" + uniqueID()
+
+	// tcp4, so the header's family is the connection's: a v6 client reaching a
+	// v4 listener can only guess at the address the server saw.
+	addr := net.JoinHostPort(mxHost(), port)
 	dialer := &net.Dialer{Timeout: *flagTimeout}
-	conn, err := dialer.Dial("tcp", addr)
+	conn, err := dialer.Dial("tcp4", addr)
 	if err != nil {
 		return fmt.Errorf("connect %s: %w", addr, err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
 
-	// Send HAProxy PROXY header with a fake source IP.
-	fmt.Fprintf(conn, "PROXY TCP4 203.0.113.1 %s 12345 25\r\n", smtpHost())
-
-	// Expect normal SMTP banner.
+	// Both fields are addresses, never names: PROXY v1 carries addresses, and a
+	// header a parser refuses is a red row about nothing.
+	local, lerr := proxyAddrOf(conn.RemoteAddr())
+	if lerr != nil {
+		return fmt.Errorf("PROXY: %w", lerr)
+	}
+	const claimed = "203.0.113.7" // RFC 5737: only the header can put it there
+	fmt.Fprintf(conn, "PROXY TCP4 %s %s 12345 %s\r\n", claimed, local, port)
 	banner, err := readLine(conn)
 	if err != nil {
 		return fmt.Errorf("PROXY: read banner: %w", err)
@@ -814,13 +859,96 @@ func checkSMTPProxyProtocol() error {
 	if !strings.HasPrefix(banner, "220") {
 		return fmt.Errorf("PROXY: unexpected banner %q", banner)
 	}
+	if err := proxySendProbe(conn, marker); err != nil {
+		return err
+	}
+
+	// The banner alone says the header was tolerated, not that the address in
+	// it was taken: the stamp on the delivered message is what says that.
+	received, err := waitForReceivedHeaders(*flagIMAPUser, *flagIMAPPass, marker)
+	if err != nil {
+		return fmt.Errorf("PROXY: %w", err)
+	}
+	if !strings.Contains(received, claimed) {
+		return fmt.Errorf("PROXY: the delivered message records no %s in Received: %s", claimed, received)
+	}
+	return nil
+}
+
+// proxyAddrOf takes the address side of a dialled peer, which is what the
+// header's destination field is.
+func proxyAddrOf(addr net.Addr) (string, error) {
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return "", fmt.Errorf("the connected address %q is not host:port: %w", addr, err)
+	}
+	if net.ParseIP(host) == nil {
+		return "", fmt.Errorf("the connected address %q is not an IP", host)
+	}
+	return host, nil
+}
+
+// proxyProbeSender is a sender in the recipient's own domain: an MX worth the
+// name refuses a sender whose domain does not resolve.
+func proxyProbeSender(rcpt string) string {
+	at := strings.LastIndex(rcpt, "@")
+	if at < 0 {
+		return rcpt
+	}
+	return "proxy-probe" + rcpt[at:]
+}
+
+// proxySendProbe drives the SMTP session that follows the PROXY header.
+func proxySendProbe(conn net.Conn, marker string) error {
+	step := func(what, line, want string) error {
+		fmt.Fprintf(conn, "%s\r\n", line)
+		resp, err := readLine(conn)
+		if err != nil {
+			return fmt.Errorf("PROXY: %s: %w", what, err)
+		}
+		for strings.HasPrefix(resp, want+"-") {
+			if resp, err = readLine(conn); err != nil {
+				return fmt.Errorf("PROXY: %s: %w", what, err)
+			}
+		}
+		if !strings.HasPrefix(resp, want) {
+			return fmt.Errorf("PROXY: %s answered %q, want %s", what, resp, want)
+		}
+		return nil
+	}
+	if err := step("EHLO", "EHLO smoketest.invalid", "250"); err != nil {
+		return err
+	}
+	if err := step("MAIL FROM", "MAIL FROM:<"+proxyProbeSender(*flagIMAPUser)+">", "250"); err != nil {
+		return err
+	}
+	if err := step("RCPT TO", "RCPT TO:<"+*flagIMAPUser+">", "250"); err != nil {
+		return err
+	}
+	if err := step("DATA", "DATA", "354"); err != nil {
+		return err
+	}
+	fmt.Fprintf(conn, "Subject: %s\r\nFrom: <%s>\r\nTo: <%s>\r\n\r\nprobe\r\n.\r\n",
+		marker, proxyProbeSender(*flagIMAPUser), *flagIMAPUser)
+	resp, err := readLine(conn)
+	if err != nil {
+		return fmt.Errorf("PROXY: end-of-data: %w", err)
+	}
+	if !strings.HasPrefix(resp, "250") {
+		return fmt.Errorf("PROXY: the probe was not accepted: %s", resp)
+	}
+	fmt.Fprintf(conn, "QUIT\r\n")
 	return nil
 }
 
 // checkSMTPXClient connects to MX and verifies EHLO advertises XCLIENT.
 // Only run when -xclient flag is set (requires xclient: true in config).
 func checkSMTPXClient() error {
-	conn, err := smtpDial(net.JoinHostPort(*flagHost, *flagSMTPMXPort), false)
+	port := *flagXClientPort
+	if port == "" {
+		port = *flagSMTPMXPort
+	}
+	conn, err := smtpDial(net.JoinHostPort(mxHost(), port), false)
 	if err != nil {
 		return err
 	}
@@ -1042,4 +1170,29 @@ func readLine(r io.Reader) (string, error) {
 		buf = append(buf, b[0])
 	}
 	return strings.TrimRight(string(buf), "\r"), nil
+}
+
+// waitForReceivedHeaders returns the Received headers of the probe, which is
+// where the server writes the address it took the connection to be from.
+func waitForReceivedHeaders(user, pass, marker string) (string, error) {
+	c, err := imapDial()
+	if err != nil {
+		return "", err
+	}
+	defer c.close()
+	if err := c.login(user, pass); err != nil {
+		return "", fmt.Errorf("login %q: %w", user, err)
+	}
+	if _, err := c.selectFolder("INBOX"); err != nil {
+		return "", fmt.Errorf("select INBOX: %w", err)
+	}
+	uid, err := waitForIMAPProbe(c, marker)
+	if err != nil {
+		return "", err
+	}
+	lines, err := c.cmd(fmt.Sprintf("UID FETCH %s (BODY.PEEK[HEADER.FIELDS (RECEIVED)])", uid))
+	if err != nil {
+		return "", fmt.Errorf("uid fetch received: %w", err)
+	}
+	return strings.Join(lines, " "), nil
 }
