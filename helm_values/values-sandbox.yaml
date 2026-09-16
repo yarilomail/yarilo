@@ -677,8 +677,19 @@ components:
   ## (#1861, #1863), so its smoke checks skipped (#1855).
   submission:
     enabled: true
+  ## The login pod terminates client TLS, so it takes the same certificate the
+  ## other login pods do; the backend beside it holds none.
   submissionLogin:
     enabled: true
+    ## The director routes it like every other login pod; 10587 is the backend
+    ## submission port from components.submission.listeners.
+    director_addr: "yarilo-director:9102"
+    backend_port: 10587
+    internalTLS:
+      enabled: true
+      secretName: yarilo-internal-tls
+    tls:
+      secretName: yarilo-tls
 
   ## JMAP backend — one more container in the co-located pod, reached only by
   ## jmapLogin. internalTLS is on cluster-wide here, so the peer certificate is
