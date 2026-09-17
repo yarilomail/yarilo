@@ -241,6 +241,9 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 		testAfterRecordExpunged()
 	}
 
+	// Gathered, then removed in one call: a driver that locks something
+	// user-wide per body makes an expunge N round trips under the hold (#1884).
+	free := make([]string, 0, len(list))
 	for _, d := range list {
 		switch refs.fate(d.name) {
 		case bodyNameless:
@@ -250,11 +253,12 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 			slog.Warn("mailbox/expunge: the body stays, another record still names it",
 				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "file", d.name)
 		case bodyFree:
-			if err := b.RemoveHeld(folder, d.name); err != nil {
-				slog.Error("mailbox/expunge: body", "user", b.store.Username(),
-					"folder", folder, "uid", d.msg.UID, "file", d.name, "err", err)
-			}
+			free = append(free, d.name)
 		}
+	}
+	if err := b.RemoveManyHeld(folder, free); err != nil {
+		slog.Error("mailbox/expunge: bodies", "user", b.store.Username(),
+			"folder", folder, "count", len(free), "err", err)
 	}
 	return removed, failed
 }
@@ -287,6 +291,24 @@ var _ mailbox.Box = (*Box)(nil)
 
 // RemoveHeld unlinks a body while this folder is held: a driver whose Remove
 // takes the same hold cannot be called from inside one (#1794).
+// RemoveManyHeld unlinks every named body, in one operation where the driver
+// offers it: mdbox locks the whole user's map for each one otherwise (#1884).
+func (b *Box) RemoveManyHeld(folder string, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	if r, ok := mailbox.Driver(b.store).(mailbox.BatchRemover); ok {
+		return r.RemoveManyHeld(folder, names)
+	}
+	var firstErr error
+	for _, name := range names {
+		if err := b.RemoveHeld(folder, name); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func (b *Box) RemoveHeld(folder, name string) error {
 	if r, ok := mailbox.Driver(b.store).(mailbox.HeldRemover); ok {
 		return r.RemoveHeld(folder, name)

@@ -29,22 +29,24 @@ var beforeHealScan func()
 // FSCKD marker in the same locked scope. An incomplete scan ABORTS it, or a
 // message purge just compacted would read as vanished. The vanished message's
 // map refcount is not decremented here; the leak is reclaimed by the next
-// rebuild and purge. Lock order: map outer, folder inner, as delivery takes
-// them -- Scan walks the whole storage, not one folder (#1682).
+// rebuild and purge. Lock order is folder then map, the one order the tree
+// takes (#1884); delivery nests neither, writing the body outside the hold.
 func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
 	var expunged []uint32
-	err := u.withMapLock(func() error {
-		gen, gerr := u.storageGeneration()
-		if gerr != nil {
-			return gerr
-		}
-		key := healBarrierKey(u.username, folder.ID)
-		if v, ok := healBarrier.Load(key); ok {
-			if last, ok := v.(uint32); ok && last == gen {
-				return ErrHealDeferred
+	// Folder then map, as every other path takes them: the other order meets
+	// the expunge path head on, and both locks wait 30s (#1884).
+	err := u.withMailboxLock(folder.Name, func() error {
+		return u.withMapLock(func() error {
+			gen, gerr := u.storageGeneration()
+			if gerr != nil {
+				return gerr
 			}
-		}
-		return u.withMailboxLock(folder.Name, func() error {
+			key := healBarrierKey(u.username, folder.ID)
+			if v, ok := healBarrier.Load(key); ok {
+				if last, ok := v.(uint32); ok && last == gen {
+					return ErrHealDeferred
+				}
+			}
 			if beforeHealScan != nil {
 				beforeHealScan()
 			}
