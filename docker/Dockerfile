@@ -38,6 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         yarilo-submission \
         yarilo-submission-login \
         yarilo-locks \
+        yarilo-dict \
         yarilo-migrate \
         yarilo-quota-status \
         yarilo-sasl-login \

@@ -919,6 +919,14 @@ data:
       ## One lease per account instead of one acquisition per command (#1840).
     {{- end }}
 
+    {{- if .Values.components.dict.enabled }}
+    ## The dict service reads this section to open the engines; every other
+    ## component reads dict_addr and names a dict (#1733).
+    dict_service:
+      dict_listen: {{ .Values.components.dict.listen | default ":9107" | quote }}
+      dict_addr: {{ printf "%s-dict.%s.svc.cluster.local:%s" (include "yarilo.fullname" .) .Release.Namespace (include "yarilo.dictPort" .) | quote }}
+    {{- end }}
+
     ## How components talk to the yarilo-auth MASTER listener (userdb lookups).
     ## One section rather than a pair of knobs per consumer: pooling is a
     ## property of the client, not of whoever calls it.

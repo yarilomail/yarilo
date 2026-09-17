@@ -380,6 +380,10 @@ components:
       state_backend: redis
       key_prefix: "yarilo-sb:warden:"
       channel_prefix: "yarilo-sb:warden:events:"
+  dict:
+    enabled: true
+    replicas: 1
+
   locks:
     internalTLS:
       enabled: true
