@@ -735,18 +735,14 @@ func TestWire_MasterUser_DisabledByDefault(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	// authzid=alice authid=admin password=masterpass. Master flow
-	// would normally succeed (masterdb authenticates admin, target
-	// alice on userdb backstop). Because master-users are disabled
-	// the authzid is dropped and the server tries to authenticate
-	// admin via the regular passdb, which only knows alice.
+	// authzid=alice authid=admin password=masterpass. Master users are off, so
+	// the request is refused rather than logged in as admin (#1892).
 	fmt.Fprintf(conn, "AUTH\t40\tPLAIN\tservice=imap\tresp=alice\x00admin\x00masterpass\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
-	got := sc.Text()
-	if got != "FAIL\t40" {
-		t.Errorf("master flow leaked while disabled: %q (want FAIL\\t40)", got)
+	if got := sc.Text(); !strings.HasPrefix(got, "FAIL\t40") {
+		t.Errorf("master flow leaked while disabled: %q (want a FAIL)", got)
 	}
 }
 

@@ -714,6 +714,29 @@ func WithMasterUserSeparator(sep string) ServerOption {
 
 // WithMasterUsers is the top-level opt-in for master-user
 // impersonation on the wire AUTH path. While false (the default)
+// adoptTarget answers with the target's own userdb record: a master session
+// reads the target's mail, and an unknown target is a refusal (#1893).
+func (s *Server) adoptTarget(target string, req *Request) (Result, error) {
+	if s.userdb == nil {
+		return ResultOK, nil
+	}
+	ui, err := s.userdb.Lookup(target)
+	if err != nil {
+		return ResultTempFail, err
+	}
+	if ui == nil {
+		masterName, _ := req.Fields.Get("master_user")
+		slog.Info("auth: fail", "proto", req.Service, "user", masterName,
+			"master_user_target", target, "result", "fail", "reason", "userdb does not know the target")
+		return ResultFail, nil
+	}
+	ui.VisitFields(func(key, value string) {
+		req.Fields.Set("userdb_"+key, value)
+	})
+	req.Fields.Set("user", target)
+	return ResultOK, nil
+}
+
 // handleAuth ignores any SASL PLAIN authzid the client sends
 // AND skips the separator workaround — every request routes
 // through the regular passdb chain, indistinguishable from a
@@ -1145,17 +1168,8 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
 	}
-	// Master-user separator workaround (RFC 4616 §2.1 doesn't
-	// cover this case): clients that can't supply authzid encode
-	// it as `target<sep>master` inside the authid field. Only
-	// honoured when master-users are enabled AND no authzid was
-	// given AND a separator is configured.
-	//
-	// When master-users are disabled at the server level, BOTH
-	// the authzid and the separator workaround are ignored — the
-	// request routes through the regular passdb chain as if the
-	// client had sent a plain `authid\0password` PLAIN response.
-	// Indistinguishable from a build without master support.
+	// Clients that cannot supply authzid encode it as `target<sep>master` in
+	// the authid field; only with master users on and no authzid given.
 	target := ""
 	master := authid
 	if s.masterUsersEnabled {
@@ -1166,6 +1180,14 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 				target = t
 			}
 		}
+	} else if authzid != "" && authzid != authid {
+		// Dropping the field would log the client in as someone it did not ask
+		// for -- a refusal it never learns about (RFC 4616 §2, #1892).
+		slog.Info("auth: fail", "id", id, "proto", service, "user", authid,
+			"master_user_target", authzid, "result", "fail",
+			"reason", "master user login attempt without master passdb")
+		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
+		return "fail"
 	}
 
 	// Auth-penalty pre-check: look up the client IP's current
@@ -1711,6 +1733,9 @@ func (s *Server) authenticate(target, master, password, service, remoteIP string
 	)
 	if target != "" && target != master {
 		result, err = RunMasterAuth(Chain(s.passdbs), Chain(s.masterdb), target, req)
+		if err == nil && result == ResultOK {
+			result, err = s.adoptTarget(target, req)
+		}
 	} else {
 		result, err = RunAuth(Chain(s.passdbs), req)
 	}
