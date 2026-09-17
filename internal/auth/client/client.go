@@ -19,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/yarilomail/yarilo/internal/auth/protocol"
 )
 
 // Sentinel errors returned by Authenticate, Verify, and LookupUser.
@@ -68,6 +70,10 @@ type AuthResult struct {
 	// DirectorTag is the per-user director backend tag, if the passdb/userdb
 	// chain set one. Empty means the static director_tag config applies.
 	DirectorTag string
+
+	// Userdb is the service's answer in full: a session resolves storage and
+	// ACL identity from it, so nothing it sent may be dropped here (#1890).
+	Userdb *protocol.AuthResponse
 }
 
 // Options tunes a Client. Zero values select the documented defaults.
@@ -580,11 +586,26 @@ func handshake(conn net.Conn, rd *bufio.Reader) ([]string, error) {
 	return mechs, nil
 }
 
+// Response is the service's answer as a session consumes it. Built here so the
+// three protocols cannot each keep their own half-filled copy (#1890).
+func (r *AuthResult) Response() *protocol.AuthResponse {
+	if r == nil {
+		return nil
+	}
+	if r.Userdb == nil {
+		return &protocol.AuthResponse{Result: protocol.AuthOK, Username: r.Username}
+	}
+	out := *r.Userdb
+	out.Result = protocol.AuthOK
+	out.Username = r.Username
+	return &out
+}
+
 func parseAuthResponse(line string) (*AuthResult, error) {
 	fields := strings.Split(line, "\t")
 	switch fields[0] {
 	case "OK":
-		res := &AuthResult{}
+		res := &AuthResult{Userdb: &protocol.AuthResponse{Result: protocol.AuthOK}}
 		for _, f := range fields[2:] {
 			switch {
 			case f == "nologin":
@@ -595,10 +616,14 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 				res.AllowNets = f[len("allow_nets="):]
 			case strings.HasPrefix(f, "token="):
 				res.Token = f[len("token="):]
-			case strings.HasPrefix(f, "director_tag="):
-				res.DirectorTag = f[len("director_tag="):]
+			default:
+				// A dropped field sends the session to the global mail
+				// location, not to this user's own (#1890).
+				protocol.ApplyAuthOKToken(res.Userdb, f)
 			}
 		}
+		res.Userdb.Username = res.Username
+		res.DirectorTag = res.Userdb.DirectorTag
 		return res, nil
 	case "FAIL":
 		for _, f := range fields[2:] {
