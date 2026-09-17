@@ -617,9 +617,8 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 			case strings.HasPrefix(f, "token="):
 				res.Token = f[len("token="):]
 			default:
-				// Everything the service answered with, not the handful this
-				// client once knew: a dropped field sends the session to the
-				// global mail location (#1890).
+				// A dropped field sends the session to the global mail
+				// location, not to this user's own (#1890).
 				protocol.ApplyAuthOKToken(res.Userdb, f)
 			}
 		}

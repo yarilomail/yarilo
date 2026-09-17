@@ -13,9 +13,8 @@ import (
 
 var errNoVerdict = errors.New("the exchange ended without a verdict")
 
-// A relayed login must reach the session with everything the service answered:
-// this client once kept five fields, so a user whose userdb named its own mail
-// location or ACL identity was logged in without them (#1890).
+// A relayed login must reach the session with everything the service answered;
+// this client once kept five fields of it (#1890).
 //
 // The values are deliberately unlike any global default -- a row on defaults
 // would pass with the fields dropped.
