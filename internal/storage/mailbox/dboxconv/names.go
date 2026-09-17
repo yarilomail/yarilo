@@ -49,30 +49,83 @@ func AdoptNames(mailboxesDir string, utf8 bool) (int, error) {
 		if !ok || want == name {
 			continue
 		}
-		target := filepath.Join(parent, want)
+		done, err := adoptOne(mailboxesDir, filepath.Clean(parent), name, want, utf8)
+		if err != nil {
+			return renamed, err
+		}
+		if done {
+			renamed++
+		}
+	}
+	return renamed, nil
+}
+
+// adoptOne renames one folder, resolving its parent both before the attempt and
+// after a miss: a twin pass may move an ancestor at either moment (#1886).
+func adoptOne(root, parent, name, want string, utf8 bool) (bool, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		at, ok := currentDir(root, parent, utf8)
+		if !ok {
+			return false, nil
+		}
+		src, target := filepath.Join(at, name), filepath.Join(at, want)
 		if _, err := os.Stat(target); err == nil {
 			// Source gone: a twin or a crash halfway already renamed. Source
 			// still there: two folders would become one, which nothing undoes (#1609).
-			if _, serr := os.Stat(dir); os.IsNotExist(serr) {
-				continue
+			if _, serr := os.Stat(src); os.IsNotExist(serr) {
+				return false, nil
 			}
-			return renamed, fmt.Errorf("dboxconv: renaming %s to %s: the target already exists", dir, target)
+			return false, fmt.Errorf("dboxconv: renaming %s to %s: the target already exists", src, target)
 		}
-		if err := os.Rename(dir, target); err != nil {
-			if os.IsNotExist(err) {
-				// Renamed by a twin between the walk and here.
-				if _, serr := os.Stat(target); serr == nil {
-					continue
-				}
+		beforeRename(src)
+		err := os.Rename(src, target)
+		if err == nil {
+			if ferr := fsyncDir(at); ferr != nil {
+				return false, ferr
 			}
-			return renamed, fmt.Errorf("dboxconv: rename %s to %s: %w", dir, target, err)
+			return true, nil
 		}
-		if err := fsyncDir(filepath.Clean(parent)); err != nil {
-			return renamed, err
+		if !os.IsNotExist(err) {
+			return false, fmt.Errorf("dboxconv: rename %s to %s: %w", src, target, err)
 		}
-		renamed++
+		// Gone from under the walk: either already adopted, or an ancestor
+		// moved and the same folder is one path over.
+		if _, serr := os.Stat(target); serr == nil {
+			return false, nil
+		}
 	}
-	return renamed, nil
+	return false, nil
+}
+
+// beforeRename is a seam for the twin-pass test; nil cost in production.
+var beforeRename = func(string) {}
+
+// currentDir follows a path collected before a twin pass may have renamed part
+// of it: each segment is either still theirs or already adopted (#1886).
+func currentDir(root, dir string, utf8 bool) (string, bool) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return "", false
+	}
+	at := root
+	if rel == "." {
+		return at, true
+	}
+	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+		if fi, serr := os.Stat(filepath.Join(at, seg)); serr == nil && fi.IsDir() {
+			at = filepath.Join(at, seg)
+			continue
+		}
+		want, ok := adoptedName(seg, utf8)
+		if !ok {
+			return "", false
+		}
+		if fi, serr := os.Stat(filepath.Join(at, want)); serr != nil || !fi.IsDir() {
+			return "", false
+		}
+		at = filepath.Join(at, want)
+	}
+	return at, true
 }
 
 // adoptedName returns the name this deployment would write for a directory
