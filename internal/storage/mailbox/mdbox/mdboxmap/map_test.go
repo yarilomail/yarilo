@@ -3,6 +3,7 @@ package mdboxmap
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -213,6 +214,48 @@ func TestUpdateRefcountsRejectsMissingUID(t *testing.T) {
 	m, _ := openTestMap(t)
 	if err := m.UpdateRefcounts([]uint32{9999}, +1); err == nil {
 		t.Fatal("expected error on missing UID, got nil")
+	}
+}
+
+// One stale map_uid in a batch must not leave the rest referenced: the bodies
+// behind them would be reachable by nothing and collected by no purge (#1884).
+func TestABatchWithOneUnknownUIDStillClearsTheRest(t *testing.T) {
+	m, dir := openTestMap(t)
+	b := m.AppendBatch()
+	for i := 0; i < 4; i++ {
+		b.Next(10)
+	}
+	uids, err := b.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	batch := append([]uint32{uids[0], 9999}, uids[1:]...)
+	err = m.UpdateRefcounts(batch, -1)
+	if err == nil {
+		t.Fatal("a batch naming an unknown map_uid returned no error")
+	}
+	if !strings.Contains(err.Error(), "9999") {
+		t.Errorf("the error does not name the unknown uid: %v", err)
+	}
+
+	// From disk, not from the map this process already changed in memory.
+	if cerr := m.Close(); cerr != nil {
+		t.Fatal(cerr)
+	}
+	reopened, err := Open(dir, "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	for _, uid := range uids {
+		e, ok, lerr := reopened.Lookup(uid)
+		if lerr != nil || !ok {
+			t.Fatalf("map_uid %d: ok=%v err=%v", uid, ok, lerr)
+		}
+		if e.RefCount != 0 {
+			t.Errorf("map_uid %d kept refcount %d after the batch, want 0", uid, e.RefCount)
+		}
 	}
 }
 

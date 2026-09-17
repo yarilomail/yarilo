@@ -160,8 +160,9 @@ func TestTwoFoldersOfOneUserDoNotHealAtOnce(t *testing.T) {
 // orderingLocker records the order in which resources are taken, so the lock
 // order is measured rather than read off a comment.
 type orderingLocker struct {
-	mu    sync.Mutex
-	order []string
+	mu      sync.Mutex
+	order   []string
+	holding map[string]bool
 }
 
 func (l *orderingLocker) Lock(_ context.Context, resource, _ string, _ time.Duration) (locks.Lock, error) {
@@ -176,8 +177,18 @@ func (l *orderingLocker) LockShared(ctx context.Context, r, o string, ttl time.D
 }
 func (l *orderingLocker) Unlock(context.Context, string) error               { return nil }
 func (l *orderingLocker) Renew(context.Context, string, time.Duration) error { return nil }
-func (l *orderingLocker) HoldsResource(string) (locks.HoldMode, bool)        { return locks.HoldNone, false }
-func (l *orderingLocker) Close() error                                       { return nil }
+
+// HoldsResource answers from what this locker was told to hold, so a row can
+// put the guard in the position the inverted path put it in.
+func (l *orderingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.holding[resource] {
+		return locks.HoldExclusive, true
+	}
+	return locks.HoldNone, false
+}
+func (l *orderingLocker) Close() error { return nil }
 func (l *orderingLocker) Subscribe(context.Context, string) (<-chan locks.Event, error) {
 	return nil, nil
 }
@@ -194,9 +205,9 @@ func (l *orderingLocker) taken() []string {
 	return out
 }
 
-// Every path that takes both keys takes the map first: inverting one trades the
-// loop for a deadlock, so the order is read off what runs (#1682).
-func TestBothKeysAreAlwaysTakenMapFirst(t *testing.T) {
+// Every path that takes both keys takes the folder first, the order the expunge
+// path takes them: the other one meets it head on (#1884).
+func TestBothKeysAreAlwaysTakenFolderFirst(t *testing.T) {
 	healBarrier.Range(func(k, _ any) bool { healBarrier.Delete(k); return true })
 	rec := &orderingLocker{}
 	b := New(WithLocker(rec))
@@ -224,9 +235,9 @@ func TestBothKeysAreAlwaysTakenMapFirst(t *testing.T) {
 	if mapAt < 0 || folderAt < 0 {
 		t.Fatalf("the heal took %v, which is not both keys", order)
 	}
-	if mapAt > folderAt {
-		t.Errorf("the heal took the folder key before the map key (%v): delivery and "+
-			"RebuildStorage take the map first, and an inversion deadlocks against them", order)
+	if folderAt > mapAt {
+		t.Errorf("the heal took the map key before the folder key (%v): the expunge "+
+			"path takes folder then map, and an inversion deadlocks against it", order)
 	}
 }
 

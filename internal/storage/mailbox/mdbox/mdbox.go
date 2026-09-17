@@ -107,9 +107,8 @@ func WithFsync(m mailbox.FsyncMode) Option {
 	return func(b *Backend) { b.fsync = m }
 }
 
-// WithLocker wires a yarilo-locks client into the backend. Lock order on every
-// mutation path (Save, Remove, Copy): MdboxMapKey(user) then
-// MailboxKey(user, folder).
+// WithLocker wires a yarilo-locks client into the backend. Lock order wherever
+// both are held: MailboxKey(user, folder) then MdboxMapKey(user) (#1884).
 func WithLocker(l locks.Locker) Option {
 	return func(b *Backend) { b.locker = l }
 }
@@ -360,6 +359,11 @@ func (u *userMailbox) withMailboxLock(folder string, fn func() error) error {
 func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) error {
 	if u.b.locker == nil {
 		return fn()
+	}
+	// One order for the pair, held by the code rather than by a comment: the
+	// map is taken under a folder, never a folder under the map (#1884).
+	if err := u.refuseFolderUnderMap(folder, site); err != nil {
+		return err
 	}
 	key := locks.MailboxKey(u.username, folder)
 	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
@@ -886,6 +890,27 @@ func corruptFetchErr(fileID uint32, err error) error {
 // Remove decrements the map record's refcount. Bytes stay on disk; purge
 // reclaims them later. Idempotent: a Remove of an already-zero-ref record is a
 // no-op (UpdateRefcounts clamps at zero).
+// RemoveManyHeld drops the refcount of every named body in one pass, so an
+// expunge locks the user's map once instead of once per message (#1884).
+func (u *userMailbox) RemoveManyHeld(_ string, filenames []string) error {
+	if len(filenames) == 0 {
+		return nil
+	}
+	uids := make([]uint32, 0, len(filenames))
+	for _, name := range filenames {
+		mapUID, err := parseFilename(name)
+		if err != nil {
+			return fmt.Errorf("mdbox/remove: %w", err)
+		}
+		uids = append(uids, mapUID)
+	}
+	m, err := u.openMap()
+	if err != nil {
+		return err
+	}
+	return m.UpdateRefcounts(uids, -1)
+}
+
 func (u *userMailbox) Remove(_, filename string) error {
 	mapUID, err := parseFilename(filename)
 	if err != nil {
@@ -1240,6 +1265,24 @@ func logOtherHeaderSize(file string, offset uint32, announced, actual int) {
 
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
+
+// refuseFolderUnderMap refuses a folder taken by a goroutine already holding
+// the map; another session of the same user waits instead.
+func (u *userMailbox) refuseFolderUnderMap(folder, site string) error {
+	mapKey := locks.MdboxMapKey(u.username)
+	if _, held := u.b.locker.HoldsResource(mapKey); !held {
+		return nil
+	}
+	folderKey := locks.MailboxKey(u.username, folder)
+	metricLockOrderRefused.WithLabelValues(site).Inc()
+	slog.Error("mdbox: refusing a folder lock under the map lock",
+		"site", site, "outer", mapKey, "inner", folderKey, "issue", "#1884")
+	return fmt.Errorf("mdbox/lock: %s wants %s while holding %s: %w", site, folderKey, mapKey, ErrLockOrder)
+}
+
+// ErrLockOrder is returned when the pair would be taken map-first, the order
+// that meets the expunge path head on.
+var ErrLockOrder = errors.New("mdbox: lock order is folder then map")
 
 // HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
 func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {

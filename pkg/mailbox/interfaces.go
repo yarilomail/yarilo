@@ -636,6 +636,12 @@ type HeldRemover interface {
 	RemoveHeld(folder, filename string) error
 }
 
+// BatchRemover unlinks several bodies as one operation. A driver whose removal
+// takes a user-wide lock pays for it once instead of once per message (#1884).
+type BatchRemover interface {
+	RemoveManyHeld(folder string, filenames []string) error
+}
+
 // SplitStoredFlags sorts one stored list back into the two fields MessageMeta
 // keeps apart (#1605).
 func SplitStoredFlags(all []string) (flags, keywords []string) {
