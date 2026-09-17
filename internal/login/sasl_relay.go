@@ -15,9 +15,17 @@ import (
 // lazily dialled one, so a proxy holds a single connection per process.
 type relayDialer func() (*authclient.Client, error)
 
+// relayContext is what a relayed exchange needs from the connection it serves:
+// where to reach the service, and the session id the token is issued for.
+type relayContext struct {
+	dial      relayDialer
+	sessionID string
+}
+
 // scramMechanisms are what the service announced. The proxy runs none of them,
 // so naming one it cannot relay is a promise it cannot keep.
-func scramMechanisms(dial relayDialer, conn net.Conn) []string {
+func scramMechanisms(rc relayContext, conn net.Conn) []string {
+	dial := rc.dial
 	if dial == nil {
 		return nil
 	}
@@ -67,17 +75,17 @@ type saslRelayOutcome struct {
 // runRelayedSASL drives one exchange. writeChallenge and readResponse are the
 // protocol's own spellings of sending and reading the SASL bytes.
 func runRelayedSASL(
-	dial relayDialer,
+	rc relayContext,
 	conn net.Conn,
-	mech, service, clientIP, sessionID string,
+	mech, service, clientIP string,
 	initial []byte,
 	writeChallenge func([]byte) error,
 	readResponse func() ([]byte, error),
 ) (*saslRelayOutcome, error) {
-	if dial == nil {
+	if rc.dial == nil {
 		return nil, fmt.Errorf("login: no auth relay configured")
 	}
-	cl, err := dial()
+	cl, err := rc.dial()
 	if err != nil {
 		return nil, fmt.Errorf("login: auth relay unavailable: %w", err)
 	}
@@ -87,7 +95,7 @@ func runRelayedSASL(
 			return nil, fmt.Errorf("login: %s needs a channel binding this connection has none of", mech)
 		}
 	}
-	srv := authclient.NewRelayServer(cl, mech, service, clientIP, sessionID, cb)
+	srv := authclient.NewRelayServer(cl, mech, service, clientIP, rc.sessionID, cb)
 	// An exchange the client abandons frees the service's half at once, rather
 	// than waiting out its deadline there (#1733).
 	defer srv.Cancel()

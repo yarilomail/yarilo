@@ -249,14 +249,23 @@ func (s *Server) advanceSCRAM(conn net.Conn, live *exchanges, id string, x *sasl
 	}
 	live.drop(id)
 	user := x.user()
+	// The same reply the password path sends, token included: a session
+	// without one cannot open a backend, whatever proved the identity.
+	reply := buildAuthOK(id, &AuthResponse{Result: AuthOK, Username: user})
+	reply += "\tsession=" + x.session + "\tservice=" + x.service
+	if s.tokenStore != nil && x.session != "" {
+		if tok, terr := s.tokenStore.Issue(user, x.session, x.service); terr == nil {
+			reply += "\ttoken=" + tok
+		} else {
+			slog.Warn("auth: token issue failed", "err", terr, "mech", x.mech)
+		}
+	}
 	if len(challenge) > 0 {
 		// The server-final travels with the verdict: a client verifying the
 		// signature needs both, and a second round trip buys nothing.
-		fmt.Fprintf(conn, "OK\t%s\tuser=%s\tsession=%s\tservice=%s\tresp=%s\n",
-			id, user, x.session, x.service, encodeChallenge(challenge))
-	} else {
-		fmt.Fprintf(conn, "OK\t%s\tuser=%s\tsession=%s\tservice=%s\n", id, user, x.session, x.service)
+		reply += "\tresp=" + encodeChallenge(challenge)
 	}
+	fmt.Fprintln(conn, reply)
 	slog.Info("auth: sasl exchange succeeded",
 		"sid", x.session, "proto", x.service, "mech", x.mech, "user", user, "result", "ok")
 	return "ok"

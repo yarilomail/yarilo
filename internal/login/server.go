@@ -620,7 +620,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	// Extract preamble: speak the protocol pre-auth exchange to collect credentials.
 	// authConn/authRd may be TLS-upgraded from the original conn/rd if STARTTLS happened.
 	preambleStart := time.Now()
-	pre, authConn, authRd, err := extractPreamble(conn, rd, s.opts.Protocol, s.opts.StarttlsTLS, s.opts, s.authClient)
+	pre, authConn, authRd, err := extractPreamble(conn, rd, s.opts.Protocol, s.opts.StarttlsTLS, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
 	if err != nil {
 		log.Debug("login: preamble", "err", err)
 		s.incResult("preamble_error")
@@ -770,7 +770,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			if _, ok := authConn.(*tls.Conn); !ok {
 				retryExtTLS = s.opts.StarttlsTLS
 			}
-			pre, authConn, authRd, err = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, s.authClient)
+			pre, authConn, authRd, err = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
 			if err != nil {
 				log.Debug("login: preamble retry", "err", err)
 				return outcomeClose, nil
@@ -937,7 +937,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			retryExtTLS = s.opts.StarttlsTLS
 		}
 		var cerr error
-		pre, authConn, authRd, cerr = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, s.authClient)
+		pre, authConn, authRd, cerr = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
 		if cerr != nil {
 			log.Debug("login: transient re-login: client did not retry", "err", cerr)
 			return

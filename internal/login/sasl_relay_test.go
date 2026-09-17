@@ -76,7 +76,7 @@ func TestTheGreetingOffersTheServiceMechanisms(t *testing.T) {
 	t.Cleanup(func() { client.Close(); server.Close() }) //nolint:errcheck
 
 	go func() {
-		_, _, _, _ = extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{}, dial)
+		_, _, _, _ = extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{}, relayContext{dial: dial, sessionID: "s1"})
 	}()
 
 	greeting, err := bufio.NewReader(client).ReadString('\n')
@@ -99,7 +99,7 @@ func TestTheProxyAdvertisesNothingTheServiceLacks(t *testing.T) {
 	_, server := net.Pipe()
 	t.Cleanup(func() { server.Close() }) //nolint:errcheck
 
-	if got := scramMechanisms(dial, server); len(got) != 0 {
+	if got := scramMechanisms(relayContext{dial: dial}, server); len(got) != 0 {
 		t.Errorf("the proxy offers %v against a service that announced no SCRAM", got)
 	}
 }
@@ -118,7 +118,7 @@ func TestTheProxyRelaysAScramExchange(t *testing.T) {
 	done := make(chan result, 1)
 	go func() {
 		write, read := saslIO(server, bufio.NewReader(server))
-		out, err := runRelayedSASL(dial, server, "SCRAM-SHA-256", "imap", "192.0.2.1", "s1",
+		out, err := runRelayedSASL(relayContext{dial: dial, sessionID: "s1"}, server, "SCRAM-SHA-256", "imap", "192.0.2.1",
 			[]byte("n,,n=alice,r=nonce"), write, read)
 		done <- result{out, err}
 	}()
@@ -177,7 +177,7 @@ func TestACancelledExchangeIsNotALogin(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		write, read := saslIO(server, bufio.NewReader(server))
-		_, err := runRelayedSASL(dial, server, "SCRAM-SHA-256", "imap", "192.0.2.1", "s1",
+		_, err := runRelayedSASL(relayContext{dial: dial, sessionID: "s1"}, server, "SCRAM-SHA-256", "imap", "192.0.2.1",
 			[]byte("n,,n=alice,r=nonce"), write, read)
 		done <- err
 	}()
@@ -206,7 +206,7 @@ func TestTheCommandLoopCompletesAScramLogin(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		pre, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{}, dial)
+		pre, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{}, relayContext{dial: dial, sessionID: "s1"})
 		done <- result{pre, err}
 	}()
 
@@ -297,7 +297,7 @@ func TestFailedScramExchangesHitTheAttemptLimit(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{AuthMaxAttempts: 2}, dial)
+		_, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{AuthMaxAttempts: 2}, relayContext{dial: dial, sessionID: "s1"})
 		done <- err
 	}()
 

@@ -508,3 +508,33 @@ func TestCancelFreesTheExchange(t *testing.T) {
 		t.Errorf("after CANCEL the exchange answered %q, want no-such-exchange", line)
 	}
 }
+
+// tokenRecorder is a token store that hands out a known value, so a row can
+// see whether the reply carried one.
+type tokenRecorder struct{ issued int }
+
+func (t *tokenRecorder) Issue(user, session, service string) (string, error) {
+	t.issued++
+	return "tok-" + user, nil
+}
+
+func (t *tokenRecorder) Validate(tok string) (string, string, string, bool) {
+	return strings.TrimPrefix(tok, "tok-"), "s1", "imap", true
+}
+
+// A SCRAM login must carry the token the password path carries: the backend
+// verifies it, so a session without one cannot open (#1733).
+func TestAScramLoginCarriesAToken(t *testing.T) {
+	store := &tokenRecorder{}
+	srv := NewServer(scramChain(t, "alice", "hunter2"), WithTokenStore(store))
+	line := runSCRAM(t, srv, MechScramSha256, "alice", "hunter2", nil)
+	if !strings.HasPrefix(line, "OK\t") {
+		t.Fatalf("exchange ended %q, want OK", line)
+	}
+	if !strings.Contains(line, "token=tok-alice") {
+		t.Errorf("reply %q carries no token; the backend would refuse the session", line)
+	}
+	if store.issued != 1 {
+		t.Errorf("the store issued %d tokens, want one", store.issued)
+	}
+}
