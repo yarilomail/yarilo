@@ -6,21 +6,34 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	authclient "github.com/yarilomail/yarilo/internal/auth/client"
 )
 
+// stubToken is what the fake service issues; a login without one is refused
+// before the backend, so a fake that omits it models nothing real.
+const stubToken = "stubtoken1234567890123456789012345678901234567890123456789012"
+
 // relayService answers a SCRAM exchange the way yarilo-auth does, so the proxy
 // is driven against the wire it will meet rather than against a stub of itself.
 func relayService(t *testing.T, mechs []string) string {
+	addr, _ := relayServiceRecording(t, mechs)
+	return addr
+}
+
+// relayServiceRecording also hands back what the proxy sent, so a row can read
+// the AUTH line rather than trust that the proxy filled it.
+func relayServiceRecording(t *testing.T, mechs []string) (string, *authLines) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { ln.Close() }) //nolint:errcheck
+	seen := &authLines{}
 	go func() {
 		for {
 			c, aerr := ln.Accept()
@@ -43,10 +56,11 @@ func relayService(t *testing.T, mechs []string) string {
 					f := strings.Split(strings.TrimRight(line, "\n"), "\t")
 					switch f[0] {
 					case "AUTH":
+						seen.record(strings.TrimRight(line, "\n"))
 						fmt.Fprintf(c, "CONT\t%s\t%s\n", f[1],
 							base64.StdEncoding.EncodeToString([]byte("r=nonce,s=c2FsdA==,i=4096")))
 					case "CONT":
-						fmt.Fprintf(c, "OK\t%s\tuser=alice\tresp=%s\n", f[1],
+						fmt.Fprintf(c, "OK\t%s\tuser=alice\ttoken=%s\tresp=%s\n", f[1], stubToken,
 							base64.StdEncoding.EncodeToString([]byte("v=signature")))
 					case "CANCEL":
 						fmt.Fprintf(c, "OK\t%s\n", f[1])
@@ -55,7 +69,28 @@ func relayService(t *testing.T, mechs []string) string {
 			}()
 		}
 	}()
-	return ln.Addr().String()
+	return ln.Addr().String(), seen
+}
+
+// authLines records the AUTH commands a fake service received.
+type authLines struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (a *authLines) record(line string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.lines = append(a.lines, line)
+}
+
+func (a *authLines) last() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.lines) == 0 {
+		return ""
+	}
+	return a.lines[len(a.lines)-1]
 }
 
 func relayTo(t *testing.T, addr string) relayDialer {
@@ -346,5 +381,108 @@ func TestTheAttemptCeilingIsOneNumber(t *testing.T) {
 		if got := authAttemptLimit(row.opts); got != row.want {
 			t.Errorf("%s: limit = %d, want %d", row.name, got, row.want)
 		}
+	}
+}
+
+// The session id reaches the service: a token is issued for one, so an empty
+// id costs the login its token and the backend refuses it (#1733).
+func TestTheRelayedAuthCarriesTheSessionID(t *testing.T) {
+	addr, seen := relayServiceRecording(t, []string{"SCRAM-SHA-256"})
+	dial := relayTo(t, addr)
+	client, server := net.Pipe()
+	t.Cleanup(func() { client.Close(); server.Close() }) //nolint:errcheck
+
+	go func() {
+		write, read := saslIO(server, bufio.NewReader(server))
+		_, _ = runRelayedSASL(relayContext{dial: dial, sessionID: "s1"}, server,
+			"SCRAM-SHA-256", "imap", "192.0.2.1", []byte("n,,n=alice,r=nonce"), write, read)
+	}()
+
+	rd := bufio.NewReader(client)
+	if _, err := rd.ReadString('\n'); err != nil {
+		t.Fatalf("challenge: %v", err)
+	}
+	if got := seen.last(); !strings.Contains(got, "session=s1") {
+		t.Errorf("the AUTH command was %q, which names no session; no token is issued for that", got)
+	}
+}
+
+// A verdict without a token is refused before the backend is dialled, so the
+// failure names the auth service rather than the backend that refused it.
+func TestALoginWithoutATokenIsRefusedBeforeTheBackend(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go func() {
+				defer c.Close() //nolint:errcheck
+				rd := bufio.NewReader(c)
+				fmt.Fprint(c, "VERSION\t1\t0\nMECH\tPLAIN\tplaintext\nDONE\n")
+				for {
+					line, rerr := rd.ReadString('\n')
+					if rerr != nil {
+						return
+					}
+					f := strings.Split(strings.TrimRight(line, "\n"), "\t")
+					if f[0] == "AUTH" {
+						// An OK with no token: the shape that reached the stand
+						// and was blamed on the backend.
+						fmt.Fprintf(c, "OK\t%s\tuser=alice\n", f[1])
+					}
+				}
+			}()
+		}
+	}()
+
+	dialled := make(chan struct{}, 1)
+	backend, berr := net.Listen("tcp", "127.0.0.1:0")
+	if berr != nil {
+		t.Fatalf("listen backend: %v", berr)
+	}
+	t.Cleanup(func() { backend.Close() }) //nolint:errcheck
+	go func() {
+		for {
+			c, aerr := backend.Accept()
+			if aerr != nil {
+				return
+			}
+			dialled <- struct{}{}
+			c.Close() //nolint:errcheck
+		}
+	}()
+
+	srv := New(Options{
+		Protocol:    ProtocolIMAP,
+		AuthAddr:    ln.Addr().String(),
+		BackendAddr: backend.Addr().String(),
+		LocalIP:     "127.0.0.1",
+	})
+	client, server := net.Pipe()
+	t.Cleanup(func() { client.Close(); server.Close() }) //nolint:errcheck
+	go srv.handleConn(server)
+
+	rd := bufio.NewReader(client)
+	if _, err := rd.ReadString('\n'); err != nil {
+		t.Fatalf("greeting: %v", err)
+	}
+	fmt.Fprintf(client, "a1 LOGIN alice secret\r\n")
+	reply, rerr := rd.ReadString('\n')
+	if rerr != nil {
+		t.Fatalf("reply: %v", rerr)
+	}
+	if !strings.Contains(reply, "UNAVAILABLE") {
+		t.Errorf("the proxy answered %q, want the unavailable refusal", strings.TrimSpace(reply))
+	}
+	select {
+	case <-dialled:
+		t.Error("the proxy dialled the backend with a tokenless verdict")
+	default:
 	}
 }

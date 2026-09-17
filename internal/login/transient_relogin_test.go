@@ -241,7 +241,9 @@ func serveOKAuth(c net.Conn) {
 		case "VERSION":
 			continue
 		case "AUTH":
-			fmt.Fprintf(c, "OK\t%s\tuser=alice\n", fields[1])
+			// With a token, because a session cannot open without one: a fake
+			// that omits it models a service no deployment runs.
+			fmt.Fprintf(c, "OK\t%s\tuser=alice\ttoken=stubtoken1234567890123456789012345678901234567890123456789012\n", fields[1])
 		default:
 			fmt.Fprintf(c, "FAIL\t%s\n", fields[1])
 		}
