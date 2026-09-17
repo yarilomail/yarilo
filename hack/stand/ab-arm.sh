@@ -21,6 +21,38 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" "$@"; }
 mkdir -p "$OUT"
 
+IMAGE_REPO="${YARILO_IMAGE_REPO:-yarilomail/yarilo}"
+
+# A tag with no image deploys, backs off, and reports "pods did not settle" ten
+# minutes later -- a true sentence pointing at the wrong thing (#1881).
+tag_exists() {
+  local tok code
+  tok=$(curl -fsS "https://ghcr.io/token?scope=repository:${IMAGE_REPO}:pull&service=ghcr.io" |
+    sed 's/.*"token":"\([^"]*\)".*/\1/') || return 2
+  [ -n "$tok" ] || return 2
+  code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $tok" \
+    -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
+    "https://ghcr.io/v2/${IMAGE_REPO}/manifests/$1") || return 2
+  case "$code" in 200) return 0;; 404) return 1;; *) return 2;; esac
+}
+
+last_built_tag() {
+  local tok
+  tok=$(curl -fsS "https://ghcr.io/token?scope=repository:${IMAGE_REPO}:pull&service=ghcr.io" |
+    sed 's/.*"token":"\([^"]*\)".*/\1/') || return 1
+  curl -fsS -H "Authorization: Bearer $tok" "https://ghcr.io/v2/${IMAGE_REPO}/tags/list?n=1000" |
+    tr ',' '\n' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+-dev\.[0-9]\+' | sort -t. -k4 -n | tail -1
+}
+
+tag_exists "$TAG" && rc=0 || rc=$?
+if [ "$rc" = 1 ]; then
+  echo "ab-arm: no image for tag $TAG; the last built tag is $(last_built_tag)" >&2
+  exit 1
+elif [ "$rc" != 0 ]; then
+  echo "ab-arm: could not read the registry to check tag $TAG" >&2
+  exit 1
+fi
+
 echo "== arm $ARM: $TAG"
 helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
   -f "$REPO/helm_values/values-sandbox.yaml" --set image.tag="$TAG" --timeout 10m >/dev/null
