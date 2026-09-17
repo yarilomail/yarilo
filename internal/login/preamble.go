@@ -49,10 +49,7 @@ type preamble struct {
 	// authResult is the verdict of a relayed SASL exchange: there is no
 	// password to re-send, so the caller uses it instead of authenticating.
 	authResult *authclient.AuthResult
-	// saslFinal is the mechanism's last message, handed to the client with the
-	// success so one verifying the server signature still receives it.
-	saslFinal []byte
-	cmdTag    string // IMAP command tag; empty for POP3/Submission
+	cmdTag     string // IMAP command tag; empty for POP3/Submission
 	// forwardIP/forwardPort record what an upstream claimed, not what is
 	// trusted: handleConn checks the peer against trusted_nets first (#742).
 	forwardIP     string
@@ -344,7 +341,6 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					return &preamble{
 						username:      out.username,
 						authResult:    out.result,
-						saslFinal:     out.final,
 						cmdTag:        tag,
 						forwardIP:     fwdIP,
 						forwardPort:   fwdPort,
@@ -493,7 +489,6 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				return &preamble{
 					username:      out.username,
 					authResult:    out.result,
-					saslFinal:     out.final,
 					forwardIP:     fwdIP,
 					forwardPort:   fwdPort,
 					forwardSource: "xclient",

@@ -165,9 +165,6 @@ func TestTheProxyRelaysAScramExchange(t *testing.T) {
 	if got.out.username != "alice" {
 		t.Errorf("verdict names %q, want alice", got.out.username)
 	}
-	if string(got.out.final) != "v=signature" {
-		t.Errorf("server-final = %q, want the service's", got.out.final)
-	}
 }
 
 // A client that cancels mid-exchange is a failure, not a login, and the proxy

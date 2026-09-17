@@ -857,9 +857,8 @@ components:
       storageClass: ""
       size: 1Gi
 
-    ## auth_max_attempts — failed authentications allowed on one connection
-    ## before the server sends BYE / -ERR and closes (IMAP/POP3). Counts a
-    ## refused SASL exchange as well as a wrong password. Default 3.
+    ## auth_max_attempts — failed authentications allowed on one connection,
+    ## a refused SASL exchange included, before it is closed. Default 3.
     auth_max_attempts: 3
     failure_delay: 2
     ## internal_failure_delay_ms — separate delay for INTERNAL

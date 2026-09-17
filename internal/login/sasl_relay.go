@@ -62,9 +62,6 @@ func channelBinding(conn net.Conn) []byte {
 type saslRelayOutcome struct {
 	username string
 	result   *authclient.AuthResult
-	// final is the server's last message, handed to the client with the
-	// success so a client verifying the server signature still gets it.
-	final []byte
 }
 
 // runRelayedSASL drives one exchange. writeChallenge and readResponse are the
@@ -112,11 +109,7 @@ func runRelayedSASL(
 					return nil, rerr
 				}
 			}
-			return &saslRelayOutcome{
-				username: srv.Result.Username,
-				result:   srv.Result,
-				final:    challenge,
-			}, nil
+			return &saslRelayOutcome{username: srv.Result.Username, result: srv.Result}, nil
 		}
 		if werr := writeChallenge(challenge); werr != nil {
 			return nil, werr
