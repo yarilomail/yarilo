@@ -1431,26 +1431,8 @@ func buildAuthOK(id string, res *AuthResponse) string {
 		}
 		return reply
 	}
-	if res.Home != "" {
-		reply += "\thome=" + res.Home
-	}
-	if res.MailLoc != "" {
-		reply += "\tmail=" + res.MailLoc
-	}
-	if res.MailboxFormat != "" {
-		reply += "\tmailbox_format=" + res.MailboxFormat
-	}
-	if len(res.Groups) > 0 {
-		reply += "\tgroups=" + strings.Join(res.Groups, ",")
-	}
-	if len(res.QuotaRules) > 0 {
-		reply += "\tquota_rule=" + strings.Join(res.QuotaRules, ",")
-	}
-	if res.QuotaOverFlag != "" {
-		reply += "\tquota_over_flag=" + res.QuotaOverFlag
-	}
-	if res.DirectorTag != "" {
-		reply += "\tdirector_tag=" + res.DirectorTag
+	for _, tok := range AuthOKTokens(res) {
+		reply += "\t" + tok
 	}
 	return reply
 }

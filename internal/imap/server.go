@@ -962,7 +962,7 @@ func (s *session) verifyBearer(username, token string) (*protocol.AuthResponse, 
 	if err != nil {
 		return nil, err
 	}
-	return &protocol.AuthResponse{Result: protocol.AuthOK, Username: res.Username}, nil
+	return res.Response(), nil
 }
 
 // scramServer runs a SCRAM mechanism: through the auth service when a relay is
@@ -980,7 +980,7 @@ func (s *session) scramServer(mech string) (sasl.Server, error) {
 		// once, rather than waiting out its deadline there (#1733).
 		s.cancelRelay()
 		srv := authrelay.NewRelayServer(relay, mech, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID(), cb)
-		srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeSCRAMLogin(res.Username) }
+		srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeLogin(res.Response()) }
 		s.liveRelay = srv
 		return srv, nil
 	}

@@ -238,11 +238,22 @@ func (s *session) cmdSASLAuth(arg string) {
 	}
 }
 
+// onSuccessFn takes the whole answer: a session resolves storage from it, and
+// a name alone sends it to the global mail location (#1890).
+type onSuccessFn func(*protocol.AuthResponse) error
+
+// named adapts an in-process SCRAM adapter, which knows only the verified name.
+func named(f onSuccessFn) func(string) error {
+	return func(user string) error {
+		return f(&protocol.AuthResponse{Result: protocol.AuthOK, Username: user})
+	}
+}
+
 // scramBuilder wires one digest family (SHA-1 or SHA-256) for handleSASLScram.
 type scramBuilder struct {
 	supported bool
-	nonPlus   func(onSuccess func(string) error) sasl.Server
-	plus      func(cb []byte, onSuccess func(string) error) sasl.Server
+	nonPlus   func(onSuccess onSuccessFn) sasl.Server
+	plus      func(cb []byte, onSuccess onSuccessFn) sasl.Server
 }
 
 func (s *session) scramSha256Builder() scramBuilder {
@@ -255,8 +266,8 @@ func (s *session) scramSha256Builder() scramBuilder {
 	}
 	return scramBuilder{
 		supported: true,
-		nonPlus:   func(f func(string) error) sasl.Server { return scram.NewSha256(lookup, f) },
-		plus:      func(cb []byte, f func(string) error) sasl.Server { return scram.NewSha256Plus(lookup, cb, f) },
+		nonPlus:   func(f onSuccessFn) sasl.Server { return scram.NewSha256(lookup, named(f)) },
+		plus:      func(cb []byte, f onSuccessFn) sasl.Server { return scram.NewSha256Plus(lookup, cb, named(f)) },
 	}
 }
 
@@ -274,15 +285,15 @@ func (s *session) relayBuilder(mech, plusMech string) (scramBuilder, bool) {
 	if !announced[mech] {
 		return scramBuilder{}, false
 	}
-	build := func(m string, cb []byte, f func(string) error) sasl.Server {
+	build := func(m string, cb []byte, f onSuccessFn) sasl.Server {
 		srv := authrelay.NewRelayServer(relay, m, "pop3", s.remoteIP.String(), s.sid, cb)
-		srv.OnSuccess = func(res *authrelay.AuthResult) error { return f(res.Username) }
+		srv.OnSuccess = func(res *authrelay.AuthResult) error { return f(res.Response()) }
 		return srv
 	}
 	return scramBuilder{
 		supported: true,
-		nonPlus:   func(f func(string) error) sasl.Server { return build(mech, nil, f) },
-		plus:      func(cb []byte, f func(string) error) sasl.Server { return build(plusMech, cb, f) },
+		nonPlus:   func(f onSuccessFn) sasl.Server { return build(mech, nil, f) },
+		plus:      func(cb []byte, f onSuccessFn) sasl.Server { return build(plusMech, cb, f) },
 	}, true
 }
 
@@ -296,8 +307,8 @@ func (s *session) scramSha1Builder() scramBuilder {
 	}
 	return scramBuilder{
 		supported: true,
-		nonPlus:   func(f func(string) error) sasl.Server { return scram.NewSha1(lookup, f) },
-		plus:      func(cb []byte, f func(string) error) sasl.Server { return scram.NewSha1Plus(lookup, cb, f) },
+		nonPlus:   func(f onSuccessFn) sasl.Server { return scram.NewSha1(lookup, named(f)) },
+		plus:      func(cb []byte, f onSuccessFn) sasl.Server { return scram.NewSha1Plus(lookup, cb, named(f)) },
 	}
 }
 
@@ -318,11 +329,11 @@ func (s *session) handleSASLScram(parts []string, plus bool, b scramBuilder) {
 
 	// capture the SCRAM-verified username for completeAuthenticated
 	var (
-		verifiedUser string
-		completed    bool
+		verified  *protocol.AuthResponse
+		completed bool
 	)
-	onSuccess := func(user string) error {
-		verifiedUser = user
+	onSuccess := func(res *protocol.AuthResponse) error {
+		verified = res
 		completed = true
 		return nil
 	}
@@ -350,10 +361,7 @@ func (s *session) handleSASLScram(parts []string, plus bool, b scramBuilder) {
 		s.writeErr("authentication failed")
 		return
 	}
-	s.completeAuthenticated(&protocol.AuthResponse{
-		Result:   protocol.AuthOK,
-		Username: verifiedUser,
-	})
+	s.completeAuthenticated(verified)
 }
 
 // tlsExporter returns the 32-byte RFC 9266 channel-binding material,
