@@ -1266,9 +1266,8 @@ func logOtherHeaderSize(file string, offset uint32, announced, actual int) {
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
 
-// refuseFolderUnderMap answers the one question that makes the pair safe: is
-// this goroutine already holding the map? The registry is keyed by goroutine,
-// so another session of the same user waits rather than being refused.
+// refuseFolderUnderMap refuses a folder taken by a goroutine already holding
+// the map; another session of the same user waits instead.
 func (u *userMailbox) refuseFolderUnderMap(folder, site string) error {
 	mapKey := locks.MdboxMapKey(u.username)
 	if _, held := u.b.locker.HoldsResource(mapKey); !held {

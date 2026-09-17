@@ -62,11 +62,8 @@ func (l *countingLocker) taken(resource string) int {
 	return l.count[resource]
 }
 
-// An expunge of many messages costs one map lock, not one per body: each is a
-// round trip to the lock service under the folder hold (#1884).
-//
-// Driven through ExpungeMarked, not through the batch call: the defect was the
-// caller looping, so a row that calls the batch itself proves nothing.
+// An expunge costs one map lock, not one per body (#1884). Driven through
+// ExpungeMarked: the defect was the caller looping, not the batch call.
 func TestAnExpungeTakesTheMapLockOnce(t *testing.T) {
 	rec := newCountingLocker()
 	home := t.TempDir()
@@ -144,9 +141,8 @@ func TestAFolderUnderTheMapIsRefusedByName(t *testing.T) {
 	}
 }
 
-// Two sessions of one user, opposite orders, driven by channels rather than
-// sleeps: the pair that deadlocked is refused at once instead of waiting out
-// two 30-second timeouts.
+// Opposite orders on one user, driven by channels: refused at once rather
+// than waiting out two 30-second timeouts.
 func TestTheInvertedOrderIsRefusedRatherThanDeadlocked(t *testing.T) {
 	rec := newCountingLocker()
 	b := New(WithLocker(rec))

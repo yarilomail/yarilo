@@ -6,9 +6,9 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 )
 
-// UpdateRefcounts applies a delta to every listed map_uid under one lock hop. A
-// missing uid is an error; a negative result is clamped, and reaching the clamp
-// is a bug at the call site.
+// UpdateRefcounts applies a delta to every listed map_uid under one lock hop.
+// A missing uid does not stop the rest -- the error names it -- so one stale
+// record cannot leave a batch of bodies referenced forever (#1884).
 func (m *Map) UpdateRefcounts(mapUIDs []uint32, delta int16) error {
 	if len(mapUIDs) == 0 {
 		return nil
@@ -18,15 +18,21 @@ func (m *Map) UpdateRefcounts(mapUIDs []uint32, delta int16) error {
 			return err
 		}
 		deltas := make([]mailindex.TxExtAtomicInc, 0, len(mapUIDs))
+		var missing []uint32
 		for _, uid := range mapUIDs {
 			i, ok := m.findLocked(uid)
 			if !ok {
-				return fmt.Errorf("mdboxmap/refcount: map_uid %d not found", uid)
+				missing = append(missing, uid)
+				continue
 			}
 			e := m.st.at(i)
 			e.RefCount = clampRef(int32(e.RefCount) + int32(delta))
 			m.st.setAt(i, e)
 			deltas = append(deltas, mailindex.TxExtAtomicInc{UID: uid, Diff: int32(delta)})
+		}
+		if len(deltas) == 0 {
+			// Nothing was changed in memory, so nothing to invalidate.
+			return fmt.Errorf("mdboxmap/refcount: map_uid %v not found", missing)
 		}
 		// Appended, not rewritten: every save and delete changes a refcount, so
 		// a base rewrite here priced one operation at a full file (#1205).
@@ -36,6 +42,9 @@ func (m *Map) UpdateRefcounts(mapUIDs []uint32, delta int16) error {
 			// value, which for a decrement is what the purge scan reads.
 			m.invalidateLocked()
 			return err
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("mdboxmap/refcount: map_uid %v not found", missing)
 		}
 		return nil
 	})
