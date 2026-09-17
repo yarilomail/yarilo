@@ -42,33 +42,26 @@ func imapPreAuthCaps(extTLS *tls.Config, opts Options, scram []string) string {
 type preamble struct {
 	username string // for director LOOKUP and yarilo-auth AUTH
 	password string // credential to pass to yarilo-auth AUTH
-	// authzid is the SASL PLAIN impersonation target: non-empty only when a
-	// master user asked to act as somebody else. It travels to yarilo-auth,
-	// which decides whether the request is granted -- the login pod never
-	// judges it (#1305).
+	// authzid is the SASL PLAIN impersonation target. yarilo-auth decides
+	// whether it is granted; the login pod never judges it (#1305).
 	authzid  string
 	ehloLine string // SMTP EHLO line replayed after XCLIENT reset (submission only)
-	// authResult is set when the identity was already proved to the service
-	// through a relayed SASL exchange: there is no password to re-send, and
-	// the caller uses this verdict instead of authenticating again (#1733).
+	// authResult is the verdict of a relayed SASL exchange: there is no
+	// password to re-send, so the caller uses it instead of authenticating.
 	authResult *authclient.AuthResult
 	// saslFinal is the mechanism's last message, handed to the client with the
 	// success so one verifying the server signature still receives it.
 	saslFinal []byte
 	cmdTag    string // IMAP command tag; empty for POP3/Submission
-	// forwardIP/forwardPort carry the original client address a trusted
-	// upstream forwarded (IMAP ID fields / POP3+Submission XCLIENT, #742).
-	// This records what was claimed, not what is trusted: handleConn verifies
-	// the socket peer is in general.xclient.trusted_nets before applying.
-	// forwardSource is "xclient" or "id" for logging an untrusted claim.
+	// forwardIP/forwardPort record what an upstream claimed, not what is
+	// trusted: handleConn checks the peer against trusted_nets first (#742).
 	forwardIP     string
 	forwardPort   string
 	forwardSource string
 }
 
-// idForwardedClientIP extracts the client IP/port a trusted proxy forwarded in
-// an IMAP ID command (#742): x-originating-ip / x-client-ip and
-// x-originating-port / x-client-port. Returns empty strings when absent.
+// idForwardedClientIP reads x-originating-ip / x-client-ip and their port
+// fields out of an IMAP ID command; empty strings when absent (#742).
 func idForwardedClientIP(line string) (ip, port string) {
 	open := strings.IndexByte(line, '(')
 	closeIdx := strings.LastIndexByte(line, ')')
@@ -127,9 +120,8 @@ func imapIDTokens(body string) []string {
 	return toks
 }
 
-// xclientForwarded parses an inbound XCLIENT command line (POP3/Submission,
-// #742) and returns the forwarded client IP/port. Empty ADDR or the
-// [UNAVAILABLE] sentinel yields empty strings.
+// xclientForwarded reads the forwarded IP/port out of an XCLIENT line; an
+// empty ADDR or [UNAVAILABLE] yields empty strings (#742).
 func xclientForwarded(line string) (ip, port string) {
 	a, err := xclient.Parse(line)
 	if err != nil {
@@ -138,9 +130,8 @@ func xclientForwarded(line string) (ip, port string) {
 	return a.Addr, a.Port
 }
 
-// extractPreamble dispatches to the protocol-specific handler. Returns the
-// preamble and the (possibly TLS-upgraded) conn and rd: STARTTLS replaces the
-// plain conn, so callers must use the returned values for all further writes.
+// extractPreamble dispatches per protocol. STARTTLS replaces the conn, so a
+// caller must write to the returned conn and rd, never the ones it passed.
 func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Config, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
 	switch p {
 	case ProtocolIMAP, ProtocolIMAPS:
@@ -169,6 +160,9 @@ func extractIMAPPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, op
 // NOT send the greeting. Returns the (possibly TLS-upgraded) conn and rd.
 func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
 	var fwdIP, fwdPort string
+	// A relayed exchange fails inside this loop, so the attempt limit the
+	// password path applies must be applied here too (#1733).
+	saslFailures := 0
 	for {
 		line, err := rd.ReadString('\n')
 		if err != nil {
@@ -191,9 +185,8 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 			fmt.Fprintf(conn, "* CAPABILITY %s\r\n", c)                       //nolint:errcheck
 			fmt.Fprintf(conn, "%s OK [CAPABILITY %s] CAPABILITY\r\n", tag, c) //nolint:errcheck
 		case "ID":
-			// Record the forwarded client IP (#742); handleConn verifies the
-			// peer is trusted before applying. Reply stays NIL so an untrusted
-			// client learns nothing about our trust state.
+			// Recorded, not applied: handleConn checks the peer first. The NIL
+			// reply tells an untrusted client nothing about that (#742).
 			if opts.XClient {
 				if ip, port := idForwardedClientIP(line); ip != "" {
 					fwdIP, fwdPort = ip, port
@@ -340,6 +333,11 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					write, read := saslIO(conn, rd)
 					out, serr := runRelayedSASL(dial, conn, mech, "imap", clientIPOf(conn), "", initial, write, read)
 					if serr != nil {
+						saslFailures++
+						if saslFailures >= authAttemptLimit(opts) {
+							fmt.Fprintf(conn, "%s NO [AUTHENTICATIONFAILED] Too many failed authentications\r\n", tag) //nolint:errcheck
+							return nil, conn, rd, fmt.Errorf("imap: too many failed authentications")
+						}
 						fmt.Fprintf(conn, "%s NO Authentication failed\r\n", tag) //nolint:errcheck
 						continue
 					}
@@ -373,6 +371,8 @@ func extractPOP3Preamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, op
 // pop3CommandLoop handles POP3 commands until USER+PASS or AUTH PLAIN/LOGIN are
 // received. Does NOT send the greeting.
 func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
+	// The same per-connection ceiling the password path applies (#1733).
+	saslFailures := 0
 	var username string
 	var fwdIP, fwdPort string
 	for {
@@ -404,9 +404,8 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 		case upper == "NOOP":
 			fmt.Fprintf(conn, "+OK\r\n") //nolint:errcheck
 		case opts.XClient && strings.HasPrefix(upper, "XCLIENT"):
-			// Record the forwarded client IP (#742); handleConn verifies the
-			// peer is trusted before applying. Reply is +OK regardless, so an
-			// untrusted client learns nothing.
+			// Recorded, not applied: handleConn checks the peer first, and the
+			// +OK is the same either way (#742).
 			if ip, port := xclientForwarded(line); ip != "" {
 				fwdIP, fwdPort = ip, port
 			}
@@ -483,6 +482,11 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				write, read := saslIO(conn, rd)
 				out, serr := runRelayedSASL(dial, conn, mech, "pop3", clientIPOf(conn), "", initial, write, read)
 				if serr != nil {
+					saslFailures++
+					if saslFailures >= authAttemptLimit(opts) {
+						fmt.Fprintf(conn, "-ERR Too many failed authentications\r\n") //nolint:errcheck
+						return nil, conn, rd, fmt.Errorf("pop3: too many failed authentications")
+					}
 					fmt.Fprintf(conn, "-ERR Authentication failed\r\n") //nolint:errcheck
 					continue
 				}
@@ -545,9 +549,8 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 	}
 }
 
-// continueAuth re-enters the protocol command loop after a failed
-// authentication without re-sending the greeting, keeping the connection alive
-// for retries. STARTTLS is re-offered when extTLS is non-nil (still plain).
+// continueAuth re-enters the command loop after a failed authentication, with
+// no second greeting; STARTTLS is re-offered while the conn is still plain.
 func continueAuth(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, p Protocol, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
 	switch p {
 	case ProtocolIMAP, ProtocolIMAPS:
@@ -565,9 +568,8 @@ func continueAuth(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, p Protoco
 	}
 }
 
-// extractSubmissionPreamble speaks minimal SMTP until AUTH PLAIN/LOGIN
-// completes. extTLS is used for STARTTLS on port 587; nil on port 465 (already
-// TLS). Returns the (possibly TLS-upgraded) conn and rd.
+// extractSubmissionPreamble speaks SMTP until AUTH completes. extTLS is the
+// STARTTLS config on 587 and nil on 465, which is TLS already.
 func extractSubmissionPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options) (*preamble, net.Conn, *bufio.Reader, error) {
 	if _, err := fmt.Fprintf(conn, "220 Yarilo Login ready\r\n"); err != nil {
 		return nil, conn, rd, fmt.Errorf("smtp: send greeting: %w", err)
@@ -575,10 +577,8 @@ func extractSubmissionPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Conf
 	return smtpAuthLoop(conn, rd, extTLS, opts)
 }
 
-// smtpAuthLoop speaks SMTP after the 220 greeting until AUTH completes. Split
-// out of extractSubmissionPreamble so continueAuth can re-enter it WITHOUT
-// re-greeting: after a 4xx the client re-issues EHLO/AUTH on the same
-// connection (#896), so starting with an empty ehloLine is correct.
+// smtpAuthLoop runs after the 220 greeting so continueAuth can re-enter it
+// without one: a client re-issues EHLO/AUTH on the same connection (#896).
 func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options) (*preamble, net.Conn, *bufio.Reader, error) {
 	var ehloLine string
 	var tlsDone bool
@@ -630,10 +630,8 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			tlsDone = true
 			ehloLine = "" // must re-EHLO after STARTTLS
 		case opts.XClient && strings.HasPrefix(upper, "XCLIENT"):
-			// Postfix-compatible inbound XCLIENT (#742): record the forwarded
-			// client IP and reset to the post-greeting state; the upstream
-			// re-issues EHLO next. Reply is the standard greeting regardless of
-			// trust (no leak); handleConn verifies the peer before applying fwdIP.
+			// Inbound XCLIENT resets to the post-greeting state; the reply is
+			// the same whatever the peer, and handleConn judges trust (#742).
 			if ip, port := xclientForwarded(trimmed); ip != "" {
 				fwdIP, fwdPort = ip, port
 			}
@@ -738,13 +736,8 @@ func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string) (*pr
 	}
 }
 
-// decodePlainCreds extracts authzid, authcid and passwd from a SASL PLAIN
-// base64 payload. Wire format: [authzid] NUL authcid NUL passwd.
-//
-// The authzid is the impersonation target (RFC 4616 §2): a master user
-// authenticates as itself and asks to act as somebody else. Dropping it here
-// turned every master login into an ordinary login of the master, which failed
-// with the target never reaching the auth service (#1305).
+// decodePlainCreds splits [authzid] NUL authcid NUL passwd. Dropping the
+// authzid turned every master login into a login of the master (#1305).
 func decodePlainCreds(b64str string) (authzid, username, password string, err error) {
 	data, decErr := base64.StdEncoding.DecodeString(b64str)
 	if decErr != nil {
@@ -767,9 +760,8 @@ func decodePlainUsername(b64str string) (string, error) {
 	return u, err
 }
 
-// parseIMAPLoginArgs parses username and password from an IMAP LOGIN command
-// line, handling RFC 3501 quoted strings, atoms, and synchronizing /
-// non-synchronizing literals ({N}, {N+}, {N-}).
+// parseIMAPLoginArgs reads the two arguments of LOGIN: quoted strings, atoms
+// and both literal forms of RFC 3501.
 func parseIMAPLoginArgs(line string, rd *bufio.Reader, conn net.Conn) (username, password string, err error) {
 	s := line
 	i := strings.IndexByte(s, ' ')
@@ -801,10 +793,8 @@ func parseIMAPLoginArgs(line string, rd *bufio.Reader, conn net.Conn) (username,
 	return
 }
 
-// readIMAPString reads one IMAP string token (quoted string, literal, or atom)
-// from s. Literals cause reads from rd; synchronizing literals send a
-// continuation response on conn before reading. Returns the value, the
-// remaining inline text, and any I/O error.
+// readIMAPString reads one string token. A literal reads from rd, and a
+// synchronizing one is answered with a continuation first.
 func readIMAPString(s string, rd *bufio.Reader, conn net.Conn) (val, rest string, err error) {
 	if s == "" {
 		return "", "", fmt.Errorf("imap/login: expected string token, got empty")
@@ -868,4 +858,13 @@ func clientIPOf(conn net.Conn) string {
 		return ""
 	}
 	return host
+}
+
+// authAttemptLimit is the per-connection ceiling on failed authentications,
+// the same one the password path counts against.
+func authAttemptLimit(opts Options) int {
+	if opts.AuthMaxAttempts > 0 {
+		return opts.AuthMaxAttempts
+	}
+	return 3
 }

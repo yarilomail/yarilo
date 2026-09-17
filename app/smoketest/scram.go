@@ -12,9 +12,8 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// Row: SCRAM through the login proxy. The proxy runs no mechanism itself — it
-// relays to yarilo-auth — so this is the check that the relay is wired where
-// clients actually connect (#1733).
+// Row: SCRAM through the login proxy, which relays to yarilo-auth. The check
+// that the relay is wired where clients actually connect (#1733).
 func checkSCRAMThroughProxy(user, pass string, plus bool) error {
 	mech := "SCRAM-SHA-256"
 	if plus {
@@ -84,18 +83,28 @@ func (c *imapClient) scramLogin(mech, user, pass string, binding []byte) error {
 		return fmt.Errorf("%s: challenge is not base64: %w", mech, err)
 	}
 
-	final, err := scramClientFinal(string(serverFirst), gs2, binding, firstBare, pass, nonce)
+	final, salted, err := scramClientFinal(string(serverFirst), gs2, binding, firstBare, pass, nonce)
 	if err != nil {
 		return fmt.Errorf("%s: %w", mech, err)
 	}
-	if err := c.saslFinish(base64.StdEncoding.EncodeToString([]byte(final))); err != nil {
+	serverFinal, err := c.saslStep(base64.StdEncoding.EncodeToString([]byte(final)))
+	if err != nil {
+		return fmt.Errorf("%s: %w", mech, err)
+	}
+	// RFC 5802 §5: a client that does not check v= accepts a login a real one
+	// refuses, so this row would pass over a proxy that never sends it.
+	authMessage := firstBare + "," + string(serverFirst) + "," + strings.TrimSuffix(final, ",p="+lastProof(final))
+	if err := verifyServerSignature(serverFinal, salted, authMessage); err != nil {
+		return fmt.Errorf("%s: %w", mech, err)
+	}
+	if err := c.saslFinish(""); err != nil {
 		return fmt.Errorf("%s: %w", mech, err)
 	}
 	return nil
 }
 
 // scramClientFinal computes the client-final message, proof and all.
-func scramClientFinal(serverFirst, gs2 string, binding []byte, firstBare, pass, nonce string) (string, error) {
+func scramClientFinal(serverFirst, gs2 string, binding []byte, firstBare, pass, nonce string) (string, []byte, error) {
 	var combined, saltB64 string
 	var iter int
 	for _, attr := range strings.Split(serverFirst, ",") {
@@ -112,11 +121,11 @@ func scramClientFinal(serverFirst, gs2 string, binding []byte, firstBare, pass, 
 		}
 	}
 	if combined == "" || !strings.HasPrefix(combined, nonce) {
-		return "", fmt.Errorf("the server nonce %q does not extend the client's", combined)
+		return "", nil, fmt.Errorf("the server nonce %q does not extend the client's", combined)
 	}
 	salt, err := base64.StdEncoding.DecodeString(saltB64)
 	if err != nil {
-		return "", fmt.Errorf("salt is not base64: %w", err)
+		return "", nil, fmt.Errorf("salt is not base64: %w", err)
 	}
 	cb := append([]byte(gs2), binding...)
 	withoutProof := fmt.Sprintf("c=%s,r=%s", base64.StdEncoding.EncodeToString(cb), combined)
@@ -130,7 +139,7 @@ func scramClientFinal(serverFirst, gs2 string, binding []byte, firstBare, pass, 
 	for i := range proof {
 		proof[i] = clientKey[i] ^ sig[i]
 	}
-	return fmt.Sprintf("%s,p=%s", withoutProof, base64.StdEncoding.EncodeToString(proof)), nil
+	return fmt.Sprintf("%s,p=%s", withoutProof, base64.StdEncoding.EncodeToString(proof)), salted, nil
 }
 
 func hmacSHA256(key, data []byte) []byte {
@@ -172,4 +181,52 @@ func (c *imapClient) saslFinish(response string) error {
 			return fmt.Errorf("%s", line)
 		}
 	}
+}
+
+// lastProof is the base64 proof of a client-final message, used to recover the
+// part the auth message is built from.
+func lastProof(clientFinal string) string {
+	i := strings.LastIndex(clientFinal, ",p=")
+	if i < 0 {
+		return ""
+	}
+	return clientFinal[i+3:]
+}
+
+// verifyServerSignature checks v= against the client's own computation: proof
+// the server holds the account's key, not merely that it answered OK.
+func verifyServerSignature(serverFinal string, salted []byte, authMessage string) error {
+	raw, err := base64.StdEncoding.DecodeString(serverFinal)
+	if err != nil {
+		return fmt.Errorf("server-final is not base64: %w", err)
+	}
+	var got string
+	for _, attr := range strings.Split(string(raw), ",") {
+		if strings.HasPrefix(attr, "v=") {
+			got = attr[2:]
+		}
+	}
+	if got == "" {
+		return fmt.Errorf("the server sent no signature: %q", raw)
+	}
+	serverKey := hmacSHA256(salted, []byte("Server Key"))
+	want := base64.StdEncoding.EncodeToString(hmacSHA256(serverKey, []byte(authMessage)))
+	if got != want {
+		return fmt.Errorf("the server signature does not verify: got %s, want %s", got, want)
+	}
+	return nil
+}
+
+// saslStep sends one client response and returns the server's next challenge.
+func (c *imapClient) saslStep(response string) (string, error) {
+	fmt.Fprintf(c.conn, "%s\r\n", response)
+	line, err := c.r.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if !strings.HasPrefix(line, "+ ") {
+		return "", fmt.Errorf("expected the server-final message, got %q", line)
+	}
+	return strings.TrimSpace(line[2:]), nil
 }

@@ -38,10 +38,8 @@ type saslExchange struct {
 	session  string
 }
 
-// SASLExchangeTTL bounds how long an unfinished conversation is kept. A client
-// that walks away must not leave the service holding its half: the relay's
-// connection is one per mail process, so state kept on it is kept for the
-// life of that process (#1733).
+// SASLExchangeTTL bounds an unfinished conversation. The relay's connection is
+// one per mail process, so what is held on it is held that long (#1733).
 const SASLExchangeTTL = 30 * time.Second
 
 // exchanges holds the in-flight conversations of one connection. A conversation
@@ -95,9 +93,8 @@ func (e *exchanges) drop(id string) {
 	delete(e.m, id)
 }
 
-// scramMechanisms names the SCRAM mechanisms the chain's drivers can serve at
-// all. Whether a given user has a verifier is a per-user fact, read during the
-// exchange -- a handshake does not know who is calling yet.
+// scramMechanisms names what the chain's drivers can serve at all: whether a
+// user has a verifier is read during the exchange, not at the handshake.
 func (s *Server) scramMechanisms() []string {
 	var out []string
 	if s.chainHasSCRAM(false) {
@@ -253,9 +250,8 @@ func (s *Server) advanceSCRAM(conn net.Conn, live *exchanges, id string, x *sasl
 	live.drop(id)
 	user := x.user()
 	if len(challenge) > 0 {
-		// The server-final message travels with the verdict: a client that
-		// verifies the server signature needs both, and a second round trip
-		// after success is a round trip for nothing.
+		// The server-final travels with the verdict: a client verifying the
+		// signature needs both, and a second round trip buys nothing.
 		fmt.Fprintf(conn, "OK\t%s\tuser=%s\tsession=%s\tservice=%s\tresp=%s\n",
 			id, user, x.session, x.service, encodeChallenge(challenge))
 	} else {

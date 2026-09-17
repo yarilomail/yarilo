@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	authclient "github.com/yarilomail/yarilo/internal/auth/client"
 )
@@ -67,9 +68,8 @@ func relayTo(t *testing.T, addr string) relayDialer {
 	return func() (*authclient.Client, error) { return cl, nil }
 }
 
-// The proxy advertises what the service announced, in the greeting the client
-// actually reads: it runs no mechanism itself, so a name it cannot relay is a
-// promise it cannot keep (#1733).
+// The greeting offers what the service announced: the proxy runs no mechanism,
+// so a name it cannot relay is a promise it cannot keep (#1733).
 func TestTheGreetingOffersTheServiceMechanisms(t *testing.T) {
 	dial := relayTo(t, relayService(t, []string{"PLAIN", "LOGIN", "SCRAM-SHA-256"}))
 	client, server := net.Pipe()
@@ -104,9 +104,8 @@ func TestTheProxyAdvertisesNothingTheServiceLacks(t *testing.T) {
 	}
 }
 
-// The exchange runs end to end through the proxy: the client's bytes reach the
-// service, its challenge comes back, and the verdict names the user -- with no
-// password anywhere in the proxy.
+// The exchange runs end to end: the client's bytes reach the service and the
+// verdict names the user, with no password anywhere in the proxy.
 func TestTheProxyRelaysAScramExchange(t *testing.T) {
 	dial := relayTo(t, relayService(t, []string{"SCRAM-SHA-256"}))
 	client, server := net.Pipe()
@@ -140,6 +139,24 @@ func TestTheProxyRelaysAScramExchange(t *testing.T) {
 		t.Errorf("challenge %q is not the service's server-first message", challenge)
 	}
 	fmt.Fprintf(client, "%s\r\n", base64.StdEncoding.EncodeToString([]byte("c=biws,r=nonce,p=proof")))
+
+	// RFC 5802 §5: the server signature reaches the client before the login is
+	// announced, and the client acknowledges it with an empty response.
+	final, err := rd.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read server-final: %v", err)
+	}
+	if !strings.HasPrefix(final, "+ ") {
+		t.Fatalf("the proxy sent %q, want the server-final message", strings.TrimSpace(final))
+	}
+	signature, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(final[2:]))
+	if derr != nil {
+		t.Fatalf("server-final is not base64: %v", derr)
+	}
+	if !strings.HasPrefix(string(signature), "v=") {
+		t.Errorf("the client was sent %q, which carries no server signature", signature)
+	}
+	fmt.Fprintf(client, "\r\n")
 
 	got := <-done
 	if got.err != nil {
@@ -179,9 +196,8 @@ func TestACancelledExchangeIsNotALogin(t *testing.T) {
 	}
 }
 
-// The whole command loop, not just the helper: a client sends AUTHENTICATE
-// SCRAM-SHA-256, the proxy relays both rounds, and the preamble comes back
-// carrying an identity the proxy never had a password for (#1733).
+// The whole command loop: the proxy relays both rounds and the preamble comes
+// back with an identity it never had a password for (#1733).
 func TestTheCommandLoopCompletesAScramLogin(t *testing.T) {
 	dial := relayTo(t, relayService(t, []string{"PLAIN", "LOGIN", "SCRAM-SHA-256"}))
 	client, server := net.Pipe()
@@ -213,6 +229,18 @@ func TestTheCommandLoopCompletesAScramLogin(t *testing.T) {
 	}
 	fmt.Fprintf(client, "%s\r\n", base64.StdEncoding.EncodeToString([]byte("c=biws,r=nonce,p=proof")))
 
+	// A client that cannot verify v= refuses a login the proxy just accepted,
+	// so the signature must arrive before the identity is handed onward.
+	final, ferr := rd.ReadString('\n')
+	if ferr != nil {
+		t.Fatalf("read server-final: %v", ferr)
+	}
+	signature, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(final, "+ ")))
+	if derr != nil || !strings.HasPrefix(string(signature), "v=") {
+		t.Fatalf("the client was sent %q, which carries no server signature", strings.TrimSpace(final))
+	}
+	fmt.Fprintf(client, "\r\n")
+
 	got := <-done
 	if got.err != nil {
 		t.Fatalf("preamble: %v", got.err)
@@ -225,5 +253,82 @@ func TestTheCommandLoopCompletesAScramLogin(t *testing.T) {
 	}
 	if got.pre.password != "" {
 		t.Error("the proxy kept a password out of a SCRAM exchange, which has none")
+	}
+}
+
+// refusingRelay answers every exchange with a refusal, so a row can count what
+// the proxy does with repeated failures.
+func refusingRelay(t *testing.T) relayDialer {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go func() {
+				defer c.Close() //nolint:errcheck
+				rd := bufio.NewReader(c)
+				fmt.Fprintf(c, "VERSION\t1\t0\nMECH\tSCRAM-SHA-256\tactive\nDONE\n")
+				for {
+					line, rerr := rd.ReadString('\n')
+					if rerr != nil {
+						return
+					}
+					f := strings.Split(strings.TrimRight(line, "\n"), "\t")
+					if f[0] == "AUTH" || f[0] == "CONT" {
+						fmt.Fprintf(c, "FAIL\t%s\n", f[1])
+					}
+				}
+			}()
+		}
+	}()
+	return relayTo(t, ln.Addr().String())
+}
+
+// A failed SCRAM exchange counts against the same per-connection ceiling as a
+// failed LOGIN: without it, a client could try mechanisms forever (#1733).
+func TestFailedScramExchangesHitTheAttemptLimit(t *testing.T) {
+	dial := refusingRelay(t)
+	client, server := net.Pipe()
+	t.Cleanup(func() { client.Close(); server.Close() }) //nolint:errcheck
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{AuthMaxAttempts: 2}, dial)
+		done <- err
+	}()
+
+	rd := bufio.NewReader(client)
+	if _, err := rd.ReadString('\n'); err != nil { // greeting
+		t.Fatalf("greeting: %v", err)
+	}
+	var lastReply string
+	for i := 1; i <= 2; i++ {
+		fmt.Fprintf(client, "a%d AUTHENTICATE SCRAM-SHA-256 %s\r\n", i,
+			base64.StdEncoding.EncodeToString([]byte("n,,n=alice,r=nonce")))
+		line, err := rd.ReadString('\n')
+		if err != nil {
+			t.Fatalf("attempt %d: %v", i, err)
+		}
+		lastReply = strings.TrimSpace(line)
+	}
+	if !strings.Contains(lastReply, "Too many failed authentications") {
+		t.Errorf("after two refusals the proxy said %q, want the ceiling message", lastReply)
+	}
+	// Not a blocking read: without the ceiling the loop never returns, and a
+	// row that hangs there reports a timeout instead of the defect.
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("the loop returned a login after the ceiling was reached")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("the loop kept going after the ceiling was reached")
 	}
 }

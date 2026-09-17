@@ -15,9 +15,8 @@ import (
 // lazily dialled one, so a proxy holds a single connection per process.
 type relayDialer func() (*authclient.Client, error)
 
-// scramMechanisms are the SCRAM mechanisms the service announced. The proxy
-// advertises these rather than a fixed list: it runs none of them itself, so
-// naming one the service cannot serve would be a promise it cannot keep.
+// scramMechanisms are what the service announced. The proxy runs none of them,
+// so naming one it cannot relay is a promise it cannot keep.
 func scramMechanisms(dial relayDialer, conn net.Conn) []string {
 	if dial == nil {
 		return nil
@@ -68,9 +67,8 @@ type saslRelayOutcome struct {
 	final []byte
 }
 
-// runRelayedSASL drives one exchange between the mail client and the service.
-// readResponse and writeChallenge are the protocol's own spellings of "send
-// the client these bytes" and "read the client's answer".
+// runRelayedSASL drives one exchange. writeChallenge and readResponse are the
+// protocol's own spellings of sending and reading the SASL bytes.
 func runRelayedSASL(
 	dial relayDialer,
 	conn net.Conn,
@@ -104,6 +102,16 @@ func runRelayedSASL(
 			return nil, nerr
 		}
 		if done {
+			// RFC 5802 §5: a login whose v= never arrives is one a real client
+			// refuses after we accepted it. Deliver it, await the empty ack.
+			if len(challenge) > 0 {
+				if werr := writeChallenge(challenge); werr != nil {
+					return nil, werr
+				}
+				if _, rerr := readResponse(); rerr != nil {
+					return nil, rerr
+				}
+			}
 			return &saslRelayOutcome{
 				username: srv.Result.Username,
 				result:   srv.Result,
