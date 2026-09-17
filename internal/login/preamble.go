@@ -129,12 +129,12 @@ func xclientForwarded(line string) (ip, port string) {
 
 // extractPreamble dispatches per protocol. STARTTLS replaces the conn, so a
 // caller must write to the returned conn and rd, never the ones it passed.
-func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Config, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
+func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	switch p {
 	case ProtocolIMAP, ProtocolIMAPS:
-		return extractIMAPPreamble(conn, rd, extTLS, opts, dial)
+		return extractIMAPPreamble(conn, rd, extTLS, opts, rc)
 	case ProtocolPOP3, ProtocolPOP3S:
-		return extractPOP3Preamble(conn, rd, extTLS, opts, dial)
+		return extractPOP3Preamble(conn, rd, extTLS, opts, rc)
 	case ProtocolSubmission, ProtocolSubmissions:
 		return extractSubmissionPreamble(conn, rd, extTLS, opts)
 	case ProtocolManageSieve:
@@ -145,17 +145,17 @@ func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Co
 }
 
 // extractIMAPPreamble sends the greeting then enters the auth command loop.
-func extractIMAPPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
-	caps := imapPreAuthCaps(extTLS, opts, scramMechanisms(dial, conn))
+func extractIMAPPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
+	caps := imapPreAuthCaps(extTLS, opts, scramMechanisms(rc, conn))
 	if _, err := fmt.Fprintf(conn, "* OK [CAPABILITY %s] Yarilo Login ready\r\n", caps); err != nil {
 		return nil, conn, rd, fmt.Errorf("imap: send greeting: %w", err)
 	}
-	return imapCommandLoop(conn, rd, extTLS, opts, dial)
+	return imapCommandLoop(conn, rd, extTLS, opts, rc)
 }
 
 // imapCommandLoop handles IMAP commands until the client sends credentials. Does
 // NOT send the greeting. Returns the (possibly TLS-upgraded) conn and rd.
-func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
+func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	var fwdIP, fwdPort string
 	// A relayed exchange fails inside this loop, so the attempt limit the
 	// password path applies must be applied here too (#1733).
@@ -178,7 +178,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 
 		switch cmd {
 		case "CAPABILITY":
-			c := imapPreAuthCaps(extTLS, opts, scramMechanisms(dial, conn))
+			c := imapPreAuthCaps(extTLS, opts, scramMechanisms(rc, conn))
 			fmt.Fprintf(conn, "* CAPABILITY %s\r\n", c)                       //nolint:errcheck
 			fmt.Fprintf(conn, "%s OK [CAPABILITY %s] CAPABILITY\r\n", tag, c) //nolint:errcheck
 		case "ID":
@@ -328,7 +328,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 						initial = decoded
 					}
 					write, read := saslIO(conn, rd)
-					out, serr := runRelayedSASL(dial, conn, mech, "imap", clientIPOf(conn), "", initial, write, read)
+					out, serr := runRelayedSASL(rc, conn, mech, "imap", clientIPOf(conn), initial, write, read)
 					if serr != nil {
 						saslFailures++
 						if saslFailures >= authAttemptLimit(opts) {
@@ -357,16 +357,16 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 }
 
 // extractPOP3Preamble sends the greeting then enters the auth command loop.
-func extractPOP3Preamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
+func extractPOP3Preamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	if _, err := fmt.Fprintf(conn, "+OK Yarilo Login ready\r\n"); err != nil {
 		return nil, conn, rd, fmt.Errorf("pop3: send greeting: %w", err)
 	}
-	return pop3CommandLoop(conn, rd, extTLS, opts, dial)
+	return pop3CommandLoop(conn, rd, extTLS, opts, rc)
 }
 
 // pop3CommandLoop handles POP3 commands until USER+PASS or AUTH PLAIN/LOGIN are
 // received. Does NOT send the greeting.
-func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
+func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	// The same per-connection ceiling the password path applies (#1733).
 	saslFailures := 0
 	var username string
@@ -387,7 +387,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 			}
 			if !opts.DisablePlainAuth || extTLS == nil {
 				sasl := "SASL PLAIN LOGIN"
-				for _, mech := range scramMechanisms(dial, conn) {
+				for _, mech := range scramMechanisms(rc, conn) {
 					sasl += " " + mech
 				}
 				capa += "USER\r\n" + sasl + "\r\n"
@@ -476,7 +476,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					initial = decoded
 				}
 				write, read := saslIO(conn, rd)
-				out, serr := runRelayedSASL(dial, conn, mech, "pop3", clientIPOf(conn), "", initial, write, read)
+				out, serr := runRelayedSASL(rc, conn, mech, "pop3", clientIPOf(conn), initial, write, read)
 				if serr != nil {
 					saslFailures++
 					if saslFailures >= authAttemptLimit(opts) {
@@ -546,12 +546,12 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 
 // continueAuth re-enters the command loop after a failed authentication, with
 // no second greeting; STARTTLS is re-offered while the conn is still plain.
-func continueAuth(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, p Protocol, opts Options, dial relayDialer) (*preamble, net.Conn, *bufio.Reader, error) {
+func continueAuth(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, p Protocol, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	switch p {
 	case ProtocolIMAP, ProtocolIMAPS:
-		return imapCommandLoop(conn, rd, extTLS, opts, dial)
+		return imapCommandLoop(conn, rd, extTLS, opts, rc)
 	case ProtocolPOP3, ProtocolPOP3S:
-		return pop3CommandLoop(conn, rd, extTLS, opts, dial)
+		return pop3CommandLoop(conn, rd, extTLS, opts, rc)
 	case ProtocolManageSieve:
 		return manageSieveCommandLoop(conn, rd, extTLS, opts)
 	case ProtocolSubmission, ProtocolSubmissions:

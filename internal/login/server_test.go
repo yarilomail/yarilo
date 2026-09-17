@@ -38,7 +38,7 @@ func TestExtractIMAPPreamble_Login(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, nil)
+		p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -74,7 +74,7 @@ func TestExtractIMAPPreamble_AuthenticatePlain(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, nil)
+		p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -106,7 +106,7 @@ func TestExtractPOP3Preamble(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractPOP3Preamble(srv, rd, nil, Options{}, nil)
+		p, _, _, err := extractPOP3Preamble(srv, rd, nil, Options{}, relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -177,7 +177,7 @@ func TestExtractIMAPPreamble_AuthenticateLogin(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, nil)
+		p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -235,7 +235,7 @@ func TestExtractIMAPPreamble_StarttlsAdvertised(t *testing.T) {
 			go func() {
 				defer close(done)
 				rd := bufio.NewReader(srv)
-				extractIMAPPreamble(srv, rd, tc.tlsCfg, Options{}, nil) //nolint:errcheck
+				extractIMAPPreamble(srv, rd, tc.tlsCfg, Options{}, relayContext{}) //nolint:errcheck
 			}()
 
 			crd := bufio.NewReader(cli)
@@ -269,7 +269,7 @@ func TestExtractIMAPPreamble_LiteralPlusAdvertised(t *testing.T) {
 	go func() {
 		defer close(done)
 		rd := bufio.NewReader(srv)
-		extractIMAPPreamble(srv, rd, nil, Options{}, nil) //nolint:errcheck
+		extractIMAPPreamble(srv, rd, nil, Options{}, relayContext{}) //nolint:errcheck
 	}()
 
 	crd := bufio.NewReader(cli)
@@ -309,7 +309,7 @@ func TestExtractIMAPPreamble_StarttlsUnavailable(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		rd := bufio.NewReader(srv)
-		_, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, nil)
+		_, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, relayContext{})
 		errCh <- err
 	}()
 
@@ -359,7 +359,7 @@ func TestExtractPOP3Preamble_AuthPlain(t *testing.T) {
 			var got *preamble
 			go func() {
 				rd := bufio.NewReader(srv)
-				p, _, _, err := extractPOP3Preamble(srv, rd, nil, Options{}, nil)
+				p, _, _, err := extractPOP3Preamble(srv, rd, nil, Options{}, relayContext{})
 				got = p
 				errCh <- err
 			}()
@@ -404,7 +404,7 @@ func TestExtractPOP3Preamble_StlsAdvertised(t *testing.T) {
 			go func() {
 				defer close(done)
 				rd := bufio.NewReader(srv)
-				extractPOP3Preamble(srv, rd, tc.tlsCfg, Options{}, nil) //nolint:errcheck
+				extractPOP3Preamble(srv, rd, tc.tlsCfg, Options{}, relayContext{}) //nolint:errcheck
 			}()
 
 			crd := bufio.NewReader(cli)
@@ -446,7 +446,7 @@ func TestExtractIMAPPreamble_LoginLiterals(t *testing.T) {
 		var got *preamble
 		go func() {
 			rd := bufio.NewReader(srv)
-			p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, nil)
+			p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, relayContext{})
 			got = p
 			errCh <- err
 		}()
@@ -494,7 +494,7 @@ func TestExtractIMAPPreamble_LoginLiterals(t *testing.T) {
 			var got *preamble
 			go func() {
 				rd := bufio.NewReader(srv)
-				p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, nil)
+				p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{}, relayContext{})
 				got = p
 				errCh <- err
 			}()
@@ -527,21 +527,21 @@ func TestIMAPAuthRetry(t *testing.T) {
 	go func() {
 		rd := bufio.NewReader(srv)
 		// First attempt (with greeting).
-		p, c, r, err := extractIMAPPreamble(srv, rd, nil, Options{}, nil)
+		p, c, r, err := extractIMAPPreamble(srv, rd, nil, Options{}, relayContext{})
 		results <- p
 		errs <- err
 		if err != nil {
 			return
 		}
 		// Simulate auth failure: re-enter without greeting.
-		p, c, r, err = continueAuth(c, r, nil, ProtocolIMAP, Options{}, nil)
+		p, c, r, err = continueAuth(c, r, nil, ProtocolIMAP, Options{}, relayContext{})
 		results <- p
 		errs <- err
 		if err != nil {
 			return
 		}
 		// Second retry.
-		p, _, _, err = continueAuth(c, r, nil, ProtocolIMAP, Options{}, nil)
+		p, _, _, err = continueAuth(c, r, nil, ProtocolIMAP, Options{}, relayContext{})
 		results <- p
 		errs <- err
 	}()
