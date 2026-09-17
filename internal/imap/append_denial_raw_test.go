@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
@@ -28,7 +30,7 @@ func rawSharedServer(t *testing.T) (aliceHome, addr string) {
 		Mailbox:    maildir.New(),
 		Index:      file.New(),
 		Resolver:   &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:       &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}},
+		AuthRelay:  authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}}),
 		ACLEnabled: true,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
@@ -181,7 +183,7 @@ func rawPersonalServer(t *testing.T, mb mailboxpkg.MailboxBackend) (addr, home s
 		Mailbox:    mb,
 		Index:      file.New(),
 		Resolver:   &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:       &enforcePassdb{users: map[string]string{"alice": "pw"}},
+		AuthRelay:  authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw"}}),
 		ACLEnabled: true,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},

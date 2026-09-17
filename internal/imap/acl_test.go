@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -42,7 +44,7 @@ func startACLServer(t *testing.T, aclEnabled bool) *imapclient.Client {
 		Mailbox:    mb,
 		Index:      idx,
 		Resolver:   resolver,
-		Auth:       &aclPassdb{user: "alice@test.com", pass: "pw"},
+		AuthRelay:  authtest.RelayTo(t, &aclPassdb{user: "alice@test.com", pass: "pw"}),
 		ACLEnabled: aclEnabled,
 	})
 

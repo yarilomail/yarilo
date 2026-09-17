@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
@@ -43,7 +45,7 @@ func buildTestServer(t *testing.T) (addr string, cleanup func()) {
 			Hostname:   "mx.example.com",
 			MaxMsgSize: 1 << 20,
 		},
-		Auth: stubAuth{},
+		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
 	}
 	srv := New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -210,8 +212,8 @@ func TestSubmission_Relay(t *testing.T) {
 			Hostname:   "mx.example.com",
 			MaxMsgSize: 1 << 20,
 		},
-		Auth:  stubAuth{},
-		Proxy: proxy.New(relayCfg, "mx.example.com"),
+		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
+		Proxy:     proxy.New(relayCfg, "mx.example.com"),
 	}
 
 	srv := New(opts)
@@ -256,7 +258,7 @@ func TestSubmission_STARTTLS_Advertised(t *testing.T) {
 			Hostname:   "mx.example.com",
 			MaxMsgSize: 1 << 20,
 		},
-		Auth:      stubAuth{},
+		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}},
 	}
 	srv := New(opts)
@@ -378,8 +380,8 @@ func runSubmissionWithReceivedHeader(t *testing.T, addReceived bool) []byte {
 			MaxMsgSize:        1 << 20,
 			AddReceivedHeader: addReceived,
 		},
-		Auth:  stubAuth{},
-		Proxy: proxy.New(relayCfg, "mx.example.com"),
+		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
+		Proxy:     proxy.New(relayCfg, "mx.example.com"),
 	}
 	srv := New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

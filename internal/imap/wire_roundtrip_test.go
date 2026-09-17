@@ -7,6 +7,8 @@ import (
 	"net"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -54,10 +56,10 @@ func TestADeliveryOverTheWireFetchesBackOverIMAP(t *testing.T) {
 			deliverLMTP(t, lln.Addr().String(), user, body)
 
 			isrv := imapserver.New(imapserver.Options{
-				Mailbox:  mailbox.Validating(be.new(t), mailbox.DefaultNameRules()),
-				Index:    file.New(),
-				Resolver: res,
-				Auth:     &formatPassdb{user: user, pass: pass, format: driver},
+				Mailbox:   mailbox.Validating(be.new(t), mailbox.DefaultNameRules()),
+				Index:     file.New(),
+				Resolver:  res,
+				AuthRelay: authtest.RelayTo(t, &formatPassdb{user: user, pass: pass, format: driver}),
 			})
 			iln, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {

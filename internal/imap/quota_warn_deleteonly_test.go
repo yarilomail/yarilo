@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -41,10 +43,10 @@ func startQuotaWarnServer(t *testing.T, dir string, mb mailbox.MailboxBackend, w
 func startQuotaWarnServerWithHandler(t *testing.T, dir string, mb mailbox.MailboxBackend, withWarn bool, h *imapclient.UnilateralDataHandler) *imapclient.Client {
 	t.Helper()
 	opts := imapserver.Options{
-		Mailbox:  mb,
-		Index:    file.New(),
-		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
-		Auth:     &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000"},
+		Mailbox:   mb,
+		Index:     file.New(),
+		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000"}),
 	}
 	if withWarn {
 		opts.QuotaPolicy = quota.Policy{

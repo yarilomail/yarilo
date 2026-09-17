@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -51,10 +53,10 @@ func startTestServerIn(t *testing.T, dir string) *imapclient.Client {
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 
 	opts := imapserver.Options{
-		Mailbox:  mb,
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   mb,
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		SpecialUseDefaults: map[string]string{
 			"Sent":    `\Sent`,
 			"Drafts":  `\Drafts`,
@@ -360,10 +362,10 @@ func TestConcurrentSessions(t *testing.T) {
 	idx := file.New()
 
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  mb,
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   mb,
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1078,7 +1080,7 @@ func startMetadataClient(t *testing.T, user, pass string) *imapclient.Client {
 		Mailbox:      mb,
 		Index:        idx,
 		Resolver:     resolver,
-		Auth:         &stubPassdb{user: user, pass: pass},
+		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: user, pass: pass}),
 		MetadataDict: md,
 	}
 	srv := imapserver.New(opts)
@@ -1315,7 +1317,7 @@ func startNamespaceClient(t *testing.T, specs []imapserver.NamespaceSpec) *imapc
 		Mailbox:    mb,
 		Index:      idx,
 		Resolver:   resolver,
-		Auth:       &stubPassdb{user: "user@test.com", pass: "testpass"},
+		AuthRelay:  authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Namespaces: specs,
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1453,7 +1455,7 @@ func startSharedClient(t *testing.T, user, pass string) (*imapclient.Client, str
 		Mailbox:      mb,
 		Index:        idx,
 		Resolver:     resolver,
-		Auth:         &stubPassdb{user: user, pass: pass},
+		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: user, pass: pass}),
 		MetadataDict: md,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
@@ -1617,7 +1619,7 @@ func TestSharedMetadataPrivIsPerAccessingUser(t *testing.T) {
 		Mailbox:      mb,
 		Index:        idx,
 		Resolver:     resolver,
-		Auth:         auth,
+		AuthRelay:    authtest.RelayTo(t, auth),
 		MetadataDict: md,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
@@ -1761,10 +1763,10 @@ func TestPerNamespaceMailboxOverrideRoutesToCorrectBackend(t *testing.T) {
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  globalRec,
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   globalRec,
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
 			{Type: imapserver.NamespaceShared, Prefix: "Shared/", Separator: '/', List: imapserver.ListYes, Location: "maildir:" + sharedRoot},
@@ -1817,10 +1819,10 @@ func TestPerNamespaceNoOverrideFallsBackToGlobal(t *testing.T) {
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  globalRec,
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   globalRec,
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
 			{Type: imapserver.NamespaceShared, Prefix: "Shared/", Separator: '/', List: imapserver.ListYes, Location: "maildir:" + sharedRoot},

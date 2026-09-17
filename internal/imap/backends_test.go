@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -31,10 +33,10 @@ func startServerWith(t *testing.T, mb mailbox.MailboxBackend) *imapclient.Client
 		// a server that has no folder-name rules at all -- it passes while
 		// asserting nothing. Making the faithful arrangement the default is
 		// the same argument this package applies to shared resolvers (#1075).
-		Mailbox:  mailbox.Validating(mb, mailbox.DefaultNameRules()),
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   mailbox.Validating(mb, mailbox.DefaultNameRules()),
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	}
 	srv := imapserver.New(opts)
 
@@ -313,10 +315,10 @@ func TestIMAPBackends_DeleteReclaimsIndex(t *testing.T) {
 			root := t.TempDir()
 			resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 			opts := imapserver.Options{
-				Mailbox:  bf.new(t),
-				Index:    file.New(),
-				Resolver: resolver,
-				Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+				Mailbox:   bf.new(t),
+				Index:     file.New(),
+				Resolver:  resolver,
+				AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 			}
 			srv := imapserver.New(opts)
 			ln, err := net.Listen("tcp", "127.0.0.1:0")

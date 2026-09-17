@@ -14,11 +14,7 @@ import (
 
 	_ "github.com/yarilomail/yarilo/pkg/dict/drivers/all" // register all dict drivers
 
-	"github.com/emersion/go-sasl"
-
 	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/oauth2"
-	"github.com/yarilomail/yarilo/internal/auth/passdbs"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/connlimit"
 	"github.com/yarilomail/yarilo/internal/fts/language"
@@ -87,41 +83,6 @@ func (s *Server) startReadyFile(ctx context.Context, proto string) {
 
 // New creates and wires all components according to cfg.
 func New(cfg *config.Config) (*Server, error) {
-	// ---- auth ----
-	passdbs, err := buildPassdbs(cfg.Auth.Passdb)
-	if err != nil {
-		return nil, fmt.Errorf("backend: auth: %w", err)
-	}
-	// OAuth2 passdbs go ahead of SQL so SQL never sees a bearer token
-	// as a plaintext "password".
-	if len(cfg.Auth.OAuth2) > 0 {
-		oauth2pdbs, err := oauth2.BuildPassdbs(context.Background(), cfg.Auth.OAuth2)
-		if err != nil {
-			return nil, fmt.Errorf("backend: oauth2: %w", err)
-		}
-		passdbs = append(oauth2pdbs, passdbs...)
-	}
-	authCache := protocol.NewCache(
-		cfg.Auth.Cache.CacheSizeBytes(),
-		time.Duration(cfg.Auth.Cache.TTLSeconds)*time.Second,
-		time.Duration(cfg.Auth.Cache.NegativeTTLSeconds)*time.Second,
-	)
-	authOpts := []protocol.AuthenticatorOption{
-		protocol.WithAuthenticatorCache(authCache),
-	}
-	if cfg.Auth.MasterUsers.Enabled {
-		masterdbs, err := buildPassdbs(cfg.Auth.MasterUsers.Masterdb)
-		if err != nil {
-			return nil, fmt.Errorf("backend: masterdb: %w", err)
-		}
-		authOpts = append(authOpts,
-			protocol.WithAuthenticatorMasterUsers(true),
-			protocol.WithAuthenticatorMasterdb(masterdbs),
-			protocol.WithAuthenticatorMasterUserSeparator(cfg.Auth.MasterUsers.Separator),
-		)
-	}
-	authChain := protocol.NewAuthenticator(passdbs, authOpts...)
-
 	// ---- storage ----
 	if cfg.Storage.MaildirRoot == "" {
 		cfg.Storage.MaildirRoot = "/var/mail/vhosts"
@@ -228,15 +189,12 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// One relay per process: the mechanism list travels in its handshake, so a
 	// client per session would make that the commonest request (#1733).
-	var authRelay *authrelay.Client
-	if authAddr != "" {
-		relay, rerr := authrelay.Dial(authAddr, authTLS)
-		if rerr != nil {
-			slog.Warn("backend: auth relay unavailable, sasl runs in-process until it returns",
-				"addr", authAddr, "err", rerr)
-		} else {
-			authRelay = relay
-		}
+	if authAddr == "" {
+		return nil, fmt.Errorf("backend: %w", authrelay.ErrNoAuthService)
+	}
+	authRelay, err := authrelay.Dial(authAddr, authTLS)
+	if err != nil {
+		return nil, fmt.Errorf("backend: auth relay: %w", err)
 	}
 
 	// One master-protocol pool for the whole process, shared by every
@@ -316,7 +274,6 @@ func New(cfg *config.Config) (*Server, error) {
 			Resolver:           resolver,
 			UserdbLookup:       ownerUserdbLookup(masterAddr, authTLS, resolver),
 			Threads:            threadCache,
-			Auth:               authChain,
 			AuthRelay:          authRelay,
 			ProxyProtocol:      primary.HAProxy,
 			HAProxyTimeout:     haproxyTimeout,
@@ -397,7 +354,6 @@ func New(cfg *config.Config) (*Server, error) {
 			},
 			Index:              idx,
 			Resolver:           resolver,
-			Auth:               authChain,
 			AuthRelay:          authRelay,
 			ProxyProtocol:      primary.HAProxy,
 			HAProxyTimeout:     haproxyTimeout,
@@ -450,7 +406,6 @@ func New(cfg *config.Config) (*Server, error) {
 			PreambleTLS:    internalServerTLS,
 			TLSConfig:      submissionTLS,
 			Config:         cfg.Protocol.Submission,
-			Auth:           chainAuth{authChain},
 			AuthRelay:      authRelay,
 			Proxy:          submissionProxy,
 			FailureDelay:   time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
@@ -1042,59 +997,6 @@ func parseCIDRs(cidrs []string) []*net.IPNet {
 	return nets
 }
 
-// chainAuth adapts protocol.Authenticator to the SMTP server's
-// (username, password) -> error surface; only the accept/reject decision
-// is kept.
-type chainAuth struct{ c protocol.Authenticator }
-
-func (a chainAuth) AuthPlain(username, password string) error {
-	resp, err := a.c.Authenticate(username, password, "smtp", "")
-	if err != nil {
-		return fmt.Errorf("smtp/auth: %w", err)
-	}
-	if resp == nil || resp.Result != protocol.AuthOK {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	return nil
-}
-
-// AuthPlainMaster forwards a SASL PLAIN response carrying an authzid to the
-// chain's MasterAuthenticator. If the chain doesn't implement it, the failure
-// is deliberately indistinguishable from a wrong-password rejection.
-func (a chainAuth) AuthPlainMaster(authzid, authid, password string) error {
-	master, ok := a.c.(protocol.MasterAuthenticator)
-	if !ok {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	resp, err := master.AuthenticateMaster(authzid, authid, password, "smtp", "")
-	if err != nil {
-		return fmt.Errorf("smtp/auth: %w", err)
-	}
-	if resp == nil || resp.Result != protocol.AuthOK {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	return nil
-}
-
-// LookupSCRAMSha256 forwards to the chain's SCRAM verifier lookup. Returns
-// (nil, nil) when the chain has none, so SCRAM mechs are not advertised in EHLO.
-func (a chainAuth) LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error) {
-	lookup, ok := a.c.(protocol.SCRAMSha256Lookup)
-	if !ok {
-		return nil, nil
-	}
-	return lookup.LookupSCRAMSha256(username)
-}
-
-// LookupSCRAMSha1 is the SHA-1 counterpart of LookupSCRAMSha256.
-func (a chainAuth) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error) {
-	lookup, ok := a.c.(protocol.SCRAMSha1Lookup)
-	if !ok {
-		return nil, nil
-	}
-	return lookup.LookupSCRAMSha1(username)
-}
-
 // lazyUserdbLookup builds the LMTP UserdbLookup resolving a recipient's userdb
 // via yarilo-auth. The client is dialled lazily on first lookup and re-dialled
 // on error; an eager dial at New would block readiness when yarilo-auth is
@@ -1483,9 +1385,4 @@ func languagesOrDefault(xs []string) []string {
 		return xs
 	}
 	return []string{"en"}
-}
-
-func buildPassdbs(entries []config.PassdbEntry) ([]protocol.Passdb, error) {
-	dbs, _, err := passdbs.Build(entries)
-	return dbs, err
 }

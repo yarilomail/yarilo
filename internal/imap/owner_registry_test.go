@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -41,7 +43,7 @@ func startRegistryServer(t *testing.T) (d dict.Dict, addr string) {
 		Mailbox:      maildir.New(),
 		Index:        file.New(),
 		Resolver:     &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:         &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw", "carol": "pw"}},
+		AuthRelay:    authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw", "carol": "pw"}}),
 		ACLEnabled:   true,
 		UserdbLookup: lookup,
 		SharedDict:   d,
@@ -185,7 +187,7 @@ func TestOwnerRegistry_DivergentRootPersonalGrantStaysLocal(t *testing.T) {
 		Mailbox:      maildir.New(),
 		Index:        file.New(),
 		Resolver:     &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:         &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}},
+		AuthRelay:    authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}}),
 		ACLEnabled:   true,
 		UserdbLookup: lookup,
 		SharedDict:   d,

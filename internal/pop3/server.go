@@ -13,7 +13,6 @@ import (
 	proxyproto "github.com/pires/go-proxyproto"
 
 	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/connlimit"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/pkg/authclient"
@@ -33,9 +32,8 @@ type Options struct {
 	MailboxByDriver func(driver string) mailbox.MailboxBackend
 	Index           mailbox.IndexBackend
 	Resolver        *mailbox.Resolver
-	Auth            protocol.Authenticator
-	// AuthRelay carries a SASL exchange to yarilo-auth, which runs the
-	// mechanism. Nil leaves the in-process chain, until the cut (#1733).
+	// AuthRelay carries every credential to yarilo-auth, which runs the
+	// mechanism. Required: a session verifies nothing itself (#1733).
 	AuthRelay          *authrelay.Client
 	ProxyProtocol      bool
 	HAProxyTimeout     time.Duration

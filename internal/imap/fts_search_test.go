@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -98,10 +100,10 @@ func startFTSTestServerWith(t *testing.T, client ftsproto.Client, autoindex bool
 		t.Fatal(err)
 	}
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		FTS: imapserver.FTSOptions{
 			Chain:         chain,
 			AddMissing:    "body-search-only",
@@ -519,10 +521,10 @@ func TestSearchDisabledFallsBackToScanWithoutTouchingFTS(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		FTS: imapserver.FTSOptions{
 			Chain:         chain,
 			AddMissing:    "body-search-only",

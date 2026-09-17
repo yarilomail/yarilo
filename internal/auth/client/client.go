@@ -23,6 +23,10 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 )
 
+// ErrNoAuthService names the key a session process cannot start without: it
+// verifies no credential itself, so there is nothing to fall back to (#1733).
+var ErrNoAuthService = errors.New("auth_service_addr is required: sessions authenticate through yarilo-auth")
+
 // Sentinel errors returned by Authenticate, Verify, and LookupUser.
 var (
 	ErrAuthFailed   = errors.New("auth/client: authentication failed")

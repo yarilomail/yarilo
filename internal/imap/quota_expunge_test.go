@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -41,7 +43,7 @@ func startCloningServerAt(t *testing.T, dir string) (*imapclient.Client, dict.Di
 		Mailbox:     maildir.New(),
 		Index:       file.New(),
 		Resolver:    &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
-		Auth:        &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=100000"},
+		AuthRelay:   authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=100000"}),
 		QuotaEngine: true,
 		QuotaClone:  quota.NewClone([]dict.Dict{d}),
 	}
