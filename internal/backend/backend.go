@@ -82,6 +82,20 @@ func (s *Server) startReadyFile(ctx context.Context, proto string) {
 	go readyfile.Touch(ctx, reg.ReadinessDir, proto, time.Duration(reg.ReadinessTouchInterval)*time.Second, ready)
 }
 
+// dictClientTLS mirrors the auth relay: the same internal_tls section, because
+// the dict service listens with it too.
+func dictClientTLS(cfg *config.Config) (*tls.Config, error) {
+	if !cfg.InternalTLS.Enabled {
+		return nil, nil
+	}
+	t, err := mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA,
+		cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
+	if err != nil {
+		return nil, fmt.Errorf("backend: dict mtls: %w", err)
+	}
+	return t, nil
+}
+
 // ErrNoDictService names the key a session process needs to reach a configured
 // dict: it links no engine, so there is nothing to open in-process (#1733).
 var ErrNoDictService = errors.New("dict_service.dict_addr is required: sessions reach their dicts through yarilo-dict")
@@ -1298,7 +1312,11 @@ func buildDict(cfg *config.Config, name string) (dict.Dict, error) {
 	if cfg.DictService.DictAddr == "" {
 		return nil, ErrNoDictService
 	}
-	return proxy.New(cfg.DictService.DictAddr, name), nil
+	tlsCfg, err := dictClientTLS(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return proxy.New(cfg.DictService.DictAddr, name, tlsCfg), nil
 }
 
 // buildLocksClient constructs a yarilo-locks client per cfg.LocksClient.

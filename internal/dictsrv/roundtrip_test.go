@@ -29,7 +29,7 @@ func serveOne(t *testing.T, name string) (dict.Dict, dict.Dict) {
 	t.Cleanup(cancel)
 	go New(map[string]dict.Dict{name: real}, nil).Serve(ctx, ln) //nolint:errcheck
 
-	c := proxy.New(ln.Addr().String(), name)
+	c := proxy.New(ln.Addr().String(), name, nil)
 	t.Cleanup(func() { _ = c.Close() })
 	return c, real
 }
@@ -93,9 +93,8 @@ func TestAProxiedWriteLandsInTheEngine(t *testing.T) {
 	}
 }
 
-// Iterate over a prefix through the proxy returns the same set as the engine:
-// the ACL registry reads its owners this way, and a missing row is a user whose
-// shared folders went invisible (#1733).
+// Iterate through the proxy returns the engine's set: the ACL registry reads
+// its owners this way, and a missing row hides someone's shared folders (#1733).
 func TestIterateThroughTheProxyReturnsTheSameSet(t *testing.T) {
 	c, real := serveOne(t, "acl_shared")
 	ctx := context.Background()
@@ -144,7 +143,7 @@ func TestAGoneServiceIsAnErrorNotAHang(t *testing.T) {
 		t.Fatalf("the first lookup should work: %v", err)
 	}
 
-	gone := proxy.New("127.0.0.1:1", "metadata")
+	gone := proxy.New("127.0.0.1:1", "metadata", nil)
 	done := make(chan error, 1)
 	go func() {
 		_, _, err := gone.Lookup(ctx, set, "priv/one")
@@ -155,14 +154,13 @@ func TestAGoneServiceIsAnErrorNotAHang(t *testing.T) {
 	}
 }
 
-// quota_clone mirrors into several dicts at once, and one of them failing is a
-// log line, never an error on the save path. The proxy moves that failure into
-// another process; the shape must survive (#1733).
+// One failing clone target is a log line, never an error on the save path; the
+// proxy moves that failure into another process, and the shape must hold (#1733).
 func TestOneFailingCloneTargetDoesNotFailTheSave(t *testing.T) {
 	good, _ := serveOne(t, "quota_clone_redis")
 	// A dict name the service does not serve: the same shape as an engine that
 	// is down, refused at hello rather than at the write.
-	bad := proxy.New(unreachableAddr(t), "quota_clone_mysql")
+	bad := proxy.New(unreachableAddr(t), "quota_clone_mysql", nil)
 	t.Cleanup(func() { _ = bad.Close() })
 
 	clone := quota.NewClone([]dict.Dict{good, bad})

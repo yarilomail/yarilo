@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 type Client struct {
 	addr string
 	name string
+	tls  *tls.Config
 
 	mu   sync.Mutex
 	conn net.Conn
@@ -29,8 +31,11 @@ type Client struct {
 // answering fails the command rather than holding the session.
 const DialTimeout = 10 * time.Second
 
-// New returns a dict client for one named dict on the dict service.
-func New(addr, name string) *Client { return &Client{addr: addr, name: name} }
+// New returns a dict client for one named dict on the dict service. A non-nil
+// tlsCfg is required wherever the service listens with internal mTLS.
+func New(addr, name string, tlsCfg *tls.Config) *Client {
+	return &Client{addr: addr, name: name, tls: tlsCfg}
+}
 
 // Name reports the driver name, which for a proxied dict is what it is: a
 // client. The engine's name lives in the dict service's config.
@@ -40,7 +45,7 @@ func (c *Client) ensure(user string) error {
 	if c.conn != nil {
 		return nil
 	}
-	conn, err := net.DialTimeout("tcp", c.addr, DialTimeout)
+	conn, err := c.dial()
 	if err != nil {
 		return fmt.Errorf("dict/proxy: dial %s: %w", c.addr, err)
 	}
@@ -51,6 +56,16 @@ func (c *Client) ensure(user string) error {
 		return fmt.Errorf("dict/proxy: hello: %w", err)
 	}
 	return nil
+}
+
+// dial speaks TLS where the service does: a plain dial against an mTLS listener
+// fails at the first command, not at connect (#1733).
+func (c *Client) dial() (net.Conn, error) {
+	d := &net.Dialer{Timeout: DialTimeout}
+	if c.tls == nil {
+		return d.Dial("tcp", c.addr)
+	}
+	return tls.DialWithDialer(d, "tcp", c.addr, c.tls)
 }
 
 func (c *Client) drop() {

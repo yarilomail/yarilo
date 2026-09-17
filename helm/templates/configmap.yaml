@@ -924,7 +924,7 @@ data:
     ## component reads dict_addr and names a dict (#1733).
     dict_service:
       dict_listen: {{ .Values.components.dict.listen | default ":9107" | quote }}
-      dict_addr: {{ printf "%s-dict.%s.svc.cluster.local:9107" (include "yarilo.fullname" .) .Release.Namespace | quote }}
+      dict_addr: {{ printf "%s-dict.%s.svc.cluster.local:%s" (include "yarilo.fullname" .) .Release.Namespace (include "yarilo.dictPort" .) | quote }}
     {{- end }}
 
     ## How components talk to the yarilo-auth MASTER listener (userdb lookups).

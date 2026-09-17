@@ -42,8 +42,8 @@ spec:
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:
-            - name: locks
-              containerPort: 9104
+            - name: dict
+              containerPort: {{ include "yarilo.dictPort" . }}
               protocol: TCP
             - name: telemetry
               containerPort: 8080

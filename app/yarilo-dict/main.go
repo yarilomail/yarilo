@@ -1,6 +1,5 @@
-// yarilo-dict serves the named dicts declared in yarilo.yaml. It is the only
-// process that links a dict engine: sessions name a dict and speak the dict
-// protocol to this one (#1733).
+// yarilo-dict serves the named dicts from yarilo.yaml: the only process that
+// links a dict engine, which sessions reach by name (#1733).
 package main
 
 import (

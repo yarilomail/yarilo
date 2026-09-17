@@ -9,9 +9,9 @@ metadata:
 spec:
   type: ClusterIP
   ports:
-    - name: locks
-      port: 9107
-      targetPort: locks
+    - name: dict
+      port: {{ include "yarilo.dictPort" . }}
+      targetPort: dict
       protocol: TCP
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "dict") | nindent 4 }}

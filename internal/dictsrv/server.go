@@ -17,9 +17,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/dict/proxy"
 )
 
-// Server answers for the dicts it was opened with. A name it does not know is
-// refused by name: a session asking for a dict nobody configured is a config
-// error, not an empty result.
+// Server answers for the dicts it holds. An unknown name is refused by name:
+// asking for a dict nobody configured is a config error, not an empty result.
 type Server struct {
 	dicts   map[string]dict.Dict
 	metrics *Metrics

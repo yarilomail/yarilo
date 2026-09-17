@@ -390,3 +390,13 @@ startupProbe:
   failureThreshold: {{ $p.failureThreshold }}
 {{- end }}
 {{- end -}}
+
+{{/*
+yarilo.dictPort — the port yarilo-dict listens on, taken from the listener
+value so the container port, the Service and dict_addr cannot disagree.
+*/}}
+{{- define "yarilo.dictPort" -}}
+{{- $listen := .Values.components.dict.listen | default ":9107" -}}
+{{- $parts := splitList ":" $listen -}}
+{{- index $parts (sub (len $parts) 1) -}}
+{{- end }}
