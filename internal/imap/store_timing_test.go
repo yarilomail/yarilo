@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -36,10 +38,10 @@ func TestStoreTimingSpansTheStorageWrite(t *testing.T) {
 	defer maildir.SetTestFlagRenameDelay(delay)()
 
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
-		Auth:     &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=100000"},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=100000"}),
 	}
 	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

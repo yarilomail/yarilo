@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -199,7 +201,7 @@ func startServerWithOptsBackend(t *testing.T, root string, mb mailbox.MailboxBac
 		Mailbox:      mb,
 		Index:        file.New(),
 		Resolver:     &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
-		Auth:         &stubPassdb{user: "user@test.com", pass: "testpass"},
+		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		MetadataDict: md,
 	}
 	srv := imapserver.New(opts)

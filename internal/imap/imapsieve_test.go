@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -49,7 +51,7 @@ func startImapSieveClient(t *testing.T) *imapclient.Client {
 		Mailbox:      maildir.New(),
 		Index:        file.New(),
 		Resolver:     &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
-		Auth:         &stubPassdb{user: "user@test.com", pass: "testpass"},
+		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		MetadataDict: md,
 		SieveEngine:  eng,
 	})

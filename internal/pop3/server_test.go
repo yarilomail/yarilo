@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 
@@ -207,9 +209,9 @@ func (m *mockIndex) Close() error                                  { return nil 
 
 // ---- test helpers -----------------------------------------------------------
 
-func newTestOpts(auth *mockAuth, mbox mailbox.MailboxBackend, idx mailbox.IndexBackend) Options {
+func newTestOpts(t *testing.T, auth *mockAuth, mbox mailbox.MailboxBackend, idx mailbox.IndexBackend) Options {
 	return Options{
-		Auth:             auth,
+		AuthRelay:        authtest.RelayTo(t, auth),
 		Mailbox:          mbox,
 		Index:            idx,
 		Resolver:         &mailbox.Resolver{},
@@ -303,7 +305,7 @@ func TestTheSessionLockFollowsTheKey(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			opts := newTestOpts(&mockAuth{users: map[string]string{"u@x": "p"}, home: home},
+			opts := newTestOpts(t, &mockAuth{users: map[string]string{"u@x": "p"}, home: home},
 				&mockMailbox{}, &mockIndex{})
 			opts.LockSession = tc.lock
 
@@ -331,7 +333,7 @@ func TestTheSessionLockFollowsTheKey(t *testing.T) {
 // ---- AUTH state tests -------------------------------------------------------
 
 func TestSession_CAPA_AuthState(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -356,7 +358,7 @@ func TestSession_CAPA_AuthState(t *testing.T) {
 }
 
 func TestSession_CAPA_NoSTLS_WithoutTLSConfig(t *testing.T) {
-	opts := newTestOpts(&mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
+	opts := newTestOpts(t, &mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
 	opts.TLSConfig = nil
 	c, r := newPOP3Session(t, opts)
 
@@ -371,7 +373,7 @@ func TestSession_CAPA_NoSTLS_WithoutTLSConfig(t *testing.T) {
 }
 
 func TestSession_UserPass_OK(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -388,7 +390,7 @@ func TestSession_UserPass_OK(t *testing.T) {
 }
 
 func TestSession_Pass_RequiresUser(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -403,7 +405,7 @@ func TestSession_Pass_RequiresUser(t *testing.T) {
 }
 
 func TestSession_Pass_WrongPassword(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "correct"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -422,7 +424,7 @@ func TestSession_Pass_WrongPassword(t *testing.T) {
 // TestSession_AuthPlain_InitialResponse verifies RFC 5034 SASL PLAIN via the
 // POP3 AUTH command with an initial response: AUTH PLAIN <base64(\0u\0p)>.
 func TestSession_AuthPlain_InitialResponse(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -446,7 +448,7 @@ func TestSession_AuthPlain_InitialResponse(t *testing.T) {
 // the client omits the initial response: server returns "+ ", then reads the
 // base64 payload from the next line.
 func TestSession_AuthPlain_Continuation(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -466,7 +468,7 @@ func TestSession_AuthPlain_Continuation(t *testing.T) {
 }
 
 func TestSession_AuthPlain_WrongPassword(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "correct"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -482,7 +484,7 @@ func TestSession_AuthPlain_WrongPassword(t *testing.T) {
 }
 
 func TestSession_AuthPlain_UnsupportedMechanism(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -497,7 +499,7 @@ func TestSession_AuthPlain_UnsupportedMechanism(t *testing.T) {
 }
 
 func TestSession_DisablePlainAuth(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -515,7 +517,7 @@ func TestSession_DisablePlainAuth(t *testing.T) {
 }
 
 func TestSession_Quit_AuthState(t *testing.T) {
-	opts := newTestOpts(&mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
+	opts := newTestOpts(t, &mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
 	c, r := newPOP3Session(t, opts)
 
 	send(t, c, "QUIT")
@@ -526,7 +528,7 @@ func TestSession_Quit_AuthState(t *testing.T) {
 }
 
 func TestSession_UnknownCommand_AuthState(t *testing.T) {
-	opts := newTestOpts(&mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
+	opts := newTestOpts(t, &mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
 	c, r := newPOP3Session(t, opts)
 
 	send(t, c, "BOGUS")
@@ -539,7 +541,7 @@ func TestSession_UnknownCommand_AuthState(t *testing.T) {
 // ---- TRANSACTION state tests -----------------------------------------------
 
 func TestSession_STAT_Empty(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: nil},
@@ -555,7 +557,7 @@ func TestSession_STAT_Empty(t *testing.T) {
 }
 
 func TestSession_STAT_WithMessages(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
@@ -574,7 +576,7 @@ func TestSession_STAT_WithMessages(t *testing.T) {
 }
 
 func TestSession_LIST(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
@@ -598,7 +600,7 @@ func TestSession_LIST(t *testing.T) {
 
 func TestSession_RETR(t *testing.T) {
 	body := []byte("From: a@b.com\r\n\r\nHello\r\n")
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{bodies: map[string][]byte{"1": body}},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
@@ -626,7 +628,7 @@ func TestSession_RETR(t *testing.T) {
 }
 
 func TestSession_UIDL(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
@@ -649,7 +651,7 @@ func TestSession_UIDL(t *testing.T) {
 }
 
 func TestSession_DELE_QUIT(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
@@ -673,7 +675,7 @@ func TestSession_DELE_QUIT(t *testing.T) {
 }
 
 func TestSession_NOOP(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -689,7 +691,7 @@ func TestSession_NOOP(t *testing.T) {
 }
 
 func TestSession_RSET(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
@@ -721,7 +723,7 @@ func TestSession_SaveUIDL_PersistsAcrossSessions(t *testing.T) {
 		{UID: 1, Size: 50},
 		{UID: 2, Size: 60},
 	}}
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		idx,
@@ -779,7 +781,7 @@ func TestSession_SaveUIDL_PersistsAcrossSessions(t *testing.T) {
 func TestSession_LockSession_RejectsConcurrent(t *testing.T) {
 	home := t.TempDir()
 	opts := Options{
-		Auth:        &mockAuth{users: map[string]string{"u": "p"}},
+		AuthRelay:   authtest.RelayTo(t, &mockAuth{users: map[string]string{"u": "p"}}),
 		Mailbox:     &mockMailbox{},
 		Index:       &mockIndex{},
 		Resolver:    &mailbox.Resolver{Root: home},
@@ -817,7 +819,7 @@ func (m *mockMailbox) Username() string { return "mock@example.com" }
 // greeting in front of it: the proxy answers the client with that line (#1776).
 func TestARefusedProxiedSessionSpeaksFirst(t *testing.T) {
 	home := t.TempDir()
-	opts := newTestOpts(&mockAuth{users: map[string]string{"u@x": "p"}, home: home},
+	opts := newTestOpts(t, &mockAuth{users: map[string]string{"u@x": "p"}, home: home},
 		&mockMailbox{}, &mockIndex{})
 	opts.LockSession = true
 

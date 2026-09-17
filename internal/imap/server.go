@@ -26,7 +26,6 @@ import (
 	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/auth/scram"
 	"github.com/yarilomail/yarilo/internal/connlimit"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/msgcache"
@@ -59,7 +58,6 @@ type Options struct {
 	Mailbox            mailbox.MailboxBackend
 	Index              mailbox.IndexBackend
 	Resolver           *mailbox.Resolver
-	Auth               protocol.Authenticator
 	ProxyProtocol      bool
 	HAProxyTimeout     time.Duration
 	HAProxyTrustedNets []*net.IPNet
@@ -91,8 +89,8 @@ type Options struct {
 	// Zero disables.
 	FailureDelay time.Duration
 
-	// AuthRelay carries a SASL exchange to yarilo-auth, which runs the
-	// mechanism. Nil leaves the in-process chain, until the cut (#1733).
+	// AuthRelay carries every credential to yarilo-auth, which runs the
+	// mechanism. Required: a session verifies nothing itself (#1733).
 	AuthRelay *authrelay.Client
 	// OAuth2Enabled advertises OAUTHBEARER/XOAUTH2. Set when at least one
 	// OAuth provider is configured; otherwise the mechs are never
@@ -843,8 +841,8 @@ func formatLogoutMsg(format string, vars map[string]string) string {
 
 func (s *session) Login(username, password string) error {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Login")
-	res, err := s.srv.opts.Auth.Authenticate(username, password, "imap", remoteIP(s.imapConn.NetConn()))
-	if err != nil || res == nil || res.Result != protocol.AuthOK {
+	res, err := s.authenticate("", username, password)
+	if err != nil {
 		s.delayFailure()
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Invalid credentials"}
 	}
@@ -883,24 +881,18 @@ func (s *session) AuthenticateMechanisms() []string {
 	return out
 }
 
-// relayMechanisms are the SCRAM mechanisms the auth service announced. Without
-// a relay the session keeps answering from its own chain until the cut.
+// relayMechanisms are the SCRAM mechanisms the auth service announced; the
+// session holds no verifier of its own (#1733).
 func (s *session) relayMechanisms() []string {
-	if relay := s.srv.opts.AuthRelay; relay != nil {
-		var out []string
-		for _, mech := range relay.Mechanisms() {
-			if strings.HasPrefix(mech, "SCRAM-") {
-				out = append(out, mech)
-			}
-		}
-		return out
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return nil
 	}
 	var out []string
-	if _, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup); ok {
-		out = append(out, sasl.ScramSha256, sasl.ScramSha256Plus)
-	}
-	if _, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup); ok {
-		out = append(out, sasl.ScramSha1, sasl.ScramSha1Plus)
+	for _, mech := range relay.Mechanisms() {
+		if strings.HasPrefix(mech, "SCRAM-") {
+			out = append(out, mech)
+		}
 	}
 	return out
 }
@@ -938,9 +930,6 @@ func (s *session) Authenticate(mech string) (sasl.Server, error) {
 	}
 }
 
-// completeSCRAMLogin is the OnSuccess hook for SCRAM adapters; the SASL
-// server has already verified the user, this runs the regular post-auth
-// setup.
 // cancelRelay abandons a relayed exchange this session started and did not
 // finish. Idempotent, so the teardown path may always call it.
 func (s *session) cancelRelay() {
@@ -951,22 +940,14 @@ func (s *session) cancelRelay() {
 	s.liveRelay = nil
 }
 
-// verifyBearer validates a bearer token. Through the service when a relay is
-// configured: a token checked in two places is two places to keep in step.
+// verifyBearer validates a bearer token in the auth service: a token checked
+// in two places is two places to keep in step (#1733).
 func (s *session) verifyBearer(username, token string) (*protocol.AuthResponse, error) {
-	relay := s.srv.opts.AuthRelay
-	if relay == nil {
-		return s.srv.opts.Auth.Authenticate(username, token, "imap", remoteIP(s.imapConn.NetConn()))
-	}
-	res, err := relay.Authenticate(username, token, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID())
-	if err != nil {
-		return nil, err
-	}
-	return res.Response(), nil
+	return s.authenticate("", username, token)
 }
 
-// scramServer runs a SCRAM mechanism: through the auth service when a relay is
-// configured, from the in-process chain until the cut removes it (#1733).
+// scramServer runs a SCRAM mechanism in the auth service; the session holds no
+// verifier of its own (#1733).
 func (s *session) scramServer(mech string) (sasl.Server, error) {
 	unsupported := &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "SASL mechanism not supported"}
 	var cb []byte
@@ -975,42 +956,17 @@ func (s *session) scramServer(mech string) (sasl.Server, error) {
 			return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Channel binding unavailable"}
 		}
 	}
-	if relay := s.srv.opts.AuthRelay; relay != nil {
-		// Held so an AUTHENTICATE the client aborts frees the service's half at
-		// once, rather than waiting out its deadline there (#1733).
-		s.cancelRelay()
-		srv := authrelay.NewRelayServer(relay, mech, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID(), cb)
-		srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeLogin(res.Response()) }
-		s.liveRelay = srv
-		return srv, nil
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return nil, unsupported
 	}
-	switch mech {
-	case sasl.ScramSha256, sasl.ScramSha256Plus:
-		lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup)
-		if !ok {
-			return nil, unsupported
-		}
-		if cb != nil {
-			return scram.NewSha256Plus(lookup, cb, s.completeSCRAMLogin), nil
-		}
-		return scram.NewSha256(lookup, s.completeSCRAMLogin), nil
-	default:
-		lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup)
-		if !ok {
-			return nil, unsupported
-		}
-		if cb != nil {
-			return scram.NewSha1Plus(lookup, cb, s.completeSCRAMLogin), nil
-		}
-		return scram.NewSha1(lookup, s.completeSCRAMLogin), nil
-	}
-}
-
-func (s *session) completeSCRAMLogin(username string) error {
-	return s.completeLogin(&protocol.AuthResponse{
-		Result:   protocol.AuthOK,
-		Username: username,
-	})
+	// Held so an AUTHENTICATE the client aborts frees the service's half at
+	// once, rather than waiting out its deadline there (#1733).
+	s.cancelRelay()
+	srv := authrelay.NewRelayServer(relay, mech, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID(), cb)
+	srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeLogin(res.Response()) }
+	s.liveRelay = srv
+	return srv, nil
 }
 
 // tlsExporter returns the 32-byte RFC 9266 exporter output used as
@@ -1085,22 +1041,8 @@ func (s *session) authenticatePlainSASL(authzid, authid, password string) error 
 		Type: imaplib.StatusResponseTypeNo,
 		Text: "Invalid credentials",
 	}
-	ip := remoteIP(s.imapConn.NetConn())
-	if authzid == "" || authzid == authid {
-		res, err := s.srv.opts.Auth.Authenticate(authid, password, "imap", ip)
-		if err != nil || res == nil || res.Result != protocol.AuthOK {
-			s.delayFailure()
-			return invalid
-		}
-		return s.completeLogin(res)
-	}
-	master, ok := s.srv.opts.Auth.(protocol.MasterAuthenticator)
-	if !ok {
-		s.delayFailure()
-		return invalid
-	}
-	res, err := master.AuthenticateMaster(authzid, authid, password, "imap", ip)
-	if err != nil || res == nil || res.Result != protocol.AuthOK {
+	res, err := s.authenticate(authzid, authid, password)
+	if err != nil {
 		s.delayFailure()
 		return invalid
 	}
@@ -1110,6 +1052,24 @@ func (s *session) authenticatePlainSASL(authzid, authid, password string) error 
 // completeLogin runs the post-auth setup shared by LOGIN and AUTHENTICATE.
 // res carries the resolved username and userdb fields needed to open the
 // per-namespace storage handles.
+// errNoAuthService is what a session answers when no auth service is wired: a
+// startup check refuses that config, so reaching it is a bug, not a state.
+var errNoAuthService = errors.New("imap: no auth service configured")
+
+// authenticate runs a password login in the auth service. authzid is the
+// impersonation target: empty for an ordinary login, the master's target else.
+func (s *session) authenticate(authzid, authid, password string) (*protocol.AuthResponse, error) {
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return nil, errNoAuthService
+	}
+	res, err := relay.AuthenticateAs(authzid, authid, password, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID())
+	if err != nil {
+		return nil, err
+	}
+	return res.Response(), nil
+}
+
 func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	resolver := s.srv.opts.Resolver
 	if resolver == nil {

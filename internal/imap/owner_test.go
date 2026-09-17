@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -88,11 +90,11 @@ func TestASessionTakesEveryLockUnderOneName(t *testing.T) {
 		// The locker goes into the storage backends too, not only the session's
 		// own stores: without it the driver and the index take no lock at all
 		// and this test saw one spelling out of three (#1652).
-		Mailbox:  maildir.New(),
-		Index:    file.New(file.WithLocker(rec)),
-		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
-		Auth:     &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"},
-		Locker:   rec,
+		Mailbox:   maildir.New(),
+		Index:     file.New(file.WithLocker(rec)),
+		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"}),
+		Locker:    rec,
 		// An owner-templated namespace: its handle takes a different road to
 		// storage -- the owner comes from userdb, which knows nothing of
 		// sessions -- and that is the road that produced a second spelling of
@@ -192,11 +194,11 @@ func TestASessionWithoutAPreambleIDStillNamesItself(t *testing.T) {
 	// No SetTestSessionID: this is the production shape of a connection whose
 	// proxy carried no id, which is what the field showed 942 times.
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(file.WithLocker(rec)),
-		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
-		Auth:     &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"},
-		Locker:   rec,
+		Mailbox:   maildir.New(),
+		Index:     file.New(file.WithLocker(rec)),
+		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"}),
+		Locker:    rec,
 	}
 	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

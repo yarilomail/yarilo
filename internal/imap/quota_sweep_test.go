@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -57,10 +59,10 @@ func TestAnExpungeDoesNotOpenEveryFolderOfTheAccount(t *testing.T) {
 	var opens int64
 	dir := t.TempDir()
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    countingBackend{IndexBackend: file.New(), opens: &opens},
-		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
-		Auth:     &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"},
+		Mailbox:   maildir.New(),
+		Index:     countingBackend{IndexBackend: file.New(), opens: &opens},
+		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"}),
 		QuotaPolicy: quota.Policy{
 			Warnings: []quota.Warning{{Name: "over90", Resource: "storage", Percentage: 90}},
 		},

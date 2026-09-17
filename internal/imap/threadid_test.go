@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -87,10 +89,10 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 	box.Close() //nolint:errcheck
 
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    fileindex.New(),
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     fileindex.New(),
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	}
 	if withSidecar {
 		opts.Threads = cache

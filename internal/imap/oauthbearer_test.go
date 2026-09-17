@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-sasl"
 
@@ -38,7 +40,7 @@ func startOAuthServer(t *testing.T, auth protocol.Authenticator, enabled bool) *
 		Mailbox:       maildir.New(),
 		Index:         file.New(),
 		Resolver:      resolver,
-		Auth:          auth,
+		AuthRelay:     authtest.RelayTo(t, auth),
 		OAuth2Enabled: enabled,
 	}
 	srv := imapserver.New(opts)

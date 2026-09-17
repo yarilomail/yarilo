@@ -14,10 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/emersion/go-sasl"
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 
-	"github.com/yarilomail/yarilo/internal/auth/passdbs"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	submsvr "github.com/yarilomail/yarilo/internal/submission"
 	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
@@ -58,35 +56,6 @@ func main() {
 	// certificate this process must not read (#1863).
 	config.KeepOnlySessionListener(cfg, config.RoleSubmission)
 
-	// The shared builder: a loop of its own handed every driver to the SQL
-	// constructor and killed the process at start (#1861).
-	dbs, _, err := passdbs.Build(cfg.Auth.Passdb)
-	if err != nil {
-		slog.Error("passdb init failed", "err", err)
-		os.Exit(1)
-	}
-
-	authCache := protocol.NewCache(
-		cfg.Auth.Cache.CacheSizeBytes(),
-		time.Duration(cfg.Auth.Cache.TTLSeconds)*time.Second,
-		time.Duration(cfg.Auth.Cache.NegativeTTLSeconds)*time.Second,
-	)
-	authOpts := []protocol.AuthenticatorOption{
-		protocol.WithAuthenticatorCache(authCache),
-	}
-	if cfg.Auth.MasterUsers.Enabled {
-		masterdbs, _, merr := passdbs.Build(cfg.Auth.MasterUsers.Masterdb)
-		if merr != nil {
-			slog.Error("masterdb init failed", "err", merr)
-			os.Exit(1)
-		}
-		authOpts = append(authOpts,
-			protocol.WithAuthenticatorMasterUsers(true),
-			protocol.WithAuthenticatorMasterdb(masterdbs),
-			protocol.WithAuthenticatorMasterUserSeparator(cfg.Auth.MasterUsers.Separator),
-		)
-	}
-
 	// ---- relay proxy ----
 	var relay *submproxy.Submission
 	if cfg.Protocol.Submission.Relay.Host != "" {
@@ -106,14 +75,15 @@ func main() {
 	haproxyTimeout := time.Duration(cfg.General.HAProxy.Timeout) * time.Second
 
 	authAddr := cfg.AuthService.ClientAddr()
-	var authTLS *tls.Config
-	if cfg.InternalTLS.Enabled {
-		t, err := mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
-		if err != nil {
-			slog.Error("auth_service mtls config failed", "err", err)
-			os.Exit(1)
-		}
-		authTLS = t
+	authTLS, err := authClientTLS(cfg)
+	if err != nil {
+		slog.Error("auth_service mtls config failed", "err", err)
+		os.Exit(1)
+	}
+	authRelay, err := dialAuthService(authAddr, authTLS)
+	if err != nil {
+		slog.Error("submission: cannot start", "addr", authAddr, "err", err)
+		os.Exit(1)
 	}
 
 	primary := firstActive(svcs.Submission, svcs.Submissions)
@@ -122,11 +92,11 @@ func main() {
 		HAProxyTimeout:   haproxyTimeout,
 		HAProxyNets:      haproxyNets,
 		AuthAddr:         authAddr,
+		AuthRelay:        authRelay,
 		AuthTLS:          authTLS,
 		DisablePlainAuth: primary.PlainAuthDisabled(),
 		TLSConfig:        extTLS,
 		Config:           cfg.Protocol.Submission,
-		Auth:             chainAuth{protocol.NewAuthenticator(dbs, authOpts...)},
 		Proxy:            relay,
 		FailureDelay:     time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 		OAuth2Enabled:    len(cfg.Auth.OAuth2) > 0,
@@ -187,55 +157,22 @@ func main() {
 	slog.Info("yarilo-submission stopped")
 }
 
-// chainAuth adapts protocol.Authenticator to submission.Authenticator: the
-// wire surface takes (username, password) and wants only the verdict.
-type chainAuth struct{ c protocol.Authenticator }
-
-func (a chainAuth) AuthPlain(username, password string) error {
-	resp, err := a.c.Authenticate(username, password, "smtp", "")
-	if err != nil {
-		return fmt.Errorf("smtp/auth: %w", err)
+// dialAuthService is the one path a direct client on 587 authenticates through:
+// without an address there is nothing to fall back to, so this refuses (#1733).
+func dialAuthService(addr string, tlsCfg *tls.Config) (*authrelay.Client, error) {
+	if addr == "" {
+		return nil, authrelay.ErrNoAuthService
 	}
-	if resp == nil || resp.Result != protocol.AuthOK {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	return nil
+	return authrelay.Dial(addr, tlsCfg)
 }
 
-// AuthPlainMaster takes a non-empty authzid through the master-user flow; a
-// chain without it fails opaquely, so the wire reply matches a wrong password.
-func (a chainAuth) AuthPlainMaster(authzid, authid, password string) error {
-	master, ok := a.c.(protocol.MasterAuthenticator)
-	if !ok {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	resp, err := master.AuthenticateMaster(authzid, authid, password, "smtp", "")
-	if err != nil {
-		return fmt.Errorf("smtp/auth: %w", err)
-	}
-	if resp == nil || resp.Result != protocol.AuthOK {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	return nil
-}
-
-// LookupSCRAMSha256 forwards to the chain; (nil, nil) from one without SCRAM
-// is what keeps the mechanism out of EHLO.
-func (a chainAuth) LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error) {
-	lookup, ok := a.c.(protocol.SCRAMSha256Lookup)
-	if !ok {
+// authClientTLS builds the mTLS config for the auth service, if configured.
+func authClientTLS(cfg *config.Config) (*tls.Config, error) {
+	if !cfg.InternalTLS.Enabled {
 		return nil, nil
 	}
-	return lookup.LookupSCRAMSha256(username)
-}
-
-// LookupSCRAMSha1 is the SHA-1 counterpart of LookupSCRAMSha256.
-func (a chainAuth) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error) {
-	lookup, ok := a.c.(protocol.SCRAMSha1Lookup)
-	if !ok {
-		return nil, nil
-	}
-	return lookup.LookupSCRAMSha1(username)
+	return mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA,
+		cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
 }
 
 func parseCIDRs(ss []string) []*net.IPNet {

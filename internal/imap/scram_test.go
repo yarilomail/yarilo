@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-sasl"
 	"golang.org/x/crypto/pbkdf2"
@@ -48,7 +50,7 @@ func startSCRAMServer(t *testing.T, auth protocol.Authenticator) *imapclient.Cli
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 	srv := imapserver.New(imapserver.Options{
 		Mailbox: maildir.New(), Index: file.New(),
-		Resolver: resolver, Auth: auth,
+		Resolver: resolver, AuthRelay: authtest.RelayTo(t, auth),
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -179,7 +181,7 @@ func TestIMAP_SCRAMSha256_RawWire(t *testing.T) {
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 	srv := imapserver.New(imapserver.Options{
 		Mailbox: maildir.New(), Index: file.New(),
-		Resolver: resolver, Auth: auth,
+		Resolver: resolver, AuthRelay: authtest.RelayTo(t, auth),
 	})
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	go srv.Serve(ln) //nolint:errcheck
@@ -215,7 +217,7 @@ func TestIMAP_SCRAMSha256_WrongPasswordRejected(t *testing.T) {
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 	srv := imapserver.New(imapserver.Options{
 		Mailbox: maildir.New(), Index: file.New(),
-		Resolver: resolver, Auth: auth,
+		Resolver: resolver, AuthRelay: authtest.RelayTo(t, auth),
 	})
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	go srv.Serve(ln) //nolint:errcheck

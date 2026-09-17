@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -26,7 +28,7 @@ func startEnforcingServer(t *testing.T, dir string) *imapclient.Client {
 		Mailbox:     maildir.New(),
 		Index:       file.New(),
 		Resolver:    &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
-		Auth:        &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000"},
+		AuthRelay:   authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000"}),
 		QuotaEngine: true,
 		QuotaPolicy: quota.Policy{
 			Warnings: []quota.Warning{

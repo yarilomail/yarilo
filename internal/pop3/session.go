@@ -25,7 +25,6 @@ import (
 	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/auth/scram"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -242,12 +241,9 @@ func (s *session) cmdSASLAuth(arg string) {
 // a name alone sends it to the global mail location (#1890).
 type onSuccessFn func(*protocol.AuthResponse) error
 
-// named adapts an in-process SCRAM adapter, which knows only the verified name.
-func named(f onSuccessFn) func(string) error {
-	return func(user string) error {
-		return f(&protocol.AuthResponse{Result: protocol.AuthOK, Username: user})
-	}
-}
+// errNoAuthService is what a session answers when no auth service is wired: a
+// startup check refuses that config, so reaching it is a bug, not a state.
+var errNoAuthService = errors.New("pop3: no auth service configured")
 
 // scramBuilder wires one digest family (SHA-1 or SHA-256) for handleSASLScram.
 type scramBuilder struct {
@@ -257,33 +253,22 @@ type scramBuilder struct {
 }
 
 func (s *session) scramSha256Builder() scramBuilder {
-	if b, ok := s.relayBuilder(sasl.ScramSha256, sasl.ScramSha256Plus); ok {
-		return b
-	}
-	lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup)
-	if !ok {
-		return scramBuilder{}
-	}
-	return scramBuilder{
-		supported: true,
-		nonPlus:   func(f onSuccessFn) sasl.Server { return scram.NewSha256(lookup, named(f)) },
-		plus:      func(cb []byte, f onSuccessFn) sasl.Server { return scram.NewSha256Plus(lookup, cb, named(f)) },
-	}
+	return s.relayBuilder(sasl.ScramSha256, sasl.ScramSha256Plus)
 }
 
 // relayBuilder runs the mechanism in the auth service when a relay is
 // configured, and says so: the session then holds no verifier at all (#1733).
-func (s *session) relayBuilder(mech, plusMech string) (scramBuilder, bool) {
+func (s *session) relayBuilder(mech, plusMech string) scramBuilder {
 	relay := s.srv.opts.AuthRelay
 	if relay == nil {
-		return scramBuilder{}, false
+		return scramBuilder{}
 	}
 	announced := map[string]bool{}
 	for _, m := range relay.Mechanisms() {
 		announced[m] = true
 	}
 	if !announced[mech] {
-		return scramBuilder{}, false
+		return scramBuilder{}
 	}
 	build := func(m string, cb []byte, f onSuccessFn) sasl.Server {
 		srv := authrelay.NewRelayServer(relay, m, "pop3", s.remoteIP.String(), s.sid, cb)
@@ -294,22 +279,11 @@ func (s *session) relayBuilder(mech, plusMech string) (scramBuilder, bool) {
 		supported: true,
 		nonPlus:   func(f onSuccessFn) sasl.Server { return build(mech, nil, f) },
 		plus:      func(cb []byte, f onSuccessFn) sasl.Server { return build(plusMech, cb, f) },
-	}, true
+	}
 }
 
 func (s *session) scramSha1Builder() scramBuilder {
-	if b, ok := s.relayBuilder(sasl.ScramSha1, sasl.ScramSha1Plus); ok {
-		return b
-	}
-	lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup)
-	if !ok {
-		return scramBuilder{}
-	}
-	return scramBuilder{
-		supported: true,
-		nonPlus:   func(f onSuccessFn) sasl.Server { return scram.NewSha1(lookup, named(f)) },
-		plus:      func(cb []byte, f onSuccessFn) sasl.Server { return scram.NewSha1Plus(lookup, cb, named(f)) },
-	}
+	return s.relayBuilder(sasl.ScramSha1, sasl.ScramSha1Plus)
 }
 
 // handleSASLScram handles AUTH SCRAM-SHA-{1,256}[-PLUS] (RFC 5802 / RFC 7677).
@@ -664,19 +638,18 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	return true
 }
 
-// authenticate dispatches to MasterAuthenticator when authzid is set and
-// supported. A distinct authzid against a non-master backend gets an opaque
-// AuthFail, indistinguishable from a wrong password.
+// authenticate runs a password login in the auth service. authzid is the
+// impersonation target: empty for an ordinary login, the master's target else.
 func (s *session) authenticate(authzid, username, password string) (*protocol.AuthResponse, error) {
-	ip := s.remoteIP.String()
-	if authzid == "" || authzid == username {
-		return s.srv.opts.Auth.Authenticate(username, password, "pop3", ip)
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return nil, errNoAuthService
 	}
-	master, ok := s.srv.opts.Auth.(protocol.MasterAuthenticator)
-	if !ok {
+	res, err := relay.AuthenticateAs(authzid, username, password, "pop3", s.remoteIP.String(), s.sid)
+	if err != nil {
 		return &protocol.AuthResponse{Result: protocol.AuthFail}, nil
 	}
-	return master.AuthenticateMaster(authzid, username, password, "pop3", ip)
+	return res.Response(), nil
 }
 
 func (s *session) loadMailbox() error {

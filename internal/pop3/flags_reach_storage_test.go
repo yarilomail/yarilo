@@ -50,7 +50,7 @@ func maildirStandN(t *testing.T, opts func(*Options), n int) (Options, string) {
 	box.Close() //nolint:errcheck
 	idx.Close() //nolint:errcheck
 
-	o := newTestOpts(&mockAuth{users: map[string]string{"u@x": "p"}, home: home}, mb, fileindex.New())
+	o := newTestOpts(t, &mockAuth{users: map[string]string{"u@x": "p"}, home: home}, mb, fileindex.New())
 	if opts != nil {
 		opts(&o)
 	}
