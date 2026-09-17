@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# One arm of a stand A/B: deploy a tag, put the mailboxes back to the same
-# start, run imaptest over the three storage types, and record the auth
-# latency histogram of the arm.
+# One arm of a stand A/B: deploy, restore the same start, run the three storage
+# types, and record the auth latency histogram either side.
 #
-# The start is identical for every arm on purpose: mailbox fill moves
-# throughput further than anything usually under test, and two arms that
-# started differently diverged per type in opposite directions (#1733).
+# The same start before every arm is the point: mailbox fill moves throughput
+# further than most things under test (#1733).
 #
 # Usage:
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml \
@@ -55,12 +53,19 @@ kube exec "$authpod" -- sh -c \
 for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   set -- $pair
   name=$1; range=$2
-  # The watcher runs beside the job: a stall captured after the run is a stall
-  # nobody can explain, which is how one cost two windows (#1733).
+  # Checked, not assumed: if the literal in job.yaml ever moves, an unchecked
+  # sed runs mdbox three times and reports three types.
+  manifest="$OUT/job-$ARM-$name.yaml"
+  sed "s/- users=1-20/- users=$range/" "$REPO/hack/imaptest/job.yaml" > "$manifest"
+  if ! grep -q -- "- users=$range" "$manifest"; then
+    echo "ab-arm: the user range did not substitute; hack/imaptest/job.yaml no longer carries 'users=1-20'" >&2
+    exit 1
+  fi
+  # The watcher runs beside the job: a stall captured after the run is one
+  # nobody can explain (#1881).
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-stalls.sh" "$OUT" "$ARM-$name" &
   watcher=$!
-  sed "s/- users=1-20/- users=$range/" "$REPO/hack/imaptest/job.yaml" |
-    KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest - "$OUT/ab-$ARM-$name.log" 900
+  KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest "$manifest" "$OUT/ab-$ARM-$name.log" 900
   wait "$watcher" 2>/dev/null || true
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)

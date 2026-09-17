@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Watches a running imaptest job and, the moment it stalls, captures what would
-# otherwise be gone by the time anyone looks: goroutines from every backend, the
-# auth service's latency histogram, and what else was running on the node.
-#
-# Started beside a run, not after it: an anomaly seen twice and explained never
-# is what this exists to prevent.
+# Captures, at the first stalls, what is gone by the time anyone looks:
+# goroutines from every backend, the auth histogram, and the node's jobs (#1881).
 #
 # Usage: watch-stalls.sh <out-dir> <label> [threshold] [poll-seconds]
 
