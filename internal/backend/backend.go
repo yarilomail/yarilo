@@ -4,6 +4,7 @@ package backend
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -12,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/yarilomail/yarilo/pkg/dict/drivers/all" // register all dict drivers
+	"github.com/yarilomail/yarilo/pkg/dict/proxy"
 
 	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
@@ -81,6 +82,10 @@ func (s *Server) startReadyFile(ctx context.Context, proto string) {
 	go readyfile.Touch(ctx, reg.ReadinessDir, proto, time.Duration(reg.ReadinessTouchInterval)*time.Second, ready)
 }
 
+// ErrNoDictService names the key a session process needs to reach a configured
+// dict: it links no engine, so there is nothing to open in-process (#1733).
+var ErrNoDictService = errors.New("dict_service.dict_addr is required: sessions reach their dicts through yarilo-dict")
+
 // New creates and wires all components according to cfg.
 func New(cfg *config.Config) (*Server, error) {
 	// ---- storage ----
@@ -116,12 +121,12 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// ---- dicts ----
-	metadataDict, err := buildDict(cfg.Dicts, "metadata")
+	metadataDict, err := buildDict(cfg, "metadata")
 	if err != nil {
 		return nil, fmt.Errorf("backend: dicts.metadata: %w", err)
 	}
 	// Owner-discovery registry (#1168); empty name resolves to nil = disabled.
-	sharedDict, err := buildDict(cfg.Dicts, cfg.ACL.SharedDict)
+	sharedDict, err := buildDict(cfg, cfg.ACL.SharedDict)
 	if err != nil {
 		return nil, fmt.Errorf("backend: dicts.%s (acl_shared_dict): %w", cfg.ACL.SharedDict, err)
 	}
@@ -135,7 +140,7 @@ func New(cfg *config.Config) (*Server, error) {
 	// ---- quota_clone mirror (fan-out to N dicts, shared by IMAP + LMTP) ----
 	var cloneDicts []dict.Dict
 	for _, name := range cfg.Quota.CloneDicts {
-		d, err := buildDict(cfg.Dicts, name)
+		d, err := buildDict(cfg, name)
 		if err != nil {
 			return nil, fmt.Errorf("backend: quota_clone dict %q: %w", name, err)
 		}
@@ -221,13 +226,13 @@ func New(cfg *config.Config) (*Server, error) {
 	// ---- sieve ----
 	svcs := cfg.Services
 	var sieveEngine *sieve.Engine
-	sieveDict, err := buildDict(cfg.Dicts, cfg.Sieve.ScriptsDictName)
+	sieveDict, err := buildDict(cfg, cfg.Sieve.ScriptsDictName)
 	if err != nil {
 		return nil, fmt.Errorf("backend: sieve dict: %w", err)
 	}
 	// Dict for the Sieve duplicate test (RFC 7352). driver=redis makes the
 	// dedup window cross-pod; absent/memory keeps it per-process.
-	dupDict, err := buildDict(cfg.Dicts, "sieve_duplicate")
+	dupDict, err := buildDict(cfg, "sieve_duplicate")
 	if err != nil {
 		return nil, fmt.Errorf("backend: sieve duplicate dict: %w", err)
 	}
@@ -1286,20 +1291,14 @@ func buildNamespaces(cfg []config.NamespaceConfig) []imapsvr.NamespaceSpec {
 // IMAP METADATA tolerates a nil dict (the feature degrades to "Metadata
 // storage not configured"); other consumers may require a non-nil
 // result and error out at startup.
-func buildDict(dicts map[string]config.DictConfig, name string) (dict.Dict, error) {
-	cfg, ok := dicts[name]
-	if !ok {
+func buildDict(cfg *config.Config, name string) (dict.Dict, error) {
+	if _, ok := cfg.Dicts[name]; !ok {
 		return nil, nil
 	}
-	if cfg.Driver == "" {
-		return nil, fmt.Errorf("dict %q has empty driver", name)
+	if cfg.DictService.DictAddr == "" {
+		return nil, ErrNoDictService
 	}
-	d, err := dict.Open(dict.Config{Driver: cfg.Driver, Settings: cfg.Settings})
-	if err != nil {
-		return nil, fmt.Errorf("open dict %q: %w", name, err)
-	}
-	slog.Info("backend: dict opened", "name", name, "driver", cfg.Driver)
-	return d, nil
+	return proxy.New(cfg.DictService.DictAddr, name), nil
 }
 
 // buildLocksClient constructs a yarilo-locks client per cfg.LocksClient.

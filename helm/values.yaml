@@ -1121,6 +1121,17 @@ components:
   ## mbox:<user>:<folder> before mutating maildir / index files.
   ## State lives in Redis (see top-level redis: section).
   ## Default 2 replicas for HA — set replicas: 1 for single-node dev.
+  ## yarilo-dict — the only process that links a dict engine. Sessions name a
+  ## dict and speak the dict protocol to this one (#1733).
+  dict:
+    enabled: true
+    replicas: 1
+    listen: ":9107"
+    resources: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
   locks:
     enabled: true
     replicas: 2

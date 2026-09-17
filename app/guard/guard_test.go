@@ -6,17 +6,22 @@ import (
 	"testing"
 )
 
-// The session binaries authenticate through the auth service, so a passdb in
-// their dependency tree is a chain built where none should be (#1733).
+// A session binary holds no credential chain and no storage engine: both live
+// behind a service, and a driver in its tree means one was built here (#1733).
 //
-// The SQL client drivers stay for now: pkg/dict/sql still links one, which the
-// dict proxy removes (#1733 PR 3).
+// go-redis is not listed: pkg/locks and internal/warden speak to Redis directly
+// and are not storage engines.
 func TestASessionBinaryLinksNoPassdbDriver(t *testing.T) {
 	forbidden := []string{
 		"yarilo/internal/auth/sql",
 		"yarilo/internal/auth/passwdfile",
 		"yarilo/internal/auth/static",
 		"yarilo/internal/auth/passdbs",
+		"yarilo/pkg/dict/sql",
+		"yarilo/pkg/dict/redis",
+		"go-sql-driver/mysql",
+		"lib/pq",
+		"modernc.org/sqlite",
 	}
 	for _, bin := range []string{"yarilo-imap", "yarilo-pop3", "yarilo-submission", "yarilo-lmtp", "yarilo-managesieve", "yarilo-jmap"} {
 		t.Run(bin, func(t *testing.T) {
