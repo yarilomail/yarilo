@@ -164,3 +164,27 @@ func TestRateLimitKeyAliases(t *testing.T) {
 		})
 	}
 }
+
+// auth_max_attempts is the canonical spelling; the older max_attempts still
+// parses, because a config written against it must keep working.
+func TestAuthMaxAttemptsTakesBothSpellings(t *testing.T) {
+	rows := []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{"canonical", "auth:\n  auth_max_attempts: 7\n", 7},
+		{"alias", "auth:\n  max_attempts: 5\n", 5},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			cfg, err := loadYAML(t, row.yaml)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if cfg.Auth.MaxAttempts != row.want {
+				t.Errorf("auth.MaxAttempts = %d, want %d", cfg.Auth.MaxAttempts, row.want)
+			}
+		})
+	}
+}

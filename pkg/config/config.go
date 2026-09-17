@@ -1838,7 +1838,10 @@ type AuthConfig struct {
 	// make on a single connection before the server sends BYE / -ERR and
 	// closes. Applies to IMAP and POP3; SMTP submission always closes after
 	// the first failure. Default 3.
-	MaxAttempts int `koanf:"max_attempts"`
+	MaxAttempts int `koanf:"auth_max_attempts"`
+	// MaxAttemptsAlias is the pre-prefix spelling, kept so a config written
+	// against it still parses.
+	MaxAttemptsAlias int `koanf:"max_attempts"`
 
 	// FailureDelaySeconds is the timing-leak mitigation: every
 	// failed auth reply (wrong password, unknown user, malformed

@@ -90,7 +90,7 @@ func TestIMAPPreamble_ForwardedID(t *testing.T) {
 			var got *preamble
 			go func() {
 				rd := bufio.NewReader(srv)
-				p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{XClient: enabled})
+				p, _, _, err := extractIMAPPreamble(srv, rd, nil, Options{XClient: enabled}, nil)
 				got = p
 				errCh <- err
 			}()
@@ -124,7 +124,7 @@ func TestPOP3Preamble_ForwardedXClient(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractPOP3Preamble(srv, rd, nil, Options{XClient: true})
+		p, _, _, err := extractPOP3Preamble(srv, rd, nil, Options{XClient: true}, nil)
 		got = p
 		errCh <- err
 	}()
@@ -151,7 +151,7 @@ func TestPOP3Preamble_XClientDisabledUnknown(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractPOP3Preamble(srv, rd, nil, Options{})
+		p, _, _, err := extractPOP3Preamble(srv, rd, nil, Options{}, nil)
 		got = p
 		errCh <- err
 	}()

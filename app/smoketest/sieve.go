@@ -258,6 +258,9 @@ type imapClient struct {
 	conn net.Conn
 	r    *bufio.Reader
 	seq  int
+	// tag is the last command's tag, for an exchange that spans more than one
+	// write and cannot go through cmd().
+	tag string
 }
 
 // imapEndpoint is where IMAP answers and how it is secured.

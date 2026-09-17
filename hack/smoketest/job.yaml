@@ -103,6 +103,8 @@ spec:
         - -xclient-port=10024
         - -proxy-protocol
         - -proxy-protocol-port=10025
+        - -scram-user=scram@d00001.test
+        - -scram-pass=Yarilo!test1
         - -quota-over-user=over@d00001.test
         - -quota-over-pass=Yarilo!test1
         - -acl-user=u1@d00001.test

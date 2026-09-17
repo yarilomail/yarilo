@@ -97,6 +97,8 @@ var (
 
 	flagQuotaUser     = flag.String("quota-user", "", "IMAP username for the QUOTA extension check (enables it)")
 	flagQuotaPass     = flag.String("quota-pass", "", "password for -quota-user")
+	flagSCRAMUser     = flag.String("scram-user", "", "IMAP username whose passdb entry carries a SCRAM-SHA-256 verifier (enables the SCRAM checks)")
+	flagSCRAMPass     = flag.String("scram-pass", "", "password for -scram-user")
 	flagQuotaOverUser = flag.String("quota-over-user", "", "IMAP username provisioned over quota, for the enforcement check (enables it)")
 	flagQuotaOverPass = flag.String("quota-over-pass", "", "password for -quota-over-user")
 	flagACLUser       = flag.String("acl-user", "", "IMAP username for the ACL extension check (enables it)")
@@ -302,6 +304,12 @@ func register() []check {
 	})
 	want("imap", *flagQuotaUser != "", "imap QUOTA (GETQUOTA)", "needs -quota-user", func() error {
 		return checkQuota(*flagQuotaUser, *flagQuotaPass)
+	})
+	want("imap", *flagSCRAMUser != "", "imap SCRAM-SHA-256 through the login proxy", "needs -scram-user", func() error {
+		return checkSCRAMThroughProxy(*flagSCRAMUser, *flagSCRAMPass, false)
+	})
+	want("imap", *flagSCRAMUser != "", "imap SCRAM-SHA-256-PLUS through the login proxy", "needs -scram-user", func() error {
+		return checkSCRAMThroughProxy(*flagSCRAMUser, *flagSCRAMPass, true)
 	})
 	want("imap", *flagQuotaOverUser != "", "imap QUOTA enforcement (OVERQUOTA)", "needs -quota-over-user", func() error {
 		return checkQuotaOver(*flagQuotaOverUser, *flagQuotaOverPass)
