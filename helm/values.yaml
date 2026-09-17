@@ -857,10 +857,10 @@ components:
       storageClass: ""
       size: 1Gi
 
-    ## maxAttempts — number of failed auth attempts allowed on a single
-    ## connection before the server sends BYE and closes (IMAP/POP3).
-    ## Mirrors the `auth_max_attempts`. Default 3.
-    maxAttempts: 3
+    ## auth_max_attempts — failed authentications allowed on one connection
+    ## before the server sends BYE / -ERR and closes (IMAP/POP3). Counts a
+    ## refused SASL exchange as well as a wrong password. Default 3.
+    auth_max_attempts: 3
     failure_delay: 2
     ## internal_failure_delay_ms — separate delay for INTERNAL
     ## failures (passdb backend down, SQL refused). Matches

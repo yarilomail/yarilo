@@ -685,10 +685,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		// Auth retry loop: keep the connection open after a bad-password failure.
 		// Up to maxAuthAttempts attempts; after the last one send an untagged
 		// BYE (IMAP) / -ERR (POP3) and close.
-		maxAuthAttempts := s.opts.AuthMaxAttempts
-		if maxAuthAttempts <= 0 {
-			maxAuthAttempts = 3
-		}
+		maxAuthAttempts := authAttemptLimit(s.opts)
 		var authResult *authclient.AuthResult
 		for attempt := 1; ; attempt++ {
 			// Single point where a forwarded address replaces the socket IP;

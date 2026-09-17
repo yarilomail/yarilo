@@ -210,6 +210,7 @@ func authAliases(cfg *Config) []aliasedKey {
 		intKey("auth.cache.auth_cache_ttl", "auth.cache.ttl_seconds", &c.TTLSeconds, &c.TTLSecondsAlias),
 		intKey("auth.cache.auth_cache_negative_ttl", "auth.cache.negative_ttl_seconds", &c.NegativeTTLSeconds, &c.NegativeTTLSecondsAlias),
 		intKey("auth.auth_failure_delay", "auth.failure_delay", &au.FailureDelaySeconds, &au.FailureDelaySecondsAlias),
+		intKey("auth.auth_max_attempts", "auth.max_attempts", &au.MaxAttempts, &au.MaxAttemptsAlias),
 		strKey("auth.master_users.auth_master_user_separator", "auth.master_users.separator", &m.Separator, &m.SeparatorAlias),
 		strKey("auth.policy.auth_policy_server_url", "auth.policy.url", &p.URL, &p.URLAlias),
 		strKey("auth.policy.auth_policy_server_api_header", "auth.policy.api_header", &p.APIHeader, &p.APIHeaderAlias),

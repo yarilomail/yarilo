@@ -277,6 +277,7 @@ data:
 
     auth:
       auth_failure_delay: {{ .Values.components.auth.failure_delay | default 2 }}
+      auth_max_attempts: {{ .Values.components.auth.auth_max_attempts | default 3 }}
       internal_failure_delay_ms: {{ .Values.components.auth.internal_failure_delay_ms | default 2000 }}
       cache:
         # dig, not `| default`: `default` swallows an explicit 0, so caching/TTLs

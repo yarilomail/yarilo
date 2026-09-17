@@ -332,3 +332,22 @@ func TestFailedScramExchangesHitTheAttemptLimit(t *testing.T) {
 		t.Error("the loop kept going after the ceiling was reached")
 	}
 }
+
+// One ceiling for both paths: a password failure and a refused SASL exchange
+// count against the same configured number, with the same fallback.
+func TestTheAttemptCeilingIsOneNumber(t *testing.T) {
+	rows := []struct {
+		name string
+		opts Options
+		want int
+	}{
+		{"configured", Options{AuthMaxAttempts: 7}, 7},
+		{"unset falls back", Options{}, 3},
+		{"negative falls back", Options{AuthMaxAttempts: -1}, 3},
+	}
+	for _, row := range rows {
+		if got := authAttemptLimit(row.opts); got != row.want {
+			t.Errorf("%s: limit = %d, want %d", row.name, got, row.want)
+		}
+	}
+}
