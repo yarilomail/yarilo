@@ -52,6 +52,17 @@ elif [ "$rc" != 0 ]; then
   echo "ab-arm: could not read the registry to check tag $TAG" >&2
   exit 1
 fi
+# Lock acquisitions by resource class, summed over the backends: the number that
+# says which lock a change moved, which throughput alone cannot (#1884).
+lock_classes() {
+  local pod
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    kube exec "$pod" -c yarilo-imap -- sh -c \
+      'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep "^yarilo_locks_acquire_wait_seconds_count{"' 2>/dev/null
+  done | awk -F'"' '{split($0,f," "); sum[$2]+=f[length(f)]} END{for (c in sum) printf "%s %d\n", c, sum[c]}' | sort
+}
+
+
 
 echo "== arm $ARM: $TAG"
 helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
@@ -97,7 +108,9 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # nobody can explain (#1881).
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-stalls.sh" "$OUT" "$ARM-$name" &
   watcher=$!
+  lock_classes > "$OUT/locks-$ARM-$name-before.txt"
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest "$manifest" "$OUT/ab-$ARM-$name.log" 900
+  lock_classes > "$OUT/locks-$ARM-$name-after.txt"
   wait "$watcher" 2>/dev/null || true
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)
