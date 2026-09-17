@@ -171,9 +171,8 @@ func msieveDeactivateAndDelete(name string) {
 
 // ── SMTP injector (via MX) ────────────────────────────────────────────────
 
-// deliveryGreeting is what the delivery listener expects. An LMTP server
-// answers EHLO with "500 5.5.1 This is a LMTP server, use LHLO", which is what
-// a deployment whose only ingress is yarilo-lmtp-login used to get (#1202).
+// deliveryGreeting is what the listener expects: an LMTP server answers EHLO
+// with "use LHLO", which is what an lmtp-only ingress got (#1202).
 func deliveryGreeting() string {
 	if strings.EqualFold(*flagDeliveryProto, "lmtp") {
 		return "LHLO smoketest"
@@ -301,9 +300,8 @@ func (c *imapClient) close() { c.conn.Close() }
 func (c *imapClient) cmd(command string) ([]string, error) {
 	c.seq++
 	tag := fmt.Sprintf("S%04d", c.seq)
-	// Per-command deadline from imap-read-timeout, above the server's fts
-	// catch-up budget, so an index wait isn't misread as an i/o timeout.
-	// Overrides any shorter deadline set by the caller.
+	// Per-command deadline above the server's fts catch-up budget, so an index
+	// wait is not misread as an i/o timeout.
 	start := time.Now()
 	c.conn.SetDeadline(start.Add(*flagIMAPReadTimeout)) //nolint:errcheck
 	defer func() {
@@ -377,23 +375,14 @@ func (c *imapClient) deleteUIDs(uids []string) error {
 	return err
 }
 
-// isMailRoot reports whether folder names the user's mailbox itself rather than
-// a folder inside it. On maildir INBOX *is* the mail root, so deleting it takes
-// the account (#1063).
+// isMailRoot says whether folder is the mailbox itself: on maildir INBOX is
+// the mail root, and deleting it takes the account (#1063).
 func isMailRoot(folder string) bool {
 	return folder == "" || strings.EqualFold(folder, "INBOX")
 }
 
-// deleteFolder removes a folder the smoke run created.
-//
-// It refuses the mail root outright. The server refuses it too since 2.3.52,
-// but this is the caller that asked, and a test suite that asks to destroy an
-// account is a defect whether or not the server declines -- the refusal has to
-// be visible here, in the run's own output, rather than inferred from a server
-// log nobody reads during a smoke run.
-//
-// The error is returned rather than discarded. Discarding it is how a cleanup
-// that deleted the wrong thing kept reporting success (#1063, #1070).
+// deleteFolder refuses the mail root here, not only at the server, and returns
+// the error: discarding it let a wrong deletion report success (#1063, #1070).
 func (c *imapClient) deleteFolder(folder string) error {
 	if isMailRoot(folder) {
 		return fmt.Errorf("smoketest: refusing to DELETE %q: that is the mailbox itself, not a folder in it", folder)
@@ -404,9 +393,8 @@ func (c *imapClient) deleteFolder(folder string) error {
 	return nil
 }
 
-// removeSeeded expunges only the messages this run injected, found by their
-// Message-ID. Used where the folder must survive the cleanup -- which is every
-// check against INBOX, since the alternative there is emptying a live mailbox.
+// removeSeeded expunges only what this run injected, by Message-ID: the
+// alternative against INBOX is emptying a live mailbox.
 func (c *imapClient) removeSeeded(ids []string) error {
 	var uids []string
 	for _, id := range ids {
@@ -469,12 +457,8 @@ func createFolder(user, pass, folder string) error {
 	return nil
 }
 
-// cleanupAfterCheck disposes of what a check delivered.
-//
-// A folder the run created is removed whole; the mail root is not, so only the
-// messages named in seeded leave it. Splitting on the folder rather than on the
-// call site is deliberate: the destructive choice then lives in one place
-// instead of at each of the fourteen callers.
+// cleanupAfterCheck removes a created folder whole and takes only the seeded
+// messages out of the mail root -- one place for the destructive choice.
 func (c *imapClient) cleanupAfterCheck(folder string, seeded []string) error {
 	if isMailRoot(folder) {
 		return c.removeSeeded(seeded)
@@ -482,19 +466,8 @@ func (c *imapClient) cleanupAfterCheck(folder string, seeded []string) error {
 	return c.deleteFolder(folder)
 }
 
-// checkFolder waits for folder to hold a delivered message, then cleans up
-// after itself.
-//
-// seeded carries the Message-IDs this check injected. It is required when
-// folder is the mail root and unused otherwise: a folder the run created is
-// removed whole, which disposes of its messages, but INBOX must survive, so
-// only the seeded messages may be removed from it.
-//
-// The old cleanup ran UID SEARCH ALL followed by an expunge, then a DELETE, for
-// every folder including INBOX. Against a live account that emptied the mailbox
-// and destroyed it; with the server-side refusals in place it merely empties it
-// -- quieter, equally destructive, and invisible because the errors were
-// discarded (#1063, #1070).
+// checkFolder waits for the delivery, then cleans up: seeded names what this
+// check injected, required when the folder is the mail root (#1063, #1070).
 func checkFolder(user, pass, folder string, seeded ...string) error {
 	if isMailRoot(folder) && len(seeded) == 0 {
 		return fmt.Errorf("smoketest: checkFolder(%q) has nothing to clean up by: "+
@@ -632,9 +605,8 @@ func testSieveMailbox(user, pass, to string) error {
 		if err := c.login(user, pass); err != nil {
 			return
 		}
-		// Pre-clean of a leftover from an earlier run: the folder is usually
-		// absent, so the error is expected and only worth a line if it is not
-		// a plain "no such mailbox".
+		// A leftover from an earlier run: absence is the usual answer and only
+		// something other than "no such mailbox" is worth a line.
 		if err := c.deleteFolder(folder); err != nil && !strings.Contains(err.Error(), "NONEXISTENT") {
 			fmt.Printf("  pre-clean %q: %v\n", folder, err)
 		}
@@ -1303,9 +1275,8 @@ func extractMailboxID(s string) string {
 	return rest[:j]
 }
 
-// testSieveMetadata verifies RFC 5490 §4 mboxmetadata + servermetadata: sets a
-// mailbox-scoped and a server-scoped annotation, then asserts a script keying
-// on both routes to the target folder.
+// testSieveMetadata sets a mailbox- and a server-scoped annotation, then
+// requires a script keyed on both to route the mail (RFC 5490 §4).
 func testSieveMetadata(user, pass, to string) error {
 	folder := "sieve-test-meta"
 	if err := createFolder(user, pass, folder); err != nil {
@@ -1343,9 +1314,8 @@ func testSieveMetadata(user, pass, to string) error {
 	return checkFolder(user, pass, folder)
 }
 
-// testSieveReport verifies vnd.yarilo.report (RFC 5965 ARF): the script reports
-// the trigger back to the recipient via submission -> LMTP into INBOX.
-// Guarded on the trigger's subject so the report cannot loop.
+// testSieveReport requires the script to report its trigger back through
+// submission into INBOX, guarded on the subject so it cannot loop.
 func testSieveReport(user, pass, to string) error {
 	script := "require [\"vnd.yarilo.report\"];\n" +
 		"if header :contains \"subject\" \"report-trigger\" {\n" +
@@ -1355,9 +1325,8 @@ func testSieveReport(user, pass, to string) error {
 		return fmt.Errorf("msieve: %w", err)
 	}
 	id := fmt.Sprintf("report-%d@test", time.Now().UnixNano())
-	// The subject carries a unique token so the cleanup at the end can name
-	// this run's trigger. The script matches on :contains, so the token does
-	// not stop it firing.
+	// A unique token in the subject lets the cleanup name this run's trigger;
+	// the script matches :contains, so it still fires.
 	trigger := "report-trigger-" + uniqueID()
 	if err := lmtpSend(id, "s@test.invalid", to, trigger, "body"); err != nil {
 		return fmt.Errorf("inject: %w", err)
@@ -1400,9 +1369,8 @@ func testSieveReport(user, pass, to string) error {
 	if !found {
 		return fmt.Errorf("no valid ARF report delivered back to INBOX within timeout")
 	}
-	// Only what this check put there: the report it matched, and the trigger by
-	// its own subject. Emptying INBOX would take the account's mail with it,
-	// and nothing in this tool's flags says the account is disposable (#1056).
+	// Only what this check put there: nothing in the flags says the account is
+	// disposable, so emptying INBOX is not ours to do (#1056).
 	if len(reportUIDs) > 0 {
 		if err := c.deleteUIDs(reportUIDs); err != nil {
 			fmt.Printf("  cleanup: expunging %d report message(s): %v\n", len(reportUIDs), err)
