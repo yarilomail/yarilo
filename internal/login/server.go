@@ -754,9 +754,8 @@ func (s *Server) handleConn(conn net.Conn) {
 
 			if !authFailed {
 				log.Info("login: auth", "user", pre.username, "result", "ok", "attempt", attempt)
-				// The backend's preamble verifies this token, so an empty one
-				// is refused here: dialling it would blame the backend for a
-				// verdict the auth service returned incomplete (#1733).
+				// The backend's preamble verifies this token: dialling without
+				// one blames the backend for the auth service's answer (#1733).
 				if authResult != nil && authResult.Token == "" {
 					log.Error("login: auth returned no session token; refusing before the backend",
 						"user", pre.username, "result", "fail")
