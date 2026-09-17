@@ -11,6 +11,7 @@ DB_NS="${DB_NS:-db}"
 DB_POD="${DB_POD:-mysql-0}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 OVER_USER="${OVER_USER:-over@d00001.test}"
+SCRAM_USER="${SCRAM_USER:-scram@d00001.test}"
 
 mysql_do() {
   kubectl --kubeconfig="$KCFG" exec -i -n "$DB_NS" "$DB_POD" -- \
@@ -86,7 +87,7 @@ echo "matrix: $GOT"
 echo "Rows this script does not own, left alone:"
 OTHERS=$(mysql_do -e "
 SELECT mbtype, COUNT(*) AS cnt FROM mailbox
-WHERE username <> '$OVER_USER'
+WHERE username NOT IN ('$OVER_USER', '$SCRAM_USER')
   AND NOT (username REGEXP '^u[0-9]+@d00001[.]test\$'
   AND CAST(SUBSTRING_INDEX(SUBSTRING(username, 2), '@', 1) AS UNSIGNED) BETWEEN 1 AND 150)
 GROUP BY mbtype;" 2>&1) || {
@@ -107,6 +108,23 @@ LMTP_HOST="${LMTP_HOST:-yarilo-lmtp-login}"
 LMTP_PORT="${LMTP_PORT:-24}"
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$YARILO_NS" "$@"; }
+
+# A SCRAM-SHA-256 verifier for the sandbox password, so the service has a
+# mechanism to announce; generated with sasl.GenerateScramSha256Credentials.
+SCRAM_PASSWORD='{SCRAM-SHA-256}4096,rVWY5tn9RRHylcRuVMDh+Q==,CDuPU6P3lQho2V+PqMFpgA+StYaqyyUoBqoZRkhQa/k=,ZQl7BB7E33Klr/aYgxpFiof+ISzx8uUewXhLo1CiJTw='
+
+echo "Seeding $SCRAM_USER (SCRAM-SHA-256 verifier) ..."
+SCRAM_OUT=$(mysql_do <<SQL 2>&1
+INSERT INTO mailbox (username, password, mbtype, home, maildir, quota_bytes, local_part, domain, active, mpath)
+VALUES ('$SCRAM_USER', '$SCRAM_PASSWORD', 'maildir', '/var/mail/vhosts/', 'Maildir', 1073741824,
+        'scram', 'd00001.test', 1, 'd00001.test/$SCRAM_USER')
+ON DUPLICATE KEY UPDATE
+  password = VALUES(password), mbtype = VALUES(mbtype), home = VALUES(home),
+  maildir = VALUES(maildir), quota_bytes = VALUES(quota_bytes), local_part = VALUES(local_part),
+  domain = VALUES(domain), active = VALUES(active), mpath = VALUES(mpath);
+SQL
+) || { echo "$SCRAM_OUT" >&2; echo "seed: the scram row failed" >&2; exit 1; }
+echo "$SCRAM_OUT" | grep -v Warning || true
 
 echo "Seeding $OVER_USER ($OVER_MBTYPE, limit $OVER_LIMIT bytes) ..."
 # The limit is written absolutely, never as an increment: a second run must

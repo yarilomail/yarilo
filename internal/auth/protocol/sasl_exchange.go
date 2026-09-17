@@ -95,9 +95,9 @@ func (e *exchanges) drop(id string) {
 	delete(e.m, id)
 }
 
-// scramMechanisms names the SCRAM mechanisms the chain can serve. A chain with
-// no verifier for anybody advertises none: a mechanism nobody can pass is a
-// failure the client meets after choosing it, not before.
+// scramMechanisms names the SCRAM mechanisms the chain's drivers can serve at
+// all. Whether a given user has a verifier is a per-user fact, read during the
+// exchange -- a handshake does not know who is calling yet.
 func (s *Server) scramMechanisms() []string {
 	var out []string
 	if s.chainHasSCRAM(false) {
