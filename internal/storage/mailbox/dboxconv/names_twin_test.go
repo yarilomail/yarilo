@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// Two connections on one login both run the pass, and one may rename an
-// ancestor between the other's walk and its rename. The path collected by the
-// walk is then stale, and the pass must follow the folder, not fail (#1886).
+// A twin pass may rename an ancestor between this walk and this rename: the
+// collected path is then stale, and the pass must follow the folder (#1886).
 func TestAPassFollowsAParentATwinRenamed(t *testing.T) {
 	const (
 		encodedParent = "&BBIERQRWBDQEPQRW-" // Вхідні
