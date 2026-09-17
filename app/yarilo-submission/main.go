@@ -75,25 +75,14 @@ func main() {
 	haproxyTimeout := time.Duration(cfg.General.HAProxy.Timeout) * time.Second
 
 	authAddr := cfg.AuthService.ClientAddr()
-	if authAddr == "" {
-		slog.Error("submission: cannot start", "err", authrelay.ErrNoAuthService)
+	authTLS, err := authClientTLS(cfg)
+	if err != nil {
+		slog.Error("auth_service mtls config failed", "err", err)
 		os.Exit(1)
 	}
-	var authTLS *tls.Config
-	if cfg.InternalTLS.Enabled {
-		t, err := mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
-		if err != nil {
-			slog.Error("auth_service mtls config failed", "err", err)
-			os.Exit(1)
-		}
-		authTLS = t
-	}
-
-	// Direct clients on 587 reach this listener without a login proxy, so this
-	// process needs its own relay to the auth service (#1733).
-	authRelay, err := authrelay.Dial(authAddr, authTLS)
+	authRelay, err := dialAuthService(authAddr, authTLS)
 	if err != nil {
-		slog.Error("submission: auth relay", "addr", authAddr, "err", err)
+		slog.Error("submission: cannot start", "addr", authAddr, "err", err)
 		os.Exit(1)
 	}
 
@@ -166,6 +155,24 @@ func main() {
 	slog.Info("received signal, shutting down", "signal", sig.String())
 	cancel() // stop touching the readiness file so the sidecar drops this pod
 	slog.Info("yarilo-submission stopped")
+}
+
+// dialAuthService is the one path a direct client on 587 authenticates through:
+// without an address there is nothing to fall back to, so this refuses (#1733).
+func dialAuthService(addr string, tlsCfg *tls.Config) (*authrelay.Client, error) {
+	if addr == "" {
+		return nil, authrelay.ErrNoAuthService
+	}
+	return authrelay.Dial(addr, tlsCfg)
+}
+
+// authClientTLS builds the mTLS config for the auth service, if configured.
+func authClientTLS(cfg *config.Config) (*tls.Config, error) {
+	if !cfg.InternalTLS.Enabled {
+		return nil, nil
+	}
+	return mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA,
+		cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
 }
 
 func parseCIDRs(ss []string) []*net.IPNet {
