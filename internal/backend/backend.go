@@ -36,6 +36,7 @@ import (
 	authclient "github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/dict"
+	filedict "github.com/yarilomail/yarilo/pkg/dict/file"
 	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -1314,8 +1315,15 @@ func buildNamespaces(cfg []config.NamespaceConfig) []imapsvr.NamespaceSpec {
 // storage not configured"); other consumers may require a non-nil
 // result and error out at startup.
 func buildDict(cfg *config.Config, name string) (dict.Dict, error) {
-	if _, ok := cfg.Dicts[name]; !ok {
+	dc, ok := cfg.Dicts[name]
+	if !ok {
 		return nil, nil
+	}
+	// The file driver opens here: it links no engine, and a per-user file in
+	// the user's own home is two network hops cheaper than asking a service
+	// to open it for us (#1733).
+	if dc.Driver == filedict.DriverName {
+		return dict.Open(dict.Config{Driver: dc.Driver, Settings: dc.Settings})
 	}
 	if cfg.DictService.DictAddr == "" {
 		return nil, ErrNoDictService

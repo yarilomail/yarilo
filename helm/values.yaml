@@ -2892,12 +2892,20 @@ namespaces: []
 dicts:
   # IMAP METADATA (RFC 5464) state. When omitted, GETMETADATA /
   # SETMETADATA respond NO "Metadata storage not configured" but the
-  # rest of the server still works. file driver is fine for standalone
-  # single-pod releases; switch to redis or sql for backend multi-pod.
+  # rest of the server still works.
+  #
+  # The default is a file per user in that user's home, on the mail volume:
+  # the session opens it itself, so an annotation costs no round trip to
+  # yarilo-dict. Writes take a lock on the file, so several pods may share it.
+  # Switch to redis or sql only where the annotations must live off the mail
+  # volume.
   metadata:
     driver: file
     settings:
-      path: /var/yarilo/dicts/metadata.json
+      path: "%h/yarilo-metadata.json"
+      ## lock_method for the write lock: flock (default), fcntl or dotlock.
+      ## Match storage_lock_method -- the same volume answers both.
+      lock_method: ""
 #   quota:
 #     driver: redis
 #     settings:

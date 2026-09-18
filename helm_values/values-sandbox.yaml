@@ -229,13 +229,13 @@ dicts:
       addr: redis.redis.svc.cluster.local:6379
       db: 0
       prefix: "yarilo-sb:acl-shared:"
+  ## Annotations go to a file in the user's home, the chart default: the
+  ## session opens it itself and asks yarilo-dict nothing (#1733).
   metadata:
-    driver: redis
+    driver: file
     settings:
-      addr: redis.redis.svc.cluster.local:6379
-      db: 0
-      prefix: "yarilo-sb:metadata:"
-      path: null
+      path: "%h/yarilo-metadata.json"
+      lock_method: ""
   ## quota_clone mirror targets — fan-out: usage is written to BOTH at once.
   ## Advisory mirror only; enforcement always reads the index.
   quota_clone_redis:
