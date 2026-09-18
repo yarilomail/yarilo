@@ -113,7 +113,6 @@ Search stays sub-millisecond as the mailbox grows; the linear scan it replaces g
 | yarilo-backend-api | HTTP admin API (dict, ACL, folder, quota, rebuild) | ✅ |
 | yarilo-backend-reg | Co-located backend registration sidecar — one BACKEND-UP per pod IP, readiness-gated heartbeat, graceful LEAVE on SIGTERM (#776/#788) | ✅ |
 | yarctl | CLI control tool — `director` and `backend` planes (backward-compat alias: `yarilo-admin`) | ✅ |
-| yarilo-monitor | Optional backend health sidecar for the director ring (probe-based; the primary path is yarilo-backend-reg self-registration) | ✅ |
 | yarilo-migrate | Offline mailbox FORMAT converter (Maildir → sdbox/mdbox); not cross-server dsync/imapc | ✅ |
 | yarilo-director | Consistent-hashing ring, sticky sessions, throttled evacuation, failover | ✅ |
 
@@ -266,7 +265,6 @@ Full documentation lives at **[doc.yarilomail.org](https://doc.yarilomail.org/)*
 | [FTS](https://doc.yarilomail.org/FTS) | Full-text search: engine, multi-language, decoders, config, phases |
 | [SMOKE](https://doc.yarilomail.org/SMOKE) | End-to-end smoke test |
 | [DIRECTOR](https://doc.yarilomail.org/DIRECTOR) | `director_service`: ring, peers, mTLS, session routing, sticky assignments, username-hash, evacuation, flush hook, ring formation history |
-| [MONITOR](https://doc.yarilomail.org/MONITOR) | `yarilo-monitor`: health probes, Prometheus metrics |
 | [DIRECTOR-API](https://doc.yarilomail.org/DIRECTOR-API) | Director HTTP admin API |
 | [BACKEND-API](https://doc.yarilomail.org/BACKEND-API) | Backend HTTP admin API |
 | [YARILO-ADMIN](https://doc.yarilomail.org/YARILO-ADMIN) | `yarctl` CLI reference |
