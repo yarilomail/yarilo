@@ -1444,13 +1444,17 @@ func (u *userMailbox) uidListPath(folder string) string {
 
 // migrateLegacyUIDList renames the legacy uidlist file (LegacyUIDListFileName)
 // to yarilo-uidlist when the yarilo file is absent. Idempotent.
+// statPath is the only path-walking stat on the list read, so a row can count
+// what a read costs (#1875).
+var statPath = os.Stat
+
 func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	dst := u.uidListPath(folder)
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := statPath(dst); err == nil {
 		return nil
 	}
 	src := filepath.Join(u.folderPath(folder), LegacyUIDListFileName)
-	if _, err := os.Stat(src); err != nil {
+	if _, err := statPath(src); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -1459,7 +1463,7 @@ func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	if err := os.Rename(src, dst); err != nil {
 		// Called from paths holding no lock, so the loser of a race sees the
 		// source already gone -- that is the migration having happened (#1626).
-		if _, serr := os.Stat(dst); serr == nil {
+		if _, serr := statPath(dst); serr == nil {
 			return nil
 		}
 		return fmt.Errorf("maildir: legacy uidlist rename: %w", err)
@@ -1467,30 +1471,53 @@ func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	return nil
 }
 
+// openUIDList opens our list, adopting a copied-in store's own list when ours
+// is not there yet: after our first write the other name is not looked at (#1593).
+// A nil file with a nil error means neither exists.
+func (u *userMailbox) openUIDList(folder string) (*os.File, os.FileInfo, error) {
+	path := u.uidListPath(folder)
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if merr := u.migrateLegacyUIDList(folder); merr != nil {
+			return nil, nil, merr
+		}
+		f, err = os.Open(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
+		}
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	// On the open descriptor: no second path walk, and no window where the
+	// file changes between the stat and the read.
+	fi, serr := f.Stat()
+	if serr != nil {
+		_ = f.Close()
+		return nil, nil, serr
+	}
+	return f, fi, nil
+}
+
 func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
-	if err := u.migrateLegacyUIDList(folder); err != nil {
+	// Opened, not stat-ed first: the read needs the file open anyway, and the
+	// legacy name is only looked for when ours is absent (#1875).
+	f, fi, err := u.openUIDList(folder)
+	if err != nil {
 		return nil, err
 	}
-	path := u.uidListPath(folder)
-
-	fi, statErr := os.Stat(path)
-	if errors.Is(statErr, os.ErrNotExist) {
+	if f == nil {
 		return make(map[string]uint32), nil
 	}
-	if statErr != nil {
-		return nil, statErr
-	}
+	defer f.Close()
 
 	if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
 		u.debugListRead(folder, "cache", len(m), stampOf(fi))
 		return m, nil
 	}
-
-	f, err := os.Open(path)
-	if err != nil {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	listReads.Add(1)
 
 	m := make(map[string]uint32)
@@ -2021,11 +2048,8 @@ func randomGUID() string {
 // both implementations write alike -- so the file is adopted, not converted. The
 // numbers used to be parsed past, costing a taken-over store its UIDs (#1593).
 func (u *userMailbox) UIDSpace(folder string) (uidValidity, nextUID uint32, ok bool) {
-	if err := u.migrateLegacyUIDList(folder); err != nil {
-		return 0, 0, false
-	}
-	f, err := os.Open(u.uidListPath(folder))
-	if err != nil {
+	f, _, err := u.openUIDList(folder)
+	if err != nil || f == nil {
 		return 0, 0, false
 	}
 	defer f.Close() //nolint:errcheck
