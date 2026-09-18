@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -23,17 +24,34 @@ func (s *session) imapSieveScriptName(h *nsHandle, rel string, guid [16]byte) st
 	}
 	ctx := context.Background()
 	ops := s.metadataOps()
-	key := s.metadataKey(h, rel, guid, mailbox.AttrShared, imapSieveScriptAttr)
-	if vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, key); err == nil && found && len(vals) > 0 && len(vals[0]) > 0 {
-		return string(vals[0])
+	if name, ok := s.lookupScriptAttr(ctx, ops, s.metadataKey(h, rel, guid, mailbox.AttrShared, imapSieveScriptAttr), rel); ok {
+		return name
 	}
-	if guid, ok := s.inboxGUID(); ok {
-		skey := mailbox.ServerAttrKey(mailbox.AttrShared, guid, imapSieveScriptAttr)
-		if vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, skey); err == nil && found && len(vals) > 0 && len(vals[0]) > 0 {
-			return string(vals[0])
+	if inbox, ok := s.inboxGUID(); ok {
+		skey := mailbox.ServerAttrKey(mailbox.AttrShared, inbox, imapSieveScriptAttr)
+		if name, ok := s.lookupScriptAttr(ctx, ops, skey, rel); ok {
+			return name
 		}
 	}
 	return ""
+}
+
+// lookupScriptAttr separates the three answers a dict gives: a bound script, no
+// script, and a failure -- which is not "no script" and must not read as one.
+func (s *session) lookupScriptAttr(ctx context.Context, ops *dict.OpSettings, key, rel string) (string, bool) {
+	vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, key)
+	if err != nil {
+		// The message stays stored: a dict outage must not refuse mail. It is
+		// loud instead, because the script did not run (#1905).
+		metricImapSieveLookupErrors.Inc()
+		slog.Error("imapsieve: annotation lookup failed; the event runs without a script",
+			"user", s.userInfo.Username, "folder", rel, "key", key, "err", err)
+		return "", false
+	}
+	if !found || len(vals) == 0 || len(vals[0]) == 0 {
+		return "", false
+	}
+	return string(vals[0]), true
 }
 
 // inboxGUID is the account's INBOX identity, read once: opening the folder on
