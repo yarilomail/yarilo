@@ -13,7 +13,7 @@ import (
 // A keyword letter in a filename means what the folder's keyword file says it
 // means.
 //
-// The letters a-z in the ":2," part are indexes into dovecot-keywords, one line
+// The letters a-z in the ":2," part are indexes into the keywords file, one line
 // per keyword as "<index> <name>", the letter being 'a'+index. We used to
 // invent a name instead -- kw_a -- so a message the other server had marked
 // $Important reached a client as something nothing on disk ever said (#1600).

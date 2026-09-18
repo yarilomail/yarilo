@@ -11,8 +11,8 @@ import (
 // collected path is then stale, and the pass must follow the folder (#1886).
 func TestAPassFollowsAParentATwinRenamed(t *testing.T) {
 	const (
-		encodedParent = "&BBIERQRWBDQEPQRW-" // Вхідні
-		encodedChild  = "&BCAEPgQxBD4EQgQw-" // Робота
+		encodedParent = "&BBIERQRWBDQEPQRW-" // modified UTF-7 for "Вхідні"
+		encodedChild  = "&BCAEPgQxBD4EQgQw-" // modified UTF-7 for "Робота"
 		parent        = "Вхідні"
 		child         = "Робота"
 	)

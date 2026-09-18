@@ -44,7 +44,7 @@ func copyIn(t *testing.T, from, to string) {
 //
 // Everything here is the reference's own output, not a reading of the format:
 // the uids, the flag and keyword sets, the guids and the uid space all come
-// from doveadm run over the store these files were taken from.
+// from the reference's own admin tool, run over the store these files came from.
 func TestSdboxFolderConvertsToWhatTheirServerReported(t *testing.T) {
 	indexDir, mailDir := sdboxStore(t, "sdbox-inbox.log",
 		"sdbox-inbox-u.1", "sdbox-inbox-u.2", "sdbox-inbox-u.3", "sdbox-inbox-u.4")
@@ -53,7 +53,7 @@ func TestSdboxFolderConvertsToWhatTheirServerReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// doveadm mailbox status "uidnext messages uidvalidity" INBOX
+	// the reference's mailbox status for uidnext, messages and uidvalidity on INBOX
 	if hdr.UIDValidity != 1788252508 {
 		t.Errorf("uidvalidity = %d, their server reported 1788252508", hdr.UIDValidity)
 	}

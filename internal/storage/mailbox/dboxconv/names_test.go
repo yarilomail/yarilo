@@ -16,8 +16,8 @@ import (
 // nothing, and one that renamed ASCII would rewrite every store there is.
 func TestAdoptNamesBringsTheDiskToTheConfiguredEncoding(t *testing.T) {
 	const (
-		encoded = "&BBIERQRWBDQEPQRW-" // Вхідні
-		child   = "&BCAEPgQxBD4EQgQw-" // Робота
+		encoded = "&BBIERQRWBDQEPQRW-" // modified UTF-7 for "Вхідні"
+		child   = "&BCAEPgQxBD4EQgQw-" // modified UTF-7 for "Робота"
 		plain   = "Вхідні"
 		kid     = "Робота"
 	)
@@ -95,7 +95,7 @@ func TestAdoptNamesFinishesAPartialPass(t *testing.T) {
 	// Two different folders: one already renamed by the pass that stopped, one
 	// not. (Both spellings of the *same* folder is a different case -- a merge,
 	// refused below.)
-	const encoded = "&BCAEPgQxBD4EQgQw-" // Робота
+	const encoded = "&BCAEPgQxBD4EQgQw-" // modified UTF-7 for "Робота"
 	for _, d := range []string{"Вхідні", encoded} {
 		if err := os.MkdirAll(filepath.Join(root, d, "dbox-Mails"), 0o700); err != nil {
 			t.Fatal(err)

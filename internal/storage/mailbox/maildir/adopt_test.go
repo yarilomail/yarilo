@@ -184,8 +184,8 @@ func maildirBaseOf(name string) string {
 // argument that holds for '/' in the dbox layout.
 func TestMaildirFolderNamesAreBroughtToTheConfiguredEncoding(t *testing.T) {
 	const (
-		encoded      = "&BBIERQRWBDQEPQRW-" // Вхідні
-		encodedChild = "&BCAEPgQxBD4EQgQw-" // Робота
+		encoded      = "&BBIERQRWBDQEPQRW-" // modified UTF-7 for "Вхідні"
+		encodedChild = "&BCAEPgQxBD4EQgQw-" // modified UTF-7 for "Робота"
 	)
 	tests := []struct {
 		name   string
