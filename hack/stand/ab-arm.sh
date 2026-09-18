@@ -74,9 +74,16 @@ if [ "$BLOCKPROFILE" = "1" ]; then
   [ -f "$OVERLAY" ] || { echo "ab-arm: $OVERLAY is missing" >&2; exit 1; }
   # Only the profiling keys live there. A file that has grown a second purpose
   # is a stand running on something nobody reviewed.
+  # Both levels the header promises: telemetry at the top, pprof under it. A
+  # guard that reads only the first level lets telemetry.metrics_enabled in,
+  # and the file then says one thing while the arm does another.
   stray=$(awk '
     /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-    /^[^[:space:]]/ { top=$1; sub(":.*","",top); if (top != "telemetry") print top }
+    /^[^[:space:]]/ { key=$1; sub(":.*","",key); top=key; if (key != "telemetry") print key; next }
+    /^[[:space:]][[:space:]][^[:space:]]/ {
+      key=$1; sub(":.*","",key)
+      if (top == "telemetry" && key != "pprof") print "telemetry." key
+    }
   ' "$OVERLAY")
   if [ -n "$stray" ]; then
     echo "ab-arm: $OVERLAY carries keys outside telemetry.pprof.*: $stray" >&2
