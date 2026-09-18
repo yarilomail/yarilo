@@ -44,21 +44,51 @@ last_built_tag() {
     tr ',' '\n' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+-dev\.[0-9]\+' | sort -t. -k4 -n | tail -1
 }
 
+# The node keeps images the registry no longer lists, and an A arm is taken
+# from that cache by rule: pullPolicy is IfNotPresent, so a cached tag starts.
+# Checked on the node itself, not in the registry (#1875).
+NODE_SSH="${YARILO_NODE_SSH:-ssh -J ncjump -o BatchMode=yes -o ConnectTimeout=15 root@10.50.80.24}"
+cached_on_node() {
+  # Anchored on both ends of the reference: ctr prints one full reference per
+  # line, and an unanchored match answers "yes" for dev.676 when asked about
+  # dev.67 -- a check that accepts a neighbour reports another arm's number.
+  local pat
+  pat=$(printf '%s' "${IMAGE_REPO}:$1" | sed 's/[.]/\\./g')
+  $NODE_SSH "microk8s.ctr images ls -q 2>/dev/null | grep -qE '(^|/)${pat}\$'" >/dev/null 2>&1
+}
+
 tag_exists "$TAG" && rc=0 || rc=$?
-if [ "$rc" = 1 ]; then
-  echo "ab-arm: no image for tag $TAG; the last built tag is $(last_built_tag)" >&2
-  exit 1
-elif [ "$rc" != 0 ]; then
-  echo "ab-arm: could not read the registry to check tag $TAG" >&2
-  exit 1
+if [ "$rc" != 0 ]; then
+  if cached_on_node "$TAG"; then
+    echo "-- tag $TAG is not in the registry and is cached on the node; the arm runs from the cache" |
+      tee "$OUT/tag-$ARM-from-node-cache.txt"
+  elif [ "$rc" = 1 ]; then
+    echo "ab-arm: no image for tag $TAG, in the registry or on the node; the last built tag is $(last_built_tag)" >&2
+    exit 1
+  else
+    echo "ab-arm: could not read the registry to check tag $TAG, and the node does not cache it" >&2
+    exit 1
+  fi
 fi
 # Lock acquisitions by resource class, summed over the backends: the number that
 # says which lock a change moved, which throughput alone cannot (#1884).
+# A pod that has taken no lock yet has no such metric, and the grep that finds
+# none exits 1 -- which under set -e ended the arm before its first run.
+# Nothing acquired is an answer, and an empty file is how it is written.
 lock_classes() {
-  local pod
+  local pod page
   for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
-    kube exec "$pod" -c yarilo-imap -- sh -c \
-      'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep "^yarilo_locks_acquire_wait_seconds_count{"' 2>/dev/null
+    # The page first, and it is never empty -- runtime series are always there.
+    # An empty one means the endpoint is unreadable, which is not the same
+    # answer as "this pod has taken no lock yet", and must not be written as
+    # one: only the grep for the lock series may come back with nothing.
+    page=$(kube exec "$pod" -c yarilo-imap -- sh -c \
+      'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
+    if [ -z "$page" ]; then
+      echo "ab-arm: $pod does not answer on /metrics; lock classes cannot be counted" >&2
+      return 1
+    fi
+    printf '%s\n' "$page" | grep "^yarilo_locks_acquire_wait_seconds_count{" || true
   done | awk -F'"' '{split($0,f," "); sum[$2]+=f[length(f)]} END{for (c in sum) printf "%s %d\n", c, sum[c]}' | sort
 }
 
