@@ -780,7 +780,7 @@ func (c *sizeCounter) Write(p []byte) (int, error) {
 
 func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, error) {
 	p := filepath.Join(u.folderPath(folder), "cur", filename)
-	f, err := os.Open(p)
+	f, err := openPath(p)
 	if err != nil {
 		return nil, fmt.Errorf("maildir: fetch %s: %w", filename, err)
 	}
@@ -1990,7 +1990,7 @@ func (u *userMailbox) keywordNames(folder string) map[byte]string {
 	if keywordFileRead != nil {
 		keywordFileRead(path)
 	}
-	f, err := os.Open(path)
+	f, err := openPath(path)
 	if err != nil {
 		return nil
 	}

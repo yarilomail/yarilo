@@ -3,6 +3,7 @@ package maildir
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -125,6 +126,8 @@ func countFileOps(t *testing.T) (*atomic.Int64, *atomic.Int64) {
 
 // The counting row above is only worth its name while every path walk goes
 // through the seam: a bare os.Stat would pass it green (#1875).
+var declaresSeam = regexp.MustCompile(`^\s*(stat|lstat|open)Path\s*=\s*os\.`)
+
 func TestEveryPathWalkGoesThroughTheSeam(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -141,7 +144,9 @@ func TestEveryPathWalkGoesThroughTheSeam(t *testing.T) {
 			t.Fatal(rerr)
 		}
 		for n, line := range strings.Split(string(body), "\n") {
-			if strings.Contains(line, "= os.Stat") || strings.Contains(line, "= os.Lstat") || strings.Contains(line, "= os.Open") {
+			// Only the declarations of the seams themselves, anchored: "= os."
+			// alone also matches ":=", which let every bare call through.
+			if declaresSeam.MatchString(line) {
 				continue
 			}
 			if strings.Contains(line, "os.Stat(") || strings.Contains(line, "os.Lstat(") || strings.Contains(line, "os.Open(") {
