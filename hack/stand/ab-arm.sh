@@ -49,7 +49,12 @@ last_built_tag() {
 # Checked on the node itself, not in the registry (#1875).
 NODE_SSH="${YARILO_NODE_SSH:-ssh -J ncjump -o BatchMode=yes -o ConnectTimeout=15 root@10.50.80.24}"
 cached_on_node() {
-  $NODE_SSH "microk8s.ctr images ls -q 2>/dev/null | grep -q '${IMAGE_REPO}:$1'" >/dev/null 2>&1
+  # Anchored on both ends of the reference: ctr prints one full reference per
+  # line, and an unanchored match answers "yes" for dev.676 when asked about
+  # dev.67 -- a check that accepts a neighbour reports another arm's number.
+  local pat
+  pat=$(printf '%s' "${IMAGE_REPO}:$1" | sed 's/[.]/\\./g')
+  $NODE_SSH "microk8s.ctr images ls -q 2>/dev/null | grep -qE '(^|/)${pat}\$'" >/dev/null 2>&1
 }
 
 tag_exists "$TAG" && rc=0 || rc=$?
@@ -71,10 +76,19 @@ fi
 # none exits 1 -- which under set -e ended the arm before its first run.
 # Nothing acquired is an answer, and an empty file is how it is written.
 lock_classes() {
-  local pod
+  local pod page
   for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
-    kube exec "$pod" -c yarilo-imap -- sh -c \
-      'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep "^yarilo_locks_acquire_wait_seconds_count{" || true' 2>/dev/null || true
+    # The page first, and it is never empty -- runtime series are always there.
+    # An empty one means the endpoint is unreadable, which is not the same
+    # answer as "this pod has taken no lock yet", and must not be written as
+    # one: only the grep for the lock series may come back with nothing.
+    page=$(kube exec "$pod" -c yarilo-imap -- sh -c \
+      'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
+    if [ -z "$page" ]; then
+      echo "ab-arm: $pod does not answer on /metrics; lock classes cannot be counted" >&2
+      return 1
+    fi
+    printf '%s\n' "$page" | grep "^yarilo_locks_acquire_wait_seconds_count{" || true
   done | awk -F'"' '{split($0,f," "); sum[$2]+=f[length(f)]} END{for (c in sum) printf "%s %d\n", c, sum[c]}' | sort
 }
 
