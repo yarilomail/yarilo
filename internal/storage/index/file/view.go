@@ -62,16 +62,10 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	return img, nil
 }
 
-// readSnapshot is this reader's own view: the shared base image plus the log
-// tail replayed into private memory, up to the last whole group (#1833).
-func (fs *folderState) readSnapshot() (*folderState, error) {
-	view, _, err := fs.buildView()
-	return view, err
-}
-
-// buildView is readSnapshot plus the log offset the view stands at: a caller
-// that folds again needs to know where this one stopped, and a view whose base
-// already holds the whole log stops at the log's end, not at zero (#1875).
+// buildView folds one image: the shared base parse plus the log tail replayed
+// into private memory, up to the last whole group (#1833). It reports the
+// offset the view stands at -- a base that already holds the whole log stands
+// at the log's end, not at zero, and the next fold continues from there.
 func (fs *folderState) buildView() (*folderState, int64, error) {
 	img, err := imageFor(fs)
 	if err != nil {
