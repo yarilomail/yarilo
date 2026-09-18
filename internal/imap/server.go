@@ -502,6 +502,9 @@ type session struct {
 	imapConn *imapserver.Conn
 	userInfo *mailbox.UserInfo
 	sid      string // cross-service correlation ID from login-proxy
+	// inboxGUID* caches the INBOX identity for server-wide annotations.
+	inboxGUIDVal [16]byte
+	inboxGUIDOK  bool
 	// liveRelay is a relayed SASL exchange this session started; cancelled on
 	// teardown so an aborted AUTHENTICATE frees the service's half at once.
 	liveRelay *authrelay.RelayServer
@@ -3581,7 +3584,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	// fires on the selected mailbox for each message whose flags changed; the
 	// script may refile / discard / reflag it. Gated on a bound script (or
 	// globals) so a bulk STORE with no imapsieve script fetches nothing.
-	if eng := s.srv.opts.SieveEngine; eng != nil && eng.ImapSieveEnabled() && storeFlags != nil && len(pending) > 0 {
+	if eng := s.srv.opts.SieveEngine; eng != nil && storeFlags != nil && len(pending) > 0 {
 		scriptName := s.imapSieveScriptName(s.folderNS, s.folder.Name, s.folder.GUID)
 		if scriptName != "" || eng.HasImapGlobals() {
 			changed := make([]string, 0, len(storeFlags.Flags))

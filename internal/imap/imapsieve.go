@@ -27,13 +27,27 @@ func (s *session) imapSieveScriptName(h *nsHandle, rel string, guid [16]byte) st
 	if vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, key); err == nil && found && len(vals) > 0 && len(vals[0]) > 0 {
 		return string(vals[0])
 	}
-	if inbox, err := s.primary.mailbox().Folder("INBOX", uint32(time.Now().Unix())); err == nil {
-		skey := mailbox.ServerAttrKey(mailbox.AttrShared, inbox.GUID, imapSieveScriptAttr)
+	if guid, ok := s.inboxGUID(); ok {
+		skey := mailbox.ServerAttrKey(mailbox.AttrShared, guid, imapSieveScriptAttr)
 		if vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, skey); err == nil && found && len(vals) > 0 && len(vals[0]) > 0 {
 			return string(vals[0])
 		}
 	}
 	return ""
+}
+
+// inboxGUID is the account's INBOX identity, read once: opening the folder on
+// every stored message is a reconcile per message (#1902).
+func (s *session) inboxGUID() ([16]byte, bool) {
+	if s.inboxGUIDOK {
+		return s.inboxGUIDVal, true
+	}
+	inbox, err := s.primary.mailbox().Folder("INBOX", uint32(time.Now().Unix()))
+	if err != nil {
+		return [16]byte{}, false
+	}
+	s.inboxGUIDVal, s.inboxGUIDOK = inbox.GUID, true
+	return s.inboxGUIDVal, true
 }
 
 // runImapSieveEvent runs imapsieve for one just-stored message and applies the
@@ -42,10 +56,15 @@ func (s *session) imapSieveScriptName(h *nsHandle, rel string, guid [16]byte) st
 // (empty for APPEND).
 func (s *session) runImapSieveEvent(cause, mailboxName, rel string, h *nsHandle, folder *mailbox.Folder, uid uint32, filename string, altTier bool, srcMailbox string, changedFlags []string) {
 	eng := s.srv.opts.SieveEngine
-	if eng == nil {
+	if eng == nil || !eng.ImapSieveEnabled() {
 		return
 	}
+	// Nothing to run means nothing to read: the message was just written, and
+	// re-reading it for a script that does not exist is the hot path (#1902).
 	scriptName := s.imapSieveScriptName(h, rel, folder.GUID)
+	if scriptName == "" && !eng.HasImapGlobals() {
+		return
+	}
 
 	rc, err := h.box.Fetch(rel, filename, altTier)
 	if err != nil {
