@@ -175,6 +175,13 @@ jobs:
           ## one, which is the one that actually works here.
           cache: false
 
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          ## The chart rows render the chart; without helm they would skip and
+          ## the gate would be green on nothing.
+          version: v3.19.0
+
       - name: Install go-junit-report
         run: |
           command -v go-junit-report >/dev/null || \

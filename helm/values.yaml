@@ -1127,6 +1127,11 @@ components:
     enabled: true
     replicas: 1
     listen: ":9107"
+    ## The service listens with internal mTLS wherever internal_tls is on; the
+    ## certificate must be mounted here or it cannot come up at all.
+    internalTLS:
+      enabled: false
+      secretName: ""
     resources: {}
     nodeSelector: {}
     tolerations: []
