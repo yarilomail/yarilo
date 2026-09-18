@@ -112,7 +112,14 @@ for attempt in 1 2 3 4 5; do
   sleep 20
 done
 
-echo "-- start after seed: $(start_inventory)" | tee "$OUT/start-$ARM-seeded.txt"
+seeded=$(start_inventory)
+echo "-- start after seed: ${seeded:-unreadable}" | tee "$OUT/start-$ARM-seeded.txt"
+# A wrong path and a pod without the volume both read as empty, and then the
+# wipe check above passed on nothing at all. The seed delivers mail, so the
+# inventory must see it.
+case "$seeded" in
+  "files=0 du_kb=0"|"") echo "ab-arm: the inventory does not see what the seed delivered (${seeded:-unreadable}); it is reading the wrong place" >&2; exit 1 ;;
+esac
 
 authpod=$(kube get pods -l app.kubernetes.io/component=auth -o name | head -1 | cut -d/ -f2)
 [ -n "$authpod" ] || { echo "ab-arm: no auth pod to read the histogram from" >&2; exit 1; }
