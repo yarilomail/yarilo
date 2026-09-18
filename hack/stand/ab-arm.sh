@@ -64,9 +64,38 @@ lock_classes() {
 
 
 
+# The profiling overlay, for an arm that measures waiting rather than
+# throughput. Off unless the arm asks: accounting for every blocking operation
+# changes the pod being measured (#1875).
+BLOCKPROFILE="${YARILO_ARM_BLOCKPROFILE:-0}"
+OVERLAY="$REPO/helm_values/values-sandbox-blockprofile.yaml"
+overlay_args=()
+if [ "$BLOCKPROFILE" = "1" ]; then
+  [ -f "$OVERLAY" ] || { echo "ab-arm: $OVERLAY is missing" >&2; exit 1; }
+  # Only the profiling keys live there. A file that has grown a second purpose
+  # is a stand running on something nobody reviewed.
+  # Both levels the header promises: telemetry at the top, pprof under it. A
+  # guard that reads only the first level lets telemetry.metrics_enabled in,
+  # and the file then says one thing while the arm does another.
+  stray=$(awk '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    /^[^[:space:]]/ { key=$1; sub(":.*","",key); top=key; if (key != "telemetry") print key; next }
+    /^[[:space:]][[:space:]][^[:space:]]/ {
+      key=$1; sub(":.*","",key)
+      if (top == "telemetry" && key != "pprof") print "telemetry." key
+    }
+  ' "$OVERLAY")
+  if [ -n "$stray" ]; then
+    echo "ab-arm: $OVERLAY carries keys outside telemetry.pprof.*: $stray" >&2
+    exit 1
+  fi
+  overlay_args=(-f "$OVERLAY")
+  echo "-- arm $ARM runs with the profiling overlay: this is a latency arm" | tee "$OUT/overlay-$ARM.txt"
+fi
+
 echo "== arm $ARM: $TAG"
 helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
-  -f "$REPO/helm_values/values-sandbox.yaml" --set image.tag="$TAG" --timeout 10m >/dev/null
+  -f "$REPO/helm_values/values-sandbox.yaml" "${overlay_args[@]}" --set image.tag="$TAG" --timeout 10m >/dev/null
 
 deadline=$(( $(date +%s) + 600 ))
 until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ]; do
