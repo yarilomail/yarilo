@@ -80,13 +80,13 @@ spec:
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-              volumes:
+      volumes:
         - name: config
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
           emptyDir: {}
-                {{- include "yarilo.internalTLSVolume" .Values.components.director.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" .Values.components.director.internalTLS | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
