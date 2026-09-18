@@ -924,6 +924,7 @@ data:
     ## component reads dict_addr and names a dict (#1733).
     dict_service:
       dict_listen: {{ .Values.components.dict.listen | default ":9107" | quote }}
+      dict_max_conns: {{ .Values.components.dict.max_conns | default 8 | int64 }}
       dict_addr: {{ printf "%s-dict.%s.svc.cluster.local:%s" (include "yarilo.fullname" .) .Release.Namespace (include "yarilo.dictPort" .) | quote }}
     {{- end }}
 

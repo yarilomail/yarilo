@@ -96,6 +96,14 @@ func dictClientTLS(cfg *config.Config) (*tls.Config, error) {
 	return t, nil
 }
 
+// dictConns is the configured ceiling, or the package default.
+func dictConns(cfg *config.Config) int {
+	if n := cfg.DictService.DictMaxConns; n > 0 {
+		return n
+	}
+	return proxy.DefaultMaxConns
+}
+
 // ErrNoDictService names the key a session process needs to reach a configured
 // dict: it links no engine, so there is nothing to open in-process (#1733).
 var ErrNoDictService = errors.New("dict_service.dict_addr is required: sessions reach their dicts through yarilo-dict")
@@ -1316,7 +1324,7 @@ func buildDict(cfg *config.Config, name string) (dict.Dict, error) {
 	if err != nil {
 		return nil, err
 	}
-	return proxy.New(cfg.DictService.DictAddr, name, tlsCfg), nil
+	return proxy.NewWithLimit(cfg.DictService.DictAddr, name, tlsCfg, dictConns(cfg)), nil
 }
 
 // buildLocksClient constructs a yarilo-locks client per cfg.LocksClient.
