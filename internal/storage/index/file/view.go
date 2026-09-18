@@ -65,9 +65,17 @@ func imageFor(fs *folderState) (*baseImage, error) {
 // readSnapshot is this reader's own view: the shared base image plus the log
 // tail replayed into private memory, up to the last whole group (#1833).
 func (fs *folderState) readSnapshot() (*folderState, error) {
+	view, _, err := fs.buildView()
+	return view, err
+}
+
+// buildView is readSnapshot plus the log offset the view stands at: a caller
+// that folds again needs to know where this one stopped, and a view whose base
+// already holds the whole log stops at the log's end, not at zero (#1875).
+func (fs *folderState) buildView() (*folderState, int64, error) {
 	img, err := imageFor(fs)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	view := &folderState{
 		user:      fs.user,
@@ -82,15 +90,15 @@ func (fs *folderState) readSnapshot() (*folderState, error) {
 
 	lg, lgErr := openLogRead(fs.indexPath)
 	if lgErr != nil {
-		return nil, fmt.Errorf("fileindex/view: log: %w", lgErr)
+		return nil, 0, fmt.Errorf("fileindex/view: log: %w", lgErr)
 	}
 	defer lg.close()
 	if lg.f == nil || !lg.ok {
 		if rerr := view.refreshExtState(); rerr != nil {
-			return nil, rerr
+			return nil, 0, rerr
 		}
 		view.ensureVsizeLocked()
-		return view, nil
+		return view, 0, nil
 	}
 	// Where this log meets this base, by the lineage table: an unpaired one
 	// replays whole rather than from an offset that means nothing in it.
@@ -100,10 +108,10 @@ func (fs *folderState) readSnapshot() (*folderState, error) {
 	}
 	if lg.size <= from {
 		if rerr := view.refreshExtState(); rerr != nil {
-			return nil, rerr
+			return nil, 0, rerr
 		}
 		view.ensureVsizeLocked()
-		return view, nil // the base already holds everything
+		return view, lg.size, nil // the base already holds everything
 	}
 
 	// Only now is a copy paid for: the tail has something to apply, and the
@@ -111,13 +119,13 @@ func (fs *folderState) readSnapshot() (*folderState, error) {
 	view.file = cloneIndexFile(img.file)
 	end, aerr := view.applyLogFrom(lg, from)
 	if aerr != nil {
-		return nil, aerr
+		return nil, 0, aerr
 	}
 	view.logSize = end
 	// The typed halves of the header the readers ask for -- keywords, vsize,
 	// dbox -- are derived, and a view that skips them answers zero.
 	if rerr := view.refreshExtState(); rerr != nil {
-		return nil, rerr
+		return nil, 0, rerr
 	}
 	// A recount that finds no sizes at all does not replace an aggregate the
 	// base already knows: records carrying none add nothing (#1728).
@@ -126,7 +134,7 @@ func (fs *folderState) readSnapshot() (*folderState, error) {
 	if view.vsize.Vsize == 0 && fromHeader.Vsize > 0 {
 		view.vsize = fromHeader
 	}
-	return view, nil
+	return view, end, nil
 }
 
 // cloneIndexFile copies what a replay writes into: the records and their
