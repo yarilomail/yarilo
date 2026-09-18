@@ -14,7 +14,6 @@ import (
 // The oracle is the reference's own listing of subscribed mailboxes over the
 // store this fixture came from:
 //
-//	doveadm mailbox list -s
 //	Вхідні
 //	Вхідні/Робота
 //	Archive
