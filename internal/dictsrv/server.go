@@ -89,7 +89,11 @@ func (s *Server) closeConns() {
 	}
 }
 
+// serveConn runs commands on a context the listener's shutdown does not cancel:
+// a command answered with the shutdown's own error reads as a refusal the
+// client would not retry. Shutdown closes the connection instead (#1902).
 func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
+	ctx = context.WithoutCancel(ctx)
 	s.mu.Lock()
 	s.conns[conn] = struct{}{}
 	s.mu.Unlock()

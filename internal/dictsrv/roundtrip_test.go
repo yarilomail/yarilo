@@ -1,8 +1,10 @@
 package dictsrv
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -447,9 +449,17 @@ func TestAServiceRestartCostsNoCommand(t *testing.T) {
 
 	cancel()
 	_ = ln.Close()
-	again, err := net.Listen("tcp", addr)
-	if err != nil {
-		t.Skipf("the port did not come back: %v", err)
+	// The port comes back once the kernel releases it; skipping here would be
+	// a green row that tested nothing.
+	var again net.Listener
+	for i := 0; i < 50; i++ {
+		if again, err = net.Listen("tcp", addr); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if again == nil {
+		t.Fatalf("the port did not come back: %v", err)
 	}
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	t.Cleanup(cancel2)
@@ -513,3 +523,44 @@ func (d refusingWrites) Begin(ctx context.Context, set *dict.OpSettings) (dict.T
 type refusingTx struct{ dict.Tx }
 
 func (t refusingTx) Set(string, []byte) error { return errors.New("engine refuses writes") }
+
+// A command must never be answered with the listener's own shutdown error: that
+// is a refusal in form, and a client cannot tell it from a real one, so it does
+// not retry. Shutdown closes the connection; it does not answer (#1902).
+func TestACommandIsNotAnsweredWithTheShutdownError(t *testing.T) {
+	real, err := dict.Open(dict.Config{Driver: "memory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := &dict.OpSettings{Username: "u1@d.test"}
+	tx, _ := real.Begin(context.Background(), set)
+	_ = tx.Set("priv/one", []byte("first"))
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+
+	// The listener's context is already over when this connection is served.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	go New(map[string]dict.Dict{"metadata": real}, nil).serveConn(ctx, server)
+
+	_ = client.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := client.Write([]byte(helloAndLookup())); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := bufio.NewReader(client).ReadString('\n')
+	if err != nil {
+		return // the connection was closed instead of answered, which is correct
+	}
+	if strings.HasPrefix(reply, "F") {
+		t.Errorf("a command was answered with a refusal from the shutdown: %q", strings.TrimSpace(reply))
+	}
+}
+
+// helloAndLookup is one greeting and one lookup, as a client sends them.
+func helloAndLookup() string {
+	return "H3\t2\t0\tu1@d.test\tmetadata\nLpriv/one\tu1@d.test\n"
+}
