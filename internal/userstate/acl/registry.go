@@ -115,8 +115,12 @@ func (r *Registry) SyncFromList(entries []ListEntry, complete bool) error {
 		return fmt.Errorf("userstate/acl: registry begin: %w", err)
 	}
 	one := []byte("1")
+	// Every principal this write adds or removes: their cached answer is the
+	// one that just went stale.
+	touched := make([]string, 0, len(wanted))
 	for p := range wanted {
 		if !current[p] {
+			touched = append(touched, p)
 			if err := tx.Set(r.fwdKey(p), one); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("userstate/acl: registry set: %w", err)
@@ -133,6 +137,7 @@ func (r *Registry) SyncFromList(entries []ListEntry, complete bool) error {
 	if complete && haveCurrent {
 		for p := range current {
 			if !wanted[p] {
+				touched = append(touched, p)
 				if err := tx.Unset(r.fwdKey(p)); err != nil {
 					return fmt.Errorf("userstate/acl: registry unset: %w", err)
 				}
@@ -145,6 +150,10 @@ func (r *Registry) SyncFromList(entries []ListEntry, complete bool) error {
 	if res, err := tx.Commit(); err != nil || res != dict.CommitOK {
 		return fmt.Errorf("userstate/acl: registry commit: result=%v err=%w", res, err)
 	}
+	// The answers this write made wrong belong to the principals it names --
+	// the recipients -- not to the owner who granted. Dropped here so a
+	// recipient on this backend sees the share in their next LIST.
+	InvalidatePrincipals(touched)
 	return nil
 }
 
@@ -161,6 +170,17 @@ func (r *Registry) fwdKey(identPath string) string {
 // through the same visibility gate as any verb, so a stale row and an
 // invented owner produce the same silence.
 func OwnersFor(ctx context.Context, d dict.Dict, user string, groups []string) ([]string, error) {
+	return ownersFor(ctx, d, user, groups, true)
+}
+
+// OwnersForNow answers from the registry itself, with no interval in front of
+// it. For the admin surface: an operator asking who granted this user has to
+// be told what the dict says now, not what a session was told an hour ago.
+func OwnersForNow(ctx context.Context, d dict.Dict, user string, groups []string) ([]string, error) {
+	return ownersFor(ctx, d, user, groups, false)
+}
+
+func ownersFor(ctx context.Context, d dict.Dict, user string, groups []string, cached bool) ([]string, error) {
 	if d == nil {
 		return nil, nil
 	}
@@ -169,25 +189,50 @@ func OwnersFor(ctx context.Context, d dict.Dict, user string, groups []string) (
 		paths = append(paths, fwdPrefix+"group/"+dict.Escape(g)+"/")
 	}
 	seen := make(map[string]bool)
-	owners := make([]string, 0)
+	out := make([]string, 0)
 	for _, p := range paths {
-		it, err := d.Iterate(ctx, nil, p, dict.IterRecurse|dict.IterNoValue)
-		if err != nil {
-			return nil, fmt.Errorf("userstate/acl: registry scan %s: %w", p, err)
+		var (
+			list []string
+			err  error
+		)
+		if cached {
+			list, err = owners.cachedPath(ctx, d, p)
+		} else {
+			list, err = scanPath(ctx, d, p)
 		}
-		for it.Next() {
-			key := it.Key()
-			owner := dict.Unescape(key[strings.LastIndex(key, "/")+1:])
-			if owner != "" && !seen[owner] {
-				seen[owner] = true
-				owners = append(owners, owner)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range list {
+			if !seen[o] {
+				seen[o] = true
+				out = append(out, o)
 			}
 		}
-		if err := it.Close(); err != nil {
-			return nil, fmt.Errorf("userstate/acl: registry scan %s: %w", p, err)
+	}
+	return out, nil
+}
+
+// scanPath reads one registry path off the dict.
+func scanPath(ctx context.Context, d dict.Dict, path string) ([]string, error) {
+	it, err := d.Iterate(ctx, nil, path, dict.IterRecurse|dict.IterNoValue)
+	if err != nil {
+		return nil, fmt.Errorf("userstate/acl: registry scan %s: %w", path, err)
+	}
+	found := make([]string, 0)
+	seen := make(map[string]bool)
+	for it.Next() {
+		key := it.Key()
+		owner := dict.Unescape(key[strings.LastIndex(key, "/")+1:])
+		if owner != "" && !seen[owner] {
+			seen[owner] = true
+			found = append(found, owner)
 		}
 	}
-	return owners, nil
+	if err := it.Close(); err != nil {
+		return nil, fmt.Errorf("userstate/acl: registry scan %s: %w", path, err)
+	}
+	return found, nil
 }
 
 // RegistrySync reprojects the registry from the current index snapshot -- the
@@ -200,5 +245,11 @@ func (s *Store) RegistrySync() error {
 	if err != nil {
 		return fmt.Errorf("userstate/acl: registry sync snapshot: %w", err)
 	}
-	return s.registry.SyncFromList(entries, true)
+	if err := s.registry.SyncFromList(entries, true); err != nil {
+		return err
+	}
+	// The repair verb rewrites the registry under everybody, so nobody's
+	// cached answer survives it.
+	InvalidateAll()
+	return nil
 }
