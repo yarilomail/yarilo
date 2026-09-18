@@ -93,26 +93,55 @@ type Dict struct {
 type store struct {
 	path   string
 	method filelock.Method
+	refs   int // sessions holding this user open; the map keeps only these
 	mu     sync.Mutex
 	rows   map[string]row
 	loaded bool
 	stamp  string
 }
 
-// storeFor resolves the path for this operation's user. A template naming %h
+// pathFor resolves the file this operation's user owns. A template naming %h
 // with no home in the settings is a configuration error at the call, not an
 // empty path silently shared by everyone.
-func (d *Dict) storeFor(set *dict.OpSettings) (*store, error) {
+func (d *Dict) pathFor(set *dict.OpSettings) (string, error) {
 	vars := varexpand.Vars{}
 	if set != nil {
 		vars.Username, vars.HomeDir = set.Username, set.HomeDir
 	}
 	if strings.Contains(d.tmpl, "%h") && vars.HomeDir == "" {
-		return nil, fmt.Errorf("file: path %q needs the home of %q and the operation carries none", d.tmpl, vars.Username)
+		return "", fmt.Errorf("file: path %q needs the home of %q and the operation carries none", d.tmpl, vars.Username)
 	}
 	path := varexpand.Expand(d.tmpl, vars)
 	if path == "" {
-		return nil, fmt.Errorf("file: path %q expands to nothing for user %q", d.tmpl, vars.Username)
+		return "", fmt.Errorf("file: path %q expands to nothing for user %q", d.tmpl, vars.Username)
+	}
+	return path, nil
+}
+
+// storeFor returns the store to serve this operation with. A user some session
+// holds open is served from the kept store; anyone else is served by a store
+// that is dropped with the operation, so the map never grows past the users
+// actually being served.
+func (d *Dict) storeFor(set *dict.OpSettings) (*store, error) {
+	path, err := d.pathFor(set)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if st, ok := d.stores[path]; ok {
+		return st, nil
+	}
+	return &store{path: path, method: d.method, rows: map[string]row{}}, nil
+}
+
+// AcquireUser keeps this user's rows in memory until the last holder releases
+// them. Without it the rows of every user this process ever served would be
+// held to the end of the process.
+func (d *Dict) AcquireUser(set *dict.OpSettings) error {
+	path, err := d.pathFor(set)
+	if err != nil {
+		return err
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -121,7 +150,34 @@ func (d *Dict) storeFor(set *dict.OpSettings) (*store, error) {
 		st = &store{path: path, method: d.method, rows: map[string]row{}}
 		d.stores[path] = st
 	}
-	return st, nil
+	st.refs++
+	return nil
+}
+
+// ReleaseUser drops the rows once nobody holds the user open.
+func (d *Dict) ReleaseUser(set *dict.OpSettings) {
+	path, err := d.pathFor(set)
+	if err != nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	st, ok := d.stores[path]
+	if !ok {
+		return
+	}
+	st.refs--
+	if st.refs <= 0 {
+		delete(d.stores, path)
+	}
+}
+
+// Stores reports how many users' rows this Dict is holding. Test-facing: the
+// number is the property, not a statistic.
+func (d *Dict) Stores() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.stores)
 }
 
 type row struct {
@@ -383,20 +439,33 @@ func (d *Dict) ExpireScan(ctx context.Context) error {
 func (s *store) expire() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The rows we hold answer whether there is anything to remove; taking the
+	// file lock on every file each pass would cost more than the sweep.
+	if !s.hasExpiredLocked() {
+		return nil
+	}
 	return s.withWriteLock(func() error {
+		if !s.hasExpiredLocked() {
+			return nil
+		}
 		now := time.Now().Unix()
-		changed := false
 		for k, r := range s.rows {
 			if r.Expires > 0 && now > r.Expires {
 				delete(s.rows, k)
-				changed = true
 			}
-		}
-		if !changed {
-			return nil
 		}
 		return s.flushLocked()
 	})
+}
+
+func (s *store) hasExpiredLocked() bool {
+	now := time.Now().Unix()
+	for _, r := range s.rows {
+		if r.Expires > 0 && now > r.Expires {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Dict) guard(ctx context.Context) error {

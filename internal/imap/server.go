@@ -811,6 +811,9 @@ func (s *session) Close() error {
 		})
 		slog.Info("imap: logout", "sid", s.sid, "user", s.userInfo.Username, "stats", msg)
 	}
+	if s.srv.opts.MetadataDict != nil && s.userInfo != nil {
+		dict.ReleaseUser(s.srv.opts.MetadataDict, s.metadataOps())
+	}
 	// tears down every per-namespace box+idx, including the personal handle.
 	s.closeHandles()
 	return nil
@@ -1124,6 +1127,13 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	}
 
 	s.userInfo = userInfo
+	// The annotation dict may hold this user's rows in memory; it holds them
+	// for the session, not for the life of the process.
+	if s.srv.opts.MetadataDict != nil {
+		if err := dict.AcquireUser(s.srv.opts.MetadataDict, s.metadataOps()); err != nil {
+			slog.Warn("imap: annotation dict refused the user", "sid", s.sid, "user", userInfo.Username, "err", err)
+		}
+	}
 
 	handles, primary, err := s.openHandles(userInfo)
 	if err != nil {

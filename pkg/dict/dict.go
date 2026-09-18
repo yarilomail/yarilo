@@ -93,6 +93,30 @@ const (
 // flow through Begin → Tx; there is no direct Set/Unset on Dict by
 // design — the transaction-only mutation surface keeps drivers'
 // write paths consistent. Close releases all driver resources;
+// UserScoped is implemented by drivers that hold per-user state in memory.
+// A caller that serves one user for a while -- a session -- says so, and the
+// driver keeps the state for exactly that long; an operation from nobody in
+// particular is served without anything being kept.
+type UserScoped interface {
+	AcquireUser(set *OpSettings) error
+	ReleaseUser(set *OpSettings)
+}
+
+// AcquireUser calls d.AcquireUser when the driver keeps per-user state.
+func AcquireUser(d Dict, set *OpSettings) error {
+	if us, ok := d.(UserScoped); ok {
+		return us.AcquireUser(set)
+	}
+	return nil
+}
+
+// ReleaseUser calls d.ReleaseUser when the driver keeps per-user state.
+func ReleaseUser(d Dict, set *OpSettings) {
+	if us, ok := d.(UserScoped); ok {
+		us.ReleaseUser(set)
+	}
+}
+
 // subsequent calls on a closed Dict return ErrClosed.
 type Dict interface {
 	// Lookup returns every value bound to key, plus found=true when at

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/dict"
 	_ "github.com/yarilomail/yarilo/pkg/dict/file"
@@ -125,5 +126,127 @@ func TestTwoProcessesWritingKeepEveryAnnotation(t *testing.T) {
 	}
 	if missing > 0 {
 		t.Errorf("%d of 50 annotations were lost: one writer overwrote the other's file", missing)
+	}
+}
+
+// The rows of a user nobody is serving are not kept: a process that served
+// many users over a day would otherwise hold every one of them to its exit.
+func TestStoresLiveOnlyWhileSessionsHoldThem(t *testing.T) {
+	root := t.TempDir()
+	d, err := dict.Open(dict.Config{Driver: "file", Settings: map[string]any{"path": "%h/yarilo-metadata.json"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close() //nolint:errcheck
+	counted, ok := d.(interface{ Stores() int })
+	if !ok {
+		t.Fatal("the file dict no longer reports how many users it holds")
+	}
+
+	opsFor := func(i int) *dict.OpSettings {
+		u := "u" + strconv.Itoa(i) + "@d.test"
+		return &dict.OpSettings{Username: u, HomeDir: filepath.Join(root, u)}
+	}
+
+	const users = 20
+	for i := 0; i < users; i++ {
+		if err := dict.AcquireUser(d, opsFor(i)); err != nil {
+			t.Fatal(err)
+		}
+		set(t, d, opsFor(i), "/private/comment", "v")
+	}
+	if got := counted.Stores(); got != users {
+		t.Errorf("%d users held open and the dict keeps %d", users, got)
+	}
+
+	for i := 0; i < users; i++ {
+		dict.ReleaseUser(d, opsFor(i))
+	}
+	if got := counted.Stores(); got != 0 {
+		t.Errorf("every session closed and the dict still keeps %d users", got)
+	}
+
+	// A read from nobody in particular is served, and keeps nothing.
+	if _, found, err := d.Lookup(context.Background(), opsFor(0), "/private/comment"); err != nil || !found {
+		t.Fatalf("a released user's annotation is unreadable (found=%v, err=%v)", found, err)
+	}
+	if got := counted.Stores(); got != 0 {
+		t.Errorf("a lookup outside a session left %d users held", got)
+	}
+
+	// Two sessions for one user: the rows go when the second one goes.
+	if err := dict.AcquireUser(d, opsFor(0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := dict.AcquireUser(d, opsFor(0)); err != nil {
+		t.Fatal(err)
+	}
+	dict.ReleaseUser(d, opsFor(0))
+	if got := counted.Stores(); got != 1 {
+		t.Errorf("one of two sessions closed and the dict keeps %d users", got)
+	}
+	dict.ReleaseUser(d, opsFor(0))
+	if got := counted.Stores(); got != 0 {
+		t.Errorf("both sessions closed and the dict keeps %d users", got)
+	}
+}
+
+// A sweep with nothing to sweep takes no lock: the lock is per file, and a
+// process holding many users would otherwise take all of them every pass.
+func TestASweepWithNothingExpiredTakesNoLock(t *testing.T) {
+	home := t.TempDir()
+	d := open(t, "%h/yarilo-metadata.json")
+	ops := &dict.OpSettings{Username: "u1@d.test", HomeDir: home}
+	if err := dict.AcquireUser(d, ops); err != nil {
+		t.Fatal(err)
+	}
+	set(t, d, ops, "/private/comment", "v")
+
+	lock := filepath.Join(home, "yarilo-metadata.json.lock")
+	if err := os.Remove(lock); err != nil {
+		t.Fatalf("the write did not take the lock: %v", err)
+	}
+	if err := d.ExpireScan(context.Background()); err != nil {
+		t.Fatalf("expire scan: %v", err)
+	}
+	if _, err := os.Stat(lock); !os.IsNotExist(err) {
+		t.Errorf("the sweep took the file lock with nothing expired (%v)", err)
+	}
+
+	// And one that does have something to remove still takes it.
+	tx, err := d.Begin(context.Background(), &dict.OpSettings{Username: "u1@d.test", HomeDir: home, ExpireSecs: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Set("/private/short", []byte("v")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	expired(t, d, ops)
+	if _, err := os.Stat(lock); err != nil {
+		t.Errorf("the sweep did not take the lock with a key to remove: %v", err)
+	}
+	if _, found, err := d.Lookup(context.Background(), ops, "/private/short"); err != nil || found {
+		t.Errorf("the expired key is still there (found=%v, err=%v)", found, err)
+	}
+}
+
+// expired runs the sweep once the one-second TTL has passed.
+func expired(t *testing.T, d dict.Dict, ops *dict.OpSettings) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if err := d.ExpireScan(context.Background()); err != nil {
+			t.Fatalf("expire scan: %v", err)
+		}
+		if _, found, _ := d.Lookup(context.Background(), ops, "/private/short"); !found {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the key with a one-second ttl outlived three seconds of sweeps")
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
