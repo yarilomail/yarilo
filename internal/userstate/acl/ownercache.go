@@ -31,13 +31,20 @@ type ownerEntry struct {
 
 var owners = &ownerCache{entries: map[string]ownerEntry{}, now: time.Now}
 
-// InvalidateOwner drops what this user was told, so their own SETACL shows in
-// their next LIST instead of waiting out the interval. Another user's grant
-// arrives with the interval, as in the reference.
-func InvalidateOwner(user string) {
+// InvalidatePrincipals drops the answers a grant has just made wrong. The keys
+// are read by the principal a grant names -- user/<seer>/, group/<g>/,
+// anyone/ -- so it is the recipients' answers that go stale, not the owner's.
+// On the backend that took the SETACL the recipient sees it at once; on every
+// other backend it arrives with the interval, as in the reference.
+func InvalidatePrincipals(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
 	owners.mu.Lock()
 	defer owners.mu.Unlock()
-	delete(owners.entries, fwdPrefix+"user/"+dict.Escape(user)+"/")
+	for _, p := range paths {
+		delete(owners.entries, fwdPrefix+p+"/")
+	}
 }
 
 // InvalidateAll drops every cached answer. For the admin repair verb, which
@@ -75,9 +82,14 @@ func (c *ownerCache) cachedPath(ctx context.Context, d dict.Dict, path string) (
 	countScan()
 	list, err := scanPath(ctx, d, path)
 	if err != nil {
-		// A failed scan answers with what we last had rather than with
-		// nothing: discovery degrades, it does not flip to empty.
+		// The attempt is what the interval counts, not its outcome: a dict
+		// that is down would otherwise be asked again by every LIST. A failed
+		// scan answers with what we last had -- discovery degrades, it does
+		// not flip to empty.
 		if ok {
+			c.mu.Lock()
+			c.entries[path] = ownerEntry{owners: e.owners, read: c.now()}
+			c.mu.Unlock()
 			return e.owners, nil
 		}
 		return nil, err

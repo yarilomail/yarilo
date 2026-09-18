@@ -2,6 +2,7 @@ package acl
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 	"time"
@@ -114,52 +115,91 @@ func TestSharedPathsAreReadOncePerProcess(t *testing.T) {
 	}
 }
 
-// The owner's own SETACL shows in their next LIST; another user's grant waits
-// out the interval, as in the reference.
-func TestOwnSetaclIsSeenAtOnce(t *testing.T) {
+// A grant drops the answer of the principal it names, not of the owner who
+// granted: on the backend that took the SETACL the recipient sees the share in
+// their next LIST, and a user the grant does not name waits out the interval.
+func TestAGrantIsSeenByItsRecipientAtOnce(t *testing.T) {
 	d := regDict(t)
 	now := clockFor(t)
-	grant(t, d, "bob", mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"})
-	if got := lookup(t, d, "bob"); len(got) != 1 || got[0] != "bob" {
-		t.Fatalf("bob does not see his own grant: %v", got)
+
+	// Both read once, so both have an answer held.
+	if got := lookup(t, d, "bob"); len(got) != 0 {
+		t.Fatalf("bob starts with %v, want nothing", got)
+	}
+	if got := lookup(t, d, "carol"); len(got) != 0 {
+		t.Fatalf("carol starts with %v, want nothing", got)
 	}
 
-	// Somebody else grants bob something: bob keeps the answer he has.
 	grant(t, d, "alice", mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"})
-	if got := lookup(t, d, "bob"); len(got) != 1 {
-		t.Errorf("another user's grant arrived before the interval: %v", got)
+
+	if got := lookup(t, d, "bob"); len(got) != 1 || got[0] != "alice" {
+		t.Errorf("the recipient sees %v after the grant, want [alice]", got)
+	}
+	if got := lookup(t, d, "carol"); len(got) != 0 {
+		t.Errorf("a user the grant does not name sees %v before the interval", got)
 	}
 
-	// Bob's own write invalidates what bob was told.
-	grant(t, d, "bob", mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"})
-	got := lookup(t, d, "bob")
-	if len(got) != 2 {
-		t.Errorf("after bob's own SETACL he sees %v, want both owners", got)
-	}
-
-	// And the interval brings it to everyone else.
+	// And carol, who was never granted anything, still sees nothing after it.
 	*now = now.Add(OwnerScanTTL + time.Minute)
 	if got := lookup(t, d, "carol"); len(got) != 0 {
 		t.Errorf("carol was granted nothing and sees %v", got)
 	}
 }
 
-// The interval ends: the next read goes to the dict again.
-func TestTheIntervalExpires(t *testing.T) {
+// A grant to a group drops the group's answer, which is shared: every member
+// on this backend sees it, and that is one entry, not one per member.
+func TestAGroupGrantIsSeenByTheGroup(t *testing.T) {
+	d := regDict(t)
+	clockFor(t)
+	lookup(t, d, "bob", "staff")
+	lookup(t, d, "carol", "staff")
+
+	grant(t, d, "alice", mailbox.Identifier{Type: mailbox.IDGroup, Name: "staff"})
+
+	for _, who := range []string{"bob", "carol"} {
+		if got := lookup(t, d, who, "staff"); len(got) != 1 || got[0] != "alice" {
+			t.Errorf("%s sees %v after a grant to their group, want [alice]", who, got)
+		}
+	}
+}
+
+// A dict that fails is asked once per interval, not once per LIST: the
+// interval counts the attempt, as the reference counts its check.
+func TestAFailedScanIsNotRetriedPerList(t *testing.T) {
 	d := regDict(t)
 	now := clockFor(t)
 	grant(t, d, "alice", mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"})
-	lookup(t, d, "bob")
-	before := Scans()
+	lookup(t, d, "bob") // an answer is held
 
-	*now = now.Add(OwnerScanTTL - time.Minute)
-	lookup(t, d, "bob")
-	if Scans() != before {
-		t.Errorf("a read inside the interval scanned: %d, was %d", Scans(), before)
+	broken := &failingDict{Dict: d}
+	*now = now.Add(OwnerScanTTL + time.Minute)
+	ResetScans()
+
+	first, err := OwnersFor(context.Background(), broken, "bob", nil)
+	if err != nil {
+		t.Fatalf("a failed scan with an answer in hand returned an error: %v", err)
 	}
-	*now = now.Add(2 * time.Minute)
-	lookup(t, d, "bob")
-	if Scans() <= before {
-		t.Errorf("a read after the interval did not scan: %d, was %d", Scans(), before)
+	if len(first) != 1 || first[0] != "alice" {
+		t.Errorf("the failed scan answered %v, want the last good answer [alice]", first)
+	}
+	after := Scans()
+
+	if _, err := OwnersFor(context.Background(), broken, "bob", nil); err != nil {
+		t.Fatal(err)
+	}
+	if Scans() != after {
+		t.Errorf("the next LIST retried the failed scan: %d scans, was %d", Scans(), after)
 	}
 }
+
+// failingDict answers every iteration with an error, as a dict service that is
+// down does.
+type failingDict struct {
+	dict.Dict
+}
+
+func (f *failingDict) Iterate(context.Context, *dict.OpSettings, string, dict.IterFlag) (dict.Iterator, error) {
+	return nil, errBroken
+}
+
+var errBroken = errors.New("acl test: the dict is down")

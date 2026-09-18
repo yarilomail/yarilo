@@ -115,8 +115,12 @@ func (r *Registry) SyncFromList(entries []ListEntry, complete bool) error {
 		return fmt.Errorf("userstate/acl: registry begin: %w", err)
 	}
 	one := []byte("1")
+	// Every principal this write adds or removes: their cached answer is the
+	// one that just went stale.
+	touched := make([]string, 0, len(wanted))
 	for p := range wanted {
 		if !current[p] {
+			touched = append(touched, p)
 			if err := tx.Set(r.fwdKey(p), one); err != nil {
 				_ = tx.Rollback()
 				return fmt.Errorf("userstate/acl: registry set: %w", err)
@@ -133,6 +137,7 @@ func (r *Registry) SyncFromList(entries []ListEntry, complete bool) error {
 	if complete && haveCurrent {
 		for p := range current {
 			if !wanted[p] {
+				touched = append(touched, p)
 				if err := tx.Unset(r.fwdKey(p)); err != nil {
 					return fmt.Errorf("userstate/acl: registry unset: %w", err)
 				}
@@ -145,10 +150,10 @@ func (r *Registry) SyncFromList(entries []ListEntry, complete bool) error {
 	if res, err := tx.Commit(); err != nil || res != dict.CommitOK {
 		return fmt.Errorf("userstate/acl: registry commit: result=%v err=%w", res, err)
 	}
-	// What this owner was told about themselves is now wrong, and they are the
-	// one who just acted: their next LIST reads the registry again. Everyone
-	// else's answer moves with the interval, as in the reference.
-	InvalidateOwner(r.owner)
+	// The answers this write made wrong belong to the principals it names --
+	// the recipients -- not to the owner who granted. Dropped here so a
+	// recipient on this backend sees the share in their next LIST.
+	InvalidatePrincipals(touched)
 	return nil
 }
 
@@ -165,6 +170,17 @@ func (r *Registry) fwdKey(identPath string) string {
 // through the same visibility gate as any verb, so a stale row and an
 // invented owner produce the same silence.
 func OwnersFor(ctx context.Context, d dict.Dict, user string, groups []string) ([]string, error) {
+	return ownersFor(ctx, d, user, groups, true)
+}
+
+// OwnersForNow answers from the registry itself, with no interval in front of
+// it. For the admin surface: an operator asking who granted this user has to
+// be told what the dict says now, not what a session was told an hour ago.
+func OwnersForNow(ctx context.Context, d dict.Dict, user string, groups []string) ([]string, error) {
+	return ownersFor(ctx, d, user, groups, false)
+}
+
+func ownersFor(ctx context.Context, d dict.Dict, user string, groups []string, cached bool) ([]string, error) {
 	if d == nil {
 		return nil, nil
 	}
@@ -175,7 +191,15 @@ func OwnersFor(ctx context.Context, d dict.Dict, user string, groups []string) (
 	seen := make(map[string]bool)
 	out := make([]string, 0)
 	for _, p := range paths {
-		list, err := owners.cachedPath(ctx, d, p)
+		var (
+			list []string
+			err  error
+		)
+		if cached {
+			list, err = owners.cachedPath(ctx, d, p)
+		} else {
+			list, err = scanPath(ctx, d, p)
+		}
 		if err != nil {
 			return nil, err
 		}
