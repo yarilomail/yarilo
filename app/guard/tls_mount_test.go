@@ -12,9 +12,12 @@ import (
 func TestEveryInternalTLSListenerMountsItsCertificate(t *testing.T) {
 	out, err := exec.Command("helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
-		t.Skipf("helm not available: %v", err)
+		// Not a skip: a row that quietly does not run is a green gate on nothing.
+		t.Fatalf("helm template: %v", err)
 	}
-	if !strings.Contains(string(out), "internal_tls:") {
+	// The key renders unconditionally, so its presence proves nothing; the row
+	// needs it switched on.
+	if !regexp.MustCompile(`internal_tls:\s*\n\s*enabled: true`).MatchString(string(out)) {
 		t.Fatal("the sandbox values no longer enable internal_tls, so this row proves nothing")
 	}
 	docs := strings.Split(string(out), "\n---\n")
