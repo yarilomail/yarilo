@@ -14,29 +14,25 @@ import (
 	"github.com/yarilomail/yarilo/pkg/dict"
 )
 
-// Client is a dict.Dict served by yarilo-dict. One connection per dict name,
-// re-dialled on loss: a session must get an error, never a hang (#1733).
+// Client is a dict.Dict served by yarilo-dict. Connections are pooled: an
+// iteration streams untagged rows to a terminator and only COMMIT_ASYNC carries
+// an id, so nothing may share a connection with one (#1902).
 type Client struct {
 	addr string
 	name string
 	tls  *tls.Config
 
-	// One connection cannot carry two commands: iterate streams untagged rows
-	// to a terminator, and only COMMIT_ASYNC has an id (INTERNALS §32). So a
-	// session's lookup waits out someone else's iteration unless it has its
-	// own connection (#1902).
-	mu    sync.Mutex
-	idle  []*conn
-	live  int
-	limit int
-	txn   uint32
+	// sem bounds connections; mu guards the idle set and the id counter.
+	sem  chan struct{}
+	mu   sync.Mutex
+	idle []*conn
+	txn  uint32
 }
 
 // conn is one connection with its reader.
 type conn struct {
-	net  net.Conn
-	rd   *bufio.Reader
-	said bool // the greeting names the dict once per connection
+	net net.Conn
+	rd  *bufio.Reader
 }
 
 // DialTimeout bounds every connect and every request; a dict that stopped
@@ -57,52 +53,74 @@ func NewWithLimit(addr, name string, tlsCfg *tls.Config, limit int) *Client {
 	if limit < 1 {
 		limit = 1
 	}
-	return &Client{addr: addr, name: name, tls: tlsCfg, limit: limit}
+	return &Client{addr: addr, name: name, tls: tlsCfg, sem: make(chan struct{}, limit)}
 }
 
-// take returns a connection to use, dialling one when none is idle. Blocks
-// only when the ceiling is reached, and then only until one is returned.
-func (c *Client) take(user string) (*conn, error) {
-	c.mu.Lock()
-	for {
-		if n := len(c.idle); n > 0 {
-			cn := c.idle[n-1]
-			c.idle = c.idle[:n-1]
-			c.mu.Unlock()
-			return cn, nil
-		}
-		if c.live < c.limit {
-			c.live++
-			c.mu.Unlock()
-			cn, err := c.open(user)
-			if err != nil {
-				c.mu.Lock()
-				c.live--
-				c.mu.Unlock()
-				return nil, err
-			}
-			return cn, nil
-		}
-		c.mu.Unlock()
-		// Waiting for a free connection is ordinary under load; waiting
-		// forever is not, so the caller's deadline still bounds the command.
-		time.Sleep(time.Millisecond)
-		c.mu.Lock()
+// Name reports the driver name, which for a proxied dict is what it is: a
+// client. The engine's name lives in the dict service's config.
+func (c *Client) Name() string { return "proxy" }
+
+// take returns a connection, waiting for a free slot no longer than the
+// caller's deadline: a command that was abandoned must not hold one.
+func (c *Client) take(ctx context.Context, user string) (*conn, error) {
+	// Cancellation is honoured with or without a deadline; the timer only adds
+	// a bound where the caller set none.
+	var timer *time.Timer
+	if _, ok := ctx.Deadline(); !ok {
+		timer = time.NewTimer(DialTimeout)
+		defer timer.Stop()
 	}
+	select {
+	case c.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timerC(timer):
+		return nil, fmt.Errorf("dict/proxy: no free connection to %s", c.addr)
+	}
+	c.mu.Lock()
+	if n := len(c.idle); n > 0 {
+		cn := c.idle[n-1]
+		c.idle = c.idle[:n-1]
+		c.mu.Unlock()
+		return cn, nil
+	}
+	c.mu.Unlock()
+	cn, err := c.open(user)
+	if err != nil {
+		<-c.sem
+		return nil, err
+	}
+	return cn, nil
 }
 
-// put returns a connection to the pool, or drops it when it is broken.
+// timerC is nil for a nil timer, which a select reads as "never".
+func timerC(t *time.Timer) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
+// put returns a connection, or drops it and everything else idle: connections
+// are dialled together and a restart kills them together (#1902).
 func (c *Client) put(cn *conn, broken bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if broken {
 		if cn != nil {
 			_ = cn.net.Close()
 		}
-		c.live--
+		stale := c.idle
+		c.idle = nil
+		c.mu.Unlock()
+		for _, s := range stale {
+			_ = s.net.Close()
+		}
+		<-c.sem
 		return
 	}
 	c.idle = append(c.idle, cn)
+	c.mu.Unlock()
+	<-c.sem
 }
 
 // open dials and greets: the greeting names the dict, never its URI.
@@ -115,30 +133,26 @@ func (c *Client) open(user string) (*conn, error) {
 		_ = nc.Close()
 		return nil, fmt.Errorf("dict/proxy: hello: %w", err)
 	}
-	return &conn{net: nc, rd: bufio.NewReaderSize(nc, MaxLine), said: true}, nil
+	return &conn{net: nc, rd: bufio.NewReaderSize(nc, MaxLine)}, nil
 }
 
-// roundTrip writes one line on its own connection and reads one reply.
-func (c *Client) roundTrip(ctx context.Context, user, line string) (string, error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		cn, err := c.take(user)
-		if err != nil {
-			return "", err
-		}
-		setDeadline(ctx, cn)
-		if _, err := cn.net.Write([]byte(line)); err != nil {
-			c.put(cn, true)
-			continue
-		}
-		reply, err := cn.rd.ReadString('\n')
-		if err != nil {
-			c.put(cn, true)
-			continue
-		}
-		c.put(cn, false)
-		return reply, nil
+// dial speaks TLS where the service does: a plain dial against an mTLS listener
+// fails at the first command, not at connect (#1733).
+func (c *Client) dial() (net.Conn, error) {
+	d := &net.Dialer{Timeout: DialTimeout}
+	if c.tls == nil {
+		return d.Dial("tcp", c.addr)
 	}
-	return "", fmt.Errorf("dict/proxy: %s unreachable", c.addr)
+	return tls.DialWithDialer(d, "tcp", c.addr, c.tls)
+}
+
+// exchange writes one line on cn and reads one reply.
+func exchange(ctx context.Context, cn *conn, line string) (string, error) {
+	setDeadline(ctx, cn)
+	if _, err := cn.net.Write([]byte(line)); err != nil {
+		return "", err
+	}
+	return cn.rd.ReadString('\n')
 }
 
 func setDeadline(ctx context.Context, cn *conn) {
@@ -149,18 +163,26 @@ func setDeadline(ctx context.Context, cn *conn) {
 	_ = cn.net.SetDeadline(time.Now().Add(DialTimeout))
 }
 
-// Name reports the driver name, which for a proxied dict is what it is: a
-// client. The engine's name lives in the dict service's config.
-func (c *Client) Name() string { return "proxy" }
-
-// dial speaks TLS where the service does: a plain dial against an mTLS listener
-// fails at the first command, not at connect (#1733).
-func (c *Client) dial() (net.Conn, error) {
-	d := &net.Dialer{Timeout: DialTimeout}
-	if c.tls == nil {
-		return d.Dial("tcp", c.addr)
+// roundTrip runs one command on a pooled connection, re-dialling once: the
+// service restarts like any other pod, and one restart is not a failure.
+func (c *Client) roundTrip(ctx context.Context, user, line string) (string, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		cn, err := c.take(ctx, user)
+		if err != nil {
+			return "", err
+		}
+		reply, err := exchange(ctx, cn, line)
+		if err != nil {
+			c.put(cn, true)
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			continue
+		}
+		c.put(cn, false)
+		return reply, nil
 	}
-	return tls.DialWithDialer(d, "tcp", c.addr, c.tls)
+	return "", fmt.Errorf("dict/proxy: %s unreachable", c.addr)
 }
 
 func userOf(set *dict.OpSettings) string {
@@ -201,7 +223,7 @@ func (c *Client) Lookup(ctx context.Context, set *dict.OpSettings, key string) (
 // Iterate implements dict.Dict. Rows stream until the empty line.
 func (c *Client) Iterate(ctx context.Context, set *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
 	user := userOf(set)
-	cn, err := c.take(user)
+	cn, err := c.take(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -214,8 +236,8 @@ func (c *Client) Iterate(ctx context.Context, set *dict.OpSettings, path string,
 	return &iterator{c: c, cn: cn, noValue: flags&dict.IterNoValue != 0}, nil
 }
 
-// iterator holds the client lock for its lifetime: the rows are a stream on the
-// one connection, so another command may not interleave with them.
+// iterator owns its connection for its lifetime: the rows are an untagged
+// stream, so nothing else may use that connection until it ends.
 type iterator struct {
 	c       *Client
 	cn      *conn
@@ -285,23 +307,51 @@ func (c *Client) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, erro
 	c.txn++
 	id := c.txn
 	c.mu.Unlock()
-	if _, err := c.roundTrip(ctx, user, fmt.Sprintf("%c%d\t%s\n", OpBegin, id, user)); err != nil {
+	// The service holds a transaction on the connection it began on, so this
+	// one is held until Commit or Rollback (#1902).
+	cn, err := c.take(ctx, user)
+	if err != nil {
 		return nil, err
 	}
-	return &tx{c: c, id: id, ctx: ctx, user: user}, nil
+	if _, err := exchange(ctx, cn, fmt.Sprintf("%c%d\t%s\n", OpBegin, id, user)); err != nil {
+		c.put(cn, true)
+		return nil, fmt.Errorf("dict/proxy: begin: %w", err)
+	}
+	return &tx{c: c, cn: cn, id: id, ctx: ctx, user: user}, nil
 }
 
 type tx struct {
 	c    *Client
+	cn   *conn
 	id   uint32
 	ctx  context.Context
 	user string
 	done bool
 }
 
+// send runs one mutation on the transaction's own connection.
 func (t *tx) send(line string) error {
-	_, err := t.c.roundTrip(t.ctx, t.user, line)
-	return err
+	if t.cn == nil {
+		return fmt.Errorf("dict/proxy: transaction is finished")
+	}
+	reply, err := exchange(t.ctx, t.cn, line)
+	if err != nil {
+		t.release(true)
+		return fmt.Errorf("dict/proxy: transaction: %w", err)
+	}
+	if len(reply) > 0 && reply[0] == ReplyFail {
+		return fmt.Errorf("dict/proxy: %s", strings.TrimSuffix(reply[1:], "\n"))
+	}
+	return nil
+}
+
+// release returns the transaction's connection to the pool.
+func (t *tx) release(broken bool) {
+	if t.cn == nil {
+		return
+	}
+	t.c.put(t.cn, broken)
+	t.cn = nil
 }
 
 func (t *tx) Set(key string, value []byte) error {
@@ -321,10 +371,15 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 		return dict.CommitOK, nil
 	}
 	t.done = true
-	reply, err := t.c.roundTrip(t.ctx, t.user, fmt.Sprintf("%c%d\n", OpCommit, t.id))
-	if err != nil {
-		return dict.CommitFailed, err
+	if t.cn == nil {
+		return dict.CommitFailed, fmt.Errorf("dict/proxy: transaction is finished")
 	}
+	reply, err := exchange(t.ctx, t.cn, fmt.Sprintf("%c%d\n", OpCommit, t.id))
+	if err != nil {
+		t.release(true)
+		return dict.CommitFailed, fmt.Errorf("dict/proxy: commit: %w", err)
+	}
+	t.release(false)
 	reply = strings.TrimSuffix(reply, "\n")
 	switch {
 	case reply == "":
@@ -344,7 +399,9 @@ func (t *tx) Rollback() error {
 		return nil
 	}
 	t.done = true
-	return t.send(fmt.Sprintf("%c%d\n", OpRollback, t.id))
+	err := t.send(fmt.Sprintf("%c%d\n", OpRollback, t.id))
+	t.release(err != nil)
+	return err
 }
 
 // ExpireScan is the service's business: it holds the engine that knows what
@@ -362,6 +419,5 @@ func (c *Client) Close() error {
 		_ = cn.net.Close()
 	}
 	c.idle = nil
-	c.live = 0
 	return nil
 }

@@ -3,6 +3,7 @@ package dictsrv
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"context"
@@ -315,4 +316,147 @@ func TestOnOneConnectionALookupWaitsForTheIteration(t *testing.T) {
 	}
 	_ = it.Close()
 	<-done
+}
+
+// The service keeps a transaction on the connection it began on, so the client
+// must keep it too: with the connection handed back, an iteration takes it and
+// the commit lands on a connection that never saw the BEGIN (#1902).
+func TestATransactionKeepsItsConnectionAcrossAnIteration(t *testing.T) {
+	c, real := serveOneLimited(t, "quota_clone_redis", 2)
+	ctx := context.Background()
+	set := &dict.OpSettings{Username: "u1@d.test"}
+
+	seed, _ := real.Begin(ctx, set)
+	for i := 0; i < 50; i++ {
+		if err := seed.Set(fmt.Sprintf("shared/rows/%03d", i), []byte("1")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := seed.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := c.Begin(ctx, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An iteration in the middle: it must not be able to take the connection
+	// the transaction is standing on.
+	it, err := c.Iterate(ctx, set, "shared/rows/", dict.IterRecurse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !it.Next() {
+		t.Fatal("the iteration yielded nothing")
+	}
+	if err := tx.Set("priv/quota/storage", []byte("4242")); err != nil {
+		t.Fatalf("set inside the transaction: %v", err)
+	}
+	res, err := tx.Commit()
+	if err != nil || res != dict.CommitOK {
+		t.Fatalf("commit: %v %v", res, err)
+	}
+	for it.Next() {
+	}
+	_ = it.Close()
+
+	vals, found, err := real.Lookup(ctx, set, "priv/quota/storage")
+	if err != nil || !found {
+		t.Fatalf("the engine did not get the write: found=%v err=%v", found, err)
+	}
+	if string(vals[0]) != "4242" {
+		t.Errorf("the engine holds %q, want 4242", vals[0])
+	}
+}
+
+// A caller that gave up must not hold a connection: waiting at the ceiling ends
+// with the context, not with a sleep loop (#1902).
+func TestACancelledLookupStopsWaitingAtTheCeiling(t *testing.T) {
+	c, real := serveOneLimited(t, "acl_shared", 1)
+	base := context.Background()
+	set := &dict.OpSettings{Username: "u1@d.test"}
+
+	tx, _ := real.Begin(base, set)
+	for i := 0; i < 200; i++ {
+		if err := tx.Set(fmt.Sprintf("shared/acl/%03d", i), []byte("1")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	it, err := c.Iterate(base, set, "shared/acl/", dict.IterRecurse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !it.Next() {
+		t.Fatal("the iteration yielded nothing")
+	}
+
+	ctx, cancel := context.WithCancel(base)
+	done := make(chan error, 1)
+	go func() {
+		_, _, lerr := c.Lookup(ctx, set, "priv/one")
+		done <- lerr
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("a cancelled lookup ended with %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("a cancelled lookup kept waiting for a connection")
+	}
+
+	for it.Next() {
+	}
+	_ = it.Close()
+}
+
+// The service restarts like any other pod: every pooled connection dies at
+// once, and the next command must come back on a fresh one (#1902).
+func TestAServiceRestartCostsNoCommand(t *testing.T) {
+	real, err := dict.Open(dict.Config{Driver: "memory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	go New(map[string]dict.Dict{"metadata": real}, nil).Serve(ctx, ln) //nolint:errcheck
+
+	c := proxy.NewWithLimit(addr, "metadata", nil, 4)
+	t.Cleanup(func() { _ = c.Close() })
+	set := &dict.OpSettings{Username: "u1@d.test"}
+
+	// Fill the pool: several connections, all of which the restart kills.
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, _ = c.Lookup(context.Background(), set, "priv/one")
+		}()
+	}
+	wg.Wait()
+
+	cancel()
+	_ = ln.Close()
+	again, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Skipf("the port did not come back: %v", err)
+	}
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	t.Cleanup(cancel2)
+	go New(map[string]dict.Dict{"metadata": real}, nil).Serve(ctx2, again) //nolint:errcheck
+	t.Cleanup(func() { _ = again.Close() })
+
+	if _, _, err := c.Lookup(context.Background(), set, "priv/one"); err != nil {
+		t.Errorf("the first command after a restart failed: %v", err)
+	}
 }
