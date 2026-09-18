@@ -383,6 +383,9 @@ components:
   dict:
     enabled: true
     replicas: 1
+    internalTLS:
+      enabled: true
+      secretName: yarilo-internal-tls
 
   locks:
     internalTLS:
