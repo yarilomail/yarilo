@@ -51,7 +51,7 @@ func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, er
 func (u *userMailbox) publishFromTemp(folder, filename string) error {
 	dir := u.folderPath(folder)
 	src := filepath.Join(dir, "tmp", filename)
-	if _, err := os.Lstat(src); err != nil {
+	if _, err := lstatPath(src); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}

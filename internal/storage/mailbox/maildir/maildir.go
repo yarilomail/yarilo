@@ -233,7 +233,7 @@ func (u *userMailbox) listCanTakeRow(folder, base string) bool {
 // adoptRow adds one written row to the cache under the list's new stamp:
 // re-reading the whole list to learn one name is what made a save O(n) (#1840).
 func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, hasGUID bool) {
-	fi, err := os.Stat(u.uidListPath(folder))
+	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
 		u.folderCacheFor(folder).invalidateUIDs()
 		return
@@ -244,7 +244,7 @@ func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, h
 // adoptWritten makes the cache the content just written: a map merged into an
 // older one loses another session's rows while the stamp says nothing is (#1739).
 func (u *userMailbox) adoptWritten(folder string, l *uidList) {
-	fi, err := os.Stat(u.uidListPath(folder))
+	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
 		u.folderCacheFor(folder).invalidateUIDs()
 		return
@@ -421,7 +421,7 @@ func (u *userMailbox) adoptFolderNames() error {
 			continue
 		}
 		target := filepath.Join(root, want)
-		if _, serr := os.Stat(target); serr == nil {
+		if _, serr := statPath(target); serr == nil {
 			// Two folders must never become one: that is a loss no later step
 			// can undo, and a store in that shape needs a person.
 			return fmt.Errorf("maildir/adopt names: %s would become %s, which exists", e.Name(), want)
@@ -664,7 +664,7 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 		curDir := filepath.Join(u.folderPath(dstFolder), "cur")
 		dstPath := filepath.Join(dstDir, newName)
 		override := outGUID != guidFromBase(newName)
-		if _, err := os.Lstat(filepath.Join(curDir, newName)); err == nil {
+		if _, err := lstatPath(filepath.Join(curDir, newName)); err == nil {
 			// Base name taken: mint a fresh one and pin the GUID explicitly.
 			oldBase := maildirBase(filename)
 			trailer := filename[len(oldBase):] // ":2,<flags>"
@@ -829,7 +829,7 @@ func (u *userMailbox) afterRemoved(folder, dir, filename string, held bool) {
 		u.folderCacheFor(folder).invalidateDir()
 		return
 	}
-	fi, err := os.Stat(dir)
+	fi, err := statPath(dir)
 	if err != nil {
 		u.folderCacheFor(folder).invalidateDirEntries()
 		return
@@ -848,7 +848,7 @@ func (u *userMailbox) reportRemoveMiss(folder, asked, shown string, err error) {
 func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 	dir := filepath.Join(u.folderPath(folder), "cur")
 
-	dirFi, statErr := os.Stat(dir)
+	dirFi, statErr := statPath(dir)
 	if errors.Is(statErr, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -907,7 +907,7 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 }
 
 func (u *userMailbox) FolderExists(folder string) (bool, error) {
-	_, err := os.Stat(u.folderPath(folder))
+	_, err := statPath(u.folderPath(folder))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -1411,7 +1411,7 @@ func (u *userMailbox) SyncToken(folder string) string {
 	var b strings.Builder
 	dirty := false
 	for _, sub := range []string{"cur", "new"} {
-		fi, err := os.Stat(filepath.Join(base, sub))
+		fi, err := statPath(filepath.Join(base, sub))
 		if err != nil {
 			continue
 		}
@@ -1444,9 +1444,12 @@ func (u *userMailbox) uidListPath(folder string) string {
 
 // migrateLegacyUIDList renames the legacy uidlist file (LegacyUIDListFileName)
 // to yarilo-uidlist when the yarilo file is absent. Idempotent.
-// statPath is the only path-walking stat on the list read, so a row can count
-// what a read costs (#1875).
-var statPath = os.Stat
+// Every path walk in this package goes through these, so a row can count what
+// an operation costs and a guard can keep new ones from slipping past (#1875).
+var (
+	statPath  = os.Stat
+	lstatPath = os.Lstat
+)
 
 func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	dst := u.uidListPath(folder)
@@ -1754,7 +1757,7 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 	dir := u.folderPath(folder)
 	for _, sub := range []string{"cur", "new"} {
 		from := filepath.Join(dir, sub, filename)
-		if _, serr := os.Stat(from); serr != nil {
+		if _, serr := statPath(from); serr != nil {
 			continue
 		}
 		if rerr := os.Rename(from, filepath.Join(dir, sub, want)); rerr != nil {
@@ -2115,7 +2118,7 @@ func (u *userMailbox) stillOnDisk(folder, filename string) bool {
 	}
 	dir := u.folderPath(folder)
 	for _, sub := range []string{"cur", "new"} {
-		if _, err := os.Lstat(filepath.Join(dir, sub, filename)); err == nil {
+		if _, err := lstatPath(filepath.Join(dir, sub, filename)); err == nil {
 			return true
 		}
 	}
@@ -2145,7 +2148,7 @@ func (u *userMailbox) inCurDir(folder, filename string) bool {
 	if u.inSection.Load() > 0 {
 		u.sectionFS.Add(1)
 	}
-	_, err := os.Lstat(filepath.Join(u.folderPath(folder), "cur", filename))
+	_, err := lstatPath(filepath.Join(u.folderPath(folder), "cur", filename))
 	return err == nil
 }
 

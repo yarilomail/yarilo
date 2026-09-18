@@ -3,6 +3,7 @@ package maildir
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -82,5 +83,36 @@ func TestReadingTheListTakesNoPathStat(t *testing.T) {
 	}
 	if got := stats.Load(); got != 0 {
 		t.Errorf("reading the list made %d path stats, want 0", got)
+	}
+}
+
+// The counting row above is only worth its name while every path walk goes
+// through the seam: a bare os.Stat would pass it green (#1875).
+func TestEveryPathWalkGoesThroughTheSeam(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		checked++
+		body, rerr := os.ReadFile(f)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		for n, line := range strings.Split(string(body), "\n") {
+			if strings.Contains(line, "statPath  = os.Stat") || strings.Contains(line, "lstatPath = os.Lstat") {
+				continue
+			}
+			if strings.Contains(line, "os.Stat(") || strings.Contains(line, "os.Lstat(") {
+				t.Errorf("%s:%d walks a path outside the seam: %s", f, n+1, strings.TrimSpace(line))
+			}
+		}
+	}
+	if checked < 5 {
+		t.Fatalf("read %d files, which cannot be right", checked)
 	}
 }

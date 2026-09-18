@@ -396,7 +396,7 @@ func (u *userMailbox) ensureUIDListLocked(folder string) error {
 		return err
 	}
 	path := u.uidListPath(folder)
-	if _, err := os.Stat(path); err == nil {
+	if _, err := statPath(path); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("maildir/uidlist: stat: %w", err)
@@ -424,7 +424,7 @@ func listDebug() bool {
 
 // listStampNow is the list file's identity as it stands, for a debug line.
 func (u *userMailbox) listStampNow(folder string) listStamp {
-	fi, err := os.Stat(u.uidListPath(folder))
+	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
 		return listStamp{}
 	}
@@ -433,7 +433,7 @@ func (u *userMailbox) listStampNow(folder string) listStamp {
 
 // listStat is the file's identity for a debug row, without reading it.
 func (u *userMailbox) listStat(folder string) (mtime, size int64) {
-	fi, err := os.Stat(u.uidListPath(folder))
+	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
 		return 0, 0
 	}
