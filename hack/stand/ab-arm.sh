@@ -80,12 +80,39 @@ for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut 
     'for n in $(seq 1 150); do rm -rf "/var/mail/vhosts/d00001.test/u${n}@d00001.test"; done' >/dev/null
 done
 
+# The start as a number, not as a step that ran: a mailbox left behind moves
+# throughput further than anything under test, and an arm that starts bigger
+# than the one before it is not a comparison (#1875).
+start_inventory() {
+  local pod
+  pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
+  kube exec "$pod" -c yarilo-imap -- sh -c '
+    f=0; k=0
+    for n in $(seq 1 150); do
+      d="/var/mail/vhosts/d00001.test/u${n}@d00001.test"
+      [ -d "$d" ] || continue
+      f=$((f+$(find "$d" -type f 2>/dev/null | wc -l)))
+      k=$((k+$(du -sk "$d" 2>/dev/null | cut -f1)))
+    done
+    echo "files=$f du_kb=$k"' 2>/dev/null
+}
+
+left=$(start_inventory)
+echo "-- start after wipe: ${left:-unreadable}" | tee "$OUT/start-$ARM-wiped.txt"
+case "$left" in
+  "files=0 du_kb=0") ;;
+  "") echo "ab-arm: could not read the start inventory" >&2; exit 1 ;;
+  *) echo "ab-arm: the wipe left $left behind; this arm would start from more than the last one" >&2; exit 1 ;;
+esac
+
 # The seed delivers over LMTP, so it needs the pods serving, not merely Running.
 for attempt in 1 2 3 4 5; do
   if KUBECONFIG="$KCFG" bash "$REPO/hack/db/seed-sandbox.sh" >/dev/null 2>&1; then break; fi
   [ "$attempt" -lt 5 ] || { echo "ab-arm: the seed did not take" >&2; exit 1; }
   sleep 20
 done
+
+echo "-- start after seed: $(start_inventory)" | tee "$OUT/start-$ARM-seeded.txt"
 
 authpod=$(kube get pods -l app.kubernetes.io/component=auth -o name | head -1 | cut -d/ -f2)
 [ -n "$authpod" ] || { echo "ab-arm: no auth pod to read the histogram from" >&2; exit 1; }
