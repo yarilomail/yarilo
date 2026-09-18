@@ -204,7 +204,9 @@ func (s *store) withWriteLock(f func() error) error {
 	if err != nil {
 		return fmt.Errorf("file: lock %s: %w", s.path, err)
 	}
-	defer h.Release() //nolint:errcheck — a failed release says nothing a caller can act on.
+	// A failed release says nothing a caller can act on: the process either
+	// exits or takes the lock again.
+	defer func() { _ = h.Release() }()
 	s.loaded = false
 	if err := s.loadLocked(); err != nil {
 		return err
