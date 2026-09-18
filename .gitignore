@@ -17,3 +17,7 @@ app/smoketest-e2e/smoketest-e2e
 
 # Local-only docs (internal design/planning notes, not shipped)
 docs_internal/
+
+# Profile captures: taken on the stand, read with pprof, never committed.
+*.pprof
+*.pprof.b64

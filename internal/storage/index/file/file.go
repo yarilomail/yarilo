@@ -489,6 +489,13 @@ type userIndex struct {
 type folderState struct {
 	mu sync.RWMutex
 
+	// mapMu guards current and the reference counts on it, and nothing else:
+	// no file is read while it is held. foldMu serialises the folds so N
+	// readers pay for one (#1875).
+	mapMu   sync.Mutex
+	foldMu  sync.Mutex
+	current *indexMap
+
 	user        string // whose mailbox this folder is; named in every report
 	folder      string // mailbox folder name (e.g. "INBOX", "Sent")
 	indexDir    string // <home>/<folder-relative>/
@@ -713,10 +720,10 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 		// not a read that wanted the lock.
 		return u.withFolderROSite(folderID, lockSiteFallback, fn)
 	}
-	// The reader's own view: the shared base image plus its own replay of the
-	// log tail. Nothing here writes what another session reads (#647, #1809).
+	// One image per folder version, shared by every reader of it: the base
+	// plus the log folded in once, not once per read (#647, #1809, #1875).
 	reloadStart := time.Now()
-	view, err := fs.readSnapshot()
+	view, release, err := fs.openView()
 	observeReadPart("reload", time.Since(reloadStart))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -724,6 +731,7 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 		}
 		return err
 	}
+	defer release()
 	buildStart := time.Now()
 	ferr := fn(view)
 	observeReadPart("build", time.Since(buildStart))
