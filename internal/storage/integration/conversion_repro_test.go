@@ -511,7 +511,7 @@ func TestAForeignStoreWithEncodedNamesIsAdopted(t *testing.T) {
 	dial := embeddedLocksForSaveTest(t)
 	home := t.TempDir()
 	mail := filepath.Join(home, "mdbox")
-	// Their spelling of Вхідні and Вхідні/Робота.
+	// Their spelling of "Вхідні" and "Вхідні/Робота".
 	const encoded = "&BBIERQRWBDQEPQRW-"
 	const encodedChild = "&BCAEPgQxBD4EQgQw-"
 	their := filepath.Join(mail, "mailboxes", encoded, encodedChild, "dbox-Mails")

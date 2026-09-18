@@ -13,7 +13,7 @@ import (
 //
 // Both follow mailbox_list_utf8, and the index used to ignore it: with the
 // deployment writing modified UTF-7 the mail went to &BBIERQRWBDQEPQRW- and the
-// index to Вхідні, so the two halves of one folder sat under two names and
+// index to "Вхідні", so the two halves of one folder sat under two names and
 // neither found the other's (#1586).
 func TestTheIndexTreeFollowsTheConfiguredNameEncoding(t *testing.T) {
 	const (
