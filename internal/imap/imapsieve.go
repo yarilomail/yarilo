@@ -59,9 +59,18 @@ func (s *session) runImapSieveEvent(cause, mailboxName, rel string, h *nsHandle,
 	if eng == nil || !eng.ImapSieveEnabled() {
 		return
 	}
+	s.runImapSieveScript(s.imapSieveScriptName(h, rel, folder.GUID), cause, mailboxName, rel, h, folder, uid, filename, altTier, srcMailbox, changedFlags)
+}
+
+// runImapSieveScript is the event with the bound script already resolved: a
+// command that stores many messages resolves it once, not once per message.
+func (s *session) runImapSieveScript(scriptName, cause, mailboxName, rel string, h *nsHandle, folder *mailbox.Folder, uid uint32, filename string, altTier bool, srcMailbox string, changedFlags []string) {
+	eng := s.srv.opts.SieveEngine
+	if eng == nil || !eng.ImapSieveEnabled() {
+		return
+	}
 	// Nothing to run means nothing to read: the message was just written, and
 	// re-reading it for a script that does not exist is the hot path (#1902).
-	scriptName := s.imapSieveScriptName(h, rel, folder.GUID)
 	if scriptName == "" && !eng.HasImapGlobals() {
 		return
 	}

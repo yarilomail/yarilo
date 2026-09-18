@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	"github.com/yarilomail/yarilo/internal/auth/authtest"
@@ -104,6 +105,29 @@ func TestAStoreAsksNothingWhenImapSieveIsOff(t *testing.T) {
 	}
 	if got := md.lookups.Load() - before; got != 0 {
 		t.Errorf("five appends made %d annotation lookups with imapsieve off, want 0", got)
+	}
+}
+
+// A STORE with imapsieve off asks nothing either: the switch is checked before
+// the command resolves the bound script, not after (#1902).
+func TestAStoreCommandAsksNothingWhenImapSieveIsOff(t *testing.T) {
+	c, md, _ := startCostClient(t, false)
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		appendCost(t, c)
+	}
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	before := md.lookups.Load()
+	seq := imap.SeqSetNum(1, 2, 3, 4, 5)
+	if err := c.Store(seq, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagFlagged}}, nil).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := md.lookups.Load() - before; got != 0 {
+		t.Errorf("a STORE over five messages made %d annotation lookups with imapsieve off, want 0", got)
 	}
 }
 
