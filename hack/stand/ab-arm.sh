@@ -133,11 +133,20 @@ FILL="${YARILO_ARM_FILL:-200}"
 # dict_ops prints the dict service's operation counters, one per line. Read
 # either side of a run, the difference is what that run asked of the service.
 dict_ops() {
-  local pod
+  local pod page
   pod=$(kube get pods -l app.kubernetes.io/component=dict -o name 2>/dev/null | head -1 | cut -d/ -f2)
-  [ -n "$pod" ] || return 0
-  kube exec "$pod" -- sh -c \
-    'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep "^yarilo_dict_operations_total{" || true' 2>/dev/null || true
+  if [ -z "$pod" ]; then
+    echo "ab-arm: no dict pod in $NS; the dict counters cannot be read" >&2
+    return 1
+  fi
+  page=$(kube exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
+  if [ -z "$page" ]; then
+    echo "ab-arm: $pod does not answer on /metrics; the dict counters cannot be read" >&2
+    return 1
+  fi
+  # Only the absence of these series is an answer -- a dict nobody asked
+  # anything of. The page itself is never empty.
+  printf '%s\n' "$page" | grep "^yarilo_dict_operations_total{" || true
 }
 
 # dict_delta writes what one run cost the dict service, per dict and verb.
@@ -153,19 +162,39 @@ dict_delta() {
 # not a CPU sample, and a profile taken after the load measures silence. Which
 # pod carried the load is only visible afterwards, from the sample seconds in
 # the file name.
+# The file name carries the window asked for, not the sample seconds -- those
+# are inside the profile, and naming them here would be a promise this script
+# cannot keep without reading the file back.
 block_profile() {
-  local label="$1" secs="${2:-40}" p pid pids=()
-  for p in 0 1; do
-    kube port-forward "pod/yarilo-backend-$p" "$((18080 + p)):8080" >/dev/null 2>&1 &
+  local label="$1" secs="${2:-40}" pod port=18080 pid pids=() files=() rc=0
+  local pods
+  pods=$(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2)
+  [ -n "$pods" ] || { echo "ab-arm: no backend pod to profile" >&2; return 1; }
+  for pod in $pods; do
+    kube port-forward "pod/$pod" "$port:8080" >/dev/null 2>&1 &
     pids+=($!)
+    files+=("$OUT/block-$label-$pod-req${secs}s.pprof")
+    port=$((port + 1))
   done
   sleep 3
-  for p in 0 1; do
-    curl -s -o "$OUT/block-$label-b$p-${secs}s.pprof" \
-      "http://127.0.0.1:$((18080 + p))/debug/pprof/block?seconds=$secs" &
+  port=18080
+  for pod in $pods; do
+    curl -fsS -o "$OUT/block-$label-$pod-req${secs}s.pprof" \
+      "http://127.0.0.1:$port/debug/pprof/block?seconds=$secs" &
+    port=$((port + 1))
   done
   wait
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+  # An empty file is a capture that did not happen, and it reads exactly like
+  # a pod where nobody waited.
+  local f
+  for f in "${files[@]}"; do
+    if [ ! -s "$f" ]; then
+      echo "ab-arm: the block profile for $(basename "$f") is empty; that pod was not profiled" >&2
+      rc=1
+    fi
+  done
+  return "$rc"
 }
 
 echo "== arm $ARM: $TAG"
@@ -269,15 +298,18 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   watcher=$!
   lock_classes > "$OUT/locks-$ARM-$name-before.txt"
   if [ "$BLOCKPROFILE" = "1" ]; then
-    dict_ops > "$OUT/dict-$ARM-$name-before.txt"
+    dict_ops > "$OUT/dict-$ARM-$name-before.txt" || exit 1
     ( sleep 20; block_profile "$ARM-$name" 40 ) &
     capture=$!
   fi
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest "$manifest" "$OUT/ab-$ARM-$name.log" 900
   lock_classes > "$OUT/locks-$ARM-$name-after.txt"
   if [ "$BLOCKPROFILE" = "1" ]; then
-    wait "$capture" 2>/dev/null || true
-    dict_ops > "$OUT/dict-$ARM-$name-after.txt"
+    if ! wait "$capture"; then
+      echo "ab-arm: the block capture failed for $name; this arm has no latency number" >&2
+      exit 1
+    fi
+    dict_ops > "$OUT/dict-$ARM-$name-after.txt" || exit 1
     dict_delta "$OUT/dict-$ARM-$name-before.txt" "$OUT/dict-$ARM-$name-after.txt" "$OUT/dict-$ARM-$name-delta.txt"
   fi
   wait "$watcher" 2>/dev/null || true
