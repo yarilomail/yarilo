@@ -118,9 +118,11 @@ func (r *Registry) SyncFromList(entries []ListEntry, complete bool) error {
 	for p := range wanted {
 		if !current[p] {
 			if err := tx.Set(r.fwdKey(p), one); err != nil {
+				_ = tx.Rollback()
 				return fmt.Errorf("userstate/acl: registry set: %w", err)
 			}
 			if err := tx.Set(revPrefix+dict.Escape(r.owner)+"/"+p, one); err != nil {
+				_ = tx.Rollback()
 				return fmt.Errorf("userstate/acl: registry set: %w", err)
 			}
 		}

@@ -460,3 +460,56 @@ func TestAServiceRestartCostsNoCommand(t *testing.T) {
 		t.Errorf("the first command after a restart failed: %v", err)
 	}
 }
+
+// A refused mutation ends the transaction, so its connection goes back: a
+// caller that returns on that error without rolling back must not cost a slot
+// for the life of the process (#1902).
+func TestARefusedMutationReleasesItsConnection(t *testing.T) {
+	inner, err := dict.Open(dict.Config{Driver: "memory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := context.Background()
+	ctx0, cancel0 := context.WithCancel(base)
+	t.Cleanup(cancel0)
+	go New(map[string]dict.Dict{"metadata": refusingWrites{inner}}, nil).Serve(ctx0, ln) //nolint:errcheck
+	c := proxy.NewWithLimit(ln.Addr().String(), "metadata", nil, 1)
+	t.Cleanup(func() { _ = c.Close() })
+	set := &dict.OpSettings{Username: "u1@d.test"}
+
+	tx, err := c.Begin(base, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The engine refuses the write and the caller walks away, as the ACL
+	// registry does on its error path.
+	if err := tx.Set("priv/one", []byte("x")); err == nil {
+		t.Fatal("the engine was supposed to refuse the write")
+	}
+
+	ctx, cancel := context.WithTimeout(base, 500*time.Millisecond)
+	defer cancel()
+	if _, _, err := c.Lookup(ctx, set, "priv/one"); err != nil {
+		t.Errorf("the only connection is still held by an abandoned transaction: %v", err)
+	}
+}
+
+// refusingWrites is an engine that accepts a transaction and refuses its
+// mutations, which is what a full disk or a broken table looks like.
+type refusingWrites struct{ dict.Dict }
+
+func (d refusingWrites) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, error) {
+	tx, err := d.Dict.Begin(ctx, set)
+	if err != nil {
+		return nil, err
+	}
+	return refusingTx{tx}, nil
+}
+
+type refusingTx struct{ dict.Tx }
+
+func (t refusingTx) Set(string, []byte) error { return errors.New("engine refuses writes") }

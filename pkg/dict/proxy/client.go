@@ -340,6 +340,11 @@ func (t *tx) send(line string) error {
 		return fmt.Errorf("dict/proxy: transaction: %w", err)
 	}
 	if len(reply) > 0 && reply[0] == ReplyFail {
+		// A refused mutation ends the transaction: a caller that returns here
+		// without rolling back would hold its connection for good (#1902).
+		t.done = true
+		_, _ = exchange(t.ctx, t.cn, fmt.Sprintf("%c%d\n", OpRollback, t.id))
+		t.release(false)
 		return fmt.Errorf("dict/proxy: %s", strings.TrimSuffix(reply[1:], "\n"))
 	}
 	return nil
