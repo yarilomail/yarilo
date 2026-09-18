@@ -156,13 +156,6 @@ protocol:
   lmtp:
     add_received_header: true
     hdr_delivery_address: final
-    ## Local, uncommitted: the fill before an arm delivers 200 messages per
-    ## user, which the shipped 100/60s burst refuses by design. Restored to the
-    ## committed value right after the window.
-    rate_limit:
-      enabled: true
-      per_recipient_burst: 1000
-      per_recipient_window_seconds: 60
   managesieve:
     max_script_size: 65536
 
