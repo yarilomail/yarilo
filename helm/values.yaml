@@ -656,50 +656,6 @@ components:
       ## CIDRs as opt-in defense-in-depth once you know them.
       allowed_nets: []
 
-    ## yarilo-monitor sidecar — probes backend pods and reports health to the director.
-    ## Runs as a sidecar container in the director pod.
-    monitor:
-      enabled: false
-
-      ## Image override (defaults to the same image as the director).
-      image: ""
-
-      ## Which protocols to probe on every backend in the ring.
-      ## Ports default to standard mail ports (993 / 110 / 24).
-      pollIMAP: true
-      imapPort: 993
-      pollPOP3: false
-      pop3Port: 110
-      pollLMTP: false
-      lmtpPort: 24
-
-      ## Poll interval and per-probe timeout (seconds).
-      interval: 10
-      timeout: 3
-
-      ## Consecutive failures before rapid poll; rapid poll threshold.
-      retryCount: 3
-      rapidRounds: 10
-      rapidFailsNeeded: 7
-
-      ## Seconds from BACKEND-FLUSH (drain start) to BACKEND-DOWN (full ring
-      ## removal). Supported by the monitor but previously not rendered
-      ## (#748 item 4).
-      drainTimeout: 60
-
-      ## Per-tag monitoring credentials.
-      ## The tag is the same label used on backends, users, and storage.
-      ## The "" key covers untagged backends.
-      ##
-      ## tags:
-      ##   "":
-      ##     user: monitor@example.com
-      ##     password: secret
-      ##   ssd:
-      ##     user: monitor-ssd@example.com
-      ##     password: ssd-secret
-      tags: {}
-
     service:
       type: LoadBalancer
       annotations: {}
@@ -2489,7 +2445,7 @@ logLevel: info
 ##     yarilo-auth: debug
 ##     yarilo-imap-login: debug
 ##
-## Recognised names: yarilo-director, yarilo-monitor, yarilo-auth, yarilo-warden,
+## Recognised names: yarilo-director, yarilo-auth, yarilo-warden,
 ## yarilo-locks, yarilo-fts, yarilo-backend-api, yarilo-backend-reg,
 ## yarilo-quota-status, yarilo-imap, yarilo-pop3, yarilo-lmtp,
 ## yarilo-managesieve, yarilo-submission, and the matching *-login components.

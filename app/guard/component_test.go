@@ -31,14 +31,7 @@ func TestEveryChartComponentIsBuiltAndDispatched(t *testing.T) {
 		t.Fatalf("found %d components in the chart, which cannot be right", len(wanted))
 	}
 
-	// yarilo-monitor: in the chart, not in the image since #776, off by default.
-	// Named rather than hidden, pending the issue that decides its life.
-	known := map[string]bool{"yarilo-monitor": true}
-
 	for _, c := range wanted {
-		if known[c] {
-			continue
-		}
 		if !strings.Contains(entrypoint, "  "+c+")") {
 			t.Errorf("%s is started by the chart and the entrypoint does not dispatch it", c)
 		}
