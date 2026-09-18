@@ -233,7 +233,7 @@ func (u *userMailbox) listCanTakeRow(folder, base string) bool {
 // adoptRow adds one written row to the cache under the list's new stamp:
 // re-reading the whole list to learn one name is what made a save O(n) (#1840).
 func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, hasGUID bool) {
-	fi, err := os.Stat(u.uidListPath(folder))
+	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
 		u.folderCacheFor(folder).invalidateUIDs()
 		return
@@ -244,7 +244,7 @@ func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, h
 // adoptWritten makes the cache the content just written: a map merged into an
 // older one loses another session's rows while the stamp says nothing is (#1739).
 func (u *userMailbox) adoptWritten(folder string, l *uidList) {
-	fi, err := os.Stat(u.uidListPath(folder))
+	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
 		u.folderCacheFor(folder).invalidateUIDs()
 		return
@@ -421,7 +421,7 @@ func (u *userMailbox) adoptFolderNames() error {
 			continue
 		}
 		target := filepath.Join(root, want)
-		if _, serr := os.Stat(target); serr == nil {
+		if _, serr := statPath(target); serr == nil {
 			// Two folders must never become one: that is a loss no later step
 			// can undo, and a store in that shape needs a person.
 			return fmt.Errorf("maildir/adopt names: %s would become %s, which exists", e.Name(), want)
@@ -664,7 +664,7 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 		curDir := filepath.Join(u.folderPath(dstFolder), "cur")
 		dstPath := filepath.Join(dstDir, newName)
 		override := outGUID != guidFromBase(newName)
-		if _, err := os.Lstat(filepath.Join(curDir, newName)); err == nil {
+		if _, err := lstatPath(filepath.Join(curDir, newName)); err == nil {
 			// Base name taken: mint a fresh one and pin the GUID explicitly.
 			oldBase := maildirBase(filename)
 			trailer := filename[len(oldBase):] // ":2,<flags>"
@@ -829,7 +829,7 @@ func (u *userMailbox) afterRemoved(folder, dir, filename string, held bool) {
 		u.folderCacheFor(folder).invalidateDir()
 		return
 	}
-	fi, err := os.Stat(dir)
+	fi, err := statPath(dir)
 	if err != nil {
 		u.folderCacheFor(folder).invalidateDirEntries()
 		return
@@ -848,7 +848,7 @@ func (u *userMailbox) reportRemoveMiss(folder, asked, shown string, err error) {
 func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 	dir := filepath.Join(u.folderPath(folder), "cur")
 
-	dirFi, statErr := os.Stat(dir)
+	dirFi, statErr := statPath(dir)
 	if errors.Is(statErr, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -907,7 +907,7 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 }
 
 func (u *userMailbox) FolderExists(folder string) (bool, error) {
-	_, err := os.Stat(u.folderPath(folder))
+	_, err := statPath(u.folderPath(folder))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -1411,7 +1411,7 @@ func (u *userMailbox) SyncToken(folder string) string {
 	var b strings.Builder
 	dirty := false
 	for _, sub := range []string{"cur", "new"} {
-		fi, err := os.Stat(filepath.Join(base, sub))
+		fi, err := statPath(filepath.Join(base, sub))
 		if err != nil {
 			continue
 		}
@@ -1444,13 +1444,20 @@ func (u *userMailbox) uidListPath(folder string) string {
 
 // migrateLegacyUIDList renames the legacy uidlist file (LegacyUIDListFileName)
 // to yarilo-uidlist when the yarilo file is absent. Idempotent.
+// Every path walk in this package goes through these, so a row can count what
+// an operation costs and a guard can keep new ones from slipping past (#1875).
+var (
+	statPath  = os.Stat
+	lstatPath = os.Lstat
+)
+
 func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	dst := u.uidListPath(folder)
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := statPath(dst); err == nil {
 		return nil
 	}
 	src := filepath.Join(u.folderPath(folder), LegacyUIDListFileName)
-	if _, err := os.Stat(src); err != nil {
+	if _, err := statPath(src); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -1459,7 +1466,7 @@ func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	if err := os.Rename(src, dst); err != nil {
 		// Called from paths holding no lock, so the loser of a race sees the
 		// source already gone -- that is the migration having happened (#1626).
-		if _, serr := os.Stat(dst); serr == nil {
+		if _, serr := statPath(dst); serr == nil {
 			return nil
 		}
 		return fmt.Errorf("maildir: legacy uidlist rename: %w", err)
@@ -1467,30 +1474,53 @@ func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	return nil
 }
 
+// openUIDList opens our list, adopting a copied-in store's own list when ours
+// is not there yet: after our first write the other name is not looked at (#1593).
+// A nil file with a nil error means neither exists.
+func (u *userMailbox) openUIDList(folder string) (*os.File, os.FileInfo, error) {
+	path := u.uidListPath(folder)
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if merr := u.migrateLegacyUIDList(folder); merr != nil {
+			return nil, nil, merr
+		}
+		f, err = os.Open(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
+		}
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	// On the open descriptor: no second path walk, and no window where the
+	// file changes between the stat and the read.
+	fi, serr := f.Stat()
+	if serr != nil {
+		_ = f.Close()
+		return nil, nil, serr
+	}
+	return f, fi, nil
+}
+
 func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
-	if err := u.migrateLegacyUIDList(folder); err != nil {
+	// Opened, not stat-ed first: the read needs the file open anyway, and the
+	// legacy name is only looked for when ours is absent (#1875).
+	f, fi, err := u.openUIDList(folder)
+	if err != nil {
 		return nil, err
 	}
-	path := u.uidListPath(folder)
-
-	fi, statErr := os.Stat(path)
-	if errors.Is(statErr, os.ErrNotExist) {
+	if f == nil {
 		return make(map[string]uint32), nil
 	}
-	if statErr != nil {
-		return nil, statErr
-	}
+	defer f.Close()
 
 	if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
 		u.debugListRead(folder, "cache", len(m), stampOf(fi))
 		return m, nil
 	}
-
-	f, err := os.Open(path)
-	if err != nil {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	listReads.Add(1)
 
 	m := make(map[string]uint32)
@@ -1727,7 +1757,7 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 	dir := u.folderPath(folder)
 	for _, sub := range []string{"cur", "new"} {
 		from := filepath.Join(dir, sub, filename)
-		if _, serr := os.Stat(from); serr != nil {
+		if _, serr := statPath(from); serr != nil {
 			continue
 		}
 		if rerr := os.Rename(from, filepath.Join(dir, sub, want)); rerr != nil {
@@ -2021,11 +2051,8 @@ func randomGUID() string {
 // both implementations write alike -- so the file is adopted, not converted. The
 // numbers used to be parsed past, costing a taken-over store its UIDs (#1593).
 func (u *userMailbox) UIDSpace(folder string) (uidValidity, nextUID uint32, ok bool) {
-	if err := u.migrateLegacyUIDList(folder); err != nil {
-		return 0, 0, false
-	}
-	f, err := os.Open(u.uidListPath(folder))
-	if err != nil {
+	f, _, err := u.openUIDList(folder)
+	if err != nil || f == nil {
 		return 0, 0, false
 	}
 	defer f.Close() //nolint:errcheck
@@ -2091,7 +2118,7 @@ func (u *userMailbox) stillOnDisk(folder, filename string) bool {
 	}
 	dir := u.folderPath(folder)
 	for _, sub := range []string{"cur", "new"} {
-		if _, err := os.Lstat(filepath.Join(dir, sub, filename)); err == nil {
+		if _, err := lstatPath(filepath.Join(dir, sub, filename)); err == nil {
 			return true
 		}
 	}
@@ -2121,7 +2148,7 @@ func (u *userMailbox) inCurDir(folder, filename string) bool {
 	if u.inSection.Load() > 0 {
 		u.sectionFS.Add(1)
 	}
-	_, err := os.Lstat(filepath.Join(u.folderPath(folder), "cur", filename))
+	_, err := lstatPath(filepath.Join(u.folderPath(folder), "cur", filename))
 	return err == nil
 }
 
