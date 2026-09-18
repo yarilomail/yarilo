@@ -1449,6 +1449,7 @@ func (u *userMailbox) uidListPath(folder string) string {
 var (
 	statPath  = os.Stat
 	lstatPath = os.Lstat
+	openPath  = os.Open
 )
 
 func (u *userMailbox) migrateLegacyUIDList(folder string) error {
@@ -1479,12 +1480,12 @@ func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 // A nil file with a nil error means neither exists.
 func (u *userMailbox) openUIDList(folder string) (*os.File, os.FileInfo, error) {
 	path := u.uidListPath(folder)
-	f, err := os.Open(path)
+	f, err := openPath(path)
 	if errors.Is(err, os.ErrNotExist) {
 		if merr := u.migrateLegacyUIDList(folder); merr != nil {
 			return nil, nil, merr
 		}
-		f, err = os.Open(path)
+		f, err = openPath(path)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil, nil
 		}
@@ -1503,8 +1504,15 @@ func (u *userMailbox) openUIDList(folder string) (*os.File, os.FileInfo, error) 
 }
 
 func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
-	// Opened, not stat-ed first: the read needs the file open anyway, and the
-	// legacy name is only looked for when ours is absent (#1875).
+	// The stamp first, by one path walk: a hit must open nothing, and knowing
+	// whether another process changed the file needs the filesystem asked
+	// (#1875).
+	if fi, err := statPath(u.uidListPath(folder)); err == nil {
+		if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
+			u.debugListRead(folder, "cache", len(m), stampOf(fi))
+			return m, nil
+		}
+	}
 	f, fi, err := u.openUIDList(folder)
 	if err != nil {
 		return nil, err
