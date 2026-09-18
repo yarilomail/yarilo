@@ -4,10 +4,12 @@
 // per-user templating (%u/%h/%n/%d/%i) is the caller's job via pkg/dict/varexpand
 // before Open.
 //
-// An in-process sync.RWMutex guards reads and mutations. The driver is NOT safe
-// across processes — two binaries opening the same path clobber each other — so
-// it is for single-process runs (CLI, dev, tests, single-pod helm); use the
-// redis or sql drivers for state shared across pods.
+// The path may name variables (%u/%h/%n/%d/%i); they are expanded per operation
+// from OpSettings, so one Dict serves every user with a file of their own.
+//
+// Several processes may hold the same file: a write takes pkg/filelock and
+// re-reads under it, and a read reloads when the file's stamp moved. Reads take
+// no lock.
 //
 // Format: one JSON document with a fixed envelope and an array of rows; the
 // "version" tag is reserved for future migrations. []byte values are
@@ -26,15 +28,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/pkg/dict/varexpand"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 )
 
+// DriverName is how this driver is named in config, and what a caller matches
+// on to decide it can open the dict itself.
+const DriverName = "file"
+
 func init() {
-	dict.Register("file", New)
+	dict.Register(DriverName, New)
 }
 
 // New constructs a file dict. Required setting: "path" (string). The file need
@@ -49,18 +58,126 @@ func New(cfg dict.Config) (dict.Dict, error) {
 	if !ok || path == "" {
 		return nil, fmt.Errorf("setting \"path\" must be a non-empty string, got %T", pathAny)
 	}
-	d := &Dict{path: path, rows: map[string]row{}}
-	return d, nil
+	method, err := filelock.Parse(settingString(cfg.Settings, "lock_method"))
+	if err != nil {
+		return nil, err
+	}
+	return &Dict{tmpl: path, method: method, stores: map[string]*store{}}, nil
 }
+
+// settingString reads an optional string setting; a non-string is left to the
+// caller's parser to reject.
+func settingString(settings map[string]any, key string) string {
+	if v, ok := settings[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// lockWait is the same bound the uidlist writer uses: long enough for a slow
+// volume, short enough that a wedged holder is reported rather than waited on.
+const lockWait = 30 * time.Second
 
 const formatVersion = 1
 
 type Dict struct {
+	tmpl   string
+	method filelock.Method
+	mu     sync.Mutex
+	stores map[string]*store
+	closed atomic.Bool
+}
+
+// store is one file: the rows it held when we last read it, and the stamp they
+// came from. Another process writing the file moves the stamp.
+type store struct {
 	path   string
-	mu     sync.RWMutex
+	method filelock.Method
+	refs   int // sessions holding this user open; the map keeps only these
+	mu     sync.Mutex
 	rows   map[string]row
 	loaded bool
-	closed atomic.Bool
+	stamp  string
+}
+
+// pathFor resolves the file this operation's user owns. A template naming %h
+// with no home in the settings is a configuration error at the call, not an
+// empty path silently shared by everyone.
+func (d *Dict) pathFor(set *dict.OpSettings) (string, error) {
+	vars := varexpand.Vars{}
+	if set != nil {
+		vars.Username, vars.HomeDir = set.Username, set.HomeDir
+	}
+	if strings.Contains(d.tmpl, "%h") && vars.HomeDir == "" {
+		return "", fmt.Errorf("file: path %q needs the home of %q and the operation carries none", d.tmpl, vars.Username)
+	}
+	path := varexpand.Expand(d.tmpl, vars)
+	if path == "" {
+		return "", fmt.Errorf("file: path %q expands to nothing for user %q", d.tmpl, vars.Username)
+	}
+	return path, nil
+}
+
+// storeFor returns the store to serve this operation with. A user some session
+// holds open is served from the kept store; anyone else is served by a store
+// that is dropped with the operation, so the map never grows past the users
+// actually being served.
+func (d *Dict) storeFor(set *dict.OpSettings) (*store, error) {
+	path, err := d.pathFor(set)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if st, ok := d.stores[path]; ok {
+		return st, nil
+	}
+	return &store{path: path, method: d.method, rows: map[string]row{}}, nil
+}
+
+// AcquireUser keeps this user's rows in memory until the last holder releases
+// them. Without it the rows of every user this process ever served would be
+// held to the end of the process.
+func (d *Dict) AcquireUser(set *dict.OpSettings) error {
+	path, err := d.pathFor(set)
+	if err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	st, ok := d.stores[path]
+	if !ok {
+		st = &store{path: path, method: d.method, rows: map[string]row{}}
+		d.stores[path] = st
+	}
+	st.refs++
+	return nil
+}
+
+// ReleaseUser drops the rows once nobody holds the user open.
+func (d *Dict) ReleaseUser(set *dict.OpSettings) {
+	path, err := d.pathFor(set)
+	if err != nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	st, ok := d.stores[path]
+	if !ok {
+		return
+	}
+	st.refs--
+	if st.refs <= 0 {
+		delete(d.stores, path)
+	}
+}
+
+// Stores reports how many users' rows this Dict is holding. Test-facing: the
+// number is the property, not a statistic.
+func (d *Dict) Stores() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.stores)
 }
 
 type row struct {
@@ -84,51 +201,85 @@ func (d *Dict) Wait(_ context.Context) error { return nil }
 func (d *Dict) Close() error {
 	d.closed.Store(true)
 	d.mu.Lock()
-	d.rows = nil
-	d.loaded = false
+	d.stores = map[string]*store{}
 	d.mu.Unlock()
 	return nil
 }
 
 // loadLocked reads the on-disk file into d.rows once; subsequent calls are a
 // no-op. d.mu (write) must be held.
-func (d *Dict) loadLocked() error {
-	if d.loaded {
+// stampOf names the file's state cheaply. Another process's write lands as a
+// rename, so size and mtime together move whenever the content does.
+func stampOf(fi os.FileInfo) string {
+	return strconv.FormatInt(fi.ModTime().UnixNano(), 10) + ":" + strconv.FormatInt(fi.Size(), 10)
+}
+
+// loadLocked reads the file when this process has not read it, or when someone
+// else has written it since. s.mu must be held.
+func (s *store) loadLocked() error {
+	fi, statErr := os.Stat(s.path)
+	if statErr == nil && s.loaded && stampOf(fi) == s.stamp {
 		return nil
 	}
-	data, err := os.ReadFile(d.path)
+	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			d.loaded = true
+			s.rows = map[string]row{}
+			s.loaded, s.stamp = true, ""
 			return nil
 		}
 		return fmt.Errorf("read: %w", err)
 	}
-	if len(data) == 0 {
-		d.loaded = true
-		return nil
+	rows := make(map[string]row, len(s.rows))
+	if len(data) > 0 {
+		var env envelope
+		if err := json.Unmarshal(data, &env); err != nil {
+			return fmt.Errorf("decode: %w", err)
+		}
+		for _, e := range env.Entries {
+			rows[e.Key] = e.row
+		}
 	}
-	var env envelope
-	if err := json.Unmarshal(data, &env); err != nil {
-		return fmt.Errorf("decode: %w", err)
+	s.rows = rows
+	s.loaded = true
+	s.stamp = ""
+	if fi, err := os.Stat(s.path); err == nil {
+		s.stamp = stampOf(fi)
 	}
-	for _, e := range env.Entries {
-		d.rows[e.Key] = e.row
-	}
-	d.loaded = true
 	return nil
 }
 
+// withWriteLock runs f holding the file lock, with the rows re-read under it:
+// the whole file is rewritten on every commit, so a writer that did not re-read
+// would drop whatever another process wrote meanwhile.
+func (s *store) withWriteLock(f func() error) error {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return fmt.Errorf("mkdir parent: %w", err)
+	}
+	h, err := filelock.Take(s.path+".lock", s.method, lockWait)
+	if err != nil {
+		return fmt.Errorf("file: lock %s: %w", s.path, err)
+	}
+	// A failed release says nothing a caller can act on: the process either
+	// exits or takes the lock again.
+	defer func() { _ = h.Release() }()
+	s.loaded = false
+	if err := s.loadLocked(); err != nil {
+		return err
+	}
+	return f()
+}
+
 // flushLocked serialises d.rows and writes it atomically via temp-file + fsync +
-// rename. d.mu (write) must be held; d.rows must already be the desired
-// post-write state.
-func (d *Dict) flushLocked() error {
-	if err := os.MkdirAll(filepath.Dir(d.path), 0o700); err != nil {
+// rename. s.mu and the file lock must be held; s.rows must already be the
+// desired post-write state.
+func (s *store) flushLocked() error {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("mkdir parent: %w", err)
 	}
 
-	entries := make([]wireEntry, 0, len(d.rows))
-	for k, r := range d.rows {
+	entries := make([]wireEntry, 0, len(s.rows))
+	for k, r := range s.rows {
 		entries = append(entries, wireEntry{Key: k, row: r})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
@@ -138,7 +289,7 @@ func (d *Dict) flushLocked() error {
 		return fmt.Errorf("encode: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(d.path), filepath.Base(d.path)+".tmp.*")
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp.*")
 	if err != nil {
 		return fmt.Errorf("create temp: %w", err)
 	}
@@ -156,22 +307,30 @@ func (d *Dict) flushLocked() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp: %w", err)
 	}
-	if err := os.Rename(tmpName, d.path); err != nil {
+	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("rename: %w", err)
+	}
+	s.stamp = ""
+	if fi, err := os.Stat(s.path); err == nil {
+		s.stamp = stampOf(fi)
 	}
 	return nil
 }
 
-func (d *Dict) Lookup(ctx context.Context, _ *dict.OpSettings, key string) ([][]byte, bool, error) {
+func (d *Dict) Lookup(ctx context.Context, set *dict.OpSettings, key string) ([][]byte, bool, error) {
 	if err := d.guard(ctx); err != nil {
 		return nil, false, err
 	}
-	d.mu.Lock() // write lock: loadLocked mutates state
-	defer d.mu.Unlock()
-	if err := d.loadLocked(); err != nil {
+	st, err := d.storeFor(set)
+	if err != nil {
 		return nil, false, err
 	}
-	r, ok := d.rows[key]
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if err := st.loadLocked(); err != nil {
+		return nil, false, err
+	}
+	r, ok := st.rows[key]
 	if !ok {
 		return nil, false, nil
 	}
@@ -185,8 +344,12 @@ func (d *Dict) Lookup(ctx context.Context, _ *dict.OpSettings, key string) ([][]
 	return out, true, nil
 }
 
-func (d *Dict) Iterate(ctx context.Context, _ *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
+func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
 	if err := d.guard(ctx); err != nil {
+		return nil, err
+	}
+	st, err := d.storeFor(set)
+	if err != nil {
 		return nil, err
 	}
 	recurse := flags&dict.IterRecurse != 0
@@ -195,14 +358,14 @@ func (d *Dict) Iterate(ctx context.Context, _ *dict.OpSettings, path string, fla
 	sortByKey := flags&dict.IterSortByKey != 0
 	sortByValue := flags&dict.IterSortByValue != 0
 
-	d.mu.Lock()
-	if err := d.loadLocked(); err != nil {
-		d.mu.Unlock()
+	st.mu.Lock()
+	if err := st.loadLocked(); err != nil {
+		st.mu.Unlock()
 		return nil, err
 	}
 	now := time.Now().Unix()
 	var rows []iterRow
-	for k, r := range d.rows {
+	for k, r := range st.rows {
 		if r.Expires > 0 && now > r.Expires {
 			continue
 		}
@@ -218,7 +381,7 @@ func (d *Dict) Iterate(ctx context.Context, _ *dict.OpSettings, path string, fla
 		}
 		rows = append(rows, rr)
 	}
-	d.mu.Unlock()
+	st.mu.Unlock()
 
 	switch {
 	case sortByKey:
@@ -242,34 +405,67 @@ func (d *Dict) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, error)
 	if err := d.guard(ctx); err != nil {
 		return nil, err
 	}
+	st, err := d.storeFor(set)
+	if err != nil {
+		return nil, err
+	}
 	expire := int64(0)
 	if set != nil && set.ExpireSecs > 0 {
 		expire = time.Now().Unix() + int64(set.ExpireSecs)
 	}
-	return &tx{d: d, expires: expire}, nil
+	return &tx{d: d, st: st, expires: expire}, nil
 }
 
+// ExpireScan sweeps every file this process has opened; a file nobody here has
+// touched is swept by whoever does touch it.
 func (d *Dict) ExpireScan(ctx context.Context) error {
 	if err := d.guard(ctx); err != nil {
 		return err
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if err := d.loadLocked(); err != nil {
-		return err
+	stores := make([]*store, 0, len(d.stores))
+	for _, st := range d.stores {
+		stores = append(stores, st)
 	}
-	now := time.Now().Unix()
-	changed := false
-	for k, r := range d.rows {
-		if r.Expires > 0 && now > r.Expires {
-			delete(d.rows, k)
-			changed = true
+	d.mu.Unlock()
+	for _, st := range stores {
+		if err := st.expire(); err != nil {
+			return err
 		}
 	}
-	if !changed {
+	return nil
+}
+
+func (s *store) expire() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// The rows we hold answer whether there is anything to remove; taking the
+	// file lock on every file each pass would cost more than the sweep.
+	if !s.hasExpiredLocked() {
 		return nil
 	}
-	return d.flushLocked()
+	return s.withWriteLock(func() error {
+		if !s.hasExpiredLocked() {
+			return nil
+		}
+		now := time.Now().Unix()
+		for k, r := range s.rows {
+			if r.Expires > 0 && now > r.Expires {
+				delete(s.rows, k)
+			}
+		}
+		return s.flushLocked()
+	})
+}
+
+func (s *store) hasExpiredLocked() bool {
+	now := time.Now().Unix()
+	for _, r := range s.rows {
+		if r.Expires > 0 && now > r.Expires {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Dict) guard(ctx context.Context) error {
@@ -316,6 +512,7 @@ func (it *iterator) Close() error { return nil }
 
 type tx struct {
 	d       *Dict
+	st      *store
 	buf     dict.MemoryTx
 	expires int64
 	done    bool
@@ -360,17 +557,32 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 		return dict.CommitFailed, dict.ErrClosed
 	}
 
-	t.d.mu.Lock()
-	defer t.d.mu.Unlock()
-	if err := t.d.loadLocked(); err != nil {
+	st := t.st
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	// The file lock spans the re-read and the write: a commit rewrites the
+	// whole file, so anything another process wrote has to be read first.
+	result := dict.CommitOK
+	err := st.withWriteLock(func() error {
+		res, err := t.applyLocked(st)
+		result = res
+		return err
+	})
+	if err != nil {
 		return dict.CommitFailed, err
 	}
+	return result, nil
+}
 
-	// Apply ops to a snapshot — only commit to t.d.rows after every op
+// applyLocked applies the buffered ops to a snapshot and writes it. s.mu and
+// the file lock are held, and st.rows has just been re-read from disk.
+func (t *tx) applyLocked(st *store) (dict.CommitResult, error) {
+	// Apply ops to a snapshot — only commit to st.rows after every op
 	// succeeds, so a failing atomic-inc does not leave a half-applied
 	// transaction in memory.
-	snap := make(map[string]row, len(t.d.rows))
-	for k, v := range t.d.rows {
+	snap := make(map[string]row, len(st.rows))
+	for k, v := range st.rows {
 		snap[k] = v
 	}
 
@@ -400,10 +612,10 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 
 	// Promote snapshot then flush. On flush failure, the in-memory map
 	// is rewound so subsequent reads still see the pre-commit state.
-	prev := t.d.rows
-	t.d.rows = snap
-	if err := t.d.flushLocked(); err != nil {
-		t.d.rows = prev
+	prev := st.rows
+	st.rows = snap
+	if err := st.flushLocked(); err != nil {
+		st.rows = prev
 		return dict.CommitFailed, err
 	}
 	return dict.CommitOK, nil

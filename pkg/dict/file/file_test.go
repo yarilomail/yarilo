@@ -65,7 +65,8 @@ func TestAtomicRenameLeavesNoPartialFiles(t *testing.T) {
 		t.Fatalf("readdir: %v", err)
 	}
 	for _, e := range entries {
-		if e.Name() == filepath.Base(path) {
+		// The lock file is a sibling the writer keeps, not a half-written temp.
+		if e.Name() == filepath.Base(path) || e.Name() == filepath.Base(path)+".lock" {
 			continue
 		}
 		t.Errorf("unexpected leftover file after commit: %s", e.Name())
