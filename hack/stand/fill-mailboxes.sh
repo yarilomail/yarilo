@@ -23,6 +23,7 @@ BODY_LINES="${YARILO_FILL_LINES:-24}"
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" "$@"; }
 
 pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
+# The index, not the transcript, answers whether a mailbox is filled.
 [ -n "$pod" ] || { echo "fill: no backend pod in $NS" >&2; exit 1; }
 
 # One connection per user, every message in it: a connection per message spends
@@ -42,17 +43,35 @@ deliver_user() {
   } | kube exec -i "$pod" -c yarilo-imap -- nc -w 60 "$LMTP_HOST" "$LMTP_PORT" 2>&1
 }
 
-delivered=0
-refused=0
+# messages_in prints how many messages the index holds for one mailbox. This
+# is the proof that a fill happened: the LMTP transcript is a stream, and
+# counting its lines counted 18 of 30000 deliveries as refused that the server
+# had accepted and the index had (#1875).
+messages_in() {
+  kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
+    awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'
+}
+
+acked=0
 for n in $(seq "$FROM" "$TO"); do
   user="u${n}@${DOMAIN}"
   out=$(deliver_user "$user") || true
-  # Counted from the answers, not from what was sent: a mailbox that refused
-  # is not a mailbox that was filled.
-  ok=$(printf '%s\n' "$out" | grep -c '^250 2\.0\.0' || true)
-  delivered=$((delivered + ok))
-  refused=$((refused + COUNT - ok))
+  # Informational: what the transport said, for a failure to be readable.
+  acked=$((acked + $(printf '%s\n' "$out" | grep -o '250 2\.0\.0' | wc -l | tr -d ' ')))
 done
 
-echo "fill: delivered=$delivered refused=$refused users=$((TO - FROM + 1)) per_user=$COUNT"
-[ "$refused" = "0" ] || { echo "fill: $refused deliveries were not accepted" >&2; exit 1; }
+short=0
+have_total=0
+for n in $(seq "$FROM" "$TO"); do
+  user="u${n}@${DOMAIN}"
+  have=$(messages_in "$user")
+  have=${have:-0}
+  have_total=$((have_total + have))
+  if [ "$have" != "$COUNT" ]; then
+    echo "fill: $user holds $have messages, want $COUNT" >&2
+    short=$((short + 1))
+  fi
+done
+
+echo "fill: in_index=$have_total acked=$acked users=$((TO - FROM + 1)) per_user=$COUNT"
+[ "$short" = "0" ] || { echo "fill: $short mailboxes are not filled to $COUNT" >&2; exit 1; }
