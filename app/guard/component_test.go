@@ -7,20 +7,20 @@ import (
 	"testing"
 )
 
-// A component the chart starts must be built into the image and dispatched by
-// the entrypoint: missing either, the pod crash-loops with "Unknown
-// YARILO_COMPONENT" (#1733).
+// A component the chart starts must be built and dispatched: missing either,
+// the pod crash-loops with "Unknown YARILO_COMPONENT" (#1733).
 func TestEveryChartComponentIsBuiltAndDispatched(t *testing.T) {
 	entrypoint := readFile(t, "../../docker/entrypoint.sh")
 	dockerfile := readFile(t, "../../docker/Dockerfile")
 
+	// The value paired with YARILO_COMPONENT, not any yarilo-looking value: a
+	// service name in a neighbouring env entry is not a binary.
+	re := regexp.MustCompile(`name:\s*YARILO_COMPONENT\s*\n\s*value:\s*"?([A-Za-z0-9-]+)"?`)
 	var wanted []string
 	seen := map[string]bool{}
-	re := regexp.MustCompile(`value:\s*"(yarilo[a-z-]*)"`)
 	for _, path := range chartTemplates(t) {
-		body := readFile(t, path)
-		for _, m := range re.FindAllStringSubmatch(body, -1) {
-			if !strings.Contains(body, "YARILO_COMPONENT") || seen[m[1]] {
+		for _, m := range re.FindAllStringSubmatch(readFile(t, path), -1) {
+			if seen[m[1]] {
 				continue
 			}
 			seen[m[1]] = true
@@ -31,9 +31,8 @@ func TestEveryChartComponentIsBuiltAndDispatched(t *testing.T) {
 		t.Fatalf("found %d components in the chart, which cannot be right", len(wanted))
 	}
 
-	// yarilo-monitor is the director's sidecar from before backend-lease (#776):
-	// the chart still has it, the image stopped building it, and it is off by
-	// default. Named here rather than hidden, pending a decision on its life.
+	// yarilo-monitor: in the chart, not in the image since #776, off by default.
+	// Named rather than hidden, pending the issue that decides its life.
 	known := map[string]bool{"yarilo-monitor": true}
 
 	for _, c := range wanted {
