@@ -123,6 +123,80 @@ if [ "$BLOCKPROFILE" = "1" ]; then
   echo "-- arm $ARM runs with the profiling overlay: this is a latency arm" | tee "$OUT/overlay-$ARM.txt"
 fi
 
+# FILL is how many messages each user starts with. An empty mailbox is a state
+# no deployment is in, and on this stand it is worth about four times the
+# throughput of a filled one -- so a window on empty mailboxes measures
+# something nobody runs (#1875). Set 0 for the empty mode, which is still the
+# right start for a question about the login path alone.
+FILL="${YARILO_ARM_FILL:-200}"
+
+# dict_ops prints the dict service's operation counters, one per line. Read
+# either side of a run, the difference is what that run asked of the service.
+dict_ops() {
+  local pod page
+  pod=$(kube get pods -l app.kubernetes.io/component=dict -o name 2>/dev/null | head -1 | cut -d/ -f2)
+  if [ -z "$pod" ]; then
+    echo "ab-arm: no dict pod in $NS; the dict counters cannot be read" >&2
+    return 1
+  fi
+  page=$(kube exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
+  if [ -z "$page" ]; then
+    echo "ab-arm: $pod does not answer on /metrics; the dict counters cannot be read" >&2
+    return 1
+  fi
+  # Only the absence of these series is an answer -- a dict nobody asked
+  # anything of. The page itself is never empty.
+  printf '%s\n' "$page" | grep "^yarilo_dict_operations_total{" || true
+}
+
+# dict_delta writes what one run cost the dict service, per dict and verb.
+dict_delta() {
+  local before="$1" after="$2" out="$3"
+  awk '
+    FNR==NR { was[$1]=$2; next }
+    { d = $2 - (($1 in was) ? was[$1] : 0); if (d != 0) printf "%s %d\n", $1, d }
+  ' "$before" "$after" | sort > "$out"
+}
+
+# block_profile captures both backends while the run is under way: waiting is
+# not a CPU sample, and a profile taken after the load measures silence. Which
+# pod carried the load is only visible afterwards, from the sample seconds in
+# the file name.
+# The file name carries the window asked for, not the sample seconds -- those
+# are inside the profile, and naming them here would be a promise this script
+# cannot keep without reading the file back.
+block_profile() {
+  local label="$1" secs="${2:-40}" pod port=18080 pid pids=() files=() rc=0
+  local pods
+  pods=$(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2)
+  [ -n "$pods" ] || { echo "ab-arm: no backend pod to profile" >&2; return 1; }
+  for pod in $pods; do
+    kube port-forward "pod/$pod" "$port:8080" >/dev/null 2>&1 &
+    pids+=($!)
+    files+=("$OUT/block-$label-$pod-req${secs}s.pprof")
+    port=$((port + 1))
+  done
+  sleep 3
+  port=18080
+  for pod in $pods; do
+    curl -fsS -o "$OUT/block-$label-$pod-req${secs}s.pprof" \
+      "http://127.0.0.1:$port/debug/pprof/block?seconds=$secs" &
+    port=$((port + 1))
+  done
+  wait
+  for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+  # An empty file is a capture that did not happen, and it reads exactly like
+  # a pod where nobody waited.
+  local f
+  for f in "${files[@]}"; do
+    if [ ! -s "$f" ]; then
+      echo "ab-arm: the block profile for $(basename "$f") is empty; that pod was not profiled" >&2
+      rc=1
+    fi
+  done
+  return "$rc"
+}
+
 echo "== arm $ARM: $TAG"
 helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
   -f "$REPO/helm_values/values-sandbox.yaml" "${overlay_args[@]}" --set image.tag="$TAG" --timeout 10m >/dev/null
@@ -180,6 +254,15 @@ for attempt in 1 2 3 4 5; do
   sleep 20
 done
 
+if [ "$FILL" != "0" ]; then
+  echo "-- filling u1-u150 with $FILL messages each"
+  for range in "1 50" "51 100" "101 150"; do
+    set -- $range
+    KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/fill-mailboxes.sh" "$1" "$2" "$FILL" |
+      tee -a "$OUT/fill-$ARM.txt"
+  done
+fi
+
 seeded=$(start_inventory)
 echo "-- start after seed: ${seeded:-unreadable}" | tee "$OUT/start-$ARM-seeded.txt"
 # u1-150 are empty at the start by design: the seed puts them in the database
@@ -214,8 +297,21 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-stalls.sh" "$OUT" "$ARM-$name" &
   watcher=$!
   lock_classes > "$OUT/locks-$ARM-$name-before.txt"
+  if [ "$BLOCKPROFILE" = "1" ]; then
+    dict_ops > "$OUT/dict-$ARM-$name-before.txt" || exit 1
+    ( sleep 20; block_profile "$ARM-$name" 40 ) &
+    capture=$!
+  fi
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest "$manifest" "$OUT/ab-$ARM-$name.log" 900
   lock_classes > "$OUT/locks-$ARM-$name-after.txt"
+  if [ "$BLOCKPROFILE" = "1" ]; then
+    if ! wait "$capture"; then
+      echo "ab-arm: the block capture failed for $name; this arm has no latency number" >&2
+      exit 1
+    fi
+    dict_ops > "$OUT/dict-$ARM-$name-after.txt" || exit 1
+    dict_delta "$OUT/dict-$ARM-$name-before.txt" "$OUT/dict-$ARM-$name-after.txt" "$OUT/dict-$ARM-$name-delta.txt"
+  fi
   wait "$watcher" 2>/dev/null || true
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)
