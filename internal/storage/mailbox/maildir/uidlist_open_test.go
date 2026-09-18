@@ -3,6 +3,7 @@ package maildir
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -62,32 +63,71 @@ func TestTheOtherNameIsNotReadOnceOursExists(t *testing.T) {
 	}
 }
 
-// Reading the list costs one open and one fstat on that descriptor: the two
-// path walks it used to take are what the hot path pays for per read (#1875).
-func TestReadingTheListTakesNoPathStat(t *testing.T) {
+// What a read costs: a hit asks the filesystem once and opens nothing, a miss
+// opens once. Knowing whether another process changed the file cannot be done
+// without asking, so one walk is the floor, not a regression (#1875).
+func TestAListHitAsksOnceAndOpensNothing(t *testing.T) {
+	box := batchBox(t)
+	if err := os.WriteFile(box.uidListPath("INBOX"), []byte("3 V1 N2 G0\n1 :a.host,S=5:2,\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Warm the cache: this read is the miss.
+	if _, err := box.readUIDList("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, opens := countFileOps(t)
+	if _, err := box.readUIDList("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	if got := stats.Load(); got != 1 {
+		t.Errorf("a cache hit walked the path %d times, want 1", got)
+	}
+	if got := opens.Load(); got != 0 {
+		t.Errorf("a cache hit opened the file %d times, want 0", got)
+	}
+}
+
+// And a miss opens once -- not twice, which a stat-then-open shape costs.
+func TestAListMissOpensOnce(t *testing.T) {
 	box := batchBox(t)
 	if err := os.WriteFile(box.uidListPath("INBOX"), []byte("3 V1 N2 G0\n1 :a.host,S=5:2,\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	var stats atomic.Int64
-	real := statPath
-	statPath = func(name string) (os.FileInfo, error) {
-		stats.Add(1)
-		return real(name)
-	}
-	t.Cleanup(func() { statPath = real })
-
+	stats, opens := countFileOps(t)
 	if _, err := box.readUIDList("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	if got := stats.Load(); got != 0 {
-		t.Errorf("reading the list made %d path stats, want 0", got)
+	if got := opens.Load(); got != 1 {
+		t.Errorf("a miss opened the file %d times, want 1", got)
 	}
+	if got := stats.Load(); got > 1 {
+		t.Errorf("a miss walked the path %d times, want at most 1", got)
+	}
+}
+
+// countFileOps swaps the seams for the duration of one row.
+func countFileOps(t *testing.T) (*atomic.Int64, *atomic.Int64) {
+	t.Helper()
+	var stats, opens atomic.Int64
+	realStat, realOpen := statPath, openPath
+	statPath = func(name string) (os.FileInfo, error) {
+		stats.Add(1)
+		return realStat(name)
+	}
+	openPath = func(name string) (*os.File, error) {
+		opens.Add(1)
+		return realOpen(name)
+	}
+	t.Cleanup(func() { statPath, openPath = realStat, realOpen })
+	return &stats, &opens
 }
 
 // The counting row above is only worth its name while every path walk goes
 // through the seam: a bare os.Stat would pass it green (#1875).
+var declaresSeam = regexp.MustCompile(`^\s*(stat|lstat|open)Path\s*=\s*os\.`)
+
 func TestEveryPathWalkGoesThroughTheSeam(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -104,11 +144,13 @@ func TestEveryPathWalkGoesThroughTheSeam(t *testing.T) {
 			t.Fatal(rerr)
 		}
 		for n, line := range strings.Split(string(body), "\n") {
-			if strings.Contains(line, "statPath  = os.Stat") || strings.Contains(line, "lstatPath = os.Lstat") {
+			// Only the declarations of the seams themselves, anchored: "= os."
+			// alone also matches ":=", which let every bare call through.
+			if declaresSeam.MatchString(line) {
 				continue
 			}
-			if strings.Contains(line, "os.Stat(") || strings.Contains(line, "os.Lstat(") {
-				t.Errorf("%s:%d walks a path outside the seam: %s", f, n+1, strings.TrimSpace(line))
+			if strings.Contains(line, "os.Stat(") || strings.Contains(line, "os.Lstat(") || strings.Contains(line, "os.Open(") {
+				t.Errorf("%s:%d touches the filesystem outside the seam: %s", f, n+1, strings.TrimSpace(line))
 			}
 		}
 	}

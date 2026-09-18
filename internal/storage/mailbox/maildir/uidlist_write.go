@@ -45,7 +45,7 @@ type uidList struct {
 // the rows too: an appended row leaves the header behind it (#1840).
 func readUIDListFile(path string) (*uidList, error) {
 	listParses.Add(1)
-	f, err := os.Open(path)
+	f, err := openPath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func nameCarriesSizes(base string) bool {
 // measureSizes reads the file for the two numbers a name does not carry: the
 // physical size, and the virtual one a lone LF grows under CRLF.
 func measureSizes(path string) (psize, vsize uint32, err error) {
-	f, err := os.Open(path)
+	f, err := openPath(path)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -490,7 +490,7 @@ func ResetListParses() { listParses.Store(0) }
 // syncDir flushes a directory entry, so a file published into it is found
 // again after a crash. Test seam: the row counts the call, not the effect.
 var syncDir = func(dir string) error {
-	d, err := os.Open(dir)
+	d, err := openPath(dir)
 	if err != nil {
 		return err
 	}
