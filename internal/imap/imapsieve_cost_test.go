@@ -2,6 +2,7 @@ package imap_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"sync/atomic"
@@ -171,4 +172,73 @@ type countingUser struct {
 func (u countingUser) Fetch(folder, filename string, altTier bool) (io.ReadCloser, error) {
 	u.fetches.Add(1)
 	return u.UserMailbox.Fetch(folder, filename, altTier)
+}
+
+// failingLookupDict answers every lookup with an error, as a dict service that
+// is down or timing out does.
+type failingLookupDict struct{ dict.Dict }
+
+func (failingLookupDict) Lookup(context.Context, *dict.OpSettings, string) ([][]byte, bool, error) {
+	return nil, false, errors.New("dict is down")
+}
+
+// A dict failure must not be read as "no script bound": the message is still
+// stored, and the skipped filtering is counted and logged (#1905).
+func TestADictFailureIsCountedNotSilent(t *testing.T) {
+	inner, err := dict.Open(dict.Config{Driver: "memory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := sieve.New(config.SieveConfig{
+		Enabled: true, MaxRedirects: 32, MaxActions: 32, MaxScriptSize: 65536,
+		DefaultName: "yarilo", ImapSieveEnabled: true, ImapSieveScriptDir: t.TempDir(),
+	}, nil, nil, nil)
+
+	srv := imapserver.New(imapserver.Options{
+		Mailbox:      maildir.New(),
+		Index:        file.New(),
+		Resolver:     &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
+		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+		MetadataDict: failingLookupDict{inner},
+		SieveEngine:  eng,
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln) //nolint:errcheck
+	t.Cleanup(func() { ln.Close() })
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	c := imapclient.New(conn, nil)
+	if err := c.WaitGreeting(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Login("user@test.com", "testpass").Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+
+	before := imapserver.ImapSieveLookupErrors()
+	appendCost(t, c) // the message is accepted, which is the point
+
+	// Both lookups fail, and both are counted: an error on the mailbox-bound
+	// annotation must not be masked by "not found" on the server-wide one.
+	if got := imapserver.ImapSieveLookupErrors() - before; got != 2 {
+		t.Errorf("a failed annotation lookup was counted %v times, want 2 (mailbox and server-wide)", got)
+	}
+
+	// And the mail is still there: a dict outage does not refuse delivery.
+	sel, err := c.Select("INBOX", nil).Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.NumMessages == 0 {
+		t.Error("the message was not stored, so a dict outage refused mail")
+	}
 }
