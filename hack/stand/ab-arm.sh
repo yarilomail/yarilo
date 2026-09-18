@@ -97,6 +97,15 @@ start_inventory() {
     echo "files=$f du_kb=$k"' 2>/dev/null
 }
 
+# probe_inventory counts the one mailbox the seed itself fills.
+probe_inventory() {
+  local pod
+  pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
+  kube exec "$pod" -c yarilo-imap -- sh -c '
+    d="/var/mail/vhosts/d00001.test/over@d00001.test"
+    echo "files=$(find "$d" -type f 2>/dev/null | wc -l) du_kb=$(du -sk "$d" 2>/dev/null | cut -f1)"' 2>/dev/null
+}
+
 left=$(start_inventory)
 echo "-- start after wipe: ${left:-unreadable}" | tee "$OUT/start-$ARM-wiped.txt"
 case "$left" in
@@ -114,11 +123,14 @@ done
 
 seeded=$(start_inventory)
 echo "-- start after seed: ${seeded:-unreadable}" | tee "$OUT/start-$ARM-seeded.txt"
-# A wrong path and a pod without the volume both read as empty, and then the
-# wipe check above passed on nothing at all. The seed delivers mail, so the
-# inventory must see it.
-case "$seeded" in
-  "files=0 du_kb=0"|"") echo "ab-arm: the inventory does not see what the seed delivered (${seeded:-unreadable}); it is reading the wrong place" >&2; exit 1 ;;
+# u1-150 are empty at the start by design: the seed puts them in the database
+# and imaptest fills them during the run. What the seed does deliver is the
+# over-quota probe, so that is what proves the inventory reads a real volume
+# rather than answering zero from the wrong path.
+probe=$(probe_inventory)
+echo "-- seeded probe mailbox: ${probe:-unreadable}" | tee "$OUT/start-$ARM-probe.txt"
+case "$probe" in
+  files=0\ *|"") echo "ab-arm: the inventory does not see the mailbox the seed delivered (${probe:-unreadable}); it is reading the wrong place" >&2; exit 1 ;;
 esac
 
 authpod=$(kube get pods -l app.kubernetes.io/component=auth -o name | head -1 | cut -d/ -f2)
