@@ -502,6 +502,9 @@ type session struct {
 	imapConn *imapserver.Conn
 	userInfo *mailbox.UserInfo
 	sid      string // cross-service correlation ID from login-proxy
+	// inboxGUID* caches the INBOX identity for server-wide annotations.
+	inboxGUIDVal [16]byte
+	inboxGUIDOK  bool
 	// liveRelay is a relayed SASL exchange this session started; cancelled on
 	// teardown so an aborted AUTHENTICATE frees the service's half at once.
 	liveRelay *authrelay.RelayServer
@@ -3582,6 +3585,8 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	// script may refile / discard / reflag it. Gated on a bound script (or
 	// globals) so a bulk STORE with no imapsieve script fetches nothing.
 	if eng := s.srv.opts.SieveEngine; eng != nil && eng.ImapSieveEnabled() && storeFlags != nil && len(pending) > 0 {
+		// Resolved once for the command: a bulk STORE would otherwise ask the
+		// annotation dict for every message it touched (#1902).
 		scriptName := s.imapSieveScriptName(s.folderNS, s.folder.Name, s.folder.GUID)
 		if scriptName != "" || eng.HasImapGlobals() {
 			changed := make([]string, 0, len(storeFlags.Flags))
@@ -3589,7 +3594,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 				changed = append(changed, string(fl))
 			}
 			for _, p := range pending {
-				s.runImapSieveEvent("FLAG", s.folder.Name, s.folder.Name, s.folderNS, s.folder, p.uid, p.filename, p.altTier, "", changed)
+				s.runImapSieveScript(scriptName, "FLAG", s.folder.Name, s.folder.Name, s.folderNS, s.folder, p.uid, p.filename, p.altTier, "", changed)
 			}
 		}
 	}
