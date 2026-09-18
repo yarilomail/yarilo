@@ -231,6 +231,9 @@ type DictServiceConfig struct {
 	DictAddr string `koanf:"dict_addr"`
 	// DictListen is the address yarilo-dict serves on.
 	DictListen string `koanf:"dict_listen"`
+	// DictMaxConns bounds the connections one process keeps to one named dict.
+	// An iteration holds its connection to the end, so one is a queue (#1902).
+	DictMaxConns int `koanf:"dict_max_conns"`
 }
 
 // DictConfig declares one named dict instance. The Config.Dicts map key is

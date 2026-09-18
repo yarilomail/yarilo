@@ -1127,6 +1127,9 @@ components:
     enabled: true
     replicas: 1
     listen: ":9107"
+    ## Connections a session keeps to one named dict. An iteration holds its
+    ## connection to the end, so one connection is a queue (#1902).
+    max_conns: 8
     ## The service listens with internal mTLS wherever internal_tls is on; the
     ## certificate must be mounted here or it cannot come up at all.
     internalTLS:

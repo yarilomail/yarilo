@@ -22,12 +22,17 @@ import (
 type Server struct {
 	dicts   map[string]dict.Dict
 	metrics *Metrics
+
+	// Accepted connections, closed on shutdown: a client that keeps one open
+	// would otherwise talk to a server that has stopped (#1902).
+	mu    sync.Mutex
+	conns map[net.Conn]struct{}
 }
 
 // New returns a server over already-opened dicts. Nil metrics are allowed for
 // tests; production passes a registered set.
 func New(dicts map[string]dict.Dict, metrics *Metrics) *Server {
-	return &Server{dicts: dicts, metrics: metrics}
+	return &Server{dicts: dicts, metrics: metrics, conns: map[net.Conn]struct{}{}}
 }
 
 // observe records one operation on one named dict.
@@ -48,6 +53,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
+		s.closeConns()
 	}()
 	for {
 		conn, err := ln.Accept()
@@ -71,8 +77,32 @@ type session struct {
 	valid bool
 }
 
+// closeConns ends every accepted connection, so a pooled client re-dials
+// instead of waiting on a server that is gone.
+func (s *Server) closeConns() {
+	s.mu.Lock()
+	conns := s.conns
+	s.conns = map[net.Conn]struct{}{}
+	s.mu.Unlock()
+	for c := range conns {
+		_ = c.Close()
+	}
+}
+
+// serveConn runs commands on a context the listener's shutdown does not cancel:
+// a command answered with the shutdown's own error reads as a refusal the
+// client would not retry. Shutdown closes the connection instead (#1902).
 func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
-	defer conn.Close() //nolint:errcheck
+	ctx = context.WithoutCancel(ctx)
+	s.mu.Lock()
+	s.conns[conn] = struct{}{}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.conns, conn)
+		s.mu.Unlock()
+		_ = conn.Close()
+	}()
 	rd := bufio.NewReaderSize(conn, proxy.MaxLine)
 	sess := &session{txs: map[uint32]dict.Tx{}}
 
