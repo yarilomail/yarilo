@@ -681,6 +681,9 @@ components:
     ## per-request dials never wait. 0 = built-in default (30); negative = do
     ## not wait at all.
     startup_wait: 30
+    ## Connections kept for waiting acquires (LOCK-WAIT). Sized for concurrent
+    ## waiters: each holds its connection for the length of its wait.
+    wait_pool_size: 64
 
     ## client — how OTHER components talk to auth's MASTER listener (userdb
     ## lookups from the jmap and fts resolvers), as opposed to the login pods

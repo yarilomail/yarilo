@@ -5,6 +5,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // clientBusyRetries counts blocking acquisitions that found the resource held
@@ -92,6 +93,24 @@ func attemptBucket(n int) string {
 
 // Where an acquisition's time goes inside the call that hides it: queueing for a
 // pool connection, against the exchange with the service (#1650).
+// clientDials counts the connections this process opens to the lock service.
+// A waiting acquire used to open one per call, and each open resolved the
+// service name again: 376 s of a 928 s waiting profile (#1875).
+var clientDials = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "yarilo_locks_client_dials_total",
+	Help: "Connections opened to the lock service, by the pool that needed one.",
+}, []string{"pool"})
+
+// Dials reports the dial count for one pool, for a row that asserts how many
+// connections a run of commands costs.
+func Dials(pool string) float64 {
+	m := &dto.Metric{}
+	if err := clientDials.WithLabelValues(pool).Write(m); err != nil {
+		return 0
+	}
+	return m.GetCounter().GetValue()
+}
+
 var clientPart = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Name:    "yarilo_locks_client_part_seconds",
 	Help:    "Time in one part of a command: waiting for a pool connection, or the exchange with the lock service on it.",

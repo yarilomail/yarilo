@@ -15,6 +15,18 @@ import (
 	"time"
 )
 
+// defaultWaitPoolSize is the number of connections kept for waiting acquires.
+// A waiting call holds its connection for as long as it waits -- up to the
+// caller's limit, tens of seconds -- so this is sized for concurrent waiters,
+// not for round trips: at fifty sessions with a few folders each, a pool much
+// smaller than this only moves the queue from the lock service into the pool.
+const defaultWaitPoolSize = 64
+
+// waitIdleTimeout closes a kept connection nobody has used for this long. A
+// pool that only ever grows holds a file descriptor and a server-side
+// connection for a burst that happened once.
+const waitIdleTimeout = 2 * time.Minute
+
 // defaultPoolSize is the number of concurrent control connections per Client.
 // Each connection handles one round-trip at a time; the pool lets goroutines
 // proceed in parallel instead of serialising through a single mutex.
@@ -24,6 +36,9 @@ const defaultPoolSize = 16
 type connSlot struct {
 	conn   net.Conn
 	reader *reader
+	// idleSince is when this slot was last returned; a slot idle past
+	// waitIdleTimeout is closed rather than reused.
+	idleSince time.Time
 }
 
 // Client is the Locker implementation talking the TAB-delimited wire protocol.
@@ -33,13 +48,23 @@ type connSlot struct {
 // Owner convention (not enforced): callers pass "<process>/<pid>/<sessionID>"
 // so the BUSY response identifies the contending peer in logs.
 type Client struct {
-	dial     Dialer
-	poolSize int
+	dial         Dialer
+	poolSize     int
+	waitPoolSize int
 
 	// idle is the connection pool: a buffered channel of available slots.
 	// Taking a slot gives exclusive access to its conn; returning it makes it
 	// available again. Cap = poolSize; starts with all-nil conns (lazy connect).
 	idle chan *connSlot
+
+	// The waiting pool: a semaphore for how many waits may be in flight, and
+	// a stack of connections kept for them. A stack, not a queue: the slot
+	// just returned is the one still connected, so reuse takes it first and
+	// the pool only ever holds as many connections as there were concurrent
+	// waits.
+	waitSem  chan struct{}
+	waitMu   sync.Mutex
+	waitFree []*connSlot
 
 	// holdsMu guards the holds map. Separate from the pool so HoldsResource is
 	// safe to call mid-roundtrip.
@@ -61,6 +86,16 @@ type ClientOption func(*Client)
 // WithPoolSize overrides the number of concurrent control connections.
 // The default is 16. Larger values reduce mutex contention under high
 // concurrency at the cost of more open TCP connections.
+// WithWaitPoolSize overrides the number of connections kept for waiting
+// acquires.
+func WithWaitPoolSize(n int) ClientOption {
+	return func(c *Client) {
+		if n > 0 {
+			c.waitPoolSize = n
+		}
+	}
+}
+
 func WithPoolSize(n int) ClientOption {
 	return func(c *Client) {
 		if n > 0 {
@@ -117,10 +152,11 @@ func DialTLS(addr string, tlsCfg *tls.Config) Dialer {
 // version handshake. Call Close to release all connections.
 func NewClient(ctx context.Context, dial Dialer, opts ...ClientOption) (*Client, error) {
 	c := &Client{
-		dial:     dial,
-		poolSize: defaultPoolSize,
-		holds:    make(map[uint64]map[string]hold),
-		closed:   make(chan struct{}),
+		dial:         dial,
+		poolSize:     defaultPoolSize,
+		waitPoolSize: defaultWaitPoolSize,
+		holds:        make(map[uint64]map[string]hold),
+		closed:       make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -129,6 +165,7 @@ func NewClient(ctx context.Context, dial Dialer, opts ...ClientOption) (*Client,
 	for i := 0; i < c.poolSize; i++ {
 		c.idle <- &connSlot{} // conn == nil → lazy connect on first use
 	}
+	c.waitSem = make(chan struct{}, c.waitPoolSize)
 	// Verify the server is reachable by connecting one slot eagerly.
 	slot := <-c.idle
 	if err := c.ensureConnected(ctx, slot); err != nil {
@@ -156,9 +193,69 @@ func (c *Client) handshakeSlot(slot *connSlot) error {
 // ensureConnected opens (or reopens) the connection for a pool slot.
 // Caller holds exclusive access to the slot (taken from the idle channel).
 func (c *Client) ensureConnected(ctx context.Context, slot *connSlot) error {
+	return c.ensureConnectedIn(ctx, slot, "control")
+}
+
+// WaitConnections reports how many kept connections the waiting pool holds.
+// Test-facing: the ceiling is a property, and a number is how it is asserted.
+func (c *Client) WaitConnections() int {
+	c.waitMu.Lock()
+	defer c.waitMu.Unlock()
+	n := 0
+	for _, slot := range c.waitFree {
+		if slot.conn != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// takeWaitSlot admits one waiting call and gives it a connection to use: the
+// most recently returned one, which is the one most likely still open.
+func (c *Client) takeWaitSlot(ctx context.Context) (*connSlot, error) {
+	select {
+	case <-c.closed:
+		return nil, ErrClosed
+	case <-ctx.Done():
+		return nil, waitFailure(ctx.Err())
+	case c.waitSem <- struct{}{}:
+	}
+	c.waitMu.Lock()
+	defer c.waitMu.Unlock()
+	for n := len(c.waitFree); n > 0; n = len(c.waitFree) {
+		slot := c.waitFree[n-1]
+		c.waitFree = c.waitFree[:n-1]
+		if slot.conn != nil && time.Since(slot.idleSince) > waitIdleTimeout {
+			_ = slot.conn.Close()
+			slot.conn, slot.reader = nil, nil
+		}
+		return slot, nil
+	}
+	return &connSlot{}, nil
+}
+
+// putWaitSlot returns a slot. A connection whose exchange did not finish is
+// not returned: the server may still write the answer the caller walked away
+// from into it.
+func (c *Client) putWaitSlot(slot *connSlot, reusable bool) {
+	if !reusable && slot.conn != nil {
+		_ = slot.conn.Close()
+		slot.conn, slot.reader = nil, nil
+	}
+	slot.idleSince = time.Now()
+	c.waitMu.Lock()
+	c.waitFree = append(c.waitFree, slot)
+	c.waitMu.Unlock()
+	<-c.waitSem
+}
+
+// ensureConnectedIn connects a slot of the named pool, counting the dial: a
+// connection kept is a name resolved once, and the counter is what says so.
+func (c *Client) ensureConnectedIn(ctx context.Context, slot *connSlot, pool string) error {
 	if slot.conn != nil {
 		return nil
 	}
+	clientDials.WithLabelValues(pool).Inc()
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
@@ -570,6 +667,16 @@ func (c *Client) Close() error {
 				// goroutine returns it after noticing c.closed.
 			}
 		}
+		// The waiting pool the same way: its connections are kept, so closing
+		// the client has to close them too.
+		c.waitMu.Lock()
+		for _, slot := range c.waitFree {
+			if slot.conn != nil {
+				_ = slot.conn.Close()
+			}
+		}
+		c.waitFree = nil
+		c.waitMu.Unlock()
 	})
 	return nil
 }

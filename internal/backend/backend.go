@@ -1353,7 +1353,8 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 		if lc.Socket == "" {
 			return nil, fmt.Errorf("locks_client.socket is required for embedded mode")
 		}
-		c, err := locks.NewClientWaiting(ctx, locks.DialUnix(lc.Socket), lc.StartupWait())
+		c, err := locks.NewClientWaiting(ctx, locks.DialUnix(lc.Socket), lc.StartupWait(),
+			locks.WithWaitPoolSize(lc.WaitPoolSize))
 		return c, err
 	case "remote":
 		if len(lc.Endpoints) == 0 {
@@ -1364,12 +1365,14 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 			if err != nil {
 				return nil, fmt.Errorf("locks_client mtls: %w", err)
 			}
-			c, cerr := locks.NewClientWaiting(ctx, locks.DialTLS(lc.Endpoints[0], tlsCfg), lc.StartupWait())
+			c, cerr := locks.NewClientWaiting(ctx, locks.DialTLS(lc.Endpoints[0], tlsCfg), lc.StartupWait(),
+				locks.WithWaitPoolSize(lc.WaitPoolSize))
 			return c, cerr
 		}
 		// Single-endpoint connect for now; failover across Endpoints is a
 		// follow-up (custom Dialer iterating the list until first success).
-		c, cerr := locks.NewClientWaiting(ctx, locks.DialTCP(lc.Endpoints[0]), lc.StartupWait())
+		c, cerr := locks.NewClientWaiting(ctx, locks.DialTCP(lc.Endpoints[0]), lc.StartupWait(),
+			locks.WithWaitPoolSize(lc.WaitPoolSize))
 		return c, cerr
 	default:
 		return nil, fmt.Errorf("locks_client: unknown mode %q (want remote | embedded | \"\")", lc.Mode)
