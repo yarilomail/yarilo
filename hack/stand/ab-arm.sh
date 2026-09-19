@@ -176,7 +176,22 @@ block_profile() {
     files+=("$OUT/block-$label-$pod-req${secs}s.pprof")
     port=$((port + 1))
   done
-  sleep 3
+  # Ready, not slept for: a fixed pause captured one pod and missed the other,
+  # and a forward that is not up yet writes no profile at all.
+  port=18080
+  for pod in $pods; do
+    local deadline=$(( $(date +%s) + 30 ))
+    until curl -fsS -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null; do
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        echo "ab-arm: the forward to $pod on $port never came up" >&2
+        for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+        return 1
+      fi
+      sleep 1
+    done
+    port=$((port + 1))
+  done
+
   port=18080
   local curls=()
   for pod in $pods; do
