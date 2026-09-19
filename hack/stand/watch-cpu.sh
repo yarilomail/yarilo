@@ -33,10 +33,13 @@ samples="$OUT/cpu-$LABEL.txt"
     jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable.cpu}{"\n"}{end}' 2>/dev/null
 } >> "$samples"
 
-echo "# samples: every ${EVERY}s, pod cpu from metrics-server" >> "$samples"
+# Per container, because the limit is per container: a pod-wide figure mixes
+# imap with pop3, lmtp and the api, and says nothing about the one that runs
+# the load.
+echo "# samples: every ${EVERY}s, per-container cpu from metrics-server" >> "$samples"
 while :; do
   ts=$(date +%H:%M:%S)
-  kube top pod --no-headers 2>/dev/null |
-    awk -v ts="$ts" '$1 ~ /backend|imaptest/ { printf "%s %s %s %s\n", ts, $1, $2, $3 }' >> "$samples"
+  kube top pod --containers --no-headers 2>/dev/null |
+    awk -v ts="$ts" '$1 ~ /backend|imaptest/ { printf "%s %s %s %s %s\n", ts, $1, $2, $3, $4 }' >> "$samples"
   sleep "$EVERY"
 done
