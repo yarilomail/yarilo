@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/dict/fail"
@@ -31,7 +32,7 @@ func readInt(t *testing.T, d dict.Dict, user, key string) int64 {
 
 func TestClone_FanOut(t *testing.T) {
 	d1, d2 := newMem(t), newMem(t)
-	c := NewClone([]dict.Dict{d1, d2})
+	c := NewClone([]dict.Dict{d1, d2}, time.Second)
 	c.Write(context.Background(), "u@x", Usage{StorageBytes: 4096, Messages: 7})
 
 	for _, d := range []dict.Dict{d1, d2} {
@@ -51,7 +52,7 @@ func TestClone_BestEffortPerTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fail dict: %v", err)
 	}
-	c := NewClone([]dict.Dict{bad, good})
+	c := NewClone([]dict.Dict{bad, good}, time.Second)
 	c.Write(context.Background(), "u@x", Usage{StorageBytes: 100, Messages: 1})
 
 	if got := readInt(t, good, "u@x", KeyStorage); got != 100 {
@@ -60,7 +61,7 @@ func TestClone_BestEffortPerTarget(t *testing.T) {
 }
 
 func TestClone_NilDisabled(t *testing.T) {
-	if NewClone(nil) != nil {
+	if NewClone(nil, time.Second) != nil {
 		t.Error("no targets should yield a nil (disabled) clone")
 	}
 	var c *Clone

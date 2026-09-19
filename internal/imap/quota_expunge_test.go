@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/internal/auth/authtest"
 
@@ -45,7 +46,7 @@ func startCloningServerAt(t *testing.T, dir string) (*imapclient.Client, dict.Di
 		Resolver:    &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
 		AuthRelay:   authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=100000"}),
 		QuotaEngine: true,
-		QuotaClone:  quota.NewClone([]dict.Dict{d}),
+		QuotaClone:  quota.NewClone([]dict.Dict{d}, 50*time.Millisecond),
 	}
 	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -102,18 +103,48 @@ func appendOne(t *testing.T, c *imapclient.Client, subject string) {
 	}
 }
 
+// The mirror is written off the session's path, on its own timer, so a reader
+// waits for the value rather than expecting it the instant a command returns
+// (#1875).
 func mirroredMessages(t *testing.T, d dict.Dict) int64 {
 	t.Helper()
-	vs, found, err := d.Lookup(context.Background(),
-		&dict.OpSettings{Username: "user@test.com"}, "priv/quota/messages")
-	if err != nil || !found || len(vs) == 0 {
-		t.Fatalf("the clone mirror holds no message count: found=%v err=%v", found, err)
+	var (
+		vs    [][]byte
+		found bool
+		err   error
+	)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		vs, found, err = d.Lookup(context.Background(),
+			&dict.OpSettings{Username: "user@test.com"}, "priv/quota/messages")
+		if err == nil && found && len(vs) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the clone mirror holds no message count: found=%v err=%v", found, err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	n, perr := strconv.ParseInt(string(vs[0]), 10, 64)
 	if perr != nil {
 		t.Fatalf("mirrored count %q: %v", vs[0], perr)
 	}
 	return n
+}
+
+// mirroredMessagesReaching waits for the mirror to hold want, and returns what
+// it holds when it stops waiting. The write is on a timer, so "the value is
+// there" is a question with a deadline, not an instant.
+func mirroredMessagesReaching(t *testing.T, d dict.Dict, want int64) int64 {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := mirroredMessages(t, d)
+		if got == want || time.Now().After(deadline) {
+			return got
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // A session that only deletes counts the account once, and every expunge after
@@ -152,7 +183,7 @@ func TestADeleteOnlySessionCountsOnceAndThenNotAtAll(t *testing.T) {
 	if got := expunge(1); got != 1 {
 		t.Errorf("the first expunge of a delete-only session counted %v times, want 1", got)
 	}
-	if got := mirroredMessages(t, d); got != 2 {
+	if got := mirroredMessagesReaching(t, d, 2); got != 2 {
 		t.Fatalf("the mirror holds %d messages after one of three was removed, want 2", got)
 	}
 
@@ -164,7 +195,7 @@ func TestADeleteOnlySessionCountsOnceAndThenNotAtAll(t *testing.T) {
 	}
 	// The zeros above mean nothing on their own: a folder with nothing left to
 	// remove also counts zero times. The mirror is what shows the deltas landed.
-	if got := mirroredMessages(t, d); got != 0 {
+	if got := mirroredMessagesReaching(t, d, 0); got != 0 {
 		t.Errorf("the mirror holds %d messages after all three were removed, want 0 -- "+
 			"the free expunges never reached the total", got)
 	}

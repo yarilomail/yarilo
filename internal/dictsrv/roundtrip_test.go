@@ -188,7 +188,7 @@ func TestOneFailingCloneTargetDoesNotFailTheSave(t *testing.T) {
 	bad := proxy.New(unreachableAddr(t), "quota_clone_mysql", nil)
 	t.Cleanup(func() { _ = bad.Close() })
 
-	clone := quota.NewClone([]dict.Dict{good, bad})
+	clone := quota.NewClone([]dict.Dict{good, bad}, 50*time.Millisecond)
 	done := make(chan struct{})
 	go func() {
 		clone.Write(context.Background(), "u1@d.test", quota.Usage{StorageBytes: 4242, Messages: 7})

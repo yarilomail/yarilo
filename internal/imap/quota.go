@@ -206,33 +206,24 @@ func (s *session) effectiveLimits(folder string) (quota.Limits, bool) {
 	return s.quotaPolicy().Scale(lim), false
 }
 
-// cloneMirror updates the quota_clone mirror with usage u, debounced: it writes
-// at most once per flush delay and otherwise defers the latest usage to the
-// final flush on session close. Mirrors the reference plugin's 10s flush timer.
+// cloneMirror hands the latest usage to the mirror, which writes it on its own
+// timer. The session never waits for a mirror: it is advisory, and the write
+// is two dict round trips (#1875).
 func (s *session) cloneMirror(u quota.Usage) {
 	if s.srv.opts.QuotaClone == nil || s.userInfo == nil {
 		return
 	}
-	if time.Since(s.cloneLastFlush) >= s.srv.opts.QuotaCloneFlushDelay {
-		s.cloneFlush(u)
-		return
-	}
-	s.cloneDirtyUsg, s.cloneDirty = u, true
+	// Records and returns: the write happens on the mirror's own timer, so a
+	// save never waits for two dict round trips (#1875).
+	s.srv.opts.QuotaClone.Mirror(s.userInfo.Username, u)
 }
 
-// cloneFlush writes u to the clone dicts now and resets the debounce state.
-func (s *session) cloneFlush(u quota.Usage) {
-	s.cloneLastFlush = time.Now()
-	s.cloneDirty = false
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s.srv.opts.QuotaClone.Write(ctx, s.userInfo.Username, u)
-}
-
-// cloneFlushFinal writes any deferred usage on session close.
+// cloneFlushFinal hands the user back to the mirror; the last session of a
+// user is where anything still pending is written, as the reference does in
+// deinit_pre.
 func (s *session) cloneFlushFinal() {
-	if s.srv.opts.QuotaClone != nil && s.cloneDirty && s.userInfo != nil {
-		s.cloneFlush(s.cloneDirtyUsg)
+	if s.srv.opts.QuotaClone != nil && s.userInfo != nil {
+		s.srv.opts.QuotaClone.Release(s.userInfo.Username)
 	}
 }
 
