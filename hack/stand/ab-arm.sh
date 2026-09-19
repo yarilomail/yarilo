@@ -329,6 +329,10 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # nobody can explain (#1881).
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-stalls.sh" "$OUT" "$ARM-$name" &
   watcher=$!
+  # CPU beside the run: waiting removed does not move a number bounded by work,
+  # and the ceiling has to be in the window rather than in someone's memory.
+  KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-cpu.sh" "$OUT" "$ARM-$name" 10 &
+  cpuwatch=$!
   lock_classes > "$OUT/locks-$ARM-$name-before.txt"
   if [ "$BLOCKPROFILE" = "1" ]; then
     dict_ops > "$OUT/dict-$ARM-$name-before.txt" || exit 1
@@ -346,6 +350,20 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
     dict_delta "$OUT/dict-$ARM-$name-before.txt" "$OUT/dict-$ARM-$name-after.txt" "$OUT/dict-$ARM-$name-delta.txt"
   fi
   wait "$watcher" 2>/dev/null || true
+  kill "$cpuwatch" 2>/dev/null || true
+  # The peak each side reached, so the reading does not need the whole file.
+  # Per container against its own limit: imap is the one under load, and its
+  # limit is one CPU whatever the pod totals say.
+  peak=$(awk '/^[0-9][0-9]:/ {
+                cpu=$4; sub("m","",cpu); cpu+=0
+                if ($3 == "yarilo-imap" && cpu > i) i=cpu
+                if ($2 ~ /imaptest/ && cpu > c) c=cpu
+                if ($1 != last) { last=$1; delete pod }
+                if ($2 ~ /backend/) { pod[$1"/"$2]+=cpu; if (pod[$1"/"$2] > p) p=pod[$1"/"$2] }
+              }
+              END { printf "imap_peak=%dm (limit 1000m) backend_pod_peak=%dm imaptest_peak=%dm", i, p, c }' \
+        "$OUT/cpu-$ARM-$name.txt" 2>/dev/null)
+  echo "$ARM $name cpu: ${peak:-unreadable}"
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)
   echo "$ARM $name logins=${logins:-?} stalls=$stalls"
