@@ -200,6 +200,10 @@ type Options struct {
 	// preamble carried a warden session id, each SELECT/EXAMINE/UNSELECT
 	// pushes the selected folder to warden for `who`.
 	WardenAddr string
+	// WardenEventQueue caps the SELECT events waiting for the warden writer;
+	// zero takes the built-in default. Full drops the oldest.
+	WardenEventQueue int
+
 	// WardenTLS optionally wraps the warden dialer with mTLS.
 	WardenTLS *tls.Config
 
@@ -299,7 +303,7 @@ func New(opts Options) *Server {
 
 	s := &Server{
 		opts:         opts,
-		wardenClient: newImapWardenClient(opts.WardenAddr, opts.WardenTLS),
+		wardenClient: newImapWardenClient(opts.WardenAddr, opts.WardenTLS, opts.WardenEventQueue),
 	}
 
 	caps := imaplib.CapSet{

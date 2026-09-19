@@ -785,6 +785,10 @@ data:
       listen: {{ $wardenListen | quote }}
       addr: {{ printf "%s-warden%s" (include "yarilo.fullname" .) $wardenListen | quote }}
       conns: {{ $wardenSvc.conns | default 0 }}
+      ## SELECT events a backend queues for the warden. They are accounting --
+      ## the warden records the folder for `who` and can refuse nothing -- so a
+      ## full queue drops the oldest rather than holding the command.
+      warden_service_event_queue_size: {{ $wardenSvc.event_queue_size | default 4096 | int64 }}
       state_backend: {{ $wardenSvc.state_backend | default "memory" | quote }}
       key_prefix: {{ $wardenSvc.key_prefix | default "yarilo:warden:" | quote }}
       channel_prefix: {{ $wardenSvc.channel_prefix | default "yarilo:warden:events:" | quote }}

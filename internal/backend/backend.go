@@ -318,6 +318,7 @@ func New(cfg *config.Config) (*Server, error) {
 			ConnLimit:          connLimiter,
 			// warden push of the SELECTed mailbox, used by `yarctl who`
 			WardenAddr:           cfg.WardenService.ClientAddr(),
+			WardenEventQueue:     cfg.WardenService.EventQueueSize,
 			WardenTLS:            authTLS,
 			IDSend:               p.IDSend,
 			LoginGreeting:        p.LoginGreeting,

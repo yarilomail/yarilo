@@ -35,10 +35,13 @@ func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Conn, error)
 		return nil, fmt.Errorf("warden/client: dial %s: %w", addr, err)
 	}
 	c := &Conn{conn: raw, rd: bufio.NewReaderSize(raw, 512)}
+	// The dial timeout covers the connect; the greeting is a read of its own.
+	_ = raw.SetDeadline(time.Now().Add(timeout))
 	if err := c.readHandshake(); err != nil {
 		raw.Close()
 		return nil, err
 	}
+	_ = raw.SetDeadline(time.Time{})
 	return c, nil
 }
 
@@ -252,6 +255,14 @@ func (c *Conn) Select(id, folder string) error {
 		return fmt.Errorf("warden/client: unexpected SELECT response: %q", line)
 	}
 	return nil
+}
+
+// SetDeadline bounds one exchange; without it a silent server holds its caller.
+func (c *Conn) SetDeadline(t time.Time) error {
+	if c == nil || c.conn == nil {
+		return nil
+	}
+	return c.conn.SetDeadline(t)
 }
 
 // Backend records the backend pod IP a session was routed to (#814). The login
