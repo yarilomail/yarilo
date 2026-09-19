@@ -992,6 +992,13 @@ components:
       ## time — each is a sub-ms round trip, so a handful covers any login rate.
       conns: 0
 
+      ## event_queue_size — SELECT events a backend queues for the warden
+      ## writer. The events are accounting: the warden records the folder so
+      ## `who` can render it, answers OK, and can refuse nothing. So a full
+      ## queue drops the oldest (counted in yarilo_warden_events_dropped_total)
+      ## rather than holding a command on the session's path (#1875).
+      event_queue_size: 4096
+
       ## state_backend (#908) — shared-state store.
       ##   "memory": in-process, single replica (replicas MUST stay 1).
       ##   "redis":  survives a restart and is shared across replicas; required

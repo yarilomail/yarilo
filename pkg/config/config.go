@@ -956,6 +956,10 @@ type WardenServiceConfig struct {
 	// from the login rate. The protocol has no request id — one connection
 	// serves one command at a time. 0 = warden.DefaultPoolSize.
 	Conns int `koanf:"conns"`
+	// EventQueueSize caps the SELECT events a backend queues for the warden
+	// writer. The events are accounting, so a full queue drops the oldest
+	// rather than holding a command; zero takes the built-in default.
+	EventQueueSize int `koanf:"warden_service_event_queue_size"`
 	// StateBackend selects the shared-state store: "memory" (default, single
 	// replica) or "redis" (survives restart, required for replicas > 1).
 	StateBackend string `koanf:"state_backend"`
