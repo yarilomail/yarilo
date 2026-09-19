@@ -52,6 +52,13 @@ last_built_tag() {
 # from that cache by rule: pullPolicy is IfNotPresent, so a cached tag starts.
 # Checked on the node itself, not in the registry (#1875).
 NODE_SSH="${YARILO_NODE_SSH:-ssh -J ncjump -o BatchMode=yes -o ConnectTimeout=15 root@10.50.80.24}"
+# node_reachable says whether the node can be asked at all. From a laptop with
+# the jump host open it can; from the runner, which has no such access, it
+# cannot -- and "cannot ask" must not read as "the image is not there".
+node_reachable() {
+  $NODE_SSH "true" >/dev/null 2>&1
+}
+
 cached_on_node() {
   # Anchored on both ends of the reference: ctr prints one full reference per
   # line, and an unanchored match answers "yes" for dev.676 when asked about
@@ -63,14 +70,16 @@ cached_on_node() {
 
 tag_exists "$TAG" && rc=0 || rc=$?
 if [ "$rc" != 0 ]; then
-  if cached_on_node "$TAG"; then
+  if ! node_reachable; then
+    # The rollout is the authoritative check: an image the node does not have
+    # leaves the pods in ImagePullBackOff, and the wait below fails on it.
+    echo "-- tag $TAG is not in the registry and the node cannot be asked from here; the rollout decides" |
+      tee "$OUT/tag-$ARM-unverified.txt"
+  elif cached_on_node "$TAG"; then
     echo "-- tag $TAG is not in the registry and is cached on the node; the arm runs from the cache" |
       tee "$OUT/tag-$ARM-from-node-cache.txt"
-  elif [ "$rc" = 1 ]; then
-    echo "ab-arm: no image for tag $TAG, in the registry or on the node; the last built tag is $(last_built_tag)" >&2
-    exit 1
   else
-    echo "ab-arm: could not read the registry to check tag $TAG, and the node does not cache it" >&2
+    echo "ab-arm: no image for tag $TAG, in the registry or on the node; the last built tag is $(last_built_tag)" >&2
     exit 1
   fi
 fi
@@ -239,6 +248,29 @@ until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ];
   [ "$(date +%s)" -lt "$deadline" ] || { echo "ab-arm: pods did not settle" >&2; exit 1; }
   sleep 10
 done
+
+# What actually runs, read from the pods: a rollout that quietly left the old
+# pod in place, or a tag that resolved elsewhere, is otherwise invisible -- and
+# on a path where the image could not be verified beforehand, this is the
+# proof (#1875).
+running_images() {
+  kube get pods -l app.kubernetes.io/component=backend -o \
+    jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.containerStatuses[?(@.name=="yarilo-imap")]}{.image}{"\t"}{.imageID}{end}{"\n"}{end}' 2>/dev/null
+}
+running_images > "$OUT/image-$ARM.txt"
+echo "-- running image: $(head -1 "$OUT/image-$ARM.txt" | awk '{print $2}')"
+# Every backend, not any: a rollout that left one pod behind is the case this
+# exists for, and half a window is not a window.
+if ! [ -s "$OUT/image-$ARM.txt" ]; then
+  echo "ab-arm: no backend reported a running image" >&2
+  exit 1
+fi
+wrong=$(grep -v ":$TAG[[:space:]]" "$OUT/image-$ARM.txt" | grep -v ":$TAG$" || true)
+if [ -n "$wrong" ]; then
+  echo "ab-arm: not every backend runs $TAG:" >&2
+  printf '%s\n' "$wrong" >&2
+  exit 1
+fi
 
 echo "-- same start: emptying u1-u150"
 for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
