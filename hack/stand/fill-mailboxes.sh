@@ -35,10 +35,10 @@ messages_in() {
 # One connection per user, every message in it: a connection per message spends
 # the whole fill in handshakes.
 deliver_user() {
-  local user="$1"
+  local user="$1" want="${2:-$COUNT}"
   {
     printf 'LHLO fill.invalid\r\n'
-    for i in $(seq 1 "$COUNT"); do
+    for i in $(seq 1 "$want"); do
       printf 'MAIL FROM:<fill@test.invalid>\r\nRCPT TO:<%s>\r\nDATA\r\n' "$user"
       printf 'Subject: fill %s\r\nFrom: <fill@test.invalid>\r\nTo: <%s>\r\nDate: Thu, 18 Sep 2026 12:00:00 +0000\r\nMessage-ID: <fill-%s-%s@test.invalid>\r\n\r\n' \
         "$i" "$user" "$i" "$user"
@@ -68,11 +68,20 @@ fi
 acked=0
 for n in $(seq "$FROM" "$TO"); do
   user="u${n}@${DOMAIN}"
-  # A mailbox already at COUNT is skipped: delivering into it would put it
-  # past the number the arm promises.
   have=$(messages_in "$user")
-  [ "${have:-0}" = "$COUNT" ] && continue
-  out=$(deliver_user "$user") || true
+  have=${have:-0}
+  if [ "$have" -eq "$COUNT" ]; then
+    continue
+  elif [ "$have" -gt "$COUNT" ]; then
+    # Not ours to correct: a mailbox past the number was filled by something
+    # else, and topping up or ignoring it both make the arm a liar.
+    echo "fill: $user holds $have messages, more than the $COUNT asked for" >&2
+    exit 1
+  fi
+  # The remainder only: the mailbox a lost connection left half full is the
+  # one that most needs resuming, and a second full delivery would break the
+  # proof exactly there.
+  out=$(deliver_user "$user" "$((COUNT - have))") || true
   # Informational: what the transport said, for a failure to be readable.
   acked=$((acked + $(printf '%s\n' "$out" | grep -o '250 2\.0\.0' | wc -l | tr -d ' ')))
 done
