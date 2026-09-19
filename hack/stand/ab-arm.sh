@@ -133,17 +133,27 @@ FILL="${YARILO_ARM_FILL:-200}"
 # dict_ops prints the dict service's operation counters, one per line. Read
 # either side of a run, the difference is what that run asked of the service.
 dict_ops() {
-  local pod page
-  pod=$(kube get pods -l app.kubernetes.io/component=dict -o name 2>/dev/null | head -1 | cut -d/ -f2)
-  if [ -z "$pod" ]; then
-    echo "ab-arm: no dict pod in $NS; the dict counters cannot be read" >&2
-    return 1
-  fi
-  page=$(kube exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
-  if [ -z "$page" ]; then
-    echo "ab-arm: $pod does not answer on /metrics; the dict counters cannot be read" >&2
-    return 1
-  fi
+  local pod page deadline
+  # A blink of the network reads exactly like a silent pod, and it costs the
+  # arm its fill -- half an hour of deliveries. So the read is retried to a
+  # deadline, and the two causes are told apart before giving up.
+  deadline=$(( $(date +%s) + 60 ))
+  while :; do
+    pod=$(kube get pods -l app.kubernetes.io/component=dict -o name 2>/dev/null | head -1 | cut -d/ -f2)
+    if [ -n "$pod" ]; then
+      page=$(kube exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
+      [ -n "$page" ] && break
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      if kube get nodes >/dev/null 2>&1; then
+        echo "ab-arm: ${pod:-the dict pod} does not answer on /metrics; the dict counters cannot be read" >&2
+      else
+        echo "ab-arm: the cluster API is unreachable; the dict counters cannot be read" >&2
+      fi
+      return 1
+    fi
+    sleep 5
+  done
   # Only the absence of these series is an answer -- a dict nobody asked
   # anything of. The page itself is never empty.
   printf '%s\n' "$page" | grep "^yarilo_dict_operations_total{" || true
