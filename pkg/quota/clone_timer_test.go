@@ -137,3 +137,35 @@ func TestTheLastSessionFlushes(t *testing.T) {
 		t.Errorf("the final write carried %d bytes, want 7", got)
 	}
 }
+
+// A pod that stops writes what nobody was left to flush: a user whose timer had
+// not fired and who has no open session would otherwise be lost (#1875).
+func TestCloseFlushesWhatIsPending(t *testing.T) {
+	c, d := cloneWith(t, time.Hour) // only Close can write inside the test
+	c.Mirror("u1@d.test", Usage{StorageBytes: 99, Messages: 3})
+
+	if n := d.writes.Load(); n != 0 {
+		t.Fatalf("the mirror wrote %d times before Close", n)
+	}
+	c.Close()
+	if n := d.writes.Load(); n != 1 {
+		t.Errorf("Close wrote %d times, want 1", n)
+	}
+	if got := d.last.Load(); got != 99 {
+		t.Errorf("Close wrote %d bytes, want the pending 99", got)
+	}
+}
+
+// Close also waits for a write already on its way, so a stopping pod does not
+// cut one in half.
+func TestCloseWaitsForAReleaseAlreadyFlushing(t *testing.T) {
+	c, d := cloneWith(t, time.Hour)
+	c.Acquire("u1@d.test")
+	c.Mirror("u1@d.test", Usage{StorageBytes: 5, Messages: 1})
+	c.Release("u1@d.test") // flushes on its own goroutine
+
+	c.Close()
+	if n := d.writes.Load(); n != 1 {
+		t.Errorf("after Close the mirror has %d writes, want exactly 1", n)
+	}
+}

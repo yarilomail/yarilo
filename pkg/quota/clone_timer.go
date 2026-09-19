@@ -63,16 +63,56 @@ func (c *Clone) Release(user string) {
 	}
 	p.refs--
 	last := p.refs <= 0
+	if last {
+		c.inflight.Add(1)
+	}
 	c.mu.Unlock()
 	if last {
+		// Off this goroutine as well: closing a session is not the place to
+		// wait for a mirror either. Close() waits for these before returning.
+		go func() {
+			defer c.inflight.Done()
+			c.flush(user)
+		}()
+	}
+}
+
+// Close flushes everything still pending and waits for the writes already on
+// their way. A pod that stops otherwise loses every user whose timer had not
+// fired and who had no session left to release them; the reference writes at
+// deinit for the same reason.
+func (c *Clone) Close() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.closed, c.draining = true, true
+	users := make([]string, 0, len(c.state))
+	for user, p := range c.state {
+		if p.dirty {
+			users = append(users, user)
+		}
+	}
+	c.mu.Unlock()
+	for _, user := range users {
 		c.flush(user)
 	}
+	c.mu.Lock()
+	c.draining = false
+	c.mu.Unlock()
+	c.inflight.Wait()
 }
 
 // flush writes the last value held for user, if any, and disarms. Runs off the
 // session's goroutine in every case.
 func (c *Clone) flush(user string) {
 	c.mu.Lock()
+	if c.closed && !c.draining {
+		// A timer that fires after Close has nothing to add: Close wrote what
+		// was pending and is waiting for the writes already under way.
+		c.mu.Unlock()
+		return
+	}
 	p, ok := c.state[user]
 	if !ok || !p.dirty {
 		if ok {

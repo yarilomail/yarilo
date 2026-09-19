@@ -23,9 +23,12 @@ type Clone struct {
 	// delay is how long a change waits before it is mirrored; state holds the
 	// latest usage per user until then. Nothing on a session's path waits for
 	// either (see clone_timer.go).
-	delay time.Duration
-	mu    sync.Mutex
-	state map[string]*pending
+	delay    time.Duration
+	mu       sync.Mutex
+	state    map[string]*pending
+	closed   bool
+	draining bool
+	inflight sync.WaitGroup
 }
 
 // NewClone returns a Clone over targets, or nil when none are configured so

@@ -668,11 +668,10 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 						if len(s.opts.QuotaPolicy.Warnings) > 0 {
 							s.opts.QuotaWarner.Fire(username, userInfo.Home, s.opts.QuotaPolicy.Warnings, s.opts.QuotaPolicy.Scale(lim), u, after)
 						}
-						if s.opts.QuotaClone != nil {
-							cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
-							s.opts.QuotaClone.Write(cctx, username, after)
-							ccancel()
-						}
+						// Recorded, not written here: a delivery is where usage
+						// changes most, and it must not wait for two dict round
+						// trips (#1875). The mirror writes on its own timer.
+						s.opts.QuotaClone.Mirror(username, after)
 					}
 				}
 			}

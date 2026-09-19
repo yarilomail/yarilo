@@ -55,6 +55,7 @@ type Server struct {
 	lmtp        *lmtp.Server    // nil if LMTP not configured
 	managesieve *mssvr.Server   // nil if ManageSieve not configured
 	locker      locks.Locker    // cross-process write coordinator; nil = disabled
+	quotaClone  *quota.Clone    // usage mirror; flushed on Close
 
 	// Per-protocol TLS configs, kept so each Run* binds its listener before
 	// reporting readiness. New cannot bind: the co-located pod runs one
@@ -67,6 +68,9 @@ type Server struct {
 // Close releases backend resources. Session binaries should defer Close after
 // backend.New for clean lock and dict release.
 func (s *Server) Close() error {
+	// The mirror first: it holds values no session is left to flush, and the
+	// locks client may be what its writes travel through.
+	s.quotaClone.Close()
 	if s.locker != nil {
 		return s.locker.Close()
 	}
@@ -565,6 +569,7 @@ func New(cfg *config.Config) (*Server, error) {
 		lmtp:        lmtpServer,
 		managesieve: msServer,
 		locker:      locker,
+		quotaClone:  quotaClone,
 
 		imapTLS:       imapTLS,
 		pop3TLS:       pop3TLS,
