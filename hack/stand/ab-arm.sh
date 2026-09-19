@@ -178,12 +178,16 @@ block_profile() {
   done
   sleep 3
   port=18080
+  local curls=()
   for pod in $pods; do
     curl -fsS -o "$OUT/block-$label-$pod-req${secs}s.pprof" \
       "http://127.0.0.1:$port/debug/pprof/block?seconds=$secs" &
+    curls+=($!)
     port=$((port + 1))
   done
-  wait
+  # Only the captures: a bare wait also waits for the port-forwards, which
+  # never exit, and the arm stops there for ever (seen: 80 minutes).
+  for pid in "${curls[@]}"; do wait "$pid" || rc=1; done
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
   # An empty file is a capture that did not happen, and it reads exactly like
   # a pod where nobody waited.
