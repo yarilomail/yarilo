@@ -20,15 +20,34 @@ LMTP_HOST="${LMTP_HOST:-yarilo-lmtp-login}"
 LMTP_PORT="${LMTP_PORT:-24}"
 BODY_LINES="${YARILO_FILL_LINES:-24}"
 
-kube() { kubectl --kubeconfig="$KCFG" -n "$NS" "$@"; }
+# --request-timeout so a call that hangs becomes an error instead of a script
+# that waits for ever: an arm stood six hours on one (#1875).
+kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 
 pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
 # The index, not the transcript, answers whether a mailbox is filled.
 [ -n "$pod" ] || { echo "fill: no backend pod in $NS" >&2; exit 1; }
 
 # messages_in prints how many messages the index holds for one mailbox.
+# A failed read answers "unknown", not "the script is over": under set -e a
+# command substitution that fails ends the run with no line in the log, which
+# is how an arm died silently mid-fill (#1875).
 messages_in() {
-  kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
+  local out rc
+  out=$(kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>&1) || rc=$?
+  if [ "${rc:-0}" != "0" ]; then
+    case "$out" in
+      *"no mail home"*)
+        # Not an error: a wiped mailbox has no home until the first delivery.
+        echo "0"
+        return 0
+        ;;
+    esac
+    echo "fill: could not read the index for $1: ${out%%$'\n'*}" >&2
+    echo "-1"
+    return 0
+  fi
+  printf '%s\n' "$out" |
     awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'
 }
 
@@ -70,6 +89,10 @@ for n in $(seq "$FROM" "$TO"); do
   user="u${n}@${DOMAIN}"
   have=$(messages_in "$user")
   have=${have:-0}
+  if [ "$have" -lt 0 ]; then
+    # Unknown: deliver the whole count and let the proof below decide.
+    have=0
+  fi
   if [ "$have" -eq "$COUNT" ]; then
     continue
   elif [ "$have" -gt "$COUNT" ]; then

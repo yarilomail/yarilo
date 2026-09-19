@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# An arm that ends anywhere but its own last line says so: three runs died
+# inside the fill leaving only the line before it (#1875).
+trap 'rc=$?; [ "$rc" = 0 ] || echo "ab-arm: arm ${ARM:-?} ended at line $LINENO with status $rc" >&2' EXIT
+
 ARM="${1:?arm label}"
 TAG="${2:?image tag}"
 OUT="${3:?output directory}"
@@ -18,7 +22,7 @@ NS="${YARILO_NS:-yarilo-sb}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-kube() { kubectl --kubeconfig="$KCFG" -n "$NS" "$@"; }
+kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 mkdir -p "$OUT"
 
 IMAGE_REPO="${YARILO_IMAGE_REPO:-yarilomail/yarilo}"
