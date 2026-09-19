@@ -259,8 +259,16 @@ running_images() {
 }
 running_images > "$OUT/image-$ARM.txt"
 echo "-- running image: $(head -1 "$OUT/image-$ARM.txt" | awk '{print $2}')"
-if ! grep -q ":$TAG[[:space:]]" "$OUT/image-$ARM.txt" && ! grep -q ":$TAG$" "$OUT/image-$ARM.txt"; then
-  echo "ab-arm: the backends run $(head -1 "$OUT/image-$ARM.txt" | awk '{print $2}'), not $TAG" >&2
+# Every backend, not any: a rollout that left one pod behind is the case this
+# exists for, and half a window is not a window.
+if ! [ -s "$OUT/image-$ARM.txt" ]; then
+  echo "ab-arm: no backend reported a running image" >&2
+  exit 1
+fi
+wrong=$(grep -v ":$TAG[[:space:]]" "$OUT/image-$ARM.txt" | grep -v ":$TAG$" || true)
+if [ -n "$wrong" ]; then
+  echo "ab-arm: not every backend runs $TAG:" >&2
+  printf '%s\n' "$wrong" >&2
   exit 1
 fi
 
