@@ -26,6 +26,12 @@ pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | c
 # The index, not the transcript, answers whether a mailbox is filled.
 [ -n "$pod" ] || { echo "fill: no backend pod in $NS" >&2; exit 1; }
 
+# messages_in prints how many messages the index holds for one mailbox.
+messages_in() {
+  kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
+    awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'
+}
+
 # One connection per user, every message in it: a connection per message spends
 # the whole fill in handshakes.
 deliver_user() {
@@ -43,18 +49,29 @@ deliver_user() {
   } | kube exec -i "$pod" -c yarilo-imap -- nc -w 60 "$LMTP_HOST" "$LMTP_PORT" 2>&1
 }
 
-# messages_in prints how many messages the index holds for one mailbox. This
-# is the proof that a fill happened: the LMTP transcript is a stream, and
-# counting its lines counted 18 of 30000 deliveries as refused that the server
-# had accepted and the index had (#1875).
-messages_in() {
-  kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
-    awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'
-}
+# A range that is already filled is left alone: the fill is the expensive part
+# of an arm -- thirty thousand deliveries -- and a run that lost its connection
+# should resume, not start over (#1875).
+already=1
+for n in $(seq "$FROM" "$TO"); do
+  have=$(messages_in "u${n}@${DOMAIN}")
+  if [ "${have:-0}" != "$COUNT" ]; then
+    already=0
+    break
+  fi
+done
+if [ "$already" = "1" ]; then
+  echo "fill: in_index=$(( (TO - FROM + 1) * COUNT )) acked=0 users=$((TO - FROM + 1)) per_user=$COUNT (already filled)"
+  exit 0
+fi
 
 acked=0
 for n in $(seq "$FROM" "$TO"); do
   user="u${n}@${DOMAIN}"
+  # A mailbox already at COUNT is skipped: delivering into it would put it
+  # past the number the arm promises.
+  have=$(messages_in "$user")
+  [ "${have:-0}" = "$COUNT" ] && continue
   out=$(deliver_user "$user") || true
   # Informational: what the transport said, for a failure to be readable.
   acked=$((acked + $(printf '%s\n' "$out" | grep -o '250 2\.0\.0' | wc -l | tr -d ' ')))
