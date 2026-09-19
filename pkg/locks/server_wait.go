@@ -180,6 +180,12 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 // is called before the answer, never after: a client that reads the answer may
 // send its next command immediately, and a watcher still in Read would eat the
 // first byte of it (#1875).
+// watchStopDelay is a test seam. Stopping the watcher before the answer means
+// the delay happens while the client cannot yet have sent anything; stopping
+// it after means the client's next command arrives while the watcher is still
+// in Read, and it is eaten. Zero in production.
+var watchStopDelay time.Duration
+
 func watchClose(conn net.Conn) (gone <-chan struct{}, stop func()) {
 	done := make(chan struct{})
 	go func() {
@@ -190,6 +196,9 @@ func watchClose(conn net.Conn) (gone <-chan struct{}, stop func()) {
 	var once sync.Once
 	return done, func() {
 		once.Do(func() {
+			if watchStopDelay > 0 {
+				time.Sleep(watchStopDelay)
+			}
 			_ = conn.SetReadDeadline(time.Now().Add(-time.Second))
 			<-done
 			_ = conn.SetReadDeadline(time.Time{})

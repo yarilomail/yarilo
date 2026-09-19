@@ -141,9 +141,16 @@ func TestAWaitRightAfterAWaitIsServed(t *testing.T) {
 	client := l.(*locks.Client)
 	ctx := locks.WithSite(context.Background(), "wait-pool-row")
 
+	// The window between answering and letting the connection go is widened,
+	// so the order of those two is a property this row measures rather than
+	// one argued from the code: with the answer written first, the watcher is
+	// still in Read when the next command arrives and eats it.
+	locks.SetWatchStopDelay(200 * time.Millisecond)
+	defer locks.SetWatchStopDelay(0)
+
 	// Repeated: the failure this guards is a race between the server's watcher
 	// and the next command, and one pass proves little.
-	for i := 0; i < 25; i++ {
+	for i := 0; i < 5; i++ {
 		lk, err := client.LockWaiting(ctx, "res", locks.Owner("u1@d.test", "w"), time.Minute, 2*time.Second, false)
 		if err != nil {
 			t.Fatalf("wait %d: %v", i, err)

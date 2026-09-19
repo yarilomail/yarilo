@@ -166,6 +166,10 @@ func NewClient(ctx context.Context, dial Dialer, opts ...ClientOption) (*Client,
 		c.idle <- &connSlot{} // conn == nil → lazy connect on first use
 	}
 	c.waitSem = make(chan struct{}, c.waitPoolSize)
+	// Swept on a timer, not only when the next waiting call takes a slot: a
+	// pool nobody uses would otherwise hold its connections -- and the
+	// server's -- until the process ended.
+	go c.sweepWaitPool()
 	// Verify the server is reachable by connecting one slot eagerly.
 	slot := <-c.idle
 	if err := c.ensureConnected(ctx, slot); err != nil {
@@ -210,6 +214,30 @@ func (c *Client) WaitConnections() int {
 	return n
 }
 
+// sweepWaitPool closes kept connections nobody has used for waitIdleTimeout.
+func (c *Client) sweepWaitPool() {
+	t := time.NewTicker(waitIdleTimeout / 2)
+	defer t.Stop()
+	for {
+		select {
+		case <-c.closed:
+			return
+		case <-t.C:
+			c.waitMu.Lock()
+			kept := c.waitFree[:0]
+			for _, slot := range c.waitFree {
+				if slot.conn != nil && time.Since(slot.idleSince) > waitIdleTimeout {
+					_ = slot.conn.Close()
+					slot.conn, slot.reader = nil, nil
+				}
+				kept = append(kept, slot)
+			}
+			c.waitFree = kept
+			c.waitMu.Unlock()
+		}
+	}
+}
+
 // takeWaitSlot admits one waiting call and gives it a connection to use: the
 // most recently returned one, which is the one most likely still open.
 func (c *Client) takeWaitSlot(ctx context.Context) (*connSlot, error) {
@@ -222,7 +250,7 @@ func (c *Client) takeWaitSlot(ctx context.Context) (*connSlot, error) {
 	}
 	c.waitMu.Lock()
 	defer c.waitMu.Unlock()
-	for n := len(c.waitFree); n > 0; n = len(c.waitFree) {
+	if n := len(c.waitFree); n > 0 {
 		slot := c.waitFree[n-1]
 		c.waitFree = c.waitFree[:n-1]
 		if slot.conn != nil && time.Since(slot.idleSince) > waitIdleTimeout {
