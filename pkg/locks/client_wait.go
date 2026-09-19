@@ -66,39 +66,45 @@ func holdKind(shared bool) HoldMode {
 	return HoldExclusive
 }
 
-// soloExchange runs one command on a connection opened for it and closed after,
+// soloExchange runs one waiting command on a connection from the waiting pool,
 // with a deadline covering the wait the server is allowed to hold it open for.
+//
+// A waiting call cannot share the control pool: the server may hold the request
+// open for the whole wait, and a control slot held that long would starve every
+// ordinary round trip. It does not need a new connection either -- opening one
+// per call meant resolving the service name per call, which was 376 s of a
+// 928 s waiting profile (#1875). So: its own pool, kept connected.
 func (c *Client) soloExchange(ctx context.Context, limit time.Duration, cmd ...string) ([]string, string, error) {
-	conn, err := c.dial(ctx)
+	slot, err := c.takeWaitSlot(ctx)
 	if err != nil {
-		return nil, "", fmt.Errorf("locks/client: connect: %w: %w", ErrUnavailable, err)
+		return nil, "", err
 	}
-	defer func() { _ = conn.Close() }()
+	ok := false
+	defer func() { c.putWaitSlot(slot, ok) }()
+
+	if cerr := c.ensureConnectedIn(ctx, slot, "wait"); cerr != nil {
+		return nil, "", fmt.Errorf("locks/client: connect: %w: %w", ErrUnavailable, cerr)
+	}
+	conn := slot.conn
 	addr := conn.RemoteAddr().String()
 
 	// The server may hold the request for the whole wait; the margin covers the
-	// handshake and the reply after the grant.
+	// reply after the grant.
 	_ = conn.SetDeadline(time.Now().Add(limit + 5*time.Second))
-	if deadline, ok := ctx.Deadline(); ok && deadline.Before(time.Now().Add(limit+5*time.Second)) {
+	if deadline, dok := ctx.Deadline(); dok && deadline.Before(time.Now().Add(limit+5*time.Second)) {
 		_ = conn.SetDeadline(deadline)
 	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
-	if err := writeFields(conn, cmdVersion, protocolVersion); err != nil {
-		return nil, addr, fmt.Errorf("locks/client: handshake: %w", err)
-	}
-	rd := newReader(conn)
-	hs, err := rd.readFields()
-	if err != nil || len(hs) < 3 || hs[2] != respOK {
-		return nil, addr, fmt.Errorf("locks/client: handshake failed: %w", ErrProtocol)
-	}
 	if err := writeFields(conn, cmd...); err != nil {
 		return nil, addr, fmt.Errorf("locks/client: send: %w", err)
 	}
-	resp, err := rd.readFields()
+	resp, err := slot.reader.readFields()
 	if err != nil {
 		return nil, addr, fmt.Errorf("locks/client: read: %w", err)
 	}
+	_ = conn.SetDeadline(time.Time{})
+	ok = true
 	return resp, addr, nil
 }

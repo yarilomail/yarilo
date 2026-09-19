@@ -23,7 +23,12 @@ type Server struct {
 
 	closing chan struct{}
 	closeMu sync.Mutex
-	closed  bool
+
+	// conns are the open connections, so a shutdown can end the reads that
+	// are waiting for the next command on a kept connection (#1875).
+	connMu sync.Mutex
+	conns  map[net.Conn]struct{}
+	closed bool
 
 	wg sync.WaitGroup
 }
@@ -118,7 +123,36 @@ func (s *Server) Close() {
 	s.closed = true
 	close(s.closing)
 	s.closeMu.Unlock()
+	// A client keeps its connections now (#1875), so a reader blocked on the
+	// next command would hold the shutdown open until the peer went away. The
+	// deadline in the past ends those reads; the loops then see s.closing.
+	s.unblockConns()
 	s.wg.Wait()
+}
+
+// trackConn and untrackConn keep the open connections so shutdown can unblock
+// their readers.
+func (s *Server) trackConn(conn net.Conn) {
+	s.connMu.Lock()
+	if s.conns == nil {
+		s.conns = map[net.Conn]struct{}{}
+	}
+	s.conns[conn] = struct{}{}
+	s.connMu.Unlock()
+}
+
+func (s *Server) untrackConn(conn net.Conn) {
+	s.connMu.Lock()
+	delete(s.conns, conn)
+	s.connMu.Unlock()
+}
+
+func (s *Server) unblockConns() {
+	s.connMu.Lock()
+	for conn := range s.conns {
+		_ = conn.SetReadDeadline(time.Now().Add(-time.Second))
+	}
+	s.connMu.Unlock()
 }
 
 // handleConn serves a single connection.
@@ -127,7 +161,11 @@ func (s *Server) Close() {
 // invokes SUBSCRIBE leaves the command loop and streams events until the
 // peer closes the conn or its subscription context is cancelled.
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
-	defer func() { _ = conn.Close() }()
+	s.trackConn(conn)
+	defer func() {
+		s.untrackConn(conn)
+		_ = conn.Close()
+	}()
 	peer := conn.RemoteAddr().String()
 	r := newReader(conn)
 
@@ -159,11 +197,15 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		case cmdLock:
 			s.handleLock(ctx, conn, fields, peer)
 		case cmdLockWait:
-			s.handleLockWait(ctx, conn, fields, peer, false)
-			return // the wait watched the connection; its reader is spent
+			// The wait watched the connection and let it go before answering,
+			// so the reader is the command loop's again (#1875).
+			if !s.handleLockWait(ctx, conn, fields, peer, false) {
+				return
+			}
 		case cmdLockSharedWait:
-			s.handleLockWait(ctx, conn, fields, peer, true)
-			return
+			if !s.handleLockWait(ctx, conn, fields, peer, true) {
+				return
+			}
 		case cmdLockShared:
 			s.handleLockShared(ctx, conn, fields, peer)
 		case cmdUnlock:

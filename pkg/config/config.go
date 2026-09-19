@@ -1114,6 +1114,11 @@ type LocksClientConfig struct {
 	// StartupWaitSeconds bounds the first wait for the lock service. Zero
 	// selects the default; negative disables waiting (#1350).
 	StartupWaitSeconds int `koanf:"locks_client_startup_wait"`
+	// WaitPoolSize caps the connections kept for waiting acquires. A waiting
+	// call holds its connection for as long as it waits, so this is sized for
+	// concurrent waiters rather than for round trips; zero selects the
+	// built-in default.
+	WaitPoolSize int `koanf:"locks_client_wait_pool_size"`
 }
 
 // DefaultAuthStartupWait is the built-in bound for waiting on auth at startup.

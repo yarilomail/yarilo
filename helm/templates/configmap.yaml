@@ -916,6 +916,11 @@ data:
       ## ordinary; exiting on it costs a restart. Bounded, so a wrong endpoint
       ## still fails loudly. Negative disables waiting.
       locks_client_startup_wait: {{ .Values.components.locks.client.startup_wait | default 30 | int64 }}
+      ## Connections kept for waiting acquires. A waiting call holds its
+      ## connection for as long as it waits, so this is sized for concurrent
+      ## waiters, not for round trips; too small only moves the queue from the
+      ## lock service into the client.
+      locks_client_wait_pool_size: {{ .Values.components.locks.client.wait_pool_size | default 64 | int64 }}
       ## One lease per account instead of one acquisition per command (#1840).
     {{- end }}
 

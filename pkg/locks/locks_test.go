@@ -321,6 +321,13 @@ func testSharedReleaseUnblocksExclusive(t *testing.T, factory lockerFactory) {
 
 func memoryFactory(t *testing.T) (locks.Locker, func()) {
 	t.Helper()
+	return memoryFactoryOpts(t)
+}
+
+// memoryFactoryOpts is memoryFactory with client options, for rows about the
+// pool rather than about locking.
+func memoryFactoryOpts(t *testing.T, opts ...locks.ClientOption) (locks.Locker, func()) {
+	t.Helper()
 	socket := shortSocketPath(t)
 	backend := locks.NewMemoryBackend(locks.WithSweepInterval(10 * time.Millisecond))
 	srv := locks.NewServer(backend, slog.New(slog.NewTextHandler(os.Stderr, nil)), newTestMetrics(t, "embedded"))
@@ -338,7 +345,7 @@ func memoryFactory(t *testing.T) (locks.Locker, func()) {
 	if !waitDial(t, "unix", socket) {
 		t.Fatal("server did not start")
 	}
-	client, err := locks.NewClient(context.Background(), locks.DialUnix(socket))
+	client, err := locks.NewClient(context.Background(), locks.DialUnix(socket), opts...)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

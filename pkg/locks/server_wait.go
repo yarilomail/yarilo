@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -16,16 +17,19 @@ const lostWakeBackstop = time.Second
 
 // handleLockWait answers when the lock is the caller's, not when the resource
 // happens to be free. The order is the backend's, shared by every replica (#1821).
-func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []string, peer string, shared bool) {
+// handleLockWait answers one waiting acquire. It reports whether the
+// connection is still usable for another command: the waiting call no longer
+// ends the connection, so a client pool can keep it (#1875).
+func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []string, peer string, shared bool) bool {
 	var w io.Writer = conn
 	if len(fields) != 6 {
 		_ = writeFields(w, respError, "bad_lock")
-		return
+		return true
 	}
 	queue, ok := queueing(s.backend)
 	if !ok {
 		_ = writeFields(w, respError, "unknown_command")
-		return
+		return true
 	}
 	resource, owner := fields[1], fields[2]
 	site := SiteUnknown
@@ -35,12 +39,12 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	ttl, err := parseTTL(fields[3])
 	if err != nil {
 		_ = writeFields(w, respError, "bad_ttl")
-		return
+		return true
 	}
 	limit, err := parseTTL(fields[5])
 	if err != nil {
 		_ = writeFields(w, respError, "bad_wait")
-		return
+		return true
 	}
 
 	// The subscription comes before the place in line: a release between the
@@ -50,7 +54,7 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	if err != nil {
 		s.logger.Error("locks: could not listen for releases", "peer", peer, "resource", resource, "err", err)
 		_ = writeFields(w, respError, "internal")
-		return
+		return true
 	}
 	defer unsubscribe()
 	s.trace(ticket, resource, "subscribe", peer)
@@ -59,7 +63,7 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	if err != nil {
 		s.logger.Error("locks: could not join the line", "peer", peer, "resource", resource, "err", err)
 		_ = writeFields(w, respError, "internal")
-		return
+		return true
 	}
 	defer func() {
 		if derr := queue.Dequeue(context.WithoutCancel(ctx), resource, ticket); derr != nil {
@@ -71,7 +75,13 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 
 	// A caller that is gone must stop waiting: a grant it never receives is a
 	// lock nobody releases, and the line behind it waits out the TTL (#1824).
-	gone := watchClose(conn)
+	gone, stopWatch := watchClose(conn)
+	// Every answer goes through reply, which stops the watcher first: the
+	// order is the whole point (#1875).
+	reply := func(fields ...string) error {
+		stopWatch()
+		return writeFields(w, fields...)
+	}
 
 	deadline := time.Now().Add(limit)
 	started := time.Now()
@@ -94,7 +104,7 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 				s.metrics.observeAcquire(time.Since(started).Seconds(), "ok")
 				// A grant nobody receives is a lock nobody releases, and it
 				// stands until its TTL (#1824).
-				if werr := writeFields(w, respOK, id); werr != nil {
+				if werr := reply(respOK, id); werr != nil {
 					if rerr := s.backend.Release(context.WithoutCancel(ctx), id); rerr != nil {
 						s.logger.Error("locks: the grant could not be delivered and the lock could not be released",
 							"peer", peer, "resource", resource, "id", id, "write_err", werr, "err", rerr)
@@ -103,37 +113,38 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 						s.logger.Warn("locks: the grant could not be delivered, so the lock was released",
 							"peer", peer, "resource", resource, "id", id, "err", werr)
 					}
+					return false // the answer did not reach the peer
 				}
-				return
+				return true
 			case errors.Is(aerr, ErrBusy):
 				s.metrics.incBusy()
 				if time.Now().After(deadline) {
 					s.metrics.observeAcquire(time.Since(started).Seconds(), "busy")
-					_ = writeFields(w, respBusy, current.Owner, current.Site)
-					return
+					_ = reply(respBusy, current.Owner, current.Site)
+					return true
 				}
 			default:
 				s.metrics.observeAcquire(time.Since(started).Seconds(), "error")
 				s.logger.Error("locks: acquire failed", "peer", peer, "resource", resource, "err", aerr)
-				_ = writeFields(w, respError, "internal")
-				return
+				_ = reply(respError, "internal")
+				return true
 			}
 		}
 		select {
 		case <-gone:
 			s.metrics.incCallerGone()
 			s.logger.Debug("locks: the caller left the line", "peer", peer, "resource", resource)
-			return
+			return false // the peer is gone; there is no connection to keep
 		case <-ctx.Done():
-			_ = writeFields(w, respError, "cancelled")
-			return
+			_ = reply(respError, "cancelled")
+			return true
 		case <-s.closing:
-			_ = writeFields(w, respError, "closing")
-			return
+			_ = reply(respError, "closing")
+			return false
 		case <-time.After(time.Until(deadline)):
 			s.metrics.observeAcquire(time.Since(started).Seconds(), "busy")
-			_ = writeFields(w, respBusy, "", SiteUnknown)
-			return
+			_ = reply(respBusy, "", SiteUnknown)
+			return true
 		case <-wakes:
 			// The subscription only passes this ticket's own turn, so a signal
 			// here is it (#1809).
@@ -145,8 +156,8 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 			front, ferr := queue.AtFront(ctx, resource, ticket)
 			if ferr != nil {
 				s.logger.Error("locks: could not read the line", "resource", resource, "err", ferr)
-				_ = writeFields(w, respError, "internal")
-				return
+				_ = reply(respError, "internal")
+				return false
 			}
 			if front {
 				s.metrics.incWaitBackstop()
@@ -159,15 +170,40 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 }
 
 // watchClose closes the returned channel when the peer goes away: nothing is
-// sent while a wait is outstanding, so any read ends it (#1824).
-func watchClose(conn net.Conn) <-chan struct{} {
-	gone := make(chan struct{})
+// sent while a wait is outstanding, so any read ends it (#1824). That premise
+// is what makes the watcher safe to run on a live connection, and it is also
+// why it must be stopped before the answer is written -- see stop below.
+//
+// stop unblocks the watcher without closing the connection: a read deadline in
+// the past ends the pending Read, and the deadline is cleared once the
+// goroutine is out, so the connection goes back to the command loop clean. It
+// is called before the answer, never after: a client that reads the answer may
+// send its next command immediately, and a watcher still in Read would eat the
+// first byte of it (#1875).
+// watchStopDelay is a test seam. Stopping the watcher before the answer means
+// the delay happens while the client cannot yet have sent anything; stopping
+// it after means the client's next command arrives while the watcher is still
+// in Read, and it is eaten. Zero in production.
+var watchStopDelay time.Duration
+
+func watchClose(conn net.Conn) (gone <-chan struct{}, stop func()) {
+	done := make(chan struct{})
 	go func() {
-		defer close(gone)
+		defer close(done)
 		var b [1]byte
 		_, _ = conn.Read(b[:])
 	}()
-	return gone
+	var once sync.Once
+	return done, func() {
+		once.Do(func() {
+			if watchStopDelay > 0 {
+				time.Sleep(watchStopDelay)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(-time.Second))
+			<-done
+			_ = conn.SetReadDeadline(time.Time{})
+		})
+	}
 }
 
 // trace names one acquisition at each step, so a slow one can be stitched
