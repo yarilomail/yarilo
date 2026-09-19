@@ -249,6 +249,21 @@ until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ];
   sleep 10
 done
 
+# What actually runs, read from the pods: a rollout that quietly left the old
+# pod in place, or a tag that resolved elsewhere, is otherwise invisible -- and
+# on a path where the image could not be verified beforehand, this is the
+# proof (#1875).
+running_images() {
+  kube get pods -l app.kubernetes.io/component=backend -o \
+    jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.containerStatuses[?(@.name=="yarilo-imap")]}{.image}{"\t"}{.imageID}{end}{"\n"}{end}' 2>/dev/null
+}
+running_images > "$OUT/image-$ARM.txt"
+echo "-- running image: $(head -1 "$OUT/image-$ARM.txt" | awk '{print $2}')"
+if ! grep -q ":$TAG[[:space:]]" "$OUT/image-$ARM.txt" && ! grep -q ":$TAG$" "$OUT/image-$ARM.txt"; then
+  echo "ab-arm: the backends run $(head -1 "$OUT/image-$ARM.txt" | awk '{print $2}'), not $TAG" >&2
+  exit 1
+fi
+
 echo "-- same start: emptying u1-u150"
 for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
   kube exec "$pod" -c yarilo-imap -- sh -c \
