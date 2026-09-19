@@ -135,8 +135,6 @@ type Options struct {
 	FTS FTSOptions
 	// QuotaClone mirrors usage to external dicts. Nil = disabled.
 	QuotaClone *quota.Clone
-	// QuotaCloneFlushDelay debounces clone writes (one per interval per session).
-	QuotaCloneFlushDelay time.Duration
 
 	// IMAPQuota toggles the IMAP QUOTA extension (RFC 9208): capability plus
 	// GETQUOTA/GETQUOTAROOT. Query only, no enforcement. When false the
@@ -575,9 +573,6 @@ type session struct {
 	quotaSnapSet bool
 	// quota_clone debounce state: mirror at most once per flush delay, deferring
 	// the latest usage to a final flush on session close.
-	cloneDirty     bool
-	cloneDirtyUsg  quota.Usage
-	cloneLastFlush time.Time
 	// quota_over_status state: run the external over-flag sync once per session.
 	overStatusChecked bool
 	overStatusLoginAt time.Time
@@ -1127,6 +1122,9 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	}
 
 	s.userInfo = userInfo
+	// The quota mirror keeps this user's pending value until the last session
+	// of theirs closes, which is where it is flushed.
+	s.srv.opts.QuotaClone.Acquire(userInfo.Username)
 	// The annotation dict may hold this user's rows in memory; it holds them
 	// for the session, not for the life of the process.
 	if s.srv.opts.MetadataDict != nil {

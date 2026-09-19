@@ -173,17 +173,14 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 		cloneDicts = append(cloneDicts, d)
 	}
-	quotaClone := quota.NewClone(cloneDicts)
+	// The mirror's own timer owns the delay now; zero falls back to the
+	// reference's ten seconds inside NewClone.
+	quotaClone := quota.NewClone(cloneDicts, time.Duration(cfg.Quota.CloneFlushDelay)*time.Second)
 
 	ftsClient, ftsChain, err := BuildFTS(cfg)
 	if err != nil {
 		return nil, err
 	}
-	quotaCloneFlushDelay := time.Duration(cfg.Quota.CloneFlushDelay) * time.Second
-	if quotaCloneFlushDelay <= 0 {
-		quotaCloneFlushDelay = 10 * time.Second
-	}
-
 	// ---- shared connection limiter (IMAP + POP3) ----
 	connLimiter := connlimit.New(cfg.General.Limits.MaxUserIPConnections)
 
@@ -336,7 +333,6 @@ func New(cfg *config.Config) (*Server, error) {
 			QuotaPolicy:          cfg.Quota.QuotaPolicy(),
 			QuotaWarner:          quotaWarner,
 			QuotaClone:           quotaClone,
-			QuotaCloneFlushDelay: quotaCloneFlushDelay,
 			FTS: imapsvr.FTSOptions{
 				Client:          ftsClient,
 				Chain:           ftsChain,

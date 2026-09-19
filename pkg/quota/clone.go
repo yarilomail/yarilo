@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/dict"
 )
@@ -18,15 +19,25 @@ import (
 // cannot do.
 type Clone struct {
 	targets []dict.Dict
+
+	// delay is how long a change waits before it is mirrored; state holds the
+	// latest usage per user until then. Nothing on a session's path waits for
+	// either (see clone_timer.go).
+	delay time.Duration
+	mu    sync.Mutex
+	state map[string]*pending
 }
 
 // NewClone returns a Clone over targets, or nil when none are configured so
 // callers can hold a *Clone unconditionally and treat nil as "disabled".
-func NewClone(targets []dict.Dict) *Clone {
+func NewClone(targets []dict.Dict, delay time.Duration) *Clone {
 	if len(targets) == 0 {
 		return nil
 	}
-	return &Clone{targets: targets}
+	if delay <= 0 {
+		delay = 10 * time.Second // the reference's QUOTA_CLONE_FLUSH_DELAY_MSECS
+	}
+	return &Clone{targets: targets, delay: delay, state: map[string]*pending{}}
 }
 
 // Write mirrors u for user into every target concurrently. Each target is
