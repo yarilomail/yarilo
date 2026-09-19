@@ -7,8 +7,11 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
 	"testing"
 	"time"
+
+	dto "github.com/prometheus/client_model/go"
 )
 
 // fakeWarden answers SELECT like the service does, and records what arrived.
@@ -185,4 +188,52 @@ func TestTheWriterKeepsDeliveringWhenTheWardenAnswers(t *testing.T) {
 		c.PushSelect("sess", fmt.Sprintf("folder-%d", i))
 	}
 	w.waitFor(t, n, 15*time.Second)
+}
+
+// dropCount reads the drop counter for one reason.
+func dropCount(reason string) float64 {
+	m := &dto.Metric{}
+	if err := wardenDropped.WithLabelValues(reason).Write(m); err != nil {
+		return 0
+	}
+	return m.GetCounter().GetValue()
+}
+
+// A warden that is down costs one dial per hold, not one per event: the refusal
+// comes back instantly, so without the hold the writer would dial for every
+// queued event and then for every SELECT (#1875).
+func TestADeadWardenIsNotDialledPerEvent(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close() // nobody listens there now
+
+	c := newImapWardenClient(addr, nil, 4096)
+	defer c.Close()
+
+	var dials atomic.Int64
+	c.mu.Lock()
+	c.clock = time.Now
+	c.mu.Unlock()
+	c.dialCounter = &dials
+
+	before := dropCount("unreachable")
+	for i := 0; i < 200; i++ {
+		c.PushSelect("sess", "INBOX")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for dropCount("unreachable")-before < 100 {
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := dials.Load(); n > 10 {
+		t.Errorf("two hundred events with the warden down cost %d dials; the hold is not holding", n)
+	}
+	if dropCount("unreachable")-before == 0 {
+		t.Error("nothing was counted as unreachable; the drops are invisible")
+	}
 }

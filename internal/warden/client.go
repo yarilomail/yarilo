@@ -35,9 +35,7 @@ func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Conn, error)
 		return nil, fmt.Errorf("warden/client: dial %s: %w", addr, err)
 	}
 	c := &Conn{conn: raw, rd: bufio.NewReaderSize(raw, 512)}
-	// The greeting is a read, and a server that accepts without greeting would
-	// otherwise hold the dialler for ever: the dial timeout covers the connect
-	// only (#1875).
+	// The dial timeout covers the connect; the greeting is a read of its own.
 	_ = raw.SetDeadline(time.Now().Add(timeout))
 	if err := c.readHandshake(); err != nil {
 		raw.Close()
@@ -259,9 +257,7 @@ func (c *Conn) Select(id, folder string) error {
 	return nil
 }
 
-// SetDeadline bounds one exchange. A warden that accepts a connection and
-// answers nothing would otherwise hold its caller for ever -- and the events
-// behind it (#1875).
+// SetDeadline bounds one exchange; without it a silent server holds its caller.
 func (c *Conn) SetDeadline(t time.Time) error {
 	if c == nil || c.conn == nil {
 		return nil

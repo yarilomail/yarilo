@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,9 +32,15 @@ type imapWardenClient struct {
 	done   chan struct{}
 	once   sync.Once
 
-	// mu guards conn, which only the writer touches; Close needs it too.
-	mu   sync.Mutex
-	conn *warden.Conn
+	// mu guards conn and the dial hold; the writer touches both, Close needs
+	// conn too.
+	mu        sync.Mutex
+	conn      *warden.Conn
+	backoff   time.Duration
+	dialAfter time.Time
+	clock     func() time.Time // test seam
+	// dialCounter counts dials, for a row about the hold. Nil in production.
+	dialCounter *atomic.Int64
 }
 
 type wardenEvent struct {
@@ -49,12 +56,21 @@ const defaultWardenQueue = 4096
 // wardenExchangeTimeout bounds one event's round trip.
 const wardenExchangeTimeout = 5 * time.Second
 
-// wardenDropped counts events the queue discarded, so "the folder in who is
-// stale" is visible rather than silent.
-var wardenDropped = promauto.NewCounter(prometheus.CounterOpts{
+// The hold after a refused dial, doubling to the cap. Events that arrive
+// inside it are dropped and counted, which is what a warden being down costs.
+const (
+	wardenBackoffMin = 100 * time.Millisecond
+	wardenBackoffMax = 5 * time.Second
+)
+
+// wardenDropped counts events that never reached the warden, by reason, so a
+// stale folder in `who` is visible rather than silent: queue_full when a burst
+// outran the writer, unreachable while the warden is down, transport when the
+// exchange failed mid-flight.
+var wardenDropped = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "yarilo_warden_events_dropped_total",
-	Help: "SELECT events dropped because the warden event queue was full.",
-})
+	Help: "SELECT events that never reached the warden, by reason.",
+}, []string{"reason"})
 
 func newImapWardenClient(addr string, tlsCfg *tls.Config, queue int) *imapWardenClient {
 	if addr == "" {
@@ -92,7 +108,7 @@ func (c *imapWardenClient) PushSelect(sessionID, folder string) {
 		// Make room. A drop here is one row of `who` going stale, counted.
 		select {
 		case <-c.events:
-			wardenDropped.Inc()
+			wardenDropped.WithLabelValues("queue_full").Inc()
 		default:
 		}
 	}
@@ -115,11 +131,21 @@ func (c *imapWardenClient) run() {
 }
 
 func (c *imapWardenClient) deliver(ev wardenEvent) {
+	// While the warden is down a dial is refused at once, so without a hold
+	// the writer would dial once per queued event and then once per SELECT --
+	// and the warden coming back would meet that at full speed.
+	if hold := c.dialHold(); hold {
+		wardenDropped.WithLabelValues("unreachable").Inc()
+		return
+	}
 	conn, err := c.connect()
 	if err != nil {
+		c.dialFailed()
+		wardenDropped.WithLabelValues("unreachable").Inc()
 		slog.Debug("imap/warden: dial", "err", err)
 		return
 	}
+	c.dialOK()
 	// Bounded: a warden that accepts and never answers must cost this event,
 	// not every event behind it.
 	_ = conn.SetDeadline(time.Now().Add(wardenExchangeTimeout))
@@ -128,9 +154,42 @@ func (c *imapWardenClient) deliver(ev wardenEvent) {
 	err = conn.Select(ev.sessionID, ev.folder)
 	_ = conn.SetDeadline(time.Time{})
 	if err != nil {
+		wardenDropped.WithLabelValues("transport").Inc()
 		slog.Debug("imap/warden: select", "sess", ev.sessionID, "folder", ev.folder, "err", err)
 		c.drop()
 	}
+}
+
+// dialHold reports whether the writer is still holding off after a refused
+// dial; dialFailed and dialOK move the hold.
+func (c *imapWardenClient) dialHold() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn == nil && c.now().Before(c.dialAfter)
+}
+
+func (c *imapWardenClient) dialFailed() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.backoff == 0 {
+		c.backoff = wardenBackoffMin
+	} else if c.backoff < wardenBackoffMax {
+		c.backoff *= 2
+	}
+	c.dialAfter = c.now().Add(c.backoff)
+}
+
+func (c *imapWardenClient) dialOK() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.backoff, c.dialAfter = 0, time.Time{}
+}
+
+func (c *imapWardenClient) now() time.Time {
+	if c.clock != nil {
+		return c.clock()
+	}
+	return time.Now()
 }
 
 // connect returns the live connection, dialling if there is none.
@@ -143,6 +202,9 @@ func (c *imapWardenClient) connect() (*warden.Conn, error) {
 	}
 	// Dialled outside the mutex: the dial reads the greeting, and holding the
 	// mutex across it made Close wait for a warden that had gone quiet.
+	if c.dialCounter != nil {
+		c.dialCounter.Add(1)
+	}
 	conn, err := warden.Dial(c.addr, c.tls, wardenExchangeTimeout)
 	if err != nil {
 		return nil, err
