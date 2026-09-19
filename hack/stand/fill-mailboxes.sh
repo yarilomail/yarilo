@@ -26,13 +26,19 @@ pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | c
 # The index, not the transcript, answers whether a mailbox is filled.
 [ -n "$pod" ] || { echo "fill: no backend pod in $NS" >&2; exit 1; }
 
+# messages_in prints how many messages the index holds for one mailbox.
+messages_in() {
+  kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
+    awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'
+}
+
 # One connection per user, every message in it: a connection per message spends
 # the whole fill in handshakes.
 deliver_user() {
-  local user="$1"
+  local user="$1" want="${2:-$COUNT}"
   {
     printf 'LHLO fill.invalid\r\n'
-    for i in $(seq 1 "$COUNT"); do
+    for i in $(seq 1 "$want"); do
       printf 'MAIL FROM:<fill@test.invalid>\r\nRCPT TO:<%s>\r\nDATA\r\n' "$user"
       printf 'Subject: fill %s\r\nFrom: <fill@test.invalid>\r\nTo: <%s>\r\nDate: Thu, 18 Sep 2026 12:00:00 +0000\r\nMessage-ID: <fill-%s-%s@test.invalid>\r\n\r\n' \
         "$i" "$user" "$i" "$user"
@@ -43,19 +49,39 @@ deliver_user() {
   } | kube exec -i "$pod" -c yarilo-imap -- nc -w 60 "$LMTP_HOST" "$LMTP_PORT" 2>&1
 }
 
-# messages_in prints how many messages the index holds for one mailbox. This
-# is the proof that a fill happened: the LMTP transcript is a stream, and
-# counting its lines counted 18 of 30000 deliveries as refused that the server
-# had accepted and the index had (#1875).
-messages_in() {
-  kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
-    awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'
-}
+# A range that is already filled is left alone: the fill is the expensive part
+# of an arm -- thirty thousand deliveries -- and a run that lost its connection
+# should resume, not start over (#1875).
+already=1
+for n in $(seq "$FROM" "$TO"); do
+  have=$(messages_in "u${n}@${DOMAIN}")
+  if [ "${have:-0}" != "$COUNT" ]; then
+    already=0
+    break
+  fi
+done
+if [ "$already" = "1" ]; then
+  echo "fill: in_index=$(( (TO - FROM + 1) * COUNT )) acked=0 users=$((TO - FROM + 1)) per_user=$COUNT (already filled)"
+  exit 0
+fi
 
 acked=0
 for n in $(seq "$FROM" "$TO"); do
   user="u${n}@${DOMAIN}"
-  out=$(deliver_user "$user") || true
+  have=$(messages_in "$user")
+  have=${have:-0}
+  if [ "$have" -eq "$COUNT" ]; then
+    continue
+  elif [ "$have" -gt "$COUNT" ]; then
+    # Not ours to correct: a mailbox past the number was filled by something
+    # else, and topping up or ignoring it both make the arm a liar.
+    echo "fill: $user holds $have messages, more than the $COUNT asked for" >&2
+    exit 1
+  fi
+  # The remainder only: the mailbox a lost connection left half full is the
+  # one that most needs resuming, and a second full delivery would break the
+  # proof exactly there.
+  out=$(deliver_user "$user" "$((COUNT - have))") || true
   # Informational: what the transport said, for a failure to be readable.
   acked=$((acked + $(printf '%s\n' "$out" | grep -o '250 2\.0\.0' | wc -l | tr -d ' ')))
 done
