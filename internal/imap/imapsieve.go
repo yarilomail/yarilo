@@ -60,7 +60,9 @@ func (s *session) inboxGUID() ([16]byte, bool) {
 	if s.inboxGUIDOK {
 		return s.inboxGUIDVal, true
 	}
-	inbox, err := s.primary.mailbox().Folder("INBOX", uint32(time.Now().Unix()))
+	// The identity, not a settled folder: a counting open reads the index and
+	// leaves the store alone (#1875).
+	inbox, err := mailbox.Counting(s.primary.mailbox()).Folder("INBOX", uint32(time.Now().Unix()))
 	if err != nil {
 		return [16]byte{}, false
 	}

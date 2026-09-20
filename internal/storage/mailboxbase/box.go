@@ -150,6 +150,17 @@ func (b *Box) Messages(folderID uint64, set mailbox.SeqSet) ([]*mailbox.MessageM
 	return ReadMessages(b.index, folderID, set)
 }
 
+// CountingBox is this box's folders opened as they are: a count reads the
+// index and never needs the store settled first (#1875, quota-count.c:41).
+func (b *Box) CountingBox() mailbox.Box {
+	if b.mode == openReadOnly {
+		return b
+	}
+	cp := *b
+	cp.mode = openReadOnly
+	return &cp
+}
+
 // BoxOption tunes a box at Open time.
 type BoxOption func(*Box)
 

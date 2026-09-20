@@ -121,7 +121,9 @@ func backfillUser(boxBE mailbox.MailboxBackend, idxBE mailbox.IndexBackend, reso
 		return fmt.Errorf("list folders: %w", err)
 	}
 	dryRun := o.DryRun
-	mbox := mailboxbase.Open(box, idx)
+	// Read-only: the backfill does its own scan of every folder it touches, so
+	// settling one first walks it twice (#1875).
+	mbox := mailboxbase.Open(box, idx, mailboxbase.ReadOnly())
 	for _, e := range entries {
 		if !e.Selectable {
 			continue
