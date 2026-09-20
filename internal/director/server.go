@@ -158,6 +158,20 @@ type Options struct {
 	// %d (domain), optional %L lowercase, plus %%. Empty derives %Lu / %u from
 	// UsernameHashLowercase for byte-identical back-compat. Validated in main.
 	UsernameHashFormat string
+	// DomainRebalancePercent is how far the busiest backend of a tag may rise
+	// above the quietest before one domain moves down; 0 never moves one.
+	DomainRebalancePercent int
+
+	// DomainRebalanceInterval is how often that is judged, and
+	// DomainRebalanceCooldown how long a moved domain is left alone -- the
+	// hysteresis that keeps two backends from trading a domain (#1943).
+	DomainRebalanceInterval time.Duration
+	DomainRebalanceCooldown time.Duration
+
+	// DomainExpire is how long a domain keeps its backend with no session on
+	// it; the reference's director_user_expire for domains (#1943).
+	DomainExpire time.Duration
+
 	// AssignmentPolicy selects the initial (unpinned) placement: "hash"
 	// (default) or "least_sessions". Sticky pins / USER-MOVE are unaffected.
 	AssignmentPolicy string
@@ -264,6 +278,30 @@ func (o *Options) userExpire() time.Duration {
 	return o.UserExpire
 }
 
+// domainExpire is how long a domain's placement outlives its traffic. Its own
+// knob, not the user TTL: a domain forgotten between two logins would be placed
+// again elsewhere, which is affinity lost with nobody asking for it (#1943).
+func (o *Options) domainExpire() time.Duration {
+	if o.DomainExpire <= 0 {
+		return 900 * time.Second
+	}
+	return o.DomainExpire
+}
+
+func (o *Options) domainRebalanceInterval() time.Duration {
+	if o.DomainRebalanceInterval <= 0 {
+		return time.Minute
+	}
+	return o.DomainRebalanceInterval
+}
+
+func (o *Options) domainRebalanceCooldown() time.Duration {
+	if o.DomainRebalanceCooldown <= 0 {
+		return 10 * time.Minute
+	}
+	return o.DomainRebalanceCooldown
+}
+
 func (o *Options) pingInterval() time.Duration {
 	if o.PingInterval <= 0 {
 		return 30 * time.Second
@@ -355,6 +393,11 @@ type Server struct {
 	// userDir stores user→backend mappings with TTL.
 	userDir *UserDir
 
+	// domainDir stores domain→backend placements, for the domain policy: a
+	// shared mailbox is only reachable where its whole domain is (#1943).
+	domainDir   *DomainDir
+	domainMoves domainMoves
+
 	// clients is the registry of all currently connected clients.
 	clientMu sync.RWMutex
 	clients  map[*client]struct{}
@@ -441,6 +484,7 @@ func NewWithOptions(opts Options) *Server {
 		hf:              hf,
 		hashFmtExplicit: hfExplicit,
 		userDir:         NewUserDir(opts.userExpire(), hf, Member{IP: opts.LocalIP, Port: opts.LocalPort}.String()),
+		domainDir:       NewDomainDir(opts.domainExpire(), Member{IP: opts.LocalIP, Port: opts.LocalPort}.String()),
 		clients:         make(map[*client]struct{}),
 		sessById:        make(map[string]*sessionRec),
 		sessByBE:        make(map[string]map[string]bool),
@@ -563,6 +607,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Co
 // Serve serves an already-bound listener.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	go s.purgeLoop(ctx)
+	go s.rebalanceLoop(ctx)
 	return s.listenOn(ctx, ln)
 }
 
@@ -577,6 +622,21 @@ func (s *Server) purgeLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.userDir.Purge()
+		}
+	}
+}
+
+// rebalanceLoop judges the spread between backends on a cadence; the pass
+// itself answers nothing when the policy is not domain or the threshold is off.
+func (s *Server) rebalanceLoop(ctx context.Context) {
+	ticker := time.NewTicker(s.opts.domainRebalanceInterval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.rebalanceDomains()
 		}
 	}
 }
@@ -1254,6 +1314,15 @@ func (s *Server) handleSessionOpen(c *client, fields []string) {
 	}
 	s.sessByBE[rec.backend][rec.id] = true
 	s.sessRecMu.Unlock()
+	// The placement's credit has done its job: this domain's traffic is in the
+	// session counts now, and counting it twice would push the next domain off
+	// a backend that is not in fact busier (#1943).
+	if s.assignmentPolicy() == policyDomain {
+		if domain := DomainOf(rec.user); domain != "" {
+			s.domainDir.Seen(domain)
+			s.domainDir.Touch(domain)
+		}
+	}
 	// Replicate ring-wide (#804): SESSION-OPEN/CLOSE land on ONE director (the
 	// login pod's watch-holder behind the ClusterIP), but least_sessions (#797)
 	// needs the cluster-wide session view on whichever RANDOM replica answers a

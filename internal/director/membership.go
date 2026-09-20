@@ -1653,6 +1653,7 @@ func (m *Membership) Leave() {
 func (m *Membership) handleRingLine(fields []string, arrivalConn net.Conn) {
 	switch fields[0] {
 	case "DIRECTOR-ADD", "DIRECTOR-REMOVE", "RING-CHANGE", "USER-MOVED", "USER-KICKED", "USER-ASSIGN",
+		"DOMAIN-ASSIGN",
 		"SESSION-OPEN", "SESSION-CLOSE", "BACKEND-UNREACHABLE", "USER-KILLING", "USER-KILL-DONE",
 		// The escaped user events (#1365 step 1). Accepted now, written only
 		// once every member accepts them.
@@ -1970,6 +1971,19 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 		}
 		if old := m.srv.userDir.MergeByHash(uint32(hash), payload[1], false, seq, payload[3]); old != "" {
 			m.srv.kickStaleSessions(uint32(hash), old)
+		}
+	case "DOMAIN-ASSIGN":
+		// payload: <domain> <backend> <assign_seq> <assign_by> (#1943)
+		if m.srv == nil || len(payload) < 4 {
+			return
+		}
+		seq, err := strconv.ParseUint(payload[2], 10, 64)
+		if err != nil {
+			return
+		}
+		domain := proto.TabUnescape(payload[0])
+		if from := m.srv.domainDir.Merge(domain, payload[1], seq, payload[3]); from != "" {
+			m.srv.kickDomainSessions(domain, from)
 		}
 	case "USER-KICKED":
 		if len(payload) < 1 {
