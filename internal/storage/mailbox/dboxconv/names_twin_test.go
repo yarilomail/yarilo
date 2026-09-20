@@ -60,3 +60,45 @@ func TestAPassFollowsAParentATwinRenamed(t *testing.T) {
 		t.Errorf("the tree holds %s, want exactly %s", strings.Join(names, ","), parent)
 	}
 }
+
+// The other moment: a twin renames the ancestor after this pass's rename and
+// before it is made durable. The path the directory was opened by then names
+// nothing, and a rename that succeeded used to report ENOENT (#1938).
+func TestAPassSurvivesATwinRenamingTheParentAfterTheRename(t *testing.T) {
+	const (
+		encodedParent = "&BBIERQRWBDQEPQRW-"
+		encodedChild  = "&BCAEPgQxBD4EQgQw-"
+		parent        = "Вхідні"
+		child         = "Робота"
+	)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, encodedParent, encodedChild), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	fired := false
+	afterRename = func(src string) {
+		if fired || filepath.Base(src) != encodedChild {
+			return
+		}
+		fired = true
+		done := make(chan error, 1)
+		go func() {
+			done <- os.Rename(filepath.Join(root, encodedParent), filepath.Join(root, parent))
+		}()
+		if err := <-done; err != nil {
+			t.Errorf("the twin could not rename the parent: %v", err)
+		}
+	}
+	t.Cleanup(func() { afterRename = func(string) {} })
+
+	if _, err := AdoptNames(root, true); err != nil {
+		t.Fatalf("the pass failed after a twin renamed the parent under a finished rename: %v", err)
+	}
+	if !fired {
+		t.Fatal("the hook never fired, so nothing was interleaved")
+	}
+	if _, err := os.Stat(filepath.Join(root, parent, child)); err != nil {
+		t.Errorf("the child is not where the rename left it: %v", err)
+	}
+}

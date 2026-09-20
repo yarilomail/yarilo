@@ -77,14 +77,25 @@ func adoptOne(root, parent, name, want string, utf8 bool) (bool, error) {
 			}
 			return false, fmt.Errorf("dboxconv: renaming %s to %s: the target already exists", src, target)
 		}
+		// The directory is opened before the rename and synced through that
+		// descriptor: a twin moving an ancestor after the rename leaves the
+		// path naming nothing, and the rename that succeeded would report
+		// ENOENT (#1938).
+		dir, derr := os.Open(at)
+		if derr != nil {
+			return false, fmt.Errorf("dboxconv: open %s: %w", at, derr)
+		}
 		beforeRename(src)
 		err := os.Rename(src, target)
 		if err == nil {
-			if ferr := fsyncDir(at); ferr != nil {
+			afterRename(src)
+			ferr := syncAndClose(dir)
+			if ferr != nil {
 				return false, ferr
 			}
 			return true, nil
 		}
+		_ = dir.Close()
 		if !os.IsNotExist(err) {
 			return false, fmt.Errorf("dboxconv: rename %s to %s: %w", src, target, err)
 		}
@@ -97,8 +108,29 @@ func adoptOne(root, parent, name, want string, utf8 bool) (bool, error) {
 	return false, nil
 }
 
-// beforeRename is a seam for the twin-pass test; nil cost in production.
-var beforeRename = func(string) {}
+// beforeRename and afterRename are seams for the twin-pass rows; nil cost in
+// production. The two moments differ: one leaves the source somewhere else, the
+// other leaves the directory the rename has to be made durable through with no
+// path at all (#1938).
+var (
+	beforeRename = func(string) {}
+	afterRename  = func(string) {}
+)
+
+// syncAndClose flushes the directory entry through the descriptor the caller
+// opened, so a rename inside it survives a crash rather than merely having been
+// asked for -- whatever the directory's path has become since.
+func syncAndClose(dir *os.File) error {
+	serr := dir.Sync()
+	cerr := dir.Close()
+	if serr != nil {
+		return fmt.Errorf("dboxconv: fsync %s: %w", dir.Name(), serr)
+	}
+	if cerr != nil {
+		return fmt.Errorf("dboxconv: fsync %s: %w", dir.Name(), cerr)
+	}
+	return nil
+}
 
 // currentDir follows a path collected before a twin pass may have renamed part
 // of it: each segment is either still theirs or already adopted (#1886).
@@ -159,18 +191,4 @@ func isASCII(s string) bool {
 		}
 	}
 	return true
-}
-
-// fsyncDir flushes a directory entry, so a rename inside it survives a crash
-// rather than merely having been asked for.
-func fsyncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("dboxconv: fsync %s: %w", dir, err)
-	}
-	defer d.Close() //nolint:errcheck
-	if err := d.Sync(); err != nil {
-		return fmt.Errorf("dboxconv: fsync %s: %w", dir, err)
-	}
-	return nil
 }
