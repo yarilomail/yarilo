@@ -144,18 +144,19 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	arrivalHot, storeDirty, window := b.syncDirtiness(ps, folder)
 	if token != "" {
 		if prev, seen := syncTokens.get(key); seen {
-			// A walk taken inside the window owes one more walk once the
-			// window has passed: a change landing in that same second moves
-			// neither the token nor the mtime it is built from.
-			owed := prev.dirtyThen && time.Since(prev.checkedAt) >= window
 			switch {
-			case arrivalHot || owed:
-				// Walk: an arrival directory that is hot is never held, or the
-				// owed re-walk has come due.
+			case arrivalHot || prev.token != token:
+				// A moved mtime is always walked, as the reference walks on
+				// DIR_MTIME_CHANGED; the window bounds re-walks of a dirty
+				// directory that has not moved, nothing else (#1875).
 			case prev.dirtyThen && time.Since(prev.checkedAt) < window:
 				MetricReconcile.WithLabelValues("skipped-window").Inc()
 				return false
-			case prev.token == token:
+			case prev.dirtyThen:
+				// The window has passed: one walk is owed, because a change
+				// landing in the same second as that walk moved neither the
+				// mtime nor the token built from it.
+			default:
 				MetricReconcile.WithLabelValues("skipped").Inc()
 				return false
 			}

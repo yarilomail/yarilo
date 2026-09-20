@@ -1,7 +1,6 @@
 package mailboxbase_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,10 +20,9 @@ func TestABurstOnADirtyFolderWalksOnce(t *testing.T) {
 
 	scanned := syncCount(t, "scanned")
 	held := syncCount(t, "skipped-window")
-	// Writes keep landing through the burst, as they do under load: every open
-	// sees a token it has not seen. Without the window each of those is a walk.
+	// Nothing lands during the burst: the folder is merely dirty, which is
+	// what a nonce in the token used to turn into a walk per command.
 	for i := 0; i < 30; i++ {
-		deliverNow(t, inbox, fmt.Sprintf("1700000101.M%dP1.h:2,", i))
 		if _, err := box.Folder("INBOX", 0); err != nil {
 			t.Fatalf("open %d: %v", i, err)
 		}
@@ -35,6 +33,32 @@ func TestABurstOnADirtyFolderWalksOnce(t *testing.T) {
 	}
 	if got := syncCount(t, "skipped-window") - held; got != 29 {
 		t.Errorf("%v opens were held by the window, want 29", got)
+	}
+}
+
+// The window bounds re-walks of a directory that has not moved -- never a
+// directory that has. The reference walks on DIR_MTIME_CHANGED whatever the
+// check time says (maildir-sync.c:691-697), and a flag rename by another
+// session inside the same second is exactly that (#1875).
+func TestAMovedMtimeIsWalkedInsideTheWindow(t *testing.T) {
+	box, inbox := gateSetup(t)
+
+	scanned := syncCount(t, "scanned")
+	deliverNow(t, inbox, "1700000300.M1P1.h:2,")
+	if _, err := box.Folder("INBOX", 0); err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	// A second write in the same window: the mtime moves, so this is a change
+	// the folder must take, not a re-walk the window may hold.
+	deliverNow(t, inbox, "1700000300.M2P1.h:2,")
+	if _, err := box.Folder("INBOX", 0); err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	if got := syncCount(t, "scanned") - scanned; got != 2 {
+		t.Errorf("two writes one window apart walked %v times, want 2", got)
+	}
+	if n := messageCount(t, box); n != 2 {
+		t.Errorf("the folder holds %d messages, want 2: a write inside the window was not taken", n)
 	}
 }
 
