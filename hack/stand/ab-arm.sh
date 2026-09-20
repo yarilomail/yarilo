@@ -187,7 +187,42 @@ dict_ops() {
   printf '%s\n' "$page" | grep "^yarilo_dict_operations_total{" || true
 }
 
-# dict_delta writes what one run cost the dict service, per dict and verb.
+# backend_counters prints the per-run counters of the imap container, summed
+# over the backends: with two pods serving one load, a per-pod number answers
+# only which pod the director picked (#1875).
+backend_counters() {
+  local pods pod page deadline total=""
+  deadline=$(( $(date +%s) + 60 ))
+  while :; do
+    pods=$(kube get pods -l app.kubernetes.io/component=backend -o name 2>/dev/null | cut -d/ -f2)
+    if [ -n "$pods" ]; then
+      total=""
+      for pod in $pods; do
+        page=$(kube exec "$pod" -c yarilo-imap -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
+        # One silent backend makes the sum a different question, so the whole
+        # read is retried rather than answered from the pods that did reply.
+        [ -n "$page" ] || { total=""; break; }
+        total+=$(printf '%s\n' "$page" |
+          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_count|quota_folders_opened_total|quota_usage_count_total\{)" || true)
+        total+=$'\n'
+      done
+      [ -n "${total//[$'\n']/}" ] && break
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      if kube get nodes >/dev/null 2>&1; then
+        echo "ab-arm: a backend does not answer on /metrics; the reconcile counters cannot be read" >&2
+      else
+        echo "ab-arm: the cluster API is unreachable; the reconcile counters cannot be read" >&2
+      fi
+      return 1
+    fi
+    sleep 5
+  done
+  printf '%s\n' "$total" | awk 'NF == 2 { sum[$1] += $2 } END { for (k in sum) printf "%s %d\n", k, sum[k] }' | sort
+}
+
+# dict_delta writes what one run cost the dict service, per dict and verb. The
+# shape is a counter page either side, so the reconcile counters share it.
 dict_delta() {
   local before="$1" after="$2" out="$3"
   awk '
@@ -386,6 +421,9 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-cpu.sh" "$OUT" "$ARM-$name" 10 &
   cpuwatch=$!
   lock_classes > "$OUT/locks-$ARM-$name-before.txt"
+  # Taken on every run, not only under the profiling overlay: these are the
+  # numbers a change to the open path is judged by (#1875).
+  backend_counters > "$OUT/backend-$ARM-$name-before.txt" || exit 1
   if [ "$BLOCKPROFILE" = "1" ]; then
     dict_ops > "$OUT/dict-$ARM-$name-before.txt" || exit 1
     ( sleep 20; block_profile "$ARM-$name" 40 ) &
@@ -393,6 +431,9 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   fi
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest "$manifest" "$OUT/ab-$ARM-$name.log" 900
   lock_classes > "$OUT/locks-$ARM-$name-after.txt"
+  backend_counters > "$OUT/backend-$ARM-$name-after.txt" || exit 1
+  dict_delta "$OUT/backend-$ARM-$name-before.txt" "$OUT/backend-$ARM-$name-after.txt" \
+    "$OUT/backend-$ARM-$name-delta.txt"
   if [ "$BLOCKPROFILE" = "1" ]; then
     if ! wait "$capture"; then
       echo "ab-arm: the block capture failed for $name; this arm has no latency number" >&2
@@ -427,6 +468,16 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)
   echo "$ARM $name logins=${logins:-?} stalls=$stalls"
+  # Per login, because that is the unit the arm already reports: a raw delta
+  # says nothing without the load that produced it.
+  echo "$ARM $name $(awk -v logins="${logins:-0}" '
+      $1 ~ /^imap_maildir_sync_total\{result="scanned/ { scanned += $2 }
+      $1 ~ /^imap_maildir_sync_total\{result="skipped"/ { skipped += $2 }
+      $1 == "quota_folders_opened_total" { opened += $2 }
+      END { printf "reconcile: scanned=%d skipped=%d folders_opened=%d", scanned, skipped, opened
+            if (logins + 0 > 0) printf " scanned_per_login=%.3f folders_per_login=%.3f",
+              scanned / logins, opened / logins }
+    ' "$OUT/backend-$ARM-$name-delta.txt")"
 done
 
 kube exec "$authpod" -- sh -c \
