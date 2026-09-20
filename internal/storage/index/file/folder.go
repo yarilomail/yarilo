@@ -665,6 +665,7 @@ func (fs *folderState) flush() error {
 		return fmt.Errorf("fileindex/flush: recreate: %w", err)
 	}
 	fs.lineage = next
+	fs.flushes++
 	// Track base mtime+identity so the reload fast path fires after this flush.
 	if st, _ := os.Stat(fs.indexPath); st != nil {
 		fs.baseMod = st.ModTime()
@@ -2096,6 +2097,10 @@ func (fs *folderState) holdJournal(site string) (func(), error) {
 	}, nil
 }
 
+// mutLogWriteFails stands in for a log that refuses the write -- a full disk is
+// not reproducible any other way, and the state left behind is the point.
+var mutLogWriteFails func() error
+
 // mutLogLockWait bounds a writer's wait for the journal: the hold is one
 // write(2), so a longer wait is a wedged mount, not a queue (#1840).
 var mutLogLockWait = 10 * time.Second
@@ -2147,7 +2152,11 @@ func (fs *folderState) appendMutLog(records ...[]byte) error {
 	if err != nil {
 		return err
 	}
-	_, err = fs.logFD.Write(buf)
+	if mutLogWriteFails != nil {
+		err = mutLogWriteFails()
+	} else {
+		_, err = fs.logFD.Write(buf)
+	}
 	if err == nil && fs.fsync.SyncsIndex() {
 		err = fs.logFD.Sync()
 	}
