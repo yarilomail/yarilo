@@ -498,22 +498,31 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # What drove the walks, and how the cold share fades: the number A2 is
   # decided by. Read from the delta, with the curve beside it in the file.
   echo "$ARM $name $(awk '
-      $1 ~ /result="scanned/ { scanned += $2 }
-      $1 ~ /reason="first-seen"/ && $1 ~ /result="scanned/ { cold += $2 }
-      END { printf "walks: scanned=%d first-seen=%d", scanned, cold
-            if (scanned + 0 > 0) printf " cold_share=%.1f%%", 100 * cold / scanned }
+      # Each result exactly, never by prefix: scanned-partial and
+      # scanned-untokened both begin with the word and folding them into the
+      # full count hides the very share this window is for (#1875).
+      $1 ~ /result="scanned"/            { full += $2 }
+      $1 ~ /result="scanned-partial"/    { partial += $2 }
+      $1 ~ /result="scanned-untokened"/  { untokened += $2 }
+      $1 ~ /reason="first-seen"/ && $1 ~ /result="scanned"/ { cold += $2 }
+      END { walks = full + partial + untokened
+            printf "walks: full=%d partial=%d untokened=%d first-seen=%d", full, partial, untokened, cold
+            if (walks + 0 > 0) printf " partial_share=%.1f%%", 100 * partial / walks
+            if (full + 0 > 0) printf " cold_share=%.1f%%", 100 * cold / full }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
   # Per login, because that is the unit the arm already reports: a raw delta
   # says nothing without the load that produced it.
   echo "$ARM $name $(awk -v logins="${logins:-0}" '
       # Matched on the label, not on where it sits: a second label (reason,
       # #1875) sorts before result and an anchored pattern then reads zero.
-      $1 ~ /^imap_maildir_sync_total\{/ && $1 ~ /result="scanned/ { scanned += $2 }
+      $1 ~ /^imap_maildir_sync_total\{/ && $1 ~ /result="scanned"/ { scanned += $2 }
+      $1 ~ /^imap_maildir_sync_total\{/ && $1 ~ /result="scanned-partial"/ { partial += $2 }
       $1 ~ /^imap_maildir_sync_total\{/ && $1 ~ /result="skipped"/ { skipped += $2 }
       $1 == "quota_folders_opened_total" { opened += $2 }
-      END { printf "reconcile: scanned=%d skipped=%d folders_opened=%d", scanned, skipped, opened
-            if (logins + 0 > 0) printf " scanned_per_login=%.3f folders_per_login=%.3f",
-              scanned / logins, opened / logins }
+      END { printf "reconcile: scanned=%d partial=%d skipped=%d folders_opened=%d",
+              scanned, partial, skipped, opened
+            if (logins + 0 > 0) printf " scanned_per_login=%.3f partial_per_login=%.3f folders_per_login=%.3f",
+              scanned / logins, partial / logins, opened / logins }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
 done
 
