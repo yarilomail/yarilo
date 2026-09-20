@@ -1,0 +1,132 @@
+package imap_test
+
+import (
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	imapserver "github.com/yarilomail/yarilo/internal/imap"
+	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
+
+// startIdentityServer is the raw-connection server with an annotation dict, so
+// METADATA reaches the resolve that reads a folder's GUID: without a dict the
+// command answers before it ever opens the folder.
+func startIdentityServer(t *testing.T) (root, addr string) {
+	t.Helper()
+	root = t.TempDir()
+	md, err := dict.Open(dict.Config{Driver: "memory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = md.Close() })
+	srv := imapserver.New(imapserver.Options{
+		Mailbox:      maildir.New(),
+		Index:        file.New(),
+		Resolver:     &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
+		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+		MetadataDict: md,
+	})
+	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	go srv.Serve(ln) //nolint:errcheck
+	t.Cleanup(func() { ln.Close() })
+	return root, ln.Addr().String()
+}
+
+func storeWalks(t *testing.T) float64 {
+	t.Helper()
+	return testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned")) +
+		testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned-untokened"))
+}
+
+// changeOutOfBand drops a file into a folder's cur/ the way another MUA does,
+// and backdates the directory so the change is the moved mtime and not the
+// same-second rule.
+func changeOutOfBand(t *testing.T, root, folder, name string) {
+	t.Helper()
+	dir := folderDir(root, folder)
+	if err := os.WriteFile(filepath.Join(dir, "cur", name), []byte("Subject: out of band\r\n\r\nx\r\n"), 0o600); err != nil {
+		t.Fatalf("out-of-band write: %v", err)
+	}
+	backdate(t, dir)
+}
+
+// settleFolder puts a folder's directories far enough in the past that their
+// mtime stands for their contents.
+func settleFolder(t *testing.T, root, folder string) {
+	t.Helper()
+	backdate(t, folderDir(root, folder))
+}
+
+func backdate(t *testing.T, dir string) {
+	t.Helper()
+	old := time.Now().Add(-time.Hour)
+	for _, sub := range []string{"cur", "new"} {
+		if err := os.Chtimes(filepath.Join(dir, sub), old, old); err != nil {
+			t.Fatalf("backdate %s: %v", sub, err)
+		}
+	}
+}
+
+func folderDir(root, folder string) string {
+	dir := filepath.Join(root, "test.com", "user", "Maildir")
+	if folder != "INBOX" {
+		dir = filepath.Join(dir, "."+folder)
+	}
+	return dir
+}
+
+// Four callers asked a session box for a folder and got a store walk with it,
+// while needing only the folder's identity and the index: METADATA's GUID, the
+// per-folder quota count, and the destination of APPEND/COPY/MOVE, which
+// writes its own record (#1875).
+func TestIdentityOnlyCallersDoNotWalkTheStore(t *testing.T) {
+	root, addr := startIdentityServer(t)
+	c := dialRaw(t, addr)
+	c.login()
+	c.cmd(`CREATE Dest`)
+	appendSubject(t, c, "INBOX", "source")
+	// The selected folder is settled and left alone: every walk counted below
+	// then belongs to the destination, not to the poll that follows a command.
+	settleFolder(t, root, "INBOX")
+	c.cmd(`SELECT INBOX`)
+
+	tests := []struct {
+		name string
+		run  func()
+	}{
+		{name: "METADATA reads a GUID", run: func() { c.cmd(`GETMETADATA Dest (/private/comment)`) }},
+		{name: "APPEND writes its own record", run: func() { appendSubject(t, c, "Dest", "appended") }},
+		{name: "COPY writes its own record", run: func() { c.cmd(`COPY 1 Dest`) }},
+		// MOVE is not here: its expunge moves the source's mtime, so the poll
+		// that follows walks the selected folder for a reason of its own and
+		// the destination cannot be told apart. It reaches the destination
+		// through the same ensureFolderHandle as APPEND and COPY.
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// The destination is changed behind the session's back, so a
+			// settling open would have something to import and the walk would
+			// be visible in the counter.
+			changeOutOfBand(t, root, "Dest", "1700000400.M1P1.h"+strings.ReplaceAll(tc.name, " ", "")+":2,")
+			before := storeWalks(t)
+			tc.run()
+			if got := storeWalks(t) - before; got != 0 {
+				t.Errorf("%s walked the store %v times; it needs the folder's identity, not what the store holds", tc.name, got)
+			}
+		})
+	}
+}

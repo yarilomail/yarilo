@@ -1533,7 +1533,9 @@ func (s *session) renameInbox(dest string) error {
 	if err != nil {
 		return err
 	}
-	destFolder, err := s.mbox.Folder(dest, uint32(time.Now().Unix()))
+	// Just created by the line above: there is nothing in the store for it to
+	// take (#1875).
+	destFolder, err := mailbox.Counting(s.mbox).Folder(dest, uint32(time.Now().Unix()))
 	if err != nil {
 		return err
 	}
@@ -3934,7 +3936,9 @@ func (s *session) metadataResolve(folder string) (*nsHandle, [16]byte, error) {
 			Text: "No such mailbox",
 		}
 	}
-	f, err := h.mailbox().Folder(rel, uint32(time.Now().Unix()))
+	// The GUID is all this answers with, so the folder is opened as it is
+	// (#1875).
+	f, err := mailbox.Counting(h.mailbox()).Folder(rel, uint32(time.Now().Unix()))
 	if err != nil {
 		return nil, [16]byte{}, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Mailbox lookup failed: " + err.Error()}
 	}
@@ -4187,7 +4191,9 @@ func (s *session) ensureFolderHandle(name string) (*nsHandle, string, *mailbox.F
 	if !exists {
 		return nil, "", nil, errFolderNotFound
 	}
-	f, err := h.mailbox().Folder(rel, uint32(time.Now().Unix()))
+	// The destination of a save: the write puts its own record in, so walking
+	// the store buys nothing here (#1875, #1706).
+	f, err := mailbox.Counting(h.mailbox()).Folder(rel, uint32(time.Now().Unix()))
 	if err != nil {
 		return nil, "", nil, err
 	}

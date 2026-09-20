@@ -352,7 +352,8 @@ func (s *session) folderMessageCount(folder string) (int64, bool) {
 	if s.box == nil || s.idx == nil {
 		return 0, false
 	}
-	f, err := s.mbox.Folder(folder, 0)
+	// The id, then the index's own aggregate: the same pair a count needs.
+	f, err := mailbox.Counting(s.mbox).Folder(folder, 0)
 	if err != nil {
 		return 0, false
 	}
