@@ -349,17 +349,17 @@ components:
     ring_secret: "sandbox-ring-secret-32charslong00"
     min_members: 3
     seed_poll_idle_interval: 5
-    ## Hash, not least_sessions: the load-aware policy never looks at the
-    ## username, so the hash key below would have no effect while it is on --
-    ## and under a burst of logins its counts (raised on SESSION-OPEN, after
-    ## the lookup) are all equal, so the tie-break sends the whole burst to one
-    ## backend. That is what put every load run this week on a single pod
-    ## (#1931).
-    assignment_policy: hash
-    ## Domain affinity: the stand exercises ACL between users of one domain,
-    ## and sharing within a domain needs those users on one backend. The chart
-    ## default stays %Lu -- a single-domain deployment on %Ld lands on one
-    ## backend and stops scaling.
+    ## Domain affinity by load (#1943): the stand exercises ACL between users
+    ## of one domain, so those users must share a backend -- and the domains
+    ## must not all land on the same one. This policy places a domain on the
+    ## backend with the fewest connections and credits it at placement, which
+    ## is what the burst defect needed: the counts least_sessions reads are
+    ## raised on SESSION-OPEN, after the lookup, so a burst reads zeroes and
+    ## piles onto one pod (#1931).
+    assignment_policy: domain
+    ## Kept for a revert to hash: the domain policy does not consult it, but on
+    ## hash it is what keeps a domain together. The chart default stays %Lu --
+    ## a single-domain deployment on %Ld lands on one backend and stops scaling.
     username_hash: "%Ld"
     backend_unreachable_reporters: 1
     backends: []
