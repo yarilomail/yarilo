@@ -32,12 +32,14 @@ while :; do
   # single pod's curve is the shape of its share, not of the run.
   for pod in $pods; do
     want=$((want + 1))
+    # The whole page decides whether the pod answered; the series may be absent
+    # for a good reason -- a labelled counter has none until its first walk --
+    # and a backend that has not walked yet is not a backend that is silent.
     got=$(kube exec "$pod" -c yarilo-imap -- sh -c \
-      'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null |
-      grep '^imap_maildir_sync_total{')
+      'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
     [ -n "$got" ] || continue
     answered=$((answered + 1))
-    page+="$got"$'\n'
+    page+=$(printf '%s\n' "$got" | grep '^imap_maildir_sync_total{' || true)$'\n'
   done
   # The count on every tick: a backend that did not answer sums one pod fewer,
   # and that dip reads exactly like a fading curve. A tick nobody answered is

@@ -231,9 +231,11 @@ session_spread() {
   page=$(kube exec "$pod" -- yarctl -O json director backends list 2>/dev/null) || return 0
   # The pair in order, not a line per field: the port sits between them, and a
   # field-splitting read pairs an address with the wrong count.
+  # yarctl prints indented JSON, so the colon carries a space: a pattern
+  # written against compact output matches nothing and the line reads empty.
   printf '%s\n' "$page" |
-    grep -o '"ip":"[^"]*"\|"sessions":[0-9]*' |
-    sed 's/"//g; s/ip://; s/sessions://' | paste - - || true
+    grep -oE '"ip": *"[^"]*"|"sessions": *[0-9]+' |
+    sed 's/"//g; s/ip: *//; s/sessions: *//' | paste - - || true
 }
 
 # dict_delta writes what one run cost the dict service, per dict and verb. The
@@ -504,8 +506,10 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # Per login, because that is the unit the arm already reports: a raw delta
   # says nothing without the load that produced it.
   echo "$ARM $name $(awk -v logins="${logins:-0}" '
-      $1 ~ /^imap_maildir_sync_total\{result="scanned/ { scanned += $2 }
-      $1 ~ /^imap_maildir_sync_total\{result="skipped"/ { skipped += $2 }
+      # Matched on the label, not on where it sits: a second label (reason,
+      # #1875) sorts before result and an anchored pattern then reads zero.
+      $1 ~ /^imap_maildir_sync_total\{/ && $1 ~ /result="scanned/ { scanned += $2 }
+      $1 ~ /^imap_maildir_sync_total\{/ && $1 ~ /result="skipped"/ { skipped += $2 }
       $1 == "quota_folders_opened_total" { opened += $2 }
       END { printf "reconcile: scanned=%d skipped=%d folders_opened=%d", scanned, skipped, opened
             if (logins + 0 > 0) printf " scanned_per_login=%.3f folders_per_login=%.3f",
