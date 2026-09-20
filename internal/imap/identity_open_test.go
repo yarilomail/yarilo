@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -135,5 +136,38 @@ func TestIdentityOnlyCallersDoNotWalkTheStore(t *testing.T) {
 				t.Errorf("%s walked the store %v times; it needs the folder's identity, not what the store holds", tc.name, got)
 			}
 		})
+	}
+}
+
+// RENAME INBOX moves mail out of the selected folder, so a counter cannot say
+// whether the destination was walked too: the source is walked for a reason of
+// its own. The seam names each folder as it is walked, which answers it (#1875).
+func TestTheRenameDestinationIsNotWalked(t *testing.T) {
+	root, addr := startIdentityServer(t)
+	c := dialRaw(t, addr)
+	c.login()
+	appendSubject(t, c, "INBOX", "to be moved")
+	settleFolder(t, root, "INBOX")
+	c.cmd(`SELECT INBOX`)
+
+	var mu sync.Mutex
+	var walked []string
+	defer mailboxbase.SetWalkedFolder(func(folder string) {
+		mu.Lock()
+		defer mu.Unlock()
+		walked = append(walked, folder)
+	})()
+
+	c.cmd(`RENAME INBOX Moved`)
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, folder := range walked {
+		if folder == "Moved" {
+			t.Errorf("the rename destination was walked; it was created one line above the open and holds nothing the store can add (walked: %v)", walked)
+		}
+	}
+	if len(walked) == 0 {
+		t.Fatal("nothing was walked at all, so the seam proves nothing about the destination")
 	}
 }

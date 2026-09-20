@@ -79,6 +79,17 @@ func (c *syncTokenCache) put(key, token string, at time.Time, dirtyThen bool) {
 // the cap is a bound, not a tuning knob.
 var syncTokens = &syncTokenCache{maxEntries: 100_000}
 
+// walkedFolder names each folder as it is walked. A counter cannot answer
+// "which folder": a command that walks its source for a reason of its own
+// hides whether it also walked its destination (#1875).
+var walkedFolder func(string)
+
+// SetWalkedFolder registers the hook and returns a function removing it.
+func SetWalkedFolder(fn func(string)) func() {
+	walkedFolder = fn
+	return func() { walkedFolder = nil }
+}
+
 // SetTestSyncTokens swaps the cache and returns a function restoring it, so a
 // row can start from a cold one.
 func SetTestSyncTokens(c int) func() {
@@ -168,6 +179,9 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 		MetricReconcile.WithLabelValues("scanned-untokened").Inc()
 	} else {
 		MetricReconcile.WithLabelValues("scanned").Inc()
+	}
+	if walkedFolder != nil {
+		walkedFolder(folder)
 	}
 	// The walk is what costs; the counter says how often, never how long.
 	walked := time.Now()
