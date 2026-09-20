@@ -17,6 +17,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 // startIdentityServer is the raw-connection server with an annotation dict, so
@@ -36,6 +37,10 @@ func startIdentityServer(t *testing.T) (root, addr string) {
 		Resolver:     &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
 		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		MetadataDict: md,
+		// The engine and a per-mailbox message cap, so a save reaches the
+		// per-folder count: without them that caller is never called.
+		QuotaEngine: true,
+		QuotaPolicy: quota.Policy{MailboxMessageCount: 1000},
 	})
 	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
 	if lerr != nil {
@@ -111,10 +116,12 @@ func TestIdentityOnlyCallersDoNotWalkTheStore(t *testing.T) {
 		{name: "METADATA reads a GUID", run: func() { c.cmd(`GETMETADATA Dest (/private/comment)`) }},
 		{name: "APPEND writes its own record", run: func() { appendSubject(t, c, "Dest", "appended") }},
 		{name: "COPY writes its own record", run: func() { c.cmd(`COPY 1 Dest`) }},
-		// MOVE is not here: its expunge moves the source's mtime, so the poll
-		// that follows walks the selected folder for a reason of its own and
-		// the destination cannot be told apart. It reaches the destination
-		// through the same ensureFolderHandle as APPEND and COPY.
+		// MOVE and RENAME INBOX are not here, for one reason: each moves mail
+		// out of the selected folder, so the poll that follows walks it for a
+		// reason of its own and the destination cannot be told apart. MOVE
+		// reaches its destination through the same ensureFolderHandle as
+		// APPEND and COPY; the RENAME destination is a folder created one line
+		// above the open, with nothing in the store to take.
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
