@@ -2078,10 +2078,16 @@ func encU32Update(offset uint16, v uint32) []byte {
 // holdJournal excludes another process for one cycle. The lock file sits beside
 // the journal: locking it would create it empty before the base exists (#1840).
 func (fs *folderState) holdJournal(site string) (func(), error) {
+	return fs.holdJournalFor(site, mutLogLockWait)
+}
+
+// holdJournalFor is holdJournal with the wait named: dropping a stump is
+// opportunistic, so it asks briefly rather than queueing behind a writer.
+func (fs *folderState) holdJournalFor(site string, wait time.Duration) (func(), error) {
 	if fs.journalHeld {
 		return func() {}, nil
 	}
-	h, err := filelock.Take(fs.indexPath+".lock", fs.lockMethod, mutLogLockWait)
+	h, err := filelock.Take(fs.indexPath+".lock", fs.lockMethod, wait)
 	if err != nil {
 		return nil, fmt.Errorf("fileindex/journal: lock: %w", err)
 	}
@@ -2117,6 +2123,14 @@ func logEnd(f *os.File) (int64, error) {
 	}
 	return st.Size(), nil
 }
+
+// stumpGrew is the seam for the window between the read and the hold: a row
+// cannot otherwise land bytes there.
+var stumpGrew = func() {}
+
+// stumpLockWait bounds the wait for the journal before dropping a stump: the
+// next pass drops it just as well, so nothing queues for this.
+var stumpLockWait = 500 * time.Millisecond
 
 // mutLogLockWait bounds a writer's wait for the journal: the hold is one
 // write(2), so a longer wait is a wedged mount, not a queue (#1840).
@@ -2564,14 +2578,51 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	// Against the end of the tail THIS pass read, never a fresh os.Stat: a
 	// writer's valid append in the gap would otherwise be truncated away.
 	if fromOffset == 0 && committedEnd > 0 && start+int64(len(tail)) > committedEnd {
-		logPath := fs.indexPath + ".log"
-		slog.Debug("fileindex: truncating partial log tail",
-			"folder", fs.folder, "read_size", start+int64(len(tail)), "truncate_to", committedEnd)
-		_ = os.Truncate(logPath, committedEnd)
+		fs.dropStump(committedEnd, start+int64(len(tail)))
 	}
 	// committedEnd, not filePos: an incremental read neither truncates a partial
 	// trailing group nor confirms it; the next reload retries from here.
 	return committedEnd, nil
+}
+
+// dropStump removes what is past the last complete group, under the journal
+// hold and never without it: a reader that cuts an in-flight append takes the
+// bytes of a writer mid-write, and the reference only declares a short tail
+// when it holds the log (mail-transaction-log-file.c:1236-1245, #1831).
+func (fs *folderState) dropStump(committedEnd, readEnd int64) {
+	logPath := fs.indexPath + ".log"
+	if fs.journalHeld {
+		fs.truncateLog(logPath, committedEnd, readEnd)
+		return
+	}
+	release, err := fs.holdJournalFor("log-stump", stumpLockWait)
+	stumpGrew()
+	if err != nil {
+		// A held journal is a writer at work, and the stump may be its append
+		// landing. Leaving it costs a reader one more pass.
+		slog.Debug("fileindex: the partial log tail stays; the journal is held",
+			"folder", fs.folder, "err", err)
+		return
+	}
+	fs.truncateLog(logPath, committedEnd, readEnd)
+	release()
+}
+
+// truncateLog cuts back to committedEnd, but only while the file still ends
+// where this pass read it: anything appended since may be a complete group.
+func (fs *folderState) truncateLog(logPath string, committedEnd, readEnd int64) {
+	st, err := os.Stat(logPath)
+	if err != nil {
+		return
+	}
+	if st.Size() != readEnd {
+		slog.Debug("fileindex: the partial log tail grew under the hold; leaving it",
+			"folder", fs.folder, "read_size", readEnd, "size_now", st.Size())
+		return
+	}
+	slog.Debug("fileindex: truncating partial log tail",
+		"folder", fs.folder, "read_size", readEnd, "truncate_to", committedEnd)
+	_ = os.Truncate(logPath, committedEnd)
 }
 
 // flushAppend persists a newly appended record and updates the names sidecar;
