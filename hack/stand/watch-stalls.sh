@@ -29,7 +29,7 @@ while kube get job imaptest >/dev/null 2>&1; do
         'wget -qO- "http://127.0.0.1:8080/debug/pprof/goroutine?debug=2"' \
         > "$OUT/stall-$LABEL-$stamp-$pod.goroutines" 2>&1
     done
-    authpod=$(kube get pods -l app.kubernetes.io/component=auth -o name | head -1 | cut -d/ -f2)
+    authpod=$({ out=$(kube get pods -l app.kubernetes.io/component=auth -o name); printf '%s' "${out%%$'\n'*}" | cut -d/ -f2; })
     [ -n "$authpod" ] && kube exec "$authpod" -- sh -c \
       'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep -E "^yarilo_auth_request_seconds_"' \
       > "$OUT/stall-$LABEL-$stamp.auth" 2>&1

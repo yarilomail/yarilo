@@ -24,7 +24,7 @@ BODY_LINES="${YARILO_FILL_LINES:-24}"
 # that waits for ever: an arm stood six hours on one (#1875).
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 
-pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
+pod=$({ out=$(kube get pods -l app.kubernetes.io/component=backend -o name); printf '%s' "${out%%$'\n'*}" | cut -d/ -f2; })
 # The index, not the transcript, answers whether a mailbox is filled.
 [ -n "$pod" ] || { echo "fill: no backend pod in $NS" >&2; exit 1; }
 
