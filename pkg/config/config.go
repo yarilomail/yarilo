@@ -1621,7 +1621,19 @@ type DirectorServiceConfig struct {
 	// from username_hash_lowercase (%Lu / %u) for byte-identical back-compat. When set,
 	// it — not the bool — governs case-folding. Invalid templates fail loudly at startup.
 	UsernameHash     string `koanf:"username_hash"`
-	AssignmentPolicy string `koanf:"assignment_policy"` // hash | least_sessions (#797); default hash
+	AssignmentPolicy string `koanf:"assignment_policy"` // hash | least_sessions (#797) | domain (#1943); default hash
+	// DomainExpire is how long (seconds) a domain keeps its backend with no
+	// session on it, under assignment_policy: domain. Its own knob rather than
+	// the user TTL: a domain forgotten between two logins is placed again
+	// elsewhere, and a shared mailbox loses the affinity it was given (#1943).
+	DomainExpire int `koanf:"director_domain_expire"`
+	// DomainRebalancePercent is how far the busiest backend of a tag may rise
+	// above the quietest, in percent, before one domain is moved down; 0 never
+	// moves one. DomainRebalanceInterval is how often that is judged and
+	// DomainRebalanceCooldown how long a moved domain is left alone.
+	DomainRebalancePercent  int `koanf:"director_domain_rebalance_percent"`
+	DomainRebalanceInterval int `koanf:"director_domain_rebalance_interval"`
+	DomainRebalanceCooldown int `koanf:"director_domain_rebalance_cooldown"`
 	// UserKickDelay is how long (seconds) an admin-initiated kick is delayed
 	// before the USER-KICKED is pushed (#740), giving a user's in-flight
 	// command on the old backend a grace window to complete after a move.

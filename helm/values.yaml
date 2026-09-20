@@ -451,10 +451,24 @@ components:
     ## username_hash_lowercase (%Lu / %u) for byte-identical back-compat. When set, it —
     ## not the bool — governs case-folding. An invalid template aborts startup.
     username_hash: ""
-    ## Initial (unpinned) user placement (#797): hash | least_sessions.
+    ## Initial (unpinned) user placement: hash | least_sessions | domain.
     ## hash = consistent hash (reference semantics, deterministic). least_sessions
     ## = load-aware two-level pick (per-protocol then total, vhosts-normalized).
+    ## domain (#1943) = one backend per domain, so a shared mailbox is reachable
+    ## from every member of its domain; a new domain lands on the backend with
+    ## the fewest connections and stays there.
     assignment_policy: hash
+    ## Seconds a domain keeps its backend with no session on it. Its own knob,
+    ## not the user TTL: a domain forgotten between two logins would be placed
+    ## elsewhere and the affinity would be lost with nobody asking.
+    director_domain_expire: 900
+    ## How far (percent) the busiest backend of a tag may rise above the
+    ## quietest before one domain moves down; 0 never moves one. The interval is
+    ## how often that is judged, the cooldown how long a moved domain is left
+    ## alone -- without it two backends either side of the line trade a domain.
+    director_domain_rebalance_percent: 20
+    director_domain_rebalance_interval: 60
+    director_domain_rebalance_cooldown: 600
 
     ## Grace window (seconds) before an admin-initiated kick pushes USER-KICKED
     ## (#740), letting a user's in-flight command on the old backend finish
