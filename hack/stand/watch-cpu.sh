@@ -39,7 +39,16 @@ samples="$OUT/cpu-$LABEL.txt"
 echo "# samples: every ${EVERY}s, per-container cpu from metrics-server" >> "$samples"
 while :; do
   ts=$(date +%H:%M:%S)
+  # The container under load, and the box it runs on: a container below its own
+  # limit can still be bounded by a node that has nothing left (#1875).
   kube top pod --containers --no-headers 2>/dev/null |
     awk -v ts="$ts" '$1 ~ /backend|imaptest/ { printf "%s %s %s %s %s\n", ts, $1, $2, $3, $4 }' >> "$samples"
+  kubectl --kubeconfig="$KCFG" --request-timeout=30s top node --no-headers 2>/dev/null |
+    awk -v ts="$ts" '{ printf "%s NODE %s %s %s\n", ts, $1, $2, $3 }' >> "$samples"
+  # Everything else in the namespace, summed: the neighbours are the other half
+  # of the node's budget.
+  kube top pod --no-headers 2>/dev/null |
+    awk -v ts="$ts" '$1 !~ /backend|imaptest/ { c=$2; sub("m","",c); s+=c }
+                     END { printf "%s NEIGHBOURS %dm\n", ts, s }' >> "$samples"
   sleep "$EVERY"
 done
