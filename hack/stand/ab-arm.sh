@@ -13,7 +13,7 @@ set -euo pipefail
 
 # An arm that ends anywhere but its own last line says so: three runs died
 # inside the fill leaving only the line before it (#1875).
-trap 'rc=$?; [ "$rc" = 0 ] || echo "ab-arm: arm ${ARM:-?} ended at line $LINENO with status $rc" >&2' EXIT
+trap 'rc=$?; [ "$rc" = 0 ] || echo "ab-arm: arm ${ARM:-?} ended during ${STEP:-?} with status $rc" >&2' EXIT
 
 ARM="${1:?arm label}"
 TAG="${2:?image tag}"
@@ -23,6 +23,21 @@ KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
+
+# first_pod names one pod of a component. Captured whole and then cut: piping
+# kubectl into head closes the pipe under its feet, and pipefail turns that
+# SIGPIPE into status 141 -- which ended an arm after its fill, with no line
+# naming the step (#1875).
+first_pod() {
+  local out
+  out=$(kube get pods -l "app.kubernetes.io/component=$1" -o name 2>/dev/null) || return 1
+  out=${out%%$'\n'*}
+  printf '%s\n' "${out#pod/}"
+}
+
+# step names what the arm is doing, so the exit trap can say where it stopped.
+step() { STEP="$1"; }
+STEP="starting"
 mkdir -p "$OUT"
 
 IMAGE_REPO="${YARILO_IMAGE_REPO:-yarilomail/yarilo}"
@@ -152,7 +167,7 @@ dict_ops() {
   # deadline, and the two causes are told apart before giving up.
   deadline=$(( $(date +%s) + 60 ))
   while :; do
-    pod=$(kube get pods -l app.kubernetes.io/component=dict -o name 2>/dev/null | head -1 | cut -d/ -f2)
+    pod=$(first_pod dict)
     if [ -n "$pod" ]; then
       page=$(kube exec "$pod" -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null)
       [ -n "$page" ] && break
@@ -239,6 +254,7 @@ block_profile() {
   return "$rc"
 }
 
+step "deploy"
 echo "== arm $ARM: $TAG"
 helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
   -f "$REPO/helm_values/values-sandbox.yaml" "${overlay_args[@]}" --set image.tag="$TAG" --timeout 10m >/dev/null
@@ -272,6 +288,7 @@ if [ -n "$wrong" ]; then
   exit 1
 fi
 
+step "wipe"
 echo "-- same start: emptying u1-u150"
 for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
   kube exec "$pod" -c yarilo-imap -- sh -c \
@@ -283,7 +300,7 @@ done
 # than the one before it is not a comparison (#1875).
 start_inventory() {
   local pod
-  pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
+  pod=$(first_pod backend)
   kube exec "$pod" -c yarilo-imap -- sh -c '
     f=0; k=0
     for n in $(seq 1 150); do
@@ -298,7 +315,7 @@ start_inventory() {
 # probe_inventory counts the one mailbox the seed itself fills.
 probe_inventory() {
   local pod
-  pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
+  pod=$(first_pod backend)
   kube exec "$pod" -c yarilo-imap -- sh -c '
     d="/var/mail/vhosts/d00001.test/over@d00001.test"
     echo "files=$(find "$d" -type f 2>/dev/null | wc -l) du_kb=$(du -sk "$d" 2>/dev/null | cut -f1)"' 2>/dev/null
@@ -320,6 +337,7 @@ for attempt in 1 2 3 4 5; do
 done
 
 if [ "$FILL" != "0" ]; then
+  step "fill"
   echo "-- filling u1-u150 with $FILL messages each"
   for range in "1 50" "51 100" "101 150"; do
     set -- $range
@@ -340,7 +358,8 @@ case "$probe" in
   files=0\ *|"") echo "ab-arm: the inventory does not see the mailbox the seed delivered (${probe:-unreadable}); it is reading the wrong place" >&2; exit 1 ;;
 esac
 
-authpod=$(kube get pods -l app.kubernetes.io/component=auth -o name | head -1 | cut -d/ -f2)
+step "auth histogram"
+authpod=$(first_pod auth)
 [ -n "$authpod" ] || { echo "ab-arm: no auth pod to read the histogram from" >&2; exit 1; }
 kube exec "$authpod" -- sh -c \
   'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep -E "^yarilo_auth_request_seconds_(bucket|count|sum)\{.*verb=\"AUTH\""' \
@@ -349,6 +368,7 @@ kube exec "$authpod" -- sh -c \
 for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   set -- $pair
   name=$1; range=$2
+  step "run $name"
   # Checked, not assumed: if the literal in job.yaml ever moves, an unchecked
   # sed runs mdbox three times and reports three types.
   manifest="$OUT/job-$ARM-$name.yaml"
