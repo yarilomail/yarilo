@@ -1128,15 +1128,21 @@ func BuildMailbox(cfg config.StorageConfig, locker locks.Locker) mailbox.Mailbox
 
 // indexLockMethod reads the configured transport. Config refuses an unknown
 // name at load, so this cannot be reached with one.
-func indexLockMethod(cfg config.StorageConfig) filelock.Method {
-	// One place for the whole process: the timeout belongs to the volume's
-	// dotlocks, not to the index alone. Unset keeps the reference's, so a
-	// hand-written config does not lose the override by omission.
-	stale := filelock.DefaultStaleTimeout
-	if cfg.LockStaleTimeout > 0 {
-		stale = time.Duration(cfg.LockStaleTimeout) * time.Second
+// staleTimeoutOf is the one place that reads what the setting means: unset
+// keeps the reference's timeout, and a negative one asks for no override at
+// all -- zero cannot say both (#1831).
+func staleTimeoutOf(cfg config.StorageConfig) time.Duration {
+	switch {
+	case cfg.LockStaleTimeout < 0:
+		return 0
+	case cfg.LockStaleTimeout > 0:
+		return time.Duration(cfg.LockStaleTimeout) * time.Second
 	}
-	filelock.SetStaleTimeout(stale)
+	return filelock.DefaultStaleTimeout
+}
+
+func indexLockMethod(cfg config.StorageConfig) filelock.Method {
+	filelock.SetStaleTimeout(staleTimeoutOf(cfg))
 	m, _ := filelock.Parse(cfg.LockMethod)
 	return m
 }

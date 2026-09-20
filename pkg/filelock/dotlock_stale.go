@@ -35,7 +35,9 @@ var (
 )
 
 // SetStaleTimeout sets how long a dotlock may sit unchanged before a waiter
-// takes it over. Zero disables overriding, as the reference's zero does.
+// takes it over; a non-positive duration never takes one over. This is the
+// resolved duration -- what an unset or a disabled setting means is decided
+// where the config is read, not here.
 func SetStaleTimeout(d time.Duration) {
 	staleMu.Lock()
 	staleTimeout = d
@@ -128,25 +130,41 @@ func overrideDotlock(lockPath string, judged os.FileInfo, reason string) bool {
 
 // touchWhileHeld keeps a live holder's lock from reading as abandoned: the
 // stale rule is "nothing changed", so a long hold has to say that it is alive.
+//
+// Armed, not running: a journal hold is one write(2), and a timer that only
+// fires a third of the way into the timeout costs a short hold nothing.
 func touchWhileHeld(lockPath string, stale time.Duration) (stop func()) {
 	if stale <= 0 {
 		return func() {}
 	}
-	done := make(chan struct{})
-	var once sync.Once
-	go func() {
-		t := time.NewTicker(stale / 3)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case now := <-t.C:
-				_ = os.Chtimes(lockPath, now, now)
+	var (
+		mu      sync.Mutex
+		timer   *time.Timer
+		stopped bool
+		arm     func()
+	)
+	arm = func() {
+		timer = time.AfterFunc(stale/3, func() {
+			now := time.Now()
+			_ = os.Chtimes(lockPath, now, now)
+			mu.Lock()
+			defer mu.Unlock()
+			if !stopped {
+				arm()
 			}
+		})
+	}
+	mu.Lock()
+	arm()
+	mu.Unlock()
+	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+		stopped = true
+		if timer != nil {
+			timer.Stop()
 		}
-	}()
-	return func() { once.Do(func() { close(done) }) }
+	}
 }
 
 // processLives reports whether a pid is a process on this host.

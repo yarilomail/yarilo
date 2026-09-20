@@ -2250,8 +2250,9 @@ type StorageConfig struct {
 	// flock (default), fcntl or dotlock (#1840).
 	LockMethod string `koanf:"storage_lock_method"`
 	// LockStaleTimeout is how long a dotlock may sit unchanged before a waiter
-	// takes it over; 0 never takes one over. Only dotlock has the question:
-	// flock and fcntl die with the process that held them (#1831).
+	// takes it over, in seconds: unset keeps the reference's 180, -1 never
+	// takes one over. Only dotlock has the question: flock and fcntl die with
+	// the process that held them (#1831).
 	LockStaleTimeout int `koanf:"storage_lock_stale_timeout"`
 	// MailFsync is what reaches the disk before a delivery is acknowledged:
 	// never, optimized (default, the body) or always (#1847).
@@ -2912,8 +2913,9 @@ func (cfg *Config) validate() error {
 	if _, err := filelock.Parse(cfg.Storage.LockMethod); err != nil {
 		return fmt.Errorf("config: storage.storage_lock_method: %w", err)
 	}
-	if cfg.Storage.LockStaleTimeout < 0 {
-		return fmt.Errorf("config: storage.storage_lock_stale_timeout: %d is negative", cfg.Storage.LockStaleTimeout)
+	if cfg.Storage.LockStaleTimeout < -1 {
+		return fmt.Errorf("config: storage.storage_lock_stale_timeout: %d is neither a duration nor -1 (never take a dotlock over)",
+			cfg.Storage.LockStaleTimeout)
 	}
 	return nil
 }
