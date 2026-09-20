@@ -59,9 +59,15 @@ func deliverOutOfBand(t *testing.T, inbox, name string, at time.Time) {
 	settle(t, inbox, at)
 }
 
+// syncCount sums one decision across every reason it was taken for: a row
+// about how often the store was walked does not care what drove each walk.
 func syncCount(t *testing.T, result string) float64 {
 	t.Helper()
-	return testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues(result))
+	n := 0.0
+	for _, reason := range []string{"", "first-seen", "token-moved", "hot-new", "owed"} {
+		n += testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues(result, reason))
+	}
+	return n
 }
 
 func messageCount(t *testing.T, b mailbox.Box) int {
