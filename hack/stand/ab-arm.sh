@@ -435,6 +435,10 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # and the ceiling has to be in the window rather than in someone's memory.
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-cpu.sh" "$OUT" "$ARM-$name" 10 &
   cpuwatch=$!
+  # The reconcile curve beside the CPU one: a cold cache and a changed folder
+  # are the same total, and only their shapes over time tell them apart (#1875).
+  KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-reconcile.sh" "$OUT" "$ARM-$name" 10 &
+  recwatch=$!
   lock_classes > "$OUT/locks-$ARM-$name-before.txt"
   # Taken on every run, not only under the profiling overlay: these are the
   # numbers a change to the open path is judged by (#1875).
@@ -460,6 +464,7 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   fi
   wait "$watcher" 2>/dev/null || true
   kill "$cpuwatch" 2>/dev/null || true
+  kill "$recwatch" 2>/dev/null || true
   # The peak each side reached, so the reading does not need the whole file.
   # Per container against its own limit: imap is the one under load, and its
   # limit is one CPU whatever the pod totals say.
@@ -488,6 +493,14 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # them is the #1931 case, whatever the totals say.
   spread=$(awk '{printf "%s=%s ", $1, $2}' "$OUT/spread-$ARM-$name.txt" 2>/dev/null)
   echo "$ARM $name sessions: ${spread:-unreadable}"
+  # What drove the walks, and how the cold share fades: the number A2 is
+  # decided by. Read from the delta, with the curve beside it in the file.
+  echo "$ARM $name $(awk '
+      $1 ~ /result="scanned/ { scanned += $2 }
+      $1 ~ /reason="first-seen"/ && $1 ~ /result="scanned/ { cold += $2 }
+      END { printf "walks: scanned=%d first-seen=%d", scanned, cold
+            if (scanned + 0 > 0) printf " cold_share=%.1f%%", 100 * cold / scanned }
+    ' "$OUT/backend-$ARM-$name-delta.txt")"
   # Per login, because that is the unit the arm already reports: a raw delta
   # says nothing without the load that produced it.
   echo "$ARM $name $(awk -v logins="${logins:-0}" '
