@@ -221,6 +221,21 @@ backend_counters() {
   printf '%s\n' "$total" | awk 'NF == 2 { sum[$1] += $2 } END { for (k in sum) printf "%s %d\n", k, sum[k] }' | sort
 }
 
+# session_spread prints how many sessions each backend carries, from the
+# director's own view. Under assignment_policy: domain the question a run
+# answers is not only how many logins there were but where they went (#1943).
+session_spread() {
+  local pod page
+  pod=$(first_pod director) || return 0
+  [ -n "$pod" ] || return 0
+  page=$(kube exec "$pod" -- yarctl -O json director backends list 2>/dev/null) || return 0
+  # The pair in order, not a line per field: the port sits between them, and a
+  # field-splitting read pairs an address with the wrong count.
+  printf '%s\n' "$page" |
+    grep -o '"ip":"[^"]*"\|"sessions":[0-9]*' |
+    sed 's/"//g; s/ip://; s/sessions://' | paste - - || true
+}
+
 # dict_delta writes what one run cost the dict service, per dict and verb. The
 # shape is a counter page either side, so the reconcile counters share it.
 dict_delta() {
@@ -430,6 +445,7 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
     capture=$!
   fi
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest "$manifest" "$OUT/ab-$ARM-$name.log" 900
+  session_spread > "$OUT/spread-$ARM-$name.txt" || true
   lock_classes > "$OUT/locks-$ARM-$name-after.txt"
   backend_counters > "$OUT/backend-$ARM-$name-after.txt" || exit 1
   dict_delta "$OUT/backend-$ARM-$name-before.txt" "$OUT/backend-$ARM-$name-after.txt" \
@@ -468,6 +484,10 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)
   echo "$ARM $name logins=${logins:-?} stalls=$stalls"
+  # Where the sessions sat when the run ended: one backend carrying all of
+  # them is the #1931 case, whatever the totals say.
+  spread=$(awk '{printf "%s=%s ", $1, $2}' "$OUT/spread-$ARM-$name.txt" 2>/dev/null)
+  echo "$ARM $name sessions: ${spread:-unreadable}"
   # Per login, because that is the unit the arm already reports: a raw delta
   # says nothing without the load that produced it.
   echo "$ARM $name $(awk -v logins="${logins:-0}" '
