@@ -3,6 +3,7 @@ package mailboxbase
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -51,9 +52,10 @@ func TestTheTokenKeyKeepsAccountsAndFoldersApart(t *testing.T) {
 // scan, never a wrong skip.
 func TestCacheOverflowCostsAScanNotCorrectness(t *testing.T) {
 	c := &syncTokenCache{maxEntries: 4}
-	c.put("a", "t")
+	now := time.Now()
+	c.put("a", "t", now, false)
 	for i := 0; i < 4; i++ {
-		c.put(string(rune('b'+i)), "t")
+		c.put(string(rune('b'+i)), "t", now, false)
 	}
 	if _, ok := c.get("a"); ok {
 		t.Error("entry survived the overflow drop; the bound is not bounding")
@@ -61,7 +63,7 @@ func TestCacheOverflowCostsAScanNotCorrectness(t *testing.T) {
 	if len(c.tokens) > c.maxEntries {
 		t.Errorf("%d entries held, cap is %d", len(c.tokens), c.maxEntries)
 	}
-	if tok, ok := c.get(string(rune('b' + 3))); !ok || tok != "t" {
+	if tok, ok := c.get(string(rune('b' + 3))); !ok || tok.token != "t" {
 		t.Error("the entry that triggered the drop was not kept")
 	}
 }

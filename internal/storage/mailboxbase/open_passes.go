@@ -17,6 +17,15 @@ type proactiveSyncer interface {
 	ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error)
 }
 
+// syncWindower reports what the driver knows about its own timestamps: whether
+// new mail may be sitting in a directory the mtime cannot yet vouch for, and
+// how wide that window is. A driver without it is judged by its token alone.
+type syncWindower interface {
+	// SyncDirty reports a hot arrival directory, a changed-store directory
+	// whose mtime is inside the window, and the window itself.
+	SyncDirty(folder string) (arrivalHot, storeDirty bool, window time.Duration)
+}
+
 // indexDirNamer names where a folder's files live: one user's namespaces
 // resolve to different directories, and their tokens are not each other's.
 type indexDirNamer interface {
@@ -27,31 +36,43 @@ type indexDirNamer interface {
 // a session-scoped one is invalidated by the login pattern, not the data (#1248).
 type syncTokenCache struct {
 	mu     sync.Mutex
-	tokens map[string]string
+	tokens map[string]tokenSeen
 	// maxEntries bounds the map; overflow drops it whole, since the entries
 	// carry no age and rebuilding one costs a reconcile.
 	maxEntries int
 }
 
-func (c *syncTokenCache) get(key string) (string, bool) {
+// tokenSeen is the last token and when the folder was last walked: the token
+// alone cannot bound a dirty folder, whose token is new on every read.
+type tokenSeen struct {
+	token     string
+	checkedAt time.Time
+	// dirtyThen is whether the walk behind this entry was taken while the
+	// store's mtime could not vouch for it. The reference compares the stored
+	// check time against the stored mtime for the same reason: a change landing
+	// in the same second as the check is invisible to both.
+	dirtyThen bool
+}
+
+func (c *syncTokenCache) get(key string) (tokenSeen, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	v, ok := c.tokens[key]
 	return v, ok
 }
 
-func (c *syncTokenCache) put(key, token string) {
+func (c *syncTokenCache) put(key, token string, at time.Time, dirtyThen bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.tokens == nil {
-		c.tokens = make(map[string]string)
+		c.tokens = make(map[string]tokenSeen)
 	}
 	if len(c.tokens) >= c.maxEntries {
 		slog.Info("mailbox/sync: the token cache reached its bound and was dropped",
 			"entries", len(c.tokens), "max", c.maxEntries)
-		c.tokens = make(map[string]string)
+		c.tokens = make(map[string]tokenSeen)
 	}
-	c.tokens[key] = token
+	c.tokens[key] = tokenSeen{token: token, checkedAt: at, dirtyThen: dirtyThen}
 }
 
 // syncTokens is the process-wide instance. 100k folders of tokens is a few MB;
@@ -101,6 +122,16 @@ func (b *Box) sweepTemps(folder string) {
 	sw.SweepTemps(folder)
 }
 
+// syncDirtiness asks the driver what its own timestamps are worth right now. A
+// driver that does not answer is judged by its token alone, as before.
+func (b *Box) syncDirtiness(ps proactiveSyncer, folder string) (arrivalHot, storeDirty bool, window time.Duration) {
+	sw, ok := ps.(syncWindower)
+	if !ok {
+		return false, false, 0
+	}
+	return sw.SyncDirty(folder)
+}
+
 // reconcile skips the walk while the token is the one the last successful pass
 // saw; caching only on success keeps a failure from wedging a permanent skip.
 func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
@@ -110,10 +141,25 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	}
 	key := b.tokenKey(folder)
 	token := ps.SyncToken(folder)
+	arrivalHot, storeDirty, window := b.syncDirtiness(ps, folder)
 	if token != "" {
-		if prev, seen := syncTokens.get(key); seen && prev == token {
-			MetricReconcile.WithLabelValues("skipped").Inc()
-			return false
+		if prev, seen := syncTokens.get(key); seen {
+			switch {
+			case arrivalHot || prev.token != token:
+				// A moved mtime is always walked, as the reference walks on
+				// DIR_MTIME_CHANGED; the window bounds re-walks of a dirty
+				// directory that has not moved, nothing else (#1875).
+			case prev.dirtyThen && time.Since(prev.checkedAt) < window:
+				MetricReconcile.WithLabelValues("skipped-window").Inc()
+				return false
+			case prev.dirtyThen:
+				// The window has passed: one walk is owed, because a change
+				// landing in the same second as that walk moved neither the
+				// mtime nor the token built from it.
+			default:
+				MetricReconcile.WithLabelValues("skipped").Inc()
+				return false
+			}
 		}
 	}
 	// Why it walks, not only how often: a folder whose driver gives no token
@@ -132,7 +178,7 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 			"user", b.store.Username(), "folder", folder, "err", err)
 		return false
 	}
-	syncTokens.put(key, token)
+	syncTokens.put(key, token, walked, storeDirty || arrivalHot)
 	if !st.Changed {
 		return false
 	}

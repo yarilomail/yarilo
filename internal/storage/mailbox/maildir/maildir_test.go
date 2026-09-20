@@ -766,10 +766,11 @@ func TestSyncTokenChangesOnDelivery(t *testing.T) {
 	}
 }
 
-// TestSyncTokenDirtyWithinSecond verifies the same-second guard: a folder just
-// modified yields a non-repeating token so the caller cannot wrongly skip a
-// reconcile on a filesystem with coarse mtime granularity.
-func TestSyncTokenDirtyWithinSecond(t *testing.T) {
+// The same-second guard moved from the token to the driver's own report: the
+// token is what changed, the dirty state is what the mtime cannot vouch for,
+// and the caller bounds the re-walk by its own last check (#1875). A token
+// that carried a nonce could only ever say "walk again now".
+func TestSyncTokenIsStableAndDirtinessIsReportedApart(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
@@ -777,10 +778,16 @@ func TestSyncTokenDirtyWithinSecond(t *testing.T) {
 	if err := box.Create("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	// cur/new were just created (mtime ~now), so both reads are dirty and must
-	// differ from each other, forcing a reconcile.
-	if a, b := box.SyncToken("INBOX"), box.SyncToken("INBOX"); a == b {
-		t.Fatalf("dirty token repeated within the same second: %q", a)
+	if a, b := box.SyncToken("INBOX"), box.SyncToken("INBOX"); a != b {
+		t.Errorf("the token moved with nothing written: %q then %q", a, b)
+	}
+	// cur/ and new/ were made a moment ago, so both are inside the window.
+	arrivalHot, storeDirty, window := box.SyncDirty("INBOX")
+	if !arrivalHot || !storeDirty {
+		t.Errorf("SyncDirty = (%v, %v); a directory written this second cannot be vouched for by its mtime", arrivalHot, storeDirty)
+	}
+	if window != dirSettleWindow {
+		t.Errorf("window %s, want %s", window, dirSettleWindow)
 	}
 }
 

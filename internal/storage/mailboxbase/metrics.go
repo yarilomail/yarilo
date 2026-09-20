@@ -10,8 +10,8 @@ import (
 var (
 	MetricReconcile = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "imap_maildir_sync_total",
-		Help: "Maildir reconcile decisions: scanned means the change token moved and cur/ and new/ were walked, scanned-untokened means there was no token to compare, skipped means the token said nothing had changed.",
-	}, []string{"result"}) // scanned | scanned-untokened | skipped
+		Help: "Maildir reconcile decisions: scanned means the change token moved and cur/ and new/ were walked, scanned-untokened means there was no token to compare, skipped means the token said nothing had changed, skipped-window means it moved inside the window the mtime cannot vouch for and the folder was walked less than a window ago.",
+	}, []string{"result"}) // scanned | scanned-untokened | skipped | skipped-window
 
 	MetricReconcileSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "imap_maildir_sync_seconds",

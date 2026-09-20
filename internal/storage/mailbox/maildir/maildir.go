@@ -1407,9 +1407,7 @@ func sameFlags(a, b []string) bool {
 // carries a nonce: at 1s granularity a same-tick change moves nothing.
 func (u *userMailbox) SyncToken(folder string) string {
 	base := u.folderPath(folder)
-	now := time.Now()
 	var b strings.Builder
-	dirty := false
 	for _, sub := range []string{"cur", "new"} {
 		fi, err := statPath(filepath.Join(base, sub))
 		if err != nil {
@@ -1417,14 +1415,23 @@ func (u *userMailbox) SyncToken(folder string) string {
 		}
 		mt := fi.ModTime()
 		fmt.Fprintf(&b, "%s=%d/%d;", sub, mt.UnixNano(), fi.Size())
-		if !settled(mt) {
-			dirty = true
-		}
-	}
-	if dirty {
-		fmt.Fprintf(&b, "dirty=%d", now.UnixNano())
 	}
 	return b.String()
+}
+
+// SyncDirty says which of the two directories the mtime cannot yet vouch for.
+// A filesystem that keeps mtime to the second cannot distinguish two changes
+// inside one, so a directory written just now is re-walked -- but bounded by
+// the caller's last check, not on every open (#1875).
+func (u *userMailbox) SyncDirty(folder string) (arrivalHot, storeDirty bool, window time.Duration) {
+	base := u.folderPath(folder)
+	if fi, err := statPath(filepath.Join(base, "new")); err == nil && !settled(fi.ModTime()) {
+		arrivalHot = true
+	}
+	if fi, err := statPath(filepath.Join(base, "cur")); err == nil && !settled(fi.ModTime()) {
+		storeDirty = true
+	}
+	return arrivalHot, storeDirty, dirSettleWindow
 }
 
 // ---- uidlist ---------------------------------------------------------------
