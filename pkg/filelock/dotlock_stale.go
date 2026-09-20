@@ -171,3 +171,13 @@ func touchWhileHeld(lockPath string, stale time.Duration) (stop func()) {
 func processLives(pid int) bool {
 	return !errors.Is(unix.Kill(pid, 0), unix.ESRCH)
 }
+
+// reportOverride says why a waiter that decided to take a lock over did not:
+// the file moved under the decision, which is a holder finishing normally.
+func reportOverride(lockPath string, taken bool, reason string) {
+	if taken {
+		return
+	}
+	slog.Debug("filelock: the dotlock was not taken over after all",
+		"lock", lockPath, "reason", reason, "cause", "it is no longer the file that was judged")
+}

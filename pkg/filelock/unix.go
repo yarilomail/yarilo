@@ -95,10 +95,10 @@ func takeDotlock(path string, wait time.Duration) (*Hold, error) {
 		if lst, lerr := os.Lstat(lockPath); lerr == nil {
 			switch {
 			case holderGone(lockPath):
-				overrideDotlock(lockPath, lst, "dead")
+				reportOverride(lockPath, overrideDotlock(lockPath, lst, "dead"), "dead")
 			case stale > 0:
 				if judged, quiet := unchangedFor(path, lockPath, stale, time.Now()); quiet {
-					overrideDotlock(lockPath, judged, "stale")
+					reportOverride(lockPath, overrideDotlock(lockPath, judged, "stale"), "stale")
 				}
 			}
 		}
