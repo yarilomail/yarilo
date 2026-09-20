@@ -1022,6 +1022,41 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 	return out, nil
 }
 
+// scanNamed builds the records for named files in cur/, without reading the
+// directory: an arrivals-only pass already knows which names it moved, and
+// walking cur/ to find them is the cost this pass exists to avoid (#1875).
+func (u *userMailbox) scanNamed(folder string, names []string) []mailbox.ScanRecord {
+	if len(names) == 0 {
+		return nil
+	}
+	_, _ = u.readUIDList(folder)
+	kwNames := u.keywordNames(folder)
+	curDir := filepath.Join(u.folderPath(folder), "cur")
+	out := make([]mailbox.ScanRecord, 0, len(names))
+	for _, name := range names {
+		info, err := statPath(filepath.Join(curDir, name))
+		if err != nil {
+			continue // moved on by another process between the rename and here
+		}
+		phys, virt, hasPhys, _ := parseSizeInfo(name)
+		size := uint32(info.Size())
+		if hasPhys {
+			size = phys
+		}
+		flags, keywords := decodeFlagsWith(name, kwNames)
+		out = append(out, mailbox.ScanRecord{
+			Filename:     name,
+			Size:         size,
+			VSize:        virt,
+			InternalDate: info.ModTime(),
+			Flags:        append([]string(nil), flags...),
+			Keywords:     append([]string(nil), keywords...),
+			GUID:         u.guidFor(folder, name),
+		})
+	}
+	return out
+}
+
 func (u *userMailbox) Close() error { return nil }
 
 // ProactiveScan says the store changes out of band -- an MDA into new/, another
@@ -1060,17 +1095,18 @@ func guidFromBase(filename string) [16]byte {
 // moveNewToCurLocked moves every file from new/ into cur/, appending the ":2,"
 // info marker for a message with no flags. The MDA delivers into new/; the rest
 // of the driver (Fetch, Remove, List) only looks in cur/. Caller holds the lock.
-func (u *userMailbox) moveNewToCurLocked(folder string) error {
+func (u *userMailbox) moveNewToCurLocked(folder string) ([]string, error) {
 	base := u.folderPath(folder)
 	newDir := filepath.Join(base, "new")
 	curDir := filepath.Join(base, "cur")
 	entries, err := os.ReadDir(newDir)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("maildir/sync: read new: %w", err)
+		return nil, fmt.Errorf("maildir/sync: read new: %w", err)
 	}
+	var moved []string
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -1084,16 +1120,29 @@ func (u *userMailbox) moveNewToCurLocked(folder string) error {
 			if errors.Is(err, os.ErrNotExist) {
 				continue // moved by a concurrent sync
 			}
-			return fmt.Errorf("maildir/sync: move new->cur %s: %w", name, err)
+			return nil, fmt.Errorf("maildir/sync: move new->cur %s: %w", name, err)
 		}
+		moved = append(moved, curName)
 	}
-	return nil
+	return moved, nil
 }
 
 // ReconcileIndex brings idx into agreement with the maildir, matching by base
 // name so a flag rename keeps its UID. An unchanged name is left alone: the
 // index is authoritative for flags this server set.
 func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
+	return u.reconcile(idx, folder, false)
+}
+
+// ReconcileArrivals takes what the arrival directory holds and judges no
+// absence: a pass that has not read cur/ cannot say what is missing from it.
+// This is the reference's partial sync, taken when cur/ has not moved
+// (maildir-sync.c:860-867, MAILDIR_UIDLIST_SYNC_PARTIAL).
+func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
+	return u.reconcile(idx, folder, true)
+}
+
+func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
 	// The move precedes the scan because it renames, and is asked about before
 	// the lock: one acquisition taken to find an empty new/ is paid on every
@@ -1102,9 +1151,12 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, fol
 	if movePhaseProbe != nil {
 		movePhaseProbe(movedNew)
 	}
+	var arrivals []string
 	if movedNew {
 		if err := u.withMailboxLockSite(folder.Name, lockSiteReconcileMove, func() error {
-			return u.moveNewToCurLocked(folder.Name)
+			var merr error
+			arrivals, merr = u.moveNewToCurLocked(folder.Name)
+			return merr
 		}); err != nil {
 			return st, err
 		}
@@ -1113,7 +1165,16 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, fol
 	// The walk, holding nothing. A flag change renames only the part after
 	// ":2,", and everything here is keyed by the base name -- so the scan is
 	// sound about which messages exist and unsound about the flags they carry.
-	scanned, err := u.Scan(folder.Name)
+	//
+	// Unless this pass is an arrivals-only one: then the names that moved are
+	// what it reads, and cur/ is not walked at all (#1875).
+	var scanned []mailbox.ScanRecord
+	var err error
+	if arrivalsOnly {
+		scanned = u.scanNamed(folder.Name, arrivals)
+	} else {
+		scanned, err = u.Scan(folder.Name)
+	}
 	if err != nil {
 		return st, fmt.Errorf("maildir/sync: scan: %w", err)
 	}
@@ -1124,7 +1185,10 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, fol
 	// Nothing to apply, no lock at all: fifty sessions polling one folder took
 	// it to find the first had done the work (#1630). A stale answer errs
 	// toward taking the lock, and the section re-reads before writing.
-	if u.reconcileIsClean(idx, folder, scanned) {
+	if arrivalsOnly && len(scanned) == 0 {
+		return st, nil // nothing arrived, and absence is not this pass's business
+	}
+	if !arrivalsOnly && u.reconcileIsClean(idx, folder, scanned) {
 		return st, nil
 	}
 
@@ -1191,7 +1255,20 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, fol
 				baseByGUID[rec.GUID] = base
 			}
 		}
+		// The absence of a name means nothing to a pass that did not read cur/:
+		// every record there would look missing. Known bases are claimed so
+		// they are not imported twice, and nothing else is judged (#1875).
+		if arrivalsOnly {
+			for _, m := range existing {
+				if base, known := uidToBase[m.UID]; known {
+					tracked[base] = struct{}{}
+				}
+			}
+		}
 		for _, m := range existing {
+			if arrivalsOnly {
+				break
+			}
 			base, known := uidToBase[m.UID]
 			if !known {
 				// The row is what was lost, so write it back: importing the
@@ -1417,6 +1494,35 @@ func (u *userMailbox) SyncToken(folder string) string {
 		fmt.Fprintf(&b, "%s=%d/%d;", sub, mt.UnixNano(), fi.Size())
 	}
 	return b.String()
+}
+
+// PartialScope reports whether a walk may read the arrival directory alone:
+// true when cur/ stands exactly where the last walk left it. The reference
+// asks the same question as !cur_changed (maildir-sync.c:860-867).
+func (u *userMailbox) PartialScope(folder, prevToken string) bool {
+	// By mtime alone, as the reference compares it (DIR_MTIME_CHANGED): the
+	// size in the token is a directory's byte count, which a filesystem may
+	// change for a removal that leaves the timestamp where it was -- and that
+	// is a change this question is not asking about.
+	prev, _, ok := strings.Cut(tokenPart(prevToken, "cur"), "/")
+	if !ok || prev == "" {
+		return false
+	}
+	fi, err := statPath(filepath.Join(u.folderPath(folder), "cur"))
+	if err != nil {
+		return false
+	}
+	return prev == fmt.Sprintf("%d", fi.ModTime().UnixNano())
+}
+
+// tokenPart pulls one directory's half out of a token this driver built.
+func tokenPart(token, sub string) string {
+	for _, part := range strings.Split(token, ";") {
+		if name, value, ok := strings.Cut(part, "="); ok && name == sub {
+			return value
+		}
+	}
+	return ""
 }
 
 // SyncDirty says which of the two directories the mtime cannot yet vouch for.

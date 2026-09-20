@@ -17,6 +17,14 @@ type proactiveSyncer interface {
 	ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error)
 }
 
+// partialSyncer is a driver that can take the arrivals alone when the rest of
+// the store has not moved. A partial pass never judges absence: a walk that did
+// not read the store cannot say what is missing from it (#1875).
+type partialSyncer interface {
+	PartialScope(folder, prevToken string) bool
+	ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error)
+}
+
 // syncWindower reports what the driver knows about its own timestamps: whether
 // new mail may be sitting in a directory the mtime cannot yet vouch for, and
 // how wide that window is. A driver without it is judged by its token alone.
@@ -84,6 +92,16 @@ var syncTokens = &syncTokenCache{maxEntries: 100_000}
 // hides whether it also walked its destination (#1875).
 var walkedFolder func(string)
 
+// afterWalk runs between the walk and the re-read of the token, which is the
+// only window a row can land a change in.
+var afterWalk func(string)
+
+// SetAfterWalk registers that hook and returns a function removing it.
+func SetAfterWalk(fn func(string)) func() {
+	afterWalk = fn
+	return func() { afterWalk = nil }
+}
+
 // SetWalkedFolder registers the hook and returns a function removing it.
 func SetWalkedFolder(fn func(string)) func() {
 	walkedFolder = fn
@@ -133,6 +151,23 @@ func (b *Box) sweepTemps(folder string) {
 	sw.SweepTemps(folder)
 }
 
+// walk runs the pass the gate chose: the whole store, or the arrivals alone.
+func (b *Box) walk(ps proactiveSyncer, f *mailbox.Folder, partial bool) (mailbox.SyncStats, error) {
+	if partial {
+		if pw, ok := ps.(partialSyncer); ok {
+			return pw.ReconcileArrivals(b, b.index, f)
+		}
+	}
+	return ps.ReconcileIndex(b, b.index, f)
+}
+
+// partialWalkable reports whether this walk may read the arrivals alone: the
+// driver has to offer it, and the store half of the token must not have moved.
+func (b *Box) partialWalkable(ps proactiveSyncer, folder, prevToken string) bool {
+	pw, ok := ps.(partialSyncer)
+	return ok && prevToken != "" && pw.PartialScope(folder, prevToken)
+}
+
 // syncDirtiness asks the driver what its own timestamps are worth right now. A
 // driver that does not answer is judged by its token alone, as before.
 func (b *Box) syncDirtiness(ps proactiveSyncer, folder string) (arrivalHot, storeDirty bool, window time.Duration) {
@@ -152,17 +187,21 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	}
 	key := b.tokenKey(folder)
 	token := ps.SyncToken(folder)
-	arrivalHot, storeDirty, window := b.syncDirtiness(ps, folder)
+	arrivalHot, _, window := b.syncDirtiness(ps, folder)
 	// The cause is recorded, not only the decision: a folder this process has
 	// never seen walks for a different reason than one whose mtime moved, and
 	// a counter that cannot tell them apart cannot say what a restart costs
 	// (#1875). The reference keeps the same four in enum maildir_scan_why.
 	reason := reasonFirstSeen
+	partial := false
 	if token != "" {
 		if prev, seen := syncTokens.get(key); seen {
 			switch {
 			case arrivalHot:
 				reason = reasonHotNew
+				// Only the arrivals, when the store has not moved: the walk
+				// this case pays for is the one cur/ does not need.
+				partial = b.partialWalkable(ps, folder, prev.token)
 			case prev.token != token:
 				// A moved mtime is always walked, as the reference walks on
 				// DIR_MTIME_CHANGED; the window bounds re-walks of a dirty
@@ -184,9 +223,14 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	}
 	// Why it walks, not only how often: a folder whose driver gives no token
 	// walks every open, and it counts apart from one whose token moved (#1821).
-	if token == "" {
+	switch {
+	case token == "":
 		MetricReconcile.WithLabelValues("scanned-untokened", reason).Inc()
-	} else {
+	case partial:
+		// Counted apart: the share of walks that read only the arrivals is
+		// what says whether the partial pass is worth its definition.
+		MetricReconcile.WithLabelValues("scanned-partial", reason).Inc()
+	default:
 		MetricReconcile.WithLabelValues("scanned", reason).Inc()
 	}
 	if walkedFolder != nil {
@@ -194,14 +238,29 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	}
 	// The walk is what costs; the counter says how often, never how long.
 	walked := time.Now()
-	st, err := ps.ReconcileIndex(b, b.index, f)
+	st, err := b.walk(ps, f, partial)
 	MetricReconcileSeconds.Observe(time.Since(walked).Seconds())
 	if err != nil {
 		slog.Warn("mailbox/open: the reconcile did not finish",
 			"user", b.store.Username(), "folder", folder, "err", err)
 		return false
 	}
-	syncTokens.put(key, token, walked, storeDirty || arrivalHot)
+	if afterWalk != nil {
+		afterWalk(folder)
+	}
+	// The directory as the walk left it, not as it found it: a walk that moves
+	// new/ into cur/ changes cur's mtime itself, and storing the pre-walk token
+	// makes the next open walk again for this process's own move. The reference
+	// re-stats cur/ after the sync for the same reason
+	// (maildir-sync-index.c:277-281). Nothing is lost by it: a change that
+	// lands during the walk leaves the directory dirty, and the window's owed
+	// re-walk takes it (#1941, #1875).
+	after := ps.SyncToken(folder)
+	if after == "" {
+		after = token
+	}
+	hotAfter, dirtyAfter, _ := b.syncDirtiness(ps, folder)
+	syncTokens.put(key, after, time.Now(), dirtyAfter || hotAfter)
 	if !st.Changed {
 		return false
 	}
