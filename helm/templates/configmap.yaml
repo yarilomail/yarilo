@@ -983,6 +983,12 @@ data:
       username_hash_lowercase: {{ .Values.components.director.username_hash_lowercase }}
       username_hash: {{ .Values.components.director.username_hash | default "" | quote }}
       assignment_policy: {{ .Values.components.director.assignment_policy | default "hash" | quote }}
+      director_domain_expire: {{ .Values.components.director.director_domain_expire | default 900 }}
+      {{- /* hasKey, not default: Helm reads 0 as unset, and 0 is how an
+             operator turns the rebalance off (#1943). */}}
+      director_domain_rebalance_percent: {{ if hasKey .Values.components.director "director_domain_rebalance_percent" }}{{ .Values.components.director.director_domain_rebalance_percent }}{{ else }}20{{ end }}
+      director_domain_rebalance_interval: {{ .Values.components.director.director_domain_rebalance_interval | default 60 }}
+      director_domain_rebalance_cooldown: {{ .Values.components.director.director_domain_rebalance_cooldown | default 600 }}
       user_kick_delay: {{ .Values.components.director.user_kick_delay }}
       user_kill_timeout: {{ .Values.components.director.user_kill_timeout }}
       user_kill_confirm_grace: {{ .Values.components.director.user_kill_confirm_grace }}
