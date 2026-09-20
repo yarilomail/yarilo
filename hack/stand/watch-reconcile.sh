@@ -25,15 +25,29 @@ echo "# samples: every ${EVERY}s, imap_maildir_sync_total summed over the backen
 while :; do
   ts=$(date +%H:%M:%S)
   pods=$(kube get pods -l app.kubernetes.io/component=backend -o name 2>/dev/null | cut -d/ -f2)
+  want=0
+  answered=0
+  page=""
   # Summed over the pods, not one of them: the director spreads the load and a
   # single pod's curve is the shape of its share, not of the run.
   for pod in $pods; do
-    kube exec "$pod" -c yarilo-imap -- sh -c \
+    want=$((want + 1))
+    got=$(kube exec "$pod" -c yarilo-imap -- sh -c \
       'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null' 2>/dev/null |
-      grep '^imap_maildir_sync_total{'
-  done | awk -v ts="$ts" '
-      { n = $NF; sub(/^imap_maildir_sync_total/, "", $1); sum[$1] += n }
-      END { for (k in sum) printf "%s %s %d\n", ts, k, sum[k] }
-    ' | sort -k2 >> "$samples"
+      grep '^imap_maildir_sync_total{')
+    [ -n "$got" ] || continue
+    answered=$((answered + 1))
+    page+="$got"$'\n'
+  done
+  # The count on every tick: a backend that did not answer sums one pod fewer,
+  # and that dip reads exactly like a fading curve. A tick nobody answered is
+  # recorded as such rather than as zero counters.
+  echo "$ts PODS $answered/$want" >> "$samples"
+  if [ "$answered" -gt 0 ]; then
+    printf '%s\n' "$page" | awk -v ts="$ts" '
+        NF == 2 { n = $NF; sub(/^imap_maildir_sync_total/, "", $1); sum[$1] += n }
+        END { for (k in sum) printf "%s %s %d\n", ts, k, sum[k] }
+      ' | sort -k2 >> "$samples"
+  fi
   sleep "$EVERY"
 done
