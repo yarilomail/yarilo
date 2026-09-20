@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
-
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -88,7 +86,7 @@ func folderOpens(t *testing.T) float64 {
 	t.Helper()
 	total := 0.0
 	for _, result := range []string{"scanned", "scanned-untokened", "skipped"} {
-		total += testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues(result))
+		total += syncCount(t, result)
 	}
 	return total
 }

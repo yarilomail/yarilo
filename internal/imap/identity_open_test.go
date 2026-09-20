@@ -54,8 +54,17 @@ func startIdentityServer(t *testing.T) (root, addr string) {
 
 func storeWalks(t *testing.T) float64 {
 	t.Helper()
-	return testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned")) +
-		testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned-untokened"))
+	return reconcileCount("scanned") + reconcileCount("scanned-untokened")
+}
+
+// reconcileCount sums one decision over every reason: these rows count walks,
+// not their causes.
+func reconcileCount(result string) float64 {
+	n := 0.0
+	for _, reason := range []string{"", "first-seen", "token-moved", "hot-new", "owed"} {
+		n += testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues(result, reason))
+	}
+	return n
 }
 
 // changeOutOfBand drops a file into a folder's cur/ the way another MUA does,

@@ -54,7 +54,7 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 
 	const raw = "From: a@b\r\nSubject: one hold\r\n\r\nbody\r\n"
 	before := journalHolds(t)
-	scansBefore := testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned"))
+	scansBefore := reconcileCount("scanned")
 	uid, _, _, err := deliverOne(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
 	if err != nil {
 		t.Fatalf("deliver: %v", err)
@@ -65,7 +65,7 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	if got := journalHolds(t) - before; got != 1 {
 		t.Errorf("the delivery held the journal %v times, want 1", got)
 	}
-	if n := testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues("scanned")) - scansBefore; n != 0 {
+	if n := reconcileCount("scanned") - scansBefore; n != 0 {
 		t.Errorf("the delivery walked the folder %v times, want none", n)
 	}
 
@@ -90,4 +90,14 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	if _, rerr := rc.Read(body); rerr != nil && !strings.Contains(rerr.Error(), "EOF") {
 		t.Fatalf("read: %v", rerr)
 	}
+}
+
+// reconcileCount sums one decision over every reason: these rows count walks,
+// not their causes.
+func reconcileCount(result string) float64 {
+	n := 0.0
+	for _, reason := range []string{"", "first-seen", "token-moved", "hot-new", "owed"} {
+		n += testutil.ToFloat64(mailboxbase.MetricReconcile.WithLabelValues(result, reason))
+	}
+	return n
 }

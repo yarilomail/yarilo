@@ -153,22 +153,31 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	key := b.tokenKey(folder)
 	token := ps.SyncToken(folder)
 	arrivalHot, storeDirty, window := b.syncDirtiness(ps, folder)
+	// The cause is recorded, not only the decision: a folder this process has
+	// never seen walks for a different reason than one whose mtime moved, and
+	// a counter that cannot tell them apart cannot say what a restart costs
+	// (#1875). The reference keeps the same four in enum maildir_scan_why.
+	reason := reasonFirstSeen
 	if token != "" {
 		if prev, seen := syncTokens.get(key); seen {
 			switch {
-			case arrivalHot || prev.token != token:
+			case arrivalHot:
+				reason = reasonHotNew
+			case prev.token != token:
 				// A moved mtime is always walked, as the reference walks on
 				// DIR_MTIME_CHANGED; the window bounds re-walks of a dirty
 				// directory that has not moved, nothing else (#1875).
+				reason = reasonTokenMoved
 			case prev.dirtyThen && time.Since(prev.checkedAt) < window:
-				MetricReconcile.WithLabelValues("skipped-window").Inc()
+				MetricReconcile.WithLabelValues("skipped-window", "").Inc()
 				return false
 			case prev.dirtyThen:
 				// The window has passed: one walk is owed, because a change
 				// landing in the same second as that walk moved neither the
 				// mtime nor the token built from it.
+				reason = reasonOwed
 			default:
-				MetricReconcile.WithLabelValues("skipped").Inc()
+				MetricReconcile.WithLabelValues("skipped", "").Inc()
 				return false
 			}
 		}
@@ -176,9 +185,9 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	// Why it walks, not only how often: a folder whose driver gives no token
 	// walks every open, and it counts apart from one whose token moved (#1821).
 	if token == "" {
-		MetricReconcile.WithLabelValues("scanned-untokened").Inc()
+		MetricReconcile.WithLabelValues("scanned-untokened", reason).Inc()
 	} else {
-		MetricReconcile.WithLabelValues("scanned").Inc()
+		MetricReconcile.WithLabelValues("scanned", reason).Inc()
 	}
 	if walkedFolder != nil {
 		walkedFolder(folder)
