@@ -66,3 +66,19 @@ type Box interface {
 	// Close releases both halves.
 	Close()
 }
+
+// CountingOpener is a box that can open folders without settling them.
+type CountingOpener interface {
+	// CountingBox opens folders as they are, for a caller that needs the
+	// folder's identity and its index and nothing from the store.
+	CountingBox() Box
+}
+
+// Counting is b's non-settling view where it has one, and b itself otherwise:
+// a driver that does not settle has nothing to take off the path (#1875).
+func Counting(b Box) Box {
+	if c, ok := b.(CountingOpener); ok {
+		return c.CountingBox()
+	}
+	return b
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -38,15 +39,35 @@ func (s *Server) quotaRegistry(lazy *lazyStore, accountID string) jmapcore.Regis
 	}
 }
 
+// quotaCacheTTL bounds how long a displayed usage is served from the handle
+// before the index is re-summed, as IMAP's does. Enforcement does not read it.
+const quotaCacheTTL = time.Second
+
+// usage sums the account, or answers from the count taken a moment ago: the
+// walk opens every folder of the account, and one request can ask four times.
+func (h *userHandle) usage(limits quota.Limits) (quota.Usage, error) {
+	if !h.quotaAt.IsZero() && time.Since(h.quotaAt) < quotaCacheTTL {
+		quota.MetricUsageCount.WithLabelValues("hit", "jmap").Inc()
+		return h.quotaUsage, nil
+	}
+	entries, err := h.box.ListFolders()
+	if err != nil {
+		return quota.Usage{}, err
+	}
+	quota.MetricUsageCount.WithLabelValues("miss", "jmap").Inc()
+	h.quotaUsage = quota.CountUsage(h.mbox, h.idx, mailbox.SelectableNames(entries), limits)
+	h.quotaAt = time.Now()
+	return h.quotaUsage, nil
+}
+
 // quotaObjects answers the account's Quota objects and their state, from the
 // count GETQUOTA reads: a second accounting answers one question twice (#1856).
 func (s *Server) quotaObjects(h *userHandle) ([]jmapcore.Quota, string, error) {
 	limits := s.opts.QuotaPolicy.Scale(quotaRulesOf(h))
-	entries, err := h.box.ListFolders()
+	used, err := h.usage(limits)
 	if err != nil {
 		return nil, "", err
 	}
-	used := quota.CountUsage(h.mbox, h.idx, mailbox.SelectableNames(entries), limits)
 	state := quotaStateOf(used, limits)
 	// The gates IMAP answers on, plus the engine itself: a limit nobody
 	// enforces is not a limit, and reporting zero would read as "no headroom".

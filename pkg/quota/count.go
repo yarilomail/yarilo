@@ -17,6 +17,9 @@ type FolderVSizer interface {
 // failing the whole read, mirroring how the aggregate self-heals: a transient
 // per-folder error must not deny service on the user-wide total.
 func CountUsage(box mailbox.Box, vs FolderVSizer, folders []string, limits Limits) Usage {
+	// Counting settles nothing: it needs the folder's id and the index behind
+	// it, and a session box would walk the store for every folder it opens.
+	box = mailbox.Counting(box)
 	var u Usage
 	for _, name := range folders {
 		if _, ignore := limits.EffectiveLimits(name); ignore {

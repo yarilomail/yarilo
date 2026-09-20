@@ -3,6 +3,7 @@ package jmap
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
@@ -10,6 +11,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 // Storage wires everything a request needs to reach one user's mail. It mirrors
@@ -44,6 +46,12 @@ type userHandle struct {
 	mbox       mailbox.Box
 	subs       *subs.Store
 	specialUse *specialuse.Store
+
+	// quotaUsage is the last count and when it was taken: four methods answer
+	// from one count, and a request asking several of them counted the whole
+	// account once per method (#1875).
+	quotaUsage quota.Usage
+	quotaAt    time.Time
 }
 
 func (h *userHandle) close() {
