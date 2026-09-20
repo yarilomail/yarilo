@@ -50,9 +50,11 @@ func (s *Server) rebalanceDomains() {
 			continue
 		}
 		byTag[b.Tag] = append(byTag[b.Tag], backendLoad{
-			host: fmt.Sprintf("%s:%d", b.IP, b.Port),
-			ip:   b.IP,
-			load: total[b.IP] * 100 / b.Vhosts,
+			host:     fmt.Sprintf("%s:%d", b.IP, b.Port),
+			ip:       b.IP,
+			sessions: total[b.IP],
+			vhosts:   b.Vhosts,
+			load:     total[b.IP] * 100 / b.Vhosts,
 		})
 	}
 	for tag, loads := range byTag {
@@ -76,27 +78,55 @@ func (s *Server) rebalanceDomains() {
 }
 
 type backendLoad struct {
-	host string
-	ip   string
-	load int
+	host     string
+	ip       string
+	sessions int
+	vhosts   int
+	load     int
 }
 
-// moveOneDomain takes the quietest domain off the busiest backend: moving the
-// loudest would swap the imbalance rather than settle it.
+// spreadAfter is the gap the two backends would carry if n sessions moved from
+// hi to lo. A move that does not narrow it is a move that only disconnects: one
+// big domain alone on a backend is the quietest domain there, and sending it
+// down turns the imbalance over rather than settling it (#1943).
+func spreadAfter(hi, lo backendLoad, n int) int {
+	hiLoad := (hi.sessions - n) * 100 / hi.vhosts
+	loLoad := (lo.sessions + n) * 100 / lo.vhosts
+	if hiLoad > loLoad {
+		return hiLoad - loLoad
+	}
+	return loLoad - hiLoad
+}
+
+// moveOneDomain takes the least disruptive domain whose move actually narrows
+// the spread, and none at all when no move does: one big domain alone on a
+// backend is both the quietest and the loudest there, and sending it down turns
+// the imbalance over rather than settling it. Among the moves that do narrow
+// it, the fewest sessions win -- every session moved is a client disconnected,
+// and two domains that sum to the same load narrow it equally (#1943).
 func (s *Server) moveOneDomain(tag string, hi, lo backendLoad) {
 	cooldown := s.opts.domainRebalanceCooldown()
+	spread := hi.load - lo.load
 	var pick string
-	pickSessions := -1
+	pickSessions, best := 0, 0
 	for _, domain := range s.domainDir.Domains(hi.ip) {
 		if s.domainMoves.recently(domain, cooldown) {
 			continue
 		}
 		n := s.domainSessionCount(domain, hi.ip)
-		if pickSessions < 0 || n < pickSessions {
-			pick, pickSessions = domain, n
+		after := spreadAfter(hi, lo, n)
+		if after >= spread {
+			continue
+		}
+		// Ties go to the name so two directors judging the same tag at the
+		// same moment pick the same domain.
+		if pick == "" || n < pickSessions || (n == pickSessions && domain < pick) {
+			pick, pickSessions, best = domain, n, after
 		}
 	}
 	if pick == "" {
+		slog.Debug("director: no domain worth moving",
+			"tag", tag, "from", hi.host, "to", lo.host, "spread", spread)
 		return
 	}
 	seq, by := s.domainDir.Set(pick, lo.host)
@@ -105,7 +135,8 @@ func (s *Server) moveOneDomain(tag string, hi, lo backendLoad) {
 		proto.TabEscape(pick), lo.host, seq, by))
 	slog.Info("director: rebalancing a domain",
 		"domain", pick, "tag", tag, "from", hi.host, "to", lo.host,
-		"from_load", hi.load, "to_load", lo.load, "sessions", pickSessions)
+		"from_load", hi.load, "to_load", lo.load, "sessions", pickSessions,
+		"spread_now", spread, "spread_after", best)
 	// After the ring knows, as the reference kills only after sending its
 	// USER-MOVE: a kick that finishes instantly must not race the update.
 	s.kickDomainSessions(pick, hi.host)

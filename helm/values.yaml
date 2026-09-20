@@ -463,7 +463,8 @@ components:
     ## elsewhere and the affinity would be lost with nobody asking.
     director_domain_expire: 900
     ## How far (percent) the busiest backend of a tag may rise above the
-    ## quietest before one domain moves down; 0 never moves one. The interval is
+    ## quietest before one domain moves down. Set 0 to never move one -- the
+    ## key is read with hasKey, so a 0 here is a 0 in the config. The interval is
     ## how often that is judged, the cooldown how long a moved domain is left
     ## alone -- without it two backends either side of the line trade a domain.
     director_domain_rebalance_percent: 20
