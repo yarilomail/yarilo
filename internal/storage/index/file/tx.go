@@ -63,7 +63,8 @@ func (t *indexTx) MarkDirty(uid uint32, dirty bool) {
 func (t *indexTx) Rollback() { t.done = true }
 
 // Commit writes every queued change, or none: the records reach the log in one
-// append, so a torn transaction cannot be read back.
+// append, so a torn transaction cannot be read back, and a write the log refuses
+// leaves the folder as it was (#1831).
 func (t *indexTx) Commit() (mailbox.TxResult, error) {
 	var out mailbox.TxResult
 	if t.done {
@@ -74,48 +75,62 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 		return out, nil
 	}
 	err := t.idx.withFolderSite(t.folderID, lockSiteTransaction, func(fs *folderState) error {
-		var err error
-		out.ModSeq, err = fs.bumpModSeqHeader()
+		// The ops apply to fs.file before the log takes them, so the pre-image
+		// is what a refused write is put back to (#1831).
+		undo := fs.snapshotForTx(t.ops)
+		err := t.applyAll(fs, &out)
 		if err != nil {
-			return err
+			fs.restore(undo)
+			out = mailbox.TxResult{}
 		}
-		var records [][]byte
-		// Flag changes go as one batch: each message keeps its own modseq,
-		// which is what CONDSTORE addresses them by.
-		flags := make(map[uint32]mailbox.FlagsUpdate)
-		for i := range t.ops {
-			if t.ops[i].kind == opUpdateFlags {
-				flags[t.ops[i].uid] = t.ops[i].upd
-			}
-		}
-		if len(flags) > 0 {
-			out.Flags = make(map[uint32]mailbox.FlagsResult, len(flags))
-			recs, ferr := fs.flagsMultiLocked(flags, out.Flags)
-			if ferr != nil {
-				return ferr
-			}
-			records = append(records, recs...)
-		}
-		for i := range t.ops {
-			op := &t.ops[i]
-			if op.kind == opUpdateFlags {
-				continue
-			}
-			recs, oerr := t.applyLocked(fs, op, out.ModSeq)
-			if oerr != nil {
-				return oerr
-			}
-			records = append(records, recs...)
-		}
-		if len(records) == 0 {
-			return nil
-		}
-		return fs.appendMutLog(records...)
+		return err
 	})
 	if err != nil {
 		return mailbox.TxResult{}, err
 	}
 	return out, nil
+}
+
+// applyAll applies every queued op and writes them as one group. Anything it
+// returns an error from leaves fs half-applied; Commit puts it back.
+func (t *indexTx) applyAll(fs *folderState, out *mailbox.TxResult) error {
+	var err error
+	out.ModSeq, err = fs.bumpModSeqHeader()
+	if err != nil {
+		return err
+	}
+	var records [][]byte
+	// Flag changes go as one batch: each message keeps its own modseq,
+	// which is what CONDSTORE addresses them by.
+	flags := make(map[uint32]mailbox.FlagsUpdate)
+	for i := range t.ops {
+		if t.ops[i].kind == opUpdateFlags {
+			flags[t.ops[i].uid] = t.ops[i].upd
+		}
+	}
+	if len(flags) > 0 {
+		out.Flags = make(map[uint32]mailbox.FlagsResult, len(flags))
+		recs, ferr := fs.flagsMultiLocked(flags, out.Flags)
+		if ferr != nil {
+			return ferr
+		}
+		records = append(records, recs...)
+	}
+	for i := range t.ops {
+		op := &t.ops[i]
+		if op.kind == opUpdateFlags {
+			continue
+		}
+		recs, oerr := t.applyLocked(fs, op, out.ModSeq)
+		if oerr != nil {
+			return oerr
+		}
+		records = append(records, recs...)
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	return fs.appendMutLog(records...)
 }
 
 func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byte, error) {

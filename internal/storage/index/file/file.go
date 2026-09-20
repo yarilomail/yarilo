@@ -513,6 +513,10 @@ type folderState struct {
 	file     *mailindex.File // the wire-format snapshot
 	keywords keywordsHdr     // parsed keyword name registry
 
+	// flushes counts base rewrites, so a transaction can tell whether one
+	// happened while it was applying its own ops (#1831).
+	flushes uint64
+
 	// lineage pairs this base with its log; folded* say which log it absorbed
 	// and how far. Zero predates the extension and proves nothing.
 	lineage lineageHdr
