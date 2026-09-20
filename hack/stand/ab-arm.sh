@@ -340,28 +340,56 @@ if [ -n "$wrong" ]; then
   exit 1
 fi
 
+# One domain per storage type (#1943): a single domain puts the whole stand on
+# one backend under assignment_policy: domain, which is the policy working and
+# a window measuring half a cluster. The ranges are the accounts the sandbox
+# holds for each.
+MDBOX_DOMAIN="${YARILO_MDBOX_DOMAIN:-d00001.test}"
+MAILDIR_DOMAIN="${YARILO_MAILDIR_DOMAIN:-d00002.test}"
+SDBOX_DOMAIN="${YARILO_SDBOX_DOMAIN:-d00003.test}"
+
+# type → domain and the range that type's accounts live in.
+type_domain() {
+  case "$1" in
+    mdbox) echo "$MDBOX_DOMAIN 1 50" ;;
+    maildir) echo "$MAILDIR_DOMAIN 51 100" ;;
+    sdbox) echo "$SDBOX_DOMAIN 101 150" ;;
+    *) return 1 ;;
+  esac
+}
+
 step "wipe"
-echo "-- same start: emptying u1-u150"
+echo "-- same start: emptying every type's accounts"
 for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
-  kube exec "$pod" -c yarilo-imap -- sh -c \
-    'for n in $(seq 1 150); do rm -rf "/var/mail/vhosts/d00001.test/u${n}@d00001.test"; done' >/dev/null
+  for t in mdbox maildir sdbox; do
+    set -- $(type_domain "$t")
+    kube exec "$pod" -c yarilo-imap -- sh -c \
+      "for n in \$(seq $2 $3); do rm -rf \"/var/mail/vhosts/$1/u\${n}@$1\"; done" >/dev/null
+  done
 done
 
 # The start as a number, not as a step that ran: a mailbox left behind moves
 # throughput further than anything under test, and an arm that starts bigger
 # than the one before it is not a comparison (#1875).
 start_inventory() {
-  local pod
+  local pod f=0 k=0 out
   pod=$(first_pod backend)
-  kube exec "$pod" -c yarilo-imap -- sh -c '
-    f=0; k=0
-    for n in $(seq 1 150); do
-      d="/var/mail/vhosts/d00001.test/u${n}@d00001.test"
-      [ -d "$d" ] || continue
-      f=$((f+$(find "$d" -type f 2>/dev/null | wc -l)))
-      k=$((k+$(du -sk "$d" 2>/dev/null | cut -f1)))
-    done
-    echo "files=$f du_kb=$k"' 2>/dev/null
+  for t in mdbox maildir sdbox; do
+    set -- $(type_domain "$t")
+    out=$(kube exec "$pod" -c yarilo-imap -- sh -c "
+      f=0; k=0
+      for n in \$(seq $2 $3); do
+        d=\"/var/mail/vhosts/$1/u\${n}@$1\"
+        [ -d \"\$d\" ] || continue
+        f=\$((f+\$(find \"\$d\" -type f 2>/dev/null | wc -l)))
+        k=\$((k+\$(du -sk \"\$d\" 2>/dev/null | cut -f1)))
+      done
+      echo \"\$f \$k\"" 2>/dev/null)
+    set -- $out
+    f=$((f + ${1:-0}))
+    k=$((k + ${2:-0}))
+  done
+  echo "files=$f du_kb=$k"
 }
 
 # probe_inventory counts the one mailbox the seed itself fills.
@@ -369,7 +397,7 @@ probe_inventory() {
   local pod
   pod=$(first_pod backend)
   kube exec "$pod" -c yarilo-imap -- sh -c '
-    d="/var/mail/vhosts/d00001.test/over@d00001.test"
+    d="/var/mail/vhosts/'"$MDBOX_DOMAIN"'/over@'"$MDBOX_DOMAIN"'"
     echo "files=$(find "$d" -type f 2>/dev/null | wc -l) du_kb=$(du -sk "$d" 2>/dev/null | cut -f1)"' 2>/dev/null
 }
 
@@ -390,10 +418,11 @@ done
 
 if [ "$FILL" != "0" ]; then
   step "fill"
-  echo "-- filling u1-u150 with $FILL messages each"
-  for range in "1 50" "51 100" "101 150"; do
-    set -- $range
-    KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/fill-mailboxes.sh" "$1" "$2" "$FILL" |
+  echo "-- filling every type's accounts with $FILL messages each"
+  for t in mdbox maildir sdbox; do
+    set -- $(type_domain "$t")
+    KUBECONFIG="$KCFG" YARILO_NS="$NS" YARILO_FILL_DOMAIN="$1" \
+      bash "$REPO/hack/stand/fill-mailboxes.sh" "$2" "$3" "$FILL" |
       tee -a "$OUT/fill-$ARM.txt"
   done
 fi
@@ -420,13 +449,16 @@ kube exec "$authpod" -- sh -c \
 for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   set -- $pair
   name=$1; range=$2
+  domain=$(type_domain "$name" | cut -d' ' -f1)
   step "run $name"
-  # Checked, not assumed: if the literal in job.yaml ever moves, an unchecked
-  # sed runs mdbox three times and reports three types.
+  # Checked, not assumed: if either literal in job.yaml ever moves, an
+  # unchecked sed runs one type three times and reports three.
   manifest="$OUT/job-$ARM-$name.yaml"
-  sed "s/- users=1-20/- users=$range/" "$REPO/hack/imaptest/job.yaml" > "$manifest"
-  if ! grep -q -- "- users=$range" "$manifest"; then
-    echo "ab-arm: the user range did not substitute; hack/imaptest/job.yaml no longer carries 'users=1-20'" >&2
+  sed -e "s/- users=1-20/- users=$range/" \
+      -e "s/- user=u%d@d00001.test/- user=u%d@$domain/" \
+      "$REPO/hack/imaptest/job.yaml" > "$manifest"
+  if ! grep -q -- "- users=$range" "$manifest" || ! grep -q -- "- user=u%d@$domain" "$manifest"; then
+    echo "ab-arm: the range or the domain did not substitute; hack/imaptest/job.yaml no longer carries 'users=1-20' and 'user=u%d@d00001.test'" >&2
     exit 1
   fi
   # The watcher runs beside the job: a stall captured after the run is one
