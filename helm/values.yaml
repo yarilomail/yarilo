@@ -172,6 +172,10 @@ storage:
   ## How a write to a shared file excludes another writer: flock (default),
   ## fcntl for NFS with NLM, or dotlock where the lock daemon is not trusted.
   storage_lock_method: flock
+  ## Seconds a dotlock may sit unchanged -- neither it nor the file it protects
+  ## touched -- before a waiter takes it over. Only dotlock needs it: flock and
+  ## fcntl die with the process. Unset keeps 180; -1 never takes one over.
+  storage_lock_stale_timeout: 180
   ## What reaches the disk before a delivery is answered: never, optimized
   ## (the body) or always (plus index, list and directory). See the docs.
   mail_fsync: optimized

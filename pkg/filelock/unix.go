@@ -76,13 +76,31 @@ var ErrBusy = errors.New("filelock: busy")
 func takeDotlock(path string, wait time.Duration) (*Hold, error) {
 	lockPath := path + ".lock"
 	deadline := time.Now().Add(wait)
+	stale := staleAfter()
 	for {
 		f, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 		if err == nil {
-			return &Hold{f: f, method: MethodDotlock, path: lockPath}, nil
+			// The holder names itself: without it an abandoned lock is only a
+			// timeout away from being taken, never a dead process away.
+			_, _ = f.WriteString(ownerLine())
+			h := &Hold{f: f, method: MethodDotlock, path: lockPath}
+			h.stopTouch = touchWhileHeld(lockPath, stale)
+			return h, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("filelock: dotlock %s: %w", lockPath, err)
+		}
+		// A holder that is gone is not waited for, whatever the clock says: the
+		// reference checks the pid before it checks the age.
+		if lst, lerr := os.Lstat(lockPath); lerr == nil {
+			switch {
+			case holderGone(lockPath):
+				reportOverride(lockPath, overrideDotlock(lockPath, lst, "dead"), "dead")
+			case stale > 0:
+				if judged, quiet := unchangedFor(path, lockPath, stale, time.Now()); quiet {
+					reportOverride(lockPath, overrideDotlock(lockPath, judged, "stale"), "stale")
+				}
+			}
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("filelock: %s is held elsewhere after %s: %w", lockPath, wait, ErrBusy)
@@ -92,6 +110,10 @@ func takeDotlock(path string, wait time.Duration) (*Hold, error) {
 }
 
 func (h *Hold) releaseDotlock() error {
+	if h.stopTouch != nil {
+		h.stopTouch()
+		h.stopTouch = nil
+	}
 	err := h.f.Close()
 	h.f = nil
 	if rerr := os.Remove(h.path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {

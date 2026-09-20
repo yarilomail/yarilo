@@ -85,6 +85,8 @@ type Hold struct {
 	method Method
 	path   string
 	local  *sync.Mutex
+	// stopTouch ends the keep-alive a dotlock runs while it is held.
+	stopTouch func()
 }
 
 // local serialises this process's own writers: the kernel arbitrates between
