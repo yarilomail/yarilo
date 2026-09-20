@@ -23,7 +23,7 @@ spec:
         args:
         - -protocol=imap
         - -addr=yarilo-imap-login.yarilo-sb.svc.cluster.local:143
-        - -users=u1@d00001.test:150
+        - -users=u1@d00001.test:50,u51@d00002.test:50,u101@d00003.test:50
         - -password=Yarilo!test1
         - -concurrency=16
         - -duration=5m

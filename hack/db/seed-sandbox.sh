@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Seeds the sandbox matrix: u1-50 mdbox, u51-100 maildir, u101-150 sdbox, plus
-# the over-quota account. It owns those rows, and no other one (#1806).
+# Seeds the sandbox matrix, one domain per storage type: u1-50 mdbox, u51-100
+# maildir, u101-150 sdbox, plus the over-quota account. It owns those rows, and
+# no other one (#1806, #1943).
 #
 # Usage:
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml bash hack/db/seed-sandbox.sh
@@ -31,10 +32,8 @@ QUOTA_OUT=$(mysql_do < "$SCRIPT_DIR/quota-mapped.sql" 2>&1) || {
 }
 echo "$QUOTA_OUT" | grep -v Warning || true
 
-# One domain per storage type (#1943): a single domain puts every account of
-# the stand on one backend under assignment_policy: domain, and the window then
-# measures half a cluster. The probes below stay on the first domain, because
-# the smoketest addresses them by name.
+# One domain per type: under assignment_policy: domain a single domain puts the
+# whole stand on one backend (#1943). The probes stay on the first one.
 MDBOX_DOMAIN="${MDBOX_DOMAIN:-d00001.test}"
 MAILDIR_DOMAIN="${MAILDIR_DOMAIN:-d00002.test}"
 SDBOX_DOMAIN="${SDBOX_DOMAIN:-d00003.test}"
@@ -68,9 +67,8 @@ ON DUPLICATE KEY UPDATE
 SQL
 }
 
-# The accounts this script replaced: a number that used to be one account is
-# now one per domain, and leaving the old row active gives the matrix two
-# accounts for the same user (#1943).
+# The accounts the split replaced: left active, the table carries two accounts
+# for one number and the matrix counts double (#1943).
 retire_old() {
   cat <<SQL
 UPDATE mailbox SET active = 0
