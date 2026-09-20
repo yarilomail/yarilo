@@ -85,7 +85,9 @@ func TestASizelessAppendNamesItsSite(t *testing.T) {
 	if strings.Contains(site, "storage/index/file") {
 		t.Errorf("the row names site %q, which is the index naming itself", site)
 	}
-	if !strings.Contains(site, "ReconcileIndex") {
+	// The driver's reconcile, whichever of its two entry points ran: the point
+	// of the row is that the site is the store's pass, not the index (#1875).
+	if !strings.Contains(site, "maildir") || !strings.Contains(site, "econcile") {
 		t.Errorf("the row names site %q, and the record came from the maildir reconcile", site)
 	}
 }
