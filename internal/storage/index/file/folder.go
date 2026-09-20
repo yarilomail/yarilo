@@ -2097,9 +2097,26 @@ func (fs *folderState) holdJournal(site string) (func(), error) {
 	}, nil
 }
 
-// mutLogWriteFails stands in for a log that refuses the write -- a full disk is
-// not reproducible any other way, and the state left behind is the point.
-var mutLogWriteFails func() error
+// The write and the sync are seamed apart: a full disk refuses after part of
+// the group is down, and a sync can fail with all of it down. What is left
+// behind differs, and both have to be reproducible (#1831).
+var (
+	mutLogWrite = func(f *os.File, buf []byte) (int, error) { return f.Write(buf) }
+	mutLogSync  = func(f *os.File) error { return f.Sync() }
+)
+
+func writeMutLog(f *os.File, buf []byte) (int, error) { return mutLogWrite(f, buf) }
+
+func syncMutLog(f *os.File) error { return mutLogSync(f) }
+
+// logEnd is where the next append lands: with O_APPEND the offset is not it.
+func logEnd(f *os.File) (int64, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("fileindex/mutlog: stat: %w", err)
+	}
+	return st.Size(), nil
+}
 
 // mutLogLockWait bounds a writer's wait for the journal: the hold is one
 // write(2), so a longer wait is a wedged mount, not a queue (#1840).
@@ -2152,13 +2169,28 @@ func (fs *folderState) appendMutLog(records ...[]byte) error {
 	if err != nil {
 		return err
 	}
-	if mutLogWriteFails != nil {
-		err = mutLogWriteFails()
+	// The length before the write, taken under the hold: a full disk refuses
+	// after writing part of the group, and a group the BOUNDARY promises whole
+	// is what every reader replays (#1831).
+	wrote := int64(0)
+	before, serr := logEnd(fs.logFD)
+	if serr != nil {
+		err = serr
 	} else {
-		_, err = fs.logFD.Write(buf)
+		var n int
+		n, err = writeMutLog(fs.logFD, buf)
+		wrote = int64(n)
+		if err == nil && fs.fsync.SyncsIndex() {
+			err = syncMutLog(fs.logFD)
+		}
 	}
-	if err == nil && fs.fsync.SyncsIndex() {
-		err = fs.logFD.Sync()
+	if err != nil && wrote > 0 {
+		// Under the same hold: releasing first lets the next writer append
+		// after the stump, and the reader parsing from there reads garbage.
+		if terr := fs.logFD.Truncate(before); terr != nil {
+			slog.Error("fileindex: a refused log write left a partial group behind",
+				"folder", fs.folder, "at", before, "wrote", wrote, "err", terr)
+		}
 	}
 	release()
 	if err != nil {

@@ -38,8 +38,16 @@ func TestCommitRestoresStateWhenLogRefuses(t *testing.T) {
 	}
 
 	full := errors.New("no space left on device")
-	mutLogWriteFails = func() error { return full }
-	t.Cleanup(func() { mutLogWriteFails = nil })
+	// A short write, not a refused one: the disk fills mid-group, and the
+	// stump the BOUNDARY promises whole is what a reader would replay.
+	mutLogWrite = func(f *os.File, buf []byte) (int, error) {
+		n, err := f.Write(buf[:len(buf)/2])
+		if err != nil {
+			return n, err
+		}
+		return n, full
+	}
+	t.Cleanup(restoreMutLogSeams)
 
 	tx, err := b.Begin(f.ID)
 	if err != nil {
@@ -72,11 +80,26 @@ func TestCommitRestoresStateWhenLogRefuses(t *testing.T) {
 		t.Fatalf("stat log: %v", err)
 	}
 	if st.Size() != wantLog.Size() {
-		t.Errorf("log grew to %d from %d", st.Size(), wantLog.Size())
+		t.Errorf("log is %d bytes, want %d: the partial group stayed in the file", st.Size(), wantLog.Size())
+	}
+
+	// The log still parses to its end: a stump left behind is only visible to
+	// a reader that replays it.
+	restoreMutLogSeams()
+	reader := openIdx(dir, testUser)
+	rf, err := reader.OpenFolder("INBOX", 1, "")
+	if err != nil {
+		t.Fatalf("reopen after the refusal: %v", err)
+	}
+	msgs, err := reader.GetMessages(rf.ID, nil)
+	if err != nil {
+		t.Fatalf("GetMessages after the refusal: %v", err)
+	}
+	if len(msgs) != int(wantCount) {
+		t.Errorf("a fresh reader sees %d messages, want %d", len(msgs), wantCount)
 	}
 
 	// The uid the refused transaction took must be free for the next one.
-	mutLogWriteFails = nil
 	tx2, err := b.Begin(f.ID)
 	if err != nil {
 		t.Fatalf("Begin again: %v", err)
@@ -88,5 +111,64 @@ func TestCommitRestoresStateWhenLogRefuses(t *testing.T) {
 	}
 	if again.UID != wantNextUID {
 		t.Errorf("the next append took uid %d, want %d: the refused transaction burned one", again.UID, wantNextUID)
+	}
+}
+
+// restoreMutLogSeams puts the log's write and sync back to the real ones.
+func restoreMutLogSeams() {
+	mutLogWrite = func(f *os.File, buf []byte) (int, error) { return f.Write(buf) }
+	mutLogSync = func(f *os.File) error { return f.Sync() }
+}
+
+// A sync that fails leaves the whole group in the file, and memory was rolled
+// back: the log has to give it up too, or the next reader replays a
+// transaction no session was told about (#1831).
+func TestCommitTakesBackTheGroupWhenSyncFails(t *testing.T) {
+	dir := t.TempDir()
+	b := openIdx(dir, testUser)
+	b.b.fsync = mailbox.FsyncAlways
+	f, err := b.OpenFolder("INBOX", 1, "")
+	if err != nil {
+		t.Fatalf("OpenFolder: %v", err)
+	}
+	uid, err := b.AllocateUID(f.ID)
+	if err != nil {
+		t.Fatalf("AllocateUID: %v", err)
+	}
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+	fs := b.open[f.ID]
+	wantNextUID := fs.file.Header.NextUID
+	wantLog, err := os.Stat(fs.indexPath + ".log")
+	if err != nil {
+		t.Fatalf("stat log: %v", err)
+	}
+
+	ioerr := errors.New("input/output error")
+	synced := false
+	mutLogSync = func(f *os.File) error { synced = true; return ioerr }
+	t.Cleanup(restoreMutLogSeams)
+
+	tx, err := b.Begin(f.ID)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	tx.Append(&mailbox.MessageMeta{Size: 20})
+	if _, err := tx.Commit(); !errors.Is(err, ioerr) {
+		t.Fatalf("Commit err = %v, want the sync's own error", err)
+	}
+	if !synced {
+		t.Fatal("the sync seam never ran: this folder does not make its journal durable, so the row proves nothing")
+	}
+	st, err := os.Stat(fs.indexPath + ".log")
+	if err != nil {
+		t.Fatalf("stat log: %v", err)
+	}
+	if st.Size() != wantLog.Size() {
+		t.Errorf("log is %d bytes, want %d: a group nobody was told about stayed", st.Size(), wantLog.Size())
+	}
+	if got := fs.file.Header.NextUID; got != wantNextUID {
+		t.Errorf("NextUID = %d, want %d", got, wantNextUID)
 	}
 }
