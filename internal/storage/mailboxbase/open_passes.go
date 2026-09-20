@@ -152,7 +152,7 @@ func (b *Box) sweepTemps(folder string) {
 }
 
 // walk runs the pass the gate chose: the whole store, or the arrivals alone.
-func (b *Box) walk(ps proactiveSyncer, folder string, f *mailbox.Folder, partial bool) (mailbox.SyncStats, error) {
+func (b *Box) walk(ps proactiveSyncer, f *mailbox.Folder, partial bool) (mailbox.SyncStats, error) {
 	if partial {
 		if pw, ok := ps.(partialSyncer); ok {
 			return pw.ReconcileArrivals(b, b.index, f)
@@ -238,7 +238,7 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	}
 	// The walk is what costs; the counter says how often, never how long.
 	walked := time.Now()
-	st, err := b.walk(ps, folder, f, partial)
+	st, err := b.walk(ps, f, partial)
 	MetricReconcileSeconds.Observe(time.Since(walked).Seconds())
 	if err != nil {
 		slog.Warn("mailbox/open: the reconcile did not finish",

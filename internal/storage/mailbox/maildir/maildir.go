@@ -1131,7 +1131,7 @@ func (u *userMailbox) moveNewToCurLocked(folder string) ([]string, error) {
 // name so a flag rename keeps its UID. An unchanged name is left alone: the
 // index is authoritative for flags this server set.
 func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
-	return u.reconcile(box, idx, folder, false)
+	return u.reconcile(idx, folder, false)
 }
 
 // ReconcileArrivals takes what the arrival directory holds and judges no
@@ -1139,10 +1139,10 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, fol
 // This is the reference's partial sync, taken when cur/ has not moved
 // (maildir-sync.c:860-867, MAILDIR_UIDLIST_SYNC_PARTIAL).
 func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
-	return u.reconcile(box, idx, folder, true)
+	return u.reconcile(idx, folder, true)
 }
 
-func (u *userMailbox) reconcile(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
+func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
 	// The move precedes the scan because it renames, and is asked about before
 	// the lock: one acquisition taken to find an empty new/ is paid on every
