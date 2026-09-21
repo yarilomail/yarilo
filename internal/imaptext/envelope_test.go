@@ -1,6 +1,7 @@
 package imaptext
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -70,10 +71,17 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 		From:      []imaplib.Address{{Name: "Ann Lee", Mailbox: "ann", Host: "example.com"}},
 		To:        []imaplib.Address{{Mailbox: "bo", Host: "example.org"}, {Mailbox: "cy", Host: "example.net"}},
 		Cc:        []imaplib.Address{{Name: "C C", Mailbox: "cc", Host: "example.com"}},
-		InReplyTo: []string{"<0@example.com>"},
-		MessageID: "<1@example.com>",
+		InReplyTo: []string{"0@example.com"},
+		MessageID: "1@example.com",
 	}
-	got, ok := ParseEnvelope(WriteEnvelope(env))
+	on := WriteEnvelope(env)
+	// The disk form carries the header's angle brackets, the parsed form does
+	// not: that is the reference's convention on one side and go-imap's on the
+	// other, and the pair has to cross it in both directions.
+	if !strings.Contains(on, `"<1@example.com>"`) {
+		t.Errorf("the message id lost its brackets on the way out: %q", on)
+	}
+	got, ok := ParseEnvelope(on)
 	if !ok {
 		t.Fatal("what we wrote did not parse")
 	}
@@ -89,7 +97,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 	if len(got.Cc) != 1 || got.Cc[0].Name != "C C" {
 		t.Errorf("cc = %+v", got.Cc)
 	}
-	if len(got.InReplyTo) != 1 || got.InReplyTo[0] != "<0@example.com>" {
+	if len(got.InReplyTo) != 1 || got.InReplyTo[0] != "0@example.com" {
 		t.Errorf("in-reply-to = %v", got.InReplyTo)
 	}
 	if got.MessageID != env.MessageID {
@@ -114,7 +122,7 @@ func TestParseEnvelopeWrittenByTheReference(t *testing.T) {
 	if len(env.Sender) != 0 || len(env.ReplyTo) != 0 {
 		t.Errorf("NIL sender/reply-to became %+v / %+v", env.Sender, env.ReplyTo)
 	}
-	if env.MessageID != "<abc@example.ua>" {
+	if env.MessageID != "abc@example.ua" {
 		t.Errorf("message-id = %q", env.MessageID)
 	}
 	if env.Date.IsZero() {

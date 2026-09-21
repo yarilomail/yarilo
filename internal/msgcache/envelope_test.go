@@ -23,8 +23,8 @@ func TestEnvelopeRoundTripThroughTheReferenceEncoding(t *testing.T) {
 				{Mailbox: "bob", Host: "example.com"},
 				{Name: "Carol", Mailbox: "carol", Host: "example.org"},
 			},
-			InReplyTo: []string{"<a@x>", "<b@y>"},
-			MessageID: "<m1@example.com>",
+			InReplyTo: []string{"a@x", "b@y"},
+			MessageID: "m1@example.com",
 		},
 		{}, // everything empty, date zero
 		{Subject: "only-subject", Bcc: []imaplib.Address{{Mailbox: "hidden", Host: "h"}}},

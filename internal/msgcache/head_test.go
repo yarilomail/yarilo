@@ -168,7 +168,7 @@ func TestAMessageWithNoMessageIDIsAHit(t *testing.T) {
 	}{
 		{"no message id", &imaplib.Envelope{Subject: "Plan", Date: time.Unix(1770000000, 0).UTC()}},
 		{"no message id and nothing else", &imaplib.Envelope{}},
-		{"with a message id, the ordinary case", &imaplib.Envelope{Subject: "Plan", MessageID: "<a@x>"}},
+		{"with a message id, the ordinary case", &imaplib.Envelope{Subject: "Plan", MessageID: "a@x"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

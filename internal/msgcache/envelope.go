@@ -65,12 +65,8 @@ type Index interface {
 
 /* --- per-FETCH cache handle ----------------------------------------------- */
 
-// folderCache serves one FETCH's worth of envelope lookups and batches the
-// write-back. Opened lazily on the first envelope-needing message; nil-safe
-// throughout, so every failure degrades to "parse as today".
-// Handle is one request's view of a folder's cache. Opened per FETCH,
-// closed after the batched stamp. nil is a valid value meaning "no cache":
-// every method tolerates it, so a miss degrades to parsing.
+// Handle is one request's view of a folder's cache, closed after the batched
+// stamp. nil means "no cache": every method tolerates it (#1176).
 type Handle struct {
 	file   *mailindex.CacheFile
 	ids    map[string]uint32             // reference field name -> id in this file
@@ -117,11 +113,7 @@ type pendingField struct {
 // UID is the message this field belongs to.
 func (p pendingField) UID() uint32 { return p.meta.UID }
 
-// openFolderCache opens (or lazily creates) the folder's cache pair. Any
-// invalidity removes the stale file and starts a fresh one -- the cache is
-// derived data, absence is its recovery mode.
-// Options carries what the cache needs from its caller: the lock identity
-// and a trace id for logs.
+// Options carries the lock identity and a trace id.
 // lockID: a caller that supplied none still names a holder (#1670).
 func (o Options) lockID() string {
 	if o.SessionID != "" {

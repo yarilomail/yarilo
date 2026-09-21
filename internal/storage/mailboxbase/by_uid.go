@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -14,6 +15,7 @@ func OpenMessage(box mailbox.UserMailbox, folder string, m *mailbox.MessageMeta)
 	if !ok {
 		return nil, fmt.Errorf("mailbox: %T cannot find a message from its record", mailbox.Driver(box))
 	}
+	mailboxmetrics.ObserveOpen(mailbox.DriverNameOf(box))
 	return addr.OpenRecord(folder, m)
 }
 

@@ -106,7 +106,7 @@ func TestParseBodyStructureWrittenByTheReference(t *testing.T) {
 	if !ok || second.MessageRFC822 == nil {
 		t.Fatalf("second child = %+v", mp.Children[1])
 	}
-	if second.MessageRFC822.Envelope.MessageID != "<x@b.ua>" {
+	if second.MessageRFC822.Envelope.MessageID != "x@b.ua" {
 		t.Errorf("nested envelope = %+v", second.MessageRFC822.Envelope)
 	}
 	if second.MessageRFC822.NumLines != 20 {

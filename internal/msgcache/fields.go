@@ -26,9 +26,8 @@ const (
 	fieldHdrReferences     = "hdr.references"
 )
 
-// referenceFields is what a folder's cache carries. Sizes match the reference's
-// struct members: uoff_t is 8 bytes, a date is 4, and date.sent adds the
-// timezone the header carried (index-mail.h:63-66).
+// Sizes are the reference's struct members: uoff_t is 8, a date 4, and
+// date.sent carries the header's timezone too (index-mail.h:63-66).
 var referenceFields = []mailindex.CacheField{
 	{Name: fieldSizePhysical, Type: mailindex.CacheFieldFixedSize, Size: 8, Decision: mailindex.CacheDecisionYes},
 	{Name: fieldSizeVirtual, Type: mailindex.CacheFieldFixedSize, Size: 8, Decision: mailindex.CacheDecisionYes},
@@ -91,8 +90,7 @@ func decodeSentDate(b []byte) (time.Time, bool) {
 	return time.Unix(int64(secs), 0).In(time.FixedZone("", int(tz)*60)), true
 }
 
-// encodeHeaderField is the reference's header payload: the line numbers the
-// header occupied, a zero terminator, then the header text itself
+// The reference's header payload: line numbers, a zero, then the header text
 // (index-mail-headers.c:99-127).
 func encodeHeaderField(lineNum uint32, text string) []byte {
 	b := make([]byte, 0, 8+len(text))
@@ -139,10 +137,8 @@ func unfoldHeader(s string) string {
 	return b.String()
 }
 
-// encodeReferencesHeader writes the References the way the reference caches a
-// header: the whole line, so a reader can serve BODY[HEADER.FIELDS] from it.
-// An empty list is an empty payload, which is how "this message has none" is
-// cached rather than left a permanent miss.
+// The whole line, as the reference caches a header. An empty list is an empty
+// payload: "none" is an answer, not a permanent miss.
 func encodeReferencesHeader(refs []string) []byte {
 	if len(refs) == 0 {
 		return nil
@@ -249,9 +245,8 @@ func (fc *Handle) StorePOP3UIDL(m *mailbox.MessageMeta, uidl string, order uint3
 	}
 }
 
-// StoreRecordFields caches what the index record already knows: the sizes, the
-// two dates and the identifier. They cost nothing to write while a message is
-// open for its envelope, and they are what a listing reads next time.
+// StoreRecordFields caches what the record already knows -- sizes, dates,
+// identifier -- while the message is open anyway for its envelope.
 func (fc *Handle) StoreRecordFields(m *mailbox.MessageMeta) {
 	if fc == nil || m == nil {
 		return

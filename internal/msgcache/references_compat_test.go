@@ -54,7 +54,7 @@ func reread(t *testing.T, idx mailbox.UserIndex, folderID uint64, uid uint32) *m
 // incident, so it is answered here instead.
 func TestAReaderWithoutReferencesStillReadsTheFile(t *testing.T) {
 	idx, f, m := compatFolder(t)
-	want := &imaplib.Envelope{Subject: "Plan", MessageID: "<a@x>", Date: time.Unix(1770000000, 0).UTC()}
+	want := &imaplib.Envelope{Subject: "Plan", MessageID: "a@x", Date: time.Unix(1770000000, 0).UTC()}
 
 	fc := Open(idx, f.ID, Options{User: "u", Folder: f.Name})
 	if fc == nil {
@@ -192,13 +192,13 @@ func TestCombinedReadAgreesWithThePair(t *testing.T) {
 		{
 			name: "no References field at all",
 			store: func(fc *Handle, m *mailbox.MessageMeta) {
-				fc.StoreEnvelope(m, &imaplib.Envelope{Subject: "Plan", MessageID: "<a@x>"})
+				fc.StoreEnvelope(m, &imaplib.Envelope{Subject: "Plan", MessageID: "a@x"})
 			},
 		},
 		{
 			name: "References cached as empty",
 			store: func(fc *Handle, m *mailbox.MessageMeta) {
-				fc.StoreEnvelope(m, &imaplib.Envelope{Subject: "Plan", MessageID: "<a@x>"})
+				fc.StoreEnvelope(m, &imaplib.Envelope{Subject: "Plan", MessageID: "a@x"})
 				fc.StoreReferences(m, nil)
 			},
 		},
@@ -269,7 +269,7 @@ func TestAPreloadedHandleStillSeesWhatItAppends(t *testing.T) {
 	if fc == nil {
 		t.Fatal("cache unavailable")
 	}
-	fc.StoreEnvelope(first, &imaplib.Envelope{Subject: "First", MessageID: "<a@x>"})
+	fc.StoreEnvelope(first, &imaplib.Envelope{Subject: "First", MessageID: "a@x"})
 	fc.Close()
 
 	second := &mailbox.MessageMeta{UID: 2}

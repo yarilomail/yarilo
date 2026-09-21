@@ -35,9 +35,9 @@ func WriteEnvelope(env *imaplib.Envelope) string {
 		writeAddressList(&b, list)
 	}
 	b.WriteByte(' ')
-	AppendNString(&b, strings.Join(env.InReplyTo, " "), len(env.InReplyTo) > 0)
+	AppendNString(&b, joinMessageIDs(env.InReplyTo), len(env.InReplyTo) > 0)
 	b.WriteByte(' ')
-	AppendNString(&b, env.MessageID, env.MessageID != "")
+	AppendNString(&b, bracketed(env.MessageID), env.MessageID != "")
 	return b.String()
 }
 
@@ -48,6 +48,31 @@ func envelopeDate(env *imaplib.Envelope) string {
 		return ""
 	}
 	return env.Date.Format("Mon, 02 Jan 2006 15:04:05 -0700")
+}
+
+// The reference caches the header's own form, angle brackets and all; the
+// parsed form here carries them stripped, so they are put back on the way out
+// and taken off on the way in.
+func bracketed(id string) string {
+	if id == "" || strings.HasPrefix(id, "<") {
+		return id
+	}
+	return "<" + id + ">"
+}
+
+func unbracketed(id string) string {
+	if strings.HasPrefix(id, "<") && strings.HasSuffix(id, ">") {
+		return id[1 : len(id)-1]
+	}
+	return id
+}
+
+func joinMessageIDs(ids []string) string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, bracketed(id))
+	}
+	return strings.Join(out, " ")
 }
 
 func writeAddressList(b *strings.Builder, addrs []imaplib.Address) {
@@ -116,10 +141,10 @@ func envelopeFromArgs(items []arg) (*imaplib.Envelope, bool) {
 		}
 		*dst = addrs
 	}
-	if items[8].present && items[8].str != "" {
-		env.InReplyTo = strings.Fields(items[8].str)
+	for _, id := range strings.Fields(items[8].str) {
+		env.InReplyTo = append(env.InReplyTo, unbracketed(id))
 	}
-	env.MessageID = items[9].str
+	env.MessageID = unbracketed(items[9].str)
 	return env, true
 }
 
@@ -200,8 +225,8 @@ func ParseEnvelopeHead(s string) (EnvelopeHead, bool) {
 	if !ok {
 		return h, false
 	}
-	if inReplyTo.present && inReplyTo.str != "" {
-		h.InReplyTo = strings.Fields(inReplyTo.str)
+	for _, id := range strings.Fields(inReplyTo.str) {
+		h.InReplyTo = append(h.InReplyTo, unbracketed(id))
 	}
 	if !p.space() {
 		return h, false
@@ -210,6 +235,6 @@ func ParseEnvelopeHead(s string) (EnvelopeHead, bool) {
 	if !ok {
 		return h, false
 	}
-	h.MessageID = messageID.str
+	h.MessageID = unbracketed(messageID.str)
 	return h, p.eof()
 }

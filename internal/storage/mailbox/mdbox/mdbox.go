@@ -1316,3 +1316,6 @@ var (
 		return cerr
 	}
 )
+
+// DriverName is the label this driver's messages are counted under.
+func (u *userMailbox) DriverName() string { return driverName }

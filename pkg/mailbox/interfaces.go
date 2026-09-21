@@ -594,6 +594,20 @@ func (e *NoSpaceError) Error() string {
 
 func (e *NoSpaceError) Unwrap() []error { return []error{ErrNoSpace, e.Err} }
 
+// DriverNamer names the driver a handle belongs to, so a counter can carry it
+// without asking what concrete type is underneath.
+type DriverNamer interface {
+	DriverName() string
+}
+
+// DriverNameOf is the label for a box, or "other" for a driver that names none.
+func DriverNameOf(box UserMailbox) string {
+	if n, ok := Driver(box).(DriverNamer); ok {
+		return n.DriverName()
+	}
+	return "other"
+}
+
 // CacheStamp is where a message's cache record starts and what that record
 // hashed to. The CRC is checked before any field is read: a record that does
 // not hash to it is not this message's (#1714).

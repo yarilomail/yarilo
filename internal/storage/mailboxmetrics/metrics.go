@@ -13,6 +13,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -62,4 +63,26 @@ func ClassifyWrite(driver, folder string, err error) error {
 	}
 	writeFailed.WithLabelValues(driver, reason).Inc()
 	return err
+}
+
+// messageOpened counts message bodies opened from a record. It is how a cache
+// claim is checked: a listing answered from the cache opens nothing (#1714).
+var messageOpened = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "mailbox_message_opened_total",
+	Help: "Message bodies opened from their index record, by driver. A listing served from the index cache adds none.",
+}, []string{"driver"})
+
+// ObserveOpen records one message body opened.
+func ObserveOpen(driver string) {
+	messageOpened.WithLabelValues(driver).Inc()
+}
+
+// MessageOpens is what the counter holds for a driver, for the rows that
+// assert a listing opened nothing.
+func MessageOpens(driver string) float64 {
+	m := &dto.Metric{}
+	if err := messageOpened.WithLabelValues(driver).Write(m); err != nil {
+		return 0
+	}
+	return m.GetCounter().GetValue()
 }

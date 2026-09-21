@@ -2418,3 +2418,6 @@ var _ mailbox.HeldRemover = (*userMailbox)(nil)
 func (u *userMailbox) RemoveHeld(folder, filename string) error {
 	return u.removeFile(folder, filename, true)
 }
+
+// DriverName is the label this driver's messages are counted under.
+func (u *userMailbox) DriverName() string { return driverName }
