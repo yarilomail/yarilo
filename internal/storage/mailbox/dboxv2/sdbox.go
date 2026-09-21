@@ -355,7 +355,7 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 		defer func() { <-u.b.writeSem }()
 	}
 	if err := os.MkdirAll(u.folderPath(folder), 0o700); err != nil {
-		return "", 0, noGUID, fmt.Errorf("sdbox/save: mkdir: %w", err)
+		return "", 0, noGUID, fmt.Errorf("sdbox/save: mkdir: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 
 	body, err := readBodyCRLF(r)
@@ -391,16 +391,16 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 
 		f, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
-			return fmt.Errorf("sdbox/save: create %s: %w", tempPath, err)
+			return fmt.Errorf("sdbox/save: create %s: %w", tempPath, mailboxmetrics.ClassifyWrite(driverName, folder, err))
 		}
 		if _, err := f.Write(buf.Bytes()); err != nil {
 			_ = f.Close()
 			_ = os.Remove(tempPath)
-			return fmt.Errorf("sdbox/save: write: %w", err)
+			return fmt.Errorf("sdbox/save: write: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 		}
 		if err := f.Close(); err != nil {
 			_ = os.Remove(tempPath)
-			return fmt.Errorf("sdbox/save: close: %w", err)
+			return fmt.Errorf("sdbox/save: close: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 		}
 		return nil
 	}()

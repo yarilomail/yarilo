@@ -110,6 +110,13 @@ func observeReadPart(part string, d time.Duration) {
 	metricReadPart.WithLabelValues(part).Observe(d.Seconds())
 }
 
+// metricJournalWriteFailed counts the appends the journal refused, by why: a
+// volume filling up is otherwise visible only as commands failing (#1831).
+var metricJournalWriteFailed = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "fileindex_journal_write_failed_total",
+	Help: "Journal appends that failed, by reason: no-space is a full volume or an exhausted disk quota, other is anything else.",
+}, []string{"reason"}) // no-space | other
+
 // metricCompactionRefused counts log compactions that could not write the base.
 // Rotation stopping is invisible from the outside — the folder keeps serving
 // mail while its log grows and every open replays more of it — so the count is

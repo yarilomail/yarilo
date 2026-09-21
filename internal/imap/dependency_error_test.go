@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -25,6 +27,7 @@ func TestDependencyErrorClassification(t *testing.T) {
 		name     string
 		err      error
 		wantCode imaplib.ResponseCode
+		wantText string
 		wantSame bool
 	}{
 		{
@@ -43,6 +46,14 @@ func TestDependencyErrorClassification(t *testing.T) {
 			name:     "a busy resource is not an outage",
 			err:      fmt.Errorf("locks: %w", locks.ErrBusy),
 			wantSame: true,
+		},
+		{
+			// A full volume is a wait, not a fault: the folder is intact and
+			// the same write works once there is room.
+			name:     "a volume with no room left",
+			err:      fmt.Errorf("maildir: write: %w", mailboxmetrics.ClassifyWrite("maildir", "Drafts", syscall.ENOSPC)),
+			wantCode: imaplib.ResponseCodeUnavailable,
+			wantText: "Drafts",
 		},
 		{
 			name:     "an ordinary failure is untouched",
@@ -71,6 +82,9 @@ func TestDependencyErrorClassification(t *testing.T) {
 			}
 			if imapErr.Code != tc.wantCode {
 				t.Errorf("code = %q, want %q", imapErr.Code, tc.wantCode)
+			}
+			if tc.wantText != "" && !strings.Contains(imapErr.Text, tc.wantText) {
+				t.Errorf("text = %q, want the folder %q named in it", imapErr.Text, tc.wantText)
 			}
 		})
 	}

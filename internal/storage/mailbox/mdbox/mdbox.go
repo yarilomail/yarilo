@@ -556,10 +556,10 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 	}
 	tPrepare := time.Now()
 	if err := os.MkdirAll(u.folderPath(folder), 0o700); err != nil {
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir folder: %w", err)
+		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir folder: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 	if err := os.MkdirAll(u.storagePath(), 0o700); err != nil {
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir storage: %w", err)
+		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir storage: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 	m, err := u.openMap()
 	if err != nil {
@@ -657,14 +657,14 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 	mailboxmetrics.ObserveSavePart(driverName, "write", time.Since(tWrite))
 	if werr != nil {
 		f.Close()
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: write record: %w", werr)
+		return "", 0, noGUID, fmt.Errorf("mdbox/save: write record: %w", mailboxmetrics.ClassifyWrite(driverName, folder, werr))
 	}
 	// Before the map names it, and so before the delivery is answered: the map
 	// entry would otherwise point at bytes a crash never wrote (#1847).
 	if u.b.fsync.SyncsBody() {
 		if serr := syncFile(f); serr != nil {
 			f.Close() //nolint:errcheck
-			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync m.%d: %w", fileID, serr)
+			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync m.%d: %w", fileID, mailboxmetrics.ClassifyWrite(driverName, folder, serr))
 		}
 	}
 	if createdFile && u.b.fsync.SyncsDir() {

@@ -587,13 +587,13 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	tmpPath := filepath.Join(folderPath, "tmp", basename)
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return "", 0, noGUID, fmt.Errorf("maildir: create tmp: %w", err)
+		return "", 0, noGUID, fmt.Errorf("maildir: create tmp: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 	sc := &sizeCounter{}
 	if _, err := io.Copy(f, io.TeeReader(r, sc)); err != nil {
 		f.Close()
 		os.Remove(tmpPath)
-		return "", 0, noGUID, fmt.Errorf("maildir: write: %w", err)
+		return "", 0, noGUID, fmt.Errorf("maildir: write: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 	// Before the name, not after: the answer to the client follows this, and a
 	// node that loses power in between answered for bytes it does not have.
@@ -601,7 +601,7 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 		if serr := syncFile(f); serr != nil {
 			f.Close()          //nolint:errcheck
 			os.Remove(tmpPath) //nolint:errcheck
-			return "", 0, noGUID, fmt.Errorf("maildir: sync body: %w", serr)
+			return "", 0, noGUID, fmt.Errorf("maildir: sync body: %w", mailboxmetrics.ClassifyWrite(driverName, folder, serr))
 		}
 	}
 	if err := f.Close(); err != nil {

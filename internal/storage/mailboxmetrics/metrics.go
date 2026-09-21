@@ -7,10 +7,14 @@
 package mailboxmetrics
 
 import (
+	"errors"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 var (
@@ -36,4 +40,26 @@ func ObserveSave(driver string, d time.Duration) {
 // have a given step simply never reports it.
 func ObserveSavePart(driver, part string, d time.Duration) {
 	savePartSeconds.WithLabelValues(driver, part).Observe(d.Seconds())
+}
+
+// A volume that is full refuses the body long before the journal, so the class
+// has to be named at every write a delivery makes (#1831).
+var writeFailed = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "mailbox_write_failed_total",
+	Help: "Writes a driver's storage refused, by driver and what refused them: no-space is a full volume or an exhausted quota, other is everything else.",
+}, []string{"driver", "reason"})
+
+// ClassifyWrite names what the volume refused and counts it. A full volume is
+// a resource condition: the same write works once there is room.
+func ClassifyWrite(driver, folder string, err error) error {
+	if err == nil {
+		return nil
+	}
+	reason := "other"
+	if errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT) {
+		reason = "no-space"
+		err = &mailbox.NoSpaceError{Folder: folder, Err: err}
+	}
+	writeFailed.WithLabelValues(driver, reason).Inc()
+	return err
 }
