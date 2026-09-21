@@ -110,7 +110,7 @@ jobs:
           echo "building ${DEV_TAG}"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.3.0
+        uses: docker/setup-buildx-action@v4.4.1
         with:
           driver: docker
 
