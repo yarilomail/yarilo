@@ -5,6 +5,8 @@ import (
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
+
+	"github.com/yarilomail/yarilo/internal/imaptext"
 )
 
 // The head decode must answer exactly what the full decode answers for the
@@ -80,14 +82,14 @@ func TestHeadAgreesWithTheFullDecode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			enc := encodeEnvelope(tt.env)
-			full, ok := decodeEnvelope(enc)
+			enc := imaptext.WriteEnvelope(tt.env)
+			full, ok := imaptext.ParseEnvelope(enc)
 			if !ok {
-				t.Fatal("full decode refused its own encoding")
+				t.Fatal("the full read refused its own encoding")
 			}
 			head, ok := decodeHead(enc)
 			if !ok {
-				t.Fatal("head decode refused the same bytes the full decode read")
+				t.Fatal("the head read refused the same bytes the full one read")
 			}
 			if !head.Date.Equal(full.Date) {
 				t.Errorf("Date = %v, full decode says %v", head.Date, full.Date)
@@ -129,7 +131,7 @@ func firstMailbox(addrs []imaplib.Address) string {
 // where the full one builds, and a skip that trusts its length prefix would
 // walk off the end of a record a disk gave back short.
 func TestHeadRefusesATruncatedRecord(t *testing.T) {
-	enc := encodeEnvelope(realisticEnvelope())
+	enc := imaptext.WriteEnvelope(realisticEnvelope())
 	for n := 0; n < len(enc); n++ {
 		if _, ok := decodeHead(enc[:n]); ok {
 			t.Errorf("head decode accepted a record truncated to %d of %d bytes", n, len(enc))
@@ -138,7 +140,7 @@ func TestHeadRefusesATruncatedRecord(t *testing.T) {
 }
 
 func BenchmarkDecodeHead(b *testing.B) {
-	enc := encodeEnvelope(realisticEnvelope())
+	enc := imaptext.WriteEnvelope(realisticEnvelope())
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

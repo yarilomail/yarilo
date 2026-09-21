@@ -73,7 +73,11 @@ func TestWriteBodyStructureMatchesTheReferencesBytes(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := WriteBodyStructure(tc.bs, tc.extended); got != tc.want {
+			got, ok := WriteBodyStructure(tc.bs, tc.extended)
+			if !ok {
+				t.Fatal("the structure was refused")
+			}
+			if got != tc.want {
 				t.Errorf("wrote\n  %q\nwant\n  %q", got, tc.want)
 			}
 		})
@@ -123,12 +127,15 @@ func TestBodyStructureRoundTrip(t *testing.T) {
 		},
 		Extended: &imaplib.BodyStructureMultiPartExt{},
 	}
-	s := WriteBodyStructure(bs, true)
+	s, ok := WriteBodyStructure(bs, true)
+	if !ok {
+		t.Fatal("the structure was refused")
+	}
 	back, ok := ParseBodyStructure(s)
 	if !ok {
 		t.Fatalf("what we wrote did not parse: %q", s)
 	}
-	if again := WriteBodyStructure(back, true); again != s {
+	if again, _ := WriteBodyStructure(back, true); again != s {
 		t.Errorf("a second pass differs:\n  %q\n  %q", again, s)
 	}
 }

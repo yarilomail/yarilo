@@ -2,6 +2,7 @@ package imaptext
 
 import (
 	"strings"
+	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
 )
@@ -141,4 +142,74 @@ func parseAddressList(a arg) ([]imaplib.Address, bool) {
 		})
 	}
 	return out, true
+}
+
+// EnvelopeHead is what ordering reads: the sent date, the base subject, and
+// the first mailbox of three address lists (RFC 5256 §2.2).
+type EnvelopeHead struct {
+	Date         time.Time
+	Subject      string
+	From, To, Cc string
+	InReplyTo    []string
+	MessageID    string
+}
+
+// ParseEnvelopeHead reads the ordering fields without building the six address
+// lists an envelope carries (#1490).
+func ParseEnvelopeHead(s string) (EnvelopeHead, bool) {
+	var h EnvelopeHead
+	p := &parser{in: s}
+	date, ok := p.arg()
+	if !ok {
+		return h, false
+	}
+	if date.present {
+		if t, ok := parseMessageDate(date.str); ok {
+			h.Date = t
+		}
+	}
+	if !p.space() {
+		return h, false
+	}
+	subject, ok := p.arg()
+	if !ok {
+		return h, false
+	}
+	h.Subject = subject.str
+	// from, sender, reply-to, to, cc, bcc -- three of the six are read.
+	for _, want := range []*string{&h.From, nil, nil, &h.To, &h.Cc, nil} {
+		if !p.space() {
+			return h, false
+		}
+		if want == nil {
+			if !p.skip() {
+				return h, false
+			}
+			continue
+		}
+		mailbox, ok := p.firstMailbox()
+		if !ok {
+			return h, false
+		}
+		*want = mailbox
+	}
+	if !p.space() {
+		return h, false
+	}
+	inReplyTo, ok := p.arg()
+	if !ok {
+		return h, false
+	}
+	if inReplyTo.present && inReplyTo.str != "" {
+		h.InReplyTo = strings.Fields(inReplyTo.str)
+	}
+	if !p.space() {
+		return h, false
+	}
+	messageID, ok := p.arg()
+	if !ok {
+		return h, false
+	}
+	h.MessageID = messageID.str
+	return h, p.eof()
 }

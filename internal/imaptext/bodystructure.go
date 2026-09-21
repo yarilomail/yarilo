@@ -31,24 +31,28 @@ const maxBodyStructureDepth = 50
 //
 // Parameters are written in name order. The reference writes them in the order
 // it parsed them, which the parsed form here does not keep.
-func WriteBodyStructure(bs imaplib.BodyStructure, extended bool) string {
+// A kind neither branch knows is not written at all: an empty text part in its
+// place is a wrong answer served from cache, which is worse than a miss.
+func WriteBodyStructure(bs imaplib.BodyStructure, extended bool) (string, bool) {
 	var b strings.Builder
-	writeBodyStructure(&b, bs, extended)
-	return b.String()
+	if !writeBodyStructure(&b, bs, extended) {
+		return "", false
+	}
+	return b.String(), true
 }
 
-func writeBodyStructure(b *strings.Builder, bs imaplib.BodyStructure, extended bool) {
+func writeBodyStructure(b *strings.Builder, bs imaplib.BodyStructure, extended bool) bool {
 	switch p := bs.(type) {
 	case *imaplib.BodyStructureMultiPart:
-		writeMultiPart(b, p, extended)
+		return writeMultiPart(b, p, extended)
 	case *imaplib.BodyStructureSinglePart:
-		writeSinglePart(b, p, extended)
+		return writeSinglePart(b, p, extended)
 	default:
-		b.WriteString(strings.TrimPrefix(strings.TrimSuffix(emptyBody, ")"), "("))
+		return false
 	}
 }
 
-func writeMultiPart(b *strings.Builder, p *imaplib.BodyStructureMultiPart, extended bool) {
+func writeMultiPart(b *strings.Builder, p *imaplib.BodyStructureMultiPart, extended bool) bool {
 	if len(p.Children) == 0 {
 		if extended {
 			b.WriteString(emptyBodyStructure)
@@ -58,13 +62,15 @@ func writeMultiPart(b *strings.Builder, p *imaplib.BodyStructureMultiPart, exten
 	}
 	for _, child := range p.Children {
 		b.WriteByte('(')
-		writeBodyStructure(b, child, extended)
+		if !writeBodyStructure(b, child, extended) {
+			return false
+		}
 		b.WriteByte(')')
 	}
 	b.WriteByte(' ')
 	appendString(b, p.Subtype)
 	if !extended {
-		return
+		return true
 	}
 	b.WriteByte(' ')
 	var params map[string]string
@@ -76,9 +82,10 @@ func writeMultiPart(b *strings.Builder, p *imaplib.BodyStructureMultiPart, exten
 	}
 	writeParams(b, params, false)
 	writeCommon(b, disp, lang, loc)
+	return true
 }
 
-func writeSinglePart(b *strings.Builder, p *imaplib.BodyStructureSinglePart, extended bool) {
+func writeSinglePart(b *strings.Builder, p *imaplib.BodyStructureSinglePart, extended bool) bool {
 	typ, sub := p.Type, p.Subtype
 	if typ == "" {
 		typ, sub = "text", "plain"
@@ -112,12 +119,14 @@ func writeSinglePart(b *strings.Builder, p *imaplib.BodyStructureSinglePart, ext
 		b.WriteString(" (")
 		b.WriteString(WriteEnvelope(p.MessageRFC822.Envelope))
 		b.WriteString(") (")
-		writeBodyStructure(b, p.MessageRFC822.BodyStructure, extended)
+		if !writeBodyStructure(b, p.MessageRFC822.BodyStructure, extended) {
+			return false
+		}
 		b.WriteByte(')')
 		fmt.Fprintf(b, " %d", p.MessageRFC822.NumLines)
 	}
 	if !extended {
-		return
+		return true
 	}
 	// md5 is not kept: nothing computes it here, and NIL is what the
 	// reference writes when it has none.
@@ -129,6 +138,7 @@ func writeSinglePart(b *strings.Builder, p *imaplib.BodyStructureSinglePart, ext
 		disp, lang, loc = p.Extended.Disposition, p.Extended.Language, p.Extended.Location
 	}
 	writeCommon(b, disp, lang, loc)
+	return true
 }
 
 // writeCommon is the disposition, language and location tail both part kinds

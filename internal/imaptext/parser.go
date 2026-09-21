@@ -148,3 +148,82 @@ func parseMessageDate(s string) (time.Time, bool) {
 	}
 	return time.Time{}, false
 }
+
+// skip advances past one item without building its strings. Ordering reads
+// three mailbox parts out of ten items, and materialising the rest was most of
+// what a SORT allocated (#1490).
+func (p *parser) skip() bool {
+	if p.eof() {
+		return false
+	}
+	switch p.in[p.at] {
+	case '(':
+		p.at++
+		for {
+			if p.eof() {
+				return false
+			}
+			if p.in[p.at] == ')' {
+				p.at++
+				return true
+			}
+			if p.in[p.at] == ' ' {
+				p.at++
+				continue
+			}
+			if !p.skip() {
+				return false
+			}
+		}
+	case '"':
+		_, ok := p.parseQuoted()
+		return ok
+	case '{':
+		_, ok := p.parseLiteral()
+		return ok
+	default:
+		_, ok := p.parseAtom()
+		return ok
+	}
+}
+
+// firstMailbox reads the mailbox part of a list's first address structure and
+// skips the rest of the list.
+func (p *parser) firstMailbox() (string, bool) {
+	if p.eof() {
+		return "", false
+	}
+	if p.in[p.at] != '(' {
+		return "", p.skip()
+	}
+	p.at++
+	first := true
+	var out string
+	for {
+		if p.eof() {
+			return "", false
+		}
+		if p.in[p.at] == ')' {
+			p.at++
+			return out, true
+		}
+		if p.in[p.at] == ' ' {
+			p.at++
+			continue
+		}
+		if !first {
+			if !p.skip() {
+				return "", false
+			}
+			continue
+		}
+		a, ok := p.parseList()
+		if !ok {
+			return "", false
+		}
+		if len(a.items) >= 3 {
+			out = a.items[2].str
+		}
+		first = false
+	}
+}

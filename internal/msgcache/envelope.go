@@ -6,16 +6,16 @@ package msgcache
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"flag"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
+
+	"github.com/yarilomail/yarilo/internal/imaptext"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -46,23 +46,6 @@ func lockCachePath(path string, shared bool) func() {
 	return m.Unlock
 }
 
-// cacheFieldEnvelope is the cache field name for the encoded envelope.
-const cacheFieldEnvelope = "yarilo.envelope"
-
-// cacheFieldReferences holds the References header, the one threading field
-// ENVELOPE does not carry (RFC 3501 has Message-ID and In-Reply-To and stops
-// there). Without it THREAD opens every matched message to read a header the
-// cache already holds the rest of (#1461).
-//
-// A separate field rather than a wider envelope encoding: the envelope's bytes
-// are read by every FETCH, and a threading header nobody fetches has no place
-// in them. Fields are looked up by name, so a file written before this one
-// existed simply does not carry it, and a file that does is read by older
-// binaries without complaint -- the field table lives in the file itself.
-const cacheFieldReferences = "yarilo.references"
-
-// indexCacher is the slice of the file-index surface the cache reader needs.
-// Asserted at use: an index backend without it simply serves no cache.
 // Index is the slice of the index surface the cache needs. Asserted at use:
 // a backend without it serves no cache.
 type Index interface {
@@ -80,133 +63,6 @@ type Index interface {
 	SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) error
 }
 
-/* --- envelope codec ------------------------------------------------------- */
-
-// envelopeCodecVersion is the first byte of every encoded envelope. A reader
-// seeing an unknown version treats the value as a miss; changing the encoding
-// itself requires a CacheProducerGen bump, which invalidates the whole file.
-const envelopeCodecVersion = 1
-
-func putStr(b []byte, s string) []byte {
-	var l [4]byte
-	binary.LittleEndian.PutUint32(l[:], uint32(len(s)))
-	return append(append(b, l[:]...), s...)
-}
-
-func getStr(b []byte) (string, []byte, error) {
-	if len(b) < 4 {
-		return "", nil, errors.New("short length")
-	}
-	n := binary.LittleEndian.Uint32(b)
-	b = b[4:]
-	if uint32(len(b)) < n {
-		return "", nil, errors.New("short string")
-	}
-	return string(b[:n]), b[n:], nil
-}
-
-func putAddrs(b []byte, addrs []imaplib.Address) []byte {
-	var l [4]byte
-	binary.LittleEndian.PutUint32(l[:], uint32(len(addrs)))
-	b = append(b, l[:]...)
-	for _, a := range addrs {
-		b = putStr(b, a.Name)
-		b = putStr(b, a.Mailbox)
-		b = putStr(b, a.Host)
-	}
-	return b
-}
-
-func getAddrs(b []byte) ([]imaplib.Address, []byte, error) {
-	if len(b) < 4 {
-		return nil, nil, errors.New("short address count")
-	}
-	n := binary.LittleEndian.Uint32(b)
-	b = b[4:]
-	if n > 1<<16 {
-		return nil, nil, errors.New("address count implausible")
-	}
-	var out []imaplib.Address
-	for i := uint32(0); i < n; i++ {
-		var a imaplib.Address
-		var err error
-		if a.Name, b, err = getStr(b); err != nil {
-			return nil, nil, err
-		}
-		if a.Mailbox, b, err = getStr(b); err != nil {
-			return nil, nil, err
-		}
-		if a.Host, b, err = getStr(b); err != nil {
-			return nil, nil, err
-		}
-		out = append(out, a)
-	}
-	return out, b, nil
-}
-
-// encodeEnvelope serialises the parsed envelope. A nil date encodes as zero.
-func encodeEnvelope(env *imaplib.Envelope) []byte {
-	b := []byte{envelopeCodecVersion}
-	var d [8]byte
-	if !env.Date.IsZero() {
-		binary.LittleEndian.PutUint64(d[:], uint64(env.Date.Unix()))
-	}
-	b = append(b, d[:]...)
-	b = putStr(b, env.Subject)
-	for _, list := range [][]imaplib.Address{env.From, env.Sender, env.ReplyTo, env.To, env.Cc, env.Bcc} {
-		b = putAddrs(b, list)
-	}
-	var l [4]byte
-	binary.LittleEndian.PutUint32(l[:], uint32(len(env.InReplyTo)))
-	b = append(b, l[:]...)
-	for _, s := range env.InReplyTo {
-		b = putStr(b, s)
-	}
-	b = putStr(b, env.MessageID)
-	return b
-}
-
-// decodeEnvelope is the inverse; any malformation is (nil, false) -- a cache
-// miss, never an error.
-func decodeEnvelope(b []byte) (*imaplib.Envelope, bool) {
-	if len(b) < 9 || b[0] != envelopeCodecVersion {
-		return nil, false
-	}
-	env := &imaplib.Envelope{}
-	if unix := binary.LittleEndian.Uint64(b[1:9]); unix != 0 {
-		env.Date = time.Unix(int64(unix), 0).UTC()
-	}
-	b = b[9:]
-	var err error
-	if env.Subject, b, err = getStr(b); err != nil {
-		return nil, false
-	}
-	for _, dst := range []*[]imaplib.Address{&env.From, &env.Sender, &env.ReplyTo, &env.To, &env.Cc, &env.Bcc} {
-		if *dst, b, err = getAddrs(b); err != nil {
-			return nil, false
-		}
-	}
-	if len(b) < 4 {
-		return nil, false
-	}
-	n := binary.LittleEndian.Uint32(b)
-	b = b[4:]
-	if n > 1<<16 {
-		return nil, false
-	}
-	for i := uint32(0); i < n; i++ {
-		var s string
-		if s, b, err = getStr(b); err != nil {
-			return nil, false
-		}
-		env.InReplyTo = append(env.InReplyTo, s)
-	}
-	if env.MessageID, _, err = getStr(b); err != nil {
-		return nil, false
-	}
-	return env, true
-}
-
 /* --- per-FETCH cache handle ----------------------------------------------- */
 
 // folderCache serves one FETCH's worth of envelope lookups and batches the
@@ -217,9 +73,7 @@ func decodeEnvelope(b []byte) (*imaplib.Envelope, bool) {
 // every method tolerates it, so a miss degrades to parsing.
 type Handle struct {
 	file   *mailindex.CacheFile
-	envID  uint32
-	bsID   uint32
-	refsID uint32
+	ids    map[string]uint32 // reference field name -> id in this file
 	stamps map[uint32]uint32 // uid -> new head offset, flushed on close
 	idx    Index
 	fid    uint64
@@ -408,19 +262,11 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 		fc.release()
 		return nil
 	}
-	// Both fields are registered up front: AddFields is a read-modify-write
-	// of the in-file table, so doing it once per window beats doing it per
-	// field, and a file that carries only one of them is a file two producer
-	// versions wrote.
-	for _, want := range []struct {
-		name string
-		dst  *uint32
-	}{
-		{cacheFieldEnvelope, &fc.envID},
-		{cacheFieldBodyStructure, &fc.bsID},
-		{cacheFieldReferences, &fc.refsID},
-	} {
-		id, ok := fc.file.FieldID(want.name)
+	// The whole table is registered up front: AddFields is a read-modify-write
+	// of the in-file table, so once per window beats once per field.
+	fc.ids = make(map[string]uint32, len(referenceFields))
+	for _, want := range referenceFields {
+		id, ok := fc.file.FieldID(want.Name)
 		if !ok {
 			if opts.Shared {
 				// AddFields is a read-modify-write of the in-file table.
@@ -428,9 +274,7 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 				fc.release()
 				return openExclusive(idx, folderID, opts)
 			}
-			first, aerr := fc.file.AddFields([]mailindex.CacheField{{
-				Name: want.name, Type: mailindex.CacheFieldVariableSize, Decision: mailindex.CacheDecisionYes,
-			}})
+			first, aerr := fc.file.AddFields([]mailindex.CacheField{want})
 			if aerr != nil {
 				fc.file.Close()
 				fc.release()
@@ -438,7 +282,7 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 			}
 			id = first
 		}
-		*want.dst = id
+		fc.ids[want.Name] = id
 	}
 	fc.reopen.idx, fc.reopen.ic = idx, ic
 	fc.reopen.fid, fc.reopen.opts = folderID, opts
@@ -586,11 +430,11 @@ func (fc *Handle) Envelope(m *mailbox.MessageMeta) *imaplib.Envelope {
 	if fc == nil {
 		return nil
 	}
-	data, ok := fc.read(m)[fc.envID]
+	data, ok := fc.read(m)[fc.ids[fieldIMAPEnvelope]]
 	if !ok {
 		return nil // no record, or a record without this field
 	}
-	env, ok := decodeEnvelope(data)
+	env, ok := imaptext.ParseEnvelope(string(data))
 	if !ok {
 		return nil
 	}
@@ -618,14 +462,11 @@ func (fc *Handle) References(m *mailbox.MessageMeta) ([]string, bool) {
 	if fc == nil {
 		return nil, false
 	}
-	data, ok := fc.read(m)[fc.refsID]
+	data, ok := fc.read(m)[fc.ids[fieldHdrReferences]]
 	if !ok {
 		return nil, false
 	}
-	if len(data) == 0 {
-		return nil, true // cached, and the message has none
-	}
-	return splitRefs(data), true
+	return referencesFromHeader(data)
 }
 
 // EnvelopeAndReferences reads both in ONE pass over the message's record.
@@ -640,22 +481,20 @@ func (fc *Handle) EnvelopeAndReferences(m *mailbox.MessageMeta) (*imaplib.Envelo
 		return nil, nil, false
 	}
 	vals := fc.read(m)
-	envData, ok := vals[fc.envID]
+	envData, ok := vals[fc.ids[fieldIMAPEnvelope]]
 	if !ok {
 		return nil, nil, false
 	}
-	env, ok := decodeEnvelope(envData)
+	env, ok := imaptext.ParseEnvelope(string(envData))
 	if !ok {
 		return nil, nil, false
 	}
-	refsData, cached := vals[fc.refsID]
+	refsData, cached := vals[fc.ids[fieldHdrReferences]]
 	if !cached {
 		return env, nil, false
 	}
-	if len(refsData) == 0 {
-		return env, nil, true // cached, and the message has none
-	}
-	return env, splitRefs(refsData), true
+	refs, ok := referencesFromHeader(refsData)
+	return env, refs, ok
 }
 
 // StoreReferences caches the References of a message. An empty list is stored
@@ -665,7 +504,7 @@ func (fc *Handle) StoreReferences(m *mailbox.MessageMeta, refs []string) {
 	if fc == nil {
 		return
 	}
-	fc.storeField(m, fc.refsID, []byte(strings.Join(refs, "\n")))
+	fc.storeField(m, fc.ids[fieldHdrReferences], encodeReferencesHeader(refs))
 }
 
 // store appends the freshly-parsed envelope for a message.
@@ -673,7 +512,7 @@ func (fc *Handle) StoreEnvelope(m *mailbox.MessageMeta, env *imaplib.Envelope) {
 	if fc == nil || env == nil {
 		return
 	}
-	fc.storeField(m, fc.envID, encodeEnvelope(env))
+	fc.storeField(m, fc.ids[fieldIMAPEnvelope], []byte(imaptext.WriteEnvelope(env)))
 }
 
 // bodyStructure returns the cached body structure, or nil on any miss.
@@ -681,11 +520,11 @@ func (fc *Handle) BodyStructure(m *mailbox.MessageMeta) imaplib.BodyStructure {
 	if fc == nil {
 		return nil
 	}
-	data, ok := fc.read(m)[fc.bsID]
+	data, ok := fc.read(m)[fc.ids[fieldIMAPBodyStructure]]
 	if !ok {
 		return nil
 	}
-	bs, ok := decodeBodyStructure(data)
+	bs, ok := imaptext.ParseBodyStructure(string(data))
 	if !ok {
 		return nil
 	}
@@ -700,12 +539,21 @@ func (fc *Handle) StoreBodyStructure(m *mailbox.MessageMeta, bs imaplib.BodyStru
 	if fc == nil || bs == nil {
 		return
 	}
-	enc := encodeBodyStructure(bs)
-	if _, ok := decodeBodyStructure(enc); !ok {
+	enc, ok := imaptext.WriteBodyStructure(bs, true)
+	if !ok {
 		slog.Debug("msgcache: body structure not representable; leaving uncached", "uid", m.UID)
 		return
 	}
-	fc.storeField(m, fc.bsID, enc)
+	if _, ok := imaptext.ParseBodyStructure(enc); !ok {
+		slog.Debug("msgcache: body structure did not survive its own codec; leaving uncached", "uid", m.UID)
+		return
+	}
+	body, ok := imaptext.WriteBodyStructure(bs, false)
+	if !ok {
+		return
+	}
+	fc.storeField(m, fc.ids[fieldIMAPBodyStructure], []byte(enc))
+	fc.storeField(m, fc.ids[fieldIMAPBody], []byte(body))
 }
 
 // close flushes the batched offset stamps -- one index write per FETCH, not
