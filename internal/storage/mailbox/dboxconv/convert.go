@@ -119,6 +119,9 @@ func ConvertFolder(folderDir string, c *MapCorrespondence) ([]*mailbox.MessageMe
 		return nil, f.Header, fmt.Errorf("dboxconv: folder %s has no mdbox extension, so its messages cannot be located", folderDir)
 	}
 	guidExt, hasGUID := dboxindex.Find(exts, "guid")
+	// Their cache offset rides along: the cache file beside the index is
+	// adopted, and an offset without it points nowhere (#1714).
+	cacheExt, hasCache := dboxindex.Find(exts, "cache")
 
 	out := make([]*mailbox.MessageMeta, 0, len(recs))
 	for _, r := range recs {
@@ -152,6 +155,11 @@ func ConvertFolder(folderDir string, c *MapCorrespondence) ([]*mailbox.MessageMe
 				copy(m.GUID[:], raw)
 			}
 		}
+		if hasCache {
+			if raw, ok := dboxindex.FieldOf(r, cacheExt); ok && len(raw) >= 4 {
+				m.CacheOffset = binary.LittleEndian.Uint32(raw)
+			}
+		}
 		out = append(out, m)
 	}
 	return out, f.Header, nil
@@ -159,8 +167,9 @@ func ConvertFolder(folderDir string, c *MapCorrespondence) ([]*mailbox.MessageMe
 
 // RemoveForeignFolder unlinks their folder files, last: ours is fsynced first,
 // so a crash leaves a folder one of the two servers can still open (#1569).
+// The cache is not in the list: it is adopted, not removed (#1714).
 func RemoveForeignFolder(dir string) error {
-	for _, name := range []string{foreignIndex, foreignLog, foreignLogPrev, foreignCache} {
+	for _, name := range []string{foreignIndex, foreignLog, foreignLogPrev} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("dboxconv: remove %s: %w", name, err)
 		}
@@ -176,6 +185,7 @@ func ConvertSdboxFolder(indexDir, mailDir string) ([]*mailbox.MessageMeta, dboxi
 	if err != nil {
 		return nil, dboxindex.HeaderState{}, nil, err
 	}
+	cacheExt, hasCache := dboxindex.Find(f.Exts, "cache")
 	present, err := sdboxFilesPresent(mailDir)
 	if err != nil {
 		return nil, f.Header, nil, err
@@ -190,6 +200,11 @@ func ConvertSdboxFolder(indexDir, mailDir string) ([]*mailbox.MessageMeta, dboxi
 			UID:      r.UID,
 			Flags:    flagNames(r.Flags),
 			Keywords: r.Keywords,
+		}
+		if hasCache {
+			if raw, ok := dboxindex.FieldOf(r, cacheExt); ok && len(raw) >= 4 {
+				m.CacheOffset = binary.LittleEndian.Uint32(raw)
+			}
 		}
 		name, ok := sdboxNameFor(present, r.UID)
 		if !ok {
@@ -236,3 +251,7 @@ func nameIn(present map[string]struct{}, name string) bool {
 // RemoveForeignSdboxFolder unlinks their folder index, last. The message files
 // are read in place by both, so nothing else in the directory is touched.
 func RemoveForeignSdboxFolder(dir string) error { return RemoveForeignFolder(dir) }
+
+// ForeignCachePath is the cache file beside their index, for the caller that
+// adopts it (#1714).
+func ForeignCachePath(dir string) string { return filepath.Join(dir, foreignCache) }

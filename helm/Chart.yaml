@@ -3,8 +3,8 @@ name: yarilo
 description: Production-grade IMAP/POP3/Submission mail server
 type: application
 
-version: 2.3.403
-appVersion: "2.3.403"
+version: 2.3.404
+appVersion: "2.3.404"
 
 # Release status of the line this chart deploys.
 annotations:

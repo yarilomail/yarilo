@@ -219,6 +219,12 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	if hdr.NextUID > fs.file.Header.NextUID {
 		fs.file.Header.NextUID = hdr.NextUID
 	}
+	// Their cache comes with the folder: its records are the same bytes ours
+	// would be, and one checksum pass makes them ours to trust (#1714).
+	u.adoptForeignCache(fs, dir, metas)
+	if err := fs.stampAdoptedCache(metas); err != nil {
+		return false, fmt.Errorf("fileindex/convert: folder %q: %w", fs.folder, err)
+	}
 	// Ours durable before theirs is unlinked, so a crash between the two leaves
 	// a folder one of the two servers can still open. Both halves are needed:
 	// the file's bytes before the rename, the directory entry before the
@@ -387,6 +393,10 @@ func (u *userIndex) convertForeignSdboxFolder(fs *folderState, dir string) (bool
 	}
 	if hdr.NextUID > fs.file.Header.NextUID {
 		fs.file.Header.NextUID = hdr.NextUID
+	}
+	u.adoptForeignCache(fs, dir, metas)
+	if err := fs.stampAdoptedCache(metas); err != nil {
+		return false, fmt.Errorf("fileindex/convert: folder %q: %w", fs.folder, err)
 	}
 	fs.fsyncOnFlush = true
 	defer func() { fs.fsyncOnFlush = false }()

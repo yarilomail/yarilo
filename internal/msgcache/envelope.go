@@ -403,7 +403,7 @@ func (fc *Handle) read(m *mailbox.MessageMeta) map[uint32][]byte {
 	}
 	// The checksum before the fields (cyrus mailbox.c:705-775): a record that
 	// hashes to something else is another message's, field by field.
-	if crc := fc.recordCRCFor(m); crc != 0 && recordCRC(vals) != crc {
+	if crc := fc.recordCRCFor(m); crc != 0 && mailindex.RecordCRC(vals) != crc {
 		metricCRCMismatch.Inc()
 		slog.Debug("msgcache: cache record checksum mismatch; re-reading the message", "uid", m.UID)
 		return nil
@@ -440,7 +440,7 @@ func (fc *Handle) storeField(m *mailbox.MessageMeta, fieldID uint32, data []byte
 		return
 	}
 	fc.remember(m, fieldID, data)
-	fc.stamps[m.UID] = mailbox.CacheStamp{Offset: off, CRC: recordCRC(fc.merged[m.UID])}
+	fc.stamps[m.UID] = mailbox.CacheStamp{Offset: off, CRC: mailindex.RecordCRC(fc.merged[m.UID])}
 }
 
 // remember keeps what the record now holds, seeded from what was there before:
@@ -459,7 +459,7 @@ func (fc *Handle) remember(m *mailbox.MessageMeta, fieldID uint32, data []byte) 
 		fc.merged[m.UID] = vals
 	}
 	vals[fieldID] = data
-	fc.crcs[m.UID] = recordCRC(vals)
+	fc.crcs[m.UID] = mailindex.RecordCRC(vals)
 }
 
 // envelope returns the cached envelope for a message, or nil on any of the
