@@ -546,12 +546,35 @@ func (fc *Handle) StoreReferences(m *mailbox.MessageMeta, refs []string) {
 	fc.storeField(m, fc.ids[fieldHdrReferences], encodeReferencesHeader(refs))
 }
 
-// store appends the freshly-parsed envelope for a message.
+// StoreEnvelope caches an envelope a caller holds as a struct. The text is the
+// stored form, so what a client is shown does not depend on who wrote it.
 func (fc *Handle) StoreEnvelope(m *mailbox.MessageMeta, env *imaplib.Envelope) {
 	if fc == nil || env == nil {
 		return
 	}
-	fc.storeField(m, fc.ids[fieldIMAPEnvelope], []byte(imaptext.WriteEnvelope(env)))
+	fc.StoreEnvelopeText(m, imaptext.WriteEnvelope(env))
+}
+
+// StoreEnvelopeText caches the envelope exactly as it will be answered: built
+// from the raw header by the reference's rules, encoded words and address
+// groups intact (#1714).
+func (fc *Handle) StoreEnvelopeText(m *mailbox.MessageMeta, text string) {
+	if fc == nil || text == "" {
+		return
+	}
+	fc.storeField(m, fc.ids[fieldIMAPEnvelope], []byte(text))
+}
+
+// EnvelopeText is the stored envelope, for a caller that answers with text.
+func (fc *Handle) EnvelopeText(m *mailbox.MessageMeta) (string, bool) {
+	if fc == nil {
+		return "", false
+	}
+	data, ok := fc.read(m)[fc.ids[fieldIMAPEnvelope]]
+	if !ok || len(data) == 0 {
+		return "", false
+	}
+	return string(data), true
 }
 
 // bodyStructure returns the cached body structure, or nil on any miss.

@@ -608,9 +608,8 @@ func DriverNameOf(box UserMailbox) string {
 	return "other"
 }
 
-// CacheStamp is where a message's cache record starts and what that record
-// hashed to. The CRC is checked before any field is read: a record that does
-// not hash to it is not this message's (#1714).
+// CacheStamp is where a message's cache record starts and what it hashed to:
+// a record that does not hash to it is not this message's (#1714).
 type CacheStamp struct {
 	Offset uint32
 	CRC    uint32

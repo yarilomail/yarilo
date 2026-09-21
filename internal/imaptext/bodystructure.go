@@ -13,9 +13,8 @@ import (
 // charset (message-part-data.h, MESSAGE_PART_DEFAULT_CHARSET).
 const defaultCharset = "us-ascii"
 
-// emptyBody is the structure the reference writes for a multipart with no
-// children, which the grammar does not allow to be empty
-// (imap-bodystructure.c:124-133).
+// What the reference writes for a childless multipart, which the grammar does
+// not allow to be empty (imap-bodystructure.c:124-133).
 const (
 	emptyBody          = `("text" "plain" ("charset" "us-ascii") NIL NIL "7bit" 0 0)`
 	emptyBodyStructure = `("text" "plain" ("charset" "us-ascii") NIL NIL "7bit" 0 0 NIL NIL NIL NIL)`
@@ -25,14 +24,13 @@ const (
 // data, and a nested one from elsewhere must not cost the process its stack.
 const maxBodyStructureDepth = 50
 
-// WriteBodyStructure returns the body structure the way the reference writes
-// it, without the enclosing parentheses. extended adds the BODYSTRUCTURE
-// fields; without it the result is BODY (imap-bodystructure.c:271-283).
+// WriteBodyStructure writes the structure as the reference does, without the
+// enclosing parentheses; extended gives BODYSTRUCTURE, else BODY
+// (imap-bodystructure.c:271-283).
 //
-// Parameters are written in name order. The reference writes them in the order
-// it parsed them, which the parsed form here does not keep.
-// A kind neither branch knows is not written at all: an empty text part in its
-// place is a wrong answer served from cache, which is worse than a miss.
+// Parameters go in name order -- the reference keeps parse order, which the
+// parsed form here does not. An unknown kind is refused rather than written as
+// an empty text part: a wrong answer from cache is worse than a miss.
 func WriteBodyStructure(bs imaplib.BodyStructure, extended bool) (string, bool) {
 	var b strings.Builder
 	if !writeBodyStructure(&b, bs, extended) {

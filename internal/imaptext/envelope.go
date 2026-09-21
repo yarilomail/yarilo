@@ -135,7 +135,7 @@ func envelopeFromArgs(items []arg) (*imaplib.Envelope, bool) {
 	env.Subject = items[1].str
 	lists := []*[]imaplib.Address{&env.From, &env.Sender, &env.ReplyTo, &env.To, &env.Cc, &env.Bcc}
 	for i, dst := range lists {
-		addrs, ok := parseAddressList(items[2+i])
+		addrs, ok := addressListFromArg(items[2+i])
 		if !ok {
 			return nil, false
 		}
@@ -148,7 +148,7 @@ func envelopeFromArgs(items []arg) (*imaplib.Envelope, bool) {
 	return env, true
 }
 
-func parseAddressList(a arg) ([]imaplib.Address, bool) {
+func addressListFromArg(a arg) ([]imaplib.Address, bool) {
 	if !a.present {
 		return nil, true
 	}

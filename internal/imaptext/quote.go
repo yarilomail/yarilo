@@ -1,9 +1,5 @@
-// Package imaptext writes and reads the IMAP text the reference keeps in its
-// index cache: the ENVELOPE and BODYSTRUCTURE strings, byte for byte.
-//
-// Byte-for-byte is the point. A cache written here is read by the reference and
-// one written by the reference is read here, which is what makes the cache a
-// shared container rather than ours in their file (#1714).
+// Package imaptext writes and reads the ENVELOPE and BODYSTRUCTURE text the
+// reference keeps in its index cache, byte for byte (#1714).
 package imaptext
 
 import (
@@ -15,9 +11,8 @@ import (
 // quoted string becomes a literal (imap-quote.c:16).
 const quotedMaxEscapeChars = 4
 
-// AppendNString writes s as the reference's imap_append_nstring does:
-// NIL for absent, an atom-safe run bare, otherwise quoted or literal
-// (imap-quote.c:45-91).
+// AppendNString is the reference's imap_append_nstring: NIL, a bare atom-safe
+// run, else quoted or literal (imap-quote.c:45-91).
 func AppendNString(b *strings.Builder, s string, present bool) {
 	if !present {
 		b.WriteString("NIL")
@@ -88,9 +83,8 @@ func appendLiteral(b *strings.Builder, s string) {
 	b.WriteString(s)
 }
 
-// AppendStringForHumans is the subject and display-name form: runs of
-// whitespace collapse, NUL becomes 0x80, and the result is quoted when nothing
-// had to change (imap-quote.c:152-240).
+// AppendStringForHumans is the subject and display-name form: whitespace runs
+// collapse, NUL becomes 0x80, quoted only when nothing changed (imap-quote.c:152-240).
 func AppendStringForHumans(b *strings.Builder, s string) {
 	var removed int
 	lastLWSP, wsPrefix, modify := true, true, false

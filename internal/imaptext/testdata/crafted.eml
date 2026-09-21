@@ -1,0 +1,22 @@
+Date: Mon, 21 Sep 2026 14:05:06 +0300
+Subject: =?UTF-8?Q?Caf=C3=A9_menu?= "quoted" back\slash
+From: "Doe, John" <john@example.test>
+Reply-To: <reply@example.test>
+To: =?UTF-8?B?0IbQstCw0L0=?= <ivan@example.test>, "quoted local"@example.test
+Cc: undisclosed-recipients:;
+In-Reply-To: <m0@example.test>
+Message-Id: <m1@example.test>
+References: <m0@example.test>
+ <mminus1@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=b1
+
+--b1
+Content-Type: text/plain; charset=utf-8
+
+body
+--b1
+Content-Type: multipart/alternative; boundary=b2
+
+--b2--
+--b1--
