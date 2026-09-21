@@ -40,7 +40,7 @@ spec:
         # generator flags: -mbox replaces the generator entirely, and a run that
         # passed both would be describing settings that had no effect.
         - -mbox=/corpus/corpus.mbox
-        - -recipients=u1@d00001.test:150
+        - -recipients=u1@d00001.test:50,u51@d00002.test:50,u101@d00003.test:50
         - -concurrency=8
         - -duration=5m
         - -interval=10s

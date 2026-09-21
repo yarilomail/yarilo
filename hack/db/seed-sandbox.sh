@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Seeds the sandbox matrix: u1-50 mdbox, u51-100 maildir, u101-150 sdbox, plus
-# the over-quota account. It owns those rows, and no other one (#1806).
+# Seeds the sandbox matrix, one domain per storage type: u1-50 mdbox, u51-100
+# maildir, u101-150 sdbox, plus the over-quota account. It owns those rows, and
+# no other one (#1806, #1943).
 #
 # Usage:
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml bash hack/db/seed-sandbox.sh
@@ -31,12 +32,27 @@ QUOTA_OUT=$(mysql_do < "$SCRIPT_DIR/quota-mapped.sql" 2>&1) || {
 }
 echo "$QUOTA_OUT" | grep -v Warning || true
 
-# range <mbtype> <maildir> <from> <to>
+# One domain per type: under assignment_policy: domain a single domain puts the
+# whole stand on one backend (#1943). The probes stay on the first one.
+MDBOX_DOMAIN="${MDBOX_DOMAIN:-d00001.test}"
+MAILDIR_DOMAIN="${MAILDIR_DOMAIN:-d00002.test}"
+SDBOX_DOMAIN="${SDBOX_DOMAIN:-d00003.test}"
+
+# domain_row makes sure a domain exists before accounts point at it.
+domain_row() {
+  cat <<SQL
+INSERT INTO domain (domain, transport, customer_id, trial, abuse, active)
+VALUES ('$1', 'virtual', '$2', 0, 0, 1)
+ON DUPLICATE KEY UPDATE active = 1;
+SQL
+}
+
+# range <mbtype> <maildir> <from> <to> <domain>
 range() {
   cat <<SQL
 INSERT INTO mailbox (username, password, mbtype, home, maildir, quota_bytes, local_part, domain, active, mpath)
-SELECT CONCAT('u', n, '@d00001.test'), '$PLAIN_HASH', '$1', '/var/mail/vhosts/', '$2', 1073741824,
-       CONCAT('u', n), 'd00001.test', 1, CONCAT('d00001.test/u', n, '@d00001.test')
+SELECT CONCAT('u', n, '@$5'), '$PLAIN_HASH', '$1', '/var/mail/vhosts/', '$2', 1073741824,
+       CONCAT('u', n), '$5', 1, CONCAT('$5/u', n, '@$5')
 FROM (SELECT a.N + b.N*10 + c.N*100 + 1 AS n
       FROM (SELECT 0 AS N UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
             UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
@@ -51,10 +67,29 @@ ON DUPLICATE KEY UPDATE
 SQL
 }
 
-echo "Seeding u1-u150@d00001.test in $DB_NS/$DB_POD ..."
+# The accounts the split replaced: left active, the table carries two accounts
+# for one number and the matrix counts double (#1943).
+retire_old() {
+  cat <<SQL
+UPDATE mailbox SET active = 0
+WHERE domain = '$MDBOX_DOMAIN'
+  AND username REGEXP '^u[0-9]+@'
+  AND CAST(SUBSTRING_INDEX(SUBSTRING(username, 2), '@', 1) AS UNSIGNED) BETWEEN 51 AND 150;
+SQL
+}
+
+echo "Seeding mdbox@$MDBOX_DOMAIN, maildir@$MAILDIR_DOMAIN, sdbox@$SDBOX_DOMAIN in $DB_NS/$DB_POD ..."
 # Not piped into grep: a failing INSERT there is invisible, which is how the
 # previous version emptied the table and reported nothing (#1806).
-SEED_OUT=$({ range mdbox mdbox 1 50; range maildir Maildir 51 100; range sdbox sdbox 101 150; } | mysql_do 2>&1) || {
+SEED_OUT=$({
+  domain_row "$MDBOX_DOMAIN" cust-00001
+  domain_row "$MAILDIR_DOMAIN" cust-00002
+  domain_row "$SDBOX_DOMAIN" cust-00003
+  range mdbox mdbox 1 50 "$MDBOX_DOMAIN"
+  range maildir Maildir 51 100 "$MAILDIR_DOMAIN"
+  range sdbox sdbox 101 150 "$SDBOX_DOMAIN"
+  retire_old
+} | mysql_do 2>&1) || {
   echo "$SEED_OUT" >&2
   echo "seed: the insert failed; nothing was changed" >&2
   exit 1
@@ -66,7 +101,9 @@ echo "$SEED_OUT" | grep -v Warning || true
 echo "Verifying the matrix ..."
 RAW=$(mysql_do -N -B -e "
 SELECT CONCAT(mbtype, '=', COUNT(*)) FROM mailbox
-WHERE username REGEXP '^u[0-9]+@d00001[.]test\$'
+WHERE active = 1
+  AND domain IN ('$MDBOX_DOMAIN', '$MAILDIR_DOMAIN', '$SDBOX_DOMAIN')
+  AND username REGEXP '^u[0-9]+@'
   AND CAST(SUBSTRING_INDEX(SUBSTRING(username, 2), '@', 1) AS UNSIGNED) BETWEEN 1 AND 150
 GROUP BY mbtype ORDER BY mbtype;" 2>&1) || {
   echo "$RAW" >&2
@@ -88,7 +125,8 @@ echo "Rows this script does not own, left alone:"
 OTHERS=$(mysql_do -e "
 SELECT mbtype, COUNT(*) AS cnt FROM mailbox
 WHERE username NOT IN ('$OVER_USER', '$SCRAM_USER')
-  AND NOT (username REGEXP '^u[0-9]+@d00001[.]test\$'
+  AND NOT (domain IN ('$MDBOX_DOMAIN', '$MAILDIR_DOMAIN', '$SDBOX_DOMAIN')
+  AND username REGEXP '^u[0-9]+@'
   AND CAST(SUBSTRING_INDEX(SUBSTRING(username, 2), '@', 1) AS UNSIGNED) BETWEEN 1 AND 150)
 GROUP BY mbtype;" 2>&1) || {
   echo "$OTHERS" >&2
