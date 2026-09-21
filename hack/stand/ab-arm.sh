@@ -526,9 +526,8 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)
   echo "$ARM $name logins=${logins:-?} stalls=$stalls"
-  # The peak each backend reached, not the last sample: a run ends with every
-  # client gone. Every backend seen is printed, a nought included -- "carried
-  # nothing" and "was never named" are the two answers #1931 is about.
+  # The peak, not the last sample: a run ends with every client gone. A nought
+  # is printed too -- it is not the same answer as an absent backend (#1931).
   spread=$(awk '/^[0-9]/ { if (!($2 in peak) || $3 > peak[$2]) peak[$2] = $3 }
                 END { for (ip in peak) printf "%s=%d ", ip, peak[ip] }' \
     "$OUT/spread-$ARM-$name.txt" 2>/dev/null)
