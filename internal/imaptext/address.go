@@ -2,9 +2,8 @@ package imaptext
 
 import "strings"
 
-// addrItem is one entry of an address list: an address, or the marker that
-// opens or closes a group. The reference writes a group as a pair of markers
-// around its members (imap-envelope.c:18-44, message-address.c).
+// One address, or one of the pair of markers the reference writes around a
+// group's members (imap-envelope.c:18-44).
 type addrItem struct {
 	name    string
 	mailbox string
@@ -14,8 +13,7 @@ type addrItem struct {
 	group bool
 }
 
-// parseAddressList splits a raw header value into address structures without
-// decoding anything: an encoded word stays encoded, because that is what the
+// Splits a raw header value, decoding nothing: an encoded word is what the
 // reference caches and what a client is shown.
 func parseAddressList(value string) []addrItem {
 	var out []addrItem

@@ -6,8 +6,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/imaptext"
 )
 
-// RawHeader gives imaptext the header values as the message carried them.
-// go-message decodes nothing on read, which is what the envelope needs: the
+// RawHeader gives imaptext the header values as the message carried them: the
 // reference caches the header's own bytes (#1714).
 type RawHeader struct {
 	H textproto.Header

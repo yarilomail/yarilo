@@ -361,9 +361,8 @@ func (fc *Handle) flush() {
 			// often (#1549).
 			continue
 		}
-		// The checksum travels with the offset: the second window seeds its
-		// own from the record it finds, and a stale one would make every read
-		// of it a mismatch.
+		// The checksum travels with the offset: a stale one makes every later
+		// read of that record a mismatch.
 		meta := p.meta
 		meta.CacheOffset, meta.CacheCRC = stamp.Offset, stamp.CRC
 		second.storeField(&meta, p.fieldID, p.data)
@@ -401,9 +400,8 @@ func (fc *Handle) read(m *mailbox.MessageMeta) map[uint32][]byte {
 	if err != nil {
 		return nil // a bad chain is a miss; the re-parse overwrites the head
 	}
-	// The checksum before the fields, as the reference's neighbour does
-	// (cyrus mailbox.c:705-775): a record that does not hash to what the index
-	// recorded belongs to another message, and every field in it is wrong.
+	// The checksum before the fields (cyrus mailbox.c:705-775): a record that
+	// hashes to something else is another message's, field by field.
 	if crc := fc.recordCRCFor(m); crc != 0 && recordCRC(vals) != crc {
 		metricCRCMismatch.Inc()
 		slog.Debug("msgcache: cache record checksum mismatch; re-reading the message", "uid", m.UID)
@@ -555,9 +553,8 @@ func (fc *Handle) StoreEnvelope(m *mailbox.MessageMeta, env *imaplib.Envelope) {
 	fc.StoreEnvelopeText(m, imaptext.WriteEnvelope(env))
 }
 
-// StoreEnvelopeText caches the envelope exactly as it will be answered: built
-// from the raw header by the reference's rules, encoded words and address
-// groups intact (#1714).
+// StoreEnvelopeText caches the envelope exactly as it will be answered, built
+// from the raw header by the reference's rules (#1714).
 func (fc *Handle) StoreEnvelopeText(m *mailbox.MessageMeta, text string) {
 	if fc == nil || text == "" {
 		return

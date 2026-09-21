@@ -24,13 +24,8 @@ const (
 // data, and a nested one from elsewhere must not cost the process its stack.
 const maxBodyStructureDepth = 50
 
-// WriteBodyStructure writes the structure as the reference does, without the
-// enclosing parentheses; extended gives BODYSTRUCTURE, else BODY
-// (imap-bodystructure.c:271-283).
-//
-// Parameters go in name order -- the reference keeps parse order, which the
-// parsed form here does not. An unknown kind is refused rather than written as
-// an empty text part: a wrong answer from cache is worse than a miss.
+// WriteBodyStructure writes the structure as the reference does, unparenthesised;
+// extended gives BODYSTRUCTURE, else BODY (imap-bodystructure.c:271-283).
 func WriteBodyStructure(bs imaplib.BodyStructure, extended bool) (string, bool) {
 	var b strings.Builder
 	if !writeBodyStructure(&b, bs, extended) {
@@ -39,6 +34,8 @@ func WriteBodyStructure(bs imaplib.BodyStructure, extended bool) (string, bool) 
 	return b.String(), true
 }
 
+// Parameters go in name order; an unknown kind is refused, never written as an
+// empty text part -- a wrong answer from cache is worse than a miss.
 func writeBodyStructure(b *strings.Builder, bs imaplib.BodyStructure, extended bool) bool {
 	switch p := bs.(type) {
 	case *imaplib.BodyStructureMultiPart:
@@ -169,9 +166,8 @@ func writeCommon(b *strings.Builder, disp *imaplib.BodyStructureDisposition, lan
 	AppendNString(b, loc, loc != "")
 }
 
-// writeParams is params_write: a text part always names a charset, and an
-// absent list is NIL unless the default has to be supplied
-// (imap-bodystructure.c:26-60).
+// params_write: a text part always names a charset, an absent list is NIL
+// unless the default is owed (imap-bodystructure.c:26-60).
 func writeParams(b *strings.Builder, params map[string]string, defaultCharsetWanted bool) {
 	if !defaultCharsetWanted && len(params) == 0 {
 		b.WriteString("NIL")

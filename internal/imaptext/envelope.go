@@ -50,9 +50,8 @@ func envelopeDate(env *imaplib.Envelope) string {
 	return env.Date.Format("Mon, 02 Jan 2006 15:04:05 -0700")
 }
 
-// The reference caches the header's own form, angle brackets and all; the
-// parsed form here carries them stripped, so they are put back on the way out
-// and taken off on the way in.
+// The reference caches the header's own form, brackets and all; the parsed
+// form carries none, so they go on out and come off in.
 func bracketed(id string) string {
 	if id == "" || strings.HasPrefix(id, "<") {
 		return id

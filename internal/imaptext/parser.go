@@ -149,9 +149,8 @@ func parseMessageDate(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// skip advances past one item without building its strings. Ordering reads
-// three mailbox parts out of ten items, and materialising the rest was most of
-// what a SORT allocated (#1490).
+// skip advances past one item without building its strings: materialising the
+// rest was most of what a SORT allocated (#1490).
 func (p *parser) skip() bool {
 	if p.eof() {
 		return false
