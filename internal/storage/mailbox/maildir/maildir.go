@@ -2421,3 +2421,7 @@ func (u *userMailbox) RemoveHeld(folder, filename string) error {
 
 // DriverName is the label this driver's messages are counted under.
 func (u *userMailbox) DriverName() string { return driverName }
+
+// FsyncMode is what a delivery makes durable here, so the wiring of the
+// configured mode has a reader (#1969).
+func (b *Backend) FsyncMode() mailbox.FsyncMode { return b.fsync }

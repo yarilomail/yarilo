@@ -47,10 +47,17 @@ type Backend struct {
 	locker   locks.Locker
 	writeSem chan struct{} // nil = unlimited
 	listUTF8 bool
+	// fsync says what reaches the disk before a delivery is answered (#1847).
+	fsync mailbox.FsyncMode
 }
 
 // Option configures a Backend at construction time.
 type Option func(*Backend)
+
+// WithFsync sets what a delivery makes durable before it is acknowledged.
+func WithFsync(m mailbox.FsyncMode) Option {
+	return func(b *Backend) { b.fsync = m }
+}
 
 // WithLocker wires a yarilo-locks client into the backend: every
 // folder-mutating call (Save, Rename, Delete, Remove, AssignUID, Copy) takes
@@ -80,7 +87,7 @@ func New(opts ...Option) *Backend {
 	if host == "" {
 		host = "localhost"
 	}
-	b := &Backend{hostname: host, pid: os.Getpid(), listUTF8: true}
+	b := &Backend{hostname: host, pid: os.Getpid(), listUTF8: true, fsync: mailbox.FsyncOptimized}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -397,6 +404,15 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 			_ = f.Close()
 			_ = os.Remove(tempPath)
 			return fmt.Errorf("sdbox/save: write: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
+		}
+		// Before the answer, not after: a node that loses power in between
+		// answered for bytes it does not have (#1847).
+		if u.b.fsync.SyncsBody() {
+			if serr := syncFile(f); serr != nil {
+				_ = f.Close()
+				_ = os.Remove(tempPath)
+				return fmt.Errorf("sdbox/save: sync body: %w", mailboxmetrics.ClassifyWrite(driverName, folder, serr))
+			}
 		}
 		if err := f.Close(); err != nil {
 			_ = os.Remove(tempPath)
@@ -857,3 +873,11 @@ func (u *userMailbox) Username() string { return u.username }
 
 // DriverName is the label this driver's messages are counted under.
 func (u *userMailbox) DriverName() string { return driverName }
+
+// syncFile is the durability call. A test seam: a row counts it, because
+// nothing else in the package observes whether it happened (#1847).
+var syncFile = (*os.File).Sync
+
+// FsyncMode is what a delivery makes durable here, so the wiring of the
+// configured mode has a reader (#1969).
+func (b *Backend) FsyncMode() mailbox.FsyncMode { return b.fsync }
