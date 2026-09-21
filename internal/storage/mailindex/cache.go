@@ -9,14 +9,17 @@
 // id meaningful outside the process that assigned it, and compat_sizeof_uoff_t
 // guards against an implementation the file cannot serve.
 //
-// What byte compatibility buys is INSPECTABILITY -- our cache reads with the
-// reference's tooling and vice versa -- and deliberately does NOT buy data
-// reuse: cached values are parsing results, and the producer is part of
-// their identity. A file written by the reference carries producer byte 0
-// and is rejected at open exactly like any other producer mismatch, then
-// rebuilt; the cache is derived, so nothing is lost. Do not "fix" the
-// generation check to accept 0 for migration's sake -- that silently
-// restores trust in a foreign parser.
+// A file written by the reference carries producer byte 0, and it is READ:
+// since #1714 our envelope, body structure, sizes, dates, guid and hdr.*
+// are the reference's own bytes for the same message, so the producer differs
+// and the result does not. The rule is 0 or CacheProducerGen; anything else is
+// a mismatch and the file is rebuilt (#1714).
+//
+// The reference never reads this byte -- it is its `unused` slot
+// (mail-cache-private.h:30) -- so our 1 costs a reader of theirs nothing. Our
+// first write into an adopted file stamps our own generation, and a later gen
+// bump then invalidates the reference's records along with ours: more than is
+// strictly owed, and safe, at the price of one recompute.
 //
 // The cache has no vote on its own validity. Four levels, all owned by the
 // index or the producing code:
@@ -60,6 +63,9 @@ const (
 	// alters output for the same bytes; a mismatch invalidates the file
 	// exactly as an indexid mismatch does.
 	CacheProducerGen = 1
+	// cacheProducerGenForeign is what the reference leaves in the slot: a file
+	// it wrote, whose values are the same bytes ours would be (#1714).
+	cacheProducerGenForeign = 0
 
 	cacheHeaderSize = 32
 )
@@ -117,7 +123,10 @@ func (h *CacheHeader) encode() []byte {
 	le.PutUint32(b[16:], h.RecordCount)
 	le.PutUint32(b[20:], h.BackwardsCompatUsedFileSize)
 	le.PutUint32(b[24:], h.DeletedRecordCount)
-	le.PutUint32(b[28:], h.FieldHeaderOffset)
+	// Packed, as the reference writes it: the field table's own next_offset
+	// already is, and the header's must match or neither side reads the other
+	// (mail-cache-fields.c:232, mail-index-util.c:21-31).
+	le.PutUint32(b[28:], packCacheOffset(h.FieldHeaderOffset))
 	return b
 }
 
@@ -137,7 +146,7 @@ func decodeCacheHeader(b []byte) (CacheHeader, error) {
 		RecordCount:                 le.Uint32(b[16:]),
 		BackwardsCompatUsedFileSize: le.Uint32(b[20:]),
 		DeletedRecordCount:          le.Uint32(b[24:]),
-		FieldHeaderOffset:           le.Uint32(b[28:]),
+		FieldHeaderOffset:           unpackCacheOffset(le.Uint32(b[28:])),
 	}, nil
 }
 
@@ -276,7 +285,7 @@ func OpenCache(path string, indexID, expectFileSeq uint32) (*CacheFile, error) {
 		err = fmt.Errorf("mailindex: cache indexid %d, index %d: %w", hdr.IndexID, indexID, ErrCacheInvalid)
 	case hdr.FileSeq != expectFileSeq:
 		err = fmt.Errorf("mailindex: cache file_seq %d, reset_id %d: %w", hdr.FileSeq, expectFileSeq, ErrCacheInvalid)
-	case hdr.ProducerGen != CacheProducerGen:
+	case hdr.ProducerGen != CacheProducerGen && hdr.ProducerGen != cacheProducerGenForeign:
 		// The one divergence the pair identity cannot see: the parser
 		// changed, so every stored value is wrong against current code.
 		err = fmt.Errorf("mailindex: cache producer gen %d, code %d: %w", hdr.ProducerGen, CacheProducerGen, ErrCacheInvalid)
