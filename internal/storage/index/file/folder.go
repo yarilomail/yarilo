@@ -2116,10 +2116,8 @@ func writeMutLog(f *os.File, buf []byte) (int, error) { return mutLogWrite(f, bu
 
 func syncMutLog(f *os.File) error { return mutLogSync(f) }
 
-// journalWriteError names what the volume refused and counts it. A full disk
-// is a resource condition, not a fault: the folder is intact and the same write
-// works once there is room, so a caller must be able to say "later" rather than
-// "this server is broken" (#1831).
+// journalWriteError names what the volume refused and counts it: a caller must
+// be able to answer "later" rather than "this server is broken" (#1831).
 func journalWriteError(folder string, err error) error {
 	reason := "other"
 	if errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT) {

@@ -421,9 +421,8 @@ func dependencyError(err error) error {
 			Text: fmt.Sprintf("Mailbox %q has a damaged index and cannot be opened; it must be repaired", corrupt.Folder),
 		}
 	}
-	// A full volume is a resource condition, not a fault: the folder is intact
-	// and the same write works once there is room, so the client is told to
-	// come back rather than that the server is broken.
+	// A full volume is a wait, not a fault: the same write works once there is
+	// room, so the client is told to come back.
 	var nospace *mailbox.NoSpaceError
 	if errors.As(err, &nospace) {
 		return &imaplib.Error{

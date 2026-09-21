@@ -884,8 +884,7 @@ func fillSizes(box mailbox.Box, folders []string) {
 }
 
 // deliveryError answers a failed delivery. A full volume holds the message at
-// the sender rather than bouncing it: the class is temporary, and the same
-// delivery works once there is room (#1831).
+// the sender rather than bouncing it: the class is temporary (#1831).
 func deliveryError(err error, verbose bool) error {
 	if errors.Is(err, mailbox.ErrNoSpace) {
 		return &goSmtp.SMTPError{Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 3, 1}, Message: "Mail system full"}

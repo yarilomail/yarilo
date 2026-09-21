@@ -110,10 +110,6 @@ func observeReadPart(part string, d time.Duration) {
 	metricReadPart.WithLabelValues(part).Observe(d.Seconds())
 }
 
-// metricCompactionRefused counts log compactions that could not write the base.
-// Rotation stopping is invisible from the outside — the folder keeps serving
-// mail while its log grows and every open replays more of it — so the count is
-// what says it is happening at all (#1285).
 // metricJournalWriteFailed counts the appends the journal refused, by why: a
 // volume filling up is otherwise visible only as commands failing (#1831).
 var metricJournalWriteFailed = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -121,6 +117,10 @@ var metricJournalWriteFailed = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Journal appends that failed, by reason: no-space is a full volume or an exhausted disk quota, other is anything else.",
 }, []string{"reason"}) // no-space | other
 
+// metricCompactionRefused counts log compactions that could not write the base.
+// Rotation stopping is invisible from the outside — the folder keeps serving
+// mail while its log grows and every open replays more of it — so the count is
+// what says it is happening at all (#1285).
 var metricCompactionRefused = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fileindex_log_compaction_refused_total",
 	Help: "Log compactions that failed to rewrite the base index; rotation is not happening for those folders.",

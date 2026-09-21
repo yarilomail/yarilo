@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
 	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // SERVERBUG says "this server is broken, the request will never work", and a
@@ -50,7 +51,7 @@ func TestDependencyErrorClassification(t *testing.T) {
 			// A full volume is a wait, not a fault: the folder is intact and
 			// the same write works once there is room.
 			name:     "a volume with no room left",
-			err:      fmt.Errorf("fileindex/mutlog: write: %w", &mailbox.NoSpaceError{Folder: "Drafts", Err: errors.New("no space left on device")}),
+			err:      fmt.Errorf("maildir: write: %w", mailboxmetrics.ClassifyWrite("maildir", "Drafts", syscall.ENOSPC)),
 			wantCode: imaplib.ResponseCodeUnavailable,
 			wantText: "Drafts",
 		},

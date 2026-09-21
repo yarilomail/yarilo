@@ -3,9 +3,12 @@ package lmtp
 import (
 	"errors"
 	"fmt"
+	"syscall"
 	"testing"
 
 	goSmtp "github.com/emersion/go-smtp"
+
+	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -22,13 +25,19 @@ func TestDeliveryErrorAnswersTheResourceClass(t *testing.T) {
 	}{
 		{
 			name:     "a volume with no room left",
+			err:      fmt.Errorf("maildir: write: %w", mailboxmetrics.ClassifyWrite("maildir", "INBOX", syscall.ENOSPC)),
+			wantCode: 452,
+			wantEnh:  goSmtp.EnhancedCode{4, 3, 1},
+		},
+		{
+			name:     "the journal, once the body is written",
 			err:      fmt.Errorf("fileindex/mutlog: write: %w", &mailbox.NoSpaceError{Folder: "INBOX", Err: errors.New("no space left on device")}),
 			wantCode: 452,
 			wantEnh:  goSmtp.EnhancedCode{4, 3, 1},
 		},
 		{
 			name:     "the same volume, verbose replies on",
-			err:      fmt.Errorf("fileindex/mutlog: write: %w", &mailbox.NoSpaceError{Folder: "INBOX", Err: errors.New("no space left on device")}),
+			err:      fmt.Errorf("maildir: write: %w", mailboxmetrics.ClassifyWrite("maildir", "INBOX", syscall.ENOSPC)),
 			verbose:  true,
 			wantCode: 452,
 			wantEnh:  goSmtp.EnhancedCode{4, 3, 1},
