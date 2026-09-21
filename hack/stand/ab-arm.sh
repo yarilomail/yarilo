@@ -280,7 +280,7 @@ block_profile() {
     until curl -fsS -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null; do
       if [ "$(date +%s)" -ge "$deadline" ]; then
         echo "ab-arm: the forward to $pod on $port never came up" >&2
-        for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+        for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null || true; done
         return 1
       fi
       sleep 1
@@ -298,12 +298,14 @@ block_profile() {
   done
   # Only the captures: a bare wait also waits for the port-forwards, which
   # never exit, and the arm stops there for ever (seen: 80 minutes).
-  for pid in "${curls[@]}"; do wait "$pid" || rc=1; done
-  for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+  # Empty arrays are "unbound" under set -u on bash 3.2, which is what macOS
+  # ships: a window with no pod to profile must say so, not die here.
+  for pid in ${curls[@]+"${curls[@]}"}; do wait "$pid" || rc=1; done
+  for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null || true; done
   # An empty file is a capture that did not happen, and it reads exactly like
   # a pod where nobody waited.
   local f
-  for f in "${files[@]}"; do
+  for f in ${files[@]+"${files[@]}"}; do
     if [ ! -s "$f" ]; then
       echo "ab-arm: the block profile for $(basename "$f") is empty; that pod was not profiled" >&2
       rc=1
@@ -315,7 +317,8 @@ block_profile() {
 step "deploy"
 echo "== arm $ARM: $TAG"
 helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
-  -f "$REPO/helm_values/values-sandbox.yaml" "${overlay_args[@]}" --set image.tag="$TAG" --timeout 10m >/dev/null
+  -f "$REPO/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} \
+  --set image.tag="$TAG" --timeout 10m >/dev/null
 
 deadline=$(( $(date +%s) + 600 ))
 until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ]; do
