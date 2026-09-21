@@ -1,12 +1,11 @@
 package msgcache
 
 import (
-	"encoding/binary"
-	"strings"
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/imaptext"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -36,100 +35,16 @@ type Head struct {
 // length-prefixed in sequence, so the only way to reach the message id is
 // through the address lists. What it avoids is not the walk but the building
 // -- a string per name, mailbox and host, and a slice per list.
-func decodeHead(b []byte) (Head, bool) {
-	var h Head
-	if len(b) < 9 || b[0] != envelopeCodecVersion {
-		return h, false
+func decodeHead(s string) (Head, bool) {
+	h, ok := imaptext.ParseEnvelopeHead(s)
+	if !ok {
+		return Head{}, false
 	}
-	if unix := binary.LittleEndian.Uint64(b[1:9]); unix != 0 {
-		h.Date = time.Unix(int64(unix), 0).UTC()
-	}
-	b = b[9:]
-	var err error
-	if h.Subject, b, err = getStr(b); err != nil {
-		return h, false
-	}
-	// The six lists in the order encodeEnvelope writes them. Only three are
-	// wanted, and of those only the first mailbox.
-	for _, want := range []*string{&h.From, nil, nil, &h.To, &h.Cc, nil} {
-		var ok bool
-		if b, ok = firstMailboxOf(b, want); !ok {
-			return h, false
-		}
-	}
-	if len(b) < 4 {
-		return h, false
-	}
-	n := binary.LittleEndian.Uint32(b)
-	b = b[4:]
-	if n > 1<<16 {
-		return h, false
-	}
-	if n > 0 {
-		h.InReplyTo = make([]string, 0, n)
-	}
-	for i := uint32(0); i < n; i++ {
-		var s string
-		if s, b, err = getStr(b); err != nil {
-			return h, false
-		}
-		h.InReplyTo = append(h.InReplyTo, s)
-	}
-	if h.MessageID, _, err = getStr(b); err != nil {
-		return h, false
-	}
-	return h, true
-}
-
-// firstMailboxOf walks one encoded address list, writing the first address's
-// mailbox part to want when want is non-nil, and returns the rest of the
-// record. A nil want reads nothing and only skips.
-func firstMailboxOf(b []byte, want *string) ([]byte, bool) {
-	if len(b) < 4 {
-		return nil, false
-	}
-	n := binary.LittleEndian.Uint32(b)
-	b = b[4:]
-	if n > 1<<16 {
-		return nil, false
-	}
-	for i := uint32(0); i < n; i++ {
-		var ok bool
-		// name
-		if b, ok = skipStr(b); !ok {
-			return nil, false
-		}
-		// mailbox: the one field anybody here asks for, and only from the
-		// first address.
-		if want != nil && i == 0 {
-			var s string
-			var err error
-			if s, b, err = getStr(b); err != nil {
-				return nil, false
-			}
-			*want = s
-		} else if b, ok = skipStr(b); !ok {
-			return nil, false
-		}
-		// host
-		if b, ok = skipStr(b); !ok {
-			return nil, false
-		}
-	}
-	return b, true
-}
-
-// skipStr steps over one length-prefixed string without building it.
-func skipStr(b []byte) ([]byte, bool) {
-	if len(b) < 4 {
-		return nil, false
-	}
-	n := binary.LittleEndian.Uint32(b)
-	b = b[4:]
-	if uint32(len(b)) < n {
-		return nil, false
-	}
-	return b[n:], true
+	return Head{
+		Date: h.Date, Subject: h.Subject,
+		From: h.From, To: h.To, Cc: h.Cc,
+		InReplyTo: h.InReplyTo, MessageID: h.MessageID,
+	}, true
 }
 
 // Head returns the ordering fields of the cached envelope, or false on any of
@@ -138,11 +53,11 @@ func (fc *Handle) Head(m *mailbox.MessageMeta) (Head, bool) {
 	if fc == nil {
 		return Head{}, false
 	}
-	data, ok := fc.read(m)[fc.envID]
+	data, ok := fc.read(m)[fc.ids[fieldIMAPEnvelope]]
 	if !ok {
 		return Head{}, false
 	}
-	return decodeHead(data)
+	return decodeHead(string(data))
 }
 
 // HeadAndReferences reads both in ONE pass over the message's record, for the
@@ -159,28 +74,20 @@ func (fc *Handle) HeadAndReferences(m *mailbox.MessageMeta) (Head, []string, boo
 		return Head{}, nil, false
 	}
 	vals := fc.read(m)
-	envData, ok := vals[fc.envID]
+	envData, ok := vals[fc.ids[fieldIMAPEnvelope]]
 	if !ok {
 		return Head{}, nil, false
 	}
-	h, ok := decodeHead(envData)
+	h, ok := decodeHead(string(envData))
 	if !ok {
 		return Head{}, nil, false
 	}
-	refsData, cached := vals[fc.refsID]
+	refsData, cached := vals[fc.ids[fieldHdrReferences]]
 	if !cached {
 		return h, nil, false
 	}
-	if len(refsData) == 0 {
-		return h, nil, true // cached, and the message has none
-	}
-	return h, splitRefs(refsData), true
-}
-
-// splitRefs is the one spelling of "how a References list is stored", shared so
-// the two readers cannot drift apart.
-func splitRefs(b []byte) []string {
-	return strings.Split(string(b), "\n")
+	refs, ok := referencesFromHeader(refsData)
+	return h, refs, ok
 }
 
 // HeadOf takes the ordering fields off a freshly-parsed envelope, for the miss

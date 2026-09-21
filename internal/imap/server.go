@@ -3240,13 +3240,19 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			mw.WriteInternalDate(m.InternalDate)
 		}
 		if opts.RFC822Size {
-			// From where the driver keeps it: a maildir name carries it, a dbox
-			// record holds it (#1726).
-			size, vsize, serr := s.folderMailbox().MessageSize(s.folder.Name, m)
-			if serr != nil {
-				// The number still goes out, from the record: the one attribute
-				// here with a second source, so a wrong answer is otherwise mute.
-				mark("rfc822.size", serr)
+			// The cache first, as the reference's index_mail_get_*_size do: a
+			// listing that has the numbers must not reach storage for them.
+			size, vsize, cached := envCache.Sizes(m)
+			if !cached {
+				var serr error
+				size, vsize, serr = s.folderMailbox().MessageSize(s.folder.Name, m)
+				if serr != nil {
+					// The number still goes out, from the record: the one
+					// attribute here with a second source, so a wrong answer is
+					// otherwise mute.
+					mark("rfc822.size", serr)
+				}
+				envCache.StoreSizes(m, size, vsize)
 			}
 			if vsize != 0 {
 				size = vsize
@@ -3267,14 +3273,19 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			mw.WriteThreadID(threadIDs[m.UID])
 		}
 		if opts.Envelope && s.folderMailbox().Readable(m) {
-			if env := envCache.Envelope(m); env != nil {
-				mw.WriteEnvelope(env)
+			// One text, whoever wrote it: built from the raw header by the
+			// reference's rules, so an encoded word and an address group reach
+			// the client as the message wrote them (#1714).
+			if text, ok := envCache.EnvelopeText(m); ok {
+				mw.WriteEnvelopeRaw(text)
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
 				hdr, _ := textproto.ReadHeader(bufio.NewReader(rc))
 				rc.Close()
-				env := imapserver.ExtractEnvelope(hdr)
-				mw.WriteEnvelope(env)
-				envCache.StoreEnvelope(m, env)
+				text := msgcache.EnvelopeTextOf(hdr)
+				mw.WriteEnvelopeRaw(text)
+				envCache.StoreEnvelopeText(m, text)
+				envCache.StoreSentDate(m, imapserver.ExtractEnvelope(hdr).Date)
+				envCache.StoreRecordFields(m)
 			} else {
 				mark("envelope", ferr)
 			}

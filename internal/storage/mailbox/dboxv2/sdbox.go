@@ -854,3 +854,6 @@ func randomGUID() [16]byte {
 
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
+
+// DriverName is the label this driver's messages are counted under.
+func (u *userMailbox) DriverName() string { return driverName }
