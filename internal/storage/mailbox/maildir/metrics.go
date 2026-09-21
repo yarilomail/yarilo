@@ -22,6 +22,14 @@ var metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
 
 // metricImportRowRefused counts imports skipped because the list already names
 // the file under another uid: one message reported, not a batch lost (#1745).
+// A partial pass that found nothing to move costs one readdir of an empty
+// directory. How many of them there are says whether the arrivals passes a
+// delivery burst provokes are worth measuring at all (#1952).
+var metricPartialEmpty = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "maildir_partial_pass_empty_total",
+	Help: "Arrivals-only passes that found nothing in new/ to move, so they read an empty directory and stopped.",
+})
+
 var metricImportRowRefused = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "maildir_import_row_refused_total",
 	Help: "Reconcile imports skipped because the list names the file under another uid. The message stays with its owner; nothing is written for the skipped one.",
