@@ -7,15 +7,11 @@ import (
 	"testing"
 )
 
-// STATUS SIZE answers for the message, not for the bytes on disk. A foreign
-// delivery is imported with the size its name and a stat give -- physical only,
-// because a bare name carries no W= -- so the record's own number is the byte
-// count, while the message's size counts the CRLF a client is told about
-// (#1726, index-mailbox-size.c:387-411).
+// STATUS SIZE answers for the message, not for the bytes on disk: a bare name
+// carries no W=, and the RFC822 form counts line endings (#1726, #1962).
 //
-// The order is the row: the first FETCH stamps the measured size into the
-// record (#1728), and after that the two sums agree whatever they read. STATUS
-// has to be asked first, which is also the order a client uses.
+// STATUS is asked first, because the first FETCH stamps the record (#1728) and
+// after that both sums agree whatever they read.
 func TestStatusSizeCountsTheMessageNotTheBytes(t *testing.T) {
 	root, addr := startIdentityServer(t)
 	c := dialRaw(t, addr)
@@ -26,18 +22,14 @@ func TestStatusSizeCountsTheMessageNotTheBytes(t *testing.T) {
 	deliverForeign(t, root, "INBOX", "1700004000.M1P1.mda", "a\nb\n")
 	c.cmd(`SELECT INBOX`) // the settle that imports it
 
-	// Six is what both should say; today both say four, because the index
-	// cannot hold "no virtual size" and writes the byte count instead
-	// (#1962). Until that is fixed, what this row can hold is that the two
-	// commands answer alike -- and STATUS is asked first, because the first
-	// FETCH stamps the record (#1728).
-	status := statusSize(t, c)
-	fetch := numberAfter(t, c.cmd(`FETCH 1 (RFC822.SIZE)`), "RFC822.SIZE ")
-	if status != fetch {
-		t.Errorf("STATUS SIZE is %d and FETCH RFC822.SIZE is %d for the same message", status, fetch)
+	// Six: four bytes on disk, two line endings a client is told about.
+	const wantVirtual = 6
+	if got := statusSize(t, c); got != wantVirtual {
+		t.Errorf("STATUS SIZE is %d, want %d: it answered with the bytes on disk", got, wantVirtual)
 	}
-	if status == 0 {
-		t.Error("the message is reported with no size at all")
+	fetch := c.cmd(`FETCH 1 (RFC822.SIZE)`)
+	if got := numberAfter(t, fetch, "RFC822.SIZE "); got != wantVirtual {
+		t.Errorf("FETCH RFC822.SIZE is %d, want %d:\n%s", got, wantVirtual, fetch)
 	}
 }
 

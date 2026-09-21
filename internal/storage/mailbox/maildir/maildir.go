@@ -1028,6 +1028,14 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 					facts.size = uint32(info.Size())
 				}
 				facts.vsize = virt
+				if virt == 0 {
+					// A name with no W= says nothing about the RFC822 form, and
+					// the index keeps one number: measured here, or the byte
+					// count stands as the message's size for ever (#1962).
+					if _, measured, merr := measureSizes(filepath.Join(dir, name)); merr == nil {
+						facts.vsize = measured
+					}
+				}
 				if statErr == nil {
 					facts.date = info.ModTime()
 				}
@@ -1071,6 +1079,13 @@ func (u *userMailbox) scanNamed(folder string, names []string) []mailbox.ScanRec
 		size := uint32(info.Size())
 		if hasPhys {
 			size = phys
+		}
+		if virt == 0 {
+			// As in Scan: a name with no W= says nothing about the RFC822 form,
+			// and the index keeps one number for both (#1962).
+			if _, measured, merr := measureSizes(filepath.Join(curDir, name)); merr == nil {
+				virt = measured
+			}
 		}
 		flags, keywords := decodeFlagsWith(name, kwNames)
 		out = append(out, mailbox.ScanRecord{
