@@ -40,10 +40,8 @@ step() { STEP="$1"; }
 STEP="starting"
 mkdir -p "$OUT"
 
-# The tooling that runs the arm has to be the tooling the arm is supposed to be:
-# a dirty file stops a checkout, the runner stays on the commit before it, and
-# the window measures a version nobody asked for. That happened once and cost a
-# window (#1875).
+# A dirty file stops a checkout, the runner stays on the commit before it, and
+# the window then measures tooling nobody asked for (#1875).
 step "checkout"
 dirty=$(git -C "$REPO" status --porcelain 2>/dev/null)
 head=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
@@ -528,11 +526,10 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)
   echo "$ARM $name logins=${logins:-?} stalls=$stalls"
-  # Where the sessions sat when the run ended: one backend carrying all of
-  # them is the #1931 case, whatever the totals say.
   # The peak each backend reached, not the last sample: a run ends with every
-  # client gone, and the question is where they were while they ran.
-  spread=$(awk '/^[0-9]/ { if ($3 > peak[$2]) peak[$2] = $3 }
+  # client gone. Every backend seen is printed, a nought included -- "carried
+  # nothing" and "was never named" are the two answers #1931 is about.
+  spread=$(awk '/^[0-9]/ { if (!($2 in peak) || $3 > peak[$2]) peak[$2] = $3 }
                 END { for (ip in peak) printf "%s=%d ", ip, peak[ip] }' \
     "$OUT/spread-$ARM-$name.txt" 2>/dev/null)
   echo "$ARM $name sessions (peak): ${spread:-unreadable}"
