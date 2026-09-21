@@ -2127,13 +2127,11 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 			deleted++
 		}
 	}
-	// STATUS=SIZE (RFC 8438) from the same records that answer MESSAGES: the
-	// reference takes it from the index too, never from the store
-	// (index-mailbox-size.c:387-411). Reading the store's cur/ instead missed
-	// a message delivered and not yet settled, which is where it waits (#1959).
+	// From the records MESSAGES answers from, with the store asked for what a
+	// record does not carry: the reference fills those too (#1726, #1959).
 	if opts.Size {
 		for _, m := range msgs {
-			totalSize += int64(m.RFC822Size())
+			totalSize += int64(h.mailbox().RFC822Size(rel, m))
 		}
 	}
 	d := &imaplib.StatusData{Mailbox: name}

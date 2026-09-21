@@ -131,9 +131,8 @@ func TestGUIDSurvivesFlagChange(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	// A flag change renames only the trailer, which is what an IMAP STORE does
-	// -- and it moves the file out of new/, because a name with flags cannot
-	// live there (#1959).
+	// An IMAP STORE renames the trailer and moves the file out of new/, where
+	// a name with flags cannot live (#1959).
 	arrival := filepath.Join(home, "Maildir", "new")
 	cur := filepath.Join(home, "Maildir", "cur")
 	flagged := name + ":2,S"
