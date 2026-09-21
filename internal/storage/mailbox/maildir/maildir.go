@@ -622,7 +622,14 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	flagStr := encodeFlags(flags) + letters
 	// ,S=<phys>,W=<virt> before :2,<flags> so List() reports both sizes
 	// without reading the body.
-	finalName := fmt.Sprintf("%s,S=%d,W=%d:2,%s", basename, sc.phys, sc.phys+sc.lfNoCR, flagStr)
+	sized := fmt.Sprintf("%s,S=%d,W=%d", basename, sc.phys, sc.phys+sc.lfNoCR)
+	// A message with nothing to say about its flags is delivered under a bare
+	// name, which is what puts it in new/: a file there cannot carry flags, so
+	// the name is what decides the directory (maildir-save.c:251-256, #1959).
+	finalName := sized
+	if flagStr != "" {
+		finalName = sized + ":2," + flagStr
+	}
 
 	// Fresh base name, so the derived GUID is unique. A caller-supplied GUID
 	// (migration) is pinned with an explicit uidlist override instead.
@@ -657,7 +664,10 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 		outGUID = guidFromBase(filename)
 	}
 	err := u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
-		srcPath := filepath.Join(u.folderPath(srcFolder), "cur", filename)
+		srcPath, found := u.locate(srcFolder, filename)
+		if !found {
+			srcPath = filepath.Join(u.folderPath(srcFolder), "cur", filename)
+		}
 		// Into the destination's tmp/, not its cur/: the file is published by
 		// the naming step, under the hold that writes its row (#1736).
 		dstDir := filepath.Join(u.folderPath(dstFolder), "tmp")
@@ -707,7 +717,11 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 	if !nameCarriesSizes(base) {
 		// Measured from the file, never copied from another record: a number
 		// carried over could be the zero that was never measured (#1701).
-		psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", filename))
+		sizePath, found := u.locate(folder, filename)
+		if !found {
+			sizePath = filepath.Join(u.folderPath(folder), "cur", filename)
+		}
+		psize, vsize, merr := measureSizes(sizePath)
 		if merr == nil {
 			rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
 		}
@@ -779,7 +793,10 @@ func (c *sizeCounter) Write(p []byte) (int, error) {
 }
 
 func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, error) {
-	p := filepath.Join(u.folderPath(folder), "cur", filename)
+	p, ok := u.locate(folder, filename)
+	if !ok {
+		p = filepath.Join(u.folderPath(folder), "cur", filename) // for the error's sake
+	}
 	f, err := openPath(p)
 	if err != nil {
 		return nil, fmt.Errorf("maildir: fetch %s: %w", filename, err)
@@ -797,10 +814,22 @@ func (u *userMailbox) Remove(folder, filename string) error {
 // lock is ours: only then may the listing be re-keyed instead of dropped.
 func (u *userMailbox) removeFile(folder, filename string, held bool) error {
 	dir := filepath.Join(u.folderPath(folder), "cur")
-	err := os.Remove(filepath.Join(dir, filename))
+	target := filepath.Join(dir, filename)
+	// Removed from where it is, not from where it usually is: a delivery still
+	// in new/ would otherwise survive its own expunge (#1959).
+	if p, ok := u.locate(folder, filename); ok {
+		target = p
+		dir = filepath.Dir(p)
+	}
+	err := os.Remove(target)
+	curDir := filepath.Join(u.folderPath(folder), "cur")
 	switch {
 	case err == nil:
-		u.afterRemoved(folder, dir, filename, held)
+		// The listing cache is cur/'s: a file taken out of new/ was never in
+		// it, so re-keying it by new/'s mtime would drop it for nothing.
+		if dir == curDir {
+			u.afterRemoved(folder, dir, filename, held)
+		}
 		return nil
 	case !errors.Is(err, os.ErrNotExist):
 		return err
@@ -1347,10 +1376,10 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 			if _, ok := tracked[base]; ok {
 				continue
 			}
-			// In cur/ and still there: the scan was unlocked, and a record for
-			// a message since expunged -- or one still in new/ -- serves a uid
-			// whose body cannot be read.
-			if !u.inCurDir(folder.Name, rec.Filename) {
+			// Still on disk: the scan was unlocked, and a record for a message
+			// since expunged serves a uid whose body cannot be read. A file in
+			// new/ counts now that readers reach it (#1959).
+			if !u.bodyReadable(folder.Name, rec.Filename) {
 				continue
 			}
 			// Claim the base before appending: a scan that reports one message
@@ -1881,8 +1910,14 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 		if _, serr := statPath(from); serr != nil {
 			continue
 		}
-		if rerr := os.Rename(from, filepath.Join(dir, sub, want)); rerr != nil {
+		// A name that carries flags cannot stay in new/: the flags land in
+		// cur/ with the file, which is the move the sync would have made
+		// anyway (#1959).
+		if rerr := os.Rename(from, filepath.Join(dir, "cur", want)); rerr != nil {
 			return filename, fmt.Errorf("maildir/flags: rename %s: %w", filename, rerr)
+		}
+		if sub == "new" {
+			u.folderCacheFor(folder).invalidateDir()
 		}
 		return want, nil
 	}
@@ -2262,15 +2297,33 @@ func (u *userMailbox) hasNewMail(folder string) bool {
 	return false
 }
 
-// inCurDir reports whether a scanned name is in cur/. Only those are imported:
-// Fetch opens cur/ alone, so a record naming a file in new/ has an unreadable
-// body until the next pass moves it (#1630).
-func (u *userMailbox) inCurDir(folder, filename string) bool {
+// bodyReadable reports whether a scanned name resolves to a file at all. Both
+// directories count: a delivery waits in new/ until a sync moves it, and its
+// body is readable from there (#1959).
+func (u *userMailbox) bodyReadable(folder, filename string) bool {
 	if u.inSection.Load() > 0 {
 		u.sectionFS.Add(1)
 	}
-	_, err := lstatPath(filepath.Join(u.folderPath(folder), "cur", filename))
-	return err == nil
+	_, ok := u.locate(folder, filename)
+	return ok
+}
+
+// locate answers where a named message's body is: cur/ first, because that is
+// where all but the newest are, then new/ under the bare name a file there must
+// have. The reference chooses the order by a remembered bit and falls back the
+// same way (maildir-util.c:96-106); the fallback alone gives the same answers
+// without a second place to keep in step (#1959).
+func (u *userMailbox) locate(folder, filename string) (path string, ok bool) {
+	base := u.folderPath(folder)
+	cur := filepath.Join(base, "cur", filename)
+	if _, err := lstatPath(cur); err == nil {
+		return cur, true
+	}
+	arrival := filepath.Join(base, "new", maildirBase(filename))
+	if _, err := lstatPath(arrival); err == nil {
+		return arrival, true
+	}
+	return "", false
 }
 
 // reconcileIsClean reports whether the scan and the index agree, so the apply

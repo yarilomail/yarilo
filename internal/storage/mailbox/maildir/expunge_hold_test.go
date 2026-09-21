@@ -16,11 +16,13 @@ import (
 
 const holdBody = "From: a@b\r\nSubject: x\r\n\r\nbody\r\n"
 
-// fillFolder saves n messages into INBOX at uids 1..n.
+// fillFolder saves n messages into INBOX at uids 1..n. Flagged, so they land
+// in cur/: these rows count what the listing there costs, and a flagless
+// delivery waits in new/ until a sync (#1959).
 func fillFolder(t *testing.T, box *userMailbox, n int) {
 	t.Helper()
 	for i := 1; i <= n; i++ {
-		name, _, _, err := box.Save("INBOX", strings.NewReader(holdBody), 0, int64(len(holdBody)), nil, nil, [16]byte{})
+		name, _, _, err := box.Save("INBOX", strings.NewReader(holdBody), 0, int64(len(holdBody)), []string{`\Seen`}, nil, [16]byte{})
 		if err != nil {
 			t.Fatal(err)
 		}

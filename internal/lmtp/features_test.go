@@ -15,8 +15,11 @@ import (
 )
 
 type featureServer struct {
-	addr       string
-	maildirCur string // alice's INBOX/cur path for direct file inspection
+	addr string
+	// alice's INBOX arrival directory: a delivery with no flags waits in new/
+	// until a session settles the folder, which is where the format puts it
+	// (#1959).
+	maildirCur string
 }
 
 func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServer {
@@ -41,7 +44,7 @@ func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServ
 	go func() { _ = srv.Serve(ln) }()
 	return featureServer{
 		addr:       ln.Addr().String(),
-		maildirCur: filepath.Join(resolver.Resolve("alice@example.com", ""), "Maildir", "cur"),
+		maildirCur: filepath.Join(resolver.Resolve("alice@example.com", ""), "Maildir", "new"),
 	}
 }
 

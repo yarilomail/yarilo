@@ -18,7 +18,11 @@ func (u *userMailbox) RecordSize(folder string, m *mailbox.MessageMeta) (uint32,
 	if size, vsize, ok := sizesFromName(name); ok {
 		return size, vsize, nil
 	}
-	return measureSizes(filepath.Join(u.folderPath(folder), "cur", name))
+	path, ok := u.locate(folder, name)
+	if !ok {
+		path = filepath.Join(u.folderPath(folder), "cur", name)
+	}
+	return measureSizes(path)
 }
 
 // sizesFromName reads the ,S= and ,W= fields of a base name. Both or neither:

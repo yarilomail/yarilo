@@ -113,6 +113,29 @@ func TestAlwaysSyncsTheDirectoryAfterPublishing(t *testing.T) {
 	if got := len(l.dirs); got != 1 {
 		t.Fatalf("always synced %d directories, want 1: %v", got, l.dirs)
 	}
+	// new/, because a save with no flags is a delivery and that is where one
+	// waits until a sync moves it (#1959).
+	if want := filepath.Join(box.folderPath("INBOX"), "new"); l.dirs[0] != want {
+		t.Errorf("the directory synced was %q, want %q", l.dirs[0], want)
+	}
+}
+
+// The same save with a flag is published into cur/, and that is the directory
+// made durable: the name decides where the file goes (#1959).
+func TestAlwaysSyncsCurWhenTheNameCarriesFlags(t *testing.T) {
+	box := fsyncBox(t, mailbox.FsyncAlways)
+	l := watchSyncs(t)
+	body := "From: a@b\r\n\r\nx\r\n"
+	name, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), []string{`\Seen`}, nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", name, 1); aerr != nil {
+		t.Fatal(aerr)
+	}
+	if got := len(l.dirs); got == 0 {
+		t.Fatal("no directory was synced at all")
+	}
 	if want := filepath.Join(box.folderPath("INBOX"), "cur"); l.dirs[0] != want {
 		t.Errorf("the directory synced was %q, want %q", l.dirs[0], want)
 	}

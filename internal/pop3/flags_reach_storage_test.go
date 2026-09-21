@@ -47,6 +47,11 @@ func maildirStandN(t *testing.T, opts func(*Options), n int) (Options, string) {
 			t.Fatal(err)
 		}
 	}
+	// The delivery waits in new/; one settling open moves it into cur/, which
+	// is what a session does before anything reads a name there (#1959).
+	if _, ferr := mailboxbase.Open(box, idx).Folder("INBOX", 1); ferr != nil {
+		t.Fatal(ferr)
+	}
 	box.Close() //nolint:errcheck
 	idx.Close() //nolint:errcheck
 

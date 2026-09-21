@@ -46,8 +46,10 @@ func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, er
 	return filename, nil
 }
 
-// publishFromTemp moves a saved body out of tmp/ into cur/. A message already
-// there is one a caller named twice, which is not an error to fail on.
+// publishFromTemp moves a saved body out of tmp/ into the directory its name
+// asks for: a name with no ":2," carries no flags, and a file that carries no
+// flags belongs in new/ (#1959). A message already published is one a caller
+// named twice, which is not an error to fail on.
 func (u *userMailbox) publishFromTemp(folder, filename string) error {
 	dir := u.folderPath(folder)
 	src := filepath.Join(dir, "tmp", filename)
@@ -57,13 +59,17 @@ func (u *userMailbox) publishFromTemp(folder, filename string) error {
 		}
 		return fmt.Errorf("maildir/assign: stat temp %q: %w", filename, err)
 	}
-	if err := os.Rename(src, filepath.Join(dir, "cur", filename)); err != nil {
+	sub := "cur"
+	if maildirBase(filename) == filename {
+		sub = "new"
+	}
+	if err := os.Rename(src, filepath.Join(dir, sub, filename)); err != nil {
 		return fmt.Errorf("maildir/assign: publish %q: %w", filename, err)
 	}
 	// The entry, not the file: a crash here loses the name, not the bytes.
 	if u.b.fsync.SyncsDir() {
-		if err := syncDir(filepath.Join(dir, "cur")); err != nil {
-			return fmt.Errorf("maildir/assign: sync cur: %w", err)
+		if err := syncDir(filepath.Join(dir, sub)); err != nil {
+			return fmt.Errorf("maildir/assign: sync %s: %w", sub, err)
 		}
 	}
 	u.folderCacheFor(folder).invalidateDir()
