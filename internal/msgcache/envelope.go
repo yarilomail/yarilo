@@ -563,9 +563,8 @@ func (fc *Handle) StoreEnvelopeText(m *mailbox.MessageMeta, text string) {
 	fc.storeField(m, fc.fieldID(fieldIMAPEnvelope), []byte(text))
 }
 
-// EnvelopeText is the stored envelope, for a caller that answers with text. A
-// record holding only headers has one built from them and written back, as the
-// reference does on its own miss (index-mail-headers.c:515-560).
+// EnvelopeText is the stored envelope; a record holding only headers has one
+// built from them and written back (index-mail-headers.c:515-560).
 func (fc *Handle) EnvelopeText(m *mailbox.MessageMeta) (string, bool) {
 	if fc == nil {
 		return "", false

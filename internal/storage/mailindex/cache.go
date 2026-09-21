@@ -9,9 +9,8 @@
 // id meaningful outside the process that assigned it, and compat_sizeof_uoff_t
 // guards against an implementation the file cannot serve.
 //
-// Producer byte 0 is a file the reference wrote and it is read; anything
-// other than 0 or CacheProducerGen is rebuilt. Why, and what it costs:
-// INTERNALS.md §7 and #1714.
+// Producer byte 0 is a file the reference wrote and is read; anything but 0 or
+// CacheProducerGen is rebuilt. Why and what it costs: INTERNALS.md §7, #1714.
 //
 // The cache has no vote on its own validity. Four levels, all owned by the
 // index or the producing code:
