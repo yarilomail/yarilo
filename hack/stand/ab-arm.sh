@@ -545,6 +545,9 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
       # Each result exactly, never by prefix: scanned-partial and
       # scanned-untokened both begin with the word and folding them into the
       # full count hides the very share this window is for (#1875).
+      # The total series only: the seconds histogram now carries the same
+      # label, and a pattern that does not name the series counts both (#1952).
+      $1 !~ /^imap_maildir_sync_total\{/ { next }
       $1 ~ /result="scanned"/            { full += $2 }
       $1 ~ /result="scanned-partial"/    { partial += $2 }
       $1 ~ /result="scanned-untokened"/  { untokened += $2 }
