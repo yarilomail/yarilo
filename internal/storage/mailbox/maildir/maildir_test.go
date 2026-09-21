@@ -445,7 +445,9 @@ func TestList_PopulatesSizesFromFilename(t *testing.T) {
 	box.Init() //nolint:errcheck
 
 	body := "From: a@b\n\nhello\n"
-	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, nil, [16]byte{})
+	// With a flag, so the save lands in cur/: this row is about the listing
+	// there, and a flagless delivery waits in new/ until a sync (#1959).
+	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +599,8 @@ func TestList_ReadDirCacheHitSkipsReadDir(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
-	saved, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, nil, nil, [16]byte{})
+	// Flagged, so it is in cur/ -- the directory whose cache this row counts.
+	saved, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -633,7 +636,8 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
-	first, _, _, err := box.Save("INBOX", strings.NewReader("msg1"), 1, 1, nil, nil, [16]byte{})
+	// Flagged, so both saves land in cur/ -- the cache this row is about.
+	first, _, _, err := box.Save("INBOX", strings.NewReader("msg1"), 1, 1, []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +653,7 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 	}
 
 	// Save a second message — must invalidate the cache.
-	second, _, _, err := box.Save("INBOX", strings.NewReader("msg2"), 2, 1, nil, nil, [16]byte{})
+	second, _, _, err := box.Save("INBOX", strings.NewReader("msg2"), 2, 1, []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -61,6 +61,12 @@ func (u *userMailbox) currentName(folder, base string) (string, error) {
 			return e.Name(), nil
 		}
 	}
+	// Then the arrivals, by one stat rather than a listing: a file in new/
+	// carries no flags, so its name is the base itself -- and reading that
+	// directory per message is what #1809 took out of the expunge hold (#1959).
+	if _, err := lstatPath(filepath.Join(u.folderPath(folder), "new", base)); err == nil {
+		return base, nil
+	}
 	// fs.ErrNotExist, because that is what it is: the file the record stands
 	// for is not there, which a reader tells apart from an unreadable one.
 	return "", fmt.Errorf("maildir/by-uid: %q holds no file named %q: %w",

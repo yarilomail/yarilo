@@ -22,7 +22,8 @@ func TestLockAcquisitionsAreCountedByCaller(t *testing.T) {
 
 	// The save itself: one acquisition. The list entry is written inside the
 	// caller's own hold of the same key, which the next row measures (#1700).
-	saved, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
+	// Flagged, so it is published into cur/ where List looks (#1959).
+	saved, _, _, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}

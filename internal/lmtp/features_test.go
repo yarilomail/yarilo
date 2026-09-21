@@ -15,8 +15,10 @@ import (
 )
 
 type featureServer struct {
-	addr       string
-	maildirCur string // alice's INBOX/cur path for direct file inspection
+	addr string
+	// alice's INBOX arrival directory: a flagless delivery waits there until a
+	// session settles the folder (#1959).
+	maildirNew string
 }
 
 func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServer {
@@ -41,7 +43,7 @@ func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServ
 	go func() { _ = srv.Serve(ln) }()
 	return featureServer{
 		addr:       ln.Addr().String(),
-		maildirCur: filepath.Join(resolver.Resolve("alice@example.com", ""), "Maildir", "cur"),
+		maildirNew: filepath.Join(resolver.Resolve("alice@example.com", ""), "Maildir", "new"),
 	}
 }
 
@@ -58,7 +60,7 @@ func TestLMTP_HdrDeliveryAddress_Final(t *testing.T) {
 		t.Fatalf("expected 250, got: %q", resp[0])
 	}
 	// final: detail stripped → alice@example.com
-	checkDirHeader(t, fs.maildirCur, "Delivered-To", "alice@example.com")
+	checkDirHeader(t, fs.maildirNew, "Delivered-To", "alice@example.com")
 }
 
 func TestLMTP_HdrDeliveryAddress_Original(t *testing.T) {
@@ -74,7 +76,7 @@ func TestLMTP_HdrDeliveryAddress_Original(t *testing.T) {
 		t.Fatalf("expected 250, got: %q", resp[0])
 	}
 	// original: +tag kept
-	checkDirHeader(t, fs.maildirCur, "Delivered-To", "alice+tag@example.com")
+	checkDirHeader(t, fs.maildirNew, "Delivered-To", "alice+tag@example.com")
 }
 
 func TestLMTP_HdrDeliveryAddress_None(t *testing.T) {
@@ -89,7 +91,7 @@ func TestLMTP_HdrDeliveryAddress_None(t *testing.T) {
 	if !strings.HasPrefix(resp[0], "250") {
 		t.Fatalf("expected 250, got: %q", resp[0])
 	}
-	checkDirNoHeader(t, fs.maildirCur, "Delivered-To")
+	checkDirNoHeader(t, fs.maildirNew, "Delivered-To")
 }
 
 func TestParseWorkarounds(t *testing.T) {

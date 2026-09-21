@@ -2127,17 +2127,11 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 			deleted++
 		}
 	}
-	// STATUS=SIZE (RFC 8438, also IMAP4rev2 required) — the FileIndex
-	// record does not carry message size; pull it from the maildir/dbox
-	// filename via box.List which extracts the ",S=<phys>" suffix.
-	// Only walked when the client asked for SIZE so the common STATUS
-	// path stays cheap.
+	// From the records MESSAGES answers from, with the store asked for what a
+	// record does not carry: the reference fills those too (#1726, #1959).
 	if opts.Size {
-		boxMsgs, listErr := h.box.List(rel)
-		if listErr == nil {
-			for _, bm := range boxMsgs {
-				totalSize += int64(bm.RFC822Size())
-			}
+		for _, m := range msgs {
+			totalSize += int64(h.mailbox().RFC822Size(rel, m))
 		}
 	}
 	d := &imaplib.StatusData{Mailbox: name}
