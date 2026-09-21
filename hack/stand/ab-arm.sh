@@ -40,6 +40,22 @@ step() { STEP="$1"; }
 STEP="starting"
 mkdir -p "$OUT"
 
+# A dirty file stops a checkout, the runner stays on the commit before it, and
+# the window then measures tooling nobody asked for (#1875).
+step "checkout"
+dirty=$(git -C "$REPO" status --porcelain 2>/dev/null)
+head=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
+if [ -n "$dirty" ]; then
+  echo "ab-arm: the checkout at $REPO is not clean, so the arm would run tooling nobody reviewed:" >&2
+  printf '%s\n' "$dirty" >&2
+  exit 1
+fi
+if [ -n "${YARILO_ARM_COMMIT:-}" ] && [ "$head" != "$YARILO_ARM_COMMIT" ]; then
+  echo "ab-arm: the checkout is at $head, and the window was asked for $YARILO_ARM_COMMIT" >&2
+  exit 1
+fi
+echo "-- tooling: $(git -C "$REPO" log --oneline -1 2>/dev/null)"
+
 IMAGE_REPO="${YARILO_IMAGE_REPO:-yarilomail/yarilo}"
 
 # A tag with no image deploys, backs off, and reports "pods did not settle" ten
@@ -219,23 +235,6 @@ backend_counters() {
     sleep 5
   done
   printf '%s\n' "$total" | awk 'NF == 2 { sum[$1] += $2 } END { for (k in sum) printf "%s %d\n", k, sum[k] }' | sort
-}
-
-# session_spread prints how many sessions each backend carries, from the
-# director's own view. Under assignment_policy: domain the question a run
-# answers is not only how many logins there were but where they went (#1943).
-session_spread() {
-  local pod page
-  pod=$(first_pod director) || return 0
-  [ -n "$pod" ] || return 0
-  page=$(kube exec "$pod" -- yarctl -O json director backends list 2>/dev/null) || return 0
-  # The pair in order, not a line per field: the port sits between them, and a
-  # field-splitting read pairs an address with the wrong count.
-  # yarctl prints indented JSON, so the colon carries a space: a pattern
-  # written against compact output matches nothing and the line reads empty.
-  printf '%s\n' "$page" |
-    grep -oE '"ip": *"[^"]*"|"sessions": *[0-9]+' |
-    sed 's/"//g; s/ip: *//; s/sessions: *//' | paste - - || true
 }
 
 # dict_delta writes what one run cost the dict service, per dict and verb. The
@@ -473,6 +472,10 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # are the same total, and only their shapes over time tell them apart (#1875).
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-reconcile.sh" "$OUT" "$ARM-$name" 10 &
   recwatch=$!
+  # Sessions are counted while they exist: read after the run they are all
+  # zero, because every client has disconnected (#1943).
+  KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/watch-sessions.sh" "$OUT" "$ARM-$name" 5 &
+  sesswatch=$!
   lock_classes > "$OUT/locks-$ARM-$name-before.txt"
   # Taken on every run, not only under the profiling overlay: these are the
   # numbers a change to the open path is judged by (#1875).
@@ -483,7 +486,6 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
     capture=$!
   fi
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest "$manifest" "$OUT/ab-$ARM-$name.log" 900
-  session_spread > "$OUT/spread-$ARM-$name.txt" || true
   lock_classes > "$OUT/locks-$ARM-$name-after.txt"
   backend_counters > "$OUT/backend-$ARM-$name-after.txt" || exit 1
   dict_delta "$OUT/backend-$ARM-$name-before.txt" "$OUT/backend-$ARM-$name-after.txt" \
@@ -499,6 +501,7 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   wait "$watcher" 2>/dev/null || true
   kill "$cpuwatch" 2>/dev/null || true
   kill "$recwatch" 2>/dev/null || true
+  kill "$sesswatch" 2>/dev/null || true
   # The peak each side reached, so the reading does not need the whole file.
   # Per container against its own limit: imap is the one under load, and its
   # limit is one CPU whatever the pod totals say.
@@ -523,10 +526,12 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   logins=$(grep -A 3 '^Logi' "$OUT/ab-$ARM-$name.log" | tail -1 | awk '{print $1}')
   stalls=$(grep -c 'stalled for' "$OUT/ab-$ARM-$name.log" || true)
   echo "$ARM $name logins=${logins:-?} stalls=$stalls"
-  # Where the sessions sat when the run ended: one backend carrying all of
-  # them is the #1931 case, whatever the totals say.
-  spread=$(awk '{printf "%s=%s ", $1, $2}' "$OUT/spread-$ARM-$name.txt" 2>/dev/null)
-  echo "$ARM $name sessions: ${spread:-unreadable}"
+  # The peak, not the last sample: a run ends with every client gone. A nought
+  # is printed too -- it is not the same answer as an absent backend (#1931).
+  spread=$(awk '/^[0-9]/ { if (!($2 in peak) || $3 > peak[$2]) peak[$2] = $3 }
+                END { for (ip in peak) printf "%s=%d ", ip, peak[ip] }' \
+    "$OUT/spread-$ARM-$name.txt" 2>/dev/null)
+  echo "$ARM $name sessions (peak): ${spread:-unreadable}"
   # What drove the walks, and how the cold share fades: the number A2 is
   # decided by. Read from the delta, with the curve beside it in the file.
   echo "$ARM $name $(awk '
