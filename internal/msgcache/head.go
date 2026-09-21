@@ -53,7 +53,7 @@ func (fc *Handle) Head(m *mailbox.MessageMeta) (Head, bool) {
 	if fc == nil {
 		return Head{}, false
 	}
-	data, ok := fc.read(m)[fc.ids[fieldIMAPEnvelope]]
+	data, ok := fc.read(m)[fc.fieldID(fieldIMAPEnvelope)]
 	if !ok {
 		return Head{}, false
 	}
@@ -74,7 +74,7 @@ func (fc *Handle) HeadAndReferences(m *mailbox.MessageMeta) (Head, []string, boo
 		return Head{}, nil, false
 	}
 	vals := fc.read(m)
-	envData, ok := vals[fc.ids[fieldIMAPEnvelope]]
+	envData, ok := vals[fc.fieldID(fieldIMAPEnvelope)]
 	if !ok {
 		return Head{}, nil, false
 	}
@@ -82,7 +82,7 @@ func (fc *Handle) HeadAndReferences(m *mailbox.MessageMeta) (Head, []string, boo
 	if !ok {
 		return Head{}, nil, false
 	}
-	refsData, cached := vals[fc.ids[fieldHdrReferences]]
+	refsData, cached := vals[fc.fieldID(fieldHdrReferences)]
 	if !cached {
 		return h, nil, false
 	}

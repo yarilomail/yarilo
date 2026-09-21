@@ -71,7 +71,7 @@ func TestAReaderWithoutReferencesStillReadsTheFile(t *testing.T) {
 		t.Fatal("cache unavailable on the second open")
 	}
 	defer old.Close()
-	old.ids[fieldHdrReferences] = 1 << 30 // a field id this reader never registered
+	old.ids[fieldHdrReferences] = 1 << 30 // already lower-case // a field id this reader never registered
 
 	m = reread(t, idx, f.ID, m.UID)
 	got := old.Envelope(m)

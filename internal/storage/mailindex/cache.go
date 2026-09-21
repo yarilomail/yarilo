@@ -175,7 +175,10 @@ type CacheFile struct {
 	f      *os.File
 	hdr    CacheHeader
 	fields []CacheField
-	// byName maps a field name to its id (= position in fields).
+	// byName maps a lower-cased field name to its id (= position in fields).
+	// The reference hashes names case-insensitively and refuses a second
+	// spelling of one (mail-cache.c:575-576, mail-cache-fields.c:122), which
+	// is how hdr.Date and hdr.DATE are one field.
 	byName map[string]uint32
 	// snap is the file as it stood when Preload was called, or nil. Reads
 	// fully inside it are served from memory; anything past its end -- an
@@ -337,7 +340,7 @@ func (c *CacheFile) loadFields() error {
 	}
 	c.byName = make(map[string]uint32, len(c.fields))
 	for i, fl := range c.fields {
-		c.byName[fl.Name] = uint32(i)
+		c.byName[strings.ToLower(fl.Name)] = uint32(i)
 	}
 	return nil
 }
@@ -391,14 +394,14 @@ func (c *CacheFile) AddFields(add []CacheField) (uint32, error) {
 	firstNew := uint32(len(c.fields))
 	merged := c.Fields()
 	for _, fl := range add {
-		if _, dup := c.byName[fl.Name]; dup {
+		if _, dup := c.byName[strings.ToLower(fl.Name)]; dup {
 			continue
 		}
 		if fl.Type == CacheFieldVariableSize || fl.Type == CacheFieldString || fl.Type == CacheFieldHeader {
 			fl.Size = 0xffffffff
 		}
 		merged = append(merged, fl)
-		c.byName[fl.Name] = uint32(len(merged) - 1)
+		c.byName[strings.ToLower(fl.Name)] = uint32(len(merged) - 1)
 	}
 	if uint32(len(merged)) == firstNew {
 		return firstNew, nil // nothing new
@@ -468,9 +471,10 @@ func (c *CacheFile) newestTableOffset() (uint32, error) {
 	}
 }
 
-// FieldID resolves a field name to its id, or ok=false.
+// FieldID resolves a field name to its id, or ok=false. Case-insensitive: a
+// file written elsewhere spells hdr.MESSAGE-ID and hdr.Date in one table.
 func (c *CacheFile) FieldID(name string) (uint32, bool) {
-	id, ok := c.byName[name]
+	id, ok := c.byName[strings.ToLower(name)]
 	return id, ok
 }
 

@@ -26,9 +26,28 @@ const (
 	fieldHdrReferences     = "hdr.references"
 )
 
+// envelopeHeaders is the reference's list, in its order
+// (message-part-data.c:14-18). A cache of theirs holds these rather than a
+// built envelope, and a cache of ours must hold them too or theirs cannot use
+// it (#1714).
+var envelopeHeaders = []string{
+	"Date", "Subject", "From", "Sender", "Reply-To",
+	"To", "Cc", "Bcc", "In-Reply-To", "Message-ID",
+}
+
+// headerField is the cache field name for one header.
+func headerField(name string) string { return "hdr." + name }
+
+// fieldID resolves a field name to its id in this file, case-insensitively:
+// a table written elsewhere spells hdr.MESSAGE-ID where ours says
+// hdr.Message-ID (mail-cache.c:575-576).
+func (fc *Handle) fieldID(name string) uint32 {
+	return fc.ids[strings.ToLower(name)]
+}
+
 // Sizes are the reference's struct members: uoff_t is 8, a date 4, and
 // date.sent carries the header's timezone too (index-mail.h:63-66).
-var referenceFields = []mailindex.CacheField{
+var referenceFields = withEnvelopeHeaders([]mailindex.CacheField{
 	{Name: fieldSizePhysical, Type: mailindex.CacheFieldFixedSize, Size: 8, Decision: mailindex.CacheDecisionYes},
 	{Name: fieldSizeVirtual, Type: mailindex.CacheFieldFixedSize, Size: 8, Decision: mailindex.CacheDecisionYes},
 	{Name: fieldDateReceived, Type: mailindex.CacheFieldFixedSize, Size: 4, Decision: mailindex.CacheDecisionYes},
@@ -41,6 +60,17 @@ var referenceFields = []mailindex.CacheField{
 	{Name: fieldPOP3UIDL, Type: mailindex.CacheFieldString, Decision: mailindex.CacheDecisionYes},
 	{Name: fieldPOP3Order, Type: mailindex.CacheFieldFixedSize, Size: 4, Decision: mailindex.CacheDecisionYes},
 	{Name: fieldHdrReferences, Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+})
+
+// withEnvelopeHeaders appends the ten header fields to the fixed table, so the
+// list stays one spelling rather than ten more literals.
+func withEnvelopeHeaders(fields []mailindex.CacheField) []mailindex.CacheField {
+	for _, h := range envelopeHeaders {
+		fields = append(fields, mailindex.CacheField{
+			Name: headerField(h), Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes,
+		})
+	}
+	return fields
 }
 
 func encodeU32(v uint32) []byte {
@@ -170,8 +200,8 @@ func (fc *Handle) Sizes(m *mailbox.MessageMeta) (size, vsize uint32, ok bool) {
 		return 0, 0, false
 	}
 	vals := fc.read(m)
-	phys, pok := decodeU64(vals[fc.ids[fieldSizePhysical]])
-	virt, vok := decodeU64(vals[fc.ids[fieldSizeVirtual]])
+	phys, pok := decodeU64(vals[fc.fieldID(fieldSizePhysical)])
+	virt, vok := decodeU64(vals[fc.fieldID(fieldSizeVirtual)])
 	if !pok || !vok {
 		return 0, 0, false
 	}
@@ -184,8 +214,8 @@ func (fc *Handle) StoreSizes(m *mailbox.MessageMeta, size, vsize uint32) {
 	if fc == nil || size == 0 || vsize == 0 {
 		return
 	}
-	fc.storeField(m, fc.ids[fieldSizePhysical], encodeU64(uint64(size)))
-	fc.storeField(m, fc.ids[fieldSizeVirtual], encodeU64(uint64(vsize)))
+	fc.storeField(m, fc.fieldID(fieldSizePhysical), encodeU64(uint64(size)))
+	fc.storeField(m, fc.fieldID(fieldSizeVirtual), encodeU64(uint64(vsize)))
 }
 
 // ReceivedDate returns the cached internal date.
@@ -193,7 +223,7 @@ func (fc *Handle) ReceivedDate(m *mailbox.MessageMeta) (time.Time, bool) {
 	if fc == nil {
 		return time.Time{}, false
 	}
-	secs, ok := decodeU32(fc.read(m)[fc.ids[fieldDateReceived]])
+	secs, ok := decodeU32(fc.read(m)[fc.fieldID(fieldDateReceived)])
 	if !ok || secs == 0 {
 		return time.Time{}, false
 	}
@@ -205,7 +235,7 @@ func (fc *Handle) SentDate(m *mailbox.MessageMeta) (time.Time, bool) {
 	if fc == nil {
 		return time.Time{}, false
 	}
-	return decodeSentDate(fc.read(m)[fc.ids[fieldDateSent]])
+	return decodeSentDate(fc.read(m)[fc.fieldID(fieldDateSent)])
 }
 
 // GUID returns the cached message identifier, as the reference stores it: the
@@ -214,7 +244,7 @@ func (fc *Handle) GUID(m *mailbox.MessageMeta) (string, bool) {
 	if fc == nil {
 		return "", false
 	}
-	data, ok := fc.read(m)[fc.ids[fieldGUID]]
+	data, ok := fc.read(m)[fc.fieldID(fieldGUID)]
 	if !ok || len(data) == 0 {
 		return "", false
 	}
@@ -226,7 +256,7 @@ func (fc *Handle) POP3UIDL(m *mailbox.MessageMeta) (string, bool) {
 	if fc == nil {
 		return "", false
 	}
-	data, ok := fc.read(m)[fc.ids[fieldPOP3UIDL]]
+	data, ok := fc.read(m)[fc.fieldID(fieldPOP3UIDL)]
 	if !ok || len(data) == 0 {
 		return "", false
 	}
@@ -239,9 +269,9 @@ func (fc *Handle) StorePOP3UIDL(m *mailbox.MessageMeta, uidl string, order uint3
 	if fc == nil || uidl == "" {
 		return
 	}
-	fc.storeField(m, fc.ids[fieldPOP3UIDL], []byte(uidl))
+	fc.storeField(m, fc.fieldID(fieldPOP3UIDL), []byte(uidl))
 	if order != 0 {
-		fc.storeField(m, fc.ids[fieldPOP3Order], encodeU32(order))
+		fc.storeField(m, fc.fieldID(fieldPOP3Order), encodeU32(order))
 	}
 }
 
@@ -253,13 +283,13 @@ func (fc *Handle) StoreRecordFields(m *mailbox.MessageMeta) {
 	}
 	fc.StoreSizes(m, m.Size, m.VSize)
 	if !m.InternalDate.IsZero() {
-		fc.storeField(m, fc.ids[fieldDateReceived], encodeU32(uint32(m.InternalDate.Unix())))
+		fc.storeField(m, fc.fieldID(fieldDateReceived), encodeU32(uint32(m.InternalDate.Unix())))
 	}
 	if m.SaveDate != 0 {
-		fc.storeField(m, fc.ids[fieldDateSave], encodeU32(m.SaveDate))
+		fc.storeField(m, fc.fieldID(fieldDateSave), encodeU32(m.SaveDate))
 	}
 	if m.GUID != ([16]byte{}) {
-		fc.storeField(m, fc.ids[fieldGUID], []byte(mailbox.FormatObjectID(m.GUID)))
+		fc.storeField(m, fc.fieldID(fieldGUID), []byte(mailbox.FormatObjectID(m.GUID)))
 	}
 }
 
@@ -268,5 +298,5 @@ func (fc *Handle) StoreSentDate(m *mailbox.MessageMeta, t time.Time) {
 	if fc == nil || t.IsZero() {
 		return
 	}
-	fc.storeField(m, fc.ids[fieldDateSent], encodeSentDate(t))
+	fc.storeField(m, fc.fieldID(fieldDateSent), encodeSentDate(t))
 }
