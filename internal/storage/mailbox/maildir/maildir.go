@@ -29,11 +29,10 @@ import (
 )
 
 // Backend is the Maildir MailboxBackend factory. Holds only
-// process-wide state (hostname, pid, counter); per-user state lives in userMailbox.
+// process-wide state (hostname, pid); per-user state lives in userMailbox.
 type Backend struct {
 	hostname string
 	pid      int
-	counter  atomic.Uint64
 	// lockMethod is how a write to a shared file excludes another writer.
 	lockMethod filelock.Method
 	// fsync says what reaches the disk before a delivery is answered (#1847).
@@ -582,10 +581,8 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 		defer func() { <-u.b.writeSem }()
 	}
 	folderPath := u.folderPath(folder)
-	now := time.Now()
-	seq := u.b.counter.Add(1)
-	basename := fmt.Sprintf("%d.M%dP%d_%d.%s",
-		now.Unix(), now.UnixMicro()%1_000_000, u.b.pid, seq, u.b.hostname)
+	secs, usecs := mintNameTime()
+	basename := fmt.Sprintf("%d.M%dP%d.%s", secs, usecs, u.b.pid, u.b.hostname)
 
 	tmpPath := filepath.Join(folderPath, "tmp", basename)
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -682,10 +679,9 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 			if i := strings.IndexByte(oldBase, ','); i >= 0 {
 				sizeInfo = oldBase[i:]
 			}
-			now := time.Now()
-			seq := u.b.counter.Add(1)
-			newName = fmt.Sprintf("%d.M%dP%d_%d.%s%s%s",
-				now.Unix(), now.UnixMicro()%1_000_000, u.b.pid, seq, u.b.hostname, sizeInfo, trailer)
+			secs, usecs := mintNameTime()
+			newName = fmt.Sprintf("%d.M%dP%d.%s%s%s",
+				secs, usecs, u.b.pid, u.b.hostname, sizeInfo, trailer)
 			dstPath = filepath.Join(dstDir, newName)
 			override = true
 		}
