@@ -3240,13 +3240,19 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			mw.WriteInternalDate(m.InternalDate)
 		}
 		if opts.RFC822Size {
-			// From where the driver keeps it: a maildir name carries it, a dbox
-			// record holds it (#1726).
-			size, vsize, serr := s.folderMailbox().MessageSize(s.folder.Name, m)
-			if serr != nil {
-				// The number still goes out, from the record: the one attribute
-				// here with a second source, so a wrong answer is otherwise mute.
-				mark("rfc822.size", serr)
+			// The cache first, as the reference's index_mail_get_*_size do: a
+			// listing that has the numbers must not reach storage for them.
+			size, vsize, cached := envCache.Sizes(m)
+			if !cached {
+				var serr error
+				size, vsize, serr = s.folderMailbox().MessageSize(s.folder.Name, m)
+				if serr != nil {
+					// The number still goes out, from the record: the one
+					// attribute here with a second source, so a wrong answer is
+					// otherwise mute.
+					mark("rfc822.size", serr)
+				}
+				envCache.StoreSizes(m, size, vsize)
 			}
 			if vsize != 0 {
 				size = vsize
@@ -3275,6 +3281,8 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				env := imapserver.ExtractEnvelope(hdr)
 				mw.WriteEnvelope(env)
 				envCache.StoreEnvelope(m, env)
+				envCache.StoreSentDate(m, env.Date)
+				envCache.StoreRecordFields(m)
 			} else {
 				mark("envelope", ferr)
 			}

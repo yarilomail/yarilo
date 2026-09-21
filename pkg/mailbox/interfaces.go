@@ -234,6 +234,9 @@ type MessageMeta struct {
 	InternalDate time.Time
 	GUID         [16]byte
 	CacheOffset  uint32
+	// CacheCRC is the checksum of the cache record at CacheOffset. Zero means
+	// the index carries none -- an index another implementation wrote.
+	CacheCRC uint32
 	// AltTier is true when the message body resides in alt (cold) storage.
 	// Stored as FlagBackend (0x40) in the on-disk index record so Fetch() opens
 	// the correct tier without a wasted primary-tier syscall. Only meaningful for
@@ -590,6 +593,14 @@ func (e *NoSpaceError) Error() string {
 }
 
 func (e *NoSpaceError) Unwrap() []error { return []error{ErrNoSpace, e.Err} }
+
+// CacheStamp is where a message's cache record starts and what that record
+// hashed to. The CRC is checked before any field is read: a record that does
+// not hash to it is not this message's (#1714).
+type CacheStamp struct {
+	Offset uint32
+	CRC    uint32
+}
 
 // FolderCreator is an index that can be told a folder is being created rather
 // than opened. The two differ in what a missing index means, and one call site

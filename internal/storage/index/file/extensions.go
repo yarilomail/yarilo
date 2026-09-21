@@ -27,6 +27,7 @@ const (
 	extNameVsize        = "vsize"
 	extNameGUID         = "guid"
 	extNameCache        = "cache"
+	extNameCacheCRC     = "cache-crc"
 )
 
 // guid extension: wire layout in INTERNALS.md §7. The header state is the O(1)
@@ -507,6 +508,10 @@ func findExt(exts []mailindex.Extension, name string) *mailindex.Extension {
 // until first parse.
 const cacheRecSize = 4
 
+// cacheCRCRecSize is the crc32 of the message's cache record, checked before
+// its fields are read (#1714).
+const cacheCRCRecSize = 4
+
 func encodeCacheRec(offset uint32) []byte {
 	out := make([]byte, cacheRecSize)
 	binary.LittleEndian.PutUint32(out, offset)
@@ -549,6 +554,7 @@ var ourExtensions = map[string]bool{
 	extNameVsize:        true,
 	extNameGUID:         true,
 	extNameCache:        true,
+	extNameCacheCRC:     true,
 	extNameLineage:      true,
 	extNameMdbox:        true,
 }

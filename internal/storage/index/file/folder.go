@@ -1536,6 +1536,7 @@ func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbo
 			}
 			if data, ok := rec.Ext[extNameCache]; ok {
 				meta.CacheOffset = decodeCacheRec(data)
+				meta.CacheCRC = decodeCacheRec(rec.Ext[extNameCacheCRC])
 			}
 			if data, ok := rec.Ext[extNameInternalDate]; ok {
 				meta.InternalDate = decodeIdateRec(data)
@@ -2709,8 +2710,8 @@ func truncateLogLineage(indexPath string, indexID, lineage uint32) error {
 
 // SetCacheOffsets stamps cache offsets for the given UIDs (#1030), a FETCH's
 // worth per flush. An offset may be overwritten, but only with a non-zero one.
-func (u *userIndex) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) error {
-	if len(offsets) == 0 {
+func (u *userIndex) SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.CacheStamp) error {
+	if len(stamps) == 0 {
 		return nil
 	}
 	return u.withFolderSite(folderID, lockSiteCacheOffsets, func(fs *folderState) error {
@@ -2718,15 +2719,23 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) 
 			cacheRecSize, 4, fs.file.Header.UIDValidity); err != nil {
 			return err
 		}
+		// The checksum rides beside the offset, in its own extension: an index
+		// written before it simply carries none, and is read at the bounds the
+		// reference reads it at (#1714).
+		if err := fs.declareRecordExtLocked(extNameCacheCRC, nil,
+			cacheCRCRecSize, 4, fs.file.Header.UIDValidity); err != nil {
+			return err
+		}
 		for _, rec := range fs.file.Records {
-			off, ok := offsets[rec.UID]
-			if !ok || off == 0 {
+			stamp, ok := stamps[rec.UID]
+			if !ok || stamp.Offset == 0 {
 				continue
 			}
 			if rec.Ext == nil {
-				rec.Ext = make(map[string][]byte, 1)
+				rec.Ext = make(map[string][]byte, 2)
 			}
-			rec.Ext[extNameCache] = encodeCacheRec(off)
+			rec.Ext[extNameCache] = encodeCacheRec(stamp.Offset)
+			rec.Ext[extNameCacheCRC] = encodeCacheRec(stamp.CRC)
 		}
 		return fs.flush()
 	})

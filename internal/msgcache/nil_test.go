@@ -82,10 +82,10 @@ func (o *olderIndex) CachePath(folderID uint64) (string, error) {
 	}).CachePath(folderID)
 }
 
-func (o *olderIndex) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) error {
+func (o *olderIndex) SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.CacheStamp) error {
 	return o.UserIndex.(interface {
-		SetCacheOffsets(uint64, map[uint32]uint32) error
-	}).SetCacheOffsets(folderID, offsets)
+		SetCacheOffsets(uint64, map[uint32]mailbox.CacheStamp) error
+	}).SetCacheOffsets(folderID, stamps)
 }
 
 // An index without the extension is the normal case on an upgraded

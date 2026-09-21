@@ -1135,8 +1135,8 @@ func (h *userHandle) CachePath(folderID uint64) (string, error) {
 	return h.stamped(folderID).CachePath(folderID)
 }
 
-func (h *userHandle) SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) error {
-	return h.stamped(folderID).SetCacheOffsets(folderID, offsets)
+func (h *userHandle) SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.CacheStamp) error {
+	return h.stamped(folderID).SetCacheOffsets(folderID, stamps)
 }
 
 // PurgeCache forwards the cache purge (#1030) like every other folder verb.

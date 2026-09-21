@@ -60,7 +60,7 @@ type Index interface {
 	// applying to whatever gets written at those offsets next.
 	BumpCacheGeneration(folderID uint64) (uint32, error)
 	CachePath(folderID uint64) (string, error)
-	SetCacheOffsets(folderID uint64, offsets map[uint32]uint32) error
+	SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.CacheStamp) error
 }
 
 /* --- per-FETCH cache handle ----------------------------------------------- */
@@ -73,8 +73,12 @@ type Index interface {
 // every method tolerates it, so a miss degrades to parsing.
 type Handle struct {
 	file   *mailindex.CacheFile
-	ids    map[string]uint32 // reference field name -> id in this file
-	stamps map[uint32]uint32 // uid -> new head offset, flushed on close
+	ids    map[string]uint32             // reference field name -> id in this file
+	stamps map[uint32]mailbox.CacheStamp // uid -> head offset and checksum, flushed on close
+	// merged is what this handle has written for a message, so the checksum it
+	// stamps covers the whole record rather than the last field appended.
+	merged map[uint32]map[uint32][]byte
+	crcs   map[uint32]uint32
 	idx    Index
 	fid    uint64
 	// unlock releases the locks taken for the open-append-stamp window, in
@@ -194,7 +198,7 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 	if err != nil {
 		return nil
 	}
-	fc := &Handle{idx: ic, fid: folderID, stamps: make(map[uint32]uint32)}
+	fc := &Handle{idx: ic, fid: folderID, stamps: make(map[uint32]mailbox.CacheStamp)}
 	// The whole open-append-stamp window runs under the lock, reads
 	// included: remove-and-recreate under a live descriptor and the
 	// read-modify-write of the field table are only safe when nobody else
@@ -343,10 +347,10 @@ func (fc *Handle) flush() {
 	// over that record and leave it unreachable. Losing a cached field is only
 	// a re-parse, but it is exactly the "tolerate what somebody else wrote"
 	// that splitting the window promised (#1545).
-	heads := map[uint32]uint32{}
+	heads := map[uint32]mailbox.CacheStamp{}
 	if msgs, merr := r.idx.GetMessages(r.fid, mailbox.SeqSet{}); merr == nil {
 		for _, m := range msgs {
-			heads[m.UID] = m.CacheOffset
+			heads[m.UID] = mailbox.CacheStamp{Offset: m.CacheOffset, CRC: m.CacheCRC}
 		}
 	} else {
 		slog.Debug("msgcache: could not re-read chain heads; dropping cached fields",
@@ -355,7 +359,7 @@ func (fc *Handle) flush() {
 		return
 	}
 	for _, p := range fc.pending {
-		off, live := heads[p.UID()]
+		stamp, live := heads[p.UID()]
 		if !live {
 			// Expunged while the response was being written, which is ordinary
 			// on a busy folder. Appending anyway writes bytes no chain reaches:
@@ -365,8 +369,11 @@ func (fc *Handle) flush() {
 			// often (#1549).
 			continue
 		}
+		// The checksum travels with the offset: the second window seeds its
+		// own from the record it finds, and a stale one would make every read
+		// of it a mismatch.
 		meta := p.meta
-		meta.CacheOffset = off
+		meta.CacheOffset, meta.CacheCRC = stamp.Offset, stamp.CRC
 		second.storeField(&meta, p.fieldID, p.data)
 	}
 	second.Close()
@@ -380,8 +387,8 @@ func (fc *Handle) head(m *mailbox.MessageMeta) uint32 {
 	if fc == nil {
 		return 0
 	}
-	if off, ok := fc.stamps[m.UID]; ok {
-		return off
+	if stamp, ok := fc.stamps[m.UID]; ok {
+		return stamp.Offset
 	}
 	return m.CacheOffset
 }
@@ -395,11 +402,31 @@ func (fc *Handle) read(m *mailbox.MessageMeta) map[uint32][]byte {
 	if off == 0 {
 		return nil // nothing cached for this message
 	}
+	if vals, ok := fc.merged[m.UID]; ok {
+		return vals // what this handle wrote, already checked
+	}
 	vals, err := fc.file.ReadRecord(off)
 	if err != nil {
 		return nil // a bad chain is a miss; the re-parse overwrites the head
 	}
+	// The checksum before the fields, as the reference's neighbour does
+	// (cyrus mailbox.c:705-775): a record that does not hash to what the index
+	// recorded belongs to another message, and every field in it is wrong.
+	if crc := fc.recordCRCFor(m); crc != 0 && recordCRC(vals) != crc {
+		metricCRCMismatch.Inc()
+		slog.Debug("msgcache: cache record checksum mismatch; re-reading the message", "uid", m.UID)
+		return nil
+	}
 	return vals
+}
+
+// recordCRCFor is the checksum the index holds for a message, or zero when the
+// index carries none: one written by the reference, read at its bounds.
+func (fc *Handle) recordCRCFor(m *mailbox.MessageMeta) uint32 {
+	if crc, ok := fc.crcs[m.UID]; ok {
+		return crc
+	}
+	return m.CacheCRC
 }
 
 // storeField appends one field value for a message and moves the chain head.
@@ -421,7 +448,27 @@ func (fc *Handle) storeField(m *mailbox.MessageMeta, fieldID uint32, data []byte
 		slog.Debug("msgcache: cache append failed", "uid", m.UID, "err", err)
 		return
 	}
-	fc.stamps[m.UID] = off
+	fc.remember(m, fieldID, data)
+	fc.stamps[m.UID] = mailbox.CacheStamp{Offset: off, CRC: recordCRC(fc.merged[m.UID])}
+}
+
+// remember keeps what the record now holds, seeded from what was there before:
+// the checksum has to cover the whole chain, not the field just appended.
+func (fc *Handle) remember(m *mailbox.MessageMeta, fieldID uint32, data []byte) {
+	if fc.merged == nil {
+		fc.merged = make(map[uint32]map[uint32][]byte)
+		fc.crcs = make(map[uint32]uint32)
+	}
+	vals, ok := fc.merged[m.UID]
+	if !ok {
+		vals = make(map[uint32][]byte, len(referenceFields))
+		for id, v := range fc.read(m) {
+			vals[id] = v
+		}
+		fc.merged[m.UID] = vals
+	}
+	vals[fieldID] = data
+	fc.crcs[m.UID] = recordCRC(vals)
 }
 
 // envelope returns the cached envelope for a message, or nil on any of the

@@ -55,7 +55,7 @@ func TestPurgeCacheIsANewGeneration(t *testing.T) {
 		offsets[uid] = off
 	}
 	cf.Close()
-	if err := ui.SetCacheOffsets(f.ID, offsets); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(offsets)); err != nil {
 		t.Fatal(err)
 	}
 	// Dead weight for the purge to drop.
@@ -151,7 +151,7 @@ func TestPurgeCacheReclaims(t *testing.T) {
 		offsets[uid] = off
 	}
 	cf.Close()
-	if err := ui.SetCacheOffsets(f.ID, offsets); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(offsets)); err != nil {
 		t.Fatal(err)
 	}
 	for uid := uint32(1); uid <= n-5; uid++ {
@@ -208,7 +208,7 @@ func TestPurgeCacheAbandonsTheGenerationOfAnUnreadableFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	cf.Close()
-	if err := ui.SetCacheOffsets(f.ID, map[uint32]uint32{1: 512}); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(map[uint32]uint32{1: 512})); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("torn"), 0o600); err != nil {
