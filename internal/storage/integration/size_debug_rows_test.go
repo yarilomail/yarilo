@@ -64,9 +64,8 @@ func captureAt(t *testing.T, level slog.Level) *rowCapture {
 func TestASizelessAppendNamesItsSite(t *testing.T) {
 	box, idx, f, root := openMaildir(t, "erin@example.com")
 	rec := mailbox.Driver(box).(reconciler)
-	// A name with no S=/W= whose body cannot be read: the scan measures what a
-	// name does not spell (#1962), so an unreadable one is what still reaches
-	// the index with no size.
+	// A name with no S=/W= whose body cannot be read: names are measured now
+	// (#1962), so an unreadable one is what still arrives sizeless.
 	name := "1700000001.M4P4_4.host:2,"
 	dropInCur(t, root, name, "From: a@b\r\nSubject: unsized\r\n\r\nbody\r\n")
 	if err := os.Chmod(filepath.Join(root, "cur", name), 0o000); err != nil {

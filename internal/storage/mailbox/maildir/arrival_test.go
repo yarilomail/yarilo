@@ -76,10 +76,8 @@ func TestEveryReaderFindsABodyStillInTheArrivalDirectory(t *testing.T) {
 		}
 	})
 	t.Run("its size is measured", func(t *testing.T) {
-		// A name our own save writes carries S= and W=, and RecordSize answers
-		// from those without touching the disk. The measured path is reached by
-		// a name that carries neither -- which is what a foreign MDA leaves in
-		// new/, and the case this fallback is for.
+		// Our own names carry S= and W=, and RecordSize answers from them: the
+		// measured path is reached by what a foreign MDA leaves.
 		foreign := "1700009000.M1P1.mda.example"
 		body := "From: a@b\r\n\r\nforeign\r\n"
 		if err := os.WriteFile(filepath.Join(box.folderPath("INBOX"), "new", foreign), []byte(body), 0o600); err != nil {
@@ -117,9 +115,8 @@ func TestRemoveTakesAMessageOutOfTheArrivalDirectory(t *testing.T) {
 	}
 }
 
-// The fallback reads one name, not a directory: listing new/ per message is
-// what #1809 took out of the expunge hold, and a resolver that lists it again
-// puts it straight back.
+// One name, not a directory: listing new/ per message is what #1809 took out
+// of the expunge hold (#1959).
 func TestResolvingAnArrivalReadsNoDirectory(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
@@ -139,9 +136,8 @@ func TestResolvingAnArrivalReadsNoDirectory(t *testing.T) {
 	}
 }
 
-// A removal from new/ must not disturb the listing cache, which is cur/'s: it
-// never held that file, and dropping it costs a re-read of a directory nobody
-// changed (#1809, #1959).
+// A removal from new/ leaves the listing cache of cur/ alone: it never held
+// that file (#1809, #1959).
 func TestARemovalFromTheArrivalDirectoryKeepsTheListingCache(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
@@ -166,5 +162,28 @@ func TestARemovalFromTheArrivalDirectoryKeepsTheListingCache(t *testing.T) {
 	}
 	if box.folderCacheFor("INBOX").entries == nil {
 		t.Error("removing a file from new/ dropped the listing cache of cur/")
+	}
+}
+
+// A migrated maildir is read by the full scan -- its names are already in cur/
+// -- so that scan must measure a name with no W= too (#1962).
+func TestAColdImportMeasuresANameWithoutSizes(t *testing.T) {
+	box, idx, folder := recSetup(t)
+	// Two lines of bare LF: four bytes on disk, six in RFC822 form.
+	const body = "a\nb\n"
+	if err := os.WriteFile(filepath.Join(box.folderPath("INBOX"), "cur", "1700005000.M1P1.mda:2,"), []byte(body), 0o600); err != nil {
+		t.Fatalf("the migrated message: %v", err)
+	}
+
+	if _, err := box.ReconcileIndex(nil, idx, folder); err != nil {
+		t.Fatalf("the first pass: %v", err)
+	}
+
+	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{})
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("index holds %d messages: %v", len(msgs), err)
+	}
+	if got := msgs[0].RFC822Size(); got != 6 {
+		t.Errorf("the record reports %d, want 6: the scan stored the bytes on disk", got)
 	}
 }
