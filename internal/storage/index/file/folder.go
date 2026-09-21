@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
@@ -2115,6 +2116,20 @@ func writeMutLog(f *os.File, buf []byte) (int, error) { return mutLogWrite(f, bu
 
 func syncMutLog(f *os.File) error { return mutLogSync(f) }
 
+// journalWriteError names what the volume refused and counts it. A full disk
+// is a resource condition, not a fault: the folder is intact and the same write
+// works once there is room, so a caller must be able to say "later" rather than
+// "this server is broken" (#1831).
+func journalWriteError(folder string, err error) error {
+	reason := "other"
+	if errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT) {
+		reason = "no-space"
+		err = &mailbox.NoSpaceError{Folder: folder, Err: err}
+	}
+	metricJournalWriteFailed.WithLabelValues(reason).Inc()
+	return fmt.Errorf("fileindex/mutlog: write: %w", err)
+}
+
 // logEnd is where the next append lands: with O_APPEND the offset is not it.
 func logEnd(f *os.File) (int64, error) {
 	st, err := f.Stat()
@@ -2210,7 +2225,7 @@ func (fs *folderState) appendMutLog(records ...[]byte) error {
 	if err != nil {
 		_ = fs.logFD.Close()
 		fs.logFD = nil
-		return fmt.Errorf("fileindex/mutlog: write: %w", err)
+		return journalWriteError(fs.folder, err)
 	}
 	fs.logSize += int64(len(buf))
 

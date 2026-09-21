@@ -574,6 +574,26 @@ func (e *CorruptIndexError) Unwrap() error { return e.Err }
 // storage is the answer nobody checks (#1608).
 var ErrIndexLost = errors.New("folder index lost")
 
+// ErrNoSpace is wrapped by a write that the volume refused for room: a full
+// disk or an exhausted quota on it. It is a resource condition, not a fault --
+// the data is intact, the same write will work when there is room, and a caller
+// that reports it as a bug tells the client to stop trying (#1831).
+var ErrNoSpace = errors.New("mailbox: no space on the volume")
+
+// NoSpaceError names the folder whose write the volume refused. The name is
+// what an operator acts on and what a generic resource error loses: the write
+// failed for one folder, the account keeps working (#1831).
+type NoSpaceError struct {
+	Folder string
+	Err    error
+}
+
+func (e *NoSpaceError) Error() string {
+	return "mailbox: no space for folder " + e.Folder + ": " + e.Err.Error()
+}
+
+func (e *NoSpaceError) Unwrap() []error { return []error{ErrNoSpace, e.Err} }
+
 // FolderCreator is an index that can be told a folder is being created rather
 // than opened. The two differ in what a missing index means, and one call site
 // answering both served the wrong one.

@@ -756,11 +756,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		rcptIdx.Close() //nolint:errcheck
 		if deliverErr != nil {
 			slog.Error("lmtp: delivery failed", "rcpt", rcpt, "err", deliverErr)
-			if s.opts.Config.VerboseReplies {
-				deliverErr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: deliverErr.Error()}
-			} else {
-				deliverErr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: "Local delivery failed"}
-			}
+			deliverErr = deliveryError(deliverErr, s.opts.Config.VerboseReplies)
 		}
 		setStatus(status, rcpt, deliveryStart, deliverErr)
 	}
@@ -885,4 +881,17 @@ func fillSizes(box mailbox.Box, folders []string) {
 			slog.Warn("lmtp: sizes not filled", "folder", name, "err", ferr)
 		}
 	}
+}
+
+// deliveryError answers a failed delivery. A full volume holds the message at
+// the sender rather than bouncing it: the class is temporary, and the same
+// delivery works once there is room (#1831).
+func deliveryError(err error, verbose bool) error {
+	if errors.Is(err, mailbox.ErrNoSpace) {
+		return &goSmtp.SMTPError{Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 3, 1}, Message: "Mail system full"}
+	}
+	if verbose {
+		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: err.Error()}
+	}
+	return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: "Local delivery failed"}
 }
