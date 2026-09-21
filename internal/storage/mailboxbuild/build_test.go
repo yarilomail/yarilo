@@ -40,3 +40,24 @@ func TestByDriverThreadsMdboxAltStorage(t *testing.T) {
 		t.Error("no alt path configured but AltEnabled() is true")
 	}
 }
+
+// Every driver that can make a body durable is given the configured mode. The
+// default hid a driver that was never wired: sdbox synced nothing and no row
+// could tell, because a driver that syncs by default looks the same (#1969).
+func TestEveryDriverIsGivenTheConfiguredFsyncMode(t *testing.T) {
+	type fsyncer interface{ FsyncMode() mailbox.FsyncMode }
+	for _, driver := range []string{"maildir", "mdbox", "sdbox", "dbox"} {
+		t.Run(driver, func(t *testing.T) {
+			for _, want := range []mailbox.FsyncMode{mailbox.FsyncNever, mailbox.FsyncAlways, mailbox.FsyncOptimized} {
+				box := byDriver(driver, config.StorageConfig{MailFsync: string(want)}, nil)
+				f, ok := box.(fsyncer)
+				if !ok {
+					t.Fatalf("%T names no fsync mode, so the configured one cannot be checked", box)
+				}
+				if got := f.FsyncMode(); got != want {
+					t.Errorf("%s was built with %q, config says %q", driver, got, want)
+				}
+			}
+		})
+	}
+}
