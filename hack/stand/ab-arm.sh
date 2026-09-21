@@ -542,11 +542,8 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # What drove the walks, and how the cold share fades: the number A2 is
   # decided by. Read from the delta, with the curve beside it in the file.
   echo "$ARM $name $(awk '
-      # Each result exactly, never by prefix: scanned-partial and
-      # scanned-untokened both begin with the word and folding them into the
-      # full count hides the very share this window is for (#1875).
-      # The total series only: the seconds histogram now carries the same
-      # label, and a pattern that does not name the series counts both (#1952).
+      # This series and each result exactly: the seconds histogram carries the
+      # same label, and "scanned" is a prefix of two more (#1875, #1952).
       $1 !~ /^imap_maildir_sync_total\{/ { next }
       $1 ~ /result="scanned"/            { full += $2 }
       $1 ~ /result="scanned-partial"/    { partial += $2 }
