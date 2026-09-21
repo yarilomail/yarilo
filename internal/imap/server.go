@@ -3273,15 +3273,18 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			mw.WriteThreadID(threadIDs[m.UID])
 		}
 		if opts.Envelope && s.folderMailbox().Readable(m) {
-			if env := envCache.Envelope(m); env != nil {
-				mw.WriteEnvelope(env)
+			// One text, whoever wrote it: built from the raw header by the
+			// reference's rules, so an encoded word and an address group reach
+			// the client as the message wrote them (#1714).
+			if text, ok := envCache.EnvelopeText(m); ok {
+				mw.WriteEnvelopeRaw(text)
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
 				hdr, _ := textproto.ReadHeader(bufio.NewReader(rc))
 				rc.Close()
-				env := imapserver.ExtractEnvelope(hdr)
-				mw.WriteEnvelope(env)
-				envCache.StoreEnvelope(m, env)
-				envCache.StoreSentDate(m, env.Date)
+				text := msgcache.EnvelopeTextOf(hdr)
+				mw.WriteEnvelopeRaw(text)
+				envCache.StoreEnvelopeText(m, text)
+				envCache.StoreSentDate(m, imapserver.ExtractEnvelope(hdr).Date)
 				envCache.StoreRecordFields(m)
 			} else {
 				mark("envelope", ferr)
