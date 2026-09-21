@@ -3283,9 +3283,8 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				rc.Close()
 				text := msgcache.EnvelopeTextOf(hdr)
 				mw.WriteEnvelopeRaw(text)
-				envCache.StoreEnvelopeText(m, text)
+				envCache.StoreFromHeader(m, hdr, text)
 				envCache.StoreSentDate(m, imapserver.ExtractEnvelope(hdr).Date)
-				envCache.StoreRecordFields(m)
 			} else {
 				mark("envelope", ferr)
 			}

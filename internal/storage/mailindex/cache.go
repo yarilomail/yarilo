@@ -9,14 +9,8 @@
 // id meaningful outside the process that assigned it, and compat_sizeof_uoff_t
 // guards against an implementation the file cannot serve.
 //
-// What byte compatibility buys is INSPECTABILITY -- our cache reads with the
-// reference's tooling and vice versa -- and deliberately does NOT buy data
-// reuse: cached values are parsing results, and the producer is part of
-// their identity. A file written by the reference carries producer byte 0
-// and is rejected at open exactly like any other producer mismatch, then
-// rebuilt; the cache is derived, so nothing is lost. Do not "fix" the
-// generation check to accept 0 for migration's sake -- that silently
-// restores trust in a foreign parser.
+// Producer byte 0 is a file the reference wrote and is read; anything but 0 or
+// CacheProducerGen is rebuilt. Why and what it costs: INTERNALS.md §7, #1714.
 //
 // The cache has no vote on its own validity. Four levels, all owned by the
 // index or the producing code:
@@ -60,6 +54,9 @@ const (
 	// alters output for the same bytes; a mismatch invalidates the file
 	// exactly as an indexid mismatch does.
 	CacheProducerGen = 1
+	// cacheProducerGenForeign is what the reference leaves in the slot: a file
+	// it wrote, whose values are the same bytes ours would be (#1714).
+	cacheProducerGenForeign = 0
 
 	cacheHeaderSize = 32
 )
@@ -117,7 +114,10 @@ func (h *CacheHeader) encode() []byte {
 	le.PutUint32(b[16:], h.RecordCount)
 	le.PutUint32(b[20:], h.BackwardsCompatUsedFileSize)
 	le.PutUint32(b[24:], h.DeletedRecordCount)
-	le.PutUint32(b[28:], h.FieldHeaderOffset)
+	// Packed, as the reference writes it: the field table's own next_offset
+	// already is, and the header's must match or neither side reads the other
+	// (mail-cache-fields.c:232, mail-index-util.c:21-31).
+	le.PutUint32(b[28:], packCacheOffset(h.FieldHeaderOffset))
 	return b
 }
 
@@ -137,7 +137,7 @@ func decodeCacheHeader(b []byte) (CacheHeader, error) {
 		RecordCount:                 le.Uint32(b[16:]),
 		BackwardsCompatUsedFileSize: le.Uint32(b[20:]),
 		DeletedRecordCount:          le.Uint32(b[24:]),
-		FieldHeaderOffset:           le.Uint32(b[28:]),
+		FieldHeaderOffset:           unpackCacheOffset(le.Uint32(b[28:])),
 	}, nil
 }
 
@@ -166,7 +166,10 @@ type CacheFile struct {
 	f      *os.File
 	hdr    CacheHeader
 	fields []CacheField
-	// byName maps a field name to its id (= position in fields).
+	// byName maps a lower-cased field name to its id (= position in fields).
+	// The reference hashes names case-insensitively and refuses a second
+	// spelling of one (mail-cache.c:575-576, mail-cache-fields.c:122), which
+	// is how hdr.Date and hdr.DATE are one field.
 	byName map[string]uint32
 	// snap is the file as it stood when Preload was called, or nil. Reads
 	// fully inside it are served from memory; anything past its end -- an
@@ -276,7 +279,7 @@ func OpenCache(path string, indexID, expectFileSeq uint32) (*CacheFile, error) {
 		err = fmt.Errorf("mailindex: cache indexid %d, index %d: %w", hdr.IndexID, indexID, ErrCacheInvalid)
 	case hdr.FileSeq != expectFileSeq:
 		err = fmt.Errorf("mailindex: cache file_seq %d, reset_id %d: %w", hdr.FileSeq, expectFileSeq, ErrCacheInvalid)
-	case hdr.ProducerGen != CacheProducerGen:
+	case hdr.ProducerGen != CacheProducerGen && hdr.ProducerGen != cacheProducerGenForeign:
 		// The one divergence the pair identity cannot see: the parser
 		// changed, so every stored value is wrong against current code.
 		err = fmt.Errorf("mailindex: cache producer gen %d, code %d: %w", hdr.ProducerGen, CacheProducerGen, ErrCacheInvalid)
@@ -328,7 +331,7 @@ func (c *CacheFile) loadFields() error {
 	}
 	c.byName = make(map[string]uint32, len(c.fields))
 	for i, fl := range c.fields {
-		c.byName[fl.Name] = uint32(i)
+		c.byName[strings.ToLower(fl.Name)] = uint32(i)
 	}
 	return nil
 }
@@ -382,14 +385,14 @@ func (c *CacheFile) AddFields(add []CacheField) (uint32, error) {
 	firstNew := uint32(len(c.fields))
 	merged := c.Fields()
 	for _, fl := range add {
-		if _, dup := c.byName[fl.Name]; dup {
+		if _, dup := c.byName[strings.ToLower(fl.Name)]; dup {
 			continue
 		}
 		if fl.Type == CacheFieldVariableSize || fl.Type == CacheFieldString || fl.Type == CacheFieldHeader {
 			fl.Size = 0xffffffff
 		}
 		merged = append(merged, fl)
-		c.byName[fl.Name] = uint32(len(merged) - 1)
+		c.byName[strings.ToLower(fl.Name)] = uint32(len(merged) - 1)
 	}
 	if uint32(len(merged)) == firstNew {
 		return firstNew, nil // nothing new
@@ -459,9 +462,10 @@ func (c *CacheFile) newestTableOffset() (uint32, error) {
 	}
 }
 
-// FieldID resolves a field name to its id, or ok=false.
+// FieldID resolves a field name to its id, or ok=false. Case-insensitive: a
+// file written elsewhere spells hdr.MESSAGE-ID and hdr.Date in one table.
 func (c *CacheFile) FieldID(name string) (uint32, bool) {
-	id, ok := c.byName[name]
+	id, ok := c.byName[strings.ToLower(name)]
 	return id, ok
 }
 

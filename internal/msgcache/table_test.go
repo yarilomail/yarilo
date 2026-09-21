@@ -119,22 +119,22 @@ func TestOneRecordsBytesAreTheReferencesBytes(t *testing.T) {
 		{fieldIMAPBodyStructure, wantBodyStructure},
 		{fieldIMAPBody, wantBody},
 	} {
-		if got := string(vals[fresh.ids[tc.field]]); got != tc.want {
+		if got := string(vals[fresh.fieldID(tc.field)]); got != tc.want {
 			t.Errorf("%s on disk is\n  %q\nwant\n  %q", tc.field, got, tc.want)
 		}
 	}
 
 	// The fixed-size fields are the reference's widths, little-endian as it
 	// writes them on the platforms this runs on.
-	if got := vals[fresh.ids[fieldSizePhysical]]; len(got) != 8 {
+	if got := vals[fresh.fieldID(fieldSizePhysical)]; len(got) != 8 {
 		t.Errorf("size.physical is %d bytes, want 8", len(got))
 	}
-	if got, ok := decodeU64(vals[fresh.ids[fieldSizeVirtual]]); !ok || got != 18 {
+	if got, ok := decodeU64(vals[fresh.fieldID(fieldSizeVirtual)]); !ok || got != 18 {
 		t.Errorf("size.virtual = %v (%v)", got, ok)
 	}
 	// The header field keeps the whole line, line numbers first, as the
 	// reference stores a cached header (index-mail-headers.c:99-127).
-	line, ok := decodeHeaderField(vals[fresh.ids[fieldHdrReferences]])
+	line, ok := decodeHeaderField(vals[fresh.fieldID(fieldHdrReferences)])
 	if !ok || line != "References: <root@example.com>\r\n" {
 		t.Errorf("hdr.references = %q (%v)", line, ok)
 	}

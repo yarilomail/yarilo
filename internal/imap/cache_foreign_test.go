@@ -8,6 +8,7 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
@@ -140,5 +141,113 @@ func TestTheMessageIsStillReadableBesideAForeignCache(t *testing.T) {
 	}
 	if string(got) != cachedTestBody {
 		t.Errorf("the body came back as %q", string(got))
+	}
+}
+
+// A cache from the reference holds the headers, not a built envelope: the
+// listing must answer from them and open nothing, and the built envelope must
+// land in the record so the next listing is a plain hit (#1714).
+func TestAForeignCacheOfHeadersAnswersTheListing(t *testing.T) {
+	root := cachedFolder(t)
+	home := filepath.Join(root, "test.com", "user")
+	info := &mailbox.UserInfo{Username: "user@test.com", Home: home, Driver: "maildir"}
+
+	idx := file.New().OpenUser(info)
+	f, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ic, ok := idx.(interface {
+		CachePath(uint64) (string, error)
+		EnsureCacheExtension(uint64) (uint32, uint32, error)
+		SetCacheOffsets(uint64, map[uint32]mailbox.CacheStamp) error
+	})
+	if !ok {
+		t.Fatal("the index serves no cache")
+	}
+	indexID, resetID, err := ic.EnsureCacheExtension(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := ic.CachePath(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(path)
+	cf, err := mailindex.CreateCache(path, indexID, resetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Their spelling, their order, and no imap.envelope at all.
+	first, err := cf.AddFields([]mailindex.CacheField{
+		{Name: "size.physical", Type: mailindex.CacheFieldFixedSize, Size: 8, Decision: mailindex.CacheDecisionYes},
+		{Name: "size.virtual", Type: mailindex.CacheFieldFixedSize, Size: 8, Decision: mailindex.CacheDecisionYes},
+		{Name: "imap.bodystructure", Type: mailindex.CacheFieldString, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.SUBJECT", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.FROM", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.TO", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.MESSAGE-ID", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := make([]byte, 8)
+	size[0] = byte(len(cachedTestBody))
+	size[1] = byte(len(cachedTestBody) >> 8)
+	header := func(line string) []byte {
+		b := []byte{1, 0, 0, 0, 0, 0, 0, 0}
+		return append(b, line...)
+	}
+	off, err := cf.AppendRecord(0, []mailindex.CacheFieldValue{
+		{FieldID: first, Data: size},
+		{FieldID: first + 1, Data: size},
+		{FieldID: first + 2, Data: []byte(foreignBodyStructure)},
+		{FieldID: first + 3, Data: header("Subject: a listing\r\n")},
+		{FieldID: first + 4, Data: header("From: Ann <ann@example.com>\r\n")},
+		{FieldID: first + 5, Data: header("To: Bo <bo@example.org>\r\n")},
+		{FieldID: first + 6, Data: header("Message-ID: <listing@example.com>\r\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cf.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ic.SetCacheOffsets(f.ID, map[uint32]mailbox.CacheStamp{1: {Offset: off}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, env, _, opens := listingFetch(t, root)
+	if opens != 0 {
+		t.Errorf("the listing opened %v messages although the headers were cached", opens)
+	}
+	if env == nil || env.Subject != "a listing" || env.MessageID != "listing@example.com" {
+		t.Errorf("envelope built from cached headers = %+v", env)
+	}
+	if len(env.To) != 1 || env.To[0].Mailbox != "bo" {
+		t.Errorf("recipients = %+v", env.To)
+	}
+
+	// And it was written back, so a reader that knows only imap.envelope finds it.
+	idx2 := file.New().OpenUser(info)
+	defer idx2.Close() //nolint:errcheck
+	f2, err := idx2.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fc := msgcache.Open(idx2, f2.ID, msgcache.Options{User: "user@test.com", Folder: "INBOX"})
+	if fc == nil {
+		t.Fatal("cache unavailable")
+	}
+	defer fc.Close()
+	msgs, err := idx2.GetMessages(f2.ID, nil)
+	if err != nil || len(msgs) == 0 {
+		t.Fatalf("messages: %v", err)
+	}
+	if _, ok := fc.EnvelopeText(msgs[0]); !ok {
+		t.Error("the envelope built from the headers was not written back")
 	}
 }

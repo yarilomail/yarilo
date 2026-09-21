@@ -10,6 +10,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -278,7 +279,7 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 			}
 			id = first
 		}
-		fc.ids[want.Name] = id
+		fc.ids[strings.ToLower(want.Name)] = id
 	}
 	fc.reopen.idx, fc.reopen.ic = idx, ic
 	fc.reopen.fid, fc.reopen.opts = folderID, opts
@@ -402,7 +403,7 @@ func (fc *Handle) read(m *mailbox.MessageMeta) map[uint32][]byte {
 	}
 	// The checksum before the fields (cyrus mailbox.c:705-775): a record that
 	// hashes to something else is another message's, field by field.
-	if crc := fc.recordCRCFor(m); crc != 0 && recordCRC(vals) != crc {
+	if crc := fc.recordCRCFor(m); crc != 0 && mailindex.RecordCRC(vals) != crc {
 		metricCRCMismatch.Inc()
 		slog.Debug("msgcache: cache record checksum mismatch; re-reading the message", "uid", m.UID)
 		return nil
@@ -439,7 +440,7 @@ func (fc *Handle) storeField(m *mailbox.MessageMeta, fieldID uint32, data []byte
 		return
 	}
 	fc.remember(m, fieldID, data)
-	fc.stamps[m.UID] = mailbox.CacheStamp{Offset: off, CRC: recordCRC(fc.merged[m.UID])}
+	fc.stamps[m.UID] = mailbox.CacheStamp{Offset: off, CRC: mailindex.RecordCRC(fc.merged[m.UID])}
 }
 
 // remember keeps what the record now holds, seeded from what was there before:
@@ -458,7 +459,7 @@ func (fc *Handle) remember(m *mailbox.MessageMeta, fieldID uint32, data []byte) 
 		fc.merged[m.UID] = vals
 	}
 	vals[fieldID] = data
-	fc.crcs[m.UID] = recordCRC(vals)
+	fc.crcs[m.UID] = mailindex.RecordCRC(vals)
 }
 
 // envelope returns the cached envelope for a message, or nil on any of the
@@ -467,11 +468,11 @@ func (fc *Handle) Envelope(m *mailbox.MessageMeta) *imaplib.Envelope {
 	if fc == nil {
 		return nil
 	}
-	data, ok := fc.read(m)[fc.ids[fieldIMAPEnvelope]]
+	text, ok := fc.EnvelopeText(m)
 	if !ok {
-		return nil // no record, or a record without this field
+		return nil // no record, or a record with neither envelope nor headers
 	}
-	env, ok := imaptext.ParseEnvelope(string(data))
+	env, ok := imaptext.ParseEnvelope(text)
 	if !ok {
 		return nil
 	}
@@ -499,7 +500,7 @@ func (fc *Handle) References(m *mailbox.MessageMeta) ([]string, bool) {
 	if fc == nil {
 		return nil, false
 	}
-	data, ok := fc.read(m)[fc.ids[fieldHdrReferences]]
+	data, ok := fc.read(m)[fc.fieldID(fieldHdrReferences)]
 	if !ok {
 		return nil, false
 	}
@@ -518,7 +519,7 @@ func (fc *Handle) EnvelopeAndReferences(m *mailbox.MessageMeta) (*imaplib.Envelo
 		return nil, nil, false
 	}
 	vals := fc.read(m)
-	envData, ok := vals[fc.ids[fieldIMAPEnvelope]]
+	envData, ok := vals[fc.fieldID(fieldIMAPEnvelope)]
 	if !ok {
 		return nil, nil, false
 	}
@@ -526,7 +527,7 @@ func (fc *Handle) EnvelopeAndReferences(m *mailbox.MessageMeta) (*imaplib.Envelo
 	if !ok {
 		return nil, nil, false
 	}
-	refsData, cached := vals[fc.ids[fieldHdrReferences]]
+	refsData, cached := vals[fc.fieldID(fieldHdrReferences)]
 	if !cached {
 		return env, nil, false
 	}
@@ -541,7 +542,7 @@ func (fc *Handle) StoreReferences(m *mailbox.MessageMeta, refs []string) {
 	if fc == nil {
 		return
 	}
-	fc.storeField(m, fc.ids[fieldHdrReferences], encodeReferencesHeader(refs))
+	fc.storeField(m, fc.fieldID(fieldHdrReferences), encodeReferencesHeader(refs))
 }
 
 // StoreEnvelope caches an envelope a caller holds as a struct. The text is the
@@ -559,19 +560,25 @@ func (fc *Handle) StoreEnvelopeText(m *mailbox.MessageMeta, text string) {
 	if fc == nil || text == "" {
 		return
 	}
-	fc.storeField(m, fc.ids[fieldIMAPEnvelope], []byte(text))
+	fc.storeField(m, fc.fieldID(fieldIMAPEnvelope), []byte(text))
 }
 
-// EnvelopeText is the stored envelope, for a caller that answers with text.
+// EnvelopeText is the stored envelope; a record holding only headers has one
+// built from them and written back (index-mail-headers.c:515-560).
 func (fc *Handle) EnvelopeText(m *mailbox.MessageMeta) (string, bool) {
 	if fc == nil {
 		return "", false
 	}
-	data, ok := fc.read(m)[fc.ids[fieldIMAPEnvelope]]
-	if !ok || len(data) == 0 {
+	vals := fc.read(m)
+	if data, ok := vals[fc.fieldID(fieldIMAPEnvelope)]; ok && len(data) > 0 {
+		return string(data), true
+	}
+	text, ok := fc.envelopeFromCachedHeaders(vals)
+	if !ok {
 		return "", false
 	}
-	return string(data), true
+	fc.StoreEnvelopeText(m, text)
+	return text, true
 }
 
 // bodyStructure returns the cached body structure, or nil on any miss.
@@ -579,7 +586,7 @@ func (fc *Handle) BodyStructure(m *mailbox.MessageMeta) imaplib.BodyStructure {
 	if fc == nil {
 		return nil
 	}
-	data, ok := fc.read(m)[fc.ids[fieldIMAPBodyStructure]]
+	data, ok := fc.read(m)[fc.fieldID(fieldIMAPBodyStructure)]
 	if !ok {
 		return nil
 	}
@@ -611,8 +618,8 @@ func (fc *Handle) StoreBodyStructure(m *mailbox.MessageMeta, bs imaplib.BodyStru
 	if !ok {
 		return
 	}
-	fc.storeField(m, fc.ids[fieldIMAPBodyStructure], []byte(enc))
-	fc.storeField(m, fc.ids[fieldIMAPBody], []byte(body))
+	fc.storeField(m, fc.fieldID(fieldIMAPBodyStructure), []byte(enc))
+	fc.storeField(m, fc.fieldID(fieldIMAPBody), []byte(body))
 }
 
 // close flushes the batched offset stamps -- one index write per FETCH, not
