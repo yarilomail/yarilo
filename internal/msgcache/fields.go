@@ -26,10 +26,8 @@ const (
 	fieldHdrReferences     = "hdr.references"
 )
 
-// envelopeHeaders is the reference's list, in its order
-// (message-part-data.c:14-18). A cache of theirs holds these rather than a
-// built envelope, and a cache of ours must hold them too or theirs cannot use
-// it (#1714).
+// The reference's list, in its order (message-part-data.c:14-18): their cache
+// holds these instead of a built envelope, so ours holds them too (#1714).
 var envelopeHeaders = []string{
 	"Date", "Subject", "From", "Sender", "Reply-To",
 	"To", "Cc", "Bcc", "In-Reply-To", "Message-ID",
@@ -38,9 +36,8 @@ var envelopeHeaders = []string{
 // headerField is the cache field name for one header.
 func headerField(name string) string { return "hdr." + name }
 
-// fieldID resolves a field name to its id in this file, case-insensitively:
-// a table written elsewhere spells hdr.MESSAGE-ID where ours says
-// hdr.Message-ID (mail-cache.c:575-576).
+// Case-insensitive: a table written elsewhere spells hdr.MESSAGE-ID where ours
+// says hdr.Message-ID (mail-cache.c:575-576).
 func (fc *Handle) fieldID(name string) uint32 {
 	return fc.ids[strings.ToLower(name)]
 }

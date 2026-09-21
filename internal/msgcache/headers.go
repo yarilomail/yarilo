@@ -30,9 +30,8 @@ func (c cachedHeaders) RawValues(name string) []string {
 	return nil
 }
 
-// envelopeFromCachedHeaders builds the envelope from the headers a record
-// holds, which is what a cache from the reference carries instead of a built
-// one (index-mail-headers.c:515-560).
+// Builds the envelope from the headers a record holds, which is what a cache
+// of theirs carries instead of a built one (index-mail-headers.c:515-560).
 func (fc *Handle) envelopeFromCachedHeaders(vals map[uint32][]byte) (string, bool) {
 	h := cachedHeaders{fc: fc, vals: vals}
 	var any bool
@@ -48,8 +47,7 @@ func (fc *Handle) envelopeFromCachedHeaders(vals map[uint32][]byte) (string, boo
 	return imaptext.EnvelopeFromHeader(h), true
 }
 
-// storeEnvelopeHeaders caches the ten headers the envelope is built from, as
-// the reference caches them: one field per header, the line kept whole so a
+// One field per header, the line kept whole, as the reference caches them: a
 // reader can serve BODY[HEADER.FIELDS] from it.
 func (fc *Handle) storeEnvelopeHeaders(m *mailbox.MessageMeta, h textproto.Header) {
 	for _, name := range envelopeHeaders {

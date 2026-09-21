@@ -27,9 +27,8 @@ func EnvelopeTextOf(h textproto.Header) string {
 	return imaptext.EnvelopeFromHeader(RawHeader{H: h})
 }
 
-// StoreFromHeader caches what one parse of a message's header yields: the
-// envelope, the ten headers it was built from and the References. A cache of
-// ours is then what a cache of theirs is after one FETCH ENVELOPE (#1714).
+// StoreFromHeader caches what one parse yields: the envelope, its ten headers
+// and the record's own fields -- their cache after one FETCH ENVELOPE (#1714).
 func (fc *Handle) StoreFromHeader(m *mailbox.MessageMeta, h textproto.Header, text string) {
 	if fc == nil {
 		return

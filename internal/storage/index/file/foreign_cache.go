@@ -13,13 +13,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// adoptForeignCache takes their cache file with the folder: its records are
-// the same bytes ours would be (#1714), so deleting it would buy a cold
-// listing per folder for nothing.
-//
-// The file keeps its records and field table and gets our pair in its header;
-// every record that parses is checksummed, so an adopted mailbox is protected
-// from the first read rather than from its first write.
+// adoptForeignCache takes their cache with the folder: the file keeps its
+// records, takes our pair, and every record that parses is checksummed (#1714).
 func (u *userIndex) adoptForeignCache(fs *folderState, foreignDir string, metas []*mailbox.MessageMeta) {
 	src := dboxconv.ForeignCachePath(foreignDir)
 	if _, err := os.Stat(src); err != nil {
@@ -78,9 +73,8 @@ func (u *userIndex) dropCacheOffsets(metas []*mailbox.MessageMeta) {
 	}
 }
 
-// repairCachePair writes our index identity into the header of a cache file
-// written against theirs. Nothing else in the file is touched: the records and
-// the field table are what make it worth keeping.
+// repairCachePair writes our index identity into a header written against
+// theirs. Nothing else is touched: the records are the point.
 func repairCachePair(path string, indexID, fileSeq uint32) error {
 	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {

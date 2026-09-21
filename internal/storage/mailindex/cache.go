@@ -9,17 +9,9 @@
 // id meaningful outside the process that assigned it, and compat_sizeof_uoff_t
 // guards against an implementation the file cannot serve.
 //
-// A file written by the reference carries producer byte 0, and it is READ:
-// since #1714 our envelope, body structure, sizes, dates, guid and hdr.*
-// are the reference's own bytes for the same message, so the producer differs
-// and the result does not. The rule is 0 or CacheProducerGen; anything else is
-// a mismatch and the file is rebuilt (#1714).
-//
-// The reference never reads this byte -- it is its `unused` slot
-// (mail-cache-private.h:30) -- so our 1 costs a reader of theirs nothing. Our
-// first write into an adopted file stamps our own generation, and a later gen
-// bump then invalidates the reference's records along with ours: more than is
-// strictly owed, and safe, at the price of one recompute.
+// Producer byte 0 is a file the reference wrote and it is read; anything
+// other than 0 or CacheProducerGen is rebuilt. Why, and what it costs:
+// INTERNALS.md §7 and #1714.
 //
 // The cache has no vote on its own validity. Four levels, all owned by the
 // index or the producing code:
