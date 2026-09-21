@@ -220,8 +220,6 @@ Never push directly to `main`. Feature branch → PR → user merges.
   **Always consult it before implementing any binary format or internal socket.**
 - Magic bytes, version numbers, field offsets — must match exactly.
   See §7 (FileIndex), §8 (Maildir), §2 (director protocol), §3 (auth protocol).
-- Maildir filenames: `{secs}.M{usecs}P{pid}_{seq}.{hostname}:2,{flags}` — flags sorted uppercase.
-- yarilo-uidlist version 3: header `3 V<uidvalidity> N<nextuid> G<guid128hex>`.
 
 ---
 
