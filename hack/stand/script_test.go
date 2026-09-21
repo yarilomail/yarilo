@@ -31,9 +31,8 @@ func TestEveryStandScriptParses(t *testing.T) {
 	}
 }
 
-// An empty array is an unbound variable under `set -u` on bash 3.2, which is
-// what macOS ships -- and an arm with no overlay is the ordinary arm, so
-// "${a[@]}" ended the window before it deployed anything (#1969 window).
+// An empty array is an unbound variable under `set -u` on bash 3.2: the arm
+// with no overlay died at the deploy line on a laptop that runs it.
 func TestAnEmptyArrayExpansionSurvivesSetU(t *testing.T) {
 	const snippet = `set -euo pipefail
 a=()
