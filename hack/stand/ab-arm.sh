@@ -219,7 +219,7 @@ backend_counters() {
         # read is retried rather than answered from the pods that did reply.
         [ -n "$page" ] || { total=""; break; }
         total+=$(printf '%s\n' "$page" |
-          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_count|quota_folders_opened_total|quota_usage_count_total\{)" || true)
+          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{)" || true)
         total+=$'\n'
       done
       [ -n "${total//[$'\n']/}" ] && break
@@ -243,7 +243,14 @@ dict_delta() {
   local before="$1" after="$2" out="$3"
   awk '
     FNR==NR { was[$1]=$2; next }
-    { d = $2 - (($1 in was) ? was[$1] : 0); if (d != 0) printf "%s %d\n", $1, d }
+    {
+      d = $2 - (($1 in was) ? was[$1] : 0)
+      if (d == 0) next
+      # Seconds are fractions: printing them as integers reports a walk that
+      # took 0.4s as zero, and the average is then a division by a lie.
+      if ($1 ~ /_seconds_sum/) printf "%s %.6f\n", $1, d
+      else printf "%s %d\n", $1, d
+    }
   ' "$before" "$after" | sort > "$out"
 }
 
@@ -546,6 +553,19 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
             printf "walks: full=%d partial=%d untokened=%d first-seen=%d", full, partial, untokened, cold
             if (walks + 0 > 0) printf " partial_share=%.1f%%", 100 * partial / walks
             if (full + 0 > 0) printf " cold_share=%.1f%%", 100 * cold / full }
+    ' "$OUT/backend-$ARM-$name-delta.txt")"
+  # What each kind of walk cost, and how many arrivals passes had nothing to
+  # move: the two numbers that price the trade the partial pass makes (#1952).
+  echo "$ARM $name $(awk '
+      $1 ~ /_seconds_sum\{/ && $1 ~ /result="scanned"/ { fullSum += $2 }
+      $1 ~ /_seconds_count\{/ && $1 ~ /result="scanned"/ { fullN += $2 }
+      $1 ~ /_seconds_sum\{/ && $1 ~ /result="scanned-partial"/ { partSum += $2 }
+      $1 ~ /_seconds_count\{/ && $1 ~ /result="scanned-partial"/ { partN += $2 }
+      $1 == "maildir_partial_pass_empty_total" { empty += $2 }
+      END { printf "walk cost: full_ms=%s partial_ms=%s partial_empty=%d of %d",
+              (fullN > 0 ? sprintf("%.3f", 1000 * fullSum / fullN) : "-"),
+              (partN > 0 ? sprintf("%.3f", 1000 * partSum / partN) : "-"),
+              empty, partN }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
   # Per login, because that is the unit the arm already reports: a raw delta
   # says nothing without the load that produced it.

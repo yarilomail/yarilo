@@ -95,3 +95,27 @@ func TestAPartialPassRemovesNothing(t *testing.T) {
 		t.Errorf("the folder holds %d messages after the full pass, want 1: the removal was never taken", n)
 	}
 }
+
+// The duration carries the same label the count does, so a partial pass can be
+// priced against a full one rather than argued about (#1952).
+func TestTheWalkDurationSaysWhichWalkItTimed(t *testing.T) {
+	box, inbox := gateSetup(t)
+	settle(t, inbox, time.Now().Add(-time.Hour))
+	if _, err := box.Folder("INBOX", 0); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+
+	full := reconcileWalks(t, "scanned")
+	partial := reconcileWalks(t, "scanned-partial")
+	arrive(t, inbox, "1700007000.M1P1.h")
+	if _, err := box.Folder("INBOX", 0); err != nil {
+		t.Fatalf("open after the delivery: %v", err)
+	}
+
+	if got := reconcileWalks(t, "scanned-partial") - partial; got != 1 {
+		t.Errorf("the partial walk was timed %v times, want 1", got)
+	}
+	if got := reconcileWalks(t, "scanned") - full; got != 0 {
+		t.Errorf("a full walk was timed %v times for a delivery that only touched new/", got)
+	}
+}

@@ -1230,7 +1230,10 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 	// it to find the first had done the work (#1630). A stale answer errs
 	// toward taking the lock, and the section re-reads before writing.
 	if arrivalsOnly && len(scanned) == 0 {
-		return st, nil // nothing arrived, and absence is not this pass's business
+		// Nothing arrived, and absence is not this pass's business: the whole
+		// cost was one readdir of an empty new/ (#1952).
+		metricPartialEmpty.Inc()
+		return st, nil
 	}
 	if !arrivalsOnly && u.reconcileIsClean(idx, folder, scanned) {
 		return st, nil

@@ -20,6 +20,13 @@ var metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
 }, []string{"site"})
 
+// metricPartialEmpty counts arrivals passes that found nothing to move: one
+// readdir of an empty directory, which is what they cost (#1952).
+var metricPartialEmpty = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "maildir_partial_pass_empty_total",
+	Help: "Arrivals-only passes that found nothing in new/ to move, so they read an empty directory and stopped.",
+})
+
 // metricImportRowRefused counts imports skipped because the list already names
 // the file under another uid: one message reported, not a batch lost (#1745).
 var metricImportRowRefused = promauto.NewCounter(prometheus.CounterOpts{

@@ -1,6 +1,8 @@
 package maildir
 
 import (
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,5 +187,39 @@ func TestAColdImportMeasuresANameWithoutSizes(t *testing.T) {
 	}
 	if got := msgs[0].RFC822Size(); got != 6 {
 		t.Errorf("the record reports %d, want 6: the scan stored the bytes on disk", got)
+	}
+}
+
+// Most of the arrivals passes a delivery burst provokes find nothing left to
+// move: the first one took the mail, the rest read an empty new/ and stop.
+// That is what the counter is for -- a number that says whether those passes
+// are worth measuring (#1952).
+func TestRepeatedArrivalsPassesFindNothingToMove(t *testing.T) {
+	box, idx, folder := recSetup(t)
+	deliverToNewDir(t, box, "1700006000.M1P1.mda", "a\nb\n")
+
+	before := testutil.ToFloat64(metricPartialEmpty)
+	if _, err := box.ReconcileArrivals(nil, idx, folder); err != nil {
+		t.Fatalf("the pass that takes it: %v", err)
+	}
+	if got := testutil.ToFloat64(metricPartialEmpty) - before; got != 0 {
+		t.Errorf("the pass that moved a message counted %v empty passes", got)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := box.ReconcileArrivals(nil, idx, folder); err != nil {
+			t.Fatalf("the pass after it: %v", err)
+		}
+	}
+	if got := testutil.ToFloat64(metricPartialEmpty) - before; got != 3 {
+		t.Errorf("three passes over an empty new/ counted %v, want 3", got)
+	}
+}
+
+// deliverToNewDir writes a message into new/ the way an MDA does.
+func deliverToNewDir(t *testing.T, box *userMailbox, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(box.folderPath("INBOX"), "new", name), []byte(body), 0o600); err != nil {
+		t.Fatalf("deliver: %v", err)
 	}
 }

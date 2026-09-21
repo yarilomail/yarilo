@@ -238,8 +238,12 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	}
 	// The walk is what costs; the counter says how often, never how long.
 	walked := time.Now()
+	walkResult := "scanned"
+	if partial {
+		walkResult = "scanned-partial"
+	}
 	st, err := b.walk(ps, f, partial)
-	MetricReconcileSeconds.Observe(time.Since(walked).Seconds())
+	MetricReconcileSeconds.WithLabelValues(walkResult).Observe(time.Since(walked).Seconds())
 	if err != nil {
 		slog.Warn("mailbox/open: the reconcile did not finish",
 			"user", b.store.Username(), "folder", folder, "err", err)
