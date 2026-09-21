@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Samples where the sessions sit while a run is under way. Read after the run
-# they are all zero -- the clients have disconnected -- so the question "which
-# backend carried this load" can only be answered from inside it (#1943).
+# Samples where the sessions sit while a run is under way: read afterwards they
+# are all zero, because the clients have disconnected (#1943).
 #
 # Usage:
 #   KUBECONFIG=... bash hack/stand/watch-sessions.sh <out-dir> <label> [interval]
