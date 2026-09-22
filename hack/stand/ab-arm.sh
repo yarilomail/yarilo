@@ -187,9 +187,13 @@ fi
 # right start for a question about the login path alone.
 FILL="${YARILO_ARM_FILL:-200}"
 
-# KEEP_STORE carries the previous arm's mailboxes in, for the question a wiped
-# arm cannot ask: the first listing over older state (#1714).
+# KEEP_STORE answers one question: run 1 against run 2 of the same arm. It is
+# not a throughput comparison with the arm before (README.md, #1714).
 KEEP_STORE="${YARILO_ARM_KEEP_STORE:-0}"
+
+# REPEATS runs each type more than once in one arm, so the first run can be
+# told from the ones after it -- the only way a cold listing is visible (#1714).
+REPEATS="${YARILO_ARM_REPEATS:-1}"
 
 # dict_ops prints the dict service's operation counters, one per line. Read
 # either side of a run, the difference is what that run asked of the service.
@@ -537,8 +541,13 @@ kube exec "$authpod" -- sh -c \
 
 for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   set -- $pair
-  name=$1; range=$2
-  domain=$(type_domain "$name" | cut -d' ' -f1)
+  type=$1; range=$2
+ for run in $(seq 1 "$REPEATS"); do
+  # One name per run: the counters, the log and the profile are that run's,
+  # not the type's, or a first run cannot be told from a second.
+  name="$type"
+  [ "$REPEATS" = "1" ] || name="$type-run$run"
+  domain=$(type_domain "$type" | cut -d' ' -f1)
   step "run $name"
   # Checked, not assumed: if either literal in job.yaml ever moves, an
   # unchecked sed runs one type three times and reports three.
@@ -685,6 +694,7 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
               crc, opened, journal, writes
             if (logins + 0 > 0) printf " opens_per_login=%.3f", opened / logins }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
+ done
 done
 
 kube exec "$authpod" -- sh -c \

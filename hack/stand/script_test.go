@@ -282,3 +282,44 @@ func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 		t.Error("the retry does not distinguish a forward that never came up from a capture that failed")
 	}
 }
+
+// The method is read in the README, so that is where the carried mode's
+// limits have to be: a window is set up from it, not from the shell (#1714).
+func TestTheReadmeSaysWhatTheCarriedModeIsFor(t *testing.T) {
+	raw, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatalf("the stand has no README: %v", err)
+	}
+	doc := string(raw)
+	for _, want := range []string{
+		"YARILO_ARM_KEEP_STORE",
+		"first listing",
+		"not** a throughput comparison",
+		"bigger store",
+		"two arms that both wipe and fill",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the README does not say %q, so the next window can read the mode as a general A/B", want)
+		}
+	}
+	// And the script points at it rather than repeating it.
+	if !strings.Contains(armSource(t), "README.md") {
+		t.Error("the arm does not point at the README")
+	}
+}
+
+// One run per type cannot show a cold listing: there is nothing to compare
+// the first run with.
+func TestTheArmCanRepeatARunPerType(t *testing.T) {
+	src := armSource(t)
+	if !strings.Contains(src, `REPEATS="${YARILO_ARM_REPEATS:-1}"`) {
+		t.Fatal("an arm cannot repeat a run, so cold and warm cannot be told apart")
+	}
+	if !strings.Contains(src, `name="$type-run$run"`) {
+		t.Error("the runs of one type share a name, so their counters are one number")
+	}
+	// Default stays one run, or every window pays three times over.
+	if !strings.Contains(src, "YARILO_ARM_REPEATS:-1") {
+		t.Error("the default is not one run")
+	}
+}
