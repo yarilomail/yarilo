@@ -174,9 +174,8 @@ fi
 # right start for a question about the login path alone.
 FILL="${YARILO_ARM_FILL:-200}"
 
-# KEEP_STORE carries the previous arm's mailboxes into this one, for the
-# question a wiped arm cannot ask: what the first listing costs over state an
-# older version wrote (#1714).
+# KEEP_STORE carries the previous arm's mailboxes in, for the question a wiped
+# arm cannot ask: the first listing over older state (#1714).
 KEEP_STORE="${YARILO_ARM_KEEP_STORE:-0}"
 
 # dict_ops prints the dict service's operation counters, one per line. Read
@@ -380,9 +379,8 @@ type_domain() {
 
 if [ "$KEEP_STORE" = "1" ]; then
   step "carry"
-  # Nothing is emptied, seeded or filled: this arm answers what the first
-  # listing over the previous arm's state costs, and a wipe would remove the
-  # question (#1714).
+  # Nothing is emptied, seeded or filled: a wipe would remove the very
+  # question this arm is here to ask (#1714).
   carried=$(message_inventory)
   echo "-- start carried over: ${carried:-unreadable}" | tee "$OUT/start-$ARM-carried.txt"
   case "$carried" in
@@ -437,9 +435,8 @@ start_inventory() {
   echo "files=$f du_kb=$k"
 }
 
-# message_inventory is the start as the INDEX sees it: a carried-over arm is
-# proven by the same message count as the arm before it, and files on disk are
-# not that number -- a cache rewritten in place changes them (#1714).
+# message_inventory is the start as the INDEX sees it: a cache rewritten in
+# place moves the file count while the mailbox is unchanged (#1714).
 message_inventory() {
   local pod total=0 n out
   pod=$(first_pod backend-api)
