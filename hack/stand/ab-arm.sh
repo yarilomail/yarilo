@@ -142,29 +142,42 @@ lock_classes() {
 # throughput. Off unless the arm asks: accounting for every blocking operation
 # changes the pod being measured (#1875).
 BLOCKPROFILE="${YARILO_ARM_BLOCKPROFILE:-0}"
-OVERLAY="$REPO/helm_values/values-sandbox-blockprofile.yaml"
+# OVERLAY_NAME picks a second values file, and the arm records which one it ran
+# with: an arm whose config nobody can name is not a comparison (#1875).
+OVERLAY_NAME="${YARILO_ARM_OVERLAY:-}"
+[ "$BLOCKPROFILE" = "1" ] && OVERLAY_NAME="blockprofile"
 overlay_args=()
-if [ "$BLOCKPROFILE" = "1" ]; then
+
+# The keys each overlay is allowed to carry, as an extended regex over the
+# "top.second" path. Anything else and the arm stops.
+overlay_allows() {
+  case "$1" in
+    blockprofile) echo '^telemetry(\.pprof)?$' ;;
+    fsync-never) echo '^storage(\.mail_fsync)?$' ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ -n "$OVERLAY_NAME" ]; then
+  allow=$(overlay_allows "$OVERLAY_NAME") || {
+    echo "ab-arm: no overlay is named $OVERLAY_NAME" >&2
+    exit 1
+  }
+  OVERLAY="$REPO/helm_values/values-sandbox-$OVERLAY_NAME.yaml"
   [ -f "$OVERLAY" ] || { echo "ab-arm: $OVERLAY is missing" >&2; exit 1; }
-  # Only the profiling keys live there. A file that has grown a second purpose
-  # is a stand running on something nobody reviewed.
-  # Both levels the header promises: telemetry at the top, pprof under it. A
-  # guard that reads only the first level lets telemetry.metrics_enabled in,
-  # and the file then says one thing while the arm does another.
+  # Both levels the header promises: a guard that reads only the first lets a
+  # sibling key in, and the file then says one thing while the arm does another.
   stray=$(awk '
     /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-    /^[^[:space:]]/ { key=$1; sub(":.*","",key); top=key; if (key != "telemetry") print key; next }
-    /^[[:space:]][[:space:]][^[:space:]]/ {
-      key=$1; sub(":.*","",key)
-      if (top == "telemetry" && key != "pprof") print "telemetry." key
-    }
-  ' "$OVERLAY")
+    /^[^[:space:]]/ { key=$1; sub(":.*","",key); top=key; print key; next }
+    /^[[:space:]][[:space:]][^[:space:]]/ { key=$1; sub(":.*","",key); print top "." key }
+  ' "$OVERLAY" | grep -Ev "$allow" || true)
   if [ -n "$stray" ]; then
-    echo "ab-arm: $OVERLAY carries keys outside telemetry.pprof.*: $stray" >&2
+    echo "ab-arm: $OVERLAY carries keys the $OVERLAY_NAME overlay may not: $stray" >&2
     exit 1
   fi
   overlay_args=(-f "$OVERLAY")
-  echo "-- arm $ARM runs with the profiling overlay: this is a latency arm" | tee "$OUT/overlay-$ARM.txt"
+  echo "-- arm $ARM runs with the $OVERLAY_NAME overlay" | tee "$OUT/overlay-$ARM.txt"
 fi
 
 # FILL is how many messages each user starts with. An empty mailbox is a state

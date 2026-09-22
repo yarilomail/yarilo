@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -130,5 +131,59 @@ func TestTheCPUProfileIsTakenOnEveryArm(t *testing.T) {
 	}
 	if !strings.Contains(src, "this arm cannot price a read") {
 		t.Error("a missing CPU profile does not fail the arm")
+	}
+}
+
+// An overlay may carry only the keys its own question needs; the guard reads
+// two levels, because a sibling one level down is what quietly moves in.
+func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
+	cases := []struct {
+		name  string
+		allow string
+	}{
+		{name: "blockprofile", allow: `^telemetry(\.pprof)?$`},
+		{name: "fsync-never", allow: `^storage(\.mail_fsync)?$`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join("..", "..", "helm_values", "values-sandbox-"+tc.name+".yaml")
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("the %s overlay is missing: %v", tc.name, err)
+			}
+			allow := regexp.MustCompile(tc.allow)
+			var top string
+			for _, line := range strings.Split(string(raw), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+				indent := len(line) - len(strings.TrimLeft(line, " "))
+				if indent > 2 {
+					continue // the guard reads two levels, as the overlays are two deep
+				}
+				key := strings.TrimSuffix(strings.Fields(trimmed)[0], ":")
+				path := key
+				if indent == 2 {
+					path = top + "." + key
+				} else {
+					top = key
+				}
+				if !allow.MatchString(path) {
+					t.Errorf("%s carries %q, which its question does not need", tc.name, path)
+				}
+			}
+			// And the arm must know the name, or the overlay is unreachable.
+			if !strings.Contains(armSource(t), tc.name+")") {
+				t.Errorf("ab-arm.sh does not name the %s overlay", tc.name)
+			}
+		})
+	}
+}
+
+// An overlay nobody named is refused rather than deployed silently.
+func TestTheArmRefusesAnUnknownOverlay(t *testing.T) {
+	if !strings.Contains(armSource(t), "no overlay is named") {
+		t.Error("an unknown overlay name does not stop the arm")
 	}
 }
