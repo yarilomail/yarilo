@@ -29,13 +29,14 @@ func TestAMissReadsTheChainOnce(t *testing.T) {
 	if reader == nil {
 		t.Fatal("cache unavailable")
 	}
-	defer reader.Close()
-
 	before := mailindex.RecordReads()
 	rereads := testutil.ToFloat64(metricChainReread)
 	if _, ok := reader.EnvelopeText(m); !ok {
 		t.Fatal("the envelope was not built from the cached headers")
 	}
+	// The write is deferred to Close, and Close is where the cost was: the
+	// count is taken after it, or the row never reaches the seam.
+	reader.Close()
 	if reads := mailindex.RecordReads() - before; reads != 1 {
 		t.Errorf("one miss cost %v chain reads, want 1", reads)
 	}

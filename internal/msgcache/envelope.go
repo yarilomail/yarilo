@@ -366,6 +366,11 @@ func (fc *Handle) flush() {
 		// read of that record a mismatch.
 		meta := p.meta
 		meta.CacheOffset, meta.CacheCRC = stamp.Offset, stamp.CRC
+		// Handed over when the head has not moved: otherwise the second window
+		// re-reads every chain it writes to, which is where the cost was (#1714).
+		if chain, ok := fc.chain(p.UID()); ok && stamp.Offset == p.meta.CacheOffset {
+			second.keepChain(p.UID(), chain)
+		}
 		second.storeField(&meta, p.fieldID, p.data)
 	}
 	second.Close()
@@ -385,9 +390,8 @@ func (fc *Handle) head(m *mailbox.MessageMeta) uint32 {
 	return m.CacheOffset
 }
 
-// read returns the merged field values for a message, or nil on a miss. What
-// it read is kept: a store follows a miss, and reading the chain a second time
-// to checksum it cost a fifth of the backend's CPU (#1714).
+// read returns the merged field values, or nil on a miss, and keeps them: a
+// store follows a miss, and reading twice cost a fifth of the CPU (#1714).
 func (fc *Handle) read(m *mailbox.MessageMeta) map[uint32][]byte {
 	if fc == nil {
 		return nil
@@ -417,9 +421,8 @@ func (fc *Handle) read(m *mailbox.MessageMeta) map[uint32][]byte {
 	return vals
 }
 
-// startFreshChain drops a record this handle would not serve: the next append
-// must not hang off it, or the checksum we stamp covers less than a reader
-// merges and every later read is a mismatch (#1714).
+// startFreshChain drops a record this handle would not serve: an append onto
+// it would checksum less than a reader merges, a miss for ever (#1714).
 func (fc *Handle) startFreshChain(m *mailbox.MessageMeta) {
 	fc.keepChain(m.UID, nil)
 	fc.stamps[m.UID] = mailbox.CacheStamp{}
@@ -481,16 +484,18 @@ func (fc *Handle) storeField(m *mailbox.MessageMeta, fieldID uint32, data []byte
 	fc.stamps[m.UID] = mailbox.CacheStamp{Offset: off, CRC: mailindex.RecordCRC(fc.merged[m.UID])}
 }
 
-// remember adds a field to what the handle knows the record holds and
-// checksums it from memory, as the reference's neighbour does over the buffer
-// it just wrote (cyrus message.c:2170).
+// remember adds a field to the chain the handle knows and checksums it from
+// memory, over the buffer just written (cyrus message.c:2170).
 func (fc *Handle) remember(m *mailbox.MessageMeta, fieldID uint32, data []byte) {
 	vals, ok := fc.chain(m.UID)
 	if !ok {
 		// A store with no read before it: the chain has to come from disk
 		// once, and the counter says how often that happens (#1714).
 		metricChainReread.Inc()
-		fc.read(m)
+		vals = fc.read(m)
+		if _, kept := fc.chain(m.UID); !kept {
+			fc.keepChain(m.UID, vals) // a reader that kept nothing still gets a map
+		}
 		vals, _ = fc.chain(m.UID)
 	}
 	vals[fieldID] = data
