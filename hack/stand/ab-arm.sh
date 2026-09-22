@@ -278,11 +278,22 @@ dict_delta() {
 # The file name carries the window asked for, not the sample seconds -- those
 # are inside the profile, and naming them here would be a promise this script
 # cannot keep without reading the file back.
-block_profile() { pprof_capture block "$1" "${2:-40}"; }
+# A forward that never came up is the flake this retries: status 2 is that
+# and only that, so a genuinely unprofilable pod still stops the arm.
+retry_capture() {
+  local kind="$1" label="$2" secs="$3" rc
+  pprof_capture "$kind" "$label" "$secs" && return 0
+  rc=$?
+  [ "$rc" = 2 ] || return "$rc"
+  echo "ab-arm: the $kind forward did not come up; taking it once more" >&2
+  pprof_capture "$kind" "$label" "$secs"
+}
+
+block_profile() { retry_capture block "$1" "${2:-40}"; }
 
 # cpu_profile is the same capture against the CPU endpoint, which needs no
 # overlay: pprof is on in the sandbox values with the block rate at zero.
-cpu_profile() { pprof_capture profile "$1" "${2:-40}"; }
+cpu_profile() { retry_capture profile "$1" "${2:-40}"; }
 
 pprof_capture() {
   local kind="$1" label="$2" secs="${3:-40}" pod port=18080 pid pids=() files=() rc=0
@@ -304,7 +315,7 @@ pprof_capture() {
       if [ "$(date +%s)" -ge "$deadline" ]; then
         echo "ab-arm: the forward to $pod on $port never came up" >&2
         for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null || true; done
-        return 1
+        return 2
       fi
       sleep 1
     done
