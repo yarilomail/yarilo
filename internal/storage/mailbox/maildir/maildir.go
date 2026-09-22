@@ -308,12 +308,22 @@ func (c *folderCache) guidOf(base string) ([16]byte, bool) {
 // dirEntries returns the cached directory listing when the directory has not
 // moved, and otherwise records the one the caller read.
 func (c *folderCache) dirEntries(mtime time.Time) ([]os.DirEntry, bool) {
+	entries, ok, _ := c.dirEntriesWhy(mtime)
+	return entries, ok
+}
+
+// dirEntriesWhy is dirEntries with the reason a miss happened, which is the
+// number that says whether a listing survives between two commands (#1875).
+func (c *folderCache) dirEntriesWhy(mtime time.Time) ([]os.DirEntry, bool, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.entries != nil && mtime.Equal(c.dirMtime) {
-		return c.entries, true
+	if c.entries == nil {
+		return nil, false, "no-listing"
 	}
-	return nil, false
+	if !mtime.Equal(c.dirMtime) {
+		return nil, false, "stale-mtime"
+	}
+	return c.entries, true, ""
 }
 
 // dirSettleWindow is the resolution mtime is kept at.
@@ -893,7 +903,10 @@ func (u *userMailbox) removeFile(folder, filename string, held bool) error {
 	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
+	// The removal's own lookup: named apart from a FETCH's, because a folder
+	// where removals dominate is a different picture (#1875).
 	u.folderCacheFor(folder).invalidateDirEntries()
+	metricDirRead.WithLabelValues("remove").Inc()
 	current, cerr := u.currentName(folder, maildirBase(filename))
 	if cerr != nil || current == filename {
 		u.reportRemoveMiss(folder, filename, current, cerr)
@@ -948,6 +961,7 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 	entries, cached := c.dirEntries(dirFi.ModTime())
 	if !cached {
 		var err error
+		metricDirRead.WithLabelValues("scan").Inc()
 		entries, err = os.ReadDir(dir)
 		if err != nil {
 			return nil, err
@@ -1764,6 +1778,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	if kept, keptGUIDs, at, ok := u.folderCacheFor(folder).snapshotForAppend(stampOf(fi)); ok && appendedAt(f, at) {
 		m, guids, from = kept, keptGUIDs, at
 		listAppendReads.Add(1)
+		metricUIDListRead.WithLabelValues("tail").Inc()
 	}
 	if _, err := f.Seek(from, io.SeekStart); err != nil {
 		return nil, err
@@ -1771,6 +1786,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	if m == nil {
 		m = make(map[string]uint32)
 		listReads.Add(1)
+		metricUIDListRead.WithLabelValues("whole").Inc()
 	}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

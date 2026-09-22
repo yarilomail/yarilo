@@ -62,3 +62,22 @@ const (
 	lockSiteMigrateNames   = "migrate-names"   // the pass that puts records in the list
 	lockSiteRename         = "rename"          // a folder rename, both locks
 )
+
+// Where a listing's cost comes from: the uid list, read whole or by its tail,
+// and cur/, by whoever asked for it (#1875).
+var metricUIDListRead = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_uidlist_read_total",
+	Help: "Reads of a folder's uid list, by how much was parsed: whole is every row, tail is only the rows appended since the last read.",
+}, []string{"mode"})
+
+var metricDirRead = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_dir_read_total",
+	Help: "Reads of a folder's cur/ off disk, by what asked for it: current-name is a record being named, scan is a walk, remove is an unlink checking what it took.",
+}, []string{"reason"})
+
+// Why a name lookup could not use the cached listing: one read per login and
+// one per FETCH are otherwise the same number (#1875).
+var metricListingMiss = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_listing_miss_total",
+	Help: "Name lookups that could not use the cached listing, by why: no-listing is nothing cached yet, stale-mtime is a directory that changed under it.",
+}, []string{"reason"})
