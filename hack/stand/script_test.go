@@ -229,3 +229,37 @@ func TestEveryHelperIsDefinedBeforeItIsCalled(t *testing.T) {
 		}
 	}
 }
+
+// A definition inside a branch exists only when that branch runs: the carried
+// arm skipped the wipe and lost two helpers defined between its steps.
+func TestNoHelperIsDefinedInsideABranch(t *testing.T) {
+	def := regexp.MustCompile(`^([a-z_][a-z0-9_]*)\(\)\s*\{`)
+	depth, inFunc := 0, false
+	for i, line := range strings.Split(armSource(t), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if def.MatchString(line) {
+			if depth > 0 {
+				t.Errorf("line %d defines %s inside a branch, so an arm that takes the other one has no such helper",
+					i+1, strings.TrimSuffix(trimmed, "() {"))
+			}
+			inFunc = true
+			continue
+		}
+		if inFunc {
+			if line == "}" {
+				inFunc = false
+			}
+			continue
+		}
+		// Only top-level control counts: what is inside a function travels
+		// with it.
+		switch {
+		case strings.HasPrefix(trimmed, "if ") || trimmed == "if", strings.HasPrefix(trimmed, "for "), strings.HasPrefix(trimmed, "while "), strings.HasPrefix(trimmed, "case "):
+			depth++
+		case trimmed == "fi" || trimmed == "done" || trimmed == "esac":
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+}

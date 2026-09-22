@@ -407,6 +407,37 @@ type_domain() {
   esac
 }
 
+# The start as a number, not as a step that ran: a mailbox left behind moves
+# throughput further than anything under test, and an arm that starts bigger
+# than the one before it is not a comparison (#1875).
+start_inventory() {
+  local pod f=0 k=0 out
+  pod=$(first_pod backend)
+  for t in mdbox maildir sdbox; do
+    set -- $(type_domain "$t")
+    out=$(kube exec "$pod" -c yarilo-imap -- sh -c "
+      f=0; k=0
+      for n in \$(seq $2 $3); do
+        d=\"/var/mail/vhosts/$1/u\${n}@$1\"
+        [ -d \"\$d\" ] || continue
+        f=\$((f+\$(find \"\$d\" -type f 2>/dev/null | wc -l)))
+        k=\$((k+\$(du -sk \"\$d\" 2>/dev/null | cut -f1)))
+      done
+      echo \"\$f \$k\"" 2>/dev/null)
+    set -- $out
+    f=$((f + ${1:-0}))
+    k=$((k + ${2:-0}))
+  done
+  echo "files=$f du_kb=$k"
+}
+# probe_inventory counts the one mailbox the seed itself fills.
+probe_inventory() {
+  local pod
+  pod=$(first_pod backend)
+  kube exec "$pod" -c yarilo-imap -- sh -c '
+    d="/var/mail/vhosts/'"$MDBOX_DOMAIN"'/over@'"$MDBOX_DOMAIN"'"
+    echo "files=$(find "$d" -type f 2>/dev/null | wc -l) du_kb=$(du -sk "$d" 2>/dev/null | cut -f1)"' 2>/dev/null
+}
 if [ "$KEEP_STORE" = "1" ]; then
   step "carry"
   # Nothing is emptied, seeded or filled: a wipe would remove the very
@@ -441,38 +472,7 @@ for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut 
   done
 done
 
-# The start as a number, not as a step that ran: a mailbox left behind moves
-# throughput further than anything under test, and an arm that starts bigger
-# than the one before it is not a comparison (#1875).
-start_inventory() {
-  local pod f=0 k=0 out
-  pod=$(first_pod backend)
-  for t in mdbox maildir sdbox; do
-    set -- $(type_domain "$t")
-    out=$(kube exec "$pod" -c yarilo-imap -- sh -c "
-      f=0; k=0
-      for n in \$(seq $2 $3); do
-        d=\"/var/mail/vhosts/$1/u\${n}@$1\"
-        [ -d \"\$d\" ] || continue
-        f=\$((f+\$(find \"\$d\" -type f 2>/dev/null | wc -l)))
-        k=\$((k+\$(du -sk \"\$d\" 2>/dev/null | cut -f1)))
-      done
-      echo \"\$f \$k\"" 2>/dev/null)
-    set -- $out
-    f=$((f + ${1:-0}))
-    k=$((k + ${2:-0}))
-  done
-  echo "files=$f du_kb=$k"
-}
 
-# probe_inventory counts the one mailbox the seed itself fills.
-probe_inventory() {
-  local pod
-  pod=$(first_pod backend)
-  kube exec "$pod" -c yarilo-imap -- sh -c '
-    d="/var/mail/vhosts/'"$MDBOX_DOMAIN"'/over@'"$MDBOX_DOMAIN"'"
-    echo "files=$(find "$d" -type f 2>/dev/null | wc -l) du_kb=$(du -sk "$d" 2>/dev/null | cut -f1)"' 2>/dev/null
-}
 
 left=$(start_inventory)
 echo "-- start after wipe: ${left:-unreadable}" | tee "$OUT/start-$ARM-wiped.txt"
