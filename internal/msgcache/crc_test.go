@@ -37,8 +37,6 @@ func TestABentRecordIsARecomputeNotAnAnswer(t *testing.T) {
 	if fresh == nil {
 		t.Fatal("cache unavailable")
 	}
-	defer fresh.Close()
-
 	was := testutil.ToFloat64(metricCRCMismatch)
 	if env := fresh.Envelope(&bent); env != nil {
 		t.Errorf("a record the checksum rejects was served: %+v", env)
@@ -46,7 +44,15 @@ func TestABentRecordIsARecomputeNotAnAnswer(t *testing.T) {
 	if now := testutil.ToFloat64(metricCRCMismatch); now != was+1 {
 		t.Errorf("mismatch counter = %v, want %v", now, was+1)
 	}
-	if env := fresh.Envelope(m); env == nil || env.Subject != "Plan" {
+	fresh.Close() // the folder's lock is exclusive; the control opens after it
+	// A second handle, because one handle keeps what it read: the control is
+	// that the record itself is sound, not that the miss is forgotten.
+	control := Open(idx, f.ID, Options{User: "u", Folder: f.Name})
+	if control == nil {
+		t.Fatal("cache unavailable")
+	}
+	defer control.Close()
+	if env := control.Envelope(m); env == nil || env.Subject != "Plan" {
 		t.Error("the same record read with its own checksum was refused too")
 	}
 }
