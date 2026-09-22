@@ -368,8 +368,13 @@ func (fc *Handle) flush() {
 		meta.CacheOffset, meta.CacheCRC = stamp.Offset, stamp.CRC
 		// Handed over when the head has not moved: otherwise the second window
 		// re-reads every chain it writes to, which is where the cost was (#1714).
-		if chain, ok := fc.chain(p.UID()); ok && stamp.Offset == p.meta.CacheOffset {
-			second.keepChain(p.UID(), chain)
+		// Once per message: a second seeding would throw away what this window
+		// has already appended for it, and the checksum would cover less than
+		// the chain holds.
+		if _, seeded := second.chain(p.UID()); !seeded {
+			if chain, ok := fc.chain(p.UID()); ok && stamp.Offset == p.meta.CacheOffset {
+				second.keepChain(p.UID(), chain)
+			}
 		}
 		second.storeField(&meta, p.fieldID, p.data)
 	}
