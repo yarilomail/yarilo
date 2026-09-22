@@ -187,11 +187,8 @@ fi
 # right start for a question about the login path alone.
 FILL="${YARILO_ARM_FILL:-200}"
 
-# KEEP_STORE carries the previous arm's mailboxes in. It answers ONE question:
-# what a first listing over older state costs, read as run 1 against run 2 of
-# the same arm (YARILO_ARM_REPEATS). It is not a throughput comparison with the
-# arm before -- that arm's own runs delivered mail, so a carried arm always
-# measures a bigger store (#1714).
+# KEEP_STORE answers one question: run 1 against run 2 of the same arm. It is
+# not a throughput comparison with the arm before (README.md, #1714).
 KEEP_STORE="${YARILO_ARM_KEEP_STORE:-0}"
 
 # REPEATS runs each type more than once in one arm, so the first run can be

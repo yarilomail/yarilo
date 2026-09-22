@@ -283,25 +283,33 @@ func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 	}
 }
 
-// A carried arm measures a bigger store than the arm before it, because that
-// arm's runs delivered mail: the file has to say so, or the next window reads
-// a size difference as an image difference (#1714).
-func TestTheCarriedModeSaysWhatItIsFor(t *testing.T) {
-	src := armSource(t)
-	i := strings.Index(src, "KEEP_STORE=")
-	if i < 0 {
-		t.Fatal("the carried mode is gone")
+// The method is read in the README, so that is where the carried mode's
+// limits have to be: a window is set up from it, not from the shell (#1714).
+func TestTheReadmeSaysWhatTheCarriedModeIsFor(t *testing.T) {
+	raw, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatalf("the stand has no README: %v", err)
 	}
-	doc := src[max(0, i-400):i]
-	for _, want := range []string{"first listing", "not a throughput comparison", "bigger store"} {
+	doc := string(raw)
+	for _, want := range []string{
+		"YARILO_ARM_KEEP_STORE",
+		"first listing",
+		"not** a throughput comparison",
+		"bigger store",
+		"two arms that both wipe and fill",
+	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("the carried mode does not say %q, so it reads as a general A/B", want)
+			t.Errorf("the README does not say %q, so the next window can read the mode as a general A/B", want)
 		}
+	}
+	// And the script points at it rather than repeating it.
+	if !strings.Contains(armSource(t), "README.md") {
+		t.Error("the arm does not point at the README")
 	}
 }
 
-// One run per type cannot show a cold listing: the first run is the cold one
-// and there is nothing to compare it with.
+// One run per type cannot show a cold listing: there is nothing to compare
+// the first run with.
 func TestTheArmCanRepeatARunPerType(t *testing.T) {
 	src := armSource(t)
 	if !strings.Contains(src, `REPEATS="${YARILO_ARM_REPEATS:-1}"`) {
