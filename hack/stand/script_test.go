@@ -188,9 +188,8 @@ func TestTheArmRefusesAnUnknownOverlay(t *testing.T) {
 	}
 }
 
-// bash resolves a function when the line runs, not when the file is read, so a
-// helper defined below its first top-level caller is "command not found" --
-// which cost an arm its half of a window.
+// bash resolves a function when the line runs: a helper defined below its
+// first top-level caller is "command not found", and cost win406 an arm.
 func TestEveryHelperIsDefinedBeforeItIsCalled(t *testing.T) {
 	src := armSource(t)
 	lines := strings.Split(src, "\n")
