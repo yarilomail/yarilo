@@ -174,6 +174,11 @@ fi
 # right start for a question about the login path alone.
 FILL="${YARILO_ARM_FILL:-200}"
 
+# KEEP_STORE carries the previous arm's mailboxes into this one, for the
+# question a wiped arm cannot ask: what the first listing costs over state an
+# older version wrote (#1714).
+KEEP_STORE="${YARILO_ARM_KEEP_STORE:-0}"
+
 # dict_ops prints the dict service's operation counters, one per line. Read
 # either side of a run, the difference is what that run asked of the service.
 dict_ops() {
@@ -219,7 +224,7 @@ backend_counters() {
         # read is retried rather than answered from the pods that did reply.
         [ -n "$page" ] || { total=""; break; }
         total+=$(printf '%s\n' "$page" |
-          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{)" || true)
+          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{|index_cache_record_crc_mismatch_total|mailbox_message_opened_total\{|fileindex_journal_write_failed_total\{|mailbox_write_failed_total\{)" || true)
         total+=$'\n'
       done
       [ -n "${total//[$'\n']/}" ] && break
@@ -261,15 +266,21 @@ dict_delta() {
 # The file name carries the window asked for, not the sample seconds -- those
 # are inside the profile, and naming them here would be a promise this script
 # cannot keep without reading the file back.
-block_profile() {
-  local label="$1" secs="${2:-40}" pod port=18080 pid pids=() files=() rc=0
+block_profile() { pprof_capture block "$1" "${2:-40}"; }
+
+# cpu_profile is the same capture against the CPU endpoint, which needs no
+# overlay: pprof is on in the sandbox values with the block rate at zero.
+cpu_profile() { pprof_capture profile "$1" "${2:-40}"; }
+
+pprof_capture() {
+  local kind="$1" label="$2" secs="${3:-40}" pod port=18080 pid pids=() files=() rc=0
   local pods
   pods=$(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2)
   [ -n "$pods" ] || { echo "ab-arm: no backend pod to profile" >&2; return 1; }
   for pod in $pods; do
     kube port-forward "pod/$pod" "$port:8080" >/dev/null 2>&1 &
     pids+=($!)
-    files+=("$OUT/block-$label-$pod-req${secs}s.pprof")
+    files+=("$OUT/$kind-$label-$pod-req${secs}s.pprof")
     port=$((port + 1))
   done
   # Ready, not slept for: a fixed pause captured one pod and missed the other,
@@ -291,8 +302,8 @@ block_profile() {
   port=18080
   local curls=()
   for pod in $pods; do
-    curl -fsS -o "$OUT/block-$label-$pod-req${secs}s.pprof" \
-      "http://127.0.0.1:$port/debug/pprof/block?seconds=$secs" &
+    curl -fsS -o "$OUT/$kind-$label-$pod-req${secs}s.pprof" \
+      "http://127.0.0.1:$port/debug/pprof/$kind?seconds=$secs" &
     curls+=($!)
     port=$((port + 1))
   done
@@ -307,7 +318,7 @@ block_profile() {
   local f
   for f in ${files[@]+"${files[@]}"}; do
     if [ ! -s "$f" ]; then
-      echo "ab-arm: the block profile for $(basename "$f") is empty; that pod was not profiled" >&2
+      echo "ab-arm: the $kind profile for $(basename "$f") is empty; that pod was not profiled" >&2
       rc=1
     fi
   done
@@ -367,6 +378,31 @@ type_domain() {
   esac
 }
 
+if [ "$KEEP_STORE" = "1" ]; then
+  step "carry"
+  # Nothing is emptied, seeded or filled: this arm answers what the first
+  # listing over the previous arm's state costs, and a wipe would remove the
+  # question (#1714).
+  carried=$(message_inventory)
+  echo "-- start carried over: ${carried:-unreadable}" | tee "$OUT/start-$ARM-carried.txt"
+  case "$carried" in
+    "messages=0"|"") echo "ab-arm: nothing was carried over (${carried:-unreadable}); this arm has nothing to list over" >&2; exit 1 ;;
+  esac
+  # The arm before must have ended on this number, or the two arms did not
+  # start from the same place and the comparison is not one.
+  if [ -f "$OUT/messages-last-arm.txt" ]; then
+    before=$(cat "$OUT/messages-last-arm.txt")
+    [ "$before" = "$carried" ] || {
+      echo "ab-arm: the arm before left $before and this one starts from $carried" >&2
+      exit 1
+    }
+    echo "-- same start as the arm before: $carried"
+  else
+    echo "ab-arm: no arm recorded its messages, so a carried start cannot be proven" >&2
+    exit 1
+  fi
+else
+
 step "wipe"
 echo "-- same start: emptying every type's accounts"
 for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
@@ -399,6 +435,24 @@ start_inventory() {
     k=$((k + ${2:-0}))
   done
   echo "files=$f du_kb=$k"
+}
+
+# message_inventory is the start as the INDEX sees it: a carried-over arm is
+# proven by the same message count as the arm before it, and files on disk are
+# not that number -- a cache rewritten in place changes them (#1714).
+message_inventory() {
+  local pod total=0 n out
+  pod=$(first_pod backend-api)
+  [ -n "$pod" ] || pod=$(first_pod backend)
+  for t in mdbox maildir sdbox; do
+    set -- $(type_domain "$t")
+    for n in $(seq "$2" "$3"); do
+      out=$(kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "u${n}@$1" 2>/dev/null |
+        awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }')
+      total=$((total + ${out:-0}))
+    done
+  done
+  echo "messages=$total"
 }
 
 # probe_inventory counts the one mailbox the seed itself fills.
@@ -435,9 +489,14 @@ if [ "$FILL" != "0" ]; then
       tee -a "$OUT/fill-$ARM.txt"
   done
 fi
+fi
 
-seeded=$(start_inventory)
-echo "-- start after seed: ${seeded:-unreadable}" | tee "$OUT/start-$ARM-seeded.txt"
+if [ "$KEEP_STORE" = "1" ]; then
+  seeded="$carried"
+else
+  seeded=$(start_inventory)
+  echo "-- start after seed: ${seeded:-unreadable}" | tee "$OUT/start-$ARM-seeded.txt"
+fi
 # u1-150 are empty at the start by design: the seed puts them in the database
 # and imaptest fills them during the run. What the seed does deliver is the
 # over-quota probe, so that is what proves the inventory reads a real volume
@@ -490,9 +549,13 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   # Taken on every run, not only under the profiling overlay: these are the
   # numbers a change to the open path is judged by (#1875).
   backend_counters > "$OUT/backend-$ARM-$name-before.txt" || exit 1
+  # The CPU profile is taken on every arm: what a read spends on the checksum
+  # is a share of this file, and a share needs no second arm to compare with.
+  ( sleep 20; cpu_profile "$ARM-$name" 40 ) &
+  cpucapture=$!
   if [ "$BLOCKPROFILE" = "1" ]; then
     dict_ops > "$OUT/dict-$ARM-$name-before.txt" || exit 1
-    ( sleep 20; block_profile "$ARM-$name" 40 ) &
+    ( sleep 70; block_profile "$ARM-$name" 40 ) &
     capture=$!
   fi
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" imaptest "$manifest" "$OUT/ab-$ARM-$name.log" 900
@@ -500,6 +563,12 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
   backend_counters > "$OUT/backend-$ARM-$name-after.txt" || exit 1
   dict_delta "$OUT/backend-$ARM-$name-before.txt" "$OUT/backend-$ARM-$name-after.txt" \
     "$OUT/backend-$ARM-$name-delta.txt"
+  # A CPU profile that did not land is an arm with no read cost in it, which
+  # is the number this window is for.
+  if ! wait "$cpucapture"; then
+    echo "ab-arm: the CPU capture failed for $name; this arm cannot price a read" >&2
+    exit 1
+  fi
   if [ "$BLOCKPROFILE" = "1" ]; then
     if ! wait "$capture"; then
       echo "ab-arm: the block capture failed for $name; this arm has no latency number" >&2
@@ -584,9 +653,24 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
             if (logins + 0 > 0) printf " scanned_per_login=%.3f partial_per_login=%.3f folders_per_login=%.3f",
               scanned / logins, partial / logins, opened / logins }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
+  # Every counter this arm collects has a line, or it is a number nobody reads
+  # (#1964). Zero is the expected reading for three of these four.
+  echo "$ARM $name $(awk -v logins="${logins:-0}" '
+      $1 == "index_cache_record_crc_mismatch_total" { crc += $2 }
+      $1 ~ /^mailbox_message_opened_total\{/ { opened += $2 }
+      $1 ~ /^fileindex_journal_write_failed_total\{/ { journal += $2 }
+      $1 ~ /^mailbox_write_failed_total\{/ { writes += $2 }
+      END { printf "cache: crc_mismatch=%d bodies_opened=%d journal_write_failed=%d store_write_failed=%d",
+              crc, opened, journal, writes
+            if (logins + 0 > 0) printf " opens_per_login=%.3f", opened / logins }
+    ' "$OUT/backend-$ARM-$name-delta.txt")"
 done
 
 kube exec "$authpod" -- sh -c \
   'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep -E "^yarilo_auth_request_seconds_(bucket|count|sum)\{.*verb=\"AUTH\""' \
   > "$OUT/auth-$ARM-after.txt"
+
+# What the next arm must find if it carries this state over.
+message_inventory > "$OUT/messages-last-arm.txt"
+echo "-- this arm ends on $(cat "$OUT/messages-last-arm.txt")" | tee "$OUT/messages-$ARM-end.txt"
 echo "== arm $ARM done"
