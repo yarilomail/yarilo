@@ -263,3 +263,23 @@ func TestNoHelperIsDefinedInsideABranch(t *testing.T) {
 		}
 	}
 }
+
+// A port-forward that does not come up is a flake, and it cost an arm its
+// second half: it is retried once, while a pod that cannot be profiled still
+// stops the arm.
+func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
+	src := armSource(t)
+	if !strings.Contains(src, "retry_capture") {
+		t.Fatal("no retry around the capture; one flaky forward ends an arm")
+	}
+	for _, kind := range []string{"block_profile", "cpu_profile"} {
+		if !regexp.MustCompile(kind + `\(\) \{ retry_capture`).MatchString(src) {
+			t.Errorf("%s does not go through the retry", kind)
+		}
+	}
+	// The retry must tell the two causes apart, or a pod with no pprof at all
+	// is tried twice and still fails the arm twice as slowly.
+	if !strings.Contains(src, `[ "$rc" = 2 ] || return "$rc"`) {
+		t.Error("the retry does not distinguish a forward that never came up from a capture that failed")
+	}
+}
