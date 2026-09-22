@@ -264,9 +264,8 @@ func TestNoHelperIsDefinedInsideABranch(t *testing.T) {
 	}
 }
 
-// A port-forward that does not come up is a flake, and it cost an arm its
-// second half: it is retried once, while a pod that cannot be profiled still
-// stops the arm.
+// A forward that never came up is a flake and is retried once; a pod that
+// cannot be profiled still stops the arm.
 func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 	src := armSource(t)
 	if !strings.Contains(src, "retry_capture") {
