@@ -8,9 +8,8 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 )
 
-// A FETCH that misses reads the message's chain once: the store that follows
-// checksums from what the read already returned. Reading it again to checksum
-// it cost a fifth of the backend's CPU on the stand (#1714).
+// A miss reads the chain once and the store that follows checksums from it:
+// reading twice cost a fifth of the backend's CPU on the stand (#1714).
 func TestAMissReadsTheChainOnce(t *testing.T) {
 	idx, f, m := compatFolder(t)
 	hdr := craftedHeader(t)
@@ -68,9 +67,8 @@ func TestAStoreWithoutAReadIsCounted(t *testing.T) {
 	}
 }
 
-// The deferred write is where the cost was, so the two cases are asserted
-// through it: a head that has not moved is written without a read, and one
-// that moved under the window is read once because our view of it is stale.
+// Through the deferred write, where the cost was: a head that stood still is
+// written without a read, one that moved is read once (our view is stale).
 func TestTheDeferredWriteReadsOnlyWhenTheHeadMoved(t *testing.T) {
 	tests := []struct {
 		name        string
