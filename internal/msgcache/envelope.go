@@ -385,30 +385,68 @@ func (fc *Handle) head(m *mailbox.MessageMeta) uint32 {
 	return m.CacheOffset
 }
 
-// read returns the merged field values for a message, or nil on a miss.
+// read returns the merged field values for a message, or nil on a miss. What
+// it read is kept: a store follows a miss, and reading the chain a second time
+// to checksum it cost a fifth of the backend's CPU (#1714).
 func (fc *Handle) read(m *mailbox.MessageMeta) map[uint32][]byte {
 	if fc == nil {
 		return nil
 	}
+	if vals, ok := fc.chain(m.UID); ok {
+		return vals
+	}
 	off := fc.head(m)
 	if off == 0 {
-		return nil // nothing cached for this message
-	}
-	if vals, ok := fc.merged[m.UID]; ok {
-		return vals // what this handle wrote, already checked
+		fc.keepChain(m.UID, nil) // nothing cached, and nothing to re-read for
+		return nil
 	}
 	vals, err := fc.file.ReadRecord(off)
 	if err != nil {
-		return nil // a bad chain is a miss; the re-parse overwrites the head
+		fc.startFreshChain(m) // a bad chain is a miss; nothing of it is kept
+		return nil
 	}
 	// The checksum before the fields (cyrus mailbox.c:705-775): a record that
 	// hashes to something else is another message's, field by field.
 	if crc := fc.recordCRCFor(m); crc != 0 && mailindex.RecordCRC(vals) != crc {
 		metricCRCMismatch.Inc()
 		slog.Debug("msgcache: cache record checksum mismatch; re-reading the message", "uid", m.UID)
+		fc.startFreshChain(m)
 		return nil
 	}
+	fc.keepChain(m.UID, vals)
 	return vals
+}
+
+// startFreshChain drops a record this handle would not serve: the next append
+// must not hang off it, or the checksum we stamp covers less than a reader
+// merges and every later read is a mismatch (#1714).
+func (fc *Handle) startFreshChain(m *mailbox.MessageMeta) {
+	fc.keepChain(m.UID, nil)
+	fc.stamps[m.UID] = mailbox.CacheStamp{}
+}
+
+// chain is what this handle has read or written for a message; the bool says
+// whether the chain is known at all, so an empty one is not a second read.
+func (fc *Handle) chain(uid uint32) (map[uint32][]byte, bool) {
+	if fc.merged == nil {
+		return nil, false
+	}
+	vals, ok := fc.merged[uid]
+	return vals, ok
+}
+
+// keepChain records what a message's record holds, copied: the values belong
+// to the reader that produced them.
+func (fc *Handle) keepChain(uid uint32, vals map[uint32][]byte) {
+	if fc.merged == nil {
+		fc.merged = make(map[uint32]map[uint32][]byte)
+		fc.crcs = make(map[uint32]uint32)
+	}
+	kept := make(map[uint32][]byte, len(vals)+len(referenceFields))
+	for id, v := range vals {
+		kept[id] = v
+	}
+	fc.merged[uid] = kept
 }
 
 // recordCRCFor is the checksum the index holds for a message, or zero when the
@@ -443,20 +481,17 @@ func (fc *Handle) storeField(m *mailbox.MessageMeta, fieldID uint32, data []byte
 	fc.stamps[m.UID] = mailbox.CacheStamp{Offset: off, CRC: mailindex.RecordCRC(fc.merged[m.UID])}
 }
 
-// remember keeps what the record now holds, seeded from what was there before:
-// the checksum has to cover the whole chain, not the field just appended.
+// remember adds a field to what the handle knows the record holds and
+// checksums it from memory, as the reference's neighbour does over the buffer
+// it just wrote (cyrus message.c:2170).
 func (fc *Handle) remember(m *mailbox.MessageMeta, fieldID uint32, data []byte) {
-	if fc.merged == nil {
-		fc.merged = make(map[uint32]map[uint32][]byte)
-		fc.crcs = make(map[uint32]uint32)
-	}
-	vals, ok := fc.merged[m.UID]
+	vals, ok := fc.chain(m.UID)
 	if !ok {
-		vals = make(map[uint32][]byte, len(referenceFields))
-		for id, v := range fc.read(m) {
-			vals[id] = v
-		}
-		fc.merged[m.UID] = vals
+		// A store with no read before it: the chain has to come from disk
+		// once, and the counter says how often that happens (#1714).
+		metricChainReread.Inc()
+		fc.read(m)
+		vals, _ = fc.chain(m.UID)
 	}
 	vals[fieldID] = data
 	fc.crcs[m.UID] = mailindex.RecordCRC(vals)

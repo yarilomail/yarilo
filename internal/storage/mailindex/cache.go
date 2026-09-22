@@ -519,6 +519,7 @@ func (c *CacheFile) AppendRecord(prevOffset uint32, values []CacheFieldValue) (u
 // ReadRecord returns the merged field values reachable from offset,
 // following the prev_offset chain. The newest record wins per field.
 func (c *CacheFile) ReadRecord(offset uint32) (map[uint32][]byte, error) {
+	metricRecordReads.Inc()
 	out := make(map[uint32][]byte)
 	le := binary.LittleEndian
 	seen := 0
