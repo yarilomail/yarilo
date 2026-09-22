@@ -282,3 +282,36 @@ func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 		t.Error("the retry does not distinguish a forward that never came up from a capture that failed")
 	}
 }
+
+// A carried arm measures a bigger store than the arm before it, because that
+// arm's runs delivered mail: the file has to say so, or the next window reads
+// a size difference as an image difference (#1714).
+func TestTheCarriedModeSaysWhatItIsFor(t *testing.T) {
+	src := armSource(t)
+	i := strings.Index(src, "KEEP_STORE=")
+	if i < 0 {
+		t.Fatal("the carried mode is gone")
+	}
+	doc := src[max(0, i-400):i]
+	for _, want := range []string{"first listing", "not a throughput comparison", "bigger store"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("the carried mode does not say %q, so it reads as a general A/B", want)
+		}
+	}
+}
+
+// One run per type cannot show a cold listing: the first run is the cold one
+// and there is nothing to compare it with.
+func TestTheArmCanRepeatARunPerType(t *testing.T) {
+	src := armSource(t)
+	if !strings.Contains(src, `REPEATS="${YARILO_ARM_REPEATS:-1}"`) {
+		t.Fatal("an arm cannot repeat a run, so cold and warm cannot be told apart")
+	}
+	if !strings.Contains(src, `name="$type-run$run"`) {
+		t.Error("the runs of one type share a name, so their counters are one number")
+	}
+	// Default stays one run, or every window pays three times over.
+	if !strings.Contains(src, "YARILO_ARM_REPEATS:-1") {
+		t.Error("the default is not one run")
+	}
+}
