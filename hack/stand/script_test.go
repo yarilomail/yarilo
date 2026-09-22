@@ -187,3 +187,45 @@ func TestTheArmRefusesAnUnknownOverlay(t *testing.T) {
 		t.Error("an unknown overlay name does not stop the arm")
 	}
 }
+
+// bash resolves a function when the line runs: a helper defined below its
+// first top-level caller is "command not found", and cost win406 an arm.
+func TestEveryHelperIsDefinedBeforeItIsCalled(t *testing.T) {
+	src := armSource(t)
+	lines := strings.Split(src, "\n")
+	def := regexp.MustCompile(`^([a-z_][a-z0-9_]*)\(\)\s*\{`)
+
+	defined := map[string]int{}
+	for i, line := range lines {
+		if m := def.FindStringSubmatch(line); m != nil {
+			defined[m[1]] = i
+		}
+	}
+	if len(defined) == 0 {
+		t.Fatal("no helpers found, so this asserts nothing")
+	}
+
+	inFunc := false
+	for i, line := range lines {
+		if def.MatchString(line) {
+			inFunc = true
+			continue
+		}
+		if inFunc {
+			if line == "}" {
+				inFunc = false
+			}
+			continue
+		}
+		for name, at := range defined {
+			if at <= i {
+				continue
+			}
+			call := regexp.MustCompile(`(^|[^\w.-])` + regexp.QuoteMeta(name) + `($|[^\w.-])`)
+			if call.MatchString(line) && !strings.Contains(line, "#") {
+				t.Errorf("line %d calls %s, which is defined at line %d:\n  %s",
+					i+1, name, at+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}

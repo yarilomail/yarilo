@@ -380,6 +380,23 @@ MDBOX_DOMAIN="${YARILO_MDBOX_DOMAIN:-d00001.test}"
 MAILDIR_DOMAIN="${YARILO_MAILDIR_DOMAIN:-d00002.test}"
 SDBOX_DOMAIN="${YARILO_SDBOX_DOMAIN:-d00003.test}"
 
+# message_inventory is the start as the INDEX sees it: a cache rewritten in
+# place moves the file count while the mailbox is unchanged (#1714).
+message_inventory() {
+  local pod total=0 n out
+  pod=$(first_pod backend-api)
+  [ -n "$pod" ] || pod=$(first_pod backend)
+  for t in mdbox maildir sdbox; do
+    set -- $(type_domain "$t")
+    for n in $(seq "$2" "$3"); do
+      out=$(kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "u${n}@$1" 2>/dev/null |
+        awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }')
+      total=$((total + ${out:-0}))
+    done
+  done
+  echo "messages=$total"
+}
+
 # type → domain and the range that type's accounts live in.
 type_domain() {
   case "$1" in
@@ -446,23 +463,6 @@ start_inventory() {
     k=$((k + ${2:-0}))
   done
   echo "files=$f du_kb=$k"
-}
-
-# message_inventory is the start as the INDEX sees it: a cache rewritten in
-# place moves the file count while the mailbox is unchanged (#1714).
-message_inventory() {
-  local pod total=0 n out
-  pod=$(first_pod backend-api)
-  [ -n "$pod" ] || pod=$(first_pod backend)
-  for t in mdbox maildir sdbox; do
-    set -- $(type_domain "$t")
-    for n in $(seq "$2" "$3"); do
-      out=$(kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "u${n}@$1" 2>/dev/null |
-        awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }')
-      total=$((total + ${out:-0}))
-    done
-  done
-  echo "messages=$total"
 }
 
 # probe_inventory counts the one mailbox the seed itself fills.
