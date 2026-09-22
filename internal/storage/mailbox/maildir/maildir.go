@@ -181,6 +181,31 @@ func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
 	return nil, false
 }
 
+// snapshotForAppend answers when the file is the one the map was read from and
+// has only grown: the tail alone is parsed then (#1875).
+func (c *folderCache) snapshotForAppend(stamp listStamp) (map[string]uint32, map[string][16]byte, int64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.uidMap == nil || c.uidStamp.ino == 0 || c.uidStamp.ino != stamp.ino {
+		return nil, nil, 0, false
+	}
+	if stamp.size <= c.uidStamp.size {
+		return nil, nil, 0, false
+	}
+	uids := make(map[string]uint32, len(c.uidMap)+8)
+	for k, v := range c.uidMap {
+		uids[k] = v
+	}
+	var guids map[string][16]byte
+	if c.guidMap != nil {
+		guids = make(map[string][16]byte, len(c.guidMap))
+		for k, v := range c.guidMap {
+			guids[k] = v
+		}
+	}
+	return uids, guids, c.uidStamp.size, true
+}
+
 // addUID adds one row, but only to a map that is still the list it was loaded
 // from: a stale map gains a row and keeps claiming to be whole (#1739).
 func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID bool, stamp listStamp) {
@@ -323,6 +348,44 @@ func (c *folderCache) invalidateDir() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = nil
+}
+
+// renamedEntry is a cached entry under the name this process just gave it.
+type renamedEntry struct {
+	os.DirEntry
+	name string
+}
+
+func (e renamedEntry) Name() string { return e.name }
+
+// renameEntry puts our own rename into the listing and re-keys it: dropping it
+// costs a full read of cur/ on the next FETCH (#1875).
+func (c *folderCache) renameEntry(from, to string, mtime time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		return
+	}
+	// A fresh slice: dirEntries hands the old one out without this mutex.
+	kept := make([]os.DirEntry, 0, len(c.entries)+1)
+	var seen bool
+	for _, e := range c.entries {
+		switch e.Name() {
+		case from:
+			kept = append(kept, renamedEntry{DirEntry: e, name: to})
+			seen = true
+		case to:
+			// Already there: a rename that lands on a name the listing holds
+			// is the same file, not a second one.
+		default:
+			kept = append(kept, e)
+		}
+	}
+	if !seen {
+		c.entries, c.dirMtime = nil, time.Time{}
+		return
+	}
+	c.entries, c.dirMtime = kept, mtime
 }
 
 // forgetEntry drops one name from the cached listing and re-keys it to mtime.
@@ -1659,6 +1722,19 @@ func (u *userMailbox) openUIDList(folder string) (*os.File, os.FileInfo, error) 
 	return f, fi, nil
 }
 
+// appendedAt reports whether the byte before at ends a line, which is what
+// makes the rest of the file a whole number of rows (#1875).
+func appendedAt(f *os.File, at int64) bool {
+	if at <= 0 {
+		return false
+	}
+	var b [1]byte
+	if _, err := f.ReadAt(b[:], at-1); err != nil {
+		return false
+	}
+	return b[0] == '\n'
+}
+
 func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	// The stamp first, by one path walk: a hit must open nothing, and knowing
 	// whether another process changed the file needs the filesystem asked
@@ -1682,13 +1758,20 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 		u.debugListRead(folder, "cache", len(m), stampOf(fi))
 		return m, nil
 	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
+	// Only the rows appended since the last read: a large folder re-parsed the
+	// whole file for one new row (#1875).
+	m, guids, from := map[string]uint32(nil), map[string][16]byte(nil), int64(0)
+	if kept, keptGUIDs, at, ok := u.folderCacheFor(folder).snapshotForAppend(stampOf(fi)); ok && appendedAt(f, at) {
+		m, guids, from = kept, keptGUIDs, at
+		listAppendReads.Add(1)
+	}
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
 		return nil, err
 	}
-	listReads.Add(1)
-
-	m := make(map[string]uint32)
-	var guids map[string][16]byte
+	if m == nil {
+		m = make(map[string]uint32)
+		listReads.Add(1)
+	}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
@@ -1930,15 +2013,29 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 		if rerr := os.Rename(from, filepath.Join(dir, "cur", want)); rerr != nil {
 			return filename, fmt.Errorf("maildir/flags: rename %s: %w", filename, rerr)
 		}
-		if sub == "new" {
-			u.folderCacheFor(folder).invalidateDir()
-		}
+		u.afterFlagRename(folder, sub, filename, want)
 		return want, nil
 	}
 	// The file is not where the index says it is. Left to the reconcile pass,
 	// which is what notices a message that moved or went; failing here would
 	// turn a flag change into an error a client cannot act on.
 	return filename, nil
+}
+
+// afterFlagRename keeps the listing this process just changed. A file coming
+// out of new/ was never in it, so that one is an invalidation as before.
+func (u *userMailbox) afterFlagRename(folder, sub, from, to string) {
+	cache := u.folderCacheFor(folder)
+	if sub == "new" {
+		cache.invalidateDir()
+		return
+	}
+	fi, err := statPath(filepath.Join(u.folderPath(folder), "cur"))
+	if err != nil {
+		cache.invalidateDirEntries()
+		return
+	}
+	cache.renameEntry(from, to, fi.ModTime())
 }
 
 // renameWithFlags returns the filename with its ":2," info part replaced.

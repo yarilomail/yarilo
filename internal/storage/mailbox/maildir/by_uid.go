@@ -150,6 +150,10 @@ var listReads atomic.Int64
 // the list alone says nothing about how often the directory is walked (#1700).
 var dirReads atomic.Int64
 
+// listAppendReads counts the reads that parsed only the rows appended since
+// the last one: the whole point of item 1 is that these are the ordinary case.
+var listAppendReads atomic.Int64
+
 // scanStats counts the per-file reads a walk still has to make: a name the
 // walk has seen before is answered from the parsed set (#1800).
 var scanStats atomic.Int64
