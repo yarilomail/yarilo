@@ -74,6 +74,12 @@ type GUIDRecord struct {
 	CID          uint64 // reserved for JMAP Thread; zero until then
 }
 
+// GUIDStoreRebuilder writes the per-user GUID store from what the folders say.
+// The store is derived, so this is what repairs it (#1711).
+type GUIDStoreRebuilder interface {
+	ReplaceGUIDStore(copies []GUIDRecord) error
+}
+
 // GUIDResolver answers where a message id lives, from the per-user GUID store
 // rather than from a walk of the folders (#1711).
 type GUIDResolver interface {
