@@ -88,3 +88,10 @@ var metricCacheStat = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_cache_stat_total",
 	Help: "Stats made to decide whether a cached listing or uid list is still current, by what was stated.",
 }, []string{"what"})
+
+// Who closes the window a walk earned: a window shut by our own write is one
+// the next lookup pays a stat for, and nobody asked it to (#1875).
+var metricWindowClosed = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_window_closed_total",
+	Help: "Times a folder's checked window was closed, by what closed it.",
+}, []string{"by"})

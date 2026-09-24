@@ -131,7 +131,7 @@ func TestAnOverrideBetweenWalksReachesTheSecond(t *testing.T) {
 	}); werr != nil {
 		t.Fatal(werr)
 	}
-	box.folderCacheFor("INBOX").invalidateUIDs()
+	box.folderCacheFor("INBOX").invalidateUIDs("test")
 
 	second, err := box.Scan("INBOX")
 	if err != nil {

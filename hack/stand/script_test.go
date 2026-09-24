@@ -91,6 +91,7 @@ func TestEveryCollectedCounterHasAReader(t *testing.T) {
 		"maildir_dir_read_total",
 		"maildir_listing_miss_total",
 		"maildir_cache_stat_total",
+		"maildir_window_closed_total",
 		"index_cache_record_crc_mismatch_total",
 		"mailbox_message_opened_total",
 		"fileindex_journal_write_failed_total",
