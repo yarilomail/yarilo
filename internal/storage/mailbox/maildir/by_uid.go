@@ -38,6 +38,7 @@ func (u *userMailbox) baseForUID(folder string, uid uint32) (string, error) {
 	if _, err := u.readUIDList(folder); err != nil {
 		return "", fmt.Errorf("maildir/by-uid: read list %q: %w", folder, err)
 	}
+	metricCacheStat.WithLabelValues("list").Inc()
 	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -76,6 +77,7 @@ func (u *userMailbox) currentName(folder, base string) (string, error) {
 // dirEntriesFor lists cur/, through the cache the scan already keeps.
 func (u *userMailbox) dirEntriesFor(folder string) ([]os.DirEntry, error) {
 	dir := filepath.Join(u.folderPath(folder), "cur")
+	metricCacheStat.WithLabelValues("dir").Inc()
 	st, err := statPath(dir)
 	if err != nil {
 		return nil, fmt.Errorf("maildir/by-uid: stat %q: %w", folder, err)

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 func listingCounts(t *testing.T) (whole, tail, byName, misses float64) {
@@ -68,4 +70,25 @@ func TestAChangedDirectoryIsAStaleMiss(t *testing.T) {
 	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime")); now != was+1 {
 		t.Errorf("stale-mtime misses = %v, want %v", now, was+1)
 	}
+}
+
+// Every check of a cache costs a stat, and the number is what says whether
+// the check belongs per message or per folder open (#1875).
+func TestANameLookupCountsItsStats(t *testing.T) {
+	u, _ := item1Folder(t, 4)
+	dir0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir"))
+	list0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list"))
+	if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 2}); err != nil {
+		t.Fatal(err)
+	}
+	dir1 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir")) - dir0
+	list1 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list")) - list0
+
+	if dir1 < 1 {
+		t.Errorf("naming a message stated cur/ %v times, want at least one", dir1)
+	}
+	if list1 < 1 {
+		t.Errorf("naming a message stated the list %v times, want at least one", list1)
+	}
+	t.Logf("one RecordPath costs stat(dir)=%v stat(list)=%v", dir1, list1)
 }
