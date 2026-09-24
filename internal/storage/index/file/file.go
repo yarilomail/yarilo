@@ -322,6 +322,12 @@ func (h *userHandle) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) er
 	return h.stamped(folderID).SetMaildirStamp(folderID, s)
 }
 
+// ReplaceGUIDStore satisfies mailbox.GUIDStoreRebuilder on the handle: the
+// admin API holds one of these, not the index beneath it.
+func (h *userHandle) ReplaceGUIDStore(copies []mailbox.GUIDRecord) error {
+	return h.ui.ReplaceGUIDStore(copies)
+}
+
 // GUIDCopies satisfies mailbox.GUIDResolver on the handle too.
 func (h *userHandle) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
 	return h.ui.GUIDCopies(guids)

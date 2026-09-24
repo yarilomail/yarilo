@@ -276,3 +276,25 @@ func TestARebuildLeavesNoLogBehind(t *testing.T) {
 		t.Errorf("a fresh handle sees %d copies, the rebuild wrote %d", len(back), len(wrote))
 	}
 }
+
+// The capabilities are asked of the handle, which is what a caller holds: one
+// answered only by the type beneath it answers nobody (#1711).
+func TestTheHandleCarriesTheGUIDCapabilities(t *testing.T) {
+	var h mailbox.UserIndex = New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: t.TempDir()})
+	rebuilder, ok := h.(mailbox.GUIDStoreRebuilder)
+	if !ok {
+		t.Fatal("the handle keeps no GUID store, so the rebuild endpoint refuses every user")
+	}
+	if _, ok := h.(mailbox.GUIDResolver); !ok {
+		t.Error("the handle resolves no GUID, so every id lookup walks the folders")
+	}
+	if err := rebuilder.ReplaceGUIDStore([]mailbox.GUIDRecord{{
+		GUID: [16]byte{1}, FolderGUID: [16]byte{2}, UID: 3,
+	}}); err != nil {
+		t.Fatalf("the handle refused the rebuild: %v", err)
+	}
+	resolved, err := h.(mailbox.GUIDResolver).GUIDCopies([][16]byte{{1}})
+	if err != nil || len(resolved) != 1 {
+		t.Errorf("after a rebuild through the handle the copy reads %v (err %v)", resolved, err)
+	}
+}
