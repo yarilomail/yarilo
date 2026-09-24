@@ -83,6 +83,7 @@ const (
 	lockSiteTestWrite       = "test-write"
 	lockSiteAdoptUidSpace   = "adopt-uid-space"
 	lockSiteMaildirStamp    = "maildir-stamp"
+	lockSiteGUIDAppend      = "guid-append"
 	lockSiteAllocateUid     = "allocate-uid"
 	lockSiteAppend          = "append"
 	lockSiteCacheExtension  = "cache-extension"

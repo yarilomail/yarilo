@@ -61,6 +61,17 @@ type UIDSpaceAdopter interface {
 	AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) error
 }
 
+// GUIDRecord is one copy of one message, as the per-user GUID store keeps it:
+// the id a JMAP client names, and where that copy lives (INTERNALS.md §35).
+type GUIDRecord struct {
+	GUID         [16]byte
+	FolderID     uint64
+	UID          uint32
+	Flags        uint32
+	InternalDate int64
+	CID          uint64 // reserved for JMAP Thread; zero until then
+}
+
 // MaildirStamp is what a folder's directories and uid list looked like when the
 // index was written, in the reference's layout (maildir-storage.h:52-56).
 type MaildirStamp struct {
