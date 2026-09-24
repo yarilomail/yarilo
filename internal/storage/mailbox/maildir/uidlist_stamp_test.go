@@ -9,6 +9,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
+
 	mailboxbase "github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -184,4 +186,55 @@ func TestTheStampPinsTheNanoseconds(t *testing.T) {
 	if windowOpen(box, "INBOX") {
 		t.Error("a list rewritten inside the second opened the window anyway")
 	}
+}
+
+// A second full pass over a list that has not moved leaves the index file
+// alone: writing the same stamp again costs a flush per pass (#1875).
+func TestAnUnchangedStampDoesNotTouchTheIndex(t *testing.T) {
+	box, idx, folder := recSetup(t)
+	deliverToNew(t, box, "1700000001.M1Pa.host", "body\r\n")
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
+		t.Fatal(err)
+	}
+	path := indexFileIn(t, box.home)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	skipped := testutil.ToFloat64(fileidx.StampUnchangedCount())
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+		t.Errorf("the index moved on a pass that changed nothing: %v/%d -> %v/%d",
+			before.ModTime(), before.Size(), after.ModTime(), after.Size())
+	}
+	if now := testutil.ToFloat64(fileidx.StampUnchangedCount()); now != skipped+1 {
+		t.Errorf("unchanged stamps = %v, want %v", now, skipped+1)
+	}
+}
+
+// indexFileIn finds the index this layout wrote, so the row reads the file the
+// driver writes rather than a path it assumes.
+func indexFileIn(t *testing.T, home string) string {
+	t.Helper()
+	var found string
+	if err := filepath.WalkDir(home, func(path string, d os.DirEntry, werr error) error {
+		if werr != nil || d.IsDir() || d.Name() != "yarilo.index" {
+			return werr
+		}
+		found = path
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if found == "" {
+		t.Fatal("no index file was written")
+	}
+	return found
 }

@@ -244,7 +244,7 @@ backend_counters() {
         # read is retried rather than answered from the pods that did reply.
         [ -n "$page" ] || { total=""; break; }
         total+=$(printf '%s\n' "$page" |
-          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{|index_cache_record_crc_mismatch_total|mailbox_message_opened_total\{|fileindex_journal_write_failed_total\{|mailbox_write_failed_total\{|maildir_uidlist_read_total\{|maildir_dir_read_total\{|maildir_listing_miss_total\{|maildir_listing_retry_total\{|maildir_uidlist_stamp_hit_total|maildir_uidlist_stamp_miss_total|maildir_cache_stat_total\{|maildir_window_closed_total\{)" || true)
+          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{|index_cache_record_crc_mismatch_total|mailbox_message_opened_total\{|fileindex_journal_write_failed_total\{|mailbox_write_failed_total\{|maildir_uidlist_read_total\{|maildir_dir_read_total\{|maildir_listing_miss_total\{|maildir_listing_retry_total\{|maildir_uidlist_stamp_hit_total|fileindex_maildir_stamp_unchanged_total|maildir_uidlist_stamp_miss_total|maildir_cache_stat_total\{|maildir_window_closed_total\{)" || true)
         total+=$'\n'
       done
       [ -n "${total//[$'\n']/}" ] && break
@@ -717,6 +717,7 @@ for type in $TYPES; do
       $1 ~ /^maildir_listing_miss_total\{/ && $1 ~ /reason="stale-mtime"/ { missStale += $2 }
       $1 == "maildir_uidlist_stamp_hit_total" { stampHit += $2 }
       $1 == "maildir_uidlist_stamp_miss_total" { stampMiss += $2 }
+      $1 == "fileindex_maildir_stamp_unchanged_total" { stampSame += $2 }
       $1 ~ /^maildir_listing_retry_total\{/ && $1 ~ /at="path"/ { retryPath += $2 }
       $1 ~ /^maildir_listing_retry_total\{/ && $1 ~ /at="rename"/ { retryRename += $2 }
       $1 ~ /^maildir_cache_stat_total\{/ && $1 ~ /what="dir"/ { statDir += $2 }
@@ -726,8 +727,8 @@ for type in $TYPES; do
       $1 ~ /^maildir_window_closed_total\{/ && $1 !~ /by="own-write"/ && $1 !~ /by="expunge"/ { shutOther += $2 }
       END { printf "listing: list_whole=%d list_tail=%d dir_name=%d dir_scan=%d dir_remove=%d miss_none=%d miss_stale=%d retry_path=%d retry_rename=%d stat_dir=%d stat_list=%d",
               whole, tail, byName, byScan, byRemove, missNone, missStale, retryPath, retryRename, statDir, statList
-            printf " shut_own=%d shut_expunge=%d shut_other=%d stamp_hit=%d stamp_miss=%d",
-              shutOwn, shutExpunge, shutOther, stampHit, stampMiss
+            printf " shut_own=%d shut_expunge=%d shut_other=%d stamp_hit=%d stamp_miss=%d stamp_same=%d",
+              shutOwn, shutExpunge, shutOther, stampHit, stampMiss, stampSame
             if (logins + 0 > 0) printf " list_per_login=%.3f dir_per_login=%.3f stat_per_login=%.3f",
               (whole + tail) / logins, (byName + byScan + byRemove) / logins, (statDir + statList) / logins }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
