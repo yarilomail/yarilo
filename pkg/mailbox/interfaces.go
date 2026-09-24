@@ -74,6 +74,14 @@ type GUIDRecord struct {
 	CID          uint64 // reserved for JMAP Thread; zero until then
 }
 
+// GUIDResolver answers where a message id lives, from the per-user GUID store
+// rather than from a walk of the folders (#1711).
+type GUIDResolver interface {
+	// GUIDCopies returns every copy recorded for these GUIDs. An empty answer
+	// means the store says nothing, not that the message does not exist.
+	GUIDCopies(guids [][16]byte) ([]GUIDRecord, error)
+}
+
 // MaildirStamp is what a folder's directories and uid list looked like when the
 // index was written, in the reference's layout (maildir-storage.h:52-56).
 type MaildirStamp struct {

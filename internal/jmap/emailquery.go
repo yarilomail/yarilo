@@ -182,6 +182,9 @@ func (s *Server) queryScope(h *userHandle, f *jmapcore.EmailFilter) (*queryScope
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", name, err)
 		}
+		// A query opens every folder in scope: the identity it reads is the
+		// one an id lookup would otherwise open folders to find (#1711).
+		h.folders.remember(folder.GUID, name)
 		sf := scopeFolder{
 			name:        name,
 			id:          folder.ID,

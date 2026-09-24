@@ -322,6 +322,11 @@ func (h *userHandle) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) er
 	return h.stamped(folderID).SetMaildirStamp(folderID, s)
 }
 
+// GUIDCopies satisfies mailbox.GUIDResolver on the handle too.
+func (h *userHandle) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
+	return h.ui.GUIDCopies(guids)
+}
+
 func (h *userHandle) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error {
 	return h.stamped(folderID).AppendMessage(folderID, m)
 }
