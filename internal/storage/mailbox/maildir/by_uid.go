@@ -16,9 +16,23 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A maildir message is found as the reference finds it: the list holds the base
-// a uid names, the directory holds the flags it wears now (#1700).
+// A name off the cached listing is a hint until disk answers for it: a moved
+// name costs one re-sync and a second ask (#1700, maildir-util.c:140-172).
 func (u *userMailbox) RecordPath(folder string, m *mailbox.MessageMeta) (string, error) {
+	name, err := u.recordPathOnce(folder, m)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return name, err
+	}
+	metricListingRetry.WithLabelValues("path").Inc()
+	if rerr := u.relistFor(folder); rerr != nil {
+		return "", rerr
+	}
+	// One retry, not a loop: a record still without a file after a listing
+	// just read is the reconcile pass's to answer.
+	return u.recordPathOnce(folder, m)
+}
+
+func (u *userMailbox) recordPathOnce(folder string, m *mailbox.MessageMeta) (string, error) {
 	if m.UID == 0 {
 		return "", fmt.Errorf("maildir/by-uid: uid 0 names no message")
 	}
@@ -30,7 +44,17 @@ func (u *userMailbox) RecordPath(folder string, m *mailbox.MessageMeta) (string,
 		return "", fmt.Errorf("maildir/by-uid: %q uid %d is in no list entry: %w",
 			folder, m.UID, mailbox.ErrCorruptStorage)
 	}
-	return u.currentName(folder, base)
+	name, fromCache, err := u.currentName(folder, base)
+	if err != nil || !fromCache {
+		return name, err
+	}
+	// A name off the listing is checked once: it is what the index and every
+	// caller outside this driver will act on.
+	if _, serr := lstatPath(filepath.Join(u.folderPath(folder), "cur", name)); serr != nil {
+		return "", fmt.Errorf("maildir/by-uid: %q holds no file named %q: %w",
+			folder, name, fs.ErrNotExist)
+	}
+	return name, nil
 }
 
 // baseForUID reads the list once and asks the map the load built, so a fetch
@@ -47,43 +71,46 @@ func (u *userMailbox) baseForUID(folder string, uid uint32) (string, error) {
 
 // currentName finds the file a base name wears now: the flags in the trailer
 // change without the base changing, which is why the list keys on the base.
-func (u *userMailbox) currentName(folder, base string) (string, error) {
-	entries, err := u.dirEntriesFor(folder)
+// The bool says the name came off the cached listing, which is a hint: a name
+// read from disk in this call answers for itself.
+func (u *userMailbox) currentName(folder, base string) (string, bool, error) {
+	entries, cached, err := u.dirEntriesFor(folder)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	for _, e := range entries {
 		if maildirBase(e.Name()) == base {
-			return e.Name(), nil
+			return e.Name(), cached, nil
 		}
 	}
 	// Then the arrivals, by one stat rather than a listing: a file in new/
 	// carries no flags, so its name is the base itself -- and reading that
 	// directory per message is what #1809 took out of the expunge hold (#1959).
 	if _, err := lstatPath(filepath.Join(u.folderPath(folder), "new", base)); err == nil {
-		return base, nil
+		return base, false, nil
 	}
 	// fs.ErrNotExist, because that is what it is: the file the record stands
 	// for is not there, which a reader tells apart from an unreadable one.
-	return "", fmt.Errorf("maildir/by-uid: %q holds no file named %q: %w",
+	return "", false, fmt.Errorf("maildir/by-uid: %q holds no file named %q: %w",
 		folder, base, fs.ErrNotExist)
 }
 
 // dirEntriesFor lists cur/, through the cache the scan already keeps.
-func (u *userMailbox) dirEntriesFor(folder string) ([]os.DirEntry, error) {
+func (u *userMailbox) dirEntriesFor(folder string) ([]os.DirEntry, bool, error) {
 	cache := u.folderCacheFor(folder)
 	dir := filepath.Join(u.folderPath(folder), "cur")
 	metricCacheStat.WithLabelValues("dir").Inc()
 	st, err := statPath(dir)
 	if err != nil {
-		return nil, fmt.Errorf("maildir/by-uid: stat %q: %w", folder, err)
+		return nil, false, fmt.Errorf("maildir/by-uid: stat %q: %w", folder, err)
 	}
 	entries, ok, why := cache.dirEntriesWhy(st.ModTime())
 	if ok {
-		return entries, nil
+		return entries, true, nil
 	}
 	metricListingMiss.WithLabelValues(why).Inc()
-	return u.readCurDir(folder, dir, st)
+	entries, err = u.readCurDir(folder, dir, st)
+	return entries, false, err
 }
 
 // relistFor reads cur/ again under a fresh stat: the re-sync a name that has
@@ -110,23 +137,9 @@ func (u *userMailbox) readCurDir(folder, dir string, st os.FileInfo) ([]os.DirEn
 	return entries, nil
 }
 
-// A name taken from the listing can have moved on since it was read, so a miss
-// earns one re-sync and a second attempt (maildir-util.c:154-155).
+// OpenRecord opens the file a record names: the retry that makes a cached
+// name safe is in RecordPath, so one lookup means one re-sync at most.
 func (u *userMailbox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
-	rc, err := u.openOnce(folder, m)
-	if err == nil || !errors.Is(err, fs.ErrNotExist) {
-		return rc, err
-	}
-	metricListingMiss.WithLabelValues("retried").Inc()
-	if rerr := u.relistFor(folder); rerr != nil {
-		return nil, rerr
-	}
-	// One retry, not a loop: a name still missing from a listing just read is
-	// a record without a file, which is the reconcile pass's to answer.
-	return u.openOnce(folder, m)
-}
-
-func (u *userMailbox) openOnce(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
 	name, err := u.RecordPath(folder, m)
 	if err != nil {
 		return nil, err

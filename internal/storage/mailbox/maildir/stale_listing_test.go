@@ -25,7 +25,7 @@ func TestARemovalAfterAFlagWriteInTheSameSecondStillUnlinks(t *testing.T) {
 		t.Fatal(aerr)
 	}
 	// Warm the listing under the name the file wears now.
-	if _, cerr := box.currentName("INBOX", maildirBase(name)); cerr != nil {
+	if _, _, cerr := box.currentName("INBOX", maildirBase(name)); cerr != nil {
 		t.Fatal(cerr)
 	}
 	renamed, werr := box.WriteFlags("INBOX", name, []string{`\Deleted`}, nil)
