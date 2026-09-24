@@ -511,10 +511,7 @@ func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Res
 	}
 	defer s.release(h)
 	t0 := time.Now()
-	res, err := h.ui.Lookup([]string{mbox.GUID}, q)
-	if err == nil {
-		err = h.resolveHits(&res, mbox)
-	}
+	res, err := s.lookupThrough(h, mbox, q)
 	metricLookupDuration.Observe(time.Since(t0).Seconds())
 	if err != nil {
 		metricLookupErrors.Inc()
@@ -1096,4 +1093,13 @@ func (s *Service) optimize(h *userHandle, user string, mbox fts.MailboxRef) erro
 		})
 	}
 	return s.opts.lockIndex(user, func() error { return h.ui.OptimizeMailbox(mbox) })
+}
+
+// lookupThrough scopes the search to the folder and resolves what it answers.
+func (s *Service) lookupThrough(h *userHandle, mbox fts.MailboxRef, q fts.Query) (fts.Result, error) {
+	res, err := h.ui.Lookup([]string{mbox.GUID}, q)
+	if err != nil {
+		return res, err
+	}
+	return res, h.resolveHits(&res, mbox)
 }
