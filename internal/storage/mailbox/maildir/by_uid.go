@@ -81,11 +81,14 @@ func (u *userMailbox) dirEntriesFor(folder string) ([]os.DirEntry, error) {
 		return nil, fmt.Errorf("maildir/by-uid: stat %q: %w", folder, err)
 	}
 	cache := u.folderCacheFor(folder)
-	if entries, ok := cache.dirEntries(st.ModTime()); ok {
+	entries, ok, why := cache.dirEntriesWhy(st.ModTime())
+	if ok {
 		return entries, nil
 	}
+	metricListingMiss.WithLabelValues(why).Inc()
+	metricDirRead.WithLabelValues("current-name").Inc()
 	dirReads.Add(1)
-	entries, err := os.ReadDir(dir)
+	entries, err = os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("maildir/by-uid: list %q: %w", folder, err)
 	}
