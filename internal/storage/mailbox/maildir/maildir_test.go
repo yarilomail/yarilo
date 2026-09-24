@@ -632,7 +632,7 @@ func TestList_ReadDirCacheHitSkipsReadDir(t *testing.T) {
 	}
 }
 
-func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
+func TestList_ReadDirCacheKeepsOurOwnSave(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
@@ -652,7 +652,8 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 		t.Fatal("readdir cache not populated")
 	}
 
-	// Save a second message — must invalidate the cache.
+	// Save a second message: our own write goes into the cached listing
+	// rather than dropping it (#1875).
 	second, _, _, err := box.Save("INBOX", strings.NewReader("msg2"), 2, 1, []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
@@ -660,8 +661,11 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 	if _, aerr := box.AssignUID("INBOX", second, 2); aerr != nil {
 		t.Fatal(aerr)
 	}
-	if c.entries != nil {
-		t.Error("readdir cache not invalidated after Save")
+	c.mu.Lock()
+	kept := len(c.entries)
+	c.mu.Unlock()
+	if kept != 2 {
+		t.Errorf("the listing holds %d entries after the second save, want 2", kept)
 	}
 
 	// Next List must return both messages.

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -172,32 +173,83 @@ func TestAWalkKeepsNoListingFromAnUnsettledDirectory(t *testing.T) {
 	}
 }
 
-// Who closes the window has to be visible before anything is changed about
-// it: a window shut by our own write costs the next lookup a stat (#1875).
-func TestTheWindowSaysWhoClosedIt(t *testing.T) {
-	u, _ := item1Folder(t, 3)
+// Our own write is a name we know, so it goes into the listing instead of
+// closing the window a walk earned (#1875).
+func TestOurOwnSaveKeepsTheWindow(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	// A folder that has stood still, so the walk keeps its listing: a walk
+	// over a directory that just changed keeps none (#1797).
+	cur := filepath.Join(home, "Maildir", "cur")
+	old := time.Now().Add(-2 * dirSettleWindow)
+	if err := os.Chtimes(cur, old, old); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := u.Scan("INBOX"); err != nil {
 		t.Fatal(err)
 	}
 	c := u.folderCacheFor("INBOX")
-
 	c.markChecked()
 	own := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write"))
-	// Through the save path, so the publish that closes the window runs: a
-	// file placed into cur/ by hand never goes through it.
-	name, _, _, err := u.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, nil, [16]byte{})
+
+	// Through the save path, so the publish runs: a file placed into cur/ by
+	// hand never goes through it.
+	name, _, _, err := u.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := u.AssignUID("INBOX", name, 70); err != nil {
 		t.Fatal(err)
 	}
-	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != own+1 {
-		t.Errorf("own-write closings = %v, want %v", now, own+1)
+	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != own {
+		t.Errorf("our own save closed the window %v times, want 0", now-own)
+	}
+	if _, open := c.snapshotChecked(); !open {
+		t.Error("the window a walk earned is shut after our own save")
 	}
 
-	// A window that is already shut is not shut twice: the number is windows
-	// lost, not calls made.
+	// And the name it wrote is findable from the listing it kept, without a
+	// read of cur/.
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	got, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 70})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != name {
+		t.Errorf("the record names %q, the save wrote %q", got, name)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads {
+		t.Errorf("naming our own save read cur/ %v times, want none", now-reads)
+	}
+}
+
+// Somebody else's write is not a name we know: it moves cur/'s mtime, and the
+// listing keyed by the old one is not served.
+func TestAForeignAppendClosesTheWindow(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	was := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime"))
+	other := filepath.Join(home, "Maildir", "cur", "1700000091.M91P9.host,S=20,W=20:2,")
+	if err := os.WriteFile(other, []byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime")); now != was+1 {
+		t.Errorf("stale-mtime misses = %v, want %v", now, was+1)
+	}
+}
+
+// A window that is already shut is not shut twice: the number is windows lost,
+// not calls made.
+func TestAClosedWindowIsNotClosedAgain(t *testing.T) {
+	u, _ := item1Folder(t, 3)
+	c := u.folderCacheFor("INBOX")
+	c.markChecked()
+	c.invalidateDir("own-write")
 	again := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write"))
 	c.invalidateDir("own-write")
 	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != again {
