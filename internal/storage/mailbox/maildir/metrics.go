@@ -81,3 +81,10 @@ var metricListingMiss = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_listing_miss_total",
 	Help: "Name lookups that could not use the cached listing, by why: no-listing is nothing cached yet, stale-mtime is a directory that changed under it.",
 }, []string{"reason"})
+
+// Every stat a name lookup makes to check a cache it already has: the
+// reference checks once per sync, not once per message (#1875).
+var metricCacheStat = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_cache_stat_total",
+	Help: "Stats made to decide whether a cached listing or uid list is still current, by what was stated.",
+}, []string{"what"})

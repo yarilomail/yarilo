@@ -1753,6 +1753,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	// The stamp first, by one path walk: a hit must open nothing, and knowing
 	// whether another process changed the file needs the filesystem asked
 	// (#1875).
+	metricCacheStat.WithLabelValues("list").Inc()
 	if fi, err := statPath(u.uidListPath(folder)); err == nil {
 		if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
 			u.debugListRead(folder, "cache", len(m), stampOf(fi))
