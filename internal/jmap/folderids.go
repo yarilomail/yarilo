@@ -2,9 +2,8 @@ package jmap
 
 import "sync"
 
-// folderIdentities remembers which folder wears which GUID. A copy in the GUID
-// store names its folder by identity, and the folder list carries none, so
-// without this every id lookup opens folders until it matches (#1711).
+// folderIdentities remembers which folder wears which GUID: the folder list
+// carries none, so a cold lookup opens folders until it matches (#1711).
 type folderIdentities struct {
 	mu     sync.Mutex
 	byGUID map[[16]byte]string
