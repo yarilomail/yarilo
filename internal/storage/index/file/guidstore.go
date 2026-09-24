@@ -417,8 +417,8 @@ func (u *userIndex) ReplaceGUIDStore(copies []mailbox.GUIDRecord) error {
 	}); err != nil {
 		return fmt.Errorf("fileindex/guid-rebuild: write: %w", err)
 	}
-	// The log belonged to the file that is gone: folding its entries into the
-	// new one would replay writes the rebuild already read from the folders.
+	// Hygiene, not correctness: the new file has its own index id and the old
+	// log is not folded into it, but a log naming a file nobody has is litter.
 	if err := os.Remove(u.GUIDStorePath() + ".log"); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("fileindex/guid-rebuild: drop log: %w", err)
 	}

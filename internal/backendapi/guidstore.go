@@ -17,9 +17,8 @@ type guidRebuildStats struct {
 	Copies  int `json:"copies"`
 }
 
-// handleGUIDRebuild writes the per-user GUID store from the folder indexes.
-// The store is derived: this is how one that is missing, behind or written in
-// an older shape comes back (#1711).
+// handleGUIDRebuild writes the per-user GUID store from the folder indexes:
+// the store is derived, and this is what repairs it (#1711).
 func (s *Server) handleGUIDRebuild(w http.ResponseWriter, r *http.Request) {
 	var req guidRebuildRequest
 	if !decodeJSON(w, r, &req) {

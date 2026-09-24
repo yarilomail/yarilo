@@ -250,3 +250,29 @@ func TestACopyAfterARebuildLandsInTheNewStore(t *testing.T) {
 		t.Fatalf("the store holds %d copies after a rebuild and one append, want 2: %+v", len(got), got)
 	}
 }
+
+// The rebuild leaves no log behind. It is not what keeps the copies right --
+// a log naming another file is not folded in -- but a file nobody will read.
+func TestARebuildLeavesNoLogBehind(t *testing.T) {
+	ui, wrote := guidTxFolder2(t)
+	logPath := ui.GUIDStorePath() + ".log"
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("the transactions left no log to begin with: %v", err)
+	}
+	if err := ui.ReplaceGUIDStore(wrote); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("the replaced store's log is still there: %v", err)
+	}
+
+	// And the copies are what the rebuild wrote, once each.
+	again := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: ui.home}).(*userHandle).ui
+	back, err := again.GUIDRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back) != len(wrote) {
+		t.Errorf("a fresh handle sees %d copies, the rebuild wrote %d", len(back), len(wrote))
+	}
+}
