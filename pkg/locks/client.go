@@ -832,9 +832,8 @@ func WithLock(ctx context.Context, l Locker, resource, owner string, ttl, renewE
 	return withLock(ctx, l, resource, owner, ttl, renewEvery, 0, fn)
 }
 
-// WithLockWaiting is WithLock for a caller that must queue for the resource
-// rather than give up on the first hold. waitLimit bounds the queueing only:
-// the work that follows runs under ctx, or a slow acquisition would cut it.
+// WithLockWaiting is WithLock for a caller that queues instead of giving up.
+// waitLimit bounds the queueing only; the work that follows runs under ctx.
 func WithLockWaiting(ctx context.Context, l Locker, resource, owner string, ttl, renewEvery, waitLimit time.Duration, fn func(context.Context) error) error {
 	return withLock(ctx, l, resource, owner, ttl, renewEvery, waitLimit, fn)
 }
