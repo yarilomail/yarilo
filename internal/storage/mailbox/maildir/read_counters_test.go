@@ -92,3 +92,79 @@ func TestANameLookupCountsItsStats(t *testing.T) {
 	}
 	t.Logf("one RecordPath costs stat(dir)=%v stat(list)=%v", dir1, list1)
 }
+
+// Inside the window a walk earns, a lookup asks the list no questions: the
+// three stats a name cost are two fewer, and the listing keeps its own check.
+func TestAWalkEarnsTheListWindow(t *testing.T) {
+	u, _ := item1Folder(t, 4)
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	u.folderCacheFor("INBOX").markChecked()
+
+	list0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list"))
+	dir0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir"))
+	for uid := uint32(1); uid <= 3; uid++ {
+		if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: uid}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list1 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list")) - list0
+	dir1 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir")) - dir0
+
+	if list1 != 0 {
+		t.Errorf("three lookups stated the list %v times inside the window, want 0", list1)
+	}
+	if dir1 != 3 {
+		t.Errorf("the listing was checked %v times, want one per lookup", dir1)
+	}
+}
+
+// What the window does not cover: a name that moved after the walk is still
+// found, because the listing is checked on every lookup (#1800).
+func TestANameThatMovedIsStillFound(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	u.folderCacheFor("INBOX").markChecked()
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+
+	cur := filepath.Join(home, "Maildir", "cur")
+	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, base+"S")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := u.currentName("INBOX", maildirBase(base))
+	if err != nil {
+		t.Fatalf("the moved name is not findable: %v", err)
+	}
+	if got != base+"S" {
+		t.Errorf("currentName says %q, the file is %q", got, base+"S")
+	}
+}
+
+// A walk keeps its listing only when the mtime has settled: a change inside
+// the same tick shares the key and serves a name already gone (#1797).
+func TestAWalkKeepsNoListingFromAnUnsettledDirectory(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	cur := filepath.Join(home, "Maildir", "cur")
+	// Written now, so cur/ has just changed and its mtime is inside the window
+	// that cannot vouch for its contents.
+	if err := os.WriteFile(filepath.Join(cur, "1700000050.M50P1.host,S=20,W=20:2,"),
+		[]byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	c := u.folderCacheFor("INBOX")
+	c.mu.Lock()
+	kept := c.entries != nil
+	c.mu.Unlock()
+	if kept {
+		t.Error("the walk kept a listing keyed by an mtime that cannot vouch for it")
+	}
+}
