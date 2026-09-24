@@ -150,13 +150,12 @@ func TestANameThatMovedIsStillFound(t *testing.T) {
 	}
 }
 
-// A walk keeps its listing only when the mtime has settled: a change inside
-// the same tick shares the key and serves a name already gone (#1797).
-func TestAWalkKeepsNoListingFromAnUnsettledDirectory(t *testing.T) {
+// A walk keeps the listing of a directory that has just changed: the name that
+// moved inside that tick is answered by the re-sync a miss earns (#1987).
+func TestAWalkKeepsTheListingOfAChangedDirectory(t *testing.T) {
 	u, home := item1Folder(t, 3)
 	cur := filepath.Join(home, "Maildir", "cur")
-	// Written now, so cur/ has just changed and its mtime is inside the window
-	// that cannot vouch for its contents.
+	// Written now, so cur/ has just changed.
 	if err := os.WriteFile(filepath.Join(cur, "1700000050.M50P1.host,S=20,W=20:2,"),
 		[]byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -168,8 +167,8 @@ func TestAWalkKeepsNoListingFromAnUnsettledDirectory(t *testing.T) {
 	c.mu.Lock()
 	kept := c.entries != nil
 	c.mu.Unlock()
-	if kept {
-		t.Error("the walk kept a listing keyed by an mtime that cannot vouch for it")
+	if !kept {
+		t.Error("the walk kept no listing, so every lookup after it reads cur/ again")
 	}
 }
 
@@ -279,14 +278,14 @@ func TestAnOpenOfAMovedNameIsRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	was := testutil.ToFloat64(metricListingMiss.WithLabelValues("retried"))
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("open"))
 	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
 	rc, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2})
 	if err != nil {
 		t.Fatalf("a name that moved inside the tick did not open: %v", err)
 	}
 	_ = rc.Close()
-	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("retried")); now != was+1 {
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("open")); now != was+1 {
 		t.Errorf("retried misses = %v, want %v", now, was+1)
 	}
 	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads+1 {
@@ -330,17 +329,60 @@ func TestAnOpenThatFindsItsFileDoesNotRelist(t *testing.T) {
 	if _, err := u.currentName("INBOX", maildirBase("1700000002.M2P1.host,S=20,W=20:2,")); err != nil {
 		t.Fatal(err)
 	}
-	was := testutil.ToFloat64(metricListingMiss.WithLabelValues("retried"))
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("open"))
 	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
 	rc, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = rc.Close()
-	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("retried")); now != was {
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("open")); now != was {
 		t.Errorf("a hit counted %v retries", now-was)
 	}
 	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads {
 		t.Errorf("a hit read cur/ %v times, want none", now-reads)
+	}
+}
+
+// A flag write takes its name from the listing too: a name that moved inside
+// the tick is renamed on the second attempt, never on the name that is gone.
+func TestFlagsFollowANameThatMovedInsideTheTick(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	cur := filepath.Join(home, "Maildir", "cur")
+	name, err := u.currentName("INBOX", maildirBase(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Somebody else gives it a flag and puts cur/ back to the mtime the
+	// listing is keyed by: the cache cannot tell that from our own write.
+	fi, err := statPath(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := base + "S"
+	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, moved)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cur, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("rename"))
+	got, err := u.WriteFlags("INBOX", name, []string{`\Answered`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == name {
+		t.Fatalf("the flag write answered the name it was given, %q, which is gone", name)
+	}
+	if _, serr := lstatPath(filepath.Join(cur, got)); serr != nil {
+		t.Errorf("the flag write names %q, which is not there: %v", got, serr)
+	}
+	if !strings.Contains(got, "S") {
+		t.Errorf("the flags landed on %q, losing the flag the other session set", got)
+	}
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("rename")); now != was+1 {
+		t.Errorf("rename retries = %v, want %v", now, was+1)
 	}
 }

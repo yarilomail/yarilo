@@ -1151,9 +1151,9 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 		if err != nil {
 			return nil, fmt.Errorf("maildir/scan: read %s: %w", dir, err)
 		}
-		// Only a settled mtime may key it: a second change inside the same tick
-		// would share the key and serve a name that is already gone (#1797).
-		if sub == "cur" && !mtime.IsZero() && settled(mtime) {
+		// A name that moved inside the tick the key cannot resolve is answered
+		// by the re-sync a miss earns, at both consumers (#1987, #1797).
+		if sub == "cur" && !mtime.IsZero() {
 			cache.storeDirEntries(entries, mtime)
 		}
 		for _, e := range entries {
@@ -2096,6 +2096,36 @@ var beforeFlagRename func()
 // writeFlagsLocked renames one file, with its keyword letters already resolved.
 // The caller holds the folder lock.
 func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, letters string) (string, error) {
+	name, err := u.renameForFlags(folder, filename, flags, letters)
+	if err != nil || name != "" {
+		return nameOr(name, filename), err
+	}
+	// The name came from a listing that has moved on: re-sync it and ask once
+	// more, the way an open does (#1987, maildir-util.c:154-155).
+	metricListingRetry.WithLabelValues("rename").Inc()
+	if rerr := u.relistFor(folder); rerr != nil {
+		return filename, nil
+	}
+	now, nerr := u.currentName(folder, maildirBase(filename))
+	if nerr != nil || now == filename {
+		return filename, nil
+	}
+	name, err = u.renameForFlags(folder, now, flags, letters)
+	// Still not there: left to the reconcile pass, because failing here turns
+	// a flag change into an error a client cannot act on.
+	return nameOr(name, filename), err
+}
+
+func nameOr(name, fallback string) string {
+	if name == "" {
+		return fallback
+	}
+	return name
+}
+
+// renameForFlags renames the file if it is where the name says. An empty name
+// back means it is not there, which is the caller's to answer.
+func (u *userMailbox) renameForFlags(folder, filename string, flags []string, letters string) (string, error) {
 	want := renameWithFlags(filename, encodeFlags(flags)+letters)
 	if want == filename {
 		return filename, nil
@@ -2110,15 +2140,12 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 		// cur/ with the file, which is the move the sync would have made
 		// anyway (#1959).
 		if rerr := os.Rename(from, filepath.Join(dir, "cur", want)); rerr != nil {
-			return filename, fmt.Errorf("maildir/flags: rename %s: %w", filename, rerr)
+			return "", fmt.Errorf("maildir/flags: rename %s: %w", filename, rerr)
 		}
 		u.afterFlagRename(folder, sub, filename, want)
 		return want, nil
 	}
-	// The file is not where the index says it is. Left to the reconcile pass,
-	// which is what notices a message that moved or went; failing here would
-	// turn a flag change into an error a client cannot act on.
-	return filename, nil
+	return "", nil
 }
 
 // afterFlagRename keeps the listing this process just changed, under the name

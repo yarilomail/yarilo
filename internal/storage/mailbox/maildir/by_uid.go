@@ -117,7 +117,7 @@ func (u *userMailbox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.Read
 	if err == nil || !errors.Is(err, fs.ErrNotExist) {
 		return rc, err
 	}
-	metricListingMiss.WithLabelValues("retried").Inc()
+	metricListingRetry.WithLabelValues("open").Inc()
 	if rerr := u.relistFor(folder); rerr != nil {
 		return nil, rerr
 	}
