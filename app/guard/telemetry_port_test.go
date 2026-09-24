@@ -8,9 +8,8 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Every container in a pod shares one network namespace, so a container with no
-// telemetry port of its own answers nothing: its neighbour's page is read
-// instead, and a counter its process moved reads zero (#1999).
+// Containers share one network namespace, so one without a telemetry port of
+// its own is read off a neighbour's page, and its counters read zero (#1999).
 func TestEveryBackendContainerHasItsOwnTelemetryPort(t *testing.T) {
 	out, err := exec.Command("helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
