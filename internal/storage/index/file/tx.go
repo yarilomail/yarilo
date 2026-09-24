@@ -143,6 +143,9 @@ func (t *indexTx) applyAll(fs *folderState, out *mailbox.TxResult) error {
 // trackGUIDs records this command's copies in the per-user store, in one hold:
 // a transaction takes the folder once, and the store once (#1827).
 func (t *indexTx) trackGUIDs(fs *folderState) {
+	// The folder's own identity, not its number: the number is assigned per
+	// process and names a different folder in the next one.
+	folderGUID := fs.hdr.MailboxGUID
 	var b guidBatch
 	for i := range t.ops {
 		op := &t.ops[i]
@@ -153,12 +156,12 @@ func (t *indexTx) trackGUIDs(fs *folderState) {
 			}
 			b.add = append(b.add, mailbox.GUIDRecord{
 				GUID:         op.meta.GUID,
-				FolderID:     t.folderID,
+				FolderGUID:   folderGUID,
 				UID:          op.meta.UID,
 				InternalDate: op.meta.InternalDate.Unix(),
 			})
 		case opExpunge:
-			b.gone = append(b.gone, guidCopy{folderID: t.folderID, uid: op.uid})
+			b.gone = append(b.gone, guidCopy{folderGUID: folderGUID, uid: op.uid})
 		}
 	}
 	// The store is derived: a failure is logged and rebuilt, never returned,

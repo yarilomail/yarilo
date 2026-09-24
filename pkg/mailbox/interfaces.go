@@ -64,8 +64,10 @@ type UIDSpaceAdopter interface {
 // GUIDRecord is one copy of one message, as the per-user GUID store keeps it:
 // the id a JMAP client names, and where that copy lives (INTERNALS.md §35).
 type GUIDRecord struct {
-	GUID         [16]byte
-	FolderID     uint64
+	GUID [16]byte
+	// FolderGUID, never a number: a folder's id is assigned per process, so a
+	// number recorded today names a different folder tomorrow.
+	FolderGUID   [16]byte
 	UID          uint32
 	Flags        uint32
 	InternalDate int64
