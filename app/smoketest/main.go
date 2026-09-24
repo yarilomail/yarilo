@@ -114,6 +114,10 @@ var (
 
 	flagFTSUser = flag.String("fts-user", "", "IMAP username for the full-text search check (enables it)")
 	flagFTSPass = flag.String("fts-pass", "", "password for -fts-user")
+	// One entry per storage driver: the index lives per user, but what the
+	// drivers do with a copy differs, so each type carries its own row.
+	flagFTSCopyUsers = flag.String("fts-copy-users", "",
+		"comma-separated user:pass list for the FTS copy-scope check, one per storage type (defaults to -fts-user)")
 
 	flagDirectorAPI      = flag.String("director-api", "", "director admin API base URL, e.g. http://yarilo-director-api:9103 (enables the check, #755)")
 	flagDirectorAPIToken = flag.String("director-api-token", "", "director admin API bearer token (defaults to env DIRECTOR_API_TOKEN / YARILO_ADMIN_TOKEN)")
@@ -312,6 +316,14 @@ func register() []check {
 	want("imap", *flagFTSUser != "", "imap FTS (SEARCH BODY/TEXT/HEADER/FROM)", "needs -fts-user", func() error {
 		return checkFTS(*flagFTSUser, *flagFTSPass)
 	})
+	for _, acct := range ftsCopyAccounts() {
+		user, pass := acct.user, acct.pass
+		withJMAP := *flagJMAP && user == *flagJMAPUser
+		want("imap", user != "", "imap FTS document is the message ("+user+")",
+			"needs -fts-user or -fts-copy-users", func() error {
+				return checkFTSDocumentIsMessage(user, pass, withJMAP)
+			})
+	}
 	// A missing credential is an unchecked surface, not a failure: a red gate
 	// for an absent token reads as a broken deployment (#1311).
 	want("director", *flagDirectorAPI != "" && directorAPIToken() != "",
