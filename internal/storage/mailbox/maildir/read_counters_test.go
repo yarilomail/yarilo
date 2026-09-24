@@ -1,6 +1,8 @@
 package maildir
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,5 +202,93 @@ func TestTheWindowSaysWhoClosedIt(t *testing.T) {
 	c.invalidateDir("own-write")
 	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != again {
 		t.Errorf("a closed window was counted again: %v -> %v", again, now)
+	}
+}
+
+// The re-sync a miss earns: a name another session moved inside the tick the
+// listing is keyed by opens on the second attempt (maildir-util.c:154-155).
+func TestAnOpenOfAMovedNameIsRetried(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	cur := filepath.Join(home, "Maildir", "cur")
+	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	// The listing is cached now. Move the file and put cur/ back to the mtime
+	// that listing is keyed by: this is what a same-tick change looks like.
+	fi, err := statPath(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, base+"S")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cur, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	was := testutil.ToFloat64(metricListingMiss.WithLabelValues("retried"))
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	rc, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2})
+	if err != nil {
+		t.Fatalf("a name that moved inside the tick did not open: %v", err)
+	}
+	_ = rc.Close()
+	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("retried")); now != was+1 {
+		t.Errorf("retried misses = %v, want %v", now, was+1)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads+1 {
+		t.Errorf("the retry read cur/ %v times, want one", now-reads)
+	}
+}
+
+// A record whose file is really gone costs one re-sync and then answers, not a
+// directory read for as long as the caller keeps asking.
+func TestAGoneRecordIsRetriedOnce(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	cur := filepath.Join(home, "Maildir", "cur")
+	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := statPath(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(cur, base)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cur, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	if _, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2}); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a gone record answers %v, want a not-exist error", err)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads+1 {
+		t.Errorf("the open read cur/ %v times, want exactly one retry", now-reads)
+	}
+}
+
+// The retry belongs to the miss: an open that finds its file reads no
+// directory a second time.
+func TestAnOpenThatFindsItsFileDoesNotRelist(t *testing.T) {
+	u, _ := item1Folder(t, 3)
+	if _, err := u.currentName("INBOX", maildirBase("1700000002.M2P1.host,S=20,W=20:2,")); err != nil {
+		t.Fatal(err)
+	}
+	was := testutil.ToFloat64(metricListingMiss.WithLabelValues("retried"))
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	rc, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rc.Close()
+	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("retried")); now != was {
+		t.Errorf("a hit counted %v retries", now-was)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads {
+		t.Errorf("a hit read cur/ %v times, want none", now-reads)
 	}
 }

@@ -1,6 +1,7 @@
 package maildir
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -82,17 +83,50 @@ func (u *userMailbox) dirEntriesFor(folder string) ([]os.DirEntry, error) {
 		return entries, nil
 	}
 	metricListingMiss.WithLabelValues(why).Inc()
+	return u.readCurDir(folder, dir, st)
+}
+
+// relistFor reads cur/ again under a fresh stat: the re-sync a name that has
+// moved on earns, rather than a listing kept until something invalidates it.
+func (u *userMailbox) relistFor(folder string) error {
+	dir := filepath.Join(u.folderPath(folder), "cur")
+	metricCacheStat.WithLabelValues("dir").Inc()
+	st, err := statPath(dir)
+	if err != nil {
+		return fmt.Errorf("maildir/by-uid: stat %q: %w", folder, err)
+	}
+	_, err = u.readCurDir(folder, dir, st)
+	return err
+}
+
+func (u *userMailbox) readCurDir(folder, dir string, st os.FileInfo) ([]os.DirEntry, error) {
 	metricDirRead.WithLabelValues("current-name").Inc()
 	dirReads.Add(1)
-	entries, err = os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("maildir/by-uid: list %q: %w", folder, err)
 	}
-	cache.storeDirEntries(entries, st.ModTime())
+	u.folderCacheFor(folder).storeDirEntries(entries, st.ModTime())
 	return entries, nil
 }
 
+// A name taken from the listing can have moved on since it was read, so a miss
+// earns one re-sync and a second attempt (maildir-util.c:154-155).
 func (u *userMailbox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
+	rc, err := u.openOnce(folder, m)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return rc, err
+	}
+	metricListingMiss.WithLabelValues("retried").Inc()
+	if rerr := u.relistFor(folder); rerr != nil {
+		return nil, rerr
+	}
+	// One retry, not a loop: a name still missing from a listing just read is
+	// a record without a file, which is the reconcile pass's to answer.
+	return u.openOnce(folder, m)
+}
+
+func (u *userMailbox) openOnce(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
 	name, err := u.RecordPath(folder, m)
 	if err != nil {
 		return nil, err
