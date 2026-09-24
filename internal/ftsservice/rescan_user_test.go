@@ -8,9 +8,8 @@ import (
 	"testing"
 )
 
-// A whole-user rescan holds the user's index once for every folder. A hold per
-// folder made the command queue behind its own queued job, which is how the
-// stand found it: only an account with more than one folder reaches it (#1986).
+// A whole-user rescan holds the user's index once for every folder: a hold per
+// folder made the command queue behind its own queued job (#1986).
 func TestWholeUserRescanTakesOneHold(t *testing.T) {
 	// No messages: a folder with a gap queues an index job, and that job takes
 	// the user's index too -- which would be counted as the command's hold.

@@ -28,9 +28,8 @@ func (c *Client) LockWaiting(ctx context.Context, resource, owner string, ttl, l
 	started := time.Now()
 	resp, addr, err := c.soloExchange(ctx, limit, cmd, resource, owner, ttlStr, CheckSite(ctx), waitStr)
 	if err != nil {
-		// A wait that ran its limit ends as contention whatever shape the
-		// failure takes: a read timeout and a cut connection are the same
-		// answer, and callers classify on this one.
+		// One shape for one event: a read timeout and a cut connection are
+		// both "the limit ran out", and callers classify on this.
 		if time.Since(started) >= limit || ctx.Err() != nil {
 			return Lock{Resource: resource, Owner: owner}, ErrBusy
 		}

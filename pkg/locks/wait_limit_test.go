@@ -45,9 +45,8 @@ func muteAfterHandshake(t *testing.T) string {
 	return ln.Addr().String()
 }
 
-// A wait that runs out is ErrBusy, one shape for one event: the transport ends
-// it as a read timeout or a cut connection depending on the run, and a caller
-// classifying on that told contention from an outage by coin flip (#1986).
+// A wait that runs out is ErrBusy: the transport ends it as a read timeout or
+// a cut connection by turns, and classifying on that was a coin flip (#1986).
 func TestAWaitThatRunsOutIsBusy(t *testing.T) {
 	addr := muteAfterHandshake(t)
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "test"), 10*time.Second)

@@ -146,3 +146,42 @@ func TestAPassPastTheWaitLimitReportsBusy(t *testing.T) {
 		t.Fatalf("a pass past the wait limit returned %v, want ErrBusy", err)
 	}
 }
+
+// The hold outlives its TTL because it is renewed: one hold now covers a
+// whole-user walk, and a lapse would admit a writer mid-walk (#1986).
+func TestAHoldIsRenewedWhileThePassRuns(t *testing.T) {
+	defer swapLockTiming(t, 600*time.Millisecond, 150*time.Millisecond)()
+
+	dial := ftsLockService(t)
+	const user = "u3@example.com"
+	inside := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- lockMailbox(dial())(user, "", func() error {
+			close(inside)
+			<-release
+			return nil
+		})
+	}()
+
+	<-inside
+	// Past the TTL, and still ours: an unrenewed hold has expired by now.
+	time.Sleep(900 * time.Millisecond)
+	if _, err := dial().Lock(locks.WithSite(context.Background(), "other"),
+		locks.FTSKey(user, ""), locks.Owner(user, "rival"), time.Minute); !errors.Is(err, locks.ErrBusy) {
+		t.Errorf("another writer took the index mid-pass: %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Errorf("the pass failed: %v", err)
+	}
+}
+
+// swapLockTiming shortens the hold's TTL for one row and restores it.
+func swapLockTiming(t *testing.T, ttl, renew time.Duration) func() {
+	t.Helper()
+	oldTTL, oldRenew := lockTTL, lockRenewEvery
+	lockTTL, lockRenewEvery = ttl, renew
+	return func() { lockTTL, lockRenewEvery = oldTTL, oldRenew }
+}

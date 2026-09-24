@@ -211,6 +211,13 @@ func userResolver(masterAddr string, resolver *mailbox.Resolver, pool *authclien
 // reported busy, leaving the background retry to carry it (retry.go).
 var lockWaitLimit = 30 * time.Second
 
+// The hold covers a whole-user walk, whose length is the account's folder
+// count: it is renewed rather than sized, and lapsing would admit a writer.
+var (
+	lockTTL        = 5 * time.Minute
+	lockRenewEvery = time.Minute
+)
+
 // lockMailbox wraps every index write in the cross-process mailbox lock
 // (project rule). nil locker (locks disabled in config) runs direct.
 func lockMailbox(locker locks.Locker) func(user, folder string, fn func() error) error {
@@ -223,25 +230,25 @@ func lockMailbox(locker locks.Locker) func(user, folder string, fn func() error)
 		// one. Taking the mailbox key made every pass queue behind session
 		// mail-index writes it does not interact with (#1004).
 		key := locks.FTSKey(user, folder)
-		// The deadline is the wait limit: locks.Acquire queues for whatever is
-		// left of it, so the two must not be separate numbers.
-		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "fts-index"), lockWaitLimit)
-		defer cancel()
+		ctx := locks.WithSite(context.Background(), "fts-index")
 		t0 := time.Now()
-		// Queued, not refused: one index per user, so a pass that gives up on
-		// the first hold fails a rescan behind a background job (#1986).
-		lk, err := locks.Acquire(ctx, locker, key, locks.Owner(user, locks.NewID()), 5*time.Minute)
-		ftsservice.ObserveLockWait(time.Since(t0))
+		// Queued and renewed: one index per user, so a pass that gives up on
+		// the first hold fails a rescan behind a background job, and one hold
+		// now covers a whole-user walk rather than a single folder (#1986).
+		err := locks.WithLockWaiting(ctx, locker, key, locks.Owner(user, locks.NewID()),
+			lockTTL, lockRenewEvery, lockWaitLimit, func(context.Context) error {
+				ftsservice.ObserveLockWait(time.Since(t0))
+				return fn()
+			})
 		if err != nil {
 			// Either shape of "the wait limit ran out": the client reports the
 			// deadline, or cuts the connection first. retry.go keys on ErrBusy.
-			if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, locks.ErrBusy) {
 				return fmt.Errorf("fts: lock %s: %w after %s", key, locks.ErrBusy, lockWaitLimit)
 			}
-			return fmt.Errorf("fts: lock %s: %w", key, err)
+			return err
 		}
-		defer locker.Unlock(context.Background(), lk.ID) //nolint:errcheck
-		return fn()
+		return nil
 	}
 }
 
