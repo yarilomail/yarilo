@@ -72,6 +72,22 @@ func (u *userMailbox) publishFromTemp(folder, filename string) error {
 			return fmt.Errorf("maildir/assign: sync %s: %w", sub, err)
 		}
 	}
-	u.folderCacheFor(folder).invalidateDir("own-write")
+	u.afterPublish(folder, sub, filename)
 	return nil
+}
+
+// afterPublish keeps the window over a name this process wrote. A file landing
+// in new/ is not in the cur/ listing at all, so it changes nothing there.
+func (u *userMailbox) afterPublish(folder, sub, name string) {
+	if sub == "new" {
+		return
+	}
+	cache := u.folderCacheFor(folder)
+	dir := filepath.Join(u.folderPath(folder), "cur")
+	fi, err := statPath(dir)
+	if err != nil {
+		cache.invalidateDirEntries("own-write")
+		return
+	}
+	cache.addEntry(dir, name, fi.ModTime())
 }

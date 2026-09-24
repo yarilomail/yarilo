@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -427,6 +428,35 @@ func (c *folderCache) renameEntry(from, to string, mtime time.Time) {
 		return
 	}
 	c.entries, c.dirMtime = kept, mtime
+}
+
+// ownEntry is a name this process wrote, standing in the listing without a
+// read. Info stats on demand: a fetch wants the name, only the scan the size.
+type ownEntry struct{ dir, name string }
+
+func (e ownEntry) Name() string               { return e.name }
+func (e ownEntry) IsDir() bool                { return false }
+func (e ownEntry) Type() fs.FileMode          { return 0 }
+func (e ownEntry) Info() (fs.FileInfo, error) { return lstatPath(filepath.Join(e.dir, e.name)) }
+
+// addEntry puts a name this process published into the listing and re-keys it:
+// closing the window over our own write cost a read of cur/ per save (#1875).
+func (c *folderCache) addEntry(dir, name string, mtime time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		return
+	}
+	for _, e := range c.entries {
+		if e.Name() == name {
+			c.dirMtime = mtime
+			return
+		}
+	}
+	// A fresh slice: dirEntries hands the old one out without this mutex.
+	kept := make([]os.DirEntry, len(c.entries), len(c.entries)+1)
+	copy(kept, c.entries)
+	c.entries, c.dirMtime = append(kept, ownEntry{dir: dir, name: name}), mtime
 }
 
 // forgetEntry drops one name from the cached listing and re-keys it to mtime.
@@ -2091,17 +2121,20 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 	return filename, nil
 }
 
-// afterFlagRename keeps the listing this process just changed. A file coming
-// out of new/ was never in it, so that one is an invalidation as before.
+// afterFlagRename keeps the listing this process just changed, under the name
+// it now wears.
 func (u *userMailbox) afterFlagRename(folder, sub, from, to string) {
 	cache := u.folderCacheFor(folder)
-	if sub == "new" {
-		cache.invalidateDir("own-write")
-		return
-	}
-	fi, err := statPath(filepath.Join(u.folderPath(folder), "cur"))
+	dir := filepath.Join(u.folderPath(folder), "cur")
+	fi, err := statPath(dir)
 	if err != nil {
 		cache.invalidateDirEntries("own-write")
+		return
+	}
+	// A file coming out of new/ was never in the cur/ listing, so it is an
+	// arrival there rather than a rename of a row it holds.
+	if sub == "new" {
+		cache.addEntry(dir, to, fi.ModTime())
 		return
 	}
 	cache.renameEntry(from, to, fi.ModTime())
