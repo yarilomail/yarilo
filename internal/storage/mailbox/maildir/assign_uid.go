@@ -72,6 +72,6 @@ func (u *userMailbox) publishFromTemp(folder, filename string) error {
 			return fmt.Errorf("maildir/assign: sync %s: %w", sub, err)
 		}
 	}
-	u.folderCacheFor(folder).invalidateDir()
+	u.folderCacheFor(folder).invalidateDir("own-write")
 	return nil
 }

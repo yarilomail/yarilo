@@ -281,7 +281,7 @@ func (u *userMailbox) listCanTakeRow(folder, base string) bool {
 func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, hasGUID bool) {
 	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
-		u.folderCacheFor(folder).invalidateUIDs()
+		u.folderCacheFor(folder).invalidateUIDs("own-write")
 		return
 	}
 	u.folderCacheFor(folder).addUID(base, uid, guid, hasGUID, stampOf(fi))
@@ -292,7 +292,7 @@ func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, h
 func (u *userMailbox) adoptWritten(folder string, l *uidList) {
 	fi, err := statPath(u.uidListPath(folder))
 	if err != nil {
-		u.folderCacheFor(folder).invalidateUIDs()
+		u.folderCacheFor(folder).invalidateUIDs("own-write")
 		return
 	}
 	m := make(map[string]uint32, len(l.records))
@@ -351,9 +351,12 @@ func (c *folderCache) storeDirEntries(entries []os.DirEntry, mtime time.Time) {
 
 // invalidateDirEntries drops the cached listing and the mtime it was keyed by,
 // for a caller that has just learnt it is stale.
-func (c *folderCache) invalidateDirEntries() {
+func (c *folderCache) invalidateDirEntries(by string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.checked {
+		metricWindowClosed.WithLabelValues(by).Inc()
+	}
 	c.checked = false
 	c.entries, c.dirMtime = nil, time.Time{}
 }
@@ -368,16 +371,22 @@ func (c *folderCache) markChecked() {
 
 // invalidateUIDs drops the cached list after a rewrite, so the next read takes
 // the file rather than the map it replaced.
-func (c *folderCache) invalidateUIDs() {
+func (c *folderCache) invalidateUIDs(by string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.checked {
+		metricWindowClosed.WithLabelValues(by).Inc()
+	}
 	c.checked = false
 	c.uidMap, c.guidMap, c.byUID = nil, nil, nil
 }
 
-func (c *folderCache) invalidateDir() {
+func (c *folderCache) invalidateDir(by string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.checked {
+		metricWindowClosed.WithLabelValues(by).Inc()
+	}
 	c.checked = false
 	c.entries = nil
 }
@@ -783,8 +792,8 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 		if err := os.Rename(srcPath, dstPath); err != nil {
 			return fmt.Errorf("maildir: move rename: %w", err)
 		}
-		u.folderCacheFor(srcFolder).invalidateDir()
-		u.folderCacheFor(dstFolder).invalidateDir()
+		u.folderCacheFor(srcFolder).invalidateDir("own-write")
+		u.folderCacheFor(dstFolder).invalidateDir("own-write")
 		if override {
 			u.rememberGUID(dstFolder, newName, outGUID)
 		}
@@ -927,7 +936,7 @@ func (u *userMailbox) removeFile(folder, filename string, held bool) error {
 	}
 	// The removal's own lookup: named apart from a FETCH's, because a folder
 	// where removals dominate is a different picture (#1875).
-	u.folderCacheFor(folder).invalidateDirEntries()
+	u.folderCacheFor(folder).invalidateDirEntries("expunge")
 	metricDirRead.WithLabelValues("remove").Inc()
 	current, cerr := u.currentName(folder, maildirBase(filename))
 	if cerr != nil || current == filename {
@@ -949,12 +958,12 @@ func (u *userMailbox) removeFile(folder, filename string, held bool) error {
 // Only a holder may keep it (#1809).
 func (u *userMailbox) afterRemoved(folder, dir, filename string, held bool) {
 	if !held {
-		u.folderCacheFor(folder).invalidateDir()
+		u.folderCacheFor(folder).invalidateDir("expunge")
 		return
 	}
 	fi, err := statPath(dir)
 	if err != nil {
-		u.folderCacheFor(folder).invalidateDirEntries()
+		u.folderCacheFor(folder).invalidateDirEntries("expunge")
 		return
 	}
 	u.folderCacheFor(folder).forgetEntry(filename, fi.ModTime())
@@ -2087,12 +2096,12 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 func (u *userMailbox) afterFlagRename(folder, sub, from, to string) {
 	cache := u.folderCacheFor(folder)
 	if sub == "new" {
-		cache.invalidateDir()
+		cache.invalidateDir("own-write")
 		return
 	}
 	fi, err := statPath(filepath.Join(u.folderPath(folder), "cur"))
 	if err != nil {
-		cache.invalidateDirEntries()
+		cache.invalidateDirEntries("own-write")
 		return
 	}
 	cache.renameEntry(from, to, fi.ModTime())

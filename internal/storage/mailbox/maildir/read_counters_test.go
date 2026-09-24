@@ -3,6 +3,7 @@ package maildir
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -166,5 +167,38 @@ func TestAWalkKeepsNoListingFromAnUnsettledDirectory(t *testing.T) {
 	c.mu.Unlock()
 	if kept {
 		t.Error("the walk kept a listing keyed by an mtime that cannot vouch for it")
+	}
+}
+
+// Who closes the window has to be visible before anything is changed about
+// it: a window shut by our own write costs the next lookup a stat (#1875).
+func TestTheWindowSaysWhoClosedIt(t *testing.T) {
+	u, _ := item1Folder(t, 3)
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	c := u.folderCacheFor("INBOX")
+
+	c.markChecked()
+	own := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write"))
+	// Through the save path, so the publish that closes the window runs: a
+	// file placed into cur/ by hand never goes through it.
+	name, _, _, err := u.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, nil, nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.AssignUID("INBOX", name, 70); err != nil {
+		t.Fatal(err)
+	}
+	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != own+1 {
+		t.Errorf("own-write closings = %v, want %v", now, own+1)
+	}
+
+	// A window that is already shut is not shut twice: the number is windows
+	// lost, not calls made.
+	again := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write"))
+	c.invalidateDir("own-write")
+	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != again {
+		t.Errorf("a closed window was counted again: %v -> %v", again, now)
 	}
 }
