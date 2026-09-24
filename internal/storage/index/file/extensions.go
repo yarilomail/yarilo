@@ -556,6 +556,7 @@ var ourExtensions = map[string]bool{
 	extNameCache:        true,
 	extNameCacheCRC:     true,
 	extNameMaildir:      true,
+	extNameGUIDMap:      true,
 	extNameLineage:      true,
 	extNameMdbox:        true,
 }

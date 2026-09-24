@@ -492,6 +492,7 @@ type userIndex struct {
 	next  uint64                  // monotonic per-session folder ID counter
 	open  map[uint64]*folderState // folderID → state
 	byDir map[string]uint64       // index dir path → folderID (dedup OpenFolder)
+	guid  guidStore               // the per-user GUID store, opened by name (#1711)
 }
 
 // folderState is one folder's fileindex in memory: mutations append to the log
