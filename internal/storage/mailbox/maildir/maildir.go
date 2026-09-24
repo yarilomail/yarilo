@@ -1331,10 +1331,15 @@ func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, 
 
 func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
-	// Only a full walk earns the window: an arrivals-only pass never reads
-	// cur/, so it has compared nothing to trust afterwards (#1875).
+	// A full walk earns the window; so does a uid list the index was built
+	// from, by one stat (maildir-uidlist.c:975-995, #1875).
 	if !arrivalsOnly {
 		defer u.folderCacheFor(folder.Name).markChecked()
+		defer u.stampUIDList(idx, folder)
+	} else {
+		// At the end, as the full pass does: a window opened before the pass
+		// runs is one the pass itself closes.
+		defer u.windowFromStamp(idx, folder)
 	}
 	// The move precedes the scan because it renames, and is asked about before
 	// the lock: one acquisition taken to find an empty new/ is paid on every
@@ -2649,3 +2654,56 @@ func (u *userMailbox) DriverName() string { return driverName }
 // FsyncMode is what a delivery makes durable here, so the wiring of the
 // configured mode has a reader (#1969).
 func (b *Backend) FsyncMode() mailbox.FsyncMode { return b.fsync }
+
+// uidListStamp is the uid list as one stat sees it, in the fields the stamp
+// keeps (maildir-storage.h:52-56).
+func (u *userMailbox) uidListStamp(folder string) (mailbox.MaildirStamp, bool) {
+	metricCacheStat.WithLabelValues("list").Inc()
+	fi, err := statPath(u.uidListPath(folder))
+	if err != nil {
+		return mailbox.MaildirStamp{}, false
+	}
+	mt := fi.ModTime()
+	return mailbox.MaildirStamp{
+		UIDListMtime:      uint32(mt.Unix()),
+		UIDListMtimeNsecs: uint32(mt.Nanosecond()),
+		UIDListSize:       uint32(fi.Size()),
+	}, true
+}
+
+// stampUIDList records what a full pass read the list at, so the next open can
+// ask one stat rather than a walk.
+func (u *userMailbox) stampUIDList(idx mailbox.UserIndex, folder *mailbox.Folder) {
+	st, ok := idx.(mailbox.MaildirStamped)
+	if !ok {
+		return
+	}
+	now, have := u.uidListStamp(folder.Name)
+	if !have {
+		return
+	}
+	if err := st.SetMaildirStamp(folder.ID, now); err != nil {
+		slog.Warn("maildir: the uid list stamp was not recorded",
+			"user", u.username, "folder", folder.Name, "err", err)
+	}
+}
+
+// windowFromStamp opens the window a walk would have earned, when the list is
+// the one the index was built from.
+func (u *userMailbox) windowFromStamp(idx mailbox.UserIndex, folder *mailbox.Folder) {
+	st, ok := idx.(mailbox.MaildirStamped)
+	if !ok {
+		return
+	}
+	was, have := st.MaildirStamp(folder.ID)
+	if !have || was.UIDListSize == 0 {
+		return
+	}
+	now, fresh := u.uidListStamp(folder.Name)
+	if !fresh || now != was {
+		metricStampMiss.Inc()
+		return
+	}
+	metricStampHit.Inc()
+	u.folderCacheFor(folder.Name).markChecked()
+}
