@@ -993,6 +993,7 @@ func (u *userIndex) GUIDBackfillNeeded(folderID uint64) (bool, error) {
 func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 	var zero [16]byte
 	return u.withFolderSite(folderID, lockSiteSetGuids, func(fs *folderState) error {
+		var stamped []mailbox.GUIDRecord
 		// An index written before the extension existed needs it added first;
 		// existing records gain 16 zero bytes on the next write.
 		if err := fs.declareRecordExtLocked(extNameGUID, encodeGUIDHdr(guidStatePending),
@@ -1011,12 +1012,19 @@ func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 				rec.Ext = make(map[string][]byte, 1)
 			}
 			rec.Ext[extNameGUID] = encodeGUIDRec(g)
+			stamped = append(stamped, mailbox.GUIDRecord{
+				GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: rec.UID,
+			})
 		}
 		if ext := findExt(fs.file.Extensions, extNameGUID); ext != nil {
 			ext.HdrData = encodeGUIDHdr(guidStateComplete)
 			ext.HdrSize = guidHdrSize
 		}
-		return fs.flush()
+		if err := fs.flush(); err != nil {
+			return err
+		}
+		u.trackStampedGUIDs(fs, stamped)
+		return nil
 	})
 }
 
@@ -1720,6 +1728,19 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 			return err
 		}
 		fs.logSize = 0
+		// The store holds what the folder holds: a rebuild replaces records
+		// and their identities together.
+		var recorded []mailbox.GUIDRecord
+		for _, m := range records {
+			if m == nil || m.UID == 0 || m.GUID == ([16]byte{}) {
+				continue
+			}
+			recorded = append(recorded, mailbox.GUIDRecord{
+				GUID: m.GUID, FolderGUID: fs.hdr.MailboxGUID, UID: m.UID,
+				InternalDate: m.InternalDate.Unix(),
+			})
+		}
+		u.trackReplacedFolder(fs, recorded)
 		// Log kept vs dropped counts so a "missing after rebuild" message can
 		// be traced to the dropped set.
 		slog.Debug("fileindex: reset folder",

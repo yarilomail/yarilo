@@ -248,6 +248,37 @@ func (u *userIndex) trackAppendedGUID(fs *folderState, m *mailbox.MessageMeta) {
 	}}})
 }
 
+// trackStampedGUIDs records copies whose identity was settled after the
+// record was written: a stamped or adopted message is as unresolvable as an
+// unrecorded one until the store knows it (#1986).
+func (u *userIndex) trackStampedGUIDs(fs *folderState, recs []mailbox.GUIDRecord) {
+	if len(recs) == 0 {
+		return
+	}
+	u.applyGUIDTracking(fs, guidBatch{add: recs})
+}
+
+// trackReplacedFolder makes the store hold exactly what the folder now holds:
+// a rebuild replaces records and their identities in one command.
+func (u *userIndex) trackReplacedFolder(fs *folderState, recs []mailbox.GUIDRecord) {
+	folder := fs.hdr.MailboxGUID
+	u.applyGUIDTracking(fs, guidBatch{goneFolder: &folder, add: recs})
+}
+
+// trackDeletedFolder retracts every copy of a folder that is gone: a search
+// over the account must not answer with a copy in a folder that no longer
+// exists.
+func (u *userIndex) trackDeletedFolder(folder string, folderGUID [16]byte) {
+	if folderGUID == ([16]byte{}) {
+		return
+	}
+	if err := u.applyGUIDBatch(guidBatch{goneFolder: &folderGUID}); err != nil {
+		metricGUIDTrackFailed.Inc()
+		slog.Warn("fileindex: the guid store did not take this command; it is derived and rebuildable",
+			"user", u.username, "folder", folder, "err", err)
+	}
+}
+
 // trackExpungedGUID retracts one copy written outside a transaction.
 func (u *userIndex) trackExpungedGUID(fs *folderState, uid uint32) {
 	u.applyGUIDTracking(fs, guidBatch{gone: []guidCopy{{folderGUID: fs.hdr.MailboxGUID, uid: uid}}})
@@ -273,12 +304,15 @@ type guidCopy struct {
 type guidBatch struct {
 	add  []mailbox.GUIDRecord
 	gone []guidCopy
+	// goneFolder retracts every copy a folder holds, for the commands that
+	// take the folder away rather than one message (#1986).
+	goneFolder *[16]byte
 }
 
 // applyGUIDBatch takes the store once and writes the command's copies: per-op
 // holds cost a transaction one acquisition per record (#1827).
 func (u *userIndex) applyGUIDBatch(b guidBatch) error {
-	if len(b.add) == 0 && len(b.gone) == 0 {
+	if len(b.add) == 0 && len(b.gone) == 0 && b.goneFolder == nil {
 		return nil
 	}
 	// Nothing to remove from a store that was never written: an expunge must
@@ -293,6 +327,17 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 		return err
 	}
 	return u.withFolderSite(id, lockSiteGUIDAppend, func(fs *folderState) error {
+		if b.goneFolder != nil {
+			for i := len(fs.file.Records) - 1; i >= 0; i-- {
+				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+				if !ok || r.FolderGUID != *b.goneFolder {
+					continue
+				}
+				if _, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0); eerr != nil {
+					return eerr
+				}
+			}
+		}
 		for _, c := range b.gone {
 			for i := range fs.file.Records {
 				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])

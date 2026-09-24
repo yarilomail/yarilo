@@ -904,7 +904,29 @@ func (u *userIndex) folderTreeDir(dir string) string {
 // UserMailbox.Delete, so the index does not outlive it. Idempotent.
 func (u *userIndex) DeleteFolder(folder string) error {
 	return u.withTwoFolderLocks(folder, folder, func() error {
+		// The folder's identity, read while the index is still there: the
+		// store is keyed by it and the directory is about to go.
+		var guid [16]byte
+		u.mu.Lock()
+		for _, fs := range u.open {
+			if fs.folder == folder {
+				guid = fs.hdr.MailboxGUID
+				break
+			}
+		}
+		u.mu.Unlock()
 		dir := u.folderTreeDir(u.indexDir(folder))
+		if guid == ([16]byte{}) {
+			// Not open here: read the identity off the file rather than leave
+			// the folder's copies in the store for ever.
+			if f, ferr := mailindex.Open(filepath.Join(dir, IndexFileName)); ferr == nil {
+				if ext := findExt(f.Extensions, extNameDboxHdr); ext != nil {
+					if hdr, herr := decodeDboxHdr(ext.HdrData); herr == nil {
+						guid = hdr.MailboxGUID
+					}
+				}
+			}
+		}
 		if err := os.RemoveAll(dir); err != nil {
 			return fmt.Errorf("fileindex/delete %s: %w", dir, err)
 		}
@@ -924,6 +946,9 @@ func (u *userIndex) DeleteFolder(folder string) error {
 			delete(u.byDir, u.indexDir(folder))
 		}
 		u.mu.Unlock()
+		// The copies go with the folder: a search over the account must not
+		// answer with a copy in a folder that no longer exists.
+		u.trackDeletedFolder(folder, guid)
 		// The identity goes with the folder: RFC 3501 §6.3.4 requires one
 		// recreated under this name to look new, not to get the old number.
 		if u.folders != nil {
