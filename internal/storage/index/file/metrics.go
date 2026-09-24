@@ -148,3 +148,16 @@ var metricGUIDStoreStale = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fileindex_guid_store_stale_total",
 	Help: "Opens of a per-user GUID store whose records are not the shape this build writes.",
 })
+
+// The GUID lookup map: built once per version of the store, then answered from
+// memory (#1711).
+var (
+	metricGUIDImageBuilt = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fileindex_guid_image_built_total",
+		Help: "Times the GUID lookup map was built from the store.",
+	})
+	metricGUIDImageHit = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fileindex_guid_image_hit_total",
+		Help: "Lookups answered from the GUID map already built for this version of the store.",
+	})
+)

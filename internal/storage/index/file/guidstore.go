@@ -57,8 +57,18 @@ func decodeGUIDMapRec(b []byte) (guidMapRec, bool) {
 
 // guidStore is the open handle, one per user index.
 type guidStore struct {
-	mu sync.Mutex
-	id uint64
+	mu      sync.Mutex
+	id      uint64
+	image   map[[16]byte][]mailbox.GUIDRecord
+	version guidImageVersion
+}
+
+// guidImageVersion says which image a map was built from: the file's identity,
+// how far its uids have gone, and how many records it holds.
+type guidImageVersion struct {
+	indexID uint32
+	nextUID uint32
+	records int
 }
 
 // GUIDStorePath is where the store lives: the index root the folders use, so
@@ -89,12 +99,18 @@ func (u *userIndex) openGUIDStore() (uint64, error) {
 	id := u.next
 	u.mu.Unlock()
 
+	// A store that exists is opened, not created: a reader must not take the
+	// lock a creation needs.
+	intent := intentCreate
+	if _, err := os.Stat(path); err == nil {
+		intent = intentOpen
+	}
 	fs := &folderState{
 		user:       u.username,
 		folder:     "",
 		indexDir:   dir,
 		indexPath:  path,
-		intent:     intentCreate,
+		intent:     intent,
 		lockMethod: u.b.lockMethod,
 		fsync:      u.b.fsync,
 	}
@@ -284,4 +300,72 @@ func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) error {
 		Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
 	})
 	return nil
+}
+
+// GUIDCopies answers from the image the store last read: the map is built once
+// per version of the file, so a second lookup in a session costs no I/O.
+func (u *userIndex) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
+	if len(guids) == 0 {
+		return nil, nil
+	}
+	byGUID, err := u.guidImage()
+	if err != nil || byGUID == nil {
+		return nil, err
+	}
+	var out []mailbox.GUIDRecord
+	for _, g := range guids {
+		out = append(out, byGUID[g]...)
+	}
+	return out, nil
+}
+
+// guidImage returns the lookup map for the store as it stands, rebuilding it
+// only when the file has moved on.
+func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
+	// A lookup never creates the store: reading is not what brings a derived
+	// file into being, and an empty answer sends the caller to the walk.
+	if _, err := os.Stat(u.GUIDStorePath()); err != nil {
+		return nil, nil
+	}
+	id, err := u.openGUIDStore()
+	if errors.Is(err, errGUIDStoreStale) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var version guidImageVersion
+	if err := u.withFolderROUnlocked(id, func(fs *folderState) error {
+		version = guidImageVersion{
+			indexID: fs.file.Header.IndexID,
+			nextUID: fs.file.Header.NextUID,
+			records: len(fs.file.Records),
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	u.guid.mu.Lock()
+	if u.guid.image != nil && u.guid.version == version {
+		m := u.guid.image
+		u.guid.mu.Unlock()
+		metricGUIDImageHit.Inc()
+		return m, nil
+	}
+	u.guid.mu.Unlock()
+
+	recs, err := u.GUIDRecords()
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[[16]byte][]mailbox.GUIDRecord, len(recs))
+	for _, r := range recs {
+		m[r.GUID] = append(m[r.GUID], r)
+	}
+	u.guid.mu.Lock()
+	u.guid.image, u.guid.version = m, version
+	u.guid.mu.Unlock()
+	metricGUIDImageBuilt.Inc()
+	return m, nil
 }

@@ -3,6 +3,7 @@ package jmap
 import (
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
@@ -18,6 +19,11 @@ import (
 // the session protocols: userdb resolves the storage identity, then the backends
 // hand out per-user handles.
 type Storage struct {
+	// folderIDs maps a folder's GUID to its name, per user: a handle lives for
+	// one request, and the id lookup needs the identity across them (#1711).
+	folderIDsMu sync.Mutex
+	folderIDs   map[string]*folderIdentities
+
 	Mailbox mailbox.MailboxBackend
 	Index   mailbox.IndexBackend
 	// ResolveUser maps a username to its storage identity (userdb).
@@ -52,6 +58,10 @@ type userHandle struct {
 	// account once per method (#1875).
 	quotaUsage quota.Usage
 	quotaAt    time.Time
+
+	// folders is the process-wide map of folder identities: a handle lives for
+	// one request, and the folder list carries no GUIDs (#1711).
+	folders *folderIdentities
 }
 
 func (h *userHandle) close() {
@@ -95,6 +105,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 		idx:  s.Index.OpenUser(info),
 	}
 	h.mbox = mailboxbase.Open(h.box, h.idx)
+	h.folders = s.folderIdentitiesFor(username)
 	h.threads = s.Threads
 	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)
 	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)
