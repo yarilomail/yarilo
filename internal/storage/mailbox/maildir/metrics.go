@@ -102,3 +102,16 @@ var metricWindowClosed = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_window_closed_total",
 	Help: "Times a folder's checked window was closed, by what closed it.",
 }, []string{"by"})
+
+// Whether the stamp in the index opened the window: a partial pass never walks
+// cur/, so without it every lookup states the uid list (#1875).
+var (
+	metricStampHit = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "maildir_uidlist_stamp_hit_total",
+		Help: "Folder opens where the uid list matched the stamp the index was built from, so the window opened without a walk.",
+	})
+	metricStampMiss = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "maildir_uidlist_stamp_miss_total",
+		Help: "Folder opens where the uid list had moved on from the stamp, or there was none.",
+	})
+)

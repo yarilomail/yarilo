@@ -82,6 +82,7 @@ const (
 	// Only a test reaches the index without a caller of its own.
 	lockSiteTestWrite       = "test-write"
 	lockSiteAdoptUidSpace   = "adopt-uid-space"
+	lockSiteMaildirStamp    = "maildir-stamp"
 	lockSiteAllocateUid     = "allocate-uid"
 	lockSiteAppend          = "append"
 	lockSiteCacheExtension  = "cache-extension"

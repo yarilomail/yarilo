@@ -61,6 +61,22 @@ type UIDSpaceAdopter interface {
 	AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) error
 }
 
+// MaildirStamp is what a folder's directories and uid list looked like when the
+// index was written, in the reference's layout (maildir-storage.h:52-56).
+type MaildirStamp struct {
+	NewCheckTime, NewMtime, NewMtimeNsecs uint32
+	CurCheckTime, CurMtime, CurMtimeNsecs uint32
+	UIDListMtime, UIDListMtimeNsecs       uint32
+	UIDListSize                           uint32
+}
+
+// MaildirStamped is an index that keeps that stamp, so opening a folder can ask
+// one stat whether the uid list is the one the index was built from.
+type MaildirStamped interface {
+	MaildirStamp(folderID uint64) (MaildirStamp, bool)
+	SetMaildirStamp(folderID uint64, s MaildirStamp) error
+}
+
 // UIDAddressable is a driver that finds a message from the record itself: the
 // name is derived from what the folder records, not kept beside it (#1700).
 type UIDAddressable interface {
