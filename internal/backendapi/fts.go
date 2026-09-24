@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // ftsExpunge invalidates FTS documents for UIDs a rebuild dropped.
@@ -131,10 +130,11 @@ func (s *Server) handleFTSRescan(w http.ResponseWriter, r *http.Request) {
 	}
 	defer uc.Close()
 
-	var names []string
-	if folder != "" {
-		names = []string{folder}
-	} else {
+	// Without a folder the walk belongs to the service, which holds the
+	// user's index once for all of them instead of once per call (#1986).
+	if folder == "" {
+		// The mail home is still checked here: an account that has none is
+		// refused before anything opens it, never made by the attempt.
 		bundle, err := uc.ns(s, "")
 		if err != nil {
 			apiError(w, "fts rescan: "+err.Error(), http.StatusInternalServerError)
@@ -144,28 +144,25 @@ func (s *Server) handleFTSRescan(w http.ResponseWriter, r *http.Request) {
 			apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 			return
 		}
-		folders, err := bundle.box.ListFolders()
+		done, err := s.opts.FTSClient.RescanUser(user)
 		if err != nil {
-			apiError(w, "fts rescan: "+err.Error(), http.StatusInternalServerError)
+			apiError(w, "fts rescan: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		names = mailbox.SelectableNames(folders)
+		apiJSON(w, ftsRescanResponse{User: user, Folders: done})
+		return
 	}
 
-	done := make([]string, 0, len(names))
-	for _, name := range names {
-		mbox, err := s.ftsMailboxRef(uc, name)
-		if err != nil {
-			apiError(w, "fts rescan: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := s.opts.FTSClient.Rescan(user, mbox); err != nil {
-			apiError(w, "fts rescan "+name+": "+err.Error(), http.StatusBadGateway)
-			return
-		}
-		done = append(done, name)
+	mbox, err := s.ftsMailboxRef(uc, folder)
+	if err != nil {
+		apiError(w, "fts rescan: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-	apiJSON(w, ftsRescanResponse{User: user, Folders: done})
+	if err := s.opts.FTSClient.Rescan(user, mbox); err != nil {
+		apiError(w, "fts rescan "+folder+": "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	apiJSON(w, ftsRescanResponse{User: user, Folders: []string{folder}})
 }
 
 // handleFTSOptimize compacts every index owned by the user.

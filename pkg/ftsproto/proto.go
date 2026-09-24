@@ -44,6 +44,9 @@ const (
 	CmdStatus   = "STATUS"
 	CmdRescan   = "RESCAN"
 	CmdOptimize = "OPTIMIZE"
+	// Whole-user rescan: one hold for every folder, rather than one call and
+	// one hold per folder (#1986).
+	CmdRescanUser = "RESCANUSER"
 
 	replyOK = "OK"
 	replyNO = "NO"
@@ -68,6 +71,7 @@ type Service interface {
 	Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Result, error)
 	Status(user string, mbox fts.MailboxRef) (lastUID, checksum uint32, err error)
 	Rescan(user string, mbox fts.MailboxRef) error
+	RescanUser(user string) ([]string, error)
 	Optimize(user string) error
 }
 
@@ -274,6 +278,17 @@ func (r *Remote) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 func (r *Remote) Rescan(user string, m fts.MailboxRef) error {
 	_, err := r.call(append([]string{CmdRescan, user}, MboxFields(m)...)...)
 	return err
+}
+
+func (r *Remote) RescanUser(user string) ([]string, error) {
+	payload, err := r.call(CmdRescanUser, user)
+	if err != nil {
+		return nil, err
+	}
+	if payload == "" {
+		return nil, nil
+	}
+	return strings.Split(payload, "\t"), nil
 }
 
 func (r *Remote) Optimize(user string) error {

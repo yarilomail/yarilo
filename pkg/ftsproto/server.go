@@ -186,6 +186,18 @@ func dispatch(line string, svc Service) string {
 			return replyOK
 		}
 
+	case CmdRescanUser:
+		if len(f) != 2 {
+			return no("malformed RESCANUSER")
+		}
+		done, err := svc.RescanUser(f[1])
+		if err != nil {
+			slog.Debug("fts: whole-user rescan failed", "user", f[1], "err", err)
+			return noFor(err)
+		}
+		slog.Debug("fts: rescanned", "user", f[1], "folders", len(done))
+		return strings.Join(append([]string{replyOK}, done...), "\t")
+
 	case CmdOptimize:
 		if len(f) != 2 {
 			return no("malformed OPTIMIZE")

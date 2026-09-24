@@ -16,11 +16,12 @@ import (
 
 // fakeFTS records calls and scripts Status for the backend-api tests.
 type fakeFTS struct {
-	mu       sync.Mutex
-	status   uint32
-	rescans  []string
-	optimize int
-	expunges []ftsExpungeCall
+	mu        sync.Mutex
+	status    uint32
+	rescans   []string
+	wholeUser int
+	optimize  int
+	expunges  []ftsExpungeCall
 }
 
 type ftsExpungeCall struct {
@@ -44,6 +45,13 @@ func (f *fakeFTS) Status(_ string, _ fts.MailboxRef) (uint32, uint32, error) {
 	defer f.mu.Unlock()
 	return f.status, 7, nil
 }
+func (f *fakeFTS) RescanUser(_ string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.wholeUser++
+	return []string{"INBOX", "Archive"}, nil
+}
+
 func (f *fakeFTS) Rescan(_ string, m fts.MailboxRef) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -175,13 +183,18 @@ func TestFTSRescanAllFolders(t *testing.T) {
 		Folders []string `json:"folders"`
 	}
 	decodeJSONBody(t, body, &r)
-	if len(r.Folders) < 2 {
-		t.Fatalf("rescanned folders = %v, want INBOX + Archive", r.Folders)
-	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if len(fake.rescans) != len(r.Folders) {
-		t.Fatalf("service rescans = %v, response = %v", fake.rescans, r.Folders)
+	// One call for the user, and the folders are the service's answer: the
+	// walk lives where the index is held, not here (#1986).
+	if fake.wholeUser != 1 {
+		t.Errorf("whole-user rescans = %d, want 1", fake.wholeUser)
+	}
+	if len(fake.rescans) != 0 {
+		t.Errorf("the handler still rescanned folder by folder: %v", fake.rescans)
+	}
+	if len(r.Folders) != 2 {
+		t.Errorf("rescanned folders = %v, want what the service reported", r.Folders)
 	}
 }
 

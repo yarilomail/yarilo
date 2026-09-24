@@ -23,6 +23,7 @@ func (f failingService) Index(string, fts.MailboxRef, uint32, int) error { retur
 func (f failingService) Prepend(string, fts.MailboxRef, uint32) error    { return f.err }
 func (f failingService) Expunge(string, fts.MailboxRef, uint32) error    { return f.err }
 func (f failingService) Rescan(string, fts.MailboxRef) error             { return f.err }
+func (f failingService) RescanUser(string) ([]string, error)             { return nil, f.err }
 func (f failingService) Optimize(string) error                           { return f.err }
 func (f failingService) Lookup(string, fts.MailboxRef, fts.Query) (fts.Result, error) {
 	return fts.Result{}, f.err

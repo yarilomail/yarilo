@@ -43,6 +43,7 @@ func (s *slowService) Prepend(string, fts.MailboxRef, uint32) error          { r
 func (s *slowService) Expunge(string, fts.MailboxRef, uint32) error          { return nil }
 func (s *slowService) Status(string, fts.MailboxRef) (uint32, uint32, error) { return 0, 0, nil }
 func (s *slowService) Rescan(string, fts.MailboxRef) error                   { return nil }
+func (s *slowService) RescanUser(string) ([]string, error)                   { return nil, nil }
 func (s *slowService) Optimize(string) error                                 { return nil }
 
 func serveSlow(t *testing.T) (addr string, svc *slowService) {

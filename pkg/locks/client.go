@@ -829,12 +829,30 @@ func acquireBlocking(ctx context.Context, resource string, wrapWaitErr func(erro
 // after the lock is released. Errors from Renew abort fn (via context) and
 // surface as the function's return value.
 func WithLock(ctx context.Context, l Locker, resource, owner string, ttl, renewEvery time.Duration, fn func(context.Context) error) error {
+	return withLock(ctx, l, resource, owner, ttl, renewEvery, 0, fn)
+}
+
+// WithLockWaiting is WithLock for a caller that queues instead of giving up.
+// waitLimit bounds the queueing only; the work that follows runs under ctx.
+func WithLockWaiting(ctx context.Context, l Locker, resource, owner string, ttl, renewEvery, waitLimit time.Duration, fn func(context.Context) error) error {
+	return withLock(ctx, l, resource, owner, ttl, renewEvery, waitLimit, fn)
+}
+
+func withLock(ctx context.Context, l Locker, resource, owner string, ttl, renewEvery, waitLimit time.Duration, fn func(context.Context) error) error {
 	if renewEvery <= 0 || renewEvery >= ttl {
 		return fmt.Errorf("locks/withlock: renewEvery %v must be in (0, ttl=%v)", renewEvery, ttl)
 	}
 	owner = CheckOwner(owner)
 	_ = CheckSite(ctx)
-	lock, err := l.Lock(ctx, resource, owner, ttl)
+	var lock Lock
+	var err error
+	if waitLimit > 0 {
+		waitCtx, waitCancel := context.WithTimeout(ctx, waitLimit)
+		lock, err = Acquire(waitCtx, l, resource, owner, ttl)
+		waitCancel()
+	} else {
+		lock, err = l.Lock(ctx, resource, owner, ttl)
+	}
 	if err != nil {
 		return err
 	}

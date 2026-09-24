@@ -556,16 +556,64 @@ func (s *Service) Rescan(user string, mbox fts.MailboxRef) error {
 		return err
 	}
 	defer s.release(h)
+	return s.opts.lockIndex(user, func() error {
+		return s.rescanLocked(h, user, mbox)
+	})
+}
+
+// RescanUser reconciles every selectable folder of one user under a single
+// hold: a hold per folder makes the command queue behind itself (#1986).
+func (s *Service) RescanUser(user string) ([]string, error) {
+	h, err := s.handle(user)
+	if err != nil {
+		return nil, err
+	}
+	defer s.release(h)
+	folders, err := h.box.ListFolders()
+	if err != nil {
+		return nil, fmt.Errorf("ftsservice: list folders: %w", err)
+	}
+	names := mailbox.SelectableNames(folders)
+	done := make([]string, 0, len(names))
+	err = s.opts.lockIndex(user, func() error {
+		for _, name := range names {
+			mbox, rerr := h.mailboxRef(name)
+			if rerr != nil {
+				return rerr
+			}
+			if rerr := s.rescanLocked(h, user, mbox); rerr != nil {
+				return rerr
+			}
+			done = append(done, name)
+		}
+		return nil
+	})
+	return done, err
+}
+
+// mailboxRef names one folder the way the index knows it: by its own GUID,
+// never by a number this process assigned (#1995).
+func (h *userHandle) mailboxRef(name string) (fts.MailboxRef, error) {
+	f, err := h.mailboxOf().Folder(name, 0)
+	if err != nil {
+		return fts.MailboxRef{}, fmt.Errorf("ftsservice: open folder %q: %w", name, err)
+	}
+	return fts.MailboxRef{
+		Name:        f.Name,
+		GUID:        hex.EncodeToString(f.GUID[:]),
+		UIDValidity: f.UIDValidity,
+	}, nil
+}
+
+// rescanLocked is the reconciliation itself, with the user's index already
+// held by the caller.
+func (s *Service) rescanLocked(h *userHandle, user string, mbox fts.MailboxRef) error {
 	present, maxUID, uidValidity, err := s.presentUIDs(h, mbox)
 	if err != nil {
 		return err
 	}
-	var missing []uint32
-	if err := s.opts.lockIndex(user, func() error {
-		var rerr error
-		missing, rerr = h.ui.Rescan(mbox, present)
-		return rerr
-	}); err != nil {
+	missing, err := h.ui.Rescan(mbox, present)
+	if err != nil {
 		return err
 	}
 	if len(missing) > 0 {
