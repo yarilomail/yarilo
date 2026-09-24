@@ -968,7 +968,7 @@ func (u *userMailbox) removeFile(folder, filename string, held bool) error {
 	// where removals dominate is a different picture (#1875).
 	u.folderCacheFor(folder).invalidateDirEntries("expunge")
 	metricDirRead.WithLabelValues("remove").Inc()
-	current, cerr := u.currentName(folder, maildirBase(filename))
+	current, _, cerr := u.currentName(folder, maildirBase(filename))
 	if cerr != nil || current == filename {
 		u.reportRemoveMiss(folder, filename, current, cerr)
 		return nil
@@ -2104,7 +2104,7 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 	if rerr := u.relistFor(folder); rerr != nil {
 		return filename, nil
 	}
-	now, nerr := u.currentName(folder, maildirBase(filename))
+	now, _, nerr := u.currentName(folder, maildirBase(filename))
 	if nerr != nil || now == filename {
 		return filename, nil
 	}

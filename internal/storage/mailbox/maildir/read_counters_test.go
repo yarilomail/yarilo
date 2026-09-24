@@ -29,7 +29,7 @@ func TestANameLookupCountsItsReads(t *testing.T) {
 	const base = "1700000002.M2P1.host,S=20,W=20:2,"
 
 	whole0, tail0, name0, miss0 := listingCounts(t)
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 	whole1, tail1, name1, miss1 := listingCounts(t)
@@ -45,7 +45,7 @@ func TestANameLookupCountsItsReads(t *testing.T) {
 	}
 
 	// The second lookup uses the listing it just read, and counts nothing.
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, name2, miss2 := listingCounts(t); name2 != name1 || miss2 != miss1 {
@@ -58,7 +58,7 @@ func TestANameLookupCountsItsReads(t *testing.T) {
 func TestAChangedDirectoryIsAStaleMiss(t *testing.T) {
 	u, home := item1Folder(t, 3)
 	const base = "1700000001.M1P1.host,S=20,W=20:2,"
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +68,7 @@ func TestAChangedDirectoryIsAStaleMiss(t *testing.T) {
 	if err := os.WriteFile(other, []byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime")); now != was+1 {
@@ -133,7 +133,7 @@ func TestANameThatMovedIsStillFound(t *testing.T) {
 	}
 	u.folderCacheFor("INBOX").markChecked()
 	const base = "1700000002.M2P1.host,S=20,W=20:2,"
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -141,7 +141,7 @@ func TestANameThatMovedIsStillFound(t *testing.T) {
 	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, base+"S")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := u.currentName("INBOX", maildirBase(base))
+	got, _, err := u.currentName("INBOX", maildirBase(base))
 	if err != nil {
 		t.Fatalf("the moved name is not findable: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestOurOwnSaveKeepsTheWindow(t *testing.T) {
 func TestAForeignAppendClosesTheWindow(t *testing.T) {
 	u, home := item1Folder(t, 3)
 	const base = "1700000002.M2P1.host,S=20,W=20:2,"
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 	was := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime"))
@@ -234,7 +234,7 @@ func TestAForeignAppendClosesTheWindow(t *testing.T) {
 	if err := os.WriteFile(other, []byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime")); now != was+1 {
@@ -262,7 +262,7 @@ func TestAnOpenOfAMovedNameIsRetried(t *testing.T) {
 	u, home := item1Folder(t, 3)
 	const base = "1700000002.M2P1.host,S=20,W=20:2,"
 	cur := filepath.Join(home, "Maildir", "cur")
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 	// The listing is cached now. Move the file and put cur/ back to the mtime
@@ -278,14 +278,14 @@ func TestAnOpenOfAMovedNameIsRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("open"))
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("path"))
 	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
 	rc, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2})
 	if err != nil {
 		t.Fatalf("a name that moved inside the tick did not open: %v", err)
 	}
 	_ = rc.Close()
-	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("open")); now != was+1 {
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("path")); now != was+1 {
 		t.Errorf("retried misses = %v, want %v", now, was+1)
 	}
 	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads+1 {
@@ -299,7 +299,7 @@ func TestAGoneRecordIsRetriedOnce(t *testing.T) {
 	u, home := item1Folder(t, 3)
 	const base = "1700000002.M2P1.host,S=20,W=20:2,"
 	cur := filepath.Join(home, "Maildir", "cur")
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := statPath(cur)
@@ -326,17 +326,17 @@ func TestAGoneRecordIsRetriedOnce(t *testing.T) {
 // directory a second time.
 func TestAnOpenThatFindsItsFileDoesNotRelist(t *testing.T) {
 	u, _ := item1Folder(t, 3)
-	if _, err := u.currentName("INBOX", maildirBase("1700000002.M2P1.host,S=20,W=20:2,")); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase("1700000002.M2P1.host,S=20,W=20:2,")); err != nil {
 		t.Fatal(err)
 	}
-	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("open"))
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("path"))
 	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
 	rc, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = rc.Close()
-	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("open")); now != was {
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("path")); now != was {
 		t.Errorf("a hit counted %v retries", now-was)
 	}
 	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads {
@@ -350,7 +350,7 @@ func TestFlagsFollowANameThatMovedInsideTheTick(t *testing.T) {
 	u, home := item1Folder(t, 3)
 	const base = "1700000002.M2P1.host,S=20,W=20:2,"
 	cur := filepath.Join(home, "Maildir", "cur")
-	name, err := u.currentName("INBOX", maildirBase(base))
+	name, _, err := u.currentName("INBOX", maildirBase(base))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,5 +407,40 @@ func TestAPassLeavesTheListingForTheLookups(t *testing.T) {
 	}
 	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("scan")); now != scans {
 		t.Errorf("a lookup counted %v passes, so the arm cannot read passes from the counter", now-scans)
+	}
+}
+
+// A name off the cached listing is checked before it leaves the driver: every
+// consumer outside it acts on what RecordPath answers.
+func TestRecordPathAnswersTheNameOnDisk(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	cur := filepath.Join(home, "Maildir", "cur")
+	if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 2}); err != nil {
+		t.Fatal(err)
+	}
+	// Another session gives it a flag, inside the tick the listing is keyed by.
+	fi, err := statPath(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := base + "S"
+	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, moved)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cur, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("path"))
+	got, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 2})
+	if err != nil {
+		t.Fatalf("the record has no name after the move: %v", err)
+	}
+	if got != moved {
+		t.Errorf("RecordPath answers %q, the file is %q", got, moved)
+	}
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("path")); now != was+1 {
+		t.Errorf("path retries = %v, want %v", now, was+1)
 	}
 }

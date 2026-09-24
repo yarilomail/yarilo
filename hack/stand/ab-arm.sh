@@ -715,15 +715,15 @@ for type in $TYPES; do
       $1 ~ /^maildir_dir_read_total\{/ && $1 ~ /reason="remove"/ { byRemove += $2 }
       $1 ~ /^maildir_listing_miss_total\{/ && $1 ~ /reason="no-listing"/ { missNone += $2 }
       $1 ~ /^maildir_listing_miss_total\{/ && $1 ~ /reason="stale-mtime"/ { missStale += $2 }
-      $1 ~ /^maildir_listing_retry_total\{/ && $1 ~ /at="open"/ { retryOpen += $2 }
+      $1 ~ /^maildir_listing_retry_total\{/ && $1 ~ /at="path"/ { retryPath += $2 }
       $1 ~ /^maildir_listing_retry_total\{/ && $1 ~ /at="rename"/ { retryRename += $2 }
       $1 ~ /^maildir_cache_stat_total\{/ && $1 ~ /what="dir"/ { statDir += $2 }
       $1 ~ /^maildir_cache_stat_total\{/ && $1 ~ /what="list"/ { statList += $2 }
       $1 ~ /^maildir_window_closed_total\{/ && $1 ~ /by="own-write"/ { shutOwn += $2 }
       $1 ~ /^maildir_window_closed_total\{/ && $1 ~ /by="expunge"/ { shutExpunge += $2 }
       $1 ~ /^maildir_window_closed_total\{/ && $1 !~ /by="own-write"/ && $1 !~ /by="expunge"/ { shutOther += $2 }
-      END { printf "listing: list_whole=%d list_tail=%d dir_name=%d dir_scan=%d dir_remove=%d miss_none=%d miss_stale=%d retry_open=%d retry_rename=%d stat_dir=%d stat_list=%d",
-              whole, tail, byName, byScan, byRemove, missNone, missStale, retryOpen, retryRename, statDir, statList
+      END { printf "listing: list_whole=%d list_tail=%d dir_name=%d dir_scan=%d dir_remove=%d miss_none=%d miss_stale=%d retry_path=%d retry_rename=%d stat_dir=%d stat_list=%d",
+              whole, tail, byName, byScan, byRemove, missNone, missStale, retryPath, retryRename, statDir, statList
             printf " shut_own=%d shut_expunge=%d shut_other=%d", shutOwn, shutExpunge, shutOther
             if (logins + 0 > 0) printf " list_per_login=%.3f dir_per_login=%.3f stat_per_login=%.3f",
               (whole + tail) / logins, (byName + byScan + byRemove) / logins, (statDir + statList) / logins }

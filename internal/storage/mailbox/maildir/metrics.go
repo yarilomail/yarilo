@@ -86,7 +86,7 @@ var metricListingMiss = promauto.NewCounterVec(prometheus.CounterOpts{
 // consumer that found it out (#1987).
 var metricListingRetry = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_listing_retry_total",
-	Help: "Re-syncs of a folder's listing after a name taken from it had moved on, by where it was found out: open is a fetch, rename is a flag write.",
+	Help: "Re-syncs of a folder's listing after a name taken from it had moved on, by where it was found out: path is a name lookup, rename is a flag write.",
 }, []string{"at"})
 
 // Every stat a name lookup makes to check a cache it already has: the

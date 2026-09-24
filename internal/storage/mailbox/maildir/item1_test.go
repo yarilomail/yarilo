@@ -119,7 +119,7 @@ func TestAReplacedListIsReadWhole(t *testing.T) {
 func TestOurOwnFlagRenameDoesNotCostAReadDir(t *testing.T) {
 	u, _ := item1Folder(t, 10)
 	const base = "1700000003.M3P1.host,S=20,W=20:2,"
-	if _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -131,7 +131,7 @@ func TestOurOwnFlagRenameDoesNotCostAReadDir(t *testing.T) {
 	if renamed == base {
 		t.Fatal("the flag change renamed nothing, so the row asserts nothing")
 	}
-	got, err := u.currentName("INBOX", maildirBase(base))
+	got, _, err := u.currentName("INBOX", maildirBase(base))
 	if err != nil {
 		t.Fatalf("the message is not findable after its own rename: %v", err)
 	}
