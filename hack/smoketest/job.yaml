@@ -118,9 +118,9 @@ spec:
         - -envelope-pass=Yarilo!test1
         - -fts-user=u1@d00001.test
         - -fts-pass=Yarilo!test1
-        # One account per storage driver: the copy-scope row runs on mdbox,
-        # maildir and sdbox, since each stores a copy its own way.
-        - -fts-copy-users=u1@d00001.test:Yarilo!test1,u51@d00001.test:Yarilo!test1,u101@d00001.test:Yarilo!test1
+        # One account per storage driver, and the drivers are split by domain
+        # on this stand: d00001 mdbox, d00002 maildir, d00003 sdbox.
+        - -fts-copy-users=u1@d00001.test:Yarilo!test1,u51@d00002.test:Yarilo!test1,u101@d00003.test:Yarilo!test1
         - -director-api=http://yarilo-director-api:9103
         # The service is yarilo-backend (not -backend-api) and 9105 is HTTPS.
         - -backend-api=https://yarilo-backend:9105
