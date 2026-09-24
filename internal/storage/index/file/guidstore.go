@@ -248,9 +248,8 @@ func (u *userIndex) trackAppendedGUID(fs *folderState, m *mailbox.MessageMeta) {
 	}}})
 }
 
-// trackStampedGUIDs records copies whose identity was settled after the
-// record was written: a stamped or adopted message is as unresolvable as an
-// unrecorded one until the store knows it (#1986).
+// trackStampedGUIDs records copies whose identity was settled after the record
+// was written; until the store knows one, no search can name it (#1986).
 func (u *userIndex) trackStampedGUIDs(fs *folderState, recs []mailbox.GUIDRecord) {
 	if len(recs) == 0 {
 		return
@@ -265,9 +264,8 @@ func (u *userIndex) trackReplacedFolder(fs *folderState, recs []mailbox.GUIDReco
 	u.applyGUIDTracking(fs, guidBatch{goneFolder: &folder, add: recs})
 }
 
-// trackDeletedFolder retracts every copy of a folder that is gone: a search
-// over the account must not answer with a copy in a folder that no longer
-// exists.
+// trackDeletedFolder retracts every copy of a folder that is gone, or an
+// account-wide search answers with a copy in a mailbox that does not exist.
 func (u *userIndex) trackDeletedFolder(folder string, folderGUID [16]byte) {
 	if folderGUID == ([16]byte{}) {
 		return
