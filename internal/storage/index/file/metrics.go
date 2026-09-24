@@ -141,3 +141,10 @@ var metricGUIDTrackFailed = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fileindex_guid_track_failed_total",
 	Help: "Copies the per-user GUID store did not record after the folder write succeeded.",
 })
+
+// A GUID store written in an older record shape: refused, not reinterpreted,
+// until a rebuild replaces it (#1711).
+var metricGUIDStoreStale = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_guid_store_stale_total",
+	Help: "Opens of a per-user GUID store whose records are not the shape this build writes.",
+})

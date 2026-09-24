@@ -20,9 +20,9 @@ func guidUser(t *testing.T) (*userIndex, string) {
 func TestTheGUIDStoreKeepsOneRecordPerCopy(t *testing.T) {
 	ui, _ := guidUser(t)
 	want := []mailbox.GUIDRecord{
-		{GUID: [16]byte{1, 2, 3}, FolderID: 7, UID: 11, Flags: 1, InternalDate: 1700000000, CID: 0},
-		{GUID: [16]byte{1, 2, 3}, FolderID: 9, UID: 4, Flags: 0, InternalDate: 1700000001},
-		{GUID: [16]byte{9}, FolderID: 7, UID: 12, Flags: 2, InternalDate: 1700000002},
+		{GUID: [16]byte{1, 2, 3}, FolderGUID: [16]byte{7}, UID: 11, Flags: 1, InternalDate: 1700000000, CID: 0},
+		{GUID: [16]byte{1, 2, 3}, FolderGUID: [16]byte{9}, UID: 4, Flags: 0, InternalDate: 1700000001},
+		{GUID: [16]byte{9}, FolderGUID: [16]byte{7}, UID: 12, Flags: 2, InternalDate: 1700000002},
 	}
 	for _, r := range want {
 		if err := ui.AppendGUIDRecord(r); err != nil {
@@ -47,7 +47,7 @@ func TestTheGUIDStoreKeepsOneRecordPerCopy(t *testing.T) {
 // in the index root, so no folder enumerator can reach it.
 func TestTheGUIDStoreIsNotAFolder(t *testing.T) {
 	ui, home := guidUser(t)
-	if err := ui.AppendGUIDRecord(mailbox.GUIDRecord{GUID: [16]byte{1}, FolderID: 1, UID: 1}); err != nil {
+	if err := ui.AppendGUIDRecord(mailbox.GUIDRecord{GUID: [16]byte{1}, FolderGUID: [16]byte{1}, UID: 1}); err != nil {
 		t.Fatal(err)
 	}
 	path := ui.GUIDStorePath()
@@ -77,7 +77,7 @@ func TestTheGUIDStoreIsNotAFolder(t *testing.T) {
 // session's memory.
 func TestTheGUIDStoreSurvivesReopening(t *testing.T) {
 	ui, home := guidUser(t)
-	r := mailbox.GUIDRecord{GUID: [16]byte{4, 5}, FolderID: 3, UID: 8, Flags: 5, InternalDate: 99, CID: 0}
+	r := mailbox.GUIDRecord{GUID: [16]byte{4, 5}, FolderGUID: [16]byte{3}, UID: 8, Flags: 5, InternalDate: 99, CID: 0}
 	if err := ui.AppendGUIDRecord(r); err != nil {
 		t.Fatal(err)
 	}

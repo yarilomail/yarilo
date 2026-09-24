@@ -2,6 +2,7 @@ package file
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,14 +16,14 @@ import (
 const (
 	GUIDIndexFileName = "yarilo.guid.index"
 	extNameGUIDMap    = "guidmap"
-	guidMapRecSize    = 48
+	guidMapRecSize    = 56
 )
 
 // guidMapRec is the record extension, laid out from the Cyrus key and value
 // (conversations.c:2306, 2318-2326).
 type guidMapRec struct {
 	GUID         [16]byte
-	FolderID     uint64
+	FolderGUID   [16]byte
 	UID          uint32
 	Flags        uint32
 	InternalDate int64
@@ -32,11 +33,11 @@ type guidMapRec struct {
 func encodeGUIDMapRec(r guidMapRec) []byte {
 	b := make([]byte, guidMapRecSize)
 	copy(b[0:16], r.GUID[:])
-	binary.LittleEndian.PutUint64(b[16:24], r.FolderID)
-	binary.LittleEndian.PutUint32(b[24:28], r.UID)
-	binary.LittleEndian.PutUint32(b[28:32], r.Flags)
-	binary.LittleEndian.PutUint64(b[32:40], uint64(r.InternalDate))
-	binary.LittleEndian.PutUint64(b[40:48], r.CID)
+	copy(b[16:32], r.FolderGUID[:])
+	binary.LittleEndian.PutUint32(b[32:36], r.UID)
+	binary.LittleEndian.PutUint32(b[36:40], r.Flags)
+	binary.LittleEndian.PutUint64(b[40:48], uint64(r.InternalDate))
+	binary.LittleEndian.PutUint64(b[48:56], r.CID)
 	return b
 }
 
@@ -46,11 +47,11 @@ func decodeGUIDMapRec(b []byte) (guidMapRec, bool) {
 	}
 	var r guidMapRec
 	copy(r.GUID[:], b[0:16])
-	r.FolderID = binary.LittleEndian.Uint64(b[16:24])
-	r.UID = binary.LittleEndian.Uint32(b[24:28])
-	r.Flags = binary.LittleEndian.Uint32(b[28:32])
-	r.InternalDate = int64(binary.LittleEndian.Uint64(b[32:40]))
-	r.CID = binary.LittleEndian.Uint64(b[40:48])
+	copy(r.FolderGUID[:], b[16:32])
+	r.UID = binary.LittleEndian.Uint32(b[32:36])
+	r.Flags = binary.LittleEndian.Uint32(b[36:40])
+	r.InternalDate = int64(binary.LittleEndian.Uint64(b[40:48]))
+	r.CID = binary.LittleEndian.Uint64(b[48:56])
 	return r, true
 }
 
@@ -112,8 +113,17 @@ func (u *userIndex) openGUIDStore() (uint64, error) {
 	return id, nil
 }
 
+// errGUIDStoreStale says the store on disk carries an older record shape. It
+// is derived, so it is refused rather than reinterpreted, and rebuilt (#1711).
+var errGUIDStoreStale = errors.New("fileindex/guid: store written in an older record shape")
+
 func (u *userIndex) declareGUIDExt(fs *folderState) error {
-	if findExt(fs.file.Extensions, extNameGUIDMap) != nil {
+	if ext := findExt(fs.file.Extensions, extNameGUIDMap); ext != nil {
+		if ext.RecordSize != guidMapRecSize {
+			metricGUIDStoreStale.Inc()
+			return fmt.Errorf("%w: records are %d bytes, this build writes %d",
+				errGUIDStoreStale, ext.RecordSize, guidMapRecSize)
+		}
 		return nil
 	}
 	if err := fs.file.AddRecordExtension(extNameGUIDMap, nil, guidMapRecSize, 8, fs.file.Header.UIDValidity); err != nil {
@@ -143,7 +153,7 @@ func (u *userIndex) AppendGUIDRecord(r mailbox.GUIDRecord) error {
 			rec.Ext = map[string][]byte{}
 		}
 		rec.Ext[extNameGUIDMap] = encodeGUIDMapRec(guidMapRec{
-			GUID: r.GUID, FolderID: r.FolderID, UID: r.UID,
+			GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 			Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
 		})
 		return fs.flush()
@@ -152,7 +162,7 @@ func (u *userIndex) AppendGUIDRecord(r mailbox.GUIDRecord) error {
 
 // RemoveGUIDRecords drops every copy the store holds for one uid of one
 // folder: an expunge removes the copy, not the message.
-func (u *userIndex) RemoveGUIDRecords(folderID uint64, uid uint32) error {
+func (u *userIndex) RemoveGUIDRecords(folderGUID [16]byte, uid uint32) error {
 	id, err := u.openGUIDStore()
 	if err != nil {
 		return err
@@ -161,7 +171,7 @@ func (u *userIndex) RemoveGUIDRecords(folderID uint64, uid uint32) error {
 		var gone []uint32
 		for i := range fs.file.Records {
 			r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
-			if ok && r.FolderID == folderID && r.UID == uid {
+			if ok && r.FolderGUID == folderGUID && r.UID == uid {
 				gone = append(gone, fs.file.Records[i].UID)
 			}
 		}
@@ -177,9 +187,13 @@ func (u *userIndex) RemoveGUIDRecords(folderID uint64, uid uint32) error {
 	})
 }
 
-// GUIDRecords reads every copy the store holds, in the order it recorded them.
+// GUIDRecords reads every copy the store holds. A store in an older shape
+// reads as empty: it is derived, and its folder field is a number.
 func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {
 	id, err := u.openGUIDStore()
+	if errors.Is(err, errGUIDStoreStale) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +206,7 @@ func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {
 				continue
 			}
 			out = append(out, mailbox.GUIDRecord{
-				GUID: r.GUID, FolderID: r.FolderID, UID: r.UID,
+				GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 				Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
 			})
 		}
@@ -203,8 +217,8 @@ func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {
 
 // guidCopy names one copy: the folder and the uid inside it.
 type guidCopy struct {
-	folderID uint64
-	uid      uint32
+	folderGUID [16]byte
+	uid        uint32
 }
 
 // guidBatch is one command's worth of changes to the store.
@@ -234,7 +248,7 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 		for _, c := range b.gone {
 			for i := range fs.file.Records {
 				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
-				if !ok || r.FolderID != c.folderID || r.UID != c.uid {
+				if !ok || r.FolderGUID != c.folderGUID || r.UID != c.uid {
 					continue
 				}
 				if _, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0); eerr != nil {
@@ -266,7 +280,7 @@ func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) error {
 		rec.Ext = map[string][]byte{}
 	}
 	rec.Ext[extNameGUIDMap] = encodeGUIDMapRec(guidMapRec{
-		GUID: r.GUID, FolderID: r.FolderID, UID: r.UID,
+		GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 		Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
 	})
 	return nil
