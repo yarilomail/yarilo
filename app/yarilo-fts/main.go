@@ -211,8 +211,8 @@ func userResolver(masterAddr string, resolver *mailbox.Resolver, pool *authclien
 // reported busy, leaving the background retry to carry it (retry.go).
 var lockWaitLimit = 30 * time.Second
 
-// The hold covers a whole-user walk, whose length is the account's folder
-// count: it is renewed rather than sized, and lapsing would admit a writer.
+// The walk's length is the account's folder count, so the hold is renewed
+// rather than sized: a lapse mid-walk would admit the next writer.
 var (
 	lockTTL        = 5 * time.Minute
 	lockRenewEvery = time.Minute
@@ -232,9 +232,8 @@ func lockMailbox(locker locks.Locker) func(user, folder string, fn func() error)
 		key := locks.FTSKey(user, folder)
 		ctx := locks.WithSite(context.Background(), "fts-index")
 		t0 := time.Now()
-		// Queued and renewed: one index per user, so a pass that gives up on
-		// the first hold fails a rescan behind a background job, and one hold
-		// now covers a whole-user walk rather than a single folder (#1986).
+		// Queued and renewed: one hold covers a whole-user walk, and giving
+		// up on the first try failed a rescan behind a job (#1986).
 		err := locks.WithLockWaiting(ctx, locker, key, locks.Owner(user, locks.NewID()),
 			lockTTL, lockRenewEvery, lockWaitLimit, func(context.Context) error {
 				ftsservice.ObserveLockWait(time.Since(t0))
