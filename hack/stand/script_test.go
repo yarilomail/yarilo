@@ -328,3 +328,35 @@ func TestTheArmCanRepeatARunPerType(t *testing.T) {
 		t.Error("the default is not one run")
 	}
 }
+
+// A quick arm is one storage type, and it has to prove its own start only:
+// a wipe check over ranges the arm never touched reads somebody else's state.
+func TestTheQuickArmTouchesOnlyItsOwnType(t *testing.T) {
+	src := armSource(t)
+	if !strings.Contains(src, `TYPES="${YARILO_ARM_TYPES:-mdbox maildir sdbox}"`) {
+		t.Fatal("an arm cannot be narrowed to one storage type")
+	}
+	// Every place that walks the types walks the ones this arm runs.
+	if n := strings.Count(src, "for t in mdbox maildir sdbox"); n != 0 {
+		t.Errorf("%d loops still walk all three types, so a one-type arm wipes, fills and proves the other two", n)
+	}
+	if strings.Contains(src, `for pair in "mdbox 1-20"`) || !strings.Contains(src, "for type in $TYPES") {
+		t.Error("the runs are a fixed list, so a one-type arm still runs three")
+	}
+	// And the arm says which type and which fill it was, beside the tag.
+	if !strings.Contains(src, `types=[$TYPES] fill=$FILL`) {
+		t.Error("the arm does not print its knobs, so a window cannot say what kind of arm it is")
+	}
+}
+
+// The first-seen count is the start's, not the image's: 20 accounts log in per
+// run, so a smaller fill must not move it.
+func TestTheArmFlagsAFirstSeenOutsideItsRange(t *testing.T) {
+	src := armSource(t)
+	if !strings.Contains(src, "first_seen_off=1") {
+		t.Error("a first-seen outside 20-21 is not marked, so a different start reads as a result")
+	}
+	if !strings.Contains(src, "cold + 0 < 20 || cold + 0 > 21") {
+		t.Error("the first-seen control does not name the range it checks")
+	}
+}

@@ -187,6 +187,10 @@ fi
 # right start for a question about the login path alone.
 FILL="${YARILO_ARM_FILL:-200}"
 
+# TYPES narrows an arm to the storage the question is about: a maildir counter
+# reads zero under the other two (README.md: the quick arm).
+TYPES="${YARILO_ARM_TYPES:-mdbox maildir sdbox}"
+
 # KEEP_STORE answers one question: run 1 against run 2 of the same arm. It is
 # not a throughput comparison with the arm before (README.md, #1714).
 KEEP_STORE="${YARILO_ARM_KEEP_STORE:-0}"
@@ -353,7 +357,9 @@ pprof_capture() {
 }
 
 step "deploy"
-echo "== arm $ARM: $TAG"
+# The knobs beside the tag, so a window says what kind of arm it is: a quick
+# arm's numbers are per-login ratios, not throughput (README.md).
+echo "== arm $ARM: $TAG types=[$TYPES] fill=$FILL"
 helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
   -f "$REPO/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} \
   --set image.tag="$TAG" --timeout 10m >/dev/null
@@ -401,7 +407,7 @@ message_inventory() {
   local pod total=0 n out
   pod=$(first_pod backend-api)
   [ -n "$pod" ] || pod=$(first_pod backend)
-  for t in mdbox maildir sdbox; do
+  for t in $TYPES; do
     set -- $(type_domain "$t")
     for n in $(seq "$2" "$3"); do
       out=$(kube exec "$pod" -c yarilo-backend-api -- yarctl -O json backend quota show "u${n}@$1" 2>/dev/null |
@@ -422,13 +428,27 @@ type_domain() {
   esac
 }
 
+# type → the account range one run of that type logs in as.
+type_run_range() {
+  case "$1" in
+    mdbox) echo "1-20" ;;
+    maildir) echo "51-70" ;;
+    sdbox) echo "101-120" ;;
+    *) return 1 ;;
+  esac
+}
+
+for t in $TYPES; do
+  type_run_range "$t" >/dev/null || { echo "ab-arm: $t is no storage type this stand has" >&2; exit 1; }
+done
+
 # The start as a number, not as a step that ran: a mailbox left behind moves
 # throughput further than anything under test, and an arm that starts bigger
 # than the one before it is not a comparison (#1875).
 start_inventory() {
   local pod f=0 k=0 out
   pod=$(first_pod backend)
-  for t in mdbox maildir sdbox; do
+  for t in $TYPES; do
     set -- $(type_domain "$t")
     out=$(kube exec "$pod" -c yarilo-imap -- sh -c "
       f=0; k=0
@@ -480,7 +500,7 @@ else
 step "wipe"
 echo "-- same start: emptying every type's accounts"
 for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
-  for t in mdbox maildir sdbox; do
+  for t in $TYPES; do
     set -- $(type_domain "$t")
     kube exec "$pod" -c yarilo-imap -- sh -c \
       "for n in \$(seq $2 $3); do rm -rf \"/var/mail/vhosts/$1/u\${n}@$1\"; done" >/dev/null
@@ -507,7 +527,7 @@ done
 if [ "$FILL" != "0" ]; then
   step "fill"
   echo "-- filling every type's accounts with $FILL messages each"
-  for t in mdbox maildir sdbox; do
+  for t in $TYPES; do
     set -- $(type_domain "$t")
     KUBECONFIG="$KCFG" YARILO_NS="$NS" YARILO_FILL_DOMAIN="$1" \
       bash "$REPO/hack/stand/fill-mailboxes.sh" "$2" "$3" "$FILL" |
@@ -539,9 +559,8 @@ kube exec "$authpod" -- sh -c \
   'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep -E "^yarilo_auth_request_seconds_(bucket|count|sum)\{.*verb=\"AUTH\""' \
   > "$OUT/auth-$ARM-before.txt" || true
 
-for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
-  set -- $pair
-  type=$1; range=$2
+for type in $TYPES; do
+  range=$(type_run_range "$type")
  for run in $(seq 1 "$REPEATS"); do
   # One name per run: the counters, the log and the profile are that run's,
   # not the type's, or a first run cannot be told from a second.
@@ -653,6 +672,9 @@ for pair in "mdbox 1-20" "maildir 51-70" "sdbox 101-120"; do
       $1 ~ /reason="first-seen"/ && $1 ~ /result="scanned"/ { cold += $2 }
       END { walks = full + partial + untokened
             printf "walks: full=%d partial=%d untokened=%d first-seen=%d", full, partial, untokened, cold
+            # 20 accounts log in per run, so a first-seen outside 20-21 is a
+            # different start, not a different image.
+            if (cold + 0 < 20 || cold + 0 > 21) printf " first_seen_off=1"
             if (walks + 0 > 0) printf " partial_share=%.1f%%", 100 * partial / walks
             if (full + 0 > 0) printf " cold_share=%.1f%%", 100 * cold / full }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
