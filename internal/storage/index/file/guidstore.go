@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -368,4 +370,58 @@ func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 	u.guid.mu.Unlock()
 	metricGUIDImageBuilt.Inc()
 	return m, nil
+}
+
+// ReplaceGUIDStore writes the store from scratch: the file is derived, so this
+// is how one that is behind, refused or missing comes back (#1711).
+func (u *userIndex) ReplaceGUIDStore(copies []mailbox.GUIDRecord) error {
+	dir := u.indexRootDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("fileindex/guid-rebuild: mkdir: %w", err)
+	}
+	// The set a fresh store is created with, plus ours: a file carrying only
+	// the guidmap extension refuses the next append, which loses the copy.
+	exts := append(defaultExtensions(1, [16]byte{}), mailindex.Extension{
+		Name: extNameGUIDMap, RecordSize: guidMapRecSize, RecordAlign: 8, ResetID: 1,
+	})
+	layout, err := mailindex.ComputeRecordLayout(exts)
+	if err != nil {
+		return fmt.Errorf("fileindex/guid-rebuild: layout: %w", err)
+	}
+	extBytes, err := mailindex.EncodeExtHeaders(layout.Extensions)
+	if err != nil {
+		return fmt.Errorf("fileindex/guid-rebuild: extension headers: %w", err)
+	}
+	hdr := mailindex.NewHeader(uint32(time.Now().Unix()))
+	hdr.UIDValidity = 1
+	hdr.RecordSize = layout.RecordSize
+	hdr.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
+	hdr.NextUID = uint32(len(copies)) + 1
+
+	records := make([]*mailindex.Record, 0, len(copies))
+	for i, c := range copies {
+		records = append(records, &mailindex.Record{
+			UID: uint32(i + 1),
+			Ext: map[string][]byte{extNameGUIDMap: encodeGUIDMapRec(guidMapRec{
+				GUID: c.GUID, FolderGUID: c.FolderGUID, UID: c.UID,
+				Flags: c.Flags, InternalDate: c.InternalDate, CID: c.CID,
+			})},
+		})
+	}
+
+	u.guid.mu.Lock()
+	defer u.guid.mu.Unlock()
+	if _, err := mailindex.Recreate(mailindex.RecreateInput{
+		Path: u.GUIDStorePath(), Header: hdr, Extensions: layout.Extensions,
+		Records: records,
+	}); err != nil {
+		return fmt.Errorf("fileindex/guid-rebuild: write: %w", err)
+	}
+	// Hygiene, not correctness: the new file has its own index id and the old
+	// log is not folded into it, but a log naming a file nobody has is litter.
+	if err := os.Remove(u.GUIDStorePath() + ".log"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("fileindex/guid-rebuild: drop log: %w", err)
+	}
+	metricGUIDRebuilt.Inc()
+	return nil
 }

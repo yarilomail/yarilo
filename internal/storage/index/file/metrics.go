@@ -161,3 +161,10 @@ var (
 		Help: "Lookups answered from the GUID map already built for this version of the store.",
 	})
 )
+
+// A GUID store written from the folder indexes: the file is derived, and this
+// is how it comes back (#1711).
+var metricGUIDRebuilt = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_guid_store_rebuilt_total",
+	Help: "Times the per-user GUID store was rebuilt from the folder indexes.",
+})
