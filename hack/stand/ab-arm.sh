@@ -259,6 +259,14 @@ backend_counters() {
     fi
     sleep 5
   done
+  # The admin API is its own process with its own registry: what an admin
+  # command moved is not in the session containers' counters (#1999).
+  for pod in $pods; do
+    page=$(kube exec "$pod" -c yarilo-backend-api -- sh -c \
+      'wget -qO- http://127.0.0.1:8088/metrics 2>/dev/null' 2>/dev/null) || continue
+    total+=$(printf '%s\n' "$page" | grep -E "^fileindex_guid_" || true)
+    total+=$'\n'
+  done
   printf '%s\n' "$total" | awk 'NF == 2 { sum[$1] += $2 } END { for (k in sum) printf "%s %d\n", k, sum[k] }' | sort
 }
 
@@ -731,6 +739,13 @@ for type in $TYPES; do
               shutOwn, shutExpunge, shutOther, stampHit, stampMiss, stampSame
             if (logins + 0 > 0) printf " list_per_login=%.3f dir_per_login=%.3f stat_per_login=%.3f",
               (whole + tail) / logins, (byName + byScan + byRemove) / logins, (statDir + statList) / logins }
+    ' "$OUT/backend-$ARM-$name-delta.txt")"
+  # The per-user GUID store, read from the admin API's own registry (#1999).
+  echo "$ARM $name $(awk '
+      $1 == "fileindex_guid_store_rebuilt_total" { rebuilt += $2 }
+      $1 == "fileindex_guid_store_stale_total" { stale += $2 }
+      $1 == "fileindex_guid_image_built_total" { built += $2 }
+      END { printf "guid store: rebuilt=%d stale=%d image_built=%d", rebuilt, stale, built }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
   # Every counter this arm collects has a line, or it is a number nobody reads
   # (#1964). Zero is the expected reading for three of these four.
