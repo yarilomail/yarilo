@@ -61,9 +61,8 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 	if err != nil {
 		return fmt.Errorf("%s: %w", copyFolder, err)
 	}
-	// The scope, not the hit: a lookup that drops the folder terms answers the
-	// same set everywhere, and a folder the message was never copied into is
-	// the only place that shows it.
+	// The copy is indexed under its own folder and nowhere else: a folder the
+	// message never reached must answer with nothing.
 	if err := assertHits(c, otherFolder, marker, 0); err != nil {
 		return err
 	}
