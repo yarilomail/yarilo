@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -231,6 +232,35 @@ func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {
 		return nil
 	})
 	return out, err
+}
+
+// trackAppendedGUID records one copy written outside a transaction: delivery
+// and APPEND settle the uid in folder.go, not in indexTx (#1986).
+func (u *userIndex) trackAppendedGUID(fs *folderState, m *mailbox.MessageMeta) {
+	if m == nil || m.GUID == ([16]byte{}) {
+		return
+	}
+	u.applyGUIDTracking(fs, guidBatch{add: []mailbox.GUIDRecord{{
+		GUID:         m.GUID,
+		FolderGUID:   fs.hdr.MailboxGUID,
+		UID:          m.UID,
+		InternalDate: m.InternalDate.Unix(),
+	}}})
+}
+
+// trackExpungedGUID retracts one copy written outside a transaction.
+func (u *userIndex) trackExpungedGUID(fs *folderState, uid uint32) {
+	u.applyGUIDTracking(fs, guidBatch{gone: []guidCopy{{folderGUID: fs.hdr.MailboxGUID, uid: uid}}})
+}
+
+// applyGUIDTracking is the shared tail: the store is derived, so a failure is
+// counted and logged rather than failing mail that is already written.
+func (u *userIndex) applyGUIDTracking(fs *folderState, b guidBatch) {
+	if err := u.applyGUIDBatch(b); err != nil {
+		metricGUIDTrackFailed.Inc()
+		slog.Warn("fileindex: the guid store did not take this command; it is derived and rebuildable",
+			"user", u.username, "folder", fs.folder, "err", err)
+	}
 }
 
 // guidCopy names one copy: the folder and the uid inside it.

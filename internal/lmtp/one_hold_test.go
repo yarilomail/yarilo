@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -16,7 +17,11 @@ import (
 
 // journalHolds sums the file locks the index has taken, from the default
 // registry: the count lives in another package, the number is the same one.
-func journalHolds(t *testing.T) float64 {
+func journalHolds(t *testing.T) float64 { return holdsBySite(t, "") }
+
+// holdsBySite sums the folder journal locks; site "" sums every site, and the
+// GUID store's own site is counted apart from the delivering folder's.
+func holdsBySite(t *testing.T, site string) float64 {
 	t.Helper()
 	fams, err := prometheus.DefaultGatherer.Gather()
 	if err != nil {
@@ -28,10 +33,22 @@ func journalHolds(t *testing.T) float64 {
 			continue
 		}
 		for _, m := range f.GetMetric() {
+			if site != "" && !hasLabel(m.GetLabel(), "site", site) {
+				continue
+			}
 			total += m.GetCounter().GetValue()
 		}
 	}
 	return total
+}
+
+func hasLabel(pairs []*dto.LabelPair, name, value string) bool {
+	for _, p := range pairs {
+		if p.GetName() == name && p.GetValue() == value {
+			return true
+		}
+	}
+	return false
 }
 
 // A delivery holds the journal once: it took the folder three times -- uid,
@@ -53,7 +70,13 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	}
 
 	const raw = "From: a@b\r\nSubject: one hold\r\n\r\nbody\r\n"
+	// The first delivery also opens the per-user GUID store, which is a
+	// once-per-handle cost; the invariant is about the steady state.
+	if _, _, _, err := deliverOne(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil); err != nil {
+		t.Fatalf("warm-up deliver: %v", err)
+	}
 	before := journalHolds(t)
+	guidBefore := holdsBySite(t, "guid-append")
 	scansBefore := reconcileCount("scanned")
 	uid, _, _, err := deliverOne(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
 	if err != nil {
@@ -62,8 +85,14 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	if uid == 0 {
 		t.Fatal("the delivery reported uid 0")
 	}
-	if got := journalHolds(t) - before; got != 1 {
-		t.Errorf("the delivery held the journal %v times, want 1", got)
+	// One for the folder, one for the per-user GUID store: a copy is recorded
+	// in the same command that writes it, and neither is held twice (#1986).
+	guid := holdsBySite(t, "guid-append") - guidBefore
+	if got := journalHolds(t) - before - guid; got != 1 {
+		t.Errorf("the delivery held the folder journal %v times, want 1", got)
+	}
+	if guid != 1 {
+		t.Errorf("the delivery held the guid store %v times, want 1", guid)
 	}
 	if n := reconcileCount("scanned") - scansBefore; n != 0 {
 		t.Errorf("the delivery walked the folder %v times, want none", n)
@@ -74,14 +103,15 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 {
+	// Two: the warm-up delivery and the measured one.
+	if len(msgs) != 2 {
 		t.Fatalf("the folder holds %d records", len(msgs))
 	}
-	name, perr := box.MessagePath("INBOX", msgs[0])
+	name, perr := box.MessagePath("INBOX", msgs[len(msgs)-1])
 	if perr != nil || name == "" {
 		t.Fatalf("the delivered record names no file: %q %v", name, perr)
 	}
-	rc, oerr := box.OpenMessage("INBOX", msgs[0])
+	rc, oerr := box.OpenMessage("INBOX", msgs[len(msgs)-1])
 	if oerr != nil {
 		t.Fatalf("the delivered message cannot be read: %v", oerr)
 	}

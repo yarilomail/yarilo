@@ -945,6 +945,7 @@ func (u *userIndex) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error
 		if err := fs.flushAppend(fs.file.Records[len(fs.file.Records)-1]); err != nil {
 			return err
 		}
+		u.trackAppendedGUID(fs, m)
 		u.compactLogIfNeeded(fs)
 		return nil
 	}); err != nil {
@@ -1084,6 +1085,7 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 		if err := fs.flushAppend(fs.file.Records[len(fs.file.Records)-1]); err != nil {
 			return err
 		}
+		u.trackAppendedGUID(fs, m)
 		u.compactLogIfNeeded(fs)
 		return nil
 	}); err != nil {
@@ -1437,6 +1439,7 @@ func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
 		if eerr != nil || len(recs) == 0 {
 			return eerr
 		}
+		u.trackExpungedGUID(fs, uid)
 		return fs.appendMutLog(recs...)
 	}); err != nil {
 		return err
