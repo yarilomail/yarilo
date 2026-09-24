@@ -90,5 +90,5 @@ func (stubUserIndex) Rescan(fts.MailboxRef, []uint32) ([]uint32, error)         
 func (stubUserIndex) Mailboxes() []fts.MailboxRef                                { return nil }
 func (stubUserIndex) OptimizeMailbox(fts.MailboxRef) error                       { return nil }
 func (stubUserIndex) Refresh() error                                             { return nil }
-func (stubUserIndex) Lookup(fts.MailboxRef, fts.Query) (fts.Result, error)       { return fts.Result{}, nil }
+func (stubUserIndex) Lookup([]string, fts.Query) (fts.Result, error)             { return fts.Result{}, nil }
 func (stubUserIndex) Close() error                                               { return nil }

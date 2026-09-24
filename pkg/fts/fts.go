@@ -23,7 +23,10 @@ const (
 // BuildKey scopes the BuildMore stream that follows it: which message (UID),
 // which part type, and — for headers — the lowercased field name.
 type BuildKey struct {
-	UID         uint32
+	UID uint32
+	// GUID is the message's own identity. One index per user holds every
+	// folder's messages, so a uid alone names nothing (#1986).
+	GUID        [16]byte
 	Type        BuildKeyType
 	HdrName     string
 	ContentType string
@@ -126,8 +129,16 @@ type UserIndex interface {
 	// Refresh makes writes committed by earlier updates visible to Lookup.
 	Refresh() error
 
-	Lookup(mbox MailboxRef, q Query) (Result, error)
+	// Lookup searches the folders named by their GUIDs; an empty list is the
+	// whole account, which a virtual folder over everything asks for (#1986).
+	Lookup(folders []string, q Query) (Result, error)
 	Close() error
+}
+
+// SplitOptimizer is an engine that can merge outside the caller's lock and
+// take it only to put the merged index in place (#1986).
+type SplitOptimizer interface {
+	OptimizeUnderLock(mbox MailboxRef, withLock func(func() error) error) error
 }
 
 // Update is one indexing session for one mailbox. Keys and token/text data
@@ -193,6 +204,10 @@ type Result struct {
 	Definite []uint32
 	Maybe    []uint32
 	Scores   []Score
+	// DefiniteGUIDs and MaybeGUIDs are what an engine holding one index per
+	// user answers with: the uid of a hit is the store's to say (#1986).
+	DefiniteGUIDs [][16]byte
+	MaybeGUIDs    [][16]byte
 }
 
 // MergeScoresAnd folds src into dest for an AND composition: UIDs present

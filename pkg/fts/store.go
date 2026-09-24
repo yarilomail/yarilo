@@ -10,18 +10,18 @@ package fts
 // medium will bring its own additions, and guessing them now would be an
 // interface written for a store nobody has.
 type IndexStore interface {
-	// Locate returns where a mailbox's index belongs. It touches nothing, so
+	// Locate returns where the user's index belongs. It touches nothing, so
 	// it answers for an index that does not exist yet.
-	Locate(user UserRef, mbox MailboxRef) string
+	Locate(user UserRef) string
 
-	// Prepare returns the mailbox's index location, having adopted an index
+	// Prepare returns the user's index location, having adopted an index
 	// left at a layout an earlier version used. It does not create anything:
 	// an engine that only reads must not leave a directory behind.
 	//
 	// Best-effort on the adoption: a migration that fails leaves the older
 	// index where it is and returns the current location, which the engine
 	// fills by reindexing.
-	Prepare(user UserRef, mbox MailboxRef) (string, error)
+	Prepare(user UserRef) (string, error)
 
 	// Create materialises the index location so the engine can write into it.
 	Create(dir string) error
@@ -39,9 +39,9 @@ type IndexStore interface {
 // apart is what lets a second medium reuse the layout, and a second engine
 // reuse the medium.
 type Layout struct {
-	// Dir names a mailbox's index under root.
-	Dir func(root string, user UserRef, mbox MailboxRef) string
-	// Legacy names the locations earlier versions used for the same mailbox,
-	// newest first. A store adopts the first one it finds.
-	Legacy func(root string, user UserRef, mbox MailboxRef) []string
+	// Dir names the user's index under root.
+	Dir func(root string, user UserRef) string
+	// Legacy names the locations earlier versions used, newest first. A store
+	// adopts the first one it finds.
+	Legacy func(root string, user UserRef) []string
 }

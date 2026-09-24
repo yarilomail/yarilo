@@ -42,7 +42,7 @@ func (i *boxesIndex) OptimizeMailbox(m fts.MailboxRef) error {
 // shards another pod was reading or extending (#1176). Asserted on the key
 // actually held while each compaction runs, which is the only thing that
 // distinguishes the fix from a loop that merely visits every mailbox.
-func TestOptimizeHoldsThePerMailboxLock(t *testing.T) {
+func TestOptimizeHoldsTheUsersIndexLock(t *testing.T) {
 	dir := t.TempDir()
 	chain, err := language.NewMultiChain(nil, nil, nil, 100, 100, 0)
 	if err != nil {
@@ -79,17 +79,14 @@ func TestOptimizeHoldsThePerMailboxLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := idx.compacted; len(got) != 2 {
-		t.Fatalf("compacted %v, want both mailboxes", got)
+	if len(idx.compacted) == 0 {
+		t.Fatal("nothing was compacted")
 	}
+	// One index, one lock: every writer of it takes FTSKey(user, "") now, and
+	// a folder in the key would exclude nobody (#1986).
 	for i, folder := range idx.lockedWith {
-		if folder == "" {
-			t.Errorf("compaction %d (%s) ran under a user-wide lock; every other writer keys on (user, folder), so that excludes nobody",
-				i, idx.compacted[i])
-			continue
-		}
-		if folder != idx.compacted[i] {
-			t.Errorf("compaction of %s ran under the lock for %q", idx.compacted[i], folder)
+		if folder != "" {
+			t.Errorf("compaction %d ran under the lock for folder %q, but the index is the user's", i, folder)
 		}
 	}
 }

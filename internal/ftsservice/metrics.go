@@ -223,3 +223,10 @@ var ftsHandlesEvicted = promauto.NewCounter(prometheus.CounterOpts{
 	Name:      "handles_evicted_total",
 	Help:      "Per-user index handles closed after being idle, releasing their write lock.",
 })
+
+// A write the search database refused because another pass held it: the
+// service waits rather than answering the client an error (#1986).
+var metricIndexLockRetry = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fts_index_lock_retry_total",
+	Help: "Index writes retried after the search database reported its own lock held.",
+})

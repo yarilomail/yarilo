@@ -4,9 +4,11 @@ package flatcurve
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +36,27 @@ var inbox = fts.MailboxRef{GUID: "g1", Name: "INBOX", UIDValidity: 1}
 // indexDoc feeds one message's tokens (subject header + body words) into
 // inbox. indexDocIn is the general form for tests that need a second
 // mailbox (#715's OptimizeMailbox isolation test).
+// testGUID is the identity a uid stands for in these rows: the engine answers
+// with messages, and a row reads them back as the uids it indexed.
+func testGUID(uid uint32) [16]byte {
+	var g [16]byte
+	binary.BigEndian.PutUint32(g[:4], uid)
+	return g
+}
+
+// uidsOf reads an engine answer back as uids through the same rule.
+func uidsOf(guids [][16]byte) []uint32 {
+	if len(guids) == 0 {
+		return nil
+	}
+	out := make([]uint32, 0, len(guids))
+	for _, g := range guids {
+		out = append(out, binary.BigEndian.Uint32(g[:4]))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 func indexDoc(t *testing.T, ui fts.UserIndex, uid uint32, subject []string, body []string) {
 	t.Helper()
 	indexDocIn(t, ui, inbox, uid, subject, body)
@@ -41,12 +64,19 @@ func indexDoc(t *testing.T, ui fts.UserIndex, uid uint32, subject []string, body
 
 func indexDocIn(t *testing.T, ui fts.UserIndex, mbox fts.MailboxRef, uid uint32, subject []string, body []string) {
 	t.Helper()
+	indexCopy(t, ui, mbox, uid, testGUID(uid), subject, body)
+}
+
+// indexCopy indexes one copy of a message: the same GUID under another folder
+// and uid is a copy, not another message.
+func indexCopy(t *testing.T, ui fts.UserIndex, mbox fts.MailboxRef, uid uint32, guid [16]byte, subject []string, body []string) {
+	t.Helper()
 	up, err := ui.BeginUpdate(mbox)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(subject) > 0 {
-		ok, err := up.SetBuildKey(fts.BuildKey{UID: uid, Type: fts.KeyHeader, HdrName: "subject"})
+		ok, err := up.SetBuildKey(fts.BuildKey{UID: uid, GUID: guid, Type: fts.KeyHeader, HdrName: "subject"})
 		if err != nil || !ok {
 			t.Fatalf("subject key: ok=%v err=%v", ok, err)
 		}
@@ -56,7 +86,7 @@ func indexDocIn(t *testing.T, ui fts.UserIndex, mbox fts.MailboxRef, uid uint32,
 			}
 		}
 	}
-	ok, err := up.SetBuildKey(fts.BuildKey{UID: uid, Type: fts.KeyBodyPart, ContentType: "text/plain"})
+	ok, err := up.SetBuildKey(fts.BuildKey{UID: uid, GUID: guid, Type: fts.KeyBodyPart, ContentType: "text/plain"})
 	if err != nil || !ok {
 		t.Fatalf("body key: ok=%v err=%v", ok, err)
 	}
@@ -133,13 +163,14 @@ func TestIndexAndLookup(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := ui.Lookup(inbox, tc.q)
+			res, err := ui.Lookup([]string{inbox.GUID}, tc.q)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(res.Definite, tc.definite) || !reflect.DeepEqual(res.Maybe, tc.maybe) {
+			definite, maybe := uidsOf(res.DefiniteGUIDs), uidsOf(res.MaybeGUIDs)
+			if !reflect.DeepEqual(definite, tc.definite) || !reflect.DeepEqual(maybe, tc.maybe) {
 				t.Fatalf("definite=%v maybe=%v, want %v / %v",
-					res.Definite, res.Maybe, tc.definite, tc.maybe)
+					definite, maybe, tc.definite, tc.maybe)
 			}
 		})
 	}
@@ -150,12 +181,12 @@ func TestUppercaseFirstCharHack(t *testing.T) {
 	// The indexer lowercases a leading ASCII capital so it is not mistaken
 	// for a Xapian prefix; the query side must apply the same rule.
 	indexDoc(t, ui, 1, nil, []string{"Zebra"})
-	res, err := ui.Lookup(inbox, bodyQuery("Zebra"))
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("Zebra"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(res.Definite, []uint32{1}) {
-		t.Fatalf("capitalized term lookup = %v", res.Definite)
+	if !reflect.DeepEqual(uidsOf(res.DefiniteGUIDs), []uint32{1}) {
+		t.Fatalf("capitalized term lookup = %v", uidsOf(res.DefiniteGUIDs))
 	}
 }
 
@@ -166,12 +197,12 @@ func TestExpunge(t *testing.T) {
 	if err := ui.Expunge(inbox, 1); err != nil {
 		t.Fatal(err)
 	}
-	res, err := ui.Lookup(inbox, bodyQuery("alpha"))
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("alpha"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(res.Definite, []uint32{2}) {
-		t.Fatalf("after expunge = %v, want [2]", res.Definite)
+	if !reflect.DeepEqual(uidsOf(res.DefiniteGUIDs), []uint32{2}) {
+		t.Fatalf("after expunge = %v, want [2]", uidsOf(res.DefiniteGUIDs))
 	}
 	// Expunging a missing UID is a no-op.
 	if err := ui.Expunge(inbox, 99); err != nil {
@@ -198,11 +229,11 @@ func TestCheckpoint(t *testing.T) {
 // reads back, with uidvalidity 0 so a UIDVALIDITY mismatch resets it (#638).
 func TestCheckpointLegacyV1(t *testing.T) {
 	ui, _ := testEngine(t, Options{})
-	dir := (ui.(*userIndex)).state(inbox).dir
+	dir := (ui.(*userIndex)).state().dir
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, checkpointFile), []byte("1 10 7\n"), 0o600); err != nil {
+	if err := os.WriteFile(checkpointPath(dir, inbox), []byte("1 10 7\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	last, uidv, sum, err := ui.Checkpoint(inbox)
@@ -211,18 +242,18 @@ func TestCheckpointLegacyV1(t *testing.T) {
 	}
 }
 
-func TestCheckpointMigrationFallback(t *testing.T) {
-	// A migrated index has no yarilo checkpoint file: last UID must
-	// come from Xapian's lastdocid.
+// A missing checkpoint is "never indexed": the highest docid says nothing
+// about a uid now, so there is nothing to read it off (#1986).
+func TestAMissingCheckpointReadsAsNeverIndexed(t *testing.T) {
 	ui, _ := testEngine(t, Options{})
 	indexDoc(t, ui, 17, nil, []string{"legacy"})
-	dir := ui.(*userIndex).state(inbox).dir
-	if err := os.Remove(filepath.Join(dir, checkpointFile)); err != nil && !os.IsNotExist(err) {
+	dir := ui.(*userIndex).state().dir
+	if err := os.Remove(checkpointPath(dir, inbox)); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	last, uidv, sum, err := ui.Checkpoint(inbox)
-	if err != nil || last != 17 || uidv != 0 || sum != 0 {
-		t.Fatalf("migration checkpoint = %d/%d/%d/%v, want 17/0/0", last, uidv, sum, err)
+	if err != nil || last != 0 || uidv != 0 || sum != 0 {
+		t.Fatalf("checkpoint = %d/%d/%d/%v, want 0/0/0", last, uidv, sum, err)
 	}
 }
 
@@ -239,13 +270,13 @@ func TestRescanTargeted(t *testing.T) {
 	if !reflect.DeepEqual(missing, []uint32{7}) {
 		t.Fatalf("missing = %v, want [7]", missing)
 	}
-	res, err := ui.Lookup(inbox, bodyQuery("word"))
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("word"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Stale 1 and 4 removed; 2,3,5 intact (no delete-above-gap storm).
-	if !reflect.DeepEqual(res.Definite, []uint32{2, 3, 5}) {
-		t.Fatalf("after rescan = %v, want [2 3 5]", res.Definite)
+	if !reflect.DeepEqual(uidsOf(res.DefiniteGUIDs), []uint32{2, 3, 5}) {
+		t.Fatalf("after rescan = %v, want [2 3 5]", uidsOf(res.DefiniteGUIDs))
 	}
 }
 
@@ -258,7 +289,7 @@ func TestRescanTargeted(t *testing.T) {
 func TestRotateTimeTriggersRotationOnSlowCommit(t *testing.T) {
 	ui, _ := testEngine(t, Options{RotateCount: 1000, CommitLimit: 1, RotateTime: time.Nanosecond})
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
-	dir := ui.(*userIndex).state(inbox).dir
+	dir := ui.(*userIndex).state().dir
 	sealed, current := countShards(t, dir)
 	if sealed < 1 {
 		t.Fatalf("expected a time-based rotation after the commit: sealed=%d current=%d", sealed, current)
@@ -272,7 +303,7 @@ func TestRotateTimeTriggersRotationOnSlowCommit(t *testing.T) {
 func TestRotateTimeZeroDisablesTimeBasedRotation(t *testing.T) {
 	ui, _ := testEngine(t, Options{RotateCount: 1000, CommitLimit: 1, RotateTime: 0})
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
-	dir := ui.(*userIndex).state(inbox).dir
+	dir := ui.(*userIndex).state().dir
 	sealed, current := countShards(t, dir)
 	if sealed != 0 || current != 1 {
 		t.Fatalf("expected no rotation with RotateTime=0: sealed=%d current=%d", sealed, current)
@@ -284,17 +315,17 @@ func TestRotationAndOptimize(t *testing.T) {
 	for uid := uint32(1); uid <= 5; uid++ {
 		indexDoc(t, ui, uid, nil, []string{"steady"})
 	}
-	dir := ui.(*userIndex).state(inbox).dir
+	dir := ui.(*userIndex).state().dir
 	sealed, current := countShards(t, dir)
 	if sealed < 2 {
 		t.Fatalf("expected rotation to seal shards: sealed=%d current=%d", sealed, current)
 	}
-	res, err := ui.Lookup(inbox, bodyQuery("steady"))
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("steady"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Definite) != 5 {
-		t.Fatalf("lookup across shards = %v", res.Definite)
+	if len(uidsOf(res.DefiniteGUIDs)) != 5 {
+		t.Fatalf("lookup across shards = %v", uidsOf(res.DefiniteGUIDs))
 	}
 	// Whole-user optimize is a loop over Mailboxes() under each mailbox's
 	// own lock now (#1176); the service does exactly this.
@@ -307,9 +338,9 @@ func TestRotationAndOptimize(t *testing.T) {
 	if sealed != 1 || current != 0 {
 		t.Fatalf("after optimize: sealed=%d current=%d, want 1/0", sealed, current)
 	}
-	res, err = ui.Lookup(inbox, bodyQuery("steady"))
-	if err != nil || len(res.Definite) != 5 {
-		t.Fatalf("lookup after optimize = %v (%v)", res.Definite, err)
+	res, err = ui.Lookup([]string{inbox.GUID}, bodyQuery("steady"))
+	if err != nil || len(uidsOf(res.DefiniteGUIDs)) != 5 {
+		t.Fatalf("lookup after optimize = %v (%v)", uidsOf(res.DefiniteGUIDs), err)
 	}
 }
 
@@ -372,8 +403,10 @@ func TestOptimizeCallbackFiresAtLimit(t *testing.T) {
 	if len(calls) == 0 {
 		t.Fatal("callback never fired after reaching OptimizeLimit")
 	}
-	if calls[0].GUID != inbox.GUID {
-		t.Fatalf("callback mailbox = %+v, want GUID %q", calls[0], inbox.GUID)
+	// The index is the user's, so the callback names no folder: what it asks
+	// for is a compaction of that one index (#1986).
+	if calls[0].GUID != "" {
+		t.Fatalf("callback names folder %+v, but the index is the user's", calls[0])
 	}
 }
 
@@ -406,34 +439,47 @@ func TestOptimizeCallbackDisabledWhenLimitZero(t *testing.T) {
 // TestOptimizeMailboxIsolatesOtherMailboxes (#715) proves OptimizeMailbox
 // compacts exactly the requested mailbox, leaving a different mailbox's
 // shards untouched — unlike whole-user Optimize.
-func TestOptimizeMailboxIsolatesOtherMailboxes(t *testing.T) {
-	ui, user := testEngine(t, Options{RotateCount: 2})
+// One index per user: a compaction is the user's, and both folders' documents
+// are in the shards it merges (#1986).
+func TestOptimizeMergesTheUsersShards(t *testing.T) {
+	ui, _ := testEngine(t, Options{RotateCount: 2})
 	archive := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
-
-	for uid := uint32(1); uid <= 4; uid++ {
-		indexDocIn(t, ui, inbox, uid, nil, []string{"steady"})
-		indexDocIn(t, ui, archive, uid, nil, []string{"steady"})
+	for uid := uint32(1); uid <= 2; uid++ {
+		indexDocIn(t, ui, inbox, uid, nil, []string{"shared"})
 	}
-	dirInbox := ui.(*userIndex).state(inbox).dir
-	dirArchive := ui.(*userIndex).state(archive).dir
-	sealedInbox, _ := countShards(t, dirInbox)
-	sealedArchive, _ := countShards(t, dirArchive)
-	if sealedInbox < 2 || sealedArchive < 2 {
-		t.Fatalf("expected both mailboxes to have rotated shards: inbox=%d archive=%d", sealedInbox, sealedArchive)
+	for uid := uint32(3); uid <= 4; uid++ {
+		indexDocIn(t, ui, archive, uid, nil, []string{"shared"})
 	}
-
-	if err := ui.OptimizeMailbox(inbox); err != nil {
+	dir := ui.(*userIndex).state().dir
+	before, err := shardPaths(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	sealedInbox, _ = countShards(t, dirInbox)
-	sealedArchive, _ = countShards(t, dirArchive)
-	if sealedInbox != 1 {
-		t.Fatalf("inbox not optimized: sealed=%d, want 1", sealedInbox)
+	if len(before) < 2 {
+		t.Fatalf("the fixture left %d shards, the row needs at least two", len(before))
 	}
-	if sealedArchive < 2 {
-		t.Fatalf("archive must be untouched by OptimizeMailbox(inbox): sealed=%d", sealedArchive)
+
+	if err := ui.OptimizeMailbox(fts.MailboxRef{}); err != nil {
+		t.Fatal(err)
 	}
-	_ = user
+	after, err := shardPaths(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 {
+		t.Errorf("after a compaction the index holds %d shards, want one", len(after))
+	}
+	for _, mbox := range []fts.MailboxRef{inbox, archive} {
+		res, lerr := ui.Lookup([]string{mbox.GUID}, fts.Query{AndTerms: true,
+			Terms: []fts.Term{{Field: fts.FieldBody, Words: []fts.Word{{Variants: []string{"shared"}}}}}})
+		if lerr != nil {
+			t.Fatal(lerr)
+		}
+		if len(uidsOf(res.DefiniteGUIDs)) != 2 {
+			t.Errorf("folder %q answers %v after the compaction, want two messages",
+				mbox.Name, uidsOf(res.DefiniteGUIDs))
+		}
+	}
 }
 
 // TestShardPathsIgnoresOptimizeTmpDir (#715) is the direct safety check
@@ -475,7 +521,7 @@ func TestCleanStaleOptimizeTmpDir(t *testing.T) {
 	}
 	t.Cleanup(func() { ui.Close() }) //nolint:errcheck
 
-	dir := ui.(*userIndex).eng.opts.Store.Locate(user, inbox)
+	dir := ui.(*userIndex).eng.opts.Store.Locate(user)
 	tmp := filepath.Join(dir, "optimize")
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		t.Fatal(err)
@@ -495,22 +541,22 @@ func TestSubstringSearch(t *testing.T) {
 	ui, _ := testEngine(t, Options{SubstringSearch: true})
 	indexDoc(t, ui, 1, nil, []string{"butterfly"})
 	// Substring mode stores suffixes, so an inner fragment prefix-matches.
-	res, err := ui.Lookup(inbox, bodyQuery("tterf"))
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("tterf"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(res.Definite, []uint32{1}) {
-		t.Fatalf("substring lookup = %v, want [1]", res.Definite)
+	if !reflect.DeepEqual(uidsOf(res.DefiniteGUIDs), []uint32{1}) {
+		t.Fatalf("substring lookup = %v, want [1]", uidsOf(res.DefiniteGUIDs))
 	}
 	// Without substring mode the same fragment must not match.
 	ui2, _ := testEngine(t, Options{})
 	indexDoc(t, ui2, 1, nil, []string{"butterfly"})
-	res, err = ui2.Lookup(inbox, bodyQuery("tterf"))
+	res, err = ui2.Lookup([]string{inbox.GUID}, bodyQuery("tterf"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Definite) != 0 {
-		t.Fatalf("prefix-only lookup matched inner fragment: %v", res.Definite)
+	if len(uidsOf(res.DefiniteGUIDs)) != 0 {
+		t.Fatalf("prefix-only lookup matched inner fragment: %v", uidsOf(res.DefiniteGUIDs))
 	}
 }
 
@@ -518,16 +564,16 @@ func TestMinTermSize(t *testing.T) {
 	ui, _ := testEngine(t, Options{})
 	indexDoc(t, ui, 1, nil, []string{"a", "ok", "xyz"})
 	// 1-byte token is below min_term_size (2) and never indexed.
-	res, err := ui.Lookup(inbox, bodyQuery("ok"))
-	if err != nil || len(res.Definite) != 1 {
-		t.Fatalf("2-byte term should be indexed: %v (%v)", res.Definite, err)
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("ok"))
+	if err != nil || len(uidsOf(res.DefiniteGUIDs)) != 1 {
+		t.Fatalf("2-byte term should be indexed: %v (%v)", uidsOf(res.DefiniteGUIDs), err)
 	}
-	res, err = ui.Lookup(inbox, bodyQuery("a"))
+	res, err = ui.Lookup([]string{inbox.GUID}, bodyQuery("a"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Definite) != 0 {
-		t.Fatalf("1-byte term must not be indexed: %v", res.Definite)
+	if len(uidsOf(res.DefiniteGUIDs)) != 0 {
+		t.Fatalf("1-byte term must not be indexed: %v", uidsOf(res.DefiniteGUIDs))
 	}
 }
 
@@ -537,7 +583,7 @@ func TestVersionMetadataWritten(t *testing.T) {
 	if err := ui.Close(); err != nil {
 		t.Fatal(err)
 	}
-	dir := ui.(*userIndex).state(inbox).dir
+	dir := ui.(*userIndex).state().dir
 	paths, err := shardPaths(dir)
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("no shards: %v", err)
@@ -556,63 +602,21 @@ func TestVersionMetadataWritten(t *testing.T) {
 	}
 }
 
-// TestMailboxDirDriverAware locks the #654 layout: the fts-flatcurve directory
-// is co-located inside the mailbox's driver-aware per-folder index path (the
-// same FolderSubpath layout the fileindex uses), not a flat <root>/<folder>.
-// The index path is keyed by the folder's GUID, and the mail driver does not
-// appear in it: the FTS tree is its own, so a driver migration moves the mail
-// and leaves the index where it is (#1183). Every driver, one path.
-func TestMailboxDirIsKeyedByGUIDNotDriver(t *testing.T) {
+// One index per user, wherever the mail lives: the folder is a term in a
+// document, not a directory, and the driver does not appear in the path (#1986).
+func TestTheIndexIsTheUsersWhateverTheDriver(t *testing.T) {
 	root := t.TempDir()
-	want := filepath.Join(root, inbox.GUID, Label)
+	want := filepath.Join(root, Label)
 	for _, driver := range []string{"mdbox", "sdbox", "maildir", ""} {
 		user := fts.UserRef{Username: "u@test", IndexRoot: root, Driver: driver}
 		ui, err := New(Options{}).OpenUser(context.Background(), user)
 		if err != nil {
 			t.Fatalf("driver %q: OpenUser: %v", driver, err)
 		}
-		if got := ui.(*userIndex).state(inbox).dir; got != want {
+		if got := ui.(*userIndex).state().dir; got != want {
 			t.Errorf("driver %q: dir = %q, want %q", driver, got, want)
 		}
 		ui.Close() //nolint:errcheck
-	}
-}
-
-// TestLegacyDirMigration verifies the rename-on-open migration: an index sitting
-// at the pre-#654 flat path is relocated in place to the driver-aware path on
-// first access (no reindex, no orphan), and its checkpoint survives the move.
-func TestLegacyDirMigration(t *testing.T) {
-	root := t.TempDir()
-	legacy := filepath.Join(root, inbox.Name, Label) // <root>/INBOX/fts-flatcurve
-	if err := os.MkdirAll(legacy, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// v2 checkpoint: "2 <uidvalidity> <last_uid> <checksum>".
-	if err := os.WriteFile(filepath.Join(legacy, checkpointFile), []byte("2 9 5 3\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	user := fts.UserRef{Username: "u@test", IndexRoot: root, Driver: "mdbox"}
-	ui, err := New(Options{}).OpenUser(context.Background(), user)
-	if err != nil {
-		t.Fatalf("OpenUser: %v", err)
-	}
-
-	// First access triggers the migration.
-	newDir := ui.(*userIndex).state(inbox).dir
-	wantNew := filepath.Join(root, inbox.GUID, Label)
-	if newDir != wantNew {
-		t.Fatalf("new dir = %q, want %q", newDir, wantNew)
-	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Errorf("legacy dir still present after migration: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(newDir, checkpointFile)); err != nil {
-		t.Errorf("checkpoint not present at new dir: %v", err)
-	}
-	last, uidv, sum, err := ui.Checkpoint(inbox)
-	if err != nil || last != 5 || uidv != 9 || sum != 3 {
-		t.Fatalf("checkpoint after migration = %d/%d/%d/%v, want 5/9/3", last, uidv, sum, err)
 	}
 }
 
@@ -632,16 +636,16 @@ func TestMultiShardLookupReturnsRealUIDs(t *testing.T) {
 			indexDoc(t, ui, uid, nil, []string{"filler"})
 		}
 	}
-	dir := ui.(*userIndex).state(inbox).dir
+	dir := ui.(*userIndex).state().dir
 	if sealed, _ := countShards(t, dir); sealed < 2 {
 		t.Fatalf("expected rotation to seal ≥2 shards, got sealed=%d", sealed)
 	}
-	res, err := ui.Lookup(inbox, bodyQuery("needle"))
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("needle"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(res.Definite, want) {
-		t.Fatalf("multi-shard lookup = %v, want %v (real UIDs, not interleaved docids)", res.Definite, want)
+	if !reflect.DeepEqual(uidsOf(res.DefiniteGUIDs), want) {
+		t.Fatalf("multi-shard lookup = %v, want %v (real UIDs, not interleaved docids)", uidsOf(res.DefiniteGUIDs), want)
 	}
 }
 
@@ -656,14 +660,14 @@ func TestHeaderExistenceRequiresRealToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok, err := up.SetBuildKey(fts.BuildKey{UID: 1, Type: fts.KeyHeader, HdrName: "x-empty"})
+	ok, err := up.SetBuildKey(fts.BuildKey{UID: 1, GUID: testGUID(1), Type: fts.KeyHeader, HdrName: "x-empty"})
 	if err != nil || !ok {
 		t.Fatalf("SetBuildKey: ok=%v err=%v", ok, err)
 	}
 	if err := up.BuildMore([]byte("a")); err != nil { // below MinTermSize=2
 		t.Fatal(err)
 	}
-	ok, err = up.SetBuildKey(fts.BuildKey{UID: 1, Type: fts.KeyHeader, HdrName: "x-real"})
+	ok, err = up.SetBuildKey(fts.BuildKey{UID: 1, GUID: testGUID(1), Type: fts.KeyHeader, HdrName: "x-real"})
 	if err != nil || !ok {
 		t.Fatalf("SetBuildKey: ok=%v err=%v", ok, err)
 	}
@@ -676,14 +680,14 @@ func TestHeaderExistenceRequiresRealToken(t *testing.T) {
 
 	probe := func(hdr string) []uint32 {
 		t.Helper()
-		res, err := ui.Lookup(inbox, fts.Query{
+		res, err := ui.Lookup([]string{inbox.GUID}, fts.Query{
 			Terms:    []fts.Term{{Field: fts.FieldHeader, HdrName: hdr}},
 			AndTerms: true,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return res.Definite
+		return uidsOf(res.DefiniteGUIDs)
 	}
 	if got := probe("x-empty"); len(got) != 0 {
 		t.Fatalf("HEADER x-empty existence probe = %v, want none (zero real tokens)", got)
@@ -704,7 +708,7 @@ func TestHeaderNameIndexedSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The header name build key: empty HdrName, per buildmail's contract.
-	ok, err := up.SetBuildKey(fts.BuildKey{UID: 1, Type: fts.KeyHeader})
+	ok, err := up.SetBuildKey(fts.BuildKey{UID: 1, GUID: testGUID(1), Type: fts.KeyHeader})
 	if err != nil || !ok {
 		t.Fatalf("SetBuildKey (name): ok=%v err=%v", ok, err)
 	}
@@ -715,7 +719,7 @@ func TestHeaderNameIndexedSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The value build key: a value that shares no words with the name.
-	ok, err = up.SetBuildKey(fts.BuildKey{UID: 1, Type: fts.KeyHeader, HdrName: "list-id"})
+	ok, err = up.SetBuildKey(fts.BuildKey{UID: 1, GUID: testGUID(1), Type: fts.KeyHeader, HdrName: "list-id"})
 	if err != nil || !ok {
 		t.Fatalf("SetBuildKey (value): ok=%v err=%v", ok, err)
 	}
@@ -727,27 +731,27 @@ func TestHeaderNameIndexedSeparately(t *testing.T) {
 	}
 
 	// TEXT "list" matches — the header NAME reached the A-pool.
-	res, err := ui.Lookup(inbox, fts.Query{
+	res, err := ui.Lookup([]string{inbox.GUID}, fts.Query{
 		Terms:    []fts.Term{{Field: fts.FieldText, Words: []fts.Word{{Variants: []string{"list"}}}}},
 		AndTerms: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(res.Definite, []uint32{1}) {
-		t.Fatalf("TEXT %q = %v, want [1] (header name must reach the A-pool)", "list", res.Definite)
+	if !reflect.DeepEqual(uidsOf(res.DefiniteGUIDs), []uint32{1}) {
+		t.Fatalf("TEXT %q = %v, want [1] (header name must reach the A-pool)", "list", uidsOf(res.DefiniteGUIDs))
 	}
 
 	// HEADER list-id "list" must NOT match — the name's tokens must not
 	// leak into the per-field H<NAME> pool alongside the value.
-	res, err = ui.Lookup(inbox, fts.Query{
+	res, err = ui.Lookup([]string{inbox.GUID}, fts.Query{
 		Terms:    []fts.Term{{Field: fts.FieldHeader, HdrName: "list-id", Words: []fts.Word{{Variants: []string{"list"}}}}},
 		AndTerms: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Definite) != 0 {
-		t.Fatalf("HEADER list-id %q = %v, want none (name tokens must not leak into the value pool)", "list", res.Definite)
+	if len(uidsOf(res.DefiniteGUIDs)) != 0 {
+		t.Fatalf("HEADER list-id %q = %v, want none (name tokens must not leak into the value pool)", "list", uidsOf(res.DefiniteGUIDs))
 	}
 }

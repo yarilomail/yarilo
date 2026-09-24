@@ -29,7 +29,7 @@ func TestOptimizeRacesLookupAndLeavesNoOpenShards(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dir := ui.(*userIndex).state(inbox).dir
+	dir := ui.(*userIndex).state().dir
 	if paths, err := shardPaths(dir); err != nil || len(paths) < 2 {
 		t.Fatalf("need at least 2 shards to compact, got %v (err %v)", paths, err)
 	}
@@ -43,13 +43,13 @@ func TestOptimizeRacesLookupAndLeavesNoOpenShards(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for i := 0; i < 60; i++ {
-				res, err := ui.Lookup(inbox, bodyQuery("needle"))
+				res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("needle"))
 				if err != nil {
 					t.Errorf("lookup during compaction: %v", err)
 					return
 				}
-				if len(res.Definite) != 12 {
-					t.Errorf("lookup during compaction saw %d of 12 documents", len(res.Definite))
+				if len(res.DefiniteGUIDs) != 12 {
+					t.Errorf("lookup during compaction saw %d of 12 documents", len(res.DefiniteGUIDs))
 					return
 				}
 			}
@@ -84,9 +84,9 @@ func TestOptimizeRacesLookupAndLeavesNoOpenShards(t *testing.T) {
 			t.Errorf("compaction tmp dir left behind: %s", e.Name())
 		}
 	}
-	res, err := ui.Lookup(inbox, bodyQuery("needle"))
-	if err != nil || len(res.Definite) != 12 {
-		t.Errorf("after compaction: %d of 12 documents (err %v)", len(res.Definite), err)
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("needle"))
+	if err != nil || len(res.DefiniteGUIDs) != 12 {
+		t.Errorf("after compaction: %d of 12 documents (err %v)", len(res.DefiniteGUIDs), err)
 	}
 }
 
@@ -104,9 +104,11 @@ func TestMailboxesDrivesWholeUserOptimize(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// One index per user, so the service's loop runs once and compacts every
+	// folder's documents together (#1986).
 	boxes := ui.Mailboxes()
-	if len(boxes) != 2 {
-		t.Fatalf("Mailboxes() = %v, want both open mailboxes", boxes)
+	if len(boxes) != 1 {
+		t.Fatalf("Mailboxes() = %v, want the user's one index", boxes)
 	}
 	// The service loops exactly like this, taking each mailbox's lock.
 	for _, mbox := range boxes {
@@ -115,7 +117,7 @@ func TestMailboxesDrivesWholeUserOptimize(t *testing.T) {
 		}
 	}
 	for _, mbox := range []fts.MailboxRef{inbox, other} {
-		paths, err := shardPaths(ui.(*userIndex).state(mbox).dir)
+		paths, err := shardPaths(ui.(*userIndex).state().dir)
 		if err != nil {
 			t.Fatal(err)
 		}

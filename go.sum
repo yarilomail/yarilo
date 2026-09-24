@@ -10,6 +10,14 @@ github.com/0kaba0hub/go-smtp v0.0.0-20260814073645-91cc4e0044d6 h1:HyzxoyzusjYP4
 github.com/0kaba0hub/go-smtp v0.0.0-20260814073645-91cc4e0044d6/go.mod h1:ZtRRkbTyp2XTHCA+BmyTFTrj8xY4I+b4McvHxCU2gsQ=
 github.com/0kaba0hub/go-xapian v0.2.0 h1:JB78AjmnNeyEOnzB0rXtYH+kK5mA13d30MVFpmzZlT0=
 github.com/0kaba0hub/go-xapian v0.2.0/go.mod h1:CGAxZyJsdWsdOjY0oQPxWwFqGQLlKCFDhUb7BBijMEc=
+github.com/0kaba0hub/go-xapian v0.2.1-0.20260924171720-61fd5d6dec71 h1:S/5+IrETZdQNghpBslsAQtqi+Qe42ycYu4K54xkd+fY=
+github.com/0kaba0hub/go-xapian v0.2.1-0.20260924171720-61fd5d6dec71/go.mod h1:CGAxZyJsdWsdOjY0oQPxWwFqGQLlKCFDhUb7BBijMEc=
+github.com/0kaba0hub/go-xapian v0.2.1-0.20260924174421-f2f3bf4fe790 h1:etmIolSwBj4qyiyqg5kW1KAZ3mZMdXsMP142lXZr1i4=
+github.com/0kaba0hub/go-xapian v0.2.1-0.20260924174421-f2f3bf4fe790/go.mod h1:CGAxZyJsdWsdOjY0oQPxWwFqGQLlKCFDhUb7BBijMEc=
+github.com/0kaba0hub/go-xapian v0.2.1-0.20260924174804-1da5d89566bb h1:y33xGHEhk7QVq7HfQ1Ga+A5CZiNf274T58Uw4i6RHVs=
+github.com/0kaba0hub/go-xapian v0.2.1-0.20260924174804-1da5d89566bb/go.mod h1:CGAxZyJsdWsdOjY0oQPxWwFqGQLlKCFDhUb7BBijMEc=
+github.com/0kaba0hub/go-xapian v0.2.1-0.20260924175919-3247b7699d7d h1:3m0S3+DqMYOMJ3wOXpxGTfIr91AVzd6OiBR/VvNV+Hk=
+github.com/0kaba0hub/go-xapian v0.2.1-0.20260924175919-3247b7699d7d/go.mod h1:CGAxZyJsdWsdOjY0oQPxWwFqGQLlKCFDhUb7BBijMEc=
 github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5 h1:IEjq88XO4PuBDcvmjQJcQGg+w+UaafSy8G5Kcb5tBhI=
 github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5/go.mod h1:exZ0C/1emQJAw5tHOaUDyY1ycttqBAPcxuzf7QbY6ec=
 github.com/MicahParks/jwkset v0.11.3 h1:Phli4RdTDdIdLXZpuO7abkwZyzIk0RDTUPVVBHPRdkQ=

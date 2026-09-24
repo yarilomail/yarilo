@@ -40,8 +40,8 @@ func NewPosix(layout fts.Layout, storageType string) *Posix {
 // kernel answers 0 to (#1176).
 func (p *Posix) dirSyncUseful() bool { return p.storageType != StorageTypeNFS }
 
-func (p *Posix) Locate(user fts.UserRef, mbox fts.MailboxRef) string {
-	return p.layout.Dir(user.IndexRoot, user, mbox)
+func (p *Posix) Locate(user fts.UserRef) string {
+	return p.layout.Dir(user.IndexRoot, user)
 }
 
 // Prepare resolves the location and moves an index found at an older layout to
@@ -49,8 +49,8 @@ func (p *Posix) Locate(user fts.UserRef, mbox fts.MailboxRef) string {
 // and forcing a full reindex. Best-effort: on failure a fresh index is built at
 // the current location (self-heals via autoindex). The yarilo-fts service is the
 // sole writer, so no cross-process race.
-func (p *Posix) Prepare(user fts.UserRef, mbox fts.MailboxRef) (string, error) {
-	dir := p.Locate(user, mbox)
+func (p *Posix) Prepare(user fts.UserRef) (string, error) {
+	dir := p.Locate(user)
 	if _, err := os.Stat(dir); err == nil {
 		return dir, nil // target already present — nothing to migrate
 	}
@@ -58,7 +58,7 @@ func (p *Posix) Prepare(user fts.UserRef, mbox fts.MailboxRef) (string, error) {
 		return dir, nil
 	}
 	var legacy string
-	for _, cand := range p.layout.Legacy(user.IndexRoot, user, mbox) {
+	for _, cand := range p.layout.Legacy(user.IndexRoot, user) {
 		if cand == dir {
 			continue // a custom layout already yields this shape
 		}
