@@ -7,9 +7,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The maildir extension: what a folder's directories and uid list looked like
-// when this index was written, in the reference's layout
-// (maildir-storage.h:52-56) -- nine uint32, little endian.
+// The maildir extension: what the directories and uid list looked like when
+// this index was written (maildir-storage.h:52-56, nine uint32 little endian).
 const (
 	extNameMaildir = "maildir"
 	maildirHdrSize = 36
@@ -41,7 +40,7 @@ func decodeMaildirHdr(b []byte) (mailbox.MaildirStamp, bool) {
 	}, true
 }
 
-// MaildirStamp reads the stamp this index was written with. Absent reads as
+// MaildirStamp reads the stamp this index was written with; absent reads as
 // "this index does not say", which sends the caller to the directory.
 func (u *userIndex) MaildirStamp(folderID uint64) (mailbox.MaildirStamp, bool) {
 	var (
@@ -69,9 +68,9 @@ func (u *userIndex) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) err
 			ext.HdrData, ext.HdrSize = data, uint32(len(data))
 			return fs.flush()
 		}
-		// AddHeaderExtension also fixes Header.HeaderSize, which Recreate
-		// rejects on mismatch.
-		if err := fs.file.AddHeaderExtension(extNameMaildir, data, 4, fs.file.Header.UIDValidity); err != nil {
+		// Registered (36, 0, 0) as the reference does: a header-only
+		// extension has no records to align (maildir-storage.c:318-319).
+		if err := fs.file.AddHeaderExtension(extNameMaildir, data, 0, fs.file.Header.UIDValidity); err != nil {
 			return fmt.Errorf("fileindex/maildir-stamp: %w", err)
 		}
 		return fs.flush()

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -13,8 +14,7 @@ import (
 )
 
 // A full pass records what it read the uid list at, and an arrivals-only pass
-// after it opens the window from that stamp: without it, a session that only
-// ever walks partially states the list on every name lookup (#1875).
+// after it opens the window from that stamp (#1875).
 func TestAStampedUIDListOpensTheWindow(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	deliverToNew(t, box, "1700000001.M1Pa.host", "body\r\n")
@@ -142,4 +142,46 @@ func windowOpen(u *userMailbox, folder string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.checked
+}
+
+// A list rewritten in the same second to the same size differs only in the
+// nanoseconds, which is the ordinary case (maildir-sync-index.c:255-257).
+func TestTheStampPinsTheNanoseconds(t *testing.T) {
+	box, idx, folder := recSetup(t)
+	deliverToNew(t, box, "1700000001.M1Pa.host", "body\r\n")
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
+		t.Fatal(err)
+	}
+	list := box.uidListPath("INBOX")
+	fi, err := statPath(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same bytes, the same second, a different nanosecond: size and
+	// seconds alone cannot tell this rewrite from no rewrite at all.
+	if err := os.WriteFile(list, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	same := time.Unix(fi.ModTime().Unix(), int64(fi.ModTime().Nanosecond())+1000)
+	if err := os.Chtimes(list, same, same); err != nil {
+		t.Fatal(err)
+	}
+
+	// The window the full pass earned is shut first, or this row would read
+	// that one rather than the stamp.
+	box.folderCacheFor("INBOX").invalidateUIDs("test")
+	miss := testutil.ToFloat64(metricStampMiss)
+	if _, err := box.ReconcileArrivals(mailboxbase.Open(box, idx), idx, folder); err != nil {
+		t.Fatal(err)
+	}
+	if now := testutil.ToFloat64(metricStampMiss); now != miss+1 {
+		t.Errorf("stamp misses = %v, want %v: the rewrite went unnoticed", now, miss+1)
+	}
+	if windowOpen(box, "INBOX") {
+		t.Error("a list rewritten inside the second opened the window anyway")
+	}
 }
