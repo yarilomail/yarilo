@@ -1018,17 +1018,15 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 		return nil, statErr
 	}
 
+	// A pass that decides the truth reads the directory itself: the cached
+	// listing names a message, it does not say what is on disk (maildir-sync.c).
 	c := u.folderCacheFor(folder)
-	entries, cached := c.dirEntries(dirFi.ModTime())
-	if !cached {
-		var err error
-		metricDirRead.WithLabelValues("scan").Inc()
-		entries, err = os.ReadDir(dir)
-		if err != nil {
-			return nil, err
-		}
-		c.storeDirEntries(entries, dirFi.ModTime())
+	metricDirRead.WithLabelValues("scan").Inc()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
 	}
+	c.storeDirEntries(entries, dirFi.ModTime())
 
 	uidMap, err := u.readUIDList(folder)
 	if err != nil {

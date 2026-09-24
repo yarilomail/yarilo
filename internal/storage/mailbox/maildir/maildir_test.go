@@ -1,6 +1,8 @@
 package maildir
 
 import (
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"bufio"
 	"os"
 	"path/filepath"
@@ -595,7 +597,9 @@ func TestReadUIDList_CacheUpdatedAfterAppend(t *testing.T) {
 	}
 }
 
-func TestList_ReadDirCacheHitSkipsReadDir(t *testing.T) {
+// A pass that decides the truth reads the directory itself, and what it read
+// becomes the listing a name lookup uses.
+func TestList_ReadsTheDirectoryAndRefreshesTheCache(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
@@ -622,13 +626,18 @@ func TestList_ReadDirCacheHitSkipsReadDir(t *testing.T) {
 		t.Fatal("readdir cache not populated after first List")
 	}
 
-	// Second List on unchanged folder must use cached entries.
+	// Second List on an unchanged folder reads it again: the cache names a
+	// message, it does not say what is on disk.
 	cached := c.entries
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("scan"))
 	if _, err := box.List("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	if &c.entries[0] != &cached[0] {
-		t.Error("second List replaced cached entries — readdir was not skipped")
+	if &c.entries[0] == &cached[0] {
+		t.Error("List answered from the cache, so a name that moved is written into the index")
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("scan")); now != reads+1 {
+		t.Errorf("the pass read cur/ %v times, want one per pass", now-reads)
 	}
 }
 

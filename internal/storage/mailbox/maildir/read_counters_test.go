@@ -386,3 +386,26 @@ func TestFlagsFollowANameThatMovedInsideTheTick(t *testing.T) {
 		t.Errorf("rename retries = %v, want %v", now, was+1)
 	}
 }
+
+// The boundary in one line: the pass that decides the truth reads the
+// directory, and the lookup after it is served from what that pass read.
+func TestAPassLeavesTheListingForTheLookups(t *testing.T) {
+	u, _ := item1Folder(t, 3)
+	if _, err := u.List("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	u.folderCacheFor("INBOX").markChecked()
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	scans := testutil.ToFloat64(metricDirRead.WithLabelValues("scan"))
+	for uid := uint32(1); uid <= 3; uid++ {
+		if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: uid}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads {
+		t.Errorf("three lookups after a pass read cur/ %v times, want none", now-reads)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("scan")); now != scans {
+		t.Errorf("a lookup counted %v passes, so the arm cannot read passes from the counter", now-scans)
+	}
+}
