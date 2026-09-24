@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/yarilomail/yarilo/pkg/locks"
 
@@ -432,6 +433,15 @@ func TestMarkCorruptOnFetchErrIsGated(t *testing.T) {
 
 // journalHolds sums the file locks the index has taken: the count lives in
 // another package, the number is the same one.
+func siteOf(m *dto.Metric) string {
+	for _, l := range m.GetLabel() {
+		if l.GetName() == "site" {
+			return l.GetValue()
+		}
+	}
+	return ""
+}
+
 func journalHolds(t *testing.T) int {
 	t.Helper()
 	fams, err := prometheus.DefaultGatherer.Gather()
@@ -444,6 +454,11 @@ func journalHolds(t *testing.T) int {
 			continue
 		}
 		for _, m := range f.GetMetric() {
+			// The folder's holds only: the per-user GUID store is a second
+			// index and takes its own, once per transaction (#1711).
+			if siteOf(m) == "guid-append" {
+				continue
+			}
 			total += m.GetCounter().GetValue()
 		}
 	}
