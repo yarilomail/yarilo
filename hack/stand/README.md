@@ -21,8 +21,26 @@ KUBECONFIG=~/.kube/sbox.yaml \
 | `YARILO_ARM_FILL` | 200 | messages per account before the runs; 0 measures the login path on empty mailboxes |
 | `YARILO_ARM_REPEATS` | 1 | runs per type; each run gets its own name, counters, log and profile |
 | `YARILO_ARM_KEEP_STORE` | 0 | take the previous arm's mailboxes instead of wiping and filling |
+| `YARILO_ARM_TYPES` | `mdbox maildir sdbox` | which storage types the arm wipes, fills and runs |
 | `YARILO_ARM_OVERLAY` | — | a second values file from `helm_values/values-sandbox-<name>.yaml` |
 | `YARILO_ARM_BLOCKPROFILE` | 0 | the profiling overlay; this makes the arm a latency arm, not a throughput one |
+
+## The quick arm
+
+A question about one storage type does not need the other two: a maildir
+counter reads zero under mdbox and sdbox, so two thirds of such an arm is paid
+for and never read. `YARILO_ARM_TYPES=maildir` with a smaller
+`YARILO_ARM_FILL` is the quick arm, and it answers **per-login ratios inside
+one type**: stats per login, listings per login, misses per login.
+
+It is **not** a throughput arm and **not** a release check, and its numbers do
+not compare with a full arm's: a different fill is a different start. Compare a
+quick arm only with another quick arm of the same fill, in the same slot.
+
+Both knobs are printed beside the tag, so a window says what kind of arm it
+was. The first-seen count stays the control: 20 accounts log in per run, so a
+`first-seen` outside 20-21 is a different start rather than a different image,
+and the arm marks it as `first_seen_off=1`.
 
 ## The same start
 
