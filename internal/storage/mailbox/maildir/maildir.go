@@ -1112,9 +1112,9 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 		if err != nil {
 			return nil, fmt.Errorf("maildir/scan: read %s: %w", dir, err)
 		}
-		// The walk's own listing is the one a lookup afterwards may use: it was
-		// read here, so reading it again would be the second walk (#1875).
-		if sub == "cur" && !mtime.IsZero() {
+		// Only a settled mtime may key it: a second change inside the same tick
+		// would share the key and serve a name that is already gone (#1797).
+		if sub == "cur" && !mtime.IsZero() && settled(mtime) {
 			cache.storeDirEntries(entries, mtime)
 		}
 		for _, e := range entries {

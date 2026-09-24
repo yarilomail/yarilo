@@ -145,3 +145,26 @@ func TestANameThatMovedIsStillFound(t *testing.T) {
 		t.Errorf("currentName says %q, the file is %q", got, base+"S")
 	}
 }
+
+// A walk keeps its listing only when the mtime has settled: a change inside
+// the same tick shares the key and serves a name already gone (#1797).
+func TestAWalkKeepsNoListingFromAnUnsettledDirectory(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	cur := filepath.Join(home, "Maildir", "cur")
+	// Written now, so cur/ has just changed and its mtime is inside the window
+	// that cannot vouch for its contents.
+	if err := os.WriteFile(filepath.Join(cur, "1700000050.M50P1.host,S=20,W=20:2,"),
+		[]byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	c := u.folderCacheFor("INBOX")
+	c.mu.Lock()
+	kept := c.entries != nil
+	c.mu.Unlock()
+	if kept {
+		t.Error("the walk kept a listing keyed by an mtime that cannot vouch for it")
+	}
+}
