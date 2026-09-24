@@ -134,3 +134,10 @@ var metricStampUnchanged = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fileindex_maildir_stamp_unchanged_total",
 	Help: "Maildir stamp writes that found the same stamp already recorded and left the index alone.",
 })
+
+// A copy the guid store did not take: the folder is written and the store is
+// behind, which a rebuild fixes (#1711).
+var metricGUIDTrackFailed = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_guid_track_failed_total",
+	Help: "Copies the per-user GUID store did not record after the folder write succeeded.",
+})

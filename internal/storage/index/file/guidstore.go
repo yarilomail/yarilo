@@ -150,6 +150,33 @@ func (u *userIndex) AppendGUIDRecord(r mailbox.GUIDRecord) error {
 	})
 }
 
+// RemoveGUIDRecords drops every copy the store holds for one uid of one
+// folder: an expunge removes the copy, not the message.
+func (u *userIndex) RemoveGUIDRecords(folderID uint64, uid uint32) error {
+	id, err := u.openGUIDStore()
+	if err != nil {
+		return err
+	}
+	return u.withFolderSite(id, lockSiteGUIDAppend, func(fs *folderState) error {
+		var gone []uint32
+		for i := range fs.file.Records {
+			r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+			if ok && r.FolderID == folderID && r.UID == uid {
+				gone = append(gone, fs.file.Records[i].UID)
+			}
+		}
+		if len(gone) == 0 {
+			return nil
+		}
+		for _, sequence := range gone {
+			if _, eerr := fs.expungeLocked(sequence, 0); eerr != nil {
+				return eerr
+			}
+		}
+		return fs.flush()
+	})
+}
+
 // GUIDRecords reads every copy the store holds, in the order it recorded them.
 func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {
 	id, err := u.openGUIDStore()
@@ -172,4 +199,75 @@ func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {
 		return nil
 	})
 	return out, err
+}
+
+// guidCopy names one copy: the folder and the uid inside it.
+type guidCopy struct {
+	folderID uint64
+	uid      uint32
+}
+
+// guidBatch is one command's worth of changes to the store.
+type guidBatch struct {
+	add  []mailbox.GUIDRecord
+	gone []guidCopy
+}
+
+// applyGUIDBatch takes the store once and writes the command's copies: per-op
+// holds cost a transaction one acquisition per record (#1827).
+func (u *userIndex) applyGUIDBatch(b guidBatch) error {
+	if len(b.add) == 0 && len(b.gone) == 0 {
+		return nil
+	}
+	// Nothing to remove from a store that was never written: an expunge must
+	// not be what creates it.
+	if len(b.add) == 0 {
+		if _, err := os.Stat(u.GUIDStorePath()); err != nil {
+			return nil
+		}
+	}
+	id, err := u.openGUIDStore()
+	if err != nil {
+		return err
+	}
+	return u.withFolderSite(id, lockSiteGUIDAppend, func(fs *folderState) error {
+		for _, c := range b.gone {
+			for i := range fs.file.Records {
+				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+				if !ok || r.FolderID != c.folderID || r.UID != c.uid {
+					continue
+				}
+				if _, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0); eerr != nil {
+					return eerr
+				}
+				break
+			}
+		}
+		for _, r := range b.add {
+			if err := appendGUIDLocked(fs, r); err != nil {
+				return err
+			}
+		}
+		return fs.flush()
+	})
+}
+
+func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) error {
+	uid := fs.file.Header.NextUID
+	if uid == 0 {
+		uid = 1
+	}
+	fs.file.Header.NextUID = uid + 1
+	if err := fs.appendLocked(&mailbox.MessageMeta{UID: uid}); err != nil {
+		return err
+	}
+	rec := fs.file.Records[len(fs.file.Records)-1]
+	if rec.Ext == nil {
+		rec.Ext = map[string][]byte{}
+	}
+	rec.Ext[extNameGUIDMap] = encodeGUIDMapRec(guidMapRec{
+		GUID: r.GUID, FolderID: r.FolderID, UID: r.UID,
+		Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
+	})
+	return nil
 }

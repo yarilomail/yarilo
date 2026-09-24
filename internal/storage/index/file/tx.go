@@ -2,6 +2,7 @@ package file
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -130,7 +131,43 @@ func (t *indexTx) applyAll(fs *folderState, out *mailbox.TxResult) error {
 	if len(records) == 0 {
 		return nil
 	}
-	return fs.appendMutLog(records...)
+	if err := fs.appendMutLog(records...); err != nil {
+		return err
+	}
+	// After the folder's write, never before it: a refused folder write must
+	// leave the store without the copy (#1711, conversations.c:2600-2640).
+	t.trackGUIDs(fs)
+	return nil
+}
+
+// trackGUIDs records this command's copies in the per-user store, in one hold:
+// a transaction takes the folder once, and the store once (#1827).
+func (t *indexTx) trackGUIDs(fs *folderState) {
+	var b guidBatch
+	for i := range t.ops {
+		op := &t.ops[i]
+		switch op.kind {
+		case opAppend:
+			if op.meta.GUID == ([16]byte{}) {
+				continue
+			}
+			b.add = append(b.add, mailbox.GUIDRecord{
+				GUID:         op.meta.GUID,
+				FolderID:     t.folderID,
+				UID:          op.meta.UID,
+				InternalDate: op.meta.InternalDate.Unix(),
+			})
+		case opExpunge:
+			b.gone = append(b.gone, guidCopy{folderID: t.folderID, uid: op.uid})
+		}
+	}
+	// The store is derived: a failure is logged and rebuilt, never returned,
+	// because the mail is written and the client was told so.
+	if err := t.idx.applyGUIDBatch(b); err != nil {
+		metricGUIDTrackFailed.Inc()
+		slog.Warn("fileindex: the guid store did not take this command; it is derived and rebuildable",
+			"user", t.idx.username, "folder", fs.folder, "err", err)
+	}
 }
 
 func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byte, error) {
