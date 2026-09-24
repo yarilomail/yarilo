@@ -13,8 +13,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// Row 5, at the service's seam: a search names the folder it searches, and a
-// hit is the uid of a copy in that folder (#1986).
+// At the service's seam: a search names the folder it searches, and a hit is
+// the uid of a copy in that folder (#1986).
 func TestAServiceLookupAnswersOnlyTheFolderAsked(t *testing.T) {
 	svc, box, uidx := newTestService(t)
 	saveMessage(t, box, uidx, 1, "wolves howl nightly")
@@ -114,9 +114,8 @@ func (s *scopeIndex) Lookup(folders []string, _ fts.Query) (fts.Result, error) {
 	return fts.Result{}, nil
 }
 
-// The service asks the engine for the folder it was given. Searching the whole
-// account and filtering afterwards answers the same, and reads every folder's
-// postings to do it (#1986).
+// The service asks the engine for the folder it was given: searching the whole
+// account answers the same and reads every folder's postings to do it (#1986).
 func TestTheServiceScopesTheLookupToTheFolder(t *testing.T) {
 	idx := &scopeIndex{}
 	h := &userHandle{ui: idx}
@@ -131,8 +130,8 @@ func TestTheServiceScopesTheLookupToTheFolder(t *testing.T) {
 	}
 }
 
-// Row 6: the uid of a hit comes from the GUID store, not from the document.
-// The engine answers with messages; what the folder calls them is the store's.
+// The uid of a hit comes from the GUID store, not from the document: the
+// engine answers with messages, and the folder's names for them are the store's.
 func TestAHitIsResolvedThroughTheStore(t *testing.T) {
 	svc, box, uidx := newTestService(t)
 	saveMessage(t, box, uidx, 1, "wolves howl nightly")

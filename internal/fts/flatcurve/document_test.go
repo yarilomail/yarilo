@@ -121,9 +121,8 @@ func TestAnExpungeRemovesTheCopyThenTheDocument(t *testing.T) {
 // Row 3: a uid is unique in a folder, not in the account. Two messages with
 // uid 5 in two folders are two documents, and expunging one leaves the other.
 func TestTwoFoldersMayShareAUID(t *testing.T) {
-	// Both directions: taking the copy of the folder indexed first and of the
-	// one indexed second, because a term without the folder in it is masked by
-	// whichever document the lookup happens to reach first.
+	// Both directions: a term without the folder in it is masked by whichever
+	// document the lookup reaches first.
 	for _, tc := range []struct {
 		name              string
 		expunge, survives fts.MailboxRef
