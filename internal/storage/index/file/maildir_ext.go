@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -65,6 +67,12 @@ func (u *userIndex) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) err
 	return u.withFolderSite(folderID, lockSiteMaildirStamp, func(fs *folderState) error {
 		data := encodeMaildirHdr(s)
 		if ext := findExt(fs.file.Extensions, extNameMaildir); ext != nil {
+			// Only on a difference, as the reference writes it
+			// (maildir-sync-index.c:245-262).
+			if was, ok := decodeMaildirHdr(ext.HdrData); ok && was == s {
+				metricStampUnchanged.Inc()
+				return nil
+			}
 			ext.HdrData, ext.HdrSize = data, uint32(len(data))
 			return fs.flush()
 		}
@@ -76,3 +84,7 @@ func (u *userIndex) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) err
 		return fs.flush()
 	})
 }
+
+// StampUnchangedCount exposes the counter to a driver's row: the number that
+// says a pass changing nothing wrote nothing.
+func StampUnchangedCount() prometheus.Counter { return metricStampUnchanged }
