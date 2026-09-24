@@ -7,11 +7,13 @@ package ftsservice
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -488,7 +490,9 @@ func (s *Service) Expunge(user string, mbox fts.MailboxRef, uid uint32) error {
 		return err
 	}
 	defer s.release(h)
-	err = s.opts.LockMailbox(user, mbox.Name, func() error {
+	// The index is the user's, so the lock is too: two folders' writers share
+	// one file now (#1986).
+	err = s.opts.lockIndex(user, func() error {
 		return h.ui.Expunge(mbox, uid)
 	})
 	slog.Debug("fts: expunge document", "user", user, "folder", mbox.Name, "uid", uid, "ok", err == nil)
@@ -507,7 +511,7 @@ func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Res
 	}
 	defer s.release(h)
 	t0 := time.Now()
-	res, err := h.ui.Lookup(mbox, q)
+	res, err := s.lookupThrough(h, mbox, q)
 	metricLookupDuration.Observe(time.Since(t0).Seconds())
 	if err != nil {
 		metricLookupErrors.Inc()
@@ -557,7 +561,7 @@ func (s *Service) Rescan(user string, mbox fts.MailboxRef) error {
 		return err
 	}
 	var missing []uint32
-	if err := s.opts.LockMailbox(user, mbox.Name, func() error {
+	if err := s.opts.lockIndex(user, func() error {
 		var rerr error
 		missing, rerr = h.ui.Rescan(mbox, present)
 		return rerr
@@ -587,15 +591,10 @@ func (s *Service) Optimize(user string) error {
 		return err
 	}
 	defer s.release(h)
-	// Per mailbox, under that mailbox's own lock. A single user-keyed lock
-	// would exclude nobody: every writer -- index jobs, rescan, auto-optimize
-	// -- keys on (user, folder), so a whole-user compaction holding
-	// FTSKey(user, "") ran concurrently with them across processes, deleting
-	// shards another pod was reading or extending (#1176).
+	// One index, one lock: every writer of it -- index jobs, rescan,
+	// auto-optimize -- takes FTSKey(user, "") now (#1176, #1986).
 	for _, mbox := range h.ui.Mailboxes() {
-		if err := s.opts.LockMailbox(user, mbox.Name, func() error {
-			return h.ui.OptimizeMailbox(mbox)
-		}); err != nil {
+		if err := s.optimize(h, user, mbox); err != nil {
 			return err
 		}
 	}
@@ -691,9 +690,7 @@ func (s *Service) runOptimize(j optimizeJob) {
 		return
 	}
 	defer s.release(h)
-	if err := s.opts.LockMailbox(j.user.Username, j.mbox.Name, func() error {
-		return h.ui.OptimizeMailbox(j.mbox)
-	}); err != nil {
+	if err := s.optimize(h, j.user.Username, j.mbox); err != nil {
 		slog.Warn("fts: auto-optimize failed",
 			"user", j.user.Username, "folder", j.mbox.Name, "err", err)
 	}
@@ -817,7 +814,7 @@ func (s *Service) runIndex(j job) error {
 	// must not race the read-modify-write of last_indexed_uid and clobber each
 	// other's progress. Different mailboxes/users are keyed separately and
 	// index in parallel.
-	err = s.opts.LockMailbox(j.user, j.mbox.Name, func() error {
+	err = s.opts.lockIndex(j.user, func() error {
 		last, storedUIDV, storedSum, cerr := h.ui.Checkpoint(j.mbox)
 		if cerr != nil {
 			return cerr
@@ -963,7 +960,7 @@ func (s *Service) indexOne(mbox fts.MailboxRef, item fetched, upd fts.Update) er
 	}
 
 	tBuild := time.Now()
-	report, err := s.builder.Build(m.UID, bytes.NewReader(item.body), upd)
+	report, err := s.builder.BuildMessage(m.UID, m.GUID, bytes.NewReader(item.body), upd)
 	metricBuild.Observe(time.Since(tBuild).Seconds())
 	if err != nil {
 		return &buildError{err: err}
@@ -1016,4 +1013,93 @@ func skipReason(err error) string {
 	default:
 		return "other"
 	}
+}
+
+// resolveHits turns the messages an engine answered with into the folder's
+// uids: the engine knows none, the per-user GUID store does (#1711, #1986).
+func (h *userHandle) resolveHits(res *fts.Result, mbox fts.MailboxRef) error {
+	if len(res.DefiniteGUIDs) == 0 && len(res.MaybeGUIDs) == 0 {
+		return nil
+	}
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return fmt.Errorf("ftsservice: this index resolves no GUID, so a hit names no message")
+	}
+	uids, err := resolveToUIDs(resolver, res.DefiniteGUIDs, mbox.GUID)
+	if err != nil {
+		return err
+	}
+	res.Definite = append(res.Definite, uids...)
+	uids, err = resolveToUIDs(resolver, res.MaybeGUIDs, mbox.GUID)
+	if err != nil {
+		return err
+	}
+	res.Maybe = append(res.Maybe, uids...)
+	res.DefiniteGUIDs, res.MaybeGUIDs = nil, nil
+	return nil
+}
+
+// resolveToUIDs asks the store once for every hit, not once per hit.
+func resolveToUIDs(res mailbox.GUIDResolver, guids [][16]byte, folder string) ([]uint32, error) {
+	if len(guids) == 0 {
+		return nil, nil
+	}
+	copies, err := res.GUIDCopies(guids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uint32, 0, len(guids))
+	for _, c := range copies {
+		if hex.EncodeToString(c.FolderGUID[:]) == folder {
+			out = append(out, c.UID)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+// lockIndex takes the user's index for one batch and waits out a lock the
+// database itself refuses: two passes meeting is a wait, not an error (#1986).
+func (o *Options) lockIndex(user string, fn func() error) error {
+	var err error
+	for attempt := 0; attempt < indexLockAttempts; attempt++ {
+		err = o.LockMailbox(user, "", fn)
+		if err == nil || !isDatabaseLocked(err) {
+			return err
+		}
+		metricIndexLockRetry.Inc()
+		time.Sleep(indexLockBackoff)
+	}
+	return err
+}
+
+// isDatabaseLocked says the write was refused by the search database's own
+// lock rather than by anything this service decided.
+func isDatabaseLocked(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "DatabaseLockError")
+}
+
+const (
+	indexLockAttempts = 3
+	indexLockBackoff  = 200 * time.Millisecond
+)
+
+// optimize compacts the user's index, holding the lock only for the switch
+// when the engine can separate it from the merge (#1986).
+func (s *Service) optimize(h *userHandle, user string, mbox fts.MailboxRef) error {
+	if split, ok := h.ui.(fts.SplitOptimizer); ok {
+		return split.OptimizeUnderLock(mbox, func(fn func() error) error {
+			return s.opts.lockIndex(user, fn)
+		})
+	}
+	return s.opts.lockIndex(user, func() error { return h.ui.OptimizeMailbox(mbox) })
+}
+
+// lookupThrough scopes the search to the folder and resolves what it answers.
+func (s *Service) lookupThrough(h *userHandle, mbox fts.MailboxRef, q fts.Query) (fts.Result, error) {
+	res, err := h.ui.Lookup([]string{mbox.GUID}, q)
+	if err != nil {
+		return res, err
+	}
+	return res, h.resolveHits(&res, mbox)
 }

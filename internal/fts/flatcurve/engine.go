@@ -3,12 +3,15 @@
 package flatcurve
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,7 +22,6 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
 	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // On-disk format constants (see https://doc.yarilomail.org/FTS for the format specification).
@@ -103,16 +105,11 @@ func (o Options) withDefaults() Options {
 // needs none of them, but reading where an older index sits does, and will
 // for as long as any deployment can still be carrying one.
 func Layout() fts.Layout {
+	// One index per user: a document carries the folders it belongs to as
+	// terms, so there is nothing per folder to place (#1986).
 	return fts.Layout{
-		Dir: func(root string, _ fts.UserRef, mbox fts.MailboxRef) string {
-			return filepath.Join(root, mbox.GUID, Label)
-		},
-		Legacy: func(root string, user fts.UserRef, mbox fts.MailboxRef) []string {
-			return []string{
-				filepath.Join(root, mailbox.FolderSubpathEscaped(user.Driver, mbox.Name, mbox.Name,
-					mailbox.SepOrDefault(user.Separator), user.EscapeChar), Label),
-				filepath.Join(root, mbox.Name, Label),
-			}
+		Dir: func(root string, _ fts.UserRef) string {
+			return filepath.Join(root, Label)
 		},
 	}
 }
@@ -198,7 +195,7 @@ func (e *Engine) Caps() fts.Caps {
 func (e *Engine) Close() error { return nil }
 
 func (e *Engine) OpenUser(_ context.Context, user fts.UserRef) (fts.UserIndex, error) {
-	return &userIndex{eng: e, user: user, boxes: map[string]*mboxState{}}, nil
+	return &userIndex{eng: e, user: user}, nil
 }
 
 // mboxState holds the open write shard for one mailbox. The service is the
@@ -215,29 +212,30 @@ type mboxState struct {
 }
 
 type userIndex struct {
-	eng   *Engine
-	user  fts.UserRef
-	mu    sync.Mutex
-	boxes map[string]*mboxState
+	eng  *Engine
+	user fts.UserRef
+	mu   sync.Mutex
+	box  *mboxState
 }
 
-func (u *userIndex) state(mbox fts.MailboxRef) *mboxState {
-	dir := u.eng.opts.Store.Locate(u.user, mbox)
-	st, ok := u.boxes[dir]
-	if !ok {
-		// Prepare adopts an index left at an older layout; it answers with the
-		// same location Locate did, so the map key does not move under us.
-		if prepared, err := u.eng.opts.Store.Prepare(u.user, mbox); err == nil {
-			dir = prepared
-		} else {
-			slog.Warn("fts/flatcurve: preparing the index location failed; using it as-is",
-				"dir", dir, "err", err)
-		}
-		cleanStaleOptimizeTmp(dir)
-		st = &mboxState{dir: dir, eng: u.eng, user: u.user, mbox: mbox}
-		u.boxes[dir] = st
+// state is the user's one index: a document names the folders it belongs to,
+// so there is no per-folder state to keep (#1986).
+func (u *userIndex) state() *mboxState {
+	if u.box != nil {
+		return u.box
 	}
-	return st
+	dir := u.eng.opts.Store.Locate(u.user)
+	// Prepare adopts an index left at an older layout; it answers with the
+	// same location Locate did.
+	if prepared, err := u.eng.opts.Store.Prepare(u.user); err == nil {
+		dir = prepared
+	} else {
+		slog.Warn("fts/flatcurve: preparing the index location failed; using it as-is",
+			"dir", dir, "err", err)
+	}
+	cleanStaleOptimizeTmp(dir)
+	u.box = &mboxState{dir: dir, eng: u.eng, user: u.user}
+	return u.box
 }
 
 // cleanStaleOptimizeTmp removes a leftover "optimize" compaction tmp directory
@@ -438,11 +436,21 @@ func (st *mboxState) closeCurrent() error {
 // checksum). The on-disk file is v2 ("2 <uidvalidity> <last_uid> <checksum>");
 // an old v1 file ("1 <last_uid> <checksum>") reads uidvalidity back as 0 so
 // the caller treats it as "unknown" and lets a UIDVALIDITY mismatch reset it.
+// checkpointPath names one folder's checkpoint inside the user's index: the
+// index is one, the indexing progress is per folder (#1986).
+func checkpointPath(dir string, mbox fts.MailboxRef) string {
+	name := mbox.GUID
+	if name == "" {
+		name = "user"
+	}
+	return filepath.Join(dir, checkpointFile+"."+name)
+}
+
 func (u *userIndex) Checkpoint(mbox fts.MailboxRef) (lastUID, uidValidity, sum uint32, err error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	st := u.state(mbox)
-	if data, rerr := os.ReadFile(filepath.Join(st.dir, checkpointFile)); rerr == nil {
+	st := u.state()
+	if data, rerr := os.ReadFile(checkpointPath(st.dir, mbox)); rerr == nil {
 		var version uint32
 		if _, e := fmt.Sscanf(string(data), "%d", &version); e == nil {
 			switch version {
@@ -457,40 +465,24 @@ func (u *userIndex) Checkpoint(mbox fts.MailboxRef) (lastUID, uidValidity, sum u
 			}
 		}
 	}
-	// No yarilo checkpoint: a migrated index still knows its highest docid
-	// (== UID). Checksum + uidvalidity 0 force a rebuild decision upstream.
-	paths, perr := shardPaths(st.dir)
-	if perr != nil || len(paths) == 0 {
-		return 0, 0, 0, nil
-	}
-	if cerr := st.commitCurrent(); cerr != nil {
-		return 0, 0, 0, cerr
-	}
-	db, derr := xapian.OpenDBMulti(paths)
-	if derr != nil {
-		return 0, 0, 0, derr
-	}
-	defer db.Close()
-	last, lerr := db.LastDocID()
-	if lerr != nil {
-		return 0, 0, 0, lerr
-	}
-	return last, 0, 0, nil
+	// No checkpoint: never indexed. The highest docid says nothing about a
+	// uid now, so there is nothing to fall back on (#1986).
+	return 0, 0, 0, nil
 }
 
 func (u *userIndex) SetCheckpoint(mbox fts.MailboxRef, lastUID, uidValidity, sum uint32) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	st := u.state(mbox)
+	st := u.state()
 	if err := st.eng.opts.Store.Create(st.dir); err != nil {
 		return fmt.Errorf("fts/flatcurve: mkdir: %w", err)
 	}
-	tmp := filepath.Join(st.dir, checkpointFile+".tmp")
+	tmp := checkpointPath(st.dir, mbox) + ".tmp"
 	body := fmt.Sprintf("2 %d %d %d\n", uidValidity, lastUID, sum)
 	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
 		return fmt.Errorf("fts/flatcurve: checkpoint write: %w", err)
 	}
-	if err := os.Rename(tmp, filepath.Join(st.dir, checkpointFile)); err != nil {
+	if err := os.Rename(tmp, checkpointPath(st.dir, mbox)); err != nil {
 		return fmt.Errorf("fts/flatcurve: checkpoint rename: %w", err)
 	}
 	return nil
@@ -501,16 +493,37 @@ func (u *userIndex) SetCheckpoint(mbox fts.MailboxRef, lastUID, uidValidity, sum
 func (u *userIndex) BeginUpdate(mbox fts.MailboxRef) (fts.Update, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	st := u.state(mbox)
-	return &update{ui: u, st: st}, nil
+	st := u.state()
+	return &update{ui: u, st: st, folder: mbox.GUID}, nil
+}
+
+// The document's terms: what it is, which folders hold a copy, and the address
+// of each copy. INTERNALS §7 carries the table (#1986).
+const (
+	termGUID   = "G"
+	termFolder = "XF"
+	termCopy   = "Q"
+	// slotGUID holds the message GUID, so a hit says which message it is
+	// without the docid meaning anything.
+	slotGUID = 0
+)
+
+func guidTerm(guid [16]byte) string { return termGUID + hex.EncodeToString(guid[:]) }
+
+func folderTerm(folderGUID string) string { return termFolder + folderGUID }
+
+func copyTerm(folderGUID string, uid uint32) string {
+	return termCopy + folderGUID + ":" + strconv.FormatUint(uint64(uid), 10)
 }
 
 type update struct {
-	ui  *userIndex
-	st  *mboxState
-	uid uint32
-	doc *xapian.Doc
-	key fts.BuildKey
+	ui     *userIndex
+	st     *mboxState
+	folder string
+	guid   [16]byte
+	uid    uint32
+	doc    *xapian.Doc
+	key    fts.BuildKey
 	// seenBool dedups header-existence terms within one document.
 	seenBool map[string]bool
 }
@@ -530,6 +543,7 @@ func (up *update) SetBuildKey(k fts.BuildKey) (bool, error) {
 		up.doc = xapian.NewDoc()
 		up.seenBool = map[string]bool{}
 		up.uid = k.UID
+		up.guid = k.GUID
 	}
 	up.key = k
 	// The header-existence boolean term is NOT set here: header presence is
@@ -630,6 +644,44 @@ func (up *update) BuildMore(data []byte) error {
 	}
 }
 
+// writeDocLocked stores the message. A copy of a message the current shard
+// already holds joins that document; the docid is the database's own.
+func (up *update) writeDocLocked(st *mboxState) error {
+	if err := up.doc.AddBooleanTerm(guidTerm(up.guid)); err != nil {
+		return err
+	}
+	if err := up.doc.AddBooleanTerm(folderTerm(up.folder)); err != nil {
+		return err
+	}
+	if err := up.doc.AddBooleanTerm(copyTerm(up.folder, up.uid)); err != nil {
+		return err
+	}
+	if err := up.doc.SetValue(slotGUID, string(up.guid[:])); err != nil {
+		return err
+	}
+	ids, err := st.cur.DocIDsByTerm(guidTerm(up.guid))
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		_, aerr := st.cur.AddDocument(up.doc)
+		return aerr
+	}
+	// The message is here already: this is another copy of it, so only the
+	// terms that name the copy are added.
+	stored, gerr := st.cur.GetDocument(ids[0])
+	if gerr != nil {
+		return gerr
+	}
+	defer stored.Free()
+	for _, t := range []string{folderTerm(up.folder), copyTerm(up.folder, up.uid)} {
+		if err := stored.AddBooleanTerm(t); err != nil {
+			return err
+		}
+	}
+	return st.cur.ReplaceDocument(ids[0], stored)
+}
+
 func (up *update) flushDocLocked() error {
 	if up.doc == nil {
 		return nil
@@ -638,7 +690,7 @@ func (up *update) flushDocLocked() error {
 	if err := st.ensureCurrent(); err != nil {
 		return err
 	}
-	if err := st.cur.ReplaceDocument(up.uid, up.doc); err != nil {
+	if err := up.writeDocLocked(st); err != nil {
 		st.discardCurrent() // poisoned shard → reopen on the next pass
 		return err
 	}
@@ -687,18 +739,18 @@ func (up *update) Rollback() error {
 
 /* --- expunge / rescan / optimize -------------------------------------------- */
 
+// Expunge removes one copy: the terms that name it go, and the document goes
+// with the last of them (#1986).
 func (u *userIndex) Expunge(mbox fts.MailboxRef, uid uint32) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	st := u.state(mbox)
-	// The open write shard is checked in place; sealed shards are opened one by
-	// one.
+	st := u.state()
 	if st.cur != nil {
-		existed, err := st.cur.DeleteDocument(uid)
+		done, err := dropCopy(st.cur, mbox.GUID, uid)
 		if err != nil {
 			return err
 		}
-		if existed {
+		if done {
 			st.pending++
 			return st.commitCurrent()
 		}
@@ -707,33 +759,63 @@ func (u *userIndex) Expunge(mbox fts.MailboxRef, uid uint32) error {
 	if err != nil {
 		return err
 	}
+	// A copy indexed before the current shard opened lives in a sealed one.
 	for _, p := range paths {
 		if p == st.curPath && st.cur != nil {
 			continue
 		}
-		w, err := xapian.OpenWDB(p)
-		if err != nil {
-			return err
+		w, oerr := xapian.OpenWDB(p)
+		if oerr != nil {
+			return oerr
 		}
-		existed, derr := w.DeleteDocument(uid)
-		if derr == nil && existed {
+		done, derr := dropCopy(w, mbox.GUID, uid)
+		if derr == nil && done {
 			derr = w.Commit()
 		}
 		w.Close()
 		if derr != nil {
 			return derr
 		}
-		if existed {
+		if done {
 			return nil
 		}
 	}
 	return nil
 }
 
+// dropCopy strips a copy's terms from the message's document, and deletes the
+// document when no folder holds it any more.
+func dropCopy(w *xapian.WDB, folderGUID string, uid uint32) (bool, error) {
+	ids, err := w.DocIDsByTerm(copyTerm(folderGUID, uid))
+	if err != nil || len(ids) == 0 {
+		return false, err
+	}
+	doc, gerr := w.GetDocument(ids[0])
+	if gerr != nil {
+		return false, gerr
+	}
+	defer doc.Free()
+	if err := doc.RemoveTerm(copyTerm(folderGUID, uid)); err != nil {
+		return false, err
+	}
+	if err := doc.RemoveTerm(folderTerm(folderGUID)); err != nil {
+		return false, err
+	}
+	left, terr := w.DocTerms(ids[0], termFolder)
+	if terr != nil {
+		return false, terr
+	}
+	if len(left) <= 1 {
+		_, derr := w.DeleteDocument(ids[0])
+		return true, derr
+	}
+	return true, w.ReplaceDocument(ids[0], doc)
+}
+
 func (u *userIndex) Rescan(mbox fts.MailboxRef, present []uint32) ([]uint32, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	st := u.state(mbox)
+	st := u.state()
 	slog.Debug("fts/flatcurve: rescan closing current shard", "dir", st.dir, "cur_path", st.curPath)
 	if err := st.closeCurrent(); err != nil {
 		return nil, err
@@ -803,17 +885,15 @@ func (u *userIndex) Rescan(mbox fts.MailboxRef, present []uint32) ([]uint32, err
 	return missing, nil
 }
 
-// Mailboxes lists the mailboxes this handle has open. Compaction is driven
-// mailbox by mailbox so each run holds that mailbox's own lock (#1176); the
-// list is what this process has touched, since there is no upfront sweep.
+// Mailboxes is the one index this user has: compaction is per user now, and
+// the caller's loop over this list holds the user's lock once (#1986).
 func (u *userIndex) Mailboxes() []fts.MailboxRef {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	out := make([]fts.MailboxRef, 0, len(u.boxes))
-	for _, st := range u.boxes {
-		out = append(out, st.mbox)
+	if u.box == nil {
+		return nil
 	}
-	return out
+	return []fts.MailboxRef{{}}
 }
 
 // OptimizeMailbox compacts sealed shards for one mailbox. It takes the same
@@ -822,9 +902,20 @@ func (u *userIndex) Mailboxes() []fts.MailboxRef {
 // optimizeDir is a no-op below 2 shards, so a redundant call (manual and
 // auto-optimize racing for the same mailbox) costs nothing.
 func (u *userIndex) OptimizeMailbox(mbox fts.MailboxRef) error {
+	return u.OptimizeUnderLock(mbox, func(fn func() error) error { return fn() })
+}
+
+// OptimizeUnderLock merges outside the lock and takes it only for the switch,
+// so a compaction does not shut deliveries out for the length of the merge.
+func (u *userIndex) OptimizeUnderLock(_ fts.MailboxRef, withLock func(func() error) error) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return optimizeDir(u.state(mbox))
+	st := u.state()
+	merged, paths, err := mergeShards(st)
+	if err != nil || merged == "" {
+		return err
+	}
+	return withLock(func() error { return switchToMerged(st, merged, paths) })
 }
 
 // optimizeDir merges a mailbox's sealed shards into one and deletes the
@@ -841,63 +932,60 @@ func (u *userIndex) OptimizeMailbox(mbox fts.MailboxRef) error {
 // the reference implementation's failure mode, which we do not have (#1176).
 // The cross-process half is the caller's: every compaction runs under that
 // mailbox's own FTS lock, never a user-wide one.
-func optimizeDir(st *mboxState) error {
-	slog.Debug("fts/flatcurve: optimizeDir start", "dir", st.dir, "cur_path_before_close", st.curPath)
+// mergeShards writes the merged index beside the shards; an empty path back
+// means there was nothing to merge.
+func mergeShards(st *mboxState) (string, []string, error) {
 	if err := st.closeCurrent(); err != nil {
-		return err
+		return "", nil, err
 	}
 	paths, err := shardPaths(st.dir)
 	if err != nil || len(paths) < 2 {
-		slog.Debug("fts/flatcurve: optimizeDir skip (fewer than 2 shards)", "dir", st.dir, "paths", paths, "err", err)
-		return err
+		return "", nil, err
 	}
-	t0 := time.Now()
-	slog.Debug("fts/flatcurve: optimizeDir merging shards", "dir", st.dir, "paths", paths)
 	db, err := xapian.OpenDBMulti(paths)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	tmp := filepath.Join(st.dir, "optimize")
 	_ = os.RemoveAll(tmp)
-	cerr := db.Compact(tmp)
+	// Renumbered: every shard numbers from one, and a document is recognised
+	// by its terms rather than by its id (#1986).
+	cerr := db.CompactRenumbered(tmp)
 	db.Close()
 	if cerr != nil {
 		_ = os.RemoveAll(tmp)
-		return cerr
+		return "", nil, cerr
 	}
+	// A message indexed in one shard and copied in another has a document in
+	// each: the merge brings them together, and this makes them one.
+	if derr := dedupByGUID(tmp); derr != nil {
+		_ = os.RemoveAll(tmp)
+		return "", nil, derr
+	}
+	return tmp, paths, nil
+}
+
+// switchToMerged puts the merged index in place of the shards it was built
+// from. This is the part that must not run beside another writer.
+func switchToMerged(st *mboxState, merged string, paths []string) error {
+	t0 := time.Now()
 	for _, p := range paths {
-		slog.Debug("fts/flatcurve: optimizeDir removing merged shard", "dir", st.dir, "path", p)
 		if err := os.RemoveAll(p); err != nil {
 			return fmt.Errorf("fts/flatcurve: optimize cleanup: %w", err)
 		}
 	}
-	sealed := filepath.Join(st.dir,
-		fmt.Sprintf("%s%d", dbPrefix, time.Now().UnixMicro()))
-	slog.Debug("fts/flatcurve: optimizeDir sealing", "dir", st.dir, "from", tmp, "to", sealed)
-	if err := os.Rename(tmp, sealed); err != nil {
+	sealed := filepath.Join(st.dir, fmt.Sprintf("%s%d", dbPrefix, time.Now().UnixMicro()))
+	if err := os.Rename(merged, sealed); err != nil {
 		return fmt.Errorf("fts/flatcurve: optimize rename: %w", err)
 	}
-	// Durability of the directory entries themselves: without this a crash
-	// can leave the merged shard renamed but unrecorded, or a deleted one
-	// back from the dead -- both reconcile through Rescan, at the cost of a
-	// rebuild.
-	//
-	// Issued only where it buys something -- the operator declares that
-	// through fts_storage_type. Over NFS the rename and the removals above
-	// are already durable when they return (the protocol commits metadata
-	// operations before the reply) and there is no commit-a-directory call
-	// regardless, so the fsync is skipped rather than issued as a no-op. An
-	// async export breaks that guarantee and no client-side call repairs it:
-	// a server setting, not a code path (https://doc.yarilomail.org/DEPLOYMENT, #1176).
-	//
-	// Best-effort: a failure costs a rebuild through Rescan, never
-	// correctness.
+	// Durability of the directory entries themselves, where the medium makes
+	// it worth issuing (#1176). Best-effort: a failure costs a rebuild.
 	if serr := st.eng.opts.Store.Sync(st.dir); serr != nil {
 		slog.Debug("fts/flatcurve: optimize dir sync failed", "dir", st.dir, "err", serr)
 	}
 	metricOptimizeRuns.Inc()
 	metricOptimizeShardsMerged.Add(float64(len(paths)))
-	slog.Info("fts/flatcurve: optimize completed", "user", st.user.Username, "folder", st.mbox.Name,
+	slog.Info("fts/flatcurve: optimize completed", "user", st.user.Username,
 		"shards_merged", len(paths), "dur_ms", time.Since(t0).Milliseconds())
 	return nil
 }
@@ -905,33 +993,57 @@ func optimizeDir(st *mboxState) error {
 func (u *userIndex) Refresh() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	for _, st := range u.boxes {
-		if err := st.commitCurrent(); err != nil {
-			return err
-		}
+	if u.box == nil {
+		return nil
 	}
-	return nil
+	return u.box.commitCurrent()
 }
 
 func (u *userIndex) Close() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	var firstErr error
-	for _, st := range u.boxes {
-		if err := st.closeCurrent(); err != nil && firstErr == nil {
-			firstErr = err
-		}
+	if u.box == nil {
+		return nil
 	}
-	u.boxes = map[string]*mboxState{}
-	return firstErr
+	err := u.box.closeCurrent()
+	u.box = nil
+	return err
 }
 
 /* --- lookup -------------------------------------------------------------------- */
 
-func (u *userIndex) Lookup(mbox fts.MailboxRef, q fts.Query) (fts.Result, error) {
+// filterToFolders ANDs the folders' boolean terms, ORed together, onto the
+// text query.
+func filterToFolders(xq *xapian.Query, folders []string) (*xapian.Query, error) {
+	var any *xapian.Query
+	for _, f := range folders {
+		ft, err := xapian.QueryTerm(folderTerm(f))
+		if err != nil {
+			if any != nil {
+				any.Free()
+			}
+			return nil, err
+		}
+		if any == nil {
+			any = ft
+			continue
+		}
+		joined, jerr := xapian.QueryCombine(xapian.OpOR, any, ft)
+		any.Free()
+		ft.Free()
+		if jerr != nil {
+			return nil, jerr
+		}
+		any = joined
+	}
+	defer any.Free()
+	return xapian.QueryCombine(xapian.OpAND, xq, any)
+}
+
+func (u *userIndex) Lookup(folders []string, q fts.Query) (fts.Result, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	st := u.state(mbox)
+	st := u.state()
 	if err := st.commitCurrent(); err != nil {
 		return fts.Result{}, err
 	}
@@ -948,46 +1060,59 @@ func (u *userIndex) Lookup(mbox fts.MailboxRef, q fts.Query) (fts.Result, error)
 		return fts.Result{}, err
 	}
 	defer xq.Free()
+	// Folders are a filter, not a database: an empty list searches the whole
+	// account, several are ORed together (#1986).
+	if len(folders) > 0 {
+		filtered, ferr := filterToFolders(xq, folders)
+		if ferr != nil {
+			return fts.Result{}, ferr
+		}
+		defer filtered.Free()
+		xq = filtered
+	}
 
-	// Search each shard SEPARATELY and merge, not combine into one database and
-	// search once. A Xapian database combined from N sub-databases renumbers
-	// matches to an interleaved external docid ((local-1)*N + i + 1), so a
-	// combined search over ≥2 shards reports mangled ids instead of real UIDs
-	// (docid == UID holds only per shard). A single-shard search returns the
-	// local docid unchanged, i.e. the UID. The query is immutable and reusable
-	// across shards; a UID lives in exactly one shard, but we merge into a map
+	// Shard by shard: a database combined from several renumbers what it
+	// reports, so hits are merged by the message GUID instead
 	// (keeping the higher weight) to stay correct even if that stops holding.
-	best := make(map[uint32]float64)
+	// Keyed by the message, not by the docid: one message can hold a document
+	// in more than one shard, and the shards do not share a numbering.
+	best := make(map[[16]byte]float64)
 	for _, p := range paths {
 		db, derr := xapian.OpenDBMulti([]string{p})
 		if derr != nil {
 			return fts.Result{}, derr
 		}
-		entries, serr := db.Search(xq)
+		entries, serr := db.SearchWithValue(xq, slotGUID)
 		db.Close()
 		if serr != nil {
 			return fts.Result{}, serr
 		}
 		for _, ent := range entries {
-			if w, ok := best[ent.DocID]; !ok || ent.Weight > w {
-				best[ent.DocID] = ent.Weight
+			if len(ent.Value) != 16 {
+				continue
+			}
+			var guid [16]byte
+			copy(guid[:], ent.Value)
+			if w, ok := best[guid]; !ok || ent.Weight > w {
+				best[guid] = ent.Weight
 			}
 		}
 	}
 
-	uids := make([]uint32, 0, len(best))
-	for uid := range best {
-		uids = append(uids, uid)
+	guids := make([][16]byte, 0, len(best))
+	for guid := range best {
+		guids = append(guids, guid)
 	}
-	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	sort.Slice(guids, func(i, j int) bool {
+		return bytes.Compare(guids[i][:], guids[j][:]) < 0
+	})
 	res := fts.Result{}
-	for _, uid := range uids {
+	for _, guid := range guids {
 		if maybe {
-			res.Maybe = append(res.Maybe, uid)
+			res.MaybeGUIDs = append(res.MaybeGUIDs, guid)
 		} else {
-			res.Definite = append(res.Definite, uid)
+			res.DefiniteGUIDs = append(res.DefiniteGUIDs, guid)
 		}
-		res.Scores = append(res.Scores, fts.Score{UID: uid, Value: best[uid]})
 	}
 	return res, nil
 }
@@ -1122,4 +1247,63 @@ func buildVariant(field fts.FieldKind, hdrName, v string, prefix PrefixRange) (*
 	default:
 		return nil, false, fmt.Errorf("fts/flatcurve: unknown field kind %d", field)
 	}
+}
+
+// openShard opens one shard for reading its terms back.
+func openShard(path string) (*xapian.WDB, error) { return xapian.OpenWDB(path) }
+
+// dedupByGUID folds the documents of one message into the first of them: the
+// copies' terms join it, and the rest go.
+func dedupByGUID(dir string) error {
+	w, err := xapian.OpenWDB(dir)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	last, err := w.LastDocID()
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]uint32, last)
+	for id := uint32(1); id <= last; id++ {
+		guids, terr := w.DocTerms(id, termGUID)
+		if terr != nil || len(guids) == 0 {
+			continue
+		}
+		kept, ok := seen[guids[0]]
+		if !ok {
+			seen[guids[0]] = id
+			continue
+		}
+		if err := mergeCopies(w, kept, id); err != nil {
+			return err
+		}
+		metricDedupMerged.Inc()
+	}
+	return w.Commit()
+}
+
+// mergeCopies moves one document's copy terms onto the document that stays.
+func mergeCopies(w *xapian.WDB, keep, drop uint32) error {
+	into, err := w.GetDocument(keep)
+	if err != nil {
+		return err
+	}
+	defer into.Free()
+	for _, prefix := range []string{termFolder, termCopy} {
+		terms, terr := w.DocTerms(drop, prefix)
+		if terr != nil {
+			return terr
+		}
+		for _, t := range terms {
+			if err := into.AddBooleanTerm(t); err != nil {
+				return err
+			}
+		}
+	}
+	if err := w.ReplaceDocument(keep, into); err != nil {
+		return err
+	}
+	_, derr := w.DeleteDocument(drop)
+	return derr
 }

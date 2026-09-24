@@ -27,7 +27,9 @@ import (
 
 const benchUser = "bench@example.com"
 
-var benchMbox = fts.MailboxRef{Name: "INBOX", GUID: "g-bench", UIDValidity: 1}
+// The folder's own GUID, filled once it is opened: a hit resolves through the
+// per-user GUID store, which records what the mail index stamped (#1986).
+var benchMbox = fts.MailboxRef{Name: "INBOX", UIDValidity: 1}
 
 // Config parameterises a run. Root is the mail root — point it at an NFS
 // volume in the sandbox to measure real-storage behaviour.
@@ -64,6 +66,9 @@ func Run(cfg Config) (Report, error) {
 	mbox := mailboxbase.Open(box, uidx)
 
 	folder, err := mbox.Folder(benchMbox.Name, benchMbox.UIDValidity)
+	if err == nil {
+		benchMbox.GUID = mailbox.FormatObjectID(folder.GUID)
+	}
 	if err != nil {
 		return Report{}, fmt.Errorf("ftsbench: open folder: %w", err)
 	}
@@ -77,8 +82,13 @@ func Run(cfg Config) (Report, error) {
 		if err := mbox.NameSaved(benchMbox.Name, name, meta); err != nil {
 			return Report{}, fmt.Errorf("ftsbench: name uid %d: %w", m.UID, err)
 		}
-		if err := uidx.AppendMessage(folder.ID, meta); err != nil {
-			return Report{}, fmt.Errorf("ftsbench: append uid %d: %w", m.UID, err)
+		tx, terr := uidx.Begin(folder.ID)
+		if terr != nil {
+			return Report{}, fmt.Errorf("ftsbench: begin uid %d: %w", m.UID, terr)
+		}
+		tx.Append(meta)
+		if _, terr = tx.Commit(); terr != nil {
+			return Report{}, fmt.Errorf("ftsbench: append uid %d: %w", m.UID, terr)
 		}
 		metas = append(metas, meta)
 	}

@@ -22,15 +22,15 @@ func TestOptimizeUnderNFSStorageTypeStillMerges(t *testing.T) {
 	if err := ui.OptimizeMailbox(inbox); err != nil {
 		t.Fatal(err)
 	}
-	paths, err := shardPaths(ui.(*userIndex).state(inbox).dir)
+	paths, err := shardPaths(ui.(*userIndex).state().dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(paths) != 1 {
 		t.Errorf("%d shards after compaction, want 1 merged", len(paths))
 	}
-	res, err := ui.Lookup(inbox, bodyQuery("needle"))
-	if err != nil || len(res.Definite) != 6 {
-		t.Errorf("after compaction: %d of 6 documents (err %v)", len(res.Definite), err)
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("needle"))
+	if err != nil || len(res.DefiniteGUIDs) != 6 {
+		t.Errorf("after compaction: %d of 6 documents (err %v)", len(res.DefiniteGUIDs), err)
 	}
 }

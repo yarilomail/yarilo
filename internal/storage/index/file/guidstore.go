@@ -422,6 +422,16 @@ func (u *userIndex) ReplaceGUIDStore(copies []mailbox.GUIDRecord) error {
 	if err := os.Remove(u.GUIDStorePath() + ".log"); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("fileindex/guid-rebuild: drop log: %w", err)
 	}
+	// The handle and the map built from the file that is gone: a reader that
+	// keeps them answers from a store nobody has any more (#1986).
+	id := u.guid.id
+	u.guid.id = 0
+	u.guid.image, u.guid.version = nil, guidImageVersion{}
+	if id != 0 {
+		u.mu.Lock()
+		delete(u.open, id)
+		u.mu.Unlock()
+	}
 	metricGUIDRebuilt.Inc()
 	return nil
 }

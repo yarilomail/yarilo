@@ -26,7 +26,9 @@ import (
 
 const testUser = "u@test.com"
 
-var testMbox = fts.MailboxRef{Name: "INBOX", GUID: "g-inbox", UIDValidity: 1}
+// The folder's real identity: a hit resolves through the GUID store, which
+// records the folder the mail index stamped, not a name a row invented.
+var testMbox = fts.MailboxRef{Name: "INBOX", UIDValidity: 1}
 
 func newTestService(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.UserIndex) {
 	t.Helper()
@@ -74,6 +76,9 @@ func saveMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserIndex, 
 func saveRawMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserIndex, uid uint32, raw string) {
 	t.Helper()
 	f, err := uidx.OpenFolder(testMbox.Name, testMbox.UIDValidity)
+	if err == nil {
+		testMbox.GUID = mailbox.FormatObjectID(f.GUID)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +92,14 @@ func saveRawMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserInde
 	if err := mailboxbase.NameSaved(box, testMbox.Name, name, meta); err != nil {
 		t.Fatal(err)
 	}
-	if err := uidx.AppendMessage(f.ID, meta); err != nil {
+	// Through a transaction, so the per-user GUID store records the copy: a
+	// hit names a message, and the store is what turns that into a uid (#1986).
+	tx, err := uidx.Begin(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Append(meta)
+	if _, err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -362,8 +374,9 @@ func TestServiceAutoOptimize(t *testing.T) {
 	}
 	waitIndexed(t, svc, n)
 
-	// Keyed by the folder GUID, not the mail driver's layout (#1183).
-	dir := filepath.Join(svc.indexRoot(info), testMbox.GUID, flatcurve.Label)
+	// One index per user: the folder is a term in a document, not a directory
+	// (#1986).
+	dir := filepath.Join(svc.indexRoot(info), flatcurve.Label)
 
 	// The background optimizer runs asynchronously, on its own worker
 	// goroutine — it may well have already collapsed the shards back to 1
