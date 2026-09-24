@@ -277,9 +277,8 @@ func TestARebuildLeavesNoLogBehind(t *testing.T) {
 	}
 }
 
-// Every capability the admin API asks for is asked of the handle, which is
-// what it holds: an index that answers only on the type beneath it answers
-// nobody (#1711).
+// The capabilities are asked of the handle, which is what a caller holds: one
+// answered only by the type beneath it answers nobody (#1711).
 func TestTheHandleCarriesTheGUIDCapabilities(t *testing.T) {
 	var h mailbox.UserIndex = New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: t.TempDir()})
 	rebuilder, ok := h.(mailbox.GUIDStoreRebuilder)
