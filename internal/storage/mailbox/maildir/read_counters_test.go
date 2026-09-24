@@ -76,8 +76,6 @@ func TestAChangedDirectoryIsAStaleMiss(t *testing.T) {
 // the check belongs per message or per folder open (#1875).
 func TestANameLookupCountsItsStats(t *testing.T) {
 	u, _ := item1Folder(t, 4)
-	const base = "1700000002.M2P1.host,S=20,W=20:2,"
-
 	dir0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir"))
 	list0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list"))
 	if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 2}); err != nil {
