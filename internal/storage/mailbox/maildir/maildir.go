@@ -144,6 +144,9 @@ type folderCache struct {
 	// scanned holds what a stat gave for a filename. Only that: a change
 	// renames the file, so these cannot move under a name (#1800).
 	scanned map[string]scanFacts
+	// checked says a walk has just compared this folder with the disk, so a
+	// lookup answers from the maps without stating them again (#1875).
+	checked bool
 }
 
 // scanFacts is what one walk had to read the file for. The rest is derived
@@ -176,6 +179,25 @@ func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.uidMap != nil && stamp.same(c.uidStamp) {
+		return c.uidMap, true
+	}
+	return nil, false
+}
+
+// baseOfLoaded names a uid from the map as it stands, for a caller that has
+// just loaded it and needs no second opinion from the filesystem.
+func (c *folderCache) baseOfLoaded(uid uint32) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	base, ok := c.byUID[uid]
+	return base, ok
+}
+
+// snapshotChecked answers from the map alone, inside the window a walk earned.
+func (c *folderCache) snapshotChecked() (map[string]uint32, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.checked && c.uidMap != nil {
 		return c.uidMap, true
 	}
 	return nil, false
@@ -284,17 +306,6 @@ func (u *userMailbox) adoptWritten(folder string, l *uidList) {
 	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
 }
 
-// baseOf answers the record's question, from the map the load built.
-func (c *folderCache) baseOf(uid uint32, stamp listStamp) (string, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.byUID == nil || !stamp.same(c.uidStamp) {
-		return "", false
-	}
-	base, ok := c.byUID[uid]
-	return base, ok
-}
-
 func (c *folderCache) guidOf(base string) ([16]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -343,7 +354,16 @@ func (c *folderCache) storeDirEntries(entries []os.DirEntry, mtime time.Time) {
 func (c *folderCache) invalidateDirEntries() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.checked = false
 	c.entries, c.dirMtime = nil, time.Time{}
+}
+
+// markChecked opens the window a walk earns: until something invalidates the
+// folder, a list lookup trusts the map it loaded (maildir-sync.c:44-59).
+func (c *folderCache) markChecked() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.checked = true
 }
 
 // invalidateUIDs drops the cached list after a rewrite, so the next read takes
@@ -351,12 +371,14 @@ func (c *folderCache) invalidateDirEntries() {
 func (c *folderCache) invalidateUIDs() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.checked = false
 	c.uidMap, c.guidMap, c.byUID = nil, nil, nil
 }
 
 func (c *folderCache) invalidateDir() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.checked = false
 	c.entries = nil
 }
 
@@ -1077,12 +1099,23 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 	kept := make(map[string]scanFacts, 128)
 	for _, sub := range []string{"cur", "new"} {
 		dir := filepath.Join(u.folderPath(folder), sub)
+		// The mtime before the read, so the listing is never keyed to a moment
+		// later than its own contents.
+		var mtime time.Time
+		if fi, serr := statPath(dir); serr == nil {
+			mtime = fi.ModTime()
+		}
 		entries, err := os.ReadDir(dir)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("maildir/scan: read %s: %w", dir, err)
+		}
+		// The walk's own listing is the one a lookup afterwards may use: it was
+		// read here, so reading it again would be the second walk (#1875).
+		if sub == "cur" && !mtime.IsZero() {
+			cache.storeDirEntries(entries, mtime)
 		}
 		for _, e := range entries {
 			if e.IsDir() {
@@ -1261,6 +1294,11 @@ func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, 
 
 func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
+	// Only a full walk earns the window: an arrivals-only pass never reads
+	// cur/, so it has compared nothing to trust afterwards (#1875).
+	if !arrivalsOnly {
+		defer u.folderCacheFor(folder.Name).markChecked()
+	}
 	// The move precedes the scan because it renames, and is asked about before
 	// the lock: one acquisition taken to find an empty new/ is paid on every
 	// poll (#1630).
@@ -1753,6 +1791,11 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 	// The stamp first, by one path walk: a hit must open nothing, and knowing
 	// whether another process changed the file needs the filesystem asked
 	// (#1875).
+	cache := u.folderCacheFor(folder)
+	if m, ok := cache.snapshotChecked(); ok {
+		u.debugListRead(folder, "checked", len(m), listStamp{})
+		return m, nil
+	}
 	metricCacheStat.WithLabelValues("list").Inc()
 	if fi, err := statPath(u.uidListPath(folder)); err == nil {
 		if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {

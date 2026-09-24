@@ -38,15 +38,9 @@ func (u *userMailbox) baseForUID(folder string, uid uint32) (string, error) {
 	if _, err := u.readUIDList(folder); err != nil {
 		return "", fmt.Errorf("maildir/by-uid: read list %q: %w", folder, err)
 	}
-	metricCacheStat.WithLabelValues("list").Inc()
-	fi, err := statPath(u.uidListPath(folder))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil // no list at all: the caller reports an unnamed record
-		}
-		return "", fmt.Errorf("maildir/by-uid: stat list %q: %w", folder, err)
-	}
-	base, _ := u.folderCacheFor(folder).baseOf(uid, stampOf(fi))
+	// No second stat: readUIDList has just decided which list this is, and
+	// asking the filesystem again only repeats its answer (#1875).
+	base, _ := u.folderCacheFor(folder).baseOfLoaded(uid)
 	return base, nil
 }
 
@@ -76,13 +70,13 @@ func (u *userMailbox) currentName(folder, base string) (string, error) {
 
 // dirEntriesFor lists cur/, through the cache the scan already keeps.
 func (u *userMailbox) dirEntriesFor(folder string) ([]os.DirEntry, error) {
+	cache := u.folderCacheFor(folder)
 	dir := filepath.Join(u.folderPath(folder), "cur")
 	metricCacheStat.WithLabelValues("dir").Inc()
 	st, err := statPath(dir)
 	if err != nil {
 		return nil, fmt.Errorf("maildir/by-uid: stat %q: %w", folder, err)
 	}
-	cache := u.folderCacheFor(folder)
 	entries, ok, why := cache.dirEntriesWhy(st.ModTime())
 	if ok {
 		return entries, nil
