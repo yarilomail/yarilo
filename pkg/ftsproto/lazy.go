@@ -118,6 +118,16 @@ func (l *Lazy) Rescan(user string, m fts.MailboxRef) error {
 	return l.do(func(c *Remote) error { return c.Rescan(user, m) })
 }
 
+func (l *Lazy) RescanUser(user string) ([]string, error) {
+	var done []string
+	err := l.do(func(c *Remote) error {
+		var rerr error
+		done, rerr = c.RescanUser(user)
+		return rerr
+	})
+	return done, err
+}
+
 func (l *Lazy) Optimize(user string) error {
 	return l.do(func(c *Remote) error { return c.Optimize(user) })
 }

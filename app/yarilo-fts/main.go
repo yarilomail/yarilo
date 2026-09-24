@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -206,6 +207,10 @@ func userResolver(masterAddr string, resolver *mailbox.Resolver, pool *authclien
 	}
 }
 
+// lockWaitLimit is how long a pass queues for the user's index before it is
+// reported busy, leaving the background retry to carry it (retry.go).
+var lockWaitLimit = 30 * time.Second
+
 // lockMailbox wraps every index write in the cross-process mailbox lock
 // (project rule). nil locker (locks disabled in config) runs direct.
 func lockMailbox(locker locks.Locker) func(user, folder string, fn func() error) error {
@@ -218,14 +223,21 @@ func lockMailbox(locker locks.Locker) func(user, folder string, fn func() error)
 		// one. Taking the mailbox key made every pass queue behind session
 		// mail-index writes it does not interact with (#1004).
 		key := locks.FTSKey(user, folder)
-		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "fts-index"), 30*time.Second)
+		// The deadline is the wait limit: locks.Acquire queues for whatever is
+		// left of it, so the two must not be separate numbers.
+		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "fts-index"), lockWaitLimit)
 		defer cancel()
 		t0 := time.Now()
-		// One id per pass: "some fts" answers nothing an operator reading
-		// held_by is asking (#1647, #1670).
-		lk, err := locker.Lock(ctx, key, locks.Owner(user, locks.NewID()), 5*time.Minute)
+		// Queued, not refused: one index per user, so a pass that gives up on
+		// the first hold fails a rescan behind a background job (#1986).
+		lk, err := locks.Acquire(ctx, locker, key, locks.Owner(user, locks.NewID()), 5*time.Minute)
 		ftsservice.ObserveLockWait(time.Since(t0))
 		if err != nil {
+			// Either shape of "the wait limit ran out": the client reports the
+			// deadline, or cuts the connection first. retry.go keys on ErrBusy.
+			if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+				return fmt.Errorf("fts: lock %s: %w after %s", key, locks.ErrBusy, lockWaitLimit)
+			}
 			return fmt.Errorf("fts: lock %s: %w", key, err)
 		}
 		defer locker.Unlock(context.Background(), lk.ID) //nolint:errcheck

@@ -72,6 +72,10 @@ func (s *stubService) Rescan(string, fts.MailboxRef) error {
 	s.lastCmd = "rescan"
 	return nil
 }
+func (s *stubService) RescanUser(user string) ([]string, error) {
+	s.lastCmd = "rescanuser"
+	return []string{"INBOX", "Archive"}, nil
+}
 func (s *stubService) Optimize(string) error {
 	s.lastCmd = "optimize"
 	return nil

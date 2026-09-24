@@ -132,6 +132,16 @@ func (p *Pool) Rescan(user string, m fts.MailboxRef) error {
 	return p.do(func(c *Lazy) error { return c.Rescan(user, m) })
 }
 
+func (p *Pool) RescanUser(user string) ([]string, error) {
+	var done []string
+	err := p.do(func(c *Lazy) error {
+		var rerr error
+		done, rerr = c.RescanUser(user)
+		return rerr
+	})
+	return done, err
+}
+
 func (p *Pool) Optimize(user string) error {
 	return p.do(func(c *Lazy) error { return c.Optimize(user) })
 }

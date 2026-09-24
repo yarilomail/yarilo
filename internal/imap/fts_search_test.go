@@ -74,6 +74,7 @@ func (f *fakeFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 }
 
 func (f *fakeFTS) Rescan(string, fts.MailboxRef) error { return nil }
+func (f *fakeFTS) RescanUser(string) ([]string, error) { return nil, nil }
 func (f *fakeFTS) Optimize(string) error               { return nil }
 func (f *fakeFTS) Close() error                        { return nil }
 

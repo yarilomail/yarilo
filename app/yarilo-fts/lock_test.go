@@ -87,3 +87,62 @@ func TestAnIndexingPassNamesItsSite(t *testing.T) {
 		t.Errorf("an indexing pass holds the key as %q, want \"fts-index\"", lk.Site)
 	}
 }
+
+// A pass whose user is already held queues for it instead of failing: one
+// index per user makes that meeting routine (#1986). Real hold, real service.
+func TestAPassWaitsForAHeldIndex(t *testing.T) {
+	dial := ftsLockService(t)
+	const user = "u1@example.com"
+	holder := dial()
+	lk, err := holder.Lock(locks.WithSite(context.Background(), "other"),
+		locks.FTSKey(user, ""), locks.Owner(user, "holder"), time.Minute)
+	if err != nil {
+		t.Fatalf("the foreign hold was not taken: %v", err)
+	}
+
+	released := make(chan time.Time, 1)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		released <- time.Now()
+		_ = holder.Unlock(context.Background(), lk.ID)
+	}()
+
+	ran := false
+	start := time.Now()
+	if err := lockMailbox(dial())(user, "", func() error { ran = true; return nil }); err != nil {
+		t.Fatalf("the pass refused to wait: %v", err)
+	}
+	if !ran {
+		t.Error("the pass reported success without running")
+	}
+	if got := <-released; start.After(got) || time.Since(got) < 0 {
+		t.Errorf("the pass ran at %v, before the hold was released at %v", start, got)
+	}
+	if elapsed := time.Since(start); elapsed < 250*time.Millisecond {
+		t.Errorf("the pass took %v, so it did not wait out the 300ms hold", elapsed)
+	}
+}
+
+// Past the limit the wait ends as ErrBusy, which is the one error the
+// background retry defers on (ftsservice/retry.go); anything else drops it.
+func TestAPassPastTheWaitLimitReportsBusy(t *testing.T) {
+	old := lockWaitLimit
+	lockWaitLimit = 200 * time.Millisecond
+	t.Cleanup(func() { lockWaitLimit = old })
+
+	dial := ftsLockService(t)
+	const user = "u2@example.com"
+	holder := dial()
+	if _, err := holder.Lock(locks.WithSite(context.Background(), "other"),
+		locks.FTSKey(user, ""), locks.Owner(user, "holder"), time.Minute); err != nil {
+		t.Fatalf("the foreign hold was not taken: %v", err)
+	}
+
+	err := lockMailbox(dial())(user, "", func() error {
+		t.Error("the pass ran while the index was held by someone else")
+		return nil
+	})
+	if !errors.Is(err, locks.ErrBusy) {
+		t.Fatalf("a pass past the wait limit returned %v, want ErrBusy", err)
+	}
+}
