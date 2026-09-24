@@ -3,6 +3,8 @@ package jmap
 import (
 	"encoding/hex"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -136,10 +138,15 @@ func TestAnIDCostsOneFolderThroughTheStore(t *testing.T) {
 	}
 }
 
-// A store that says nothing sends the request back to the walk, so a mailbox
-// whose copies were never recorded still answers.
+// A store that says nothing sends the request back to the walk: the file is
+// derived, so an account that has none still answers.
 func TestAnUnrecordedMailboxFallsBackToTheWalk(t *testing.T) {
-	s, id := storedServerWithMessage(t, "Subject: x\r\n\r\nbody\r\n", 0)
+	s, id, home := storedServerWithMessageAt(t, "Subject: x\r\n\r\nbody\r\n", 0)
+	for _, name := range []string{file.GUIDIndexFileName, file.GUIDIndexFileName + ".log"} {
+		if err := os.Remove(filepath.Join(home, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
 	h, err := s.opts.Storage.open(testUser, "")
 	if err != nil {
 		t.Fatal(err)
