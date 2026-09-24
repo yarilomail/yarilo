@@ -28,6 +28,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/backendapi"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/internal/telemetry"
 	"github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/build"
 	"github.com/yarilomail/yarilo/pkg/config"
@@ -192,6 +193,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// The admin API's own counters live in this process: what an admin command
+	// moved is unreadable from another container's registry (#1999).
+	go runTelemetry(cfg.Telemetry)
+
 	if err := srv.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("backend-api: serve failed", "err", err)
 		os.Exit(1)
@@ -298,4 +303,19 @@ func parseCIDRs(in []string) []*net.IPNet {
 		out = append(out, n)
 	}
 	return out
+}
+
+// runTelemetry serves /healthz, /readyz and /metrics beside the admin API.
+func runTelemetry(cfg config.TelemetryConfig) {
+	tel := telemetry.NewWithOptions(telemetry.Options{
+		Addr: telemetry.Addr(cfg.Listen),
+		Pprof: telemetry.PprofOptions{
+			Enabled:       cfg.PprofEnabled,
+			BlockRate:     cfg.PprofBlockProfileRate,
+			MutexFraction: cfg.PprofMutexProfileFraction,
+		},
+	})
+	if err := tel.ListenAndServe(context.Background()); err != nil {
+		slog.Error("backend-api: telemetry server failed", "err", err)
+	}
 }

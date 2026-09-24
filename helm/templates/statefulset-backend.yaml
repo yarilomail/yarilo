@@ -34,6 +34,7 @@
 {{- $ftsPort := int $root.Values.components.fts.port }}
 {{- $regTelemetry := 8086 }}
 {{- $backendAPIPort := 9105 }}
+{{- $backendAPITelemetry := 8088 }}
 {{- $protocols := list }}
 {{- range $p := $allProtocols }}
 {{- if (index $root.Values.components $p.vkey | default dict).enabled }}
@@ -64,6 +65,7 @@
 {{- end }}
 {{- if $root.Values.components.backendAPI.enabled }}
 {{- $claims = append $claims (dict "port" $backendAPIPort "by" "yarilo-backend-api") }}
+{{- $claims = append $claims (dict "port" $backendAPITelemetry "by" "yarilo-backend-api telemetry") }}
 {{- end }}
 {{- range $c := $claims }}
 {{- $key := printf "%v" $c.port }}
@@ -218,6 +220,8 @@ spec:
               value: "yarilo-backend-api"
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-backend-api" "root" $root) | quote }}
+            - name: TELEMETRY_LISTEN
+              value: {{ printf ":%d" (int $backendAPITelemetry) | quote }}
             # POD_IP is this co-located pod's IP — the backend IP sessions route
             # to — so `who` can scope to THIS backend by default (#814).
             - name: POD_IP
@@ -237,6 +241,9 @@ spec:
           ports:
             - name: backend-api
               containerPort: {{ $backendAPIPort }}
+              protocol: TCP
+            - name: telemetry
+              containerPort: {{ $backendAPITelemetry }}
               protocol: TCP
           volumeMounts:
             {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls) | nindent 12 }}
