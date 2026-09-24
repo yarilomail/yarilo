@@ -68,6 +68,9 @@ jobs:
           output: trivy-fs.sarif
           severity: CRITICAL,HIGH
           exit-code: "0"
+          # As in the image scan above: advice with no fixed version, about a
+          # package the build does not contain, is not a finding.
+          ignore-unfixed: true
 
       - name: Upload filesystem scan results
         uses: github/codeql-action/upload-sarif@v4
