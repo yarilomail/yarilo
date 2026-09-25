@@ -113,8 +113,7 @@ type UserIndex interface {
 	BeginUpdate(mbox MailboxRef) (Update, error)
 	Expunge(mbox MailboxRef, uid uint32) error
 	// Rescan reconciles the index against the folder's live copies by the
-	// message each one is, never by a docid; what the index does not hold
-	// comes back as missing.
+	// message, never by a docid; what it does not hold comes back as missing.
 	Rescan(mbox MailboxRef, present []Copy) (missing []uint32, err error)
 	// Mailboxes lists the user's mailboxes this handle has open. Whole-user
 	// optimize is expressed as a loop over these under each mailbox's OWN
