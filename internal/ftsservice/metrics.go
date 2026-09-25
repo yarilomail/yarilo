@@ -153,6 +153,12 @@ var (
 		Name: "fts_index_dropped_total",
 		Help: "FTS index passes given up on after repeated lock contention.",
 	})
+	// metricIndexExpungedMidJob: documents not written because the message
+	// went while the job was reading it (#2026).
+	metricIndexExpungedMidJob = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fts_index_expunged_midjob_total",
+		Help: "Documents dropped before the write because the message was expunged while indexing.",
+	})
 	// metricIndexSkipped: messages the index passed over. Each one is a hole:
 	// its content is not searchable until a rescan fills it. Expected zero,
 	// and a rising count is the signal to run one -- nothing else reports a

@@ -88,6 +88,10 @@ type Options struct {
 	// userdb mail_location driver, resolved as the session pods do. nil, or a
 	// nil result, falls back to Mailbox.
 	MailboxByDriver func(driver string) mailbox.MailboxBackend
+
+	// beforeIndexWrite runs between a message being built and the check that
+	// it is still there. Unexported: the seam is for #2026's row alone.
+	beforeIndexWrite func(uid uint32)
 }
 
 // Service implements ftsproto.Service.
@@ -699,6 +703,30 @@ func (s *Service) DropFolder(user string, mbox fts.MailboxRef) error {
 	})
 }
 
+// expungedMidJob reports whether the record this job read is gone by now, by
+// the message it was: a uid alone is reused (#2026).
+func (s *Service) expungedMidJob(h *userHandle, folderID uint64, m *mailbox.MessageMeta) bool {
+	if s.opts.beforeIndexWrite != nil {
+		s.opts.beforeIndexWrite(m.UID)
+	}
+	return !s.recordStillLive(h, folderID, m)
+}
+
+// recordStillLive asks the mail index whether the record this job read is
+// still there, by the message it was: a uid alone is reused (#2026).
+func (s *Service) recordStillLive(h *userHandle, folderID uint64, m *mailbox.MessageMeta) bool {
+	recs, err := h.idx.GetMessages(folderID, mailbox.SeqSet{{From: m.UID, To: m.UID}})
+	if err != nil {
+		return true // an unreadable index is not an expunge
+	}
+	for _, r := range recs {
+		if r.UID == m.UID && (m.GUID == [16]byte{} || r.GUID == m.GUID) {
+			return true
+		}
+	}
+	return false
+}
+
 // mailboxRef names one folder the way the index knows it: by its own GUID,
 // never by a number this process assigned (#1995).
 func (h *userHandle) mailboxRef(name string) (fts.MailboxRef, error) {
@@ -754,7 +782,7 @@ func (s *Service) Optimize(user string) error {
 			return err
 		}
 	}
-	return nil
+	return s.sweep(h, user)
 }
 
 // enqueueOptimize implements fts.OptimizeNotifier — the engine's write path
@@ -849,6 +877,11 @@ func (s *Service) runOptimize(j optimizeJob) {
 	if err := s.optimize(h, j.user.Username, j.mbox); err != nil {
 		slog.Warn("fts: auto-optimize failed",
 			"user", j.user.Username, "folder", j.mbox.Name, "err", err)
+		return
+	}
+	if err := s.sweep(h, j.user.Username); err != nil {
+		slog.Warn("fts: auto-optimize swept nothing",
+			"user", j.user.Username, "err", err)
 	}
 }
 
@@ -1067,6 +1100,16 @@ func (s *Service) runIndex(j job) error {
 				if !marked && h.mailboxOf().MarkCorruptOnFetchErr(j.mbox.Name, err) {
 					marked = true
 				}
+			} else if s.expungedMidJob(h, folder.ID, m) {
+				// Expunged mid-job: where the body outlives the record the
+				// fetch still succeeds, and so would the document (#2026).
+				if rerr := upd.Rollback(); rerr != nil {
+					slog.Error("fts: rollback of a document for an expunged message failed",
+						"job_id", j.id, "user", j.user, "folder", j.mbox.Name, "uid", m.UID, "err", rerr)
+				}
+				metricIndexExpungedMidJob.Inc()
+				slog.Debug("fts: message expunged while indexing, document not written",
+					"job_id", j.id, "user", j.user, "folder", j.mbox.Name, "uid", m.UID)
 			} else {
 				indexedCount++
 			}
@@ -1255,6 +1298,76 @@ func (s *Service) optimize(h *userHandle, user string, mbox fts.MailboxRef) erro
 		})
 	}
 	return s.opts.lockIndex(user, func() error { return h.ui.OptimizeMailbox(mbox) })
+}
+
+// sweep runs once per compaction, not once per folder: the index is the
+// user's, and so is what the sweep drops (#2026).
+func (s *Service) sweep(h *userHandle, user string) error {
+	return s.opts.lockIndex(user, func() error { return s.sweepLocked(h, user) })
+}
+
+// sweepLocked drops folder terms naming a mailbox that is gone, and documents
+// whose message the GUID store no longer has.
+func (s *Service) sweepLocked(h *userHandle, user string) error {
+	folders, err := h.box.ListFolders()
+	if err != nil {
+		// No folder list, no sweep: it decides what is orphaned, and a
+		// compaction that did its own work is not failed for this.
+		slog.Debug("fts: compaction swept nothing, the folders could not be listed", "user", user, "err", err)
+		return nil
+	}
+	live := make([]string, 0, len(folders))
+	for _, name := range mailbox.SelectableNames(folders) {
+		ref, rerr := h.mailboxRef(name)
+		if rerr != nil {
+			return rerr
+		}
+		live = append(live, ref.GUID)
+	}
+	orphans, err := h.ui.DropOrphanFolders(live)
+	if err != nil {
+		return err
+	}
+	dead, err := s.deadDocuments(h)
+	if err != nil {
+		return err
+	}
+	dropped, err := h.ui.DropDocuments(dead)
+	if err != nil {
+		return err
+	}
+	if orphans > 0 || dropped > 0 {
+		slog.Info("fts: compaction swept the index",
+			"user", user, "orphan_folders", orphans, "dead_documents", dropped)
+	}
+	return nil
+}
+
+// deadDocuments are the indexed messages the store has no copy of.
+func (s *Service) deadDocuments(h *userHandle) ([][16]byte, error) {
+	indexed, err := h.ui.DocGUIDs()
+	if err != nil || len(indexed) == 0 {
+		return nil, err
+	}
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return nil, nil // nothing to compare against is not a licence to delete
+	}
+	recs, err := resolver.GUIDCopies(indexed)
+	if err != nil {
+		return nil, fmt.Errorf("ftsservice: guid copies: %w", err)
+	}
+	alive := make(map[[16]byte]struct{}, len(recs))
+	for _, r := range recs {
+		alive[r.GUID] = struct{}{}
+	}
+	var dead [][16]byte
+	for _, g := range indexed {
+		if _, ok := alive[g]; !ok {
+			dead = append(dead, g)
+		}
+	}
+	return dead, nil
 }
 
 // lookupThrough scopes the search to the folder and resolves what it answers.
