@@ -42,9 +42,8 @@ func TestOptimizeDropsDocumentsTheStoreNoLongerHas(t *testing.T) {
 	}
 }
 
-// The same pass clears folder terms naming a mailbox the account no longer
-// has, which no per-folder walk can reach (#2022). The folder holds a message
-// of its own, so its documents are what the count is about.
+// The same pass clears folder terms no per-folder walk can reach (#2022); the
+// folder holds a message of its own, so the counts can see it go.
 func TestOptimizeSweepsOrphanFolders(t *testing.T) {
 	svc, box, uidx := newTestService(t)
 	saveMessage(t, box, uidx, 1, "alpha")

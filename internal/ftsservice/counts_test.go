@@ -19,6 +19,7 @@ func TestCountsSeparateCopiesFromMessages(t *testing.T) {
 	if err := svc.Index(testUser, testMbox, 1, 0); err != nil {
 		t.Fatalf("index INBOX: %v", err)
 	}
+	waitIndexedIn(t, svc, testMbox, 1)
 	guid := guidOfUID(t, uidx, 1)
 	archive := copyInto(t, svc, box, uidx, "Archive", guid, 7)
 

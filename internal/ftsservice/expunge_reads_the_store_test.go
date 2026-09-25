@@ -27,6 +27,9 @@ func TestExpungeAsksTheStoreForWhatIsLeft(t *testing.T) {
 			if err := svc.Index(testUser, testMbox, 1, 0); err != nil {
 				t.Fatalf("index INBOX: %v", err)
 			}
+			// The job runs in the background and shares this account's index
+			// handles: reading them while it writes is a race, not a row.
+			waitIndexedIn(t, svc, testMbox, 1)
 			guid := guidOfUID(t, uidx, 1)
 			second := copyInto(t, svc, box, uidx, tc.second, guid, 7)
 

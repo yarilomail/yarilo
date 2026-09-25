@@ -90,8 +90,7 @@ type Options struct {
 	MailboxByDriver func(driver string) mailbox.MailboxBackend
 
 	// beforeIndexWrite runs between a message being built and the check that
-	// it is still there. Unexported: the seam exists so the race of #2026 has
-	// a row, and nothing outside the package can set it.
+	// it is still there. Unexported: the seam is for #2026's row alone.
 	beforeIndexWrite func(uid uint32)
 }
 
@@ -783,7 +782,7 @@ func (s *Service) Optimize(user string) error {
 			return err
 		}
 	}
-	return nil
+	return s.sweep(h, user)
 }
 
 // enqueueOptimize implements fts.OptimizeNotifier — the engine's write path
@@ -878,6 +877,11 @@ func (s *Service) runOptimize(j optimizeJob) {
 	if err := s.optimize(h, j.user.Username, j.mbox); err != nil {
 		slog.Warn("fts: auto-optimize failed",
 			"user", j.user.Username, "folder", j.mbox.Name, "err", err)
+		return
+	}
+	if err := s.sweep(h, j.user.Username); err != nil {
+		slog.Warn("fts: auto-optimize swept nothing",
+			"user", j.user.Username, "err", err)
 	}
 }
 
@@ -1097,9 +1101,8 @@ func (s *Service) runIndex(j job) error {
 					marked = true
 				}
 			} else if s.expungedMidJob(h, folder.ID, m) {
-				// Expunged while this job was reading it: on a store whose
-				// body outlives the record the fetch still succeeds, and the
-				// document would outlive the message (#2026).
+				// Expunged mid-job: where the body outlives the record the
+				// fetch still succeeds, and so would the document (#2026).
 				if rerr := upd.Rollback(); rerr != nil {
 					slog.Error("fts: rollback of a document for an expunged message failed",
 						"job_id", j.id, "user", j.user, "folder", j.mbox.Name, "uid", m.UID, "err", rerr)
@@ -1287,27 +1290,24 @@ const (
 )
 
 // optimize compacts the user's index, holding the lock only for the switch
-// when the engine can separate it from the merge (#1986). The sweep runs with
-// it: a retraction that never arrived is then temporary without an operator,
-// which is what the reference gets from filtering at compaction (#2026).
+// when the engine can separate it from the merge (#1986).
 func (s *Service) optimize(h *userHandle, user string, mbox fts.MailboxRef) error {
-	var err error
 	if split, ok := h.ui.(fts.SplitOptimizer); ok {
-		err = split.OptimizeUnderLock(mbox, func(fn func() error) error {
+		return split.OptimizeUnderLock(mbox, func(fn func() error) error {
 			return s.opts.lockIndex(user, fn)
 		})
-	} else {
-		err = s.opts.lockIndex(user, func() error { return h.ui.OptimizeMailbox(mbox) })
 	}
-	if err != nil {
-		return err
-	}
+	return s.opts.lockIndex(user, func() error { return h.ui.OptimizeMailbox(mbox) })
+}
+
+// sweep runs once per compaction, not once per folder: the index is the
+// user's, and so is what the sweep drops (#2026).
+func (s *Service) sweep(h *userHandle, user string) error {
 	return s.opts.lockIndex(user, func() error { return s.sweepLocked(h, user) })
 }
 
-// sweepLocked drops what no folder and no message of the account owns any
-// more: folder terms naming a mailbox that is gone, and documents whose
-// message the GUID store no longer has.
+// sweepLocked drops folder terms naming a mailbox that is gone, and documents
+// whose message the GUID store no longer has.
 func (s *Service) sweepLocked(h *userHandle, user string) error {
 	folders, err := h.box.ListFolders()
 	if err != nil {

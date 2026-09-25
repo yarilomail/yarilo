@@ -4,10 +4,9 @@ package ftsservice
 
 import "testing"
 
-// The race the counts found on the stand: a job reads the folder's records,
-// the message is expunged, and on a store whose body outlives the record the
-// fetch still succeeds -- so the document would be written for a message that
-// is gone (#2026).
+// The race the stand counts found: the message is expunged mid-job, the fetch
+// still succeeds where the body outlives the record, and the document is
+// written for mail that has gone (#2026).
 func TestAMessageExpungedMidJobIsNotWritten(t *testing.T) {
 	svc, box, uidx := newTestService(t)
 	saveMessage(t, box, uidx, 1, "alpha")

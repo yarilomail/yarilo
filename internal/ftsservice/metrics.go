@@ -153,8 +153,8 @@ var (
 		Name: "fts_index_dropped_total",
 		Help: "FTS index passes given up on after repeated lock contention.",
 	})
-	// metricIndexExpungedMidJob: documents not written because the message went
-	// while the job was reading it -- the race a compaction would clean up.
+	// metricIndexExpungedMidJob: documents not written because the message
+	// went while the job was reading it (#2026).
 	metricIndexExpungedMidJob = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fts_index_expunged_midjob_total",
 		Help: "Documents dropped before the write because the message was expunged while indexing.",

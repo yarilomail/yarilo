@@ -925,8 +925,8 @@ func (u *userIndex) DropOrphanFolders(live []string) (int, error) {
 	return dropped, err
 }
 
-// DocGUIDs lists the message of every document, read-only: a compaction asks
-// the store which of them are still live (#2026).
+// DocGUIDs is every message the index has a document for, read from slot 0
+// through one read-only open rather than by walking terms (#2026).
 func (u *userIndex) DocGUIDs() ([][16]byte, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -938,40 +938,32 @@ func (u *userIndex) DocGUIDs() ([][16]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[[16]byte]struct{})
-	for _, p := range paths {
-		db, oerr := xapian.OpenDBMulti([]string{p})
-		if oerr != nil || db == nil {
-			return nil, oerr
-		}
-		ids, derr := db.DocIDs()
-		db.Close()
-		if derr != nil {
-			return nil, derr
-		}
-		w, werr := xapian.OpenWDB(p)
-		if werr != nil {
-			return nil, werr
-		}
-		for _, id := range ids {
-			terms, terr := w.DocTerms(id, termGUID)
-			if terr != nil {
-				w.Close()
-				return nil, terr
-			}
-			if len(terms) == 0 {
-				continue
-			}
-			g, perr := guidOfTerm(terms[0])
-			if perr != nil {
-				continue
-			}
-			seen[g] = struct{}{}
-		}
-		w.Close()
+	db, err := xapian.OpenDBMulti(paths)
+	if err != nil || db == nil {
+		return nil, err
 	}
-	out := make([][16]byte, 0, len(seen))
-	for g := range seen {
+	defer db.Close()
+	q, err := xapian.QueryMatchAll()
+	if err != nil {
+		return nil, err
+	}
+	defer q.Free()
+	hits, err := db.SearchWithValue(q, slotGUID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[[16]byte]struct{}, len(hits))
+	out := make([][16]byte, 0, len(hits))
+	for _, h := range hits {
+		if len(h.Value) != 16 {
+			continue
+		}
+		var g [16]byte
+		copy(g[:], h.Value)
+		if _, ok := seen[g]; ok {
+			continue
+		}
+		seen[g] = struct{}{}
 		out = append(out, g)
 	}
 	return out, nil
