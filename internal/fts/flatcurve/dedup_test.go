@@ -63,13 +63,6 @@ func TestCompactionFoldsTheCopiesOfOneMessage(t *testing.T) {
 	if len(folders) != 2 {
 		t.Errorf("the document names %v, want both folders", folders)
 	}
-	copies, err := w.DocTerms(ids[0], termCopy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(copies) != 2 {
-		t.Errorf("the document carries %v, want both copies", copies)
-	}
 
 	// And both folders still answer, each with its own uid.
 	for _, tc := range []struct {
@@ -87,7 +80,7 @@ func TestCompactionFoldsTheCopiesOfOneMessage(t *testing.T) {
 }
 
 // A mailbox whose uids are past what a docid can hold still indexes and
-// searches: the uid lives in the copy's term, not in the number (#1986).
+// searches: the store answers with the uid, the docid is the database's own.
 func TestAMailboxPastTheDocIDCeilingIndexesAndSearches(t *testing.T) {
 	ui, _ := testEngine(t, Options{})
 	const huge = uint32(1) << 31 // past half of what a docid can count
@@ -106,8 +99,8 @@ func TestAMailboxPastTheDocIDCeilingIndexesAndSearches(t *testing.T) {
 		t.Fatalf("the search answers %v, want the two high uids", got)
 	}
 
-	// And the copies are addressed by those uids: an expunge finds one.
-	if err := ui.Expunge(inbox, huge); err != nil {
+	// And a retraction names the message, so it finds that one alone.
+	if err := ui.Expunge(inbox, testGUID(huge), false, false); err != nil {
 		t.Fatal(err)
 	}
 	res, err = ui.Lookup([]string{inbox.GUID}, bodyQuery("needle"))
@@ -135,7 +128,7 @@ func writeStrayCopy(t *testing.T, ui fts.UserIndex, guid [16]byte, folderGUID st
 	defer w.Close()
 	doc := xapian.NewDoc()
 	defer doc.Free()
-	for _, term := range []string{guidTerm(guid), folderTerm(folderGUID), copyTerm(folderGUID, uid), "needl"} {
+	for _, term := range []string{guidTerm(guid), folderTerm(folderGUID), "needl"} {
 		if err := doc.AddBooleanTerm(term); err != nil {
 			t.Fatal(err)
 		}

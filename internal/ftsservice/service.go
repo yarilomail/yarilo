@@ -499,11 +499,47 @@ func (s *Service) Expunge(user string, mbox fts.MailboxRef, uid uint32, guid [16
 	defer s.release(h)
 	// The index is the user's, so the lock is too: two folders' writers share
 	// one file now (#1986).
+	// The store answers both questions, and it has already lost this copy:
+	// the retraction is tracked inside the same transaction (#1711).
+	inFolder, anywhere, cerr := s.copiesLeft(h, mbox, guid, uid)
+	if cerr != nil {
+		return cerr
+	}
 	err = s.opts.lockIndex(user, func() error {
-		return h.ui.Expunge(mbox, uid)
+		return h.ui.Expunge(mbox, guid, inFolder, anywhere)
 	})
-	slog.Debug("fts: expunge document", "user", user, "folder", mbox.Name, "uid", uid, "ok", err == nil)
+	slog.Debug("fts: expunge document", "user", user, "folder", mbox.Name, "uid", uid,
+		"in_folder", inFolder, "anywhere", anywhere, "ok", err == nil)
 	return err
+}
+
+// copiesLeft asks the per-user GUID store what is left of a message after one
+// copy went: in this folder, and anywhere at all.
+func (s *Service) copiesLeft(h *userHandle, mbox fts.MailboxRef, guid [16]byte, uid uint32) (inFolder, anywhere bool, err error) {
+	folder, err := hex.DecodeString(mbox.GUID)
+	if err != nil || len(folder) != 16 {
+		return false, false, fmt.Errorf("ftsservice: folder %q names no guid", mbox.Name)
+	}
+	var fg [16]byte
+	copy(fg[:], folder)
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return false, false, fmt.Errorf("ftsservice: this index resolves no GUID, so a retraction names no copy")
+	}
+	recs, err := resolver.GUIDCopies([][16]byte{guid})
+	if err != nil {
+		return false, false, fmt.Errorf("ftsservice: guid copies: %w", err)
+	}
+	for _, r := range recs {
+		if r.FolderGUID == fg && r.UID == uid {
+			continue // the copy just expunged, if the store has not caught up
+		}
+		anywhere = true
+		if r.FolderGUID == fg {
+			inFolder = true
+		}
+	}
+	return inFolder, anywhere, nil
 }
 
 func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Result, error) {

@@ -111,7 +111,9 @@ type UserIndex interface {
 	SetCheckpoint(mbox MailboxRef, lastUID, uidValidity, settingsChecksum uint32) error
 
 	BeginUpdate(mbox MailboxRef) (Update, error)
-	Expunge(mbox MailboxRef, uid uint32) error
+	// Expunge retracts one copy by the message it was: inFolder says another
+	// copy of it is still in this folder, anywhere that some folder holds one.
+	Expunge(mbox MailboxRef, guid [16]byte, inFolder, anywhere bool) error
 	// Rescan reconciles the index against the folder's live copies by the
 	// message, never by a docid; what it does not hold comes back as missing.
 	Rescan(mbox MailboxRef, present []Copy) (missing []uint32, err error)

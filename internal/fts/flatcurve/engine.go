@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -502,7 +501,6 @@ func (u *userIndex) BeginUpdate(mbox fts.MailboxRef) (fts.Update, error) {
 const (
 	termGUID   = "G"
 	termFolder = "XF"
-	termCopy   = "Q"
 	// slotGUID holds the message GUID, so a hit says which message it is
 	// without the docid meaning anything.
 	slotGUID = 0
@@ -511,10 +509,6 @@ const (
 func guidTerm(guid [16]byte) string { return termGUID + hex.EncodeToString(guid[:]) }
 
 func folderTerm(folderGUID string) string { return termFolder + folderGUID }
-
-func copyTerm(folderGUID string, uid uint32) string {
-	return termCopy + folderGUID + ":" + strconv.FormatUint(uint64(uid), 10)
-}
 
 type update struct {
 	ui     *userIndex
@@ -653,9 +647,6 @@ func (up *update) writeDocLocked(st *mboxState) error {
 	if err := up.doc.AddBooleanTerm(folderTerm(up.folder)); err != nil {
 		return err
 	}
-	if err := up.doc.AddBooleanTerm(copyTerm(up.folder, up.uid)); err != nil {
-		return err
-	}
 	if err := up.doc.SetValue(slotGUID, string(up.guid[:])); err != nil {
 		return err
 	}
@@ -664,7 +655,7 @@ func (up *update) writeDocLocked(st *mboxState) error {
 		return err
 	}
 	if len(ids) > 0 {
-		return joinCopy(st.cur, ids[0], up.folder, up.uid)
+		return joinCopy(st.cur, ids[0], up.folder)
 	}
 	// A message indexed before this shard opened lives in a sealed one, and the
 	// copy belongs to that document: the retraction already reaches there.
@@ -708,7 +699,7 @@ func (up *update) joinInSealedShard(st *mboxState) (bool, error) {
 		}
 		ids, derr = w.DocIDsByTerm(guidTerm(up.guid))
 		if derr == nil && len(ids) > 0 {
-			if derr = joinCopy(w, ids[0], up.folder, up.uid); derr == nil {
+			if derr = joinCopy(w, ids[0], up.folder); derr == nil {
 				derr = w.Commit()
 			}
 		}
@@ -724,18 +715,17 @@ func (up *update) joinInSealedShard(st *mboxState) (bool, error) {
 	return false, nil
 }
 
-// joinCopy adds the terms that name one copy to the document that already
-// holds the message.
-func joinCopy(w *xapian.WDB, id uint32, folderGUID string, uid uint32) error {
+// joinCopy names the copy's folder on the document that already holds the
+// message. A second copy in the same folder adds nothing: the document is the
+// message, and the folder is already named (#1986).
+func joinCopy(w *xapian.WDB, id uint32, folderGUID string) error {
 	stored, gerr := w.GetDocument(id)
 	if gerr != nil {
 		return gerr
 	}
 	defer stored.Free()
-	for _, t := range []string{folderTerm(folderGUID), copyTerm(folderGUID, uid)} {
-		if err := stored.AddBooleanTerm(t); err != nil {
-			return err
-		}
+	if err := stored.AddBooleanTerm(folderTerm(folderGUID)); err != nil {
+		return err
 	}
 	return w.ReplaceDocument(id, stored)
 }
@@ -797,14 +787,20 @@ func (up *update) Rollback() error {
 
 /* --- expunge / rescan / optimize -------------------------------------------- */
 
-// Expunge removes one copy: the terms that name it go, and the document goes
-// with the last of them (#1986).
-func (u *userIndex) Expunge(mbox fts.MailboxRef, uid uint32) error {
+// Expunge retracts one copy by the message it was. inFolder says the folder
+// still holds another copy of it, anywhere that some folder does: without a
+// per-copy term the store is what knows (#1986).
+func (u *userIndex) Expunge(mbox fts.MailboxRef, guid [16]byte, inFolder, anywhere bool) error {
+	if inFolder {
+		// Another copy of the same message is still in this folder, so the
+		// folder term stays: the document is the message.
+		return nil
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st := u.state()
 	if st.cur != nil {
-		done, err := dropCopy(st.cur, mbox.GUID, uid)
+		done, err := dropCopy(st.cur, mbox.GUID, guid, anywhere)
 		if err != nil {
 			return err
 		}
@@ -826,7 +822,7 @@ func (u *userIndex) Expunge(mbox fts.MailboxRef, uid uint32) error {
 		if oerr != nil {
 			return oerr
 		}
-		done, derr := dropCopy(w, mbox.GUID, uid)
+		done, derr := dropCopy(w, mbox.GUID, guid, anywhere)
 		if derr == nil && done {
 			derr = w.Commit()
 		}
@@ -841,31 +837,24 @@ func (u *userIndex) Expunge(mbox fts.MailboxRef, uid uint32) error {
 	return nil
 }
 
-// dropCopy strips a copy's terms from the message's document, and deletes the
-// document when no folder holds it any more.
-func dropCopy(w *xapian.WDB, folderGUID string, uid uint32) (bool, error) {
-	ids, err := w.DocIDsByTerm(copyTerm(folderGUID, uid))
+// dropCopy takes the folder off the message's document, and deletes the
+// document when the store says no folder holds the message any more.
+func dropCopy(w *xapian.WDB, folderGUID string, guid [16]byte, anywhere bool) (bool, error) {
+	ids, err := w.DocIDsByTerm(guidTerm(guid))
 	if err != nil || len(ids) == 0 {
 		return false, err
+	}
+	if !anywhere {
+		_, derr := w.DeleteDocument(ids[0])
+		return true, derr
 	}
 	doc, gerr := w.GetDocument(ids[0])
 	if gerr != nil {
 		return false, gerr
 	}
 	defer doc.Free()
-	if err := doc.RemoveTerm(copyTerm(folderGUID, uid)); err != nil {
-		return false, err
-	}
 	if err := doc.RemoveTerm(folderTerm(folderGUID)); err != nil {
 		return false, err
-	}
-	left, terr := w.DocTerms(ids[0], termFolder)
-	if terr != nil {
-		return false, terr
-	}
-	if len(left) <= 1 {
-		_, derr := w.DeleteDocument(ids[0])
-		return true, derr
 	}
 	return true, w.ReplaceDocument(ids[0], doc)
 }
@@ -1106,15 +1095,6 @@ func dropFolderFromDoc(w *xapian.WDB, id uint32, folderGUID string) error {
 		return err
 	}
 	defer doc.Free()
-	copies, terr := w.DocTerms(id, termCopy+folderGUID+":")
-	if terr != nil {
-		return terr
-	}
-	for _, t := range copies {
-		if rerr := doc.RemoveTerm(t); rerr != nil {
-			return rerr
-		}
-	}
 	if rerr := doc.RemoveTerm(folderTerm(folderGUID)); rerr != nil {
 		return rerr
 	}
@@ -1545,15 +1525,13 @@ func mergeCopies(w *xapian.WDB, keep, drop uint32) error {
 		return err
 	}
 	defer into.Free()
-	for _, prefix := range []string{termFolder, termCopy} {
-		terms, terr := w.DocTerms(drop, prefix)
-		if terr != nil {
-			return terr
-		}
-		for _, t := range terms {
-			if err := into.AddBooleanTerm(t); err != nil {
-				return err
-			}
+	terms, terr := w.DocTerms(drop, termFolder)
+	if terr != nil {
+		return terr
+	}
+	for _, t := range terms {
+		if err := into.AddBooleanTerm(t); err != nil {
+			return err
 		}
 	}
 	if err := w.ReplaceDocument(keep, into); err != nil {
