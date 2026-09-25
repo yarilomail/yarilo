@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -110,6 +111,10 @@ func assertNoOrphanDocuments(user string) error {
 	if docs <= messages {
 		return nil // nothing was left behind in the first place
 	}
+	// Said out loud, because a green row otherwise does not show which of the
+	// two mechanisms held: the check at the write, or the sweep.
+	slog.Info("smoke: a compaction was needed here",
+		"user", user, "documents", docs, "live_messages", messages)
 	if err := backendFTSOptimize(user); err != nil {
 		return err
 	}
