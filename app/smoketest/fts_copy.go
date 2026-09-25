@@ -36,15 +36,20 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 		if _, err := c.cmd(fmt.Sprintf("CREATE %q", folder)); err != nil {
 			return fmt.Errorf("CREATE %q: %w", folder, err)
 		}
-		// The folders this run created go, and a failure to remove one is
-		// reported rather than left for the next run to trip over.
-		defer func(f string) {
-			c.cmd("CLOSE") //nolint:errcheck
+	}
+	// One deferred block, in the order the judgement needs: the folders go
+	// first, and only then is the index asked what they left behind (#2022).
+	defer func() {
+		c.cmd("CLOSE") //nolint:errcheck
+		for _, f := range []string{copyFolder, otherFolder} {
 			if derr := c.deleteFolder(f); derr != nil && err == nil {
 				err = derr
 			}
-		}(folder)
-	}
+		}
+		if cerr := assertNoOrphanDocuments(user); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	if _, err := c.selectFolder("INBOX"); err != nil {
 		return fmt.Errorf("select INBOX: %w", err)
@@ -92,13 +97,6 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 	if err := assertHits(c, copyFolder, marker, 1); err != nil {
 		return err
 	}
-	// The folders this row created are deleted by the deferred cleanup above;
-	// after that the index must hold no document for them (#2022).
-	defer func() {
-		if cerr := assertNoOrphanDocuments(user); cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
 	return nil
 }
 
