@@ -34,7 +34,7 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder) *mailb
 		slog.Warn("imap: virtual mailbox configuration", "folder", rel, "err", err)
 		return nil
 	}
-	was, _ := virtualHeaderOf(h.idx, f.ID)
+	was := virtualHeaderOf(h.idx, f.ID)
 	res, err := virtual.Sync(cfg, was, &sessionBacking{s: s})
 	if err != nil {
 		slog.Warn("imap: virtual sync", "folder", rel, "err", err)
@@ -91,11 +91,12 @@ func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res v
 	return h.mailbox().Folder(rel, f.UIDValidity)
 }
 
-func virtualHeaderOf(idx mailbox.UserIndex, folderID uint64) (mailbox.VirtualHeader, bool) {
+func virtualHeaderOf(idx mailbox.UserIndex, folderID uint64) mailbox.VirtualHeader {
 	if v, ok := idx.(mailbox.VirtualIndexed); ok {
-		return v.VirtualHeader(folderID)
+		hdr, _ := v.VirtualHeader(folderID)
+		return hdr
 	}
-	return mailbox.VirtualHeader{}, false
+	return mailbox.VirtualHeader{}
 }
 
 // sessionBacking resolves what a configuration names against the session's own
@@ -148,17 +149,14 @@ func (b *sessionBacking) Matches(back virtual.Backing, rule string) (map[uint32]
 	textHits, rest, restNeedsBody, verify, indexed := b.textPart(back, criteria)
 	keep := make(map[uint32]bool, len(back.Messages))
 	for i, m := range back.Messages {
-		matchCrit, needRaw := criteria, true
+		matchCrit, needRaw := criteria, searchNeedsBody(criteria)
 		if indexed {
 			if !textHits[m.UID] {
 				continue
 			}
-			matchCrit, needRaw = rest, restNeedsBody || verify[m.UID]
-			if verify[m.UID] {
-				matchCrit = criteria
+			if !verify[m.UID] {
+				matchCrit, needRaw = rest, restNeedsBody
 			}
-		} else {
-			needRaw = searchNeedsBody(criteria)
 		}
 		var raw []byte
 		if needRaw {
@@ -265,7 +263,7 @@ func (s *session) backingFolders() (map[uint32]backingFolder, error) {
 	if s.backingOf != nil {
 		return s.backingOf, nil
 	}
-	hdr, _ := virtualHeaderOf(s.folderNS.idx, s.folder.ID)
+	hdr := virtualHeaderOf(s.folderNS.idx, s.folder.ID)
 	byGUID := make(map[[16]byte]uint32, len(hdr.Backing))
 	for _, b := range hdr.Backing {
 		byGUID[b.GUID] = b.ID
@@ -311,9 +309,8 @@ func (s *session) readVirtualCopy(m *mailbox.MessageMeta) (io.ReadCloser, error)
 	return h.mailbox().OpenMessage(b.name, recs[0])
 }
 
-// prepareVirtualFTSSearch answers the text part of a SEARCH in a virtual
-// mailbox. It never indexes the mailbox itself, which holds nothing to read:
-// each backing folder catches up, then one LookupIn asks over all of them.
+// prepareVirtualFTSSearch catches up each backing folder, then asks once over
+// all of them; the virtual mailbox holds nothing to read and is never indexed.
 func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs []*mailbox.MessageMeta) (*ftsFilter, *imaplib.Error) {
 	o := s.srv.opts.FTS
 	if !o.enabled() || s.userInfo == nil {

@@ -222,9 +222,8 @@ type Result struct {
 	MaybeGUIDs    [][16]byte
 }
 
-// FolderHit is one copy a search over several folders answered with: the
-// folder by its GUID and the uid there. A message in two of the folders asked
-// for is two hits, since a copy is what a client addresses.
+// FolderHit is one copy a search over a folder set answered with, by folder
+// GUID and uid: a message in two of the folders is two hits.
 type FolderHit struct {
 	Folder string `json:"folder"`
 	UID    uint32 `json:"uid"`
