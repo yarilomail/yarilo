@@ -233,12 +233,16 @@ func shiftMapAfterFirst(t *testing.T, u *userMailbox, delta int) {
 	}
 }
 
-// A copy keeps the source's GUID (RFC 8474 §5.1), so the map holds several
-// records under one GUID. Keyed by GUID alone, the rewrite pointed every one of
-// them at the last record's offset and a fetch read the wrong message.
+// A copy keeps the source's GUID (RFC 8474 §5.1): keyed by the GUID alone, one
+// of the records under it won and the other copy read its bytes.
 func TestARewriteRepointsEachCopyOfOneGUID(t *testing.T) {
 	_, u := healTestUser(t)
 	shared := [16]byte{9, 9}
+	// The stranger goes first, so both copies sit past the re-framed record:
+	// an unrepointed one then reads the wrong offset, whichever won.
+	if _, _, _, err := u.Save("INBOX", strings.NewReader("a stranger\r\n"), 0, 0, nil, nil, [16]byte{1}); err != nil {
+		t.Fatal(err)
+	}
 	var names []string
 	for _, body := range []string{"the first copy\r\n", "the second copy is longer\r\n"} {
 		name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, 0, nil, nil, shared)
