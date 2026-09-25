@@ -106,3 +106,7 @@ func TestSearchGivesUpOnAnIndexerThatNeverStarts(t *testing.T) {
 }
 
 func (f *slowFTS) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (f *slowFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
+}

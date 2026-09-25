@@ -170,3 +170,7 @@ func TestTheReaderToleratesBothShapes(t *testing.T) {
 }
 
 func (f failingService) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (f failingService) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, f.err
+}

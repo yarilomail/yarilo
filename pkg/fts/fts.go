@@ -222,6 +222,19 @@ type Result struct {
 	MaybeGUIDs    [][16]byte
 }
 
+// FolderHit is one copy a search over a folder set answered with, by folder
+// GUID and uid: a message in two of the folders is two hits.
+type FolderHit struct {
+	Folder string `json:"folder"`
+	UID    uint32 `json:"uid"`
+}
+
+// SetResult is a search over a set of folders.
+type SetResult struct {
+	Definite []FolderHit `json:"definite"`
+	Maybe    []FolderHit `json:"maybe"`
+}
+
 // MergeScoresAnd folds src into dest for an AND composition: UIDs present
 // in both keep the higher score; dest-only UIDs are deliberately left as-is.
 // Both slices must be sorted by UID; dest is modified in place.

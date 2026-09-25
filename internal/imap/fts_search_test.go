@@ -37,22 +37,57 @@ type fakeFTS struct {
 	droppedFolders []string
 	indexes        []uint32
 	queries        []fts.Query
+	// jobFolders is every folder an index or prepend job was asked for: a
+	// virtual mailbox has nothing to read and must never be one of them.
+	jobFolders []string
+	// lookupIns records each search over a folder set; setHits and setMaybe
+	// are the uids each folder answers with, and only a folder asked answers.
+	lookupIns [][]string
+	setHits   map[string][]uint32
+	setMaybe  map[string][]uint32
+	// behind names folders whose checkpoint stays at zero: catch-up there
+	// does not complete, as for a folder the indexer has not reached.
+	behind map[string]bool
 	// stuck models a broken FTS backend that never advances its checkpoint, even
 	// after a PREPEND — the #629 failure mode.
 	stuck bool
 }
 
-func (f *fakeFTS) Index(_ string, _ fts.MailboxRef, maxUID uint32, _ int) error {
+func (f *fakeFTS) Index(_ string, m fts.MailboxRef, maxUID uint32, _ int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.indexes = append(f.indexes, maxUID)
+	f.jobFolders = append(f.jobFolders, m.Name)
 	return nil
 }
 
-func (f *fakeFTS) Prepend(_ string, _ fts.MailboxRef, maxUID uint32) error {
+func (f *fakeFTS) LookupIn(_ string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out fts.SetResult
+	names := make([]string, 0, len(folders))
+	for _, m := range folders {
+		names = append(names, m.Name)
+		for _, uid := range f.setHits[m.Name] {
+			out.Definite = append(out.Definite, fts.FolderHit{Folder: m.GUID, UID: uid})
+		}
+		for _, uid := range f.setMaybe[m.Name] {
+			out.Maybe = append(out.Maybe, fts.FolderHit{Folder: m.GUID, UID: uid})
+		}
+	}
+	f.lookupIns = append(f.lookupIns, names)
+	f.queries = append(f.queries, q)
+	return out, nil
+}
+
+func (f *fakeFTS) Prepend(_ string, m fts.MailboxRef, maxUID uint32) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepends++
+	f.jobFolders = append(f.jobFolders, m.Name)
+	if f.behind[m.Name] {
+		return nil
+	}
 	if !f.stuck {
 		f.lastUID = maxUID // catch-up completes on the next Status poll
 	}
@@ -74,9 +109,12 @@ func (f *fakeFTS) Lookup(_ string, _ fts.MailboxRef, q fts.Query) (fts.Result, e
 	return f.lookup, f.lookupErr
 }
 
-func (f *fakeFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
+func (f *fakeFTS) Status(_ string, m fts.MailboxRef) (uint32, uint32, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.behind[m.Name] {
+		return 0, 1, nil
+	}
 	return f.lastUID, 1, nil
 }
 

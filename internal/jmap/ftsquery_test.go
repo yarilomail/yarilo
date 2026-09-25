@@ -692,3 +692,7 @@ func TestCallerCancellationIsNotSilentlyNoFilter(t *testing.T) {
 }
 
 func (s *stubFTS) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (s *stubFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
+}

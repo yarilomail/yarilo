@@ -138,6 +138,16 @@ func (p *Pool) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	return docs, copies, messages, unrecorded, err
 }
 
+func (p *Pool) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	var res fts.SetResult
+	err := p.do(func(c *Lazy) error {
+		var e error
+		res, e = c.LookupIn(user, folders, q)
+		return e
+	})
+	return res, err
+}
+
 func (p *Pool) DropFolder(user string, m fts.MailboxRef) error {
 	return p.do(func(c *Lazy) error { return c.DropFolder(user, m) })
 }

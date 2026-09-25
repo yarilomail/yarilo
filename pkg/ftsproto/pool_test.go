@@ -150,3 +150,7 @@ func TestPoolSizeFloor(t *testing.T) {
 }
 
 func (s *slowService) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (s *slowService) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
+}

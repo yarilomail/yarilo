@@ -11,6 +11,7 @@
 //	> STATUS\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
 //	> RESCAN\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
 //	> DROPFOLDER\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
+//	> LOOKUPIN\t<user>\t<request-b64json>\n
 //	> COUNTS\t<user>\n
 //	> OPTIMIZE\t<user>\n
 //	< OK[\t<payload>]\n | NO\t<message>\n | NO\t<code>\t<message>\n
@@ -58,6 +59,9 @@ const (
 	// A deleted mailbox: its documents keep no terms of a folder that is gone,
 	// and one index per user means they outlive it otherwise (#2022).
 	CmdDropFolder = "DROPFOLDER"
+	// One search over a set of folders, answered with every copy inside the
+	// set. A command of its own, so the protocol version stays (#1986).
+	CmdLookupIn = "LOOKUPIN"
 
 	replyOK = "OK"
 	replyNO = "NO"
@@ -85,6 +89,7 @@ type Service interface {
 	RescanUser(user string) ([]string, error)
 	Counts(user string) (docs, copies, messages, unrecorded uint64, err error)
 	DropFolder(user string, mbox fts.MailboxRef) error
+	LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error)
 	Optimize(user string) error
 }
 
@@ -140,6 +145,45 @@ func DecodeResult(s string) (fts.Result, error) {
 		return fts.Result{}, fmt.Errorf("ftsproto: decode result: %w", err)
 	}
 	return r, nil
+}
+
+// lookupInRequest is LOOKUPIN's one field: the folders and the query travel
+// together, base64-encoded, so no folder name or term can break the line.
+type lookupInRequest struct {
+	Folders []fts.MailboxRef `json:"folders"`
+	Query   fts.Query        `json:"query"`
+}
+
+func encodeB64JSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("ftsproto: encode: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(b), nil
+}
+
+func decodeB64JSON(s string, v any) error {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err == nil {
+		err = json.Unmarshal(b, v)
+	}
+	if err != nil {
+		return fmt.Errorf("ftsproto: decode: %w", err)
+	}
+	return nil
+}
+
+func (r *Remote) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	req, err := encodeB64JSON(lookupInRequest{Folders: folders, Query: q})
+	if err != nil {
+		return fts.SetResult{}, err
+	}
+	payload, err := r.call(CmdLookupIn, user, req)
+	if err != nil {
+		return fts.SetResult{}, err
+	}
+	var out fts.SetResult
+	return out, decodeB64JSON(payload, &out)
 }
 
 // MboxFields flattens a MailboxRef into its wire fields.
