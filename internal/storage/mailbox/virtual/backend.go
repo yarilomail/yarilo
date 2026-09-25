@@ -113,7 +113,9 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 		if rerr != nil {
 			return nil
 		}
-		out = append(out, mailbox.FolderEntry{Name: u.nameOf(rel)})
+		// Selectable: a directory with a configuration is a mailbox, and
+		// LIST marks the rest \Noselect.
+		out = append(out, mailbox.FolderEntry{Name: u.nameOf(rel), Selectable: true})
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {

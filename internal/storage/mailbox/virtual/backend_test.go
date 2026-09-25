@@ -46,6 +46,11 @@ func TestListFoldersNamesTheOnesWithAConfiguration(t *testing.T) {
 	if len(names) != 2 || names[0] != "All" || names[1] != "Views/Unseen" {
 		t.Errorf("listed %v, want [All Views/Unseen]", names)
 	}
+	for _, f := range folders {
+		if !f.Selectable {
+			t.Errorf("%q is listed as not selectable, so LIST marks it \\Noselect", f.Name)
+		}
+	}
 	if ok, _ := u.FolderExists("NotOne"); ok {
 		t.Error("a directory with no configuration was called a mailbox")
 	}
