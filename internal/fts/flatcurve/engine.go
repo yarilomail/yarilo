@@ -876,9 +876,10 @@ func (u *userIndex) DocCount() (uint64, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st := u.state()
-	// The pending documents of the open shard are not on disk for a reader.
-	if err := st.commitCurrent(); err != nil {
-		return 0, err
+	// A read never commits: the documents of an update in flight belong to it
+	// until it says so, and committing them here keeps half its batch (#2021).
+	if st.pending > 0 {
+		return 0, fmt.Errorf("fts/flatcurve: a batch is in flight; count after it commits")
 	}
 	paths, err := shardPaths(st.dir)
 	if err != nil {

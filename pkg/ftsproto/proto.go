@@ -51,9 +51,8 @@ const (
 	// Whole-user rescan: one hold for every folder, rather than one call and
 	// one hold per folder (#1986).
 	CmdRescanUser = "RESCANUSER"
-	// Operator counts for one user: documents, live copies, distinct
-	// messages. A command of its own, so an old server answers NO rather
-	// than a field an old client would misread (#2021).
+	// Operator counts for one user. A command of its own, so an old server
+	// answers NO rather than a field an old client would misread (#2021).
 	CmdCounts = "COUNTS"
 
 	replyOK = "OK"

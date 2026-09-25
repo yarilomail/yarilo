@@ -598,9 +598,8 @@ func (s *Service) RescanUser(user string) ([]string, error) {
 	return done, err
 }
 
-// Counts is what an operator reads to tell a healthy index from one that
-// carries stale documents: documents, live copies, and the distinct messages
-// those copies are. After a reconcile documents == messages, and copies >= it.
+// Counts reports documents, live copies, and the distinct messages those
+// copies are: after a reconcile documents == messages, and copies >= both.
 func (s *Service) Counts(user string) (docs, copies, messages uint64, err error) {
 	h, err := s.handle(user)
 	if err != nil {
