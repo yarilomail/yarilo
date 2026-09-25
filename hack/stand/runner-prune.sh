@@ -20,14 +20,15 @@ docker image prune -f
 # Tagged images: only this project's, and only those older than the window.
 # Base images (golang, alpine) are left alone: they are old by construction, and
 # removing them turns the next build into a cold one.
-cutoff=$(date -u -d "${KEEP_HOURS} hours ago" +%s 2>/dev/null || date -u -v-"${KEEP_HOURS}"H +%s)
-docker images --format '{{.ID}} {{.Repository}} {{.CreatedAt}}' |
-	while read -r id repo created_at; do
-		[ "$repo" = "$IMAGE_REPO" ] || continue
-		created=$(date -u -d "$created_at" +%s 2>/dev/null || echo 0)
-		[ "$created" -gt 0 ] && [ "$created" -lt "$cutoff" ] || continue
-		docker rmi "$id" >/dev/null 2>&1 || true
-	done
+cutoff=$(date -u -d "${KEEP_HOURS} hours ago" +%s)
+for ref in $(docker images --filter "reference=${IMAGE_REPO}" --format '{{.Repository}}:{{.Tag}}'); do
+	# RFC 3339 from the daemon, not the localised column: the printed form
+	# carries an offset and a zone name together, which date does not take.
+	created=$(docker inspect -f '{{.Created}}' "$ref")
+	ts=$(date -u -d "$created" +%s)
+	[ "$ts" -lt "$cutoff" ] || continue
+	docker rmi "$ref"
+done
 
 echo "runner-prune: after"
 docker system df
