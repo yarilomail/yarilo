@@ -87,8 +87,15 @@ func (s *Server) emailQuery(ctx context.Context, h *userHandle, accountID string
 	}
 	sortEmailHits(matched, req.Sort)
 
+	// One Email per message, whatever number of mailboxes hold a copy: the
+	// mailboxes are a property of it, not separate Emails (RFC 8621 §4).
 	ids := make([]string, 0, len(matched))
+	seen := make(map[string]struct{}, len(matched))
 	for _, hit := range matched {
+		if _, dup := seen[hit.id]; dup {
+			continue
+		}
+		seen[hit.id] = struct{}{}
 		ids = append(ids, hit.id)
 	}
 	total := uint(len(ids))

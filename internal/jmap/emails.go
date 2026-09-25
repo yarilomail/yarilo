@@ -225,12 +225,15 @@ func parseObjectID(id string) ([16]byte, error) {
 func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGetRequest, ceiling uint32, caches *envelopeCaches) (jmapcore.Email, map[string]any, error) {
 	var headerFields map[string]any
 	m := ref.meta
+	// Where it is and what is set on it are the Email's, not one copy's: both
+	// read across every mailbox holding the message (RFC 8621 §4).
+	copies := h.copiesOf(ref)
 	email := jmapcore.Email{
 		ID:         emailID(m),
 		BlobID:     emailID(m),
 		ThreadID:   h.threadOf(emailID(m)),
-		MailboxIDs: map[string]bool{ref.mailboxID: true},
-		Keywords:   keywordsOf(m),
+		MailboxIDs: mailboxIDsOf(copies),
+		Keywords:   keywordsAcross(copies),
 		Size:       h.mbox.RFC822Size(ref.folder, m),
 		ReceivedAt: m.InternalDate.UTC().Format(time.RFC3339),
 		BodyValues: map[string]jmapcore.EmailBodyValue{},
