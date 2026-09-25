@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/emersion/go-imap/v2/imapserver"
 )
 
 const (
@@ -37,8 +39,8 @@ type Box struct {
 	// by name ("/entry:value"); such a line carries no wildcards either.
 	MetadataEntry string
 	MetadataValue string
-	// Search is the IMAP SEARCH text for this box, kept as text: the parser
-	// SEARCH uses is unexported upstream, so a bad rule fails on first run.
+	// Search is the IMAP SEARCH text for this box, "" for none. It is parsed
+	// at load by the reader SEARCH itself uses, so a bad rule is refused here.
 	Search string
 }
 
@@ -94,6 +96,9 @@ func ParseConfig(r io.Reader) (*Config, error) {
 			return errors.New("virtual: search rule without a mailbox")
 		}
 		text := strings.TrimSpace(rule)
+		if _, err := imapserver.ParseSearchCriteria(text); err != nil {
+			return fmt.Errorf("virtual: the search rule %q is not one: %w", text, err)
+		}
 		cfg.SearchArgsCRC32 = crc32.Update(cfg.SearchArgsCRC32, crc32.IEEETable, []byte(text))
 		for i := ruleFrom; i < len(cfg.Boxes); i++ {
 			cfg.Boxes[i].Search = text

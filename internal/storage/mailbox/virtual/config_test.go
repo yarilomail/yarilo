@@ -50,6 +50,7 @@ func TestConfigRefusals(t *testing.T) {
 		{"an annotation without a value", "/private/comment\n"},
 		{"a rule before any mailbox", "  unseen\nINBOX\n"},
 		{"an empty configuration", "# nothing here\n"},
+		{"a rule that is not a search", "INBOX\n  notakey\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := ParseConfig(strings.NewReader(tc.text)); err == nil {

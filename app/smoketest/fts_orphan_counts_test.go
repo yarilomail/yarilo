@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -46,7 +48,12 @@ func TestAssertNoOrphanDocuments(t *testing.T) {
 			setFlag(t, flagBackendAPI, srv.URL)
 			setFlag(t, &orphanCountWait, 300*time.Millisecond)
 
+			var said bool
+			logged(t, &said)
 			err := assertNoOrphanDocuments("u@test")
+			if said != (tc.docs > tc.msgs) {
+				t.Errorf("the line about a compaction was %v, and one was needed: %v", said, tc.docs > tc.msgs)
+			}
 			if tc.wantErr && err == nil {
 				t.Fatalf("%d documents for %d live messages passed a compaction", tc.afterCompaction, tc.msgs)
 			}
@@ -56,3 +63,26 @@ func TestAssertNoOrphanDocuments(t *testing.T) {
 		})
 	}
 }
+
+// logged captures whether the row said a compaction was needed, which is what
+// tells the two mechanisms apart in a window's log.
+func logged(t *testing.T, said *bool) {
+	t.Helper()
+	was := slog.Default()
+	slog.SetDefault(slog.New(slogHandlerFunc(func(r slog.Record) {
+		if strings.Contains(r.Message, "a compaction was needed") {
+			*said = true
+		}
+	})))
+	t.Cleanup(func() { slog.SetDefault(was) })
+}
+
+type slogHandlerFunc func(slog.Record)
+
+func (f slogHandlerFunc) Enabled(context.Context, slog.Level) bool { return true }
+func (f slogHandlerFunc) Handle(_ context.Context, r slog.Record) error {
+	f(r)
+	return nil
+}
+func (f slogHandlerFunc) WithAttrs([]slog.Attr) slog.Handler { return f }
+func (f slogHandlerFunc) WithGroup(string) slog.Handler      { return f }
