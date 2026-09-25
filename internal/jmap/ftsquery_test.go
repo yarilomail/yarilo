@@ -89,6 +89,7 @@ func (s *stubFTS) Prepend(string, fts.MailboxRef, uint32) error {
 func (s *stubFTS) Expunge(string, fts.MailboxRef, uint32, [16]byte) error { return nil }
 func (s *stubFTS) Rescan(string, fts.MailboxRef) error                    { return nil }
 func (s *stubFTS) RescanUser(string) ([]string, error)                    { return nil, nil }
+func (s *stubFTS) Counts(string) (uint64, uint64, uint64, error)          { return 0, 0, 0, nil }
 func (s *stubFTS) Optimize(string) error                                  { return nil }
 func (s *stubFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 	return s.statusUID, 0, nil

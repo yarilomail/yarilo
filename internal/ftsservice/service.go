@@ -598,6 +598,48 @@ func (s *Service) RescanUser(user string) ([]string, error) {
 	return done, err
 }
 
+// Counts is what an operator reads to tell a healthy index from one that
+// carries stale documents: documents, live copies, and the distinct messages
+// those copies are. After a reconcile documents == messages, and copies >= it.
+func (s *Service) Counts(user string) (docs, copies, messages uint64, err error) {
+	h, err := s.handle(user)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer s.release(h)
+	folders, err := h.box.ListFolders()
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("ftsservice: list folders: %w", err)
+	}
+	names := mailbox.SelectableNames(folders)
+	seen := make(map[[16]byte]struct{})
+	err = s.opts.lockIndex(user, func() error {
+		for _, name := range names {
+			mbox, rerr := h.mailboxRef(name)
+			if rerr != nil {
+				return rerr
+			}
+			present, _, _, perr := s.presentCopies(h, mbox)
+			if perr != nil {
+				return perr
+			}
+			for _, c := range present {
+				copies++
+				if c.GUID != ([16]byte{}) {
+					seen[c.GUID] = struct{}{}
+				}
+			}
+		}
+		n, derr := h.ui.DocCount()
+		if derr != nil {
+			return derr
+		}
+		docs = n
+		return nil
+	})
+	return docs, copies, uint64(len(seen)), err
+}
+
 // mailboxRef names one folder the way the index knows it: by its own GUID,
 // never by a number this process assigned (#1995).
 func (h *userHandle) mailboxRef(name string) (fts.MailboxRef, error) {

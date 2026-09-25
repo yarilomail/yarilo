@@ -210,6 +210,17 @@ func dispatch(line string, svc Service) string {
 		slog.Debug("fts: rescanned", "user", f[1], "folders", len(done))
 		return strings.Join(append([]string{replyOK}, done...), "\t")
 
+	case CmdCounts:
+		if len(f) != 2 {
+			return no("malformed COUNTS")
+		}
+		docs, copies, messages, err := svc.Counts(f[1])
+		if err != nil {
+			return noFor(err)
+		}
+		slog.Debug("fts: counts", "user", f[1], "documents", docs, "copies", copies, "messages", messages)
+		return fmt.Sprintf("%s\t%d\t%d\t%d", replyOK, docs, copies, messages)
+
 	case CmdOptimize:
 		if len(f) != 2 {
 			return no("malformed OPTIMIZE")

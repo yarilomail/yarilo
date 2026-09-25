@@ -262,3 +262,5 @@ func TestFTSDisabledReturns501(t *testing.T) {
 		t.Fatalf("status=%d, want 501", status)
 	}
 }
+
+func (f *fakeFTS) Counts(string) (uint64, uint64, uint64, error) { return 0, 0, 0, nil }

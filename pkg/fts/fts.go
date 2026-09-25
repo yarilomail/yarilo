@@ -115,6 +115,9 @@ type UserIndex interface {
 	// Rescan reconciles the index against the folder's live copies by the
 	// message, never by a docid; what it does not hold comes back as missing.
 	Rescan(mbox MailboxRef, present []Copy) (missing []uint32, err error)
+	// DocCount is how many documents the user's index holds, read-only. One
+	// document is one message, so after a reconcile it equals the live ones.
+	DocCount() (uint64, error)
 	// Mailboxes lists the user's mailboxes this handle has open. Whole-user
 	// optimize is expressed as a loop over these under each mailbox's OWN
 	// lock, rather than as a second optimize entry point: a user-keyed lock
