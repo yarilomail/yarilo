@@ -12,9 +12,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// ErrNotStored says the operation asks a virtual mailbox to hold a message.
-// It holds none: a message lives in the folder it was delivered to, and the
-// virtual mailbox names it.
+// ErrNotStored says the caller asks a virtual mailbox to hold a message: it
+// holds none, and names messages that live in other folders.
 var ErrNotStored = errors.New("virtual: a virtual mailbox stores no message of its own")
 
 // ErrUnsupported says the namespace does not offer the operation at all.

@@ -36,13 +36,9 @@ type SyncResult struct {
 	Rebuilt bool
 }
 
-// Sync works out what the virtual mailbox holds now: the rule decides
-// membership here, at sync, not when a client searches -- so EXISTS, FETCH and
-// STATUS all speak of the same set (virtual-sync.c:604-623).
-//
-// A copy in two backing folders is two messages here, each with its own uid
-// and its own flags: "one document per message" belongs to the search index,
-// not to a mailbox.
+// Sync works out what the virtual mailbox holds: the rule decides membership
+// here, not when a client searches (virtual-sync.c:604-623). A copy in two
+// folders is two messages, each with its own uid and flags.
 func Sync(cfg *Config, was mailbox.VirtualHeader, r Resolver) (SyncResult, error) {
 	out := SyncResult{Header: was}
 	if was.NeedsRebuild(cfg.SearchArgsCRC32) {

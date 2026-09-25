@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 
 	imaplib "github.com/emersion/go-imap/v2"
@@ -19,9 +20,8 @@ type virtualConfigured interface {
 	Config(folder string) (*virtual.Config, error)
 }
 
-// syncVirtual brings a virtual mailbox up to date with the folders it draws
-// from. Membership is decided here, not at SEARCH: EXISTS, FETCH and STATUS
-// then speak of one set (virtual-sync.c:604-623).
+// syncVirtual brings a virtual mailbox up to date. Membership is decided here,
+// not at SEARCH, so EXISTS and FETCH speak of one set (virtual-sync.c:604).
 func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder) *mailbox.Folder {
 	box, ok := mailbox.Driver(h.box).(virtualConfigured)
 	if !ok {
@@ -46,9 +46,19 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder) *mailb
 	return refreshed
 }
 
-// applyVirtual writes what the pass decided: the records become the mailbox's
-// own, and the header remembers the folders they came from.
+// applyVirtual writes what the pass decided; a copy that was here keeps its
+// uid, which is stable for the life of a UIDVALIDITY (virtual-sync.c:599).
 func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res virtual.SyncResult) (*mailbox.Folder, error) {
+	known := map[[2]uint32]*mailbox.MessageMeta{}
+	if !res.Rebuilt {
+		was, err := h.idx.GetMessages(f.ID, mailbox.SeqSet{})
+		if err != nil {
+			return nil, fmt.Errorf("imap/virtual: read records: %w", err)
+		}
+		for _, m := range was {
+			known[[2]uint32{m.VirtualBacking, m.VirtualRealUID}] = m
+		}
+	}
 	records := make([]*mailbox.MessageMeta, 0, len(res.Records))
 	next := f.NextUID
 	if next == 0 {
@@ -56,17 +66,25 @@ func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res v
 	}
 	for i := range res.Records {
 		rec := res.Records[i]
-		rec.UID = next
-		next++
+		if had, ok := known[[2]uint32{rec.VirtualBacking, rec.VirtualRealUID}]; ok {
+			rec.UID = had.UID
+			rec.ModSeq = had.ModSeq
+		} else {
+			rec.UID = next
+			next++
+		}
 		records = append(records, &rec)
 	}
-	if _, err := h.idx.ResetFolder(f.ID, records); err != nil {
-		return nil, fmt.Errorf("imap/virtual: write records: %w", err)
-	}
+	sort.Slice(records, func(i, j int) bool { return records[i].UID < records[j].UID })
+	// The header first: it declares the extension, and a record written before
+	// that carries no backing folder at all.
 	if setter, ok := h.idx.(mailbox.VirtualIndexed); ok {
 		if err := setter.SetVirtualHeader(f.ID, res.Header); err != nil {
 			return nil, fmt.Errorf("imap/virtual: write header: %w", err)
 		}
+	}
+	if _, err := h.idx.ResetFolder(f.ID, records); err != nil {
+		return nil, fmt.Errorf("imap/virtual: write records: %w", err)
 	}
 	return h.mailbox().Folder(rel, f.UIDValidity)
 }
@@ -148,8 +166,8 @@ func (b *sessionBacking) Matches(back virtual.Backing, rule string) (map[uint32]
 	return keep, nil
 }
 
-// rawOf reads a backing message for a rule that asks about its text. A message
-// that cannot be read is left out rather than guessed at.
+// rawOf reads a backing message for a rule about its text. Every sync reads
+// every body for such a rule; 2b answers those through the index instead.
 func (b *sessionBacking) rawOf(folder string, m *mailbox.MessageMeta) []byte {
 	h := b.s.primary
 	name, err := h.mailbox().MessagePath(folder, m)

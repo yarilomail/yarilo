@@ -7,9 +7,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A namespace whose location names the virtual driver gets the virtual
-// backend: without this the namespace would be served by the global driver
-// and every configuration directory would read as an empty mailbox.
+// A namespace whose location names the virtual driver gets that backend, or
+// the global driver would read every configuration directory as empty.
 func TestVirtualDriverIsBuilt(t *testing.T) {
 	b := ByDriver("virtual", config.StorageConfig{}, nil)
 	if b == nil {

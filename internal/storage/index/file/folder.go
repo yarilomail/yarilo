@@ -1695,6 +1695,11 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 				// would hold messages that name no storage (#1700).
 				rec.Ext[extNameMdbox] = encodeMdboxRec(m.MapUID, m.SaveDate)
 			}
+			if m.VirtualBacking != 0 {
+				// Likewise the copy a virtual record names: without it the
+				// next sync cannot tell which message this uid was.
+				rec.Ext[extNameVirtual] = encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID)
+			}
 			fs.file.Records = append(fs.file.Records, rec)
 			kept[m.UID] = struct{}{}
 			fs.file.Header.MessagesCount++

@@ -76,13 +76,20 @@ func virtualServer(t *testing.T, configs map[string]string, seed func(t *testing
 	return conn, rd
 }
 
-func saveInto(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex, folder string, uid uint32, subject string, flags []string) {
+func saveInto(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex, folder string, uid uint32, subject string, flags []string) [16]byte {
+	t.Helper()
+	return saveCopy(t, box, ui, folder, uid, subject, flags, [16]byte{})
+}
+
+// saveCopy files the same message again: with a GUID given, both folders hold
+// one message, which is what a copy is.
+func saveCopy(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex, folder string, uid uint32, subject string, flags []string, want [16]byte) [16]byte {
 	t.Helper()
 	if folder != "INBOX" {
 		box.Create(folder) //nolint:errcheck
 	}
 	raw := fmt.Sprintf("Subject: %s\r\nFrom: a@test\r\nDate: Sun, 1 Mar 2026 10:00:00 +0000\r\n\r\nbody\r\n", subject)
-	name, vsize, guid, err := box.Save(folder, strings.NewReader(raw), uid, int64(len(raw)), flags, nil, [16]byte{})
+	name, vsize, guid, err := box.Save(folder, strings.NewReader(raw), uid, int64(len(raw)), flags, nil, want)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +107,7 @@ func saveInto(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex, folde
 	if err := ui.AppendMessage(f.ID, meta); err != nil {
 		t.Fatal(err)
 	}
+	return guid
 }
 
 func existsCount(t *testing.T, conn net.Conn, rd *bufio.Reader, tag, mailboxName string) int {
@@ -129,13 +137,13 @@ func TestVirtualMailboxHoldsOnlyWhatTheRuleKeeps(t *testing.T) {
 	}
 }
 
-// One message in two backing folders is two messages here, each addressable on
-// its own: the virtual mailbox lists copies.
+// One message in two folders is two messages here: the same GUID in both is
+// what makes it a copy rather than two messages.
 func TestVirtualMailboxListsBothCopies(t *testing.T) {
 	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\nArchive\n"},
 		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
-			saveInto(t, box, ui, "INBOX", 1, "one message", nil)
-			saveInto(t, box, ui, "Archive", 1, "one message", []string{`\Seen`})
+			guid := saveInto(t, box, ui, "INBOX", 1, "one message", nil)
+			saveCopy(t, box, ui, "Archive", 1, "one message", []string{`\Seen`}, guid)
 		})
 	if got := existsCount(t, conn, rd, "a2", "Virtual/All"); got != 2 {
 		t.Fatalf("EXISTS = %d, want 2: a copy in two folders is two messages here", got)
@@ -160,8 +168,8 @@ func TestCreateInTheVirtualNamespaceIsRefused(t *testing.T) {
 		})
 	fmt.Fprintf(conn, "a2 CREATE Virtual/Invented\r\n")
 	last := readTagged(t, rd, "a2")
-	if !strings.Contains(last, "NO") {
-		t.Errorf("CREATE in the virtual namespace answered %q, want a refusal", last)
+	if !strings.Contains(last, "NO [CANNOT]") || !strings.Contains(last, "configuration file") {
+		t.Errorf("CREATE answered %q, want the namespace's own refusal", last)
 	}
 }
 
@@ -199,5 +207,54 @@ func readTagged(t *testing.T, rd *bufio.Reader, tag string) string {
 		if strings.HasPrefix(line, tag+" ") {
 			return line
 		}
+	}
+}
+
+// uidsOfSelected asks the mailbox for its uids, in order.
+func uidsOfSelected(t *testing.T, conn net.Conn, rd *bufio.Reader, tag string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range command(t, conn, rd, tag, "FETCH 1:* (UID)") {
+		if i := strings.Index(line, "UID "); i >= 0 {
+			out = append(out, strings.TrimRight(strings.Fields(line[i:])[1], ")"))
+		}
+	}
+	return out
+}
+
+// A uid is stable for the life of a UIDVALIDITY: a client that caches by uid
+// reads one message as another otherwise.
+func TestVirtualUIDsSurviveASecondSelect(t *testing.T) {
+	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "first", nil)
+			saveInto(t, box, ui, "INBOX", 2, "second", nil)
+		})
+	if got := existsCount(t, conn, rd, "a2", "Virtual/All"); got != 2 {
+		t.Fatalf("EXISTS = %d, want 2", got)
+	}
+	first := uidsOfSelected(t, conn, rd, "a3")
+
+	// The same mailbox again: nothing changed, so nothing may be renumbered.
+	if got := existsCount(t, conn, rd, "a4", "Virtual/All"); got != 2 {
+		t.Fatalf("EXISTS = %d on the second select, want 2", got)
+	}
+	second := uidsOfSelected(t, conn, rd, "a5")
+	if strings.Join(first, ",") != strings.Join(second, ",") {
+		t.Errorf("the uids changed between selects: %v then %v", first, second)
+	}
+
+	// New mail takes the next number; the ones already here keep theirs.
+	raw := "Subject: third\r\nFrom: a@test\r\n\r\nbody\r\n"
+	fmt.Fprintf(conn, "a6 APPEND INBOX {%d+}\r\n%s\r\n", len(raw), raw)
+	if line := readTagged(t, rd, "a6"); !strings.Contains(line, "OK") {
+		t.Fatalf("APPEND answered %q", line)
+	}
+	if got := existsCount(t, conn, rd, "a7", "Virtual/All"); got != 3 {
+		t.Fatalf("EXISTS = %d after new mail, want 3", got)
+	}
+	third := uidsOfSelected(t, conn, rd, "a8")
+	if len(third) != 3 || strings.Join(third[:2], ",") != strings.Join(first, ",") {
+		t.Errorf("new mail renumbered what was here: %v became %v", first, third)
 	}
 }
