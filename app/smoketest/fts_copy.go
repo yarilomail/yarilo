@@ -104,16 +104,25 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 
 // assertNoOrphanDocuments reads the three counts an operator reads: a deleted
 // folder whose documents stayed makes documents outrun the live messages.
+// Polled, because the retraction runs off the DELETE command path.
 func assertNoOrphanDocuments(user string) error {
-	docs, _, messages, err := backendFTSCounts(user)
-	if err != nil {
-		return err
+	deadline := time.Now().Add(orphanCountWait)
+	for {
+		docs, _, messages, err := backendFTSCounts(user)
+		if err != nil {
+			return err
+		}
+		if docs <= messages {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the index holds %d documents for %d live messages: a deleted folder left its documents behind", docs, messages)
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	if docs > messages {
-		return fmt.Errorf("the index holds %d documents for %d live messages: a deleted folder left its documents behind", docs, messages)
-	}
-	return nil
 }
+
+var orphanCountWait = 10 * time.Second
 
 func backendFTSCounts(user string) (docs, copies, messages uint64, err error) {
 	url := strings.TrimRight(*flagBackendAPI, "/") + "/api/backend/fts/status?user=" + user + "&folder=INBOX"

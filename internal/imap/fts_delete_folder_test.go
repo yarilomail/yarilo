@@ -1,10 +1,12 @@
 package imap_test
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-// DELETE retracts the mailbox from the search index: with one index per user
-// its documents outlive the folder otherwise, and no per-folder pass sees
-// them again (#2022).
+// DELETE retracts the mailbox from the search index: its documents outlive
+// the folder otherwise, and no per-folder pass sees them again (#2022).
 func TestDeleteRetractsTheFolderFromFTS(t *testing.T) {
 	fake := &fakeFTS{lastUID: 100}
 	c := startFTSTestServer(t, fake, true)
@@ -22,10 +24,18 @@ func TestDeleteRetractsTheFolderFromFTS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fake.mu.Lock()
-	got := append([]string(nil), fake.droppedFolders...)
-	fake.mu.Unlock()
-	if len(got) != 1 || got[0] != "Archive" {
-		t.Fatalf("DELETE retracted %v, want [Archive]: its documents stay in the index otherwise", got)
+	// The retraction runs off the command path, so the row waits for it.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		fake.mu.Lock()
+		got := append([]string(nil), fake.droppedFolders...)
+		fake.mu.Unlock()
+		if len(got) == 1 && got[0] == "Archive" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("DELETE retracted %v, want [Archive]: its documents stay in the index otherwise", got)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

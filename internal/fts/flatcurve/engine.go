@@ -870,12 +870,54 @@ func dropCopy(w *xapian.WDB, folderGUID string, uid uint32) (bool, error) {
 	return true, w.ReplaceDocument(ids[0], doc)
 }
 
-// DocCount is the read side of the user's index: the shards opened read-only,
-// so an operator count never takes the write handle a writer wants (#2017).
-// DropFolder retracts a deleted mailbox: every document it names loses its
-// terms, and a document no folder names any more goes with them (#2022).
+// DropFolder retracts a deleted mailbox: a document no folder names goes with
+// the terms (#2022).
 func (u *userIndex) DropFolder(mbox fts.MailboxRef) error {
-	return u.dropFolders(func(folderGUID string) bool { return folderGUID == mbox.GUID })
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	st := u.state()
+	if err := st.closeCurrent(); err != nil {
+		return err
+	}
+	paths, err := shardPaths(st.dir)
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		if err := dropFolderInShard(p, mbox.GUID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dropFolderInShard reads the folder's postings first and opens for writing
+// only on a hit: a delete costs the folder, not the whole index (#2017).
+func dropFolderInShard(path, folderGUID string) error {
+	db, err := xapian.OpenDBMulti([]string{path})
+	if err != nil || db == nil {
+		return err
+	}
+	ids, err := db.DocIDsByTerm(folderTerm(folderGUID))
+	db.Close()
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	metricSealedWriteOpen.Inc()
+	w, err := xapian.OpenWDB(path)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	for _, id := range ids {
+		if derr := dropFolderFromDoc(w, id, folderGUID); derr != nil {
+			return derr
+		}
+	}
+	return w.Commit()
 }
 
 // DropOrphanFolders is the healing half: a folder term naming a mailbox the
@@ -955,6 +997,8 @@ func dropFoldersInShard(path string, drop func(folderGUID string) bool) error {
 	return w.Commit()
 }
 
+// DocCount opens the shards read-only, so an operator count never takes the
+// write handle a writer wants (#2017).
 func (u *userIndex) DocCount() (uint64, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
