@@ -1397,9 +1397,8 @@ func (s *Service) sweepLocked(h *userHandle, user string) error {
 	return nil
 }
 
-// deadDocuments are the indexed messages neither the folders' records nor the
-// GUID store knows. The store alone cannot decide: it is derived and can be
-// rebuilt, so a row it is missing is not a message that is gone (#2030).
+// deadDocuments: indexed messages neither the records nor the store knows. The
+// store cannot decide alone, being derived and rebuildable (#2030).
 func (s *Service) deadDocuments(h *userHandle, recorded map[[16]byte]struct{}) ([][16]byte, error) {
 	indexed, err := h.ui.DocGUIDs()
 	if err != nil || len(indexed) == 0 {
