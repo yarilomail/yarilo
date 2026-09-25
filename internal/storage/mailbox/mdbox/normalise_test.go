@@ -232,3 +232,40 @@ func shiftMapAfterFirst(t *testing.T, u *userMailbox, delta int) {
 		t.Fatal(err)
 	}
 }
+
+// A copy keeps the source's GUID (RFC 8474 §5.1): keyed by the GUID alone, one
+// of the records under it won and the other copy read its bytes.
+func TestARewriteRepointsEachCopyOfOneGUID(t *testing.T) {
+	_, u := healTestUser(t)
+	shared := [16]byte{9, 9}
+	// The stranger goes first, so both copies sit past the re-framed record:
+	// an unrepointed one then reads the wrong offset, whichever won.
+	if _, _, _, err := u.Save("INBOX", strings.NewReader("a stranger\r\n"), 0, 0, nil, nil, [16]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, body := range []string{"the first copy\r\n", "the second copy is longer\r\n"} {
+		name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, 0, nil, nil, shared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	before := [][]byte{fetchBody(t, u, names[0]), fetchBody(t, u, names[1])}
+	if bytes.Equal(before[0], before[1]) {
+		t.Fatal("the fixture cannot distinguish the two copies")
+	}
+
+	path := u.mfilePath(1)
+	delta := reframeFirstRecord(t, path)
+	shiftMapAfterFirst(t, u, delta)
+	if _, err := u.normaliseStorageFrames(); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, name := range names {
+		if got := fetchBody(t, u, name); !bytes.Equal(got, before[i]) {
+			t.Errorf("copy %d reads %q after the rewrite, want %q", i, got, before[i])
+		}
+	}
+}

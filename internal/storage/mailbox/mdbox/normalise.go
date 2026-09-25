@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -290,20 +291,25 @@ func repointMap(m *mdboxmap.Map, fileID uint32, landed []placed) error {
 	if err != nil {
 		return fmt.Errorf("mdbox/normalise: records in m.%d: %w", fileID, err)
 	}
-	byGUID := make(map[[16]byte]uint32, len(entries))
+	// Queued per GUID, in file order on both sides: a copy keeps the source's
+	// GUID (RFC 8474 §5.1), so one GUID can name several records here.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Offset < entries[j].Offset })
+	byGUID := make(map[[16]byte][]uint32, len(entries))
 	for _, e := range entries {
 		if e.GUID != ([16]byte{}) {
-			byGUID[e.GUID] = e.UID
+			byGUID[e.GUID] = append(byGUID[e.GUID], e.UID)
 		}
 	}
 	var moved []mdboxmap.MovedRecord
 	for _, p := range landed {
-		uid, ok := byGUID[p.guid]
-		if !ok {
+		queue := byGUID[p.guid]
+		if len(queue) == 0 {
 			// Not in the map: an orphan the rebuild deals with by refcount, and
 			// nothing points at its offset.
 			continue
 		}
+		uid := queue[0]
+		byGUID[p.guid] = queue[1:]
 		moved = append(moved, mdboxmap.MovedRecord{
 			UID: uid, FileID: fileID, Offset: p.offset, Size: p.size, GUID: p.guid,
 		})
