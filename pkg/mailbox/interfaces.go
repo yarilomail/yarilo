@@ -104,6 +104,57 @@ type MaildirStamped interface {
 	SetMaildirStamp(folderID uint64, s MaildirStamp) error
 }
 
+// VirtualBacking is one folder a virtual mailbox draws from. Keyed by GUID, so
+// a rename keeps the mapping (#1995); the name is for reading, not matching.
+type VirtualBacking struct {
+	ID            uint32
+	GUID          [16]byte
+	Name          string
+	UIDValidity   uint32
+	NextUID       uint32
+	HighestModSeq uint64
+}
+
+// VirtualHeader is what a virtual mailbox's index says about the set it holds
+// (the reference's virtual index header, virtual-storage.h:20-45).
+type VirtualHeader struct {
+	// ChangeCounter rises with each write, so a reader can tell the header it
+	// read from one written since.
+	ChangeCounter uint32
+	// HighestBackingID is never reused: a record written before a folder left
+	// must not read as one that joined afterwards.
+	HighestBackingID uint32
+	// SearchCRC32 covers the configuration's rules; a different value means
+	// the set is defined differently, so the mailbox is rebuilt, not extended.
+	SearchCRC32 uint32
+	Backing     []VirtualBacking
+}
+
+// AssignBacking returns the id this folder already holds, or the next one.
+func (h *VirtualHeader) AssignBacking(guid [16]byte, name string, uidValidity uint32) uint32 {
+	for i := range h.Backing {
+		if h.Backing[i].GUID == guid {
+			h.Backing[i].Name = name
+			h.Backing[i].UIDValidity = uidValidity
+			return h.Backing[i].ID
+		}
+	}
+	h.HighestBackingID++
+	h.Backing = append(h.Backing, VirtualBacking{
+		ID: h.HighestBackingID, GUID: guid, Name: name, UIDValidity: uidValidity,
+	})
+	return h.HighestBackingID
+}
+
+// NeedsRebuild says the configuration no longer describes what was indexed.
+func (h *VirtualHeader) NeedsRebuild(crc uint32) bool { return h.SearchCRC32 != crc }
+
+// VirtualIndexed is an index that keeps a virtual mailbox's own header.
+type VirtualIndexed interface {
+	VirtualHeader(folderID uint64) (VirtualHeader, bool)
+	SetVirtualHeader(folderID uint64, h VirtualHeader) error
+}
+
 // UIDAddressable is a driver that finds a message from the record itself: the
 // name is derived from what the folder records, not kept beside it (#1700).
 type UIDAddressable interface {
@@ -273,6 +324,10 @@ type MessageMeta struct {
 	// the name is derived rather than stored beside it (#1700).
 	MapUID   uint32
 	SaveDate uint32
+	// VirtualBacking and VirtualRealUID name where a virtual mailbox's message
+	// really is: the backing folder's id, and its uid in that folder.
+	VirtualBacking uint32
+	VirtualRealUID uint32
 	// FlagsDirty says the flags in the record have not reached storage yet, so
 	// what the store says about them is older than what the client was told.
 	FlagsDirty   bool

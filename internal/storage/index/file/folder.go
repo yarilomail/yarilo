@@ -1158,6 +1158,9 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 		rec.Ext[extNameMdbox] = encodeMdboxRec(m.MapUID, m.SaveDate)
 		fs.ensureMdboxExtLocked()
 	}
+	if m.VirtualBacking != 0 {
+		rec.Ext[extNameVirtual] = encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID)
+	}
 	if err := fs.ensureVsizeExtLocked(); err != nil {
 		slog.Warn("fileindex: vsize extension not declared", "folder", fs.folder, "err", err)
 	}
@@ -1528,16 +1531,19 @@ func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbo
 			if !seqSetContains(uids, rec.UID) {
 				continue
 			}
+			backing, realUID := decodeVirtualRec(rec.Ext[extNameVirtual])
 			mapUID, saveDate := decodeMdboxRec(rec.Ext[extNameMdbox])
 			meta := &mailbox.MessageMeta{
-				UID:        rec.UID,
-				MapUID:     mapUID,
-				SaveDate:   saveDate,
-				Flags:      indexFlagsToIMAP(uint8(rec.Flags)),
-				FlagsDirty: rec.Flags&mailindex.FlagDirty != 0,
-				Size:       decodeVsizeRec(rec.Ext[extNameVsize]),
-				VSize:      decodeVsizeRec(rec.Ext[extNameVsize]),
-				AltTier:    rec.Flags&mailindex.FlagBackend != 0,
+				UID:            rec.UID,
+				MapUID:         mapUID,
+				SaveDate:       saveDate,
+				VirtualBacking: backing,
+				VirtualRealUID: realUID,
+				Flags:          indexFlagsToIMAP(uint8(rec.Flags)),
+				FlagsDirty:     rec.Flags&mailindex.FlagDirty != 0,
+				Size:           decodeVsizeRec(rec.Ext[extNameVsize]),
+				VSize:          decodeVsizeRec(rec.Ext[extNameVsize]),
+				AltTier:        rec.Flags&mailindex.FlagBackend != 0,
 			}
 			if data, ok := rec.Ext[extNameModSeq]; ok {
 				meta.ModSeq = decodeModseqRec(data)
