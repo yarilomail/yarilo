@@ -74,16 +74,27 @@ not the pod the other arm is.
 
 ## Keeping the runner's disk
 
-`runner-prune.service` and `runner-prune.timer` are the single source of truth
-for what the CI runner deletes. Prune by age, never by count: the recent tags
-are the ones a rollback reaches for.
+`runner-prune.sh` with its `.service` and `.timer` are the single source of
+truth for what the CI runner deletes. The window is an age, and what it
+protects is the build cache: BuildKit evicts by last use, so a layer every
+build reuses stays warm however old it is, and a week only reaches what nothing
+has touched.
+
+Tagged images are pruned for this project only. The base images are left alone
+on purpose: they are old by construction, and deleting them turns the first
+build of every week into a cold one.
+
+The script prints `docker system df` before and after, so the journal says what
+a run reclaimed rather than that it ran.
 
 Install once on the runner host, and again after it is rebuilt:
 
 ```sh
+sudo install -D -m755 hack/stand/runner-prune.sh /opt/yarilo/runner-prune.sh
 sudo cp hack/stand/runner-prune.{service,timer} /etc/systemd/system/
 sudo systemctl enable --now runner-prune.timer
 systemctl list-timers runner-prune.timer
+journalctl -u runner-prune.service -n 40
 ```
 
 A change made on the host and not in these files does not count: the next
