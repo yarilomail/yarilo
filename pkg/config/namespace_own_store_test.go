@@ -6,9 +6,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The loader reads a namespace's role through NamespaceShapes: a second private
-// namespace with a store of its own is accepted, because it keeps its own
-// subscriptions, and the INBOX namespace is found by inbox, not by order.
+// A second private namespace with a store of its own keeps its own
+// subscriptions, so the loader accepts it, whatever order the set is in.
 func TestValidateAcceptsAPrivateNamespaceWithItsOwnStore(t *testing.T) {
 	for _, tc := range []struct {
 		name string
