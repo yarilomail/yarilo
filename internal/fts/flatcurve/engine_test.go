@@ -263,7 +263,7 @@ func TestRescanTargeted(t *testing.T) {
 		indexDoc(t, ui, uid, nil, []string{"word"})
 	}
 	// Mailbox now holds 2,3,5,7: 1 and 4 were expunged offline; 7 is new.
-	missing, err := ui.Rescan(inbox, []uint32{2, 3, 5, 7})
+	missing, err := ui.Rescan(inbox, copiesOf(2, 3, 5, 7))
 	if err != nil {
 		t.Fatal(err)
 	}
