@@ -25,13 +25,23 @@ echo "smoketest image tag: $TAG"
 # withholds its heartbeat until every protocol answers, and a run started in
 # that window reports "backend unavailable" about readiness, not about code.
 READY_TIMEOUT="${SMOKE_READY_TIMEOUT:-180}"
+BACKEND_LABEL="${SMOKE_BACKEND_LABEL:-app.kubernetes.io/component=backend}"
 waited=0
 while :; do
+  pods=$(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" \
+           -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+  # No pod is not "every pod is ready": a wrong label or namespace would
+  # otherwise skip the wait silently and report readiness as a broken build.
+  if [ -z "$pods" ]; then
+    echo "smoketest: no pod matches $BACKEND_LABEL in namespace $NAMESPACE" >&2
+    exit 1
+  fi
   missing=""
-  for pod in $(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/component=backend \
-                 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+  for pod in $pods; do
+    # A pod still starting refuses the exec, and that is a pod to wait for,
+    # not a reason to end the script under set -e.
     body=$(kubectl -n "$NAMESPACE" exec "$pod" -c yarilo-backend-reg -- \
-             sh -c 'wget -qO- http://127.0.0.1:8080/readyz 2>/dev/null' 2>/dev/null)
+             sh -c 'wget -qO- http://127.0.0.1:8080/readyz 2>/dev/null' 2>/dev/null || true)
     case "$body" in
       *'"ready":true'*) ;;
       *) missing="$missing $pod" ;;
