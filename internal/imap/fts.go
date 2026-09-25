@@ -416,9 +416,8 @@ func (s *session) ftsNotify(f *mailbox.Folder, expunged bool, uid uint32, guid [
 	}()
 }
 
-// ftsDropFolder retracts a deleted mailbox from the search index. Best-effort
-// off the command path, like ftsNotify: the orphan sweep in a rescan is what
-// makes a lost one harmless, and DELETE must not wait on the index (#2022).
+// ftsDropFolder retracts a deleted mailbox, best-effort off the command path:
+// a rescan's orphan sweep is what makes a lost one harmless (#2022).
 func (s *session) ftsDropFolder(f *mailbox.Folder) {
 	o := s.srv.opts.FTS
 	if o.Client == nil || s.userInfo == nil || f == nil || f.Name == "" {

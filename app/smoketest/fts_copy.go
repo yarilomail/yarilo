@@ -102,9 +102,8 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 	return nil
 }
 
-// assertNoOrphanDocuments reads the three counts an operator reads: a deleted
-// folder whose documents stayed makes documents outrun the live messages.
-// Polled, because the retraction runs off the DELETE command path.
+// assertNoOrphanDocuments: documents outrunning the live messages is a deleted
+// folder whose documents stayed. Polled, the retraction being off the path.
 func assertNoOrphanDocuments(user string) error {
 	deadline := time.Now().Add(orphanCountWait)
 	for {
