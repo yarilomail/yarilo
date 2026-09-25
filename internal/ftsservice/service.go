@@ -615,7 +615,7 @@ func (h *userHandle) mailboxRef(name string) (fts.MailboxRef, error) {
 // rescanLocked is the reconciliation itself, with the user's index already
 // held by the caller.
 func (s *Service) rescanLocked(h *userHandle, user string, mbox fts.MailboxRef) error {
-	present, maxUID, uidValidity, err := s.presentUIDs(h, mbox)
+	present, maxUID, uidValidity, err := s.presentCopies(h, mbox)
 	if err != nil {
 		return err
 	}
@@ -796,7 +796,7 @@ func (s *Service) evict(user string) {
 	}
 }
 
-func (s *Service) presentUIDs(h *userHandle, mbox fts.MailboxRef) (uids []uint32, maxUID, uidValidity uint32, err error) {
+func (s *Service) presentCopies(h *userHandle, mbox fts.MailboxRef) (copies []fts.Copy, maxUID, uidValidity uint32, err error) {
 	folder, err := h.mailboxOf().Folder(mbox.Name, mbox.UIDValidity)
 	if err != nil {
 		// A folder with no index yet holds no messages to compare against. The
@@ -819,14 +819,14 @@ func (s *Service) presentUIDs(h *userHandle, mbox fts.MailboxRef) (uids []uint32
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("ftsservice: list messages: %w", err)
 	}
-	uids = make([]uint32, 0, len(msgs))
+	copies = make([]fts.Copy, 0, len(msgs))
 	for _, m := range msgs {
-		uids = append(uids, m.UID)
+		copies = append(copies, fts.Copy{UID: m.UID, GUID: m.GUID})
 		if m.UID > maxUID {
 			maxUID = m.UID
 		}
 	}
-	return uids, maxUID, folder.UIDValidity, nil
+	return copies, maxUID, folder.UIDValidity, nil
 }
 
 func (s *Service) runIndex(j job) error {
@@ -844,7 +844,7 @@ func (s *Service) runIndex(j job) error {
 	// own value, not the job's.
 	folder, err := h.mailboxOf().Folder(j.mbox.Name, j.mbox.UIDValidity)
 	if err != nil {
-		// Nothing indexed yet means nothing to index — see presentUIDs.
+		// Nothing indexed yet means nothing to index — see presentCopies.
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("ftsservice: folder has no index yet, skipping",
 				"user", j.user, "folder", j.mbox.Name)
@@ -891,7 +891,13 @@ func (s *Service) runIndex(j job) error {
 			"stored_uidvalidity", storedUIDV, "current_uidvalidity", curUIDV, "reset", reset)
 		if reset != "" {
 			slog.Info("fts: resetting mailbox index", "job_id", j.id, "user", j.user, "folder", j.mbox.Name, "reason", reset)
-			if _, rerr := h.ui.Rescan(j.mbox, nil); rerr != nil { // drop every stale doc
+			// Never nil: with one index per user an empty live set reads as
+			// "every document is stale" and takes the account with it (#2019).
+			live, _, _, perr := s.presentCopies(h, j.mbox)
+			if perr != nil {
+				return perr
+			}
+			if _, rerr := h.ui.Rescan(j.mbox, live); rerr != nil {
 				return rerr
 			}
 			last = 0

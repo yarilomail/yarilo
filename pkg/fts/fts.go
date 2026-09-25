@@ -112,10 +112,9 @@ type UserIndex interface {
 
 	BeginUpdate(mbox MailboxRef) (Update, error)
 	Expunge(mbox MailboxRef, uid uint32) error
-	// Rescan reconciles the index against the authoritative UID set: deletes
-	// documents whose UID is absent and reports which present UIDs are
-	// missing from the index so the caller can reindex exactly those.
-	Rescan(mbox MailboxRef, present []uint32) (missing []uint32, err error)
+	// Rescan reconciles the index against the folder's live copies by the
+	// message, never by a docid; what it does not hold comes back as missing.
+	Rescan(mbox MailboxRef, present []Copy) (missing []uint32, err error)
 	// Mailboxes lists the user's mailboxes this handle has open. Whole-user
 	// optimize is expressed as a loop over these under each mailbox's OWN
 	// lock, rather than as a second optimize entry point: a user-keyed lock
@@ -263,4 +262,11 @@ func MergeScoresOr(dest []Score, src []Score) []Score {
 		}
 	}
 	return out
+}
+
+// Copy is one live copy of a message in a folder: the uid the folder gave it
+// and the message it is.
+type Copy struct {
+	UID  uint32
+	GUID [16]byte
 }

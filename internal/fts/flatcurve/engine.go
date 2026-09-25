@@ -870,11 +870,10 @@ func dropCopy(w *xapian.WDB, folderGUID string, uid uint32) (bool, error) {
 	return true, w.ReplaceDocument(ids[0], doc)
 }
 
-func (u *userIndex) Rescan(mbox fts.MailboxRef, present []uint32) ([]uint32, error) {
+func (u *userIndex) Rescan(mbox fts.MailboxRef, present []fts.Copy) ([]uint32, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st := u.state()
-	slog.Debug("fts/flatcurve: rescan closing current shard", "dir", st.dir, "cur_path", st.curPath)
 	if err := st.closeCurrent(); err != nil {
 		return nil, err
 	}
@@ -882,65 +881,109 @@ func (u *userIndex) Rescan(mbox fts.MailboxRef, present []uint32) ([]uint32, err
 	if err != nil {
 		return nil, err
 	}
-	presentSet := make(map[uint32]bool, len(present))
-	for _, uid := range present {
-		presentSet[uid] = true
-	}
-	if len(paths) == 0 {
-		missing := append([]uint32(nil), present...)
-		sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
-		return missing, nil
-	}
-	db, err := xapian.OpenDBMulti(paths)
-	if err != nil {
-		return nil, err
-	}
-	indexed, err := db.DocIDs()
-	db.Close()
-	if err != nil {
-		return nil, err
-	}
-	indexedSet := make(map[uint32]bool, len(indexed))
-	var stale []uint32
-	for _, uid := range indexed {
-		indexedSet[uid] = true
-		if !presentSet[uid] {
-			stale = append(stale, uid)
+	live := make(map[[16]byte]uint32, len(present))
+	for _, c := range present {
+		if c.GUID != ([16]byte{}) {
+			live[c.GUID] = c.UID
 		}
 	}
-	// Targeted deletes, shard by shard — no delete-above-lowest-gap storm.
-	if len(stale) > 0 {
-		for _, p := range paths {
-			w, werr := xapian.OpenWDB(p)
-			if werr != nil {
-				return nil, werr
-			}
-			changed := false
-			for _, uid := range stale {
-				existed, derr := w.DeleteDocument(uid)
-				if derr != nil {
-					w.Close()
-					return nil, derr
-				}
-				changed = changed || existed
-			}
-			if changed {
-				if cerr := w.Commit(); cerr != nil {
-					w.Close()
-					return nil, cerr
-				}
-			}
-			w.Close()
+	indexed := make(map[[16]byte]struct{}, len(live))
+	for _, p := range paths {
+		if err := reconcileShard(p, mbox.GUID, live, indexed); err != nil {
+			return nil, err
 		}
 	}
 	var missing []uint32
-	for _, uid := range present {
-		if !indexedSet[uid] {
-			missing = append(missing, uid)
+	for _, c := range present {
+		if _, ok := indexed[c.GUID]; ok {
+			continue
 		}
+		missing = append(missing, c.UID)
 	}
 	sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
 	return missing, nil
+}
+
+// reconcileShard reconciles one shard against the folder's live set, by the
+// message: a docid is the database's number and names no uid (#2019).
+func reconcileShard(path, folderGUID string, live map[[16]byte]uint32, indexed map[[16]byte]struct{}) error {
+	w, err := xapian.OpenWDB(path)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	ids, err := w.DocIDsByTerm(folderTerm(folderGUID))
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, id := range ids {
+		guids, terr := w.DocTerms(id, termGUID)
+		if terr != nil {
+			return terr
+		}
+		if len(guids) == 0 {
+			continue
+		}
+		guid, perr := guidOfTerm(guids[0])
+		if perr != nil {
+			continue
+		}
+		if _, alive := live[guid]; alive {
+			indexed[guid] = struct{}{}
+			continue
+		}
+		if derr := dropFolderFromDoc(w, id, folderGUID); derr != nil {
+			return derr
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return w.Commit()
+}
+
+// dropFolderFromDoc takes one folder off a document: the terms that name its
+// copies go with it, and the document goes when no folder is left.
+func dropFolderFromDoc(w *xapian.WDB, id uint32, folderGUID string) error {
+	doc, err := w.GetDocument(id)
+	if err != nil {
+		return err
+	}
+	defer doc.Free()
+	copies, terr := w.DocTerms(id, termCopy+folderGUID+":")
+	if terr != nil {
+		return terr
+	}
+	for _, t := range copies {
+		if rerr := doc.RemoveTerm(t); rerr != nil {
+			return rerr
+		}
+	}
+	if rerr := doc.RemoveTerm(folderTerm(folderGUID)); rerr != nil {
+		return rerr
+	}
+	left, lerr := w.DocTerms(id, termFolder)
+	if lerr != nil {
+		return lerr
+	}
+	if len(left) <= 1 {
+		_, derr := w.DeleteDocument(id)
+		return derr
+	}
+	return w.ReplaceDocument(id, doc)
+}
+
+// guidOfTerm reads a message GUID back out of its term.
+func guidOfTerm(term string) ([16]byte, error) {
+	var out [16]byte
+	raw, err := hex.DecodeString(strings.TrimPrefix(term, termGUID))
+	if err != nil || len(raw) != len(out) {
+		return out, fmt.Errorf("fts/flatcurve: bad guid term %q", term)
+	}
+	copy(out[:], raw)
+	return out, nil
 }
 
 // Mailboxes is the one index this user has: compaction is per user now, and
