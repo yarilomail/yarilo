@@ -283,6 +283,11 @@ func TestVirtualMailboxIsListed(t *testing.T) {
 	for _, n := range names {
 		if strings.HasSuffix(n, `"Virtual/All"`) || strings.HasSuffix(n, " Virtual/All") {
 			found = true
+			// Clients read the attributes: \Noselect hides a mailbox that
+			// SELECT would open, and the stand showed exactly that.
+			if strings.Contains(n, `\Noselect`) {
+				t.Errorf("Virtual/All is listed as \\Noselect: %s", n)
+			}
 		}
 	}
 	if !found {
