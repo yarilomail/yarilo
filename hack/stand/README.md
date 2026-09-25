@@ -75,7 +75,13 @@ another name. What the summary fields are made of:
 | summary field | metric |
 |:--|:--|
 | `logins`, `stalls` | the imaptest log, not a metric |
-| `reconcile: scanned` / `partial` / `skipped` | `imap_maildir_sync_total{result=...}` |
+| `sessions (peak)`, `<ip>=<n>` | the session spread samples, not a metric |
+| `walks: full` / `partial` / `untokened` | `imap_maildir_sync_total{result="scanned"}`, `{result="scanned-partial"}`, `{result="scanned-untokened"}` |
+| `walks: first-seen` | the same counter with `reason="first-seen"` and `result="scanned"`; 20 accounts log in per run, so anything outside 20-21 is a different start |
+| `walks: partial_share` / `cold_share` | partial over all walks; first-seen over full walks |
+| `walk cost: full_ms` / `partial_ms` | `imap_maildir_sync_seconds_sum` over `_count`, per result |
+| `walk cost: partial_empty` `of` | `maildir_partial_pass_empty_total` over the partial walk count |
+| `reconcile: scanned` / `partial` / `skipped` | `imap_maildir_sync_total{result=...}`, the same counter summed without the first-seen split |
 | `reconcile: folders_opened` | `quota_folders_opened_total` |
 | `listing: list_whole` / `list_tail` | `maildir_uidlist_read_total{mode=...}` |
 | `listing: dir_name` / `dir_scan` / `dir_remove` | `maildir_dir_read_total{reason=...}` |
