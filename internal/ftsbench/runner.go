@@ -31,6 +31,9 @@ const benchUser = "bench@example.com"
 // per-user GUID store, which records what the mail index stamped (#1986).
 var benchMbox = fts.MailboxRef{Name: "INBOX", UIDValidity: 1}
 
+// benchCopies is the second folder, used only when Config.CopyEvery is set.
+var benchCopies = fts.MailboxRef{Name: "Copies", UIDValidity: 1}
+
 // Config parameterises a run. Root is the mail root — point it at an NFS
 // volume in the sandbox to measure real-storage behaviour.
 type Config struct {
@@ -38,6 +41,10 @@ type Config struct {
 	Corpus     int
 	HitEvery   int
 	Iterations int // SEARCH repetitions for the latency percentiles
+	// CopyEvery puts a copy of one message in N into a second folder. A copy
+	// is where the schemes differ: one document with another folder's terms,
+	// against a second document in that folder's own index.
+	CopyEvery int
 }
 
 // Run generates the corpus under cfg.Root, indexes it, and measures the
@@ -93,6 +100,11 @@ func Run(cfg Config) (Report, error) {
 		metas = append(metas, meta)
 	}
 
+	copies, err := makeCopies(cfg, box, mbox, uidx, metas)
+	if err != nil {
+		return Report{}, err
+	}
+
 	set := language.DefaultSettings()
 	chain, err := language.NewMultiChain([]string{set.Language}, set.Filters, nil, set.TokenMaxLen, set.AddressMaxLen, 0)
 	if err != nil {
@@ -118,6 +130,14 @@ func Run(cfg Config) (Report, error) {
 	}
 	if err := waitIndexed(svc, maxUID, 5*time.Minute); err != nil {
 		return Report{}, err
+	}
+	if copies > 0 {
+		if err := svc.Index(benchUser, benchCopies, uint32(copies), 0); err != nil {
+			return Report{}, fmt.Errorf("ftsbench: index copies: %w", err)
+		}
+		if err := waitIndexedIn(svc, benchCopies, uint32(copies), 5*time.Minute); err != nil {
+			return Report{}, err
+		}
 	}
 	indexElapsed := time.Since(start)
 
@@ -147,13 +167,24 @@ func Run(cfg Config) (Report, error) {
 		return Report{}, err
 	}
 
+	// What the second folder answers: with one document per message the copies
+	// are found through their own folder's terms, not through a second document.
+	var copyHits int
+	if copies > 0 {
+		if res, lerr := svc.Lookup(benchUser, benchCopies, query); lerr == nil {
+			copyHits = len(res.Definite) + len(res.Maybe)
+		}
+	}
+
 	rep := Report{
 		Corpus:           len(corpus.Messages),
+		Copies:           copies,
+		CopyHits:         copyHits,
 		Hits:             len(corpus.Hits),
 		CorpusBytes:      corpus.TotalBytes,
 		IndexBytes:       indexBytes,
 		IndexRatio:       ratio(indexBytes, corpus.TotalBytes),
-		IndexThroughput:  float64(maxUID) / indexElapsed.Seconds(),
+		IndexThroughput:  float64(int(maxUID)+copies) / indexElapsed.Seconds(),
 		ScanP95Millis:    float64(scanP95.Microseconds()) / 1000,
 		IndexedP95Millis: float64(indexedP95.Microseconds()) / 1000,
 		Speedup:          ratioDur(scanP95, indexedP95),
@@ -191,10 +222,76 @@ func measure(iters int, fn func()) time.Duration {
 	return ds[idx]
 }
 
+// makeCopies puts a copy of one message in CopyEvery into the second folder,
+// under the message's own GUID: a copy is the same message elsewhere.
+func makeCopies(cfg Config, box mailbox.UserMailbox, mbox mailbox.Box, uidx mailbox.UserIndex, metas []*mailbox.MessageMeta) (int, error) {
+	if cfg.CopyEvery <= 0 {
+		return 0, nil
+	}
+	if err := box.Create(benchCopies.Name); err != nil {
+		return 0, fmt.Errorf("ftsbench: create %s: %w", benchCopies.Name, err)
+	}
+	folder, err := mbox.Folder(benchCopies.Name, benchCopies.UIDValidity)
+	if err != nil {
+		return 0, fmt.Errorf("ftsbench: open %s: %w", benchCopies.Name, err)
+	}
+	benchCopies.GUID = mailbox.FormatObjectID(folder.GUID)
+	var made int
+	for i, src := range metas {
+		if i%cfg.CopyEvery != 0 {
+			continue
+		}
+		rc, oerr := mbox.OpenMessage(benchMbox.Name, src)
+		if oerr != nil {
+			return 0, fmt.Errorf("ftsbench: read uid %d: %w", src.UID, oerr)
+		}
+		raw, rerr := io.ReadAll(rc)
+		rc.Close() //nolint:errcheck
+		if rerr != nil {
+			return 0, rerr
+		}
+		made++
+		uid := uint32(made)
+		name, vsize, saved, serr := box.Save(benchCopies.Name, bytes.NewReader(raw), uid, int64(len(raw)), nil, nil, src.GUID)
+		if serr != nil {
+			return 0, fmt.Errorf("ftsbench: save copy %d: %w", uid, serr)
+		}
+		// The identity is what makes this a copy rather than a second message
+		// (RFC 8474 §5.1); without it the arms measure different corpora.
+		if saved != src.GUID {
+			return 0, fmt.Errorf("ftsbench: the copy of uid %d was stored as %x, not the source's %x",
+				src.UID, saved, src.GUID)
+		}
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(raw)), VSize: vsize, GUID: src.GUID}
+		if nerr := mbox.NameSaved(benchCopies.Name, name, meta); nerr != nil {
+			return 0, fmt.Errorf("ftsbench: name copy %d: %w", uid, nerr)
+		}
+		tx, terr := uidx.Begin(folder.ID)
+		if terr != nil {
+			return 0, terr
+		}
+		tx.Append(meta)
+		if _, terr = tx.Commit(); terr != nil {
+			return 0, terr
+		}
+	}
+	// Re-read after the first open: the folder adopts the uid space the
+	// uidlist records, and a checkpoint under another UIDVALIDITY reads as
+	// "not indexed" (ftsservice/service.go:540).
+	if settled, ferr := mbox.Folder(benchCopies.Name, 0); ferr == nil {
+		benchCopies.UIDValidity = settled.UIDValidity
+	}
+	return made, nil
+}
+
 func waitIndexed(svc *ftsservice.Service, target uint32, timeout time.Duration) error {
+	return waitIndexedIn(svc, benchMbox, target, timeout)
+}
+
+func waitIndexedIn(svc *ftsservice.Service, mbox fts.MailboxRef, target uint32, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		last, _, err := svc.Status(benchUser, benchMbox)
+		last, _, err := svc.Status(benchUser, mbox)
 		if err == nil && last >= target {
 			return nil
 		}
