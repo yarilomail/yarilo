@@ -96,3 +96,6 @@ func (stubUserIndex) Close() error                                              
 
 func (stubUserIndex) DropFolder(fts.MailboxRef) error         { return nil }
 func (stubUserIndex) DropOrphanFolders([]string) (int, error) { return 0, nil }
+
+func (stubUserIndex) DocGUIDs() ([][16]byte, error)         { return nil, nil }
+func (stubUserIndex) DropDocuments([][16]byte) (int, error) { return 0, nil }

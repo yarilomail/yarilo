@@ -124,6 +124,10 @@ type UserIndex interface {
 	// folder term naming a mailbox not in live, and reports how many went.
 	DropFolder(mbox MailboxRef) error
 	DropOrphanFolders(live []string) (int, error)
+	// DocGUIDs is every message the index holds a document for, and
+	// DropDocuments removes the documents of the ones named.
+	DocGUIDs() ([][16]byte, error)
+	DropDocuments(guids [][16]byte) (int, error)
 	// Mailboxes lists the user's mailboxes this handle has open. Whole-user
 	// optimize is expressed as a loop over these under each mailbox's OWN
 	// lock, rather than as a second optimize entry point: a user-keyed lock

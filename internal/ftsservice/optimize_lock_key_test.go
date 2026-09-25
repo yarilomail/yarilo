@@ -104,3 +104,6 @@ func (fixedIndexEngine) Close() error { return nil }
 
 func (i *boxesIndex) DropFolder(fts.MailboxRef) error         { return nil }
 func (i *boxesIndex) DropOrphanFolders([]string) (int, error) { return 0, nil }
+
+func (i *boxesIndex) DocGUIDs() ([][16]byte, error)         { return nil, nil }
+func (i *boxesIndex) DropDocuments([][16]byte) (int, error) { return 0, nil }

@@ -925,6 +925,106 @@ func (u *userIndex) DropOrphanFolders(live []string) (int, error) {
 	return dropped, err
 }
 
+// DocGUIDs lists the message of every document, read-only: a compaction asks
+// the store which of them are still live (#2026).
+func (u *userIndex) DocGUIDs() ([][16]byte, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	st := u.state()
+	if st.pending > 0 {
+		return nil, fmt.Errorf("fts/flatcurve: a batch is in flight; list after it commits")
+	}
+	paths, err := shardPaths(st.dir)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[[16]byte]struct{})
+	for _, p := range paths {
+		db, oerr := xapian.OpenDBMulti([]string{p})
+		if oerr != nil || db == nil {
+			return nil, oerr
+		}
+		ids, derr := db.DocIDs()
+		db.Close()
+		if derr != nil {
+			return nil, derr
+		}
+		w, werr := xapian.OpenWDB(p)
+		if werr != nil {
+			return nil, werr
+		}
+		for _, id := range ids {
+			terms, terr := w.DocTerms(id, termGUID)
+			if terr != nil {
+				w.Close()
+				return nil, terr
+			}
+			if len(terms) == 0 {
+				continue
+			}
+			g, perr := guidOfTerm(terms[0])
+			if perr != nil {
+				continue
+			}
+			seen[g] = struct{}{}
+		}
+		w.Close()
+	}
+	out := make([][16]byte, 0, len(seen))
+	for g := range seen {
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// DropDocuments removes the documents of messages the store no longer has.
+func (u *userIndex) DropDocuments(guids [][16]byte) (int, error) {
+	if len(guids) == 0 {
+		return 0, nil
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	st := u.state()
+	if err := st.closeCurrent(); err != nil {
+		return 0, err
+	}
+	paths, err := shardPaths(st.dir)
+	if err != nil {
+		return 0, err
+	}
+	dropped := 0
+	for _, p := range paths {
+		w, oerr := xapian.OpenWDB(p)
+		if oerr != nil {
+			return dropped, oerr
+		}
+		changed := false
+		for _, g := range guids {
+			ids, derr := w.DocIDsByTerm(guidTerm(g))
+			if derr != nil {
+				w.Close()
+				return dropped, derr
+			}
+			for _, id := range ids {
+				if _, xerr := w.DeleteDocument(id); xerr != nil {
+					w.Close()
+					return dropped, xerr
+				}
+				dropped++
+				changed = true
+			}
+		}
+		if changed {
+			if cerr := w.Commit(); cerr != nil {
+				w.Close()
+				return dropped, cerr
+			}
+		}
+		w.Close()
+	}
+	return dropped, nil
+}
+
 func (u *userIndex) dropFolders(drop func(folderGUID string) bool) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
