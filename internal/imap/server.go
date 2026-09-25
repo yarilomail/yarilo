@@ -3221,8 +3221,8 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	// Implicit \Seen goes to storage after the responses, in one pass, the way
 	// STORE writes its own (#1724).
 	var seenWrites []pendingStore
-	// RFC 3516: a part whose transfer encoding is unknown fails the command.
-	unknownCTE := false
+	// RFC 3516: a section that cannot be decoded fails the command.
+	var binaryErr error
 	for _, fe := range fetchList {
 		m := fe.msg
 		// CHANGEDSINCE filter — skip messages whose modseq has not moved
@@ -3418,9 +3418,9 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			}
 			body, _ := io.ReadAll(rc)
 			rc.Close()
-			decoded, unknown := binarySection(body, section.Part)
-			if unknown {
-				unknownCTE = true
+			decoded, derr := binarySection(body, section.Part)
+			if derr != nil {
+				binaryErr = derr
 				continue
 			}
 			s.statsFetchBody++
@@ -3439,9 +3439,9 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			}
 			body, _ := io.ReadAll(rc)
 			rc.Close()
-			decoded, unknown := binarySection(body, section.Part)
-			if unknown {
-				unknownCTE = true
+			decoded, derr := binarySection(body, section.Part)
+			if derr != nil {
+				binaryErr = derr
 				continue
 			}
 			mw.WriteBinarySectionSize(section, uint32(len(decoded)))
@@ -3458,9 +3458,13 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	if len(seenWrites) > 0 {
 		s.writeFlagsToStorage(seenWrites)
 	}
-	if unknownCTE {
+	switch {
+	case errors.Is(binaryErr, errUnknownCTE):
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Code: imaplib.ResponseCodeUnknownCTE,
 			Text: "Unknown Content-Transfer-Encoding"}
+	case errors.Is(binaryErr, errInvalidMIME):
+		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Code: imaplib.ResponseCodeParse,
+			Text: "Invalid data in MIME part"}
 	}
 	return nil
 }

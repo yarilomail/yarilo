@@ -25,6 +25,40 @@ const binaryMultipart = "From: a@b\r\n" +
 	"AAEC\r\n" +
 	"--XX--\r\n"
 
+// binaryMultipartDecoded is binaryMultipart as BINARY[] answers it: each leaf
+// decoded, its header relabelled binary, everything else byte for byte.
+const binaryMultipartDecoded = "From: a@b\r\n" +
+	"Subject: parts\r\n" +
+	"MIME-Version: 1.0\r\n" +
+	"Content-Type: multipart/mixed; boundary=XX\r\n" +
+	"\r\n" +
+	"--XX\r\n" +
+	"Content-Type: text/plain; charset=utf-8\r\n" +
+	"Content-Transfer-Encoding: binary\r\n" +
+	"\r\n" +
+	"café\r\n" +
+	"--XX\r\n" +
+	"Content-Type: application/octet-stream\r\n" +
+	"Content-Transfer-Encoding: binary\r\n" +
+	"\r\n" +
+	"\x00\x01\x02\r\n" +
+	"--XX--\r\n"
+
+const binaryBase64Single = "From: a@b\r\n" +
+	"Content-Transfer-Encoding:\r\n" +
+	" base64\r\n" +
+	"Subject: folded\r\n" +
+	"\r\n" +
+	"aGVsbG8=\r\n"
+
+const binaryNested = "From: a@b\r\n" +
+	"Content-Type: message/rfc822\r\n" +
+	"\r\n" +
+	"From: c@d\r\n" +
+	"Content-Transfer-Encoding: base64\r\n" +
+	"\r\n" +
+	"aGVsbG8=\r\n"
+
 const binarySingle = "From: a@b\r\n" +
 	"Subject: needle here\r\n" +
 	"\r\n" +
@@ -41,7 +75,12 @@ func TestFetchBinarySections(t *testing.T) {
 	}{
 		{"whole single-part message", binarySingle, nil, binarySingle},
 		{"part 1 of a single-part message is its body", binarySingle, []int{1}, "body\r\n"},
-		{"multipart, whole message unchanged", binaryMultipart, nil, binaryMultipart},
+		{"multipart, every leaf decoded", binaryMultipart, nil, binaryMultipartDecoded},
+		{"folded CTE field relabelled whole", binaryBase64Single, nil,
+			"From: a@b\r\nContent-Transfer-Encoding: binary\r\nSubject: folded\r\n\r\nhello"},
+		{"part 1 of a single-part base64 message", binaryBase64Single, []int{1}, "hello"},
+		{"a nested message is decoded inside", binaryNested, nil,
+			"From: a@b\r\nContent-Type: message/rfc822\r\n\r\nFrom: c@d\r\nContent-Transfer-Encoding: binary\r\n\r\nhello"},
 		{"multipart, quoted-printable part", binaryMultipart, []int{1}, "café"},
 		{"multipart, base64 part with NULs", binaryMultipart, []int{2}, "\x00\x01\x02"},
 		{"a part that does not exist is empty", binaryMultipart, []int{3}, ""},
@@ -74,21 +113,36 @@ func TestFetchBinarySections(t *testing.T) {
 	}
 }
 
-// A part in an encoding the server cannot undo fails the command with
-// UNKNOWN-CTE (RFC 3516 4.3), rather than handing the client encoded bytes.
-func TestFetchBinaryUnknownEncodingIsRefused(t *testing.T) {
-	raw := strings.Replace(binaryMultipart, "Content-Transfer-Encoding: base64", "Content-Transfer-Encoding: x-uuencode", 1)
-	c := startAuthClient(t, "user@test.com", "testpass")
-	defer func() { c.Logout().Wait() }() //nolint:errcheck
-	appendWithFlags(t, c, "INBOX", []byte(raw))
-	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
-		t.Fatal(err)
-	}
-	_, err := c.Fetch(imap.SeqSetNum(1), &imap.FetchOptions{
-		BinarySection: []*imap.FetchItemBinarySection{{Part: []int{2}, Peek: true}},
-	}).Collect()
-	var imapErr *imap.Error
-	if !errors.As(err, &imapErr) || imapErr.Code != imap.ResponseCodeUnknownCTE {
-		t.Errorf("FETCH answered %v, want NO [UNKNOWN-CTE]", err)
+// A section that cannot be decoded fails the command: UNKNOWN-CTE for the
+// encoding (RFC 3516 4.3), PARSE for bytes the encoding does not describe.
+func TestFetchBinaryUndecodableIsRefused(t *testing.T) {
+	uuencoded := strings.Replace(binaryMultipart, "Content-Transfer-Encoding: base64", "Content-Transfer-Encoding: x-uuencode", 1)
+	corrupt := strings.Replace(binaryMultipart, "AAEC", "A@@C!", 1)
+	for _, tc := range []struct {
+		name string
+		raw  string
+		part []int
+		code imap.ResponseCode
+	}{
+		{"unknown encoding, the part", uuencoded, []int{2}, imap.ResponseCodeUnknownCTE},
+		{"unknown encoding, the whole message", uuencoded, nil, imap.ResponseCodeUnknownCTE},
+		{"corrupt base64, the part", corrupt, []int{2}, imap.ResponseCodeParse},
+		{"corrupt base64, the whole message", corrupt, nil, imap.ResponseCodeParse},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := startAuthClient(t, "user@test.com", "testpass")
+			defer func() { c.Logout().Wait() }() //nolint:errcheck
+			appendWithFlags(t, c, "INBOX", []byte(tc.raw))
+			if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+			_, err := c.Fetch(imap.SeqSetNum(1), &imap.FetchOptions{
+				BinarySection: []*imap.FetchItemBinarySection{{Part: tc.part, Peek: true}},
+			}).Collect()
+			var imapErr *imap.Error
+			if !errors.As(err, &imapErr) || imapErr.Code != tc.code {
+				t.Errorf("FETCH answered %v, want NO [%s]", err, tc.code)
+			}
+		})
 	}
 }
