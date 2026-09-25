@@ -12,9 +12,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 )
 
-// helm template only renders: a configuration every service refuses at start
-// renders fine, and the stand learned that by going down whole (#2038). Each
-// values file the repo keeps is rendered and loaded the way a pod loads it.
+// helm template only renders, so each kept values file is also loaded the way
+// a pod loads it: a refused one took the whole stand down (#2038).
 func TestEveryKeptValuesFileLoads(t *testing.T) {
 	const sandbox = "../../helm_values/values-sandbox.yaml"
 	// Each entry is the -f list a deployment is rendered with: an overlay is
