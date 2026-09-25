@@ -55,10 +55,6 @@ fts:
   # it lowered to 60 via --set to watch an eviction inside a short window. The
   # sandbox's real state belongs in this file, not in someone's shell history.
   fts_handle_idle_timeout: 300
-  # Temporary, for the #1986 compaction window: at the chart default of 5000 no
-  # stand account reaches a second shard, so merge-under-load is never exercised
-  # here. Restored in the commit that follows the measurement.
-  fts_flatcurve_rotate_count: 100
   language_filters: [lowercase, stopwords, snowball]
   # The detector only picks among the languages listed here, so a single-entry
   # list silently indexes every message as English -- including non-English mail,
