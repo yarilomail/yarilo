@@ -1,0 +1,10 @@
+[Unit]
+Description=Prune the CI runner's docker build cache and stale images
+Documentation=https://github.com/yarilomail/yarilo/blob/develop/hack/stand/README.md
+
+[Service]
+Type=oneshot
+# By age, never by count: the tags the sandbox may roll back to are the recent
+# ones, and a week is longer than any rollback window we have used.
+ExecStart=/usr/bin/docker builder prune -af --filter until=168h
+ExecStart=/usr/bin/docker image prune -af --filter until=168h

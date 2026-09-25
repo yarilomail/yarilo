@@ -71,3 +71,21 @@ reads, so every metric the arm scrapes has a line.
 The CPU profile is taken on every arm; the block profile only under the
 profiling overlay, because a pod that accounts for every blocking operation is
 not the pod the other arm is.
+
+## Keeping the runner's disk
+
+`runner-prune.service` and `runner-prune.timer` are the single source of truth
+for what the CI runner deletes. Prune by age, never by count: the recent tags
+are the ones a rollback reaches for.
+
+Install once on the runner host, and again after it is rebuilt:
+
+```sh
+sudo cp hack/stand/runner-prune.{service,timer} /etc/systemd/system/
+sudo systemctl enable --now runner-prune.timer
+systemctl list-timers runner-prune.timer
+```
+
+A change made on the host and not in these files does not count: the next
+reinstall drops it. The window that made this necessary ran the disk to 85%
+(32.7 GB of images, 27.7 GB of build cache, no live container).
