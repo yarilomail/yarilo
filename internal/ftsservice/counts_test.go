@@ -37,11 +37,14 @@ func TestCountsSeparateCopiesFromMessages(t *testing.T) {
 	}
 }
 
-// copyInto files the same message into a second folder and indexes it there.
+// copyInto files the same message into a folder and indexes it there. The
+// folder may be one that already holds a copy: that is a copy too.
 func copyInto(t *testing.T, svc *Service, box mailbox.UserMailbox, uidx mailbox.UserIndex, folder string, guid [16]byte, uid uint32) fts.MailboxRef {
 	t.Helper()
-	if err := box.Create(folder); err != nil {
-		t.Fatal(err)
+	if exists, _ := box.FolderExists(folder); !exists {
+		if err := box.Create(folder); err != nil {
+			t.Fatal(err)
+		}
 	}
 	raw := "From: a@test.com\r\nSubject: note alpha\r\n\r\nalpha\r\n"
 	name, vsize, saved, err := box.Save(folder, strings.NewReader(raw), uid, int64(len(raw)), nil, nil, guid)
@@ -71,5 +74,8 @@ func copyInto(t *testing.T, svc *Service, box mailbox.UserMailbox, uidx mailbox.
 	if err := svc.Index(testUser, ref, uid, 0); err != nil {
 		t.Fatalf("index %s: %v", folder, err)
 	}
+	// Indexing is a queued job: without the wait the copy is not in the index
+	// yet, and a row about copies would be asking about one message.
+	waitIndexedIn(t, svc, ref, uid)
 	return ref
 }

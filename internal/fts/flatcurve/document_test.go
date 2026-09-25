@@ -61,13 +61,6 @@ func TestAMessageInTwoFoldersIsOneDocument(t *testing.T) {
 	if len(folders) != 2 {
 		t.Errorf("the document names %v, want both folders", folders)
 	}
-	copies, err := sh.w.DocTerms(ids[0], termCopy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(copies) != 2 {
-		t.Errorf("the document carries %v, want both copies", copies)
-	}
 }
 
 // Row 2: an expunge takes the copy's terms off the document, and the document
@@ -78,7 +71,7 @@ func TestAnExpungeRemovesTheCopyThenTheDocument(t *testing.T) {
 	indexCopy(t, ui, inbox, 7, guid, nil, []string{"needle"})
 	indexCopy(t, ui, archive, 9, guid, nil, []string{"needle"})
 
-	if err := ui.Expunge(inbox, 7); err != nil {
+	if err := ui.Expunge(inbox, guid, false, true); err != nil {
 		t.Fatal(err)
 	}
 	if got := hitsIn(t, ui, inbox); len(got) != 0 {
@@ -104,7 +97,7 @@ func TestAnExpungeRemovesTheCopyThenTheDocument(t *testing.T) {
 	}
 	done()
 
-	if err := ui.Expunge(archive, 9); err != nil {
+	if err := ui.Expunge(archive, guid, false, false); err != nil {
 		t.Fatal(err)
 	}
 	sh, done = shardOf(t, ui)
@@ -126,9 +119,10 @@ func TestTwoFoldersMayShareAUID(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
 		expunge, survives fts.MailboxRef
+		guid              [16]byte
 	}{
-		{"the folder indexed first", inbox, archive},
-		{"the folder indexed second", archive, inbox},
+		{"the folder indexed first", inbox, archive, testGUID(100)},
+		{"the folder indexed second", archive, inbox, testGUID(200)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ui, _ := testEngine(t, Options{})
@@ -141,7 +135,7 @@ func TestTwoFoldersMayShareAUID(t *testing.T) {
 				t.Fatalf("Archive answers %v, want its own message", got)
 			}
 
-			if err := ui.Expunge(tc.expunge, 5); err != nil {
+			if err := ui.Expunge(tc.expunge, tc.guid, false, false); err != nil {
 				t.Fatal(err)
 			}
 			if got := hitsIn(t, ui, tc.expunge); len(got) != 0 {

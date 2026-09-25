@@ -194,7 +194,7 @@ func TestExpunge(t *testing.T) {
 	ui, _ := testEngine(t, Options{})
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
 	indexDoc(t, ui, 2, nil, []string{"alpha"})
-	if err := ui.Expunge(inbox, 1); err != nil {
+	if err := ui.Expunge(inbox, testGUID(1), false, false); err != nil {
 		t.Fatal(err)
 	}
 	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("alpha"))
@@ -204,8 +204,8 @@ func TestExpunge(t *testing.T) {
 	if !reflect.DeepEqual(uidsOf(res.DefiniteGUIDs), []uint32{2}) {
 		t.Fatalf("after expunge = %v, want [2]", uidsOf(res.DefiniteGUIDs))
 	}
-	// Expunging a missing UID is a no-op.
-	if err := ui.Expunge(inbox, 99); err != nil {
+	// Retracting a message the index never held is a no-op.
+	if err := ui.Expunge(inbox, testGUID(99), false, false); err != nil {
 		t.Fatal(err)
 	}
 }
