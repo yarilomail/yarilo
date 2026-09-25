@@ -185,15 +185,34 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 	out := make(map[string]*nsHandle, len(specs))
 	var primary *nsHandle
 
-	for _, spec := range specs {
+	inboxAt := primaryIndex(specs)
+	for i, spec := range specs {
 		switch spec.Type {
 		case NamespacePersonal:
-			h, err := s.openHandle(spec, "personal", personalUI, owner, mailbox.NamespaceSubsFile(spec.Prefix, string(spec.Separator), string(spec.Type)))
+			ui := personalUI
+			ownStore := spec.Location != "" && i != inboxAt
+			if ownStore {
+				// A second private namespace with storage of its own -- a
+				// virtual one -- is the user's, but not their INBOX store.
+				loc, ok, err := mailbox.ParseLocation(spec.Location, personalUI)
+				if err != nil {
+					return nil, nil, fmt.Errorf("imap: personal namespace location: %w", err)
+				}
+				if ok {
+					if ui, err = mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator)); err != nil {
+						return nil, nil, fmt.Errorf("imap: personal namespace: %w", err)
+					}
+				}
+			}
+			h, err := s.openHandle(spec, "personal", ui, owner, mailbox.NamespaceSubsFile(spec.Prefix, string(spec.Separator), string(spec.Type)))
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: open personal namespace: %w", err)
 			}
+			if ownStore {
+				h.location = ui.MailPath
+			}
 			out[spec.Prefix] = h
-			if primary == nil {
+			if i == inboxAt {
 				primary = h
 			}
 		case NamespaceShared, NamespaceOther: //nolint:exhaustive
@@ -361,6 +380,30 @@ func (s *session) mailboxBackendFor(spec NamespaceSpec, ui *mailbox.UserInfo) ma
 		return mailbox.SelectPersonalBackend(s.srv.opts.Mailbox, s.srv.opts.MailboxByDriver, ui.Driver)
 	}
 	return s.srv.opts.Mailbox
+}
+
+// primaryIndex names the personal namespace that owns INBOX: the one marked
+// inbox, else the first without a location, else the first personal one.
+func primaryIndex(specs []NamespaceSpec) int {
+	first, bare := -1, -1
+	for i, spec := range specs {
+		if spec.Type != NamespacePersonal {
+			continue
+		}
+		if spec.Inbox {
+			return i
+		}
+		if first < 0 {
+			first = i
+		}
+		if bare < 0 && spec.Location == "" {
+			bare = i
+		}
+	}
+	if bare >= 0 {
+		return bare
+	}
+	return first
 }
 
 // nsSlug is an in-memory identifier for a namespace (handle name, log field).

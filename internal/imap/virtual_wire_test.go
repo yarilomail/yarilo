@@ -16,6 +16,8 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -50,13 +52,18 @@ func virtualServer(t *testing.T, configs map[string]string, seed func(t *testing
 		Mailbox:  maildir.New(),
 		Index:    fileindex.New(),
 		Resolver: resolver,
+		// ACL on and the namespace private, as the stand has them: a row that
+		// runs without ACL cannot see a namespace its user does not own.
+		ACLEnabled: true,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
-			{Type: imapserver.NamespaceShared, Prefix: "Virtual/", Separator: '/', List: imapserver.ListYes,
+			{Type: imapserver.NamespacePersonal, Prefix: "Virtual/", Separator: '/', List: imapserver.ListYes,
 				Location: "virtual:%h/virtual"},
 		},
-		NamespaceMailboxes: map[string]mailbox.MailboxBackend{"Virtual/": virtual.New()},
-		AuthRelay:          authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+		NamespaceMailboxes: map[string]mailbox.MailboxBackend{
+			"Virtual/": mailboxbuild.ByDriver("virtual", config.StorageConfig{}, nil),
+		},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -256,5 +263,29 @@ func TestVirtualUIDsSurviveASecondSelect(t *testing.T) {
 	third := uidsOfSelected(t, conn, rd, "a8")
 	if len(third) != 3 || strings.Join(third[:2], ",") != strings.Join(first, ",") {
 		t.Errorf("new mail renumbered what was here: %v became %v", first, third)
+	}
+}
+
+// Clients ask LIST "" "*", and the virtual mailbox has to be in that answer,
+// not only under a pattern that names its namespace.
+func TestVirtualMailboxIsListed(t *testing.T) {
+	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "a message", nil)
+		})
+	var names []string
+	for _, line := range command(t, conn, rd, "a2", `LIST "" "*"`) {
+		if strings.HasPrefix(line, "* LIST") {
+			names = append(names, line)
+		}
+	}
+	found := false
+	for _, n := range names {
+		if strings.HasSuffix(n, `"Virtual/All"`) || strings.HasSuffix(n, " Virtual/All") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("LIST \"\" \"*\" did not name Virtual/All: %v", names)
 	}
 }

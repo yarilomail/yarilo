@@ -93,8 +93,8 @@ namespaces:
     location: "maildir:%h/Maildir"
   # Virtual mailboxes: every directory under this path holding a configuration
   # file is one mailbox, and the file is what defines it. A client cannot make
-  # one, as in the reference.
-  - type: shared
+  # one, as in the reference. Private, not shared: the user owns what it lists.
+  - type: personal
     prefix: "Virtual/"
     separator: "/"
     list: "yes"
