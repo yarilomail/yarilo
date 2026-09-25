@@ -126,7 +126,40 @@ func assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder string, cop
 		return fmt.Errorf("Email/query inMailbox %q returned %d ids for a folder the message was never copied into",
 			otherFolder, len(out))
 	}
+	// Where it is, is a property of the Email: both mailboxes holding a copy
+	// are named by one object (RFC 8621 §4).
+	boxes, err := jmapMailboxIDsOf(user, ids[0])
+	if err != nil {
+		return err
+	}
+	if len(boxes) != copies {
+		return fmt.Errorf("Email/get names %d mailboxes for %d live copies: %v", len(boxes), copies, boxes)
+	}
+	if !boxes[copyID] {
+		return fmt.Errorf("Email/get does not name %q among the mailboxes holding the message", copyFolder)
+	}
 	return nil
+}
+
+// jmapMailboxIDsOf reads one Email's mailboxIds.
+func jmapMailboxIDsOf(user, id string) (map[string]bool, error) {
+	args, err := jmapCall(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
+		`["Email/get",{"accountId":"` + user + `","ids":["` + id + `"],"properties":["id","mailboxIds"]},"c0"]]}`)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		List []struct {
+			MailboxIDs map[string]bool `json:"mailboxIds"`
+		} `json:"list"`
+	}
+	if err := json.Unmarshal(args, &out); err != nil {
+		return nil, fmt.Errorf("decode Email/get: %w", err)
+	}
+	if len(out.List) != 1 {
+		return nil, fmt.Errorf("Email/get returned %d objects for one id", len(out.List))
+	}
+	return out.List[0].MailboxIDs, nil
 }
 
 // waitForHits waits out the asynchronous indexing for the selected folder and

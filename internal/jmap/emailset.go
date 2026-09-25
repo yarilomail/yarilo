@@ -124,27 +124,31 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 			resp.NotUpdated[id] = serr
 			continue
 		}
-		w := workFor(ref)
-		w.idOfUID[ref.meta.UID] = id
-		w.metaOf[ref.meta.UID] = ref.meta
-		if plan.replace != nil {
-			flags, custom := splitKeywords(plan.replace)
-			w.set[ref.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsSet, Flags: flags, Keywords: custom}
-			continue
-		}
-		if len(plan.add) > 0 {
-			flags, custom := splitKeywords(plan.add)
-			w.add[ref.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsAdd, Flags: flags, Keywords: custom}
-		}
-		if len(plan.remove) > 0 {
-			flags, custom := splitKeywords(plan.remove)
-			w.remove[ref.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsRemove, Flags: flags, Keywords: custom}
-		}
-		if len(plan.add) == 0 && len(plan.remove) == 0 {
-			// An update naming nothing is not an error; it changes nothing and
-			// is reported as done, which is what the client asked for.
-			resp.Updated[id] = nil
-			delete(w.idOfUID, ref.meta.UID)
+		// Keywords belong to the Email, so the write reaches every mailbox
+		// holding a copy; Email/get reads their union (RFC 8621 §4.1.1).
+		for _, c := range h.copiesOf(ref) {
+			w := workFor(messageRef{folder: c.folder, folderID: c.folderID, meta: c.meta, mailboxID: c.mailboxID})
+			w.idOfUID[c.meta.UID] = id
+			w.metaOf[c.meta.UID] = c.meta
+			if plan.replace != nil {
+				flags, custom := splitKeywords(plan.replace)
+				w.set[c.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsSet, Flags: flags, Keywords: custom}
+				continue
+			}
+			if len(plan.add) > 0 {
+				flags, custom := splitKeywords(plan.add)
+				w.add[c.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsAdd, Flags: flags, Keywords: custom}
+			}
+			if len(plan.remove) > 0 {
+				flags, custom := splitKeywords(plan.remove)
+				w.remove[c.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsRemove, Flags: flags, Keywords: custom}
+			}
+			if len(plan.add) == 0 && len(plan.remove) == 0 {
+				// An update naming nothing is not an error; it changes nothing
+				// and is reported as done, which is what the client asked for.
+				resp.Updated[id] = nil
+				delete(w.idOfUID, c.meta.UID)
+			}
 		}
 	}
 

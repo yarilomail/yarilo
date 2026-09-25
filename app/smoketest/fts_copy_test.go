@@ -32,6 +32,22 @@ func copyQueryStub(t *testing.T, names map[string]string, ids func(text, inMailb
 				list += fmt.Sprintf(`{"id":%q,"name":%q}`, id, name)
 			}
 			fmt.Fprintf(w, `{"methodResponses":[["Mailbox/get",{"list":[%s]},"c0"]]}`, list) //nolint:errcheck
+		case "Email/get":
+			var args struct {
+				IDs []string `json:"ids"`
+			}
+			_ = json.Unmarshal(req.MethodCalls[0][1], &args)
+			// The stub's Email holds a copy in every mailbox the stub knows,
+			// which is what the judgement reads back.
+			boxes := ""
+			for _, id := range names {
+				if boxes != "" {
+					boxes += ","
+				}
+				boxes += fmt.Sprintf("%q:true", id)
+			}
+			boxes = "{" + boxes + "}"
+			fmt.Fprintf(w, `{"methodResponses":[["Email/get",{"list":[{"id":%q,"mailboxIds":%s}]},"c0"]]}`, args.IDs[0], boxes) //nolint:errcheck
 		case "Email/query":
 			var args struct {
 				Filter struct {
