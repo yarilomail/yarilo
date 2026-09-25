@@ -46,7 +46,7 @@ func (r *recordingFTS) Lookup(string, fts.MailboxRef, fts.Query) (fts.Result, er
 func (r *recordingFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) { return 0, 0, nil }
 func (r *recordingFTS) Rescan(string, fts.MailboxRef) error                   { return nil }
 func (r *recordingFTS) RescanUser(string) ([]string, error)                   { return nil, nil }
-func (r *recordingFTS) Counts(string) (uint64, uint64, uint64, error)         { return 0, 0, 0, nil }
+func (r *recordingFTS) Counts(string) (uint64, uint64, uint64, uint64, error) { return 0, 0, 0, 0, nil }
 func (r *recordingFTS) Optimize(string) error                                 { return nil }
 func (r *recordingFTS) Close() error                                          { return nil }
 

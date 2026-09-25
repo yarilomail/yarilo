@@ -651,18 +651,21 @@ func (s *Service) RescanUser(user string) ([]string, error) {
 
 // Counts reports documents, live copies, and the distinct messages those
 // copies are: after a reconcile documents == messages, and copies >= both.
-func (s *Service) Counts(user string) (docs, copies, messages uint64, err error) {
+func (s *Service) Counts(user string) (docs, copies, messages, unrecorded uint64, err error) {
 	h, err := s.handle(user)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	defer s.release(h)
 	folders, err := h.box.ListFolders()
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("ftsservice: list folders: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("ftsservice: list folders: %w", err)
 	}
 	names := mailbox.SelectableNames(folders)
 	seen := make(map[[16]byte]struct{})
+	// Copies the GUID store has no row for: a hit resolves through it, so
+	// such a copy is unsearchable however well it is indexed (#2031).
+	byFolder := make(map[[16]byte][]fts.Copy)
 	err = s.opts.lockIndex(user, func() error {
 		for _, name := range names {
 			mbox, rerr := h.mailboxRef(name)
@@ -673,6 +676,13 @@ func (s *Service) Counts(user string) (docs, copies, messages uint64, err error)
 			if perr != nil {
 				return perr
 			}
+			fg, ferr := hex.DecodeString(mbox.GUID)
+			if ferr != nil || len(fg) != 16 {
+				return fmt.Errorf("ftsservice: folder %q names no guid", mbox.Name)
+			}
+			var key [16]byte
+			copy(key[:], fg)
+			byFolder[key] = present
 			for _, c := range present {
 				copies++
 				if c.GUID != ([16]byte{}) {
@@ -680,6 +690,7 @@ func (s *Service) Counts(user string) (docs, copies, messages uint64, err error)
 				}
 			}
 		}
+		unrecorded = s.copiesWithoutARow(h, byFolder)
 		n, derr := h.ui.DocCount()
 		if derr != nil {
 			return derr
@@ -687,7 +698,42 @@ func (s *Service) Counts(user string) (docs, copies, messages uint64, err error)
 		docs = n
 		return nil
 	})
-	return docs, copies, uint64(len(seen)), err
+	return docs, copies, uint64(len(seen)), unrecorded, err
+}
+
+// copiesWithoutARow counts the live copies the GUID store does not record.
+func (s *Service) copiesWithoutARow(h *userHandle, byFolder map[[16]byte][]fts.Copy) uint64 {
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return 0
+	}
+	var guids [][16]byte
+	for _, copies := range byFolder {
+		for _, c := range copies {
+			guids = append(guids, c.GUID)
+		}
+	}
+	recs, err := resolver.GUIDCopies(guids)
+	if err != nil {
+		return 0
+	}
+	type place struct {
+		folder [16]byte
+		uid    uint32
+	}
+	recorded := make(map[place]struct{}, len(recs))
+	for _, r := range recs {
+		recorded[place{r.FolderGUID, r.UID}] = struct{}{}
+	}
+	var missing uint64
+	for folder, copies := range byFolder {
+		for _, c := range copies {
+			if _, ok := recorded[place{folder, c.UID}]; !ok {
+				missing++
+			}
+		}
+	}
+	return missing
 }
 
 // DropFolder retracts a mailbox the account no longer has: its documents lose
@@ -1317,18 +1363,26 @@ func (s *Service) sweepLocked(h *userHandle, user string) error {
 		return nil
 	}
 	live := make([]string, 0, len(folders))
+	recorded := make(map[[16]byte]struct{})
 	for _, name := range mailbox.SelectableNames(folders) {
 		ref, rerr := h.mailboxRef(name)
 		if rerr != nil {
 			return rerr
 		}
 		live = append(live, ref.GUID)
+		copies, _, _, cerr := s.presentCopies(h, ref)
+		if cerr != nil {
+			return cerr
+		}
+		for _, c := range copies {
+			recorded[c.GUID] = struct{}{}
+		}
 	}
 	orphans, err := h.ui.DropOrphanFolders(live)
 	if err != nil {
 		return err
 	}
-	dead, err := s.deadDocuments(h)
+	dead, err := s.deadDocuments(h, recorded)
 	if err != nil {
 		return err
 	}
@@ -1343,23 +1397,26 @@ func (s *Service) sweepLocked(h *userHandle, user string) error {
 	return nil
 }
 
-// deadDocuments are the indexed messages the store has no copy of.
-func (s *Service) deadDocuments(h *userHandle) ([][16]byte, error) {
+// deadDocuments are the indexed messages neither the folders' records nor the
+// GUID store knows. The store alone cannot decide: it is derived and can be
+// rebuilt, so a row it is missing is not a message that is gone (#2030).
+func (s *Service) deadDocuments(h *userHandle, recorded map[[16]byte]struct{}) ([][16]byte, error) {
 	indexed, err := h.ui.DocGUIDs()
 	if err != nil || len(indexed) == 0 {
 		return nil, err
 	}
-	resolver, ok := h.idx.(mailbox.GUIDResolver)
-	if !ok {
-		return nil, nil // nothing to compare against is not a licence to delete
+	alive := make(map[[16]byte]struct{}, len(recorded))
+	for g := range recorded {
+		alive[g] = struct{}{}
 	}
-	recs, err := resolver.GUIDCopies(indexed)
-	if err != nil {
-		return nil, fmt.Errorf("ftsservice: guid copies: %w", err)
-	}
-	alive := make(map[[16]byte]struct{}, len(recs))
-	for _, r := range recs {
-		alive[r.GUID] = struct{}{}
+	if resolver, ok := h.idx.(mailbox.GUIDResolver); ok {
+		recs, rerr := resolver.GUIDCopies(indexed)
+		if rerr != nil {
+			return nil, fmt.Errorf("ftsservice: guid copies: %w", rerr)
+		}
+		for _, r := range recs {
+			alive[r.GUID] = struct{}{}
+		}
 	}
 	var dead [][16]byte
 	for _, g := range indexed {

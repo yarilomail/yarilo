@@ -31,6 +31,12 @@ const testUser = "u@test.com"
 var testMbox = fts.MailboxRef{Name: "INBOX", UIDValidity: 1}
 
 func newTestService(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.UserIndex) {
+	svc, box, uidx, _ := newTestServiceIn(t)
+	return svc, box, uidx
+}
+
+// newTestServiceIn is newTestService for a row that has to reach the files.
+func newTestServiceIn(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.UserIndex, string) {
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
@@ -61,7 +67,7 @@ func newTestService(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.UserIn
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { box.Close(); uidx.Close() }) //nolint:errcheck
-	return svc, box, uidx
+	return svc, box, uidx, root
 }
 
 func saveMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserIndex, uid uint32, body string) {

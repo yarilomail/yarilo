@@ -23,7 +23,7 @@ func TestCountsSeparateCopiesFromMessages(t *testing.T) {
 	guid := guidOfUID(t, uidx, 1)
 	archive := copyInto(t, svc, box, uidx, "Archive", guid, 7)
 
-	docs, copies, messages, err := svc.Counts(testUser)
+	docs, copies, messages, _, err := svc.Counts(testUser)
 	if err != nil {
 		t.Fatalf("Counts: %v", err)
 	}

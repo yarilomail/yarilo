@@ -220,12 +220,13 @@ func dispatch(line string, svc Service) string {
 		if len(f) != 2 {
 			return no("malformed COUNTS")
 		}
-		docs, copies, messages, err := svc.Counts(f[1])
+		docs, copies, messages, unrecorded, err := svc.Counts(f[1])
 		if err != nil {
 			return noFor(err)
 		}
-		slog.Debug("fts: counts", "user", f[1], "documents", docs, "copies", copies, "messages", messages)
-		return fmt.Sprintf("%s\t%d\t%d\t%d", replyOK, docs, copies, messages)
+		slog.Debug("fts: counts", "user", f[1], "documents", docs, "copies", copies,
+			"messages", messages, "unrecorded_copies", unrecorded)
+		return fmt.Sprintf("%s\t%d\t%d\t%d\t%d", replyOK, docs, copies, messages, unrecorded)
 
 	case CmdOptimize:
 		if len(f) != 2 {

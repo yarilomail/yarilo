@@ -128,14 +128,14 @@ func (p *Pool) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	return last, sum, err
 }
 
-func (p *Pool) Counts(user string) (uint64, uint64, uint64, error) {
-	var docs, copies, messages uint64
+func (p *Pool) Counts(user string) (uint64, uint64, uint64, uint64, error) {
+	var docs, copies, messages, unrecorded uint64
 	err := p.do(func(c *Lazy) error {
 		var e error
-		docs, copies, messages, e = c.Counts(user)
+		docs, copies, messages, unrecorded, e = c.Counts(user)
 		return e
 	})
-	return docs, copies, messages, err
+	return docs, copies, messages, unrecorded, err
 }
 
 func (p *Pool) DropFolder(user string, m fts.MailboxRef) error {

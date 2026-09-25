@@ -86,14 +86,15 @@ func ftsStatus(args []string) error {
 			Documents        uint64 `json:"documents"`
 			Copies           uint64 `json:"copies"`
 			Messages         uint64 `json:"messages"`
+			UnrecordedCopies uint64 `json:"unrecorded_copies"`
 		}
 		if err := json.Unmarshal(data, &r); err != nil {
 			return err
 		}
 		fmt.Printf("%s [%s]: last indexed UID %d (settings checksum %08x)\n",
 			r.User, r.Folder, r.LastIndexedUID, r.SettingsChecksum)
-		fmt.Printf("%s: %d document(s), %d live copies, %d live messages\n",
-			r.User, r.Documents, r.Copies, r.Messages)
+		fmt.Printf("%s: %d document(s), %d live copies, %d live messages, %d copies with no store row\n",
+			r.User, r.Documents, r.Copies, r.Messages, r.UnrecordedCopies)
 		return nil
 	})
 }
