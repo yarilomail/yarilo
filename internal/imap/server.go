@@ -3680,9 +3680,9 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 			return nil, fmt.Errorf("imap/copy read: %w", readErr)
 		}
 		tSave := time.Now()
-		// COPY yields a distinct message, so a fresh GUID is generated (RFC 8474);
-		// only MOVE preserves the source identity.
-		newFilename, vsize, guid, saveErr := destH.box.Save(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, [16]byte{})
+		// RFC 8474 §5.1: "The server MUST return the same EMAILID as the
+		// source message for the matching destination message" -- for COPY too.
+		newFilename, vsize, guid, saveErr := destH.box.Save(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID)
 		if saveErr != nil {
 			return nil, fmt.Errorf("imap/copy save: %w", saveErr)
 		}

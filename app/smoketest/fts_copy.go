@@ -67,6 +67,14 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 		return err
 	}
 
+	// While both copies are alive: two copies of one message answer under one
+	// emailId, which an expunged one could not distinguish (RFC 8474 §5.1).
+	if withJMAP {
+		if err := assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder, len(copyUIDs)+1); err != nil {
+			return err
+		}
+	}
+
 	if _, err := c.selectFolder("INBOX"); err != nil {
 		return fmt.Errorf("re-select INBOX: %w", err)
 	}
@@ -81,10 +89,7 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 	if err := assertHits(c, copyFolder, marker, 1); err != nil {
 		return err
 	}
-	if !withJMAP {
-		return nil
-	}
-	return assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder, len(copyUIDs))
+	return nil
 }
 
 // The judgement that separates "document = the message" from "document = the

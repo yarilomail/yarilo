@@ -232,3 +232,36 @@ func shiftMapAfterFirst(t *testing.T, u *userMailbox, delta int) {
 		t.Fatal(err)
 	}
 }
+
+// A copy keeps the source's GUID (RFC 8474 §5.1), so the map holds several
+// records under one GUID. Keyed by GUID alone, the rewrite pointed every one of
+// them at the last record's offset and a fetch read the wrong message.
+func TestARewriteRepointsEachCopyOfOneGUID(t *testing.T) {
+	_, u := healTestUser(t)
+	shared := [16]byte{9, 9}
+	var names []string
+	for _, body := range []string{"the first copy\r\n", "the second copy is longer\r\n"} {
+		name, _, _, err := u.Save("INBOX", strings.NewReader(body), 0, 0, nil, nil, shared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	before := [][]byte{fetchBody(t, u, names[0]), fetchBody(t, u, names[1])}
+	if bytes.Equal(before[0], before[1]) {
+		t.Fatal("the fixture cannot distinguish the two copies")
+	}
+
+	path := u.mfilePath(1)
+	delta := reframeFirstRecord(t, path)
+	shiftMapAfterFirst(t, u, delta)
+	if _, err := u.normaliseStorageFrames(); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, name := range names {
+		if got := fetchBody(t, u, name); !bytes.Equal(got, before[i]) {
+			t.Errorf("copy %d reads %q after the rewrite, want %q", i, got, before[i])
+		}
+	}
+}
