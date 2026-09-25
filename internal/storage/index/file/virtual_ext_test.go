@@ -101,3 +101,39 @@ func TestAPlainFolderHasNoVirtualHeader(t *testing.T) {
 		t.Error("a plain folder answered as a virtual mailbox")
 	}
 }
+
+// The header is a format on disk, so it is judged field by field after a real
+// write and read: two folders, both named, with a modseq and a next uid.
+func TestVirtualHeaderSurvivesItsOwnRoundTrip(t *testing.T) {
+	b := openIdx(t.TempDir(), testUser)
+	defer b.Close() //nolint:errcheck
+	f, _ := b.OpenFolder("Virtual", 1, "")
+
+	want := mailbox.VirtualHeader{
+		SearchCRC32: 0x0f0f0f0f,
+		Backing: []mailbox.VirtualBacking{
+			{ID: 1, GUID: [16]byte{1, 2, 3}, Name: "Archive/2026", UIDValidity: 7, NextUID: 91, HighestModSeq: 1 << 33},
+			{ID: 2, GUID: [16]byte{9, 9}, Name: "Sent", UIDValidity: 11, NextUID: 5, HighestModSeq: 42},
+		},
+		HighestBackingID: 2,
+	}
+	if err := b.SetVirtualHeader(f.ID, want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := b.VirtualHeader(f.ID)
+	if !ok {
+		t.Fatal("the header written a moment ago reads as absent")
+	}
+	if got.SearchCRC32 != want.SearchCRC32 || got.HighestBackingID != want.HighestBackingID {
+		t.Errorf("crc/highest id = %#x/%d, want %#x/%d",
+			got.SearchCRC32, got.HighestBackingID, want.SearchCRC32, want.HighestBackingID)
+	}
+	if len(got.Backing) != len(want.Backing) {
+		t.Fatalf("read back %d folders, want %d", len(got.Backing), len(want.Backing))
+	}
+	for i := range want.Backing {
+		if got.Backing[i] != want.Backing[i] {
+			t.Errorf("folder %d came back as %+v, want %+v", i, got.Backing[i], want.Backing[i])
+		}
+	}
+}

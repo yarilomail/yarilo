@@ -7,14 +7,13 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The virtual extension: a virtual mailbox's record says which backing folder
-// a message came from and its uid there, and the header says what the set was
-// made of (virtual-storage.h:20-45, 62-66).
+// The virtual extension: a record names the backing folder and the uid there,
+// the header what the set was made of (virtual-storage.h:20-45, 62-66).
 const (
 	extNameVirtual = "virtual"
 	virtualRecSize = 8
-	virtualHdrHead = 16 // change counter, highest id, crc32, backing count
-	virtualBoxSize = 36 // guid, id, uidvalidity, nextuid, modseq, name length
+	virtualHdrHead = 16                     // change counter, highest id, crc32, backing count
+	virtualBoxSize = 16 + 4 + 4 + 4 + 8 + 4 // guid, id, uidvalidity, nextuid, modseq, name length
 )
 
 func encodeVirtualRec(backing, realUID uint32) []byte {
@@ -76,7 +75,7 @@ func decodeVirtualHdr(raw []byte) (mailbox.VirtualHeader, bool) {
 		b.UIDValidity = binary.LittleEndian.Uint32(raw[p+20:])
 		b.NextUID = binary.LittleEndian.Uint32(raw[p+24:])
 		b.HighestModSeq = binary.LittleEndian.Uint64(raw[p+28:])
-		nameLens[i] = binary.LittleEndian.Uint32(raw[p+32:])
+		nameLens[i] = binary.LittleEndian.Uint32(raw[p+36:])
 		h.Backing = append(h.Backing, b)
 		p += virtualBoxSize
 	}

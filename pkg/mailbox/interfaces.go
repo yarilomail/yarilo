@@ -104,9 +104,8 @@ type MaildirStamped interface {
 	SetMaildirStamp(folderID uint64, s MaildirStamp) error
 }
 
-// VirtualBacking is one folder a virtual mailbox draws from, as its index
-// remembers it: the identity is the GUID, so a rename keeps the mapping
-// (#1995), and the name is carried for reading, never for matching.
+// VirtualBacking is one folder a virtual mailbox draws from. Keyed by GUID, so
+// a rename keeps the mapping (#1995); the name is for reading, not matching.
 type VirtualBacking struct {
 	ID            uint32
 	GUID          [16]byte

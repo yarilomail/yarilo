@@ -38,6 +38,8 @@ type Box struct {
 	MetadataEntry string
 	MetadataValue string
 	// Search is the IMAP SEARCH text that applies to this box, "" for none.
+	// Kept as text: the parser SEARCH uses is unexported upstream, so a bad
+	// rule is refused when it is first run, not when it is read (#2034).
 	Search string
 }
 
