@@ -185,12 +185,13 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 	out := make(map[string]*nsHandle, len(specs))
 	var primary *nsHandle
 
-	inboxAt := primaryIndex(specs)
+	shapes := specShapes(specs)
+	inboxAt := mailbox.PrimaryPersonalIndex(shapes)
 	for i, spec := range specs {
 		switch spec.Type {
 		case NamespacePersonal:
 			ui := personalUI
-			ownStore := spec.Location != "" && i != inboxAt
+			ownStore := mailbox.OwnsStore(shapes, i)
 			if ownStore {
 				// A second private namespace with storage of its own -- a
 				// virtual one -- is the user's, but not their INBOX store.
@@ -204,7 +205,7 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 					}
 				}
 			}
-			h, err := s.openHandle(spec, "personal", ui, owner, mailbox.NamespaceSubsFile(spec.Prefix, string(spec.Separator), string(spec.Type)))
+			h, err := s.openHandle(spec, "personal", ui, owner, mailbox.SubsFileFor(shapes, i, spec.Prefix, string(spec.Separator)))
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: open personal namespace: %w", err)
 			}
@@ -382,28 +383,14 @@ func (s *session) mailboxBackendFor(spec NamespaceSpec, ui *mailbox.UserInfo) ma
 	return s.srv.opts.Mailbox
 }
 
-// primaryIndex names the personal namespace that owns INBOX: the one marked
-// inbox, else the first without a location, else the first personal one.
-func primaryIndex(specs []NamespaceSpec) int {
-	first, bare := -1, -1
-	for i, spec := range specs {
-		if spec.Type != NamespacePersonal {
-			continue
-		}
-		if spec.Inbox {
-			return i
-		}
-		if first < 0 {
-			first = i
-		}
-		if bare < 0 && spec.Location == "" {
-			bare = i
-		}
+// specShapes is the set as pkg/mailbox reads it: the loader validates by the
+// same rule, so the session cannot choose a different INBOX namespace (#2038).
+func specShapes(specs []NamespaceSpec) []mailbox.NamespaceShape {
+	out := make([]mailbox.NamespaceShape, len(specs))
+	for i, sp := range specs {
+		out[i] = mailbox.NamespaceShape{Type: string(sp.Type), Location: sp.Location, Inbox: sp.Inbox}
 	}
-	if bare >= 0 {
-		return bare
-	}
-	return first
+	return out
 }
 
 // nsSlug is an in-memory identifier for a namespace (handle name, log field).

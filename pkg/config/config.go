@@ -3141,6 +3141,16 @@ func ValidateNamespaceTypes(namespaces []NamespaceConfig) error {
 	return validateNamespaceFileSlugs(namespaces)
 }
 
+// NamespaceShapes is the set as pkg/mailbox reads it, so the loader and a
+// session decide which namespace owns INBOX by one rule (#2038).
+func NamespaceShapes(namespaces []NamespaceConfig) []mailbox.NamespaceShape {
+	out := make([]mailbox.NamespaceShape, len(namespaces))
+	for i, ns := range namespaces {
+		out[i] = mailbox.NamespaceShape{Type: ns.Type, Location: ns.Location, Inbox: ns.Inbox}
+	}
+	return out
+}
+
 // validateNamespaceFileSlugs fails startup when two namespaces would write their
 // per-namespace state to the same filename. The slug is one path segment, so a
 // separator inside a prefix becomes '-' (#1159) -- which means "Public/Team/"
@@ -3149,8 +3159,9 @@ func ValidateNamespaceTypes(namespaces []NamespaceConfig) error {
 // costs nothing and cannot be mistaken for a storage bug later.
 func validateNamespaceFileSlugs(namespaces []NamespaceConfig) error {
 	seen := make(map[string]int, len(namespaces))
+	shapes := NamespaceShapes(namespaces)
 	for i, ns := range namespaces {
-		slug := mailbox.NamespaceSubsFile(ns.Prefix, ns.Separator, ns.Type)
+		slug := mailbox.SubsFileFor(shapes, i, ns.Prefix, ns.Separator)
 		if j, dup := seen[slug]; dup {
 			return fmt.Errorf("config: namespaces %d (prefix %q) and %d (prefix %q) both use the on-disk name %q "+
 				"for their per-namespace state; give one a distinct prefix", j, namespaces[j].Prefix, i, ns.Prefix, slug)
