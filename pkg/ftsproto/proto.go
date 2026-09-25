@@ -83,7 +83,7 @@ type Service interface {
 	Status(user string, mbox fts.MailboxRef) (lastUID, checksum uint32, err error)
 	Rescan(user string, mbox fts.MailboxRef) error
 	RescanUser(user string) ([]string, error)
-	Counts(user string) (docs, copies, messages uint64, err error)
+	Counts(user string) (docs, copies, messages, unrecorded uint64, err error)
 	DropFolder(user string, mbox fts.MailboxRef) error
 	Optimize(user string) error
 }
@@ -304,24 +304,26 @@ func (r *Remote) RescanUser(user string) ([]string, error) {
 	return strings.Split(payload, "\t"), nil
 }
 
-func (r *Remote) Counts(user string) (uint64, uint64, uint64, error) {
+func (r *Remote) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	payload, err := r.call(CmdCounts, user)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
+	// Three fields is a server from before the store gap had a number; the
+	// fourth is read when it is there (#2031).
 	f := strings.Split(payload, "\t")
-	if len(f) != 3 {
-		return 0, 0, 0, fmt.Errorf("ftsproto: bad COUNTS payload %q", payload)
+	if len(f) != 3 && len(f) != 4 {
+		return 0, 0, 0, 0, fmt.Errorf("ftsproto: bad COUNTS payload %q", payload)
 	}
-	var out [3]uint64
+	var out [4]uint64
 	for i, v := range f {
 		n, perr := strconv.ParseUint(v, 10, 64)
 		if perr != nil {
-			return 0, 0, 0, fmt.Errorf("ftsproto: bad COUNTS payload %q", payload)
+			return 0, 0, 0, 0, fmt.Errorf("ftsproto: bad COUNTS payload %q", payload)
 		}
 		out[i] = n
 	}
-	return out[0], out[1], out[2], nil
+	return out[0], out[1], out[2], out[3], nil
 }
 
 func (r *Remote) DropFolder(user string, m fts.MailboxRef) error {

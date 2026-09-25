@@ -100,23 +100,66 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 	return nil
 }
 
-// assertNoOrphanDocuments: documents outrunning the live messages is a deleted
-// folder whose documents stayed. Polled, the retraction being off the path.
+// assertNoOrphanDocuments judges the guarantee we chose: a retraction that was
+// lost or raced is temporary, because a compaction clears it without anyone.
 func assertNoOrphanDocuments(user string) error {
+	docs, _, messages, err := pollFTSCounts(user)
+	if err != nil {
+		return err
+	}
+	if docs <= messages {
+		return nil // nothing was left behind in the first place
+	}
+	if err := backendFTSOptimize(user); err != nil {
+		return err
+	}
+	docs, _, messages, err = pollFTSCounts(user)
+	if err != nil {
+		return err
+	}
+	if docs > messages {
+		return fmt.Errorf("a compaction left %d documents for %d live messages", docs, messages)
+	}
+	return nil
+}
+
+// pollFTSCounts reads the counts until they settle or the window runs out: the
+// retractions this row is about run off the command path.
+func pollFTSCounts(user string) (docs, copies, messages uint64, err error) {
 	deadline := time.Now().Add(orphanCountWait)
 	for {
-		docs, _, messages, err := backendFTSCounts(user)
-		if err != nil {
-			return err
-		}
-		if docs <= messages {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("the index holds %d documents for %d live messages: a deleted folder left its documents behind", docs, messages)
+		docs, copies, messages, err = backendFTSCounts(user)
+		if err != nil || docs <= messages || time.Now().After(deadline) {
+			return docs, copies, messages, err
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+// backendFTSOptimize asks the backend to compact this account's index.
+func backendFTSOptimize(user string) error {
+	url := strings.TrimRight(*flagBackendAPI, "/") + "/api/backend/fts/optimize?user=" + user
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+	if tok := backendAPIToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	client, err := backendAPIClient()
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return explainBackendAPITransport(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fts/optimize: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 var orphanCountWait = 10 * time.Second

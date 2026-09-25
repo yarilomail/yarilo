@@ -68,6 +68,9 @@ type ftsStatusResponse struct {
 	Documents uint64 `json:"documents"`
 	Copies    uint64 `json:"copies"`
 	Messages  uint64 `json:"messages"`
+	// UnrecordedCopies are live copies with no row in the GUID store: a hit
+	// resolves through it, so such a copy cannot be found (#2031).
+	UnrecordedCopies uint64 `json:"unrecorded_copies"`
 }
 
 // handleFTSStatus reports the per-mailbox indexing checkpoint.
@@ -103,7 +106,7 @@ func (s *Server) handleFTSStatus(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "fts status: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	docs, copies, messages, err := s.opts.FTSClient.Counts(user)
+	docs, copies, messages, unrecorded, err := s.opts.FTSClient.Counts(user)
 	if err != nil {
 		apiError(w, "fts status: "+err.Error(), http.StatusBadGateway)
 		return
@@ -111,7 +114,7 @@ func (s *Server) handleFTSStatus(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, ftsStatusResponse{
 		User: user, Folder: folder,
 		LastIndexedUID: last, SettingsChecksum: checksum,
-		Documents: docs, Copies: copies, Messages: messages,
+		Documents: docs, Copies: copies, Messages: messages, UnrecordedCopies: unrecorded,
 	})
 }
 

@@ -25,7 +25,7 @@ func TestAMessageExpungedMidJobIsNotWritten(t *testing.T) {
 	}
 	waitIndexedIn(t, svc, testMbox, 2)
 
-	docs, _, messages, err := svc.Counts(testUser)
+	docs, _, messages, _, err := svc.Counts(testUser)
 	if err != nil {
 		t.Fatal(err)
 	}

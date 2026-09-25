@@ -26,7 +26,7 @@ func TestOptimizeDropsDocumentsTheStoreNoLongerHas(t *testing.T) {
 	if err := svc.Optimize(testUser); err != nil {
 		t.Fatalf("optimize: %v", err)
 	}
-	docs, _, messages, err := svc.Counts(testUser)
+	docs, _, messages, _, err := svc.Counts(testUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestOptimizeSweepsOrphanFolders(t *testing.T) {
 	if err := svc.Optimize(testUser); err != nil {
 		t.Fatalf("optimize: %v", err)
 	}
-	docs, _, messages, err := svc.Counts(testUser)
+	docs, _, messages, _, err := svc.Counts(testUser)
 	if err != nil {
 		t.Fatal(err)
 	}
