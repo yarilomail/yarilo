@@ -36,9 +36,8 @@ type SyncResult struct {
 	Rebuilt bool
 }
 
-// Sync works out what the virtual mailbox holds: the rule decides membership
-// here, not when a client searches (virtual-sync.c:604-623). A copy in two
-// folders is two messages, each with its own uid and flags.
+// Sync works out what the mailbox holds: the rule decides membership here,
+// not at search time, and a copy in two folders is two messages.
 func Sync(cfg *Config, was mailbox.VirtualHeader, r Resolver) (SyncResult, error) {
 	out := SyncResult{Header: was}
 	if was.NeedsRebuild(cfg.SearchArgsCRC32) {
