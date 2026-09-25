@@ -10,9 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-message"
-	_ "github.com/emersion/go-message/charset" // registers the charset decoders
+	"github.com/emersion/go-message/charset"
 
 	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
@@ -283,9 +282,9 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 		return email, headerFields, nil
 	}
 	fillHeaders(&email, entity.Header)
-	// Write back what the parse produced, so the next envelope-only request --
-	// here or over IMAP -- does not repeat it.
-	cache.StoreEnvelope(m, imapserver.ExtractEnvelope(entity.Header.Header))
+	// Write back what the parse produced, from the header rather than from the
+	// struct: a subject reaches IMAP as the message wrote it (#2008).
+	cache.StoreFromHeader(m, entity.Header.Header, msgcache.EnvelopeTextOf(entity.Header.Header))
 	// Header field properties are answered from the same parsed block, so a
 	// request naming only them costs no more than one naming subject.
 	headerFields = headerFieldValues(entity.Header, req.HeaderProperties())
@@ -470,7 +469,10 @@ func addresses(v string) []jmapcore.EmailAddress {
 	if v == "" {
 		return nil
 	}
-	list, err := mail.ParseAddressList(v)
+	// The parser carries the same decoder as the subject: without it an
+	// address list with a windows-1251 name fails to parse at all (#2008).
+	parser := mail.AddressParser{WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader}}
+	list, err := parser.ParseList(v)
 	if err != nil {
 		// An unparseable header is reported as a single address rather than
 		// dropped: a client showing the raw value beats showing nothing.
@@ -488,8 +490,10 @@ func addresses(v string) []jmapcore.EmailAddress {
 	return out
 }
 
+// decodeWord reads an encoded word with the charsets go-message registers, not
+// only the three a bare decoder knows: windows-1251 is ordinary mail here.
 func decodeWord(s string) string {
-	dec := new(mime.WordDecoder)
+	dec := &mime.WordDecoder{CharsetReader: charset.Reader}
 	if out, err := dec.DecodeHeader(s); err == nil {
 		return out
 	}
