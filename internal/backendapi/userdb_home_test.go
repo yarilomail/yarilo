@@ -1,6 +1,7 @@
 package backendapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -50,5 +51,26 @@ func TestOperatorCommandsOpenTheUserdbHome(t *testing.T) {
 	}
 	if strings.Contains(got, "TheTemplateHome") {
 		t.Errorf("the listing came from the template home: %s", got)
+	}
+
+	// The endpoint an operator reads to see which mailbox a name has must
+	// describe the one the commands open.
+	status, body = doJSON(t, ts, http.MethodPost, "/api/backend/user/info", "",
+		map[string]any{"user": "alice@example.com"})
+	if status != http.StatusOK {
+		t.Fatalf("user/info: HTTP %d: %s", status, body)
+	}
+	var info struct {
+		Home     string `json:"home"`
+		MailPath string `json:"mail_path"`
+	}
+	if err := json.Unmarshal(body, &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Home != userdbHome {
+		t.Errorf("user info reports home %q, want the userdb's %q", info.Home, userdbHome)
+	}
+	if want := filepath.Join(userdbHome, "Maildir"); info.MailPath != want {
+		t.Errorf("user info reports mail_path %q, want %q", info.MailPath, want)
 	}
 }

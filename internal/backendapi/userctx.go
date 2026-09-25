@@ -169,9 +169,8 @@ func (s *Server) openUserContextInner(username string, mode openMode) (*userCont
 	if err := accountNameOK(resolver, username); err != nil {
 		return nil, err
 	}
-	// The userdb first, and its home is the one every path here resolves
-	// against: a session opens that mailbox, and an operator command must not
-	// open another one under the same name (#2024).
+	// The userdb first: its home is what a session opens, and an operator
+	// command must not open another mailbox under the same name (#2024).
 	var pui *protocol.UserInfo
 	if s.opts.AuthClient != nil {
 		var err error
