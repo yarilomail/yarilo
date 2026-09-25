@@ -35,7 +35,7 @@ func (f *slowFTS) Prepend(_ string, _ fts.MailboxRef, maxUID uint32) error {
 	return nil
 }
 
-func (f *slowFTS) Expunge(string, fts.MailboxRef, uint32) error { return nil }
+func (f *slowFTS) Expunge(string, fts.MailboxRef, uint32, [16]byte) error { return nil }
 
 // Lookup answers as an engine that has the mailbox indexed would: the one
 // message is a definite hit. A fake that matched nothing would let a refusal

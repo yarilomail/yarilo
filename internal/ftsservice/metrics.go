@@ -230,3 +230,10 @@ var metricIndexLockRetry = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fts_index_lock_retry_total",
 	Help: "Index writes retried after the search database reported its own lock held.",
 })
+
+// Retractions refused for naming no message. Non-zero means a caller lost the
+// identity on the way here, which the index cannot make up (#1986).
+var metricExpungeNoGUID = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fts_expunge_no_guid_total",
+	Help: "EXPUNGE requests refused because the message GUID was empty.",
+})

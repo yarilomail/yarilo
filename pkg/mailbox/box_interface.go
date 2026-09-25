@@ -42,7 +42,7 @@ type Box interface {
 	SavePOP3UIDLs(folderID uint64, uidls map[uint32]string) error
 	// HealCorrupt repairs a folder a driver marked and returns the UIDs it
 	// expunged. Zero and nil error when the driver does not heal.
-	HealCorrupt(f *Folder) ([]uint32, error)
+	HealCorrupt(f *Folder) ([]ExpungedCopy, error)
 	// MarkCorruptOnFetchErr flags this folder for a heal when err wraps
 	// ErrCorruptStorage, and reports whether it marked it.
 	MarkCorruptOnFetchErr(folder string, err error) bool

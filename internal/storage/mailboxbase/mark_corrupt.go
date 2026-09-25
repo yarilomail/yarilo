@@ -30,7 +30,7 @@ func (b *Box) MarkCorruptOnFetchErr(folder string, err error) bool {
 
 // HealCorrupt repairs a folder a driver marked, with the index the base owns.
 // A driver that does not heal answers nothing, which is not an error.
-func (b *Box) HealCorrupt(f *mailbox.Folder) ([]uint32, error) {
+func (b *Box) HealCorrupt(f *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
 	rb, ok := mailbox.Driver(b.store).(mailbox.ReactiveHealer)
 	if !ok {
 		return nil, nil

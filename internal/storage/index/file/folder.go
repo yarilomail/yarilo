@@ -1634,17 +1634,19 @@ func (u *userIndex) keywords(folderID uint64) ([]string, error) {
 // A surviving record keeps its own ModSeq, highest_modseq advances to the max
 // carried in, and a record with none is stamped fresh -- a rebuild changing
 // nothing leaves the header untouched, with nothing to signal QRESYNC.
-func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta) ([]uint32, error) {
-	var expunged []uint32
+func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta) ([]mailbox.ExpungedCopy, error) {
+	var expunged []mailbox.ExpungedCopy
 	err := u.withFolderSite(folderID, lockSiteResetFolder, func(fs *folderState) error {
 		highest, err := fs.highestModSeq()
 		if err != nil {
 			return err
 		}
-		// UIDs present before the reset, to diff against the new set.
-		before := make(map[uint32]struct{}, len(fs.file.Records))
+		// What the folder held before the reset, to diff against the new set.
+		// The identity travels with the uid: a dropped record is retracted
+		// from the search index by the message it was (#1986).
+		before := make(map[uint32][16]byte, len(fs.file.Records))
 		for _, rec := range fs.file.Records {
-			before[rec.UID] = struct{}{}
+			before[rec.UID] = decodeGUIDRec(rec.Ext[extNameGUID])
 		}
 
 		fs.file.Records = fs.file.Records[:0]
@@ -1704,9 +1706,9 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 		if err := fs.advanceModSeqAtLeast(maxModseq); err != nil {
 			return err
 		}
-		for uid := range before {
+		for uid, guid := range before {
 			if _, ok := kept[uid]; !ok {
-				expunged = append(expunged, uid)
+				expunged = append(expunged, mailbox.ExpungedCopy{UID: uid, GUID: guid})
 			}
 		}
 		if maxUID >= fs.file.Header.NextUID {
@@ -1753,7 +1755,7 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(expunged, func(i, j int) bool { return expunged[i] < expunged[j] })
+	sort.Slice(expunged, func(i, j int) bool { return expunged[i].UID < expunged[j].UID })
 	return expunged, nil
 }
 

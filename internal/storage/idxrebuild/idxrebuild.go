@@ -23,9 +23,10 @@ type Stats struct {
 	UIDsPreserved  int
 	UIDsAssigned   int
 	OrphansDropped int
-	// ExpungedUIDs are the records dropped by the reset (their file vanished),
-	// so the caller can invalidate their FTS documents.
-	ExpungedUIDs []uint32
+	// ExpungedCopies are the records dropped by the reset (their file
+	// vanished), with the message each was: a search index retracts by the
+	// message, not by the uid (#1986).
+	ExpungedCopies []mailbox.ExpungedCopy
 }
 
 // ExpungeMissing is the reactive-heal counterpart to RebuildFolder: it removes
@@ -39,7 +40,7 @@ type Stats struct {
 // The caller holds the folder's mailbox lock. Orphan files on disk that the
 // index has never seen are NOT imported here — that is corruption repair, not
 // orphan adoption, which belongs to the operator rebuild.
-func ExpungeMissing(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
+func ExpungeMissing(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
 	scanned, err := b.Store().Scan(folder.Name)
 	if err != nil {
 		return nil, fmt.Errorf("idxrebuild/scan: %w", err)
@@ -56,7 +57,7 @@ func ExpungeMissing(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder
 	if err != nil {
 		return nil, fmt.Errorf("idxrebuild/get messages: %w", err)
 	}
-	var expunged []uint32
+	var expunged []mailbox.ExpungedCopy
 	for _, m := range existing {
 		if m.GUID == ([16]byte{}) {
 			continue // a record from before GUIDs: nothing to compare it by
@@ -67,7 +68,7 @@ func ExpungeMissing(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder
 		if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
 			return expunged, fmt.Errorf("idxrebuild/expunge %d: %w", m.UID, err)
 		}
-		expunged = append(expunged, m.UID)
+		expunged = append(expunged, mailbox.ExpungedCopy{UID: m.UID, GUID: m.GUID})
 	}
 	return expunged, nil
 }
@@ -163,7 +164,7 @@ func RebuildFolder(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder)
 	if err != nil {
 		return stats, fmt.Errorf("idxrebuild/reset folder: %w", err)
 	}
-	stats.ExpungedUIDs = expunged
+	stats.ExpungedCopies = expunged
 	return stats, nil
 }
 

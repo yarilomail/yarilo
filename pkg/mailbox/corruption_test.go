@@ -6,7 +6,7 @@ import "testing"
 // method the gating is meant to stop short of panics instead of answering.
 type fakeHealer struct{ UserMailbox }
 
-func (fakeHealer) HealCorruptFolder(Box, UserIndex, *Folder) ([]uint32, error) { return nil, nil }
+func (fakeHealer) HealCorruptFolder(Box, UserIndex, *Folder) ([]ExpungedCopy, error) { return nil, nil }
 
 type plainBox struct{ UserMailbox }
 

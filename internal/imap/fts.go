@@ -379,7 +379,7 @@ func (s *session) buildFTSQuery(criteria *imaplib.SearchCriteria) (fts.Query, *i
 // ftsNotify fires the delivery/expunge hooks toward the yarilo-fts service —
 // best-effort and asynchronous: the index heals via rescan if a hook is lost.
 // Only the folder name travels; the service resolves the rest itself.
-func (s *session) ftsNotify(f *mailbox.Folder, expunged bool, uid uint32) {
+func (s *session) ftsNotify(f *mailbox.Folder, expunged bool, uid uint32, guid [16]byte) {
 	o := s.srv.opts.FTS
 	if o.Client == nil || s.userInfo == nil || f == nil || f.Name == "" {
 		return
@@ -400,7 +400,7 @@ func (s *session) ftsNotify(f *mailbox.Folder, expunged bool, uid uint32) {
 	go func() {
 		var err error
 		if expunged {
-			err = o.Client.Expunge(user, mbox, uid)
+			err = o.Client.Expunge(user, mbox, uid, guid)
 		} else {
 			err = o.Client.Index(user, mbox, uid, o.MaxRecent)
 		}

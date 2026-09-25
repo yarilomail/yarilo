@@ -10,9 +10,9 @@ import (
 // The API answer carries every field the rebuild reports: FilesNormalised went
 // into the driver's stats and not into the response (#1687).
 func TestTheAPIAnswerCarriesEveryRebuildStat(t *testing.T) {
-	// ExpungedUIDs drives the FTS invalidation and is deliberately not in the
-	// answer: it is per-folder detail the caller does not act on.
-	notReported := map[string]bool{"ExpungedUIDs": true}
+	// ExpungedCopies drives the FTS invalidation and is deliberately not in
+	// the answer: it is per-folder detail the caller does not act on.
+	notReported := map[string]bool{"ExpungedCopies": true}
 
 	answer := map[string]bool{}
 	rt := reflect.TypeOf(storageRebuildStats{})

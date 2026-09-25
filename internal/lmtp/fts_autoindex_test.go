@@ -38,8 +38,8 @@ func (r *recordingFTS) seen() []fts.MailboxRef {
 	return append([]fts.MailboxRef(nil), r.refs...)
 }
 
-func (r *recordingFTS) Prepend(string, fts.MailboxRef, uint32) error { return nil }
-func (r *recordingFTS) Expunge(string, fts.MailboxRef, uint32) error { return nil }
+func (r *recordingFTS) Prepend(string, fts.MailboxRef, uint32) error           { return nil }
+func (r *recordingFTS) Expunge(string, fts.MailboxRef, uint32, [16]byte) error { return nil }
 func (r *recordingFTS) Lookup(string, fts.MailboxRef, fts.Query) (fts.Result, error) {
 	return fts.Result{}, nil
 }

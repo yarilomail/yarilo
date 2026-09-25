@@ -157,8 +157,9 @@ func TestServiceEndToEnd(t *testing.T) {
 		t.Fatalf("lookup = %v, want [1 3]", res.Definite)
 	}
 
-	// Expunge is synchronous.
-	if err := svc.Expunge(testUser, testMbox, 1); err != nil {
+	// Expunge is synchronous, and names the message: the index retracts by
+	// identity, not by uid (#1986).
+	if err := svc.Expunge(testUser, testMbox, 1, guidOfUID(t, uidx, 1)); err != nil {
 		t.Fatal(err)
 	}
 	res, err = svc.Lookup(testUser, testMbox, lookupWord("wolv"))
@@ -211,7 +212,7 @@ func TestServiceWireRoundTrip(t *testing.T) {
 	if err != nil || last != 1 || sum == 0 {
 		t.Fatalf("wire status = %d/%d/%v", last, sum, err)
 	}
-	if err := cl.Expunge(testUser, testMbox, 1); err != nil {
+	if err := cl.Expunge(testUser, testMbox, 1, guidOfUID(t, uidx, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := cl.Rescan(testUser, testMbox); err != nil {
@@ -566,4 +567,19 @@ func TestUnparseableMessageIsIndexedAsOpaqueText(t *testing.T) {
 	if len(res.Definite) != 1 {
 		t.Fatalf("lookup = %v, want the message after the unparseable one", res.Definite)
 	}
+}
+
+// guidOfUID reads a message's identity out of the folder's index, the way a
+// session holds it when it expunges.
+func guidOfUID(t *testing.T, uidx mailbox.UserIndex, uid uint32) [16]byte {
+	t.Helper()
+	f, err := uidx.OpenFolder(testMbox.Name, testMbox.UIDValidity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := uidx.GetMessages(f.ID, mailbox.SeqSet{{From: uid, To: uid}})
+	if err != nil || len(msgs) == 0 {
+		t.Fatalf("uid %d: %v", uid, err)
+	}
+	return msgs[0].GUID
 }

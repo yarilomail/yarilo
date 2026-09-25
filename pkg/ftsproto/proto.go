@@ -21,6 +21,7 @@ package ftsproto
 import (
 	"bufio"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,7 +35,9 @@ import (
 )
 
 const (
-	ProtocolVersion = "1"
+	// 2: EXPUNGE carries the message GUID. The index names messages, so a
+	// copy cannot be found from (folder, uid) alone any more (#1986).
+	ProtocolVersion = "2"
 
 	CmdVersion  = "VERSION"
 	CmdIndex    = "INDEX"
@@ -67,7 +70,7 @@ const (
 type Service interface {
 	Index(user string, mbox fts.MailboxRef, maxUID uint32, maxRecent int) error
 	Prepend(user string, mbox fts.MailboxRef, maxUID uint32) error
-	Expunge(user string, mbox fts.MailboxRef, uid uint32) error
+	Expunge(user string, mbox fts.MailboxRef, uid uint32, guid [16]byte) error
 	Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Result, error)
 	Status(user string, mbox fts.MailboxRef) (lastUID, checksum uint32, err error)
 	Rescan(user string, mbox fts.MailboxRef) error
@@ -237,9 +240,9 @@ func (r *Remote) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return err
 }
 
-func (r *Remote) Expunge(user string, m fts.MailboxRef, uid uint32) error {
+func (r *Remote) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
 	f := append([]string{CmdExpunge, user}, MboxFields(m)...)
-	f = append(f, strconv.FormatUint(uint64(uid), 10))
+	f = append(f, strconv.FormatUint(uint64(uid), 10), hex.EncodeToString(guid[:]))
 	_, err := r.call(f...)
 	return err
 }
@@ -294,4 +297,15 @@ func (r *Remote) RescanUser(user string) ([]string, error) {
 func (r *Remote) Optimize(user string) error {
 	_, err := r.call(CmdOptimize, user)
 	return err
+}
+
+// ParseGUID reads a message GUID as the wire spells it: 32 hex characters.
+func ParseGUID(s string) ([16]byte, error) {
+	var out [16]byte
+	raw, err := hex.DecodeString(s)
+	if err != nil || len(raw) != len(out) {
+		return out, fmt.Errorf("ftsproto: bad guid %q", s)
+	}
+	copy(out[:], raw)
+	return out, nil
 }

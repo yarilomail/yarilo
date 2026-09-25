@@ -6,13 +6,14 @@ import (
 	"net/http"
 
 	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // ftsExpunge invalidates FTS documents for UIDs a rebuild dropped.
 // Best-effort: a lost notify heals on the next fts rescan. No-op
 // without an FTS client. One RPC per UID (no batch Expunge yet).
-func (s *Server) ftsExpunge(uc *userContext, folder string, uids []uint32) {
-	if s.opts.FTSClient == nil || len(uids) == 0 {
+func (s *Server) ftsExpunge(uc *userContext, folder string, copies []mailbox.ExpungedCopy) {
+	if s.opts.FTSClient == nil || len(copies) == 0 {
 		return
 	}
 	mbox, err := s.ftsMailboxRef(uc, folder)
@@ -20,9 +21,9 @@ func (s *Server) ftsExpunge(uc *userContext, folder string, uids []uint32) {
 		slog.Warn("backendapi: fts expunge resolve failed", "user", uc.info.Username, "folder", folder, "err", err)
 		return
 	}
-	for _, uid := range uids {
-		if err := s.opts.FTSClient.Expunge(uc.info.Username, mbox, uid); err != nil {
-			slog.Warn("backendapi: fts expunge failed", "user", uc.info.Username, "folder", folder, "uid", uid, "err", err)
+	for _, c := range copies {
+		if err := s.opts.FTSClient.Expunge(uc.info.Username, mbox, c.UID, c.GUID); err != nil {
+			slog.Warn("backendapi: fts expunge failed", "user", uc.info.Username, "folder", folder, "uid", c.UID, "err", err)
 		}
 	}
 }

@@ -31,8 +31,8 @@ var beforeHealScan func()
 // map refcount is not decremented here; the leak is reclaimed by the next
 // rebuild and purge. Lock order is folder then map, the one order the tree
 // takes (#1884); delivery nests neither, writing the body outside the hold.
-func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
-	var expunged []uint32
+func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
+	var expunged []mailbox.ExpungedCopy
 	// Folder then map, as every other path takes them: the other order meets
 	// the expunge path head on, and both locks wait 30s (#1884).
 	err := u.withMailboxLock(folder.Name, func() error {

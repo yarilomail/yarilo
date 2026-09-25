@@ -136,14 +136,27 @@ func dispatch(line string, svc Service) string {
 			slog.Debug("fts: prepended", "user", user, "folder", mbox.Name, "max_uid", maxUID)
 			return replyOK
 		case CmdExpunge:
-			if len(f) != 6 {
+			if len(f) == 6 {
+				// The form without a GUID cannot name the message, and a
+				// retraction that quietly does nothing is an index answering
+				// with deleted mail (#1986).
+				metricExpungeRefused.Inc()
+				slog.Warn("fts: refusing an EXPUNGE without the message guid",
+					"user", user, "folder", mbox.Name, "protocol", ProtocolVersion)
+				return no("EXPUNGE without a message guid: protocol %s is required", ProtocolVersion)
+			}
+			if len(f) != 7 {
 				return no("malformed EXPUNGE")
 			}
 			uid, err := parseU32(f[5])
 			if err != nil {
 				return no("malformed EXPUNGE uid")
 			}
-			if err := svc.Expunge(user, mbox, uid); err != nil {
+			guid, gerr := ParseGUID(f[6])
+			if gerr != nil {
+				return no("malformed EXPUNGE guid")
+			}
+			if err := svc.Expunge(user, mbox, uid, guid); err != nil {
 				slog.Debug("fts: expunge failed", "user", user, "folder", mbox.Name, "uid", uid, "err", err)
 				return noFor(err)
 			}

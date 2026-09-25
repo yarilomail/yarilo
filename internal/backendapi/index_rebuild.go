@@ -120,7 +120,7 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 
 	// Invalidate FTS documents for the dropped records; otherwise they linger as
 	// ghost documents until the next fts rescan.
-	s.ftsExpunge(uc, folder.Name, rstats.ExpungedUIDs)
+	s.ftsExpunge(uc, folder.Name, rstats.ExpungedCopies)
 
 	stats := &rebuildStats{
 		Folder:         folder.Name,
@@ -198,7 +198,7 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 	// Invalidate FTS documents for every record the rebuild dropped, per folder;
 	// otherwise they linger as ghost documents until the next fts rescan.
-	for folderName, uids := range st.ExpungedUIDs {
+	for folderName, uids := range st.ExpungedCopies {
 		s.ftsExpunge(uc, folderName, uids)
 	}
 

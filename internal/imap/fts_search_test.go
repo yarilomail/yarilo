@@ -29,8 +29,11 @@ type fakeFTS struct {
 	lastUID   uint32
 	prepends  int
 	expunges  []uint32
-	indexes   []uint32
-	queries   []fts.Query
+	// expungedGUIDs is what each retraction named: the index retracts by the
+	// message, so an empty one is a caller that lost it (#1986).
+	expungedGUIDs [][16]byte
+	indexes       []uint32
+	queries       []fts.Query
 	// stuck models a broken FTS backend that never advances its checkpoint, even
 	// after a PREPEND — the #629 failure mode.
 	stuck bool
@@ -53,10 +56,11 @@ func (f *fakeFTS) Prepend(_ string, _ fts.MailboxRef, maxUID uint32) error {
 	return nil
 }
 
-func (f *fakeFTS) Expunge(_ string, _ fts.MailboxRef, uid uint32) error {
+func (f *fakeFTS) Expunge(_ string, _ fts.MailboxRef, uid uint32, guid [16]byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.expunges = append(f.expunges, uid)
+	f.expungedGUIDs = append(f.expungedGUIDs, guid)
 	return nil
 }
 
@@ -566,5 +570,57 @@ func TestSearchDisabledFallsBackToScanWithoutTouchingFTS(t *testing.T) {
 	defer fake.mu.Unlock()
 	if len(fake.queries) != 0 {
 		t.Fatalf("FTS Lookup called %d times, want 0 — fts_search=false must bypass FTS entirely", len(fake.queries))
+	}
+}
+
+// Every retraction names the message, whichever command produced it: EXPUNGE
+// and MOVE both carry the source record's own GUID (#1986).
+func TestRetractionsNameTheMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, c *imapclient.Client)
+	}{
+		{"expunge", func(t *testing.T, c *imapclient.Client) {
+			if err := c.Store(imap.SeqSetNum(1),
+				&imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}}, nil).Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Expunge().Close(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"move", func(t *testing.T, c *imapclient.Client) {
+			if err := c.Create("Archive", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Move(imap.SeqSetNum(1), "Archive").Wait(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeFTS{lastUID: 100}
+			c := startFTSTestServer(t, fake, true)
+			appendBody(t, c, "a message with an identity")
+			if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+			tc.run(t, c)
+
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				fake.mu.Lock()
+				got := append([][16]byte(nil), fake.expungedGUIDs...)
+				fake.mu.Unlock()
+				if len(got) > 0 {
+					if got[0] == ([16]byte{}) {
+						t.Fatalf("%s retracted uid without naming the message", tc.name)
+					}
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			t.Fatalf("%s fired no retraction", tc.name)
+		})
 	}
 }

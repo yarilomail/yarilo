@@ -16,7 +16,7 @@ func TestResetFolderPreservesModSeq(t *testing.T) {
 
 	for i := uint32(1); i <= 3; i++ {
 		modseq, _ := b.NextModSeq(f.ID)
-		m := &mailbox.MessageMeta{UID: i, ModSeq: modseq}
+		m := &mailbox.MessageMeta{UID: i, ModSeq: modseq, GUID: [16]byte{byte(i)}}
 		if err := b.AppendMessage(f.ID, m); err != nil {
 			t.Fatalf("append uid=%d: %v", i, err)
 		}
@@ -40,8 +40,13 @@ func TestResetFolderPreservesModSeq(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResetFolder: %v", err)
 	}
-	if len(expunged) != 1 || expunged[0] != 2 {
-		t.Fatalf("expunged = %v, want [2]", expunged)
+	// The identity travels with the uid: a search index retracts by the
+	// message, and a dropped record names one (#1986).
+	if len(expunged) != 1 || expunged[0].UID != 2 {
+		t.Fatalf("expunged = %v, want uid 2", expunged)
+	}
+	if expunged[0].GUID == ([16]byte{}) {
+		t.Error("the dropped record names no message, so nothing can retract its document")
 	}
 
 	after, _ := b.GetMessages(f.ID, mailbox.SeqSet{})

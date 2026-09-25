@@ -133,8 +133,8 @@ type userMailbox struct {
 // Returns the expunged UIDs (the heal count) so the caller can invalidate their
 // FTS documents. Called by the IMAP session when a folder carries the persisted
 // FSCKD marker.
-func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
-	var expunged []uint32
+func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
+	var expunged []mailbox.ExpungedCopy
 	err := u.withMailboxLock(folder.Name, func() error {
 		var e error
 		expunged, e = idxrebuild.ExpungeMissing(box, idx, folder)
