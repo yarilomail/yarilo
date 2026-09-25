@@ -9,10 +9,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/fts"
 )
 
-// A retraction that names no message is refused, counted and logged. Once the
-// index stops keeping a term per copy it cannot be carried out at all, and a
-// caller that lost the identity must find out here rather than from an index
-// answering with deleted mail (#1986).
+// A retraction that names no message is refused, counted and logged: the index
+// is about to keep no term per copy, so it could not be carried out (#1986).
 func TestExpungeWithoutAMessageIsRefused(t *testing.T) {
 	svc := &Service{}
 	before := testutil.ToFloat64(metricExpungeNoGUID)

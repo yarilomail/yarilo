@@ -235,5 +235,5 @@ var metricIndexLockRetry = promauto.NewCounter(prometheus.CounterOpts{
 // identity on the way here, which the index cannot make up (#1986).
 var metricExpungeNoGUID = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fts_expunge_no_guid_total",
-	Help: "EXPUNGE requests refused because the message GUID was empty.",
+	Help: "EXPUNGE requests refused because the message GUID was empty. Non-zero on an index whose records predate GUIDs: those documents go by rescan.",
 })

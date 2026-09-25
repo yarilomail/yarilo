@@ -210,6 +210,12 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 
 // imapSieveExpunge removes the message from its current mailbox.
 func (s *session) imapSieveExpunge(h *nsHandle, rel string, folder *mailbox.Folder, uid uint32, filename string) {
+	// Read the identity while the record is still there: the retraction names
+	// the message, and after the expunge nothing can resolve the uid (#1986).
+	var guid [16]byte
+	if msgs, err := h.idx.GetMessages(folder.ID, mailbox.SeqSet{{From: uid, To: uid}}); err == nil && len(msgs) > 0 {
+		guid = msgs[0].GUID
+	}
 	_ = h.box.Remove(rel, filename)
 	if err := h.idx.ExpungeMessage(folder.ID, uid); err != nil {
 		slog.Warn("imapsieve: expunge", "folder", rel, "uid", uid, "err", err)
@@ -221,5 +227,5 @@ func (s *session) imapSieveExpunge(h *nsHandle, rel string, folder *mailbox.Fold
 	// account-wide sweep, and this path runs per Sieve rule, not per client
 	// expunge. Getting a size would mean reading the record back after removing
 	// it.
-	s.emitMailboxChange(folder, locks.EventExpunged, uid)
+	s.emitMailboxChangeSized(folder, locks.EventExpunged, uid, 0, guid)
 }

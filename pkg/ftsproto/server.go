@@ -137,9 +137,8 @@ func dispatch(line string, svc Service) string {
 			return replyOK
 		case CmdExpunge:
 			if len(f) == 6 {
-				// The form without a GUID cannot name the message, and a
-				// retraction that quietly does nothing is an index answering
-				// with deleted mail (#1986).
+				// This form names no message, and a retraction that quietly
+				// does nothing is an index answering deleted mail (#1986).
 				metricExpungeRefused.Inc()
 				slog.Warn("fts: refusing an EXPUNGE without the message guid",
 					"user", user, "folder", mbox.Name, "protocol", ProtocolVersion)

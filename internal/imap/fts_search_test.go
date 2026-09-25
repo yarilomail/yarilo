@@ -589,6 +589,12 @@ func TestRetractionsNameTheMessage(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{"rename inbox", func(t *testing.T, c *imapclient.Client) {
+			// RENAME INBOX moves its messages out and retracts them from it.
+			if err := c.Rename("INBOX", "Kept", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+		}},
 		{"move", func(t *testing.T, c *imapclient.Client) {
 			if err := c.Create("Archive", nil).Wait(); err != nil {
 				t.Fatal(err)

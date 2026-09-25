@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/internal/auth/authtest"
 
@@ -30,7 +31,7 @@ if environment :is "imap.cause" "APPEND" { fileinto :create "Archive"; }
 
 // startImapSieveClient brings up an IMAP server with imapsieve enabled and a
 // single admin script ("act") available for binding via METADATA.
-func startImapSieveClient(t *testing.T) *imapclient.Client {
+func startImapSieveClient(t *testing.T, ftsClient ...*fakeFTS) *imapclient.Client {
 	t.Helper()
 	scriptDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(scriptDir, "act.sieve"), []byte(imapSieveScript), 0o600); err != nil {
@@ -47,14 +48,20 @@ func startImapSieveClient(t *testing.T) *imapclient.Client {
 	}
 	t.Cleanup(func() { _ = md.Close() })
 
-	srv := imapserver.New(imapserver.Options{
+	opts := imapserver.Options{
 		Mailbox:      maildir.New(),
 		Index:        file.New(),
 		Resolver:     &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
 		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		MetadataDict: md,
 		SieveEngine:  eng,
-	})
+	}
+	if len(ftsClient) > 0 {
+		opts.FTS = imapserver.FTSOptions{
+			Client: ftsClient[0], Autoindex: true, SearchEnabled: true, Timeout: 3 * time.Second,
+		}
+	}
+	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -186,4 +193,28 @@ func TestImapSieveCopyRefiles(t *testing.T) {
 	if n := numMessages(t, c, "Quarantine"); n != 1 {
 		t.Errorf("Quarantine has %d messages, want 1", n)
 	}
+}
+
+// A Sieve rule that refiles the message retracts the source, and that
+// retraction names the message like every other one (#1986).
+func TestImapSieveRetractionNamesTheMessage(t *testing.T) {
+	fake := &fakeFTS{lastUID: 100}
+	c := startImapSieveClient(t, fake)
+	bindImapSieve(t, c, "INBOX")
+	appendTo(t, c, "INBOX")
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		fake.mu.Lock()
+		got := append([][16]byte(nil), fake.expungedGUIDs...)
+		fake.mu.Unlock()
+		if len(got) > 0 {
+			if got[0] == ([16]byte{}) {
+				t.Fatal("the sieve rule retracted the source without naming the message")
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the sieve rule fired no retraction")
 }

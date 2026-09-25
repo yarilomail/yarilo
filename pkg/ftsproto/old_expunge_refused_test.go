@@ -7,9 +7,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// A client speaking the form without a message GUID is refused by name and
-// counted: during a rollout both versions run, and a retraction that quietly
-// did nothing would leave the index answering with deleted mail (#1986).
+// The form without a message GUID is refused by name and counted: a retraction
+// that quietly did nothing leaves the index answering deleted mail (#1986).
 func TestTheOldExpungeFormIsRefusedAndCounted(t *testing.T) {
 	before := testutil.ToFloat64(metricExpungeRefused)
 	svc := &stubService{}

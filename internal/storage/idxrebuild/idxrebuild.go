@@ -23,9 +23,8 @@ type Stats struct {
 	UIDsPreserved  int
 	UIDsAssigned   int
 	OrphansDropped int
-	// ExpungedCopies are the records dropped by the reset (their file
-	// vanished), with the message each was: a search index retracts by the
-	// message, not by the uid (#1986).
+	// ExpungedCopies are the records the reset dropped (their file vanished),
+	// each with the message it was: a search index retracts by that (#1986).
 	ExpungedCopies []mailbox.ExpungedCopy
 }
 

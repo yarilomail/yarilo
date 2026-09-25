@@ -1641,9 +1641,8 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 		if err != nil {
 			return err
 		}
-		// What the folder held before the reset, to diff against the new set.
-		// The identity travels with the uid: a dropped record is retracted
-		// from the search index by the message it was (#1986).
+		// What the folder held before the reset, with each record's identity:
+		// a dropped one is retracted from the search index by it (#1986).
 		before := make(map[uint32][16]byte, len(fs.file.Records))
 		for _, rec := range fs.file.Records {
 			before[rec.UID] = decodeGUIDRec(rec.Ext[extNameGUID])
