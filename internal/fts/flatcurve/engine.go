@@ -872,6 +872,89 @@ func dropCopy(w *xapian.WDB, folderGUID string, uid uint32) (bool, error) {
 
 // DocCount is the read side of the user's index: the shards opened read-only,
 // so an operator count never takes the write handle a writer wants (#2017).
+// DropFolder retracts a deleted mailbox: every document it names loses its
+// terms, and a document no folder names any more goes with them (#2022).
+func (u *userIndex) DropFolder(mbox fts.MailboxRef) error {
+	return u.dropFolders(func(folderGUID string) bool { return folderGUID == mbox.GUID })
+}
+
+// DropOrphanFolders is the healing half: a folder term naming a mailbox the
+// account no longer has is one a deletion never reached (#2022).
+func (u *userIndex) DropOrphanFolders(live []string) (int, error) {
+	alive := make(map[string]struct{}, len(live))
+	for _, g := range live {
+		alive[g] = struct{}{}
+	}
+	dropped := 0
+	err := u.dropFolders(func(folderGUID string) bool {
+		_, ok := alive[folderGUID]
+		if !ok {
+			dropped++
+		}
+		return !ok
+	})
+	return dropped, err
+}
+
+func (u *userIndex) dropFolders(drop func(folderGUID string) bool) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	st := u.state()
+	if err := st.closeCurrent(); err != nil {
+		return err
+	}
+	paths, err := shardPaths(st.dir)
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		if err := dropFoldersInShard(p, drop); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dropFoldersInShard(path string, drop func(folderGUID string) bool) error {
+	// The ids come from a read-only open: a writer has no enumeration of its
+	// own, and this walk visits every document, not one term's postings.
+	db, err := xapian.OpenDBMulti([]string{path})
+	if err != nil || db == nil {
+		return err
+	}
+	ids, err := db.DocIDs()
+	db.Close()
+	if err != nil {
+		return err
+	}
+	w, err := xapian.OpenWDB(path)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	changed := false
+	for _, id := range ids {
+		folders, terr := w.DocTerms(id, termFolder)
+		if terr != nil {
+			return terr
+		}
+		for _, t := range folders {
+			guid := strings.TrimPrefix(t, termFolder)
+			if !drop(guid) {
+				continue
+			}
+			if derr := dropFolderFromDoc(w, id, guid); derr != nil {
+				return derr
+			}
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return w.Commit()
+}
+
 func (u *userIndex) DocCount() (uint64, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()

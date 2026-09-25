@@ -32,8 +32,11 @@ type fakeFTS struct {
 	// expungedGUIDs is what each retraction named: the index retracts by the
 	// message, so an empty one is a caller that lost it (#1986).
 	expungedGUIDs [][16]byte
-	indexes       []uint32
-	queries       []fts.Query
+	// droppedFolders is what DELETE retracted: a deleted mailbox that never
+	// reaches the index keeps its documents forever (#2022).
+	droppedFolders []string
+	indexes        []uint32
+	queries        []fts.Query
 	// stuck models a broken FTS backend that never advances its checkpoint, even
 	// after a PREPEND — the #629 failure mode.
 	stuck bool
@@ -75,6 +78,13 @@ func (f *fakeFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lastUID, 1, nil
+}
+
+func (f *fakeFTS) DropFolder(_ string, m fts.MailboxRef) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.droppedFolders = append(f.droppedFolders, m.Name)
+	return nil
 }
 
 func (f *fakeFTS) Rescan(string, fts.MailboxRef) error           { return nil }

@@ -124,6 +124,10 @@ func (l *Lazy) Counts(user string) (uint64, uint64, uint64, error) {
 	return docs, copies, messages, err
 }
 
+func (l *Lazy) DropFolder(user string, m fts.MailboxRef) error {
+	return l.do(func(c *Remote) error { return c.DropFolder(user, m) })
+}
+
 func (l *Lazy) Rescan(user string, m fts.MailboxRef) error {
 	return l.do(func(c *Remote) error { return c.Rescan(user, m) })
 }

@@ -125,3 +125,5 @@ func TestAutoindexSkipsAFolderWithoutGUID(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+func (r *recordingFTS) DropFolder(string, fts.MailboxRef) error { return nil }

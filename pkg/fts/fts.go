@@ -118,6 +118,10 @@ type UserIndex interface {
 	// DocCount is how many documents the user's index holds, read-only. One
 	// document is one message, so after a reconcile it equals the live ones.
 	DocCount() (uint64, error)
+	// DropFolder retracts a deleted mailbox; DropOrphanFolders retracts every
+	// folder term naming a mailbox not in live, and reports how many went.
+	DropFolder(mbox MailboxRef) error
+	DropOrphanFolders(live []string) (int, error)
 	// Mailboxes lists the user's mailboxes this handle has open. Whole-user
 	// optimize is expressed as a loop over these under each mailbox's OWN
 	// lock, rather than as a second optimize entry point: a user-keyed lock

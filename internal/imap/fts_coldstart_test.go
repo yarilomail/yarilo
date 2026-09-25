@@ -104,3 +104,5 @@ func TestSearchGivesUpOnAnIndexerThatNeverStarts(t *testing.T) {
 		t.Errorf("a broken indexer held the client for %v: the early exit is gone", elapsed)
 	}
 }
+
+func (f *slowFTS) DropFolder(string, fts.MailboxRef) error { return nil }
