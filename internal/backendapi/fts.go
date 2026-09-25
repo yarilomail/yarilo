@@ -64,6 +64,10 @@ type ftsStatusResponse struct {
 	Folder           string `json:"folder"`
 	LastIndexedUID   uint32 `json:"last_indexed_uid"`
 	SettingsChecksum uint32 `json:"settings_checksum"`
+	// Whole-user, not per folder: one index holds every folder now (#1986).
+	Documents uint64 `json:"documents"`
+	Copies    uint64 `json:"copies"`
+	Messages  uint64 `json:"messages"`
 }
 
 // handleFTSStatus reports the per-mailbox indexing checkpoint.
@@ -99,9 +103,15 @@ func (s *Server) handleFTSStatus(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "fts status: "+err.Error(), http.StatusBadGateway)
 		return
 	}
+	docs, copies, messages, err := s.opts.FTSClient.Counts(user)
+	if err != nil {
+		apiError(w, "fts status: "+err.Error(), http.StatusBadGateway)
+		return
+	}
 	apiJSON(w, ftsStatusResponse{
 		User: user, Folder: folder,
 		LastIndexedUID: last, SettingsChecksum: checksum,
+		Documents: docs, Copies: copies, Messages: messages,
 	})
 }
 

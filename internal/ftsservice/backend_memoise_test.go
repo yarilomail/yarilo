@@ -88,6 +88,7 @@ func (stubUserIndex) BeginUpdate(fts.MailboxRef) (fts.Update, error)            
 func (stubUserIndex) Expunge(fts.MailboxRef, uint32) error                       { return nil }
 func (stubUserIndex) Rescan(fts.MailboxRef, []fts.Copy) ([]uint32, error)        { return nil, nil }
 func (stubUserIndex) Mailboxes() []fts.MailboxRef                                { return nil }
+func (stubUserIndex) DocCount() (uint64, error)                                  { return 0, nil }
 func (stubUserIndex) OptimizeMailbox(fts.MailboxRef) error                       { return nil }
 func (stubUserIndex) Refresh() error                                             { return nil }
 func (stubUserIndex) Lookup([]string, fts.Query) (fts.Result, error)             { return fts.Result{}, nil }

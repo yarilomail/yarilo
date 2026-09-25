@@ -77,10 +77,11 @@ func (f *fakeFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 	return f.lastUID, 1, nil
 }
 
-func (f *fakeFTS) Rescan(string, fts.MailboxRef) error { return nil }
-func (f *fakeFTS) RescanUser(string) ([]string, error) { return nil, nil }
-func (f *fakeFTS) Optimize(string) error               { return nil }
-func (f *fakeFTS) Close() error                        { return nil }
+func (f *fakeFTS) Rescan(string, fts.MailboxRef) error           { return nil }
+func (f *fakeFTS) RescanUser(string) ([]string, error)           { return nil, nil }
+func (f *fakeFTS) Counts(string) (uint64, uint64, uint64, error) { return 0, 0, 0, nil }
+func (f *fakeFTS) Optimize(string) error                         { return nil }
+func (f *fakeFTS) Close() error                                  { return nil }
 
 func startFTSTestServer(t *testing.T, fake *fakeFTS, autoindex bool) *imapclient.Client {
 	t.Helper()

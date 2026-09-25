@@ -10,6 +10,7 @@
 //	> LOOKUP\t<user>\t<folder>\t<guid>\t<uidvalidity>\t<query-b64json>\n
 //	> STATUS\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
 //	> RESCAN\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
+//	> COUNTS\t<user>\n
 //	> OPTIMIZE\t<user>\n
 //	< OK[\t<payload>]\n | NO\t<message>\n | NO\t<code>\t<message>\n
 //
@@ -50,6 +51,9 @@ const (
 	// Whole-user rescan: one hold for every folder, rather than one call and
 	// one hold per folder (#1986).
 	CmdRescanUser = "RESCANUSER"
+	// Operator counts for one user. A command of its own, so an old server
+	// answers NO rather than a field an old client would misread (#2021).
+	CmdCounts = "COUNTS"
 
 	replyOK = "OK"
 	replyNO = "NO"
@@ -75,6 +79,7 @@ type Service interface {
 	Status(user string, mbox fts.MailboxRef) (lastUID, checksum uint32, err error)
 	Rescan(user string, mbox fts.MailboxRef) error
 	RescanUser(user string) ([]string, error)
+	Counts(user string) (docs, copies, messages uint64, err error)
 	Optimize(user string) error
 }
 
@@ -292,6 +297,26 @@ func (r *Remote) RescanUser(user string) ([]string, error) {
 		return nil, nil
 	}
 	return strings.Split(payload, "\t"), nil
+}
+
+func (r *Remote) Counts(user string) (uint64, uint64, uint64, error) {
+	payload, err := r.call(CmdCounts, user)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	f := strings.Split(payload, "\t")
+	if len(f) != 3 {
+		return 0, 0, 0, fmt.Errorf("ftsproto: bad COUNTS payload %q", payload)
+	}
+	var out [3]uint64
+	for i, v := range f {
+		n, perr := strconv.ParseUint(v, 10, 64)
+		if perr != nil {
+			return 0, 0, 0, fmt.Errorf("ftsproto: bad COUNTS payload %q", payload)
+		}
+		out[i] = n
+	}
+	return out[0], out[1], out[2], nil
 }
 
 func (r *Remote) Optimize(user string) error {

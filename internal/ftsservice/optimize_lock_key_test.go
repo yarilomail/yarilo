@@ -23,6 +23,7 @@ type boxesIndex struct {
 }
 
 func (i *boxesIndex) Mailboxes() []fts.MailboxRef { return i.boxes }
+func (i *boxesIndex) DocCount() (uint64, error)   { return 0, nil }
 func (i *boxesIndex) OptimizeMailbox(m fts.MailboxRef) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()

@@ -53,10 +53,11 @@ func (f *slowFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 	return f.maxUID, 1, nil
 }
 
-func (f *slowFTS) Rescan(string, fts.MailboxRef) error { return nil }
-func (f *slowFTS) RescanUser(string) ([]string, error) { return nil, nil }
-func (f *slowFTS) Optimize(string) error               { return nil }
-func (f *slowFTS) Close() error                        { return nil }
+func (f *slowFTS) Rescan(string, fts.MailboxRef) error           { return nil }
+func (f *slowFTS) RescanUser(string) ([]string, error)           { return nil, nil }
+func (f *slowFTS) Counts(string) (uint64, uint64, uint64, error) { return 0, 0, 0, nil }
+func (f *slowFTS) Optimize(string) error                         { return nil }
+func (f *slowFTS) Close() error                                  { return nil }
 
 // TestSearchOnColdAccountWaitsForTheFirstIndex is #1379: the first touch of an
 // account nobody has used for a while was refused with "Mailbox is still being

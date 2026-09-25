@@ -114,6 +114,16 @@ func (l *Lazy) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	return last, sum, err
 }
 
+func (l *Lazy) Counts(user string) (uint64, uint64, uint64, error) {
+	var docs, copies, messages uint64
+	err := l.do(func(c *Remote) error {
+		var e error
+		docs, copies, messages, e = c.Counts(user)
+		return e
+	})
+	return docs, copies, messages, err
+}
+
 func (l *Lazy) Rescan(user string, m fts.MailboxRef) error {
 	return l.do(func(c *Remote) error { return c.Rescan(user, m) })
 }

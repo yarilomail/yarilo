@@ -870,6 +870,33 @@ func dropCopy(w *xapian.WDB, folderGUID string, uid uint32) (bool, error) {
 	return true, w.ReplaceDocument(ids[0], doc)
 }
 
+// DocCount is the read side of the user's index: the shards opened read-only,
+// so an operator count never takes the write handle a writer wants (#2017).
+func (u *userIndex) DocCount() (uint64, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	st := u.state()
+	// A read never commits: the documents of an update in flight belong to it
+	// until it says so, and committing them here keeps half its batch (#2021).
+	if st.pending > 0 {
+		return 0, fmt.Errorf("fts/flatcurve: a batch is in flight; count after it commits")
+	}
+	paths, err := shardPaths(st.dir)
+	if err != nil {
+		return 0, err
+	}
+	db, err := xapian.OpenDBMulti(paths)
+	if err != nil || db == nil {
+		return 0, err
+	}
+	defer db.Close()
+	ids, err := db.DocIDs()
+	if err != nil {
+		return 0, err
+	}
+	return uint64(len(ids)), nil
+}
+
 func (u *userIndex) Rescan(mbox fts.MailboxRef, present []fts.Copy) ([]uint32, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
