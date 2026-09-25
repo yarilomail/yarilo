@@ -5,7 +5,6 @@ package ftsservice
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -88,5 +87,3 @@ func TestExpungeIgnoresTheCopyItNames(t *testing.T) {
 		t.Errorf("INBOX answers %v/%v for the copy just retracted", res.Definite, res.Maybe)
 	}
 }
-
-var _ = fts.MailboxRef{}
