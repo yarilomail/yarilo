@@ -225,6 +225,9 @@ type NamespaceSpec struct {
 	Separator rune
 	List      ListMode
 	Location  string
+	// Inbox marks the namespace that owns INBOX: it is the primary, and its
+	// location says only which driver, as the personal store always has.
+	Inbox bool
 	// IgnoreACL bypasses ACL enforcement for this namespace (rights not
 	// checked, no lookup-right LIST hiding) even when ACL is enabled.
 	IgnoreACL bool
