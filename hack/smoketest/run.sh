@@ -20,6 +20,43 @@ if [ -z "$TAG" ] || [ "$TAG" = "__IMAGE_TAG__" ]; then
 fi
 
 echo "smoketest image tag: $TAG"
+
+# A rollout that finished is not a backend a client can reach: backend-reg
+# withholds its heartbeat until every protocol answers, and a run started in
+# that window reports "backend unavailable" about readiness, not about code.
+READY_TIMEOUT="${SMOKE_READY_TIMEOUT:-180}"
+BACKEND_LABEL="${SMOKE_BACKEND_LABEL:-app.kubernetes.io/component=backend}"
+waited=0
+while :; do
+  pods=$(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" \
+           -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+  # No pod is not "every pod is ready": a wrong label or namespace would
+  # otherwise skip the wait silently and report readiness as a broken build.
+  if [ -z "$pods" ]; then
+    echo "smoketest: no pod matches $BACKEND_LABEL in namespace $NAMESPACE" >&2
+    exit 1
+  fi
+  missing=""
+  for pod in $pods; do
+    # A pod still starting refuses the exec, and that is a pod to wait for,
+    # not a reason to end the script under set -e.
+    body=$(kubectl -n "$NAMESPACE" exec "$pod" -c yarilo-backend-reg -- \
+             sh -c 'wget -qO- http://127.0.0.1:8080/readyz 2>/dev/null' 2>/dev/null || true)
+    case "$body" in
+      *'"ready":true'*) ;;
+      *) missing="$missing $pod" ;;
+    esac
+  done
+  [ -z "$missing" ] && break
+  if [ "$waited" -ge "$READY_TIMEOUT" ]; then
+    echo "smoketest: backends still not ready after ${READY_TIMEOUT}s:$missing" >&2
+    exit 1
+  fi
+  sleep 5
+  waited=$((waited + 5))
+done
+[ "$waited" -gt 0 ] && echo "smoketest: waited ${waited}s for the backends to report ready"
+
 kubectl -n "$NAMESPACE" delete job smoketest --ignore-not-found
 sed "s|__IMAGE_TAG__|${TAG}|" "$(dirname "$0")/job.yaml" | kubectl -n "$NAMESPACE" apply -f -
 kubectl -n "$NAMESPACE" wait --for=condition=complete --timeout=300s job/smoketest
