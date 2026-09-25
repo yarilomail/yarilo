@@ -68,6 +68,38 @@ walks, what each kind of walk cost, the reconcile per login, and the cache
 counters. A counter that is collected and never printed is a number nobody
 reads, so every metric the arm scrapes has a line.
 
+A line that cannot be read back to its counter is the same waste one step
+later: a window report once called a metric missing that was printed under
+another name. What the summary fields are made of:
+
+| summary field | metric |
+|:--|:--|
+| `logins`, `stalls` | the imaptest log, not a metric |
+| `sessions (peak)`, `<ip>=<n>` | the session spread samples, not a metric |
+| `walks: full` / `partial` / `untokened` | `imap_maildir_sync_total{result="scanned"}`, `{result="scanned-partial"}`, `{result="scanned-untokened"}` |
+| `walks: first-seen` | the same counter with `reason="first-seen"` and `result="scanned"`; 20 accounts log in per run, so anything outside 20-21 is a different start |
+| `walks: partial_share` / `cold_share` | partial over all walks; first-seen over full walks |
+| `walk cost: full_ms` / `partial_ms` | `imap_maildir_sync_seconds_sum` over `_count`, per result |
+| `walk cost: partial_empty` `of` | `maildir_partial_pass_empty_total` over the partial walk count |
+| `reconcile: scanned` / `partial` / `skipped` | `imap_maildir_sync_total{result=...}`, the same counter summed without the first-seen split |
+| `reconcile: folders_opened` | `quota_folders_opened_total` |
+| `listing: list_whole` / `list_tail` | `maildir_uidlist_read_total{mode=...}` |
+| `listing: dir_name` / `dir_scan` / `dir_remove` | `maildir_dir_read_total{reason=...}` |
+| `listing: miss_none` / `miss_stale` | `maildir_listing_miss_total{reason=...}` |
+| `listing: retry_path` / `retry_rename` | `maildir_listing_retry_total{at=...}` |
+| `listing: stat_dir` / `stat_list` | `maildir_cache_stat_total{what=...}` |
+| `listing: shut_own` / `shut_expunge` / `shut_other` | `maildir_window_closed_total{by=...}` |
+| `listing: stamp_hit` / `stamp_miss` | `maildir_uidlist_stamp_hit_total`, `..._miss_total` |
+| `listing: stamp_same` | `fileindex_maildir_stamp_unchanged_total` |
+| `guid store: rebuilt` / `stale` / `image_built` | `fileindex_guid_store_rebuilt_total`, `..._stale_total`, `fileindex_guid_image_built_total` |
+| `cache: crc_mismatch` | `index_cache_record_crc_mismatch_total` |
+| `cache: bodies_opened`, `opens_per_login` | `mailbox_message_opened_total` |
+| `cache: journal_write_failed` | `fileindex_journal_write_failed_total` |
+| `cache: store_write_failed` | `mailbox_write_failed_total` |
+
+The `*_per_login` figures are the field divided by that arm's login count, which
+is the only unit that compares two arms of different lengths.
+
 The CPU profile is taken on every arm; the block profile only under the
 profiling overlay, because a pod that accounts for every blocking operation is
 not the pod the other arm is.
