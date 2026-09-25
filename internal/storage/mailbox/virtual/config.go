@@ -37,9 +37,8 @@ type Box struct {
 	// by name ("/entry:value"); such a line carries no wildcards either.
 	MetadataEntry string
 	MetadataValue string
-	// Search is the IMAP SEARCH text that applies to this box, "" for none.
-	// Kept as text: the parser SEARCH uses is unexported upstream, so a bad
-	// rule is refused when it is first run, not when it is read (#2034).
+	// Search is the IMAP SEARCH text for this box, kept as text: the parser
+	// SEARCH uses is unexported upstream, so a bad rule fails on first run.
 	Search string
 }
 
