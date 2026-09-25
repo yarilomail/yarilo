@@ -715,9 +715,8 @@ func (up *update) joinInSealedShard(st *mboxState) (bool, error) {
 	return false, nil
 }
 
-// joinCopy names the copy's folder on the document that already holds the
-// message. A second copy in the same folder adds nothing: the document is the
-// message, and the folder is already named (#1986).
+// joinCopy names the copy's folder on the message's document; a second copy in
+// the same folder adds nothing, the folder being named already (#1986).
 func joinCopy(w *xapian.WDB, id uint32, folderGUID string) error {
 	stored, gerr := w.GetDocument(id)
 	if gerr != nil {
@@ -787,9 +786,8 @@ func (up *update) Rollback() error {
 
 /* --- expunge / rescan / optimize -------------------------------------------- */
 
-// Expunge retracts one copy by the message it was. inFolder says the folder
-// still holds another copy of it, anywhere that some folder does: without a
-// per-copy term the store is what knows (#1986).
+// Expunge retracts one copy by the message it was; without a per-copy term the
+// store is what says whether this folder, or any, still holds one (#1986).
 func (u *userIndex) Expunge(mbox fts.MailboxRef, guid [16]byte, inFolder, anywhere bool) error {
 	if inFolder {
 		// Another copy of the same message is still in this folder, so the
