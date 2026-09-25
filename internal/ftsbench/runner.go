@@ -41,9 +41,8 @@ type Config struct {
 	Corpus     int
 	HitEvery   int
 	Iterations int // SEARCH repetitions for the latency percentiles
-	// CopyEvery puts a copy of one message in N into a second folder. A copy
-	// is where the schemes differ: one document with another folder's terms,
-	// against a second document in that folder's own index.
+	// CopyEvery copies one message in N into a second folder, which is where
+	// the two schemes differ: one document with its terms, or a second one.
 	CopyEvery int
 }
 
@@ -275,9 +274,8 @@ func makeCopies(cfg Config, box mailbox.UserMailbox, mbox mailbox.Box, uidx mail
 			return 0, terr
 		}
 	}
-	// Re-read after the first open: the folder adopts the uid space the
-	// uidlist records, and a checkpoint under another UIDVALIDITY reads as
-	// "not indexed" (ftsservice/service.go:540).
+	// The folder adopts the uidlist's uid space on first open, and a checkpoint
+	// under another UIDVALIDITY reads as "not indexed" (ftsservice/service.go:540).
 	if settled, ferr := mbox.Folder(benchCopies.Name, 0); ferr == nil {
 		benchCopies.UIDValidity = settled.UIDValidity
 	}
