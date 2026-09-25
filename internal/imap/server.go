@@ -510,6 +510,9 @@ type session struct {
 	// inboxGUID* caches the INBOX identity for server-wide annotations.
 	inboxGUIDVal [16]byte
 	inboxGUIDOK  bool
+	// backingOf maps a selected virtual mailbox's backing ids to the folders
+	// they name, built once per selection rather than once per message.
+	backingOf map[uint32]backingFolder
 	// liveRelay is a relayed SASL exchange this session started; cancelled on
 	// teardown so an aborted AUTHENTICATE frees the service's half at once.
 	liveRelay *authrelay.RelayServer
@@ -1244,6 +1247,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 	s.folder = f
 	s.folderNS = h
+	s.backingOf = nil // another selection, another set of backing folders
 	// seed a usage baseline so a quota_warning "under" crossing fires even
 	// when the session only deletes mail.
 	s.seedQuotaWarnSnap()
@@ -2767,7 +2771,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 // -- a message nobody looked at is not a message that matched.
 func (s *session) matchMessage(seqNum uint32, m *mailbox.MessageMeta, criteria *imaplib.SearchCriteria, needRaw bool) (bool, []byte, error) {
 	var rawMsg []byte
-	if needRaw && s.folderMailbox().Readable(m) {
+	if needRaw && s.readableSelected(m) {
 		rc, err := s.fetchSelected(m)
 		if err == nil {
 			rawMsg, err = io.ReadAll(rc)
@@ -2816,7 +2820,17 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 
 	// Full-text path: answer Body/Text/Header criteria from the index and
 	// scan only the candidates (https://doc.yarilomail.org/FTS §11). nil = sequential scan.
-	ftsF, ftsErr := s.prepareFTSSearch(criteria, msgs)
+	// A virtual mailbox is answered over the folders it draws from; the
+	// ordinary path would index the mailbox itself, which holds nothing.
+	var (
+		ftsF   *ftsFilter
+		ftsErr *imaplib.Error
+	)
+	if s.isVirtualSelected() {
+		ftsF, ftsErr = s.prepareVirtualFTSSearch(criteria, msgs)
+	} else {
+		ftsF, ftsErr = s.prepareFTSSearch(criteria, msgs)
+	}
 	if ftsErr != nil {
 		return nil, ftsErr
 	}
@@ -2996,7 +3010,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 					}
 				}
 				var raw []byte
-				if needRaw && s.folderMailbox().Readable(m) {
+				if needRaw && s.readableSelected(m) {
 					if rc, err := s.fetchSelected(m); err == nil {
 						raw, _ = io.ReadAll(rc)
 						rc.Close()
@@ -3298,7 +3312,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			// threading existed.
 			mw.WriteThreadID(threadIDs[m.UID])
 		}
-		if opts.Envelope && s.folderMailbox().Readable(m) {
+		if opts.Envelope && s.readableSelected(m) {
 			// One text, whoever wrote it: built from the raw header by the
 			// reference's rules, so an encoded word and an address group reach
 			// the client as the message wrote them (#1714).
@@ -3315,7 +3329,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				mark("envelope", ferr)
 			}
 		}
-		if opts.BodyStructure != nil && s.folderMailbox().Readable(m) {
+		if opts.BodyStructure != nil && s.readableSelected(m) {
 			if bs := envCache.BodyStructure(m); bs != nil {
 				mw.WriteBodyStructure(bs)
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
@@ -3328,7 +3342,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			}
 		}
 		for _, section := range opts.BodySection {
-			if !s.folderMailbox().Readable(m) {
+			if !s.readableSelected(m) {
 				if slog.Default().Enabled(context.Background(), slog.LevelDebug) &&
 					section.Specifier == imaplib.PartSpecifierNone && len(section.Part) == 0 {
 					slog.Debug("imap: fetch body[] no filename",
@@ -3396,7 +3410,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		// part spec we decode message-level CTE; multipart-walk (BINARY[1])
 		// returns the section unchanged when MIME parsing is non-trivial.
 		for _, section := range opts.BinarySection {
-			if !s.folderMailbox().Readable(m) {
+			if !s.readableSelected(m) {
 				break
 			}
 			rc, ferr := s.fetchSelected(m)
@@ -3415,7 +3429,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		}
 		// BINARY.SIZE[] — same decode, return size only.
 		for _, section := range opts.BinarySectionSize {
-			if !s.folderMailbox().Readable(m) {
+			if !s.readableSelected(m) {
 				break
 			}
 			rc, ferr := s.fetchSelected(m)

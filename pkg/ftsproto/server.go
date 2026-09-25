@@ -216,6 +216,24 @@ func dispatch(line string, svc Service) string {
 		slog.Debug("fts: rescanned", "user", f[1], "folders", len(done))
 		return strings.Join(append([]string{replyOK}, done...), "\t")
 
+	case CmdLookupIn:
+		if len(f) != 3 {
+			return no("malformed LOOKUPIN")
+		}
+		var req lookupInRequest
+		if err := decodeB64JSON(f[2], &req); err != nil {
+			return noFor(err)
+		}
+		res, err := svc.LookupIn(f[1], req.Folders, req.Query)
+		if err != nil {
+			return noFor(err)
+		}
+		payload, err := encodeB64JSON(res)
+		if err != nil {
+			return noFor(err)
+		}
+		return replyOK + "\t" + payload
+
 	case CmdCounts:
 		if len(f) != 2 {
 			return no("malformed COUNTS")

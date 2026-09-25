@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/internal/fts/language"
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -24,6 +25,13 @@ import (
 // virtualServer gives a user an INBOX and an Archive with the messages named,
 // and a virtual namespace whose mailboxes are the configurations written here.
 func virtualServer(t *testing.T, configs map[string]string, seed func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex)) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	return virtualServerFTS(t, configs, seed, nil)
+}
+
+// virtualServerFTS is the same server with full-text search answered by the
+// fake given; nil leaves search off.
+func virtualServerFTS(t *testing.T, configs map[string]string, seed func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex), fake *fakeFTS) (net.Conn, *bufio.Reader) {
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
@@ -48,7 +56,7 @@ func virtualServer(t *testing.T, configs map[string]string, seed func(t *testing
 		}
 	}
 
-	srv := imapserver.New(imapserver.Options{
+	opts := imapserver.Options{
 		Mailbox:  maildir.New(),
 		Index:    fileindex.New(),
 		Resolver: resolver,
@@ -64,7 +72,19 @@ func virtualServer(t *testing.T, configs map[string]string, seed func(t *testing
 			"Virtual/": mailboxbuild.ByDriver("virtual", config.StorageConfig{}, nil),
 		},
 		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
-	})
+	}
+	if fake != nil {
+		set := language.DefaultSettings()
+		chain, err := language.NewMultiChain([]string{set.Language}, set.Filters, nil, set.TokenMaxLen, set.AddressMaxLen, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opts.FTS = imapserver.FTSOptions{
+			Client: fake, Chain: chain, AddMissing: "body-search-only", ReadFallback: true,
+			Timeout: 300 * time.Millisecond, Autoindex: true, SearchEnabled: true,
+		}
+	}
+	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

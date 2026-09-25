@@ -266,3 +266,7 @@ func TestFTSDisabledReturns501(t *testing.T) {
 func (f *fakeFTS) Counts(string) (uint64, uint64, uint64, uint64, error) { return 0, 0, 0, 0, nil }
 
 func (f *fakeFTS) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (f *fakeFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
+}

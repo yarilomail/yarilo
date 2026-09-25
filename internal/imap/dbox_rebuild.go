@@ -62,11 +62,24 @@ func (s *session) recordStillThere(idx mailbox.UserIndex, folderID uint64, uid u
 	return false
 }
 
+// readableSelected is whether fetchSelected has bytes to read: a virtual
+// record's are its copy's, which the virtual store itself cannot say.
+func (s *session) readableSelected(m *mailbox.MessageMeta) bool {
+	if m.VirtualBacking != 0 && s.isVirtualSelected() {
+		return true
+	}
+	return s.folderMailbox().Readable(m)
+}
+
 // fetchSelected reads a message body from the selected folder, flagging the
 // folder for a reactive heal if the read tripped over corrupt storage. All
 // selected-folder FETCH body reads go through here so the marker is set
 // whichever body specifier triggered the read.
 func (s *session) fetchSelected(m *mailbox.MessageMeta) (rc io.ReadCloser, err error) {
+	if m.VirtualBacking != 0 && s.isVirtualSelected() {
+		// A virtual record holds no bytes: the copy it names does.
+		return s.readVirtualCopy(m)
+	}
 	rc, err = s.folderMailbox().OpenMessage(s.folder.Name, m)
 	if err != nil {
 		// Only flag corruption a driver can actually heal; a driver without a

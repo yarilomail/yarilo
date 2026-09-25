@@ -573,6 +573,82 @@ func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Res
 	return res, err
 }
 
+// LookupIn searches a set of folders with one query: the index is the user's,
+// so a virtual mailbox asks once, not once per folder it draws from (#1986).
+func (s *Service) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	if len(folders) == 0 {
+		return fts.SetResult{}, nil
+	}
+	guids := make([]string, 0, len(folders))
+	for _, f := range folders {
+		if err := requireGUID(f); err != nil {
+			return fts.SetResult{}, err
+		}
+		guids = append(guids, f.GUID)
+	}
+	metricLookupTotal.Inc()
+	h, err := s.handle(user)
+	if err != nil {
+		metricLookupErrors.Inc()
+		return fts.SetResult{}, err
+	}
+	defer s.release(h)
+	t0 := time.Now()
+	res, err := h.ui.Lookup(guids, q)
+	if err != nil {
+		metricLookupErrors.Inc()
+		return fts.SetResult{}, err
+	}
+	out, err := h.resolveSetHits(res, guids)
+	metricLookupDuration.Observe(time.Since(t0).Seconds())
+	if err == nil {
+		metricLookupCandidates.Observe(float64(len(out.Definite) + len(out.Maybe)))
+	}
+	slog.Debug("fts: lookup over a folder set", "user", user, "folders", len(folders),
+		"definite", len(out.Definite), "maybe", len(out.Maybe), "err", err)
+	return out, err
+}
+
+// resolveSetHits turns the messages an engine answered with into every copy of
+// them inside the set: the store holds each copy, and each is a hit.
+func (h *userHandle) resolveSetHits(res fts.Result, folders []string) (fts.SetResult, error) {
+	var out fts.SetResult
+	if len(res.DefiniteGUIDs) == 0 && len(res.MaybeGUIDs) == 0 {
+		return out, nil
+	}
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return out, fmt.Errorf("ftsservice: this index resolves no GUID, so a hit names no message")
+	}
+	in := make(map[string]bool, len(folders))
+	for _, f := range folders {
+		in[f] = true
+	}
+	hits := func(guids [][16]byte) ([]fts.FolderHit, error) {
+		if len(guids) == 0 {
+			return nil, nil
+		}
+		copies, err := resolver.GUIDCopies(guids)
+		if err != nil {
+			return nil, err
+		}
+		var list []fts.FolderHit
+		for _, c := range copies {
+			folder := hex.EncodeToString(c.FolderGUID[:])
+			if in[folder] {
+				list = append(list, fts.FolderHit{Folder: folder, UID: c.UID})
+			}
+		}
+		return list, nil
+	}
+	var err error
+	if out.Definite, err = hits(res.DefiniteGUIDs); err != nil {
+		return out, err
+	}
+	out.Maybe, err = hits(res.MaybeGUIDs)
+	return out, err
+}
+
 func (s *Service) Status(user string, mbox fts.MailboxRef) (uint32, uint32, error) {
 	h, err := s.handle(user)
 	if err != nil {

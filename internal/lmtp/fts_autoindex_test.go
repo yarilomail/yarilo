@@ -127,3 +127,7 @@ func TestAutoindexSkipsAFolderWithoutGUID(t *testing.T) {
 }
 
 func (r *recordingFTS) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (r *recordingFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
+}

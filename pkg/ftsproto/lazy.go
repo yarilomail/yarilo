@@ -124,6 +124,16 @@ func (l *Lazy) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	return docs, copies, messages, unrecorded, err
 }
 
+func (l *Lazy) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	var res fts.SetResult
+	err := l.do(func(c *Remote) error {
+		var e error
+		res, e = c.LookupIn(user, folders, q)
+		return e
+	})
+	return res, err
+}
+
 func (l *Lazy) DropFolder(user string, m fts.MailboxRef) error {
 	return l.do(func(c *Remote) error { return c.DropFolder(user, m) })
 }
