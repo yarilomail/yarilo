@@ -194,6 +194,13 @@ type CorruptionMarker interface {
 	ClearFolderCorrupt(folderID uint64) error
 }
 
+// ExpungedCopy names a record a repair dropped: the uid it held and the
+// message it was, so a search index can retract the right document (#1986).
+type ExpungedCopy struct {
+	UID  uint32
+	GUID [16]byte
+}
+
 // ReactiveHealer is a driver that can self-heal a folder whose index references
 // missing/corrupt storage. Only such drivers may have a folder flagged corrupt;
 // a driver that cannot heal would strand the folder with nothing to clear the marker.
@@ -201,7 +208,7 @@ type ReactiveHealer interface {
 	// HealCorruptFolder repairs folder and returns the UIDs it expunged (records
 	// whose backing message vanished), so the caller can invalidate their FTS
 	// documents.
-	HealCorruptFolder(box Box, idx UserIndex, folder *Folder) ([]uint32, error)
+	HealCorruptFolder(box Box, idx UserIndex, folder *Folder) ([]ExpungedCopy, error)
 }
 
 // CanReactiveHeal reports whether box can self-heal corruption. Marking a folder
@@ -232,10 +239,10 @@ type StorageRebuildStats struct {
 	OrphansRestored     int    // unreferenced messages re-filed into their ORIG_MAILBOX (only when restoreOrphans is set)
 	RebuildCount        uint32 // new generation counter after the rebuild
 	FilesNormalised     int    // storage files rewritten to the header size they announce
-	// ExpungedUIDs maps folder name → UIDs dropped from that folder's index by
+	// ExpungedCopies maps folder name → records dropped from that folder's index by
 	// the rebuild, so the operator caller can invalidate their FTS documents
 	// (otherwise ghost entries until the next rescan).
-	ExpungedUIDs map[string][]uint32
+	ExpungedCopies map[string][]ExpungedCopy
 }
 
 // StorageWideRebuilder is a folder-agnostic driver that can rebuild its whole
@@ -560,7 +567,7 @@ type UserIndex interface {
 	// Returns UIDs present before the reset but absent after, so the caller can
 	// invalidate their FTS documents. Caller holds the mailbox lock and has made a
 	// .bak of the old base file.
-	ResetFolder(folderID uint64, records []*MessageMeta) ([]uint32, error)
+	ResetFolder(folderID uint64, records []*MessageMeta) ([]ExpungedCopy, error)
 	// OptimizeIndex compacts the .index.log overlay into the base .index file,
 	// under the same write lock as a normal write. No-op nil when nothing to compact.
 	OptimizeIndex(folderID uint64) error

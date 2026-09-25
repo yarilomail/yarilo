@@ -151,6 +151,11 @@ func TestExpungeMissing(t *testing.T) {
 	if len(n) != 1 {
 		t.Fatalf("expunged = %d, want 1", len(n))
 	}
+	// The dropped record names its message: a search index retracts by the
+	// message, and a heal that loses the identity retracts nothing (#1986).
+	if n[0].GUID == ([16]byte{}) {
+		t.Errorf("the heal dropped uid %d without naming the message", n[0].UID)
+	}
 	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if len(msgs) != 1 || msgs[0].UID != 1 || msgs[0].GUID != keepGUID {
 		t.Fatalf("after heal: %+v, want only UID 1 (%s)", msgs, keep)

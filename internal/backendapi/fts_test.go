@@ -27,14 +27,17 @@ type fakeFTS struct {
 type ftsExpungeCall struct {
 	Folder string
 	UID    uint32
+	// GUID is what the retraction named: the index retracts by the message,
+	// so an empty one is a caller that lost it (#1986).
+	GUID [16]byte
 }
 
 func (f *fakeFTS) Index(string, fts.MailboxRef, uint32, int) error { return nil }
 func (f *fakeFTS) Prepend(string, fts.MailboxRef, uint32) error    { return nil }
-func (f *fakeFTS) Expunge(_ string, m fts.MailboxRef, uid uint32) error {
+func (f *fakeFTS) Expunge(_ string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.expunges = append(f.expunges, ftsExpungeCall{Folder: m.Name, UID: uid})
+	f.expunges = append(f.expunges, ftsExpungeCall{Folder: m.Name, UID: uid, GUID: guid})
 	return nil
 }
 func (f *fakeFTS) Lookup(string, fts.MailboxRef, fts.Query) (fts.Result, error) {
@@ -96,7 +99,9 @@ func TestFtsExpungeInvalidatesDroppedUIDs(t *testing.T) {
 	}
 	defer uc.Close()
 
-	s.ftsExpunge(uc, "INBOX", []uint32{5, 9})
+	s.ftsExpunge(uc, "INBOX", []mailbox.ExpungedCopy{
+		{UID: 5, GUID: [16]byte{5}}, {UID: 9, GUID: [16]byte{9}},
+	})
 
 	if len(fake.expunges) != 2 {
 		t.Fatalf("expunge calls = %d, want 2", len(fake.expunges))
@@ -105,6 +110,11 @@ func TestFtsExpungeInvalidatesDroppedUIDs(t *testing.T) {
 		if c.Folder != "INBOX" {
 			t.Errorf("expunge folder = %q, want INBOX", c.Folder)
 		}
+		// The rebuild's retraction names the message, not just the uid: the
+		// index retracts by identity (#1986).
+		if c.GUID == ([16]byte{}) {
+			t.Errorf("uid %d was retracted without naming the message", c.UID)
+		}
 	}
 	if fake.expunges[0].UID != 5 || fake.expunges[1].UID != 9 {
 		t.Errorf("expunged UIDs = %v, want [5 9]", fake.expunges)
@@ -112,7 +122,7 @@ func TestFtsExpungeInvalidatesDroppedUIDs(t *testing.T) {
 
 	// No FTS client → no-op, no panic.
 	s.opts.FTSClient = nil
-	s.ftsExpunge(uc, "INBOX", []uint32{1})
+	s.ftsExpunge(uc, "INBOX", []mailbox.ExpungedCopy{{UID: 1, GUID: [16]byte{1}}})
 }
 
 func ftsTestServer(t *testing.T) (*httptest.Server, *fakeFTS, string) {

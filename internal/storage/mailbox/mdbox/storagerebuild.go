@@ -106,10 +106,10 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 				return rerr
 			}
 			if len(dropped) > 0 {
-				if stats.ExpungedUIDs == nil {
-					stats.ExpungedUIDs = make(map[string][]uint32)
+				if stats.ExpungedCopies == nil {
+					stats.ExpungedCopies = make(map[string][]mailbox.ExpungedCopy)
 				}
-				stats.ExpungedUIDs[f.Name] = dropped
+				stats.ExpungedCopies[f.Name] = dropped
 			}
 			stats.FoldersRebuilt++
 		}
@@ -257,7 +257,7 @@ func (u *userMailbox) openOrCreateFolder(box mailbox.Box, name string, cache map
 
 // resetFolderToPresent drops the folder's records whose map_uid the scan did not
 // find, keeping everything else intact, and returns the dropped UIDs.
-func (u *userMailbox) resetFolderToPresent(idx mailbox.UserIndex, f *mailbox.Folder, present map[string]*mailbox.ScanRecord) ([]uint32, error) {
+func (u *userMailbox) resetFolderToPresent(idx mailbox.UserIndex, f *mailbox.Folder, present map[string]*mailbox.ScanRecord) ([]mailbox.ExpungedCopy, error) {
 	existing, err := idx.GetMessages(f.ID, allMessages)
 	if err != nil {
 		return nil, fmt.Errorf("mdbox/rebuild: get messages %q: %w", f.Name, err)

@@ -90,8 +90,8 @@ func (l *Lazy) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return l.do(func(c *Remote) error { return c.Prepend(user, m, maxUID) })
 }
 
-func (l *Lazy) Expunge(user string, m fts.MailboxRef, uid uint32) error {
-	return l.do(func(c *Remote) error { return c.Expunge(user, m, uid) })
+func (l *Lazy) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
+	return l.do(func(c *Remote) error { return c.Expunge(user, m, uid, guid) })
 }
 
 func (l *Lazy) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, error) {

@@ -647,7 +647,7 @@ var _ imapserver.SessionIMAP4rev2 = (*session)(nil)
 // bus needs only the name, so a folder without a resolvable GUID still wakes
 // IDLE sessions (#1183).
 func (s *session) emitMailboxChange(f *mailbox.Folder, eventType locks.EventType, uid uint32) {
-	s.emitMailboxChangeSized(f, eventType, uid, 0)
+	s.emitMailboxChangeSized(f, eventType, uid, 0, [16]byte{})
 }
 
 // pendingStore is one message a STORE touched: what the index settled on, and
@@ -718,12 +718,12 @@ func usageDelta(m *mailbox.MessageMeta) uint32 {
 // the message was, which lets the post-commit usage be the cached total plus
 // this change instead of a fresh sweep of every folder (#1548). vsize 0 means
 // "not known here", and those callers pay for the sweep as before.
-func (s *session) emitMailboxChangeSized(f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32) {
+func (s *session) emitMailboxChangeSized(f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32, guid [16]byte) {
 	folder := f.Name
 	// delivered/expunged changes storage usage; runs before the Locker
 	// guard since it is independent of the event bus.
 	if eventType == locks.EventDelivered || eventType == locks.EventExpunged {
-		s.ftsNotify(f, eventType == locks.EventExpunged, uid)
+		s.ftsNotify(f, eventType == locks.EventExpunged, uid, guid)
 
 		// The delta is applied before the cache is invalidated, and the
 		// invalidation is skipped when it lands. quotaChanged exists because
@@ -1561,9 +1561,9 @@ func (s *session) renameInbox(dest string) error {
 			_ = s.box.Remove(dest, newFilename)
 			return fmt.Errorf("imap/rename-inbox record: %w", err)
 		}
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm))
+		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
 		s.idx.ExpungeMessage(srcFolder.ID, m.UID) //nolint:errcheck
-		s.emitMailboxChangeSized(srcFolder, locks.EventExpunged, m.UID, usageDelta(m))
+		s.emitMailboxChangeSized(srcFolder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
 	}
 	srcFolder.Messages = 0
 	s.idx.SaveFolder(srcFolder) //nolint:errcheck
@@ -2290,7 +2290,7 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 			)
 		}
 	}
-	s.emitMailboxChangeSized(f, locks.EventDelivered, m.UID, usageDelta(m))
+	s.emitMailboxChangeSized(f, locks.EventDelivered, m.UID, usageDelta(m), m.GUID)
 
 	// imapsieve (RFC 6785): run scripts bound to this mailbox on the APPEND
 	// event; may refile, discard, or reflag the message just stored.
@@ -2711,7 +2711,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	// re-opens the folder, and that asks for the hold again (#1853).
 	var expunge_count int
 	for _, m := range removed {
-		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m))
+		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
 		s.statsExpunged++
 		expunge_count++
 		seq := seqOf[m.UID]
@@ -3702,7 +3702,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		}
 		indexTotalMs += time.Since(tIndex).Milliseconds()
 		count++
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm))
+		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
 		srcUIDs.AddNum(imaplib.UID(m.UID))
 		dstUIDs.AddNum(imaplib.UID(nm.UID))
 		copied = append(copied, copiedMsg{uid: nm.UID, filename: newFilename})
@@ -4022,8 +4022,11 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	numSet = resolveStar(numSet, msgs, moveUIDToClientSeq)
 
 	type matched struct {
-		seqNum   uint32
-		srcUID   uint32
+		seqNum uint32
+		srcUID uint32
+		// srcGUID is the source message's own identity, carried from its
+		// record: the retraction names the message, not the copy (#1986).
+		srcGUID  [16]byte
 		vsize    uint32
 		filename string
 		destUID  uint32
@@ -4097,10 +4100,11 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 			return fmt.Errorf("imap/move record: %w", err)
 		}
 		indexTotalMs += time.Since(tIndex).Milliseconds()
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm))
+		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
 		srcUIDs.AddNum(imaplib.UID(m.UID))
 		dstUIDs.AddNum(imaplib.UID(nm.UID))
-		hits = append(hits, matched{seqNum: seqNum, srcUID: m.UID, vsize: m.VSize, destUID: nm.UID, destFile: newFilename, moved: srcBox == destH.box})
+		hits = append(hits, matched{seqNum: seqNum, srcUID: m.UID, srcGUID: m.GUID, vsize: m.VSize,
+			destUID: nm.UID, destFile: newFilename, moved: srcBox == destH.box})
 	}
 
 	// COPYUID needs at least one pair; the encoder rejects an empty set and
@@ -4123,7 +4127,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		if !h.moved {
 			srcBox.Remove(s.folder.Name, h.filename) //nolint:errcheck
 		}
-		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, h.srcUID, h.vsize)
+		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, h.srcUID, h.vsize, h.srcGUID)
 		if err := w.WriteExpunge(h.seqNum); err != nil {
 			return err
 		}

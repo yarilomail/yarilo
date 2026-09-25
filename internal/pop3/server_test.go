@@ -200,7 +200,7 @@ func (m *mockIndex) SavePOP3UIDLs(_ uint64, uidls map[uint32]string) error {
 	m.savedUIDLs = uidls
 	return nil
 }
-func (m *mockIndex) ResetFolder(_ uint64, _ []*mailbox.MessageMeta) ([]uint32, error) {
+func (m *mockIndex) ResetFolder(_ uint64, _ []*mailbox.MessageMeta) ([]mailbox.ExpungedCopy, error) {
 	return nil, nil
 }
 func (m *mockIndex) OptimizeIndex(_ uint64) error                  { return nil }

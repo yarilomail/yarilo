@@ -481,9 +481,16 @@ func (s *Service) Prepend(user string, mbox fts.MailboxRef, maxUID uint32) error
 	return nil
 }
 
-func (s *Service) Expunge(user string, mbox fts.MailboxRef, uid uint32) error {
+func (s *Service) Expunge(user string, mbox fts.MailboxRef, uid uint32, guid [16]byte) error {
 	if err := requireGUID(mbox); err != nil {
 		return err
+	}
+	if guid == ([16]byte{}) {
+		// A caller that lost the identity finds out here, not from an index
+		// answering with deleted mail (#1986).
+		metricExpungeNoGUID.Inc()
+		slog.Warn("fts: expunge names no message", "user", user, "folder", mbox.Name, "uid", uid)
+		return fmt.Errorf("ftsservice: expunge of %s uid %d names no message", mbox.Name, uid)
 	}
 	h, err := s.handle(user)
 	if err != nil {

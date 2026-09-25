@@ -104,8 +104,8 @@ func (p *Pool) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return p.do(func(c *Lazy) error { return c.Prepend(user, m, maxUID) })
 }
 
-func (p *Pool) Expunge(user string, m fts.MailboxRef, uid uint32) error {
-	return p.do(func(c *Lazy) error { return c.Expunge(user, m, uid) })
+func (p *Pool) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
+	return p.do(func(c *Lazy) error { return c.Expunge(user, m, uid, guid) })
 }
 
 func (p *Pool) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, error) {

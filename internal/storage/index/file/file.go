@@ -450,7 +450,7 @@ func (h *userHandle) GetPOP3UIDLs(folderID uint64) (map[uint32]string, error) {
 func (h *userHandle) SavePOP3UIDLs(folderID uint64, uidls map[uint32]string) error {
 	return h.stamped(folderID).SavePOP3UIDLs(folderID, uidls)
 }
-func (h *userHandle) ResetFolder(folderID uint64, records []*mailbox.MessageMeta) ([]uint32, error) {
+func (h *userHandle) ResetFolder(folderID uint64, records []*mailbox.MessageMeta) ([]mailbox.ExpungedCopy, error) {
 	return h.stamped(folderID).ResetFolder(folderID, records)
 }
 func (h *userHandle) OptimizeIndex(folderID uint64) error {

@@ -14,11 +14,11 @@ import (
 type healBox struct {
 	mailbox.UserMailbox
 	calls    int
-	expunged []uint32
+	expunged []mailbox.ExpungedCopy
 	err      error
 }
 
-func (b *healBox) HealCorruptFolder(_ mailbox.Box, _ mailbox.UserIndex, _ *mailbox.Folder) ([]uint32, error) {
+func (b *healBox) HealCorruptFolder(_ mailbox.Box, _ mailbox.UserIndex, _ *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
 	b.calls++
 	return b.expunged, b.err
 }
