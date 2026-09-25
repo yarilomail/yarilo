@@ -138,6 +138,10 @@ func assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder string, cop
 	if !boxes[copyID] {
 		return fmt.Errorf("Email/get does not name %q among the mailboxes holding the message", copyFolder)
 	}
+	// And only those: naming every mailbox would satisfy the count as well.
+	if boxes[otherID] {
+		return fmt.Errorf("Email/get names %q, a folder the message was never copied into", otherFolder)
+	}
 	return nil
 }
 

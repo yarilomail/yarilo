@@ -31,19 +31,31 @@ func (h *userHandle) copiesThroughStore(ref messageRef) ([]emailCopy, bool) {
 	if err != nil || len(records) == 0 {
 		return nil, false
 	}
-	out := make([]emailCopy, 0, len(records))
+	// Grouped by folder, and read by uid: a copy is one record, not a folder
+	// listing, and this sits on the client's synchronisation path.
+	byFolder := make(map[[16]byte][]uint32, 4)
 	for _, r := range records {
-		name, f, ferr := h.folderByGUID(r.FolderGUID)
+		byFolder[r.FolderGUID] = append(byFolder[r.FolderGUID], r.UID)
+	}
+	out := make([]emailCopy, 0, len(records))
+	for folderGUID, uids := range byFolder {
+		name, f, ferr := h.folderByGUID(folderGUID)
 		if ferr != nil || f == nil {
 			return nil, false
 		}
-		meta, merr := h.metaOf(f.ID, r.UID)
-		if merr != nil || meta == nil {
+		set := make(mailbox.SeqSet, 0, len(uids))
+		for _, uid := range uids {
+			set = append(set, mailbox.SeqRange{From: uid, To: uid})
+		}
+		metas, merr := h.mbox.Messages(f.ID, set)
+		if merr != nil || len(metas) != len(uids) {
 			// The store is ahead of the folder: fall back rather than report
 			// a mailbox that no longer holds the message.
 			return nil, false
 		}
-		out = append(out, emailCopy{mailboxID: mailboxID(f.GUID), folder: name, folderID: f.ID, meta: meta})
+		for _, m := range metas {
+			out = append(out, emailCopy{mailboxID: mailboxID(f.GUID), folder: name, folderID: f.ID, meta: m})
+		}
 	}
 	return out, true
 }
@@ -73,20 +85,6 @@ func (h *userHandle) copiesByWalk(ref messageRef) []emailCopy {
 		out = append(out, emailCopy{mailboxID: ref.mailboxID, folder: ref.folder, folderID: ref.folderID, meta: ref.meta})
 	}
 	return out
-}
-
-// metaOf reads one message's record from a folder.
-func (h *userHandle) metaOf(folderID uint64, uid uint32) (*mailbox.MessageMeta, error) {
-	metas, err := h.mbox.Messages(folderID, mailbox.SeqSet{{From: 1, To: 0}})
-	if err != nil {
-		return nil, err
-	}
-	for _, m := range metas {
-		if m.UID == uid {
-			return m, nil
-		}
-	}
-	return nil, nil
 }
 
 // mailboxIDsOf and keywordsAcross are what RFC 8621 §4 makes properties of one
