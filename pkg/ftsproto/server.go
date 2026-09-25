@@ -96,7 +96,7 @@ func dispatch(line string, svc Service) string {
 		}
 		return CmdVersion + "\t" + ProtocolVersion + "\tOK"
 
-	case CmdIndex, CmdPrepend, CmdExpunge, CmdLookup, CmdStatus, CmdRescan:
+	case CmdIndex, CmdPrepend, CmdExpunge, CmdLookup, CmdStatus, CmdRescan, CmdDropFolder:
 		if len(f) < 5 {
 			return no("malformed %s", f[0])
 		}
@@ -189,6 +189,12 @@ func dispatch(line string, svc Service) string {
 			}
 			slog.Debug("fts: status", "user", user, "folder", mbox.Name, "last_indexed_uid", last, "checksum", sum)
 			return fmt.Sprintf("%s\t%d\t%d", replyOK, last, sum)
+		case CmdDropFolder:
+			if err := svc.DropFolder(user, mbox); err != nil {
+				return noFor(err)
+			}
+			slog.Debug("fts: folder dropped", "user", user, "folder", mbox.Name)
+			return replyOK
 		default: // CmdRescan
 			if err := svc.Rescan(user, mbox); err != nil {
 				slog.Debug("fts: rescan failed", "user", user, "folder", mbox.Name, "err", err)

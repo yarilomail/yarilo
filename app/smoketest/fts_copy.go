@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -89,7 +92,68 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 	if err := assertHits(c, copyFolder, marker, 1); err != nil {
 		return err
 	}
+	// The folders this row created are deleted by the deferred cleanup above;
+	// after that the index must hold no document for them (#2022).
+	defer func() {
+		if cerr := assertNoOrphanDocuments(user); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	return nil
+}
+
+// assertNoOrphanDocuments: documents outrunning the live messages is a deleted
+// folder whose documents stayed. Polled, the retraction being off the path.
+func assertNoOrphanDocuments(user string) error {
+	deadline := time.Now().Add(orphanCountWait)
+	for {
+		docs, _, messages, err := backendFTSCounts(user)
+		if err != nil {
+			return err
+		}
+		if docs <= messages {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the index holds %d documents for %d live messages: a deleted folder left its documents behind", docs, messages)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+var orphanCountWait = 10 * time.Second
+
+func backendFTSCounts(user string) (docs, copies, messages uint64, err error) {
+	url := strings.TrimRight(*flagBackendAPI, "/") + "/api/backend/fts/status?user=" + user + "&folder=INBOX"
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if tok := backendAPIToken(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	client, err := backendAPIClient()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, 0, 0, explainBackendAPITransport(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, 0, fmt.Errorf("fts/status: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		Documents uint64 `json:"documents"`
+		Copies    uint64 `json:"copies"`
+		Messages  uint64 `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return 0, 0, 0, fmt.Errorf("decode fts/status: %w", err)
+	}
+	return out.Documents, out.Copies, out.Messages, nil
 }
 
 // The judgement that separates "document = the message" from "document = the

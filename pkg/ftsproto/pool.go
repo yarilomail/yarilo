@@ -138,6 +138,10 @@ func (p *Pool) Counts(user string) (uint64, uint64, uint64, error) {
 	return docs, copies, messages, err
 }
 
+func (p *Pool) DropFolder(user string, m fts.MailboxRef) error {
+	return p.do(func(c *Lazy) error { return c.DropFolder(user, m) })
+}
+
 func (p *Pool) Rescan(user string, m fts.MailboxRef) error {
 	return p.do(func(c *Lazy) error { return c.Rescan(user, m) })
 }

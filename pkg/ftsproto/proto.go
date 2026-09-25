@@ -10,6 +10,7 @@
 //	> LOOKUP\t<user>\t<folder>\t<guid>\t<uidvalidity>\t<query-b64json>\n
 //	> STATUS\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
 //	> RESCAN\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
+//	> DROPFOLDER\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
 //	> COUNTS\t<user>\n
 //	> OPTIMIZE\t<user>\n
 //	< OK[\t<payload>]\n | NO\t<message>\n | NO\t<code>\t<message>\n
@@ -54,6 +55,9 @@ const (
 	// Operator counts for one user. A command of its own, so an old server
 	// answers NO rather than a field an old client would misread (#2021).
 	CmdCounts = "COUNTS"
+	// A deleted mailbox: its documents keep no terms of a folder that is gone,
+	// and one index per user means they outlive it otherwise (#2022).
+	CmdDropFolder = "DROPFOLDER"
 
 	replyOK = "OK"
 	replyNO = "NO"
@@ -80,6 +84,7 @@ type Service interface {
 	Rescan(user string, mbox fts.MailboxRef) error
 	RescanUser(user string) ([]string, error)
 	Counts(user string) (docs, copies, messages uint64, err error)
+	DropFolder(user string, mbox fts.MailboxRef) error
 	Optimize(user string) error
 }
 
@@ -317,6 +322,11 @@ func (r *Remote) Counts(user string) (uint64, uint64, uint64, error) {
 		out[i] = n
 	}
 	return out[0], out[1], out[2], nil
+}
+
+func (r *Remote) DropFolder(user string, m fts.MailboxRef) error {
+	_, err := r.call(append([]string{CmdDropFolder, user}, MboxFields(m)...)...)
+	return err
 }
 
 func (r *Remote) Optimize(user string) error {

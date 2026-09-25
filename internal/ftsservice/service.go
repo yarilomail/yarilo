@@ -583,6 +583,7 @@ func (s *Service) RescanUser(user string) ([]string, error) {
 	names := mailbox.SelectableNames(folders)
 	done := make([]string, 0, len(names))
 	err = s.opts.lockIndex(user, func() error {
+		live := make([]string, 0, len(names))
 		for _, name := range names {
 			mbox, rerr := h.mailboxRef(name)
 			if rerr != nil {
@@ -591,7 +592,17 @@ func (s *Service) RescanUser(user string) ([]string, error) {
 			if rerr := s.rescanLocked(h, user, mbox); rerr != nil {
 				return rerr
 			}
+			live = append(live, mbox.GUID)
 			done = append(done, name)
+		}
+		// A folder term naming a mailbox the account no longer has is one a
+		// deletion never reached; no per-folder pass can see it (#2022).
+		dropped, oerr := h.ui.DropOrphanFolders(live)
+		if oerr != nil {
+			return oerr
+		}
+		if dropped > 0 {
+			slog.Info("fts: dropped orphan folder terms", "user", user, "folders", dropped)
 		}
 		return nil
 	})
@@ -637,6 +648,19 @@ func (s *Service) Counts(user string) (docs, copies, messages uint64, err error)
 		return nil
 	})
 	return docs, copies, uint64(len(seen)), err
+}
+
+// DropFolder retracts a mailbox the account no longer has: its documents lose
+// its terms, and a document no folder names goes with them (#2022).
+func (s *Service) DropFolder(user string, mbox fts.MailboxRef) error {
+	h, err := s.handle(user)
+	if err != nil {
+		return err
+	}
+	defer s.release(h)
+	return s.opts.lockIndex(user, func() error {
+		return h.ui.DropFolder(mbox)
+	})
 }
 
 // mailboxRef names one folder the way the index knows it: by its own GUID,

@@ -93,3 +93,6 @@ func (stubUserIndex) OptimizeMailbox(fts.MailboxRef) error                      
 func (stubUserIndex) Refresh() error                                             { return nil }
 func (stubUserIndex) Lookup([]string, fts.Query) (fts.Result, error)             { return fts.Result{}, nil }
 func (stubUserIndex) Close() error                                               { return nil }
+
+func (stubUserIndex) DropFolder(fts.MailboxRef) error         { return nil }
+func (stubUserIndex) DropOrphanFolders([]string) (int, error) { return 0, nil }

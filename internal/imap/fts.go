@@ -416,6 +416,27 @@ func (s *session) ftsNotify(f *mailbox.Folder, expunged bool, uid uint32, guid [
 	}()
 }
 
+// ftsDropFolder retracts a deleted mailbox, best-effort off the command path:
+// a rescan's orphan sweep is what makes a lost one harmless (#2022).
+func (s *session) ftsDropFolder(f *mailbox.Folder) {
+	o := s.srv.opts.FTS
+	if o.Client == nil || s.userInfo == nil || f == nil || f.Name == "" {
+		return
+	}
+	mbox := ftsMailboxRef(f)
+	if mbox.GUID == "" {
+		warnFolderWithoutGUID(s.userInfo.Username, f.Name)
+		return
+	}
+	user := s.userInfo.Username
+	go func() {
+		if err := o.Client.DropFolder(user, mbox); err != nil {
+			slog.Warn("imap: fts drop folder failed",
+				"user", user, "folder", mbox.Name, "err", err)
+		}
+	}()
+}
+
 // relevancyScores normalizes raw per-UID engine weights to the RFC 4731/6203
 // wire range, in order's enumeration order (one score per matched message,
 // same order as the ESEARCH ALL data item). A per-result-set linear min-max

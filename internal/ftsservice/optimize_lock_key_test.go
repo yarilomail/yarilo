@@ -101,3 +101,6 @@ func (e *fixedIndexEngine) OpenUser(context.Context, fts.UserRef) (fts.UserIndex
 	return e.idx, nil
 }
 func (fixedIndexEngine) Close() error { return nil }
+
+func (i *boxesIndex) DropFolder(fts.MailboxRef) error         { return nil }
+func (i *boxesIndex) DropOrphanFolders([]string) (int, error) { return 0, nil }

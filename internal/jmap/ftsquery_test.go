@@ -690,3 +690,5 @@ func TestCallerCancellationIsNotSilentlyNoFilter(t *testing.T) {
 		t.Errorf("type = %s, want serverUnavailable", merr.Type)
 	}
 }
+
+func (s *stubFTS) DropFolder(string, fts.MailboxRef) error { return nil }

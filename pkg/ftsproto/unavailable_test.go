@@ -166,3 +166,5 @@ func TestTheReaderToleratesBothShapes(t *testing.T) {
 		})
 	}
 }
+
+func (f failingService) DropFolder(string, fts.MailboxRef) error { return nil }

@@ -148,3 +148,5 @@ func TestPoolSizeFloor(t *testing.T) {
 		}
 	}
 }
+
+func (s *slowService) DropFolder(string, fts.MailboxRef) error { return nil }

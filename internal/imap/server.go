@@ -1435,8 +1435,17 @@ func (s *session) Delete(name string) error {
 	if err := s.requireRight(h, rel, mailbox.RightDeleteMailbox); err != nil {
 		return err
 	}
+	// The identity, read while the folder still has one: after the delete
+	// nothing can name its documents (#2022).
+	deleted, ferr := mailbox.Counting(h.mailbox()).Folder(rel, 0)
+	if ferr != nil {
+		slog.Warn("imap: folder identity before DELETE", "folder", name, "err", ferr)
+	}
 	if err := h.box.Delete(rel); err != nil {
 		return nameError(err)
+	}
+	if ferr == nil {
+		s.ftsDropFolder(deleted)
 	}
 	// drop the folder's index state. Non-fatal: the mailbox is already
 	// gone; any orphan index dir is reclaimed on next rebuild.
