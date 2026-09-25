@@ -663,23 +663,66 @@ func (up *update) writeDocLocked(st *mboxState) error {
 	if err != nil {
 		return err
 	}
-	if len(ids) == 0 {
-		_, aerr := st.cur.AddDocument(up.doc)
-		return aerr
+	if len(ids) > 0 {
+		return joinCopy(st.cur, ids[0], up.folder, up.uid)
 	}
-	// The message is here already: this is another copy of it, so only the
-	// terms that name the copy are added.
-	stored, gerr := st.cur.GetDocument(ids[0])
+	// A message indexed before this shard opened lives in a sealed one, and the
+	// copy belongs to that document: the retraction already reaches there.
+	joined, jerr := up.joinInSealedShard(st)
+	if jerr != nil || joined {
+		return jerr
+	}
+	_, aerr := st.cur.AddDocument(up.doc)
+	return aerr
+}
+
+// joinInSealedShard adds the copy's terms to the message's document wherever it
+// is, and reports whether it found one.
+func (up *update) joinInSealedShard(st *mboxState) (bool, error) {
+	paths, err := shardPaths(st.dir)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range paths {
+		if p == st.curPath && st.cur != nil {
+			continue
+		}
+		w, oerr := xapian.OpenWDB(p)
+		if oerr != nil {
+			return false, oerr
+		}
+		ids, derr := w.DocIDsByTerm(guidTerm(up.guid))
+		if derr == nil && len(ids) > 0 {
+			if derr = joinCopy(w, ids[0], up.folder, up.uid); derr == nil {
+				derr = w.Commit()
+			}
+		}
+		found := derr == nil && len(ids) > 0
+		w.Close()
+		if derr != nil {
+			return false, derr
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// joinCopy adds the terms that name one copy to the document that already
+// holds the message.
+func joinCopy(w *xapian.WDB, id uint32, folderGUID string, uid uint32) error {
+	stored, gerr := w.GetDocument(id)
 	if gerr != nil {
 		return gerr
 	}
 	defer stored.Free()
-	for _, t := range []string{folderTerm(up.folder), copyTerm(up.folder, up.uid)} {
+	for _, t := range []string{folderTerm(folderGUID), copyTerm(folderGUID, uid)} {
 		if err := stored.AddBooleanTerm(t); err != nil {
 			return err
 		}
 	}
-	return st.cur.ReplaceDocument(ids[0], stored)
+	return w.ReplaceDocument(id, stored)
 }
 
 func (up *update) flushDocLocked() error {

@@ -5,23 +5,28 @@ package flatcurve
 import (
 	"testing"
 
+	"github.com/0kaba0hub/go-xapian"
+
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/yarilomail/yarilo/pkg/fts"
 )
 
-// A message indexed in one shard and copied in another has a document in each;
-// a compaction folds them into one, with both copies' terms (#1986).
+// Insurance, not the mechanism: a copy joins the message's document as it is
+// written, so a document per copy only survives in an index written before
+// that. A compaction folds such a pair into one, with both copies' terms.
 func TestCompactionFoldsTheCopiesOfOneMessage(t *testing.T) {
 	ui, _ := testEngine(t, Options{RotateCount: 1})
 	archive := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
-	// RotateCount 1 seals a shard per document, so the copy lands in its own.
 	guid := testGUID(7)
 	indexCopy(t, ui, inbox, 7, guid, nil, []string{"needle"})
-	indexCopy(t, ui, archive, 9, guid, nil, []string{"needle"})
+	// A second shard, and in it the copy as the old write path left it: its own
+	// document under the same message.
+	indexCopy(t, ui, inbox, 8, testGUID(8), nil, []string{"filler"})
 	if err := ui.Refresh(); err != nil {
 		t.Fatal(err)
 	}
+	writeStrayCopy(t, ui, guid, archive.GUID, 9)
 
 	merged := testutil.ToFloat64(metricDedupMerged)
 	if err := ui.OptimizeMailbox(fts.MailboxRef{}); err != nil {
@@ -112,5 +117,37 @@ func TestAMailboxPastTheDocIDCeilingIndexesAndSearches(t *testing.T) {
 	}
 	if got := uidsOf(res.DefiniteGUIDs); len(got) != 1 || got[0] != huge+1 {
 		t.Errorf("after expunging %d the search answers %v", huge, got)
+	}
+}
+
+// writeStrayCopy writes a second document for one message into the newest
+// shard, the way the engine did before a copy joined across shards.
+func writeStrayCopy(t *testing.T, ui fts.UserIndex, guid [16]byte, folderGUID string, uid uint32) {
+	t.Helper()
+	st := ui.(*userIndex).state()
+	paths, err := shardPaths(st.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := openShard(paths[len(paths)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	doc := xapian.NewDoc()
+	defer doc.Free()
+	for _, term := range []string{guidTerm(guid), folderTerm(folderGUID), copyTerm(folderGUID, uid), "needl"} {
+		if err := doc.AddBooleanTerm(term); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := doc.SetValue(slotGUID, string(guid[:])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.AddDocument(doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
 	}
 }
