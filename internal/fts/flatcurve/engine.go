@@ -687,11 +687,25 @@ func (up *update) joinInSealedShard(st *mboxState) (bool, error) {
 		if p == st.curPath && st.cur != nil {
 			continue
 		}
-		w, oerr := xapian.OpenWDB(p)
+		// Read first: a new message is in no sealed shard, so the common answer
+		// is a miss, and it must not cost a write handle on every delivery.
+		db, oerr := xapian.OpenDBMulti([]string{p})
 		if oerr != nil {
 			return false, oerr
 		}
-		ids, derr := w.DocIDsByTerm(guidTerm(up.guid))
+		ids, derr := db.DocIDsByTerm(guidTerm(up.guid))
+		db.Close()
+		if derr != nil {
+			return false, derr
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		w, werr := xapian.OpenWDB(p)
+		if werr != nil {
+			return false, werr
+		}
+		ids, derr = w.DocIDsByTerm(guidTerm(up.guid))
 		if derr == nil && len(ids) > 0 {
 			if derr = joinCopy(w, ids[0], up.folder, up.uid); derr == nil {
 				derr = w.Commit()

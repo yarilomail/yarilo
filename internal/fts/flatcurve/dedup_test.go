@@ -12,9 +12,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/fts"
 )
 
-// Insurance, not the mechanism: a copy joins the message's document as it is
-// written, so a document per copy only survives in an index written before
-// that. A compaction folds such a pair into one, with both copies' terms.
+// Insurance, not the mechanism: a copy joins as it is written, so a document
+// per copy survives only in an index written before that (#1986).
 func TestCompactionFoldsTheCopiesOfOneMessage(t *testing.T) {
 	ui, _ := testEngine(t, Options{RotateCount: 1})
 	archive := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}

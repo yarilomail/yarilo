@@ -9,10 +9,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/fts"
 )
 
-// A copy of a message that was indexed into an earlier shard belongs to that
-// message's document. Adding only reached the current shard while the
-// retraction already walked the sealed ones, so a copy across a rotation was a
-// second document until a compaction merged it (#1986).
+// A copy belongs to its message's document wherever that sits: adding reached
+// the current shard only, while the retraction already walked them all (#1986).
 func TestACopyJoinsTheMessageInASealedShard(t *testing.T) {
 	ui, _ := testEngine(t, Options{RotateCount: 1})
 	other := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
