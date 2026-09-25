@@ -3221,6 +3221,8 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	// Implicit \Seen goes to storage after the responses, in one pass, the way
 	// STORE writes its own (#1724).
 	var seenWrites []pendingStore
+	// RFC 3516: a part whose transfer encoding is unknown fails the command.
+	unknownCTE := false
 	for _, fe := range fetchList {
 		m := fe.msg
 		// CHANGEDSINCE filter — skip messages whose modseq has not moved
@@ -3405,10 +3407,6 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			io.Copy(bw, bytes.NewReader(extracted)) //nolint:errcheck
 			bw.Close()
 		}
-		// BINARY[] (RFC 3516) — decode Content-Transfer-Encoding (base64,
-		// quoted-printable) so the client gets the raw bytes. Without a
-		// part spec we decode message-level CTE; multipart-walk (BINARY[1])
-		// returns the section unchanged when MIME parsing is non-trivial.
 		for _, section := range opts.BinarySection {
 			if !s.readableSelected(m) {
 				break
@@ -3420,14 +3418,17 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			}
 			body, _ := io.ReadAll(rc)
 			rc.Close()
-			decoded := decodeBinarySection(body, section.Part)
+			decoded, unknown := binarySection(body, section.Part)
+			if unknown {
+				unknownCTE = true
+				continue
+			}
 			s.statsFetchBody++
 			s.statsFetchBodyB += int64(len(decoded))
 			bw := mw.WriteBinarySection(section, int64(len(decoded)))
 			io.Copy(bw, bytes.NewReader(decoded)) //nolint:errcheck
 			bw.Close()
 		}
-		// BINARY.SIZE[] — same decode, return size only.
 		for _, section := range opts.BinarySectionSize {
 			if !s.readableSelected(m) {
 				break
@@ -3438,7 +3439,11 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			}
 			body, _ := io.ReadAll(rc)
 			rc.Close()
-			decoded := decodeBinarySection(body, section.Part)
+			decoded, unknown := binarySection(body, section.Part)
+			if unknown {
+				unknownCTE = true
+				continue
+			}
 			mw.WriteBinarySectionSize(section, uint32(len(decoded)))
 		}
 		if len(unreadable) > 0 {
@@ -3452,6 +3457,10 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	}
 	if len(seenWrites) > 0 {
 		s.writeFlagsToStorage(seenWrites)
+	}
+	if unknownCTE {
+		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Code: imaplib.ResponseCodeUnknownCTE,
+			Text: "Unknown Content-Transfer-Encoding"}
 	}
 	return nil
 }

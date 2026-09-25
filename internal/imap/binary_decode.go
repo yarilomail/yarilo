@@ -1,75 +1,92 @@
 package imap
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"io"
 	"mime/quotedprintable"
 	"strings"
+
+	imaplib "github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapserver"
+	"github.com/emersion/go-message/textproto"
 )
 
-// decodeBinarySection implements the RFC 3516 BINARY[<section>] decoding —
-// strip the Content-Transfer-Encoding wrapper and return the raw bytes.
-//
-// Whole-message (part == nil or empty) is fully supported: the message
-// header is scanned for Content-Transfer-Encoding, base64 / quoted-
-// printable bodies are decoded, 7bit / 8bit / binary pass through.
-//
-// Part-spec (BINARY[1] / BINARY[1.2] etc.) requires a MIME walk over the
-// message structure. Until that lands the call returns the raw bytes
-// unchanged — clients that supply a part still get a syntactically valid
-// reply rather than an error (permissive fallback when the MIME parser
-// cannot resolve the section).
-func decodeBinarySection(raw []byte, part []int) []byte {
-	if len(part) > 0 {
-		// MIME walk deferred; return body unchanged so the client can
-		// fall back to its own decoder.
-		return raw
+// binarySection is BINARY[<part>] (RFC 3516): the section decoded by its own
+// transfer encoding. The whole message keeps its header, relabelled binary.
+func binarySection(raw []byte, part []int) (data []byte, unknownCTE bool) {
+	if len(part) == 0 {
+		return binaryWhole(raw)
 	}
-	header, body, ok := splitMessage(raw)
-	if !ok {
-		return raw
+	body := imapserver.ExtractBodySection(bytes.NewReader(raw), &imaplib.FetchItemBodySection{Part: part})
+	if body == nil {
+		return []byte{}, false // no such part: empty, as for BODY[<part>]
 	}
-	enc := strings.ToLower(strings.TrimSpace(headerValue(header, "Content-Transfer-Encoding")))
-	switch enc {
-	case "", "7bit", "8bit", "binary":
-		return body
-	case "base64":
-		// Strip CRLF / whitespace before decoding — RFC 2045 §6.8 allows
-		// line breaks anywhere in the encoded data.
-		clean := stripWhitespace(body)
-		decoded, err := base64.StdEncoding.DecodeString(string(clean))
-		if err != nil {
-			return body
+	mime := imapserver.ExtractBodySection(bytes.NewReader(raw),
+		&imaplib.FetchItemBodySection{Part: part, Specifier: imaplib.PartSpecifierMIME})
+	decoded, _, unknown := decodeCTE(headerValue(mime, "Content-Transfer-Encoding"), body)
+	return decoded, unknown
+}
+
+func binaryWhole(raw []byte) ([]byte, bool) {
+	br := bufio.NewReader(bytes.NewReader(raw))
+	hdr, err := textproto.ReadHeader(br)
+	if err != nil {
+		return raw, false
+	}
+	body, _ := io.ReadAll(br)
+	decoded, changed, unknown := decodeCTE(hdr.Get("Content-Transfer-Encoding"), body)
+	if unknown || !changed {
+		return raw, unknown
+	}
+	var out bytes.Buffer
+	out.Write(relabelBinary(raw[:len(raw)-len(body)]))
+	out.Write(decoded)
+	return out.Bytes(), false
+}
+
+// relabelBinary rewrites the Content-Transfer-Encoding field where it stands,
+// continuation lines included; the header keeps its order and its bytes.
+func relabelBinary(header []byte) []byte {
+	var out bytes.Buffer
+	lines := bytes.SplitAfter(header, []byte{'\n'})
+	for i := 0; i < len(lines); i++ {
+		name, _, found := bytes.Cut(lines[i], []byte{':'})
+		if !found || !strings.EqualFold(strings.TrimSpace(string(name)), "Content-Transfer-Encoding") {
+			out.Write(lines[i])
+			continue
 		}
-		return decoded
+		out.WriteString("Content-Transfer-Encoding: binary\r\n")
+		for i+1 < len(lines) && len(lines[i+1]) > 0 && (lines[i+1][0] == ' ' || lines[i+1][0] == '\t') {
+			i++
+		}
+	}
+	return out.Bytes()
+}
+
+// decodeCTE undoes a transfer encoding; changed is false for the identity
+// ones, and bytes that do not decode are passed through as they are.
+func decodeCTE(cte string, body []byte) (out []byte, changed, unknown bool) {
+	switch strings.ToLower(strings.TrimSpace(cte)) {
+	case "", "7bit", "8bit", "binary":
+		return body, false, false
+	case "base64":
+		// RFC 2045 6.8 allows line breaks anywhere in the encoded data.
+		decoded, err := base64.StdEncoding.DecodeString(string(stripWhitespace(body)))
+		if err != nil {
+			return body, false, false
+		}
+		return decoded, true, false
 	case "quoted-printable":
 		decoded, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(body)))
 		if err != nil {
-			return body
+			return body, false, false
 		}
-		return decoded
+		return decoded, true, false
+	default:
+		return nil, false, true
 	}
-	return body
-}
-
-// splitMessage finds the blank line that separates the RFC 5322 header
-// block from the body. Returns (header, body, true) on success or the
-// whole input as header with empty body and false when no separator is
-// present.
-func splitMessage(raw []byte) ([]byte, []byte, bool) {
-	for i := 0; i+1 < len(raw); i++ {
-		if raw[i] == '\n' {
-			// CRLF-CRLF or LF-LF separator.
-			if raw[i+1] == '\n' {
-				return raw[:i+1], raw[i+2:], true
-			}
-			if i+3 < len(raw) && raw[i+1] == '\r' && raw[i+2] == '\n' {
-				return raw[:i+1], raw[i+3:], true
-			}
-		}
-	}
-	return raw, nil, false
 }
 
 // headerValue returns the (last) value of name in the supplied header

@@ -940,10 +940,12 @@ func TestFetchBinarySectionDecodesBase64(t *testing.T) {
 	if len(msgs[0].BinarySection) != 1 {
 		t.Fatalf("BinarySection count: got %d, want 1", len(msgs[0].BinarySection))
 	}
-	got := msgs[0].BinarySection[0].Bytes
-	want := "Hello, BINARY!\r\n"
-	if string(got) != want {
-		t.Errorf("BINARY[] body: got %q, want %q", got, want)
+	// BINARY[] is the whole message: its header stays, relabelled binary, so
+	// the client does not decode the body a second time.
+	got := string(msgs[0].BinarySection[0].Bytes)
+	if !strings.HasPrefix(got, "From: a@b\r\n") || !strings.Contains(got, "Content-Transfer-Encoding: binary\r\n") ||
+		!strings.HasSuffix(got, "\r\n\r\nHello, BINARY!\r\n") || strings.Contains(got, "SGVsbG8") {
+		t.Errorf("BINARY[]: got %q, want the header relabelled binary and the decoded body", got)
 	}
 }
 
@@ -972,8 +974,8 @@ func TestFetchBinarySizeMatchesDecoded(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("FETCH count: got %d, want 1", len(msgs))
 	}
-	// "hello world\r\n" — 13 bytes after quoted-printable decode.
-	wantSize := uint32(len("hello world\r\n"))
+	// The whole message, its body decoded and its header relabelled binary.
+	wantSize := uint32(len("From: a@b\r\nContent-Transfer-Encoding: binary\r\n\r\nhello world\r\n"))
 	if len(msgs[0].BinarySectionSize) != 1 {
 		t.Fatalf("BinarySectionSize count: got %d, want 1", len(msgs[0].BinarySectionSize))
 	}
