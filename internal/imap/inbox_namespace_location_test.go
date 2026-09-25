@@ -14,10 +14,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The INBOX namespace may carry a location: mail_driver/mail_path on it fold
-// into one when the configuration loads. It is still the primary, and still
-// opens the user's own store -- its location names the driver, not a second
-// store -- with a private virtual namespace beside it (#2038).
+// An INBOX namespace with a location is still the primary and still opens the
+// user's own store: its location names the driver, not a second store (#2038).
 func TestInboxNamespaceWithALocationIsThePrimary(t *testing.T) {
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
