@@ -188,12 +188,29 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 	for _, spec := range specs {
 		switch spec.Type {
 		case NamespacePersonal:
-			h, err := s.openHandle(spec, "personal", personalUI, owner, mailbox.NamespaceSubsFile(spec.Prefix, string(spec.Separator), string(spec.Type)))
+			ui := personalUI
+			if spec.Location != "" {
+				// A second private namespace with storage of its own -- a
+				// virtual one -- is the user's too, but not their INBOX store.
+				loc, ok, err := mailbox.ParseLocation(spec.Location, personalUI)
+				if err != nil {
+					return nil, nil, fmt.Errorf("imap: personal namespace location: %w", err)
+				}
+				if ok {
+					if ui, err = mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator)); err != nil {
+						return nil, nil, fmt.Errorf("imap: personal namespace: %w", err)
+					}
+				}
+			}
+			h, err := s.openHandle(spec, "personal", ui, owner, mailbox.NamespaceSubsFile(spec.Prefix, string(spec.Separator), string(spec.Type)))
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: open personal namespace: %w", err)
 			}
+			if spec.Location != "" {
+				h.location = ui.MailPath
+			}
 			out[spec.Prefix] = h
-			if primary == nil {
+			if primary == nil && spec.Location == "" {
 				primary = h
 			}
 		case NamespaceShared, NamespaceOther: //nolint:exhaustive
