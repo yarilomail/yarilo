@@ -9,9 +9,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// What JMAP writes back is what IMAP answers with: an Email/get must leave the
-// envelope in the cache as the message wrote it, encoded word and all, or a
-// later FETCH ENVELOPE hands the client decoded 8-bit text (#2008, #1714).
+// What JMAP writes back is what IMAP answers with: the cached envelope keeps
+// the header's own text, or a later FETCH hands out decoded 8-bit (#2008).
 func TestEmailGetCachesTheEnvelopeAsTheMessageWroteIt(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
 	emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],

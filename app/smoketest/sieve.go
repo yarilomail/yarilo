@@ -320,9 +320,8 @@ func (c *imapClient) cmd(command string) ([]string, error) {
 			return nil, err
 		}
 		line = strings.TrimRight(line, "\r\n")
-		// A literal is part of the same response: ENVELOPE sends one for a
-		// subject the header wrote as raw 8-bit, and a line-at-a-time reader
-		// splits that answer in two (#2008).
+		// A literal belongs to the response it sits in; read line by line it
+		// splits one answer in two (#2008).
 		for {
 			n, ok := literalLength(line)
 			if !ok {

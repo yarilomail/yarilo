@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// SORT and THREAD write the envelope cache too, and what they write is what a
-// later FETCH answers with: an encoded word must survive whoever touched the
-// message first (#2008, #1714).
+// SORT and THREAD write the same cache FETCH reads: an encoded word survives
+// whoever touched the message first (#2008).
 func TestEnvelopeAfterSortKeepsTheEncodedWord(t *testing.T) {
 	raw := mailFrom("a@x", "=?utf-8?B?0J/RgNC40LLRltGC?=", "Sun, 1 Mar 2026 10:00:00 +0000", "Alice <a@example.com>")
 	conn, rd, _ := threadServerIn(t, []string{raw})
