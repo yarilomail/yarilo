@@ -453,6 +453,12 @@ func (h *userHandle) SavePOP3UIDLs(folderID uint64, uidls map[uint32]string) err
 func (h *userHandle) ResetFolder(folderID uint64, records []*mailbox.MessageMeta) ([]mailbox.ExpungedCopy, error) {
 	return h.stamped(folderID).ResetFolder(folderID, records)
 }
+func (h *userHandle) VirtualHeader(folderID uint64) (mailbox.VirtualHeader, bool) {
+	return h.stamped(folderID).VirtualHeader(folderID)
+}
+func (h *userHandle) SetVirtualHeader(folderID uint64, hdr mailbox.VirtualHeader) error {
+	return h.stamped(folderID).SetVirtualHeader(folderID, hdr)
+}
 func (h *userHandle) OptimizeIndex(folderID uint64) error {
 	return h.stamped(folderID).OptimizeIndex(folderID)
 }

@@ -413,7 +413,7 @@ func splitUser(u string) (local, domain string) {
 // the globally configured cfg.Storage.MailDriver driver; per-namespace driver
 // mixing is deferred until backends gain a shared OpenNamespace dispatch.
 type Location struct {
-	Driver      string // "maildir", "sdbox" (alias: "dbox"), "mdbox"
+	Driver      string // "maildir", "sdbox" (alias: "dbox"), "mdbox", "virtual"
 	Path        string // expanded absolute path (varexpand applied)
 	IndexDir    string // INDEX= modifier, expanded; empty = co-located
 	VolatileDir string // VOLATILEDIR= modifier, expanded; empty = default
@@ -424,7 +424,7 @@ type Location struct {
 // recognisedDriver reports whether name is a storage driver yarilo knows.
 func recognisedDriver(name string) bool {
 	switch name {
-	case "maildir", "sdbox", "dbox", "mdbox":
+	case "maildir", "sdbox", "dbox", "mdbox", "virtual":
 		return true
 	default:
 		return false
