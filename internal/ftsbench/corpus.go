@@ -100,6 +100,8 @@ func buildMessage(rng *rand.Rand, uid uint32, hasHit bool) []byte {
 // asserted by the acceptance test.
 type Report struct {
 	Corpus           int     `json:"corpus"`
+	Copies           int     `json:"copies"`
+	CopyHits         int     `json:"copy_hits"` // hits the second folder answers
 	Hits             int     `json:"hits"`
 	CorpusBytes      int64   `json:"corpus_bytes"`
 	IndexBytes       int64   `json:"index_bytes"`
@@ -115,6 +117,9 @@ func (r Report) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "corpus:      %d messages (%d hits, %.1f MiB)\n",
 		r.Corpus, r.Hits, float64(r.CorpusBytes)/(1<<20))
+	if r.Copies > 0 {
+		fmt.Fprintf(&b, "copies:      %d in a second folder (%d hits there)\n", r.Copies, r.CopyHits)
+	}
 	fmt.Fprintf(&b, "index size:  %.1f MiB (%.2fx corpus)\n",
 		float64(r.IndexBytes)/(1<<20), r.IndexRatio)
 	fmt.Fprintf(&b, "index rate:  %.0f msg/s\n", r.IndexThroughput)
