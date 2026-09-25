@@ -85,3 +85,31 @@ func TestRescanWithAnEmptyFolderKeepsTheRest(t *testing.T) {
 		t.Errorf("emptying INBOX took the other folder's message with it: %v", got)
 	}
 }
+
+// One message in two folders is one document: a rescan of one folder takes
+// that folder's terms off it, and the document survives for the other (#2019).
+func TestRescanOfOneFolderKeepsACopyInAnother(t *testing.T) {
+	ui, _ := testEngine(t, Options{})
+	other := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
+	guid := testGUID(1)
+	indexCopy(t, ui, inbox, 1, guid, nil, []string{"alpha"})
+	indexCopy(t, ui, other, 7, guid, nil, []string{"alpha"})
+
+	// INBOX no longer holds it; Archive still does.
+	if _, err := ui.Rescan(inbox, nil); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ui.Lookup([]string{other.GUID}, bodyQuery("alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := uidsOf(append(res.DefiniteGUIDs, res.MaybeGUIDs...)); len(got) != 1 {
+		t.Errorf("the surviving copy answers %v, want the message Archive still holds", got)
+	}
+	if res, err = ui.Lookup([]string{inbox.GUID}, bodyQuery("alpha")); err != nil {
+		t.Fatal(err)
+	}
+	if got := uidsOf(append(res.DefiniteGUIDs, res.MaybeGUIDs...)); len(got) != 0 {
+		t.Errorf("INBOX still answers %v for a message it no longer holds", got)
+	}
+}

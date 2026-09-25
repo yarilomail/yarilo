@@ -891,9 +891,8 @@ func (s *Service) runIndex(j job) error {
 			"stored_uidvalidity", storedUIDV, "current_uidvalidity", curUIDV, "reset", reset)
 		if reset != "" {
 			slog.Info("fts: resetting mailbox index", "job_id", j.id, "user", j.user, "folder", j.mbox.Name, "reason", reset)
-			// The folder's own live set, never nil: with one index per user an
-			// empty one means "every document is stale" and takes the whole
-			// account with it (#2019).
+			// Never nil: with one index per user an empty live set reads as
+			// "every document is stale" and takes the account with it (#2019).
 			live, _, _, perr := s.presentCopies(h, j.mbox)
 			if perr != nil {
 				return perr

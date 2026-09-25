@@ -904,9 +904,8 @@ func (u *userIndex) Rescan(mbox fts.MailboxRef, present []fts.Copy) ([]uint32, e
 	return missing, nil
 }
 
-// reconcileShard walks one shard's documents for this folder: a message the
-// folder no longer holds loses its folder term, and the document goes when no
-// folder holds it. Never by docid -- that number is the database's (#2019).
+// reconcileShard reconciles one shard against the folder's live set, by the
+// message: a docid is the database's number and names no uid (#2019).
 func reconcileShard(path, folderGUID string, live map[[16]byte]uint32, indexed map[[16]byte]struct{}) error {
 	w, err := xapian.OpenWDB(path)
 	if err != nil {
