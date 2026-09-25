@@ -5,8 +5,10 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -318,6 +320,24 @@ func (c *imapClient) cmd(command string) ([]string, error) {
 			return nil, err
 		}
 		line = strings.TrimRight(line, "\r\n")
+		// A literal is part of the same response: ENVELOPE sends one for a
+		// subject the header wrote as raw 8-bit, and a line-at-a-time reader
+		// splits that answer in two (#2008).
+		for {
+			n, ok := literalLength(line)
+			if !ok {
+				break
+			}
+			buf := make([]byte, n)
+			if _, err := io.ReadFull(c.r, buf); err != nil {
+				return nil, err
+			}
+			rest, err := c.r.ReadString('\n')
+			if err != nil {
+				return nil, err
+			}
+			line += string(buf) + strings.TrimRight(rest, "\r\n")
+		}
 		if strings.HasPrefix(line, tag+" OK") {
 			return untagged, nil
 		}
@@ -1401,4 +1421,21 @@ func testSieveSpamtest(user, pass, to string) error {
 		return fmt.Errorf("inject: %w", err)
 	}
 	return checkFolder(user, pass, folder)
+}
+
+// literalLength reads the {N} a line ends with, which says how many bytes of
+// the response follow it.
+func literalLength(line string) (int, bool) {
+	if !strings.HasSuffix(line, "}") {
+		return 0, false
+	}
+	open := strings.LastIndexByte(line, '{')
+	if open < 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(line[open+1 : len(line)-1])
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }

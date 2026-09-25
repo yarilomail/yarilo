@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // registers the charset decoders
 
@@ -283,9 +282,9 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 		return email, headerFields, nil
 	}
 	fillHeaders(&email, entity.Header)
-	// Write back what the parse produced, so the next envelope-only request --
-	// here or over IMAP -- does not repeat it.
-	cache.StoreEnvelope(m, imapserver.ExtractEnvelope(entity.Header.Header))
+	// Write back what the parse produced, from the header rather than from the
+	// struct: a subject reaches IMAP as the message wrote it (#2008).
+	cache.StoreFromHeader(m, entity.Header.Header, msgcache.EnvelopeTextOf(entity.Header.Header))
 	// Header field properties are answered from the same parsed block, so a
 	// request naming only them costs no more than one naming subject.
 	headerFields = headerFieldValues(entity.Header, req.HeaderProperties())

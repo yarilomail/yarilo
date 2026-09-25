@@ -257,18 +257,18 @@ func (s *session) orderingMessage(num uint32, m *mailbox.MessageMeta, raw []byte
 		// path above reads, so the next THREAD over this account opens
 		// nothing. The cache is on disk, so "once" means once per account,
 		// not once per process.
-		if env, eerr := s.envelopeOf(m, raw); eerr == nil {
-			envCache.StoreEnvelope(m, env)
+		if _, hdr, eerr := s.envelopeOf(m, raw); eerr == nil {
+			envCache.StoreFromHeader(m, hdr, msgcache.EnvelopeTextOf(hdr))
 			envCache.StoreReferences(m, full.References)
 		}
 		return full, nil
 	}
 
-	env, err := s.envelopeOf(m, raw)
+	env, hdr, err := s.envelopeOf(m, raw)
 	if err != nil {
 		return out, err
 	}
-	envCache.StoreEnvelope(m, env)
+	envCache.StoreFromHeader(m, hdr, msgcache.EnvelopeTextOf(hdr))
 	applyHead(&out, msgcache.HeadOf(env))
 	return out, nil
 }
@@ -288,27 +288,29 @@ func threadAncestry(refs []string, inReplyTo []string) []string {
 
 // envelopeOf parses the envelope from bytes already in hand, or by reading the
 // message header.
-func (s *session) envelopeOf(m *mailbox.MessageMeta, raw []byte) (*imaplib.Envelope, error) {
+// envelopeOf returns the envelope and the header it came from: what the cache
+// stores is built from that header, never from the struct (#1714, #2008).
+func (s *session) envelopeOf(m *mailbox.MessageMeta, raw []byte) (*imaplib.Envelope, textproto.Header, error) {
 	if len(raw) > 0 {
 		hdr, err := textproto.ReadHeader(bufio.NewReader(bytes.NewReader(raw)))
 		if err != nil {
-			return nil, fmt.Errorf("imap/order: parse header of uid %d: %w", m.UID, err)
+			return nil, textproto.Header{}, fmt.Errorf("imap/order: parse header of uid %d: %w", m.UID, err)
 		}
-		return imapserver.ExtractEnvelope(hdr), nil
+		return imapserver.ExtractEnvelope(hdr), hdr, nil
 	}
 	if !s.folderMailbox().Readable(m) {
-		return &imaplib.Envelope{}, nil
+		return &imaplib.Envelope{}, textproto.Header{}, nil
 	}
 	rc, err := s.fetchSelected(m)
 	if err != nil {
-		return nil, fmt.Errorf("imap/order: open uid %d: %w", m.UID, err)
+		return nil, textproto.Header{}, fmt.Errorf("imap/order: open uid %d: %w", m.UID, err)
 	}
 	defer rc.Close() //nolint:errcheck
 	hdr, err := textproto.ReadHeader(bufio.NewReader(rc))
 	if err != nil {
-		return nil, fmt.Errorf("imap/order: read header of uid %d: %w", m.UID, err)
+		return nil, textproto.Header{}, fmt.Errorf("imap/order: read header of uid %d: %w", m.UID, err)
 	}
-	return imapserver.ExtractEnvelope(hdr), nil
+	return imapserver.ExtractEnvelope(hdr), hdr, nil
 }
 
 // applyHead fills the ordering fields ENVELOPE carries. Address.Mailbox is

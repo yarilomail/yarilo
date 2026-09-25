@@ -69,7 +69,9 @@ func (c *envelopeCaches) Close() {
 // Message ids go through messageIDs for the same reason as the parsed path:
 // JMAP carries them bare, without the angle brackets (§4.1.2.4).
 func fillFromEnvelope(email *jmapcore.Email, env *imaplib.Envelope) {
-	if s := env.Subject; s != "" {
+	// The cache holds the header's own text, encoded words and all, because
+	// that is what IMAP answers with; JMAP carries decoded text (#2008).
+	if s := decodeWord(env.Subject); s != "" {
 		email.Subject = &s
 	}
 	if !env.Date.IsZero() {
@@ -94,9 +96,8 @@ func envInReplyTo(ids []string) []string {
 	return out
 }
 
-// envAddresses converts ENVELOPE addresses to the JMAP form. Encoded words are
-// already decoded: ExtractEnvelope built these through mail.Header, so decoding
-// again would corrupt a name that literally contains "=?".
+// envAddresses converts ENVELOPE addresses to the JMAP form, decoding the
+// display name: the cache carries the header's own text (#2008).
 func envAddresses(addrs []imaplib.Address) []jmapcore.EmailAddress {
 	if len(addrs) == 0 {
 		return nil
@@ -105,7 +106,7 @@ func envAddresses(addrs []imaplib.Address) []jmapcore.EmailAddress {
 	for _, a := range addrs {
 		addr := jmapcore.EmailAddress{Email: a.Addr()}
 		if a.Name != "" {
-			name := a.Name
+			name := decodeWord(a.Name)
 			addr.Name = &name
 		}
 		out = append(out, addr)

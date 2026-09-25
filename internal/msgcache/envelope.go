@@ -590,15 +590,6 @@ func (fc *Handle) StoreReferences(m *mailbox.MessageMeta, refs []string) {
 	fc.storeField(m, fc.fieldID(fieldHdrReferences), encodeReferencesHeader(refs))
 }
 
-// StoreEnvelope caches an envelope a caller holds as a struct. The text is the
-// stored form, so what a client is shown does not depend on who wrote it.
-func (fc *Handle) StoreEnvelope(m *mailbox.MessageMeta, env *imaplib.Envelope) {
-	if fc == nil || env == nil {
-		return
-	}
-	fc.StoreEnvelopeText(m, imaptext.WriteEnvelope(env))
-}
-
 // StoreEnvelopeText caches the envelope exactly as it will be answered, built
 // from the raw header by the reference's rules (#1714).
 func (fc *Handle) StoreEnvelopeText(m *mailbox.MessageMeta, text string) {
