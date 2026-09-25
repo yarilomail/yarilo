@@ -16,6 +16,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -60,6 +61,10 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 		return dboxv2.New(dboxv2.WithLocker(locker), dboxv2.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			dboxv2.WithFsync(fsyncMode(sc)),
 			dboxv2.WithListUTF8(sc.MailboxListUTF8))
+	case "virtual":
+		// A virtual mailbox holds no message of its own, so it takes none of
+		// the write knobs: what it needs is its configuration file.
+		return virtual.New()
 	case "mdbox":
 		return mdbox.New(mdbox.WithLocker(locker), mdbox.WithAltStorage(sc.MailAltPath),
 			mdbox.WithFsync(fsyncMode(sc)),

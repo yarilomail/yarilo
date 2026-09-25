@@ -1223,6 +1223,11 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		slog.Info("imap: records took the size their storage holds",
 			"user", s.username(), "folder", rel, "filled", n)
 	}
+	// A virtual mailbox is brought up to date before it is reported: what the
+	// rule keeps is what EXISTS counts (#1986).
+	if refreshed := s.syncVirtual(h, rel, f); refreshed != nil {
+		f = refreshed
+	}
 	if refreshed := s.dboxHealIfCorrupt(h, rel, f); refreshed != nil {
 		f = refreshed
 	}
@@ -1337,6 +1342,15 @@ func (s *session) Create(name string, opts *imaplib.CreateOptions) error {
 	}
 	if err := s.requireRightOnParent(h, rel, mailbox.RightCreate); err != nil {
 		return err
+	}
+	// A virtual mailbox is its configuration file: making one here would
+	// leave a mailbox with no rule, so the namespace says no (#1986).
+	if _, virtualNS := mailbox.Driver(h.box).(virtualConfigured); virtualNS {
+		return &imaplib.Error{
+			Type: imaplib.StatusResponseTypeNo,
+			Code: imaplib.ResponseCodeCannot,
+			Text: "a virtual mailbox is created by its configuration file",
+		}
 	}
 	// quota_mailbox_count: cap the number of mailboxes a user may have.
 	if lim := s.srv.opts.QuotaPolicy.MailboxCount; lim > 0 {

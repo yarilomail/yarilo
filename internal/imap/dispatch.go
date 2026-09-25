@@ -211,7 +211,10 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 				// SELECT under its prefix returns NO.
 				continue
 			}
-			loc, ok, err := mailbox.ParseLocation(spec.Location, nil)
+			// Expanded against this session's own identity: "%h" in a
+			// namespace that is per user -- a virtual one -- became empty
+			// otherwise, and every user shared one path.
+			loc, ok, err := mailbox.ParseLocation(spec.Location, personalUI)
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: %s namespace location: %w", spec.Type, err)
 			}
