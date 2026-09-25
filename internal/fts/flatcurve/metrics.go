@@ -25,3 +25,10 @@ var metricDedupMerged = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fts_flatcurve_dedup_merged_total",
 	Help: "Documents merged into another document of the same message during compaction.",
 })
+
+// Sealed shards opened for writing so a copy can join its message. A delivery
+// finds its message nowhere and must not raise this (#1986).
+var metricSealedWriteOpen = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fts_flatcurve_sealed_write_open_total",
+	Help: "Sealed shards opened for writing to join a copy to the document of its message.",
+})

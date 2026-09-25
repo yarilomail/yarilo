@@ -701,6 +701,7 @@ func (up *update) joinInSealedShard(st *mboxState) (bool, error) {
 		if len(ids) == 0 {
 			continue
 		}
+		metricSealedWriteOpen.Inc()
 		w, werr := xapian.OpenWDB(p)
 		if werr != nil {
 			return false, werr
