@@ -169,7 +169,9 @@ func (s *Server) openUserContextInner(username string, mode openMode) (*userCont
 	if err := accountNameOK(resolver, username); err != nil {
 		return nil, err
 	}
-	ui := resolver.UserInfo(username, "")
+	// The userdb first, and its home is the one every path here resolves
+	// against: a session opens that mailbox, and an operator command must not
+	// open another one under the same name (#2024).
 	var pui *protocol.UserInfo
 	if s.opts.AuthClient != nil {
 		var err error
@@ -180,6 +182,13 @@ func (s *Server) openUserContextInner(username string, mode openMode) (*userCont
 		if pui == nil {
 			return nil, fmt.Errorf("backendapi/userctx: user not found: %s", username)
 		}
+	}
+	home := ""
+	if pui != nil {
+		home = pui.Home
+	}
+	ui := resolver.UserInfo(username, home)
+	if pui != nil {
 		userdbinfo.Apply(ui, pui, username)
 	}
 	reqID := locks.NewID()
