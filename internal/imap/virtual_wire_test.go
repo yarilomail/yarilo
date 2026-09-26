@@ -92,7 +92,18 @@ func virtualServerFTS(t *testing.T, configs map[string]string, seed func(t *test
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	addr := ln.Addr().String()
+	lastVirtualAddr = addr
+	return loginTo(t, addr)
+}
+
+// lastVirtualAddr is the server virtualServer started last, for a row that
+// needs a second session of the same user.
+var lastVirtualAddr string
+
+func loginTo(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

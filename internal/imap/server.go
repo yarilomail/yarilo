@@ -2733,15 +2733,25 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		seqNum--
 	}
 
-	removed, _, herr := s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed)
-	if herr != nil {
+	virtualSel := s.isVirtualSelected()
+	var removed []*mailbox.MessageMeta
+	var herr error
+	if virtualSel {
+		removed, herr = s.expungeCopies(doomed)
+		if herr != nil {
+			return dependencyError(herr)
+		}
+	} else if removed, _, herr = s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed); herr != nil {
 		return herr
 	}
 	// Outside the hold, in the order the hold removed them: the quota count
 	// re-opens the folder, and that asks for the hold again (#1853).
 	var expunge_count int
 	for _, m := range removed {
-		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
+		if !virtualSel {
+			// A virtual record holds no bytes: its copy was reported above.
+			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
+		}
 		s.statsExpunged++
 		expunge_count++
 		seq := seqOf[m.UID]
@@ -3504,6 +3514,12 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	}
 	var modifiedUIDs imaplib.UIDSet
 
+	virtualSel := s.isVirtualSelected()
+	msgByUID := make(map[uint32]*mailbox.MessageMeta, len(msgs))
+	for _, m := range msgs {
+		msgByUID[m.UID] = m
+	}
+
 	// Pass 1: determine which messages to update and compute new flag sets.
 	var pending []pendingStore
 	batchUpdates := make(map[uint32]mailbox.FlagsUpdate)
@@ -3548,7 +3564,10 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		}
 		// The driver renames the file to carry the flags, so it is handed the
 		// name it holds now -- resolved from the record, not carried in it.
-		storeName, nameErr := s.folderMailbox().MessagePath(s.folder.Name, m)
+		storeName, nameErr := "", error(nil)
+		if !virtualSel {
+			storeName, nameErr = s.folderMailbox().MessagePath(s.folder.Name, m)
+		}
 		if nameErr != nil {
 			slog.Warn("imap: store cannot name the message, so its flags stay in the index only",
 				"user", s.userInfo.Username, "folder", s.folder.Name, "uid", m.UID, "err", nameErr)
@@ -3556,6 +3575,23 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		}
 		pending = append(pending, pendingStore{seqNum, m.UID, newFlags, newKW, storeName, m.AltTier})
 		batchUpdates[m.UID] = upd
+	}
+
+	if virtualSel && len(batchUpdates) > 0 {
+		// The copy is the message: it takes the change, and the virtual record
+		// then takes the set the copy ended with, moving its own modseq.
+		onCopies, cerr := s.storeOnCopies(msgByUID, batchUpdates)
+		if cerr != nil {
+			return dependencyError(cerr)
+		}
+		batchUpdates = onCopies
+		kept := pending[:0]
+		for _, p := range pending {
+			if _, ok := batchUpdates[p.uid]; ok {
+				kept = append(kept, p)
+			}
+		}
+		pending = kept
 	}
 
 	// Pass 2: single lock/reload/flush for all flag updates.
@@ -3649,13 +3685,15 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	// rename racing that leaves the script looking for a name that no longer
 	// exists. A message the script moved has no file left here, and this skips
 	// it rather than writing flags into the folder it left.
-	defer s.writeFlagsToStorage(pending)
+	if !virtualSel {
+		defer s.writeFlagsToStorage(pending)
+	}
 
 	// imapsieve (RFC 6785): after the STORE responses are sent, the FLAG cause
 	// fires on the selected mailbox for each message whose flags changed; the
 	// script may refile / discard / reflag it. Gated on a bound script (or
 	// globals) so a bulk STORE with no imapsieve script fetches nothing.
-	if eng := s.srv.opts.SieveEngine; eng != nil && eng.ImapSieveEnabled() && storeFlags != nil && len(pending) > 0 {
+	if eng := s.srv.opts.SieveEngine; !virtualSel && eng != nil && eng.ImapSieveEnabled() && storeFlags != nil && len(pending) > 0 {
 		// Resolved once for the command: a bulk STORE would otherwise ask the
 		// annotation dict for every message it touched (#1902).
 		scriptName := s.imapSieveScriptName(s.folderNS, s.folder.Name, s.folder.GUID)
