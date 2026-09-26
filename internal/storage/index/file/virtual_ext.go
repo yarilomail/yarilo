@@ -57,9 +57,8 @@ func encodeVirtualHdr(h mailbox.VirtualHeader) []byte {
 // name where ours carries the GUID (virtual-storage.h:33-42).
 const refBoxSize = 4 + 4 + 4 + 4 + 8
 
-// decodeVirtualHdr reads ours, and a header the reference wrote when the
-// lengths say it is that one. Such a header names folders, so its GUIDs stay
-// zero until the folders themselves are opened.
+// decodeVirtualHdr reads ours, and the reference's when the lengths say it is
+// that one: it names folders, so their GUIDs stay zero until they are opened.
 func decodeVirtualHdr(raw []byte) (mailbox.VirtualHeader, bool) {
 	if len(raw) < virtualHdrHead {
 		return mailbox.VirtualHeader{}, false

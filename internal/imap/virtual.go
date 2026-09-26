@@ -88,6 +88,11 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 // adoptReferenceHeader gives the folders of a header the reference wrote the
 // identity this server keeps them by, so a migrated mailbox keeps its uids.
 func (s *session) adoptReferenceHeader(h *nsHandle, f *mailbox.Folder, cfg *virtual.Config, was mailbox.VirtualHeader) (mailbox.VirtualHeader, bool) {
+	// Decided from the header in hand: only a folder named without an identity
+	// has anything to take, and every pass after the first has none.
+	if !virtual.NeedsNames(was) {
+		return was, false
+	}
 	folders, err := (&sessionBacking{s: s}).Folders(cfg)
 	if err != nil {
 		return was, false

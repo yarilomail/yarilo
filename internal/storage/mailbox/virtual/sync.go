@@ -332,6 +332,17 @@ func SameSeparator(pattern, sep string) string {
 	return strings.ReplaceAll(pattern, sep, "/")
 }
 
+// NeedsNames reports whether any folder is named without an identity, which is
+// what a header the reference wrote looks like and ours never does.
+func NeedsNames(was mailbox.VirtualHeader) bool {
+	for _, b := range was.Backing {
+		if b.GUID == ([16]byte{}) && b.Name != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // AdoptNames fills in the GUIDs a header the reference wrote does not carry,
 // matching its folders by name, so a migrated user keeps their virtual uids
 // and UIDVALIDITY (#1986). It reports whether anything was taken.

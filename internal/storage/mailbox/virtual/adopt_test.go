@@ -51,6 +51,9 @@ func TestAdoptNamesTakesNothingFromOurOwnHeader(t *testing.T) {
 	was := mailbox.VirtualHeader{Backing: []mailbox.VirtualBacking{
 		{ID: 1, Name: "INBOX", GUID: [16]byte{9}, NextUID: 42},
 	}}
+	if NeedsNames(was) {
+		t.Error("a header that identifies its folders reads as needing names, which costs a listing on every pass")
+	}
 	got, taken := AdoptNames(was, []Backing{{Name: "INBOX", GUID: [16]byte{1}}})
 	if taken {
 		t.Error("a header that already identifies its folders was taken from")
