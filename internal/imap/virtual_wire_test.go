@@ -103,13 +103,16 @@ func virtualServerWith(t *testing.T, configs map[string]string, seed func(t *tes
 	t.Cleanup(func() { ln.Close() })
 
 	addr := ln.Addr().String()
-	lastVirtualAddr = addr
+	lastVirtualAddr, lastVirtualHome = addr, info.Home
 	return loginTo(t, addr)
 }
 
 // lastVirtualAddr is the server virtualServer started last, for a row that
 // needs a second session of the same user.
 var lastVirtualAddr string
+
+// lastVirtualHome is that user's home, for a row that edits a configuration.
+var lastVirtualHome string
 
 func loginTo(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
 	t.Helper()

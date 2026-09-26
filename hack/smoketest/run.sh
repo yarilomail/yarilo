@@ -61,6 +61,36 @@ while :; do
 done
 [ "$waited" -gt 0 ] && echo "smoketest: waited ${waited}s for the backends to report ready"
 
+# A ready backend is not yet a routed one: it registers with the directors
+# after /readyz, and a login in between is answered TRYLATER. Wait until every
+# director lists every backend pod, by its current address, as up.
+DIRECTOR_LABEL="${SMOKE_DIRECTOR_LABEL:-app.kubernetes.io/component=director}"
+waited=0
+while :; do
+  ips=$(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" \
+          -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null || true)
+  directors=$(kubectl -n "$NAMESPACE" get pods -l "$DIRECTOR_LABEL" \
+          -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+  if [ -z "$directors" ]; then
+    break # no director in this deployment: logins route without one
+  fi
+  missing=""
+  for d in $directors; do
+    list=$(kubectl -n "$NAMESPACE" exec "$d" -- yarctl director backends list 2>/dev/null || true)
+    for ip in $ips; do
+      echo "$list" | grep -Eq "^${ip}[[:space:]].*[[:space:]]up[[:space:]]" || missing="$missing $d:$ip"
+    done
+  done
+  [ -n "$ips" ] && [ -z "$missing" ] && break
+  if [ "$waited" -ge "$READY_TIMEOUT" ]; then
+    echo "smoketest: directors still do not route to every backend after ${READY_TIMEOUT}s:$missing" >&2
+    exit 1
+  fi
+  sleep 5
+  waited=$((waited + 5))
+done
+[ "$waited" -gt 0 ] && echo "smoketest: waited ${waited}s for the directors to route to every backend"
+
 kubectl -n "$NAMESPACE" delete job smoketest --ignore-not-found
 sed "s|__IMAGE_TAG__|${TAG}|" "$(dirname "$0")/job.yaml" | kubectl -n "$NAMESPACE" apply -f -
 kubectl -n "$NAMESPACE" wait --for=condition=complete --timeout=300s job/smoketest

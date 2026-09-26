@@ -692,3 +692,44 @@ func subscribeAll(ctx context.Context, l locks.Locker, keys []string) (<-chan lo
 	go func() { wg.Wait(); close(out) }()
 	return out, nil
 }
+
+// errVirtualCannot is the refusal a virtual mailbox gives to what only its
+// configuration file may do, or what it cannot hold.
+func errVirtualCannot(text string) error {
+	return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Code: imaplib.ResponseCodeCannot, Text: text}
+}
+
+// isVirtualName reports whether name is a mailbox of a virtual namespace.
+func (s *session) isVirtualName(name string) bool {
+	h, _, err := s.dispatch(name)
+	if err != nil || h == nil {
+		return false
+	}
+	_, ok := mailbox.Driver(h.box).(virtualConfigured)
+	return ok
+}
+
+// virtualSaveTarget is where writes into name store: name, or a virtual
+// mailbox's "!" folder, then answered without UIDs (virtual-save.c:78-94).
+func (s *session) virtualSaveTarget(name string) (target string, redirected bool, err error) {
+	h, rel, derr := s.dispatch(name)
+	if derr != nil || h == nil {
+		return name, false, nil
+	}
+	box, ok := mailbox.Driver(h.box).(virtualConfigured)
+	if !ok {
+		return name, false, nil
+	}
+	cfg, cerr := box.Config(rel)
+	if cerr != nil {
+		return "", false, cerr
+	}
+	if cfg.SaveTo == nil || s.primary == nil {
+		return "", false, errVirtualCannot("Can't save messages to this virtual mailbox")
+	}
+	target = s.primary.fullName(cfg.SaveTo.Pattern)
+	if exists, _ := s.primary.box.FolderExists(cfg.SaveTo.Pattern); !exists {
+		return "", false, errVirtualCannot("the folder this virtual mailbox saves to does not exist: " + target)
+	}
+	return target, true, nil
+}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,7 +76,14 @@ func LoadConfig(dir string) (*Config, error) {
 			return nil, fmt.Errorf("virtual: open %s: %w", name, err)
 		}
 		defer f.Close() //nolint:errcheck
-		return ParseConfig(f)
+		cfg, perr := ParseConfig(f)
+		if perr != nil {
+			// The operator's error, told to the operator: the client only
+			// learns that the mailbox cannot be opened (virtual-config.c:516).
+			slog.Error("virtual: configuration refused", "path", filepath.Join(dir, name), "err", perr)
+			return nil, perr
+		}
+		return cfg, nil
 	}
 	return nil, ErrNoConfig
 }
@@ -87,17 +95,20 @@ func ParseConfig(r io.Reader) (*Config, error) {
 	sc := bufio.NewScanner(r)
 	rule := ""
 	ruleFrom := 0 // boxes from this index on take the rule being read
+	lineNo := 0
 	flush := func() error {
 		if strings.TrimSpace(rule) == "" {
 			rule = ""
 			return nil
 		}
 		if ruleFrom == len(cfg.Boxes) {
-			return errors.New("virtual: search rule without a mailbox")
+			return fmt.Errorf("virtual: line %d: search rule without a mailbox", lineNo)
 		}
 		text := strings.TrimSpace(rule)
+		// %v, not %w: a SEARCH parse error is a client's BAD, and this one
+		// is the server's configuration.
 		if _, err := imapserver.ParseSearchCriteria(text); err != nil {
-			return fmt.Errorf("virtual: the search rule %q is not one: %w", text, err)
+			return fmt.Errorf("virtual: line %d: the search rule %q is not one: %v", lineNo, text, err)
 		}
 		cfg.SearchArgsCRC32 = crc32.Update(cfg.SearchArgsCRC32, crc32.IEEETable, []byte(text))
 		for i := ruleFrom; i < len(cfg.Boxes); i++ {
@@ -107,13 +118,14 @@ func ParseConfig(r io.Reader) (*Config, error) {
 		return nil
 	}
 	for sc.Scan() {
+		lineNo++
 		line := strings.TrimRight(sc.Text(), "\r")
 		if line == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
 		if line[0] == ' ' || line[0] == '\t' {
 			if ruleFrom == len(cfg.Boxes) {
-				return nil, errors.New("virtual: search rule without a mailbox")
+				return nil, fmt.Errorf("virtual: line %d: search rule without a mailbox", lineNo)
 			}
 			rule += " " + strings.TrimSpace(line)
 			continue
@@ -123,11 +135,11 @@ func ParseConfig(r io.Reader) (*Config, error) {
 		}
 		box, err := parseBoxLine(line)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("virtual: line %d: %w", lineNo, err)
 		}
 		if box.Save {
 			if cfg.SaveTo != nil {
-				return nil, errors.New("virtual: more than one save mailbox")
+				return nil, fmt.Errorf("virtual: line %d: more than one save mailbox", lineNo)
 			}
 		}
 		cfg.Boxes = append(cfg.Boxes, box)

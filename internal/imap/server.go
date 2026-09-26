@@ -1427,6 +1427,9 @@ func (s *session) Delete(name string) error {
 	if err != nil {
 		return err
 	}
+	if s.isVirtualName(name) {
+		return errVirtualCannot("a virtual mailbox is removed with its configuration file")
+	}
 	// RFC 9051 6.3.5: DELETE of INBOX is refused. The name is legitimate
 	// everywhere else, so the refusal belongs to the destructive verb rather
 	// than to name validation -- on maildir INBOX *is* the mail root, and
@@ -1492,6 +1495,9 @@ func (s *session) Rename(oldName, newName string, _ *imaplib.RenameOptions) erro
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Rename")
 	if strings.EqualFold(oldName, "INBOX") {
 		return s.renameInbox(newName)
+	}
+	if s.isVirtualName(oldName) || s.isVirtualName(newName) {
+		return errVirtualCannot("a virtual mailbox is renamed with its configuration directory")
 	}
 	hOld, relOld, err := s.dispatch(oldName)
 	if err != nil {
@@ -2221,6 +2227,14 @@ func (c *countingReader) Read(p []byte) (int, error) {
 func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.AppendOptions) (*imaplib.AppendData, error) {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Append")
 	tAppend := time.Now()
+	if target, redirected, err := s.virtualSaveTarget(name); err != nil {
+		return nil, err
+	} else if redirected {
+		// No APPENDUID: the uid is the save folder's, not the virtual
+		// mailbox's, which learns of it at its next sync (virtual-transaction.c:70).
+		_, err := s.Append(target, r, opts)
+		return nil, err
+	}
 	h, rel, f, err := s.ensureFolderHandle(name)
 	if err != nil {
 		return nil, tryCreate(err)
@@ -3744,6 +3758,12 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, error) {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Copy")
 	tCopy := time.Now()
+	if target, redirected, err := s.virtualSaveTarget(dest); err != nil {
+		return nil, err
+	} else if redirected {
+		_, err := s.Copy(numSet, target) // no COPYUID, as for APPEND
+		return nil, err
+	}
 	if s.folder == nil {
 		return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
@@ -4106,6 +4126,12 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	if s.folder == nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
+	// Resolved before anything is touched: a refusal leaves the source whole.
+	target, redirected, err := s.virtualSaveTarget(dest)
+	if err != nil {
+		return err
+	}
+	dest = target
 	// MOVE = COPY + STORE \Deleted + EXPUNGE on the source, so the
 	// caller must hold r on the source (to read the message), t (to
 	// delete it), and e (to expunge it); plus i/p on the destination.
@@ -4223,7 +4249,8 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 
 	// COPYUID needs at least one pair; the encoder rejects an empty set and
 	// would truncate the reply mid-line. A zero-match MOVE is a plain OK.
-	if len(hits) > 0 {
+	// Into a virtual mailbox there is none: the uids are the save folder's.
+	if len(hits) > 0 && !redirected {
 		if err := w.WriteCopyData(&imaplib.CopyData{
 			UIDValidity: destFolder.UIDValidity,
 			SourceUIDs:  srcUIDs,
