@@ -683,10 +683,8 @@ func TestRetractionsNameTheMessage(t *testing.T) {
 	}
 }
 
-// SEARCH asks the index with exactly what ftsquery.Build makes of the same
-// criteria through the chain NewChain builds from the fts section, which is
-// what yarctl fts lookup asks with: an empty lookup and an empty SEARCH are
-// then the same question (#2056).
+// SEARCH asks exactly what ftsquery.Build makes of the criteria, as the lookup
+// does, so an empty lookup and an empty SEARCH are one question (#2056).
 func TestSearchAsksWhatTheLookupAsks(t *testing.T) {
 	chain, err := ftsquery.NewChain(config.FTSConfig{LanguageFilters: []string{"lowercase", "stopwords", "snowball"}})
 	if err != nil {

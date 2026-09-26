@@ -219,8 +219,7 @@ type ftsLookupResponse struct {
 	Maybe      []uint32 `json:"maybe"`
 }
 
-// handleFTSLookup asks the index what SEARCH would, with the query built as
-// SEARCH builds it, so an empty answer is the index's and not the session's.
+// handleFTSLookup asks the index with the query SEARCH would build.
 // GET /api/backend/fts/lookup?user=&folder=&header=NAME:VALUE&body=&text=
 func (s *Server) handleFTSLookup(w http.ResponseWriter, r *http.Request) {
 	if s.opts.FTSClient == nil || s.opts.FTSChain == nil {

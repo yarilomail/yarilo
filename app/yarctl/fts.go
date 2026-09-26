@@ -160,8 +160,7 @@ type repeated []string
 func (r *repeated) String() string     { return strings.Join(*r, ",") }
 func (r *repeated) Set(v string) error { *r = append(*r, v); return nil }
 
-// ftsLookup asks the index directly, so an empty SEARCH can be told apart
-// from an index that holds nothing.
+// ftsLookup asks the index with the query SEARCH would build.
 // GET /api/backend/fts/lookup?user=&folder=&header=&body=&text=
 func ftsLookup(args []string) error {
 	fs := flag.NewFlagSet("fts lookup", flag.ContinueOnError)
