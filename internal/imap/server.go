@@ -3772,7 +3772,6 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		return nil, err
 	}
 	srcIdx := s.folderIdx()
-	srcMailbox := s.folderMailbox()
 	destH, destRel, destFolder, err := s.ensureFolderHandle(dest)
 	if err != nil {
 		return nil, tryCreate(err)
@@ -3805,7 +3804,8 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		if !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
 			continue
 		}
-		rc, fetchErr := srcMailbox.OpenMessage(s.folder.Name, m)
+		// The selected-message read: a virtual record reads its copy (virtual-storage.c:978).
+		rc, fetchErr := s.fetchSelected(m)
 		if fetchErr != nil {
 			return nil, fmt.Errorf("imap/copy fetch: %w", fetchErr)
 		}
@@ -4161,6 +4161,11 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		moveUIDToClientSeq[km.uid] = uint32(i + 1)
 	}
 	numSet = resolveStar(numSet, msgs, moveUIDToClientSeq)
+	srcVirtual := s.isVirtualSelected()
+	byUID := make(map[uint32]*mailbox.MessageMeta, len(msgs))
+	for _, m := range msgs {
+		byUID[m.UID] = m
+	}
 
 	type matched struct {
 		seqNum uint32
@@ -4206,7 +4211,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		} else {
 			// Cross-namespace: no shared storage to relocate within, so copy the
 			// body over and hand the source GUID to Save, which stores it verbatim.
-			rc, fetchErr := srcMailbox.OpenMessage(s.folder.Name, m)
+			rc, fetchErr := s.fetchSelected(m)
 			if fetchErr != nil {
 				return fmt.Errorf("imap/move fetch: %w", fetchErr)
 			}
@@ -4261,15 +4266,39 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		}
 	}
 
+	// Out of a virtual mailbox the source is the copy, expunged in its own
+	// folder (virtual-mail.c:541-548); a record leaves only if its copy did.
+	var left map[uint32]bool
+	if srcVirtual {
+		var vms []*mailbox.MessageMeta
+		for _, h := range hits {
+			vms = append(vms, byUID[h.srcUID])
+		}
+		gone, gerr := s.expungeCopies(vms)
+		if gerr != nil {
+			return dependencyError(gerr)
+		}
+		left = make(map[uint32]bool, len(gone))
+		for _, g := range gone {
+			left[g.UID] = true
+		}
+	}
+
 	// Expunge source in descending seq order (RFC 6851 §3.3).
 	for i := len(hits) - 1; i >= 0; i-- {
 		h := hits[i]
-		// Index first, then storage, as the expunge loop does (#1690).
-		srcIdx.ExpungeMessage(s.folder.ID, h.srcUID) //nolint:errcheck
-		if !h.moved {
-			srcBox.Remove(s.folder.Name, h.filename) //nolint:errcheck
+		if srcVirtual {
+			if !left[h.srcUID] {
+				continue
+			}
+		} else {
+			// Index first, then storage, as the expunge loop does (#1690).
+			srcIdx.ExpungeMessage(s.folder.ID, h.srcUID) //nolint:errcheck
+			if !h.moved {
+				srcBox.Remove(s.folder.Name, h.filename) //nolint:errcheck
+			}
+			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, h.srcUID, h.vsize, h.srcGUID)
 		}
-		s.emitMailboxChangeSized(s.folder, locks.EventExpunged, h.srcUID, h.vsize, h.srcGUID)
 		if err := w.WriteExpunge(h.seqNum); err != nil {
 			return err
 		}
@@ -4278,8 +4307,12 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 			s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
 		}
 	}
-	s.folder.Messages -= uint32(len(hits))
-	srcIdx.SaveFolder(s.folder) //nolint:errcheck
+	if srcVirtual {
+		s.folder.Messages -= uint32(len(left))
+	} else {
+		s.folder.Messages -= uint32(len(hits))
+		srcIdx.SaveFolder(s.folder) //nolint:errcheck
+	}
 	// imapsieve (RFC 6785): a MOVE lands each message in the destination — the
 	// COPY cause fires there after the move completes; scripts may refile/discard.
 	if s.srv.opts.SieveEngine != nil {
