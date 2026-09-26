@@ -7,9 +7,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A flag change another session made reaches this one with its MODSEQ once
-// CONDSTORE is enabled, QRESYNC enabling it too; before that, without
-// (RFC 7162 3.2.4, #2046).
+// Another session's flag change arrives with MODSEQ once CONDSTORE (or QRESYNC)
+// is enabled, and without it before (RFC 7162 3.2.4, #2046).
 func TestAnUnsolicitedFlagChangeCarriesItsModseq(t *testing.T) {
 	for _, tc := range []struct {
 		name, enable string
