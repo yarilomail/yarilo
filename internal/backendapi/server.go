@@ -36,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	"github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/dict"
@@ -120,6 +121,8 @@ type Options struct {
 	// FTSClient dials the yarilo-fts service for the operator fts surface
 	// (status / rescan / optimize). Nil disables those endpoints (501).
 	FTSClient ftsproto.Client
+	// FTSChain expands a lookup's text the way IMAP SEARCH does; nil refuses it.
+	FTSChain ftsquery.Expander
 }
 
 // mailboxForDriver returns the MailboxBackend for driver, using opts.Mailbox

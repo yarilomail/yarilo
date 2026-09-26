@@ -19,6 +19,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/connlimit"
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	imapsvr "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/lmtp"
 	mssvr "github.com/yarilomail/yarilo/internal/managesieve"
@@ -1417,8 +1418,7 @@ func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error)
 	// same token/address limits) — otherwise query expansion (#726 item 4:
 	// per-language filter overrides) would diverge from what was actually
 	// indexed.
-	chain, err := language.NewMultiChain(languagesOrDefault(fc.Languages), fc.LanguageFilters, fc.LanguageFiltersOverride,
-		fc.LanguageTokenMaxLen, fc.LanguageAddressMaxLen, fc.DetectionMinRunes)
+	chain, err := ftsquery.NewChain(fc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fts language chain: %w", err)
 	}
@@ -1427,15 +1427,4 @@ func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error)
 	// it however many goroutines the caller starts. Connections open on demand,
 	// so a pool of four costs nothing until four calls overlap.
 	return ftsproto.NewPool(fc.Addr, fc.MaxConns, 10*time.Second), chain, nil
-}
-
-// languagesOrDefault mirrors app/yarilo-fts/main.go's languagesOr: MultiChain
-// always needs at least one language, and the session side's configured set
-// must match the yarilo-fts service's set exactly for query expansion to
-// cover what indexing could have picked.
-func languagesOrDefault(xs []string) []string {
-	if len(xs) > 0 {
-		return xs
-	}
-	return []string{"en"}
 }

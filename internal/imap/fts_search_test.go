@@ -3,6 +3,7 @@ package imap_test
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -13,9 +14,11 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -677,5 +680,37 @@ func TestRetractionsNameTheMessage(t *testing.T) {
 			}
 			t.Fatalf("%s fired no retraction", tc.name)
 		})
+	}
+}
+
+// SEARCH asks exactly what ftsquery.Build makes of the criteria, as the lookup
+// does, so an empty lookup and an empty SEARCH are one question (#2056).
+func TestSearchAsksWhatTheLookupAsks(t *testing.T) {
+	chain, err := ftsquery.NewChain(config.FTSConfig{LanguageFilters: []string{"lowercase", "stopwords", "snowball"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeFTS{lookup: fts.Result{Definite: []uint32{1}}, lastUID: 100}
+	c := startFTSTestServerWith(t, fake, false, t.TempDir(), func(o *imapserver.FTSOptions) { o.Chain = chain })
+	appendBody(t, c, "irrelevant body text")
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.UIDSearch(&imap.SearchCriteria{
+		Header: []imap.SearchCriteriaHeaderField{{Key: "Subject", Value: "running late"}},
+		Body:   []string{"invoices"},
+		Text:   []string{"quarterly report"},
+	}, nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := ftsquery.Build(chain, ftsquery.Criteria{
+		Body:   []string{"invoices"},
+		Text:   []string{"quarterly report"},
+		Header: []ftsquery.Header{{Key: "Subject", Value: "running late"}},
+	})
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.queries) != 1 || !reflect.DeepEqual(fake.queries[0], want) {
+		t.Errorf("SEARCH asked %+v, want %+v", fake.queries, want)
 	}
 }

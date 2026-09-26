@@ -4,7 +4,9 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"strings"
 
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -35,6 +37,7 @@ func (s *Server) registerFTSRoutes() {
 	s.mux.Handle("GET /api/backend/fts/status", s.middleware(s.handleFTSStatus))
 	s.mux.Handle("POST /api/backend/fts/rescan", s.middleware(s.handleFTSRescan))
 	s.mux.Handle("POST /api/backend/fts/optimize", s.middleware(s.handleFTSOptimize))
+	s.mux.Handle("GET /api/backend/fts/lookup", s.middleware(s.handleFTSLookup))
 }
 
 // ftsMailboxRef resolves a folder name to its wire identity.
@@ -196,4 +199,93 @@ func (s *Server) handleFTSOptimize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiJSON(w, map[string]string{"user": user, "status": "ok"})
+}
+
+type ftsLookupTerm struct {
+	Field  string     `json:"field"`
+	Header string     `json:"header,omitempty"`
+	Words  [][]string `json:"words"`
+	Phrase string     `json:"phrase,omitempty"`
+}
+
+type ftsLookupResponse struct {
+	User   string          `json:"user"`
+	Folder string          `json:"folder"`
+	Terms  []ftsLookupTerm `json:"terms"`
+	// Impossible: a criterion expanded to stopwords only, so nothing can match
+	// and the index was not asked.
+	Impossible bool     `json:"impossible"`
+	Definite   []uint32 `json:"definite"`
+	Maybe      []uint32 `json:"maybe"`
+}
+
+// handleFTSLookup asks the index with the query SEARCH would build.
+// GET /api/backend/fts/lookup?user=&folder=&header=NAME:VALUE&body=&text=
+func (s *Server) handleFTSLookup(w http.ResponseWriter, r *http.Request) {
+	if s.opts.FTSClient == nil || s.opts.FTSChain == nil {
+		apiError(w, "fts not configured on this backend-api", http.StatusNotImplemented)
+		return
+	}
+	q := r.URL.Query()
+	user, folder := q.Get("user"), q.Get("folder")
+	if user == "" {
+		apiError(w, errUserRequired.Error(), http.StatusBadRequest)
+		return
+	}
+	if folder == "" {
+		apiError(w, errFolderRequired.Error(), http.StatusBadRequest)
+		return
+	}
+	c := ftsquery.Criteria{Body: q["body"], Text: q["text"]}
+	for _, h := range q["header"] {
+		name, value, ok := strings.Cut(h, ":")
+		if !ok || name == "" {
+			apiError(w, "header must be NAME:VALUE, got "+h, http.StatusBadRequest)
+			return
+		}
+		c.Header = append(c.Header, ftsquery.Header{Key: name, Value: value})
+	}
+	if len(c.Body)+len(c.Text)+len(c.Header) == 0 {
+		apiError(w, "fts lookup: give at least one of header, body, text", http.StatusBadRequest)
+		return
+	}
+	query, impossible := ftsquery.Build(s.opts.FTSChain, c)
+	out := ftsLookupResponse{User: user, Folder: folder, Impossible: impossible,
+		Terms: lookupTerms(query), Definite: []uint32{}, Maybe: []uint32{}}
+	if impossible {
+		apiJSON(w, out)
+		return
+	}
+	uc, err := s.openUserContextReadOnly(user)
+	if err != nil {
+		apiError(w, "fts lookup: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer uc.Close()
+	mbox, err := s.ftsMailboxRef(uc, folder)
+	if err != nil {
+		apiError(w, "fts lookup: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	res, err := s.opts.FTSClient.Lookup(user, mbox, query)
+	if err != nil {
+		apiError(w, "fts lookup: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	out.Definite = append(out.Definite, res.Definite...)
+	out.Maybe = append(out.Maybe, res.Maybe...)
+	apiJSON(w, out)
+}
+
+func lookupTerms(q fts.Query) []ftsLookupTerm {
+	fields := map[fts.FieldKind]string{fts.FieldBody: "body", fts.FieldText: "text", fts.FieldHeader: "header"}
+	out := make([]ftsLookupTerm, 0, len(q.Terms))
+	for _, t := range q.Terms {
+		lt := ftsLookupTerm{Field: fields[t.Field], Header: t.HdrName, Phrase: t.Phrase, Words: [][]string{}}
+		for _, w := range t.Words {
+			lt.Words = append(lt.Words, w.Variants)
+		}
+		out = append(out, lt)
+	}
+	return out
 }

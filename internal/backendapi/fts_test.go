@@ -22,6 +22,8 @@ type fakeFTS struct {
 	wholeUser int
 	optimize  int
 	expunges  []ftsExpungeCall
+	lookups   []fts.Query
+	result    fts.Result
 }
 
 type ftsExpungeCall struct {
@@ -40,8 +42,11 @@ func (f *fakeFTS) Expunge(_ string, m fts.MailboxRef, uid uint32, guid [16]byte)
 	f.expunges = append(f.expunges, ftsExpungeCall{Folder: m.Name, UID: uid, GUID: guid})
 	return nil
 }
-func (f *fakeFTS) Lookup(string, fts.MailboxRef, fts.Query) (fts.Result, error) {
-	return fts.Result{}, nil
+func (f *fakeFTS) Lookup(_ string, _ fts.MailboxRef, q fts.Query) (fts.Result, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookups = append(f.lookups, q)
+	return f.result, nil
 }
 func (f *fakeFTS) Status(_ string, _ fts.MailboxRef) (uint32, uint32, error) {
 	f.mu.Lock()
