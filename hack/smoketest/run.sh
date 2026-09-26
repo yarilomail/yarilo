@@ -95,14 +95,18 @@ done
 # enotify search came back empty (#2056): the failure is gone by the next run.
 SMOKE_USER="${SMOKE_USER:-u1@d00001.test}"
 enotify_snapshot() {
-  local api pod d
-  echo "== enotify snapshot $(date -u +%FT%TZ) for $SMOKE_USER"
+  local token=$1 api pod d
+  echo "== enotify snapshot $(date -u +%FT%TZ) for $SMOKE_USER, subject $token"
   d=$(kubectl -n "$NAMESPACE" get pods -l "$DIRECTOR_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   [ -n "$d" ] && kubectl -n "$NAMESPACE" exec "$d" -- yarctl director map --user "$SMOKE_USER" 2>&1 || true
   api=$(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   # Index checkpoint against the folder's next UID: the ftsCatchUp decision.
   kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl fts status "$SMOKE_USER" --folder INBOX 2>&1 || true
   kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl folder info "$SMOKE_USER" INBOX 2>&1 || true
+  # The index asked directly, with the terms SEARCH uses: a hit here and none
+  # in SEARCH is the session's miss, no hit is the index's.
+  [ -n "$token" ] && kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- \
+    yarctl fts lookup "$SMOKE_USER" --folder INBOX --header "Subject:$token" 2>&1 || true
   for pod in $(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
     # The fts service turns hits into UIDs through the GUID store; its
     # counters live there, not in yarilo-imap.
@@ -127,8 +131,9 @@ for _ in $(seq 60); do
 done
 out=$(kubectl -n "$NAMESPACE" logs job/smoketest 2>&1 || true)
 echo "$out"
-if echo "$out" | grep -q '"msg":"sieve: FAIL".*"test":"enotify"'; then
-  enotify_snapshot
+failed=$(echo "$out" | grep '"msg":"sieve: FAIL".*"test":"enotify"' || true)
+if [ -n "$failed" ]; then
+  enotify_snapshot "$(echo "$failed" | grep -o 'XNOTIFY[0-9]*' | head -1)"
 fi
 case "$status" in
   1/*) exit 0 ;;
