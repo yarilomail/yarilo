@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"context"
 	"crypto/tls"
 	"log/slog"
 	"sync"
@@ -31,6 +32,11 @@ type imapWardenClient struct {
 	stop   chan struct{}
 	done   chan struct{}
 	once   sync.Once
+	// shutOnce guards shut, which a test may reach before Close does.
+	shutOnce sync.Once
+	// ctx ends a dial in flight on Close, which drop cannot reach.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// mu guards conn and the dial hold; the writer touches both, Close needs
 	// conn too.
@@ -41,6 +47,8 @@ type imapWardenClient struct {
 	clock     func() time.Time // test seam
 	// dialCounter counts dials, for a row about the hold. Nil in production.
 	dialCounter *atomic.Int64
+	// dialed runs between a dial and storing its connection. Nil in production.
+	dialed func()
 }
 
 type wardenEvent struct {
@@ -86,6 +94,7 @@ func newImapWardenClient(addr string, tlsCfg *tls.Config, queue int) *imapWarden
 		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
 	}
+	c.ctx, c.cancel = context.WithCancel(context.Background())
 	go c.run()
 	return c
 }
@@ -125,6 +134,12 @@ func (c *imapWardenClient) run() {
 		case <-c.stop:
 			return
 		case ev := <-c.events:
+			// Both may be ready after Close; an event must not win and redial.
+			select {
+			case <-c.stop:
+				return
+			default:
+			}
 			c.deliver(ev)
 		}
 	}
@@ -205,15 +220,23 @@ func (c *imapWardenClient) connect() (*warden.Conn, error) {
 	if c.dialCounter != nil {
 		c.dialCounter.Add(1)
 	}
-	conn, err := warden.Dial(c.addr, c.tls, wardenExchangeTimeout)
+	conn, err := warden.DialContext(c.ctx, c.addr, c.tls, wardenExchangeTimeout)
 	if err != nil {
 		return nil, err
+	}
+	if c.dialed != nil {
+		c.dialed()
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn != nil { // somebody else won; keep theirs
 		conn.Close()
 		return c.conn, nil
+	}
+	// Close cancels before it drops: a connection stored now would outlive it.
+	if err := c.ctx.Err(); err != nil {
+		conn.Close()
+		return nil, err
 	}
 	c.conn = conn
 	return conn, nil
@@ -235,15 +258,22 @@ func (c *imapWardenClient) Close() {
 		return
 	}
 	c.once.Do(func() {
-		close(c.stop)
-		// The writer may be inside an exchange; dropping the connection ends
-		// it, so Close does not wait out a warden that went quiet.
-		c.drop()
+		c.shut()
 		select {
 		case <-c.done:
 		case <-time.After(wardenExchangeTimeout + time.Second):
 			slog.Debug("imap/warden: the event writer did not stop in time")
 		}
+		c.drop()
+	})
+}
+
+// shut stops the writer without waiting for it. The writer may be inside an
+// exchange; dropping the connection ends it, so Close does not wait it out.
+func (c *imapWardenClient) shut() {
+	c.shutOnce.Do(func() {
+		close(c.stop)
+		c.cancel()
 		c.drop()
 	})
 }

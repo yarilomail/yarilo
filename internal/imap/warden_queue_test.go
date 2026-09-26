@@ -3,6 +3,7 @@ package imap
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -23,6 +24,10 @@ type fakeWarden struct {
 
 	answer  atomic.Bool // false: read the line and stay silent
 	blocked atomic.Bool // true: accept but never read
+	mute    atomic.Bool // true: accept and never greet
+	// accepted hears every connection the warden takes, selected every SELECT.
+	accepted chan struct{}
+	selected chan struct{}
 }
 
 func startFakeWarden(t *testing.T) *fakeWarden {
@@ -31,7 +36,7 @@ func startFakeWarden(t *testing.T) *fakeWarden {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &fakeWarden{ln: ln}
+	w := &fakeWarden{ln: ln, accepted: make(chan struct{}, 64), selected: make(chan struct{}, 64)}
 	w.answer.Store(true)
 	go func() {
 		for {
@@ -48,6 +53,14 @@ func startFakeWarden(t *testing.T) *fakeWarden {
 
 func (w *fakeWarden) serve(conn net.Conn) {
 	defer conn.Close() //nolint:errcheck
+	select {
+	case w.accepted <- struct{}{}:
+	default:
+	}
+	if w.mute.Load() {
+		_, _ = io.Copy(io.Discard, conn)
+		return
+	}
 	// The greeting the real service sends, both lines; the client reads them
 	// on dial and refuses the connection without them.
 	fmt.Fprint(conn, "VERSION\tyarilo-warden\t1\t0\nDONE\n")
@@ -71,6 +84,10 @@ func (w *fakeWarden) serve(conn net.Conn) {
 			w.mu.Lock()
 			w.events = append(w.events, fields[1]+" "+fields[2])
 			w.mu.Unlock()
+			select {
+			case w.selected <- struct{}{}:
+			default:
+			}
 			if w.answer.Load() {
 				// Padded on purpose: the property is that unread answers fill
 				// the socket buffer and stop the writer, and short answers
@@ -235,5 +252,76 @@ func TestADeadWardenIsNotDialledPerEvent(t *testing.T) {
 	}
 	if dropCount("unreachable")-before == 0 {
 		t.Error("nothing was counted as unreachable; the drops are invisible")
+	}
+}
+
+// waitAccepted waits for the warden to take a connection.
+func (w *fakeWarden) waitAccepted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-w.accepted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the writer did not connect in 3s")
+	}
+}
+
+// Close in the middle of an exchange, events still queued, does not dial again:
+// the stop wins over the next event (#2059).
+func TestCloseDoesNotRedial(t *testing.T) {
+	w := startFakeWarden(t)
+	w.answer.Store(false) // reads the SELECT, never answers
+	for i := 0; i < 20; i++ {
+		c := newImapWardenClient(w.ln.Addr().String(), nil, 64)
+		var dials atomic.Int64
+		c.dialCounter = &dials
+		for j := 0; j < 50; j++ {
+			c.PushSelect("sess", "INBOX")
+		}
+		select {
+		case <-w.selected:
+		case <-time.After(3 * time.Second):
+			t.Fatal("no SELECT reached the warden in 3s")
+		}
+		start := time.Now()
+		c.Close()
+		if took := time.Since(start); dials.Load() != 1 || took > time.Second {
+			t.Fatalf("run %d: Close took %s after %d dials, want at once after 1", i, took, dials.Load())
+		}
+	}
+}
+
+// Close ends a dial whose greeting has not come.
+func TestCloseAbortsADialInFlight(t *testing.T) {
+	w := startFakeWarden(t)
+	w.mute.Store(true)
+	c := newImapWardenClient(w.ln.Addr().String(), nil, 64)
+	c.PushSelect("sess", "INBOX")
+	w.waitAccepted(t)
+	start := time.Now()
+	c.Close()
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("Close took %s with a dial in flight, want at once", took)
+	}
+}
+
+// A connection dialled as Close ran is not kept: drop has already passed, and
+// an exchange on it would hold Close until its deadline.
+func TestCloseDoesNotKeepAConnectionDialledAsItClosed(t *testing.T) {
+	w := startFakeWarden(t)
+	w.blocked.Store(true)
+	c := newImapWardenClient(w.ln.Addr().String(), nil, 64)
+	c.dialed = c.shut
+	c.PushSelect("sess", "INBOX")
+	start := time.Now()
+	<-c.stop
+	c.Close()
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("Close took %s, want at once", took)
+	}
+	c.mu.Lock()
+	kept := c.conn != nil
+	c.mu.Unlock()
+	if kept {
+		t.Error("the connection dialled as Close ran was kept")
 	}
 }
