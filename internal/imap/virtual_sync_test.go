@@ -55,8 +55,13 @@ func virtualLocks(t *testing.T) func(*imapserver.Options) {
 
 func appendInbox(t *testing.T, conn net.Conn, rd *bufio.Reader, tag, subject string) {
 	t.Helper()
+	appendRaw(t, conn, rd, tag, "INBOX", subject)
+}
+
+func appendRaw(t *testing.T, conn net.Conn, rd *bufio.Reader, tag, folder, subject string) {
+	t.Helper()
 	raw := "Subject: " + subject + "\r\nFrom: a@test\r\n\r\nbody\r\n"
-	fmt.Fprintf(conn, "%s APPEND INBOX {%d+}\r\n%s\r\n", tag, len(raw), raw)
+	fmt.Fprintf(conn, "%s APPEND %s {%d+}\r\n%s\r\n", tag, folder, len(raw), raw)
 	if line := readTagged(t, rd, tag); !strings.Contains(line, "OK") {
 		t.Fatalf("APPEND answered %q", line)
 	}
@@ -205,6 +210,29 @@ func TestIdleOnAVirtualMailboxHearsItsFolders(t *testing.T) {
 	}
 	fmt.Fprintf(conn, "DONE\r\n")
 	readTagged(t, rd, "a3")
+}
+
+// A change made while no IDLE listened raised its event to nobody: IDLE reports
+// it when it starts, not at the next change.
+func TestIdleReportsWhatChangedBeforeItListened(t *testing.T) {
+	conn, rd := virtualServerWith(t, map[string]string{"All": "INBOX\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "first", nil)
+		}, nil, virtualLocks(t))
+	for _, name := range []string{"INBOX", "Virtual/All"} {
+		t.Run(name, func(t *testing.T) {
+			before := existsCount(t, conn, rd, "a1", name)
+			other, ord := loginTo(t, lastVirtualAddr)
+			appendInbox(t, other, ord, "b1", "while nobody listened")
+			fmt.Fprintf(conn, "a2 IDLE\r\n")
+			want := fmt.Sprintf("* %d EXISTS", before+1)
+			if line := waitFor(t, conn, rd, " EXISTS", 3*time.Second); line != want {
+				t.Errorf("IDLE started with %q, want %s", line, want)
+			}
+			fmt.Fprintf(conn, "DONE\r\n")
+			waitFor(t, conn, rd, "a2 ", 3*time.Second)
+		})
+	}
 }
 
 // NOTIFY on a virtual mailbox reports its new numbers when a folder it draws

@@ -1235,7 +1235,11 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 	// A virtual mailbox is brought up to date before it is reported: what the
 	// rule keeps is what EXISTS counts (#1986).
-	if refreshed := s.syncVirtual(h, rel, f, virtual.Open); refreshed != nil {
+	refreshed, verr := s.syncVirtual(h, rel, f, virtual.Open)
+	if verr != nil {
+		return nil, verr
+	}
+	if refreshed != nil {
 		f = refreshed
 	}
 	if refreshed := s.dboxHealIfCorrupt(h, rel, f); refreshed != nil {
@@ -2151,7 +2155,11 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 		f = refreshed
 	}
 	// A virtual mailbox counts what its folders hold now, not at the last SELECT.
-	if refreshed := s.syncVirtual(h, rel, f, virtual.Poll); refreshed != nil {
+	refreshed, verr := s.syncVirtual(h, rel, f, virtual.Poll)
+	if verr != nil {
+		return nil, verr
+	}
+	if refreshed != nil {
 		f = refreshed
 	}
 	msgs, err := readMessages(h.mailbox(), f.ID)
@@ -2410,10 +2418,14 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	if s.folder == nil || s.knownMsgs == nil {
 		return nil
 	}
-	// A virtual mailbox moves when a folder it draws from does; the pass is a
-	// no-op when none did (virtual-sync.c:2052-2069).
+	// A virtual mailbox follows its folders (virtual-sync.c:2052-2069); a failed
+	// pass goes out untagged and the command completes (imap-sync.c:637-639).
 	if s.isVirtualSelected() {
-		s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll)
+		if _, verr := s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll); verr != nil {
+			if err := writeSyncFailure(w, verr); err != nil {
+				return err
+			}
+		}
 	}
 
 	// The reopen settles the folder, so an IDLE / NOOP client sees an
@@ -2670,6 +2682,11 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 				slog.Debug("imap: idle subscribe failed; falling back to timer-only", "err", err)
 			} else {
 				events = ch
+				// "+ idling" went out before the subscription: a change in
+				// between raised no event.
+				if err := s.refreshIdleCount(w, false); err != nil {
+					return err
+				}
 			}
 		}
 		// Heartbeat tick — a liveness signal for misbehaving clients, useful
@@ -2700,7 +2717,7 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 				events = nil // subscription dropped; keep heartbeat going
 				continue
 			}
-			if err := s.refreshIdleCount(w); err != nil {
+			if err := s.refreshIdleCount(w, true); err != nil {
 				return err
 			}
 		case <-tickC:
@@ -2714,18 +2731,25 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 // refreshIdleCount re-reads the selected folder's message count from the
 // index and writes EXISTS. Used by IDLE after a cross-pod EVENT — the
 // in-memory s.folder.Messages may be stale if another process appended.
-func (s *session) refreshIdleCount(w *imapserver.UpdateWriter) error {
+func (s *session) refreshIdleCount(w *imapserver.UpdateWriter, always bool) error {
 	if s.folder == nil {
 		return nil
 	}
 	if s.isVirtualSelected() {
-		s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll)
+		if _, verr := s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll); verr != nil {
+			if err := writeSyncFailure(w, verr); err != nil {
+				return err
+			}
+		}
 	}
 	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)
 	if err != nil {
 		// Best-effort: report what we have. Authoritative state lives on disk
 		// and the next user command will re-read it.
 		return w.WriteNumMessages(s.folder.Messages)
+	}
+	if !always && refreshed.Messages == s.folder.Messages {
+		return nil
 	}
 	s.folder.Messages = refreshed.Messages
 	return w.WriteNumMessages(refreshed.Messages)
@@ -2775,7 +2799,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		}
 		// EXPUNGE also drops what stopped matching its rule; the poll after
 		// the command reports those (virtual-sync.c:2012-2017).
-		defer s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Open)
+		defer s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Open) //nolint:errcheck // the poll after the command reports a failure
 	} else if removed, _, herr = s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed); herr != nil {
 		return herr
 	}
