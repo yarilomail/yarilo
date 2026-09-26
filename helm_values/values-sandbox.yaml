@@ -151,6 +151,11 @@ image:
 ## the imap process's CPU, and the storage it weighs is the one being measured
 ## against a control that logs less (#1846).
 logLevel: info
+## Debug for the search path until #2056 reproduces, then back to {}: two
+## failed runs logged nothing at info.
+logLevelOverrides:
+  yarilo-fts: debug
+  yarilo-imap: debug
 
 service:
   type: LoadBalancer
