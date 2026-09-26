@@ -21,15 +21,21 @@ type Conn struct {
 // Dial connects to the warden server, reads the version handshake, and returns
 // a ready Conn. tlsCfg may be nil for plain TCP.
 func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Conn, error) {
+	return DialContext(context.Background(), addr, tlsCfg, timeout)
+}
+
+// DialContext is Dial that ctx can abandon, the greeting read included.
+func DialContext(ctx context.Context, addr string, tlsCfg *tls.Config, timeout time.Duration) (*Conn, error) {
 	if timeout == 0 {
 		timeout = 5 * time.Second
 	}
+	d := &net.Dialer{Timeout: timeout}
 	var raw net.Conn
 	var err error
 	if tlsCfg != nil {
-		raw, err = tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, tlsCfg)
+		raw, err = (&tls.Dialer{NetDialer: d, Config: tlsCfg}).DialContext(ctx, "tcp", addr)
 	} else {
-		raw, err = net.DialTimeout("tcp", addr, timeout)
+		raw, err = d.DialContext(ctx, "tcp", addr)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("warden/client: dial %s: %w", addr, err)
@@ -37,7 +43,12 @@ func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Conn, error)
 	c := &Conn{conn: raw, rd: bufio.NewReaderSize(raw, 512)}
 	// The dial timeout covers the connect; the greeting is a read of its own.
 	_ = raw.SetDeadline(time.Now().Add(timeout))
-	if err := c.readHandshake(); err != nil {
+	stop := context.AfterFunc(ctx, func() { _ = raw.SetDeadline(time.Now()) })
+	err = c.readHandshake()
+	if !stop() {
+		err = fmt.Errorf("warden/client: dial %s: %w", addr, ctx.Err())
+	}
+	if err != nil {
 		raw.Close()
 		return nil, err
 	}
