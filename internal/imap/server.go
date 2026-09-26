@@ -32,6 +32,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
@@ -513,6 +514,9 @@ type session struct {
 	// backingOf maps a selected virtual mailbox's backing ids to the folders
 	// they name, built once per selection rather than once per message.
 	backingOf map[uint32]backingFolder
+	// virtualMoved says a sync rewrote the selected virtual mailbox: a pass
+	// that only removed records leaves its modseq where it was.
+	virtualMoved bool
 	// liveRelay is a relayed SASL exchange this session started; cancelled on
 	// teardown so an aborted AUTHENTICATE frees the service's half at once.
 	liveRelay *authrelay.RelayServer
@@ -1231,7 +1235,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 	// A virtual mailbox is brought up to date before it is reported: what the
 	// rule keeps is what EXISTS counts (#1986).
-	if refreshed := s.syncVirtual(h, rel, f); refreshed != nil {
+	if refreshed := s.syncVirtual(h, rel, f, virtual.Open); refreshed != nil {
 		f = refreshed
 	}
 	if refreshed := s.dboxHealIfCorrupt(h, rel, f); refreshed != nil {
@@ -2140,6 +2144,10 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	if refreshed := s.dboxHealIfCorrupt(h, rel, f); refreshed != nil {
 		f = refreshed
 	}
+	// A virtual mailbox counts what its folders hold now, not at the last SELECT.
+	if refreshed := s.syncVirtual(h, rel, f, virtual.Poll); refreshed != nil {
+		f = refreshed
+	}
 	msgs, err := readMessages(h.mailbox(), f.ID)
 	if err != nil {
 		return nil, fmt.Errorf("imap: status getmsgs %s: %w", rel, err)
@@ -2388,6 +2396,11 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	if s.folder == nil || s.knownMsgs == nil {
 		return nil
 	}
+	// A virtual mailbox moves when a folder it draws from does; the pass is a
+	// no-op when none did (virtual-sync.c:2052-2069).
+	if s.isVirtualSelected() {
+		s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll)
+	}
 
 	// The reopen settles the folder, so an IDLE / NOOP client sees an
 	// out-of-band delivery (#1779).
@@ -2406,9 +2419,10 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 			refreshed = r2
 		}
 	}
-	if refreshed.HighestModSeq == s.syncModSeq && !s.hasPendingExpunge {
+	if refreshed.HighestModSeq == s.syncModSeq && !s.hasPendingExpunge && !s.virtualMoved {
 		return nil
 	}
+	s.virtualMoved = false
 
 	current, err := readMessages(s.folderMailbox(), s.folder.ID)
 	if err != nil {
@@ -2636,7 +2650,7 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 	var tickC <-chan time.Time
 	if s.folder != nil {
 		if s.srv.opts.Locker != nil && s.userInfo != nil {
-			ch, err := s.srv.opts.Locker.Subscribe(ctx, locks.MailboxKey(s.userInfo.Username, s.folder.Name))
+			ch, err := s.subscribeSelected(ctx)
 			if err != nil {
 				slog.Debug("imap: idle subscribe failed; falling back to timer-only", "err", err)
 			} else {
@@ -2688,6 +2702,9 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 func (s *session) refreshIdleCount(w *imapserver.UpdateWriter) error {
 	if s.folder == nil {
 		return nil
+	}
+	if s.isVirtualSelected() {
+		s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll)
 	}
 	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)
 	if err != nil {
@@ -2741,6 +2758,9 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		if herr != nil {
 			return dependencyError(herr)
 		}
+		// EXPUNGE also drops what stopped matching its rule; the poll after
+		// the command reports those (virtual-sync.c:2012-2017).
+		defer s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Open)
 	} else if removed, _, herr = s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed); herr != nil {
 		return herr
 	}

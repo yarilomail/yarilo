@@ -26,6 +26,10 @@ echo "smoketest image tag: $TAG"
 # that window reports "backend unavailable" about readiness, not about code.
 READY_TIMEOUT="${SMOKE_READY_TIMEOUT:-180}"
 BACKEND_LABEL="${SMOKE_BACKEND_LABEL:-app.kubernetes.io/component=backend}"
+BACKEND_STS="${SMOKE_BACKEND_STS:-yarilo-backend}"
+# A rolling update deletes and recreates one pod at a time: between the two,
+# the pods listed below are all ready while the set is not.
+kubectl -n "$NAMESPACE" rollout status "sts/$BACKEND_STS" --timeout="${READY_TIMEOUT}s"
 waited=0
 while :; do
   pods=$(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" \

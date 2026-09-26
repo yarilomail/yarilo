@@ -75,3 +75,7 @@ func SubscriptionsKey(user string) string { return "subs:" + user }
 // MailboxKey: per-mailbox ACL writes take MailboxKey, then briefly
 // take ACLListKey to splice their change into the index.
 func ACLListKey(home string) string { return "acllist:" + home }
+
+// VirtualSyncKey holds one virtual mailbox's sync: the pass reads the records,
+// decides, and rewrites them, and two passes interleaved would split a copy.
+func VirtualSyncKey(user, folder string) string { return "vsync:" + user + ":" + folder }
