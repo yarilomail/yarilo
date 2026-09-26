@@ -33,6 +33,13 @@ func virtualServer(t *testing.T, configs map[string]string, seed func(t *testing
 // fake given; nil leaves search off.
 func virtualServerFTS(t *testing.T, configs map[string]string, seed func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex), fake *fakeFTS) (net.Conn, *bufio.Reader) {
 	t.Helper()
+	return virtualServerWith(t, configs, seed, fake, nil)
+}
+
+// virtualServerWith lets a row add what the server needs beyond the namespace,
+// such as a sieve engine.
+func virtualServerWith(t *testing.T, configs map[string]string, seed func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex), fake *fakeFTS, tune func(*imapserver.Options)) (net.Conn, *bufio.Reader) {
+	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 	info := resolver.UserInfo("user@test.com", "")
@@ -83,6 +90,9 @@ func virtualServerFTS(t *testing.T, configs map[string]string, seed func(t *test
 			Client: fake, Chain: chain, AddMissing: "body-search-only", ReadFallback: true,
 			Timeout: 300 * time.Millisecond, Autoindex: true, SearchEnabled: true,
 		}
+	}
+	if tune != nil {
+		tune(&opts)
 	}
 	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

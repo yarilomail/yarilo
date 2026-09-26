@@ -4,11 +4,18 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	imapserver "github.com/yarilomail/yarilo/internal/imap"
+	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -173,5 +180,96 @@ func TestVirtualExpungeDropsARecordWhoseCopyIsGone(t *testing.T) {
 	}
 	if len(expunged) != 1 || expunged[0] != "* 1 EXPUNGE" {
 		t.Errorf("EXPUNGE answered %v, want * 1 EXPUNGE for the record whose copy is gone", expunged)
+	}
+}
+
+// EXPUNGE in a virtual mailbox retracts the copy from the index under the
+// copy's folder and uid, naming the message: the record itself was never indexed.
+func TestVirtualExpungeRetractsTheCopy(t *testing.T) {
+	fake := &fakeFTS{}
+	// Only the flagged message is kept, so virtual uid 1 is INBOX uid 2.
+	conn, rd := virtualServerFTS(t, map[string]string{"Flagged": "INBOX\n  flagged\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "plain", nil)
+			saveInto(t, box, ui, "INBOX", 2, "flagged", []string{`\Flagged`})
+		}, fake)
+	if got := existsCount(t, conn, rd, "a2", "Virtual/Flagged"); got != 1 {
+		t.Fatalf("EXISTS = %d, want 1", got)
+	}
+	command(t, conn, rd, "a3", `STORE 1 +FLAGS.SILENT (\Deleted)`)
+	command(t, conn, rd, "a4", "EXPUNGE")
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		fake.mu.Lock()
+		uids, guids := append([]uint32(nil), fake.expunges...), append([][16]byte(nil), fake.expungedGUIDs...)
+		fake.mu.Unlock()
+		if len(uids) > 0 {
+			if len(uids) != 1 || uids[0] != 2 || guids[0] == ([16]byte{}) {
+				t.Errorf("retracted uids %v guids %x, want INBOX uid 2 with its GUID", uids, guids)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("no retraction reached the index")
+}
+
+// Each script files what it saw into its own folder, when the cause is FLAG
+// and the mailbox is the one it is bound to.
+const (
+	sieveOnInbox = `require ["imapsieve", "environment", "fileinto", "mailbox"];
+if allof (environment :is "imap.cause" "FLAG", environment :is "imap.mailbox" "INBOX") { keep; fileinto :create "ByInbox"; }`
+	sieveOnVirtual = `require ["imapsieve", "environment", "fileinto", "mailbox"];
+if allof (environment :is "imap.cause" "FLAG", environment :is "imap.mailbox" "Virtual/All") { keep; fileinto :create "ByVirtual"; }`
+)
+
+func withImapSieve(t *testing.T) func(*imapserver.Options) {
+	t.Helper()
+	dir := t.TempDir()
+	for name, text := range map[string]string{"oninbox": sieveOnInbox, "onvirtual": sieveOnVirtual} {
+		if err := os.WriteFile(filepath.Join(dir, name+".sieve"), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	md, err := dict.Open(dict.Config{Driver: "memory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = md.Close() })
+	eng := sieve.New(config.SieveConfig{
+		Enabled: true, MaxRedirects: 32, MaxActions: 32, MaxScriptSize: 65536,
+		DefaultName: "yarilo", ImapSieveEnabled: true, ImapSieveScriptDir: dir,
+	}, nil, nil, nil)
+	return func(o *imapserver.Options) { o.SieveEngine, o.MetadataDict = eng, md }
+}
+
+// A STORE in a virtual mailbox is a FLAG event in both mailboxes, as the
+// reference has it: the copy's folder runs its script on the copy, and the
+// virtual mailbox runs its own script on the same message.
+func TestVirtualStoreRunsImapSieveInBothMailboxes(t *testing.T) {
+	for _, tc := range []struct {
+		name, bind, script, filedInto string
+	}{
+		{"the copy's folder", "INBOX", "oninbox", "ByInbox"},
+		{"the virtual mailbox", "Virtual/All", "onvirtual", "ByVirtual"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, rd := virtualServerWith(t, map[string]string{"All": "INBOX\n"},
+				func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+					saveInto(t, box, ui, "INBOX", 1, "the copy", nil)
+				}, nil, withImapSieve(t))
+			command(t, conn, rd, "a2", fmt.Sprintf(`SETMETADATA %q (/shared/imapsieve/script %q)`, tc.bind, tc.script))
+			if got := existsCount(t, conn, rd, "a3", "Virtual/All"); got != 1 {
+				t.Fatalf("EXISTS = %d, want 1", got)
+			}
+			command(t, conn, rd, "a4", `STORE 1 +FLAGS (\Flagged)`)
+			if got := existsCount(t, conn, rd, "a5", tc.filedInto); got != 1 {
+				t.Fatalf("%s holds %d messages, want the one the script on %s filed", tc.filedInto, got, tc.bind)
+			}
+			line := strings.Join(command(t, conn, rd, "a6", "FETCH 1 (BODY.PEEK[HEADER.FIELDS (SUBJECT)])"), "\n")
+			if !strings.Contains(line, "the copy") {
+				t.Errorf("the script on %s filed %q, want the copy", tc.bind, line)
+			}
+		})
 	}
 }

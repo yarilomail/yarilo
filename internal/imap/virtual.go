@@ -401,13 +401,19 @@ func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs
 	return f, nil
 }
 
-// storeOnCopies applies a STORE to the real messages the virtual records name,
-// then answers with the set each ended with; a record whose copy is gone drops
-// out. The copy is the message, so its folder's writers see the change.
-func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsUpdate, error) {
+// virtualCopy is where the message a virtual record names is kept; its file
+// name is read when needed, since a flag write renames it.
+type virtualCopy struct {
+	back backingFolder
+	uid  uint32
+}
+
+// storeOnCopies applies a STORE to the copies the virtual records name and
+// answers with the set each ended with; a record whose copy is gone drops out.
+func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsUpdate, map[uint32]virtualCopy, error) {
 	folders, err := s.backingFolders()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	byBacking := map[uint32][]uint32{}
 	for vuid := range updates {
@@ -417,6 +423,7 @@ func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates ma
 	}
 	h := s.primary
 	out := make(map[uint32]mailbox.FlagsUpdate, len(updates))
+	copies := make(map[uint32]virtualCopy, len(updates))
 	for id, vuids := range byBacking {
 		b, ok := folders[id]
 		if !ok {
@@ -424,7 +431,7 @@ func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates ma
 		}
 		tx, terr := h.idx.Begin(b.id)
 		if terr != nil {
-			return nil, terr
+			return nil, nil, terr
 		}
 		for _, vuid := range vuids {
 			tx.UpdateFlags(msgs[vuid].VirtualRealUID, updates[vuid])
@@ -432,11 +439,11 @@ func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates ma
 		res, cerr := tx.Commit()
 		tx.Rollback()
 		if cerr != nil {
-			return nil, cerr
+			return nil, nil, cerr
 		}
 		reals, rerr := h.idx.GetMessages(b.id, mailbox.SeqSet{})
 		if rerr != nil {
-			return nil, rerr
+			return nil, nil, rerr
 		}
 		realOf := make(map[uint32]*mailbox.MessageMeta, len(reals))
 		for _, r := range reals {
@@ -446,18 +453,19 @@ func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates ma
 		for _, vuid := range vuids {
 			real := msgs[vuid].VirtualRealUID
 			r, ok := res.Flags[real]
-			if !ok || realOf[real] == nil {
+			if !ok {
 				continue // the copy was expunged meanwhile
 			}
 			out[vuid] = mailbox.FlagsUpdate{Flags: r.Flags, Keywords: r.Keywords}
 			if name, nerr := h.mailbox().MessagePath(b.name, realOf[real]); nerr == nil {
 				writes = append(writes, mailbox.FlagWrite{UID: real, Filename: name, Flags: r.Flags, Keywords: r.Keywords})
+				copies[vuid] = virtualCopy{back: b, uid: real}
 			}
 		}
 		h.mailbox().WriteFlags(b.folder, b.name, writes)
 		s.emitMailboxChange(b.folder, locks.EventChanged, 0)
 	}
-	return out, nil
+	return out, copies, nil
 }
 
 // expungeCopies removes the real messages the doomed virtual records name, then
@@ -521,4 +529,38 @@ func (s *session) expungeCopies(doomed []*mailbox.MessageMeta) ([]*mailbox.Messa
 		return nil, cerr
 	}
 	return gone, nil
+}
+
+// imapSieveOnCopies runs the FLAG cause as the reference does for a STORE in a
+// virtual mailbox: the copy's folder first, then the virtual mailbox's script.
+func (s *session) imapSieveOnCopies(pending []pendingStore, copies map[uint32]virtualCopy, changed []string) {
+	h := s.primary
+	virtScript := s.imapSieveScriptName(s.folderNS, s.folder.Name, s.folder.GUID)
+	virtName := s.folderNS.fullName(s.folder.Name)
+	backScript := map[uint64]string{}
+	for _, p := range pending {
+		c, ok := copies[p.uid]
+		if !ok {
+			continue
+		}
+		b := c.back
+		script, known := backScript[b.id]
+		if !known {
+			script = s.imapSieveScriptName(h, b.name, b.guid)
+			backScript[b.id] = script
+		}
+		for _, run := range []struct{ script, mailbox string }{{script, b.name}, {virtScript, virtName}} {
+			// Read afresh each time: the flag write and the first script may
+			// have renamed the copy's file or moved the copy away.
+			recs, err := h.idx.GetMessages(b.id, mailbox.SeqSet{{From: c.uid, To: c.uid}})
+			if err != nil || len(recs) == 0 {
+				break
+			}
+			name, nerr := h.mailbox().MessagePath(b.name, recs[0])
+			if nerr != nil {
+				break
+			}
+			s.runImapSieveScript(run.script, "FLAG", run.mailbox, b.name, h, b.folder, c.uid, name, recs[0].AltTier, "", changed)
+		}
+	}
 }

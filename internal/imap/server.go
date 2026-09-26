@@ -3578,14 +3578,15 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		batchUpdates[m.UID] = upd
 	}
 
+	var virtualCopies map[uint32]virtualCopy
 	if virtualSel && len(batchUpdates) > 0 {
 		// The copy is the message: it takes the change, and the virtual record
 		// then takes the set the copy ended with, moving its own modseq.
-		onCopies, cerr := s.storeOnCopies(msgByUID, batchUpdates)
+		onCopies, copies, cerr := s.storeOnCopies(msgByUID, batchUpdates)
 		if cerr != nil {
 			return dependencyError(cerr)
 		}
-		batchUpdates = onCopies
+		batchUpdates, virtualCopies = onCopies, copies
 		kept := pending[:0]
 		for _, p := range pending {
 			if _, ok := batchUpdates[p.uid]; ok {
@@ -3694,15 +3695,16 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	// fires on the selected mailbox for each message whose flags changed; the
 	// script may refile / discard / reflag it. Gated on a bound script (or
 	// globals) so a bulk STORE with no imapsieve script fetches nothing.
-	if eng := s.srv.opts.SieveEngine; !virtualSel && eng != nil && eng.ImapSieveEnabled() && storeFlags != nil && len(pending) > 0 {
-		// Resolved once for the command: a bulk STORE would otherwise ask the
-		// annotation dict for every message it touched (#1902).
-		scriptName := s.imapSieveScriptName(s.folderNS, s.folder.Name, s.folder.GUID)
-		if scriptName != "" || eng.HasImapGlobals() {
-			changed := make([]string, 0, len(storeFlags.Flags))
-			for _, fl := range storeFlags.Flags {
-				changed = append(changed, string(fl))
-			}
+	if eng := s.srv.opts.SieveEngine; eng != nil && eng.ImapSieveEnabled() && storeFlags != nil && len(pending) > 0 {
+		changed := make([]string, 0, len(storeFlags.Flags))
+		for _, fl := range storeFlags.Flags {
+			changed = append(changed, string(fl))
+		}
+		// Scripts are resolved once per folder: a bulk STORE would otherwise ask
+		// the annotation dict for every message it touched (#1902).
+		if virtualSel {
+			s.imapSieveOnCopies(pending, virtualCopies, changed)
+		} else if scriptName := s.imapSieveScriptName(s.folderNS, s.folder.Name, s.folder.GUID); scriptName != "" || eng.HasImapGlobals() {
 			for _, p := range pending {
 				s.runImapSieveScript(scriptName, "FLAG", s.folder.Name, s.folder.Name, s.folderNS, s.folder, p.uid, p.filename, p.altTier, "", changed)
 			}
