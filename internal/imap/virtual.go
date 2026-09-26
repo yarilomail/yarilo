@@ -36,9 +36,13 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 	if err != nil {
 		return nil, s.virtualSyncFailed(rel, err)
 	}
+	was := virtualHeaderOf(h.idx, f.ID)
+	if adopted, took := s.adoptReferenceHeader(h, f, cfg, was); took {
+		was = adopted
+	}
 	// The check reads only the folders' state, so a mailbox where nothing
 	// moved costs no hold; the pass checks again under it.
-	moved, err := virtual.Moved(cfg, virtualHeaderOf(h.idx, f.ID), &sessionBacking{s: s})
+	moved, err := virtual.Moved(cfg, was, &sessionBacking{s: s})
 	if err != nil {
 		return nil, s.virtualSyncFailed(rel, err)
 	}
@@ -79,6 +83,30 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 		s.virtualMoved = true
 	}
 	return refreshed, nil
+}
+
+// adoptReferenceHeader gives the folders of a header the reference wrote the
+// identity this server keeps them by, so a migrated mailbox keeps its uids.
+func (s *session) adoptReferenceHeader(h *nsHandle, f *mailbox.Folder, cfg *virtual.Config, was mailbox.VirtualHeader) (mailbox.VirtualHeader, bool) {
+	folders, err := (&sessionBacking{s: s}).Folders(cfg)
+	if err != nil {
+		return was, false
+	}
+	adopted, took := virtual.AdoptNames(was, folders)
+	if !took {
+		return was, false
+	}
+	setter, ok := h.idx.(mailbox.VirtualIndexed)
+	if !ok {
+		return was, false
+	}
+	if err := setter.SetVirtualHeader(f.ID, adopted); err != nil {
+		slog.Warn("imap: virtual mailbox keeps the names it was given", "folder", f.Name, "err", err)
+		return was, false
+	}
+	slog.Info("imap: virtual mailbox taken over from a reference index",
+		"user", s.username(), "folder", f.Name, "folders", len(adopted.Backing))
+	return adopted, true
 }
 
 // virtualSyncFailed logs why a pass failed and answers the client the way a

@@ -331,3 +331,28 @@ func SameSeparator(pattern, sep string) string {
 	}
 	return strings.ReplaceAll(pattern, sep, "/")
 }
+
+// AdoptNames fills in the GUIDs a header the reference wrote does not carry,
+// matching its folders by name, so a migrated user keeps their virtual uids
+// and UIDVALIDITY (#1986). It reports whether anything was taken.
+func AdoptNames(was mailbox.VirtualHeader, folders []Backing) (mailbox.VirtualHeader, bool) {
+	byName := make(map[string][16]byte, len(folders))
+	for _, f := range folders {
+		byName[f.Name] = f.GUID
+	}
+	taken := false
+	out := was
+	out.Backing = append(was.Backing[:0:0], was.Backing...)
+	for i, b := range out.Backing {
+		if b.GUID != ([16]byte{}) || b.Name == "" {
+			continue
+		}
+		guid, ok := byName[b.Name]
+		if !ok || guid == ([16]byte{}) {
+			continue // a folder that is gone takes its records with it
+		}
+		out.Backing[i].GUID = guid
+		taken = true
+	}
+	return out, taken
+}
