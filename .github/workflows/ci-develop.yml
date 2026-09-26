@@ -17,6 +17,7 @@ on:
     paths:
       - "app/**"
       - "helm/**"
+      - "helm_values/**"
       - "internal/**"
       - "pkg/**"
       - "go.mod"

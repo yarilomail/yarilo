@@ -91,7 +91,47 @@ while :; do
 done
 [ "$waited" -gt 0 ] && echo "smoketest: waited ${waited}s for the directors to route to every backend"
 
+# enotify_snapshot records what the index and both backends held when the
+# enotify search came back empty (#2056): the failure is gone by the next run.
+SMOKE_USER="${SMOKE_USER:-u1@d00001.test}"
+enotify_snapshot() {
+  local api pod d
+  echo "== enotify snapshot $(date -u +%FT%TZ) for $SMOKE_USER"
+  d=$(kubectl -n "$NAMESPACE" get pods -l "$DIRECTOR_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  [ -n "$d" ] && kubectl -n "$NAMESPACE" exec "$d" -- yarctl director map --user "$SMOKE_USER" 2>&1 || true
+  api=$(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  # Index checkpoint against the folder's next UID: the ftsCatchUp decision.
+  kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl fts status "$SMOKE_USER" --folder INBOX 2>&1 || true
+  kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl folder info "$SMOKE_USER" INBOX 2>&1 || true
+  for pod in $(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+    # The fts service turns hits into UIDs through the GUID store; its
+    # counters live there, not in yarilo-imap.
+    echo "== $pod/yarilo-fts GUID store counters"
+    kubectl -n "$NAMESPACE" exec "$pod" -c yarilo-fts -- sh -c 'wget -qO- http://127.0.0.1:8085/metrics' 2>/dev/null | grep '^fileindex_guid_' || true
+    for c in yarilo-imap yarilo-fts; do
+      echo "== $pod/$c, last 90s"
+      kubectl -n "$NAMESPACE" logs "$pod" -c "$c" --since=90s 2>&1 || true
+    done
+  done
+}
+
 kubectl -n "$NAMESPACE" delete job smoketest --ignore-not-found
 sed "s|__IMAGE_TAG__|${TAG}|" "$(dirname "$0")/job.yaml" | kubectl -n "$NAMESPACE" apply -f -
-kubectl -n "$NAMESPACE" wait --for=condition=complete --timeout=300s job/smoketest
-kubectl -n "$NAMESPACE" logs job/smoketest
+# A failed check fails the Job (backoffLimit 0), which never turns Complete:
+# wait for either, so a failure prints its log instead of a 300s timeout.
+status=""
+for _ in $(seq 60); do
+  status=$(kubectl -n "$NAMESPACE" get job smoketest -o jsonpath='{.status.succeeded}/{.status.failed}' 2>/dev/null || true)
+  case "$status" in 1/* | */1) break ;; esac
+  sleep 5
+done
+out=$(kubectl -n "$NAMESPACE" logs job/smoketest 2>&1 || true)
+echo "$out"
+if echo "$out" | grep -q '"msg":"sieve: FAIL".*"test":"enotify"'; then
+  enotify_snapshot
+fi
+case "$status" in
+  1/*) exit 0 ;;
+  */1) exit 1 ;;
+  *) echo "smoketest: the Job did not finish in 300s" >&2; exit 1 ;;
+esac
