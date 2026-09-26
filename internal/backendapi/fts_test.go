@@ -127,6 +127,13 @@ func TestFtsExpungeInvalidatesDroppedUIDs(t *testing.T) {
 
 func ftsTestServer(t *testing.T) (*httptest.Server, *fakeFTS, string) {
 	t.Helper()
+	ts, fake, root, _ := ftsTestServerOf(t)
+	return ts, fake, root
+}
+
+// ftsTestServerOf also hands back the Server, for rows that set its options.
+func ftsTestServerOf(t *testing.T) (*httptest.Server, *fakeFTS, string, *Server) {
+	t.Helper()
 	root := t.TempDir()
 	d, err := dict.Open(dict.Config{Driver: "memory"})
 	if err != nil {
@@ -147,7 +154,7 @@ func ftsTestServer(t *testing.T) (*httptest.Server, *fakeFTS, string) {
 	})
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	return ts, fake, root
+	return ts, fake, root, s
 }
 
 func TestFTSStatusEndpoint(t *testing.T) {

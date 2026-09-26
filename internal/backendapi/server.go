@@ -98,6 +98,13 @@ type Options struct {
 	// disables the scoping; /who then behaves as if --all was set.
 	PodIP string
 
+	// Router says which pod keeps a user, to forward a request there (#2053);
+	// nil runs every request where it lands, as without a director.
+	Router UserRouter
+	// PeerTLS and PeerPort reach another pod's backend-api for that forward.
+	PeerTLS  *tls.Config
+	PeerPort string
+
 	// AuthClient is the live yarilo-auth master-protocol client. When nil,
 	// /api/backend/user/info skips the userdb-enrichment block and
 	// /api/backend/user/iterate returns 503. main.go owns the lifecycle
@@ -247,6 +254,9 @@ func (s *Server) middleware(next http.HandlerFunc) http.Handler {
 				apiError(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+		}
+		if s.routeUser(w, r) {
+			return
 		}
 		next(w, r)
 	})
