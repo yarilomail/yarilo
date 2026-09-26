@@ -310,6 +310,8 @@ type guidBatch struct {
 // applyGUIDBatch takes the store once and writes the command's copies: per-op
 // holds cost a transaction one acquisition per record (#1827).
 func (u *userIndex) applyGUIDBatch(b guidBatch) error {
+	slog.Debug("fileindex: guid batch", "user", u.username, "path", u.GUIDStorePath(),
+		"add", len(b.add), "gone", len(b.gone), "gone_folder", b.goneFolder != nil)
 	if len(b.add) == 0 && len(b.gone) == 0 && b.goneFolder == nil {
 		return nil
 	}
