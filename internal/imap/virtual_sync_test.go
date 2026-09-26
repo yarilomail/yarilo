@@ -8,7 +8,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -227,4 +229,87 @@ func TestNotifyOnAVirtualMailboxHearsItsFolders(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("NOTIFY reported nothing for Virtual/All after mail reached INBOX")
+}
+
+var (
+	uidvalidityRe   = regexp.MustCompile(`UIDVALIDITY (\d+)`)
+	highestModseqRe = regexp.MustCompile(`HIGHESTMODSEQ (\d+)`)
+)
+
+func selectCodes(t *testing.T, lines []string) (uidv, modseq string) {
+	t.Helper()
+	for _, l := range lines {
+		if m := uidvalidityRe.FindStringSubmatch(l); m != nil {
+			uidv = m[1]
+		}
+		if m := highestModseqRe.FindStringSubmatch(l); m != nil {
+			modseq = m[1]
+		}
+	}
+	if uidv == "" || modseq == "" {
+		t.Fatalf("SELECT named no UIDVALIDITY/HIGHESTMODSEQ: %v", lines)
+	}
+	return uidv, modseq
+}
+
+// A record that leaves with its copy is an expunge QRESYNC hears: VANISHED now,
+// VANISHED (EARLIER) on a reselect from the old modseq (RFC 7162 3.2.5, 3.2.10).
+func TestAVirtualRemovalReachesQresync(t *testing.T) {
+	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "stays", nil)
+			saveInto(t, box, ui, "INBOX", 2, "goes", nil)
+		})
+	command(t, conn, rd, "a2", "ENABLE QRESYNC")
+	uidv, before := selectCodes(t, command(t, conn, rd, "a3", `SELECT "Virtual/All"`))
+
+	other, ord := loginTo(t, lastVirtualAddr)
+	existsCount(t, other, ord, "b2", "INBOX")
+	command(t, other, ord, "b3", `STORE 2 +FLAGS.SILENT (\Deleted)`)
+	command(t, other, ord, "b4", "EXPUNGE")
+
+	if got := linesWith(command(t, conn, rd, "a4", "NOOP"), "VANISHED"); len(got) != 1 || got[0] != "* VANISHED 2" {
+		t.Errorf("NOOP answered %v, want * VANISHED 2", got)
+	}
+	command(t, conn, rd, "a5", "UNSELECT")
+	lines := command(t, conn, rd, "a6", fmt.Sprintf(`SELECT "Virtual/All" (QRESYNC (%s %s))`, uidv, before))
+	if got := linesWith(lines, "VANISHED"); len(got) != 1 || got[0] != "* VANISHED (EARLIER) 2" {
+		t.Errorf("a QRESYNC reselect from modseq %s answered %v, want * VANISHED (EARLIER) 2", before, got)
+	}
+	if _, after := selectCodes(t, lines); after == before {
+		t.Errorf("HIGHESTMODSEQ stayed %s after a record left", after)
+	}
+}
+
+// syncHolds counts the holds taken on virtual sync keys.
+type syncHolds struct {
+	recordingLocker
+	n atomic.Int32
+}
+
+func (l *syncHolds) Lock(ctx context.Context, resource, owner string, ttl time.Duration) (locks.Lock, error) {
+	if strings.HasPrefix(resource, "vsync:") {
+		l.n.Add(1)
+	}
+	return l.recordingLocker.Lock(ctx, resource, owner, ttl)
+}
+
+// A NOOP on a virtual mailbox whose folders did not move takes no hold: the
+// check reads their state first, and the hold is for a pass that has work.
+func TestANoopOverUnmovedFoldersTakesNoHold(t *testing.T) {
+	holds := &syncHolds{}
+	conn, rd := virtualServerWith(t, map[string]string{"All": "INBOX\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "one", nil)
+		}, nil, func(o *imapserver.Options) { o.Locker = holds })
+	existsCount(t, conn, rd, "a2", "Virtual/All")
+	taken := holds.n.Load()
+	if taken == 0 {
+		t.Fatal("the first sync took no hold: the row counts nothing")
+	}
+	command(t, conn, rd, "a3", "NOOP")
+	command(t, conn, rd, "a4", "NOOP")
+	if n := holds.n.Load() - taken; n != 0 {
+		t.Errorf("two NOOPs over unmoved folders took %d sync holds, want none", n)
+	}
 }

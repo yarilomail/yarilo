@@ -106,7 +106,41 @@ func Sync(cfg *Config, was mailbox.VirtualHeader, old []*mailbox.MessageMeta, mo
 			out.Changed = true // a folder that left the set takes its records along
 		}
 	}
+	// A folder gone from the set leaves the header too, so Moved can tell a
+	// set that changed from one that did not; its id is never reused.
+	kept := out.Header.Backing[:0:0]
+	for _, b := range out.Header.Backing {
+		if present[b.ID] {
+			kept = append(kept, b)
+		} else {
+			out.Changed = true
+		}
+	}
+	out.Header.Backing = kept
 	return out, nil
+}
+
+// Moved answers, from the folders' state alone, whether a pass would find
+// anything to do; nothing is read, so it runs before any hold is taken.
+func Moved(cfg *Config, was mailbox.VirtualHeader, r Resolver) (bool, error) {
+	if was.NeedsRebuild(cfg.SearchArgsCRC32) {
+		return true, nil
+	}
+	folders, err := r.Folders(cfg)
+	if err != nil {
+		return false, err
+	}
+	if len(folders) != len(was.Backing) {
+		return true, nil
+	}
+	for _, b := range folders {
+		seen, known := was.BackingByGUID(b.GUID)
+		if !known || seen.UIDValidity != b.UIDValidity || seen.NextUID != b.NextUID ||
+			seen.HighestModSeq != b.HighestModSeq || seen.HighestModSeq == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // syncFolder decides one moved folder's records against those it had.

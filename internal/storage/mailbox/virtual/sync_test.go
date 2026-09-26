@@ -316,3 +316,31 @@ func TestANewUIDValidityRebuildsOnlyThatFolder(t *testing.T) {
 		}
 	}
 }
+
+// The check is quiet when nothing moved and speaks when a folder did, left the
+// set, or joined it; a folder that left must not make every later check speak.
+func TestMovedSeesOnlyWhatChanged(t *testing.T) {
+	cfg, _ := ParseConfig(strings.NewReader("INBOX\nArchive\n"))
+	r := &stubResolver{folders: []Backing{inbox(5, msgs(1)...), archive(7, msgs(1)...)}}
+	hdr, old := stamped(t, cfg, r)
+	if moved, _ := Moved(cfg, hdr, r); moved {
+		t.Error("nothing moved, yet the check spoke")
+	}
+
+	r.folders = r.folders[:1] // Archive left the set
+	if moved, _ := Moved(cfg, hdr, r); !moved {
+		t.Error("a folder left the set, yet the check was quiet")
+	}
+	got, err := Sync(cfg, hdr, old, Poll, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved, _ := Moved(cfg, got.Header, r); moved {
+		t.Error("after the pass that dropped Archive, the check still speaks")
+	}
+
+	r.folders[0] = inbox(6, msgs(1)...)
+	if moved, _ := Moved(cfg, got.Header, r); !moved {
+		t.Error("INBOX moved, yet the check was quiet")
+	}
+}

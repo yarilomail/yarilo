@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +37,16 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 		slog.Warn("imap: virtual mailbox configuration", "folder", rel, "err", err)
 		return nil
 	}
+	// The check reads only the folders' state, so a mailbox where nothing
+	// moved costs no hold; the pass checks again under it.
+	moved, err := virtual.Moved(cfg, virtualHeaderOf(h.idx, f.ID), &sessionBacking{s: s})
+	if err != nil {
+		slog.Warn("imap: virtual mailbox check", "folder", rel, "err", err)
+		return nil
+	}
+	if !moved {
+		return nil
+	}
 	var refreshed *mailbox.Folder
 	pass := func(context.Context) error {
 		// Read under the hold: two sessions deciding from one stale view
@@ -54,7 +63,7 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 		if !res.Changed {
 			return nil
 		}
-		refreshed, serr = s.applyVirtual(h, rel, f, res)
+		refreshed, serr = s.applyVirtual(h, rel, f, res, old)
 		return serr
 	}
 	if l := s.srv.opts.Locker; l != nil {
@@ -75,28 +84,9 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 	return refreshed
 }
 
-// applyVirtual writes what the pass decided: a record keeps the uid it had,
-// which is stable for the life of a UIDVALIDITY (virtual-sync.c:599).
-func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res virtual.SyncResult) (*mailbox.Folder, error) {
-	records := make([]*mailbox.MessageMeta, 0, len(res.Records))
-	next := f.NextUID
-	if next == 0 {
-		next = 1
-	}
-	for i := range res.Records {
-		rec := res.Records[i]
-		if rec.UID >= next {
-			next = rec.UID + 1
-		}
-		records = append(records, &rec)
-	}
-	for _, rec := range records {
-		if rec.UID == 0 {
-			rec.UID = next
-			next++
-		}
-	}
-	sort.Slice(records, func(i, j int) bool { return records[i].UID < records[j].UID })
+// applyVirtual writes what the pass decided as ordinary index changes: a record
+// that left is expunged, so its modseq and VANISHED reach QRESYNC (RFC 7162).
+func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res virtual.SyncResult, old []*mailbox.MessageMeta) (*mailbox.Folder, error) {
 	// The header first: it declares the extension, and a record written before
 	// that carries no backing folder at all.
 	if setter, ok := h.idx.(mailbox.VirtualIndexed); ok {
@@ -104,7 +94,30 @@ func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res v
 			return nil, fmt.Errorf("imap/virtual: write header: %w", err)
 		}
 	}
-	if _, err := h.idx.ResetFolder(f.ID, records); err != nil {
+	tx, err := h.idx.Begin(f.ID)
+	if err != nil {
+		return nil, fmt.Errorf("imap/virtual: open records: %w", err)
+	}
+	defer tx.Rollback()
+	stays := make(map[uint32]bool, len(res.Records))
+	for i := range res.Records {
+		rec := res.Records[i]
+		switch {
+		case rec.UID == 0:
+			tx.Append(&rec) // a new copy: the index gives it the next uid
+		case rec.ModSeq == 0:
+			stays[rec.UID] = true
+			tx.UpdateFlags(rec.UID, mailbox.FlagsUpdate{Flags: rec.Flags, Keywords: rec.Keywords})
+		default:
+			stays[rec.UID] = true
+		}
+	}
+	for _, m := range old {
+		if !stays[m.UID] {
+			tx.Expunge(m.UID)
+		}
+	}
+	if _, err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("imap/virtual: write records: %w", err)
 	}
 	return h.mailbox().Folder(rel, f.UIDValidity)
