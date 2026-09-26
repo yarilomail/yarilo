@@ -46,8 +46,9 @@ func TestConfigRefusals(t *testing.T) {
 	for _, tc := range []struct{ name, text string }{
 		{"two save mailboxes", "!Drafts\n!Sent\n"},
 		{"a save mailbox with a wildcard", "!Archive/*\n"},
-		{"an annotation line with a wildcard", "/private/comment:x*\n"},
 		{"an annotation without a value", "/private/comment\n"},
+		{"an annotation outside /private/ and /shared/", "INBOX\n/comment:x\n"},
+		{"a save mailbox that is an annotation", "INBOX\n!/private/comment:x\n"},
 		{"a rule before any mailbox", "  unseen\nINBOX\n"},
 		{"an empty configuration", "# nothing here\n"},
 		{"a rule that is not a search", "INBOX\n  notakey\n"},
@@ -104,5 +105,18 @@ func TestAConfigurationErrorNamesItsLine(t *testing.T) {
 				t.Errorf("error %v, want one naming %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The value of an annotation line is a mask, not a folder pattern: its "*" is
+// kept, and the line names no folder (virtual-config.c:173-184).
+func TestAnAnnotationLineKeepsItsMask(t *testing.T) {
+	cfg, err := ParseConfig(strings.NewReader("Projects/*\n-/shared/comment:skip*\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := cfg.Boxes[1]
+	if b.MetadataEntry != "/shared/comment" || b.MetadataValue != "skip*" || !b.Negative || b.Pattern != "" {
+		t.Errorf("parsed %+v, want entry /shared/comment, mask skip*, negative, no pattern", b)
 	}
 }
