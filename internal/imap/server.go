@@ -2418,10 +2418,8 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	if s.folder == nil || s.knownMsgs == nil {
 		return nil
 	}
-	// A virtual mailbox moves when a folder it draws from does; the pass is a
-	// no-op when none did (virtual-sync.c:2052-2069).
-	// A failed pass goes out untagged and the command completes, the set as
-	// the last pass left it (imap-sync.c:637-639).
+	// A virtual mailbox follows its folders (virtual-sync.c:2052-2069); a failed
+	// pass goes out untagged and the command completes (imap-sync.c:637-639).
 	if s.isVirtualSelected() {
 		if _, verr := s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll); verr != nil {
 			if err := writeSyncFailure(w, verr); err != nil {
