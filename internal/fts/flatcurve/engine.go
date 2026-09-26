@@ -344,8 +344,12 @@ func (st *mboxState) ensureCurrent() error {
 // here, so the time-based trigger applies uniformly.
 func (st *mboxState) commitCurrent() error {
 	if st.cur == nil || st.pending == 0 {
+		slog.Debug("fts/flatcurve: commit skipped", "dir", st.dir, "cur_path", st.curPath,
+			"open", st.cur != nil, "pending", st.pending, "st", fmt.Sprintf("%p", st))
 		return nil
 	}
+	slog.Debug("fts/flatcurve: commit", "dir", st.dir, "cur_path", st.curPath,
+		"pending", st.pending, "st", fmt.Sprintf("%p", st))
 	t0 := time.Now()
 	if err := st.cur.Commit(); err != nil {
 		slog.Warn("fts/flatcurve: commitCurrent failed, discarding handle", "dir", st.dir, "cur_path", st.curPath, "pending", st.pending, "err", err)
@@ -1408,6 +1412,7 @@ func (u *userIndex) Lookup(folders []string, q fts.Query) (fts.Result, error) {
 			return fts.Result{}, derr
 		}
 		entries, serr := db.SearchWithValue(xq, slotGUID)
+		slog.Debug("fts/flatcurve: lookup shard", "path", p, "hits", len(entries), "st", fmt.Sprintf("%p", st))
 		db.Close()
 		if serr != nil {
 			return fts.Result{}, serr
