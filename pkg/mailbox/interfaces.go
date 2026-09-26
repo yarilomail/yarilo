@@ -146,6 +146,27 @@ func (h *VirtualHeader) AssignBacking(guid [16]byte, name string, uidValidity ui
 	return h.HighestBackingID
 }
 
+// BackingByGUID is what the header last saw of the folder with this GUID.
+func (h *VirtualHeader) BackingByGUID(guid [16]byte) (VirtualBacking, bool) {
+	for _, b := range h.Backing {
+		if b.GUID == guid {
+			return b, true
+		}
+	}
+	return VirtualBacking{}, false
+}
+
+// StampBacking records the folder state a pass read, so the next pass can
+// tell a folder that did not move (virtual-sync.c:1258-1322).
+func (h *VirtualHeader) StampBacking(id, nextUID uint32, highestModSeq uint64) {
+	for i := range h.Backing {
+		if h.Backing[i].ID == id {
+			h.Backing[i].NextUID, h.Backing[i].HighestModSeq = nextUID, highestModSeq
+			return
+		}
+	}
+}
+
 // NeedsRebuild says the configuration no longer describes what was indexed.
 func (h *VirtualHeader) NeedsRebuild(crc uint32) bool { return h.SearchCRC32 != crc }
 

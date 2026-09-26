@@ -3,7 +3,7 @@ module github.com/yarilomail/yarilo
 go 1.26.8
 
 require (
-	github.com/0kaba0hub/go-xapian v0.2.1-0.20260924175919-3247b7699d7d
+	github.com/0kaba0hub/go-xapian v0.2.1
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
 	github.com/MicahParks/keyfunc/v3 v3.8.2
 	github.com/abadojack/whatlanggo v1.0.1

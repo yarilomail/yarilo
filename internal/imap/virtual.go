@@ -1,12 +1,14 @@
 package imap
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
@@ -25,7 +27,7 @@ type virtualConfigured interface {
 
 // syncVirtual brings a virtual mailbox up to date. Membership is decided here,
 // not at SEARCH, so EXISTS and FETCH speak of one set (virtual-sync.c:604).
-func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder) *mailbox.Folder {
+func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode virtual.Mode) *mailbox.Folder {
 	box, ok := mailbox.Driver(h.box).(virtualConfigured)
 	if !ok {
 		return nil // not a virtual namespace
@@ -35,50 +37,56 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder) *mailb
 		slog.Warn("imap: virtual mailbox configuration", "folder", rel, "err", err)
 		return nil
 	}
-	was := virtualHeaderOf(h.idx, f.ID)
-	res, err := virtual.Sync(cfg, was, &sessionBacking{s: s})
+	// The check reads only the folders' state, so a mailbox where nothing
+	// moved costs no hold; the pass checks again under it.
+	moved, err := virtual.Moved(cfg, virtualHeaderOf(h.idx, f.ID), &sessionBacking{s: s})
 	if err != nil {
-		slog.Warn("imap: virtual sync", "folder", rel, "err", err)
+		slog.Warn("imap: virtual mailbox check", "folder", rel, "err", err)
 		return nil
 	}
-	refreshed, err := s.applyVirtual(h, rel, f, res)
+	if !moved {
+		return nil
+	}
+	var refreshed *mailbox.Folder
+	pass := func(context.Context) error {
+		// Read under the hold: two sessions deciding from one stale view
+		// would give one copy two uids.
+		was := virtualHeaderOf(h.idx, f.ID)
+		old, rerr := h.idx.GetMessages(f.ID, mailbox.SeqSet{})
+		if rerr != nil {
+			return fmt.Errorf("imap/virtual: read records: %w", rerr)
+		}
+		res, serr := virtual.Sync(cfg, was, old, mode, &sessionBacking{s: s})
+		if serr != nil {
+			return serr
+		}
+		if !res.Changed {
+			return nil
+		}
+		refreshed, serr = s.applyVirtual(h, rel, f, res, old)
+		return serr
+	}
+	if l := s.srv.opts.Locker; l != nil {
+		ctx := locks.WithSite(context.Background(), "virtual-sync")
+		err = locks.WithLockWaiting(ctx, l, locks.VirtualSyncKey(s.userInfo.Username, rel),
+			locks.Owner(s.userInfo.Username, s.sid), 30*time.Second, 10*time.Second, 10*time.Second, pass)
+	} else {
+		err = pass(context.Background())
+	}
 	if err != nil {
 		slog.Warn("imap: virtual mailbox not updated", "folder", rel, "err", err)
 		return nil
 	}
+	if refreshed != nil && s.folder != nil && h == s.folderNS && f.ID == s.folder.ID {
+		s.backingOf = nil // the header may name folders it did not
+		s.virtualMoved = true
+	}
 	return refreshed
 }
 
-// applyVirtual writes what the pass decided; a copy that was here keeps its
-// uid, which is stable for the life of a UIDVALIDITY (virtual-sync.c:599).
-func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res virtual.SyncResult) (*mailbox.Folder, error) {
-	known := map[[2]uint32]*mailbox.MessageMeta{}
-	if !res.Rebuilt {
-		was, err := h.idx.GetMessages(f.ID, mailbox.SeqSet{})
-		if err != nil {
-			return nil, fmt.Errorf("imap/virtual: read records: %w", err)
-		}
-		for _, m := range was {
-			known[[2]uint32{m.VirtualBacking, m.VirtualRealUID}] = m
-		}
-	}
-	records := make([]*mailbox.MessageMeta, 0, len(res.Records))
-	next := f.NextUID
-	if next == 0 {
-		next = 1
-	}
-	for i := range res.Records {
-		rec := res.Records[i]
-		if had, ok := known[[2]uint32{rec.VirtualBacking, rec.VirtualRealUID}]; ok {
-			rec.UID = had.UID
-			rec.ModSeq = had.ModSeq
-		} else {
-			rec.UID = next
-			next++
-		}
-		records = append(records, &rec)
-	}
-	sort.Slice(records, func(i, j int) bool { return records[i].UID < records[j].UID })
+// applyVirtual writes what the pass decided as ordinary index changes: a record
+// that left is expunged, so its modseq and VANISHED reach QRESYNC (RFC 7162).
+func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res virtual.SyncResult, old []*mailbox.MessageMeta) (*mailbox.Folder, error) {
 	// The header first: it declares the extension, and a record written before
 	// that carries no backing folder at all.
 	if setter, ok := h.idx.(mailbox.VirtualIndexed); ok {
@@ -86,7 +94,30 @@ func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res v
 			return nil, fmt.Errorf("imap/virtual: write header: %w", err)
 		}
 	}
-	if _, err := h.idx.ResetFolder(f.ID, records); err != nil {
+	tx, err := h.idx.Begin(f.ID)
+	if err != nil {
+		return nil, fmt.Errorf("imap/virtual: open records: %w", err)
+	}
+	defer tx.Rollback()
+	stays := make(map[uint32]bool, len(res.Records))
+	for i := range res.Records {
+		rec := res.Records[i]
+		switch {
+		case rec.UID == 0:
+			tx.Append(&rec) // a new copy: the index gives it the next uid
+		case rec.ModSeq == 0:
+			stays[rec.UID] = true
+			tx.UpdateFlags(rec.UID, mailbox.FlagsUpdate{Flags: rec.Flags, Keywords: rec.Keywords})
+		default:
+			stays[rec.UID] = true
+		}
+	}
+	for _, m := range old {
+		if !stays[m.UID] {
+			tx.Expunge(m.UID)
+		}
+	}
+	if _, err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("imap/virtual: write records: %w", err)
 	}
 	return h.mailbox().Folder(rel, f.UIDValidity)
@@ -102,7 +133,10 @@ func virtualHeaderOf(idx mailbox.UserIndex, folderID uint64) mailbox.VirtualHead
 
 // sessionBacking resolves what a configuration names against the session's own
 // personal namespace: the folders a user has are the ones they may draw from.
-type sessionBacking struct{ s *session }
+type sessionBacking struct {
+	s   *session
+	ids map[[16]byte]uint64 // folder id by GUID, from Folders
+}
 
 func (b *sessionBacking) Folders(cfg *virtual.Config) ([]virtual.Backing, error) {
 	h := b.s.primary
@@ -124,15 +158,28 @@ func (b *sessionBacking) Folders(cfg *virtual.Config) ([]virtual.Backing, error)
 		if ferr != nil {
 			continue // a folder that cannot be opened contributes nothing
 		}
-		msgs, merr := h.idx.GetMessages(f.ID, mailbox.SeqSet{})
-		if merr != nil {
-			return nil, fmt.Errorf("imap/virtual: read %s: %w", e.Name, merr)
+		if b.ids == nil {
+			b.ids = map[[16]byte]uint64{}
 		}
+		b.ids[f.GUID] = f.ID
 		out = append(out, virtual.Backing{
-			Name: name, GUID: f.GUID, UIDValidity: f.UIDValidity, Messages: msgs,
+			Name: name, GUID: f.GUID, UIDValidity: f.UIDValidity,
+			NextUID: f.NextUID, HighestModSeq: f.HighestModSeq,
 		})
 	}
 	return out, nil
+}
+
+func (b *sessionBacking) Messages(back virtual.Backing) ([]*mailbox.MessageMeta, error) {
+	id, ok := b.ids[back.GUID]
+	if !ok {
+		return nil, fmt.Errorf("imap/virtual: %s was not listed", back.Name)
+	}
+	msgs, err := b.s.primary.idx.GetMessages(id, mailbox.SeqSet{})
+	if err != nil {
+		return nil, fmt.Errorf("imap/virtual: read %s: %w", back.Name, err)
+	}
+	return msgs, nil
 }
 
 // Matches runs the configuration's rule over a backing folder with the same
@@ -265,7 +312,17 @@ func (s *session) backingFolders() (map[uint32]backingFolder, error) {
 	if s.backingOf != nil {
 		return s.backingOf, nil
 	}
-	hdr := virtualHeaderOf(s.folderNS.idx, s.folder.ID)
+	out, err := s.backingFoldersOf(s.folderNS.idx, s.folder.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.backingOf = out
+	return out, nil
+}
+
+// backingFoldersOf is backingFolders for any virtual mailbox, selected or not.
+func (s *session) backingFoldersOf(idx mailbox.UserIndex, folderID uint64) (map[uint32]backingFolder, error) {
+	hdr := virtualHeaderOf(idx, folderID)
 	byGUID := make(map[[16]byte]uint32, len(hdr.Backing))
 	for _, b := range hdr.Backing {
 		byGUID[b.GUID] = b.ID
@@ -285,8 +342,35 @@ func (s *session) backingFolders() (map[uint32]backingFolder, error) {
 			out[id] = backingFolder{name: e.Name, id: f.ID, guid: f.GUID, uidv: f.UIDValidity, folder: f}
 		}
 	}
-	s.backingOf = out
 	return out, nil
+}
+
+// virtualBackingNames names the folders a virtual mailbox draws from, synced
+// first so a mailbox never selected still knows them; nil for any other.
+func (s *session) virtualBackingNames(name string) []string {
+	h, rel, err := s.dispatch(name)
+	if err != nil || h == nil {
+		return nil
+	}
+	if _, ok := mailbox.Driver(h.box).(virtualConfigured); !ok {
+		return nil
+	}
+	f, err := h.mailbox().Folder(rel, 0)
+	if err != nil {
+		return nil
+	}
+	if refreshed := s.syncVirtual(h, rel, f, virtual.Poll); refreshed != nil {
+		f = refreshed
+	}
+	folders, err := s.backingFoldersOf(h.idx, f.ID)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(folders))
+	for _, b := range folders {
+		names = append(names, b.name)
+	}
+	return names
 }
 
 // readVirtualCopy opens the real message a virtual record names: the backing
@@ -563,4 +647,48 @@ func (s *session) imapSieveOnCopies(pending []pendingStore, copies map[uint32]vi
 			s.runImapSieveScript(run.script, "FLAG", run.mailbox, b.name, h, b.folder, c.uid, name, recs[0].AltTier, "", changed)
 		}
 	}
+}
+
+// subscribeSelected is the event stream an IDLE on the selected mailbox waits
+// on; a virtual one also hears every folder it draws from (virtual-storage.c:693).
+func (s *session) subscribeSelected(ctx context.Context) (<-chan locks.Event, error) {
+	l, user := s.srv.opts.Locker, s.userInfo.Username
+	keys := []string{locks.MailboxKey(user, s.folder.Name)}
+	if s.isVirtualSelected() {
+		if folders, err := s.backingFolders(); err == nil {
+			for _, b := range folders {
+				keys = append(keys, locks.MailboxKey(user, b.name))
+			}
+		}
+	}
+	return subscribeAll(ctx, l, keys)
+}
+
+// subscribeAll merges the event streams of several keys into one, closed when
+// every one of them is.
+func subscribeAll(ctx context.Context, l locks.Locker, keys []string) (<-chan locks.Event, error) {
+	if len(keys) == 1 {
+		return l.Subscribe(ctx, keys[0])
+	}
+	out := make(chan locks.Event, 16)
+	var wg sync.WaitGroup
+	for _, k := range keys {
+		ch, err := l.Subscribe(ctx, k)
+		if err != nil {
+			return nil, fmt.Errorf("imap/virtual: subscribe %s: %w", k, err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ev := range ch {
+				select {
+				case out <- ev:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() { wg.Wait(); close(out) }()
+	return out, nil
 }
