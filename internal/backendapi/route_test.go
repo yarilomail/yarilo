@@ -1,6 +1,7 @@
 package backendapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -71,7 +72,7 @@ func TestARequestAboutAUserRunsWhereTheUserLives(t *testing.T) {
 			host, port := p.serve(t)
 			srv.opts.Router, srv.opts.PodIP, srv.opts.PeerPort = tc.router(host), self, port
 
-			req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/backend/fts/optimize?user=alice@example.com", nil)
+			req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/api/backend/fts/optimize?user=alice@example.com", nil)
 			if tc.routed {
 				req.Header.Set(routedHeader, "10.9.9.2")
 			}
@@ -105,7 +106,9 @@ func TestAUserInTheBodyIsRoutedWithItsBody(t *testing.T) {
 	srv.opts.Router, srv.opts.PodIP, srv.opts.PeerPort = fixedRouter{owner: host}, "10.9.9.1", port
 
 	body := `{"user":"alice@example.com","folder":"Projects"}`
-	resp, err := http.Post(ts.URL+"/api/backend/folder/create", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/api/backend/folder/create", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
