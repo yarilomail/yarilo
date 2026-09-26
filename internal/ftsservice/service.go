@@ -566,7 +566,7 @@ func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Res
 		metricLookupCandidates.Observe(float64(len(res.Definite) + len(res.Maybe)))
 	}
 	// Term COUNT and result counts only — never the query terms (private content).
-	slog.Debug("fts: lookup executed", "user", user, "folder", mbox.Name,
+	slog.Debug("fts: lookup executed", "user", user, "folder", mbox.Name, "ui", fmt.Sprintf("%p", h.ui),
 		"terms", len(q.Terms), "and_terms", q.AndTerms,
 		"definite", len(res.Definite), "maybe", len(res.Maybe),
 		"dur_ms", time.Since(t0).Milliseconds(), "err", err)
@@ -1259,7 +1259,7 @@ func (s *Service) runIndex(j job) error {
 		return nil
 	})
 	metricIndexMessages.Add(float64(indexedCount))
-	slog.Debug("fts: index run done", "job_id", j.id, "user", j.user, "folder", j.mbox.Name,
+	slog.Debug("fts: index run done", "job_id", j.id, "user", j.user, "folder", j.mbox.Name, "ui", fmt.Sprintf("%p", h.ui),
 		"messages_in_folder", len(msgs), "indexed", indexedCount, "skipped", skippedCount,
 		"dur_ms", time.Since(tStart).Milliseconds(), "err", err)
 	return err
