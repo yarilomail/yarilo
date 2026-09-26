@@ -47,7 +47,7 @@ jobs:
           CHANGED=$(git diff --name-only "${BASE}...${GITHUB_SHA}")
           echo "changed files:"
           echo "${CHANGED}"
-          if echo "${CHANGED}" | grep -qE '^(app/|helm/|internal/|pkg/|go\.mod$|go\.sum$|docker/Dockerfile$|\.github/workflows/)'; then
+          if echo "${CHANGED}" | grep -qE '^(app/|helm/|helm_values/|internal/|pkg/|go\.mod$|go\.sum$|docker/Dockerfile$|\.github/workflows/)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
