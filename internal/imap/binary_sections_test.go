@@ -59,6 +59,18 @@ const binaryNested = "From: a@b\r\n" +
 	"\r\n" +
 	"aGVsbG8=\r\n"
 
+func qpMessage(body string) string {
+	return "From: a@b\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + body
+}
+
+// A folded field after the CTE one must not join its value: "base64 b" is an
+// encoding nobody knows.
+const binaryFoldedAfter = "Content-Transfer-Encoding: base64\r\n" +
+	"Subject: a\r\n" +
+	" b\r\n" +
+	"\r\n" +
+	"aGVsbG8=\r\n"
+
 const binarySingle = "From: a@b\r\n" +
 	"Subject: needle here\r\n" +
 	"\r\n" +
@@ -81,6 +93,10 @@ func TestFetchBinarySections(t *testing.T) {
 		{"part 1 of a single-part base64 message", binaryBase64Single, []int{1}, "hello"},
 		{"a nested message is decoded inside", binaryNested, nil,
 			"From: a@b\r\nContent-Type: message/rfc822\r\n\r\nFrom: c@d\r\nContent-Transfer-Encoding: binary\r\n\r\nhello"},
+		{"a folded field after CTE stays its own", binaryFoldedAfter, nil,
+			"Content-Transfer-Encoding: binary\r\nSubject: a\r\n b\r\n\r\nhello"},
+		{"quoted-printable: soft break, lowercase hex, trailing space", qpMessage("a=\r\nb=c3=a9 \r\nc\nd"), []int{1},
+			"abé\r\nc\r\nd"},
 		{"multipart, quoted-printable part", binaryMultipart, []int{1}, "café"},
 		{"multipart, base64 part with NULs", binaryMultipart, []int{2}, "\x00\x01\x02"},
 		{"a part that does not exist is empty", binaryMultipart, []int{3}, ""},
@@ -128,6 +144,11 @@ func TestFetchBinaryUndecodableIsRefused(t *testing.T) {
 		{"unknown encoding, the whole message", uuencoded, nil, imap.ResponseCodeUnknownCTE},
 		{"corrupt base64, the part", corrupt, []int{2}, imap.ResponseCodeParse},
 		{"corrupt base64, the whole message", corrupt, nil, imap.ResponseCodeParse},
+		{"quoted-printable, '=' not a hex pair", qpMessage("a=ZZb\r\n"), nil, imap.ResponseCodeParse},
+		{"quoted-printable, one hex digit", qpMessage("a=Axb\r\n"), nil, imap.ResponseCodeParse},
+		{"quoted-printable, '=' and space not ending the line", qpMessage("a= b\r\n"), nil, imap.ResponseCodeParse},
+		{"quoted-printable, '=' at the end", qpMessage("abc="), []int{1}, imap.ResponseCodeParse},
+		{"quoted-printable, CR without LF", qpMessage("a\rb\r\n"), nil, imap.ResponseCodeParse},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := startAuthClient(t, "user@test.com", "testpass")

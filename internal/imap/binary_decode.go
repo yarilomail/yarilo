@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
-	"io"
 	"mime"
-	"mime/quotedprintable"
 	"strings"
 
 	imaplib "github.com/emersion/go-imap/v2"
@@ -162,13 +160,80 @@ func decodeCTE(cte string, body []byte) ([]byte, error) {
 		}
 		return decoded, nil
 	case "quoted-printable":
-		decoded, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(body)))
-		if err != nil {
-			return nil, errInvalidMIME
-		}
-		return decoded, nil
+		return decodeQP(body)
 	}
 	return body, nil
+}
+
+// decodeQP refuses what the reference's decoder refuses (qp-decoder.c): an '='
+// not starting a hex pair or a soft break, and a CR without LF.
+func decodeQP(b []byte) ([]byte, error) {
+	out := make([]byte, 0, len(b))
+	isWS := func(c byte) bool { return c == ' ' || c == '\t' }
+	lineEnd := func(i int) int { // length of the line break at i, or 0
+		switch {
+		case i < len(b) && b[i] == '\n':
+			return 1
+		case i+1 < len(b) && b[i] == '\r' && b[i+1] == '\n':
+			return 2
+		}
+		return 0
+	}
+	for i := 0; i < len(b); {
+		switch c := b[i]; {
+		case c == '=':
+			if i+2 < len(b) && isHex(b[i+1]) && isHex(b[i+2]) {
+				out = append(out, unhex(b[i+1])<<4|unhex(b[i+2]))
+				i += 3
+				continue
+			}
+			j := i + 1
+			for j < len(b) && isWS(b[j]) {
+				j++
+			}
+			n := lineEnd(j)
+			if n == 0 {
+				return nil, errInvalidMIME
+			}
+			i = j + n // soft line break
+		case isWS(c):
+			j := i
+			for j < len(b) && isWS(b[j]) {
+				j++
+			}
+			if j == len(b) || lineEnd(j) > 0 {
+				i = j // trailing whitespace is transport padding
+				continue
+			}
+			out = append(out, b[i:j]...)
+			i = j
+		case c == '\r' || c == '\n':
+			n := lineEnd(i)
+			if n == 0 {
+				return nil, errInvalidMIME
+			}
+			out = append(out, '\r', '\n')
+			i += n
+		default:
+			out = append(out, c)
+			i++
+		}
+	}
+	return out, nil
+}
+
+func isHex(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'A' && c <= 'F' || c >= 'a' && c <= 'f'
+}
+
+func unhex(c byte) byte {
+	switch {
+	case c >= 'a':
+		return c - 'a' + 10
+	case c >= 'A':
+		return c - 'A' + 10
+	}
+	return c - '0'
 }
 
 // relabelBinary rewrites the Content-Transfer-Encoding field where it stands,
