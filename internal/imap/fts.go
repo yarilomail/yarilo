@@ -3,43 +3,18 @@ package imap
 import (
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
-
-// headerDataChain expands HEADER search values through the same "data" chain
-// buildmail indexes header values with: normalization only, no stemming, no
-// stopwords, independent of the configured language(s). A stemmed query variant
-// against an unstemmed indexed header token yields false-positive wildcard
-// matches (e.g. "running" -> "run*" matching an unrelated "runway").
-var headerDataChain = mustHeaderDataChain()
-
-// expander is satisfied by both *language.MultiChain (Body/Text, full language
-// stemming) and *language.Chain (Header, the no-stemming data chain);
-// buildFTSQuery picks whichever fits the field.
-type expander interface {
-	ExpandSearch(query string) []fts.Word
-}
-
-func mustHeaderDataChain() *language.Chain {
-	c, err := language.NewDataChain()
-	if err != nil {
-		// "lowercase" is a static, language-independent filter: cannot fail at
-		// runtime, only if the filter chain is broken at compile time.
-		panic(fmt.Sprintf("imap: header data chain: %v", err))
-	}
-	return c
-}
 
 // FTSOptions wires full-text search into IMAP sessions. Nil Client disables
 // FTS entirely — SEARCH keeps the sequential scan.
@@ -335,45 +310,18 @@ func (s *session) ftsCatchUp(user string, mbox fts.MailboxRef, msgs []*mailbox.M
 // match, and the whole query is unmatchable regardless of any other criteria
 // that DID expand to real terms — a match-nothing, not a dropped, constraint.
 func (s *session) buildFTSQuery(criteria *imaplib.SearchCriteria) (fts.Query, *imaplib.SearchCriteria, bool, bool) {
-	chain := s.srv.opts.FTS.Chain
-	var terms []fts.Term
-	impossible := false
-	add := func(exp expander, field fts.FieldKind, hdrName, value string) {
-		words := exp.ExpandSearch(value)
-		if len(words) == 0 && value != "" {
-			impossible = true
-			return
-		}
-		t := fts.Term{Field: field, HdrName: hdrName, Words: words}
-		if strings.ContainsRune(strings.TrimSpace(value), ' ') {
-			t.Phrase = value
-		}
-		terms = append(terms, t)
-	}
-	for _, v := range criteria.Body {
-		add(chain, fts.FieldBody, "", v)
-	}
-	for _, v := range criteria.Text {
-		add(chain, fts.FieldText, "", v)
-	}
+	c := ftsquery.Criteria{Body: criteria.Body, Text: criteria.Text}
 	for _, h := range criteria.Header {
-		if h.Value == "" {
-			terms = append(terms, fts.Term{Field: fts.FieldHeader,
-				HdrName: strings.ToLower(h.Key)})
-			continue
-		}
-		// Headers are not language text: always the no-stemming data chain,
-		// never the configured language chain, regardless of the field name —
-		// matching buildmail, which indexes every header through the same chain.
-		add(headerDataChain, fts.FieldHeader, strings.ToLower(h.Key), h.Value)
+		c.Header = append(c.Header, ftsquery.Header{Key: h.Key, Value: h.Value})
 	}
+	q, impossible := ftsquery.Build(s.srv.opts.FTS.Chain, c)
 
 	stripped := *criteria
 	stripped.Body = nil
 	stripped.Text = nil
 	stripped.Header = nil
 	needsBody := !stripped.SentSince.IsZero() || !stripped.SentBefore.IsZero()
-	return fts.Query{Terms: terms, AndTerms: true}, &stripped, needsBody, impossible
+	return q, &stripped, needsBody, impossible
 }
 
 // ftsNotify fires the delivery/expunge hooks toward the yarilo-fts service —

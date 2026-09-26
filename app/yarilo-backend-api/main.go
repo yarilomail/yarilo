@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/backendapi"
+	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/internal/telemetry"
@@ -158,9 +160,14 @@ func main() {
 	}
 
 	var ftsClient ftsproto.Client
+	var ftsChain *language.MultiChain
 	if cfg.FTS.Enabled && cfg.FTS.Mode == "remote" && cfg.FTS.Addr != "" {
 		ftsClient = ftsproto.NewPool(cfg.FTS.Addr, cfg.FTS.MaxConns, 10*time.Second)
 		defer ftsClient.Close() //nolint:errcheck
+		if ftsChain, err = ftsquery.NewChain(cfg.FTS); err != nil {
+			slog.Error("backend-api: fts language chain", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	// A request about a user runs on the pod the director keeps them on; the
@@ -204,6 +211,7 @@ func main() {
 			return mailboxbuild.ByDriver(driver, cfg.Storage, locker)
 		},
 		FTSClient: ftsClient,
+		FTSChain:  ftsChain,
 	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
