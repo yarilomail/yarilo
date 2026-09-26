@@ -6,9 +6,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A base replaced while it is being read must not label the content read with
-// the identity of the file that replaced it: every later read then matches the
-// cache and answers from a version that is already gone (#2056).
+// Content read must not carry the identity of the file that replaced it: every
+// later read then matches the cache and answers a version already gone (#2056).
 func TestAnImageCarriesTheIdentityOfWhatItRead(t *testing.T) {
 	home := t.TempDir()
 	reader := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
@@ -19,8 +18,7 @@ func TestAnImageCarriesTheIdentityOfWhatItRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The next read finds the file changed and parses it; while it does, the
-	// other process appends again, as a delivery does.
+	// While this read parses, the other process appends, as a delivery does.
 	appendFromAnotherProcess(t, home, false) // uid 2041 again: the cache goes stale
 	once := false
 	afterBaseRead = func() {
@@ -45,9 +43,8 @@ func TestAnImageCarriesTheIdentityOfWhatItRead(t *testing.T) {
 	}
 }
 
-// The sweep asks for every indexed message at once and drops what the store
-// does not know. A copy another process appended must read as present, or a
-// delivered message's document is swept as dead (#2031 class).
+// The sweep asks for every indexed message and drops what the store does not
+// know: a copy read as absent is a live document swept as dead (#2031 class).
 func TestASweepSizedLookupSeesACopyAppendedDuringARead(t *testing.T) {
 	home := t.TempDir()
 	reader := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
@@ -84,9 +81,8 @@ func TestASweepSizedLookupSeesACopyAppendedDuringARead(t *testing.T) {
 	}
 }
 
-// A writer the reader cannot outrun: the retries are spent, and the content is
-// still labelled with the file it was read from, so the reader catches up on
-// its next read instead of holding a version that is gone.
+// The retries spent, the content still carries the file it was read from, so
+// the reader catches up instead of holding a version that is gone.
 func TestAReadThatSpentItsRetriesCatchesUp(t *testing.T) {
 	home := t.TempDir()
 	reader := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
@@ -96,8 +92,8 @@ func TestAReadThatSpentItsRetriesCatchesUp(t *testing.T) {
 	reader.GUIDCopies([][16]byte{{1}}) //nolint:errcheck
 	appendFromAnotherProcess(t, home, false)
 
-	// One write per read, exactly until the retries run out. The last of them
-	// is the delivery's copy, so only the version the read ends on holds it.
+	// One write per read until the retries run out; the last is the delivery's
+	// copy, so only the version the read ends on holds it.
 	left := baseReadAttempts + 1
 	afterBaseRead = func() {
 		if left == 0 {

@@ -44,9 +44,8 @@ func imageFor(fs *folderState) (*baseImage, error) {
 			return img, nil
 		}
 	}
-	// The label has to describe what was read: a base replaced between the read
-	// and the stat would otherwise cache the old content under the new file's
-	// identity, and every later read would match it (#2056).
+	// The label has to describe what was read: a base replaced mid-read would
+	// otherwise cache old content under the new file's identity (#2056).
 	var img *baseImage
 	for attempt := 0; ; attempt++ {
 		pre := st
@@ -67,9 +66,8 @@ func imageFor(fs *folderState) (*baseImage, error) {
 		}
 		st = after
 		if attempt >= baseReadAttempts {
-			// A writer this reader cannot outrun: the content is labelled with
-			// the file it came from, so it only ever reads older, never wrong,
-			// and the next read sees the file has moved and reads again.
+			// Labelled with the file it came from: older, never wrong, and the
+			// next read sees the file has moved.
 			img = &baseImage{file: parsed, ident: pre, size: pre.Size(), mod: pre.ModTime()}
 			metricBaseReadGaveUp.Inc()
 			break

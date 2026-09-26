@@ -8,9 +8,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// guidWriterHelper is the second process: with the env set it appends one
-// copy to the store in home and exits. In one process the shared base-image
-// cache stands between the two handles, so the seam is only reachable here.
+// The second process: in one process the shared base-image cache stands
+// between two handles, so the seam is only reachable from another.
 func TestGUIDStoreWriterHelper(t *testing.T) {
 	home := os.Getenv("YARILO_TEST_GUID_HOME")
 	if home == "" {
@@ -43,10 +42,8 @@ func appendFromAnotherProcess(t *testing.T, home string, second bool) {
 	}
 }
 
-// A reader that only reads sees a copy another process appended, without a
-// write of its own. The fts service is that reader: it resolves a search hit
-// through the store, and a copy it cannot see is a delivered message the
-// search cannot name (#2056).
+// A reader that only reads sees a copy another process appended: the fts
+// service is that reader, resolving every search hit through the store.
 func TestAReaderSeesACopyAnotherIndexAppended(t *testing.T) {
 	home := t.TempDir()
 	open := func() *userIndex {
@@ -55,8 +52,7 @@ func TestAReaderSeesACopyAnotherIndexAppended(t *testing.T) {
 	reader := open()
 	t.Cleanup(func() { reader.Close() }) //nolint:errcheck
 
-	// The reader is warm before the write, as a running process is: a handle
-	// opened afterwards reads the file from scratch and cannot lag.
+	// Warm before the write: a handle opened afterwards reads from scratch.
 	appendFromAnotherProcess(t, home, false)
 	if _, err := reader.GUIDCopies([][16]byte{{1}}); err != nil {
 		t.Fatal(err)
@@ -74,9 +70,8 @@ func TestAReaderSeesACopyAnotherIndexAppended(t *testing.T) {
 	}
 }
 
-// A warm writer that appends after another process appended keeps that copy:
-// it rewrites the base from its own records, so a view that missed the other's
-// write drops it (#2056).
+// A warm writer appending after another process keeps that copy: it rewrites
+// the base from its own records (#2056).
 func TestAWarmWriterKeepsAnotherProcessesCopy(t *testing.T) {
 	home := t.TempDir()
 	mine := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
