@@ -421,6 +421,8 @@ func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 		return nil, err
 	}
 
+	slog.Debug("fileindex: guid image version", "user", u.username, "index_id", version.indexID,
+		"next_uid", version.nextUID, "records", version.records)
 	u.guid.mu.Lock()
 	if u.guid.image != nil && u.guid.version == version {
 		m := u.guid.image

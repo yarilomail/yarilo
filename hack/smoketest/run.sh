@@ -100,19 +100,26 @@ enotify_snapshot() {
   d=$(kubectl -n "$NAMESPACE" get pods -l "$DIRECTOR_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   [ -n "$d" ] && kubectl -n "$NAMESPACE" exec "$d" -- yarctl director map --user "$SMOKE_USER" 2>&1 || true
   api=$(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  lookup() {
+    [ -n "$token" ] && kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- \
+      yarctl fts lookup "$SMOKE_USER" --folder INBOX --header "Subject:$token" 2>&1 | grep -v '^term' || true
+  }
+  # The index asked directly, with the terms SEARCH uses, before anything opens
+  # the mailbox, again untouched, and once more after status and folder info
+  # have opened it: which of them finds the message says what heals it.
+  echo "-- lookup, untouched"; lookup
+  sleep 5
+  echo "-- lookup, untouched, 5s later"; lookup
   # Index checkpoint against the folder's next UID: the ftsCatchUp decision.
   kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl fts status "$SMOKE_USER" --folder INBOX 2>&1 || true
   kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl folder info "$SMOKE_USER" INBOX 2>&1 || true
-  # The index asked directly, with the terms SEARCH uses: a hit here and none
-  # in SEARCH is the session's miss, no hit is the index's.
-  [ -n "$token" ] && kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- \
-    yarctl fts lookup "$SMOKE_USER" --folder INBOX --header "Subject:$token" 2>&1 || true
+  echo "-- lookup, after status and folder info"; lookup
   for pod in $(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
     # The fts service turns hits into UIDs through the GUID store; its
     # counters live there, not in yarilo-imap.
     echo "== $pod/yarilo-fts GUID store counters"
     kubectl -n "$NAMESPACE" exec "$pod" -c yarilo-fts -- sh -c 'wget -qO- http://127.0.0.1:8085/metrics' 2>/dev/null | grep '^fileindex_guid_' || true
-    for c in yarilo-imap yarilo-fts; do
+    for c in yarilo-imap yarilo-fts yarilo-lmtp; do
       echo "== $pod/$c, last 90s"
       kubectl -n "$NAMESPACE" logs "$pod" -c "$c" --since=90s 2>&1 || true
     done

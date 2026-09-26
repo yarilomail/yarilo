@@ -1356,6 +1356,7 @@ func (h *userHandle) resolveHits(res *fts.Result, mbox fts.MailboxRef) error {
 	if err != nil {
 		return err
 	}
+	slog.Debug("fts: hits resolved", "folder", mbox.Name, "guids", len(res.DefiniteGUIDs), "uids", len(uids))
 	res.Definite = append(res.Definite, uids...)
 	uids, err = resolveToUIDs(resolver, res.MaybeGUIDs, mbox.GUID)
 	if err != nil {
@@ -1375,6 +1376,7 @@ func resolveToUIDs(res mailbox.GUIDResolver, guids [][16]byte, folder string) ([
 	if err != nil {
 		return nil, err
 	}
+	slog.Debug("fts: guid copies", "asked", len(guids), "copies", len(copies), "folder_guid", folder)
 	out := make([]uint32, 0, len(guids))
 	for _, c := range copies {
 		if hex.EncodeToString(c.FolderGUID[:]) == folder {
