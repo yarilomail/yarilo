@@ -24,6 +24,13 @@ type baseImage struct {
 // by path; the identity check says whether it still describes the file.
 var baseImages sync.Map // indexPath -> *baseImage
 
+// baseReadAttempts bounds the re-reads a base that keeps moving costs.
+const baseReadAttempts = 3
+
+// afterBaseRead is a test seam: another process replacing the base between the
+// read and the stat that labels it. Nil everywhere else.
+var afterBaseRead func()
+
 // imageFor returns the parsed base for the file at fs.indexPath as it is now.
 // It takes no lock and writes nothing the writer can see.
 func imageFor(fs *folderState) (*baseImage, error) {
@@ -37,17 +44,38 @@ func imageFor(fs *folderState) (*baseImage, error) {
 			return img, nil
 		}
 	}
-	parsed, err := mailindex.Open(fs.indexPath)
-	if err != nil {
-		return nil, asCorrupt(fs.folder, err)
+	// The label has to describe what was read: a base replaced between the read
+	// and the stat would otherwise cache the old content under the new file's
+	// identity, and every later read would match it (#2056).
+	var img *baseImage
+	for attempt := 0; ; attempt++ {
+		pre := st
+		parsed, perr := mailindex.Open(fs.indexPath)
+		if perr != nil {
+			return nil, asCorrupt(fs.folder, perr)
+		}
+		if afterBaseRead != nil {
+			afterBaseRead()
+		}
+		after, serr := os.Stat(fs.indexPath)
+		if serr != nil {
+			return nil, serr
+		}
+		if os.SameFile(pre, after) && pre.Size() == after.Size() && pre.ModTime().Equal(after.ModTime()) {
+			img = &baseImage{file: parsed, ident: pre, size: pre.Size(), mod: pre.ModTime()}
+			break
+		}
+		st = after
+		if attempt >= baseReadAttempts {
+			// A writer this reader cannot outrun: the content is labelled with
+			// the file it came from, so it only ever reads older, never wrong,
+			// and the next read sees the file has moved and reads again.
+			img = &baseImage{file: parsed, ident: pre, size: pre.Size(), mod: pre.ModTime()}
+			metricBaseReadGaveUp.Inc()
+			break
+		}
 	}
-	// Identity taken after the read: a compaction in between makes a new
-	// image rather than a mislabelled one.
-	after, serr := os.Stat(fs.indexPath)
-	if serr != nil {
-		return nil, serr
-	}
-	img := &baseImage{file: parsed, ident: after, size: after.Size(), mod: after.ModTime()}
+	parsed := img.file
 	if ext := findExt(parsed.Extensions, extNameKeywords); ext != nil {
 		kw, kerr := decodeKeywordsHdr(ext.HdrData)
 		if kerr != nil {
