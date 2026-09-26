@@ -2540,7 +2540,8 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 			for _, k := range p.ci.kw {
 				allFlags = append(allFlags, imaplib.Flag(k))
 			}
-			if err := w.WriteMessageFlags(p.seq, imaplib.UID(p.uid), allFlags); err != nil {
+			// The writer adds MODSEQ once the client enabled CONDSTORE (RFC 7162 3.2.4).
+			if err := w.WriteMessageFlagsModSeq(p.seq, imaplib.UID(p.uid), allFlags, p.ci.modseq); err != nil {
 				return err
 			}
 		}
