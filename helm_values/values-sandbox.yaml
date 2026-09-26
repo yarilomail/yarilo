@@ -156,6 +156,7 @@ logLevel: info
 logLevelOverrides:
   yarilo-fts: debug
   yarilo-imap: debug
+  yarilo-lmtp: debug
 
 service:
   type: LoadBalancer
