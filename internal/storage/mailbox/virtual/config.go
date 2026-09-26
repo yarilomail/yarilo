@@ -162,7 +162,7 @@ func ParseConfig(r io.Reader) (*Config, error) {
 func parseBoxLine(line string) (Box, error) {
 	var b Box
 	if !utf8.ValidString(line) {
-		return b, fmt.Errorf("virtual: mailbox name is not UTF-8: %q", line)
+		return b, fmt.Errorf("mailbox name is not UTF-8: %q", line)
 	}
 	noWildcards := false
 	switch line[0] {
@@ -176,10 +176,10 @@ func parseBoxLine(line string) (Box, error) {
 	if strings.HasPrefix(line, "/") {
 		entry, value, ok := strings.Cut(line[1:], ":")
 		if !ok {
-			return b, errors.New("virtual: ':' missing between the annotation and its value")
+			return b, errors.New("':' missing between the annotation and its value")
 		}
 		if entry == "" {
-			return b, errors.New("virtual: the annotation has no name")
+			return b, errors.New("the annotation has no name")
 		}
 		b.MetadataEntry, b.MetadataValue = "/"+entry, value
 		noWildcards = true
@@ -189,14 +189,14 @@ func parseBoxLine(line string) (Box, error) {
 		b.Pattern = "INBOX"
 	}
 	if b.Pattern == "" && b.MetadataEntry == "" {
-		return b, errors.New("virtual: the line names no mailbox")
+		return b, errors.New("the line names no mailbox")
 	}
 	if noWildcards && b.HasWildcard() {
 		what := "a save mailbox"
 		if b.MetadataEntry != "" {
 			what = "an annotation line"
 		}
-		return b, fmt.Errorf("virtual: %s carries no wildcard: %q", what, b.Pattern)
+		return b, fmt.Errorf("%s carries no wildcard: %q", what, b.Pattern)
 	}
 	return b, nil
 }
