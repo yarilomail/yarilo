@@ -9,9 +9,8 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Containers share one network namespace, so one without a telemetry port of
-// its own is read off a neighbour's page, and its counters read zero (#1999).
-// Port names are the pod's, not the container's (#2068).
+// Containers share one network namespace, so one without a port of its own is
+// read off a neighbour's page (#1999); names are the pod's, not one container's (#2068).
 func TestEveryBackendContainerHasItsOwnTelemetryPort(t *testing.T) {
 	out, err := exec.Command("helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
@@ -74,9 +73,8 @@ func TestEveryBackendContainerHasItsOwnTelemetryPort(t *testing.T) {
 				if p.ContainerPort == port {
 					declared = p.Name
 				}
-				// Port names are unique within a pod: a Service or a probe
-				// that selects one by name reaches the first container
-				// declaring it, and every other is unreachable by name (#2068).
+				// A name two containers share reaches the first of them, and
+				// the rest are unaddressable by name (#2068).
 				if by, ok := names[p.Name]; ok {
 					t.Errorf("containers %q and %q both name a port %q", by, c.Name, p.Name)
 				}
