@@ -163,6 +163,19 @@ func main() {
 		defer ftsClient.Close() //nolint:errcheck
 	}
 
+	// A request about a user runs on the pod the director keeps them on; the
+	// registration's director and pool say where, and none means standalone.
+	var peerTLS *tls.Config
+	if cfg.InternalTLS.Enabled {
+		peerTLS, err = mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
+		if err != nil {
+			slog.Error("backend-api: peer tls", "err", err)
+			os.Exit(1)
+		}
+	}
+	_, peerPort, _ := net.SplitHostPort(listen)
+	router := backendapi.NewDirectorRouter(cfg.BackendRegister.DirectorAddr, cfg.BackendRegister.Tag, peerTLS)
+
 	srv := backendapi.New(backendapi.Options{
 		Addr:               listen,
 		TLSConfig:          tlsCfg,
@@ -183,6 +196,9 @@ func main() {
 		WardenAddr:         cfg.WardenService.ClientAddr(),
 		WardenTLS:          wardenTLS,
 		PodIP:              os.Getenv("POD_IP"),
+		Router:             router,
+		PeerTLS:            peerTLS,
+		PeerPort:           peerPort,
 		AuthClient:         authcl,
 		MailboxByDriver: func(driver string) mailbox.MailboxBackend {
 			return mailboxbuild.ByDriver(driver, cfg.Storage, locker)
