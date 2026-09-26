@@ -3433,6 +3433,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				binaryErr = derr
 				continue
 			}
+			decoded = binaryPartial(decoded, section.Partial)
 			s.statsFetchBody++
 			s.statsFetchBodyB += int64(len(decoded))
 			bw := mw.WriteBinarySection(section, int64(len(decoded)))

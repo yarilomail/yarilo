@@ -297,3 +297,19 @@ func stripWhitespace(b []byte) []byte {
 	}
 	return out
 }
+
+// binaryPartial is <origin.count> over the decoded bytes (RFC 3516 4.2), cut as
+// BODY[]<> cuts: an origin past the end is empty, a count past it truncates.
+func binaryPartial(b []byte, p *imaplib.SectionPartial) []byte {
+	if p == nil {
+		return b
+	}
+	if p.Offset >= int64(len(b)) {
+		return []byte{}
+	}
+	b = b[p.Offset:]
+	if p.Size >= 0 && p.Size < int64(len(b)) {
+		b = b[:p.Size]
+	}
+	return b
+}
