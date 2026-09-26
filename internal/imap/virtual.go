@@ -27,25 +27,23 @@ type virtualConfigured interface {
 
 // syncVirtual brings a virtual mailbox up to date. Membership is decided here,
 // not at SEARCH, so EXISTS and FETCH speak of one set (virtual-sync.c:604).
-func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode virtual.Mode) *mailbox.Folder {
+func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode virtual.Mode) (*mailbox.Folder, *imaplib.Error) {
 	box, ok := mailbox.Driver(h.box).(virtualConfigured)
 	if !ok {
-		return nil // not a virtual namespace
+		return nil, nil // not a virtual namespace
 	}
 	cfg, err := box.Config(rel)
 	if err != nil {
-		slog.Warn("imap: virtual mailbox configuration", "folder", rel, "err", err)
-		return nil
+		return nil, s.virtualSyncFailed(rel, err)
 	}
 	// The check reads only the folders' state, so a mailbox where nothing
 	// moved costs no hold; the pass checks again under it.
 	moved, err := virtual.Moved(cfg, virtualHeaderOf(h.idx, f.ID), &sessionBacking{s: s})
 	if err != nil {
-		slog.Warn("imap: virtual mailbox check", "folder", rel, "err", err)
-		return nil
+		return nil, s.virtualSyncFailed(rel, err)
 	}
 	if !moved {
-		return nil
+		return nil, nil
 	}
 	var refreshed *mailbox.Folder
 	pass := func(context.Context) error {
@@ -74,14 +72,29 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 		err = pass(context.Background())
 	}
 	if err != nil {
-		slog.Warn("imap: virtual mailbox not updated", "folder", rel, "err", err)
-		return nil
+		return nil, s.virtualSyncFailed(rel, err)
 	}
 	if refreshed != nil && s.folder != nil && h == s.folderNS && f.ID == s.folder.ID {
 		s.backingOf = nil // the header may name folders it did not
 		s.virtualMoved = true
 	}
-	return refreshed
+	return refreshed, nil
+}
+
+// virtualSyncFailed logs why a pass failed and answers the client the way a
+// storage failure is answered: the records stay as the last pass left them.
+func (s *session) virtualSyncFailed(rel string, err error) *imaplib.Error {
+	slog.Error("imap: virtual mailbox not updated", "user", s.username(), "folder", rel, "err", err)
+	return &imaplib.Error{
+		Type: imaplib.StatusResponseTypeNo,
+		Code: imaplib.ResponseCodeServerBug,
+		Text: "Internal error occurred. Refer to server log for more information.",
+	}
+}
+
+// writeSyncFailure reports a failed pass untagged, so the command still completes.
+func writeSyncFailure(w *imapserver.UpdateWriter, err *imaplib.Error) error {
+	return w.WriteStatusResp((*imaplib.StatusResponse)(err))
 }
 
 // applyVirtual writes what the pass decided as ordinary index changes: a record
@@ -385,7 +398,8 @@ func (s *session) virtualBackingNames(name string) []string {
 	if err != nil {
 		return nil
 	}
-	if refreshed := s.syncVirtual(h, rel, f, virtual.Poll); refreshed != nil {
+	// A failed pass keeps the folders the last one saw; the poll reports it.
+	if refreshed, _ := s.syncVirtual(h, rel, f, virtual.Poll); refreshed != nil {
 		f = refreshed
 	}
 	folders, err := s.backingFoldersOf(h.idx, f.ID)
