@@ -243,9 +243,8 @@ func withImapSieve(t *testing.T) func(*imapserver.Options) {
 	return func(o *imapserver.Options) { o.SieveEngine, o.MetadataDict = eng, md }
 }
 
-// A STORE in a virtual mailbox is a FLAG event in both mailboxes, as the
-// reference has it: the copy's folder runs its script on the copy, and the
-// virtual mailbox runs its own script on the same message.
+// A STORE in a virtual mailbox is a FLAG event in both mailboxes, as in the
+// reference: each runs its own script on the copy.
 func TestVirtualStoreRunsImapSieveInBothMailboxes(t *testing.T) {
 	for _, tc := range []struct {
 		name, bind, script, filedInto string
