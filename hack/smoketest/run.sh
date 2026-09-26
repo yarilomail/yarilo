@@ -119,7 +119,7 @@ enotify_snapshot() {
     # counters live there, not in yarilo-imap.
     echo "== $pod/yarilo-fts GUID store counters"
     kubectl -n "$NAMESPACE" exec "$pod" -c yarilo-fts -- sh -c 'wget -qO- http://127.0.0.1:8085/metrics' 2>/dev/null | grep '^fileindex_guid_' || true
-    for c in yarilo-imap yarilo-fts; do
+    for c in yarilo-imap yarilo-fts yarilo-lmtp; do
       echo "== $pod/$c, last 90s"
       kubectl -n "$NAMESPACE" logs "$pod" -c "$c" --since=90s 2>&1 || true
     done
