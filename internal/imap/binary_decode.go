@@ -3,73 +3,256 @@ package imap
 import (
 	"bytes"
 	"encoding/base64"
-	"io"
-	"mime/quotedprintable"
+	"errors"
+	"mime"
 	"strings"
+
+	imaplib "github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapserver"
 )
 
-// decodeBinarySection implements the RFC 3516 BINARY[<section>] decoding —
-// strip the Content-Transfer-Encoding wrapper and return the raw bytes.
-//
-// Whole-message (part == nil or empty) is fully supported: the message
-// header is scanned for Content-Transfer-Encoding, base64 / quoted-
-// printable bodies are decoded, 7bit / 8bit / binary pass through.
-//
-// Part-spec (BINARY[1] / BINARY[1.2] etc.) requires a MIME walk over the
-// message structure. Until that lands the call returns the raw bytes
-// unchanged — clients that supply a part still get a syntactically valid
-// reply rather than an error (permissive fallback when the MIME parser
-// cannot resolve the section).
-func decodeBinarySection(raw []byte, part []int) []byte {
-	if len(part) > 0 {
-		// MIME walk deferred; return body unchanged so the client can
-		// fall back to its own decoder.
-		return raw
+var (
+	errUnknownCTE  = errors.New("unknown Content-Transfer-Encoding")
+	errInvalidMIME = errors.New("invalid data in MIME part")
+)
+
+// binarySection is BINARY[<part>] (RFC 3516): each leaf decoded by its own
+// encoding and relabelled binary; the whole message keeps its header.
+func binarySection(raw []byte, part []int) ([]byte, error) {
+	if len(part) == 0 {
+		return binaryEntity(raw, true)
 	}
-	header, body, ok := splitMessage(raw)
-	if !ok {
-		return raw
+	body := imapserver.ExtractBodySection(bytes.NewReader(raw), &imaplib.FetchItemBodySection{Part: part})
+	if body == nil {
+		return []byte{}, nil // no such part: empty, as for BODY[<part>]
 	}
-	enc := strings.ToLower(strings.TrimSpace(headerValue(header, "Content-Transfer-Encoding")))
-	switch enc {
-	case "", "7bit", "8bit", "binary":
-		return body
-	case "base64":
-		// Strip CRLF / whitespace before decoding — RFC 2045 §6.8 allows
-		// line breaks anywhere in the encoded data.
-		clean := stripWhitespace(body)
-		decoded, err := base64.StdEncoding.DecodeString(string(clean))
-		if err != nil {
-			return body
-		}
-		return decoded
-	case "quoted-printable":
-		decoded, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(body)))
-		if err != nil {
-			return body
-		}
-		return decoded
-	}
-	return body
+	hdr := imapserver.ExtractBodySection(bytes.NewReader(raw),
+		&imaplib.FetchItemBodySection{Part: part, Specifier: imaplib.PartSpecifierMIME})
+	return binaryEntity(append(append([]byte{}, hdr...), body...), false)
 }
 
-// splitMessage finds the blank line that separates the RFC 5322 header
-// block from the body. Returns (header, body, true) on success or the
-// whole input as header with empty body and false when no separator is
-// present.
-func splitMessage(raw []byte) ([]byte, []byte, bool) {
-	for i := 0; i+1 < len(raw); i++ {
-		if raw[i] == '\n' {
-			// CRLF-CRLF or LF-LF separator.
-			if raw[i+1] == '\n' {
-				return raw[:i+1], raw[i+2:], true
-			}
-			if i+3 < len(raw) && raw[i+1] == '\r' && raw[i+2] == '\n' {
-				return raw[:i+1], raw[i+3:], true
-			}
+// binaryEntity decodes one MIME entity, header then body; withHeader=false
+// answers the body alone.
+func binaryEntity(entity []byte, withHeader bool) ([]byte, error) {
+	header, body := splitHeader(entity)
+	cte := strings.ToLower(strings.TrimSpace(headerValue(header, "Content-Transfer-Encoding")))
+	var out bytes.Buffer
+	converted := cte == "base64" || cte == "quoted-printable"
+	if withHeader {
+		if converted {
+			out.Write(relabelBinary(header))
+		} else {
+			out.Write(header)
 		}
 	}
-	return raw, nil, false
+	mediaType, params, _ := mime.ParseMediaType(headerValue(header, "Content-Type"))
+	switch {
+	case cte != "" && cte != "7bit" && cte != "8bit" && cte != "binary" && !converted:
+		return nil, errUnknownCTE
+	case strings.HasPrefix(mediaType, "multipart/") && params["boundary"] != "" && !converted:
+		if err := binaryMultipart(&out, body, params["boundary"]); err != nil {
+			return nil, err
+		}
+	case mediaType == "message/rfc822" && !converted:
+		inner, err := binaryEntity(body, true)
+		if err != nil {
+			return nil, err
+		}
+		out.Write(inner)
+	default:
+		decoded, err := decodeCTE(cte, body)
+		if err != nil {
+			return nil, err
+		}
+		out.Write(decoded)
+	}
+	return out.Bytes(), nil
+}
+
+// binaryMultipart copies preamble, delimiters and epilogue as they are and
+// decodes each body part; the line break before a delimiter belongs to it.
+func binaryMultipart(out *bytes.Buffer, body []byte, boundary string) error {
+	dash := []byte("--" + boundary)
+	var part []byte
+	inPart, closed := false, false
+	flush := func() error {
+		content, lineBreak := trimLineBreak(part)
+		decoded, err := binaryEntity(content, true)
+		if err != nil {
+			return err
+		}
+		out.Write(decoded)
+		out.Write(lineBreak)
+		part = part[:0]
+		return nil
+	}
+	for _, line := range bytes.SplitAfter(body, []byte{'\n'}) {
+		if closed {
+			out.Write(line)
+			continue
+		}
+		trimmed := bytes.TrimRight(line, " \t\r\n")
+		if !bytes.HasPrefix(trimmed, dash) {
+			if inPart {
+				part = append(part, line...)
+			} else {
+				out.Write(line)
+			}
+			continue
+		}
+		rest := trimmed[len(dash):]
+		if len(rest) != 0 && !bytes.Equal(rest, []byte("--")) {
+			if inPart {
+				part = append(part, line...)
+			} else {
+				out.Write(line)
+			}
+			continue
+		}
+		if inPart {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		out.Write(line)
+		inPart, closed = len(rest) == 0, len(rest) != 0
+	}
+	if inPart {
+		return flush() // no closing delimiter: the last part runs to the end
+	}
+	return nil
+}
+
+func trimLineBreak(b []byte) (content, lineBreak []byte) {
+	switch {
+	case bytes.HasSuffix(b, []byte("\r\n")):
+		return b[:len(b)-2], b[len(b)-2:]
+	case bytes.HasSuffix(b, []byte("\n")):
+		return b[:len(b)-1], b[len(b)-1:]
+	}
+	return b, nil
+}
+
+// splitHeader cuts an entity after the blank line that ends its header; an
+// entity without one is all header.
+func splitHeader(entity []byte) (header, body []byte) {
+	if bytes.HasPrefix(entity, []byte("\r\n")) {
+		return entity[:2], entity[2:]
+	}
+	if bytes.HasPrefix(entity, []byte("\n")) {
+		return entity[:1], entity[1:]
+	}
+	for _, sep := range [][]byte{[]byte("\r\n\r\n"), []byte("\n\n")} {
+		if i := bytes.Index(entity, sep); i >= 0 {
+			return entity[:i+len(sep)], entity[i+len(sep):]
+		}
+	}
+	return entity, nil
+}
+
+func decodeCTE(cte string, body []byte) ([]byte, error) {
+	switch cte {
+	case "base64":
+		// RFC 2045 6.8 allows line breaks anywhere in the encoded data.
+		decoded, err := base64.StdEncoding.DecodeString(string(stripWhitespace(body)))
+		if err != nil {
+			return nil, errInvalidMIME
+		}
+		return decoded, nil
+	case "quoted-printable":
+		return decodeQP(body)
+	}
+	return body, nil
+}
+
+// decodeQP refuses what the reference's decoder refuses (qp-decoder.c): an '='
+// not starting a hex pair or a soft break, and a CR without LF.
+func decodeQP(b []byte) ([]byte, error) {
+	out := make([]byte, 0, len(b))
+	isWS := func(c byte) bool { return c == ' ' || c == '\t' }
+	lineEnd := func(i int) int { // length of the line break at i, or 0
+		switch {
+		case i < len(b) && b[i] == '\n':
+			return 1
+		case i+1 < len(b) && b[i] == '\r' && b[i+1] == '\n':
+			return 2
+		}
+		return 0
+	}
+	for i := 0; i < len(b); {
+		switch c := b[i]; {
+		case c == '=':
+			if i+2 < len(b) && isHex(b[i+1]) && isHex(b[i+2]) {
+				out = append(out, unhex(b[i+1])<<4|unhex(b[i+2]))
+				i += 3
+				continue
+			}
+			j := i + 1
+			for j < len(b) && isWS(b[j]) {
+				j++
+			}
+			n := lineEnd(j)
+			if n == 0 {
+				return nil, errInvalidMIME
+			}
+			i = j + n // soft line break
+		case isWS(c):
+			j := i
+			for j < len(b) && isWS(b[j]) {
+				j++
+			}
+			if j == len(b) || lineEnd(j) > 0 {
+				i = j // trailing whitespace is transport padding
+				continue
+			}
+			out = append(out, b[i:j]...)
+			i = j
+		case c == '\r' || c == '\n':
+			n := lineEnd(i)
+			if n == 0 {
+				return nil, errInvalidMIME
+			}
+			out = append(out, '\r', '\n')
+			i += n
+		default:
+			out = append(out, c)
+			i++
+		}
+	}
+	return out, nil
+}
+
+func isHex(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'A' && c <= 'F' || c >= 'a' && c <= 'f'
+}
+
+func unhex(c byte) byte {
+	switch {
+	case c >= 'a':
+		return c - 'a' + 10
+	case c >= 'A':
+		return c - 'A' + 10
+	}
+	return c - '0'
+}
+
+// relabelBinary rewrites the Content-Transfer-Encoding field where it stands,
+// continuation lines included; the header keeps its order and its bytes.
+func relabelBinary(header []byte) []byte {
+	var out bytes.Buffer
+	lines := bytes.SplitAfter(header, []byte{'\n'})
+	for i := 0; i < len(lines); i++ {
+		name, _, found := bytes.Cut(lines[i], []byte{':'})
+		if !found || !strings.EqualFold(strings.TrimSpace(string(name)), "Content-Transfer-Encoding") {
+			out.Write(lines[i])
+			continue
+		}
+		out.WriteString("Content-Transfer-Encoding: binary\r\n")
+		for i+1 < len(lines) && len(lines[i+1]) > 0 && (lines[i+1][0] == ' ' || lines[i+1][0] == '\t') {
+			i++
+		}
+	}
+	return out.Bytes()
 }
 
 // headerValue returns the (last) value of name in the supplied header
@@ -77,22 +260,26 @@ func splitMessage(raw []byte) ([]byte, []byte, bool) {
 func headerValue(header []byte, name string) string {
 	want := strings.ToLower(name)
 	var current string
+	var inWanted bool
 	for _, line := range bytes.Split(header, []byte{'\n'}) {
 		l := strings.TrimRight(string(line), "\r")
 		if l == "" {
 			continue
 		}
-		// Continuation line — append to the current value.
 		if l[0] == ' ' || l[0] == '\t' {
-			current += " " + strings.TrimSpace(l)
+			if inWanted {
+				current += " " + strings.TrimSpace(l)
+			}
 			continue
 		}
+		inWanted = false
 		colon := strings.IndexByte(l, ':')
 		if colon < 0 {
 			continue
 		}
 		if strings.ToLower(strings.TrimSpace(l[:colon])) == want {
 			current = strings.TrimSpace(l[colon+1:])
+			inWanted = true
 		}
 	}
 	return current
