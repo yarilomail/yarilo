@@ -1,6 +1,7 @@
 package virtual
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -342,5 +343,79 @@ func TestMovedSeesOnlyWhatChanged(t *testing.T) {
 	r.folders[0] = inbox(6, msgs(1)...)
 	if moved, _ := Moved(cfg, got.Header, r); !moved {
 		t.Error("INBOX moved, yet the check was quiet")
+	}
+}
+
+// Annotation lines filter what wildcards bring in: any line matching keeps the
+// folder, "-" inverts a line, and a folder named exactly is not filtered.
+func TestAnnotationLinesFilterWildcardFolders(t *testing.T) {
+	notes := map[string]map[string]string{
+		"Projects/a": {"/shared/comment": "keep me"},
+		"Projects/b": {"/shared/comment": "drop", "/private/tag": "work"},
+		"Projects/c": {},
+	}
+	for _, tc := range []struct {
+		name, config, folder string
+		want                 bool
+	}{
+		{"no annotation lines", "Projects/*\n", "Projects/c", true},
+		{"the mask matches", "Projects/*\n/shared/comment:keep*\n", "Projects/a", true},
+		{"the mask does not match", "Projects/*\n/shared/comment:keep*\n", "Projects/b", false},
+		{"compared whole, not as a prefix", "Projects/*\n/shared/comment:keep\n", "Projects/a", false},
+		{"the entry is not set", "Projects/*\n/shared/comment:*\n", "Projects/c", false},
+		{"inverted, the entry matches", "Projects/*\n-/shared/comment:keep*\n", "Projects/a", false},
+		{"inverted, the entry is not set", "Projects/*\n-/shared/comment:keep*\n", "Projects/c", true},
+		{"a second line matches", "Projects/*\n/shared/comment:keep*\n/private/tag:w?rk\n", "Projects/b", true},
+		{"named exactly", "Projects/b\nProjects/*\n/shared/comment:keep*\n", "Projects/b", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := ParseConfig(strings.NewReader(tc.config))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := PassesMetadata(cfg, tc.folder, func(entry string) (string, bool, error) {
+				v, ok := notes[tc.folder][entry]
+				return v, ok, nil
+			})
+			if err != nil || got != tc.want {
+				t.Errorf("kept %v (%v), want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// A dict that cannot be read is an error, not "the entry is not set": an
+// inverted line would otherwise take every folder in.
+func TestAnAnnotationThatCannotBeReadIsAnError(t *testing.T) {
+	cfg, err := ParseConfig(strings.NewReader("Projects/*\n-/shared/comment:x\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	down := errors.New("dict is down")
+	if _, err := PassesMetadata(cfg, "Projects/a", func(string) (string, bool, error) { return "", false, down }); !errors.Is(err, down) {
+		t.Errorf("answered %v, want the dict's error", err)
+	}
+}
+
+func TestWildcardMatch(t *testing.T) {
+	for _, tc := range []struct {
+		data, mask string
+		want       bool
+	}{
+		{"keep me", "keep*", true},
+		{"keep me", "*me", true},
+		{"keep me", "k*p*e", true},
+		{"keep me", "keep", false},
+		{"work", "w?rk", true},
+		{"wrk", "w?rk", false},
+		{"", "*", true},
+		{"", "?", false},
+		{"Keep", "keep", false},
+		{"aab", "*ab", true},
+		{"ключ", "кл?ч", true},
+	} {
+		if got := wildcardMatch(tc.data, tc.mask); got != tc.want {
+			t.Errorf("wildcardMatch(%q, %q) = %v, want %v", tc.data, tc.mask, got, tc.want)
+		}
 	}
 }

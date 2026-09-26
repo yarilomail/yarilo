@@ -158,6 +158,13 @@ func (b *sessionBacking) Folders(cfg *virtual.Config) ([]virtual.Backing, error)
 		if ferr != nil {
 			continue // a folder that cannot be opened contributes nothing
 		}
+		keep, merr := virtual.PassesMetadata(cfg, name, b.annotation(h, e.Name, f.GUID))
+		if merr != nil {
+			return nil, fmt.Errorf("imap/virtual: %w", merr)
+		}
+		if !keep {
+			continue
+		}
 		if b.ids == nil {
 			b.ids = map[[16]byte]uint64{}
 		}
@@ -168,6 +175,25 @@ func (b *sessionBacking) Folders(cfg *virtual.Config) ([]virtual.Backing, error)
 		})
 	}
 	return out, nil
+}
+
+// annotation reads a folder's METADATA entry through the dict METADATA uses.
+func (b *sessionBacking) annotation(h *nsHandle, folder string, guid [16]byte) virtual.MetadataLookup {
+	return func(entry string) (string, bool, error) {
+		md := b.s.srv.opts.MetadataDict
+		if md == nil {
+			return "", false, nil
+		}
+		scope, attr, err := mailbox.ParseAttrEntry(entry)
+		if err != nil {
+			return "", false, err
+		}
+		vals, found, err := md.Lookup(context.Background(), b.s.metadataOps(), b.s.metadataKey(h, folder, guid, scope, attr))
+		if err != nil || !found || len(vals) == 0 {
+			return "", false, err
+		}
+		return string(vals[0]), true, nil
+	}
 }
 
 func (b *sessionBacking) Messages(back virtual.Backing) ([]*mailbox.MessageMeta, error) {

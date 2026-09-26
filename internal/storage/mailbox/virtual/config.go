@@ -15,6 +15,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/emersion/go-imap/v2/imapserver"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 const (
@@ -36,8 +38,8 @@ type Box struct {
 	// Save is "!": SAVE and COPY into the virtual mailbox land here. One per
 	// configuration, and never a pattern.
 	Save bool
-	// MetadataEntry/MetadataValue select folders by an annotation instead of
-	// by name ("/entry:value"); such a line carries no wildcards either.
+	// MetadataEntry/MetadataValue filter the folders wildcards bring in by an
+	// annotation ("/entry:mask"); such a line names no folder.
 	MetadataEntry string
 	MetadataValue string
 	// Search is the IMAP SEARCH text for this box, "" for none. It is parsed
@@ -174,29 +176,29 @@ func parseBoxLine(line string) (Box, error) {
 		b.Save, line, noWildcards = true, line[1:], true
 	}
 	if strings.HasPrefix(line, "/") {
-		entry, value, ok := strings.Cut(line[1:], ":")
+		entry, value, ok := strings.Cut(line, ":")
 		if !ok {
 			return b, errors.New("':' missing between the annotation and its value")
 		}
-		if entry == "" {
-			return b, errors.New("the annotation has no name")
+		if _, _, err := mailbox.ParseAttrEntry(entry); err != nil {
+			return b, err
 		}
-		b.MetadataEntry, b.MetadataValue = "/"+entry, value
-		noWildcards = true
+		if b.Save {
+			return b, errors.New("a save mailbox names a folder, not an annotation")
+		}
+		// The value is a mask, "*" and "?" (virtual-config.c:354).
+		b.MetadataEntry, b.MetadataValue = entry, value
+		return b, nil
 	}
 	b.Pattern = line
 	if strings.EqualFold(b.Pattern, "INBOX") {
 		b.Pattern = "INBOX"
 	}
-	if b.Pattern == "" && b.MetadataEntry == "" {
+	if b.Pattern == "" {
 		return b, errors.New("the line names no mailbox")
 	}
 	if noWildcards && b.HasWildcard() {
-		what := "a save mailbox"
-		if b.MetadataEntry != "" {
-			what = "an annotation line"
-		}
-		return b, fmt.Errorf("%s carries no wildcard: %q", what, b.Pattern)
+		return b, fmt.Errorf("a save mailbox carries no wildcard: %q", b.Pattern)
 	}
 	return b, nil
 }

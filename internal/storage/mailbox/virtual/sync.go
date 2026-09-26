@@ -270,6 +270,59 @@ func Selects(cfg *Config, folder string) bool {
 	return taken
 }
 
+// MetadataLookup answers a folder's annotation: its value, whether it is set.
+type MetadataLookup func(entry string) (string, bool, error)
+
+// PassesMetadata reports whether annotation lines keep a folder: they filter
+// only what a wildcard brought in, and one match keeps it (virtual-config.c:366-441).
+func PassesMetadata(cfg *Config, folder string, lookup MetadataLookup) (bool, error) {
+	var lines []Box
+	for _, b := range cfg.Boxes {
+		switch {
+		case b.MetadataEntry != "":
+			lines = append(lines, b)
+		case !b.Negative && b.Pattern == folder:
+			return true, nil
+		}
+	}
+	if len(lines) == 0 {
+		return true, nil
+	}
+	for _, b := range lines {
+		value, found, err := lookup(b.MetadataEntry)
+		if err != nil {
+			return false, fmt.Errorf("virtual: %s %s: %w", folder, b.MetadataEntry, err)
+		}
+		if (found && wildcardMatch(value, b.MetadataValue)) != b.Negative {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// wildcardMatch is the reference's mask: "*" any run, "?" one character.
+func wildcardMatch(data, mask string) bool {
+	d, m := []rune(data), []rune(mask)
+	i, j, star, from := 0, 0, -1, 0
+	for i < len(d) {
+		switch {
+		case j < len(m) && m[j] == '*':
+			star, from, j = j, i, j+1
+		case j < len(m) && (m[j] == '?' || m[j] == d[i]):
+			i, j = i+1, j+1
+		case star >= 0:
+			from++
+			i, j = from, star+1
+		default:
+			return false
+		}
+	}
+	for j < len(m) && m[j] == '*' {
+		j++
+	}
+	return j == len(m)
+}
+
 // SameSeparator rewrites a pattern written with the client's separator into
 // the one the folder names use here.
 func SameSeparator(pattern, sep string) string {
