@@ -86,3 +86,23 @@ func TestRulesAttachToTheMailboxesAboveThem(t *testing.T) {
 		t.Error("two different rules hash to one value, so a changed set would not be noticed")
 	}
 }
+
+// A bad line names itself, whichever kind it is: the operator is sent to the
+// line to fix, not to the file (virtual-config.c:516-529, #2048).
+func TestAConfigurationErrorNamesItsLine(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, want string
+	}{
+		{"a mailbox line", "INBOX\n# note\n!Archive/*\n", "line 3:"},
+		{"a second save line", "!Saved\nINBOX\n!Other\n", "line 3:"},
+		{"a rule without a mailbox", "  unseen\n", "line 1:"},
+		{"a rule that is not SEARCH", "INBOX\nArchive\n  nosuchkey\n", "line 3:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseConfig(strings.NewReader(tc.text))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %v, want one naming %q", err, tc.want)
+			}
+		})
+	}
+}
