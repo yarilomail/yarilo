@@ -13,6 +13,7 @@ import (
 	"github.com/emersion/go-message"
 
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
@@ -367,74 +368,47 @@ func (e *ftsEvaluator) readParts(sf scopeFolder, m *mailbox.MessageMeta) (messag
 
 // buildQuery converts the filter's text conditions into the engine query, and
 // returns what a verified hit must be re-checked against.
-//
-// Header fields go through the no-stemming data chain and body text through the
-// configured language chain -- the same split indexing uses, since a header is
-// not language text.
 func (e *ftsEvaluator) buildQuery(f *jmapcore.EmailFilter) (fts.Query, []verifyTerm, bool) {
-	var terms []fts.Term
+	var c ftsquery.Criteria
 	var verify []verifyTerm
-	impossible := false
-
-	add := func(exp expander, field fts.FieldKind, hdrName, value string, where verifyTerm) {
-		if value == "" {
-			return
-		}
-		words := exp.ExpandSearch(value)
-		if len(words) == 0 {
-			impossible = true
-			return
-		}
-		t := fts.Term{Field: field, HdrName: hdrName, Words: words}
-		if strings.ContainsRune(strings.TrimSpace(value), ' ') {
-			t.Phrase = value
-		}
-		terms = append(terms, t)
-		where.want = value
-		verify = append(verify, where)
+	if v := deref(f.Text); v != "" {
+		c.Text = append(c.Text, v)
+		verify = append(verify, verifyTerm{headers: textHeaders, body: true, want: v})
 	}
-
-	str := func(p *string) string {
-		if p == nil {
-			return ""
-		}
-		return *p
+	if v := deref(f.Body); v != "" {
+		c.Body = append(c.Body, v)
+		verify = append(verify, verifyTerm{body: true, want: v})
 	}
-	add(e.fts.Chain, fts.FieldText, "", str(f.Text), verifyTerm{headers: textHeaders, body: true})
-	add(e.fts.Chain, fts.FieldBody, "", str(f.Body), verifyTerm{body: true})
-	for name, value := range map[string]string{
-		"subject": str(f.Subject), "from": str(f.From), "to": str(f.To),
-		"cc": str(f.Cc), "bcc": str(f.Bcc),
-	} {
-		add(headerDataChain, fts.FieldHeader, name, value, verifyTerm{headers: []string{name}})
+	for _, h := range []struct {
+		name  string
+		value *string
+	}{{"subject", f.Subject}, {"from", f.From}, {"to", f.To}, {"cc", f.Cc}, {"bcc", f.Bcc}} {
+		if v := deref(h.value); v != "" {
+			c.Header = append(c.Header, ftsquery.Header{Key: h.name, Value: v})
+			verify = append(verify, verifyTerm{headers: []string{h.name}, want: v})
+		}
 	}
 	if len(f.Header) > 0 {
-		name := strings.ToLower(f.Header[0])
-		if len(f.Header) == 1 {
-			// Presence only: the header exists, whatever it holds.
-			terms = append(terms, fts.Term{Field: fts.FieldHeader, HdrName: name})
-		} else {
-			add(headerDataChain, fts.FieldHeader, name, f.Header[1], verifyTerm{headers: []string{name}})
+		// One element, or an empty value, asks only that the field exist
+		// (RFC 8621 §4.4.1): contains "" holds for any header present.
+		name, value := strings.ToLower(f.Header[0]), ""
+		if len(f.Header) > 1 {
+			value = f.Header[1]
+		}
+		c.Header = append(c.Header, ftsquery.Header{Key: name, Value: value})
+		if value != "" {
+			verify = append(verify, verifyTerm{headers: []string{name}, want: value})
 		}
 	}
-	return fts.Query{Terms: terms, AndTerms: true}, verify, impossible
+	q, impossible := ftsquery.Build(e.fts.Chain, c)
+	return q, verify, impossible
 }
 
-// expander is whatever expands a query string into engine words.
-type expander interface {
-	ExpandSearch(query string) []fts.Word
-}
-
-// headerDataChain is the no-stemming chain header fields are matched through,
-// mirroring how buildmail indexes them.
-var headerDataChain = mustHeaderDataChain()
-
-func mustHeaderDataChain() *language.Chain {
-	c, err := language.NewDataChain()
-	if err != nil {
-		panic(fmt.Sprintf("jmap: header data chain: %v", err))
+func deref(p *string) string {
+	if p == nil {
+		return ""
 	}
-	return c
+	return *p
 }
 
 // ftsMailboxGUID renders a folder GUID the way the wire expects it. An unset

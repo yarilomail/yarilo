@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
@@ -47,11 +49,12 @@ type stubFTS struct {
 	prepends  int32
 
 	asked    []string
+	queries  []fts.Query
 	inFlight int32
 	maxSeen  int32
 }
 
-func (s *stubFTS) Lookup(_ string, mbox fts.MailboxRef, _ fts.Query) (fts.Result, error) {
+func (s *stubFTS) Lookup(_ string, mbox fts.MailboxRef, q fts.Query) (fts.Result, error) {
 	n := atomic.AddInt32(&s.inFlight, 1)
 	for {
 		seen := atomic.LoadInt32(&s.maxSeen)
@@ -63,6 +66,7 @@ func (s *stubFTS) Lookup(_ string, mbox fts.MailboxRef, _ fts.Query) (fts.Result
 
 	s.mu.Lock()
 	s.asked = append(s.asked, mbox.Name)
+	s.queries = append(s.queries, q)
 	d := s.delay[mbox.Name]
 	s.mu.Unlock()
 	if s.hold != nil {
@@ -695,4 +699,37 @@ func (s *stubFTS) DropFolder(string, fts.MailboxRef) error { return nil }
 
 func (s *stubFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
 	return fts.SetResult{}, nil
+}
+
+// Email/query asks the index with what ftsquery.Build makes of the same
+// conditions, as IMAP SEARCH does; an empty header value asks for presence.
+func TestEmailQueryAsksWhatSearchAsks(t *testing.T) {
+	chain, err := language.NewMultiChain([]string{"english"}, nil, nil, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, filter string
+		want         ftsquery.Criteria
+	}{
+		{"every condition", `{"text":"quarterly report","body":"invoices","subject":"running late","from":"alice","header":["X-Tag",""]}`,
+			ftsquery.Criteria{
+				Text: []string{"quarterly report"}, Body: []string{"invoices"},
+				Header: []ftsquery.Header{{Key: "subject", Value: "running late"}, {Key: "from", Value: "alice"}, {Key: "x-tag"}},
+			}},
+		{"an absent condition adds no term", `{"subject":"running late"}`,
+			ftsquery.Criteria{Header: []ftsquery.Header{{Key: "subject", Value: "running late"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{}}
+			s := searchServer(t, stub, 4, 8, map[string]string{"INBOX": "hello"})
+			emailQuery(t, s, `{"accountId":"u1@example.com","filter":`+tc.filter+`}`)
+			want, _ := ftsquery.Build(chain, tc.want)
+			stub.mu.Lock()
+			defer stub.mu.Unlock()
+			if len(stub.queries) != 1 || !reflect.DeepEqual(stub.queries[0], want) {
+				t.Errorf("Email/query asked %+v, want %+v", stub.queries, want)
+			}
+		})
+	}
 }
