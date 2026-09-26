@@ -133,7 +133,7 @@ spec:
               containerPort: {{ $port.port }}
               protocol: TCP
             {{- end }}
-            - name: telemetry
+            - name: {{ printf "tel-%s" (trimPrefix "yarilo-" $p.component) }}
               containerPort: {{ $p.telemetry }}
               protocol: TCP
           {{- $targets := list (printf "tcp://%s-locks.%s.svc:9104" (include "yarilo.fullname" $root) $root.Release.Namespace) (printf "tcp://%s:%s" (include "yarilo.redisInitHost" $root) (include "yarilo.redisInitPort" $root)) }}
@@ -197,7 +197,7 @@ spec:
             - name: fts
               containerPort: {{ $root.Values.components.fts.port }}
               protocol: TCP
-            - name: telemetry
+            - name: tel-fts
               containerPort: {{ $ftsTelemetry }}
               protocol: TCP
           # fts is best-effort — NOT gated (a wedged index degrades SEARCH but
@@ -242,7 +242,7 @@ spec:
             - name: backend-api
               containerPort: {{ $backendAPIPort }}
               protocol: TCP
-            - name: telemetry
+            - name: tel-backend-api
               containerPort: {{ $backendAPITelemetry }}
               protocol: TCP
           volumeMounts:
@@ -270,7 +270,7 @@ spec:
           securityContext:
             {{- toYaml $root.Values.containerSecurityContext | nindent 12 }}
           ports:
-            - name: telemetry
+            - name: tel-backend-reg
               containerPort: {{ $regTelemetry }}
               protocol: TCP
           readinessProbe:

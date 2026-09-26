@@ -566,7 +566,7 @@ func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Res
 		metricLookupCandidates.Observe(float64(len(res.Definite) + len(res.Maybe)))
 	}
 	// Term COUNT and result counts only — never the query terms (private content).
-	slog.Debug("fts: lookup executed", "user", user, "folder", mbox.Name, "ui", fmt.Sprintf("%p", h.ui),
+	slog.Debug("fts: lookup executed", "user", user, "folder", mbox.Name,
 		"terms", len(q.Terms), "and_terms", q.AndTerms,
 		"definite", len(res.Definite), "maybe", len(res.Maybe),
 		"dur_ms", time.Since(t0).Milliseconds(), "err", err)
@@ -1259,7 +1259,7 @@ func (s *Service) runIndex(j job) error {
 		return nil
 	})
 	metricIndexMessages.Add(float64(indexedCount))
-	slog.Debug("fts: index run done", "job_id", j.id, "user", j.user, "folder", j.mbox.Name, "ui", fmt.Sprintf("%p", h.ui),
+	slog.Debug("fts: index run done", "job_id", j.id, "user", j.user, "folder", j.mbox.Name,
 		"messages_in_folder", len(msgs), "indexed", indexedCount, "skipped", skippedCount,
 		"dur_ms", time.Since(tStart).Milliseconds(), "err", err)
 	return err
@@ -1356,7 +1356,6 @@ func (h *userHandle) resolveHits(res *fts.Result, mbox fts.MailboxRef) error {
 	if err != nil {
 		return err
 	}
-	slog.Debug("fts: hits resolved", "folder", mbox.Name, "guids", len(res.DefiniteGUIDs), "uids", len(uids))
 	res.Definite = append(res.Definite, uids...)
 	uids, err = resolveToUIDs(resolver, res.MaybeGUIDs, mbox.GUID)
 	if err != nil {
@@ -1376,7 +1375,6 @@ func resolveToUIDs(res mailbox.GUIDResolver, guids [][16]byte, folder string) ([
 	if err != nil {
 		return nil, err
 	}
-	slog.Debug("fts: guid copies", "asked", len(guids), "copies", len(copies), "folder_guid", folder)
 	out := make([]uint32, 0, len(guids))
 	for _, c := range copies {
 		if hex.EncodeToString(c.FolderGUID[:]) == folder {

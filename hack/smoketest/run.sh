@@ -104,9 +104,8 @@ enotify_snapshot() {
     [ -n "$token" ] && kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- \
       yarctl fts lookup "$SMOKE_USER" --folder INBOX --header "Subject:$token" 2>&1 | grep -v '^term' || true
   }
-  # The index asked directly, with the terms SEARCH uses, before anything opens
-  # the mailbox, again untouched, and once more after status and folder info
-  # have opened it: which of them finds the message says what heals it.
+  # Asked before anything opens the mailbox and again after: which lookup finds
+  # the message says whether opening it is what healed the answer.
   echo "-- lookup, untouched"; lookup
   sleep 5
   echo "-- lookup, untouched, 5s later"; lookup

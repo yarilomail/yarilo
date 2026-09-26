@@ -2,14 +2,15 @@ package guard_test
 
 import (
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 
 	"go.yaml.in/yaml/v3"
 )
 
-// Containers share one network namespace, so one without a telemetry port of
-// its own is read off a neighbour's page, and its counters read zero (#1999).
+// Containers share one network namespace, so one without a port of its own is
+// read off a neighbour's page (#1999); names are the pod's, not one container's (#2068).
 func TestEveryBackendContainerHasItsOwnTelemetryPort(t *testing.T) {
 	out, err := exec.Command("helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
@@ -47,23 +48,10 @@ func TestEveryBackendContainerHasItsOwnTelemetryPort(t *testing.T) {
 			continue
 		}
 		seen := map[int]string{}
+		names := map[string]string{}
 		for _, c := range obj.Spec.Template.Spec.Containers {
 			checked++
-			var port int
-			for _, p := range c.Ports {
-				if p.Name == "telemetry" {
-					port = p.ContainerPort
-				}
-			}
-			if port == 0 {
-				t.Errorf("container %q declares no telemetry port, so its counters are read off a neighbour", c.Name)
-				continue
-			}
-			if by, ok := seen[port]; ok {
-				t.Errorf("containers %q and %q both claim telemetry port %d", by, c.Name, port)
-			}
-			seen[port] = c.Name
-			// The port is what the process listens on, not only what the pod
+			// The port is what the process listens on, not what the pod
 			// advertises: the env is what the binary reads.
 			var listen string
 			for _, e := range c.Env {
@@ -72,8 +60,33 @@ func TestEveryBackendContainerHasItsOwnTelemetryPort(t *testing.T) {
 				}
 			}
 			if listen == "" {
-				t.Errorf("container %q declares a telemetry port but tells the process nothing", c.Name)
+				t.Errorf("container %q tells its process no telemetry address", c.Name)
+				continue
 			}
+			port, perr := strconv.Atoi(strings.TrimPrefix(listen, ":"))
+			if perr != nil || port == 0 {
+				t.Errorf("container %q listens on %q, which names no port", c.Name, listen)
+				continue
+			}
+			declared := ""
+			for _, p := range c.Ports {
+				if p.ContainerPort == port {
+					declared = p.Name
+				}
+				// A name two containers share reaches the first of them, and
+				// the rest are unaddressable by name (#2068).
+				if by, ok := names[p.Name]; ok {
+					t.Errorf("containers %q and %q both name a port %q", by, c.Name, p.Name)
+				}
+				names[p.Name] = c.Name
+			}
+			if declared == "" {
+				t.Errorf("container %q listens on %d and declares no port for it, so its counters are read off a neighbour", c.Name, port)
+			}
+			if by, ok := seen[port]; ok {
+				t.Errorf("containers %q and %q both claim telemetry port %d", by, c.Name, port)
+			}
+			seen[port] = c.Name
 		}
 	}
 	if checked < 5 {
