@@ -167,3 +167,71 @@ func TestFetchBinaryUndecodableIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// binaryTenBytes carries bytes 0..9 base64-encoded in part 2: an origin into the
+// encoded text and one into the decoded bytes land on different bytes.
+const binaryTenBytes = "From: a@b\r\n" +
+	"MIME-Version: 1.0\r\n" +
+	"Content-Type: multipart/mixed; boundary=XX\r\n" +
+	"\r\n" +
+	"--XX\r\n" +
+	"Content-Type: text/plain\r\n" +
+	"\r\n" +
+	"text\r\n" +
+	"--XX\r\n" +
+	"Content-Type: application/octet-stream\r\n" +
+	"Content-Transfer-Encoding: base64\r\n" +
+	"\r\n" +
+	"AAECAwQFBgcICQ==\r\n" +
+	"--XX--\r\n"
+
+// <origin.count> cuts the decoded bytes (RFC 3516 4.2) and the reply names its
+// origin (4.3); BINARY.SIZE has no partial form and stays the whole size.
+func TestFetchBinaryPartial(t *testing.T) {
+	whole := strings.Replace(binaryTenBytes, "Content-Transfer-Encoding: base64", "Content-Transfer-Encoding: binary", 1)
+	whole = strings.Replace(whole, "AAECAwQFBgcICQ==", "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09", 1)
+	for _, tc := range []struct {
+		name    string
+		part    []int
+		partial imap.SectionPartial
+		want    string
+	}{
+		{"part, from the start", []int{2}, imap.SectionPartial{Offset: 0, Size: 3}, "\x00\x01\x02"},
+		{"part, count past the end", []int{2}, imap.SectionPartial{Offset: 3, Size: 10}, "\x03\x04\x05\x06\x07\x08\x09"},
+		{"part, origin past the end", []int{2}, imap.SectionPartial{Offset: 20, Size: 4}, ""},
+		// Over the relabelled field and the decoded bytes, where the encoded
+		// message differs.
+		{"whole message, relabelled", nil, imap.SectionPartial{Offset: int64(len(whole) - 44), Size: 30}, whole[len(whole)-44 : len(whole)-14]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := startAuthClient(t, "user@test.com", "testpass")
+			defer func() { c.Logout().Wait() }() //nolint:errcheck
+			appendWithFlags(t, c, "INBOX", []byte(binaryTenBytes))
+			if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+			section := &imap.FetchItemBinarySection{Part: tc.part, Peek: true, Partial: &tc.partial}
+			msgs, err := c.Fetch(imap.SeqSetNum(1), &imap.FetchOptions{
+				BinarySection:     []*imap.FetchItemBinarySection{section},
+				BinarySectionSize: []*imap.FetchItemBinarySectionSize{{Part: tc.part}},
+			}).Collect()
+			if err != nil || len(msgs) != 1 || len(msgs[0].BinarySection) != 1 {
+				t.Fatalf("FETCH = %+v, %v", msgs, err)
+			}
+			got := msgs[0].BinarySection[0]
+			if got.Section.Partial == nil || got.Section.Partial.Offset != tc.partial.Offset {
+				t.Errorf("reply section %+v, want origin %d", got.Section, tc.partial.Offset)
+			}
+			if string(got.Bytes) != tc.want {
+				t.Errorf("BINARY%v<%d.%d> = %q, want %q", tc.part, tc.partial.Offset, tc.partial.Size, got.Bytes, tc.want)
+			}
+			wantSize := uint32(10)
+			if tc.part == nil {
+				wantSize = uint32(len(whole))
+			}
+			if size := msgs[0].BinarySectionSize[0].Size; size != wantSize {
+				t.Errorf("BINARY.SIZE%v = %d, want %d: the size has no partial", tc.part, size, wantSize)
+			}
+		})
+	}
+}
