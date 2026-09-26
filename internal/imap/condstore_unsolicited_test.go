@@ -7,16 +7,18 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// Another session's flag change arrives with MODSEQ once CONDSTORE (or QRESYNC)
-// is enabled, and without it before (RFC 7162 3.2.4, #2046).
+// Another session's flag change arrives with MODSEQ once CONDSTORE is enabled,
+// by ENABLE or by a command that enables it (RFC 7162 3.1, 3.2.4, #2046).
 func TestAnUnsolicitedFlagChangeCarriesItsModseq(t *testing.T) {
 	for _, tc := range []struct {
-		name, enable string
-		want         bool
+		name, enable, sel, after string
+		want                     bool
 	}{
-		{"CONDSTORE enabled", "ENABLE CONDSTORE", true},
-		{"QRESYNC enabled", "ENABLE QRESYNC", true},
-		{"nothing enabled", "", false},
+		{"CONDSTORE enabled", "ENABLE CONDSTORE", "", "", true},
+		{"QRESYNC enabled", "ENABLE QRESYNC", "", "", true},
+		{"SELECT (CONDSTORE), no ENABLE", "", "SELECT INBOX (CONDSTORE)", "", true},
+		{"FETCH MODSEQ, no ENABLE", "", "", "FETCH 1 (MODSEQ)", true},
+		{"nothing enabled", "", "", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, rd := virtualServer(t, map[string]string{},
@@ -26,7 +28,14 @@ func TestAnUnsolicitedFlagChangeCarriesItsModseq(t *testing.T) {
 			if tc.enable != "" {
 				command(t, conn, rd, "a2", tc.enable)
 			}
-			existsCount(t, conn, rd, "a3", "INBOX")
+			if tc.sel != "" {
+				command(t, conn, rd, "a3", tc.sel)
+			} else {
+				existsCount(t, conn, rd, "a3", "INBOX")
+			}
+			if tc.after != "" {
+				command(t, conn, rd, "a3b", tc.after)
+			}
 			other, ord := loginTo(t, lastVirtualAddr)
 			existsCount(t, other, ord, "b2", "INBOX")
 			reply := fetchLine(t, other, ord, "b3", `STORE 1 +FLAGS (\Flagged)`)
