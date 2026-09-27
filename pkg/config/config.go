@@ -265,11 +265,8 @@ type NamespaceConfig struct {
 	Prefix string `koanf:"prefix"`
 	// Separator is the hierarchy delimiter; may differ per namespace.
 	Separator string `koanf:"separator"`
-	// List is the LIST exposure: yes (node + children), children (only the
-	// children -- the node itself is not a mailbox), no (out of a wildcard
-	// LIST, still answering a pattern that names the prefix). Bool spellings
-	// are accepted for compatibility. Unset takes the kind default: children
-	// for an owner-templated prefix, yes otherwise.
+	// List is the LIST exposure: yes, children or no; bool spellings are
+	// accepted. Unset: children for an owner-templated prefix, yes otherwise.
 	List string `koanf:"list"`
 	// Hidden keeps the namespace out of the NAMESPACE response and nothing
 	// else; what LIST shows is List's decision.

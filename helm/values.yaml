@@ -2925,14 +2925,13 @@ namespaces: []
 #     prefix: "user/"
 #     separator: "/"
 #     list: "yes"
-#   - type: shared                # one virtual mailbox for every user, read
-#     prefix: "Virtual/"          # from a directory shared read-only
-#     separator: "/"              # (virtualDefinitions above)
+#   - type: personal              # a view of the user's OWN folders, so
+#     prefix: "Virtual/"          # personal; the definitions are read from a
+#     separator: "/"              # directory shared read-only (above)
 #     hidden: true                # keep out of the NAMESPACE reply; LIST is
 #                                 # list's decision, not this one
 #     list: "no"                  # out of a wildcard LIST; still answers
 #                                 # LIST "" "Virtual/*"
-#     subscriptions: false
 #     mail_driver: virtual
 #     mail_path: /etc/yarilo/virtual
 #     mail_index_path: "%h/index/virtual"  # REQUIRED here: mail_path is not
