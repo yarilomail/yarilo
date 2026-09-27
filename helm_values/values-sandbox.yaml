@@ -108,7 +108,10 @@ virtual_definitions:
   All: |
     *
     -Trash
+    -Trash/*
     -Junk
+    -Junk/*
+      all
 
 storage:
   ## Their folder names on disk are modified UTF-7; this says so, for the
