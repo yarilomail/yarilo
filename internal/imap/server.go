@@ -1623,6 +1623,11 @@ func (s *session) Subscribe(name string) error {
 	if err != nil {
 		return err
 	}
+	// Before the name is judged or anything is written: the definition
+	// directory a virtual namespace reads may be shared and read-only.
+	if _, virtualNS := mailbox.Driver(h.box).(virtualConfigured); virtualNS {
+		return errVirtualCannot("a virtual mailbox is not subscribed to")
+	}
 	// Existence is deliberately not checked: RFC 9051 6.3.7 allows subscribing
 	// to a mailbox that does not exist yet, and clients rely on it. The name
 	// itself still has to be one this server would accept somewhere -- storing

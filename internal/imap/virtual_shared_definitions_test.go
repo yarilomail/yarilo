@@ -50,7 +50,7 @@ func treeState(t *testing.T, root string) []string {
 
 // sharedDefsServer gives the user a virtual namespace whose definitions live
 // outside the home, in a directory the process may only read.
-func sharedDefsServer(t *testing.T, defs map[string]string) (net.Conn, *bufio.Reader, string) {
+func sharedDefsServer(t *testing.T, defs map[string]string) (net.Conn, *bufio.Reader, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
@@ -119,13 +119,13 @@ func sharedDefsServer(t *testing.T, defs map[string]string) (net.Conn, *bufio.Re
 	addr := ln.Addr().String()
 	lastVirtualAddr = addr
 	conn, rd := loginTo(t, addr)
-	return conn, rd, shared
+	return conn, rd, shared, info.Home
 }
 
 // One definition serves every user: the directory holding it is only read, and
 // the uids, the flags and the indexes this session writes land elsewhere.
 func TestASharedDefinitionDirectoryIsNeverWrittenTo(t *testing.T) {
-	conn, rd, shared := sharedDefsServer(t, map[string]string{"All": "INBOX\n"})
+	conn, rd, shared, _ := sharedDefsServer(t, map[string]string{"All": "INBOX\n"})
 	before := treeState(t, shared)
 
 	if got := existsCount(t, conn, rd, "a1", "Virtual/All"); got != 1 {
@@ -159,4 +159,44 @@ func equalTrees(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// A virtual mailbox is not subscribed to. The refusal comes before the name is
+// judged and before any write, so a read-only definition directory holds.
+func TestAVirtualMailboxIsNotSubscribedTo(t *testing.T) {
+	conn, rd, shared, home := sharedDefsServer(t, map[string]string{"All": "INBOX\n"})
+	defsBefore, homeBefore := treeState(t, shared), treeState(t, home)
+
+	if answer := last(tagged(t, conn, rd, "a1", `SUBSCRIBE "Virtual/All"`)); !strings.Contains(answer, "NO [CANNOT]") {
+		t.Errorf("SUBSCRIBE answered %q, want NO [CANNOT]", answer)
+	}
+	if got := strings.Join(command(t, conn, rd, "a2", `LIST (SUBSCRIBED) "" "*"`), "\n"); strings.Contains(got, "Virtual/All") {
+		t.Errorf("the refused mailbox is listed as subscribed:\n%s", got)
+	}
+	if after := treeState(t, shared); !equalTrees(defsBefore, after) {
+		t.Errorf("the definition directory was written to.\nbefore: %v\nafter:  %v", defsBefore, after)
+	}
+	if after := treeState(t, home); !equalTrees(homeBefore, after) {
+		t.Errorf("the refused subscription reached the user's own state.\nbefore: %v\nafter:  %v", homeBefore, after)
+	}
+}
+
+// Even where the subscription could be written, it is refused: what stops it is
+// the mailbox being virtual, not the directory's permissions.
+func TestAVirtualMailboxIsNotSubscribedToEvenWhenWritable(t *testing.T) {
+	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "one", nil)
+		})
+	if answer := last(tagged(t, conn, rd, "a2", `SUBSCRIBE "Virtual/All"`)); !strings.Contains(answer, "NO [CANNOT]") {
+		t.Errorf("SUBSCRIBE answered %q, want NO [CANNOT]", answer)
+	}
+	if got := strings.Join(command(t, conn, rd, "a3", `LIST (SUBSCRIBED) "" "*"`), "\n"); strings.Contains(got, "Virtual/All") {
+		t.Errorf("the refused mailbox is listed as subscribed:\n%s", got)
+	}
+	// A folder of the same store still subscribes: the refusal is not a blanket
+	// one over the session.
+	if answer := last(tagged(t, conn, rd, "a4", `SUBSCRIBE "INBOX"`)); !strings.Contains(answer, "OK") {
+		t.Errorf("SUBSCRIBE INBOX answered %q, want OK", answer)
+	}
 }
