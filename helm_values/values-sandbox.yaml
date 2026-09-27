@@ -97,7 +97,8 @@ namespaces:
   - type: personal
     prefix: "Virtual/"
     separator: "/"
-    list: "yes"
+    hidden: true
+    list: "no"
     mail_driver: virtual
     mail_path: /etc/yarilo/virtual
     mail_index_path: "%h/index/virtual"
