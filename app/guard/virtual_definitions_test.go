@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -9,40 +8,12 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// A shared virtual namespace is only usable when its definitions are mounted
-// where its mail_path names them, in the containers that read mailboxes.
+// The stand's own configuration, not a shape invented here: a shared virtual
+// namespace is only usable when its definitions are mounted where its
+// mail_path names them, in the containers that read mailboxes.
 func TestSharedVirtualDefinitionsReachTheContainersThatReadThem(t *testing.T) {
-	values := `
-virtualDefinitions:
-  All: |
-    *
-    -Trash
-namespaces:
-  - type: personal
-    prefix: ""
-    separator: "/"
-    list: "yes"
-    inbox: true
-  - type: shared
-    prefix: "Virtual/"
-    separator: "/"
-    hidden: true
-    list: "no"
-    subscriptions: false
-    mail_driver: virtual
-    mail_path: /etc/yarilo/virtual
-    mail_index_path: "%h/index/virtual"
-`
-	f, err := os.CreateTemp(t.TempDir(), "values-*.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString(values); err != nil {
-		t.Fatal(err)
-	}
-	f.Close() //nolint:errcheck
 	out, err := exec.Command("helm", "template", "../../helm",
-		"-f", "../../helm_values/values-sandbox.yaml", "-f", f.Name()).Output()
+		"-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
@@ -85,8 +56,8 @@ namespaces:
 			t.Fatalf("parse chart output: %v", err)
 		}
 		if obj.Kind == "ConfigMap" && strings.HasSuffix(obj.Metadata.Name, "-virtual") {
-			if text, ok := obj.Data["All"]; !ok || !strings.Contains(text, "-Trash") {
-				t.Errorf("the definitions map holds %v, want one key per mailbox", obj.Data)
+			if text, ok := obj.Data["All"]; !ok || strings.TrimSpace(text) != "INBOX" {
+				t.Errorf("the definitions map holds %v, want one key per mailbox holding its own file", obj.Data)
 			}
 			definitions = true
 		}

@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -17,28 +16,10 @@ var configMapKey = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
 // A key the API server refuses makes the whole release unappliable, and helm
 // template alone never says so -- it is valid YAML either way (#2073).
 func TestEveryRenderedConfigMapKeyIsOneTheAPIServerAccepts(t *testing.T) {
-	// Values that switch on the templates carrying keys built from a name the
-	// operator chose, which is where an invalid one can come from at all.
-	values := `
-virtualDefinitions:
-  All: |
-    *
-    -Trash
-  Flagged: |
-    *
-      flagged
-`
-	f, err := os.CreateTemp(t.TempDir(), "values-*.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString(values); err != nil {
-		t.Fatal(err)
-	}
-	f.Close() //nolint:errcheck
-
+	// The stand's own values, which define virtualDefinitions: a key built from
+	// an operator's name is the only place an invalid one can come from.
 	out, err := exec.Command("helm", "template", "../../helm",
-		"-f", "../../helm_values/values-sandbox.yaml", "-f", f.Name()).Output()
+		"-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
