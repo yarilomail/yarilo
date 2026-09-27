@@ -53,10 +53,23 @@ func encodeVirtualHdr(h mailbox.VirtualHeader) []byte {
 	return out
 }
 
+// refBoxSize is the reference's per-folder entry: the same watermarks with the
+// name where ours carries the GUID (virtual-storage.h:33-42).
+const refBoxSize = 4 + 4 + 4 + 4 + 8
+
+// decodeVirtualHdr reads ours, and the reference's when the lengths say it is
+// that one: it names folders, so their GUIDs stay zero until they are opened.
 func decodeVirtualHdr(raw []byte) (mailbox.VirtualHeader, bool) {
 	if len(raw) < virtualHdrHead {
 		return mailbox.VirtualHeader{}, false
 	}
+	if h, ok := decodeOurVirtualHdr(raw); ok {
+		return h, true
+	}
+	return decodeRefVirtualHdr(raw)
+}
+
+func decodeOurVirtualHdr(raw []byte) (mailbox.VirtualHeader, bool) {
 	h := mailbox.VirtualHeader{
 		ChangeCounter:    binary.LittleEndian.Uint32(raw[0:]),
 		HighestBackingID: binary.LittleEndian.Uint32(raw[4:]),
@@ -87,7 +100,45 @@ func decodeVirtualHdr(raw []byte) (mailbox.VirtualHeader, bool) {
 		h.Backing[i].Name = string(raw[p : p+n])
 		p += n
 	}
+	if p != len(raw) {
+		return mailbox.VirtualHeader{}, false // the lengths belong to another layout
+	}
 	return h, true
+}
+
+// decodeRefVirtualHdr reads the reference's: the count sits where ours keeps
+// the highest id, and a folder is named rather than identified.
+func decodeRefVirtualHdr(raw []byte) (mailbox.VirtualHeader, bool) {
+	h := mailbox.VirtualHeader{
+		ChangeCounter:    binary.LittleEndian.Uint32(raw[0:]),
+		HighestBackingID: binary.LittleEndian.Uint32(raw[8:]),
+		SearchCRC32:      binary.LittleEndian.Uint32(raw[12:]),
+	}
+	count := binary.LittleEndian.Uint32(raw[4:])
+	p := virtualHdrHead
+	if int(count)*refBoxSize > len(raw)-p {
+		return mailbox.VirtualHeader{}, false
+	}
+	nameLens := make([]uint32, count)
+	for i := uint32(0); i < count; i++ {
+		h.Backing = append(h.Backing, mailbox.VirtualBacking{
+			ID:            binary.LittleEndian.Uint32(raw[p:]),
+			UIDValidity:   binary.LittleEndian.Uint32(raw[p+8:]),
+			NextUID:       binary.LittleEndian.Uint32(raw[p+12:]),
+			HighestModSeq: binary.LittleEndian.Uint64(raw[p+16:]),
+		})
+		nameLens[i] = binary.LittleEndian.Uint32(raw[p+4:])
+		p += refBoxSize
+	}
+	for i := range h.Backing {
+		n := int(nameLens[i])
+		if p+n > len(raw) {
+			return mailbox.VirtualHeader{}, false
+		}
+		h.Backing[i].Name = string(raw[p : p+n])
+		p += n
+	}
+	return h, p == len(raw)
 }
 
 // VirtualHeader reads what this folder's index says about the set it holds.
