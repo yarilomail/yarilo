@@ -1321,6 +1321,7 @@ func buildNamespaces(cfg []config.NamespaceConfig) []imapsvr.NamespaceSpec {
 			Location:      ns.Location,
 			Inbox:         ns.Inbox,
 			IgnoreACL:     ns.IgnoreACL,
+			Hidden:        ns.Hidden,
 			Subscriptions: ns.Subscriptions,
 		})
 	}

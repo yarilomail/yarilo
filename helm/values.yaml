@@ -2877,6 +2877,15 @@ acl:
   #     entries:
   #       - { identifier: "anyone", rights: "lr" }
 
+## Definitions for a shared virtual namespace, one file per mailbox, mounted
+## read-only into every session container. The namespace above is what makes
+## them visible; without it these are written and not read.
+virtualDefinitions: {}
+##   All: |
+##     *
+##     -Trash
+##     -Junk
+
 namespaces: []
 #   - type: personal              # personal | other | shared
 #     prefix: ""                  # mailbox name prefix; "" reserved for personal
@@ -2917,6 +2926,15 @@ namespaces: []
 #     prefix: "user/"
 #     separator: "/"
 #     list: "yes"
+#   - type: shared                # one virtual mailbox for every user: the
+#     prefix: "Virtual/"          # definitions are read from a directory shared
+#     separator: "/"              # read-only (virtualDefinitions below), and the
+#     hidden: true                # indexes are written under each user's home.
+#     list: "no"
+#     subscriptions: false
+#     mail_driver: virtual
+#     mail_path: /etc/yarilo/virtual
+#     mail_index_path: "%h/index/virtual"
 
 dicts:
   # IMAP METADATA (RFC 5464) state. When omitted, GETMETADATA /

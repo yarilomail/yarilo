@@ -291,6 +291,10 @@ type NamespaceConfig struct {
 	// MailDriver / MailPath are the split form of Location.
 	MailDriver string `koanf:"mail_driver"`
 	MailPath   string `koanf:"mail_path"`
+	// MailIndexPath is where this namespace writes its indexes, the split
+	// spelling of the location's INDEX= option. A shared definition directory
+	// is read-only, so its indexes go under the user instead.
+	MailIndexPath string `koanf:"mail_index_path"`
 	// IgnoreACL bypasses ACL enforcement for this namespace even when
 	// acl.enabled is true — for trusted admin/public roots.
 	IgnoreACL bool `koanf:"acl_ignore"`
@@ -307,6 +311,9 @@ func foldNamespaceLocations(nss []NamespaceConfig) error {
 		driver := strings.TrimSpace(ns.MailDriver)
 		path := strings.TrimSpace(ns.MailPath)
 		if driver == "" && path == "" {
+			if strings.TrimSpace(ns.MailIndexPath) != "" && strings.TrimSpace(ns.Location) == "" {
+				return fmt.Errorf("config: namespace %q sets mail_index_path and no location; the index belongs to a store this namespace does not name", ns.Prefix)
+			}
 			continue
 		}
 		if strings.TrimSpace(ns.Location) != "" {
@@ -316,6 +323,9 @@ func foldNamespaceLocations(nss []NamespaceConfig) error {
 			return fmt.Errorf("config: namespace %q sets only one of mail_driver/mail_path; the pair is what names a location", ns.Prefix)
 		}
 		ns.Location = driver + ":" + path
+		if idx := strings.TrimSpace(ns.MailIndexPath); idx != "" {
+			ns.Location += ":INDEX=" + idx
+		}
 	}
 	return nil
 }
@@ -2844,8 +2854,21 @@ func resolveSize(name, raw string) (int64, error) {
 	return n, nil
 }
 
+// validateMailDriver refuses a driver nothing implements: the storage layer
+// falls back to maildir, so a typo would be mail on disk in another format.
+func validateMailDriver(driver string) error {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "", "maildir", "mdbox", "sdbox", "dbox", "virtual":
+		return nil
+	}
+	return fmt.Errorf("config: storage.mail_driver %q is not a driver this build has: maildir, mdbox, sdbox (dbox), virtual", driver)
+}
+
 func (cfg *Config) validate() error {
 	if err := foldNamespaceLocations(cfg.Namespaces); err != nil {
+		return err
+	}
+	if err := validateMailDriver(cfg.Storage.MailDriver); err != nil {
 		return err
 	}
 	if err := validateStorageEscapeChar(cfg.Storage.MailboxListStorageEscapeChar); err != nil {

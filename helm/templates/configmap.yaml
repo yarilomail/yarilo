@@ -606,8 +606,18 @@ data:
         {{- end }}
         inbox: {{ .inbox | default false }}
         acl_ignore: {{ .acl_ignore | default false }}
+        hidden: {{ .hidden | default false }}
         {{- with .location }}
         location: {{ . | quote }}
+        {{- end }}
+        {{- with .mail_driver }}
+        mail_driver: {{ . | quote }}
+        {{- end }}
+        {{- with .mail_path }}
+        mail_path: {{ . | quote }}
+        {{- end }}
+        {{- with .mail_index_path }}
+        mail_index_path: {{ . | quote }}
         {{- end }}
       {{- end }}
     {{- end }}
