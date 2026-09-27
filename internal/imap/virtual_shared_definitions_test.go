@@ -200,3 +200,51 @@ func TestAVirtualMailboxIsNotSubscribedToEvenWhenWritable(t *testing.T) {
 		t.Errorf("SUBSCRIBE INBOX answered %q, want OK", answer)
 	}
 }
+
+// A virtual mailbox has no access rights of its own: the write is refused
+// before it reaches a store that may be a shared read-only directory.
+func TestAVirtualMailboxTakesNoACLWrite(t *testing.T) {
+	conn, rd, shared, home := sharedDefsServer(t, map[string]string{"All": "*\n  all\n"})
+	defsBefore, homeBefore := treeState(t, shared), treeState(t, home)
+
+	for _, tc := range []struct{ what, cmd string }{
+		{"SETACL", `SETACL "Virtual/All" anyone lr`},
+		{"DELETEACL", `DELETEACL "Virtual/All" anyone`},
+	} {
+		if answer := last(tagged(t, conn, rd, "a"+tc.what, tc.cmd)); !strings.Contains(answer, "NO [CANNOT]") {
+			t.Errorf("%s answered %q, want NO [CANNOT]", tc.what, answer)
+		}
+	}
+	// Reads keep working: nothing about them needs the store to be writable.
+	for _, tc := range []struct{ what, cmd string }{
+		{"GETACL", `GETACL "Virtual/All"`},
+		{"MYRIGHTS", `MYRIGHTS "Virtual/All"`},
+	} {
+		if answer := last(tagged(t, conn, rd, "b"+tc.what, tc.cmd)); !strings.Contains(answer, "OK") {
+			t.Errorf("%s answered %q, want OK", tc.what, answer)
+		}
+	}
+	if after := treeState(t, shared); !equalTrees(defsBefore, after) {
+		t.Errorf("the definition directory was written to.\nbefore: %v\nafter:  %v", defsBefore, after)
+	}
+	if after := treeState(t, home); !equalTrees(homeBefore, after) {
+		t.Errorf("the refused write reached the user's own state.\nbefore: %v\nafter:  %v", homeBefore, after)
+	}
+}
+
+// Even where the ACL could be written, it is refused: what stops it is the
+// mailbox being virtual, not the directory's permissions.
+func TestAVirtualMailboxTakesNoACLWriteEvenWhenWritable(t *testing.T) {
+	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "one", nil)
+		})
+	if answer := last(tagged(t, conn, rd, "a2", `SETACL "Virtual/All" anyone lr`)); !strings.Contains(answer, "NO [CANNOT]") {
+		t.Errorf("SETACL answered %q, want NO [CANNOT]", answer)
+	}
+	// A folder of the same store still takes one: the refusal is not a blanket
+	// one over the session.
+	if answer := last(tagged(t, conn, rd, "a3", `SETACL "INBOX" anyone lr`)); !strings.Contains(answer, "OK") {
+		t.Errorf("SETACL INBOX answered %q, want OK", answer)
+	}
+}
