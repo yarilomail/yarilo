@@ -232,8 +232,8 @@ type NamespaceSpec struct {
 	// IgnoreACL bypasses ACL enforcement for this namespace (rights not
 	// checked, no lookup-right LIST hiding) even when ACL is enabled.
 	IgnoreACL bool
-	// Hidden keeps this namespace's mailboxes out of a wildcard LIST, as
-	// RFC 2342 has it: named exactly they are listed and selected as ever.
+	// Hidden keeps the namespace out of the NAMESPACE reply and nothing else.
+	// What LIST shows is List's job, and the two are not the same setting.
 	Hidden bool
 	// Subscriptions is the operator's setting, nil when unset; the answer is
 	// resolved by mailbox.NamespaceKeepsSubscriptions (see keepsSubscriptions),
@@ -265,8 +265,8 @@ const (
 	ListNo       ListMode = "no"
 )
 
-// listed reports whether the namespace appears in NAMESPACE and contributes
-// rows to LIST at all.
+// listed reports whether the namespace contributes rows to LIST at all. What
+// NAMESPACE advertises is Hidden's job, not this one.
 func (m ListMode) listed() bool { return m == ListYes || m == ListChildren }
 
 // listsSelf reports whether the namespace's own node is a LIST row.
@@ -1793,7 +1793,7 @@ func (s *session) aclVisibleEntries(h *nsHandle, entries []mailbox.FolderEntry, 
 // listNamespace emits LIST replies for one namespace's folders.
 // Folder names are wire-encoded with the namespace prefix re-attached.
 func (s *session) listNamespace(w *imapserver.ListWriter, h *nsHandle, ref string, patterns []string, opts *imaplib.ListOptions) error {
-	if h.spec.Hidden && !namesExactly(h.spec, ref, patterns) {
+	if !h.spec.List.listed() && !namedByPrefix(h.spec, ref, patterns) {
 		return nil
 	}
 	tList := time.Now()
@@ -1930,15 +1930,18 @@ func orphanAttrs(opts *imaplib.ListOptions) []imaplib.MailboxAttr {
 // hidden; existence is judged against the same (ACL-filtered) listing the
 // regular rows came from, so an ACL-hidden mailbox reads as nonexistent --
 // the answer #1158 already gives, not a new distinguisher.
-// namesExactly reports whether a pattern reaches into this namespace by name
-// rather than by wildcard: a hidden namespace answers only the former.
-func namesExactly(spec NamespaceSpec, ref string, patterns []string) bool {
+// namedByPrefix reports whether a pattern reaches a list=no namespace the only
+// way it may be reached: by its prefix, or, at the root, without a wildcard.
+func namedByPrefix(spec NamespaceSpec, ref string, patterns []string) bool {
 	prefix := mailbox.AdvertisedPrefix(spec.Prefix)
-	if prefix == "" {
-		return true // the personal namespace is never hidden
-	}
 	for _, p := range patterns {
 		full := ref + p
+		if prefix == "" {
+			if !strings.ContainsAny(full, "*%") {
+				return true
+			}
+			continue
+		}
 		if len(full) >= len(prefix) && strings.EqualFold(full[:len(prefix)], prefix) {
 			return true
 		}
@@ -3920,7 +3923,9 @@ func (s *session) Namespace() (*imaplib.NamespaceData, error) {
 	}
 	var data imaplib.NamespaceData
 	for _, ns := range specs {
-		if !ns.List.listed() {
+		// Hidden, not List: a namespace kept out of wildcard LIST is still
+		// advertised here, and only hidden=yes takes it out of this reply.
+		if ns.Hidden {
 			continue
 		}
 		// An owner-templated prefix is advertised truncated at the variable

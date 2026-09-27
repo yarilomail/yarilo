@@ -1412,13 +1412,13 @@ func TestNamespacePerNamespaceSeparator(t *testing.T) {
 	}
 }
 
-func TestNamespaceListFalseHidesFromResponse(t *testing.T) {
-	// List:false keeps the namespace addressable internally (NS-1b
-	// storage routing will respect this) but it must NOT appear in
-	// the wire-protocol NAMESPACE response.
+// What NAMESPACE advertises is hidden's decision alone: list=no governs LIST
+// and leaves this reply untouched, so the two keys are not interchangeable.
+func TestNamespaceAdvertisesOnWhatHiddenSays(t *testing.T) {
 	c := startNamespaceClient(t, []imapserver.NamespaceSpec{
 		{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
-		{Type: imapserver.NamespaceShared, Prefix: "Hidden/", Separator: '/', List: imapserver.ListNo},
+		{Type: imapserver.NamespaceShared, Prefix: "Quiet/", Separator: '/', List: imapserver.ListNo},
+		{Type: imapserver.NamespaceOther, Prefix: "Unseen/", Separator: '/', List: imapserver.ListYes, Hidden: true},
 	})
 	defer func() { c.Logout().Wait() }() //nolint:errcheck
 
@@ -1426,8 +1426,11 @@ func TestNamespaceListFalseHidesFromResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NAMESPACE: %v", err)
 	}
-	if len(data.Shared) != 0 {
-		t.Errorf("hidden shared ns leaked into NAMESPACE response: %+v", data.Shared)
+	if len(data.Shared) != 1 || data.Shared[0].Prefix != "Quiet/" {
+		t.Errorf("list=no namespace is not advertised, got %+v", data.Shared)
+	}
+	if len(data.Other) != 0 {
+		t.Errorf("hidden namespace leaked into the reply: %+v", data.Other)
 	}
 }
 

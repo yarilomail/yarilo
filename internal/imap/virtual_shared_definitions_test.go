@@ -1,0 +1,162 @@
+package imap_test
+
+import (
+	"bufio"
+	"io/fs"
+	"net"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	imapserver "github.com/yarilomail/yarilo/internal/imap"
+	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
+
+// treeState is every file under root with its size and modification time, for
+// comparing a directory against itself later.
+func treeState(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return rerr
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return ierr
+		}
+		out = append(out, strings.Join([]string{rel, info.Mode().String(),
+			fs.FormatFileInfo(info)}, "|"))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sharedDefsServer gives the user a virtual namespace whose definitions live
+// outside the home, in a directory the process may only read.
+func sharedDefsServer(t *testing.T, defs map[string]string) (net.Conn, *bufio.Reader, string) {
+	t.Helper()
+	root := t.TempDir()
+	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
+	info := resolver.UserInfo("user@test.com", "")
+
+	box := maildir.New().OpenUser(info)
+	if err := box.Init(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	ui := fileindex.New().OpenUser(info)
+	saveInto(t, box, ui, "INBOX", 1, "first", nil)
+	ui.Close()  //nolint:errcheck
+	box.Close() //nolint:errcheck
+
+	shared := filepath.Join(root, "definitions")
+	for name, text := range defs {
+		dir := filepath.Join(shared, name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, virtual.ConfigFileName), []byte(text), 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Read and execute, no write: a shared mount is what this namespace is
+	// for, and a write attempt must fail here rather than be tolerated.
+	if err := filepath.WalkDir(shared, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return err
+		}
+		return os.Chmod(p, 0o500)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(shared, func(p string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				return os.Chmod(p, 0o700)
+			}
+			return err
+		})
+	})
+
+	srv := imapserver.New(imapserver.Options{
+		Mailbox:    maildir.New(),
+		Index:      fileindex.New(),
+		Resolver:   resolver,
+		ACLEnabled: true,
+		Namespaces: []imapserver.NamespaceSpec{
+			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
+			{Type: imapserver.NamespacePersonal, Prefix: "Virtual/", Separator: '/', List: imapserver.ListYes,
+				Location: "virtual:" + shared + ":INDEX=%h/index/virtual"},
+		},
+		NamespaceMailboxes: map[string]mailbox.MailboxBackend{
+			"Virtual/": mailboxbuild.ByDriver("virtual", config.StorageConfig{}, nil),
+		},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln) //nolint:errcheck
+	t.Cleanup(func() { ln.Close() })
+
+	addr := ln.Addr().String()
+	lastVirtualAddr = addr
+	conn, rd := loginTo(t, addr)
+	return conn, rd, shared
+}
+
+// One definition serves every user: the directory holding it is only read, and
+// the uids, the flags and the indexes this session writes land elsewhere.
+func TestASharedDefinitionDirectoryIsNeverWrittenTo(t *testing.T) {
+	conn, rd, shared := sharedDefsServer(t, map[string]string{"All": "INBOX\n"})
+	before := treeState(t, shared)
+
+	if got := existsCount(t, conn, rd, "a1", "Virtual/All"); got != 1 {
+		t.Fatalf("EXISTS = %d, want the seeded message", got)
+	}
+
+	other, ord := loginTo(t, lastVirtualAddr)
+	existsCount(t, other, ord, "b1", "INBOX")
+	appendInbox(t, other, ord, "b2", "second")
+	if got := linesWith(command(t, conn, rd, "a2", "NOOP"), " EXISTS"); len(got) != 1 || got[0] != "* 2 EXISTS" {
+		t.Errorf("NOOP after delivery answered %v, want * 2 EXISTS", got)
+	}
+
+	command(t, conn, rd, "a3", `STORE 1 +FLAGS (\Seen)`)
+	if f := flagsOf(t, fetchLine(t, conn, rd, "a4", "FETCH 1 (FLAGS)")); !strings.Contains(f, `\Seen`) {
+		t.Errorf("the flag did not stick: FLAGS (%s)", f)
+	}
+
+	if after := treeState(t, shared); !equalTrees(before, after) {
+		t.Errorf("the definition directory was written to.\nbefore: %v\nafter:  %v", before, after)
+	}
+}
+
+func equalTrees(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

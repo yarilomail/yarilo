@@ -1,7 +1,6 @@
 {{- if .Values.virtualDefinitions }}
-# Virtual mailbox definitions shared by every user: one key per mailbox, its
-# value the configuration file the virtual driver reads. Mounted read-only, so
-# the namespace reading them names an index path of its own.
+# One key per virtual mailbox. Mounted read-only, so the namespace reading it
+# must name an index path of its own or SELECT cannot create one.
 apiVersion: v1
 kind: ConfigMap
 metadata:

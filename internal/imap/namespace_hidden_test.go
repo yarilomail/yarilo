@@ -15,19 +15,21 @@ import (
 	mailboxpkg "github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// hiddenNSServer serves a hidden namespace beside the personal one.
-func hiddenNSServer(t *testing.T) (net.Conn, *bufio.Reader) {
+// twoVisibilityNSServer serves two shared namespaces beside the personal one:
+// one hidden from NAMESPACE, one kept out of LIST.
+func twoVisibilityNSServer(t *testing.T) (net.Conn, *bufio.Reader) {
 	t.Helper()
 	root := t.TempDir()
-	shared := filepath.Join(root, "vhosts", "hidden")
-	if err := os.MkdirAll(filepath.Join(shared, ".Tucked", "cur"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, d := range []string{"new", "tmp"} {
-		if err := os.MkdirAll(filepath.Join(shared, ".Tucked", d), 0o700); err != nil {
-			t.Fatal(err)
+	mk := func(name string) string {
+		dir := filepath.Join(root, "vhosts", name)
+		for _, d := range []string{"cur", "new", "tmp"} {
+			if err := os.MkdirAll(filepath.Join(dir, ".Tucked", d), 0o700); err != nil {
+				t.Fatal(err)
+			}
 		}
+		return dir
 	}
+	unseen, quiet := mk("unseen"), mk("quiet")
 	srv := imapserver.New(imapserver.Options{
 		Mailbox:   maildir.New(),
 		Index:     file.New(),
@@ -35,8 +37,10 @@ func hiddenNSServer(t *testing.T) (net.Conn, *bufio.Reader) {
 		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
-			{Type: imapserver.NamespaceShared, Prefix: "Hidden/", Separator: '/',
-				Location: "maildir:" + shared, List: imapserver.ListYes, Hidden: true},
+			{Type: imapserver.NamespaceShared, Prefix: "Unseen/", Separator: '/',
+				Location: "maildir:" + unseen, List: imapserver.ListYes, Hidden: true},
+			{Type: imapserver.NamespaceShared, Prefix: "Quiet/", Separator: '/',
+				Location: "maildir:" + quiet, List: imapserver.ListNo},
 		},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -48,19 +52,29 @@ func hiddenNSServer(t *testing.T) (net.Conn, *bufio.Reader) {
 	return loginTo(t, ln.Addr().String())
 }
 
-// A hidden namespace stays out of a wildcard LIST and answers when it is named
-// (RFC 2342): that is what the key is for, and it did nothing before (#2071).
-func TestAHiddenNamespaceIsListedOnlyWhenNamed(t *testing.T) {
-	conn, rd := hiddenNSServer(t)
-	wild := strings.Join(command(t, conn, rd, "a1", `LIST "" "*"`), "\n")
-	if strings.Contains(wild, "Hidden/") {
-		t.Errorf(`LIST "" "*" answered with the hidden namespace:\n%s`, wild)
+// hidden and list are two settings, not one spelled twice: hidden decides the
+// NAMESPACE reply, list decides LIST, and neither reaches into the other.
+func TestHiddenAndListDecideDifferentReplies(t *testing.T) {
+	conn, rd := twoVisibilityNSServer(t)
+
+	ns := strings.Join(command(t, conn, rd, "a1", "NAMESPACE"), "\n")
+	if strings.Contains(ns, "Unseen/") {
+		t.Errorf("hidden=yes was advertised in NAMESPACE:\n%s", ns)
 	}
-	if !strings.Contains(wild, "INBOX") {
-		t.Errorf("the personal namespace went missing too:\n%s", wild)
+	if !strings.Contains(ns, "Quiet/") {
+		t.Errorf("list=no was dropped from NAMESPACE, which only hidden may do:\n%s", ns)
 	}
-	named := strings.Join(command(t, conn, rd, "a2", `LIST "" "Hidden/*"`), "\n")
-	if !strings.Contains(named, "Hidden/Tucked") {
-		t.Errorf("named exactly, the namespace answered nothing:\n%s", named)
+
+	wild := strings.Join(command(t, conn, rd, "a2", `LIST "" "*"`), "\n")
+	if !strings.Contains(wild, "Unseen/Tucked") {
+		t.Errorf("hidden=yes was kept out of a wildcard LIST, which is list's job:\n%s", wild)
+	}
+	if strings.Contains(wild, "Quiet/") {
+		t.Errorf("list=no answered a wildcard LIST:\n%s", wild)
+	}
+
+	named := strings.Join(command(t, conn, rd, "a3", `LIST "" "Quiet/*"`), "\n")
+	if !strings.Contains(named, "Quiet/Tucked") {
+		t.Errorf("named by its prefix, list=no answered nothing:\n%s", named)
 	}
 }
