@@ -1,4 +1,4 @@
-{{- if .Values.virtualDefinitions }}
+{{- if .Values.virtual_definitions }}
 # One key per virtual mailbox. Mounted read-only, so the namespace reading it
 # must name an index path of its own or SELECT cannot create one.
 apiVersion: v1
@@ -9,9 +9,9 @@ metadata:
   labels:
     {{- include "yarilo.labels" . | nindent 4 }}
 data:
-  {{- range $name, $text := .Values.virtualDefinitions }}
+  {{- range $name, $text := .Values.virtual_definitions }}
   {{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $name) }}
-  {{- fail (printf "virtualDefinitions: %q cannot be a mailbox name here: it becomes a ConfigMap key, which allows only letters, digits, '-', '_' and '.'" $name) }}
+  {{- fail (printf "virtual_definitions: %q cannot be a mailbox name here: it becomes a ConfigMap key, which allows only letters, digits, '-', '_' and '.'" $name) }}
   {{- end }}
   {{ $name | quote }}: |
     {{- $text | nindent 4 }}

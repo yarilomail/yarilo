@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 )
 
 // The stand's own configuration, not a shape invented here: a shared virtual
@@ -56,8 +58,16 @@ func TestSharedVirtualDefinitionsReachTheContainersThatReadThem(t *testing.T) {
 			t.Fatalf("parse chart output: %v", err)
 		}
 		if obj.Kind == "ConfigMap" && strings.HasSuffix(obj.Metadata.Name, "-virtual") {
-			if text, ok := obj.Data["All"]; !ok || strings.TrimSpace(text) != "INBOX" {
-				t.Errorf("the definitions map holds %v, want one key per mailbox holding its own file", obj.Data)
+			for name, text := range obj.Data {
+				// Through the driver's own parser: a definition the chart ships
+				// that the driver cannot read makes the mailbox unopenable, and
+				// rendering says nothing about it.
+				if _, perr := virtual.ParseConfig(strings.NewReader(text)); perr != nil {
+					t.Errorf("the definition of %q is not one the driver can read: %v", name, perr)
+				}
+			}
+			if _, ok := obj.Data["All"]; !ok {
+				t.Errorf("the definitions map holds %v, want one key per mailbox", obj.Data)
 			}
 			definitions = true
 		}

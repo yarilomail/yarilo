@@ -16,7 +16,7 @@ var configMapKey = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
 // A key the API server refuses makes the whole release unappliable, and helm
 // template alone never says so -- it is valid YAML either way (#2073).
 func TestEveryRenderedConfigMapKeyIsOneTheAPIServerAccepts(t *testing.T) {
-	// The stand's own values, which define virtualDefinitions: a key built from
+	// The stand's own values, which define virtual_definitions: a key built from
 	// an operator's name is the only place an invalid one can come from.
 	out, err := exec.Command("helm", "template", "../../helm",
 		"-f", "../../helm_values/values-sandbox.yaml").Output()
