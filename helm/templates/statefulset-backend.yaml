@@ -299,6 +299,13 @@ spec:
         - name: virtual-definitions
           configMap:
             name: {{ include "yarilo.fullname" . }}-virtual
+            # The path lives here, not in the key: a ConfigMap key may not hold
+            # a "/", and the driver reads <mailbox>/yarilo-virtual (#2073).
+            items:
+              {{- range $name, $_ := .Values.virtualDefinitions }}
+              - key: {{ $name | quote }}
+                path: {{ printf "%s/yarilo-virtual" $name | quote }}
+              {{- end }}
         {{- end }}
         - name: tmp
           emptyDir: {}

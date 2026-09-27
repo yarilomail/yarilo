@@ -10,7 +10,10 @@ metadata:
     {{- include "yarilo.labels" . | nindent 4 }}
 data:
   {{- range $name, $text := .Values.virtualDefinitions }}
-  {{ printf "%s/yarilo-virtual" $name | quote }}: |
+  {{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $name) }}
+  {{- fail (printf "virtualDefinitions: %q cannot be a mailbox name here: it becomes a ConfigMap key, which allows only letters, digits, '-', '_' and '.'" $name) }}
+  {{- end }}
+  {{ $name | quote }}: |
     {{- $text | nindent 4 }}
   {{- end }}
 {{- end }}

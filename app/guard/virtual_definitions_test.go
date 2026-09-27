@@ -48,6 +48,7 @@ namespaces:
 	}
 
 	mounted := map[string]bool{}
+	var placed map[string]string
 	definitions := false
 	for _, doc := range strings.Split(string(out), "\n---\n") {
 		var obj struct {
@@ -67,6 +68,15 @@ namespaces:
 								ReadOnly  bool   `yaml:"readOnly"`
 							} `yaml:"volumeMounts"`
 						} `yaml:"containers"`
+						Volumes []struct {
+							Name      string `yaml:"name"`
+							ConfigMap struct {
+								Items []struct {
+									Key  string `yaml:"key"`
+									Path string `yaml:"path"`
+								} `yaml:"items"`
+							} `yaml:"configMap"`
+						} `yaml:"volumes"`
 					} `yaml:"spec"`
 				} `yaml:"template"`
 			} `yaml:"spec"`
@@ -75,13 +85,22 @@ namespaces:
 			t.Fatalf("parse chart output: %v", err)
 		}
 		if obj.Kind == "ConfigMap" && strings.HasSuffix(obj.Metadata.Name, "-virtual") {
-			if text, ok := obj.Data["All/yarilo-virtual"]; !ok || !strings.Contains(text, "-Trash") {
-				t.Errorf("the definitions map holds %v, want the mailbox's own file", obj.Data)
+			if text, ok := obj.Data["All"]; !ok || !strings.Contains(text, "-Trash") {
+				t.Errorf("the definitions map holds %v, want one key per mailbox", obj.Data)
 			}
 			definitions = true
 		}
 		if obj.Kind != "StatefulSet" || !strings.HasSuffix(obj.Metadata.Name, "-backend") {
 			continue
+		}
+		for _, v := range obj.Spec.Template.Spec.Volumes {
+			if v.Name != "virtual-definitions" {
+				continue
+			}
+			placed = map[string]string{}
+			for _, it := range v.ConfigMap.Items {
+				placed[it.Key] = it.Path
+			}
 		}
 		for _, c := range obj.Spec.Template.Spec.Containers {
 			for _, m := range c.VolumeMounts {
@@ -97,6 +116,11 @@ namespaces:
 	}
 	if !definitions {
 		t.Fatal("no definitions map was rendered")
+	}
+	// The key cannot hold the path, so the volume must: without this the file
+	// lands as /etc/yarilo/virtual/All and the driver finds no mailbox (#2073).
+	if placed["All"] != "All/yarilo-virtual" {
+		t.Errorf("the volume places the key at %q, want All/yarilo-virtual", placed["All"])
 	}
 	for _, want := range []string{"yarilo-imap", "yarilo-lmtp", "yarilo-fts", "yarilo-jmap"} {
 		if !mounted[want] {
