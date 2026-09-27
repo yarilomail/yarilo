@@ -8,9 +8,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// A mailbox whose header names its folders without identifying them, as one
-// the reference wrote does: the first SELECT gives them the identity this
-// server keeps them by, and the messages keep the uids they had (#1986).
+// A header that only names its folders, as the reference's does: the first
+// SELECT identifies them and the messages keep their uids (#1986).
 func TestSelectTakesOverAHeaderThatOnlyNamesItsFolders(t *testing.T) {
 	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\n"}, seedFlagged)
 	if got := existsCount(t, conn, rd, "a2", "Virtual/All"); got != 2 {
