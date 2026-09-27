@@ -91,15 +91,21 @@ namespaces:
     list: children
     subscriptions: false
     location: "maildir:%h/Maildir"
-  # Virtual mailboxes: every directory under this path holding a configuration
-  # file is one mailbox, and the file is what defines it. A client cannot make
-  # one, as in the reference. Private, not shared: the user owns what it lists.
+  # Virtual mailboxes: one definition directory for every user, mounted
+  # read-only from virtualDefinitions, with the indexes written under each
+  # user. Personal, not shared: what it lists is the user's own mail.
   - type: personal
     prefix: "Virtual/"
     separator: "/"
     list: "yes"
-    subscriptions: false
-    location: "virtual:%h/virtual"
+    mail_driver: virtual
+    mail_path: /etc/yarilo/virtual
+    mail_index_path: "%h/index/virtual"
+
+## Definitions the namespace above reads. One key per mailbox.
+virtualDefinitions:
+  All: |
+    INBOX
 
 storage:
   ## Their folder names on disk are modified UTF-7; this says so, for the
