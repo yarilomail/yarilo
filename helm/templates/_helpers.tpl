@@ -264,6 +264,11 @@ Args: dict "root" $ "itls" <internalTLS config>.
 - name: config
   mountPath: /etc/yarilo
   readOnly: true
+{{- if $root.Values.virtualDefinitions }}
+- name: virtual-definitions
+  mountPath: /etc/yarilo/virtual
+  readOnly: true
+{{- end }}
 - name: tmp
   mountPath: /tmp
 - name: ready

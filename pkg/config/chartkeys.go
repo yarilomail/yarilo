@@ -21,7 +21,7 @@ var throughAnOperatorBlock = []string{
 	"fts_language_tokenizer_address_token_maxlen", "fts_language_tokenizer_generic_algorithm", "fts_language_tokenizer_generic_explicit_prefix", "fts_language_tokenizer_generic_token_maxlen", "fts_language_tokenizer_generic_wb5a", "fts_search_timeout_secs",
 	"globals_only", "hash_mech", "hash_nonce", "hash_truncate_bits", "hdr_delivery_address", "host",
 	"identifier", "introspection_mode", "introspection_url", "issuer_url", "issuers", "iterate_query",
-	"jwks_url", "log_only", "mail_inbox_path", "mail_path", "maildir_sync_on_select", "max_idle_conns",
+	"jwks_url", "log_only", "mail_inbox_path", "maildir_sync_on_select", "max_idle_conns",
 	"max_message_size", "max_open_conns", "max_recipients", "negative_ttl_seconds", "passwd_file", "password",
 	"password_query", "per_recipient_burst", "per_recipient_window_seconds", "quota_grace", "quota_warning_name", "reject_on_fail",
 	"report_after", "save_to_detail_mailbox", "scopes", "sieve_global_after", "sieve_global_before", "ssl_verify",
@@ -32,7 +32,7 @@ var throughAnOperatorBlock = []string{
 // defaultOnly: the chart never writes the key and the binary's default is the
 // deployed value. Some are aliases kept for configs written by hand.
 var defaultOnly = []string{
-	"active_attribute", "active_value", "disable_plaintext_auth", "fail_open", "hidden", "home_dir",
+	"active_attribute", "active_value", "disable_plaintext_auth", "fail_open", "home_dir",
 	"http_timeout_ms", "lmtp_backend_port", "max_attempts", "oauth2_mode", "prefer_introspection", "prefer_server_ciphers",
 	"proxy", "socket", "ssl_prefer_server_ciphers", "ssl_server_alt_cert_file", "ssl_server_alt_key_file", "submission_client_workarounds",
 	"tls_alt_cert", "tls_alt_key", "tls_cert", "tls_key", "tls_min_version", "token_expire_grace_seconds",

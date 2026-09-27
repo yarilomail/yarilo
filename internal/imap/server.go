@@ -232,6 +232,9 @@ type NamespaceSpec struct {
 	// IgnoreACL bypasses ACL enforcement for this namespace (rights not
 	// checked, no lookup-right LIST hiding) even when ACL is enabled.
 	IgnoreACL bool
+	// Hidden keeps the namespace out of the NAMESPACE reply and nothing else.
+	// What LIST shows is List's job, and the two are not the same setting.
+	Hidden bool
 	// Subscriptions is the operator's setting, nil when unset; the answer is
 	// resolved by mailbox.NamespaceKeepsSubscriptions (see keepsSubscriptions),
 	// so a spec built without it takes the default for its kind.
@@ -262,8 +265,8 @@ const (
 	ListNo       ListMode = "no"
 )
 
-// listed reports whether the namespace appears in NAMESPACE and contributes
-// rows to LIST at all.
+// listed reports whether the namespace contributes rows to LIST at all. What
+// NAMESPACE advertises is Hidden's job, not this one.
 func (m ListMode) listed() bool { return m == ListYes || m == ListChildren }
 
 // listsSelf reports whether the namespace's own node is a LIST row.
@@ -1620,6 +1623,11 @@ func (s *session) Subscribe(name string) error {
 	if err != nil {
 		return err
 	}
+	// Before the name is judged or anything is written: the definition
+	// directory a virtual namespace reads may be shared and read-only.
+	if _, virtualNS := mailbox.Driver(h.box).(virtualConfigured); virtualNS {
+		return errVirtualCannot("a virtual mailbox is not subscribed to")
+	}
 	// Existence is deliberately not checked: RFC 9051 6.3.7 allows subscribing
 	// to a mailbox that does not exist yet, and clients rely on it. The name
 	// itself still has to be one this server would accept somewhere -- storing
@@ -1790,6 +1798,9 @@ func (s *session) aclVisibleEntries(h *nsHandle, entries []mailbox.FolderEntry, 
 // listNamespace emits LIST replies for one namespace's folders.
 // Folder names are wire-encoded with the namespace prefix re-attached.
 func (s *session) listNamespace(w *imapserver.ListWriter, h *nsHandle, ref string, patterns []string, opts *imaplib.ListOptions) error {
+	if !h.spec.List.listed() && !namedByPrefix(h.spec, ref, patterns) {
+		return nil
+	}
 	tList := time.Now()
 	entries, err := h.box.ListFolders()
 	slog.Debug("imap: list timing listfolders_ms", "listfolders_ms", time.Since(tList).Milliseconds())
@@ -1924,6 +1935,25 @@ func orphanAttrs(opts *imaplib.ListOptions) []imaplib.MailboxAttr {
 // hidden; existence is judged against the same (ACL-filtered) listing the
 // regular rows came from, so an ACL-hidden mailbox reads as nonexistent --
 // the answer #1158 already gives, not a new distinguisher.
+// namedByPrefix reports whether a pattern reaches a list=no namespace the only
+// way it may be reached: by its prefix, or, at the root, without a wildcard.
+func namedByPrefix(spec NamespaceSpec, ref string, patterns []string) bool {
+	prefix := mailbox.AdvertisedPrefix(spec.Prefix)
+	for _, p := range patterns {
+		full := ref + p
+		if prefix == "" {
+			if !strings.ContainsAny(full, "*%") {
+				return true
+			}
+			continue
+		}
+		if len(full) >= len(prefix) && strings.EqualFold(full[:len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *session) listNamespaceOrphans(w *imapserver.ListWriter, h *nsHandle, existing map[string]bool, subs map[string]struct{}, subsKeyPrefix, ref string, patterns []string, opts *imaplib.ListOptions) error {
 	orphans := make([]string, 0)
 	for key := range subs {
@@ -3898,7 +3928,9 @@ func (s *session) Namespace() (*imaplib.NamespaceData, error) {
 	}
 	var data imaplib.NamespaceData
 	for _, ns := range specs {
-		if !ns.List.listed() {
+		// Hidden, not List: a namespace kept out of wildcard LIST is still
+		// advertised here, and only hidden=yes takes it out of this reply.
+		if ns.Hidden {
 			continue
 		}
 		// An owner-templated prefix is advertised truncated at the variable

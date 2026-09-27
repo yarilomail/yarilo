@@ -1,0 +1,16 @@
+{{- if .Values.virtualDefinitions }}
+# One key per virtual mailbox. Mounted read-only, so the namespace reading it
+# must name an index path of its own or SELECT cannot create one.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "yarilo.fullname" . }}-virtual
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yarilo.labels" . | nindent 4 }}
+data:
+  {{- range $name, $text := .Values.virtualDefinitions }}
+  {{ printf "%s/yarilo-virtual" $name | quote }}: |
+    {{- $text | nindent 4 }}
+  {{- end }}
+{{- end }}
