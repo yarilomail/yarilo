@@ -91,10 +91,14 @@ while :; do
 done
 [ "$waited" -gt 0 ] && echo "smoketest: waited ${waited}s for the directors to route to every backend"
 
-# enotify_snapshot records what the index and both backends held when the
-# enotify search came back empty (#2056): the failure is gone by the next run.
+# The account the Job logs in as: a snapshot about another one describes a
+# mailbox that was never opened.
+SMOKE_USER="${SMOKE_USER:-$(awk -F= '/-imap-user=/{print $2; exit}' "$(dirname "$0")/job.yaml")}"
 SMOKE_USER="${SMOKE_USER:-u1@d00001.test}"
-enotify_snapshot() {
+
+# failure_snapshot records what the index and both backends held at a failure
+# that the next run no longer shows (#2056, #2078).
+failure_snapshot() {
   local token=$1 api pod d
   echo "== enotify snapshot $(date -u +%FT%TZ) for $SMOKE_USER, subject $token"
   d=$(kubectl -n "$NAMESPACE" get pods -l "$DIRECTOR_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
@@ -139,7 +143,14 @@ out=$(kubectl -n "$NAMESPACE" logs job/smoketest 2>&1 || true)
 echo "$out"
 failed=$(echo "$out" | grep '"msg":"sieve: FAIL".*"test":"enotify"' || true)
 if [ -n "$failed" ]; then
-  enotify_snapshot "$(echo "$failed" | grep -o 'XNOTIFY[0-9]*' | head -1)"
+  failure_snapshot "$(echo "$failed" | grep -o 'XNOTIFY[0-9]*' | head -1)"
+fi
+# A FETCH that answers from a cold mailbox is right again by the next run, so
+# the state it answered from has to be read now or not at all (#2078).
+fetch_failed=$(echo "$out" | grep '"msg":"smoke: FAIL"' | grep '"check":"[^"]*FETCH' || true)
+if [ -n "$fetch_failed" ]; then
+  echo "$fetch_failed"
+  failure_snapshot ""
 fi
 case "$status" in
   1/*) exit 0 ;;
