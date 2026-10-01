@@ -459,9 +459,8 @@ func dropIdentifier(cur mailbox.ACL, id mailbox.Identifier, negative bool) mailb
 	return out
 }
 
-// refuseVirtualACLWrite keeps an ACL write off a virtual mailbox: the rights
-// that decide what it shows are the backing folders' own, and the store it
-// would be written into may be a shared read-only directory (#2073).
+// refuseVirtualACLWrite keeps an ACL write off a virtual mailbox: its rights are
+// the backing folders' own, and its store may be a shared read-only directory.
 func refuseVirtualACLWrite(h *nsHandle) error {
 	if _, virtualNS := mailbox.Driver(h.box).(virtualConfigured); virtualNS {
 		return errVirtualCannot("a virtual mailbox has no access rights of its own")

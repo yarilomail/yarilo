@@ -10,9 +10,8 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 )
 
-// The stand's own configuration, not a shape invented here: a shared virtual
-// namespace is only usable when its definitions are mounted where its
-// mail_path names them, in the containers that read mailboxes.
+// The stand's own configuration, not a shape invented here: the namespace is
+// usable only where its definitions are mounted at the mail_path naming them.
 func TestSharedVirtualDefinitionsReachTheContainersThatReadThem(t *testing.T) {
 	out, err := exec.Command("helm", "template", "../../helm",
 		"-f", "../../helm_values/values-sandbox.yaml").Output()
@@ -59,9 +58,8 @@ func TestSharedVirtualDefinitionsReachTheContainersThatReadThem(t *testing.T) {
 		}
 		if obj.Kind == "ConfigMap" && strings.HasSuffix(obj.Metadata.Name, "-virtual") {
 			for name, text := range obj.Data {
-				// Through the driver's own parser: a definition the chart ships
-				// that the driver cannot read makes the mailbox unopenable, and
-				// rendering says nothing about it.
+				// Through the driver's own parser: a definition it cannot read
+				// leaves the mailbox unopenable, and rendering says nothing.
 				if _, perr := virtual.ParseConfig(strings.NewReader(text)); perr != nil {
 					t.Errorf("the definition of %q is not one the driver can read: %v", name, perr)
 				}

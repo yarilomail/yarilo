@@ -91,9 +91,8 @@ namespaces:
     list: children
     subscriptions: false
     location: "maildir:%h/Maildir"
-  # Virtual mailboxes: one definition directory for every user, mounted
-  # read-only from virtual_definitions, with the indexes written under each
-  # user. Personal, not shared: what it lists is the user's own mail.
+  # Definitions mounted read-only, indexes written under each user. Personal,
+  # not shared: what it lists is the user's own mail.
   - type: personal
     prefix: "Virtual/"
     separator: "/"
