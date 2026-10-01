@@ -120,6 +120,13 @@ var metricJournalWriteFailed = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Journal appends that failed, by reason: no-space is a full volume or an exhausted disk quota, other is anything else.",
 }, []string{"reason"}) // no-space | other
 
+// metricHeaderCorrected counts header fields re-derived from the records: drift
+// the operator sees here before a client sees a reused uid (#1831).
+var metricHeaderCorrected = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "fileindex_header_corrected_total",
+	Help: "Index header fields that disagreed with the records and were re-derived from them, by field.",
+}, []string{"field"}) // next_uid | messages | seen | deleted
+
 // metricCompactionRefused counts log compactions that could not write the base.
 // Rotation stopping is invisible from the outside — the folder keeps serving
 // mail while its log grows and every open replays more of it — so the count is

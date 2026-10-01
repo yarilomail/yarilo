@@ -66,8 +66,6 @@ func ResetMapCounters() {
 	mapCopies.mu.Unlock()
 }
 
-// sameBase reports whether this map was built on the base file that is there
-// now: a compaction replaces the file, and its records are not ours to extend.
 // openView hands out the current image, folding the log tail into a new one
 // first when the log has grown. Nothing is held while the tail is read: the
 // mutex covers the pointer and the count, never a file.

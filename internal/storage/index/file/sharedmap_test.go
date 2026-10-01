@@ -1,10 +1,12 @@
 package file
 
 import (
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -232,5 +234,131 @@ func TestANewBaseIsNotReadThroughTheOldImage(t *testing.T) {
 	if len(v2.file.Records) != before+1 {
 		t.Errorf("after the base was rewritten the read has %d records, want %d (path %s)",
 			len(v2.file.Records), before+1, filepath.Base(fs.indexPath))
+	}
+}
+
+// Each half of the fold's guard alone: a base rewritten under the same log, or
+// a log replaced under the same base, is not ours to extend.
+func TestAFoldExtendsOnlyTheSameBaseAndTheSameLog(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare func(t *testing.T, dir, spare string)
+		change  func(t *testing.T, dir, spare string)
+		before  []uint32
+		after   []uint32
+	}{
+		{
+			name: "only the base changed",
+			prepare: func(t *testing.T, dir, _ string) {
+				seedBase(t, dir, [][]string{nil, nil, nil, nil})
+			},
+			change: func(t *testing.T, dir, _ string) {
+				base := indexPathFor(openIdx(dir, testUser).indexDir("INBOX"))
+				mf, err := mailindex.Open(base)
+				if err != nil {
+					t.Fatal(err)
+				}
+				mf.Records = mf.Records[:3]
+				mf.Header.MessagesCount = 3
+				if _, err := mailindex.Recreate(mf.ToRecreateInput(base)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			before: []uint32{1, 2, 3, 4},
+			after:  []uint32{1, 2, 3},
+		},
+		{
+			name: "only the log changed",
+			prepare: func(t *testing.T, dir, spare string) {
+				seedBase(t, dir, [][]string{nil, nil, nil})
+				copyTree(t, dir, spare)
+				logWithout(t, dir, keepAll, appendOps(4))
+				logWithout(t, spare, keepAll, appendOps(5))
+			},
+			change: func(t *testing.T, dir, spare string) {
+				log := indexPathFor(openIdx(dir, testUser).indexDir("INBOX")) + ".log"
+				other := indexPathFor(openIdx(spare, testUser).indexDir("INBOX")) + ".log"
+				if err := os.Rename(other, log); err != nil {
+					t.Fatal(err)
+				}
+			},
+			before: []uint32{1, 2, 3, 4},
+			after:  []uint32{1, 2, 3, 5},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, spare := t.TempDir(), t.TempDir()
+			tc.prepare(t, dir, spare)
+
+			u := openIdx(dir, testUser)
+			defer u.Close() //nolint:errcheck
+			f, err := u.OpenFolder("INBOX", 0, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			u.mu.Lock()
+			fs := u.open[f.ID]
+			u.mu.Unlock()
+
+			if got := viewUIDs(t, fs); !equalUIDs(got, tc.before) {
+				t.Fatalf("before the change the view holds %v, want %v", got, tc.before)
+			}
+			tc.change(t, dir, spare)
+			if got := viewUIDs(t, fs); !equalUIDs(got, tc.after) {
+				t.Errorf("after the change the view holds %v, want %v", got, tc.after)
+			}
+		})
+	}
+}
+
+func keepAll([]byte) bool { return false }
+
+func viewUIDs(t *testing.T, fs *folderState) []uint32 {
+	t.Helper()
+	v, release, err := fs.openView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var out []uint32
+	for _, r := range v.file.Records {
+		out = append(out, r.UID)
+	}
+	return out
+}
+
+func equalUIDs(a, b []uint32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// copyTree copies a home so a second writer can start from the same base.
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	err := filepath.WalkDir(from, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(from, path)
+		dst := filepath.Join(to, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0o700)
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(dst, data, 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
