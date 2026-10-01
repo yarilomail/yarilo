@@ -722,6 +722,33 @@ func (u *userMailbox) Fetch(_, filename string, altTier bool) (io.ReadCloser, er
 		return nil, fmt.Errorf("mdbox/fetch: map_uid %d not found: %w", mapUID, mailbox.ErrCorruptStorage)
 	}
 
+	rc, err := u.openEntry(entry, altTier)
+	if !errors.Is(err, os.ErrNotExist) {
+		return rc, err
+	}
+	// A purge elsewhere may have moved the record on: reload once. As the
+	// reference does, the caller tells expunged from lost by its folder index.
+	metricReadRefreshed.Inc()
+	fresh, ok, rerr := m.LookupReloaded(mapUID)
+	if rerr != nil {
+		return nil, fmt.Errorf("mdbox/fetch: reload: %w", rerr)
+	}
+	if !ok {
+		return nil, fmt.Errorf("mdbox/fetch: map_uid %d: %w", mapUID, mailbox.ErrExpunged)
+	}
+	if fresh.FileID == entry.FileID {
+		return nil, fmt.Errorf("%w: %w", err, mailbox.ErrCorruptStorage)
+	}
+	rc, err = u.openEntry(fresh, altTier)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %w", err, mailbox.ErrCorruptStorage)
+	}
+	return rc, err
+}
+
+// openEntry opens the record a map entry names; a missing file comes back as
+// os.ErrNotExist for Fetch to decide on.
+func (u *userMailbox) openEntry(entry mdboxmap.MapEntry, altTier bool) (io.ReadCloser, error) {
 	primary := u.mfilePath(entry.FileID)
 	alt := u.mfileAltPath(entry.FileID)
 
@@ -753,11 +780,6 @@ func (u *userMailbox) Fetch(_, filename string, altTier bool) (io.ReadCloser, er
 		}
 		if ferr != nil {
 			mdboxmap.ObserveReadPart("open", time.Since(openStart))
-			// A vanished m.<N> the map still points at is corruption; any other
-			// open error (EIO, EACCES) is transient and must not trigger a rebuild.
-			if errors.Is(ferr, os.ErrNotExist) {
-				return nil, fmt.Errorf("mdbox/fetch: open m.%d: %w: %w", entry.FileID, ferr, mailbox.ErrCorruptStorage)
-			}
 			return nil, fmt.Errorf("mdbox/fetch: open m.%d: %w", entry.FileID, ferr)
 		}
 	}
