@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -99,30 +100,62 @@ func (u *userMailbox) FolderExists(folder string) (bool, error) {
 }
 
 // ListFolders names every directory under the namespace that holds a
-// configuration file, at any depth: a directory without one is not a mailbox.
+// configuration file, at any depth, following a symlink to a directory.
 func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 	var out []mailbox.FolderEntry
-	err := filepath.WalkDir(u.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || !d.IsDir() || path == u.root {
-			return nil //nolint:nilerr // an unreadable subtree is not a mailbox
-		}
-		if !hasConfig(path) {
-			return nil
-		}
-		rel, rerr := filepath.Rel(u.root, path)
-		if rerr != nil {
-			return nil
-		}
-		// Selectable: a directory with a configuration is a mailbox, and
-		// LIST marks the rest \Noselect.
-		out = append(out, mailbox.FolderEntry{Name: u.nameOf(rel), Selectable: true})
-		return nil
-	})
-	if err != nil && !os.IsNotExist(err) {
+	seen := map[string]bool{}
+	if root, err := filepath.EvalSymlinks(u.root); err == nil {
+		seen[root] = true
+	}
+	// A root that cannot be read is an empty namespace, not a failed LIST:
+	// one wrong mode on the definitions breaks listing for every user.
+	if err := u.walk(u.root, "", seen, &out); err != nil &&
+		!errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrPermission) {
 		return nil, fmt.Errorf("virtual: read %s: %w", u.root, err)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// walk descends one directory, resolving each entry rather than trusting its
+// type: a mounted definition reaches the namespace as a symlink.
+func (u *userMailbox) walk(dir, rel string, seen map[string]bool, out *[]mailbox.FolderEntry) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if rel == "" {
+			return err
+		}
+		return nil //nolint:nilerr // an unreadable subtree is not a mailbox
+	}
+	for _, e := range entries {
+		// A name opening with a dot is the mount's own bookkeeping, never a
+		// mailbox: the definitions arrive beside ..data and ..<timestamp>.
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		// Resolved, not trusted: a link to a directory is a mailbox, a link
+		// to nothing is skipped rather than failing the whole listing.
+		info, serr := os.Stat(path)
+		if serr != nil || !info.IsDir() {
+			continue
+		}
+		real, rerr := filepath.EvalSymlinks(path)
+		if rerr != nil || seen[real] {
+			continue
+		}
+		seen[real] = true
+		child := filepath.Join(rel, e.Name())
+		if hasConfig(path) {
+			// Selectable: a directory with a configuration is a mailbox, and
+			// LIST marks the rest \Noselect.
+			*out = append(*out, mailbox.FolderEntry{Name: u.nameOf(child), Selectable: true})
+		}
+		if werr := u.walk(path, child, seen, out); werr != nil {
+			return werr
+		}
+	}
+	return nil
 }
 
 // hasConfig says whether a directory defines a mailbox.
