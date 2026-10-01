@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"reflect"
 	"testing"
 
 	imapsvr "github.com/yarilomail/yarilo/internal/imap"
@@ -91,7 +92,7 @@ func TestBuildNamespaces(t *testing.T) {
 				t.Fatalf("len mismatch: got %d, want %d (got=%+v)", len(got), len(tc.want), got)
 			}
 			for i := range got {
-				if got[i] != tc.want[i] {
+				if !reflect.DeepEqual(got[i], tc.want[i]) {
 					t.Errorf("ns[%d]: got %+v want %+v", i, got[i], tc.want[i])
 				}
 			}

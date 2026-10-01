@@ -2,9 +2,12 @@ package backendapi
 
 import (
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"sort"
+	"strings"
 
+	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -28,7 +31,10 @@ type folderRequest struct {
 }
 
 type folderInfoOut struct {
-	Name          string `json:"name"`
+	Name string `json:"name"`
+	// Created is false for a configured mailbox no server has opened yet: a
+	// diagnostic shows it and makes nothing (#1774, #2005).
+	Created       bool   `json:"created"`
 	GUID          string `json:"guid"`
 	UIDValidity   uint32 `json:"uid_validity"`
 	NextUID       uint32 `json:"next_uid"`
@@ -49,22 +55,84 @@ func (s *Server) handleFolderList(w http.ResponseWriter, r *http.Request) {
 	}
 	defer uc.Close()
 
-	bundle, ok := readBundle(w, s, uc, req.Namespace)
-	if !ok {
-		return
-	}
-	entries, err := bundle.box.ListFolders()
+	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
-		apiError(w, "list folders: "+err.Error(), http.StatusInternalServerError)
+		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	names := mailbox.SelectableNames(entries)
+	var names []string
+	var spec config.NamespaceConfig
+	if bundle != nil {
+		entries, err := bundle.box.ListFolders()
+		if err != nil {
+			apiError(w, "list folders: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		names, spec = mailbox.SelectableNames(entries), bundle.spec
+	} else if spec, err = s.listedNamespace(req.Namespace); err != nil {
+		// No mail home and nothing configured: the account has nothing yet.
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return
+	}
+	// Configured mailboxes are listed as present, as a listing of the
+	// reference does, and nothing is made: this is a read (#1774).
+	pending := s.configuredMissing(spec, names)
+	names = append(names, pending...)
 	sort.Strings(names)
-	apiJSON(w, map[string]any{"folders": names})
+	apiJSON(w, map[string]any{"folders": names, "not_created": pending, "special_use": s.listedSpecialUse(spec, names)})
+}
+
+// listedNamespace is the configuration of a namespace whose store does not
+// exist yet; an error when it configures no mailboxes to show.
+func (s *Server) listedNamespace(name string) (config.NamespaceConfig, error) {
+	if name == "" {
+		name = "personal"
+	}
+	spec, ok := s.namespaceByName(name)
+	if !ok || len(spec.AutoMailboxes()) == 0 {
+		return config.NamespaceConfig{}, errNoMailHome
+	}
+	return spec, nil
+}
+
+// configuredMissing are the namespace's auto mailboxes not in names.
+func (s *Server) configuredMissing(spec config.NamespaceConfig, names []string) []string {
+	have := make(map[string]bool, len(names))
+	for _, n := range names {
+		have[n] = true
+	}
+	out := []string{}
+	for name, mb := range spec.AutoMailboxes() {
+		if mb.Auto != mailbox.AutoNo && !have[name] {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// listedSpecialUse is the folded special-use map over the listed names; the
+// map belongs to the personal namespace alone.
+func (s *Server) listedSpecialUse(spec config.NamespaceConfig, names []string) map[string]string {
+	out := map[string]string{}
+	if !strings.EqualFold(spec.Type, "personal") || s.ownsStore(spec) {
+		return out
+	}
+	for _, n := range names {
+		if attr, ok := s.opts.SpecialUseDefaults[n]; ok {
+			out[n] = attr
+		}
+	}
+	return out
 }
 
 func (s *Server) handleFolderInfo(w http.ResponseWriter, r *http.Request) {
 	out, status, err := s.folderInfoCommon(w, r)
+	if errors.Is(err, errFolderNotFound) && out != nil {
+		// A configured mailbox not made yet: said so, with no identity made up.
+		apiJSON(w, map[string]any{"name": out.Name, "created": false, "configured": true})
+		return
+	}
 	if err != nil {
 		apiError(w, err.Error(), status)
 		return
@@ -184,6 +252,9 @@ func (s *Server) folderInfoCommon(w http.ResponseWriter, r *http.Request) (*fold
 		return nil, http.StatusInternalServerError, err
 	}
 	if !exists {
+		if mb, ok := bundle.spec.AutoMailboxes()[req.Folder]; ok && mb.Auto != mailbox.AutoNo {
+			return &folderInfoOut{Name: req.Folder}, http.StatusNotFound, errFolderNotFound
+		}
 		return nil, http.StatusNotFound, errFolderNotFound
 	}
 	folder, err := bundle.mbox.Folder(req.Folder, 0)
@@ -192,6 +263,7 @@ func (s *Server) folderInfoCommon(w http.ResponseWriter, r *http.Request) (*fold
 	}
 	return &folderInfoOut{
 		Name:          folder.Name,
+		Created:       true,
 		GUID:          hex.EncodeToString(folder.GUID[:]),
 		UIDValidity:   folder.UIDValidity,
 		NextUID:       folder.NextUID,

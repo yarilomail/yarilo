@@ -157,6 +157,8 @@ data:
         lmtp_add_received_header: {{ .Values.protocol.lmtp.add_received_header }}
         lmtp_add_message_id: {{ .Values.protocol.lmtp.add_message_id }}
         lmtp_save_to_detail_mailbox: {{ .Values.protocol.lmtp.save_to_detail_mailbox }}
+        lda_mailbox_autocreate: {{ if hasKey .Values.protocol.lmtp "lda_mailbox_autocreate" }}{{ .Values.protocol.lmtp.lda_mailbox_autocreate }}{{ else }}false{{ end }}
+        lda_mailbox_autosubscribe: {{ if hasKey .Values.protocol.lmtp "lda_mailbox_autosubscribe" }}{{ .Values.protocol.lmtp.lda_mailbox_autosubscribe }}{{ else }}false{{ end }}
         lmtp_hdr_delivery_address: {{ .Values.protocol.lmtp.hdr_delivery_address | quote }}
         lmtp_verbose_replies: {{ .Values.protocol.lmtp.verbose_replies }}
         lmtp_user_concurrency_limit: {{ .Values.protocol.lmtp.user_concurrency_limit }}
@@ -618,6 +620,16 @@ data:
         {{- end }}
         {{- with .mail_index_path }}
         mail_index_path: {{ . | quote }}
+        {{- end }}
+        {{- with .mailboxes }}
+        mailboxes:
+          {{- range $name, $mb := . }}
+          {{ $name | quote }}:
+            auto: {{ $mb.auto | default "no" | quote }}
+            {{- with $mb.special_use }}
+            special_use: {{ . | quote }}
+            {{- end }}
+          {{- end }}
         {{- end }}
       {{- end }}
     {{- end }}

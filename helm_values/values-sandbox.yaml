@@ -72,6 +72,9 @@ namespaces:
     list: "yes"
     subscriptions: true
     inbox: true
+    # One auto mailbox, so every account shows it made and subscribed (#2005).
+    mailboxes:
+      Receipts: { auto: subscribe }
   # A public namespace is declared as type: shared with a public prefix and
   # location; there is no "public" type. It was silently skipped, so nothing
   # under Public/ was ever a shared mailbox (#1086).

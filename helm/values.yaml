@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 1
+config_schema_version: 2
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2027,6 +2027,11 @@ protocol:
     # An existing header is never rewritten, malformed or not.
     add_message_id: true
     save_to_detail_mailbox: false
+    # A delivery to a folder that does not exist: off, it goes to the detail
+    # mailbox or INBOX; on, the folder is made (and subscribed with the second
+    # knob). A namespace's configured auto mailbox is made either way.
+    lda_mailbox_autocreate: false
+    lda_mailbox_autosubscribe: false
     hdr_delivery_address: final
     verbose_replies: false
     user_concurrency_limit: 10
@@ -2921,6 +2926,12 @@ namespaces: []
 #     inbox: true                 # owns the magic "INBOX" (set on exactly one)
 #     # personal inherits storage from cfg.Storage.MailHomeTemplate;
 #     # leave `location:` unset.
+#     mailboxes:                  # made on any open, delivery included; subscribe
+#                                 # once when made. special_use: personal only.
+#       Sent:   { auto: subscribe, special_use: "\\Sent" }
+#       Drafts: { auto: subscribe, special_use: "\\Drafts" }
+#       Trash:  { auto: subscribe, special_use: "\\Trash" }
+#       Junk:   { auto: create,    special_use: "\\Junk" }
 #   - type: shared
 #     prefix: "Shared/"
 #     separator: "."

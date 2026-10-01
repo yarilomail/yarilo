@@ -234,6 +234,8 @@ func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error)
 		ResolveUser:        userResolver(cfg.JMAPService.AuthMasterAddr, resolver, authPool),
 		Locker:             locker,
 		SpecialUseDefaults: cfg.Protocol.IMAP.SpecialUseDefaults,
+		Mailboxes:          cfg.PersonalAutoMailboxes(),
+		MailboxLimit:       cfg.Quota.QuotaPolicy().MailboxCount,
 	}, nil
 }
 

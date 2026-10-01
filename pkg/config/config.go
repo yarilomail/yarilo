@@ -297,6 +297,29 @@ type NamespaceConfig struct {
 	// IgnoreACL bypasses ACL enforcement for this namespace even when
 	// acl.enabled is true — for trusted admin/public roots.
 	IgnoreACL bool `koanf:"acl_ignore"`
+	// Mailboxes are created, or created and subscribed, for the user, keyed by
+	// the name inside the namespace (#2005).
+	Mailboxes map[string]NamespaceMailboxConfig `koanf:"mailboxes"`
+}
+
+// NamespaceMailboxConfig is one configured mailbox: auto is no, create or
+// subscribe; special_use is its RFC 6154 attribute, personal namespace only.
+type NamespaceMailboxConfig struct {
+	Auto       string `koanf:"auto"`
+	SpecialUse string `koanf:"special_use"`
+}
+
+// AutoMailboxes is the namespace's mailboxes block in the form sessions read.
+func (ns NamespaceConfig) AutoMailboxes() map[string]mailbox.AutoMailbox {
+	if len(ns.Mailboxes) == 0 {
+		return nil
+	}
+	out := make(map[string]mailbox.AutoMailbox, len(ns.Mailboxes))
+	for name, mb := range ns.Mailboxes {
+		mode, _ := mailbox.NormalizeAuto(mb.Auto)
+		out[name] = mailbox.AutoMailbox{Auto: mode, SpecialUse: strings.TrimSpace(mb.SpecialUse)}
+	}
+	return out
 }
 
 // foldNamespaceLocations turns the 2.4 split spelling (mail_driver + mail_path
@@ -543,6 +566,11 @@ type LMTPProtocolConfig struct {
 	AddMessageID bool `koanf:"lmtp_add_message_id"`
 	// SaveToDetailMailbox delivers user+folder@domain to mailbox 'folder' instead of INBOX. Default: false.
 	SaveToDetailMailbox bool `koanf:"lmtp_save_to_detail_mailbox"`
+	// LDAMailboxAutocreate makes a missing folder a delivery names; off, the
+	// message goes to INBOX. A configured auto mailbox is made either way.
+	LDAMailboxAutocreate bool `koanf:"lda_mailbox_autocreate"`
+	// LDAMailboxAutosubscribe subscribes what LDAMailboxAutocreate makes.
+	LDAMailboxAutosubscribe bool `koanf:"lda_mailbox_autosubscribe"`
 	// HdrDeliveryAddress controls the Delivered-To header: none | final | original. Default: "final".
 	HdrDeliveryAddress string `koanf:"lmtp_hdr_delivery_address"`
 	// VerboseReplies includes diagnostic details in error responses. Default: false.
@@ -2886,6 +2914,13 @@ func (cfg *Config) validate() error {
 	if err := ValidateNamespaceTypes(cfg.Namespaces); err != nil {
 		return err
 	}
+	if err := cfg.foldSpecialUse(); err != nil {
+		return err
+	}
+	if cfg.Protocol.LMTP.LDAMailboxAutosubscribe && !cfg.Protocol.LMTP.LDAMailboxAutocreate {
+		return fmt.Errorf("config: lda_mailbox_autosubscribe subscribes what lda_mailbox_autocreate makes; " +
+			"it does nothing with lda_mailbox_autocreate off")
+	}
 	if err := ValidateFTSIndexRoot(cfg.FTS.IndexRoot); err != nil {
 		return err
 	}
@@ -3176,8 +3211,107 @@ func ValidateNamespaceTypes(namespaces []NamespaceConfig) error {
 		if err := validateOwnerTemplatedNamespace(i, ns); err != nil {
 			return err
 		}
+		if err := validateNamespaceMailboxes(namespaces, i); err != nil {
+			return err
+		}
 	}
 	return validateNamespaceFileSlugs(namespaces)
+}
+
+// validateNamespaceMailboxes refuses an unknown auto mode or attribute, auto in
+// a namespace with no store of its own, and special_use outside the personal one.
+func validateNamespaceMailboxes(namespaces []NamespaceConfig, i int) error {
+	ns := namespaces[i]
+	if len(ns.Mailboxes) == 0 {
+		return nil
+	}
+	shapes := NamespaceShapes(namespaces)
+	primary := i == mailbox.PrimaryPersonalIndex(shapes)
+	for _, name := range sortedMailboxNames(ns.Mailboxes) {
+		mb := ns.Mailboxes[name]
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("config: namespace %d (prefix %q) has a mailboxes entry with no name", i, ns.Prefix)
+		}
+		mode, ok := mailbox.NormalizeAuto(mb.Auto)
+		if !ok {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has unknown auto %q; "+
+				"valid values are no, create and subscribe", i, ns.Prefix, name, mb.Auto)
+		}
+		if mode != mailbox.AutoNo && strings.HasPrefix(strings.ToLower(strings.TrimSpace(ns.Location)), "virtual:") {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has auto %s, but a virtual "+
+				"mailbox is made by its configuration file", i, ns.Prefix, name, mode)
+		}
+		if mode != mailbox.AutoNo && !primary && !namespaceHoldsItsOwnStore(shapes, i, ns) {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has auto %s, but the namespace "+
+				"has no store of its own to create it in", i, ns.Prefix, name, mode)
+		}
+		attr := strings.TrimSpace(mb.SpecialUse)
+		if attr == "" {
+			continue
+		}
+		if !mailbox.IsSpecialUseAttr(attr) {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has special_use %q, which is not "+
+				"a special-use attribute", i, ns.Prefix, name, attr)
+		}
+		if !primary {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has special_use %s; special_use "+
+				"is kept for the personal namespace only", i, ns.Prefix, name, attr)
+		}
+	}
+	return nil
+}
+
+// namespaceHoldsItsOwnStore is a personal namespace with its own store, or a
+// shared one at a fixed location: somewhere a mailbox can be made for the user.
+func namespaceHoldsItsOwnStore(shapes []mailbox.NamespaceShape, i int, ns NamespaceConfig) bool {
+	if mailbox.OwnsStore(shapes, i) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(ns.Type), "shared") &&
+		strings.TrimSpace(ns.Location) != "" && !mailbox.PrefixIsOwnerTemplated(ns.Prefix)
+}
+
+func sortedMailboxNames(m map[string]NamespaceMailboxConfig) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// PersonalAutoMailboxes is the primary personal namespace's mailboxes block,
+// for a server that sees that namespace only.
+func (cfg *Config) PersonalAutoMailboxes() map[string]mailbox.AutoMailbox {
+	if i := mailbox.PrimaryPersonalIndex(NamespaceShapes(cfg.Namespaces)); i >= 0 {
+		return cfg.Namespaces[i].AutoMailboxes()
+	}
+	return nil
+}
+
+// foldSpecialUse makes imap_special_use_defaults and the personal namespace's
+// special_use one map; one name with two different attributes refuses startup.
+func (cfg *Config) foldSpecialUse() error {
+	i := mailbox.PrimaryPersonalIndex(NamespaceShapes(cfg.Namespaces))
+	if i < 0 || len(cfg.Namespaces[i].Mailboxes) == 0 {
+		return nil
+	}
+	ns := cfg.Namespaces[i]
+	for _, name := range sortedMailboxNames(ns.Mailboxes) {
+		attr := strings.TrimSpace(ns.Mailboxes[name].SpecialUse)
+		if attr == "" {
+			continue
+		}
+		if prev, ok := cfg.Protocol.IMAP.SpecialUseDefaults[name]; ok && prev != attr {
+			return fmt.Errorf("config: mailbox %q has special_use %s in namespaces.mailboxes and %s in "+
+				"imap_special_use_defaults; give it one", name, attr, prev)
+		}
+		if cfg.Protocol.IMAP.SpecialUseDefaults == nil {
+			cfg.Protocol.IMAP.SpecialUseDefaults = map[string]string{}
+		}
+		cfg.Protocol.IMAP.SpecialUseDefaults[name] = attr
+	}
+	return nil
 }
 
 // NamespaceShapes is the set as pkg/mailbox reads it, so the loader and a
@@ -3437,7 +3571,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 1
+const minConfigSchema = 2
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3449,6 +3583,7 @@ const minConfigSchema = 1
 // gives.
 var schemaAdditions = map[int][]string{
 	1: {"chart_version", "config_schema_version", "hostname", "lmtp_add_message_id"},
+	2: {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

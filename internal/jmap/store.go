@@ -1,7 +1,9 @@
 package jmap
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -38,6 +40,11 @@ type Storage struct {
 	// SpecialUseDefaults maps folder name to its attribute, from
 	// protocol.imap.imap_special_use_defaults. Per-user overrides win.
 	SpecialUseDefaults map[string]string
+	// Mailboxes are the personal namespace's configured ones; the Box makes
+	// them on any open, as for every other server (#2005).
+	Mailboxes map[string]mailbox.AutoMailbox
+	// MailboxLimit is quota_mailbox_count, zero for none.
+	MailboxLimit int64
 }
 
 // userHandle is one request's view of a user's mail. JMAP has no session, so a
@@ -94,10 +101,16 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 		info: info,
 		box:  s.mailboxFor(info).OpenUser(info),
 	}
-	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info))
+	// The user's INBOX is made on any open, as IMAP's login makes it: a fresh
+	// account's first Mailbox/get otherwise found no store at all.
+	if err := h.box.Init(); err != nil {
+		h.box.Close() //nolint:errcheck
+		return nil, fmt.Errorf("jmap: init %s: %w", username, err)
+	}
 	h.folders = s.folderIdentitiesFor(username)
 	h.threads = s.Threads
 	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)
+	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info), mailboxbase.WithAuto(s.boxAuto(h)))
 	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)
 	return h, nil
 }
@@ -160,5 +173,25 @@ func (l *lazyStore) get() (*userHandle, error) {
 func (l *lazyStore) close() {
 	if l.handle != nil {
 		l.handle.close()
+	}
+}
+
+// boxAuto is the personal namespace's configured mailboxes with the list event
+// and the subscription file a made one gets, as IMAP gives them.
+func (s *Storage) boxAuto(h *userHandle) mailboxbase.Auto {
+	return mailboxbase.Auto{
+		Mailboxes: s.Mailboxes,
+		Limit:     s.MailboxLimit,
+		Created: func(rel string) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := s.Locker.Emit(ctx, locks.MailboxListKey(h.info.Username), locks.EventMailboxCreate, rel); err != nil {
+				slog.Debug("jmap: emit list event failed", "folder", rel, "err", err)
+			}
+		},
+		Subscribe: func(rel string) error {
+			_, err := h.subs.AddOwn(rel)
+			return err
+		},
 	}
 }
