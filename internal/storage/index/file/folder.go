@@ -629,23 +629,8 @@ func (fs *folderState) flush() error {
 	if err := fs.syncHeaderSizeLocked(); err != nil {
 		return err
 	}
+	fs.reconcileHeaderLocked()
 	ri := fs.file.ToRecreateInput(fs.indexPath)
-	// Recount from actual records so counter drift is corrected on every
-	// flush rather than persisted to the next base file.
-	ri.Header.MessagesCount = uint32(len(ri.Records))
-	ri.Header.SeenMessagesCount = 0
-	ri.Header.DeletedMessagesCount = 0
-	for _, rec := range ri.Records {
-		if rec.Flags&mailindex.FlagSeen != 0 {
-			ri.Header.SeenMessagesCount++
-		}
-		if rec.Flags&mailindex.FlagDeleted != 0 {
-			ri.Header.DeletedMessagesCount++
-		}
-	}
-	fs.file.Header.MessagesCount = ri.Header.MessagesCount
-	fs.file.Header.SeenMessagesCount = ri.Header.SeenMessagesCount
-	fs.file.Header.DeletedMessagesCount = ri.Header.DeletedMessagesCount
 	if fs.volatileDir != "" {
 		if err := os.MkdirAll(fs.volatileDir, 0o700); err != nil {
 			return fmt.Errorf("fileindex/flush: mkdir volatile: %w", err)
@@ -2608,19 +2593,7 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 		}
 	}
 
-	// Recount from actual records so drift from a corrupted header update is
-	// corrected right after replay, not only at the next flush.
-	fs.file.Header.MessagesCount = uint32(len(fs.file.Records))
-	fs.file.Header.SeenMessagesCount = 0
-	fs.file.Header.DeletedMessagesCount = 0
-	for _, rec := range fs.file.Records {
-		if rec.Flags&mailindex.FlagSeen != 0 {
-			fs.file.Header.SeenMessagesCount++
-		}
-		if rec.Flags&mailindex.FlagDeleted != 0 {
-			fs.file.Header.DeletedMessagesCount++
-		}
-	}
+	fs.reconcileHeaderLocked()
 
 	// Truncate any partial tail after the last complete BOUNDARY, only on full
 	// replay (fromOffset==0) -- incremental appends are always complete.
