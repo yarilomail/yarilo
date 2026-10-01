@@ -91,18 +91,23 @@ while :; do
 done
 [ "$waited" -gt 0 ] && echo "smoketest: waited ${waited}s for the directors to route to every backend"
 
-# enotify_snapshot records what the index and both backends held when the
-# enotify search came back empty (#2056): the failure is gone by the next run.
-SMOKE_USER="${SMOKE_USER:-u1@d00001.test}"
-enotify_snapshot() {
-  local token=$1 api pod d
-  echo "== enotify snapshot $(date -u +%FT%TZ) for $SMOKE_USER, subject $token"
+# Each probe logs in as its own flag says: a snapshot about another account
+# describes a mailbox the probe never opened.
+job_user() {
+  awk -F= -v f="$1" '$0 ~ "- " f "=" {print $2; exit}' "$(dirname "$0")/job.yaml"
+}
+
+# failure_snapshot records what the index and both backends held at a failure
+# that the next run no longer shows (#2056, #2078).
+failure_snapshot() {
+  local kind=$1 user=${SMOKE_USER:-$2} token=$3 api pod d
+  echo "== $kind snapshot $(date -u +%FT%TZ) for $user, subject ${token:-none}"
   d=$(kubectl -n "$NAMESPACE" get pods -l "$DIRECTOR_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  [ -n "$d" ] && kubectl -n "$NAMESPACE" exec "$d" -- yarctl director map --user "$SMOKE_USER" 2>&1 || true
+  [ -n "$d" ] && kubectl -n "$NAMESPACE" exec "$d" -- yarctl director map --user "$user" 2>&1 || true
   api=$(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
   lookup() {
     [ -n "$token" ] && kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- \
-      yarctl fts lookup "$SMOKE_USER" --folder INBOX --header "Subject:$token" 2>&1 | grep -v '^term' || true
+      yarctl fts lookup "$user" --folder INBOX --header "Subject:$token" 2>&1 | grep -v '^term' || true
   }
   # Asked before anything opens the mailbox and again after: which lookup finds
   # the message says whether opening it is what healed the answer.
@@ -110,8 +115,8 @@ enotify_snapshot() {
   sleep 5
   echo "-- lookup, untouched, 5s later"; lookup
   # Index checkpoint against the folder's next UID: the ftsCatchUp decision.
-  kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl fts status "$SMOKE_USER" --folder INBOX 2>&1 || true
-  kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl folder info "$SMOKE_USER" INBOX 2>&1 || true
+  kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl fts status "$user" --folder INBOX 2>&1 || true
+  kubectl -n "$NAMESPACE" exec "$api" -c yarilo-backend-api -- yarctl folder info "$user" INBOX 2>&1 || true
   echo "-- lookup, after status and folder info"; lookup
   for pod in $(kubectl -n "$NAMESPACE" get pods -l "$BACKEND_LABEL" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
     # The fts service turns hits into UIDs through the GUID store; its
@@ -139,7 +144,14 @@ out=$(kubectl -n "$NAMESPACE" logs job/smoketest 2>&1 || true)
 echo "$out"
 failed=$(echo "$out" | grep '"msg":"sieve: FAIL".*"test":"enotify"' || true)
 if [ -n "$failed" ]; then
-  enotify_snapshot "$(echo "$failed" | grep -o 'XNOTIFY[0-9]*' | head -1)"
+  failure_snapshot enotify "$(job_user -imap-user)" "$(echo "$failed" | grep -o 'XNOTIFY[0-9]*' | head -1)"
+fi
+# A FETCH that answers from a cold mailbox is right again by the next run, so
+# the state it answered from has to be read now or not at all (#2078).
+fetch_failed=$(echo "$out" | grep '"msg":"smoke: FAIL"' | grep '"check":"[^"]*FETCH' || true)
+if [ -n "$fetch_failed" ]; then
+  echo "$fetch_failed"
+  failure_snapshot fetch "$(job_user -envelope-user)" ""
 fi
 case "$status" in
   1/*) exit 0 ;;
