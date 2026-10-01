@@ -3,11 +3,16 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // fetchEnvelopeProbeSubject marks the message this check appends when it finds
 // an empty INBOX, so cleanup removes exactly that one.
 const fetchEnvelopeProbeSubject = "yarilo-smoke-envelope-probe"
+
+// fetchRetryDelay is the wait before the same session asks again; a var so
+// the tests do not sleep.
+var fetchRetryDelay = 2 * time.Second
 
 // checkFetchEnvelope runs the command a mail client issues to draw a message
 // list, on an account's REAL INBOX.
@@ -76,28 +81,62 @@ func fetchEnvelopeProbe(c *imapClient) error {
 	span := fmt.Sprintf("%d:%d", low, exists)
 
 	for _, label := range []string{"cold", "warm"} {
-		lines, ferr := c.cmd(fmt.Sprintf("FETCH %s (ENVELOPE BODYSTRUCTURE)", span))
-		if ferr != nil {
-			return fmt.Errorf("%s FETCH (ENVELOPE BODYSTRUCTURE) %s: %w", label, span, ferr)
+		bad, err := fetchSpan(c, label, span, want)
+		if err != nil {
+			return err
 		}
-		// The row COUNT, not just a tagged OK: a dropped connection is no
-		// tagged response at all, and a partial answer is a tagged OK with
-		// rows missing. Only counting tells those from a healthy run.
-		rows := 0
-		for _, l := range lines {
-			if !strings.HasPrefix(l, "* ") || !strings.Contains(l, "FETCH") {
-				continue
-			}
-			rows++
-			for _, item := range []string{"ENVELOPE", "BODYSTRUCTURE"} {
-				if !strings.Contains(l, item) {
-					return fmt.Errorf("%s FETCH %s answered without %s: %s", label, span, item, l)
-				}
-			}
-		}
-		if rows != want {
-			return fmt.Errorf("%s FETCH %s returned %d untagged rows, want %d", label, span, rows, want)
+		if bad != "" {
+			return fmt.Errorf("%s FETCH %s answered without %s; %s", label, span, bad, fetchRetries(c, label, span, want))
 		}
 	}
 	return nil
+}
+
+// fetchSpan returns the first row missing an item, as "<item>: <row>".
+func fetchSpan(c *imapClient, label, span string, want int) (string, error) {
+	lines, ferr := c.cmd(fmt.Sprintf("FETCH %s (ENVELOPE BODYSTRUCTURE)", span))
+	if ferr != nil {
+		return "", fmt.Errorf("%s FETCH (ENVELOPE BODYSTRUCTURE) %s: %w", label, span, ferr)
+	}
+	// The row count, not a tagged OK: a partial answer is a tagged OK with
+	// rows missing, and only counting tells it from a healthy run.
+	rows := 0
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "* ") || !strings.Contains(l, "FETCH") {
+			continue
+		}
+		rows++
+		for _, item := range []string{"ENVELOPE", "BODYSTRUCTURE"} {
+			if !strings.Contains(l, item) {
+				return item + ": " + l, nil
+			}
+		}
+	}
+	if rows != want {
+		return "", fmt.Errorf("%s FETCH %s returned %d untagged rows, want %d", label, span, rows, want)
+	}
+	return "", nil
+}
+
+// fetchRetries asks again in the same session, then after a fresh SELECT, and
+// says which answered: the first heals a load race, only the second a stale view.
+func fetchRetries(c *imapClient, label, span string, want int) string {
+	verdict := func(bad string, err error) string {
+		switch {
+		case err != nil:
+			return "failed: " + err.Error()
+		case bad != "":
+			return "still without " + bad
+		}
+		return "answered"
+	}
+	time.Sleep(fetchRetryDelay)
+	again := verdict(fetchSpan(c, label, span, want))
+	reselect := "SELECT failed"
+	if _, err := c.selectFolder("INBOX"); err == nil {
+		reselect = verdict(fetchSpan(c, label, span, want))
+	} else {
+		reselect += ": " + err.Error()
+	}
+	return fmt.Sprintf("same session after %s: %s; after a fresh SELECT: %s", fetchRetryDelay, again, reselect)
 }

@@ -19,6 +19,11 @@ type fetchServer struct {
 	// from a client (#1184).
 	reply []string
 	tear  bool
+	// replies, when set, answers the n-th FETCH with replies[n-1] and every
+	// later one with reply; healed answers every FETCH after a second SELECT.
+	replies [][]string
+	healed  []string
+	selects int
 }
 
 func newFetchClient(t *testing.T, exists int, srv *fetchServer) *imapClient {
@@ -37,11 +42,20 @@ func newFetchClient(t *testing.T, exists int, srv *fetchServer) *imapClient {
 			verb, _, _ := strings.Cut(rest, " ")
 			switch strings.ToUpper(verb) {
 			case "SELECT":
+				srv.mu.Lock()
+				srv.selects++
+				srv.mu.Unlock()
 				fmt.Fprintf(serverSide, "* %d EXISTS\r\n", exists) //nolint:errcheck
 			case "FETCH":
 				srv.mu.Lock()
 				srv.fetches++
 				tear, reply := srv.tear, srv.reply
+				if srv.fetches <= len(srv.replies) {
+					reply = srv.replies[srv.fetches-1]
+				}
+				if srv.healed != nil && srv.selects >= 2 {
+					reply = srv.healed
+				}
 				srv.mu.Unlock()
 				if tear {
 					serverSide.Close()
@@ -63,7 +77,14 @@ func row(seq int) string {
 		`BODYSTRUCTURE ("text" "plain" NIL NIL NIL "7bit" 4 1))`, seq)
 }
 
+func noRetryDelay(t *testing.T) {
+	saved := fetchRetryDelay
+	fetchRetryDelay = 0
+	t.Cleanup(func() { fetchRetryDelay = saved })
+}
+
 func TestFetchEnvelopeProbe(t *testing.T) {
+	noRetryDelay(t)
 	full := []string{row(1), row(2), row(3)}
 	cases := []struct {
 		name    string
@@ -120,5 +141,58 @@ func TestFetchEnvelopeProbeReadsTwice(t *testing.T) {
 	defer srv.mu.Unlock()
 	if srv.fetches != 2 {
 		t.Errorf("issued %d FETCHes, want 2 (cold then cached)", srv.fetches)
+	}
+}
+
+// A missing item is asked for again in the same session, then after a fresh
+// SELECT; the error says which one answered.
+func TestFetchEnvelopeProbeNamesWhichRetryAnswered(t *testing.T) {
+	noRetryDelay(t)
+
+	full := []string{row(1), row(2), row(3)}
+	empty := []string{row(1), "* 2 FETCH ()", row(3)}
+	cases := []struct {
+		name    string
+		replies [][]string
+		reply   []string
+		healed  []string
+		want    []string
+	}{
+		{
+			name:    "the same session answers on the second ask",
+			replies: [][]string{empty},
+			reply:   full,
+			want:    []string{"cold FETCH 1:3 answered without ENVELOPE: * 2 FETCH ()", "same session after 0s: answered", "after a fresh SELECT: answered"},
+		},
+		{
+			name:   "only a fresh SELECT answers",
+			reply:  empty,
+			healed: full,
+			want:   []string{"same session after 0s: still without ENVELOPE", "after a fresh SELECT: answered"},
+		},
+		{
+			name:  "nothing answers",
+			reply: empty,
+			want:  []string{"same session after 0s: still without ENVELOPE", "after a fresh SELECT: still without ENVELOPE"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &fetchServer{replies: tc.replies, reply: tc.reply, healed: tc.healed}
+			err := fetchEnvelopeProbe(newFetchClient(t, 3, srv))
+			if err == nil {
+				t.Fatal("a row without envelope passed the probe")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q does not say %q", err, w)
+				}
+			}
+			srv.mu.Lock()
+			defer srv.mu.Unlock()
+			if srv.fetches != 3 {
+				t.Errorf("issued %d FETCHes, want 3 (cold, same session, after SELECT)", srv.fetches)
+			}
+		})
 	}
 }
