@@ -48,9 +48,9 @@ func rewriteBaseHeader(t *testing.T, base string, edit func(*mailindex.Header)) 
 	}
 }
 
-// appendWithoutNextUID logs appends for these uids as a writer whose header
-// update was lost: the records reach the log, next_uid does not.
-func appendWithoutNextUID(t *testing.T, dir string, uids ...uint32) {
+// logWithout writes what ops produce to the log, minus the records drop
+// names: a writer whose header updates were lost, or never written.
+func logWithout(t *testing.T, dir string, drop func(rec []byte) bool, ops func(t *testing.T, fs *folderState) [][]byte) {
 	t.Helper()
 	a := openIdx(dir, testUser)
 	defer a.Close() //nolint:errcheck
@@ -63,28 +63,73 @@ func appendWithoutNextUID(t *testing.T, dir string, uids ...uint32) {
 	a.mu.Unlock()
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	nextUID := encU32Update(28, 0)[:12]
-	for _, uid := range uids {
-		if err := fs.appendLocked(&mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
-			t.Fatal(err)
+	var kept [][]byte
+	for _, r := range ops(t, fs) {
+		if !drop(r) {
+			kept = append(kept, r)
 		}
-		recs, err := fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+	}
+	if err := fs.appendMutLog(kept...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// isNextUIDUpdate and isHeaderUpdate tell records apart by their first 12
+// bytes: type, size, offset and length, never the value.
+func isNextUIDUpdate(r []byte) bool { return bytes.HasPrefix(r, encU32Update(28, 0)[:12]) }
+
+func isHeaderUpdate(r []byte) bool {
+	for _, off := range []uint16{28, 32, 40, 44} {
+		if bytes.HasPrefix(r, encU32Update(off, 0)[:12]) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendOps(uids ...uint32) func(t *testing.T, fs *folderState) [][]byte {
+	return func(t *testing.T, fs *folderState) [][]byte {
+		var out [][]byte
+		for _, uid := range uids {
+			if err := fs.appendLocked(&mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
+				t.Fatal(err)
+			}
+			recs, err := fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, recs...)
+		}
+		return out
+	}
+}
+
+// appendSeenExpungeOps appends 4 as seen, marks 1 seen, and expunges 2.
+func appendSeenExpungeOps(t *testing.T, fs *folderState) [][]byte {
+	out := appendOps()(t, fs)
+	if err := fs.appendLocked(&mailbox.MessageMeta{UID: 4, Size: 10, Flags: []string{`\Seen`}}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = append(out, recs...)
+	for _, step := range []func(modseq uint64) ([][]byte, error){
+		func(m uint64) ([][]byte, error) { return fs.writeFlagsLocked(1, []string{`\Seen`}, nil, flagsAdd, m) },
+		func(m uint64) ([][]byte, error) { return fs.expungeLocked(2, m) },
+	} {
+		modseq, err := fs.bumpModSeqHeader()
 		if err != nil {
 			t.Fatal(err)
 		}
-		var kept [][]byte
-		for _, r := range recs {
-			if !bytes.HasPrefix(r, nextUID) {
-				kept = append(kept, r)
-			}
-		}
-		if len(kept) != len(recs)-1 {
-			t.Fatalf("expected to drop exactly the next_uid update, dropped %d", len(recs)-len(kept))
-		}
-		if err := fs.appendMutLog(kept...); err != nil {
+		recs, err := step(modseq)
+		if err != nil {
 			t.Fatal(err)
 		}
+		out = append(out, recs...)
 	}
+	return out
 }
 
 // A header that disagrees with its records is re-derived from them on open,
@@ -92,10 +137,14 @@ func appendWithoutNextUID(t *testing.T, dir string, uids ...uint32) {
 func TestTheHeaderIsReDerivedFromItsRecords(t *testing.T) {
 	seen, deleted := []string{`\Seen`}, []string{`\Deleted`}
 	cases := []struct {
-		name    string
-		flags   [][]string
-		edit    func(*mailindex.Header)
-		logOnly []uint32
+		name  string
+		flags [][]string
+		edit  func(*mailindex.Header)
+		// log, when set, writes these records to the log without the ones drop names.
+		log  func(t *testing.T, fs *folderState) [][]byte
+		drop func(rec []byte) bool
+		// writes runs through a session before the reopen, with logging on.
+		writes func(t *testing.T, u *userIndex, fid uint64)
 		// wantUID is the uid a transaction's append must receive next.
 		wantUID   uint32
 		wantHdr   mailindex.Header
@@ -127,13 +176,58 @@ func TestTheHeaderIsReDerivedFromItsRecords(t *testing.T) {
 			wantHdr: mailindex.Header{NextUID: 5, MessagesCount: 4, SeenMessagesCount: 1},
 		},
 		{
-			name:      "next_uid behind after the log is replayed",
-			flags:     [][]string{nil, nil, nil},
-			edit:      func(*mailindex.Header) {},
-			logOnly:   []uint32{4, 5},
-			wantUID:   6,
-			wantHdr:   mailindex.Header{NextUID: 7, MessagesCount: 6},
-			corrected: []string{"next_uid"},
+			name:  "a log carrying append, \\Seen and expunge",
+			flags: [][]string{nil, seen, nil},
+			edit:  func(*mailindex.Header) {},
+			writes: func(t *testing.T, u *userIndex, fid uint64) {
+				tx, err := u.Begin(fid)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx.Append(&mailbox.MessageMeta{Size: 10, Flags: seen})
+				if _, err := tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+				if err := u.AddFlags(fid, 1, seen, nil); err != nil {
+					t.Fatal(err)
+				}
+				tx, err = u.Begin(fid)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx.UpdateFlags(3, mailbox.FlagsUpdate{Flags: seen, Mode: mailbox.FlagsAdd})
+				if _, err := tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+				tx, err = u.Begin(fid)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx.Expunge(2)
+				if _, err := tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantUID: 5,
+			wantHdr: mailindex.Header{NextUID: 6, MessagesCount: 4, SeenMessagesCount: 3},
+		},
+		{
+			name:    "the same log written without header updates",
+			flags:   [][]string{nil, seen, nil},
+			edit:    func(*mailindex.Header) {},
+			log:     appendSeenExpungeOps,
+			drop:    isHeaderUpdate,
+			wantUID: 5,
+			wantHdr: mailindex.Header{NextUID: 6, MessagesCount: 4, SeenMessagesCount: 2},
+		},
+		{
+			name:    "appends replayed without their next_uid update",
+			flags:   [][]string{nil, nil, nil},
+			edit:    func(*mailindex.Header) {},
+			log:     appendOps(4, 5),
+			drop:    isNextUIDUpdate,
+			wantUID: 6,
+			wantHdr: mailindex.Header{NextUID: 7, MessagesCount: 6},
 		},
 	}
 	for _, tc := range cases {
@@ -141,8 +235,8 @@ func TestTheHeaderIsReDerivedFromItsRecords(t *testing.T) {
 			dir := t.TempDir()
 			base := seedBase(t, dir, tc.flags)
 			rewriteBaseHeader(t, base, tc.edit)
-			if len(tc.logOnly) > 0 {
-				appendWithoutNextUID(t, dir, tc.logOnly...)
+			if tc.log != nil {
+				logWithout(t, dir, tc.drop, tc.log)
 			}
 
 			var logged bytes.Buffer
@@ -152,6 +246,16 @@ func TestTheHeaderIsReDerivedFromItsRecords(t *testing.T) {
 			before := map[string]float64{}
 			for _, f := range []string{"next_uid", "messages", "seen", "deleted"} {
 				before[f] = testutil.ToFloat64(metricHeaderCorrected.WithLabelValues(f))
+			}
+
+			if tc.writes != nil {
+				w := openIdx(dir, testUser)
+				wf, err := w.OpenFolder("INBOX", 0, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				tc.writes(t, w, wf.ID)
+				w.Close() //nolint:errcheck
 			}
 
 			b := openIdx(dir, testUser)

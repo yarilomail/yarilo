@@ -47,3 +47,14 @@ func (fs *folderState) headerCorrected(field string, was, now uint32) {
 	slog.Warn("fileindex: header corrected from its records",
 		"trace_id", fs.traceID, "folder", fs.folder, "field", field, "was", was, "now", now)
 }
+
+// moveCount adjusts a flag count for one record whose flags went from old to now.
+func moveCount(n uint32, old, now, flag mailindex.MailFlag) uint32 {
+	switch {
+	case old&flag == 0 && now&flag != 0:
+		return n + 1
+	case old&flag != 0 && now&flag == 0 && n > 0:
+		return n - 1
+	}
+	return n
+}
