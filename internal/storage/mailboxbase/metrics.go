@@ -6,7 +6,7 @@ import (
 )
 
 // The four causes a walk can have, named as the reference names them in
-// enum maildir_scan_why (maildir-sync.c:209-216).
+// enum maildir_scan_why.
 const (
 	reasonFirstSeen  = "first-seen"
 	reasonTokenMoved = "token-moved"

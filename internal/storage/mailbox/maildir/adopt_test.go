@@ -37,11 +37,8 @@ func TestAdoptingAMaildirKeepsItsUIDs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Their uidlist, written the way they write it: the name is cut at the info
-	// separator, so the record names the base and not the file. That is the
-	// point of this fixture -- with full names in it the test would agree with
-	// itself and pass over a store no other implementation produces
-	// (maildir-uidlist.c cuts at MAILDIR_INFO_SEP before recording).
+	// Their uidlist names the base, cut at the info separator as the reference
+	// writes it; full names here would describe a store nobody produces.
 	uidlist := fmt.Sprintf("3 V1600000000 N42 G0123456789abcdef0123456789abcdef\n40 :%s\n41 :%s\n",
 		maildirBaseOf(files[0]), maildirBaseOf(files[1]))
 	if err := os.WriteFile(filepath.Join(home, "Maildir", "dovecot-uidlist"), []byte(uidlist), 0o600); err != nil {

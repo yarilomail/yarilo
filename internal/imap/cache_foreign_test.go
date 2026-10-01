@@ -15,9 +15,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The strings a cache from the reference carries for this message: its own
-// writers' output for the body below (imap-envelope.c:47-87,
-// imap-bodystructure.c:26-283). Nothing of ours produced them.
+// The reference's own envelope and body-structure output for the body below:
+// nothing of ours produced these strings.
 const (
 	foreignEnvelope      = `NIL "a listing" (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Bo" NIL "bo" "example.org")) NIL NIL NIL "<listing@example.com>"`
 	foreignBodyStructure = `"text" "plain" ("charset" "utf-8") NIL NIL "7bit" 18 2 NIL NIL NIL NIL`

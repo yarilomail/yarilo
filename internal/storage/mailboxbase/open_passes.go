@@ -252,13 +252,8 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	if afterWalk != nil {
 		afterWalk(folder)
 	}
-	// The directory as the walk left it, not as it found it: a walk that moves
-	// new/ into cur/ changes cur's mtime itself, and storing the pre-walk token
-	// makes the next open walk again for this process's own move. The reference
-	// re-stats cur/ after the sync for the same reason
-	// (maildir-sync-index.c:277-281). Nothing is lost by it: a change that
-	// lands during the walk leaves the directory dirty, and the window's owed
-	// re-walk takes it (#1941, #1875).
+	// The token as the walk left it, as the reference re-stats cur/: our own move
+	// must not force a re-walk, and a change mid-walk stays dirty (#1941, #1875).
 	after := ps.SyncToken(folder)
 	if after == "" {
 		after = token

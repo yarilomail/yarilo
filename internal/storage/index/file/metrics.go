@@ -145,7 +145,7 @@ var metricCompactionRefused = promauto.NewCounter(prometheus.CounterOpts{
 })
 
 // A pass over a list that has not moved: the stamp is the same, so the index
-// is not written (maildir-sync-index.c:245-262).
+// is not written (as the reference does).
 var metricStampUnchanged = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fileindex_maildir_stamp_unchanged_total",
 	Help: "Maildir stamp writes that found the same stamp already recorded and left the index alone.",

@@ -7,8 +7,7 @@ import (
 )
 
 // The bytes again: what a client is shown is what the cache holds, so the
-// writer is checked against the reference's own output, not against itself
-// (imap-bodystructure.c:26-283).
+// writer is checked against the reference's own output, not against itself.
 func TestWriteBodyStructureMatchesTheReferencesBytes(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -38,7 +38,7 @@ func withMetadata(t *testing.T, md dict.Dict) func(*imapserver.Options) {
 }
 
 // Only the folder whose annotation matches the mask is taken, and a changed
-// annotation is seen on the next NOOP (virtual-config.c:420-441).
+// annotation is seen on the next NOOP (as the reference does).
 func TestAnAnnotationLineFiltersTheBackingFolders(t *testing.T) {
 	conn, rd := virtualServerWith(t, map[string]string{"Tagged": taggedConfig}, seedProjects, nil, withMetadata(t, nil))
 	for tag, cmd := range map[string]string{
@@ -102,7 +102,7 @@ func downServer(t *testing.T, tune func(*imapserver.Options)) (net.Conn, *bufio.
 }
 
 // A pass that fails in a poll is reported untagged and the command completes,
-// the set as the last pass left it (imap-sync.c:637-639).
+// the set as the last pass left it (as the reference does).
 func TestAFailedPassInAPollIsReportedUntagged(t *testing.T) {
 	conn, rd, md := downServer(t, nil)
 	lines := tagged(t, conn, rd, "a1", "NOOP")

@@ -3,7 +3,7 @@ package imaptext
 import "strings"
 
 // One address, or one of the pair of markers the reference writes around a
-// group's members (imap-envelope.c:18-44).
+// group's members.
 type addrItem struct {
 	name    string
 	mailbox string

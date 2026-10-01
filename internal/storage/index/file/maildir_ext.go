@@ -10,7 +10,7 @@ import (
 )
 
 // The maildir extension: what the directories and uid list looked like when
-// this index was written (maildir-storage.h:52-56, nine uint32 little endian).
+// this index was written (nine uint32 little endian, as the reference does).
 const (
 	extNameMaildir = "maildir"
 	maildirHdrSize = 36
@@ -67,8 +67,7 @@ func (u *userIndex) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) err
 	return u.withFolderSite(folderID, lockSiteMaildirStamp, func(fs *folderState) error {
 		data := encodeMaildirHdr(s)
 		if ext := findExt(fs.file.Extensions, extNameMaildir); ext != nil {
-			// Only on a difference, as the reference writes it
-			// (maildir-sync-index.c:245-262).
+			// Only on a difference, as the reference writes it.
 			if was, ok := decodeMaildirHdr(ext.HdrData); ok && was == s {
 				metricStampUnchanged.Inc()
 				return nil
@@ -77,7 +76,7 @@ func (u *userIndex) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) err
 			return fs.flush()
 		}
 		// Registered (36, 0, 0) as the reference does: a header-only
-		// extension has no records to align (maildir-storage.c:318-319).
+		// extension has no records to align.
 		if err := fs.file.AddHeaderExtension(extNameMaildir, data, 0, fs.file.Header.UIDValidity); err != nil {
 			return fmt.Errorf("fileindex/maildir-stamp: %w", err)
 		}

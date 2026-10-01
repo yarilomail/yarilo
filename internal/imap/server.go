@@ -2274,7 +2274,7 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 		return nil, err
 	} else if redirected {
 		// No APPENDUID: the uid is the save folder's, not the virtual
-		// mailbox's, which learns of it at its next sync (virtual-transaction.c:70).
+		// mailbox's, which learns of it at its next sync (as the reference does).
 		_, err := s.Append(target, r, opts)
 		return nil, err
 	}
@@ -2453,8 +2453,8 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	if s.folder == nil || s.knownMsgs == nil {
 		return nil
 	}
-	// A virtual mailbox follows its folders (virtual-sync.c:2052-2069); a failed
-	// pass goes out untagged and the command completes (imap-sync.c:637-639).
+	// A virtual mailbox follows its folders (as the reference does); a failed
+	// pass goes out untagged and the command completes.
 	if s.isVirtualSelected() {
 		if _, verr := s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll); verr != nil {
 			if err := writeSyncFailure(w, verr); err != nil {
@@ -2844,7 +2844,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 			return dependencyError(herr)
 		}
 		// EXPUNGE also drops what stopped matching its rule; the poll after
-		// the command reports those (virtual-sync.c:2012-2017).
+		// the command reports those (as the reference does).
 		defer s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Open) //nolint:errcheck // the poll after the command reports a failure
 	} else if removed, _, herr = s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed); herr != nil {
 		return herr
@@ -3874,7 +3874,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		if !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
 			continue
 		}
-		// The selected-message read: a virtual record reads its copy (virtual-storage.c:978).
+		// The selected-message read: a virtual record reads its copy (as the reference does).
 		rc, fetchErr := s.fetchSelected(m)
 		if fetchErr != nil {
 			return nil, fmt.Errorf("imap/copy fetch: %w", fetchErr)
@@ -4339,7 +4339,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	}
 
 	// Out of a virtual mailbox the source is the copy, expunged in its own
-	// folder (virtual-mail.c:541-548); a record leaves only if its copy did.
+	// folder (as the reference does); a record leaves only if its copy did.
 	var left map[uint32]bool
 	if srcVirtual {
 		var vms []*mailbox.MessageMeta

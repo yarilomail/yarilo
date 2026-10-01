@@ -423,7 +423,7 @@ func (c *folderCache) invalidateDirEntries(by string) {
 }
 
 // markChecked opens the window a walk earns: until something invalidates the
-// folder, a list lookup trusts the map it loaded (maildir-sync.c:44-59).
+// folder, a list lookup trusts the map it loaded (as the reference does).
 func (c *folderCache) markChecked() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -814,9 +814,8 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	// ,S=<phys>,W=<virt> before :2,<flags> so List() reports both sizes
 	// without reading the body.
 	sized := fmt.Sprintf("%s,S=%d,W=%d", basename, sc.phys, sc.phys+sc.lfNoCR)
-	// A message with nothing to say about its flags is delivered under a bare
-	// name, which is what puts it in new/: a file there cannot carry flags, so
-	// the name is what decides the directory (maildir-save.c:251-256, #1959).
+	// A message with no flags is delivered under a bare name, which puts it in
+	// new/: a file there cannot carry flags (#1959, as the reference does).
 	finalName := sized
 	if flagStr != "" {
 		finalName = sized + ":2," + flagStr
@@ -1087,7 +1086,7 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 	}
 
 	// A pass that decides the truth reads the directory itself: the cached
-	// listing names a message, it does not say what is on disk (maildir-sync.c).
+	// listing names a message, it does not say what is on disk (as the reference does).
 	c := u.folderCacheFor(folder)
 	metricDirRead.WithLabelValues("scan").Inc()
 	entries, err := os.ReadDir(dir)
@@ -1389,10 +1388,8 @@ func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, fol
 	return u.reconcile(idx, folder, false)
 }
 
-// ReconcileArrivals takes what the arrival directory holds and judges no
-// absence: a pass that has not read cur/ cannot say what is missing from it.
-// This is the reference's partial sync, taken when cur/ has not moved
-// (maildir-sync.c:860-867, MAILDIR_UIDLIST_SYNC_PARTIAL).
+// ReconcileArrivals reads new/ alone and judges no absence, as the reference's
+// partial sync does when cur/ has not moved.
 func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
 	return u.reconcile(idx, folder, true)
 }
@@ -1400,7 +1397,7 @@ func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, 
 func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
 	// A full walk earns the window; so does a uid list the index was built
-	// from, by one stat (maildir-uidlist.c:975-995, #1875).
+	// from, by one stat (#1875, as the reference does).
 	if !arrivalsOnly {
 		defer u.folderCacheFor(folder.Name).markChecked()
 		defer u.stampUIDList(idx, folder)
@@ -1765,9 +1762,8 @@ func (u *userMailbox) SyncToken(folder string) string {
 	return b.String()
 }
 
-// PartialScope reports whether a walk may read the arrival directory alone:
-// true when cur/ stands exactly where the last walk left it. The reference
-// asks the same question as !cur_changed (maildir-sync.c:860-867).
+// PartialScope reports whether new/ alone may be read: cur/ stands where the
+// last walk left it, the question the reference asks.
 func (u *userMailbox) PartialScope(folder, prevToken string) bool {
 	// By mtime alone, as the reference compares it (DIR_MTIME_CHANGED): the
 	// size in the token is a directory's byte count, which a filesystem may
@@ -2207,7 +2203,7 @@ func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, 
 		return nameOr(name, filename), err
 	}
 	// The name came from a listing that has moved on: re-sync it and ask once
-	// more, the way an open does (#1987, maildir-util.c:154-155).
+	// more, the way an open does (#1987, as the reference does).
 	metricListingRetry.WithLabelValues("rename").Inc()
 	if rerr := u.relistFor(folder); rerr != nil {
 		return filename, nil
@@ -2674,11 +2670,8 @@ func (u *userMailbox) bodyReadable(folder, filename string) bool {
 	return ok
 }
 
-// locate answers where a named message's body is: cur/ first, because that is
-// where all but the newest are, then new/ under the bare name a file there must
-// have. The reference chooses the order by a remembered bit and falls back the
-// same way (maildir-util.c:96-106); the fallback alone gives the same answers
-// without a second place to keep in step (#1959).
+// locate finds a message in cur/ first, then new/ under its bare name; the
+// reference orders by a remembered bit, with the same answers (#1959).
 func (u *userMailbox) locate(folder, filename string) (path string, ok bool) {
 	base := u.folderPath(folder)
 	cur := filepath.Join(base, "cur", filename)
@@ -2779,7 +2772,7 @@ func (u *userMailbox) DriverName() string { return driverName }
 func (b *Backend) FsyncMode() mailbox.FsyncMode { return b.fsync }
 
 // uidListStamp is the uid list as one stat sees it, in the fields the stamp
-// keeps (maildir-storage.h:52-56).
+// keeps (as the reference does).
 func (u *userMailbox) uidListStamp(folder string) (mailbox.MaildirStamp, bool) {
 	metricCacheStat.WithLabelValues("list").Inc()
 	fi, err := statPath(u.uidListPath(folder))

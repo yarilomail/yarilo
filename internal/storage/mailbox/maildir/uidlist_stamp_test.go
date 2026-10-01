@@ -103,7 +103,7 @@ func TestAStampedWindowCostsNoListStat(t *testing.T) {
 }
 
 // The stamp is the reference's own header, so its fields land where that
-// install reads them (maildir-storage.h:52-56).
+// install reads them.
 func TestTheStampSitsInTheReferenceLayout(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	deliverToNew(t, box, "1700000001.M1Pa.host", "body\r\n")
@@ -147,7 +147,7 @@ func windowOpen(u *userMailbox, folder string) bool {
 }
 
 // A list rewritten in the same second to the same size differs only in the
-// nanoseconds, which is the ordinary case (maildir-sync-index.c:255-257).
+// nanoseconds, which is the ordinary case (as the reference does).
 func TestTheStampPinsTheNanoseconds(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	deliverToNew(t, box, "1700000001.M1Pa.host", "body\r\n")

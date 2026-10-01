@@ -26,7 +26,7 @@ func deliver(t *testing.T, box *userMailbox, folder, body string, uid uint32) st
 }
 
 // A flagless delivery goes into new/ under a bare name, a flagged one into cur/
-// with the flags in its name (maildir-save.c:251-256).
+// with the flags in its name (as the reference does).
 func TestADeliveryWithNoFlagsLandsInTheArrivalDirectory(t *testing.T) {
 	box, root := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck

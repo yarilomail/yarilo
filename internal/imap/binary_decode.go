@@ -165,7 +165,7 @@ func decodeCTE(cte string, body []byte) ([]byte, error) {
 	return body, nil
 }
 
-// decodeQP refuses what the reference's decoder refuses (qp-decoder.c): an '='
+// decodeQP refuses what the reference's decoder refuses: an '='
 // not starting a hex pair or a soft break, and a CR without LF.
 func decodeQP(b []byte) ([]byte, error) {
 	out := make([]byte, 0, len(b))

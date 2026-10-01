@@ -71,7 +71,7 @@ func seedSaved(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
 }
 
 // APPEND into a virtual mailbox stores in its "!" folder with the flags given,
-// without APPENDUID: the uid is that folder's (virtual-save.c:78-117, :70).
+// without APPENDUID: the uid is that folder's (as the reference does).
 func TestAppendIntoAVirtualMailboxStoresInItsSaveFolder(t *testing.T) {
 	conn, rd := virtualServer(t, map[string]string{"All": saveConfig}, seedSaved)
 	if got := existsCount(t, conn, rd, "a2", "Virtual/All"); got != 1 {
@@ -164,7 +164,7 @@ func TestMoveIntoAVirtualMailboxLosesTheSourceOnlyWhenStored(t *testing.T) {
 }
 
 // A configuration the server cannot read is the server's fault: the client is
-// told NO [SERVERBUG], the log names the line (virtual-config.c:516, #2048).
+// told NO [SERVERBUG], the log names the line (#2048, as the reference does).
 func TestAnInvalidVirtualConfigurationIsTheServersFault(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()
@@ -190,7 +190,7 @@ func TestAnInvalidVirtualConfigurationIsTheServersFault(t *testing.T) {
 }
 
 // SORT and THREAD in a virtual mailbox order by what the copies say: their
-// headers and dates, read from the folders they live in (virtual-mail.c:502).
+// headers and dates, read from the folders they live in (as the reference does).
 func TestSortAndThreadReadTheCopies(t *testing.T) {
 	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\nArchive\n"},
 		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {

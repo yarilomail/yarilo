@@ -30,9 +30,8 @@ func craftedHeader(t *testing.T) textproto.Header {
 	return h
 }
 
-// A record holding the headers but no built envelope is what a cache from the
-// reference looks like: the envelope is built from them and written back, so
-// the next read is a plain hit (index-mail-headers.c:515-560).
+// A record with headers and no envelope, as the reference's cache holds it: the
+// envelope is built from them and written back, so the next read is a hit.
 func TestAnEnvelopeIsBuiltFromCachedHeaders(t *testing.T) {
 	idx, f, m := compatFolder(t)
 	hdr := craftedHeader(t)
@@ -74,8 +73,7 @@ func TestAnEnvelopeIsBuiltFromCachedHeaders(t *testing.T) {
 }
 
 // A field table written elsewhere spells the same header two ways; the lookup
-// has to be the reference's, which hashes names case-insensitively
-// (mail-cache.c:575-576).
+// has to be the reference's, which hashes names case-insensitively.
 func TestACachedHeaderIsFoundWhateverItsCase(t *testing.T) {
 	idx, f, m := compatFolder(t)
 	fc := Open(idx, f.ID, Options{User: "u", Folder: f.Name})

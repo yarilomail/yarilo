@@ -32,7 +32,7 @@ func subjectOf(t *testing.T, lines []string) string {
 }
 
 // COPY out of a virtual mailbox copies the real message, and COPYUID names the
-// virtual uid it was asked about (virtual-storage.c:978).
+// virtual uid it was asked about (as the reference does).
 func TestCopyOutOfAVirtualMailboxCopiesTheRealMessage(t *testing.T) {
 	conn, rd := virtualServer(t, map[string]string{"Flagged": flaggedConfig}, seedFlagged)
 	if got := existsCount(t, conn, rd, "a2", "Virtual/Flagged"); got != 1 {
@@ -54,7 +54,7 @@ func TestCopyOutOfAVirtualMailboxCopiesTheRealMessage(t *testing.T) {
 }
 
 // MOVE out of a virtual mailbox moves the real message: it arrives in the
-// destination and leaves its own folder (virtual-mail.c:541-548).
+// destination and leaves its own folder (as the reference does).
 func TestMoveOutOfAVirtualMailboxMovesTheRealMessage(t *testing.T) {
 	conn, rd := virtualServer(t, map[string]string{"Flagged": flaggedConfig}, seedFlagged)
 	existsCount(t, conn, rd, "a2", "Virtual/Flagged")

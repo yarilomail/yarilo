@@ -227,7 +227,7 @@ func TestAnUnmovedFolderIsNotRead(t *testing.T) {
 }
 
 // A flag change on the copy is a change of the record: it takes a new modseq,
-// so CHANGEDSINCE and the next poll report it (virtual-sync.c:66-92).
+// so CHANGEDSINCE and the next poll report it (as the reference does).
 func TestAFlagChangeOnTheCopyMovesTheRecord(t *testing.T) {
 	cfg, _ := ParseConfig(strings.NewReader("INBOX\n"))
 	r := &stubResolver{folders: []Backing{inbox(5, msgs(1, 2)...)}}
@@ -253,7 +253,7 @@ func TestAFlagChangeOnTheCopyMovesTheRecord(t *testing.T) {
 }
 
 // What stops matching stays while open and its folder is read again; what is
-// gone leaves at once (virtual-sync.c:1092-1117, 1276-1278).
+// gone leaves at once (as the reference does).
 func TestAPollKeepsWhatStoppedMatchingAndDropsWhatIsGone(t *testing.T) {
 	cfg, _ := ParseConfig(strings.NewReader("INBOX\n  unseen\n"))
 	r := &stubResolver{

@@ -78,7 +78,7 @@ func linesWith(lines []string, suffix string) []string {
 }
 
 // An open virtual mailbox sees what happens in the folders it draws from on
-// the next NOOP, without a new SELECT (virtual-sync.c:2052).
+// the next NOOP, without a new SELECT (as the reference does).
 func TestAnOpenVirtualMailboxFollowsItsFolders(t *testing.T) {
 	conn, rd := virtualServer(t, map[string]string{"All": "INBOX\n"},
 		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
@@ -128,7 +128,7 @@ func TestAnOpenVirtualMailboxFollowsItsFolders(t *testing.T) {
 }
 
 // A message read in a mailbox of unread mail stops matching, but stays until
-// EXPUNGE: vanishing mid-read is what the reference defers (virtual-sync.c:1092).
+// EXPUNGE: vanishing mid-read is what the reference defers.
 func TestWhatStopsMatchingStaysUntilExpunge(t *testing.T) {
 	conn, rd := virtualServer(t, map[string]string{"Unseen": "INBOX\n  unseen\n"},
 		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
@@ -192,7 +192,7 @@ func waitFor(t *testing.T, conn net.Conn, rd *bufio.Reader, want string, d time.
 }
 
 // IDLE on a virtual mailbox wakes on mail delivered to a folder it draws from
-// (virtual-storage.c:693).
+// (as the reference does).
 func TestIdleOnAVirtualMailboxHearsItsFolders(t *testing.T) {
 	conn, rd := virtualServerWith(t, map[string]string{"All": "INBOX\n"},
 		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {

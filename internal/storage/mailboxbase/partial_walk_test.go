@@ -15,9 +15,8 @@ func arrive(t *testing.T, inbox, name string) {
 	}
 }
 
-// A delivery with cur/ unmoved is taken by reading the arrivals alone: the
-// reference calls this the partial sync (maildir-sync.c:860-867), and it is
-// what the hot-arrival case costs today (#1875).
+// A delivery with cur/ unmoved is taken from new/ alone, the reference's
+// partial sync (#1875).
 func TestADeliveryIsTakenByReadingTheArrivalsAlone(t *testing.T) {
 	box, inbox := gateSetup(t)
 	settle(t, inbox, time.Now().Add(-time.Hour))

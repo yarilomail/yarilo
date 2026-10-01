@@ -414,7 +414,7 @@ func (fc *Handle) read(m *mailbox.MessageMeta) map[uint32][]byte {
 		fc.startFreshChain(m) // a bad chain is a miss; nothing of it is kept
 		return nil
 	}
-	// The checksum before the fields (cyrus mailbox.c:705-775): a record that
+	// The checksum before the fields (as the second reference does): a record that
 	// hashes to something else is another message's, field by field.
 	if crc := fc.recordCRCFor(m); crc != 0 && mailindex.RecordCRC(vals) != crc {
 		metricCRCMismatch.Inc()
@@ -490,7 +490,7 @@ func (fc *Handle) storeField(m *mailbox.MessageMeta, fieldID uint32, data []byte
 }
 
 // remember adds a field to the chain the handle knows and checksums it from
-// memory, over the buffer just written (cyrus message.c:2170).
+// memory, over the buffer just written (as the second reference does).
 func (fc *Handle) remember(m *mailbox.MessageMeta, fieldID uint32, data []byte) {
 	vals, ok := fc.chain(m.UID)
 	if !ok {
@@ -600,7 +600,7 @@ func (fc *Handle) StoreEnvelopeText(m *mailbox.MessageMeta, text string) {
 }
 
 // EnvelopeText is the stored envelope; a record holding only headers has one
-// built from them and written back (index-mail-headers.c:515-560).
+// built from them and written back (as the reference does).
 func (fc *Handle) EnvelopeText(m *mailbox.MessageMeta) (string, bool) {
 	if fc == nil {
 		return "", false

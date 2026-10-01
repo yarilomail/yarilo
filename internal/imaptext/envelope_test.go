@@ -8,9 +8,8 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 )
 
-// The bytes are the contract: a cache written here is read by the reference.
-// The wanted strings are the reference's own writer applied by hand to each
-// input (imap-envelope.c:47-87, imap-quote.c:45-240).
+// A cache written here is read by the reference: the wanted strings are its
+// writer's output for each input, worked by hand.
 func TestWriteEnvelopeMatchesTheReferencesBytes(t *testing.T) {
 	when := time.Date(2026, 9, 21, 14, 30, 5, 0, time.FixedZone("", 2*3600))
 	tests := []struct {

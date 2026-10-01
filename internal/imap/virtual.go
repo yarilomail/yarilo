@@ -26,7 +26,7 @@ type virtualConfigured interface {
 }
 
 // syncVirtual brings a virtual mailbox up to date. Membership is decided here,
-// not at SEARCH, so EXISTS and FETCH speak of one set (virtual-sync.c:604).
+// not at SEARCH, so EXISTS and FETCH speak of one set (as the reference does).
 func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode virtual.Mode) (*mailbox.Folder, *imaplib.Error) {
 	box, ok := mailbox.Driver(h.box).(virtualConfigured)
 	if !ok {
@@ -723,7 +723,7 @@ func (s *session) imapSieveOnCopies(pending []pendingStore, copies map[uint32]vi
 }
 
 // subscribeSelected is the event stream an IDLE on the selected mailbox waits
-// on; a virtual one also hears every folder it draws from (virtual-storage.c:693).
+// on; a virtual one also hears every folder it draws from (as the reference does).
 func (s *session) subscribeSelected(ctx context.Context) (<-chan locks.Event, error) {
 	l, user := s.srv.opts.Locker, s.userInfo.Username
 	keys := []string{locks.MailboxKey(user, s.folder.Name)}
@@ -783,7 +783,7 @@ func (s *session) isVirtualName(name string) bool {
 }
 
 // virtualSaveTarget is where writes into name store: name, or a virtual
-// mailbox's "!" folder, then answered without UIDs (virtual-save.c:78-94).
+// mailbox's "!" folder, then answered without UIDs (as the reference does).
 func (s *session) virtualSaveTarget(name string) (target string, redirected bool, err error) {
 	h, rel, derr := s.dispatch(name)
 	if derr != nil || h == nil {

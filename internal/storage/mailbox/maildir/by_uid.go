@@ -17,7 +17,7 @@ import (
 )
 
 // A name off the cached listing is a hint until disk answers for it: a moved
-// name costs one re-sync and a second ask (#1700, maildir-util.c:140-172).
+// name costs one re-sync and a second ask (#1700, as the reference does).
 func (u *userMailbox) RecordPath(folder string, m *mailbox.MessageMeta) (string, error) {
 	name, err := u.recordPathOnce(folder, m)
 	if err == nil || !errors.Is(err, fs.ErrNotExist) {

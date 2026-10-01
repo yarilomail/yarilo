@@ -135,7 +135,7 @@ func (t *indexTx) applyAll(fs *folderState, out *mailbox.TxResult) error {
 		return err
 	}
 	// After the folder's write, never before it: a refused folder write must
-	// leave the store without the copy (#1711, conversations.c:2600-2640).
+	// leave the store without the copy (#1711, as the second reference does).
 	t.trackGUIDs(fs)
 	return nil
 }

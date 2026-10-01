@@ -9,7 +9,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// encodeRefVirtualHdr writes the reference's header (virtual-storage.h:18-42):
+// encodeRefVirtualHdr writes the reference's header:
 // the same watermarks, the folder named rather than identified.
 func encodeRefVirtualHdr(crc uint32, boxes []struct {
 	ID            uint32

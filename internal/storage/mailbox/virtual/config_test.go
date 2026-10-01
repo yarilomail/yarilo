@@ -6,7 +6,7 @@ import (
 )
 
 // The three prefixes mean three different things, and the reference's own
-// parser is where they are read from (virtual-config.c:154-170).
+// parser is where they are read from.
 func TestPrefixesAreNotInterchangeable(t *testing.T) {
 	cfg, err := ParseConfig(strings.NewReader("+INBOX\n-Trash\n!Drafts\n"))
 	if err != nil {
@@ -89,7 +89,7 @@ func TestRulesAttachToTheMailboxesAboveThem(t *testing.T) {
 }
 
 // A bad line names itself, whichever kind it is: the operator is sent to the
-// line to fix, not to the file (virtual-config.c:516-529, #2048).
+// line to fix, not to the file (#2048, as the reference does).
 func TestAConfigurationErrorNamesItsLine(t *testing.T) {
 	for _, tc := range []struct {
 		name, text, want string
@@ -109,7 +109,7 @@ func TestAConfigurationErrorNamesItsLine(t *testing.T) {
 }
 
 // The value of an annotation line is a mask, not a folder pattern: its "*" is
-// kept, and the line names no folder (virtual-config.c:173-184).
+// kept, and the line names no folder (as the reference does).
 func TestAnAnnotationLineKeepsItsMask(t *testing.T) {
 	cfg, err := ParseConfig(strings.NewReader("Projects/*\n-/shared/comment:skip*\n"))
 	if err != nil {
