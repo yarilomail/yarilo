@@ -15,20 +15,15 @@ const mailboxPkg = "github.com/yarilomail/yarilo/pkg/mailbox"
 
 // storageSide are the packages that are part of the storage and may declare the
 // index or the store in their own signatures (#1805).
-var storageSide = []string{"internal/msgcache/", "internal/ftsservice/", "internal/backendapi/", "app/yarilo-migrate/"}
+var storageSide = []string{"internal/msgcache/", "internal/ftsservice/", "internal/backendapi/", "app/yarilo-migrate/", "internal/ftsbench/"}
 
 // notYetMoved is what still reaches past Box, per file; it only shrinks, each
 // PR of #1805 taking its sites off.
 var notYetMoved = map[string]int{
-	"internal/ftsbench/runner.go":   1,
-	"internal/imap/dbox_rebuild.go": 2,
-	"internal/imap/dispatch.go":     1,
-	"internal/imap/foldercreate.go": 1,
-	"internal/imap/server.go":       4,
-	"internal/imap/virtual.go":      2,
-	"internal/jmap/emailset.go":     1,
-	"internal/jmap/store.go":        1,
-	"internal/lmtp/deliver.go":      2,
+	"internal/imap/virtual.go":  4,
+	"internal/jmap/emailset.go": 1,
+	"internal/jmap/store.go":    1,
+	"internal/lmtp/deliver.go":  2,
 }
 
 // Protocol servers see Box and nothing else: a new consumer of the index or of

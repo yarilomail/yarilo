@@ -55,7 +55,7 @@ func (h *userHandle) usage(limits quota.Limits) (quota.Usage, error) {
 		return quota.Usage{}, err
 	}
 	quota.MetricUsageCount.WithLabelValues("miss", "jmap").Inc()
-	h.quotaUsage = quota.CountUsage(h.mbox, h.idx, mailbox.SelectableNames(entries), limits)
+	h.quotaUsage = quota.CountUsage(h.mbox, mailbox.SelectableNames(entries), limits)
 	h.quotaAt = time.Now()
 	return h.quotaUsage, nil
 }

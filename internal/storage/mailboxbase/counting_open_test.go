@@ -23,9 +23,7 @@ func TestCountUsageSettlesNothing(t *testing.T) {
 
 	scanned := syncCount(t, "scanned")
 	untokened := syncCount(t, "scanned-untokened")
-	u := quota.CountUsage(box, box.(interface {
-		Index() mailbox.UserIndex
-	}).Index().(quota.FolderVSizer), []string{"INBOX"}, quota.Limits{})
+	u := quota.CountUsage(box, []string{"INBOX"}, quota.Limits{})
 
 	if got := syncCount(t, "scanned") - scanned; got != 0 {
 		t.Errorf("the count walked the store %v times; it needs the index, not a settled folder", got)

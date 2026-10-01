@@ -27,7 +27,7 @@ func TestCountUsageDoesNotIndexAnUnindexedFolder(t *testing.T) {
 	t.Cleanup(func() { store.Close() }) //nolint:errcheck
 	mbox := mailboxbase.Open(store, idx)
 
-	usage := quota.CountUsage(mbox, idx, []string{"INBOX", "NeverIndexed"}, quota.Limits{})
+	usage := quota.CountUsage(mbox, []string{"INBOX", "NeverIndexed"}, quota.Limits{})
 	if usage.StorageBytes != 0 || usage.Messages != 0 {
 		t.Errorf("usage = %+v, want zero for folders with no index", usage)
 	}

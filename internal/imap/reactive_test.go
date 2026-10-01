@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -32,7 +33,7 @@ func TestTheSessionDoesNotBoundHealRetries(t *testing.T) {
 		srv:           &Server{opts: Options{DboxReactiveRebuild: true}},
 		markedCorrupt: map[uint64]bool{folderID: true},
 	}
-	h := &nsHandle{box: box}
+	h := &nsHandle{box: box, mbox: mailboxbase.Open(box, nil)}
 	fsckd := &mailbox.Folder{ID: folderID, Name: "INBOX", Fsckd: true}
 
 	for i := 0; i < 5; i++ {
@@ -52,7 +53,7 @@ func TestADeferredHealIsNotTreatedAsAFailure(t *testing.T) {
 		srv:           &Server{opts: Options{DboxReactiveRebuild: true}},
 		markedCorrupt: map[uint64]bool{folderID: true},
 	}
-	h := &nsHandle{box: box}
+	h := &nsHandle{box: box, mbox: mailboxbase.Open(box, nil)}
 	fsckd := &mailbox.Folder{ID: folderID, Name: "INBOX", Fsckd: true}
 	if got := s.dboxHealIfCorrupt(h, "INBOX", fsckd); got != nil {
 		t.Error("a deferred heal returned a refreshed folder")

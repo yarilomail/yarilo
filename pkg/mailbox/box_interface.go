@@ -63,6 +63,30 @@ type Box interface {
 	// a consumer the series still owes a method (#1715).
 	Store() UserMailbox
 
+	// Begin opens one command's changes to a folder.
+	Begin(folderID uint64) (BoxTx, error)
+	// Vanished are the uids expunged past sinceModSeq, for QRESYNC.
+	Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error)
+	// Keywords are the folder's keyword names.
+	Keywords(folderID uint64) ([]string, error)
+	// CreateFolder writes a new folder's index with the folder, best effort.
+	CreateFolder(name string, uidValidity uint32)
+	// DeleteFolder and RenameFolder carry a folder's index state along.
+	DeleteFolder(name string) error
+	RenameFolder(oldName, newName string) error
+	// Metadata is the folder's size and message count as its index keeps them.
+	Metadata(folderID uint64) (FolderMetadata, error)
+	// RecordExists reports whether the folder still holds uid.
+	RecordExists(folderID uint64, uid uint32) bool
+	// RebuildFolder rebuilds a lost index from the store; it answers the
+	// messages the folder holds after.
+	RebuildFolder(f *Folder) (int, error)
+	// BackfillGUIDs gives records without a message GUID the one their body has.
+	BackfillGUIDs(f *Folder, name string) error
+	// EnvelopeCache opens the folder's envelope cache. Never nil: with none
+	// served every read misses and every store is dropped.
+	EnvelopeCache(folderID uint64, opts EnvelopeCacheOptions) EnvelopeCache
+
 	// Close releases both halves.
 	Close()
 }

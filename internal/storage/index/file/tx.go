@@ -3,6 +3,7 @@ package file
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -43,6 +44,8 @@ type indexTx struct {
 	folderID uint64
 	ops      []txOp
 	done     bool
+	// expect is the modseq each read record had; its ops apply only on that.
+	expect map[uint32]uint64
 }
 
 func (t *indexTx) Expunge(uid uint32) {
@@ -59,6 +62,15 @@ func (t *indexTx) UpdateFlags(uid uint32, upd mailbox.FlagsUpdate) {
 
 func (t *indexTx) MarkDirty(uid uint32, dirty bool) {
 	t.ops = append(t.ops, txOp{kind: opMarkDirty, uid: uid, dirty: dirty})
+}
+
+// Expect makes the ops on uid apply only while its record still holds modseq;
+// otherwise they are skipped and reported, and the rest still commit.
+func (t *indexTx) Expect(uid uint32, modseq uint64) {
+	if t.expect == nil {
+		t.expect = make(map[uint32]uint64)
+	}
+	t.expect[uid] = modseq
 }
 
 func (t *indexTx) Rollback() { t.done = true }
@@ -81,6 +93,10 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 		// is what a refused write is put back to (#1831).
 		undo := fs.snapshotForTx(t.ops)
 		fs.cacheGone = 0
+		out.Skipped = t.dropUnmet(fs)
+		if len(t.ops) == 0 {
+			return nil
+		}
 		err := t.applyAll(fs, &out)
 		if err != nil {
 			fs.restore(undo)
@@ -95,6 +111,40 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 	}
 	t.idx.noteCacheExpunged(t.folderID, gone)
 	return out, nil
+}
+
+// dropUnmet removes the ops on every uid whose record is gone or moved past
+// the modseq it was read at, and returns those uids, as the reference merges.
+func (t *indexTx) dropUnmet(fs *folderState) []uint32 {
+	if len(t.expect) == 0 {
+		return nil
+	}
+	now := make(map[uint32]uint64, len(t.expect))
+	for _, rec := range fs.file.Records {
+		if _, ok := t.expect[rec.UID]; ok {
+			now[rec.UID] = decodeModseqRec(rec.Ext[extNameModSeq])
+		}
+	}
+	var skipped []uint32
+	unmet := make(map[uint32]bool)
+	for uid, want := range t.expect {
+		if have, ok := now[uid]; !ok || have != want {
+			unmet[uid] = true
+			skipped = append(skipped, uid)
+		}
+	}
+	if len(skipped) == 0 {
+		return nil
+	}
+	kept := t.ops[:0]
+	for _, op := range t.ops {
+		if op.kind == opAppend || !unmet[op.uid] {
+			kept = append(kept, op)
+		}
+	}
+	t.ops = kept
+	sort.Slice(skipped, func(i, j int) bool { return skipped[i] < skipped[j] })
+	return skipped
 }
 
 // applyAll applies every queued op and writes them as one group. Anything it

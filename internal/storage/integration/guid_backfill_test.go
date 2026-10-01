@@ -149,7 +149,8 @@ func TestBackfillStampsLegacyRecords(t *testing.T) {
 		t.Fatal("legacy folder reported as already backfilled")
 	}
 
-	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(mb, idx), idx, folder, "INBOX"); err != nil {
+	// Through Box, the entry point a session reaches it by (#1805).
+	if err := mailboxbase.Open(mb, idx).BackfillGUIDs(folder, "INBOX"); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 

@@ -119,9 +119,9 @@ func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.Sea
 	// One handle per command, as FETCH opens one: misses are parsed and
 	// written back, so the second ordering command over a mailbox pays
 	// nothing for what the first one had to read.
-	var envCache *msgcache.Handle
+	var envCache mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
 	if needs.envelope || needs.refs {
-		envCache = msgcache.Open(s.folderIdx(), s.folder.ID, msgcache.Options{
+		envCache = s.folderMailbox().EnvelopeCache(s.folder.ID, mailbox.EnvelopeCacheOptions{
 			Locker:    s.srv.opts.Locker,
 			User:      s.userInfo.Username,
 			SessionID: s.userInfo.SessionID,
@@ -209,7 +209,7 @@ func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.Sea
 // deliberately not treated as "no data" -- an account whose cache is cold
 // would otherwise sort by empty subjects and look like a mailbox of blank
 // mail (#1448 made the same choice about a message that cannot be read).
-func (s *session) orderingMessage(num uint32, m *mailbox.MessageMeta, raw []byte, needs orderingNeeds, envCache *msgcache.Handle) (imapthread.Message, error) {
+func (s *session) orderingMessage(num uint32, m *mailbox.MessageMeta, raw []byte, needs orderingNeeds, envCache mailbox.EnvelopeCache) (imapthread.Message, error) {
 	// The index answers ARRIVAL and SIZE, so a command asking only for those
 	// never touches the message.
 	if !needs.envelope && !needs.refs {

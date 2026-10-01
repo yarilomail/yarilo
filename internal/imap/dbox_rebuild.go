@@ -5,8 +5,6 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -15,51 +13,29 @@ import (
 // missing/corrupt storage (never on a transient I/O error) so the next open
 // heals the index. Gated per session so a FETCH over N corrupt messages pays
 // one lock/log round-trip, not N. Best-effort.
-func (s *session) flagCorruptOnRead(idx mailbox.UserIndex, folderID uint64, folder, filename string, uid uint32, err error) {
+func (s *session) flagCorruptOnRead(box mailbox.Box, folderID uint64, folder, filename string, uid uint32, err error) {
 	if err == nil || !errors.Is(err, mailbox.ErrCorruptStorage) {
 		return
 	}
-	cm, ok := idx.(mailbox.CorruptionMarker)
-	if !ok {
+	// A record another session expunged between this session's snapshot and
+	// the read is not corruption (#1690).
+	if !box.RecordExists(folderID, uid) {
 		return
 	}
-	// Re-read the index: a record another session expunged between this
-	// session's snapshot and the read is not corruption (#1690).
-	if !s.recordStillThere(idx, folderID, uid) {
+	// Keyed by folder ID: the mark and clear sites name shared folders apart.
+	if s.markedCorrupt[folderID] {
+		return
+	}
+	if !box.MarkCorruptOnFetchErr(folder, err) {
+		slog.Debug("imap: folder not marked corrupt", "user", s.username(), "folder", folder)
 		return
 	}
 	if s.markedCorrupt == nil {
 		s.markedCorrupt = make(map[uint64]bool)
 	}
-	// Key by folder ID, not name: the mark site (FETCH uses s.folder.Name) and
-	// the clear site (SELECT/STATUS use the namespace-relative name) differ for
-	// shared/public folders; the ID is the one identity every call site has.
-	if s.markedCorrupt[folderID] {
-		return
-	}
-	if merr := cm.MarkFolderCorrupt(folderID); merr != nil {
-		slog.Warn("imap: mark folder corrupt failed", "user", s.username(), "folder", folder, "err", merr)
-		return
-	}
 	s.markedCorrupt[folderID] = true
 	slog.Warn("imap: corrupt message flagged for reactive heal",
 		"user", s.username(), "folder", folder, "uid", uid, "file", filename, "err", err)
-}
-
-// recordStillThere reports whether the folder's index still carries uid. A read
-// error on a record another session has expunged is that expunge, not damage.
-func (s *session) recordStillThere(idx mailbox.UserIndex, folderID uint64, uid uint32) bool {
-	msgs, err := idx.GetMessages(folderID, mailbox.SeqSet{{From: uid, To: uid}})
-	if err != nil {
-		// Unknown: keep the old behaviour rather than swallow a real fault.
-		return true
-	}
-	for _, m := range msgs {
-		if m.UID == uid {
-			return true
-		}
-	}
-	return false
 }
 
 // readableSelected is whether fetchSelected has bytes to read: a virtual
@@ -86,7 +62,7 @@ func (s *session) fetchSelected(m *mailbox.MessageMeta) (rc io.ReadCloser, err e
 		// reactive rebuilder would otherwise be stuck FSCKD with nothing to
 		// clear the marker.
 		if mailbox.CanReactiveHeal(s.folderBox()) {
-			s.flagCorruptOnRead(s.folderIdx(), s.folder.ID, s.folder.Name, "", m.UID, err)
+			s.flagCorruptOnRead(s.folderMailbox(), s.folder.ID, s.folder.Name, "", m.UID, err)
 		}
 	}
 	return rc, err
@@ -107,11 +83,10 @@ func (s *session) dboxHealIfCorrupt(h *nsHandle, rel string, f *mailbox.Folder) 
 		delete(s.markedCorrupt, f.ID)
 		return nil
 	}
-	rb, ok := mailbox.Driver(h.box).(mailbox.ReactiveHealer)
-	if !ok {
+	if _, ok := mailbox.Driver(h.box).(mailbox.ReactiveHealer); !ok {
 		return nil
 	}
-	expunged, err := rb.HealCorruptFolder(h.mailbox(), h.idx, f)
+	expunged, err := h.mailbox().HealCorrupt(f)
 	if errors.Is(err, mdbox.ErrHealDeferred) {
 		// Already failed at this storage generation: a reconnect is not new
 		// evidence, and each attempt costs a whole-storage scan (#1682).
@@ -180,7 +155,7 @@ func (s *session) dboxRestoreIfIndexLost(h *nsHandle, rel string, f *mailbox.Fol
 	}
 	slog.Warn("imap: folder index is missing and its messages are in storage; rebuilding from the files",
 		"user", s.username(), "folder", rel, "files", len(recs))
-	st, err := idxrebuild.RebuildFolder(h.mailbox(), h.idx, f)
+	restored, err := h.mailbox().RebuildFolder(f)
 	if err != nil {
 		slog.Warn("imap: rebuild after index loss failed", "user", s.username(), "folder", rel, "err", err)
 		return nil
@@ -192,6 +167,6 @@ func (s *session) dboxRestoreIfIndexLost(h *nsHandle, rel string, f *mailbox.Fol
 	}
 	slog.Info("imap: rebuilt a folder from storage after index loss",
 		"user", s.username(), "folder", rel,
-		"messages", st.UIDsAssigned+st.UIDsPreserved, "uidvalidity", refreshed.UIDValidity)
+		"messages", restored, "uidvalidity", refreshed.UIDValidity)
 	return refreshed
 }

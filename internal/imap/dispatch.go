@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
@@ -28,13 +27,10 @@ type nsHandle struct {
 	spec NamespaceSpec
 	// location is the resolved storage path; empty for backend-less handles.
 	location string
-	// box / idx are the per-user storage handles; nil when declared-only.
-	box mailbox.UserMailbox
-	idx mailbox.UserIndex
-	// mbox pairs the two, built on first use so a handle assembled from
-	// halves still answers (#1715).
-	mbox     mailbox.Box
-	mboxOnce sync.Once
+	// box is the store and mbox the account's mail through Box; nil when
+	// declared-only.
+	box  mailbox.UserMailbox
+	mbox mailbox.Box
 	// subs is the per-namespace subscription store. Personal keeps the
 	// filename "subscriptions" so upgrades preserve existing state;
 	// shared/public use "subscriptions-<ns>" siblings.
@@ -58,7 +54,7 @@ type nsHandle struct {
 }
 
 // implemented reports whether this namespace has working backends.
-func (h *nsHandle) implemented() bool { return h != nil && h.box != nil && h.idx != nil }
+func (h *nsHandle) implemented() bool { return h != nil && h.box != nil && h.mbox != nil }
 
 // fullName returns the wire-protocol mailbox name for a folder in this
 // namespace. Inverse of dispatch().
@@ -347,7 +343,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		name:     name,
 		spec:     spec,
 		box:      box,
-		idx:      idx,
+		mbox:     mailboxbase.Open(box, idx),
 		subs:     store,
 		acl:      aclStore,
 		userInfo: ui,
@@ -355,11 +351,8 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 	}, nil
 }
 
-// mailbox pairs the handle's halves, once.
-func (h *nsHandle) mailbox() mailbox.Box {
-	h.mboxOnce.Do(func() { h.mbox = mailboxbase.Open(h.box, h.idx) })
-	return h.mbox
-}
+// mailbox is the handle's account mail.
+func (h *nsHandle) mailbox() mailbox.Box { return h.mbox }
 
 // mailboxBackendFor returns the MailboxBackend for a namespace, selected by the
 // resolved user's driver -- ui is the owner's userdb identity for an
@@ -646,11 +639,10 @@ func closeHandle(h *nsHandle) {
 	if h == nil {
 		return
 	}
-	if h.box != nil {
+	if h.mbox != nil {
+		h.mbox.Close()
+	} else if h.box != nil {
 		h.box.Close() //nolint:errcheck
-	}
-	if h.idx != nil {
-		h.idx.Close() //nolint:errcheck
 	}
 }
 

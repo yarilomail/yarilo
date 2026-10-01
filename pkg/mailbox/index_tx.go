@@ -15,6 +15,10 @@ type IndexTx interface {
 	// resolved at commit against the record the hold finds, and reported back.
 	UpdateFlags(uid uint32, upd FlagsUpdate)
 
+	// Expect makes the ops on uid apply only while its record holds modseq;
+	// otherwise they are skipped and named in TxResult.Skipped.
+	Expect(uid uint32, modseq uint64)
+
 	// MarkDirty flags a record whose flags did not reach storage, or clears
 	// the mark. Part of the flag update, not a write after it (#1809).
 	MarkDirty(uid uint32, dirty bool)
@@ -32,4 +36,7 @@ type IndexTx interface {
 type TxResult struct {
 	ModSeq uint64
 	Flags  map[uint32]FlagsResult
+	// Skipped are the uids whose ops were dropped: the record was gone or had
+	// moved past the modseq the transaction read it at.
+	Skipped []uint32
 }

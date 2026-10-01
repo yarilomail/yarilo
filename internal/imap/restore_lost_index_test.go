@@ -84,7 +84,7 @@ func TestAFolderWhoseIndexIsLostIsRebuiltFromStorage(t *testing.T) {
 	}
 
 	s := &session{srv: &Server{opts: Options{}}}
-	h := &nsHandle{box: box, idx: idx2}
+	h := &nsHandle{box: box, mbox: mailboxbase.Open(box, idx2)}
 	refreshed := s.dboxRestoreIfIndexLost(h, "INBOX", f)
 	if refreshed == nil {
 		t.Fatal("the folder was left empty although its messages are in storage")
@@ -114,7 +114,7 @@ func TestAnEmptyFolderOverEmptyStorageIsNotRebuilt(t *testing.T) {
 	defer idx.Close() //nolint:errcheck
 
 	s := &session{srv: &Server{opts: Options{}}}
-	h := &nsHandle{box: box, idx: idx}
+	h := &nsHandle{box: box, mbox: mailboxbase.Open(box, idx)}
 	if refreshed := s.dboxRestoreIfIndexLost(h, "INBOX", f); refreshed != nil {
 		t.Errorf("a new folder was rebuilt: %+v", refreshed)
 	}

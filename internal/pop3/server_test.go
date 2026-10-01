@@ -123,6 +123,7 @@ func (t *mockTx) Append(m *mailbox.MessageMeta) { t.appends = append(t.appends, 
 func (t *mockTx) UpdateFlags(uid uint32, upd mailbox.FlagsUpdate) {
 	t.flags = append(t.flags, mockFlagOp{uid: uid, upd: upd})
 }
+func (t *mockTx) Expect(uint32, uint64) {}
 func (t *mockTx) MarkDirty(uid uint32, dirty bool) {
 	t.dirty = append(t.dirty, uid)
 }

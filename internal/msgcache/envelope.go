@@ -101,6 +101,8 @@ func (o Options) lockID() string {
 	return locks.NewID()
 }
 
+var _ mailbox.EnvelopeCache = (*Handle)(nil)
+
 type Options struct {
 	Locker locks.Locker
 	User   string
