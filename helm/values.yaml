@@ -2879,7 +2879,7 @@ acl:
 
 ## One file per mailbox of a shared virtual namespace, mounted read-only. A
 ## namespace below must point at them, or they are written and never read.
-virtualDefinitions: {}
+virtual_definitions: {}
 ##   All: |
 ##     *
 ##     -Trash

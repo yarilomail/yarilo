@@ -1,53 +1,26 @@
 package guard_test
 
 import (
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 )
 
-// A shared virtual namespace is only usable when its definitions are mounted
-// where its mail_path names them, in the containers that read mailboxes.
+// The stand's own configuration, not a shape invented here: the namespace is
+// usable only where its definitions are mounted at the mail_path naming them.
 func TestSharedVirtualDefinitionsReachTheContainersThatReadThem(t *testing.T) {
-	values := `
-virtualDefinitions:
-  All: |
-    *
-    -Trash
-namespaces:
-  - type: personal
-    prefix: ""
-    separator: "/"
-    list: "yes"
-    inbox: true
-  - type: shared
-    prefix: "Virtual/"
-    separator: "/"
-    hidden: true
-    list: "no"
-    subscriptions: false
-    mail_driver: virtual
-    mail_path: /etc/yarilo/virtual
-    mail_index_path: "%h/index/virtual"
-`
-	f, err := os.CreateTemp(t.TempDir(), "values-*.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString(values); err != nil {
-		t.Fatal(err)
-	}
-	f.Close() //nolint:errcheck
 	out, err := exec.Command("helm", "template", "../../helm",
-		"-f", "../../helm_values/values-sandbox.yaml", "-f", f.Name()).Output()
+		"-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
 
 	mounted := map[string]bool{}
+	var placed map[string]string
 	definitions := false
 	for _, doc := range strings.Split(string(out), "\n---\n") {
 		var obj struct {
@@ -67,6 +40,15 @@ namespaces:
 								ReadOnly  bool   `yaml:"readOnly"`
 							} `yaml:"volumeMounts"`
 						} `yaml:"containers"`
+						Volumes []struct {
+							Name      string `yaml:"name"`
+							ConfigMap struct {
+								Items []struct {
+									Key  string `yaml:"key"`
+									Path string `yaml:"path"`
+								} `yaml:"items"`
+							} `yaml:"configMap"`
+						} `yaml:"volumes"`
 					} `yaml:"spec"`
 				} `yaml:"template"`
 			} `yaml:"spec"`
@@ -75,13 +57,29 @@ namespaces:
 			t.Fatalf("parse chart output: %v", err)
 		}
 		if obj.Kind == "ConfigMap" && strings.HasSuffix(obj.Metadata.Name, "-virtual") {
-			if text, ok := obj.Data["All/yarilo-virtual"]; !ok || !strings.Contains(text, "-Trash") {
-				t.Errorf("the definitions map holds %v, want the mailbox's own file", obj.Data)
+			for name, text := range obj.Data {
+				// Through the driver's own parser: a definition it cannot read
+				// leaves the mailbox unopenable, and rendering says nothing.
+				if _, perr := virtual.ParseConfig(strings.NewReader(text)); perr != nil {
+					t.Errorf("the definition of %q is not one the driver can read: %v", name, perr)
+				}
+			}
+			if _, ok := obj.Data["All"]; !ok {
+				t.Errorf("the definitions map holds %v, want one key per mailbox", obj.Data)
 			}
 			definitions = true
 		}
 		if obj.Kind != "StatefulSet" || !strings.HasSuffix(obj.Metadata.Name, "-backend") {
 			continue
+		}
+		for _, v := range obj.Spec.Template.Spec.Volumes {
+			if v.Name != "virtual-definitions" {
+				continue
+			}
+			placed = map[string]string{}
+			for _, it := range v.ConfigMap.Items {
+				placed[it.Key] = it.Path
+			}
 		}
 		for _, c := range obj.Spec.Template.Spec.Containers {
 			for _, m := range c.VolumeMounts {
@@ -97,6 +95,11 @@ namespaces:
 	}
 	if !definitions {
 		t.Fatal("no definitions map was rendered")
+	}
+	// The key cannot hold the path, so the volume must: without this the file
+	// lands as /etc/yarilo/virtual/All and the driver finds no mailbox (#2073).
+	if placed["All"] != "All/yarilo-virtual" {
+		t.Errorf("the volume places the key at %q, want All/yarilo-virtual", placed["All"])
 	}
 	for _, want := range []string{"yarilo-imap", "yarilo-lmtp", "yarilo-fts", "yarilo-jmap"} {
 		if !mounted[want] {
