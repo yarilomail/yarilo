@@ -140,6 +140,22 @@ func TestListFoldersResolvesLinksAndSkipsTheMountsBookkeeping(t *testing.T) {
 			want: []string{"Mail"},
 		},
 		{
+			// One wrong mode on a mounted definitions directory would
+			// otherwise break LIST for every account on the deployment.
+			name: "a root the user may not read",
+			build: func(t *testing.T, root string) {
+				writeConfig(t, filepath.Join(root, "All"), "*\n")
+				if os.Getuid() == 0 {
+					t.Skip("uid 0 reads a directory whatever its mode")
+				}
+				if err := os.Chmod(root, 0o000); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
+			},
+			want: nil,
+		},
+		{
 			name: "a link back to the directory holding it",
 			build: func(t *testing.T, root string) {
 				writeConfig(t, filepath.Join(root, "All"), "*\n")

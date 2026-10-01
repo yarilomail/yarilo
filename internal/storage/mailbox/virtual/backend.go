@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -106,7 +107,10 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 	if root, err := filepath.EvalSymlinks(u.root); err == nil {
 		seen[root] = true
 	}
-	if err := u.walk(u.root, "", seen, &out); err != nil && !os.IsNotExist(err) {
+	// A root that cannot be read is an empty namespace, not a failed LIST:
+	// one wrong mode on the definitions breaks listing for every user.
+	if err := u.walk(u.root, "", seen, &out); err != nil &&
+		!errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrPermission) {
 		return nil, fmt.Errorf("virtual: read %s: %w", u.root, err)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
