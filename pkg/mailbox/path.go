@@ -34,6 +34,10 @@ type UserInfo struct {
 	// as a storage path on its own.
 	Username string
 
+	// Personal is the user's personal namespace a namespace of theirs was
+	// derived from; a virtual one draws its folders from there (#1805).
+	Personal *UserInfo
+
 	// Home is the absolute filesystem root for the user's mailbox tree,
 	// resolved from userdb.home (override) or the storage.mail_home template
 	// expanded against the username. See Resolver.

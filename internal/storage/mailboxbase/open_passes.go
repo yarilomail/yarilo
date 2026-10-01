@@ -142,10 +142,14 @@ func (b *Box) tokenKey(folder string) string {
 
 // settle runs both passes a session owes a folder it just opened, and reports
 // whether either changed the record set.
-func (b *Box) settle(folder string, f *mailbox.Folder) bool {
+func (b *Box) settle(folder string, f *mailbox.Folder) (bool, error) {
 	b.sweepTemps(folder)
 	moved := b.alignUIDSpace(folder, f)
-	return b.reconcile(folder, f) || moved
+	synced, err := b.syncDerived(f, true)
+	if err != nil {
+		return false, err
+	}
+	return b.reconcile(folder, f) || moved || synced, nil
 }
 
 // alignUIDSpace checks the store's UID space on every open, as the reference does

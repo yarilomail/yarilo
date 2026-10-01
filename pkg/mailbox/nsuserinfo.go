@@ -43,6 +43,11 @@ func NamespaceUserInfo(base *UserInfo, loc Location, separator string) (*UserInf
 	}
 	if base != nil {
 		ui.Username = base.Username
+		// A virtual namespace draws from the personal one, whoever builds it.
+		ui.Personal = base
+		if base.Personal != nil {
+			ui.Personal = base.Personal
+		}
 		// The session travels with the username: both are the lock owner's
 		// identity, and dropping it spells one holder two ways (#1652).
 		ui.SessionID = base.SessionID

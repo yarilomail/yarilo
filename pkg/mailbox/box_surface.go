@@ -68,3 +68,23 @@ type EnvelopeCache interface {
 	StoreSizes(m *MessageMeta, size, vsize uint32)
 	Close()
 }
+
+// SelfSyncing is a store whose folders it derives itself, brought up to date
+// with the index the base owns: open settles a pass, Poll asks for one.
+type SelfSyncing interface {
+	SyncFolder(idx UserIndex, f *Folder, open bool) (changed bool, err error)
+}
+
+// BackingRef is the folder of the personal namespace a virtual record's copy
+// lives in, by the id the record names it with.
+type BackingRef struct {
+	Name        string
+	GUID        [16]byte
+	UIDValidity uint32
+}
+
+// VirtualCopies says where a derived folder's copies live; asserted where it
+// is used, since only a virtual mailbox has copies.
+type VirtualCopies interface {
+	Backing(folderID uint64) (map[uint32]BackingRef, error)
+}

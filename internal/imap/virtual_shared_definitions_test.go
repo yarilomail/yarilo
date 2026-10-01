@@ -15,8 +15,6 @@ import (
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
-	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -94,7 +92,7 @@ func sharedDefsServer(t *testing.T, defs map[string]string) (net.Conn, *bufio.Re
 		})
 	})
 
-	srv := imapserver.New(imapserver.Options{
+	opts := imapserver.Options{
 		Mailbox:    maildir.New(),
 		Index:      fileindex.New(),
 		Resolver:   resolver,
@@ -104,11 +102,10 @@ func sharedDefsServer(t *testing.T, defs map[string]string) (net.Conn, *bufio.Re
 			{Type: imapserver.NamespacePersonal, Prefix: "Virtual/", Separator: '/', List: imapserver.ListYes,
 				Location: "virtual:" + shared + ":INDEX=%h/index/virtual"},
 		},
-		NamespaceMailboxes: map[string]mailbox.MailboxBackend{
-			"Virtual/": mailboxbuild.ByDriver("virtual", config.StorageConfig{}, nil),
-		},
 		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
-	})
+	}
+	opts.NamespaceMailboxes = map[string]mailbox.MailboxBackend{"Virtual/": virtualDriver(opts)}
+	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -10,7 +10,6 @@ import (
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -29,7 +28,7 @@ func TestInboxNamespaceWithALocationIsThePrimary(t *testing.T) {
 	ui.Close()  //nolint:errcheck
 	box.Close() //nolint:errcheck
 
-	srv := imapserver.New(imapserver.Options{
+	opts := imapserver.Options{
 		Mailbox:    maildir.New(),
 		Index:      fileindex.New(),
 		Resolver:   resolver,
@@ -41,9 +40,10 @@ func TestInboxNamespaceWithALocationIsThePrimary(t *testing.T) {
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes,
 				Location: "maildir:%h/elsewhere", Inbox: true},
 		},
-		NamespaceMailboxes: map[string]mailbox.MailboxBackend{"Virtual/": virtual.New()},
-		AuthRelay:          authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
-	})
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+	}
+	opts.NamespaceMailboxes = map[string]mailbox.MailboxBackend{"Virtual/": virtualDriver(opts)}
+	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
