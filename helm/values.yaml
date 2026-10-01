@@ -2926,14 +2926,8 @@ namespaces: []
 #     inbox: true                 # owns the magic "INBOX" (set on exactly one)
 #     # personal inherits storage from cfg.Storage.MailHomeTemplate;
 #     # leave `location:` unset.
-#     mailboxes:                  # made for every user on first LIST, SELECT,
-#                                 # STATUS or JMAP Mailbox/get; never on
-#                                 # delivery. auto: no (default), create, or
-#                                 # subscribe (subscribed once, when made; an
-#                                 # unsubscribe stays). special_use is personal
-#                                 # namespace only and joins
-#                                 # imap_special_use_defaults; one name with two
-#                                 # different attributes fails startup.
+#     mailboxes:                  # made on any open, delivery included; subscribe
+#                                 # once when made. special_use: personal only.
 #       Sent:   { auto: subscribe, special_use: "\\Sent" }
 #       Drafts: { auto: subscribe, special_use: "\\Drafts" }
 #       Trash:  { auto: subscribe, special_use: "\\Trash" }
