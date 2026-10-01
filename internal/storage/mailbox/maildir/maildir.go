@@ -1463,6 +1463,11 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 	err = u.withMailboxLockSite(folder.Name, lockSiteReconcileApply, func() (rerr error) {
 		u.inSection.Add(1)
 		defer u.inSection.Add(-1)
+		if !arrivalsOnly {
+			if err := u.setAsideBrokenList(folder.Name); err != nil {
+				return err
+			}
+		}
 		// The list's UID space before any uid is read or handed out (#2083); the
 		// seed rides on the list write this pass makes, not a hold of its own.
 		seed, err := u.alignIndexUIDSpace(idx, folder.ID, folder.Name)
@@ -1834,6 +1839,10 @@ func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	if _, err := statPath(dst); err == nil {
 		return nil
 	}
+	// Ours was set aside, not missing: theirs is not taken up for it (#1593, #2086).
+	if aside, _ := filepath.Glob(dst + ".broken.*"); len(aside) > 0 {
+		return nil
+	}
 	src := filepath.Join(u.folderPath(folder), LegacyUIDListFileName)
 	if _, err := statPath(src); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1849,6 +1858,36 @@ func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 		}
 		return fmt.Errorf("maildir: legacy uidlist rename: %w", err)
 	}
+	return nil
+}
+
+// setAsideBrokenList moves a list whose uids do not ascend out of the way, as
+// the reference drops one: the folder rebuilds from its index and its files.
+func (u *userMailbox) setAsideBrokenList(folder string) error {
+	path := u.uidListPath(folder)
+	unlock, err := u.dotlock(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	l, err := readUIDListFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("maildir/uidlist: read: %w", err)
+	}
+	if l.unordered == "" {
+		return nil
+	}
+	aside := fmt.Sprintf("%s.broken.%d", path, time.Now().Unix())
+	if err := os.Rename(path, aside); err != nil {
+		return fmt.Errorf("maildir/uidlist: set aside: %w", err)
+	}
+	u.folderCacheFor(folder).invalidateUIDs("broken")
+	metricListBroken.Inc()
+	slog.Warn("maildir: the list's uids do not ascend; it is set aside and the folder rebuilt from its index",
+		"user", u.username, "folder", folder, "row", l.unordered, "aside", filepath.Base(aside))
 	return nil
 }
 
