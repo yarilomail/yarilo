@@ -42,6 +42,18 @@ func (m *Map) Lookup(mapUID uint32) (MapEntry, bool, error) {
 	return e, ok, nil
 }
 
+// LookupReloaded is Lookup on a freshly replayed view, for a reader whose file
+// vanished: a hit in a stale view can still name a file a purge removed.
+func (m *Map) LookupReloaded(mapUID uint32) (MapEntry, bool, error) {
+	lockRead(&m.mu)
+	defer m.mu.Unlock()
+	if err := m.reloadLocked(); err != nil {
+		return MapEntry{}, false, err
+	}
+	e, ok := m.lookupLocked(mapUID)
+	return e, ok, nil
+}
+
 func (m *Map) lookupLocked(mapUID uint32) (MapEntry, bool) {
 	i, ok := m.findLocked(mapUID)
 	if !ok {

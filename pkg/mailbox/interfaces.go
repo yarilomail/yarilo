@@ -14,6 +14,10 @@ import (
 // must NOT be wrapped with it.
 var ErrCorruptStorage = errors.New("mailbox: corrupt message storage")
 
+// ErrExpunged is a read of a message whose storage another session already
+// reclaimed: gone, not corrupt, so nothing is marked for a rebuild.
+var ErrExpunged = errors.New("mailbox: message expunged")
+
 // CorruptionMarker is an optional capability of an IndexBackend handle that
 // persists a per-folder "needs rebuild" marker so a corrupt message detected on
 // one read triggers a heal on the next open. Kept off the core UserIndex interface;

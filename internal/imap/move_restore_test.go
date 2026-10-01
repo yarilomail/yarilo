@@ -141,8 +141,7 @@ func refusedMoveRow(t *testing.T, driver string, newBackend func() mailbox.Mailb
 		}
 		_ = store.Close()
 	}
-	// A fresh session: the purge rewrote what an open one has cached.
-	c = switchedLogin(t, addr)
+	// The same session: its cached map has to follow the purge (#2100).
 	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
 		t.Fatal(err)
 	}
