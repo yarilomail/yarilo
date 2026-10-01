@@ -1476,6 +1476,11 @@ func (s *session) Delete(name string) error {
 	if ferr != nil {
 		slog.Warn("imap: folder identity before DELETE", "folder", name, "err", ferr)
 	}
+	// Closed before it goes, as the reference does: the poll after the command
+	// would reopen it and mint a new index with a new UIDVALIDITY (#2084).
+	if s.folder != nil && s.folderNS == h && s.folder.Name == rel {
+		s.Unselect() //nolint:errcheck // it only clears session state
+	}
 	if err := h.box.Delete(rel); err != nil {
 		return nameError(err)
 	}
@@ -2466,6 +2471,17 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)
 	if err != nil {
 		return nil
+	}
+	// Every uid the client holds names another message now; the reference
+	// disconnects rather than confuse it (#2083).
+	if refreshed.UIDValidity != s.folder.UIDValidity {
+		slog.Warn("imap: the selected mailbox changed UIDVALIDITY; disconnecting",
+			"sid", s.sid, "user", s.userInfo.Username, "folder", s.folder.Name,
+			"was", s.folder.UIDValidity, "now", refreshed.UIDValidity)
+		if s.imapConn != nil {
+			_ = s.imapConn.Bye("Mailbox UIDVALIDITY changed")
+		}
+		return errUIDValidityChanged
 	}
 	// Heal a dbox folder flagged corrupt (by this or another session's read) so
 	// an IDLE/NOOP client sees the ghost records expunged. The heal bumps
@@ -4409,6 +4425,10 @@ func (l *slogLogger) Printf(format string, args ...interface{}) {
 // with its own response code -- APPEND, COPY and MOVE owe the client TRYCREATE
 // (RFC 9051), which NONEXISTENT would not tell it.
 var errFolderNotFound = errors.New("imap: no such mailbox")
+
+// errUIDValidityChanged ends a session whose selected mailbox took a new
+// UIDVALIDITY under it; the BYE has already gone out.
+var errUIDValidityChanged = errors.New("imap: mailbox UIDVALIDITY changed")
 
 func (s *session) ensureFolderHandle(name string) (*nsHandle, string, *mailbox.Folder, error) {
 	h, rel, err := s.dispatch(name)

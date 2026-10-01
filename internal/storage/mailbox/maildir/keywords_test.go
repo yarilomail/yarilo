@@ -180,12 +180,14 @@ func TestKeywordLettersAreFolderLocalAndNeverRenumbered(t *testing.T) {
 	writer := mailbox.Driver(box).(mailbox.FlagWriter)
 
 	// Folder A learns $One first, folder B learns $Two first.
+	next := map[string]uint32{}
 	save := func(folder string) string {
 		name, _, _, err := box.Save(folder, strings.NewReader("From: a@b\r\n\r\nx\r\n"), 1, 0, nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID(folder, name, 1); aerr != nil {
+		next[folder]++
+		if _, aerr := mailbox.Driver(box).(mailbox.UIDNamer).AssignUID(folder, name, next[folder]); aerr != nil {
 			t.Fatalf("assign uid: %v", aerr)
 		}
 		return name

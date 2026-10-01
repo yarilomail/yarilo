@@ -823,9 +823,6 @@ func saveAndRecord(t *testing.T, box *userMailbox, folder, body string, uid uint
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if _, aerr := box.AssignUID(folder, name, 1); aerr != nil {
-		t.Fatalf("assign uid: %v", aerr)
-	}
 	if _, err := box.AssignUID(folder, name, uid); err != nil {
 		t.Fatalf("assign uid %d: %v", uid, err)
 	}

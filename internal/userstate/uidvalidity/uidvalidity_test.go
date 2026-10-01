@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/internal/userstate/uidvalidity"
 )
@@ -126,5 +127,19 @@ func TestTheirCounterIsAdoptedRatherThanReseeded(t *testing.T) {
 	}
 	if _, serr := os.Stat(filepath.Join(dir, uidvalidity.LegacyFileName)); !os.IsNotExist(serr) {
 		t.Errorf("their file is still there: %v", serr)
+	}
+}
+
+// A caller with no stamp of its own gets the clock, not 1: a fresh user's first
+// folder reads as a time like every other (#2083).
+func TestAZeroFloorTakesTheClock(t *testing.T) {
+	a, _ := newAlloc(t)
+	before := uint32(time.Now().Unix())
+	v, err := a.Next(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v < before {
+		t.Errorf("a zero floor gave %d, want the clock (>= %d)", v, before)
 	}
 }
