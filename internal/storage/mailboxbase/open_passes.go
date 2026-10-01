@@ -188,10 +188,8 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	key := b.tokenKey(folder)
 	token := ps.SyncToken(folder)
 	arrivalHot, _, window := b.syncDirtiness(ps, folder)
-	// The cause is recorded, not only the decision: a folder this process has
-	// never seen walks for a different reason than one whose mtime moved, and
-	// a counter that cannot tell them apart cannot say what a restart costs
-	// (#1875). The reference keeps the same four in enum maildir_scan_why.
+	// The cause is recorded, not only the decision: a counter that cannot tell a
+	// first sight from a moved mtime cannot say what a restart costs (#1875).
 	reason := reasonFirstSeen
 	partial := false
 	if token != "" {
@@ -203,9 +201,8 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 				// this case pays for is the one cur/ does not need.
 				partial = b.partialWalkable(ps, folder, prev.token)
 			case prev.token != token:
-				// A moved mtime is always walked, as the reference walks on
-				// DIR_MTIME_CHANGED; the window bounds re-walks of a dirty
-				// directory that has not moved, nothing else (#1875).
+				// A moved mtime is always walked, as the reference does; the window
+				// bounds only re-walks of a dirty directory that has not moved (#1875).
 				reason = reasonTokenMoved
 			case prev.dirtyThen && time.Since(prev.checkedAt) < window:
 				MetricReconcile.WithLabelValues("skipped-window", "").Inc()

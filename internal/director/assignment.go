@@ -29,10 +29,8 @@ func (s *Server) assignmentPolicy() string {
 	return policyHash
 }
 
-// domainLoad is what a placement compares: the sessions a backend carries plus
-// the placements it has been given that no session has reported yet. The
-// second half is what keeps a burst of first logins off one backend -- the
-// reference credits the host inside user_directory_add, not on connect.
+// domainLoad is a backend's sessions plus placements not reported yet; the second
+// keeps a login burst off one backend, as the reference credits on placement.
 func (s *Server) domainLoad(b ring.Backend, total map[string]int) int {
 	return total[b.IP] + s.domainDir.Pending(b.IP)
 }

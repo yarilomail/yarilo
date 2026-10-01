@@ -10,7 +10,7 @@ import (
 )
 
 // defaultCharset is what the reference writes into a text part that names no
-// charset (MESSAGE_PART_DEFAULT_CHARSET).
+// charset.
 const defaultCharset = "us-ascii"
 
 // What the reference writes for a childless multipart, which the grammar does
