@@ -181,3 +181,19 @@ func (b *Box) Backing(folderID uint64) (map[uint32]mailbox.BackingRef, error) {
 }
 
 var _ mailbox.VirtualCopies = (*Box)(nil)
+
+func (b *Box) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([][16]byte, bool, error) {
+	return b.index.VanishedGUIDs(folderID, sinceModSeq)
+}
+
+func (b *Box) ExpungeFloor(folderID uint64) (uint64, error) { return b.index.ExpungeFloor(folderID) }
+
+func (b *Box) FolderStamp(name string) (mailbox.FolderStamp, error) { return b.index.FolderStamp(name) }
+
+func (b *Box) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
+	r, ok := b.index.(mailbox.GUIDResolver)
+	if !ok {
+		return nil, mailbox.ErrNoGUIDStore
+	}
+	return r.GUIDCopies(guids)
+}

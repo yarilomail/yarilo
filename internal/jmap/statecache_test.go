@@ -64,7 +64,7 @@ func TestStateCacheDoesNotCrossAccounts(t *testing.T) {
 	if err := second.box.Init(); err != nil {
 		t.Fatalf("init second: %v", err)
 	}
-	if _, err := second.idx.OpenFolder("INBOX", 0); err != nil {
+	if _, err := second.index().OpenFolder("INBOX", 0); err != nil {
 		t.Fatalf("open second INBOX: %v", err)
 	}
 	secondState, err := s.emailState(second)
@@ -118,7 +118,7 @@ func TestStateCacheInvalidatesWhenTheLogShrinks(t *testing.T) {
 		t.Fatalf("folder marks: %v %v", marks, err)
 	}
 	// A change, so the log carries something, then the fold that takes it away.
-	if _, err := writeFlagBatch(warm.idx, marks[0].folder.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := writeFlagBatch(warm.mbox, marks[0].folder.ID, map[uint32]mailbox.FlagsUpdate{
 		1: {Mode: mailbox.FlagsAdd, Keywords: []string{"$cachetest"}},
 	}); err != nil {
 		t.Fatalf("store: %v", err)
@@ -130,7 +130,7 @@ func TestStateCacheInvalidatesWhenTheLogShrinks(t *testing.T) {
 	if changed == before {
 		t.Fatal("the state did not move after a write; the cache served a stale marker")
 	}
-	if err := warm.idx.OptimizeIndex(marks[0].folder.ID); err != nil {
+	if err := warm.index().OptimizeIndex(marks[0].folder.ID); err != nil {
 		t.Fatalf("optimize: %v", err)
 	}
 	warm.close()

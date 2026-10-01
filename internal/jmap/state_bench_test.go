@@ -21,11 +21,11 @@ func serverWithFolders(tb testing.TB, n int) (*Server, *userHandle) {
 		if err := h.box.Create(name); err != nil {
 			tb.Fatalf("create %s: %v", name, err)
 		}
-		f, err := h.idx.OpenFolder(name, 0)
+		f, err := h.index().OpenFolder(name, 0)
 		if err != nil {
 			tb.Fatalf("open %s: %v", name, err)
 		}
-		if err := h.idx.AppendMessage(f.ID, &mailbox.MessageMeta{
+		if err := h.index().AppendMessage(f.ID, &mailbox.MessageMeta{
 			UID: 1, Size: 10,
 		}); err != nil {
 			tb.Fatalf("append %s: %v", name, err)
@@ -82,7 +82,7 @@ func BenchmarkStateFloor(b *testing.B) {
 					b.Fatalf("list: %v", err)
 				}
 				for _, e := range entries {
-					if _, err := h.idx.FolderStamp(e.Name); err != nil {
+					if _, err := h.index().FolderStamp(e.Name); err != nil {
 						b.Fatalf("stamp: %v", err)
 					}
 				}

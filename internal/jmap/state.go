@@ -44,7 +44,7 @@ func (s *Server) emailState(h *userHandle) (string, error) {
 		// Two stats instead of a base read and a log replay, when nothing has
 		// moved since the marker was built. A mismatch -- or a stamp that
 		// cannot be taken -- falls through to the open.
-		stamp, stampErr := h.idx.FolderStamp(e.Name)
+		stamp, stampErr := h.mbox.FolderStamp(e.Name)
 		if stampErr == nil {
 			if mark, ok := s.states.get(h.info.Username, e.Name, stamp); ok {
 				desc.Entries = append(desc.Entries, jmapcore.StateEntry{Key: mark.key, Fields: mark.fields})

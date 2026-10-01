@@ -2,7 +2,6 @@ package jmap
 
 import (
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -48,7 +47,6 @@ type userHandle struct {
 	info       *mailbox.UserInfo
 	threads    *threads.Cache
 	box        mailbox.UserMailbox
-	idx        mailbox.UserIndex
 	mbox       mailbox.Box
 	subs       *subs.Store
 	specialUse *specialuse.Store
@@ -65,15 +63,8 @@ type userHandle struct {
 }
 
 func (h *userHandle) close() {
-	if h.box != nil {
-		if err := h.box.Close(); err != nil {
-			slog.Debug("jmap: mailbox close failed", "err", err)
-		}
-	}
-	if h.idx != nil {
-		if err := h.idx.Close(); err != nil {
-			slog.Debug("jmap: index close failed", "err", err)
-		}
+	if h.mbox != nil {
+		h.mbox.Close()
 	}
 }
 
@@ -102,9 +93,8 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	h := &userHandle{
 		info: info,
 		box:  s.mailboxFor(info).OpenUser(info),
-		idx:  s.Index.OpenUser(info),
 	}
-	h.mbox = mailboxbase.Open(h.box, h.idx)
+	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info))
 	h.folders = s.folderIdentitiesFor(username)
 	h.threads = s.Threads
 	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)

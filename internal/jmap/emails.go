@@ -2,6 +2,7 @@ package jmap
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -61,10 +62,7 @@ func (s *Server) findMessages(h *userHandle, want map[string]bool) (map[string]m
 // findThroughStore answers from the store or says it cannot: a partial answer
 // would report a message as missing because the store is behind.
 func (s *Server) findThroughStore(h *userHandle, want map[string]bool) (map[string]messageRef, bool, error) {
-	res, ok := h.idx.(mailbox.GUIDResolver)
-	if !ok {
-		return nil, false, nil
-	}
+	res := h.mbox
 	guids := make([][16]byte, 0, len(want))
 	byGUID := make(map[[16]byte]string, len(want))
 	for id := range want {
@@ -76,6 +74,9 @@ func (s *Server) findThroughStore(h *userHandle, want map[string]bool) (map[stri
 		byGUID[g] = id
 	}
 	copies, err := res.GUIDCopies(guids)
+	if errors.Is(err, mailbox.ErrNoGUIDStore) {
+		return nil, false, nil
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -247,7 +248,7 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 	// A listing asks for subject and sender on every row, which the cached
 	// ENVELOPE answers whole -- so the commonest request opens no message at
 	// all (#1030). The same file is what IMAP FETCH reads and writes.
-	var cache *msgcache.Handle
+	var cache mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
 	if req.NeedsHeaders() {
 		cache = caches.folder(ref)
 	}

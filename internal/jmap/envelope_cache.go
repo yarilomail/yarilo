@@ -6,6 +6,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/internal/msgcache"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
@@ -18,26 +19,26 @@ import (
 type envelopeCaches struct {
 	s    *Server
 	h    *userHandle
-	open map[uint64]*msgcache.Handle
+	open map[uint64]mailbox.EnvelopeCache
 }
 
 func (s *Server) newEnvelopeCaches(h *userHandle) *envelopeCaches {
-	return &envelopeCaches{s: s, h: h, open: map[uint64]*msgcache.Handle{}}
+	return &envelopeCaches{s: s, h: h, open: map[uint64]mailbox.EnvelopeCache{}}
 }
 
 // folder returns the folder's cache, opening it on first use. A nil *Handle is a
 // working value meaning "no cache", so every caller degrades to parsing rather
 // than to an error -- including the memoised nil of a folder that has none.
-func (c *envelopeCaches) folder(ref messageRef) *msgcache.Handle {
+func (c *envelopeCaches) folder(ref messageRef) mailbox.EnvelopeCache {
 	if c == nil {
 		return nil
 	}
 	if fc, ok := c.open[ref.folderID]; ok {
 		return fc
 	}
-	var fc *msgcache.Handle
-	if c.h.idx != nil && c.s.opts.Storage != nil {
-		fc = msgcache.Open(c.h.idx, ref.folderID, msgcache.Options{
+	var fc mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
+	if c.h.mbox != nil && c.s.opts.Storage != nil {
+		fc = c.h.mbox.EnvelopeCache(ref.folderID, mailbox.EnvelopeCacheOptions{
 			Locker:    c.s.opts.Storage.Locker,
 			User:      c.h.info.Username,
 			SessionID: c.h.info.SessionID,
