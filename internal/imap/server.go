@@ -32,6 +32,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
@@ -2951,14 +2952,7 @@ func (s *session) matchMessage(seqNum uint32, m *mailbox.MessageMeta, criteria *
 		}
 	}
 
-	imapFlags := make([]imaplib.Flag, len(m.Flags)+len(m.Keywords))
-	for j, f := range m.Flags {
-		imapFlags[j] = imaplib.Flag(f)
-	}
-	for j, k := range m.Keywords {
-		imapFlags[len(m.Flags)+j] = imaplib.Flag(k)
-	}
-	return imapserver.MatchMessage(seqNum, imaplib.UID(m.UID), m.InternalDate, int64(m.RFC822Size()), imapFlags, rawMsg, criteria), rawMsg, nil
+	return search.Match(seqNum, m, criteria, rawMsg), rawMsg, nil
 }
 
 func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriteria, opts *imaplib.SearchOptions) (*imaplib.SearchData, error) {
@@ -2984,24 +2978,23 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	// compare zero against every bound (#1726).
 	s.folderMailbox().FillResponseSizes(s.folder.Name, msgs)
 
-	needsBody := len(criteria.Header) > 0 || len(criteria.Body) > 0 || len(criteria.Text) > 0 ||
-		!criteria.SentSince.IsZero() || !criteria.SentBefore.IsZero() || searchNeedsBodyRecurse(criteria.Not, criteria.Or)
+	needsBody := search.NeedsBody(criteria)
 
 	// Full-text path: answer Body/Text/Header criteria from the index and
 	// scan only the candidates (https://doc.yarilomail.org/FTS §11). nil = sequential scan.
 	// A virtual mailbox is answered over the folders it draws from; the
 	// ordinary path would index the mailbox itself, which holds nothing.
 	var (
-		ftsF   *ftsFilter
-		ftsErr *imaplib.Error
+		ftsF   *search.Plan
+		ftsErr error
 	)
 	if s.isVirtualSelected() {
 		ftsF, ftsErr = s.prepareVirtualFTSSearch(criteria, msgs)
-	} else {
-		ftsF, ftsErr = s.prepareFTSSearch(criteria, msgs)
+	} else if s.userInfo != nil {
+		ftsF, ftsErr = s.srv.opts.FTS.searchOptions().Plan(s.userInfo.Username, search.RefOf(s.folder), criteria, msgs)
 	}
 	if ftsErr != nil {
-		return nil, ftsErr
+		return nil, searchError(ftsErr)
 	}
 
 	// Collect both representations — clients may want UID set OR sequence
@@ -3033,13 +3026,13 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 
 		matchCrit, needRaw := criteria, needsBody
 		if ftsF != nil {
-			if !ftsF.covered[m.UID] {
+			if !ftsF.Covered[m.UID] {
 				continue
 			}
-			if ftsF.verify[m.UID] {
+			if ftsF.Verify[m.UID] {
 				needRaw = true
 			} else {
-				matchCrit, needRaw = ftsF.stripped, ftsF.strippedNeedsBody
+				matchCrit, needRaw = ftsF.Rest, ftsF.RestNeedsBody
 			}
 		}
 		matched, _, readErr := s.matchMessage(seqNum, m, matchCrit, needRaw)
@@ -3154,8 +3147,8 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	// RELEVANCY (RFC 4731/6203): only available when FTS engaged and returned
 	// scores. A sequential scan has no ranking signal; nil omits the item
 	// from the response rather than erroring.
-	if opts != nil && opts.ReturnRelevancy && ftsF != nil && ftsF.scores != nil {
-		data.Relevancy = relevancyScores(ftsF.scores, matchedOrder)
+	if opts != nil && opts.ReturnRelevancy && ftsF != nil && ftsF.Scores != nil {
+		data.Relevancy = relevancyScores(ftsF.Scores, matchedOrder)
 	}
 	// SEARCHRES (RFC 5182): RETURN SAVE pins the hit set for later $ refs.
 	// The spec says the saved set is always the UID-typed result; convert
@@ -3169,13 +3162,13 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 			for i, m := range msgs {
 				matchCrit, needRaw := criteria, needsBody
 				if ftsF != nil {
-					if !ftsF.covered[m.UID] {
+					if !ftsF.Covered[m.UID] {
 						continue
 					}
-					if ftsF.verify[m.UID] {
+					if ftsF.Verify[m.UID] {
 						needRaw = true
 					} else {
-						matchCrit, needRaw = ftsF.stripped, ftsF.strippedNeedsBody
+						matchCrit, needRaw = ftsF.Rest, ftsF.RestNeedsBody
 					}
 				}
 				var raw []byte
@@ -3185,14 +3178,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 						rc.Close()
 					}
 				}
-				imapFlags := make([]imaplib.Flag, len(m.Flags)+len(m.Keywords))
-				for j, f := range m.Flags {
-					imapFlags[j] = imaplib.Flag(f)
-				}
-				for j, k := range m.Keywords {
-					imapFlags[len(m.Flags)+j] = imaplib.Flag(k)
-				}
-				if imapserver.MatchMessage(uint32(i+1), imaplib.UID(m.UID), m.InternalDate, int64(m.RFC822Size()), imapFlags, raw, matchCrit) {
+				if search.Match(uint32(i+1), m, matchCrit, raw) {
 					saved.AddNum(imaplib.UID(m.UID))
 				}
 			}
@@ -4709,28 +4695,6 @@ func resolveStar(numSet imaplib.NumSet, msgs []*mailbox.MessageMeta, uidToSeq ma
 	return numSet
 }
 
-// searchNeedsBodyRecurse reports whether any criteria in the Not/Or lists
-// requires the raw message body (Header, Body, Text, SentSince, SentBefore).
-func searchNeedsBodyRecurse(not []imaplib.SearchCriteria, or [][2]imaplib.SearchCriteria) bool {
-	for i := range not {
-		if searchCriteriaHasBody(&not[i]) {
-			return true
-		}
-	}
-	for i := range or {
-		if searchCriteriaHasBody(&or[i][0]) || searchCriteriaHasBody(&or[i][1]) {
-			return true
-		}
-	}
-	return false
-}
-
-func searchCriteriaHasBody(c *imaplib.SearchCriteria) bool {
-	return len(c.Header) > 0 || len(c.Body) > 0 || len(c.Text) > 0 ||
-		!c.SentSince.IsZero() || !c.SentBefore.IsZero() ||
-		searchNeedsBodyRecurse(c.Not, c.Or)
-}
-
 // storeDelta turns a +FLAGS / -FLAGS command into an index update that names
 // only the flags it changes.
 func storeDelta(store *imaplib.StoreFlags, mode mailbox.FlagsMode) mailbox.FlagsUpdate {
@@ -4745,8 +4709,8 @@ func storeDelta(store *imaplib.StoreFlags, mode mailbox.FlagsMode) mailbox.Flags
 	return upd
 }
 
-// readForWrite is the read for handlers whose answer drives a write: under the
-// folder's lock, as #1249 requires, and holding nothing after it.
+// readForWrite reads under the folder's lock for a decision (#1249), not as a
+// condition on the write: EXPUNGE, STORE and COPY each guard the write apart.
 func readForWrite(box mailbox.Box, folderID uint64) ([]*mailbox.MessageMeta, error) {
 	tx, err := box.Begin(folderID)
 	if err != nil {
