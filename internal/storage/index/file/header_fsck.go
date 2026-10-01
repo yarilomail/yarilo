@@ -7,7 +7,7 @@ import (
 )
 
 // reconcileHeaderLocked re-derives the header from the records it describes,
-// as the reference's fsck does (mail-index-fsck.c:327-410). Caller holds fs.mu.
+// as the reference's fsck does (#1831). Caller holds fs.mu.
 func (fs *folderState) reconcileHeaderLocked() {
 	var maxUID, seen, deleted uint32
 	for _, rec := range fs.file.Records {

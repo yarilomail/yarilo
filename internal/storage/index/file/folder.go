@@ -2395,7 +2395,7 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 						old := rec.Flags
 						rec.Flags = (rec.Flags | addFlags) &^ removeFlags
 						// The counts move with the flags, as the reference's
-						// replay does (mail-index-sync-update.c:466).
+						// replay does (#1831).
 						fs.file.Header.SeenMessagesCount = moveCount(fs.file.Header.SeenMessagesCount, old, rec.Flags, mailindex.FlagSeen)
 						fs.file.Header.DeletedMessagesCount = moveCount(fs.file.Header.DeletedMessagesCount, old, rec.Flags, mailindex.FlagDeleted)
 					}
@@ -2517,8 +2517,8 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				rp := rec
 				fs.file.Records = append(fs.file.Records, &rp)
 				existing[rp.UID] = struct{}{}
-				// The append moves next_uid itself, as the reference's does
-				// (mail-index-sync-update.c:419), not only a header update.
+				// The append moves next_uid itself, as the reference's replay
+				// does, not only a header update (#1831).
 				if rp.UID >= fs.file.Header.NextUID {
 					fs.file.Header.NextUID = rp.UID + 1
 				}
