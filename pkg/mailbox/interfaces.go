@@ -819,6 +819,12 @@ type HeldRemover interface {
 	RemoveHeld(folder, filename string) error
 }
 
+// SaveDiscarder takes back a body Save wrote and nothing records: under the
+// name Save gave, or the one a failed cycle settled for m.UID.
+type SaveDiscarder interface {
+	DiscardSaved(folder, saved string, m *MessageMeta) error
+}
+
 // BatchRemover unlinks several bodies as one operation. A driver whose removal
 // takes a user-wide lock pays for it once instead of once per message (#1884).
 type BatchRemover interface {

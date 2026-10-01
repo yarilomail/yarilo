@@ -27,6 +27,10 @@ type Box interface {
 	// FillSizeless persists a size into records that carry none.
 	FillSizeless(f *Folder) (int, error)
 
+	// Save writes a body and answers the driver's name, size and GUID; the
+	// record is the caller's, and Discard undoes a save whose record failed.
+	Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (name string, vsize uint32, outGUID [16]byte, err error)
+	Discard(folder, saved string, m *MessageMeta) error
 	// RecordDelivered records a delivery: the name settles before the record.
 	RecordDelivered(f *Folder, folder, saved string, m *MessageMeta) error
 	// RecordSaved records a body already written into a folder.
@@ -59,8 +63,8 @@ type Box interface {
 	// RemoveMessage unlinks a body, leaving the record to the caller.
 	RemoveMessage(folder string, m *MessageMeta) error
 
-	// Store and Index are the halves this arc has not moved yet. Every use is
-	// a consumer the series still owes a method (#1715).
+	// Store is the body half, for the storage side alone: a protocol server
+	// reaching for it is refused by the guard (#1805).
 	Store() UserMailbox
 
 	// Poll brings a folder its store derives up to date, as an open does;

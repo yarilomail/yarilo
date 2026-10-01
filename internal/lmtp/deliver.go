@@ -43,7 +43,7 @@ func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, loc
 	// Sieve names keywords as freely as system flags, and both the store and
 	// the record keep the two apart (#1605).
 	sysFlags, kws := mailbox.SplitStoredFlags(flags)
-	filename, vsize, guid, err := box.Store().Save(folder, bytes.NewReader(data), 0, size, sysFlags, kws, [16]byte{})
+	filename, vsize, guid, err := box.Save(folder, bytes.NewReader(data), 0, size, sysFlags, kws, [16]byte{})
 	if err != nil {
 		return 0, *f, noGUID, fmt.Errorf("lmtp: save: %w", err)
 	}
@@ -61,7 +61,7 @@ func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, loc
 	if err := box.RecordSaved(f, folder, filename, meta); err != nil {
 		slog.Warn("lmtp: delivery not recorded, rolling back save",
 			"user", username, "folder", folder, "call_id", callID, "err", err)
-		_ = box.Store().Remove(folder, filename)
+		_ = box.Discard(folder, filename, meta)
 		return 0, *f, noGUID, fmt.Errorf("lmtp: record: %w", err)
 	}
 	uid := meta.UID

@@ -440,6 +440,23 @@ func (u *userMailbox) AssignUID(folder, tempName string, uid uint32) (string, er
 	return final, nil
 }
 
+// DiscardSaved unlinks a temp Save left, or the u.<uid> a failed cycle renamed
+// it to; that one only when its GUID is m's, as the uid may be handed out again.
+func (u *userMailbox) DiscardSaved(folder, saved string, m *mailbox.MessageMeta) error {
+	dir := u.folderPath(folder)
+	err := os.Remove(filepath.Join(dir, saved))
+	if !errors.Is(err, os.ErrNotExist) || m == nil || m.UID == 0 {
+		return err
+	}
+	named := filepath.Join(dir, sdboxMailPrefix+strconv.FormatUint(uint64(m.UID), 10))
+	if guid, _, _, merr := readMetadata(named); merr != nil || guid != m.GUID {
+		return nil
+	}
+	return os.Remove(named)
+}
+
+var _ mailbox.SaveDiscarder = (*userMailbox)(nil)
+
 // Move relocates a message between folders by renaming the file; the GUID lives
 // in the metadata block so it survives untouched (RFC 8474: MOVE keeps EMAILID).
 // A zero guid is resolved from the source file's metadata.

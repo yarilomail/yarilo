@@ -1,9 +1,12 @@
 package maildir
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // rememberGUID keeps an explicit GUID until the message has a uid to be
@@ -24,6 +27,17 @@ func (u *userMailbox) takeGUID(folder, filename string) ([16]byte, bool) {
 	guid, ok := u.pending[key]
 	delete(u.pending, key)
 	return guid, ok
+}
+
+// DiscardSaved unlinks a body Save left in tmp/, where Remove does not look; one
+// AssignUID already moved is removed from where it went.
+func (u *userMailbox) DiscardSaved(folder, saved string, _ *mailbox.MessageMeta) error {
+	u.takeGUID(folder, saved)
+	err := os.Remove(filepath.Join(u.folderPath(folder), "tmp", saved))
+	if errors.Is(err, os.ErrNotExist) {
+		return u.Remove(folder, saved)
+	}
+	return err
 }
 
 // AssignUID records the message in the folder's list, inside the caller's uid
