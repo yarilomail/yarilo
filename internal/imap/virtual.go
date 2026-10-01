@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapserver"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -255,109 +255,14 @@ func (b *sessionBacking) Messages(back virtual.Backing) ([]*mailbox.MessageMeta,
 }
 
 // Matches runs the configuration's rule over a backing folder with the same
-// matcher a SEARCH uses, so a rule means there what it means on the wire.
+// evaluator a SEARCH uses, so a rule means there what it means on the wire.
 func (b *sessionBacking) Matches(back virtual.Backing, rule string) (map[uint32]bool, error) {
-	if strings.TrimSpace(rule) == "" {
-		return nil, nil // no rule keeps everything
+	f := &mailbox.Folder{Name: back.Name, GUID: back.GUID, UIDValidity: back.UIDValidity}
+	user := ""
+	if b.s.userInfo != nil {
+		user = b.s.userInfo.Username
 	}
-	criteria, err := imapserver.ParseSearchCriteria(rule)
-	if err != nil {
-		return nil, fmt.Errorf("imap/virtual: rule %q: %w", rule, err)
-	}
-	// The text part is asked of the index, as SEARCH asks it; only what the
-	// index cannot answer, or answers as "maybe", is read.
-	textHits, rest, restNeedsBody, verify, indexed := b.textPart(back, criteria)
-	keep := make(map[uint32]bool, len(back.Messages))
-	for i, m := range back.Messages {
-		matchCrit, needRaw := criteria, searchNeedsBody(criteria)
-		if indexed {
-			if !textHits[m.UID] {
-				continue
-			}
-			if !verify[m.UID] {
-				matchCrit, needRaw = rest, restNeedsBody
-			}
-		}
-		var raw []byte
-		if needRaw {
-			raw = b.rawOf(back.Name, m)
-		}
-		flags := make([]imaplib.Flag, 0, len(m.Flags)+len(m.Keywords))
-		for _, f := range m.Flags {
-			flags = append(flags, imaplib.Flag(f))
-		}
-		for _, k := range m.Keywords {
-			flags = append(flags, imaplib.Flag(k))
-		}
-		if imapserver.MatchMessage(uint32(i+1), imaplib.UID(m.UID), m.InternalDate,
-			int64(m.RFC822Size()), flags, raw, matchCrit) {
-			keep[m.UID] = true
-		}
-	}
-	return keep, nil
-}
-
-// searchNeedsBody is the question SEARCH asks: a criterion about text needs
-// the message's bytes.
-func searchNeedsBody(c *imaplib.SearchCriteria) bool {
-	return len(c.Header) > 0 || len(c.Body) > 0 || len(c.Text) > 0 ||
-		!c.SentSince.IsZero() || !c.SentBefore.IsZero() || searchNeedsBodyRecurse(c.Not, c.Or)
-}
-
-// textPart asks the index for a rule's text over one backing folder; indexed
-// is false when it cannot answer (off, text under NOT/OR, not caught up).
-func (b *sessionBacking) textPart(back virtual.Backing, criteria *imaplib.SearchCriteria) (hits map[uint32]bool, rest *imaplib.SearchCriteria, restNeedsBody bool, verify map[uint32]bool, indexed bool) {
-	s := b.s
-	o := s.srv.opts.FTS
-	if !o.enabled() || s.userInfo == nil {
-		return nil, nil, false, nil, false
-	}
-	if len(criteria.Body) == 0 && len(criteria.Text) == 0 && len(criteria.Header) == 0 {
-		return nil, nil, false, nil, false
-	}
-	if searchNeedsBodyRecurse(criteria.Not, criteria.Or) {
-		return nil, nil, false, nil, false
-	}
-	query, stripped, strippedNeedsBody, impossible := s.buildFTSQuery(criteria)
-	if impossible {
-		return map[uint32]bool{}, stripped, strippedNeedsBody, nil, true
-	}
-	mbox := fts.MailboxRef{Name: back.Name, GUID: mailbox.FormatObjectID(back.GUID), UIDValidity: back.UIDValidity}
-	fallback, imapErr := s.ftsCatchUp(s.userInfo.Username, mbox, back.Messages)
-	if imapErr != nil || fallback {
-		return nil, nil, false, nil, false
-	}
-	res, err := o.Client.LookupIn(s.userInfo.Username, []fts.MailboxRef{mbox}, query)
-	if err != nil {
-		slog.Warn("imap: virtual rule lookup", "folder", back.Name, "err", err)
-		return nil, nil, false, nil, false
-	}
-	hits = make(map[uint32]bool, len(res.Definite)+len(res.Maybe))
-	verify = make(map[uint32]bool, len(res.Maybe))
-	for _, h := range res.Definite {
-		if h.Folder == mbox.GUID {
-			hits[h.UID] = true
-		}
-	}
-	for _, h := range res.Maybe {
-		if h.Folder == mbox.GUID {
-			hits[h.UID] = true
-			verify[h.UID] = true
-		}
-	}
-	return hits, stripped, strippedNeedsBody, verify, true
-}
-
-// rawOf reads a backing message the index could not answer for: a "maybe"
-// hit, text nested under NOT/OR, or a folder not caught up yet.
-func (b *sessionBacking) rawOf(folder string, m *mailbox.MessageMeta) []byte {
-	rc, err := b.s.primary.mailbox().OpenMessage(folder, m)
-	if err != nil {
-		return nil
-	}
-	defer rc.Close() //nolint:errcheck
-	raw, _ := io.ReadAll(rc)
-	return raw
+	return b.s.srv.opts.FTS.searchOptions().Folder(b.s.primary.mailbox(), user, f, back.Messages, rule)
 }
 
 // backingFolder is a folder of the personal namespace a virtual record names.
@@ -470,30 +375,19 @@ func (s *session) readVirtualCopy(m *mailbox.MessageMeta) (io.ReadCloser, error)
 
 // prepareVirtualFTSSearch catches up each backing folder, then asks once over
 // all of them; the virtual mailbox holds nothing to read and is never indexed.
-func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs []*mailbox.MessageMeta) (*ftsFilter, *imaplib.Error) {
-	o := s.srv.opts.FTS
-	if !o.enabled() || s.userInfo == nil {
+func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs []*mailbox.MessageMeta) (*search.Plan, error) {
+	o := s.srv.opts.FTS.searchOptions()
+	if !o.Indexed() || s.userInfo == nil || !search.TextOnTop(criteria) {
 		return nil, nil
 	}
-	if len(criteria.Body) == 0 && len(criteria.Text) == 0 && len(criteria.Header) == 0 {
-		return nil, nil
-	}
-	if searchNeedsBodyRecurse(criteria.Not, criteria.Or) {
-		return nil, nil
-	}
-	query, stripped, strippedNeedsBody, impossible := s.buildFTSQuery(criteria)
-	f := &ftsFilter{
-		covered:           map[uint32]bool{},
-		verify:            map[uint32]bool{},
-		stripped:          stripped,
-		strippedNeedsBody: strippedNeedsBody,
-	}
+	query, stripped, strippedNeedsBody, impossible := o.Query(criteria)
+	f := &search.Plan{Covered: map[uint32]bool{}, Verify: map[uint32]bool{}, Rest: stripped, RestNeedsBody: strippedNeedsBody}
 	if impossible {
 		return f, nil
 	}
 	folders, err := s.backingFolders()
 	if err != nil {
-		return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Full-text search unavailable"}
+		return nil, search.ErrLookup
 	}
 	// Which virtual uid each copy is, and which copies each backing folder has.
 	virtualUID := make(map[[2]uint32]uint32, len(msgs))
@@ -512,18 +406,18 @@ func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs
 		mbox := fts.MailboxRef{Name: b.name, GUID: mailbox.FormatObjectID(b.guid), UIDValidity: b.uidv}
 		backMsgs, rerr := virtualIndex(s.primary).GetMessages(b.id, mailbox.SeqSet{})
 		if rerr != nil {
-			return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Full-text search unavailable"}
+			return nil, search.ErrLookup
 		}
-		fallback, imapErr := s.ftsCatchUp(user, mbox, backMsgs)
-		if imapErr != nil {
-			return nil, imapErr
+		fallback, cerr := o.CatchUp(user, mbox, backMsgs)
+		if cerr != nil {
+			return nil, cerr
 		}
 		if fallback {
 			// This folder is not indexed far enough to answer: its copies
 			// are read in full rather than answered from what the index has.
 			for _, uid := range perBacking[id] {
-				f.covered[uid] = true
-				f.verify[uid] = true
+				f.Covered[uid] = true
+				f.Verify[uid] = true
 			}
 			continue
 		}
@@ -539,7 +433,7 @@ func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs
 		if o.ReadFallback {
 			return nil, nil
 		}
-		return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Full-text search unavailable"}
+		return nil, fmt.Errorf("%w: %w", search.ErrLookup, err)
 	}
 	take := func(hits []fts.FolderHit, verify bool) {
 		for _, hit := range hits {
@@ -547,9 +441,9 @@ func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs
 			if !ok {
 				continue // a copy the rule kept out of this mailbox
 			}
-			f.covered[uid] = true
+			f.Covered[uid] = true
 			if verify || o.Strict {
-				f.verify[uid] = true
+				f.Verify[uid] = true
 			}
 		}
 	}

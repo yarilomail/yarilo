@@ -17,6 +17,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/imapthread"
 	"github.com/yarilomail/yarilo/internal/msgcache"
+	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -105,7 +106,7 @@ func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.Sea
 	if err != nil {
 		return nil, err
 	}
-	needsBody := searchCriteriaHasBody(criteria)
+	needsBody := search.NeedsBody(criteria)
 
 	var (
 		unreadable []uint32
