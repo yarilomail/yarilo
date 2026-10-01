@@ -34,6 +34,13 @@ var metricImportRowRefused = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Reconcile imports skipped because the list names the file under another uid. The message stays with its owner; nothing is written for the skipped one.",
 })
 
+// metricListBroken counts lists set aside because their uids did not ascend:
+// the folder rebuilt from its index and its files (#2086).
+var metricListBroken = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "maildir_uidlist_broken_total",
+	Help: "Lists set aside as broken because a uid repeated or went backwards; the folder was rebuilt from its index and its files.",
+})
+
 // metricRemoveMiss counts removals that found no file even after re-reading the
 // listing: the message was already gone. Zero is the expected reading (#1797).
 var metricRemoveMiss = promauto.NewCounter(prometheus.CounterOpts{

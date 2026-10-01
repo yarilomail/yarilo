@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -39,6 +40,8 @@ type uidList struct {
 	guid        string
 	records     []uidRecord
 	torn        bool // a line no rule explains: what follows it is unrecoverable
+	// unordered names the first row whose uid is not above the one before.
+	unordered string
 }
 
 // readUIDListFile parses the whole file. A line that parses adds a record; the
@@ -69,6 +72,9 @@ func readUIDListFile(path string) (*uidList, error) {
 		if !ok {
 			l.torn = true
 			break
+		}
+		if n := len(l.records); n > 0 && rec.uid <= l.records[n-1].uid && l.unordered == "" {
+			l.unordered = line
 		}
 		l.records = append(l.records, rec)
 	}
@@ -207,7 +213,12 @@ func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, er
 	// The header's next uid follows the row (#1701), patched in place while it
 	// keeps its width; a wider number is the whole rewrite's to write.
 	at, width, next, found := headerNextUID(f)
-	patch := found && rec.uid >= next
+	// Below a row already there, appending would break the order: the rewrite
+	// sorts instead. Two saves racing land here (#2086).
+	if !found || rec.uid < next {
+		return false, nil
+	}
+	patch := true
 	digits := strconv.FormatUint(uint64(rec.uid)+1, 10)
 	if patch && len(digits) != width {
 		return false, nil
@@ -290,6 +301,8 @@ func (u *userMailbox) withUIDList(folder, site string, fn func(l *uidList) error
 // Caller holds the list; the header's next uid is recomputed.
 func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
 	path := u.uidListPath(folder)
+	// Ascending, as every reader of the format requires (#2086).
+	sort.SliceStable(l.records, func(i, j int) bool { return l.records[i].uid < l.records[j].uid })
 
 	next := l.nextUID
 	for _, rec := range l.records {
