@@ -537,8 +537,17 @@ if [ "$FILL" != "0" ]; then
   echo "-- filling every type's accounts with $FILL messages each"
   for t in $TYPES; do
     set -- $(type_domain "$t")
-    KUBECONFIG="$KCFG" YARILO_NS="$NS" YARILO_FILL_DOMAIN="$1" \
-      bash "$REPO/hack/stand/fill-mailboxes.sh" "$2" "$3" "$FILL" |
+    # The fill is LMTP delivery, so its time per type is the arm's delivery
+    # throughput: the rest of the arm measures IMAP only (#2085).
+    started=$(date +%s)
+    filled=$(KUBECONFIG="$KCFG" YARILO_NS="$NS" YARILO_FILL_DOMAIN="$1" \
+      bash "$REPO/hack/stand/fill-mailboxes.sh" "$2" "$3" "$FILL")
+    took=$(( $(date +%s) - started ))
+    printf '%s\n' "$filled" | tee -a "$OUT/fill-$ARM.txt"
+    acked=$(printf '%s\n' "$filled" | sed -n 's/.* acked=\([0-9]*\).*/\1/p' | tail -1)
+    rate="-"
+    [ "$took" -gt 0 ] && rate=$(( ${acked:-0} / took ))
+    echo "fill-time: arm=$ARM type=$t acked=${acked:-0} seconds=$took per_second=$rate" |
       tee -a "$OUT/fill-$ARM.txt"
   done
 fi
