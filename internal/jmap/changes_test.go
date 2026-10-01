@@ -186,7 +186,7 @@ func TestEmailChangesRefusesMoreThanMaxChanges(t *testing.T) {
 // does: the record and its body, not the record alone (#1778).
 func destroyMessage(t *testing.T, h *userHandle, folderID uint64, uid uint32) {
 	t.Helper()
-	msgs, err := h.idx.GetMessages(folderID, mailbox.SeqSet{})
+	msgs, err := h.index().GetMessages(folderID, mailbox.SeqSet{})
 	if err != nil {
 		t.Fatalf("get messages: %v", err)
 	}
@@ -202,7 +202,7 @@ func destroyMessage(t *testing.T, h *userHandle, folderID uint64, uid uint32) {
 			t.Fatalf("remove body: %v", err)
 		}
 	}
-	if err := h.idx.ExpungeMessage(folderID, uid); err != nil {
+	if err := h.index().ExpungeMessage(folderID, uid); err != nil {
 		t.Fatalf("expunge: %v", err)
 	}
 }
@@ -242,11 +242,11 @@ func TestEmailChangesRefusesBelowTheExpungeFloor(t *testing.T) {
 		t.Fatalf("folder marks: %v %v", marks, err)
 	}
 	folderID := marks[0].folder.ID
-	if err := h.idx.ExpungeMessage(folderID, 1); err != nil {
+	if err := h.index().ExpungeMessage(folderID, 1); err != nil {
 		t.Fatalf("expunge: %v", err)
 	}
 	// The fold: the expunge record is now in the base and out of the log.
-	if err := h.idx.OptimizeIndex(folderID); err != nil {
+	if err := h.index().OptimizeIndex(folderID); err != nil {
 		t.Fatalf("optimize: %v", err)
 	}
 
@@ -310,7 +310,7 @@ func TestMailboxChangesReportsCreatedUpdatedAndDestroyed(t *testing.T) {
 	if err := h.box.Create("Sales"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := h.idx.OpenFolder("Sales", 0); err != nil {
+	if _, err := h.index().OpenFolder("Sales", 0); err != nil {
 		t.Fatalf("open new folder: %v", err)
 	}
 	payload, errType := changesCall(t, s, "Mailbox/changes",
@@ -330,7 +330,7 @@ func TestMailboxChangesReportsCreatedUpdatedAndDestroyed(t *testing.T) {
 	if err := h.box.Rename("Sales", "Deals"); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	if err := h.idx.RenameFolder("Sales", "Deals"); err != nil {
+	if err := h.index().RenameFolder("Sales", "Deals"); err != nil {
 		t.Fatalf("rename index: %v", err)
 	}
 	payload, errType = changesCall(t, s, "Mailbox/changes",
@@ -349,7 +349,7 @@ func TestMailboxChangesReportsCreatedUpdatedAndDestroyed(t *testing.T) {
 	// destroyed
 	since = mailboxStateOf(t, s)
 	h = openHandleForTest(t, s)
-	if err := h.idx.DeleteFolder("Deals"); err != nil {
+	if err := h.index().DeleteFolder("Deals"); err != nil {
 		t.Fatalf("delete index: %v", err)
 	}
 	if err := h.box.Delete("Deals"); err != nil {

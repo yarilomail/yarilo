@@ -20,9 +20,7 @@ var storageSide = []string{"internal/msgcache/", "internal/ftsservice/", "intern
 // notYetMoved is what still reaches past Box, per file; it only shrinks, each
 // PR of #1805 taking its sites off.
 var notYetMoved = map[string]int{
-	"internal/jmap/emailset.go": 1,
-	"internal/jmap/store.go":    1,
-	"internal/lmtp/deliver.go":  2,
+	"internal/lmtp/deliver.go": 2,
 }
 
 // Protocol servers see Box and nothing else: a new consumer of the index or of

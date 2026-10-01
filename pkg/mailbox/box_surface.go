@@ -1,6 +1,7 @@
 package mailbox
 
 import (
+	"errors"
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
@@ -58,6 +59,7 @@ type EnvelopeCache interface {
 	Preload()
 	Head(m *MessageMeta) (EnvelopeHead, bool)
 	HeadAndReferences(m *MessageMeta) (EnvelopeHead, []string, bool)
+	Envelope(m *MessageMeta) *imaplib.Envelope
 	EnvelopeText(m *MessageMeta) (string, bool)
 	BodyStructure(m *MessageMeta) imaplib.BodyStructure
 	Sizes(m *MessageMeta) (size, vsize uint32, ok bool)
@@ -88,3 +90,7 @@ type BackingRef struct {
 type VirtualCopies interface {
 	Backing(folderID uint64) (map[uint32]BackingRef, error)
 }
+
+// ErrNoGUIDStore: the account keeps no record of copies by message, so a
+// caller finds them another way.
+var ErrNoGUIDStore = errors.New("mailbox: no record of copies by message")

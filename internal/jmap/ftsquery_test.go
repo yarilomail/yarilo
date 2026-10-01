@@ -508,7 +508,7 @@ func TestLaggingIndexBudgetIsPerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &userHandle{info: info, box: box, idx: idx, mbox: mailboxbase.Open(box, idx)}
+	h := &userHandle{info: info, box: box, mbox: mailboxbase.Open(box, idx)}
 	eval := s.newFTSEvaluator(h)
 	eval.startRequest()
 	eval.deadline = time.Now().Add(-time.Second) // the siblings spent it

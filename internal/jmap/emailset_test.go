@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -368,7 +370,7 @@ func TestEmailSetPatchDoesNotEraseAConcurrentKeyword(t *testing.T) {
 				if err != nil {
 					t.Fatalf("concurrent open: %v", err)
 				}
-				if _, err := writeFlagBatch(other, f.ID, map[uint32]mailbox.FlagsUpdate{
+				if _, err := writeFlagBatch(mailboxbase.Open(maildir.New().OpenUser(info), other), f.ID, map[uint32]mailbox.FlagsUpdate{
 					1: {Mode: mailbox.FlagsAdd, Flags: []string{`\Flagged`}},
 				}); err != nil {
 					t.Fatalf("concurrent store: %v", err)

@@ -23,11 +23,7 @@ func (h *userHandle) copiesOf(ref messageRef) []emailCopy {
 }
 
 func (h *userHandle) copiesThroughStore(ref messageRef) ([]emailCopy, bool) {
-	res, ok := h.idx.(mailbox.GUIDResolver)
-	if !ok {
-		return nil, false
-	}
-	records, err := res.GUIDCopies([][16]byte{ref.meta.GUID})
+	records, err := h.mbox.GUIDCopies([][16]byte{ref.meta.GUID})
 	if err != nil || len(records) == 0 {
 		return nil, false
 	}

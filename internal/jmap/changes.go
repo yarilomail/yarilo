@@ -94,7 +94,7 @@ func (s *Server) emailChanges(_ context.Context, h *userHandle, accountID string
 		// the WHOLE call -- a partial answer carrying a fresh state would tell
 		// the client it is current, which is the same silence with a newer
 		// label.
-		floor, err := h.idx.ExpungeFloor(f.folder.ID)
+		floor, err := h.mbox.ExpungeFloor(f.folder.ID)
 		if err != nil {
 			return nil, storeFailure("Email/changes floor", accountID, err)
 		}
@@ -108,7 +108,7 @@ func (s *Server) emailChanges(_ context.Context, h *userHandle, accountID string
 		resp.Created = append(resp.Created, ids.created...)
 		resp.Updated = append(resp.Updated, ids.updated...)
 
-		guids, complete, err := h.idx.VanishedGUIDs(f.folder.ID, prevModSeq)
+		guids, complete, err := h.mbox.VanishedGUIDs(f.folder.ID, prevModSeq)
 		if err != nil {
 			return nil, storeFailure("Email/changes vanished", accountID, err)
 		}

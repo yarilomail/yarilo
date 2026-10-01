@@ -118,6 +118,45 @@ func TestTheBoxSurfaceReachesTheIndex(t *testing.T) {
 			t.Errorf("rebuilt %d, %v; want the 2 messages in the store", n, err)
 		}
 	})
+	t.Run("VanishedGUIDs names an expunge by its message, and says when it cannot", func(t *testing.T) {
+		box, idx, _, f := surfaceBox(t)
+		if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 9, Size: 10}); err != nil {
+			t.Fatal(err)
+		}
+		msgs, err := box.Messages(f.ID, mailbox.SeqSet{{From: 1, To: 1}})
+		if err != nil || len(msgs) != 1 {
+			t.Fatal(err)
+		}
+		if err := idx.ExpungeMessage(f.ID, 1); err != nil {
+			t.Fatal(err)
+		}
+		guids, complete, err := box.VanishedGUIDs(f.ID, 1)
+		if err != nil || !complete || len(guids) != 1 || guids[0] != msgs[0].GUID {
+			t.Fatalf("vanished %x complete %v, %v; want uid 1's message, complete", guids, complete, err)
+		}
+		if err := idx.ExpungeMessage(f.ID, 9); err != nil {
+			t.Fatal(err)
+		}
+		if _, complete, err := box.VanishedGUIDs(f.ID, 1); err != nil || complete {
+			t.Errorf("an expunge of a record with no message id answered complete %v, %v", complete, err)
+		}
+	})
+	t.Run("FolderStamp holds while nothing moves and moves with a write", func(t *testing.T) {
+		box, idx, _, f := surfaceBox(t)
+		a, err := box.FolderStamp("INBOX")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, err := box.FolderStamp("INBOX"); err != nil || b != a {
+			t.Fatalf("the stamp moved with nothing written: %v", err)
+		}
+		if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 9, Size: 10}); err != nil {
+			t.Fatal(err)
+		}
+		if c, err := box.FolderStamp("INBOX"); err != nil || c == a {
+			t.Errorf("the stamp held across a write: %v", err)
+		}
+	})
 	t.Run("EnvelopeCache keeps what a window stored", func(t *testing.T) {
 		box, _, _, f := surfaceBox(t)
 		msgs, err := box.Messages(f.ID, mailbox.SeqSet{})
