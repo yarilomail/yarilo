@@ -64,26 +64,36 @@ func TestASessionWhoseMailboxChangesUIDValidityIsDisconnected(t *testing.T) {
 	}
 }
 
-// Deleting the selected mailbox closes it first: the session goes on, and no
-// poll brings the deleted folder's index back (#2084).
-func TestDeletingTheSelectedMailboxDoesNotBringItBack(t *testing.T) {
-	root := t.TempDir()
-	c := startServerWithRoot(t, maildirBackend(t), root)
-	if err := c.Create("Gone", nil).Wait(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.Select("Gone", nil).Wait(); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Delete("Gone").Wait(); err != nil {
-		t.Fatalf("DELETE of the selected mailbox: %v", err)
-	}
-	if err := c.Noop().Wait(); err != nil {
-		t.Fatalf("the session ended after deleting its selected mailbox: %v", err)
-	}
-	for _, p := range findUnder(t, root, "yarilo.index") {
-		if strings.Contains(p, "Gone") {
-			t.Errorf("the deleted mailbox's index is back: %s", p)
-		}
+// DELETE of the selected mailbox is answered OK, then the session ends, and
+// no poll brings the folder's index back; another mailbox's DELETE ends nothing.
+func TestDeletingTheSelectedMailboxEndsTheSession(t *testing.T) {
+	for _, tc := range []struct {
+		name, selected string
+		wantEnd        bool
+	}{
+		{"the selected mailbox", "Gone", true},
+		{"another mailbox", "INBOX", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			c := startServerWithRoot(t, maildirBackend(t), root)
+			if err := c.Create("Gone", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Select(tc.selected, nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Delete("Gone").Wait(); err != nil {
+				t.Fatalf("DELETE was not answered OK: %v", err)
+			}
+			if ended := c.Noop().Wait() != nil; ended != tc.wantEnd {
+				t.Errorf("the session ended %v after the DELETE, want %v", ended, tc.wantEnd)
+			}
+			for _, p := range findUnder(t, root, "yarilo.index") {
+				if strings.Contains(p, "Gone") {
+					t.Errorf("the deleted mailbox's index is back: %s", p)
+				}
+			}
+		})
 	}
 }

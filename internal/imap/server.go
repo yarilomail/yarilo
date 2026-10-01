@@ -1478,7 +1478,8 @@ func (s *session) Delete(name string) error {
 	}
 	// Closed before it goes, as the reference does: the poll after the command
 	// would reopen it and mint a new index with a new UIDVALIDITY (#2084).
-	if s.folder != nil && s.folderNS == h && s.folder.Name == rel {
+	selected := s.folder != nil && s.folderNS == h && s.folder.Name == rel
+	if selected {
 		s.Unselect() //nolint:errcheck // it only clears session state
 	}
 	if err := h.box.Delete(rel); err != nil {
@@ -1500,6 +1501,12 @@ func (s *session) Delete(name string) error {
 		}
 	}
 	s.emitMailboxList(locks.EventMailboxDelete, name)
+	// The command is answered first, then the session ends, as the reference
+	// ends one whose selected mailbox is gone (#2084).
+	if selected && s.imapConn != nil {
+		conn := s.imapConn
+		conn.AfterResponse(func() { _ = conn.Bye("Selected mailbox was deleted, have to disconnect.") })
+	}
 	return nil
 }
 
