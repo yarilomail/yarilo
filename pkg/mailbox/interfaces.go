@@ -69,9 +69,9 @@ type UIDSpaceAligner interface {
 }
 
 // UIDSpaceAligningStore is a store that names its own UID space, aligned with the
-// index before a uid is handed out.
+// index before a uid is handed out; it answers the index's UIDVALIDITY after.
 type UIDSpaceAligningStore interface {
-	AlignUIDSpace(idx UserIndex, folderID uint64, folder string) error
+	AlignUIDSpace(idx UserIndex, folderID uint64, folder string) (uint32, error)
 }
 
 // ErrUIDInUse says the folder already holds a record for this uid.

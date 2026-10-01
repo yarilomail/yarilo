@@ -1433,20 +1433,27 @@ func (fs *folderState) flagsMultiLocked(updates map[uint32]mailbox.FlagsUpdate, 
 // ExpungeMessage writes a TxTypeExpungeGUID log entry and drops the in-memory
 // record; Vanished reads those entries later to satisfy QRESYNC.
 func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
+	var gone uint32
 	if err := u.withFolderSite(folderID, lockSiteExpunge, func(fs *folderState) error {
 		modseq, err := fs.bumpModSeqHeader()
 		if err != nil {
 			return err
 		}
+		fs.cacheGone = 0
 		recs, eerr := fs.expungeLocked(uid, modseq)
 		if eerr != nil || len(recs) == 0 {
 			return eerr
 		}
 		u.trackExpungedGUID(fs, uid)
-		return fs.appendMutLog(recs...)
+		if err := fs.appendMutLog(recs...); err != nil {
+			return err
+		}
+		gone = fs.cacheGone
+		return nil
 	}); err != nil {
 		return err
 	}
+	u.noteCacheExpunged(folderID, gone)
 	return nil
 }
 
@@ -1470,6 +1477,9 @@ func (fs *folderState) expungeLocked(uid uint32, modseq uint64) ([][]byte, error
 		}
 		if rec.Flags&mailindex.FlagDeleted != 0 {
 			fs.file.Header.DeletedMessagesCount--
+		}
+		if decodeCacheRec(rec.Ext[extNameCache]) != 0 {
+			fs.cacheGone++
 		}
 		expungedVSize := decodeVsizeRec(rec.Ext[extNameVsize])
 		fs.file.Records = append(fs.file.Records[:idx], fs.file.Records[idx+1:]...)

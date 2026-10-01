@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/backend"
 	"github.com/yarilomail/yarilo/internal/backendapi"
 	"github.com/yarilomail/yarilo/internal/fts/language"
 	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
@@ -119,7 +120,7 @@ func main() {
 	}
 
 	mb := mailboxbuild.ByDriver(cfg.Storage.MailDriver, cfg.Storage, locker)
-	idx := file.New(file.WithLocker(locker))
+	idx := buildIndex(cfg.Storage, locker)
 	nsOverrides, err := buildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker)
 	if err != nil {
 		slog.Error("backend-api: namespace mailbox wiring", "err", err)
@@ -342,4 +343,10 @@ func runTelemetry(cfg config.TelemetryConfig) {
 	if err := tel.ListenAndServe(context.Background()); err != nil {
 		slog.Error("backend-api: telemetry server failed", "err", err)
 	}
+}
+
+// buildIndex takes the index options every other binary takes: the admin API
+// writes the same folders, under the same locks, durability and thresholds.
+func buildIndex(sc config.StorageConfig, locker locks.Locker) *file.Backend {
+	return file.New(backend.IndexOptions(sc, locker)...)
 }

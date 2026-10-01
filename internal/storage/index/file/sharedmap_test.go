@@ -362,3 +362,30 @@ func copyTree(t *testing.T, from, to string) {
 		t.Fatal(err)
 	}
 }
+
+// A published map nobody holds this instant is still reachable: a reader with a
+// log stat from before the append takes it, so the fold goes onto a copy.
+func TestAPublishedMapIsNotExtendedInPlace(t *testing.T) {
+	u, fs, folder := openTestFolder(t, 5)
+	_, release, err := fs.openView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	fs.mapMu.Lock()
+	from := fs.current
+	fs.mapMu.Unlock()
+	if from == nil || from.refs != 0 {
+		t.Fatal("no published map without holders, so this row proves nothing")
+	}
+	if err := u.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: 6, Size: 10}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := fs.extend(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.view == from.view || len(from.view.file.Records) != 5 {
+		t.Errorf("the published image was extended in place: it holds %d records, want 5", len(from.view.file.Records))
+	}
+}

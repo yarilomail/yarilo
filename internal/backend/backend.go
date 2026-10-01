@@ -1162,7 +1162,12 @@ func IndexOptions(cfg config.StorageConfig, locker locks.Locker) []file.Option {
 	// The same encoding the mailbox backends get. The two trees spell a folder
 	// the same way or neither finds the other's (#1586).
 	opts := []file.Option{file.WithLocker(locker), file.WithListUTF8(cfg.MailboxListUTF8),
-		file.WithLockMethod(indexLockMethod(cfg)), file.WithFsync(indexFsync(cfg))}
+		file.WithLockMethod(indexLockMethod(cfg)), file.WithFsync(indexFsync(cfg)),
+		file.WithCachePurgeDeletePercentage(cfg.MailCachePurgeDeletePercentage),
+		file.WithCachePurgeContinuedPercentage(cfg.MailCachePurgeContinuedPercentage)}
+	if strings.TrimSpace(cfg.MailCachePurgeMinSizeRaw) != "" {
+		opts = append(opts, file.WithCachePurgeMinSize(cfg.MailCachePurgeMinSize))
+	}
 	// Any of the three, not all three. Gating the whole triple on min_size
 	// meant an operator could set the age or the ceiling alone, see the key in
 	// the rendered config, and have it do nothing -- accepted and inert, which

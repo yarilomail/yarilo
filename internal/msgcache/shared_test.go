@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -173,7 +174,7 @@ func TestTheInProcessTierSharesToo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	release := lockCachePath(path, true) // another reader, mid-open
+	release := mailindex.LockCachePath(path, true) // another reader, mid-open
 	defer release()
 
 	opened := make(chan *Handle, 1)

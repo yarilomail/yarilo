@@ -631,6 +631,9 @@ data:
       ## How a write to a shared file excludes another writer (#1840).
       storage_lock_method: {{ $storage.storage_lock_method | default "flock" | quote }}
       storage_lock_stale_timeout: {{ $storage.storage_lock_stale_timeout | default 180 }}
+      mail_cache_purge_delete_percentage: {{ $storage.mail_cache_purge_delete_percentage | default 20 }}
+      mail_cache_purge_continued_percentage: {{ $storage.mail_cache_purge_continued_percentage | default 200 }}
+      mail_cache_purge_min_size: {{ if hasKey $storage "mail_cache_purge_min_size" }}{{ $storage.mail_cache_purge_min_size | toString | quote }}{{ else }}"32k"{{ end }}
       mail_fsync: {{ $storage.mail_fsync | default "optimized" | quote }}
       {{- if $storage.mail_driver }}
       mail_driver: {{ $storage.mail_driver | quote }}

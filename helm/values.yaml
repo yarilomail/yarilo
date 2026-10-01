@@ -176,6 +176,14 @@ storage:
   ## touched -- before a waiter takes it over. Only dotlock needs it: flock and
   ## fcntl die with the process. Unset keeps 180; -1 never takes one over.
   storage_lock_stale_timeout: 180
+  ## Share of a folder cache's records whose messages are expunged that purges
+  ## the cache, in percent. -1 never purges on its own.
+  mail_cache_purge_delete_percentage: 20
+  ## Continued cache records against live ones, in percent, that purges the
+  ## cache: a message carries more than one record past 100.
+  mail_cache_purge_continued_percentage: 200
+  ## A cache file smaller than this is never purged on its own; "0" purges any size.
+  mail_cache_purge_min_size: "32k"
   ## What reaches the disk before a delivery is answered: never, optimized
   ## (the body) or always (plus index, list and directory). See the docs.
   mail_fsync: optimized

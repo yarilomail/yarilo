@@ -49,6 +49,7 @@ type stubFTS struct {
 	prepends  int32
 
 	asked    []string
+	statuses map[string]int // Status calls per folder
 	queries  []fts.Query
 	inFlight int32
 	maxSeen  int32
@@ -95,7 +96,13 @@ func (s *stubFTS) Rescan(string, fts.MailboxRef) error                    { retu
 func (s *stubFTS) RescanUser(string) ([]string, error)                    { return nil, nil }
 func (s *stubFTS) Counts(string) (uint64, uint64, uint64, uint64, error)  { return 0, 0, 0, 0, nil }
 func (s *stubFTS) Optimize(string) error                                  { return nil }
-func (s *stubFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
+func (s *stubFTS) Status(_ string, mbox fts.MailboxRef) (uint32, uint32, error) {
+	s.mu.Lock()
+	if s.statuses == nil {
+		s.statuses = map[string]int{}
+	}
+	s.statuses[mbox.Name]++
+	s.mu.Unlock()
 	return s.statusUID, 0, nil
 }
 func (s *stubFTS) Close() error { return nil }
@@ -482,28 +489,38 @@ func TestEmailQueryWaitsForALaggingIndexThenAsksForARetry(t *testing.T) {
 	})
 }
 
-// The waiting budget belongs to the request, not to each folder: a per-folder
-// one multiplies by the fan-out, so a query at the ceiling would hold the
-// client and half the pool for minutes.
+// The waiting budget is the request's, not each folder's: a folder that starts
+// once it is spent does not wait at all, where a budget of its own would poll.
 func TestLaggingIndexBudgetIsPerRequest(t *testing.T) {
-	const folders, timeout = 8, 200 * time.Millisecond
-	stub := &stubFTS{byFolder: map[string]fts.Result{}} // statusUID 0: every folder is behind
-	s := searchServer(t, stub, 4, folders, folderSet(folders, "needle"))
+	stub := &stubFTS{byFolder: map[string]fts.Result{}} // statusUID 0: the folder is behind
+	s := searchServer(t, stub, 4, 1, folderSet(1, "needle"))
 	s.opts.FTS.AddMissing = "priority"
-	s.opts.FTS.Timeout = timeout
+	s.opts.FTS.Timeout = time.Hour
 
-	start := time.Now()
-	err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`)
-	elapsed := time.Since(start)
-
-	if err["type"] != "serverUnavailable" {
-		t.Errorf("type = %v, want serverUnavailable", err["type"])
+	info, err := s.opts.Storage.ResolveUser(testUser)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Two at a time over eight folders is four waves; a per-folder budget would
-	// spend four timeouts, a shared one spends about one.
-	if max := 2 * timeout; elapsed > max {
-		t.Errorf("waited %v for %d lagging folders, want under %v: the budget is per folder, not per request",
-			elapsed, folders, max)
+	box := s.opts.Storage.Mailbox.OpenUser(info)
+	idx := s.opts.Storage.Index.OpenUser(info)
+	t.Cleanup(func() { idx.Close(); box.Close() }) //nolint:errcheck
+	f, err := idx.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &userHandle{info: info, box: box, idx: idx, mbox: mailboxbase.Open(box, idx)}
+	eval := s.newFTSEvaluator(h)
+	eval.startRequest()
+	eval.deadline = time.Now().Add(-time.Second) // the siblings spent it
+
+	err = eval.catchUp(context.Background(), h, scopeFolder{name: "INBOX", id: f.ID, guid: "g", uidValidity: f.UIDValidity})
+	if !errors.Is(err, errIndexLagging) {
+		t.Errorf("catchUp after the budget answered %v, want the lagging refusal", err)
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if n := stub.statuses["INBOX"]; n != 1 {
+		t.Errorf("the index was asked %d times, want once: the folder waited on a budget of its own", n)
 	}
 }
 

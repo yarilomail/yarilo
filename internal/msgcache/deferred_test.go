@@ -11,9 +11,9 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-func newFolder(t *testing.T) (mailbox.UserIndex, uint64, *mailbox.MessageMeta) {
+func newFolder(t *testing.T, opts ...file.Option) (mailbox.UserIndex, uint64, *mailbox.MessageMeta) {
 	t.Helper()
-	idx := file.New().OpenUser(&mailbox.UserInfo{Username: "u", Home: t.TempDir()})
+	idx := file.New(opts...).OpenUser(&mailbox.UserInfo{Username: "u", Home: t.TempDir()})
 	f, err := idx.OpenFolder("INBOX", 7)
 	if err != nil {
 		t.Fatal(err)
@@ -198,48 +198,52 @@ func TestADeferredHandleDoesNotHopOverAnotherSessionsRecord(t *testing.T) {
 // The assertion is the file size, because the reader cannot tell the two apart:
 // a dropped field and a written-but-unreachable one both answer a miss.
 func TestADeferredHandleDropsFieldsForMessagesExpungedMeanwhile(t *testing.T) {
-	idx, fid, m := newFolder(t)
+	for _, tc := range []struct {
+		name string
+		pct  int
+	}{
+		{"the cache kept", -1},
+		{"the expunge purged the cache", 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, fid, m := newFolder(t, file.WithCachePurgeDeletePercentage(tc.pct), file.WithCachePurgeMinSize(0))
+			ic, ok := idx.(Index)
+			if !ok {
+				t.Skip("index has no cache surface")
+			}
+			path, err := ic.CachePath(fid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A first, ordinary window, so the file exists and has a size to compare.
+			warm := Open(idx, fid, Options{})
+			if warm == nil {
+				t.Fatal("no cache handle")
+			}
+			warm.StoreEnvelope(m, &imaplib.Envelope{Subject: "warm"})
+			warm.Close()
 
-	ic, ok := idx.(Index)
-	if !ok {
-		t.Skip("index has no cache surface")
-	}
-	path, err := ic.CachePath(fid)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// A first, ordinary window, so the file exists and has a size to compare.
-	warm := Open(idx, fid, Options{})
-	if warm == nil {
-		t.Fatal("no cache handle")
-	}
-	warm.StoreEnvelope(m, &imaplib.Envelope{Subject: "warm"})
-	warm.Close()
-
-	before, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat cache: %v", err)
-	}
-
-	h := Open(idx, fid, Options{DeferWrites: true})
-	if h == nil {
-		t.Fatal("no deferred handle")
-	}
-	h.StoreEnvelope(m, &imaplib.Envelope{Subject: "for a message about to go"})
-
-	if err := idx.ExpungeMessage(fid, m.UID); err != nil {
-		t.Fatalf("expunge: %v", err)
-	}
-
-	h.Close()
-
-	after, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat cache: %v", err)
-	}
-	if after.Size() != before.Size() {
-		t.Errorf("the cache grew by %d bytes for a message that is no longer in the index: the record was written and nothing can reach it",
-			after.Size()-before.Size())
+			h := Open(idx, fid, Options{DeferWrites: true})
+			if h == nil {
+				t.Fatal("no deferred handle")
+			}
+			h.StoreEnvelope(m, &imaplib.Envelope{Subject: "for a message about to go"})
+			if err := idx.ExpungeMessage(fid, m.UID); err != nil {
+				t.Fatalf("expunge: %v", err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("stat cache: %v", err)
+			}
+			h.Close()
+			after, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("stat cache: %v", err)
+			}
+			if after.Size() != before.Size() {
+				t.Errorf("the close grew the cache by %d bytes for a message that is no longer in the index: nothing can reach the record",
+					after.Size()-before.Size())
+			}
+		})
 	}
 }

@@ -2275,6 +2275,16 @@ type StorageConfig struct {
 	// takes one over. Only dotlock has the question: flock and fcntl die with
 	// the process that held them (#1831).
 	LockStaleTimeout int `koanf:"storage_lock_stale_timeout"`
+	// MailCachePurgeDeletePercentage is the share of a folder cache's records
+	// whose messages are gone that purges it: unset keeps 20, -1 never purges.
+	MailCachePurgeDeletePercentage int `koanf:"mail_cache_purge_delete_percentage"`
+	// MailCachePurgeContinuedPercentage is continued cache records against live
+	// ones that purges the cache; unset keeps 200.
+	MailCachePurgeContinuedPercentage int `koanf:"mail_cache_purge_continued_percentage"`
+	// MailCachePurgeMinSize is the cache file size below which nothing purges
+	// it; unset keeps 32 KiB, "0" purges at any size.
+	MailCachePurgeMinSize    int64  `koanf:"-"` // resolved from MailCachePurgeMinSizeRaw at load
+	MailCachePurgeMinSizeRaw string `koanf:"mail_cache_purge_min_size"`
 	// MailFsync is what reaches the disk before a delivery is acknowledged:
 	// never, optimized (default, the body) or always (#1847).
 	MailFsync string `koanf:"mail_fsync"`
@@ -2927,6 +2937,7 @@ func (cfg *Config) validate() error {
 	resolve("fts.fts_prefetch_max_bytes", cfg.FTS.PrefetchMaxBytesRaw, &cfg.FTS.PrefetchMaxBytes)
 	resolve("storage.mail_index_log_rotate_min_size", cfg.Storage.MailIndexLogRotateMinSizeRaw, &cfg.Storage.MailIndexLogRotateMinSize)
 	resolve("storage.mail_index_log_rotate_max_size", cfg.Storage.MailIndexLogRotateMaxSizeRaw, &cfg.Storage.MailIndexLogRotateMaxSize)
+	resolve("storage.mail_cache_purge_min_size", cfg.Storage.MailCachePurgeMinSizeRaw, &cfg.Storage.MailCachePurgeMinSize)
 	resolve("protocol.jmap.jmap_max_size_upload", cfg.Protocol.JMAP.MaxSizeUploadRaw, &cfg.Protocol.JMAP.MaxSizeUpload)
 	resolve("protocol.jmap.jmap_max_size_request", cfg.Protocol.JMAP.MaxSizeRequestRaw, &cfg.Protocol.JMAP.MaxSizeRequest)
 	resolve("protocol.jmap.jmap_max_body_value_bytes", cfg.Protocol.JMAP.MaxBodyValueBytesRaw, &cfg.Protocol.JMAP.MaxBodyValueBytes)
@@ -2950,6 +2961,12 @@ func (cfg *Config) validate() error {
 	if cfg.Storage.LockStaleTimeout < -1 {
 		return fmt.Errorf("config: storage.storage_lock_stale_timeout: %d is neither a duration nor -1 (never take a dotlock over)",
 			cfg.Storage.LockStaleTimeout)
+	}
+	if p := cfg.Storage.MailCachePurgeContinuedPercentage; p < 0 {
+		return fmt.Errorf("config: storage.mail_cache_purge_continued_percentage: %d is a negative share", p)
+	}
+	if p := cfg.Storage.MailCachePurgeDeletePercentage; p < -1 || p > 100 {
+		return fmt.Errorf("config: storage.mail_cache_purge_delete_percentage: %d is neither a percentage nor -1 (never purge on its own)", p)
 	}
 	return nil
 }
