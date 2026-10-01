@@ -31,7 +31,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
@@ -523,11 +522,9 @@ type session struct {
 	// liveRelay is a relayed SASL exchange this session started; cancelled on
 	// teardown so an aborted AUTHENTICATE frees the service's half at once.
 	liveRelay *authrelay.RelayServer
-	// box / idx / subs alias the personal namespace handle
-	// (s.primary.box / .idx / .subs). Cross-namespace ops route through
-	// s.dispatch() and use the resulting handle instead.
+	// box / mbox / subs alias the personal namespace handle. Cross-namespace
+	// ops route through s.dispatch() and use the resulting handle instead.
 	box  mailbox.UserMailbox
-	idx  mailbox.UserIndex
 	mbox mailbox.Box
 	subs *subs.Store
 
@@ -643,12 +640,55 @@ func (s *session) folderMailbox() mailbox.Box {
 	return s.mbox
 }
 
-// folderIdx returns the UserIndex backing s.folder.
-func (s *session) folderIdx() mailbox.UserIndex {
-	if s.folderNS != nil {
-		return s.folderNS.idx
+// expungeSource commits MOVE's source expunges and answers what stays. A record
+// another session changed stays, unless its body already moved: then it goes.
+func (s *session) expungeSource(box mailbox.Box, tx mailbox.BoxTx, uids []uint32, moved map[uint32]bool) map[uint32]bool {
+	for _, uid := range uids {
+		tx.Expunge(uid)
 	}
-	return s.idx
+	kept := make(map[uint32]bool)
+	res, err := tx.Commit()
+	if err != nil {
+		slog.Warn("imap: MOVE did not expunge the source", "user", s.username(), "folder", s.folder.Name, "err", err)
+		for _, uid := range uids {
+			kept[uid] = true
+		}
+		return kept
+	}
+	var gone []uint32
+	for _, uid := range res.Skipped {
+		if moved[uid] {
+			gone = append(gone, uid)
+			continue
+		}
+		kept[uid] = true
+		slog.Warn("imap: MOVE left a message another session changed", "user", s.username(), "folder", s.folder.Name, "uid", uid)
+	}
+	if len(gone) == 0 {
+		return kept
+	}
+	again, err := box.Begin(s.folder.ID)
+	if err == nil {
+		for _, uid := range gone {
+			again.Expunge(uid)
+		}
+		_, err = again.Commit()
+	}
+	if err != nil {
+		slog.Warn("imap: MOVE left records whose bodies moved", "user", s.username(), "folder", s.folder.Name, "err", err)
+		for _, uid := range gone {
+			kept[uid] = true
+		}
+	}
+	return kept
+}
+
+// selectedHandle is the namespace handle of the selected folder.
+func (s *session) selectedHandle() *nsHandle {
+	if s.folderNS != nil {
+		return s.folderNS
+	}
+	return s.primary
 }
 
 var _ imapserver.SessionIMAP4rev2 = (*session)(nil)
@@ -1161,7 +1201,6 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	s.namespaces = handles
 	s.primary = primary
 	s.box = primary.box
-	s.idx = primary.idx
 	s.mbox = primary.mailbox()
 	s.subs = primary.subs
 
@@ -1253,7 +1292,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 	// Mail stored before per-message GUIDs carries none, so stamp it once here.
 	// Not fatal: the folder stays pending and every other operation works.
-	if err := idxrebuild.BackfillGUIDs(h.mailbox(), h.idx, f, rel); err != nil {
+	if err := h.mailbox().BackfillGUIDs(f, rel); err != nil {
 		slog.Warn("imap: guid backfill failed", "folder", rel, "err", err)
 	}
 	s.folder = f
@@ -1299,7 +1338,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 	allFlags := sysFlags
 	s.knownKeywords = make(map[string]struct{})
-	if kws, err := readKeywords(h.idx, f.ID); err == nil {
+	if kws, err := h.mailbox().Keywords(f.ID); err == nil {
 		for _, kw := range kws {
 			allFlags = append(allFlags, imaplib.Flag(kw))
 			s.knownKeywords[kw] = struct{}{}
@@ -1318,7 +1357,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	// VANISHED (EARLIER) listing UIDs expunged since the client's modseq.
 	// KnownUIDs narrows the response; empty means "tell me everything".
 	if opts != nil && opts.QResync != nil && opts.QResync.UIDValidity == f.UIDValidity {
-		vanishedUIDs, vErr := readVanished(h.idx, f.ID, opts.QResync.ModSeq)
+		vanishedUIDs, vErr := h.mailbox().Vanished(f.ID, opts.QResync.ModSeq)
 		if vErr == nil && len(vanishedUIDs) > 0 {
 			var vset imaplib.UIDSet
 			if len(opts.QResync.KnownUIDs) == 0 {
@@ -1383,7 +1422,7 @@ func (s *session) Create(name string, opts *imaplib.CreateOptions) error {
 	if err := h.box.Create(rel); err != nil {
 		return nameError(err)
 	}
-	createFolderIndex(h.idx, rel, uint32(time.Now().Unix()))
+	h.mailbox().CreateFolder(rel, uint32(time.Now().Unix()))
 	// Inheritance is materialised here rather than resolved on every check:
 	// the new mailbox gets its own ACL file carrying what it inherited, so the
 	// user who just created it -- often holding the create right only at the
@@ -1490,7 +1529,7 @@ func (s *session) Delete(name string) error {
 	}
 	// drop the folder's index state. Non-fatal: the mailbox is already
 	// gone; any orphan index dir is reclaimed on next rebuild.
-	if err := h.idx.DeleteFolder(rel); err != nil {
+	if err := h.mailbox().DeleteFolder(rel); err != nil {
 		slog.Warn("imap: index delete after DELETE failed", "folder", name, "err", err)
 	}
 	// drop explicit ACL state (file + namespace-wide index). Non-fatal:
@@ -1557,7 +1596,7 @@ func (s *session) Rename(oldName, newName string, _ *imaplib.RenameOptions) erro
 	if err := hOld.box.Rename(relOld, relNew); err != nil {
 		return nameError(err)
 	}
-	if err := hOld.idx.RenameFolder(relOld, relNew); err != nil {
+	if err := hOld.mailbox().RenameFolder(relOld, relNew); err != nil {
 		return err
 	}
 	// Move the per-mailbox yarilo-acl file and rewrite namespace-wide index
@@ -1583,12 +1622,23 @@ func (s *session) renameInbox(dest string) error {
 		// (#1075).
 		return nameError(fmt.Errorf("imap/rename-inbox create: %w", err))
 	}
-	createFolderIndex(s.idx, dest, uint32(time.Now().Unix()))
+	s.mbox.CreateFolder(dest, uint32(time.Now().Unix()))
 	srcFolder, err := s.mbox.Folder("INBOX", 0)
 	if err != nil {
 		return err
 	}
-	msgs, err := s.idx.GetMessages(srcFolder.ID, mailbox.SeqSet{})
+	// The source's records go in one commit; a record whose body has moved
+	// leaves whatever another session did to it in between.
+	tx, err := s.mbox.Begin(srcFolder.ID)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if _, cerr := tx.Commit(); cerr != nil {
+			slog.Warn("imap: rename INBOX left records behind", "user", s.username(), "err", cerr)
+		}
+	}()
+	msgs, err := tx.Messages(mailbox.SeqSet{})
 	if err != nil {
 		return err
 	}
@@ -1621,11 +1671,9 @@ func (s *session) renameInbox(dest string) error {
 			return fmt.Errorf("imap/rename-inbox record: %w", err)
 		}
 		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
-		s.idx.ExpungeMessage(srcFolder.ID, m.UID) //nolint:errcheck
+		tx.Expunge(m.UID)
 		s.emitMailboxChangeSized(srcFolder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
 	}
-	srcFolder.Messages = 0
-	s.idx.SaveFolder(srcFolder) //nolint:errcheck
 	return nil
 }
 
@@ -2817,8 +2865,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	if err := s.requireRightOnSelected(mailbox.RightExpunge); err != nil {
 		return err
 	}
-	idx := s.folderIdx()
-	msgs, err := idx.GetMessages(s.folder.ID, mailbox.SeqSet{})
+	msgs, err := readForWrite(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return err
 	}
@@ -3187,7 +3234,9 @@ func (s *session) substituteSearchRes(criteria *imaplib.SearchCriteria) *imaplib
 
 // openEnvCache is msgcache.Open behind a seam: the sharing decision is
 // otherwise reachable only through a live race (#1673).
-var openEnvCache = msgcache.Open
+var openEnvCache = func(box mailbox.Box, folderID uint64, o mailbox.EnvelopeCacheOptions) mailbox.EnvelopeCache {
+	return box.EnvelopeCache(folderID, o)
+}
 
 // setsSeen: RFC 3501 §6.4.5, BODY[] without .PEEK. It decides both the flag
 // write and the sharing, so the two cannot disagree (#1673).
@@ -3208,7 +3257,6 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	if err := s.requireRightOnSelected(mailbox.RightRead); err != nil {
 		return err
 	}
-	idx := s.folderIdx()
 	backendMsgs, err := readMessages(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return err
@@ -3218,7 +3266,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	// VANISHED on a sequence-number FETCH is invalid; the patched lib
 	// rejects that at parse time so we do not need to re-check here.
 	if opts.Vanished && opts.ChangedSince > 0 {
-		vanishedUIDs, vErr := readVanished(idx, s.folder.ID, opts.ChangedSince)
+		vanishedUIDs, vErr := s.folderMailbox().Vanished(s.folder.ID, opts.ChangedSince)
 		if vErr == nil && len(vanishedUIDs) > 0 {
 			var vset imaplib.UIDSet
 			for _, uid := range vanishedUIDs {
@@ -3281,15 +3329,11 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 
 	// Once per command: it is a property of the request, not of each message.
 	markSeen := setsSeen(opts)
-	// The index cache serves the listing's hot path without opening message
-	// files (#1030): ENVELOPE and BODYSTRUCTURE alike, which is also what
-	// removes the SECOND open a FETCH (ENVELOPE BODYSTRUCTURE) used to pay.
-	// Opened once per FETCH, misses parsed and written back, offsets stamped
-	// in one batch on close. nil-safe: any cache trouble degrades to
-	// parsing, never to a client error.
-	var envCache *msgcache.Handle
+	// ENVELOPE and BODYSTRUCTURE from the index cache, once per FETCH (#1030);
+	// a nil handle answers every call as a miss, so a fault only costs a parse.
+	var envCache mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
 	if opts.Envelope || opts.BodyStructure != nil {
-		envCache = openEnvCache(s.folderIdx(), s.folder.ID, msgcache.Options{
+		envCache = openEnvCache(s.folderMailbox(), s.folder.ID, mailbox.EnvelopeCacheOptions{
 			Locker:    s.srv.opts.Locker,
 			User:      s.userInfo.Username,
 			SessionID: s.userInfo.SessionID,
@@ -3379,7 +3423,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			// the read this response is built on; writing them back as an
 			// absolute list drops anything another session set in between
 			// (#1250).
-			if uerr := idx.AddFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); uerr == nil {
+			if uerr := s.folderMailbox().UpdateFlags(s.folder.ID, m.UID, mailbox.FlagsUpdate{Mode: mailbox.FlagsAdd, Flags: []string{`\Seen`}}); uerr == nil {
 				m.Flags = append(append([]string(nil), m.Flags...), `\Seen`)
 				seenJustSet = true
 				s.emitMailboxChange(s.folder, locks.EventChanged, m.UID)
@@ -3603,8 +3647,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 			return err
 		}
 	}
-	idx := s.folderIdx()
-	msgs, err := idx.GetMessages(s.folder.ID, mailbox.SeqSet{})
+	msgs, err := readForWrite(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return err
 	}
@@ -3711,7 +3754,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	// Pass 2: single lock/reload/flush for all flag updates.
 	var results map[uint32]mailbox.FlagsResult
 	if len(batchUpdates) > 0 {
-		tx, terr := idx.Begin(s.folder.ID)
+		tx, terr := s.folderMailbox().Begin(s.folder.ID)
 		if terr != nil {
 			return dependencyError(terr)
 		}
@@ -3848,7 +3891,6 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	if err := s.requireRightOnSelected(mailbox.RightRead); err != nil {
 		return nil, err
 	}
-	srcIdx := s.folderIdx()
 	destH, destRel, destFolder, err := s.ensureFolderHandle(dest)
 	if err != nil {
 		return nil, tryCreate(err)
@@ -3856,7 +3898,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	if err := s.requireRight(destH, destRel, mailbox.RightInsert); err != nil {
 		return nil, err
 	}
-	msgs, err := srcIdx.GetMessages(s.folder.ID, mailbox.SeqSet{})
+	msgs, err := readForWrite(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -4220,7 +4262,6 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	}); err != nil {
 		return err
 	}
-	srcIdx := s.folderIdx()
 	srcBox := s.folderBox()
 	srcMailbox := s.folderMailbox()
 	destH, destRel, destFolder, err := s.ensureFolderHandle(dest)
@@ -4230,7 +4271,14 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	if err := s.requireRight(destH, destRel, mailbox.RightInsert); err != nil {
 		return err
 	}
-	msgs, err := srcIdx.GetMessages(s.folder.ID, mailbox.SeqSet{})
+	// The source is read and expunged in one transaction: a record another
+	// session changed in between is skipped, not expunged as read (#1805).
+	srcTx, err := srcMailbox.Begin(s.folder.ID)
+	if err != nil {
+		return err
+	}
+	defer srcTx.Rollback()
+	msgs, err := srcTx.Messages(mailbox.SeqSet{})
 	if err != nil {
 		return err
 	}
@@ -4363,6 +4411,18 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		}
 	}
 
+	// Index first, then storage, as the expunge loop does (#1690).
+	kept := map[uint32]bool{}
+	if !srcVirtual {
+		uids := make([]uint32, 0, len(hits))
+		moved := make(map[uint32]bool, len(hits))
+		for _, h := range hits {
+			uids = append(uids, h.srcUID)
+			moved[h.srcUID] = h.moved
+		}
+		kept = s.expungeSource(srcMailbox, srcTx, uids, moved)
+	}
+	expunged := 0
 	// Expunge source in descending seq order (RFC 6851 §3.3).
 	for i := len(hits) - 1; i >= 0; i-- {
 		h := hits[i]
@@ -4371,13 +4431,15 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 				continue
 			}
 		} else {
-			// Index first, then storage, as the expunge loop does (#1690).
-			srcIdx.ExpungeMessage(s.folder.ID, h.srcUID) //nolint:errcheck
+			if kept[h.srcUID] {
+				continue
+			}
 			if !h.moved {
 				srcBox.Remove(s.folder.Name, h.filename) //nolint:errcheck
 			}
 			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, h.srcUID, h.vsize, h.srcGUID)
 		}
+		expunged++
 		if err := w.WriteExpunge(h.seqNum); err != nil {
 			return err
 		}
@@ -4386,12 +4448,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 			s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
 		}
 	}
-	if srcVirtual {
-		s.folder.Messages -= uint32(len(left))
-	} else {
-		s.folder.Messages -= uint32(len(hits))
-		srcIdx.SaveFolder(s.folder) //nolint:errcheck
-	}
+	s.folder.Messages -= uint32(expunged)
 	// imapsieve (RFC 6785): a MOVE lands each message in the destination — the
 	// COPY cause fires there after the move completes; scripts may refile/discard.
 	if s.srv.opts.SieveEngine != nil {
@@ -4688,16 +4745,15 @@ func storeDelta(store *imaplib.StoreFlags, mode mailbox.FlagsMode) mailbox.Flags
 	return upd
 }
 
-// unlockedReader is the optional capability an index has when its files can
-// prove their own freshness: a read that only answers a client can skip the
-// cross-process lock. Declared here rather than on mailbox.UserIndex so an
-// index without the property is simply an index without the method.
-// unlockedReader adds the two reads beyond the message list that IMAP serves
-// straight to the client. The message list itself goes through
-// mailbox.ReadMessages, which four packages share.
-type unlockedReader interface {
-	VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error)
-	KeywordsUnlocked(folderID uint64) ([]string, error)
+// readForWrite is the read for handlers whose answer drives a write: under the
+// folder's lock, as #1249 requires, and holding nothing after it.
+func readForWrite(box mailbox.Box, folderID uint64) ([]*mailbox.MessageMeta, error) {
+	tx, err := box.Begin(folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	return tx.Messages(mailbox.SeqSet{})
 }
 
 // readMessages is the read for handlers whose answer goes to the client and
@@ -4706,23 +4762,6 @@ type unlockedReader interface {
 // is a separate function rather than a swap inside one (#1249).
 func readMessages(box mailbox.Box, folderID uint64) ([]*mailbox.MessageMeta, error) {
 	return box.Messages(folderID, mailbox.SeqSet{})
-}
-
-// readVanished and readKeywords are the same contract for the other two reads
-// that only answer the client: QRESYNC/CHANGEDSINCE and the SELECT keyword
-// list.
-func readVanished(idx mailbox.UserIndex, folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	if u, ok := idx.(unlockedReader); ok {
-		return u.VanishedUnlocked(folderID, sinceModSeq)
-	}
-	return idx.Vanished(folderID, sinceModSeq)
-}
-
-func readKeywords(idx mailbox.UserIndex, folderID uint64) ([]string, error) {
-	if u, ok := idx.(unlockedReader); ok {
-		return u.KeywordsUnlocked(folderID)
-	}
-	return idx.Keywords(folderID)
 }
 
 func applyStoreFlags(current []string, store *imaplib.StoreFlags) []string {

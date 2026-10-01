@@ -11,7 +11,6 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -36,8 +35,8 @@ func TestFetchSharesTheKeyOnlyWhenItWritesNothing(t *testing.T) {
 	defer ln.Close() //nolint:errcheck
 
 	var mu sync.Mutex
-	var seen []msgcache.Options
-	defer imapserver.SetEnvCacheObserver(func(o msgcache.Options) {
+	var seen []mailbox.EnvelopeCacheOptions
+	defer imapserver.SetEnvCacheObserver(func(o mailbox.EnvelopeCacheOptions) {
 		mu.Lock()
 		seen = append(seen, o)
 		mu.Unlock()
@@ -70,7 +69,7 @@ func TestFetchSharesTheKeyOnlyWhenItWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fetch := func(peek bool) msgcache.Options {
+	fetch := func(peek bool) mailbox.EnvelopeCacheOptions {
 		t.Helper()
 		mu.Lock()
 		seen = nil

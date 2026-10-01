@@ -62,7 +62,7 @@ func (s *session) usageAfterDelta(dBytes, dMessages int64) (quota.Usage, bool) {
 // countUsageFor sums the account's usage from the index, naming the caller:
 // counting locks every folder, so a total without one answers nothing (#1634).
 func (s *session) countUsageFor(reason string, useCache bool) (quota.Usage, error) {
-	if s.box == nil || s.idx == nil {
+	if s.box == nil || s.mbox == nil {
 		return quota.Usage{}, nil
 	}
 	if useCache && !s.quotaCacheAt.IsZero() && time.Since(s.quotaCacheAt) < quotaCacheTTL {
@@ -74,7 +74,7 @@ func (s *session) countUsageFor(reason string, useCache bool) (quota.Usage, erro
 	if err != nil {
 		return quota.Usage{}, err
 	}
-	u := quota.CountUsage(s.mbox, s.idx, mailbox.SelectableNames(entries), s.quotaLimits())
+	u := quota.CountUsage(s.mbox, mailbox.SelectableNames(entries), s.quotaLimits())
 	s.quotaCacheUsage = u
 	s.quotaCacheAt = time.Now()
 	// Lazy quota_over_status: reconcile on the first quota operation. evalOverStatus
@@ -349,7 +349,7 @@ func (s *session) quotaCheckAppend(_ context.Context, folder string, bytes int64
 // index (the authoritative count backend). ok is false when the folder or
 // index is unavailable.
 func (s *session) folderMessageCount(folder string) (int64, bool) {
-	if s.box == nil || s.idx == nil {
+	if s.box == nil || s.mbox == nil {
 		return 0, false
 	}
 	// The id, then the index's own aggregate: the same pair a count needs.
@@ -357,9 +357,9 @@ func (s *session) folderMessageCount(folder string) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	_, msgs, err := s.idx.FolderVSize(f.ID)
+	md, err := s.mbox.Metadata(f.ID)
 	if err != nil {
 		return 0, false
 	}
-	return int64(msgs), true
+	return int64(md.Messages), true
 }

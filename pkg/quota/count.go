@@ -16,7 +16,7 @@ type FolderVSizer interface {
 // count toward quota. Unreadable or absent folders are skipped rather than
 // failing the whole read, mirroring how the aggregate self-heals: a transient
 // per-folder error must not deny service on the user-wide total.
-func CountUsage(box mailbox.Box, vs FolderVSizer, folders []string, limits Limits) Usage {
+func CountUsage(box mailbox.Box, folders []string, limits Limits) Usage {
 	// Counting settles nothing: it needs the folder's id and the index behind
 	// it, and a session box would walk the store for every folder it opens.
 	box = mailbox.Counting(box)
@@ -30,12 +30,12 @@ func CountUsage(box mailbox.Box, vs FolderVSizer, folders []string, limits Limit
 		if err != nil {
 			continue
 		}
-		bytes, msgs, err := vs.FolderVSize(f.ID)
+		md, err := box.Metadata(f.ID)
 		if err != nil {
 			continue
 		}
-		u.StorageBytes += int64(bytes)
-		u.Messages += int64(msgs)
+		u.StorageBytes += int64(md.VSize)
+		u.Messages += int64(md.Messages)
 	}
 	return u
 }

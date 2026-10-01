@@ -3,6 +3,7 @@ package imap
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"time"
@@ -97,7 +98,7 @@ func (s *session) runImapSieveScript(scriptName, cause, mailboxName, rel string,
 
 	rc, err := h.box.Fetch(rel, filename, altTier)
 	if err != nil {
-		s.flagCorruptOnRead(h.idx, folder.ID, rel, filename, uid, err)
+		s.flagCorruptOnRead(h.mailbox(), folder.ID, rel, filename, uid, err)
 		slog.Warn("imapsieve: fetch stored message", "user", s.userInfo.Username, "folder", rel, "err", err)
 		return
 	}
@@ -156,7 +157,7 @@ func (s *session) applyImapSieveResult(res *sieve.FilterResult, h *nsHandle, rel
 		return
 	}
 	if len(keepFlags) > 0 {
-		if err := h.idx.UpdateFlags(folder.ID, uid, keepFlags, nil); err != nil {
+		if err := h.mailbox().UpdateFlags(folder.ID, uid, mailbox.FlagsUpdate{Flags: keepFlags}); err != nil {
 			slog.Warn("imapsieve: update flags", "folder", rel, "uid", uid, "err", err)
 		}
 	}
@@ -170,7 +171,7 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 	if create {
 		if h, rel, derr := s.dispatch(name); derr == nil {
 			_ = h.box.Create(rel) // idempotent for imapsieve fileinto :create
-			createFolderIndex(h.idx, rel, uint32(time.Now().Unix()))
+			h.mailbox().CreateFolder(rel, uint32(time.Now().Unix()))
 		}
 	}
 	dh, drel, df, err := s.ensureFolderHandle(name)
@@ -212,12 +213,9 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 func (s *session) imapSieveExpunge(h *nsHandle, rel string, folder *mailbox.Folder, uid uint32, filename string) {
 	// Read the identity while the record is still there: the retraction names
 	// the message, and after the expunge nothing can resolve the uid (#1986).
-	var guid [16]byte
-	if msgs, err := h.idx.GetMessages(folder.ID, mailbox.SeqSet{{From: uid, To: uid}}); err == nil && len(msgs) > 0 {
-		guid = msgs[0].GUID
-	}
 	_ = h.box.Remove(rel, filename)
-	if err := h.idx.ExpungeMessage(folder.ID, uid); err != nil {
+	guid, err := expungeOne(h.mailbox(), folder.ID, uid)
+	if err != nil {
 		slog.Warn("imapsieve: expunge", "folder", rel, "uid", uid, "err", err)
 		return
 	}
@@ -228,4 +226,28 @@ func (s *session) imapSieveExpunge(h *nsHandle, rel string, folder *mailbox.Fold
 	// expunge. Getting a size would mean reading the record back after removing
 	// it.
 	s.emitMailboxChangeSized(folder, locks.EventExpunged, uid, 0, guid)
+}
+
+// expungeOne expunges uid as read, and once more when another session moved
+// the record between the read and the write; a record already gone is done.
+func expungeOne(box mailbox.Box, folderID uint64, uid uint32) ([16]byte, error) {
+	var guid [16]byte
+	for attempt := 0; attempt < 2; attempt++ {
+		tx, err := box.Begin(folderID)
+		if err != nil {
+			return guid, err
+		}
+		msgs, err := tx.Messages(mailbox.SeqSet{{From: uid, To: uid}})
+		if err != nil || len(msgs) == 0 {
+			tx.Rollback()
+			return guid, err
+		}
+		guid = msgs[0].GUID
+		tx.Expunge(uid)
+		res, err := tx.Commit()
+		if err != nil || len(res.Skipped) == 0 {
+			return guid, err
+		}
+	}
+	return guid, fmt.Errorf("uid %d kept moving under the expunge", uid)
 }

@@ -36,7 +36,7 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 	if err != nil {
 		return nil, s.virtualSyncFailed(rel, err)
 	}
-	was := virtualHeaderOf(h.idx, f.ID)
+	was := virtualHeaderOf(virtualIndex(h), f.ID)
 	if adopted, took := s.adoptReferenceHeader(h, f, cfg, was); took {
 		was = adopted
 	}
@@ -53,8 +53,8 @@ func (s *session) syncVirtual(h *nsHandle, rel string, f *mailbox.Folder, mode v
 	pass := func(context.Context) error {
 		// Read under the hold: two sessions deciding from one stale view
 		// would give one copy two uids.
-		was := virtualHeaderOf(h.idx, f.ID)
-		old, rerr := h.idx.GetMessages(f.ID, mailbox.SeqSet{})
+		was := virtualHeaderOf(virtualIndex(h), f.ID)
+		old, rerr := virtualIndex(h).GetMessages(f.ID, mailbox.SeqSet{})
 		if rerr != nil {
 			return fmt.Errorf("imap/virtual: read records: %w", rerr)
 		}
@@ -101,7 +101,7 @@ func (s *session) adoptReferenceHeader(h *nsHandle, f *mailbox.Folder, cfg *virt
 	if !took {
 		return was, false
 	}
-	setter, ok := h.idx.(mailbox.VirtualIndexed)
+	setter, ok := virtualIndex(h).(mailbox.VirtualIndexed)
 	if !ok {
 		return was, false
 	}
@@ -135,12 +135,12 @@ func writeSyncFailure(w *imapserver.UpdateWriter, err *imaplib.Error) error {
 func (s *session) applyVirtual(h *nsHandle, rel string, f *mailbox.Folder, res virtual.SyncResult, old []*mailbox.MessageMeta) (*mailbox.Folder, error) {
 	// The header first: it declares the extension, and a record written before
 	// that carries no backing folder at all.
-	if setter, ok := h.idx.(mailbox.VirtualIndexed); ok {
+	if setter, ok := virtualIndex(h).(mailbox.VirtualIndexed); ok {
 		if err := setter.SetVirtualHeader(f.ID, res.Header); err != nil {
 			return nil, fmt.Errorf("imap/virtual: write header: %w", err)
 		}
 	}
-	tx, err := h.idx.Begin(f.ID)
+	tx, err := virtualIndex(h).Begin(f.ID)
 	if err != nil {
 		return nil, fmt.Errorf("imap/virtual: open records: %w", err)
 	}
@@ -247,7 +247,7 @@ func (b *sessionBacking) Messages(back virtual.Backing) ([]*mailbox.MessageMeta,
 	if !ok {
 		return nil, fmt.Errorf("imap/virtual: %s was not listed", back.Name)
 	}
-	msgs, err := b.s.primary.idx.GetMessages(id, mailbox.SeqSet{})
+	msgs, err := virtualIndex(b.s.primary).GetMessages(id, mailbox.SeqSet{})
 	if err != nil {
 		return nil, fmt.Errorf("imap/virtual: read %s: %w", back.Name, err)
 	}
@@ -384,7 +384,7 @@ func (s *session) backingFolders() (map[uint32]backingFolder, error) {
 	if s.backingOf != nil {
 		return s.backingOf, nil
 	}
-	out, err := s.backingFoldersOf(s.folderNS.idx, s.folder.ID)
+	out, err := s.backingFoldersOf(virtualIndex(s.folderNS), s.folder.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +435,7 @@ func (s *session) virtualBackingNames(name string) []string {
 	if refreshed, _ := s.syncVirtual(h, rel, f, virtual.Poll); refreshed != nil {
 		f = refreshed
 	}
-	folders, err := s.backingFoldersOf(h.idx, f.ID)
+	folders, err := s.backingFoldersOf(virtualIndex(h), f.ID)
 	if err != nil {
 		return nil
 	}
@@ -458,7 +458,7 @@ func (s *session) readVirtualCopy(m *mailbox.MessageMeta) (io.ReadCloser, error)
 		return nil, fmt.Errorf("imap/virtual: backing folder %d is gone: %w", m.VirtualBacking, os.ErrNotExist)
 	}
 	h := s.primary
-	recs, err := h.idx.GetMessages(b.id, mailbox.SeqSet{{From: m.VirtualRealUID, To: m.VirtualRealUID}})
+	recs, err := virtualIndex(h).GetMessages(b.id, mailbox.SeqSet{{From: m.VirtualRealUID, To: m.VirtualRealUID}})
 	if err != nil {
 		return nil, fmt.Errorf("imap/virtual: read %s uid %d: %w", b.name, m.VirtualRealUID, err)
 	}
@@ -510,7 +510,7 @@ func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs
 			continue
 		}
 		mbox := fts.MailboxRef{Name: b.name, GUID: mailbox.FormatObjectID(b.guid), UIDValidity: b.uidv}
-		backMsgs, rerr := s.primary.idx.GetMessages(b.id, mailbox.SeqSet{})
+		backMsgs, rerr := virtualIndex(s.primary).GetMessages(b.id, mailbox.SeqSet{})
 		if rerr != nil {
 			return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Full-text search unavailable"}
 		}
@@ -586,7 +586,7 @@ func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates ma
 		if !ok {
 			continue // the backing folder is gone: nothing to change
 		}
-		tx, terr := h.idx.Begin(b.id)
+		tx, terr := virtualIndex(h).Begin(b.id)
 		if terr != nil {
 			return nil, nil, terr
 		}
@@ -598,7 +598,7 @@ func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates ma
 		if cerr != nil {
 			return nil, nil, cerr
 		}
-		reals, rerr := h.idx.GetMessages(b.id, mailbox.SeqSet{})
+		reals, rerr := virtualIndex(h).GetMessages(b.id, mailbox.SeqSet{})
 		if rerr != nil {
 			return nil, nil, rerr
 		}
@@ -646,7 +646,7 @@ func (s *session) expungeCopies(doomed []*mailbox.MessageMeta) ([]*mailbox.Messa
 		}
 		var reals []*mailbox.MessageMeta
 		for _, vm := range vms {
-			recs, rerr := h.idx.GetMessages(b.id, mailbox.SeqSet{{From: vm.VirtualRealUID, To: vm.VirtualRealUID}})
+			recs, rerr := virtualIndex(h).GetMessages(b.id, mailbox.SeqSet{{From: vm.VirtualRealUID, To: vm.VirtualRealUID}})
 			if rerr != nil {
 				return nil, fmt.Errorf("imap/virtual: read %s uid %d: %w", b.name, vm.VirtualRealUID, rerr)
 			}
@@ -674,7 +674,7 @@ func (s *session) expungeCopies(doomed []*mailbox.MessageMeta) ([]*mailbox.Messa
 	if len(gone) == 0 {
 		return nil, nil
 	}
-	tx, terr := s.folderIdx().Begin(s.folder.ID)
+	tx, terr := virtualIndex(s.selectedHandle()).Begin(s.folder.ID)
 	if terr != nil {
 		return nil, terr
 	}
@@ -709,7 +709,7 @@ func (s *session) imapSieveOnCopies(pending []pendingStore, copies map[uint32]vi
 		for _, run := range []struct{ script, mailbox string }{{script, b.name}, {virtScript, virtName}} {
 			// Read afresh each time: the flag write and the first script may
 			// have renamed the copy's file or moved the copy away.
-			recs, err := h.idx.GetMessages(b.id, mailbox.SeqSet{{From: c.uid, To: c.uid}})
+			recs, err := virtualIndex(h).GetMessages(b.id, mailbox.SeqSet{{From: c.uid, To: c.uid}})
 			if err != nil || len(recs) == 0 {
 				break
 			}
@@ -805,4 +805,14 @@ func (s *session) virtualSaveTarget(name string) (target string, redirected bool
 		return "", false, errVirtualCannot("the folder this virtual mailbox saves to does not exist: " + target)
 	}
 	return target, true, nil
+}
+
+// virtualIndex is the index virtual mailboxes still reach past Box for, until
+// they move behind it in the next step of #1805.
+func virtualIndex(h *nsHandle) mailbox.UserIndex {
+	ix, ok := h.mailbox().(interface{ Index() mailbox.UserIndex })
+	if !ok {
+		return nil
+	}
+	return ix.Index()
 }

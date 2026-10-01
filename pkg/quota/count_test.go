@@ -17,6 +17,12 @@ type fakeVSizer struct {
 type fakeBox struct {
 	mailbox.Box
 	byName map[string]uint64
+	sizes  *fakeVSizer
+}
+
+func (b fakeBox) Metadata(id uint64) (mailbox.FolderMetadata, error) {
+	bytes, msgs, err := b.sizes.FolderVSize(id)
+	return mailbox.FolderMetadata{VSize: bytes, Messages: msgs}, err
 }
 
 func (b fakeBox) Folder(name string, _ uint32) (*mailbox.Folder, error) {
@@ -45,8 +51,8 @@ func TestCountUsage(t *testing.T) {
 		},
 	}
 	// Missing folder is skipped, not fatal.
-	b := fakeBox{byName: f.byName}
-	u := CountUsage(b, f, []string{"INBOX", "Sent", "Archive", "Ghost"}, Limits{})
+	b := fakeBox{byName: f.byName, sizes: f}
+	u := CountUsage(b, []string{"INBOX", "Sent", "Archive", "Ghost"}, Limits{})
 	if u.StorageBytes != 1750 {
 		t.Errorf("StorageBytes = %d, want 1750", u.StorageBytes)
 	}
@@ -55,7 +61,7 @@ func TestCountUsage(t *testing.T) {
 	}
 
 	// Empty folder list yields zero usage.
-	if z := CountUsage(b, f, nil, Limits{}); z.StorageBytes != 0 || z.Messages != 0 {
+	if z := CountUsage(b, nil, Limits{}); z.StorageBytes != 0 || z.Messages != 0 {
 		t.Errorf("empty = %+v, want zero", z)
 	}
 }

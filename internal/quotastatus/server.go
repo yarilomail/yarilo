@@ -193,7 +193,7 @@ func (s *Server) check(attrs map[string]string) string {
 		slog.Warn("quotastatus: list folders failed", "user", username, "err", lerr)
 		return "DUNNO" // fail-open
 	}
-	u := quota.CountUsage(mbox, idx, mailbox.SelectableNames(entries), limits)
+	u := quota.CountUsage(mbox, mailbox.SelectableNames(entries), limits)
 
 	var msgSize int64
 	if sz := strings.TrimSpace(attrs["size"]); sz != "" {

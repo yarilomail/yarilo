@@ -239,7 +239,7 @@ func (s *session) rollBackUnadministered(h *nsHandle, folder, wireName string, c
 			Text: "mailbox created but could not be granted an administrator, and could not be removed: " + cause.Error(),
 		}
 	}
-	if err := h.idx.DeleteFolder(folder); err != nil {
+	if err := h.mailbox().DeleteFolder(folder); err != nil {
 		slog.Warn("imap: index state left behind by a rolled-back CREATE", "folder", wireName, "err", err)
 	}
 	slog.Warn("imap: CREATE rolled back, the creator could not be granted the admin right",

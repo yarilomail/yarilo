@@ -1,8 +1,6 @@
 package msgcache
 
 import (
-	"time"
-
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/internal/imaptext"
@@ -18,15 +16,7 @@ import (
 // 30.6% of every object a SORT (DATE) allocated on a ten-thousand-message
 // account: six address lists nobody in that command would read (#1490). The
 // measurement is on the issue; the number that justified this is a field one.
-type Head struct {
-	Date    time.Time
-	Subject string
-	// From, To and Cc carry the first address's mailbox part -- the local
-	// part, which is what RFC 5256 §2.2 sorts an address key by.
-	From, To, Cc string
-	InReplyTo    []string
-	MessageID    string
-}
+type Head = mailbox.EnvelopeHead
 
 // decodeHead reads a Head out of the same bytes decodeEnvelope reads, skipping
 // what it does not return.
