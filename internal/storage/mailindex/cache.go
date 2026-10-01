@@ -61,7 +61,7 @@ const (
 var ErrCacheInvalid = errors.New("mailindex: cache file invalid")
 
 // CacheHeader is the 32-byte file header, field-for-field the reference's
-// mail_cache_header. ProducerGen occupies the reference's unused byte.
+// cache header. ProducerGen occupies the reference's unused byte.
 type CacheHeader struct {
 	MajorVersion      uint8
 	CompatSizeofUoffT uint8
@@ -310,11 +310,8 @@ func (c *CacheFile) loadFields() error {
 	return nil
 }
 
-// readFieldTable decodes one mail_cache_header_fields block:
-//
-//	next_offset u32 (packed) | size u32 | fields_count u32 |
-//	last_used[count] u32 | size[count] u32 | type[count] u8 |
-//	decision[count] u8 | names: NUL-separated
+// readFieldTable decodes one field table: packed next offset, size and count,
+// then per field last_used, size, type and decision, and NUL-separated names.
 func (c *CacheFile) readFieldTable(off uint32) (next uint32, fields []CacheField, err error) {
 	fixed := make([]byte, 12)
 	if err := c.readAt(fixed, int64(off)); err != nil {
@@ -584,10 +581,8 @@ func (c *CacheFile) appendAligned(buf []byte) (uint32, error) {
 	return uint32(end), nil
 }
 
-// packCacheOffset / unpackCacheOffset are the reference's
-// mail_index_uint32_to_offset / mail_index_offset_to_uint32: a 4-aligned
-// 30-bit offset spread over four 7-bit groups with the high bit of every
-// byte set, so a partially-written value can never look valid.
+// packCacheOffset is the reference's packing: a 4-aligned 30-bit offset in four
+// 7-bit groups with every byte's high bit set, so a torn write never looks valid.
 func packCacheOffset(off uint32) uint32 {
 	off >>= 2
 	v := 0x00000080 | (off & 0x0000007f) |

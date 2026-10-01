@@ -5,8 +5,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// The four causes a walk can have, named as the reference names them in
-// enum maildir_scan_why.
+// The four causes a walk can have, as the reference names them.
 const (
 	reasonFirstSeen  = "first-seen"
 	reasonTokenMoved = "token-moved"

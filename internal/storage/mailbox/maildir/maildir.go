@@ -1765,10 +1765,8 @@ func (u *userMailbox) SyncToken(folder string) string {
 // PartialScope reports whether new/ alone may be read: cur/ stands where the
 // last walk left it, the question the reference asks.
 func (u *userMailbox) PartialScope(folder, prevToken string) bool {
-	// By mtime alone, as the reference compares it (DIR_MTIME_CHANGED): the
-	// size in the token is a directory's byte count, which a filesystem may
-	// change for a removal that leaves the timestamp where it was -- and that
-	// is a change this question is not asking about.
+	// By mtime alone, as the reference compares it: a directory's size can move
+	// for a removal that leaves the timestamp, which this question does not ask.
 	prev, _, ok := strings.Cut(tokenPart(prevToken, "cur"), "/")
 	if !ok || prev == "" {
 		return false
