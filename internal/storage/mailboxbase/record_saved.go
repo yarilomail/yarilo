@@ -5,6 +5,13 @@ import "github.com/yarilomail/yarilo/pkg/mailbox"
 // RecordSaved allocates the uid and records the message; a driver named by uid
 // settles the name in that cycle. saved is what Save returned (#1700).
 func RecordSaved(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint64, folder, saved string, m *mailbox.MessageMeta) error {
+	// The store's UID space before the uid: a delivery reaching a store first
+	// takes uids its own list already gave away otherwise (#2083).
+	if al, ok := mailbox.Driver(box).(mailbox.UIDSpaceAligningStore); ok {
+		if err := al.AlignUIDSpace(idx, folderID, folder); err != nil {
+			return err
+		}
+	}
 	stampStorageKey(box, folder, saved, m)
 	namer, isNamer := mailbox.Driver(box).(mailbox.UIDNamer)
 	appender, isAppender := idx.(mailbox.NamingAppender)

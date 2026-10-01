@@ -277,6 +277,66 @@ func (u *userMailbox) listCanTakeRow(folder, base string) bool {
 	return !known
 }
 
+// cachedUIDOwner names the base the cached list gives uid; taken is false when
+// the cache cannot say, and the rewrite path checks the file instead.
+func (u *userMailbox) cachedUIDOwner(folder string, uid uint32) (string, bool) {
+	st := u.listStampNow(folder)
+	if st == (listStamp{}) {
+		return "", false
+	}
+	m, ok := u.folderCacheFor(folder).snapshotUIDs(st)
+	if !ok {
+		return "", false
+	}
+	for base, have := range m {
+		if have == uid {
+			return base, true
+		}
+	}
+	return "", false
+}
+
+// AlignUIDSpace brings the index to the list's UID space before a delivery hands
+// out a uid, as the reference syncs the folder before every save.
+func (u *userMailbox) AlignUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) error {
+	seed, err := u.alignIndexUIDSpace(idx, folderID, folder)
+	if err != nil || seed == 0 {
+		return err
+	}
+	return u.seedUIDValidity(folder, lockSiteSave, seed)
+}
+
+// alignIndexUIDSpace gives the index the list's UID space. A list without one
+// gets the index's: the returned seed, for the caller's next list write.
+func (u *userMailbox) alignIndexUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) (uint32, error) {
+	a, ok := idx.(mailbox.UIDSpaceAligner)
+	if !ok {
+		return 0, nil
+	}
+	uidValidity, nextUID, have := u.UIDSpace(folder)
+	current, _, err := a.AlignUIDSpace(folderID, uidValidity, nextUID)
+	if err != nil {
+		return 0, fmt.Errorf("maildir: align uid space: %w", err)
+	}
+	if have {
+		return 0, nil
+	}
+	return current, nil
+}
+
+// seedUIDValidity writes the index's UIDVALIDITY into a list that has none.
+func (u *userMailbox) seedUIDValidity(folder, site string, v uint32) error {
+	if err := u.withUIDList(folder, site, func(l *uidList) error {
+		if l.uidValidity == 0 {
+			l.uidValidity = v
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("maildir: seed uidvalidity: %w", err)
+	}
+	return nil
+}
+
 // adoptRow adds one written row to the cache under the list's new stamp:
 // re-reading the whole list to learn one name is what made a save O(n) (#1840).
 func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, hasGUID bool) {
@@ -634,9 +694,9 @@ func (u *userMailbox) Create(folder string) error {
 				return fmt.Errorf("maildir/create: %w", err)
 			}
 		}
-		// The folder's UIDVALIDITY is the list's, and the index adopts it while
-		// the folder is still empty -- afterwards it cannot (#1701).
-		return u.ensureUIDListLocked(folder)
+		// No UIDVALIDITY of its own: the first alignment seeds the index's, so
+		// the folder has one UID space, not two (#2083).
+		return u.ensureUIDListLocked(folder, 0)
 	})
 }
 
@@ -856,6 +916,9 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 			rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
 		}
 	}
+	if owner, taken := u.cachedUIDOwner(folder, uid); taken && owner != base {
+		return fmt.Errorf("maildir/uidlist: uid %d already names %s: %w", uid, owner, mailbox.ErrUIDInUse)
+	}
 	// The ordinary case is a name the list has never seen: one line at the end
 	// of the file, held for that write alone (#1840).
 	if u.listCanTakeRow(folder, base) {
@@ -874,6 +937,11 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 		beforeRows = len(l.records)
 		if listDebug() {
 			beforeMod, beforeSize = u.listStat(folder)
+		}
+		for _, r := range l.records {
+			if r.uid == uid && r.base != base {
+				return fmt.Errorf("maildir/uidlist: uid %d already names %s: %w", uid, r.base, mailbox.ErrUIDInUse)
+			}
 		}
 		replaced := false
 		for i := range l.records {
@@ -1392,26 +1460,20 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		return st, nil
 	}
 
-	err = u.withMailboxLockSite(folder.Name, lockSiteReconcileApply, func() error {
+	err = u.withMailboxLockSite(folder.Name, lockSiteReconcileApply, func() (rerr error) {
 		u.inSection.Add(1)
 		defer u.inSection.Add(-1)
-		// A store being taken over: its uidlist already names a UID space.
-		// Here rather than in its own acquisition -- it must precede the
-		// appends, and nothing in the scan depends on it.
-		if a, ok := idx.(mailbox.UIDSpaceAdopter); ok {
-			if uidValidity, nextUID, have := u.UIDSpace(folder.Name); have {
-				aerr := a.AdoptUIDSpace(folder.ID, uidValidity, nextUID)
-				switch {
-				case aerr == nil:
-				case errors.Is(aerr, mailbox.ErrUIDSpaceInUse):
-					// An ordinary folder with mail in it, which is most of them.
-					// Whether a folder is empty is the index's to answer, not a
-					// caller's: the handle here is a snapshot.
-				default:
-					return fmt.Errorf("maildir/sync: adopt uid space: %w", aerr)
-				}
-			}
+		// The list's UID space before any uid is read or handed out (#2083); the
+		// seed rides on the list write this pass makes, not a hold of its own.
+		seed, err := u.alignIndexUIDSpace(idx, folder.ID, folder.Name)
+		if err != nil {
+			return err
 		}
+		defer func() {
+			if seed != 0 && rerr == nil {
+				rerr = u.seedUIDValidity(folder.Name, lockSiteReconcileApply, seed)
+			}
+		}()
 		defer func() {
 			if sectionProbe != nil {
 				sectionProbe(int(u.sectionDir.Load()), int(u.sectionFS.Load()))
@@ -1533,9 +1595,10 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		}
 
 		if len(relink) > 0 {
-			if _, err := u.recordUIDsLocked(folder.Name, relink); err != nil {
+			if _, err := u.recordUIDsLocked(folder.Name, relink, seed); err != nil {
 				return err
 			}
+			seed = 0
 			st.Relinked += len(relink)
 		}
 		for i := range scanned {
@@ -1590,10 +1653,11 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 			if testBeforeRowWrite != nil {
 				testBeforeRowWrite()
 			}
-			taken, err := u.recordUIDsLocked(folder.Name, recorded)
+			taken, err := u.recordUIDsLocked(folder.Name, recorded, seed)
 			if err != nil {
 				return err
 			}
+			seed = 0
 			if testStopAfterRows {
 				return errStoppedAfterRows
 			}
@@ -2476,6 +2540,26 @@ func (u *userMailbox) UIDSpace(folder string) (uidValidity, nextUID uint32, ok b
 			uidValidity = uint32(n)
 		case 'N':
 			nextUID = uint32(n)
+		}
+	}
+	// The header's next uid can trail the rows appended after it; the reference
+	// reads past it to the last uid, and so does this.
+	if m, cached := u.folderCacheFor(folder).snapshotUIDs(u.listStampNow(folder)); cached {
+		for _, uid := range m {
+			if uid >= nextUID {
+				nextUID = uid + 1
+			}
+		}
+		return uidValidity, nextUID, uidValidity != 0
+	}
+	for sc.Scan() {
+		line := sc.Text()
+		sp := strings.IndexByte(line, ' ')
+		if sp <= 0 {
+			continue
+		}
+		if uid, perr := strconv.ParseUint(line[:sp], 10, 32); perr == nil && uint32(uid) >= nextUID {
+			nextUID = uint32(uid) + 1
 		}
 	}
 	return uidValidity, nextUID, uidValidity != 0

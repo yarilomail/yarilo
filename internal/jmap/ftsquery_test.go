@@ -140,7 +140,7 @@ func searchServer(t *testing.T, stub *stubFTS, maxConns, maxFolders int, folders
 			UID: 1, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
 			InternalDate: time.Now(),
 		}
-		if err := mailboxbase.NameSaved(box, "INBOX", fname, meta); err != nil {
+		if err := mailboxbase.NameSaved(box, name, fname, meta); err != nil {
 			t.Fatalf("name: %v", err)
 		}
 		if err := ui.AppendMessage(f.ID, meta); err != nil {

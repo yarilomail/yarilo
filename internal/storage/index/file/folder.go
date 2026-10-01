@@ -912,6 +912,7 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 		if nextUID > fs.file.Header.NextUID {
 			fs.file.Header.NextUID = nextUID
 		}
+		u.rememberIdentity(fs.folder, uidValidity)
 		return fs.flush()
 	})
 }
@@ -1093,6 +1094,12 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 	if m.UID == 0 {
 		return fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
+	}
+	// One uid, one record: a second one hides a message from every client (#2083).
+	for _, rec := range fs.file.Records {
+		if rec.UID == m.UID {
+			return fmt.Errorf("fileindex/append: uid %d: %w", m.UID, mailbox.ErrUIDInUse)
+		}
 	}
 	fs.debugSizelessAppend(m)
 	var modseq uint64
@@ -1628,6 +1635,71 @@ func (u *userIndex) keywords(folderID uint64) ([]string, error) {
 func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta) ([]mailbox.ExpungedCopy, error) {
 	var expunged []mailbox.ExpungedCopy
 	err := u.withFolderSite(folderID, lockSiteResetFolder, func(fs *folderState) error {
+		var rerr error
+		expunged, rerr = u.resetFolderLocked(fs, records)
+		return rerr
+	})
+	return expunged, err
+}
+
+// AlignUIDSpace takes the store's UID space, as the reference does: a different
+// UIDVALIDITY over records is another generation, and they are dropped (#2083).
+func (u *userIndex) AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) (uint32, bool, error) {
+	var current uint32
+	need := false
+	if err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
+		current = fs.file.Header.UIDValidity
+		need = (uidValidity != 0 && current != uidValidity) || nextUID > fs.file.Header.NextUID
+		return nil
+	}); err != nil {
+		return 0, false, err
+	}
+	if !need {
+		return current, false, nil
+	}
+	reset := false
+	err := u.withFolderSite(folderID, lockSiteAlignUIDSpace, func(fs *folderState) error {
+		was := fs.file.Header.UIDValidity
+		if uidValidity == 0 {
+			// No space of its own to take: only the uids its rows already hold.
+			if nextUID > fs.file.Header.NextUID {
+				fs.file.Header.NextUID = nextUID
+			}
+			current = was
+			return fs.flush()
+		}
+		if was != uidValidity && len(fs.file.Records) > 0 {
+			dropped := len(fs.file.Records)
+			if _, err := u.resetFolderLocked(fs, nil); err != nil {
+				return err
+			}
+			// Keyed by uid, so it names other messages now; it is rebuilt on demand.
+			if err := os.Remove(filepath.Join(fs.indexDir, "pop3.uidl")); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("fileindex/align-uid-space: drop pop3.uidl: %w", err)
+			}
+			reset = true
+			metricUIDSpaceReset.Inc()
+			slog.Warn("fileindex: UIDVALIDITY changed; the folder's records are dropped and its messages come back as new",
+				"trace_id", fs.traceID, "user", u.username, "folder", fs.folder,
+				"was", was, "now", uidValidity, "dropped", dropped)
+		}
+		fs.file.Header.UIDValidity = uidValidity
+		if nextUID > fs.file.Header.NextUID {
+			fs.file.Header.NextUID = nextUID
+		}
+		current = uidValidity
+		if was != uidValidity {
+			u.rememberIdentity(fs.folder, uidValidity)
+		}
+		return fs.flush()
+	})
+	return current, reset, err
+}
+
+// resetFolderLocked is ResetFolder's body; the caller holds the folder.
+func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.MessageMeta) ([]mailbox.ExpungedCopy, error) {
+	var expunged []mailbox.ExpungedCopy
+	err := func() error {
 		highest, err := fs.highestModSeq()
 		if err != nil {
 			return err
@@ -1746,7 +1818,7 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 			"records_after", len(fs.file.Records),
 			"dropped", len(expunged))
 		return nil
-	})
+	}()
 	if err != nil {
 		return nil, err
 	}

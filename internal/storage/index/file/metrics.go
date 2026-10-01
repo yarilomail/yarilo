@@ -98,6 +98,7 @@ const (
 	lockSiteOptimize        = "optimize"
 	lockSiteRecomputeVsize  = "recompute-vsize"
 	lockSiteResetFolder     = "reset-folder"
+	lockSiteAlignUIDSpace   = "align-uid-space"
 	lockSiteSaveFolder      = "save-folder"
 	lockSiteSetAltTier      = "set-alt-tier"
 	lockSiteSetGuids        = "set-guids"
@@ -126,6 +127,13 @@ var metricHeaderCorrected = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "fileindex_header_corrected_total",
 	Help: "Index header fields that disagreed with the records and were re-derived from them, by field.",
 }, []string{"field"}) // next_uid | messages | seen | deleted
+
+// metricUIDSpaceReset counts folders whose records were dropped for a new
+// UIDVALIDITY: every client of them resyncs (#2083).
+var metricUIDSpaceReset = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_uid_space_reset_total",
+	Help: "Folders reset because their store named another UIDVALIDITY; their messages were added again as new.",
+})
 
 // metricCompactionRefused counts log compactions that could not write the base.
 // Rotation stopping is invisible from the outside — the folder keeps serving

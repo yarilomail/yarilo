@@ -69,12 +69,14 @@ func (a *Allocator) Next(floor uint32) (uint32, error) {
 		if err != nil {
 			return err
 		}
+		// Zero takes the clock before the counter is compared: a caller with no
+		// stamp of its own gets a readable value, not 1 (#2083).
 		candidate := floor
-		if candidate <= current {
-			candidate = current + 1
-		}
 		if candidate == 0 {
 			candidate = uint32(time.Now().Unix())
+		}
+		if candidate <= current {
+			candidate = current + 1
 		}
 		for i := 0; i < maxClaimAttempts; i++ {
 			ok, cerr := a.claim(candidate)

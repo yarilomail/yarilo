@@ -312,6 +312,10 @@ func (h *userHandle) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32)
 	return h.stamped(folderID).AdoptUIDSpace(folderID, uidValidity, nextUID)
 }
 
+func (h *userHandle) AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) (uint32, bool, error) {
+	return h.stamped(folderID).AlignUIDSpace(folderID, uidValidity, nextUID)
+}
+
 // MaildirStamp and SetMaildirStamp satisfy mailbox.MaildirStamped on the handle
 // too: a capability only on the inner type is one no assertion finds.
 func (h *userHandle) MaildirStamp(folderID uint64) (mailbox.MaildirStamp, bool) {

@@ -2,6 +2,7 @@ package maildir
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -194,7 +195,7 @@ func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, er
 	}()
 	metricLockAcquired.WithLabelValues(site).Inc()
 
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {
 		return false, nil // no list yet: the caller writes one whole
 	}
@@ -203,8 +204,21 @@ func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, er
 	if serr != nil || st.Size() == 0 {
 		return false, nil
 	}
-	if _, werr := f.WriteString(rec.String() + "\n"); werr != nil {
+	// The header's next uid follows the row (#1701), patched in place while it
+	// keeps its width; a wider number is the whole rewrite's to write.
+	at, width, next, found := headerNextUID(f)
+	patch := found && rec.uid >= next
+	digits := strconv.FormatUint(uint64(rec.uid)+1, 10)
+	if patch && len(digits) != width {
+		return false, nil
+	}
+	if _, werr := f.WriteAt([]byte(rec.String()+"\n"), st.Size()); werr != nil {
 		return false, fmt.Errorf("maildir/uidlist: append row: %w", werr)
+	}
+	if patch {
+		if _, werr := f.WriteAt([]byte(digits), at); werr != nil {
+			return false, fmt.Errorf("maildir/uidlist: header next uid: %w", werr)
+		}
 	}
 	if !u.b.fsync.SyncsList() {
 		return true, nil
@@ -215,6 +229,31 @@ func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, er
 		return false, fmt.Errorf("maildir/uidlist: sync row: %w", serr)
 	}
 	return true, nil
+}
+
+// headerNextUID finds the header's next uid: where its digits start, how many
+// there are, and the value.
+func headerNextUID(f *os.File) (at int64, width int, next uint32, found bool) {
+	buf := make([]byte, 256)
+	n, _ := f.ReadAt(buf, 0)
+	line := buf[:n]
+	if i := bytes.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	i := bytes.Index(line, []byte(" N"))
+	if i < 0 {
+		return 0, 0, 0, false
+	}
+	start := i + 2
+	end := start
+	for end < len(line) && line[end] >= '0' && line[end] <= '9' {
+		end++
+	}
+	v, err := strconv.ParseUint(string(line[start:end]), 10, 32)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return int64(start), end - start, uint32(v), true
 }
 
 // withUIDList holds the list for one row: read, change, write. The lock spans
@@ -231,7 +270,7 @@ func (u *userMailbox) withUIDList(folder, site string, fn func(l *uidList) error
 		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
 	}()
 	metricLockAcquired.WithLabelValues(site).Inc()
-	if err := u.ensureUIDListLocked(folder); err != nil {
+	if err := u.ensureUIDListLocked(folder, 0); err != nil {
 		return err
 	}
 	l, err := readUIDListFile(path)
@@ -262,9 +301,6 @@ func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
 		next = 1
 	}
 	l.nextUID = next
-	if l.uidValidity == 0 {
-		l.uidValidity = uint32(time.Now().Unix())
-	}
 	if l.guid == "" {
 		l.guid = randomGUID()
 	}
@@ -340,12 +376,15 @@ type listEntry struct {
 
 // recordUIDsLocked writes a batch of rows in one rewrite and returns the uids
 // it refused: a base already listed under another uid keeps its owner (#1745).
-func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) ([]uint32, error) {
+func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry, seed uint32) ([]uint32, error) {
 	var taken []uint32
 	var uids []uint32
 	var written *uidList
 	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
 	err := u.withUIDList(folder, lockSiteReconcileApply, func(l *uidList) error {
+		if seed != 0 && l.uidValidity == 0 {
+			l.uidValidity = seed
+		}
 		beforeRows = len(l.records)
 		if listDebug() {
 			beforeMod, beforeSize = u.listStat(folder)
@@ -389,9 +428,9 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry) ([]ui
 	return taken, nil
 }
 
-// ensureUIDListLocked gives a folder with none a header-only list: the index
-// can adopt its UIDVALIDITY only while the folder is still empty (#1701).
-func (u *userMailbox) ensureUIDListLocked(folder string) error {
+// ensureUIDListLocked gives a folder with none a header-only list. A list
+// recreated for a folder with mail gets no UIDVALIDITY: the sync seeds the index's.
+func (u *userMailbox) ensureUIDListLocked(folder string, uidValidity uint32) error {
 	if err := u.migrateLegacyUIDList(folder); err != nil {
 		return err
 	}
@@ -404,7 +443,7 @@ func (u *userMailbox) ensureUIDListLocked(folder string) error {
 	if err := os.MkdirAll(u.controlFolderPath(folder), 0o700); err != nil {
 		return fmt.Errorf("maildir/uidlist: mkdir control: %w", err)
 	}
-	return u.writeUIDListLocked(folder, &uidList{})
+	return u.writeUIDListLocked(folder, &uidList{uidValidity: uidValidity})
 }
 
 // SetTestWriteSeams points the durability call and the pre-rename hook at a

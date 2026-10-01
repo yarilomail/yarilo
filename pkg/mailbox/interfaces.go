@@ -61,6 +61,22 @@ type UIDSpaceAdopter interface {
 	AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) error
 }
 
+// UIDSpaceAligner brings a folder's UID space in line with what its store names.
+type UIDSpaceAligner interface {
+	// AlignUIDSpace takes the store's space: adopted when empty, records dropped
+	// on another UIDVALIDITY, next uid raised; a zero uidValidity only raises it.
+	AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) (current uint32, reset bool, err error)
+}
+
+// UIDSpaceAligningStore is a store that names its own UID space, aligned with the
+// index before a uid is handed out.
+type UIDSpaceAligningStore interface {
+	AlignUIDSpace(idx UserIndex, folderID uint64, folder string) error
+}
+
+// ErrUIDInUse says the folder already holds a record for this uid.
+var ErrUIDInUse = errors.New("the folder already holds this uid")
+
 // GUIDRecord is one copy of one message, as the per-user GUID store keeps it:
 // the id a JMAP client names, and where that copy lives (INTERNALS.md §35).
 type GUIDRecord struct {
