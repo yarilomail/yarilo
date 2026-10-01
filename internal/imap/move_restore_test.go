@@ -58,9 +58,8 @@ func (a switchedAppend) AllocateAndAppendNamed(id uint64, m *mailbox.MessageMeta
 	return errSwitchedOff
 }
 
-// A move whose destination record is refused leaves the source as it was, on
-// every driver and on either side of the destination's naming: the body under
-// the name its record holds, and nothing in the destination.
+// A move whose destination record is refused leaves the source as it was: the
+// body under the name its record holds, nothing in the destination.
 func TestARefusedMoveLeavesTheSourceAsItWas(t *testing.T) {
 	for _, drv := range []struct {
 		name string
