@@ -69,6 +69,12 @@ func (c *syncTokenCache) get(key string) (tokenSeen, bool) {
 	return v, ok
 }
 
+func (c *syncTokenCache) forget(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.tokens, key)
+}
+
 func (c *syncTokenCache) put(key, token string, at time.Time, dirtyThen bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -138,7 +144,27 @@ func (b *Box) tokenKey(folder string) string {
 // whether either changed the record set.
 func (b *Box) settle(folder string, f *mailbox.Folder) bool {
 	b.sweepTemps(folder)
-	return b.reconcile(folder, f)
+	moved := b.alignUIDSpace(folder, f)
+	return b.reconcile(folder, f) || moved
+}
+
+// alignUIDSpace checks the store's UID space on every open, as the reference does
+// on every sync; a moved one forgets the token, so this open walks to refill it.
+func (b *Box) alignUIDSpace(folder string, f *mailbox.Folder) bool {
+	al, ok := mailbox.Driver(b.store).(mailbox.UIDSpaceAligningStore)
+	if !ok {
+		return false
+	}
+	current, err := al.AlignUIDSpace(b.index, f.ID, folder)
+	if err != nil {
+		slog.Warn("mailbox/open: the UID space was not checked", "user", b.store.Username(), "folder", folder, "err", err)
+		return false
+	}
+	if current == 0 || current == f.UIDValidity {
+		return false
+	}
+	syncTokens.forget(b.tokenKey(folder))
+	return true
 }
 
 // sweepTemps lets the driver clear what a save never published; the driver

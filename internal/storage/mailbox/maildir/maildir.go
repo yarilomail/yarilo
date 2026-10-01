@@ -298,30 +298,34 @@ func (u *userMailbox) cachedUIDOwner(folder string, uid uint32) (string, bool) {
 
 // AlignUIDSpace brings the index to the list's UID space before a delivery hands
 // out a uid, as the reference syncs the folder before every save.
-func (u *userMailbox) AlignUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) error {
-	seed, err := u.alignIndexUIDSpace(idx, folderID, folder)
+func (u *userMailbox) AlignUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) (uint32, error) {
+	current, seed, err := u.alignIndexUIDSpace(idx, folderID, folder)
 	if err != nil || seed == 0 {
-		return err
+		return current, err
 	}
-	return u.seedUIDValidity(folder, lockSiteSave, seed)
+	return current, u.seedUIDValidity(folder, lockSiteSave, seed)
 }
 
-// alignIndexUIDSpace gives the index the list's UID space. A list without one
-// gets the index's: the returned seed, for the caller's next list write.
-func (u *userMailbox) alignIndexUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) (uint32, error) {
+// alignIndexUIDSpace gives the index the list's UID space and answers the index's
+// after. A list without one gets the index's: the seed, for the next list write.
+func (u *userMailbox) alignIndexUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) (current, seed uint32, err error) {
 	a, ok := idx.(mailbox.UIDSpaceAligner)
 	if !ok {
-		return 0, nil
+		return 0, 0, nil
 	}
 	uidValidity, nextUID, have := u.UIDSpace(folder)
-	current, _, err := a.AlignUIDSpace(folderID, uidValidity, nextUID)
+	current, reset, err := a.AlignUIDSpace(folderID, uidValidity, nextUID)
 	if err != nil {
-		return 0, fmt.Errorf("maildir: align uid space: %w", err)
+		return 0, 0, fmt.Errorf("maildir: align uid space: %w", err)
+	}
+	if reset {
+		// Another generation: rows remembered from this one name nothing now.
+		u.folderCacheFor(folder).invalidateUIDs("uid-space-reset")
 	}
 	if have {
-		return 0, nil
+		return current, 0, nil
 	}
-	return current, nil
+	return current, current, nil
 }
 
 // seedUIDValidity writes the index's UIDVALIDITY into a list that has none.
@@ -1467,7 +1471,7 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		}
 		// The list's UID space before any uid is read or handed out (#2083); the
 		// seed rides on the list write this pass makes, not a hold of its own.
-		seed, err := u.alignIndexUIDSpace(idx, folder.ID, folder.Name)
+		_, seed, err := u.alignIndexUIDSpace(idx, folder.ID, folder.Name)
 		if err != nil {
 			return err
 		}

@@ -8,7 +8,7 @@ func RecordSaved(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint64
 	// The store's UID space before the uid: a delivery reaching a store first
 	// takes uids its own list already gave away otherwise (#2083).
 	if al, ok := mailbox.Driver(box).(mailbox.UIDSpaceAligningStore); ok {
-		if err := al.AlignUIDSpace(idx, folderID, folder); err != nil {
+		if _, err := al.AlignUIDSpace(idx, folderID, folder); err != nil {
 			return err
 		}
 	}

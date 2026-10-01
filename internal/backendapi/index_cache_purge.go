@@ -22,9 +22,8 @@ type cachePurgeStats struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
-// handleIndexCachePurge reclaims a folder's yarilo.index.cache (#1030).
-// Operator-triggered in v1: the file is append-only and has no threshold
-// trigger yet, so nothing shrinks it on its own (BACKEND-API.md).
+// handleIndexCachePurge reclaims a folder's yarilo.index.cache now (#1030);
+// expunges purge it on their own past mail_cache_purge_delete_percentage.
 func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 	var req optimizeRequest
 	if !decodeJSON(w, r, &req) {

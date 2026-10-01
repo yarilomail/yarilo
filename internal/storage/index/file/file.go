@@ -123,6 +123,14 @@ type Backend struct {
 	logCompactMaxBytes int64
 	logCompactMinAge   time.Duration
 
+	// cachePurgeDeletePct is the deleted-record share that purges a folder's
+	// cache; negative never purges on its own.
+	cachePurgeDeletePct int
+	// cachePurgeContinuedPct is the continued-record share that purges a cache.
+	cachePurgeContinuedPct int
+	// cachePurgeMinSize is the cache file size below which nothing purges it.
+	cachePurgeMinSize int64
+
 	// users caches one userIndex per username, so a pod's sessions serialise on
 	// fs.mu rather than contending the cross-process lock.
 	usersMu sync.Mutex
@@ -181,6 +189,32 @@ func WithLogCompaction(minBytes, maxBytes int64, minAge time.Duration) Option {
 	}
 }
 
+// WithCachePurgeDeletePercentage sets the deleted-record share that purges a
+// cache; zero keeps the default, negative never purges on its own.
+func WithCachePurgeDeletePercentage(p int) Option {
+	return func(b *Backend) {
+		if p != 0 {
+			b.cachePurgeDeletePct = p
+		}
+	}
+}
+
+// WithCachePurgeContinuedPercentage sets the continued-record share that purges
+// a cache; zero keeps the default.
+func WithCachePurgeContinuedPercentage(p int) Option {
+	return func(b *Backend) {
+		if p != 0 {
+			b.cachePurgeContinuedPct = p
+		}
+	}
+}
+
+// WithCachePurgeMinSize sets the cache file size below which nothing purges it;
+// zero purges at any size.
+func WithCachePurgeMinSize(n int64) Option {
+	return func(b *Backend) { b.cachePurgeMinSize = n }
+}
+
 // New constructs a Backend.
 func New(opts ...Option) *Backend {
 	b := &Backend{
@@ -191,6 +225,11 @@ func New(opts ...Option) *Backend {
 		logCompactMinBytes: defaultLogCompactMinBytes,
 		logCompactMaxBytes: defaultLogCompactMaxBytes,
 		logCompactMinAge:   defaultLogCompactMinAge,
+
+		cachePurgeDeletePct: defaultCachePurgeDeletePct,
+		cachePurgeMinSize:   defaultCachePurgeMinSize,
+
+		cachePurgeContinuedPct: defaultCachePurgeContinuedPct,
 	}
 	for _, opt := range opts {
 		opt(b)
@@ -528,9 +567,11 @@ type folderState struct {
 	foldMu  sync.Mutex
 	current *indexMap
 
-	user        string // whose mailbox this folder is; named in every report
-	folder      string // mailbox folder name (e.g. "INBOX", "Sent")
-	indexDir    string // <home>/<folder-relative>/
+	user     string // whose mailbox this folder is; named in every report
+	folder   string // mailbox folder name (e.g. "INBOX", "Sent")
+	indexDir string // <home>/<folder-relative>/
+	// cacheGone counts this hold's expunged records that had a cache record.
+	cacheGone   uint32
 	indexPath   string // <indexDir>/yarilo.index
 	volatileDir string // local dir for tmp files (empty = same as indexDir)
 
@@ -1199,6 +1240,10 @@ func (h *userHandle) SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.
 // PurgeCache forwards the cache purge (#1030) like every other folder verb.
 func (h *userHandle) PurgeCache(folderID uint64) (int, int64, error) {
 	return h.stamped(folderID).PurgeCache(folderID)
+}
+
+func (h *userHandle) PurgeCacheIfDue(folderID uint64) error {
+	return h.stamped(folderID).PurgeCacheIfDue(folderID)
 }
 
 // EnsureCacheExtension forwards the lazy add (#1184).

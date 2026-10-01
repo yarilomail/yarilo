@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
@@ -22,30 +21,6 @@ import (
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
-
-// cachePathMu serialises cache-pair access within this process, keyed by the
-// cache file path -- the in-process fast path of the two-tier rule; the
-// cross-process tier is the MailboxKey lock below. Entries are never removed:
-// the set of open folders per process is small and bounded.
-var cachePathMu sync.Map // path -> *sync.Mutex
-
-// shared takes the read side: without it, sharing the cross-process key buys
-// nothing for two sessions in one pod (#1673).
-func lockCachePath(path string, shared bool) func() {
-	mu, _ := cachePathMu.LoadOrStore(path, &sync.RWMutex{})
-	m, ok := mu.(*sync.RWMutex)
-	if !ok {
-		// Unreachable: this map only ever stores *sync.RWMutex. Failing open
-		// would silently drop the in-process tier, so fail loud instead.
-		panic("imap: cache mutex map holds a foreign type")
-	}
-	if shared {
-		m.RLock()
-		return m.RUnlock
-	}
-	m.Lock()
-	return m.Unlock
-}
 
 // Index is the slice of the index surface the cache needs. Asserted at use:
 // a backend without it serves no cache.
@@ -197,7 +172,7 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 	// read-modify-write of the field table are only safe when nobody else
 	// is inside the pair. In-process mutex first, then the cross-process
 	// MailboxKey -- the same two tiers every shared write path uses.
-	fc.unlock = append(fc.unlock, lockCachePath(path, opts.Shared))
+	fc.unlock = append(fc.unlock, mailindex.LockCachePath(path, opts.Shared))
 	if lkr := opts.Locker; lkr != nil && opts.User != "" && opts.Folder != "" {
 		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "msgcache"), 35*time.Second)
 		key := locks.MailboxKey(opts.User, opts.Folder)
@@ -685,7 +660,19 @@ func (fc *Handle) Close() {
 			slog.Debug("msgcache: cache close failed", "err", err)
 		}
 	}
+	// A window that wrote asks for a purge before its locks go, as the
+	// reference asks on every header write.
+	if pa, ok := fc.idx.(purgeAsker); ok && len(fc.stamps) > 0 {
+		if err := pa.PurgeCacheIfDue(fc.fid); err != nil {
+			slog.Debug("msgcache: purge check failed", "err", err)
+		}
+	}
 	fc.release()
+}
+
+// purgeAsker is asserted at use: an index without it never purges on its own.
+type purgeAsker interface {
+	PurgeCacheIfDue(folderID uint64) error
 }
 
 // release drops held locks in reverse acquisition order.

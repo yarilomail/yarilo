@@ -174,8 +174,10 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	}
 
 	target := from.view
+	// Still published is still reachable: a reader holding a log stat from
+	// before the append takes it, so only an unpublished map is extended in place.
 	fs.mapMu.Lock()
-	shared := from.refs > 0 || !from.ownsFile
+	shared := from.refs > 0 || !from.ownsFile || fs.current == from
 	fs.mapMu.Unlock()
 	if shared {
 		// Somebody is reading this image: it stays as it is, and the fold

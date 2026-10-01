@@ -97,12 +97,16 @@ func (fs *folderState) buildView() (*folderState, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+	// A handle stamps traceID under fs.mu while this reader holds nothing.
+	fs.mu.RLock()
+	traceID := fs.traceID
+	fs.mu.RUnlock()
 	view := &folderState{
 		user:      fs.user,
 		folder:    fs.folder,
 		indexDir:  fs.indexDir,
 		indexPath: fs.indexPath,
-		traceID:   fs.traceID,
+		traceID:   traceID,
 		file:      img.file,
 		keywords:  img.keywords,
 		lineage:   img.lineage,

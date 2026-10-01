@@ -198,8 +198,8 @@ jobs:
       ## cache is safe passed for a day while the fields inside it were
       ## unguarded (#1626). Half a minute of runner time buys the only check
       ## that can fail on it.
-      - name: Run storage and IMAP tests under the race detector
-        run: go test -race -count=1 ./internal/storage/... ./internal/imap/...
+      - name: Run storage, IMAP and cache tests under the race detector
+        run: go test -race -count=1 ./internal/storage/... ./internal/imap/... ./internal/msgcache/...
 
       ## The flatcurve FTS engine is cgo + libxapian and only builds with the
       ## "flatcurve" tag; the runner installs libxapian-dev / g++ on demand.

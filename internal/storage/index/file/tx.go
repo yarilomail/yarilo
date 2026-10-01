@@ -75,20 +75,25 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 	if len(t.ops) == 0 {
 		return out, nil
 	}
+	var gone uint32
 	err := t.idx.withFolderSite(t.folderID, lockSiteTransaction, func(fs *folderState) error {
 		// The ops apply to fs.file before the log takes them, so the pre-image
 		// is what a refused write is put back to (#1831).
 		undo := fs.snapshotForTx(t.ops)
+		fs.cacheGone = 0
 		err := t.applyAll(fs, &out)
 		if err != nil {
 			fs.restore(undo)
 			out = mailbox.TxResult{}
+			return err
 		}
-		return err
+		gone = fs.cacheGone
+		return nil
 	})
 	if err != nil {
 		return mailbox.TxResult{}, err
 	}
+	t.idx.noteCacheExpunged(t.folderID, gone)
 	return out, nil
 }
 

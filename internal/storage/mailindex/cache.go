@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -544,11 +545,45 @@ func (c *CacheFile) ReadRecord(offset uint32) (map[uint32][]byte, error) {
 	return out, nil
 }
 
-// MarkDeleted counts an expunged message's record so purge knows how much
-// dead weight the file carries.
-func (c *CacheFile) MarkDeleted() error {
-	c.hdr.DeletedRecordCount++
+// ExpungeCount moves n expunged messages' records from the live count to the
+// deleted one, as the reference does; the deleted share decides a purge.
+func (c *CacheFile) ExpungeCount(n uint32) error {
+	c.hdr.DeletedRecordCount += n
+	if c.hdr.RecordCount >= n {
+		c.hdr.RecordCount -= n
+	} else {
+		c.hdr.RecordCount = 0
+	}
 	return c.writeHeader()
+}
+
+// DeletePercentage is the share of records whose messages are gone.
+func (h CacheHeader) DeletePercentage(msgCount uint32) uint32 {
+	if h.DeletedRecordCount >= math.MaxUint32/100 {
+		return math.MaxUint32
+	}
+	return h.DeletedRecordCount * 100 / (h.liveRecords(msgCount) + h.DeletedRecordCount)
+}
+
+// ContinuedPercentage is continued records against live ones; past 100 when
+// messages carry more than one each.
+func (h CacheHeader) ContinuedPercentage(msgCount uint32) uint32 {
+	if h.ContinuedRecordCount >= math.MaxUint32/100 {
+		return math.MaxUint32
+	}
+	return h.ContinuedRecordCount * 100 / h.liveRecords(msgCount)
+}
+
+// liveRecords is the record count a share divides by; one above twice the
+// folder's messages is not a real one, and msgCount stands in.
+func (h CacheHeader) liveRecords(msgCount uint32) uint32 {
+	switch {
+	case msgCount == 0:
+		return 1
+	case h.RecordCount == 0 || h.RecordCount > msgCount*2:
+		return msgCount
+	}
+	return h.RecordCount
 }
 
 /* --- low-level ------------------------------------------------------------ */
