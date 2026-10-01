@@ -1,9 +1,12 @@
 package maildir
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // rememberGUID keeps an explicit GUID until the message has a uid to be
@@ -24,6 +27,39 @@ func (u *userMailbox) takeGUID(folder, filename string) ([16]byte, bool) {
 	guid, ok := u.pending[key]
 	delete(u.pending, key)
 	return guid, ok
+}
+
+// DiscardSaved unlinks a body Save left in tmp/, where Remove does not look; one
+// AssignUID already moved is removed from where it went.
+func (u *userMailbox) DiscardSaved(folder, saved string, _ *mailbox.MessageMeta) error {
+	u.takeGUID(folder, saved)
+	err := os.Remove(filepath.Join(u.folderPath(folder), "tmp", saved))
+	if errors.Is(err, os.ErrNotExist) {
+		return u.Remove(folder, saved)
+	}
+	return err
+}
+
+// RestoreMoved renames the body back under orig, from tmp/ or from where the
+// destination's naming put it.
+func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, _ *mailbox.MessageMeta) error {
+	u.takeGUID(dstFolder, moved)
+	return u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
+		from, ok := u.locate(dstFolder, moved)
+		if !ok {
+			from = filepath.Join(u.folderPath(dstFolder), "tmp", moved)
+		}
+		sub := "cur"
+		if maildirBase(orig) == orig {
+			sub = "new"
+		}
+		if err := os.Rename(from, filepath.Join(u.folderPath(srcFolder), sub, orig)); err != nil {
+			return fmt.Errorf("maildir/restore: %w", err)
+		}
+		u.folderCacheFor(srcFolder).invalidateDir("own-write")
+		u.folderCacheFor(dstFolder).invalidateDir("own-write")
+		return nil
+	})
 }
 
 // AssignUID records the message in the folder's list, inside the caller's uid

@@ -14,14 +14,8 @@ import (
 const mailboxPkg = "github.com/yarilomail/yarilo/pkg/mailbox"
 
 // storageSide are the packages that are part of the storage and may declare the
-// index or the store in their own signatures (#1805).
+// index or the store in their own signatures; the list is the whole exception (#1805).
 var storageSide = []string{"internal/msgcache/", "internal/ftsservice/", "internal/backendapi/", "app/yarilo-migrate/", "internal/ftsbench/"}
-
-// notYetMoved is what still reaches past Box, per file; it only shrinks, each
-// PR of #1805 taking its sites off.
-var notYetMoved = map[string]int{
-	"internal/lmtp/deliver.go": 2,
-}
 
 // Protocol servers see Box and nothing else: a new consumer of the index or of
 // Box.Store() outside the storage side is refused (#1805).
@@ -51,10 +45,8 @@ func TestOnlyTheStorageSideHoldsTheIndexOrTheStore(t *testing.T) {
 	if allowed == 0 {
 		t.Fatal("the storage side holds no index at all, so the walk saw nothing")
 	}
-	for _, name := range sortedKeys(got, notYetMoved) {
-		if got[name] != notYetMoved[name] {
-			t.Errorf("%s reaches past Box %d times, the list says %d: protocol servers see Box alone (#1805)", name, got[name], notYetMoved[name])
-		}
+	for _, name := range sortedKeys(got) {
+		t.Errorf("%s reaches past Box %d times: protocol servers see Box alone (#1805)", name, got[name])
 	}
 }
 

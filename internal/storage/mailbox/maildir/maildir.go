@@ -2759,6 +2759,8 @@ func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
 // The base falls back to Remove for a driver that does not implement it, which
 // would put the per-message read back without failing anything (#1809).
 var _ mailbox.HeldRemover = (*userMailbox)(nil)
+var _ mailbox.SaveDiscarder = (*userMailbox)(nil)
+var _ mailbox.MoveRestorer = (*userMailbox)(nil)
 
 // RemoveHeld is Remove inside a hold the caller already took: a maildir unlink
 // takes none of its own, and the listing survives because nothing else writes.

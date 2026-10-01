@@ -1,6 +1,7 @@
 package mailboxbase
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -39,8 +40,7 @@ func Open(store mailbox.UserMailbox, index mailbox.UserIndex, opts ...BoxOption)
 	return b
 }
 
-// Store is the half that holds bodies. Consumers still reaching for it are the
-// ones this arc has not moved yet.
+// Store is the half that holds bodies, for the storage side alone (#1805).
 func (b *Box) Store() mailbox.UserMailbox { return b.store }
 
 // Index is the half that holds records, on the same terms.
@@ -124,6 +124,37 @@ func (b *Box) FillResponseSizes(folder string, msgs []*mailbox.MessageMeta) {
 func (b *Box) WriteFlags(f *mailbox.Folder, folder string, writes []mailbox.FlagWrite) []mailbox.FlagWriteResult {
 	return FlagsWritten(b.index, b.store, f.ID, folder, writes)
 }
+
+// Save writes a body under the driver's own name; nothing records it yet.
+func (b *Box) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
+	return b.store.Save(folder, r, uid, size, flags, keywords, guid)
+}
+
+// Discard removes a saved body whose record did not land; m is the record the
+// cycle tried, nil when none began.
+func (b *Box) Discard(folder, saved string, m *mailbox.MessageMeta) error {
+	if d, ok := mailbox.Driver(b.store).(mailbox.SaveDiscarder); ok {
+		return d.DiscardSaved(folder, saved, m)
+	}
+	return b.store.Remove(folder, saved)
+}
+
+// Restore puts a moved body back under its source name. A failure is the one
+// case a message ends up outside its record, so it is never silent.
+func (b *Box) Restore(srcFolder, orig, dstFolder, moved string, m *mailbox.MessageMeta) error {
+	err := errNoRestore
+	if r, ok := mailbox.Driver(b.store).(mailbox.MoveRestorer); ok {
+		err = r.RestoreMoved(srcFolder, orig, dstFolder, moved, m)
+	}
+	if err != nil {
+		metricMoveRestoreFailed.WithLabelValues(mailbox.DriverNameOf(b.store)).Inc()
+		slog.Warn("mailbox: a moved body did not return to its source", "user", b.Username(),
+			"src", srcFolder, "orig", orig, "dst", dstFolder, "moved", moved, "err", err)
+	}
+	return err
+}
+
+var errNoRestore = errors.New("mailbox: the driver cannot put a moved body back")
 
 // RecordSaved records a body already written into a folder — an APPEND, a
 // fileinto, a copy — settling its name before its record (#1745).

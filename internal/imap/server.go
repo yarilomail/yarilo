@@ -1650,7 +1650,7 @@ func (s *session) renameInbox(dest string) error {
 			GUID:         guid,
 		}
 		if err := s.mbox.RecordSaved(destFolder, dest, newFilename, nm); err != nil {
-			_ = s.box.Remove(dest, newFilename)
+			_ = s.mbox.Restore("INBOX", srcName, dest, newFilename, nm)
 			return fmt.Errorf("imap/rename-inbox record: %w", err)
 		}
 		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
@@ -2364,7 +2364,7 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 		// A short literal is not the malformed-tail case (#1137, a complete
 		// literal with garbage after it) -- it is an incomplete message. Remove
 		// it rather than keep mangled mail, and refuse.
-		if rmErr := h.box.Remove(rel, filename); rmErr != nil {
+		if rmErr := h.mailbox().Discard(rel, filename, nil); rmErr != nil {
 			// The truncated file survived: it is exactly the orphan
 			// ReconcileIndex would import with a fresh UID -- the #1129 outcome,
 			// inside the branch that exists to prevent it. BAD would claim nothing
@@ -2394,7 +2394,7 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 		InternalDate: internalDate, GUID: guid,
 	}
 	if err := h.mailbox().RecordSaved(f, rel, filename, m); err != nil {
-		_ = h.box.Remove(rel, filename)
+		_ = h.mailbox().Discard(rel, filename, m)
 		return nil, fmt.Errorf("imap/append record: %w", err)
 	}
 	// The driver settled the name inside that cycle; ask it, do not carry one.
@@ -3911,7 +3911,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		}
 		tIndex := time.Now()
 		if err := destH.mailbox().RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
-			_ = destH.box.Remove(destRel, newFilename)
+			_ = destH.mailbox().Discard(destRel, newFilename, nm)
 			return nil, fmt.Errorf("imap/copy record: %w", err)
 		}
 		indexTotalMs += time.Since(tIndex).Milliseconds()
@@ -4280,14 +4280,14 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		}
 		// MOVE keeps one identity across folders (RFC 8474), so the source GUID is
 		// carried into the destination instead of a fresh one being generated.
-		var newFilename string
+		var newFilename, srcName string
 		var guid [16]byte
 		vsize := m.VSize
 		size := m.Size
 		tSave := time.Now()
 		if srcBox == destH.box {
-			var moveErr error
-			srcName, pathErr := srcMailbox.MessagePath(s.folder.Name, m)
+			var moveErr, pathErr error
+			srcName, pathErr = srcMailbox.MessagePath(s.folder.Name, m)
 			if pathErr != nil {
 				return fmt.Errorf("imap/move path: %w", pathErr)
 			}
@@ -4326,9 +4326,9 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		tIndex := time.Now()
 		if err := destH.mailbox().RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
 			if srcBox == destH.box {
-				_, _, _ = srcBox.Move(destRel, s.folder.Name, newFilename, guid)
+				_ = srcMailbox.Restore(s.folder.Name, srcName, destRel, newFilename, nm)
 			} else {
-				_ = destH.box.Remove(destRel, newFilename)
+				_ = destH.mailbox().Discard(destRel, newFilename, nm)
 			}
 			return fmt.Errorf("imap/move record: %w", err)
 		}

@@ -21,6 +21,11 @@ var (
 		Help: "Maildir reconcile decisions, with what drove a walk: first-seen is a folder this process had not seen, token-moved its mtime or size changed, hot-new its arrival directory was written this second, owed the window had passed on a dirty folder. A skip carries no reason. scanned-partial means only the arrival directory was read, because the store directory had not moved. scanned means the change token moved and cur/ and new/ were walked, scanned-untokened means there was no token to compare, skipped means the token said nothing had changed, skipped-window means it moved inside the window the mtime cannot vouch for and the folder was walked less than a window ago.",
 	}, []string{"result", "reason"}) // scanned | scanned-partial | scanned-untokened | skipped | skipped-window
 
+	metricMoveRestoreFailed = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mailbox_move_restore_failed_total",
+		Help: "Moves whose destination record did not land and whose body could not be put back under its source name: each one is a message outside its record.",
+	}, []string{"driver"})
+
 	MetricReconcileSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "imap_maildir_sync_seconds",
 		Help:    "Time one maildir proactive reconcile took, from computing the change token through the index update, by what the walk read: scanned is the whole store, scanned-partial the arrivals alone.",

@@ -923,6 +923,29 @@ func (u *userMailbox) Remove(_, filename string) error {
 	return m.UpdateRefcounts([]uint32{mapUID}, -1)
 }
 
+// RestoreMoved takes back the reference Move dropped on orig and drops the one
+// the re-save took; the bytes of orig stay until a purge.
+func (u *userMailbox) RestoreMoved(_, orig, _, moved string, _ *mailbox.MessageMeta) error {
+	origUID, err := parseFilename(orig)
+	if err != nil {
+		return fmt.Errorf("mdbox/restore: %w", err)
+	}
+	movedUID, err := parseFilename(moved)
+	if err != nil {
+		return fmt.Errorf("mdbox/restore: %w", err)
+	}
+	m, err := u.openMap()
+	if err != nil {
+		return err
+	}
+	if err := m.UpdateRefcounts([]uint32{origUID}, +1); err != nil {
+		return fmt.Errorf("mdbox/restore: source refcount: %w", err)
+	}
+	return m.UpdateRefcounts([]uint32{movedUID}, -1)
+}
+
+var _ mailbox.MoveRestorer = (*userMailbox)(nil)
+
 // Copy implements the optional Copyable interface for O(1) IMAP COPY. Returns
 // the source filename unchanged: the destination folder stores the same map_uid
 // under a fresh per-folder UID, and only the refcount changes on disk.
