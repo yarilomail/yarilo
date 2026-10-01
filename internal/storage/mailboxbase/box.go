@@ -1,6 +1,7 @@
 package mailboxbase
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -137,6 +138,23 @@ func (b *Box) Discard(folder, saved string, m *mailbox.MessageMeta) error {
 	}
 	return b.store.Remove(folder, saved)
 }
+
+// Restore puts a moved body back under its source name. A failure is the one
+// case a message ends up outside its record, so it is never silent.
+func (b *Box) Restore(srcFolder, orig, dstFolder, moved string, m *mailbox.MessageMeta) error {
+	err := errNoRestore
+	if r, ok := mailbox.Driver(b.store).(mailbox.MoveRestorer); ok {
+		err = r.RestoreMoved(srcFolder, orig, dstFolder, moved, m)
+	}
+	if err != nil {
+		metricMoveRestoreFailed.WithLabelValues(mailbox.DriverNameOf(b.store)).Inc()
+		slog.Warn("mailbox: a moved body did not return to its source", "user", b.Username(),
+			"src", srcFolder, "orig", orig, "dst", dstFolder, "moved", moved, "err", err)
+	}
+	return err
+}
+
+var errNoRestore = errors.New("mailbox: the driver cannot put a moved body back")
 
 // RecordSaved records a body already written into a folder — an APPEND, a
 // fileinto, a copy — settling its name before its record (#1745).

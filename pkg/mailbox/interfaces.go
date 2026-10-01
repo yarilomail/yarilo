@@ -825,6 +825,12 @@ type SaveDiscarder interface {
 	DiscardSaved(folder, saved string, m *MessageMeta) error
 }
 
+// MoveRestorer puts a moved body back under orig, the name the source record
+// holds, from wherever the destination's cycle left it.
+type MoveRestorer interface {
+	RestoreMoved(srcFolder, orig, dstFolder, moved string, m *MessageMeta) error
+}
+
 // BatchRemover unlinks several bodies as one operation. A driver whose removal
 // takes a user-wide lock pays for it once instead of once per message (#1884).
 type BatchRemover interface {

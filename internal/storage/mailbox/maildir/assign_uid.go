@@ -40,6 +40,28 @@ func (u *userMailbox) DiscardSaved(folder, saved string, _ *mailbox.MessageMeta)
 	return err
 }
 
+// RestoreMoved renames the body back under orig, from tmp/ or from where the
+// destination's naming put it.
+func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, _ *mailbox.MessageMeta) error {
+	u.takeGUID(dstFolder, moved)
+	return u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
+		from, ok := u.locate(dstFolder, moved)
+		if !ok {
+			from = filepath.Join(u.folderPath(dstFolder), "tmp", moved)
+		}
+		sub := "cur"
+		if maildirBase(orig) == orig {
+			sub = "new"
+		}
+		if err := os.Rename(from, filepath.Join(u.folderPath(srcFolder), sub, orig)); err != nil {
+			return fmt.Errorf("maildir/restore: %w", err)
+		}
+		u.folderCacheFor(srcFolder).invalidateDir("own-write")
+		u.folderCacheFor(dstFolder).invalidateDir("own-write")
+		return nil
+	})
+}
+
 // AssignUID records the message in the folder's list, inside the caller's uid
 // cycle. No rename: on maildir the uid lives in the list, not in the name.
 func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, error) {

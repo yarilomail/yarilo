@@ -443,19 +443,48 @@ func (u *userMailbox) AssignUID(folder, tempName string, uid uint32) (string, er
 // DiscardSaved unlinks a temp Save left, or the u.<uid> a failed cycle renamed
 // it to; that one only when its GUID is m's, as the uid may be handed out again.
 func (u *userMailbox) DiscardSaved(folder, saved string, m *mailbox.MessageMeta) error {
-	dir := u.folderPath(folder)
-	err := os.Remove(filepath.Join(dir, saved))
-	if !errors.Is(err, os.ErrNotExist) || m == nil || m.UID == 0 {
+	err := os.Remove(filepath.Join(u.folderPath(folder), saved))
+	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	named := filepath.Join(dir, sdboxMailPrefix+strconv.FormatUint(uint64(m.UID), 10))
-	if guid, _, _, merr := readMetadata(named); merr != nil || guid != m.GUID {
-		return nil
+	if named, ok := u.namedByCycle(folder, m); ok {
+		return os.Remove(named)
 	}
-	return os.Remove(named)
+	return nil
 }
 
-var _ mailbox.SaveDiscarder = (*userMailbox)(nil)
+// RestoreMoved renames the body back under orig, from its moved name or the
+// u.<uid> the destination's cycle gave it.
+func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, m *mailbox.MessageMeta) error {
+	return u.withTwoMailboxLocks(srcFolder, dstFolder, func() error {
+		from := filepath.Join(u.folderPath(dstFolder), moved)
+		if _, err := os.Lstat(from); errors.Is(err, os.ErrNotExist) {
+			if named, ok := u.namedByCycle(dstFolder, m); ok {
+				from = named
+			}
+		}
+		if err := os.Rename(from, filepath.Join(u.folderPath(srcFolder), orig)); err != nil {
+			return fmt.Errorf("sdbox/restore: %w", err)
+		}
+		return nil
+	})
+}
+
+// namedByCycle is u.<m.UID> when it holds m's GUID: the uid may be handed out
+// again before a rollback runs.
+func (u *userMailbox) namedByCycle(folder string, m *mailbox.MessageMeta) (string, bool) {
+	if m == nil || m.UID == 0 {
+		return "", false
+	}
+	named := filepath.Join(u.folderPath(folder), sdboxMailPrefix+strconv.FormatUint(uint64(m.UID), 10))
+	guid, _, _, err := readMetadata(named)
+	return named, err == nil && guid == m.GUID
+}
+
+var (
+	_ mailbox.SaveDiscarder = (*userMailbox)(nil)
+	_ mailbox.MoveRestorer  = (*userMailbox)(nil)
+)
 
 // Move relocates a message between folders by renaming the file; the GUID lives
 // in the metadata block so it survives untouched (RFC 8474: MOVE keeps EMAILID).

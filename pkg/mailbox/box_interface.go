@@ -31,6 +31,9 @@ type Box interface {
 	// record is the caller's, and Discard undoes a save whose record failed.
 	Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (name string, vsize uint32, outGUID [16]byte, err error)
 	Discard(folder, saved string, m *MessageMeta) error
+	// Restore undoes a Move whose record did not land: the body returns to
+	// srcFolder under orig, and the source record stays valid.
+	Restore(srcFolder, orig, dstFolder, moved string, m *MessageMeta) error
 	// RecordDelivered records a delivery: the name settles before the record.
 	RecordDelivered(f *Folder, folder, saved string, m *MessageMeta) error
 	// RecordSaved records a body already written into a folder.
