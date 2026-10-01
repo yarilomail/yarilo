@@ -31,7 +31,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
@@ -684,14 +683,6 @@ func (s *session) expungeSource(box mailbox.Box, tx mailbox.BoxTx, uids []uint32
 	return kept
 }
 
-// selectedHandle is the namespace handle of the selected folder.
-func (s *session) selectedHandle() *nsHandle {
-	if s.folderNS != nil {
-		return s.folderNS
-	}
-	return s.primary
-}
-
 var _ imapserver.SessionIMAP4rev2 = (*session)(nil)
 
 // emitMailboxChange is fire-and-forget: events are advisory wake-ups for
@@ -1275,15 +1266,6 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	} else if n > 0 {
 		slog.Info("imap: records took the size their storage holds",
 			"user", s.username(), "folder", rel, "filled", n)
-	}
-	// A virtual mailbox is brought up to date before it is reported: what the
-	// rule keeps is what EXISTS counts (#1986).
-	refreshed, verr := s.syncVirtual(h, rel, f, virtual.Open)
-	if verr != nil {
-		return nil, verr
-	}
-	if refreshed != nil {
-		f = refreshed
 	}
 	if refreshed := s.dboxHealIfCorrupt(h, rel, f); refreshed != nil {
 		f = refreshed
@@ -2246,9 +2228,9 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 		f = refreshed
 	}
 	// A virtual mailbox counts what its folders hold now, not at the last SELECT.
-	refreshed, verr := s.syncVirtual(h, rel, f, virtual.Poll)
+	refreshed, verr := h.mailbox().Poll(f)
 	if verr != nil {
-		return nil, verr
+		return nil, s.virtualSyncFailed(rel, verr)
 	}
 	if refreshed != nil {
 		f = refreshed
@@ -2511,12 +2493,8 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	}
 	// A virtual mailbox follows its folders (as the reference does); a failed
 	// pass goes out untagged and the command completes.
-	if s.isVirtualSelected() {
-		if _, verr := s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll); verr != nil {
-			if err := writeSyncFailure(w, verr); err != nil {
-				return err
-			}
-		}
+	if err := s.pollVirtual(w); err != nil {
+		return err
 	}
 
 	// The reopen settles the folder, so an IDLE / NOOP client sees an
@@ -2524,7 +2502,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 
 	// Cheap modseq check — skip full scan when nothing changed and no
 	// pending expunges are waiting for an allowExpunge=true window.
-	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)
+	refreshed, err := s.reopenSelected()
 	if err != nil {
 		return nil
 	}
@@ -2837,14 +2815,10 @@ func (s *session) refreshIdleCount(w *imapserver.UpdateWriter, always bool) erro
 	if s.folder == nil {
 		return nil
 	}
-	if s.isVirtualSelected() {
-		if _, verr := s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Poll); verr != nil {
-			if err := writeSyncFailure(w, verr); err != nil {
-				return err
-			}
-		}
+	if err := s.pollVirtual(w); err != nil {
+		return err
 	}
-	refreshed, err := s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity)
+	refreshed, err := s.reopenSelected()
 	if err != nil {
 		// Best-effort: report what we have. Authoritative state lives on disk
 		// and the next user command will re-read it.
@@ -2900,7 +2874,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		}
 		// EXPUNGE also drops what stopped matching its rule; the poll after
 		// the command reports those (as the reference does).
-		defer s.syncVirtual(s.folderNS, s.folder.Name, s.folder, virtual.Open) //nolint:errcheck // the poll after the command reports a failure
+		defer s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity) //nolint:errcheck // an open pass; the poll after reports a failure
 	} else if removed, _, herr = s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed); herr != nil {
 		return herr
 	}
@@ -4707,6 +4681,16 @@ func storeDelta(store *imaplib.StoreFlags, mode mailbox.FlagsMode) mailbox.Flags
 		}
 	}
 	return upd
+}
+
+// readForWriteSet is readForWrite over a set of uids.
+func readForWriteSet(box mailbox.Box, folderID uint64, set mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
+	tx, err := box.Begin(folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	return tx.Messages(set)
 }
 
 // readForWrite reads under the folder's lock for a decision (#1249), not as a

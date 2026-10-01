@@ -20,7 +20,6 @@ var storageSide = []string{"internal/msgcache/", "internal/ftsservice/", "intern
 // notYetMoved is what still reaches past Box, per file; it only shrinks, each
 // PR of #1805 taking its sites off.
 var notYetMoved = map[string]int{
-	"internal/imap/virtual.go":  4,
 	"internal/jmap/emailset.go": 1,
 	"internal/jmap/store.go":    1,
 	"internal/lmtp/deliver.go":  2,

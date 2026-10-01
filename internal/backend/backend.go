@@ -28,7 +28,10 @@ import (
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/internal/storage/search"
 	submsvr "github.com/yarilomail/yarilo/internal/submission"
 	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/internal/telemetry"
@@ -141,13 +144,6 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	mbox := buildMailbox(cfg.Storage, locker)
 
-	// Per-namespace mailbox driver overrides; namespaces on the global
-	// driver are absent from the map.
-	nsMailboxes, err := buildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker)
-	if err != nil {
-		return nil, fmt.Errorf("backend: namespace mailboxes: %w", err)
-	}
-
 	// ---- dicts ----
 	metadataDict, err := buildDict(cfg, "metadata")
 	if err != nil {
@@ -185,6 +181,14 @@ func New(cfg *config.Config) (*Server, error) {
 	ftsClient, ftsChain, err := BuildFTS(cfg)
 	if err != nil {
 		return nil, err
+	}
+	// Per-namespace backends; a virtual one draws on the mail, index and
+	// search built above, so it is assembled after them.
+	nsMailboxes, err := BuildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker, VirtualDeps{
+		Mailbox: mbox, Index: idx, Search: SearchOptions(cfg, ftsClient, ftsChain), MetadataDict: metadataDict,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("backend: namespace mailboxes: %w", err)
 	}
 	// ---- shared connection limiter (IMAP + POP3) ----
 	connLimiter := connlimit.New(cfg.General.Limits.MaxUserIPConnections)
@@ -1224,11 +1228,28 @@ func buildMailboxByDriver(driver string, sc config.StorageConfig, locker locks.L
 	return mailboxbuild.ByDriver(driver, sc, locker)
 }
 
-// buildNamespaceMailboxes builds the per-namespace MailboxBackend override
-// map, keyed by namespace prefix. Only namespaces whose location: driver
-// differs from the global default get an entry; same-driver namespaces share
-// one backend instance.
-func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver string, sc config.StorageConfig, locker locks.Locker) (map[string]mailbox.MailboxBackend, error) {
+// VirtualDeps is what a virtual namespace draws on, built once per binary: the
+// user's personal mail, the search evaluator and the annotations rules test.
+type VirtualDeps struct {
+	Mailbox      mailbox.MailboxBackend
+	Index        mailbox.IndexBackend
+	Search       search.Options
+	MetadataDict dict.Dict
+}
+
+// SearchOptions is the search share of the FTS configuration.
+func SearchOptions(cfg *config.Config, client ftsproto.Client, chain *language.MultiChain) search.Options {
+	return search.Options{
+		Client: client, Chain: chain, AddMissing: cfg.FTS.SearchAddMissing, ReadFallback: cfg.FTS.SearchReadFallback,
+		Timeout:         time.Duration(cfg.FTS.SearchTimeoutSecs) * time.Second,
+		FirstIndexGrace: time.Duration(cfg.FTS.SearchFirstIndexGraceSecs) * time.Second,
+		Strict:          cfg.FTS.SearchStrict, Enabled: cfg.FTS.Search,
+	}
+}
+
+// BuildNamespaceMailboxes is every binary's per-prefix backend map: none for the
+// global driver, and a virtual one given the personal mail it draws from (#1805).
+func BuildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver string, sc config.StorageConfig, locker locks.Locker, vd VirtualDeps) (map[string]mailbox.MailboxBackend, error) {
 	if len(namespaces) == 0 {
 		return nil, nil
 	}
@@ -1240,8 +1261,7 @@ func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver s
 	overrides := map[string]mailbox.MailboxBackend{}
 	for _, ns := range namespaces {
 		if ns.Location == "" {
-			// inherits the global default
-			continue
+			continue // inherits the global default
 		}
 		loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
 		if err != nil {
@@ -1252,12 +1272,18 @@ func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver s
 		}
 		drv := strings.ToLower(loc.Driver)
 		if drv == globalDriver {
-			// same driver as global default — no override needed
 			continue
 		}
 		b, exists := byDriver[drv]
 		if !exists {
-			b = buildMailboxByDriver(drv, sc, locker)
+			if drv == "virtual" {
+				b = virtual.New(virtual.Options{
+					Personal: personalBoxes(vd, sc, locker), Search: vd.Search,
+					MetadataDict: vd.MetadataDict, Locker: locker,
+				})
+			} else {
+				b = buildMailboxByDriver(drv, sc, locker)
+			}
 			byDriver[drv] = b
 			slog.Info("backend: per-namespace mailbox backend built", "driver", drv, "ns", ns.Prefix)
 		}
@@ -1267,6 +1293,20 @@ func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver s
 		return nil, nil
 	}
 	return overrides, nil
+}
+
+// personalBoxes opens a user's personal mail as a session does, read only: a
+// virtual pass reads it and settles nothing there.
+func personalBoxes(vd VirtualDeps, sc config.StorageConfig, locker locks.Locker) func(*mailbox.UserInfo) mailbox.Box {
+	if vd.Mailbox == nil || vd.Index == nil {
+		return nil
+	}
+	return func(ui *mailbox.UserInfo) mailbox.Box {
+		mb := mailbox.SelectPersonalBackend(vd.Mailbox, func(d string) mailbox.MailboxBackend {
+			return buildMailboxByDriver(d, sc, locker)
+		}, ui.Driver)
+		return mailboxbase.Open(mb.OpenUser(ui), vd.Index.OpenUser(ui), mailboxbase.ReadOnly())
+	}
 }
 
 // personalSeparator returns the personal namespace's hierarchy separator

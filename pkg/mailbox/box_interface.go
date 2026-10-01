@@ -63,6 +63,9 @@ type Box interface {
 	// a consumer the series still owes a method (#1715).
 	Store() UserMailbox
 
+	// Poll brings a folder its store derives up to date, as an open does;
+	// it answers the refreshed folder when the records moved, nil otherwise.
+	Poll(f *Folder) (*Folder, error)
 	// Begin opens one command's changes to a folder.
 	Begin(folderID uint64) (BoxTx, error)
 	// Vanished are the uids expunged past sinceModSeq, for QRESYNC.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,8 +18,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -75,9 +75,6 @@ func virtualServerWith(t *testing.T, configs map[string]string, seed func(t *tes
 			{Type: imapserver.NamespacePersonal, Prefix: "Virtual/", Separator: '/', List: imapserver.ListYes,
 				Location: "virtual:%h/virtual"},
 		},
-		NamespaceMailboxes: map[string]mailbox.MailboxBackend{
-			"Virtual/": mailboxbuild.ByDriver("virtual", config.StorageConfig{}, nil),
-		},
 		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	}
 	if fake != nil {
@@ -93,6 +90,11 @@ func virtualServerWith(t *testing.T, configs map[string]string, seed func(t *tes
 	}
 	if tune != nil {
 		tune(&opts)
+	}
+	// Assembled as the binaries assemble it: the virtual driver draws on the
+	// server's own mail, index, search and annotations (#1805).
+	if opts.NamespaceMailboxes == nil {
+		opts.NamespaceMailboxes = map[string]mailbox.MailboxBackend{"Virtual/": virtualDriver(opts)}
 	}
 	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -336,5 +338,49 @@ func TestVirtualMailboxIsListed(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("LIST \"\" \"*\" did not name Virtual/All: %v", names)
+	}
+}
+
+// virtualDriver is the virtual namespace's driver over a server's options.
+func virtualDriver(opts imapserver.Options) mailbox.MailboxBackend {
+	return countingVirtualDriver(opts, new(atomic.Int32))
+}
+
+// countingVirtualDriver is virtualDriver counting each open of the personal mail.
+func countingVirtualDriver(opts imapserver.Options, opens *atomic.Int32) mailbox.MailboxBackend {
+	mb, idx := opts.Mailbox, opts.Index
+	return virtual.New(virtual.Options{
+		Personal: func(ui *mailbox.UserInfo) mailbox.Box {
+			opens.Add(1)
+			return mailboxbase.Open(mb.OpenUser(ui), idx.OpenUser(ui), mailboxbase.ReadOnly())
+		},
+		Search: search.Options{
+			Client: opts.FTS.Client, Chain: opts.FTS.Chain, AddMissing: opts.FTS.AddMissing,
+			ReadFallback: opts.FTS.ReadFallback, Timeout: opts.FTS.Timeout, Strict: opts.FTS.Strict,
+			FirstIndexGrace: opts.FTS.FirstIndexGrace, Enabled: opts.FTS.SearchEnabled,
+		},
+		MetadataDict: opts.MetadataDict,
+		Locker:       opts.Locker,
+	})
+}
+
+// A poll pass runs on every NOOP, so the personal mail it reads is opened once
+// for the session, not once a pass (#1805).
+func TestPollsOpenThePersonalMailOnce(t *testing.T) {
+	var opens atomic.Int32
+	conn, rd := virtualServerWith(t, map[string]string{"All": "INBOX\n"},
+		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
+			saveInto(t, box, ui, "INBOX", 1, "one", nil)
+		}, nil, func(o *imapserver.Options) {
+			o.NamespaceMailboxes = map[string]mailbox.MailboxBackend{"Virtual/": countingVirtualDriver(*o, &opens)}
+		})
+	if got := existsCount(t, conn, rd, "a2", "Virtual/All"); got != 1 {
+		t.Fatalf("EXISTS = %d, want 1", got)
+	}
+	for i := 0; i < 5; i++ {
+		command(t, conn, rd, fmt.Sprintf("n%d", i), "NOOP")
+	}
+	if n := opens.Load(); n != 1 {
+		t.Errorf("SELECT and five NOOPs opened the personal mail %d times, want once", n)
 	}
 }

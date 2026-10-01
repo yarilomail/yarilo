@@ -253,7 +253,7 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 	if !ok {
 		return nil, fmt.Errorf("backendapi/userctx: namespace %q not configured", name)
 	}
-	if spec.Type == "personal" {
+	if spec.Type == "personal" && !s.ownsStore(spec) {
 		// already opened in openUserContext
 		return nil, fmt.Errorf("backendapi/userctx: personal namespace must be opened at construction")
 	}
@@ -275,7 +275,9 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
 		}
 	} else {
-		loc, valid, perr := mailbox.ParseLocation(spec.Location, nil)
+		// Against the user's own identity, as the session servers parse it: "%h"
+		// is otherwise left unexpanded, and a per-user location is not found.
+		loc, valid, perr := mailbox.ParseLocation(spec.Location, uc.info)
 		if perr != nil {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q location: %w", name, perr)
 		}
@@ -426,6 +428,20 @@ func (s *Server) namespaceByName(name string) (config.NamespaceConfig, bool) {
 		return config.NamespaceConfig{Type: "personal", Prefix: "", Separator: "/", List: "yes"}, true
 	}
 	return config.NamespaceConfig{}, false
+}
+
+// ownsStore reports a personal namespace with storage of its own, a virtual
+// one: opened like any other, by the rule the session servers use.
+func (s *Server) ownsStore(spec config.NamespaceConfig) bool {
+	shapes := make([]mailbox.NamespaceShape, len(s.opts.Namespaces))
+	at := -1
+	for i, ns := range s.opts.Namespaces {
+		shapes[i] = mailbox.NamespaceShape{Type: ns.Type, Location: ns.Location, Inbox: ns.Inbox}
+		if ns.Prefix == spec.Prefix {
+			at = i
+		}
+	}
+	return mailbox.OwnsStore(shapes, at)
 }
 
 // deploymentBase is a user-less identity carrying only the deployment-wide

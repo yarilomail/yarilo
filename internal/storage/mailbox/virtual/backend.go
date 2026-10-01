@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -22,18 +23,30 @@ var ErrUnsupported = errors.New("virtual: not supported in a virtual namespace")
 
 // Backend serves a namespace whose location is "virtual:<path>". Every
 // subdirectory of that path holding a configuration file is one mailbox.
-type Backend struct{}
+type Backend struct{ opts Options }
 
 // New returns the backend. It keeps no state: a handle is per user.
-func New() *Backend { return &Backend{} }
+func New(opts ...Options) *Backend {
+	b := &Backend{}
+	if len(opts) > 0 {
+		b.opts = opts[0]
+	}
+	return b
+}
 
 func (b *Backend) OpenUser(info *mailbox.UserInfo) mailbox.UserMailbox {
-	return &userMailbox{info: info, root: info.MailPath}
+	return &userMailbox{info: info, root: info.MailPath, opts: b.opts}
 }
 
 type userMailbox struct {
 	info *mailbox.UserInfo
 	root string
+	opts Options
+
+	// personalBox is opened once, on the first pass, and closed with this
+	// handle: a poll pass runs on every NOOP (#1805).
+	personalMu  sync.Mutex
+	personalBox mailbox.Box
 }
 
 func (u *userMailbox) Username() string { return u.info.Username }
@@ -174,7 +187,15 @@ func (u *userMailbox) nameOf(rel string) string {
 	return strings.ReplaceAll(rel, "/", mailbox.SepOrDefault(u.info.Separator))
 }
 
-func (u *userMailbox) Close() error { return nil }
+func (u *userMailbox) Close() error {
+	u.personalMu.Lock()
+	defer u.personalMu.Unlock()
+	if u.personalBox != nil {
+		u.personalBox.Close()
+		u.personalBox = nil
+	}
+	return nil
+}
 
 // Config reads one virtual mailbox's definition.
 func (u *userMailbox) Config(folder string) (*Config, error) { return LoadConfig(u.folderDir(folder)) }

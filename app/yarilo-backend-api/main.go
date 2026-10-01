@@ -121,11 +121,6 @@ func main() {
 
 	mb := mailboxbuild.ByDriver(cfg.Storage.MailDriver, cfg.Storage, locker)
 	idx := buildIndex(cfg.Storage, locker)
-	nsOverrides, err := buildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker)
-	if err != nil {
-		slog.Error("backend-api: namespace mailbox wiring", "err", err)
-		os.Exit(1)
-	}
 
 	var wardenTLS *tls.Config
 	if cfg.InternalTLS.Enabled && cfg.WardenService.ClientAddr() != "" {
@@ -169,6 +164,15 @@ func main() {
 			slog.Error("backend-api: fts language chain", "err", err)
 			os.Exit(1)
 		}
+	}
+	// The same assembler as the session servers: a virtual namespace here draws
+	// on the same personal mail and search as there (#1805).
+	nsOverrides, err := backend.BuildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker, backend.VirtualDeps{
+		Mailbox: mb, Index: idx, Search: backend.SearchOptions(cfg, ftsClient, ftsChain), MetadataDict: dicts["metadata"],
+	})
+	if err != nil {
+		slog.Error("backend-api: namespace mailbox wiring", "err", err)
+		os.Exit(1)
 	}
 
 	// A request about a user runs on the pod the director keeps them on; the
@@ -245,44 +249,6 @@ func openDicts(specs map[string]config.DictConfig) map[string]dict.Dict {
 		slog.Info("backend-api: opened dict", "name", name, "driver", dc.Driver)
 	}
 	return out
-}
-
-func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver string, sc config.StorageConfig, locker locks.Locker) (map[string]mailbox.MailboxBackend, error) {
-	if len(namespaces) == 0 {
-		return nil, nil
-	}
-	globalDriver = strings.ToLower(globalDriver)
-	if globalDriver == "" {
-		globalDriver = "maildir"
-	}
-	byDriver := make(map[string]mailbox.MailboxBackend)
-	overrides := map[string]mailbox.MailboxBackend{}
-	for _, ns := range namespaces {
-		if ns.Location == "" {
-			continue
-		}
-		loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
-		if err != nil {
-			return nil, fmt.Errorf("backend-api: namespace %q: %w", ns.Prefix, err)
-		}
-		if !ok {
-			continue
-		}
-		drv := strings.ToLower(loc.Driver)
-		if drv == globalDriver {
-			continue
-		}
-		b, exists := byDriver[drv]
-		if !exists {
-			b = mailboxbuild.ByDriver(drv, sc, locker)
-			byDriver[drv] = b
-		}
-		overrides[ns.Prefix] = b
-	}
-	if len(overrides) == 0 {
-		return nil, nil
-	}
-	return overrides, nil
 }
 
 func buildLocksClient(cfg *config.Config) (locks.Locker, error) {

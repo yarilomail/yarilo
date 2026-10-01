@@ -56,7 +56,11 @@ func (b *Box) Folder(name string, uidValidity uint32) (*mailbox.Folder, error) {
 	if err != nil || b.mode != openSession {
 		return f, err
 	}
-	if !b.settle(name, f) {
+	moved, err := b.settle(name, f)
+	if err != nil {
+		return nil, err
+	}
+	if !moved {
 		return f, nil
 	}
 	// The record set moved, so the handle in hand is stale: UIDNEXT and

@@ -1,6 +1,8 @@
 package mailboxbase
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/yarilomail/yarilo/internal/msgcache"
@@ -134,3 +136,48 @@ func (b *Box) EnvelopeCache(folderID uint64, opts mailbox.EnvelopeCacheOptions) 
 		TraceID: opts.TraceID, DeferWrites: opts.DeferWrites, Shared: opts.Shared,
 	})
 }
+
+// syncDerived runs a pass on a folder its store derives itself; a failed pass
+// refuses the open, as a failed walk would leave its records unsaid.
+func (b *Box) syncDerived(f *mailbox.Folder, open bool) (bool, error) {
+	ss, ok := mailbox.Driver(b.store).(mailbox.SelfSyncing)
+	if !ok {
+		return false, nil
+	}
+	changed, err := ss.SyncFolder(b.index, f, open)
+	if err != nil {
+		slog.Error("mailbox: derived folder not updated", "user", b.store.Username(), "folder", f.Name, "err", err)
+		return false, fmt.Errorf("mailbox/open: %s %q not updated: %w", b.store.Username(), f.Name, err)
+	}
+	return changed, nil
+}
+
+// Poll brings a derived folder up to date, as an open does; other folders
+// have nothing to bring.
+func (b *Box) Poll(f *mailbox.Folder) (*mailbox.Folder, error) {
+	ss, ok := mailbox.Driver(b.store).(mailbox.SelfSyncing)
+	if !ok {
+		return nil, nil
+	}
+	changed, err := ss.SyncFolder(b.index, f, false)
+	if err != nil || !changed {
+		return nil, err
+	}
+	return b.index.OpenFolder(f.Name, f.UIDValidity)
+}
+
+// backingResolver is a store whose records name copies in other folders.
+type backingResolver interface {
+	ResolveBacking(idx mailbox.UserIndex, folderID uint64) (map[uint32]mailbox.BackingRef, error)
+}
+
+// Backing names where a virtual folder's copies live (mailbox.VirtualCopies).
+func (b *Box) Backing(folderID uint64) (map[uint32]mailbox.BackingRef, error) {
+	r, ok := mailbox.Driver(b.store).(backingResolver)
+	if !ok {
+		return nil, errors.New("mailbox: this folder holds no copies")
+	}
+	return r.ResolveBacking(b.index, folderID)
+}
+
+var _ mailbox.VirtualCopies = (*Box)(nil)
