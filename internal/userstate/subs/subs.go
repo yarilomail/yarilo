@@ -68,6 +68,32 @@ func (s *Store) Add(folder string) error {
 	})
 }
 
+// AddOwn is Add that leaves another implementation's file as it is, answering
+// false: a subscription the server adds on its own must not convert their file.
+func (s *Store) AddOwn(folder string) (bool, error) {
+	added := false
+	err := s.withLock(func() error {
+		raw, err := os.ReadFile(s.path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("userstate/subs: open: %w", err)
+		}
+		if looksForeign(raw) {
+			return nil
+		}
+		subs, err := s.load()
+		if err != nil {
+			return err
+		}
+		added = true
+		if _, ok := subs[folder]; ok {
+			return nil
+		}
+		subs[folder] = struct{}{}
+		return s.writeAtomic(subs)
+	})
+	return added, err
+}
+
 // Remove drops folder from the subscription set. Idempotent.
 func (s *Store) Remove(folder string) error {
 	return s.withLock(func() error {

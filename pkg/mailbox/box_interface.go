@@ -9,6 +9,10 @@ type Box interface {
 	Username() string
 	// Folder opens one folder's index.
 	Folder(name string, uidValidity uint32) (*Folder, error)
+	// ListFolders and FolderExists answer for the store, making the
+	// namespace's configured mailboxes first, as any open does (#2005).
+	ListFolders() ([]FolderEntry, error)
+	FolderExists(name string) (bool, error)
 	// Messages reads records with the driver's fill-ins applied.
 	Messages(folderID uint64, set SeqSet) ([]*MessageMeta, error)
 

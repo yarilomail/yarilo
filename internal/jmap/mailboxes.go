@@ -43,7 +43,7 @@ var personalRights = jmapcore.MailboxRights{
 
 // mailboxList builds every mailbox the user has, in a stable order.
 func (s *Server) mailboxList(h *userHandle) ([]jmapcore.Mailbox, error) {
-	entries, err := h.box.ListFolders()
+	entries, err := h.mbox.ListFolders()
 	if err != nil {
 		return nil, fmt.Errorf("jmap: list folders: %w", err)
 	}

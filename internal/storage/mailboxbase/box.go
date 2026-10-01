@@ -16,6 +16,8 @@ type Box struct {
 	index mailbox.UserIndex
 	// mode is what an open owes the folder: settle, read, or only add (#1778).
 	mode openMode
+	// auto is the namespace's configured mailboxes, made on any open (#2005).
+	auto *Auto
 }
 
 // openMode is what a box's Folder does besides opening the index.
@@ -52,6 +54,7 @@ func (b *Box) Username() string { return b.store.Username() }
 // Folder opens one folder's index, settling what the store holds first. Only a
 // session open settles; the other modes read the folder as it is.
 func (b *Box) Folder(name string, uidValidity uint32) (*mailbox.Folder, error) {
+	b.makeConfigured(name)
 	f, err := b.index.OpenFolder(name, uidValidity)
 	if err != nil || b.mode != openSession {
 		return f, err

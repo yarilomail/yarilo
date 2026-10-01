@@ -339,16 +339,17 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 	if spec.Type == NamespacePersonal {
 		nsOwner = ui.Username
 	}
-	return &nsHandle{
+	h := &nsHandle{
 		name:     name,
 		spec:     spec,
 		box:      box,
-		mbox:     mailboxbase.Open(box, idx),
 		subs:     store,
 		acl:      aclStore,
 		userInfo: ui,
 		owner:    nsOwner,
-	}, nil
+	}
+	h.mbox = mailboxbase.Open(box, idx, mailboxbase.WithAuto(s.boxAuto(h)))
+	return h, nil
 }
 
 // mailbox is the handle's account mail.

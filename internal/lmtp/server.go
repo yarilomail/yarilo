@@ -511,7 +511,7 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 		return rcptBox, rcptMbox, folder, noop
 	}
 	idx := s.opts.Index.OpenUser(ui)
-	return box, mailboxbase.Open(box, idx, mailboxbase.SaveOnly()), rel, func() {
+	return box, mailboxbase.Open(box, idx, mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.boxAuto(userInfo, s.namespaceIndex(ns), ui))), rel, func() {
 		box.Close() //nolint:errcheck
 		idx.Close() //nolint:errcheck
 	}
@@ -607,7 +607,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		mboxBackend := mailbox.SelectPersonalBackend(s.opts.Mailbox, s.opts.MailboxByDriver, userInfo.Driver)
 		rcptBox := mboxBackend.OpenUser(userInfo)
 		rcptIdx := s.opts.Index.OpenUser(userInfo)
-		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly())
+		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.personalAuto(userInfo)))
 		rcptBox.Init() //nolint:errcheck // idempotent; provisioned in rcptLocal
 
 		// Quota enforcement from the index (authoritative): reject when this
@@ -741,6 +741,20 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 			if d.Create {
 				if err := tBox.Create(rel); err != nil {
 					slog.Warn("lmtp: create folder", "folder", d.Folder, "err", err)
+				}
+			} else if rel != "INBOX" {
+				// The Box makes a configured mailbox here; any other missing
+				// folder is the two lda_mailbox knobs' to make, or INBOX's.
+				if exists, _ := tMbox.FolderExists(rel); !exists {
+					if s.opts.Config.LDAMailboxAutocreate {
+						s.ldaCreate(userInfo, tBox, tMbox, d.Folder, rel)
+					} else {
+						fallback := s.defaultMailbox(rcptMbox, folder, d.Folder)
+						slog.Info("lmtp: target folder does not exist, delivering to the default mailbox",
+							"rcpt", rcpt, "folder", d.Folder, "default", fallback)
+						closeTarget()
+						tMbox, rel, closeTarget = rcptMbox, fallback, func() {}
+					}
 				}
 			}
 			uid, folder, guid, err := deliverOne(tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), s.opts.Locker, username, s.from, d.Flags)

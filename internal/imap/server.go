@@ -28,6 +28,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/connlimit"
 	"github.com/yarilomail/yarilo/internal/loginproto"
+	"github.com/yarilomail/yarilo/internal/mailboxcreate"
 	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
@@ -238,6 +239,8 @@ type NamespaceSpec struct {
 	// resolved by mailbox.NamespaceKeepsSubscriptions (see keepsSubscriptions),
 	// so a spec built without it takes the default for its kind.
 	Subscriptions *bool
+	// Mailboxes are made for the user on LIST, SELECT or STATUS (#2005).
+	Mailboxes map[string]mailbox.AutoMailbox
 }
 
 // SessionID hands the cross-service correlation id to the imapserver layer:
@@ -1241,7 +1244,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	if err != nil {
 		return nil, err
 	}
-	exists, err := h.box.FolderExists(rel)
+	exists, err := h.mailbox().FolderExists(rel)
 	if err != nil {
 		return nil, err
 	}
@@ -1287,21 +1290,6 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	tWarden := time.Now()
 	s.pushWardenSelect(name)
 	slog.Debug("imap: select timing warden_ms", "folder", rel, "warden_ms", time.Since(tWarden).Milliseconds())
-
-	// auto-subscribe on first SELECT so LSUB returns the folder without an
-	// explicit SUBSCRIBE.
-	if store, keyPrefix, terr := s.subsView(h); terr == nil {
-		tSubs := time.Now()
-		key := keyPrefix + rel
-		if subs, snapErr := store.Snapshot(); snapErr == nil {
-			if _, already := subs[key]; !already {
-				tAdd := time.Now()
-				_ = store.Add(key)
-				slog.Debug("imap: select timing subs_add_ms", "folder", rel, "add_ms", time.Since(tAdd).Milliseconds())
-			}
-		}
-		slog.Debug("imap: select timing subs_ms", "folder", rel, "subs_ms", time.Since(tSubs).Milliseconds())
-	}
 
 	tGetMsgs := time.Now()
 	msgs, err := readMessages(h.mailbox(), f.ID)
@@ -1392,34 +1380,19 @@ func (s *session) Create(name string, opts *imaplib.CreateOptions) error {
 			Text: "a virtual mailbox is created by its configuration file",
 		}
 	}
-	// quota_mailbox_count: cap the number of mailboxes a user may have.
-	if lim := s.srv.opts.QuotaPolicy.MailboxCount; lim > 0 {
-		if entries, lerr := h.box.ListFolders(); lerr == nil && int64(len(entries)) >= lim {
+	// quota_mailbox_count caps the number of mailboxes a user may have.
+	if err := mailboxcreate.Folder(h.box, h.mailbox(), rel, s.srv.opts.QuotaPolicy.MailboxCount); err != nil {
+		if errors.Is(err, mailboxcreate.ErrLimit) {
 			return &imaplib.Error{
 				Type: imaplib.StatusResponseTypeNo,
 				Code: imaplib.ResponseCode("LIMIT"),
 				Text: "Maximum number of mailboxes reached",
 			}
 		}
-	}
-	if err := h.box.Create(rel); err != nil {
 		return nameError(err)
 	}
-	h.mailbox().CreateFolder(rel, uint32(time.Now().Unix()))
-	// Inheritance is materialised here rather than resolved on every check:
-	// the new mailbox gets its own ACL file carrying what it inherited, so the
-	// user who just created it -- often holding the create right only at the
-	// namespace root -- is named in it before they can issue a SETACL that
-	// would otherwise replace the grant they are acting under (#1111).
-	if h.acl != nil && s.aclEnforced(h) {
-		if err := h.acl.MaterialiseOnCreate(rel); err != nil {
-			slog.Warn("imap: acl inheritance not materialised", "folder", name, "err", err)
-		}
-		if err := s.grantCreatorAdmin(h, rel); err != nil {
-			if rbErr := s.rollBackUnadministered(h, rel, name, err); rbErr != nil {
-				return rbErr
-			}
-		}
+	if err := s.afterCreate(h, rel, name); err != nil {
+		return err
 	}
 	// CREATE-SPECIAL-USE (RFC 6154 §3): record the requested use attr for
 	// later LIST replies. The RFC allows one attr per folder; honour the
@@ -1845,7 +1818,7 @@ func (s *session) listNamespace(w *imapserver.ListWriter, h *nsHandle, ref strin
 		return nil
 	}
 	tList := time.Now()
-	entries, err := h.box.ListFolders()
+	entries, err := h.mailbox().ListFolders()
 	slog.Debug("imap: list timing listfolders_ms", "listfolders_ms", time.Since(tList).Milliseconds())
 	if err != nil {
 		return err
@@ -2203,7 +2176,7 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	// Without it OpenFolder *creates* the folder's index, so STATUS on a name
 	// that resolves outside the mailbox initialised a fresh index at that
 	// path and reported it as an empty mailbox (#1072).
-	exists, err := h.box.FolderExists(rel)
+	exists, err := h.mailbox().FolderExists(rel)
 	if err != nil {
 		return nil, err
 	}
