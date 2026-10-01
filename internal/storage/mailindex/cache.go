@@ -1,5 +1,6 @@
-// Package mailindex holds the index cache file (yarilo.index.cache), byte-compatible
-// with the reference's; layout, producer byte, validity levels: INTERNALS.md §7.
+// The index cache file (yarilo.index.cache), byte-compatible with the reference's;
+// layout, producer byte and validity levels: INTERNALS.md §7.
+
 package mailindex
 
 import (
