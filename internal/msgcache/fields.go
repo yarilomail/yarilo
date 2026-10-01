@@ -9,7 +9,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// The reference's field table (index-mail.c:29-68). The names and the types
+// The reference's field table. The names and the types
 // are theirs: a cache is a container both implementations read (#1714).
 const (
 	fieldDateSent          = "date.sent"
@@ -26,7 +26,7 @@ const (
 	fieldHdrReferences     = "hdr.references"
 )
 
-// The reference's list, in its order (message-part-data.c:14-18): their cache
+// The reference's list, in its order: their cache
 // holds these instead of a built envelope, so ours holds them too (#1714).
 var envelopeHeaders = []string{
 	"Date", "Subject", "From", "Sender", "Reply-To",
@@ -37,13 +37,13 @@ var envelopeHeaders = []string{
 func headerField(name string) string { return "hdr." + name }
 
 // Case-insensitive: a table written elsewhere spells hdr.MESSAGE-ID where ours
-// says hdr.Message-ID (mail-cache.c:575-576).
+// says hdr.Message-ID (as the reference does).
 func (fc *Handle) fieldID(name string) uint32 {
 	return fc.ids[strings.ToLower(name)]
 }
 
 // Sizes are the reference's struct members: uoff_t is 8, a date 4, and
-// date.sent carries the header's timezone too (index-mail.h:63-66).
+// date.sent carries the header's timezone too.
 var referenceFields = withEnvelopeHeaders([]mailindex.CacheField{
 	{Name: fieldSizePhysical, Type: mailindex.CacheFieldFixedSize, Size: 8, Decision: mailindex.CacheDecisionYes},
 	{Name: fieldSizeVirtual, Type: mailindex.CacheFieldFixedSize, Size: 8, Decision: mailindex.CacheDecisionYes},
@@ -117,8 +117,7 @@ func decodeSentDate(b []byte) (time.Time, bool) {
 	return time.Unix(int64(secs), 0).In(time.FixedZone("", int(tz)*60)), true
 }
 
-// The reference's header payload: line numbers, a zero, then the header text
-// (index-mail-headers.c:99-127).
+// The reference's header payload: line numbers, a zero, then the header text.
 func encodeHeaderField(lineNum uint32, text string) []byte {
 	b := make([]byte, 0, 8+len(text))
 	b = append(b, encodeU32(lineNum)...)
@@ -191,7 +190,7 @@ func referencesFromHeader(b []byte) ([]string, bool) {
 }
 
 // Sizes returns the physical and virtual sizes the cache holds. The reference
-// reads them here first too, before it opens anything (index-mail.c).
+// reads them here first too, before it opens anything.
 func (fc *Handle) Sizes(m *mailbox.MessageMeta) (size, vsize uint32, ok bool) {
 	if fc == nil {
 		return 0, 0, false

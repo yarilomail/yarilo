@@ -8,10 +8,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
-// Counting a user's usage needs the folder's id and the index behind it, and
-// nothing from the store: the reference opens every folder read-only and never
-// syncs (quota-count.c:41). Through a session box ours walked cur/ and new/ for
-// every folder of the account, on every count (#1875).
+// Counting usage needs the index alone, as the reference opens read-only with no
+// sync; ours walked cur/ and new/ for every folder on every count (#1875).
 func TestCountUsageSettlesNothing(t *testing.T) {
 	box, inbox := gateSetup(t)
 	deliverOutOfBand(t, inbox, "1700000000.M1P1.h:2,", time.Now().Add(-time.Hour))

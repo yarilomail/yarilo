@@ -7,10 +7,8 @@ import (
 	"time"
 )
 
-// A burst of commands on a folder that is being written costs one walk, not
-// one each: the reference re-walks a directory whose mtime it cannot vouch for
-// only once the last check is a window old (maildir-sync.c:625-633). Ours put
-// a nonce in the token instead, so every open walked (#1875).
+// A burst on a dirty folder walks once: the reference re-walks an unvouched
+// mtime only a window after the last check; ours walked on every open (#1875).
 func TestABurstOnADirtyFolderWalksOnce(t *testing.T) {
 	box, inbox := gateSetup(t)
 
@@ -36,10 +34,8 @@ func TestABurstOnADirtyFolderWalksOnce(t *testing.T) {
 	}
 }
 
-// The window bounds re-walks of a directory that has not moved -- never a
-// directory that has. The reference walks on DIR_MTIME_CHANGED whatever the
-// check time says (maildir-sync.c:691-697), and a flag rename by another
-// session inside the same second is exactly that (#1875).
+// The window never holds back a moved directory: the reference walks on a moved
+// mtime whatever the check time, as a same-second flag rename needs (#1875).
 func TestAMovedMtimeIsWalkedInsideTheWindow(t *testing.T) {
 	box, inbox := gateSetup(t)
 

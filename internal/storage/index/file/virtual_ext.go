@@ -8,7 +8,7 @@ import (
 )
 
 // The virtual extension: a record names the backing folder and the uid there,
-// the header what the set was made of (virtual-storage.h:20-45, 62-66).
+// the header what the set was made of (as the reference does).
 const (
 	extNameVirtual = "virtual"
 	virtualRecSize = 8
@@ -54,7 +54,7 @@ func encodeVirtualHdr(h mailbox.VirtualHeader) []byte {
 }
 
 // refBoxSize is the reference's per-folder entry: the same watermarks with the
-// name where ours carries the GUID (virtual-storage.h:33-42).
+// name where ours carries the GUID.
 const refBoxSize = 4 + 4 + 4 + 4 + 8
 
 // decodeVirtualHdr reads ours, and the reference's when the lengths say it is

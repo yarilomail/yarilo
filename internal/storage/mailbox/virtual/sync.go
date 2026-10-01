@@ -34,7 +34,7 @@ type Resolver interface {
 }
 
 // Mode is when a pass runs, which decides what a record that stopped matching
-// its rule does (virtual-sync.c:2012-2017).
+// its rule does (as the reference does).
 type Mode int
 
 const (
@@ -58,7 +58,7 @@ type SyncResult struct {
 }
 
 // Sync decides membership by rule, a copy per folder being one message; only
-// folders whose state moved since the header saw them are read (virtual-sync.c:1413).
+// folders whose state moved since the header saw them are read (as the reference does).
 func Sync(cfg *Config, was mailbox.VirtualHeader, old []*mailbox.MessageMeta, mode Mode, r Resolver) (SyncResult, error) {
 	out := SyncResult{Header: was}
 	if was.NeedsRebuild(cfg.SearchArgsCRC32) {
@@ -97,7 +97,7 @@ func Sync(cfg *Config, was mailbox.VirtualHeader, old []*mailbox.MessageMeta, mo
 		out.Records = append(out.Records, recs...)
 		stamp := b.HighestModSeq
 		if pending {
-			stamp = 0 // the next pass reads it again (virtual-sync.c:1276-1278)
+			stamp = 0 // the next pass reads it again (as the reference does)
 		}
 		out.Header.StampBacking(id, b.NextUID, stamp)
 	}
@@ -274,7 +274,7 @@ func Selects(cfg *Config, folder string) bool {
 type MetadataLookup func(entry string) (string, bool, error)
 
 // PassesMetadata reports whether annotation lines keep a folder: they filter
-// only what a wildcard brought in, and one match keeps it (virtual-config.c:366-441).
+// only what a wildcard brought in, and one match keeps it (as the reference does).
 func PassesMetadata(cfg *Config, folder string, lookup MetadataLookup) (bool, error) {
 	var lines []Box
 	for _, b := range cfg.Boxes {

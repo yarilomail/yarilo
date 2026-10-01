@@ -8,7 +8,7 @@ import (
 )
 
 // The extension is registered the way the reference registers it: a 36-byte
-// header, no records, no alignment (maildir-storage.c:318-319).
+// header, no records, no alignment.
 func TestTheMaildirExtensionIsRegisteredLikeTheReference(t *testing.T) {
 	// Through the writer, not through a call this row makes itself: the shape
 	// under test is the one the driver's stamp leaves behind.

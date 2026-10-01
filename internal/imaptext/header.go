@@ -9,7 +9,7 @@ type HeaderLookup interface {
 }
 
 // EnvelopeFromHeader builds the ENVELOPE text from the raw header as the
-// reference fills it: nothing decoded, groups kept (message-part-data.c:200-253).
+// reference fills it: nothing decoded, groups kept.
 func EnvelopeFromHeader(h HeaderLookup) string {
 	var b strings.Builder
 	date := joinHeader(h, "Date")
@@ -50,7 +50,7 @@ func EnvelopeFromHeader(h HeaderLookup) string {
 }
 
 // Repeated headers merge comma-separated: one From must not be shown while
-// another was validated (message-part-data.c:238-248).
+// another was validated (as the reference does).
 func joinHeader(h HeaderLookup, name string) string {
 	values := h.RawValues(name)
 	for i, v := range values {

@@ -244,12 +244,8 @@ func TestKeywordLettersAreFolderLocalAndNeverRenumbered(t *testing.T) {
 	}
 }
 
-// A new keyword takes the first free letter, not the one after the highest.
-//
-// Their file can have a hole -- a keyword removed leaves its index unused --
-// and the reference fills it (maildir-keywords.c takes the first free slot).
-// Counting instead would hand out an index already in use the moment a hole
-// exists, and every filename carrying that letter would change meaning.
+// A new keyword fills the first free letter, as the reference does: counting
+// past a hole would reuse a letter files already carry with another meaning.
 func TestANewKeywordTakesTheFirstFreeLetter(t *testing.T) {
 	home := t.TempDir()
 	mailPath := filepath.Join(home, "Maildir")

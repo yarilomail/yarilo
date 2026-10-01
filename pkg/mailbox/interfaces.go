@@ -105,7 +105,7 @@ type GUIDResolver interface {
 }
 
 // MaildirStamp is what a folder's directories and uid list looked like when the
-// index was written, in the reference's layout (maildir-storage.h:52-56).
+// index was written, in the reference's layout.
 type MaildirStamp struct {
 	NewCheckTime, NewMtime, NewMtimeNsecs uint32
 	CurCheckTime, CurMtime, CurMtimeNsecs uint32
@@ -132,7 +132,7 @@ type VirtualBacking struct {
 }
 
 // VirtualHeader is what a virtual mailbox's index says about the set it holds
-// (the reference's virtual index header, virtual-storage.h:20-45).
+// (the reference's virtual index header).
 type VirtualHeader struct {
 	// ChangeCounter rises with each write, so a reader can tell the header it
 	// read from one written since.
@@ -173,7 +173,7 @@ func (h *VirtualHeader) BackingByGUID(guid [16]byte) (VirtualBacking, bool) {
 }
 
 // StampBacking records the folder state a pass read, so the next pass can
-// tell a folder that did not move (virtual-sync.c:1258-1322).
+// tell a folder that did not move (as the reference does).
 func (h *VirtualHeader) StampBacking(id, nextUID uint32, highestModSeq uint64) {
 	for i := range h.Backing {
 		if h.Backing[i].ID == id {

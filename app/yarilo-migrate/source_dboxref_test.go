@@ -247,14 +247,8 @@ func TestAnUnreadableIndexIsAnErrorOfItsOwn(t *testing.T) {
 	}
 }
 
-// The folder a record names is a storage name, not the one a client sees.
-//
-// The reference writes box->name into the B trailer key, which is modified
-// UTF-7 for anything that is not plain ASCII (mdbox-save.c). Taken raw, a
-// message from "Вхідні/Робота" is delivered into a folder literally called
-// "&BBIENQQ0BDwEPQVW-/&BCAEPgQxBD4EQgQw-": found, no error, and not where the
-// user had it. The fixture cannot show this -- its folders are Archive and
-// INBOX, where the encoded and decoded forms are the same string.
+// A record's folder is a storage name, modified UTF-7 outside ASCII, so it is
+// decoded before delivery; the fixture's Archive and INBOX encode to themselves.
 func TestTheFolderInARecordIsDecoded(t *testing.T) {
 	for _, tc := range []struct {
 		name string

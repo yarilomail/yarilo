@@ -22,8 +22,8 @@ const (
 	guidMapRecSize    = 56
 )
 
-// guidMapRec is the record extension, laid out from the Cyrus key and value
-// (conversations.c:2306, 2318-2326).
+// guidMapRec is the record extension, laid out from the second reference's
+// key and value.
 type guidMapRec struct {
 	GUID         [16]byte
 	FolderGUID   [16]byte

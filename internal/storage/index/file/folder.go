@@ -2690,10 +2690,8 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	return committedEnd, nil
 }
 
-// dropStump removes what is past the last complete group, under the journal
-// hold and never without it: a reader that cuts an in-flight append takes the
-// bytes of a writer mid-write, and the reference only declares a short tail
-// when it holds the log (mail-transaction-log-file.c:1236-1245, #1831).
+// dropStump cuts past the last complete group only under the journal hold: the
+// reference declares a short tail only when it holds the log (#1831).
 func (fs *folderState) dropStump(committedEnd, readEnd int64) {
 	logPath := fs.indexPath + ".log"
 	if fs.journalHeld {

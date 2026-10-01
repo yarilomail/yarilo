@@ -8,11 +8,11 @@ import (
 )
 
 // quotedMaxEscapeChars is the reference's cut-off: past this many escapes a
-// quoted string becomes a literal (imap-quote.c:16).
+// quoted string becomes a literal.
 const quotedMaxEscapeChars = 4
 
 // AppendNString is the reference's imap_append_nstring: NIL, a bare atom-safe
-// run, else quoted or literal (imap-quote.c:45-91).
+// run, else quoted or literal.
 func AppendNString(b *strings.Builder, s string, present bool) {
 	if !present {
 		b.WriteString("NIL")
@@ -22,7 +22,7 @@ func AppendNString(b *strings.Builder, s string, present bool) {
 }
 
 // AppendAString writes an astring: bare when every byte is astring-safe and the
-// run is neither empty nor the word NIL (imap-quote.c:24-42).
+// run is neither empty nor the word NIL (as the reference does).
 func AppendAString(b *strings.Builder, s string) {
 	for i := 0; i < len(s); i++ {
 		if !isAStringChar(s[i]) {
@@ -84,7 +84,7 @@ func appendLiteral(b *strings.Builder, s string) {
 }
 
 // AppendStringForHumans is the subject and display-name form: whitespace runs
-// collapse, NUL becomes 0x80, quoted only when nothing changed (imap-quote.c:152-240).
+// collapse, NUL becomes 0x80, quoted only when nothing changed (as the reference does).
 func AppendStringForHumans(b *strings.Builder, s string) {
 	var removed int
 	lastLWSP, wsPrefix, modify := true, true, false
@@ -156,8 +156,8 @@ func AppendStringForHumans(b *strings.Builder, s string) {
 	b.WriteString(body)
 }
 
-// isAStringChar is the reference's ASTRING-CHAR: an atom char, plus "]"
-// (imap-arg.h:14-30). 8-bit is atom-special there, so it is here.
+// isAStringChar is the reference's ASTRING-CHAR: an atom char, plus "]".
+// 8-bit is atom-special there, so it is here.
 func isAStringChar(c byte) bool {
 	switch c {
 	case '(', ')', '{', '%', '*', '"', '\\':

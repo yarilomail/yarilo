@@ -81,7 +81,7 @@ func LoadConfig(dir string) (*Config, error) {
 		cfg, perr := ParseConfig(f)
 		if perr != nil {
 			// The operator's error, told to the operator: the client only
-			// learns that the mailbox cannot be opened (virtual-config.c:516).
+			// learns that the mailbox cannot be opened (as the reference does).
 			slog.Error("virtual: configuration refused", "path", filepath.Join(dir, name), "err", perr)
 			return nil, perr
 		}
@@ -186,7 +186,7 @@ func parseBoxLine(line string) (Box, error) {
 		if b.Save {
 			return b, errors.New("a save mailbox names a folder, not an annotation")
 		}
-		// The value is a mask, "*" and "?" (virtual-config.c:354).
+		// The value is a mask, "*" and "?" (as the reference does).
 		b.MetadataEntry, b.MetadataValue = entry, value
 		return b, nil
 	}

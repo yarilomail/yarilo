@@ -31,7 +31,7 @@ func (c cachedHeaders) RawValues(name string) []string {
 }
 
 // Builds the envelope from the headers a record holds, which is what a cache
-// of theirs carries instead of a built one (index-mail-headers.c:515-560).
+// of theirs carries instead of a built one (as the reference does).
 func (fc *Handle) envelopeFromCachedHeaders(vals map[uint32][]byte) (string, bool) {
 	h := cachedHeaders{fc: fc, vals: vals}
 	var any bool

@@ -11,10 +11,8 @@ import (
 	"time"
 )
 
-// A writer that crashed on a dotlock volume left its .lock behind, and every
-// later writer waited for a holder that was gone until an operator removed the
-// file. The reference takes such a lock over (file-dotlock.c:265-296); these
-// rows hold both halves of that: abandoned is taken, alive is waited for.
+// A crashed writer's .lock is taken over, as the reference does, and a live one
+// is waited for: before, every writer waited until an operator removed it.
 func TestDotlockStaleIsTakenOverAndLiveIsNot(t *testing.T) {
 	tests := []struct {
 		name string

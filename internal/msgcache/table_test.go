@@ -68,11 +68,8 @@ func TestTheFieldTableNamesNothingOfOurs(t *testing.T) {
 	}
 }
 
-// Trap (d): the bytes of one record. The values are read back out of the file
-// and compared against what the reference's writers produce for the same
-// message (imap-envelope.c:47-87, imap-bodystructure.c:26-283), so a change to
-// either encoding shows up here as bytes, not as a round trip agreeing with
-// itself.
+// Trap (d): one record's bytes against the reference writers' output for the
+// same message, so an encoding change shows up as bytes, not a round trip.
 func TestOneRecordsBytesAreTheReferencesBytes(t *testing.T) {
 	idx, f, m := compatFolder(t)
 	env := &imaplib.Envelope{
@@ -133,7 +130,7 @@ func TestOneRecordsBytesAreTheReferencesBytes(t *testing.T) {
 		t.Errorf("size.virtual = %v (%v)", got, ok)
 	}
 	// The header field keeps the whole line, line numbers first, as the
-	// reference stores a cached header (index-mail-headers.c:99-127).
+	// reference stores a cached header.
 	line, ok := decodeHeaderField(vals[fresh.fieldID(fieldHdrReferences)])
 	if !ok || line != "References: <root@example.com>\r\n" {
 		t.Errorf("hdr.references = %q (%v)", line, ok)

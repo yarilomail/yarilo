@@ -25,15 +25,8 @@ func (e *DomainEntry) newer(o *DomainEntry) bool {
 	return e.AssignBy < o.AssignBy
 }
 
-// DomainDir is the domain→backend directory: the same shape as UserDir with a
-// different key, because a shared mailbox is only reachable where every member
-// of its domain is (#1931, #1943).
-//
-// It carries one thing UserDir does not: the load a placement credits to a
-// backend the moment it is made. The reference raises its per-host count inside
-// user_directory_add (user-directory.c:160), not when a connection arrives --
-// without that, a burst of first logins reads the same zeroes and lands on one
-// backend, which is the defect #1931 measured in least_sessions.
+// DomainDir maps a domain to a backend (#1931, #1943); a placement credits its
+// load at once, as the reference does, so a login burst does not pile on one.
 type DomainDir struct {
 	mu      sync.RWMutex
 	byName  map[string]*DomainEntry

@@ -8,7 +8,7 @@ import (
 )
 
 // WriteEnvelope returns the ten ENVELOPE items the reference caches, space
-// separated and without the enclosing parentheses (imap-envelope.c:47-87).
+// separated and without the enclosing parentheses.
 func WriteEnvelope(env *imaplib.Envelope) string {
 	if env == nil {
 		return "NIL NIL NIL NIL NIL NIL NIL NIL NIL NIL"

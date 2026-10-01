@@ -1,29 +1,6 @@
-// The index cache file (yarilo.index.cache): the immutable half of the
-// index design. yarilo.index holds what changes (flags, keywords, modseq);
-// this file holds what a message can never change (envelope, body structure,
-// derived sizes), so a listing never opens a message file (#1030).
-//
-// Byte-compatible with the reference's mail_cache_header / mail_cache_record
-// (mail-cache-private.h), full eleven-field header included: the field table
-// lives inside the file at field_header_offset, which is what makes a field
-// id meaningful outside the process that assigned it, and compat_sizeof_uoff_t
-// guards against an implementation the file cannot serve.
-//
-// Producer byte 0 is a file the reference wrote and is read; anything but 0 or
-// CacheProducerGen is rebuilt. Why and what it costs: INTERNALS.md §7, #1714.
-//
-// The cache has no vote on its own validity. Four levels, all owned by the
-// index or the producing code:
-//
-//	indexid       — must match the paired index; a mismatch is garbage.
-//	file_seq      — must match the "cache" extension's reset_id; a purge
-//	                bumps both, invalidating every stored offset at once.
-//	record        — the offset lives in the index record; expunge and
-//	                reconcile drop it there.
-//	producer gen  — one byte in the reference's unused header slot, bumped
-//	                when the PARSER changes: what is stored is the result of
-//	                parsing, and a parser fix makes a cached value wrong
-//	                against current code while every other level still holds.
+// The index cache file (yarilo.index.cache), byte-compatible with the reference's;
+// layout, producer byte and validity levels: INTERNALS.md §7.
+
 package mailindex
 
 import (
@@ -115,8 +92,7 @@ func (h *CacheHeader) encode() []byte {
 	le.PutUint32(b[20:], h.BackwardsCompatUsedFileSize)
 	le.PutUint32(b[24:], h.DeletedRecordCount)
 	// Packed, as the reference writes it: the field table's own next_offset
-	// already is, and the header's must match or neither side reads the other
-	// (mail-cache-fields.c:232, mail-index-util.c:21-31).
+	// already is, and the header's must match or neither side reads the other.
 	le.PutUint32(b[28:], packCacheOffset(h.FieldHeaderOffset))
 	return b
 }
@@ -166,10 +142,8 @@ type CacheFile struct {
 	f      *os.File
 	hdr    CacheHeader
 	fields []CacheField
-	// byName maps a lower-cased field name to its id (= position in fields).
-	// The reference hashes names case-insensitively and refuses a second
-	// spelling of one (mail-cache.c:575-576, mail-cache-fields.c:122), which
-	// is how hdr.Date and hdr.DATE are one field.
+	// byName: lower-cased name to field id; names are case-insensitive, as in the
+	// reference, so hdr.Date and hdr.DATE are one field.
 	byName map[string]uint32
 	// snap is the file as it stood when Preload was called, or nil. Reads
 	// fully inside it are served from memory; anything past its end -- an

@@ -514,13 +514,8 @@ func dialAsLeftNeighbor(t *testing.T, addr string, left Member) net.Conn {
 	return conn
 }
 
-// TestMembership_QuitClassifiesCloseAsBenign pins the #768 QUIT semantics
-// (reference parity: director-connection.c sends QUIT\t<reason> before
-// every intentional disconnect). The same connection loss from the
-// current LEFT neighbor must go two different ways: announced with QUIT —
-// benign, no death probes, the member stays; unannounced — suspected
-// death, verification probes fail (the address is unroutable), member
-// evicted.
+// A close the LEFT neighbour announced with QUIT is benign and keeps the member,
+// as the reference sends it first; an unannounced close evicts it (#768).
 func TestMembership_QuitClassifiesCloseAsBenign(t *testing.T) {
 	left := Member{IP: "9.0.0.1", Port: 9102} // sorts below 127.0.0.1 — always the server's left
 

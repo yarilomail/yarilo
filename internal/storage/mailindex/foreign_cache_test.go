@@ -22,10 +22,8 @@ func foreignPair(t *testing.T) (indexID, fileSeq uint32) {
 	return le.Uint32(raw[4:]), le.Uint32(raw[8:])
 }
 
-// A cache another implementation wrote opens and its field table reads. Two
-// things had to be true for that: byte 0 in the producer slot is accepted, and
-// the header's field_header_offset is packed the way the reference packs it
-// (mail-index-util.c:21-31) rather than written plain.
+// A cache another implementation wrote opens: producer byte 0 is accepted and
+// field_header_offset is read packed, as the reference packs it.
 func TestAForeignCacheFileReads(t *testing.T) {
 	indexID, fileSeq := foreignPair(t)
 	cf, err := OpenCache(foreignCachePath, indexID, fileSeq)

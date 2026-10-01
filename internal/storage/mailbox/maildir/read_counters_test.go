@@ -257,7 +257,7 @@ func TestAClosedWindowIsNotClosedAgain(t *testing.T) {
 }
 
 // The re-sync a miss earns: a name another session moved inside the tick the
-// listing is keyed by opens on the second attempt (maildir-util.c:154-155).
+// listing is keyed by opens on the second attempt (as the reference does).
 func TestAnOpenOfAMovedNameIsRetried(t *testing.T) {
 	u, home := item1Folder(t, 3)
 	const base = "1700000002.M2P1.host,S=20,W=20:2,"

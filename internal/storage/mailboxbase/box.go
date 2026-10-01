@@ -151,7 +151,7 @@ func (b *Box) Messages(folderID uint64, set mailbox.SeqSet) ([]*mailbox.MessageM
 }
 
 // CountingBox is this box's folders opened as they are: a count reads the
-// index and never needs the store settled first (#1875, quota-count.c:41).
+// index and never needs the store settled first (#1875, as the reference does).
 func (b *Box) CountingBox() mailbox.Box {
 	if b.mode == openReadOnly {
 		return b

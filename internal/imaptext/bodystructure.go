@@ -10,11 +10,11 @@ import (
 )
 
 // defaultCharset is what the reference writes into a text part that names no
-// charset (message-part-data.h, MESSAGE_PART_DEFAULT_CHARSET).
+// charset (MESSAGE_PART_DEFAULT_CHARSET).
 const defaultCharset = "us-ascii"
 
 // What the reference writes for a childless multipart, which the grammar does
-// not allow to be empty (imap-bodystructure.c:124-133).
+// not allow to be empty.
 const (
 	emptyBody          = `("text" "plain" ("charset" "us-ascii") NIL NIL "7bit" 0 0)`
 	emptyBodyStructure = `("text" "plain" ("charset" "us-ascii") NIL NIL "7bit" 0 0 NIL NIL NIL NIL)`
@@ -25,7 +25,7 @@ const (
 const maxBodyStructureDepth = 50
 
 // WriteBodyStructure writes the structure as the reference does, unparenthesised;
-// extended gives BODYSTRUCTURE, else BODY (imap-bodystructure.c:271-283).
+// extended gives BODYSTRUCTURE, else BODY.
 func WriteBodyStructure(bs imaplib.BodyStructure, extended bool) (string, bool) {
 	var b strings.Builder
 	if !writeBodyStructure(&b, bs, extended) {
@@ -137,7 +137,7 @@ func writeSinglePart(b *strings.Builder, p *imaplib.BodyStructureSinglePart, ext
 }
 
 // writeCommon is the disposition, language and location tail both part kinds
-// carry (imap-bodystructure.c:77-113).
+// carry (as the reference does).
 func writeCommon(b *strings.Builder, disp *imaplib.BodyStructureDisposition, lang []string, loc string) {
 	b.WriteByte(' ')
 	if disp == nil {
@@ -167,7 +167,7 @@ func writeCommon(b *strings.Builder, disp *imaplib.BodyStructureDisposition, lan
 }
 
 // params_write: a text part always names a charset, an absent list is NIL
-// unless the default is owed (imap-bodystructure.c:26-60).
+// unless the default is owed (as the reference does).
 func writeParams(b *strings.Builder, params map[string]string, defaultCharsetWanted bool) {
 	if !defaultCharsetWanted && len(params) == 0 {
 		b.WriteString("NIL")
