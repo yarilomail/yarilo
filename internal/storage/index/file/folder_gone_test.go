@@ -2,6 +2,7 @@ package file
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 
 // goneUnderOpenState opens Work with two messages here, then deletes it from a
 // second index over the same root, as another process would.
-func goneUnderOpenState(t *testing.T) (*userIndex, *mailbox.Folder, string) {
+func goneUnderOpenState(t *testing.T) (*userIndex, *mailbox.Folder, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	u := openIdx(root, testUser)
@@ -33,14 +34,15 @@ func goneUnderOpenState(t *testing.T) (*userIndex, *mailbox.Folder, string) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("the other process left %s, so this row proves nothing: %v", dir, err)
 	}
-	return u, f, dir
+	return u, f, dir, root
 }
 
 func evicted(u *userIndex, id uint64) bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	_, open := u.open[id]
-	return !open
+	fs := u.open[id]
+	_, routed := u.byDir[u.indexDir("Work")]
+	return fs != nil && fs.gone && !routed
 }
 
 func TestAReadOfAFolderDeletedElsewhereSaysItIsGone(t *testing.T) {
@@ -62,20 +64,29 @@ func TestAReadOfAFolderDeletedElsewhereSaysItIsGone(t *testing.T) {
 		}},
 	} {
 		t.Run(read.name, func(t *testing.T) {
-			u, f, _ := goneUnderOpenState(t)
+			u, f, _, root := goneUnderOpenState(t)
 			msgs, err := read.get(u, f.ID)
 			if !errors.Is(err, mailbox.ErrFolderGone) {
 				t.Fatalf("read served %d messages of a deleted folder, err %v; want ErrFolderGone", len(msgs), err)
 			}
 			if !evicted(u, f.ID) {
-				t.Error("the deleted folder's state is still open")
+				t.Error("the deleted folder's state is still routed or not marked gone")
+			}
+			// Made again elsewhere: the old id must not start reading the new folder.
+			other := openIdx(root, testUser)
+			defer other.Close() //nolint:errcheck
+			if _, err := other.OpenFolder("Work", 0, ""); err != nil {
+				t.Fatal(err)
+			}
+			if _, again := read.get(u, f.ID); !errors.Is(again, mailbox.ErrFolderGone) {
+				t.Errorf("the next call on the same id: err %v, want ErrFolderGone again", again)
 			}
 		})
 	}
 }
 
 func TestAWriteToAFolderDeletedElsewhereDoesNotBringItBack(t *testing.T) {
-	u, f, dir := goneUnderOpenState(t)
+	u, f, dir, _ := goneUnderOpenState(t)
 	err := u.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 3})
 	if !errors.Is(err, mailbox.ErrFolderGone) {
 		t.Errorf("write to a deleted folder: err %v, want ErrFolderGone", err)
@@ -86,8 +97,7 @@ func TestAWriteToAFolderDeletedElsewhereDoesNotBringItBack(t *testing.T) {
 }
 
 func TestAFolderDeletedElsewhereReopensNew(t *testing.T) {
-	u, f, _ := goneUnderOpenState(t)
-	_, _ = u.GetMessages(f.ID, nil)
+	u, f, _, _ := goneUnderOpenState(t)
 	again, err := u.OpenFolder("Work", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +109,7 @@ func TestAFolderDeletedElsewhereReopensNew(t *testing.T) {
 }
 
 func TestFlushNeverMakesALoadedFoldersDirectoryAgain(t *testing.T) {
-	u, f, dir := goneUnderOpenState(t)
+	u, f, dir, _ := goneUnderOpenState(t)
 	u.mu.Lock()
 	fs := u.open[f.ID]
 	u.mu.Unlock()
@@ -118,5 +128,19 @@ func TestNothingLoadedYetStillTakesAMissingFile(t *testing.T) {
 	fs := &folderState{folder: "Work", indexPath: "/nonexistent/yarilo.index"}
 	if err := fs.missingBase(os.ErrNotExist); err != nil {
 		t.Errorf("a state with nothing loaded refused a missing file: %v", err)
+	}
+}
+
+func TestAnErrNotExistWithTheBaseInPlaceIsNotGone(t *testing.T) {
+	u := openIdx(t.TempDir(), testUser)
+	t.Cleanup(func() { _ = u.Close() })
+	f, err := u.OpenFolder("Work", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs, _ := u.state(f.ID)
+	cause := fmt.Errorf("fileindex: lock: %w", os.ErrNotExist)
+	if got := fs.missingBase(cause); got != cause {
+		t.Errorf("ENOENT from elsewhere with the base in place became %v; want it passed through unchanged", got)
 	}
 }

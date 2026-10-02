@@ -726,6 +726,13 @@ var ErrIndexLost = errors.New("folder index lost")
 // ErrFolderGone says another process deleted a folder this one holds open.
 var ErrFolderGone = errors.New("mailbox: folder was deleted")
 
+// FolderGoneError is ErrFolderGone naming the folder.
+type FolderGoneError struct{ Folder string }
+
+func (e *FolderGoneError) Error() string { return "mailbox: folder " + e.Folder + " was deleted" }
+
+func (e *FolderGoneError) Is(target error) bool { return target == ErrFolderGone }
+
 // ErrNoSpace is wrapped by a write the volume refused for room. The data is
 // intact and the same write works once there is room (#1831).
 var ErrNoSpace = errors.New("mailbox: no space on the volume")

@@ -11,11 +11,8 @@ import (
 // Begin opens a transaction on one folder. Nothing is written until Commit, and
 // then under one hold, as one record set in the log (#1827).
 func (u *userIndex) Begin(folderID uint64) (mailbox.IndexTx, error) {
-	u.mu.Lock()
-	_, ok := u.open[folderID]
-	u.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("fileindex: folder %d not open", folderID)
+	if _, err := u.state(folderID); err != nil {
+		return nil, err
 	}
 	return &indexTx{idx: u, folderID: folderID}, nil
 }

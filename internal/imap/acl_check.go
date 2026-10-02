@@ -418,6 +418,15 @@ func dependencyError(err error) error {
 			Text: fmt.Sprintf("Mailbox %q has a damaged index and cannot be opened; it must be repaired", corrupt.Folder),
 		}
 	}
+	// Deleted by another process while this session held it.
+	var gone *mailbox.FolderGoneError
+	if errors.As(err, &gone) {
+		return &imaplib.Error{
+			Type: imaplib.StatusResponseTypeNo,
+			Code: imaplib.ResponseCodeNonExistent,
+			Text: fmt.Sprintf("Mailbox %q was deleted", gone.Folder),
+		}
+	}
 	// A full volume is a wait, not a fault: the same write works once there is
 	// room, so the client is told to come back.
 	var nospace *mailbox.NoSpaceError
