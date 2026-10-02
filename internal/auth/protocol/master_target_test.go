@@ -3,6 +3,7 @@ package protocol
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strings"
@@ -45,7 +46,7 @@ func masterServer(t *testing.T, enabled bool) (net.Conn, *bufio.Scanner) {
 
 func ask(t *testing.T, conn net.Conn, sc *bufio.Scanner, id, resp string) string {
 	t.Helper()
-	fmt.Fprintf(conn, "AUTH\t%s\tPLAIN\tservice=imap\tresp=%s\n", id, resp)
+	fmt.Fprintf(conn, "AUTH\t%s\tPLAIN\tservice=imap\tresp=%s\n", id, base64.StdEncoding.EncodeToString([]byte(resp)))
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}

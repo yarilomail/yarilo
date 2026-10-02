@@ -80,7 +80,7 @@ func TestWire_Policy_CheckBeforeContinues(t *testing.T) {
 
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
-	fmt.Fprintf(conn, "AUTH\t1\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t1\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() || !strings.HasPrefix(sc.Text(), "OK") {
 		t.Fatalf("expected OK, got %q", sc.Text())
 	}
@@ -114,7 +114,7 @@ func TestWire_Policy_CheckBeforeRejectsPreChain(t *testing.T) {
 
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
-	fmt.Fprintf(conn, "AUTH\t2\tPLAIN\tservice=imap\tresp=\x00alice\x00x\n")
+	fmt.Fprintf(conn, "AUTH\t2\tPLAIN\tservice=imap\tresp=AGFsaWNlAHg=\n")
 	if !sc.Scan() {
 		t.Fatal("no reply")
 	}
@@ -139,7 +139,7 @@ func TestWire_Policy_CheckAfterDowngradesSuccess(t *testing.T) {
 
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
-	fmt.Fprintf(conn, "AUTH\t3\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t3\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() {
 		t.Fatal("no reply")
 	}
@@ -167,7 +167,7 @@ func TestWire_Policy_ReportAfter_FiresOnOK(t *testing.T) {
 
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
-	fmt.Fprintf(conn, "AUTH\t4\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t4\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	sc.Scan()
 	time.Sleep(50 * time.Millisecond) // wait for goroutine
 
@@ -191,7 +191,7 @@ func TestWire_Policy_ReportAfter_FiresOnFail(t *testing.T) {
 
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
-	fmt.Fprintf(conn, "AUTH\t5\tPLAIN\tservice=imap\tresp=\x00alice\x00WRONG\n")
+	fmt.Fprintf(conn, "AUTH\t5\tPLAIN\tservice=imap\tresp=AGFsaWNlAFdST05H\n")
 	sc.Scan()
 	time.Sleep(50 * time.Millisecond)
 
@@ -219,7 +219,7 @@ func TestWire_Policy_MasterFlowExempt(t *testing.T) {
 
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
-	fmt.Fprintf(conn, "AUTH\t6\tPLAIN\tservice=imap\tresp=alice\x00admin\x00masterpass\n")
+	fmt.Fprintf(conn, "AUTH\t6\tPLAIN\tservice=imap\tresp=YWxpY2UAYWRtaW4AbWFzdGVycGFzcw==\n")
 	sc.Scan()
 	time.Sleep(50 * time.Millisecond)
 
@@ -249,7 +249,7 @@ func TestWire_Policy_TarpitDelaysPreChain(t *testing.T) {
 	defer conn.Close()
 
 	t0 := time.Now()
-	fmt.Fprintf(conn, "AUTH\t7\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t7\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() || !strings.HasPrefix(sc.Text(), "OK") {
 		t.Fatalf("expected OK, got %q", sc.Text())
 	}

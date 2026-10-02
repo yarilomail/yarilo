@@ -206,6 +206,9 @@ func (c *Client) Userdb(ctx context.Context, username string) (*protocol.UserInf
 		return nil, ErrClosed
 	}
 	id := c.allocID()
+	if strings.ContainsAny(username, "\t\r\n\x00") {
+		return nil, fmt.Errorf("authclient: username %q cannot cross the wire", username)
+	}
 	line, err := c.exchange(ctx, fmt.Sprintf("USER\t%s\t%s\n", id, username))
 	if err != nil {
 		return nil, err

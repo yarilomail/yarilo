@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -251,6 +252,9 @@ func (c *Client) Authenticate(username, password, service, remoteIP, sessionID s
 // plain login of the master and refused it (#1305). Whether impersonation is
 // granted stays the service's decision; the client only carries the request.
 func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, sessionID string) (*AuthResult, error) {
+	if wireUnsafe(authzid, authcid, service, remoteIP, sessionID) {
+		return nil, ErrAuthFailed
+	}
 	id := c.nextID()
 
 	var sb strings.Builder
@@ -260,12 +264,8 @@ func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, s
 	sb.WriteString("\tuser=")
 	sb.WriteString(authcid)
 	sb.WriteString("\tresp=")
-	// SASL PLAIN: [authzid] NUL authcid NUL password
-	sb.WriteString(authzid)
-	sb.WriteString("\x00")
-	sb.WriteString(authcid)
-	sb.WriteString("\x00")
-	sb.WriteString(password)
+	// SASL PLAIN, base64: the password may hold any byte, the line may not.
+	sb.WriteString(base64.StdEncoding.EncodeToString([]byte(authzid + "\x00" + authcid + "\x00" + password)))
 	if service != "" {
 		sb.WriteString("\tservice=")
 		sb.WriteString(service)
@@ -286,10 +286,23 @@ func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, s
 	return parseAuthResponse(line)
 }
 
+// wireUnsafe reports a value that would end its field or its line on the wire.
+func wireUnsafe(vals ...string) bool {
+	for _, v := range vals {
+		if strings.ContainsAny(v, "\t\r\n\x00") {
+			return true
+		}
+	}
+	return false
+}
+
 // LookupUser sends a USER command to yarilo-auth and returns whether the user
 // exists in the userdb. Returns ErrUserNotFound when the user is unknown,
 // ErrTempFail on a transient backend error.
 func (c *Client) LookupUser(username string) (bool, error) {
+	if wireUnsafe(username) {
+		return false, ErrUserNotFound
+	}
 	id := c.nextID()
 	line, err := c.exchange(id, fmt.Sprintf("USER\t%s\t%s", id, username))
 	if err != nil {
@@ -314,6 +327,9 @@ func (c *Client) LookupUser(username string) (bool, error) {
 // at issue time. Returns ErrAuthFailed when the token is unknown, expired,
 // or the claims don't match.
 func (c *Client) Verify(token, username, sessionID string) (string, string, string, error) {
+	if wireUnsafe(token, username, sessionID) {
+		return "", "", "", ErrAuthFailed
+	}
 	id := c.nextID()
 	req := fmt.Sprintf("VERIFY\t%s\t%s\tuser=%s\tsession=%s", id, token, username, sessionID)
 	line, err := c.exchange(id, req)

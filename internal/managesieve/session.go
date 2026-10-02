@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -25,6 +26,8 @@ type session struct {
 	homeDir           string
 	store             sieve.ScriptStore
 	maxSize           int
+	maxLine           int64
+	closing           bool
 	allowedExtensions []string
 	// sid is the warden session correlation ID from the login-proxy preamble
 	// (loginproto.PreambleConn.SessionID) — included on every command
@@ -94,10 +97,41 @@ func (s *session) serve(ctx context.Context) {
 			skipLine(s.r)
 			_ = writeNO(s.w, "", fmt.Sprintf("Unknown command: %s", cmd))
 		}
-		if err := s.w.Flush(); err != nil {
+		if s.closing {
+			_ = writeBYE(s.w, "Literal size too large.")
+		}
+		if err := s.w.Flush(); err != nil || s.closing {
 			return
 		}
 	}
+}
+
+// defaultMaxLine is managesieve_max_line_length when unset.
+const defaultMaxLine = 65536
+
+func (s *session) argLimit() literalLimit {
+	limit := s.maxLine
+	if limit <= 0 {
+		limit = defaultMaxLine
+	}
+	return literalLimit{max: limit, msg: "Literal size too large."}
+}
+
+func (s *session) scriptLimit() literalLimit {
+	return literalLimit{max: int64(s.maxSize), code: "QUOTA/MAXSCRIPTSIZE", msg: "Script too large."}
+}
+
+// argError answers a bad argument. A literal over its limit that the client
+// is already sending ends the session: the next command cannot be found.
+func (s *session) argError(err error, msg string) {
+	var big *literalTooLarge
+	if errors.As(err, &big) {
+		_ = writeNO(s.w, big.lim.code, big.lim.msg)
+		s.closing = !big.sync
+		return
+	}
+	skipLine(s.r)
+	_ = writeNO(s.w, "", msg)
 }
 
 func (s *session) handleCapability() {
@@ -135,17 +169,15 @@ func (s *session) handleListScripts(ctx context.Context) {
 }
 
 func (s *session) handlePutScript(ctx context.Context) {
-	name, err := readString(s.r, nil)
+	name, err := readString(s.r, nil, s.argLimit())
 	if err != nil {
-		skipLine(s.r)
-		_ = writeNO(s.w, "", "Bad script name.")
+		s.argError(err, "Bad script name.")
 		return
 	}
 	cont := func() error { return writeContinue(s.w) }
-	src, err := readLastArg(s.r, cont)
+	src, err := readLastArg(s.r, cont, s.scriptLimit())
 	if err != nil {
-		skipLine(s.r)
-		_ = writeNO(s.w, "", "Bad script content.")
+		s.argError(err, "Bad script content.")
 		return
 	}
 
@@ -155,6 +187,10 @@ func (s *session) handlePutScript(ctx context.Context) {
 	}
 
 	nameStr := string(name)
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
 	if nameStr == s.store.DefaultScriptName() {
 		_ = writeNO(s.w, "", "Script name is reserved.")
 		return
@@ -180,14 +216,17 @@ func (s *session) handlePutScript(ctx context.Context) {
 }
 
 func (s *session) handleGetScript(ctx context.Context) {
-	name, err := readLastArg(s.r, nil)
+	name, err := readLastArg(s.r, nil, s.argLimit())
 	if err != nil {
-		skipLine(s.r)
-		_ = writeNO(s.w, "", "Bad script name.")
+		s.argError(err, "Bad script name.")
 		return
 	}
 
 	nameStr := string(name)
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
 	src, found, err := s.store.GetScript(ctx, s.username, s.homeDir, nameStr)
 	if err != nil {
 		slog.Error("managesieve: get script", "sid", s.sid, "user", s.username, "script", nameStr, "err", err)
@@ -206,10 +245,9 @@ func (s *session) handleGetScript(ctx context.Context) {
 }
 
 func (s *session) handleSetActive(ctx context.Context) {
-	name, err := readLastArg(s.r, nil)
+	name, err := readLastArg(s.r, nil, s.argLimit())
 	if err != nil {
-		skipLine(s.r)
-		_ = writeNO(s.w, "", "Bad script name.")
+		s.argError(err, "Bad script name.")
 		return
 	}
 
@@ -222,6 +260,10 @@ func (s *session) handleSetActive(ctx context.Context) {
 		}
 		slog.Info("managesieve: script deactivated", "sid", s.sid, "user", s.username)
 		_ = writeOK(s.w, "SETACTIVE completed.")
+		return
+	}
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
 		return
 	}
 
@@ -251,14 +293,17 @@ func (s *session) handleSetActive(ctx context.Context) {
 }
 
 func (s *session) handleDeleteScript(ctx context.Context) {
-	name, err := readLastArg(s.r, nil)
+	name, err := readLastArg(s.r, nil, s.argLimit())
 	if err != nil {
-		skipLine(s.r)
-		_ = writeNO(s.w, "", "Bad script name.")
+		s.argError(err, "Bad script name.")
 		return
 	}
 
 	nameStr := string(name)
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
 	if nameStr == s.store.DefaultScriptName() {
 		_ = writeNO(s.w, "", "Cannot delete reserved script.")
 		return
@@ -297,10 +342,9 @@ func (s *session) handleDeleteScript(ctx context.Context) {
 
 func (s *session) handleCheckScript() {
 	cont := func() error { return writeContinue(s.w) }
-	src, err := readLastArg(s.r, cont)
+	src, err := readLastArg(s.r, cont, s.scriptLimit())
 	if err != nil {
-		skipLine(s.r)
-		_ = writeNO(s.w, "", "Bad script content.")
+		s.argError(err, "Bad script content.")
 		return
 	}
 
@@ -322,20 +366,22 @@ func (s *session) handleCheckScript() {
 }
 
 func (s *session) handleRenameScript(ctx context.Context) {
-	oldName, err := readString(s.r, nil)
+	oldName, err := readString(s.r, nil, s.argLimit())
 	if err != nil {
-		skipLine(s.r)
-		_ = writeNO(s.w, "", "Bad old script name.")
+		s.argError(err, "Bad old script name.")
 		return
 	}
-	newName, err := readLastArg(s.r, nil)
+	newName, err := readLastArg(s.r, nil, s.argLimit())
 	if err != nil {
-		skipLine(s.r)
-		_ = writeNO(s.w, "", "Bad new script name.")
+		s.argError(err, "Bad new script name.")
 		return
 	}
 
 	oldStr, newStr := string(oldName), string(newName)
+	if !sieve.ValidScriptName(oldStr) || !sieve.ValidScriptName(newStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
 
 	if oldStr == s.store.DefaultScriptName() || newStr == s.store.DefaultScriptName() {
 		_ = writeNO(s.w, "", "Script name is reserved.")
@@ -385,8 +431,13 @@ func (s *session) handleNoop() {
 	}
 	_ = s.r.UnreadByte()
 
-	tag, err := readLastArg(s.r, nil)
+	tag, err := readLastArg(s.r, nil, s.argLimit())
 	if err != nil {
+		var big *literalTooLarge
+		if errors.As(err, &big) {
+			s.argError(err, "")
+			return
+		}
 		_ = writeOK(s.w, "")
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -1155,10 +1156,23 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 			cbind = strings.TrimPrefix(f, "cbind=")
 		}
 	}
+	if strings.ContainsRune(service+ripAttr+sessionID, 0) {
+		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-request\n", id)
+		return "bad_request"
+	}
 	if isSCRAM(mech) {
 		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, sessionID)
 	}
 	_ = service
+	// The initial response is base64 on the wire: raw, a TAB or LF in a
+	// password would end the field or the line.
+	decoded, derr := base64.StdEncoding.DecodeString(resp)
+	if derr != nil {
+		slog.Debug("auth: response is not base64", "id", id, "mech", mech)
+		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
+		return "bad_request"
+	}
+	resp = string(decoded)
 
 	// rip= carries the actual mail-client IP forwarded by the login pod.
 	// Use it for penalty tracking instead of the TCP peer (login pod) IP.
@@ -1788,22 +1802,8 @@ func (s *Server) authenticate(target, master, password, service, remoteIP string
 	return resp, err
 }
 
-// parsePlain decodes a SASL PLAIN response (RFC 4616) into its
-// three logical fields. The wire format is
-// `authzid\0authid\0passwd` — base64 already decoded by the
-// caller (yarilo-auth's AUTH command transports the response
-// pre-decoded inside the `resp=` field).
-//
-//   - authzid — the user the caller wants to log in AS. When
-//     non-empty and different from authid, this is a master-user
-//     impersonation request — see RunMasterAuth.
-//   - authid  — the user supplying the password (the master in
-//     an impersonation request, the regular user otherwise).
-//   - password — the master's / user's password.
-//
-// LOGIN mech (legacy) does not carry authzid; both the two-field
-// and three-field PLAIN shapes are accepted so a client that
-// elides the empty leading authzid still works.
+// parsePlain splits a decoded SASL PLAIN response, authzid\0authid\0passwd
+// (RFC 4616); a two-field response, as LOGIN gives, has no authzid.
 func parsePlain(mech, resp string) (authzid, authid, password string, ok bool) {
 	if mech == "PLAIN" || mech == "LOGIN" {
 		parts := strings.SplitN(resp, "\x00", 3)

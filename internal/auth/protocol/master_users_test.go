@@ -571,7 +571,7 @@ func TestWire_MasterUser_Authzid(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t9\tPLAIN\tservice=imap\tresp=alice\x00admin\x00masterpass\n")
+	fmt.Fprintf(conn, "AUTH\t9\tPLAIN\tservice=imap\tresp=YWxpY2UAYWRtaW4AbWFzdGVycGFzcw==\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -605,7 +605,7 @@ func TestWire_MasterUser_Separator(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t11\tPLAIN\tservice=imap\tresp=\x00alice*admin\x00masterpass\n")
+	fmt.Fprintf(conn, "AUTH\t11\tPLAIN\tservice=imap\tresp=AGFsaWNlKmFkbWluAG1hc3RlcnBhc3M=\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -637,7 +637,7 @@ func TestWire_MasterUser_PassdbFlagPath(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t14\tPLAIN\tservice=imap\tresp=alice\x00admin\x00masterpass\n")
+	fmt.Fprintf(conn, "AUTH\t14\tPLAIN\tservice=imap\tresp=YWxpY2UAYWRtaW4AbWFzdGVycGFzcw==\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -671,7 +671,7 @@ func TestWire_MasterUser_FailIsOpaque(t *testing.T) {
 	defer conn.Close()
 
 	// Wrong master password.
-	fmt.Fprintf(conn, "AUTH\t21\tPLAIN\tservice=imap\tresp=alice\x00admin\x00WRONG\n")
+	fmt.Fprintf(conn, "AUTH\t21\tPLAIN\tservice=imap\tresp=YWxpY2UAYWRtaW4AV1JPTkc=\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -698,7 +698,7 @@ func TestWire_NoImpersonation_AuthzidEqualsAuthid(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t30\tPLAIN\tservice=imap\tresp=alice\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t30\tPLAIN\tservice=imap\tresp=YWxpY2UAYWxpY2UAc2VjcmV0\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -737,7 +737,7 @@ func TestWire_MasterUser_DisabledByDefault(t *testing.T) {
 
 	// authzid=alice authid=admin password=masterpass. Master users are off, so
 	// the request is refused rather than logged in as admin (#1892).
-	fmt.Fprintf(conn, "AUTH\t40\tPLAIN\tservice=imap\tresp=alice\x00admin\x00masterpass\n")
+	fmt.Fprintf(conn, "AUTH\t40\tPLAIN\tservice=imap\tresp=YWxpY2UAYWRtaW4AbWFzdGVycGFzcw==\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -817,7 +817,7 @@ func TestWire_MasterUser_DisabledIgnoresSeparator(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t41\tPLAIN\tservice=imap\tresp=\x00alice*admin\x00literalpass\n")
+	fmt.Fprintf(conn, "AUTH\t41\tPLAIN\tservice=imap\tresp=AGFsaWNlKmFkbWluAGxpdGVyYWxwYXNz\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}

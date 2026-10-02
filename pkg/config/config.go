@@ -1856,6 +1856,9 @@ type ManageSieveProtocolConfig struct {
 	// MaxInvalidCommands is the number of unrecognised pre-auth commands
 	// after which the server sends BYE and closes the connection. Default: 3.
 	MaxInvalidCommands int `koanf:"max_invalid_commands"`
+	// MaxLineLength bounds, in bytes, a command line and every literal but a
+	// script's body, which sieve_max_script_size bounds. 0 = 65536.
+	MaxLineLength int `koanf:"managesieve_max_line_length"`
 }
 
 // LMTPLoginServiceConfig configures the yarilo-lmtp-login proxy.
@@ -3584,7 +3587,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 6
+const minConfigSchema = 7
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3601,6 +3604,7 @@ var schemaAdditions = map[int][]string{
 	4: {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
 	5: {"lmtp_proxy_timeout"},
 	6: {"login_proxy_timeout"},
+	7: {"managesieve_max_line_length"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

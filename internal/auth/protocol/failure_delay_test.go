@@ -34,7 +34,7 @@ func TestWire_FailureDelay_HoldsAuthFail(t *testing.T) {
 	defer conn.Close()
 
 	t0 := time.Now()
-	fmt.Fprintf(conn, "AUTH\t60\tPLAIN\tservice=imap\tresp=\x00alice\x00wrong\n")
+	fmt.Fprintf(conn, "AUTH\t60\tPLAIN\tservice=imap\tresp=AGFsaWNlAHdyb25n\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -64,7 +64,7 @@ func TestWire_FailureDelay_OK_NotDelayed(t *testing.T) {
 	defer conn.Close()
 
 	t0 := time.Now()
-	fmt.Fprintf(conn, "AUTH\t61\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t61\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -95,7 +95,7 @@ func TestWire_InternalFailureDelay_AppliesOnTempFail(t *testing.T) {
 	defer conn.Close()
 
 	t0 := time.Now()
-	fmt.Fprintf(conn, "AUTH\t62\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t62\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -128,7 +128,7 @@ func TestWire_FailureDelay_Zero_NoSleep(t *testing.T) {
 	defer conn.Close()
 
 	t0 := time.Now()
-	fmt.Fprintf(conn, "AUTH\t63\tPLAIN\tservice=imap\tresp=\x00alice\x00wrong\n")
+	fmt.Fprintf(conn, "AUTH\t63\tPLAIN\tservice=imap\tresp=AGFsaWNlAHdyb25n\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}

@@ -123,6 +123,9 @@ func (ss *FsScriptStore) InitUser(ctx context.Context, username, homeDir string)
 }
 
 func (ss *FsScriptStore) SaveScript(ctx context.Context, username, homeDir, name string, src []byte) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ss.DefaultName {
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", name)
 	}
@@ -140,6 +143,9 @@ func (ss *FsScriptStore) SaveScript(ctx context.Context, username, homeDir, name
 }
 
 func (ss *FsScriptStore) SetActive(ctx context.Context, username, homeDir, name string) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ss.DefaultName {
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", name)
 	}
@@ -205,6 +211,9 @@ func (ss *FsScriptStore) keepActiveFile(username, homeDir string) error {
 }
 
 func (ss *FsScriptStore) DeleteScript(ctx context.Context, username, homeDir, name string) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ss.DefaultName {
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", name)
 	}
@@ -218,6 +227,9 @@ func (ss *FsScriptStore) DeleteScript(ctx context.Context, username, homeDir, na
 }
 
 func (ss *FsScriptStore) GetScript(_ context.Context, _, homeDir, name string) ([]byte, bool, error) {
+	if !ValidScriptName(name) {
+		return nil, false, ErrInvalidScriptName
+	}
 	src, err := os.ReadFile(ss.namedPath(homeDir, name))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -252,6 +264,9 @@ func (ss *FsScriptStore) ListScripts(_ context.Context, _, homeDir string) ([]st
 }
 
 func (ss *FsScriptStore) RenameScript(ctx context.Context, username, homeDir, oldName, newName string) error {
+	if !ValidScriptName(oldName) || !ValidScriptName(newName) {
+		return ErrInvalidScriptName
+	}
 	if oldName == ss.DefaultName || newName == ss.DefaultName {
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", ss.DefaultName)
 	}

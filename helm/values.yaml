@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 6
+config_schema_version: 7
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2086,6 +2086,9 @@ protocol:
     ## one limit, one key. A values file still carrying max_script_size here
     ## keeps working — the server folds it onto the sieve key and says so once.
     max_invalid_commands: 3
+    # Bytes in one command line or literal, a script's body aside (that is
+    # sieve_max_script_size); a larger literal is refused before it is read.
+    managesieve_max_line_length: 65536
 
   jmap:
     ## Public origin clients reach this deployment on. It prefixes every URL in
