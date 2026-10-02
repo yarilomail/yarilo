@@ -20,6 +20,7 @@ import (
 	proxyproto "github.com/pires/go-proxyproto"
 
 	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/cluster/proto"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/warden"
@@ -751,6 +752,15 @@ func (s *Server) handleConn(conn net.Conn) {
 				"claimed", pre.username, "user", authUser)
 		}
 
+		proxyTimeout, perr := s.proxyTimeout(authResult)
+		if perr != nil {
+			log.Error("login: auth service returned an invalid proxy_timeout value",
+				"user", authUser, "value", authResult.Userdb.ProxyTimeout, "err", perr)
+			writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeUnavailable, "backend unavailable")
+			s.incResult("unavailable")
+			return outcomeRetry, nil
+		}
+
 		// Find backend address: fixed addr (standalone) or director LOOKUP.
 		// tag is hoisted so the fast-fail re-route below can re-LOOKUP with it.
 		var backendAddr, tag string
@@ -833,13 +843,15 @@ func (s *Server) handleConn(conn net.Conn) {
 		backendDialStart := time.Now()
 		var bs *backendSession
 		retries := s.transientRetries()
+		// One deadline over every attempt, pauses included (#926, #927).
+		deadline := backendDialStart.Add(proxyTimeout)
 		for attempt := 0; ; attempt++ {
 			var berr error
-			bs, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, log)
+			bs, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, deadline, log)
 			if berr == nil {
 				break
 			}
-			if attempt >= retries {
+			if attempt >= retries || time.Until(deadline) <= transientRetryBackoff {
 				log.Error("login: backend session failed", "addr", backendAddr, "attempts", attempt+1, "err", berr)
 				s.observePhase(phaseBackendDial, backendDialStart)
 				s.incTransientExhausted(stageBackendSession)
@@ -1071,15 +1083,22 @@ type backendSession struct {
 // DefaultProxyTimeout applies when Options.ProxyTimeout is zero.
 const DefaultProxyTimeout = 30 * time.Second
 
-// proxyTimeout is the user's proxy_timeout, else the configured one.
-func (s *Server) proxyTimeout(res *authclient.AuthResult) time.Duration {
-	if res != nil && res.Userdb != nil && res.Userdb.ProxyTimeout > 0 {
-		return time.Duration(res.Userdb.ProxyTimeout) * time.Second
+// proxyTimeout is the user's proxy_timeout, else the configured one; an
+// unreadable user value is an error, not the global one.
+func (s *Server) proxyTimeout(res *authclient.AuthResult) (time.Duration, error) {
+	if res != nil && res.Userdb != nil {
+		d, err := protocol.ParseProxyTimeout(res.Userdb.ProxyTimeout)
+		if err != nil {
+			return 0, err
+		}
+		if d > 0 {
+			return d, nil
+		}
 	}
 	if s.opts.ProxyTimeout > 0 {
-		return s.opts.ProxyTimeout
+		return s.opts.ProxyTimeout, nil
 	}
-	return DefaultProxyTimeout
+	return DefaultProxyTimeout, nil
 }
 
 // resolvedIdentity is what the service resolved, or the login string when it
@@ -1091,10 +1110,8 @@ func resolvedIdentity(res *authclient.AuthResult, claimed string) string {
 	return claimed
 }
 
-func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, log *slog.Logger) (*backendSession, error) {
-	// One deadline over dial, re-routes and bring-up (#926, #927); a re-route
-	// re-LOOKUPs, so it takes the resolved identity (#782, #1306).
-	deadline := time.Now().Add(s.proxyTimeout(authResult))
+func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, deadline time.Time, log *slog.Logger) (*backendSession, error) {
+	// A re-route re-LOOKUPs, so it takes the resolved identity (#782, #1306).
 	conn, addr, err := s.dialBackendWithReroute(authUser, tag, addr, deadline, log)
 	if err != nil {
 		return nil, fmt.Errorf("dial backend %s: %w", addr, err)

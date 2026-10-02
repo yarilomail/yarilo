@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,9 +66,8 @@ type AuthResponse struct {
 	// the login component's static director_tag applies.
 	DirectorTag string
 
-	// ProxyTimeout is the per-user login_proxy_timeout, in seconds; 0 keeps
-	// the global one.
-	ProxyTimeout int
+	// ProxyTimeout is the per-user proxy_timeout, raw; the login proxy parses it.
+	ProxyTimeout string
 
 	// MailboxFormat is the per-user storage driver (mail_driver /
 	// mailbox_format userdb field). Empty falls back to the driver named by
@@ -1557,20 +1555,21 @@ func extractDirectorTag(f *Fields) string {
 	return ""
 }
 
-// extractProxyTimeout reads proxy_timeout from the Fields bag; anything but a
-// positive integer is 0.
-func extractProxyTimeout(f *Fields) int {
+// extractProxyTimeout returns proxy_timeout as it came, the userdb-scoped one
+// first; a value the proxy will not read is logged, not dropped.
+func extractProxyTimeout(f *Fields) string {
 	if f == nil {
-		return 0
+		return ""
 	}
 	for _, k := range []string{"userdb_proxy_timeout", "proxy_timeout"} {
-		if v, ok := f.Get(k); ok {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				return n
+		if v, ok := f.Get(k); ok && v != "" {
+			if _, err := ParseProxyTimeout(v); err != nil {
+				slog.Warn("auth: invalid proxy_timeout value", "value", v, "err", err)
 			}
+			return v
 		}
 	}
-	return 0
+	return ""
 }
 
 // extractMailboxFormat reads the per-user storage driver from the Fields bag,

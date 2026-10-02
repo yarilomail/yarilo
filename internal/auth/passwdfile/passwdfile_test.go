@@ -191,3 +191,20 @@ func TestLookupSCRAM(t *testing.T) {
 		t.Errorf("PLAIN column surfaced a SCRAM verifier")
 	}
 }
+
+// proxy_timeout is the proxy's to read: a value it will reject still leaves
+// the user found, with the rest of the fields.
+func TestLookup_KeepsAnUnreadableProxyTimeout(t *testing.T) {
+	body := "alice@x:{PLAIN}secret:1000:1000::/mail/a::userdb_proxy_timeout=abc userdb_director_tag=t1\n"
+	db, err := New(Config{Path: writeFile(t, body)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := db.Lookup("alice@x")
+	if err != nil || info == nil {
+		t.Fatalf("lookup = %+v, %v; want the user", info, err)
+	}
+	if info.ProxyTimeout != "abc" || info.DirectorTag != "t1" {
+		t.Fatalf("proxy_timeout = %q, director_tag = %q; want abc, t1", info.ProxyTimeout, info.DirectorTag)
+	}
+}

@@ -28,7 +28,6 @@ var reservedValidators = map[string]Validator{
 
 	// Numeric — int.
 	"port":                        validateInt,
-	"proxy_timeout":               validateInt,
 	"mail_max_userip_connections": validateInt,
 	"mail_max_user_connections":   validateInt,
 

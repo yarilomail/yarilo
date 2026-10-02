@@ -230,7 +230,7 @@ func userInfoToJSON(info *protocol.UserInfo) map[string]any {
 	setInt("port", info.Port)
 	setStr("destuser", info.DestUser)
 	setStr("proxy_mech", info.ProxyMech)
-	setInt("proxy_timeout", info.ProxyTimeout)
+	setStr("proxy_timeout", info.ProxyTimeout)
 	setBool("proxy_redirect_reauth", info.ProxyRedirectReauth)
 	setBool("proxy_nopipelining", info.ProxyNoPipelining)
 	setStr("ssl", info.SSL)
