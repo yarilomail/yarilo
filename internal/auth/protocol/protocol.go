@@ -1044,6 +1044,12 @@ func (s *Server) handleConn(conn net.Conn) {
 	for _, mech := range s.scramMechanisms() {
 		fmt.Fprintf(conn, "MECH\t%s\tactive\n", mech)
 	}
+	// Announced only with a token validator in the chain: a mechanism the
+	// chain cannot check is one a client would meet only after choosing it.
+	if s.oauth2Passdb() != nil {
+		fmt.Fprintf(conn, "MECH\t%s\tplaintext\n", MechOAuthBearer)
+		fmt.Fprintf(conn, "MECH\t%s\tplaintext\n", MechXOAuth2)
+	}
 	fmt.Fprintf(conn, "SPID\t%d\n", s.pid)
 	fmt.Fprintf(conn, "CUID\t%d\n", cuid)
 	fmt.Fprintf(conn, "COOKIE\t%s\n", s.cookie)
@@ -1164,6 +1170,13 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 	if isSCRAM(mech) {
 		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, sessionID)
 	}
+	if isOAuth(mech) {
+		remoteIP := ripAttr
+		if remoteIP == "" {
+			remoteIP = connRemoteIP(conn)
+		}
+		return s.beginOAuth(conn, live, id, mech, service, resp, remoteIP, sessionID)
+	}
 	_ = service
 	// The initial response is base64 on the wire: raw, a TAB or LF in a
 	// password would end the field or the line.
@@ -1188,6 +1201,17 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
 	}
+	return s.authenticatePassword(conn, id, service, remoteIP, sessionID, authzid, authid, password, plainReject)
+}
+
+// plainReject is a refusal of a password login: nothing to say but no.
+func plainReject(conn net.Conn, id string) {
+	fmt.Fprintf(conn, "FAIL\t%s\n", id)
+}
+
+// authenticatePassword runs a credential through the chain; reject writes a
+// refusal, which a mechanism may answer with more than FAIL.
+func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sessionID, authzid, authid, password string, reject func(net.Conn, string)) string {
 	// Clients that cannot supply authzid encode it as `target<sep>master` in
 	// the authid field; only with master users on and no authzid given.
 	target := ""
@@ -1206,7 +1230,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		slog.Info("auth: fail", "id", id, "proto", service, "user", authid,
 			"master_user_target", authzid, "result", "fail",
 			"reason", "master user login attempt without master passdb")
-		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
+		reject(conn, id)
 		return "fail"
 	}
 
@@ -1250,7 +1274,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 			if s.failureDelay > 0 {
 				time.Sleep(s.failureDelay)
 			}
-			fmt.Fprintf(conn, "FAIL\t%s\n", id)
+			reject(conn, id)
 			// Pre-chain reject IS the result — report it so the
 			// policy server's telemetry sees its own decision.
 			if s.policy != nil && s.policyMode.ReportAfter {
@@ -1301,7 +1325,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		if isInternal {
 			fmt.Fprintf(conn, "FAIL\t%s\tcode=temp_fail\n", id)
 		} else {
-			fmt.Fprintf(conn, "FAIL\t%s\n", id)
+			reject(conn, id)
 		}
 		// Audit log on failure — kept server-side only; the wire
 		// reply already stripped any reason text so the attacker
@@ -1344,7 +1368,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 			if s.failureDelay > 0 {
 				time.Sleep(s.failureDelay)
 			}
-			fmt.Fprintf(conn, "FAIL\t%s\n", id)
+			reject(conn, id)
 			// Report this as a failed login for downstream
 			// analytics even though the chain accepted.
 			if s.policyMode.ReportAfter {
