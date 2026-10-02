@@ -2,6 +2,7 @@ package director
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -100,7 +101,7 @@ func (s *Server) apiMiddleware(token string, nets []*net.IPNet, next http.Handle
 		}
 		if token != "" {
 			auth := r.Header.Get("Authorization")
-			if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+			if !strings.HasPrefix(auth, "Bearer ") || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(token)) != 1 {
 				apiError(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}

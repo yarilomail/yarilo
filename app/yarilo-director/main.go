@@ -194,8 +194,11 @@ func main() {
 	}()
 
 	// start HTTP admin API
-	apiToken := cfg.DirectorService.API.Token
-	apiNets := parseCIDRs(cfg.DirectorService.API.AllowedNets)
+	apiToken, apiNets, err := cfg.DirectorService.API.Gate()
+	if err != nil {
+		slog.Error("director API refuses to start", "err", err)
+		os.Exit(1)
+	}
 	go func() {
 		if err := srv.StartAPI(ctx, cfg.DirectorService.API.Listen, apiToken, apiNets); err != nil {
 			slog.Error("director API error", "err", err)

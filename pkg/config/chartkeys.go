@@ -32,7 +32,7 @@ var throughAnOperatorBlock = []string{
 // defaultOnly: the chart never writes the key and the binary's default is the
 // deployed value. Some are aliases kept for configs written by hand.
 var defaultOnly = []string{
-	"active_attribute", "active_value", "disable_plaintext_auth", "fail_open", "home_dir",
+	"active_attribute", "active_value", "auth_disabled", "disable_plaintext_auth", "fail_open", "home_dir",
 	"http_timeout_ms", "lmtp_backend_port", "max_attempts", "oauth2_mode", "prefer_introspection", "prefer_server_ciphers",
 	"socket", "ssl_prefer_server_ciphers", "ssl_server_alt_cert_file", "ssl_server_alt_key_file", "submission_client_workarounds",
 	"tls_alt_cert", "tls_alt_key", "tls_cert", "tls_key", "tls_min_version", "token_expire_grace_seconds",
