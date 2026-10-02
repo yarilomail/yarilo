@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 4
+config_schema_version: 5
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2038,8 +2038,12 @@ protocol:
     read_timeout: 300
     write_timeout: 300
     client_workarounds: []
+    # lmtp-login's cap, in seconds, on reaching a backend and finishing one
+    # delivery there; past it the MTA gets 451 and retries.
+    proxy:
+      lmtp_proxy_timeout: 125
     ## rate_limit — deliveries allowed per (sender IP, recipient mailbox) pair
-    ## inside one window; beyond it a sender gets 421 4.7.0 and retries later.
+    ## inside one window; beyond it a sender gets 451 4.7.0 and retries later.
     ## Counters live in yarilo-locks, so the limit is cluster-wide rather than
     ## per pod.
     ##

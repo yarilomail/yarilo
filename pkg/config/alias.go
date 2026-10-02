@@ -321,6 +321,7 @@ func protocolAliases(cfg *Config) []aliasedKey {
 		boolAlias("protocol.lmtp.lmtp_verbose_replies", "protocol.lmtp.verbose_replies", &l.VerboseReplies, &l.VerboseRepliesAlias),
 		intAlias("protocol.lmtp.lmtp_user_concurrency_limit", "protocol.lmtp.user_concurrency_limit", &l.UserConcurrencyLimit, &l.UserConcurrencyLimitAlias),
 		listAlias("protocol.lmtp.lmtp_client_workarounds", "protocol.lmtp.client_workarounds", &l.ClientWorkarounds, &l.ClientWorkaroundsAlias),
+		intAlias("protocol.lmtp.proxy.lmtp_proxy_timeout", "protocol.lmtp.proxy.timeout", &l.Proxy.ProxyTimeout, &l.Proxy.TimeoutAlias),
 
 		// rate_limit's own keys carried no section prefix, unlike every other
 		// nested section (threading_enabled, sieve_max_actions). Renamed while

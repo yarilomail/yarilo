@@ -609,7 +609,7 @@ type LMTPRateLimitConfig struct {
 	// Enabled gates the entire check. Default: true.
 	Enabled bool `koanf:"rate_limit_enabled"`
 	// PerRecipientBurst is the max deliveries per (sender IP, recipient
-	// mailbox) pair inside one window; excess gets 421 4.7.0. Default: 100.
+	// mailbox) pair inside one window; excess gets 451 4.7.0. Default: 100.
 	PerRecipientBurst int `koanf:"rate_limit_per_recipient_burst"`
 	// PerRecipientWindowSeconds is the sliding window width. Default: 60.
 	PerRecipientWindowSeconds int `koanf:"rate_limit_per_recipient_window_seconds"`
@@ -620,12 +620,13 @@ type LMTPRateLimitConfig struct {
 	PerRecipientWindowSecondsAlias int  `koanf:"per_recipient_window_seconds"`
 }
 
-// LMTPProxyConfig holds LMTP proxy settings used on director nodes.
-// Backends are taken from the director's ring (general settings); this section
-// only controls transport behaviour.
+// LMTPProxyConfig is read by yarilo-lmtp-login, which delivers each recipient
+// to the backend the director's LOOKUP names; the backend ignores it.
 type LMTPProxyConfig struct {
-	// Timeout is the per-backend connection+transaction timeout in seconds. Default: 125.
-	Timeout int `koanf:"timeout"`
+	// ProxyTimeout caps lmtp-login's backend dial and transaction, in seconds. Default: 125.
+	ProxyTimeout int `koanf:"lmtp_proxy_timeout"`
+	// Pre-beta spelling without the section prefix, removed after beta.
+	TimeoutAlias int `koanf:"timeout"`
 }
 
 type IMAPProtocolConfig struct {
@@ -2655,6 +2656,7 @@ func Load(path string) (*Config, error) {
 				ReadTimeout:          300,
 				WriteTimeout:         300,
 				UserConcurrencyLimit: 10,
+				Proxy:                LMTPProxyConfig{ProxyTimeout: 125},
 				RateLimit: LMTPRateLimitConfig{
 					Enabled:                   true,
 					PerRecipientBurst:         100,
@@ -3579,7 +3581,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 4
+const minConfigSchema = 5
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3594,6 +3596,7 @@ var schemaAdditions = map[int][]string{
 	2: {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
 	3: {"quota_full_tempfail"},
 	4: {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
+	5: {"lmtp_proxy_timeout"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

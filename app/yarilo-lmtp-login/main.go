@@ -96,30 +96,7 @@ func main() {
 		defer authMasterPool.Close() //nolint:errcheck
 	}
 
-	opts := lmtplogin.Options{
-		Hostname:         hostname,
-		BackendAddr:      lmtpCfg.BackendAddr,
-		DirectorAddr:     lmtpCfg.DirectorAddr,
-		DirectorTLS:      intTLS,
-		BackendTLS:       intTLS,
-		DirectorTag:      lmtpCfg.DirectorTag,
-		BackendPort:      lmtpCfg.BackendPort,
-		LocalIP:          os.Getenv("POD_IP"),
-		AuthMasterAddr:   cfg.AuthService.MasterAddr,
-		AuthMasterPool:   authMasterPool,
-		AuthMasterTLS:    intTLS,
-		WardenAddr:       cfg.WardenService.ClientAddr(),
-		WardenTLS:        intTLS,
-		ConcurrencyLimit: cfg.Protocol.LMTP.UserConcurrencyLimit,
-		// Inbound client-IP forwarding (#742): a Postfix relay in front conveys
-		// the original SMTP client's IP via PROXY protocol and/or XCLIENT.
-		HAProxy:         cfg.Services.LMTP.HAProxy,
-		HAProxyTimeout:  time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
-		HAProxyNets:     parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
-		XClient:         cfg.Services.LMTP.XClient,
-		XClientNets:     parseCIDRs(cfg.General.XClient.TrustedNets),
-		MaxMessageBytes: quota.ParseSize(cfg.Quota.MailSize),
-	}
+	opts := options(cfg, hostname, intTLS, authMasterPool)
 
 	addr := fmt.Sprintf(":%d", cfg.Services.LMTP.Port)
 	ln, err := net.Listen("tcp", addr)
@@ -149,6 +126,35 @@ func main() {
 	// Leave the Service endpoints before draining, so no new client is routed
 	// here while in-flight work finishes.
 	tel.SetReady(false)
+}
+
+// options maps the loaded config onto the proxy's settings.
+func options(cfg *config.Config, hostname string, intTLS *tls.Config, authMasterPool *authclient.Pool) lmtplogin.Options {
+	return lmtplogin.Options{
+		Hostname:         hostname,
+		BackendAddr:      cfg.LMTPLoginService.BackendAddr,
+		DirectorAddr:     cfg.LMTPLoginService.DirectorAddr,
+		DirectorTLS:      intTLS,
+		BackendTLS:       intTLS,
+		DirectorTag:      cfg.LMTPLoginService.DirectorTag,
+		BackendPort:      cfg.LMTPLoginService.BackendPort,
+		LocalIP:          os.Getenv("POD_IP"),
+		AuthMasterAddr:   cfg.AuthService.MasterAddr,
+		AuthMasterPool:   authMasterPool,
+		AuthMasterTLS:    intTLS,
+		WardenAddr:       cfg.WardenService.ClientAddr(),
+		WardenTLS:        intTLS,
+		ConcurrencyLimit: cfg.Protocol.LMTP.UserConcurrencyLimit,
+		// Inbound client-IP forwarding (#742): a Postfix relay in front conveys
+		// the original SMTP client's IP via PROXY protocol and/or XCLIENT.
+		HAProxy:         cfg.Services.LMTP.HAProxy,
+		HAProxyTimeout:  time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
+		HAProxyNets:     parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
+		XClient:         cfg.Services.LMTP.XClient,
+		XClientNets:     parseCIDRs(cfg.General.XClient.TrustedNets),
+		MaxMessageBytes: quota.ParseSize(cfg.Quota.MailSize),
+		ProxyTimeout:    time.Duration(cfg.Protocol.LMTP.Proxy.ProxyTimeout) * time.Second,
+	}
 }
 
 func parseCIDRs(ss []string) []*net.IPNet {

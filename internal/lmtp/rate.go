@@ -9,10 +9,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
-// ErrRateLimited is returned by checkRecipientRate when the
-// (sender IP, recipient mailbox) pair has consumed its burst
-// within the current window. Callers surface it to the SMTP
-// client as `421 4.7.0`.
+// ErrRateLimited is returned by checkRecipientRate when the (sender IP,
+// recipient mailbox) pair has used its burst; the client gets 451 4.7.0.
 var ErrRateLimited = errors.New("lmtp/rate: recipient rate limit exceeded")
 
 // checkRecipientRate enforces the per-(IP, mailbox) bucket at RCPT TO. A nil

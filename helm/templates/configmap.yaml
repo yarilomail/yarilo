@@ -170,6 +170,8 @@ data:
           - {{ . | quote }}
           {{- end }}
         {{- end }}
+        proxy:
+          lmtp_proxy_timeout: {{ .Values.protocol.lmtp.proxy.lmtp_proxy_timeout | default 125 | int64 }}
         rate_limit:
           ## Not `| default true`: Helm's default treats false as empty, so
           ## that spelling would ignore an operator turning the limit off.

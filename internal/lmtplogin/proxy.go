@@ -41,8 +41,8 @@ type Options struct {
 	// BackendAddr is the TCP address of the LMTP backend used in standalone
 	// mode. Ignored when DirectorAddr is set.
 	BackendAddr string
-	// BackendTimeout caps each backend dial and transaction. Default: 300s.
-	BackendTimeout time.Duration
+	// ProxyTimeout caps each backend dial and transaction. Default: 125s.
+	ProxyTimeout time.Duration
 	// BackendTLS optionally wraps the backend fan-out dial with internal mTLS.
 	// nil = plain TCP.
 	BackendTLS *tls.Config
@@ -108,6 +108,9 @@ type Options struct {
 // recipient is already at ConcurrencyLimit.
 var ErrTooManyConcurrent = errors.New("lmtplogin: too many concurrent deliveries for user")
 
+// DefaultProxyTimeout applies when Options.ProxyTimeout is zero.
+const DefaultProxyTimeout = 125 * time.Second
+
 // Server is an LMTP login proxy.
 type Server struct {
 	srv  *goSmtp.Server
@@ -116,8 +119,8 @@ type Server struct {
 
 // New builds a Server from opts.
 func New(opts Options) *Server {
-	if opts.BackendTimeout == 0 {
-		opts.BackendTimeout = 300 * time.Second
+	if opts.ProxyTimeout == 0 {
+		opts.ProxyTimeout = DefaultProxyTimeout
 	}
 	if opts.ConcurrencyLimit == 0 {
 		opts.ConcurrencyLimit = 10
@@ -282,7 +285,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				User:      e.username,
 				Token:     e.token,
 			}
-			rerr := fanOutOne(e.backendAddr, s.opts.Hostname, s.from, e.to, data, pre, s.opts.BackendTimeout, s.opts.BackendTLS)
+			rerr := fanOutOne(e.backendAddr, s.opts.Hostname, s.from, e.to, data, pre, s.opts.ProxyTimeout, s.opts.BackendTLS)
 			if rerr == nil {
 				slog.Info("lmtplogin: delivered", "rcpt", e.to, "size", len(data))
 			} else {
@@ -559,7 +562,9 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, data []byte, pre loginp
 		return err
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout)) //nolint:errcheck
+	// Not SetDeadline: the client resets it on every command.
+	stop := time.AfterFunc(timeout, func() { conn.Close() })
+	defer stop.Stop()
 
 	// Preamble must be written before go-smtp reads the 220 greeting from the
 	// backend — the backend's PreambleListener consumes it first.
