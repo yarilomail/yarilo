@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,7 +144,7 @@ func (ss *FsScriptStore) SetActive(ctx context.Context, username, homeDir, name 
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", name)
 	}
 	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
-		if err := ss.keepActiveFile(homeDir); err != nil {
+		if err := ss.keepActiveFile(username, homeDir); err != nil {
 			return err
 		}
 		link := ss.activePath(homeDir)
@@ -158,7 +159,7 @@ func (ss *FsScriptStore) SetActive(ctx context.Context, username, homeDir, name 
 
 func (ss *FsScriptStore) Deactivate(ctx context.Context, username, homeDir string) error {
 	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
-		if err := ss.keepActiveFile(homeDir); err != nil {
+		if err := ss.keepActiveFile(username, homeDir); err != nil {
 			return err
 		}
 		err := os.Remove(ss.activePath(homeDir))
@@ -171,7 +172,7 @@ func (ss *FsScriptStore) Deactivate(ctx context.Context, username, homeDir strin
 
 // keepActiveFile copies an active script that is a regular file to
 // OrigScriptName before the caller unlinks it; the default body is not kept.
-func (ss *FsScriptStore) keepActiveFile(homeDir string) error {
+func (ss *FsScriptStore) keepActiveFile(username, homeDir string) error {
 	path := ss.activePath(homeDir)
 	fi, err := os.Lstat(path)
 	switch {
@@ -195,7 +196,12 @@ func (ss *FsScriptStore) keepActiveFile(homeDir string) error {
 	if err := os.WriteFile(target+".tmp", src, 0o600); err != nil {
 		return fmt.Errorf("sieve/scripts: keep active as %q: %w", OrigScriptName, err)
 	}
-	return os.Rename(target+".tmp", target)
+	if err := os.Rename(target+".tmp", target); err != nil {
+		return fmt.Errorf("sieve/scripts: keep active as %q: %w", OrigScriptName, err)
+	}
+	slog.Info("sieve: active script was a file of its own, kept as a script",
+		"user", username, "path", path, "script", OrigScriptName)
+	return nil
 }
 
 func (ss *FsScriptStore) DeleteScript(ctx context.Context, username, homeDir, name string) error {
