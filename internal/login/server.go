@@ -128,8 +128,8 @@ type Options struct {
 	// OAuth2Enabled advertises and accepts OAUTHBEARER and XOAUTH2 mechanisms.
 	// Mirrors cfg.Auth.OAuth2 being non-empty.
 	OAuth2Enabled bool
-	// DisablePlainAuth suppresses PLAIN and LOGIN from pre-TLS capability
-	// advertisements. After STARTTLS/implicit-TLS they are always offered.
+	// DisablePlainAuth refuses PLAIN and LOGIN, and hides them, on a connection
+	// that is not TLS, not proxied and not local.
 	DisablePlainAuth bool
 	// SieveExtensions is the space-joined list of supported Sieve extensions
 	// advertised in the ManageSieve SIEVE capability line.

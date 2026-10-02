@@ -17,6 +17,28 @@ import (
 
 // imapPreAuthCaps returns the IMAP capability string for the pre-auth state.
 // extTLS is non-nil when STARTTLS is available (plain listener).
+// cleartextDisabledMsg is the refusal of a cleartext login on an open line.
+const cleartextDisabledMsg = "Cleartext authentication disallowed on non-secure (SSL/TLS) connections."
+
+// cleartextRefused reports a PLAIN or LOGIN attempt the listener must refuse:
+// cleartext is off and the connection is not TLS, not proxied, not local.
+func cleartextRefused(conn net.Conn, opts Options) bool {
+	if !opts.DisablePlainAuth || opts.HAProxy {
+		return false
+	}
+	if _, ok := conn.(*tls.Conn); ok {
+		return false
+	}
+	r, rok := conn.RemoteAddr().(*net.TCPAddr)
+	l, lok := conn.LocalAddr().(*net.TCPAddr)
+	return !rok || !lok || !r.IP.Equal(l.IP)
+}
+
+func isCleartextMech(m string) bool {
+	m = strings.ToUpper(m)
+	return m == "PLAIN" || m == "LOGIN"
+}
+
 func imapPreAuthCaps(extTLS *tls.Config, opts Options, scram []string) string {
 	caps := "IMAP4rev2 IMAP4rev1 SASL-IR LITERAL+ ID IDLE"
 	if extTLS != nil {
@@ -217,6 +239,10 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				fmt.Fprintf(conn, "%s BAD LOGIN requires username and password\r\n", tag) //nolint:errcheck
 				continue
 			}
+			if cleartextRefused(conn, opts) {
+				fmt.Fprintf(conn, "%s NO [PRIVACYREQUIRED] %s\r\n", tag, cleartextDisabledMsg) //nolint:errcheck
+				continue
+			}
 			return &preamble{
 				username:      username,
 				password:      password,
@@ -228,6 +254,10 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 		case "AUTHENTICATE":
 			if len(fields) < 3 {
 				fmt.Fprintf(conn, "%s BAD AUTHENTICATE requires mechanism\r\n", tag) //nolint:errcheck
+				continue
+			}
+			if isCleartextMech(fields[2]) && cleartextRefused(conn, opts) {
+				fmt.Fprintf(conn, "%s NO [PRIVACYREQUIRED] %s\r\n", tag, cleartextDisabledMsg) //nolint:errcheck
 				continue
 			}
 			switch strings.ToUpper(fields[2]) {
@@ -429,6 +459,10 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				fmt.Fprintf(conn, "-ERR Unknown authentication mechanism\r\n") //nolint:errcheck
 				continue
 			}
+			if isCleartextMech(fields[1]) && cleartextRefused(conn, opts) {
+				fmt.Fprintf(conn, "-ERR [AUTH] %s\r\n", cleartextDisabledMsg) //nolint:errcheck
+				continue
+			}
 			switch strings.ToUpper(fields[1]) {
 			case "PLAIN":
 				var b64 string
@@ -523,6 +557,9 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				fmt.Fprintf(conn, "-ERR Unknown authentication mechanism\r\n") //nolint:errcheck
 				continue
 			}
+		case (strings.HasPrefix(upper, "USER ") || strings.HasPrefix(upper, "PASS ")) && cleartextRefused(conn, opts):
+			username = ""
+			fmt.Fprintf(conn, "-ERR [AUTH] %s\r\n", cleartextDisabledMsg) //nolint:errcheck
 		case strings.HasPrefix(upper, "USER "):
 			username = strings.TrimSpace(line[5:])
 			fmt.Fprintf(conn, "+OK\r\n") //nolint:errcheck
@@ -632,6 +669,9 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			}
 			ehloLine = ""
 			fmt.Fprintf(conn, "220 Yarilo Login ready\r\n") //nolint:errcheck
+		case strings.HasPrefix(upper, "AUTH ") && len(strings.Fields(upper)) > 1 &&
+			isCleartextMech(strings.Fields(upper)[1]) && cleartextRefused(conn, opts):
+			fmt.Fprintf(conn, "523 5.7.10 %s\r\n", cleartextDisabledMsg) //nolint:errcheck
 		case strings.HasPrefix(upper, "AUTH "):
 			pre, err := handleSMTPAuth(conn, rd, trimmed, ehloLine)
 			if err != nil {

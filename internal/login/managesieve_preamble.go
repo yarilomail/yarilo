@@ -78,7 +78,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 				return nil, conn, rd, err
 			}
 		case "AUTHENTICATE":
-			pre, err := msHandleAuthenticate(conn, rd)
+			pre, err := msHandleAuthenticate(conn, rd, cleartextRefused(conn, opts))
 			if err != nil {
 				return nil, conn, rd, err
 			}
@@ -124,7 +124,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 
 // msHandleAuthenticate processes AUTHENTICATE mechanism [initial-response].
 // Returns a non-nil *preamble on success; nil on auth failure (caller retries).
-func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader) (*preamble, error) {
+func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool) (*preamble, error) {
 	mechBytes, err := msReadString(rd, conn)
 	if err != nil {
 		if errors.Is(err, errMSLiteralTooLarge) {
@@ -135,6 +135,11 @@ func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader) (*preamble, error) {
 		return nil, nil
 	}
 	mech := strings.ToUpper(string(mechBytes))
+	if cleartextOff && isCleartextMech(mech) {
+		msSkipLine(rd)
+		fmt.Fprintf(conn, "NO (ENCRYPT-NEEDED) %q\r\n", cleartextDisabledMsg) //nolint:errcheck
+		return nil, nil
+	}
 
 	// Optional initial response (on same line for quoted; may be a literal).
 	msSkipWS(rd)
