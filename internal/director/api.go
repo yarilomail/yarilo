@@ -43,12 +43,11 @@ func intParam(r *http.Request, name string) (int, bool) {
 	return n, true
 }
 
-// StartAPI starts the HTTP admin API server on addr.
-// token is required in the Authorization: Bearer header; empty string disables auth.
-// allowedNets restricts access by client IP; nil/empty allows all.
-func (s *Server) StartAPI(ctx context.Context, addr, token string, allowedNets []*net.IPNet) error {
+// StartAPI serves the HTTP admin API on ln, bound by the caller so a failure
+// to bind is known before the director reports ready.
+func (s *Server) StartAPI(ctx context.Context, ln net.Listener, token string, allowedNets []*net.IPNet) error {
 	s.apiToken = token
-	s.apiAddr = addr
+	s.apiAddr = ln.Addr().String()
 	mux := http.NewServeMux()
 	h := func(fn http.HandlerFunc) http.Handler { return s.apiMiddleware(token, allowedNets, fn) }
 
@@ -72,10 +71,10 @@ func (s *Server) StartAPI(ctx context.Context, addr, token string, allowedNets [
 	mux.Handle("POST /api/director/ring", h(s.apiPeerAdd))
 	mux.Handle("DELETE /api/director/ring", h(s.apiPeerRemove))
 
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{Handler: mux}
 	go func() { <-ctx.Done(); srv.Close() }()
-	slog.Info("director: API listening", "addr", addr)
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+	slog.Info("director: API listening", "addr", s.apiAddr)
+	if err := srv.Serve(ln); err != http.ErrServerClosed {
 		return fmt.Errorf("director API: %w", err)
 	}
 	return nil

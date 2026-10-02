@@ -10,7 +10,7 @@ import (
 // Both admin APIs start only through their config gate.
 func TestTheAdminAPIsStartThroughTheirGate(t *testing.T) {
 	for path, call := range map[string]string{
-		"../yarilo-director/main.go":    "cfg.DirectorService.API.Gate()",
+		"../yarilo-director/main.go":    "api.Gate()",
 		"../yarilo-backend-api/main.go": "cfg.BackendAPI.Gate()",
 	} {
 		src, err := os.ReadFile(path)
