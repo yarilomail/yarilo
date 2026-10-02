@@ -21,7 +21,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -286,19 +285,6 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 	default:
 		return nil, fmt.Errorf("locks_client: unknown mode %q", lc.Mode)
 	}
-}
-
-func parseCIDRs(in []string) []*net.IPNet {
-	out := make([]*net.IPNet, 0, len(in))
-	for _, s := range in {
-		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
-		if err != nil {
-			slog.Warn("backend-api: ignoring bad CIDR", "value", s, "err", err)
-			continue
-		}
-		out = append(out, n)
-	}
-	return out
 }
 
 // runTelemetry serves /healthz, /readyz and /metrics beside the admin API.
