@@ -3,6 +3,7 @@ package quotastatus_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -129,13 +130,13 @@ func TestPolicyCheck_RecipientDelimiter(t *testing.T) {
 		func(o *quotastatus.Options) { o.RecipientDelimiter = "-" })
 	if a := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice-Spam@example.com", "size": "100",
-	}); a != "DUNNO" {
-		t.Errorf("want DUNNO for delimiter-ignored folder, got %q", a)
+	}); a != "OK" {
+		t.Errorf("want OK for delimiter-ignored folder, got %q", a)
 	}
 	// "+" is no longer a delimiter, so alice+Spam maps to a different username.
 	if a := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice+Spam@example.com", "size": "100",
-	}); !strings.HasPrefix(a, "DUNNO") && !strings.HasPrefix(a, "REJECT") {
+	}); !strings.HasPrefix(a, "OK") && !strings.HasPrefix(a, "554") && !strings.HasPrefix(a, "DEFER_IF_PERMIT") {
 		t.Errorf("unexpected action %q", a)
 	}
 }
@@ -147,15 +148,15 @@ func TestPolicyCheck_MailSize(t *testing.T) {
 	// Under the cap → allowed.
 	if a := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "100",
-	}); a != "DUNNO" {
-		t.Errorf("want DUNNO under mail_size, got %q", a)
+	}); a != "OK" {
+		t.Errorf("want OK under mail_size, got %q", a)
 	}
 	// Over the cap → distinct 552 rejection.
 	a := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "600",
 	})
-	if !strings.HasPrefix(a, "REJECT 552") || !strings.Contains(a, "max mail size") {
-		t.Errorf("want REJECT 552 max mail size, got %q", a)
+	if !strings.HasPrefix(a, "554 5.2.2") || !strings.Contains(a, "maximum size allowed") {
+		t.Errorf("want 554 5.2.2 with the max-size reason, got %q", a)
 	}
 }
 
@@ -166,7 +167,7 @@ func TestPolicyCheck_ExceededMessage(t *testing.T) {
 	a := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "100",
 	})
-	if !strings.HasPrefix(a, "REJECT 452") || !strings.Contains(a, "over the top") {
+	if !strings.HasPrefix(a, "554 5.2.2") || !strings.Contains(a, "over the top") {
 		t.Errorf("want custom exceeded message, got %q", a)
 	}
 }
@@ -176,8 +177,8 @@ func TestPolicyCheck_UnderQuota(t *testing.T) {
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "1024",
 	})
-	if action != "DUNNO" {
-		t.Errorf("want DUNNO, got %q", action)
+	if action != "OK" {
+		t.Errorf("want OK, got %q", action)
 	}
 }
 
@@ -186,8 +187,8 @@ func TestPolicyCheck_OverQuota(t *testing.T) {
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "100",
 	})
-	if !strings.HasPrefix(action, "REJECT 452") {
-		t.Errorf("want REJECT 452, got %q", action)
+	if !strings.HasPrefix(action, "554 5.2.2") {
+		t.Errorf("want 554 5.2.2, got %q", action)
 	}
 }
 
@@ -196,8 +197,8 @@ func TestPolicyCheck_IgnoreFolder(t *testing.T) {
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice+Spam@example.com", "size": "100",
 	})
-	if action != "DUNNO" {
-		t.Errorf("want DUNNO for ignored folder, got %q", action)
+	if action != "OK" {
+		t.Errorf("want OK for ignored folder, got %q", action)
 	}
 }
 
@@ -207,8 +208,8 @@ func TestPolicyCheck_NoStorage(t *testing.T) {
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "9999",
 	})
-	if action != "DUNNO" {
-		t.Errorf("want DUNNO when no storage, got %q", action)
+	if action != "OK" {
+		t.Errorf("want OK when no storage, got %q", action)
 	}
 }
 
@@ -233,8 +234,8 @@ func TestAliasResolution_DirectAlias(t *testing.T) {
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "info@example.com", "size": "100",
 	})
-	if !strings.HasPrefix(action, "REJECT 452") {
-		t.Errorf("alias resolved to over-quota alice: want REJECT 452, got %q", action)
+	if !strings.HasPrefix(action, "554 5.2.2") {
+		t.Errorf("alias resolved to over-quota alice: want 554 5.2.2, got %q", action)
 	}
 }
 
@@ -246,8 +247,8 @@ func TestAliasResolution_ChainedAlias(t *testing.T) {
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "sales@example.com", "size": "100",
 	})
-	if !strings.HasPrefix(action, "REJECT 452") {
-		t.Errorf("chained alias: want REJECT 452, got %q", action)
+	if !strings.HasPrefix(action, "554 5.2.2") {
+		t.Errorf("chained alias: want 554 5.2.2, got %q", action)
 	}
 }
 
@@ -258,8 +259,8 @@ func TestAliasResolution_DetailStrippedForLookup(t *testing.T) {
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "info+newsletter@example.com", "size": "100",
 	})
-	if !strings.HasPrefix(action, "REJECT 452") {
-		t.Errorf("detail+alias: want REJECT 452, got %q", action)
+	if !strings.HasPrefix(action, "554 5.2.2") {
+		t.Errorf("detail+alias: want 554 5.2.2, got %q", action)
 	}
 }
 
@@ -269,8 +270,8 @@ func TestAliasResolution_NoAlias_FallsBackToDirect(t *testing.T) {
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "bob@example.com", "size": "100",
 	})
-	if action != "DUNNO" {
-		t.Errorf("no alias, under quota: want DUNNO, got %q", action)
+	if action != "OK" {
+		t.Errorf("no alias, under quota: want OK, got %q", action)
 	}
 }
 
@@ -287,8 +288,8 @@ func TestPolicyCheck_MultipleRequestsPerConn(t *testing.T) {
 		for sc.Scan() {
 			line := sc.Text()
 			if strings.HasPrefix(line, "action=") {
-				if line != "action=DUNNO" {
-					t.Errorf("request %d: want action=DUNNO, got %q", i, line)
+				if line != "action=OK" {
+					t.Errorf("request %d: want action=OK, got %q", i, line)
 				}
 				break
 			}
@@ -320,5 +321,102 @@ func TestPolicyCheck_Nouser(t *testing.T) {
 	// Empty nouser opts out to DUNNO.
 	if a := policyCheck(t, startServer(t, base), req); a != "DUNNO" {
 		t.Errorf("empty nouser should DUNNO, got %q", a)
+	}
+}
+
+// An MTA that sends no size at RCPT still has a full mailbox refused, grace or
+// not: the check allocates at least one byte, never zero.
+func TestPolicyCheck_OverQuotaWithoutSizeAndWithGrace(t *testing.T) {
+	addr := startStorageServerOpts(t, []string{"*:storage=1K"}, nil, 0, map[string]uint32{"alice@example.com": 1024},
+		func(o *quotastatus.Options) { o.Policy.StorageGrace = 10 << 20 })
+	action := policyCheck(t, addr, map[string]string{
+		"request": "smtpd_access_policy", "recipient": "alice@example.com",
+	})
+	if !strings.HasPrefix(action, "554 5.2.2") {
+		t.Errorf("a full mailbox with no size given answered %q, want 554 5.2.2", action)
+	}
+}
+
+// Every answer is the configured action, with the reason in %{error}; an empty
+// toolarge action falls back to the over-quota one.
+func TestPolicyCheck_ActionsAreConfigured(t *testing.T) {
+	custom := func(o *quotastatus.Options) {
+		o.Success, o.Toolarge, o.Overquota = "DUNNO", "REJECT 552 too big: %{error}", "REJECT 452 4.2.2 full: %{error}"
+		o.MailSize = 5000
+	}
+	fallback := func(o *quotastatus.Options) { o.Overquota, o.MailSize = "DEFER_IF_PERMIT %{error}", 5000 }
+	for _, tc := range []struct {
+		name   string
+		used   uint32
+		size   string
+		mutate func(*quotastatus.Options)
+		want   string
+	}{
+		{"success", 100, "100", custom, "DUNNO"},
+		{"over quota", 1024, "100", custom, "REJECT 452 4.2.2 full: Mailbox full"},
+		{"over the mail size", 100, "6000", custom, "REJECT 552 too big: Mail size is larger than the maximum size allowed by server configuration"},
+		{"larger than the whole limit", 100, "2000", custom, "REJECT 552 too big: Mailbox full"},
+		{"empty toolarge uses overquota", 100, "6000", fallback, "DEFER_IF_PERMIT Mail size is larger than the maximum size allowed by server configuration"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := startStorageServerOpts(t, []string{"*:storage=1K"}, nil, 0, map[string]uint32{"alice@example.com": tc.used}, tc.mutate)
+			if a := policyCheck(t, addr, map[string]string{
+				"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": tc.size,
+			}); a != tc.want {
+				t.Errorf("answered %q, want %q", a, tc.want)
+			}
+		})
+	}
+}
+
+// A userdb that cannot answer defers the recipient; it neither accepts the
+// mail unchecked nor refuses it for good.
+func TestPolicyCheck_UserdbErrorDefers(t *testing.T) {
+	addr := startServer(t, quotastatus.Options{
+		Enabled: true, Limits: quota.ParseRules([]string{"*:storage=1K"}),
+		UserdbLookup: func(context.Context, string) (*mailbox.UserInfo, error) { return nil, errors.New("down") },
+		Mailbox:      maildir.New(), Index: file.New(),
+	})
+	if a := policyCheck(t, addr, map[string]string{
+		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "100",
+	}); !strings.HasPrefix(a, "DEFER_IF_PERMIT") {
+		t.Errorf("a userdb failure answered %q, want DEFER_IF_PERMIT", a)
+	}
+}
+
+// INBOX at its message cap is full whatever the storage says; one below it
+// takes the message, as LMTP would.
+func TestPolicyCheck_MailboxMessageCount(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rules []string
+		cap   int64
+		want  string
+	}{
+		{"at the cap", []string{"*:storage=1M"}, 1, "554 5.2.2 Too many messages in the mailbox"},
+		{"below the cap", []string{"*:storage=1M"}, 2, "OK"},
+		{"at the cap with no storage limit", nil, 1, "554 5.2.2 Too many messages in the mailbox"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := startStorageServerOpts(t, tc.rules, nil, 0, map[string]uint32{"alice@example.com": 100},
+				func(o *quotastatus.Options) { o.Policy.MailboxMessageCount = tc.cap })
+			if a := policyCheck(t, addr, map[string]string{
+				"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "100",
+			}); a != tc.want {
+				t.Errorf("answered %q, want %q", a, tc.want)
+			}
+		})
+	}
+}
+
+// A message larger than the limit that still fits within grace is accepted:
+// it is too large only once it does not fit at all.
+func TestPolicyCheck_LargerThanTheLimitWithinGraceFits(t *testing.T) {
+	addr := startStorageServerOpts(t, []string{"*:storage=1K"}, nil, 0, map[string]uint32{"alice@example.com": 0},
+		func(o *quotastatus.Options) { o.Policy.StorageGrace = 10 << 20 })
+	if a := policyCheck(t, addr, map[string]string{
+		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "2000",
+	}); a != "OK" {
+		t.Errorf("a 2000-byte message into an empty mailbox with a 1K limit and 10M grace answered %q, want OK", a)
 	}
 }

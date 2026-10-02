@@ -894,6 +894,11 @@ type QuotaStatusConfig struct {
 	// Nouser is the policy action returned when the recipient is unknown in
 	// userdb. Default "REJECT Unknown user"; empty falls back to DUNNO.
 	Nouser string `koanf:"quota_status_nouser"`
+	// Success, Toolarge and Overquota are the actions for a recipient that
+	// fits, a message larger than allowed, and a full mailbox; %{error} is the reason.
+	Success   string `koanf:"quota_status_success"`
+	Toolarge  string `koanf:"quota_status_toolarge"`
+	Overquota string `koanf:"quota_status_overquota"`
 	// DefaultQuotaRules are the site-wide quota limits applied when no
 	// per-user rules are available (userdb lookup not yet wired in this phase).
 	// Format matches yarilo.yaml quota_rule: ["*:storage=5G", "Trash:storage=+1G"].
@@ -2766,7 +2771,8 @@ func Load(path string) (*Config, error) {
 				AllowedNets: nil,
 			},
 		},
-		QuotaStatus: QuotaStatusConfig{Listen: ":12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user"},
+		QuotaStatus: QuotaStatusConfig{Listen: ":12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user",
+			Success: "OK", Overquota: "554 5.2.2 %{error}"},
 		Quota: QuotaConfig{
 			Name:              "User quota",
 			ExceededMessage:   "Quota exceeded (mailbox for user is full)",
@@ -3574,7 +3580,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 3
+const minConfigSchema = 4
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3588,6 +3594,7 @@ var schemaAdditions = map[int][]string{
 	1: {"chart_version", "config_schema_version", "hostname", "lmtp_add_message_id"},
 	2: {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
 	3: {"quota_full_tempfail"},
+	4: {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

@@ -1166,6 +1166,9 @@ data:
       {{- if hasKey .Values.components.quotaStatus "quota_status_nouser" }}
       quota_status_nouser: {{ .Values.components.quotaStatus.quota_status_nouser | quote }}
       {{- end }}
+      quota_status_success: {{ if hasKey .Values.components.quotaStatus "quota_status_success" }}{{ .Values.components.quotaStatus.quota_status_success | quote }}{{ else }}"OK"{{ end }}
+      quota_status_toolarge: {{ if hasKey .Values.components.quotaStatus "quota_status_toolarge" }}{{ .Values.components.quotaStatus.quota_status_toolarge | quote }}{{ else }}""{{ end }}
+      quota_status_overquota: {{ if hasKey .Values.components.quotaStatus "quota_status_overquota" }}{{ .Values.components.quotaStatus.quota_status_overquota | quote }}{{ else }}"554 5.2.2 %{error}"{{ end }}
       {{- with .Values.components.quotaStatus.default_quota_rules }}
       default_quota_rules:
         {{- range . }}

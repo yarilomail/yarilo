@@ -312,9 +312,9 @@ func (s *session) quotaCheckAppend(_ context.Context, folder string, bytes int64
 		}
 	}
 	// Per-mailbox message-count cap is structural (independent of quota_rule):
-	// reject when the target folder would reach the configured message count.
+	// reject when the target folder already holds the configured message count.
 	if mmc := s.quotaPolicy().MailboxMessageCount; mmc > 0 {
-		if cur, ok := s.folderMessageCount(folder); ok && cur+1 >= mmc {
+		if cur, ok := s.folderMessageCount(folder); ok && cur >= mmc {
 			return &imaplib.Error{
 				Type: imaplib.StatusResponseTypeNo,
 				Code: imaplib.ResponseCode("OVERQUOTA"),

@@ -1,8 +1,5 @@
-// Package quotastatus implements the Postfix policy service protocol
-// (RFC-style text key=value over TCP) for quota enforcement.
-// Postfix connects via check_policy_service and asks whether a
-// recipient's mailbox can accept the incoming message; the service
-// returns action=DUNNO (allow) or action=REJECT 452 4.2.2 (full).
+// Package quotastatus answers Postfix check_policy_service requests on whether a
+// recipient's mailbox can take a message; the answers are quota_status_* settings.
 package quotastatus
 
 import (
@@ -58,6 +55,35 @@ type Options struct {
 	// Nouser is the action returned when the recipient is unknown in userdb
 	// (default "REJECT Unknown user"; empty falls back to DUNNO).
 	Nouser string
+	// Success, Toolarge and Overquota are the configured actions; an empty
+	// Toolarge uses Overquota, and %{error} in either is the reason.
+	Success, Toolarge, Overquota string
+}
+
+const (
+	errMaxSize  = "Mail size is larger than the maximum size allowed by server configuration"
+	errBoxCount = "Too many messages in the mailbox"
+	errInternal = "Temporary internal error"
+	errCalc     = "Internal quota calculation error"
+)
+
+func (s *Server) success() string {
+	if s.opts.Success != "" {
+		return s.opts.Success
+	}
+	return "OK"
+}
+
+// refuse answers a message larger than allowed (tooLarge) or a full mailbox.
+func (s *Server) refuse(tooLarge bool, reason string) string {
+	action := s.opts.Overquota
+	if tooLarge && s.opts.Toolarge != "" {
+		action = s.opts.Toolarge
+	}
+	if action == "" {
+		action = "554 5.2.2 %{error}"
+	}
+	return strings.ReplaceAll(action, "%{error}", reason)
 }
 
 // exceededMessage returns the over-quota REJECT text (default "Mailbox full").
@@ -150,14 +176,14 @@ func (s *Server) check(attrs map[string]string) string {
 	username := extractUsername(resolved, delim)
 
 	if !s.opts.Enabled || s.opts.UserdbLookup == nil || s.opts.Mailbox == nil || s.opts.Index == nil {
-		return "DUNNO"
+		return s.success()
 	}
 
 	// Resolve the recipient's storage identity + per-user limits.
 	ui, err := s.opts.UserdbLookup(context.Background(), username)
 	if err != nil {
 		slog.Warn("quotastatus: userdb lookup failed", "user", username, "err", err)
-		return "DUNNO" // backend error → fail-open
+		return "DEFER_IF_PERMIT " + errInternal
 	}
 	if ui == nil {
 		// Recipient unknown in userdb: return the configured nouser action
@@ -175,8 +201,8 @@ func (s *Server) check(attrs map[string]string) string {
 
 	effLim, ignore := limits.EffectiveLimits(folder)
 	effLim = s.opts.Policy.Scale(effLim)
-	if ignore || effLim.Unlimited() {
-		return "DUNNO"
+	if ignore || (effLim.Unlimited() && s.opts.Policy.MailboxMessageCount <= 0) {
+		return s.success()
 	}
 
 	// Open the recipient's storage and sum the authoritative index aggregate —
@@ -191,7 +217,7 @@ func (s *Server) check(attrs map[string]string) string {
 	entries, lerr := box.ListFolders()
 	if lerr != nil {
 		slog.Warn("quotastatus: list folders failed", "user", username, "err", lerr)
-		return "DUNNO" // fail-open
+		return "DEFER_IF_PERMIT " + errCalc
 	}
 	u := quota.CountUsage(mbox, mailbox.SelectableNames(entries), limits)
 
@@ -200,23 +226,33 @@ func (s *Server) check(attrs map[string]string) string {
 		msgSize, _ = strconv.ParseInt(sz, 10, 64)
 	}
 
-	// Per-message size cap: distinct text so the sender can tell "too large"
-	// from "mailbox full".
 	if s.opts.MailSize > 0 && msgSize > s.opts.MailSize {
 		slog.Info("quotastatus: reject oversize", "user", username, "msg_size", msgSize, "max", s.opts.MailSize)
-		return fmt.Sprintf("REJECT 552 5.2.3 Requested allocation size %d exceeds max mail size %d", msgSize, s.opts.MailSize)
+		return s.refuse(true, errMaxSize)
+	}
+	// The per-mailbox cap is on INBOX, the mailbox a delivery lands in; LMTP enforces it too.
+	if mmc := s.opts.Policy.MailboxMessageCount; mmc > 0 {
+		if f, ferr := mailbox.Counting(mbox).Folder("INBOX", 0); ferr == nil && int64(f.Messages) >= mmc {
+			slog.Info("quotastatus: reject mailbox message count", "user", username, "messages", f.Messages, "max", mmc)
+			return s.refuse(false, errBoxCount)
+		}
 	}
 
-	// quota-status is an inbound-delivery pre-check, so storage grace applies.
-	if quota.IsOverWithGrace(u, effLim, msgSize, 1, s.opts.Policy.StorageGrace) {
+	// quota-status is an inbound-delivery pre-check, so storage grace applies;
+	// an unknown size is one byte, so a full mailbox is full without it.
+	if quota.IsOverWithGrace(u, effLim, max(msgSize, 1), 1, s.opts.Policy.StorageGrace) {
+		// Larger than the whole limit: no amount of cleaning makes it fit.
+		if effLim.StorageBytes > 0 && msgSize > effLim.StorageBytes {
+			return s.refuse(true, s.exceededMessage())
+		}
 		slog.Info("quotastatus: reject over-quota",
 			"user", username, "folder", folder,
 			"storage_bytes", u.StorageBytes, "messages", u.Messages,
 			"limit_bytes", effLim.StorageBytes, "msg_size", msgSize,
 			"per_user_rules", len(ui.QuotaRules) > 0)
-		return "REJECT 452 4.2.2 " + s.exceededMessage()
+		return s.refuse(false, s.exceededMessage())
 	}
-	return "DUNNO"
+	return s.success()
 }
 
 // extractUsername strips the detail part from a recipient address:
