@@ -624,8 +624,10 @@ type LMTPRateLimitConfig struct {
 // Backends are taken from the director's ring (general settings); this section
 // only controls transport behaviour.
 type LMTPProxyConfig struct {
-	// Timeout is the per-backend connection+transaction timeout in seconds. Default: 125.
-	Timeout int `koanf:"timeout"`
+	// ProxyTimeout caps lmtp-login's backend dial and transaction, in seconds. Default: 125.
+	ProxyTimeout int `koanf:"lmtp_proxy_timeout"`
+	// Pre-beta spelling without the section prefix, removed after beta.
+	TimeoutAlias int `koanf:"timeout"`
 }
 
 type IMAPProtocolConfig struct {
@@ -2655,6 +2657,7 @@ func Load(path string) (*Config, error) {
 				ReadTimeout:          300,
 				WriteTimeout:         300,
 				UserConcurrencyLimit: 10,
+				Proxy:                LMTPProxyConfig{ProxyTimeout: 125},
 				RateLimit: LMTPRateLimitConfig{
 					Enabled:                   true,
 					PerRecipientBurst:         100,
@@ -3579,7 +3582,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 4
+const minConfigSchema = 5
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3594,6 +3597,7 @@ var schemaAdditions = map[int][]string{
 	2: {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
 	3: {"quota_full_tempfail"},
 	4: {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
+	5: {"lmtp_proxy_timeout"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
