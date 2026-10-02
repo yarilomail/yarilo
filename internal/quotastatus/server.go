@@ -62,6 +62,7 @@ type Options struct {
 
 const (
 	errMaxSize  = "Mail size is larger than the maximum size allowed by server configuration"
+	errBoxCount = "Too many messages in the mailbox"
 	errInternal = "Temporary internal error"
 	errCalc     = "Internal quota calculation error"
 )
@@ -200,7 +201,7 @@ func (s *Server) check(attrs map[string]string) string {
 
 	effLim, ignore := limits.EffectiveLimits(folder)
 	effLim = s.opts.Policy.Scale(effLim)
-	if ignore || effLim.Unlimited() {
+	if ignore || (effLim.Unlimited() && s.opts.Policy.MailboxMessageCount <= 0) {
 		return s.success()
 	}
 
@@ -229,15 +230,21 @@ func (s *Server) check(attrs map[string]string) string {
 		slog.Info("quotastatus: reject oversize", "user", username, "msg_size", msgSize, "max", s.opts.MailSize)
 		return s.refuse(true, errMaxSize)
 	}
-	// Larger than the whole limit: no amount of cleaning makes it fit.
-	if effLim.StorageBytes > 0 && msgSize > effLim.StorageBytes {
-		slog.Info("quotastatus: reject larger than the quota", "user", username, "msg_size", msgSize, "limit_bytes", effLim.StorageBytes)
-		return s.refuse(true, s.exceededMessage())
+	// The per-mailbox cap is on INBOX, the mailbox a delivery lands in; LMTP enforces it too.
+	if mmc := s.opts.Policy.MailboxMessageCount; mmc > 0 {
+		if f, ferr := mailbox.Counting(mbox).Folder("INBOX", 0); ferr == nil && int64(f.Messages) >= mmc {
+			slog.Info("quotastatus: reject mailbox message count", "user", username, "messages", f.Messages, "max", mmc)
+			return s.refuse(false, errBoxCount)
+		}
 	}
 
 	// quota-status is an inbound-delivery pre-check, so storage grace applies;
 	// an unknown size is one byte, so a full mailbox is full without it.
 	if quota.IsOverWithGrace(u, effLim, max(msgSize, 1), 1, s.opts.Policy.StorageGrace) {
+		// Larger than the whole limit: no amount of cleaning makes it fit.
+		if effLim.StorageBytes > 0 && msgSize > effLim.StorageBytes {
+			return s.refuse(true, s.exceededMessage())
+		}
 		slog.Info("quotastatus: reject over-quota",
 			"user", username, "folder", folder,
 			"storage_bytes", u.StorageBytes, "messages", u.Messages,

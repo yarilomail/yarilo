@@ -383,3 +383,40 @@ func TestPolicyCheck_UserdbErrorDefers(t *testing.T) {
 		t.Errorf("a userdb failure answered %q, want DEFER_IF_PERMIT", a)
 	}
 }
+
+// INBOX at its message cap is full whatever the storage says; one below it
+// takes the message, as LMTP would.
+func TestPolicyCheck_MailboxMessageCount(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rules []string
+		cap   int64
+		want  string
+	}{
+		{"at the cap", []string{"*:storage=1M"}, 1, "554 5.2.2 Too many messages in the mailbox"},
+		{"below the cap", []string{"*:storage=1M"}, 2, "OK"},
+		{"at the cap with no storage limit", nil, 1, "554 5.2.2 Too many messages in the mailbox"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := startStorageServerOpts(t, tc.rules, nil, 0, map[string]uint32{"alice@example.com": 100},
+				func(o *quotastatus.Options) { o.Policy.MailboxMessageCount = tc.cap })
+			if a := policyCheck(t, addr, map[string]string{
+				"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "100",
+			}); a != tc.want {
+				t.Errorf("answered %q, want %q", a, tc.want)
+			}
+		})
+	}
+}
+
+// A message larger than the limit that still fits within grace is accepted:
+// it is too large only once it does not fit at all.
+func TestPolicyCheck_LargerThanTheLimitWithinGraceFits(t *testing.T) {
+	addr := startStorageServerOpts(t, []string{"*:storage=1K"}, nil, 0, map[string]uint32{"alice@example.com": 0},
+		func(o *quotastatus.Options) { o.Policy.StorageGrace = 10 << 20 })
+	if a := policyCheck(t, addr, map[string]string{
+		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "2000",
+	}); a != "OK" {
+		t.Errorf("a 2000-byte message into an empty mailbox with a 1K limit and 10M grace answered %q, want OK", a)
+	}
+}
