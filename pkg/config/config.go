@@ -571,6 +571,9 @@ type LMTPProtocolConfig struct {
 	LDAMailboxAutocreate bool `koanf:"lda_mailbox_autocreate"`
 	// LDAMailboxAutosubscribe subscribes what LDAMailboxAutocreate makes.
 	LDAMailboxAutosubscribe bool `koanf:"lda_mailbox_autosubscribe"`
+	// QuotaFullTempfail answers a full mailbox 452 4.2.2 (retry) instead of
+	// 552 5.2.2 (bounce). Default: false.
+	QuotaFullTempfail bool `koanf:"quota_full_tempfail"`
 	// HdrDeliveryAddress controls the Delivered-To header: none | final | original. Default: "final".
 	HdrDeliveryAddress string `koanf:"lmtp_hdr_delivery_address"`
 	// VerboseReplies includes diagnostic details in error responses. Default: false.
@@ -3571,7 +3574,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 2
+const minConfigSchema = 3
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3584,6 +3587,7 @@ const minConfigSchema = 2
 var schemaAdditions = map[int][]string{
 	1: {"chart_version", "config_schema_version", "hostname", "lmtp_add_message_id"},
 	2: {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
+	3: {"quota_full_tempfail"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

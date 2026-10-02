@@ -185,7 +185,7 @@ func checkFileNoHeader(t *testing.T, path, header string) {
 		}
 	}
 }
-func TestLMTP_QuotaEnforcement_452(t *testing.T) {
+func TestLMTP_QuotaEnforcement(t *testing.T) {
 	dir := t.TempDir()
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 	mb := maildir.New()
@@ -198,7 +198,7 @@ func TestLMTP_QuotaEnforcement_452(t *testing.T) {
 	box.Close() //nolint:errcheck
 
 	// Quota comes from the index (count backend). A tiny 10-byte limit means the
-	// incoming test message alone exceeds it → 452.
+	// incoming test message alone exceeds it → 552, a bounce by default.
 	srv := New(Options{
 		Hostname:    "lmtp.test",
 		Config:      config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
@@ -221,8 +221,8 @@ func TestLMTP_QuotaEnforcement_452(t *testing.T) {
 	conn, sc := dialLMTP(t, ln.Addr().String())
 	sendLHLO(t, conn, sc)
 	resp := deliver(t, conn, sc, "sender@external.com", "alice@example.com", testMsg)
-	if len(resp) == 0 || !strings.HasPrefix(resp[0], "452") {
-		t.Fatalf("expected 452 Mailbox full, got: %v", resp)
+	if len(resp) == 0 || !strings.HasPrefix(resp[0], "552") {
+		t.Fatalf("expected 552 Mailbox full, got: %v", resp)
 	}
 }
 

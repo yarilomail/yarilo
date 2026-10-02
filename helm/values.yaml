@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 2
+config_schema_version: 3
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2026,6 +2026,9 @@ protocol:
     # knob). A namespace's configured auto mailbox is made either way.
     lda_mailbox_autocreate: false
     lda_mailbox_autosubscribe: false
+    # A full mailbox: false bounces it (552 5.2.2), true asks the MTA to retry
+    # (452 4.2.2), which keeps the message queued until the mailbox has room.
+    quota_full_tempfail: false
     hdr_delivery_address: final
     verbose_replies: false
     user_concurrency_limit: 10

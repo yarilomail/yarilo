@@ -22,6 +22,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/logging"
 	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 func main() {
@@ -112,11 +113,12 @@ func main() {
 		ConcurrencyLimit: cfg.Protocol.LMTP.UserConcurrencyLimit,
 		// Inbound client-IP forwarding (#742): a Postfix relay in front conveys
 		// the original SMTP client's IP via PROXY protocol and/or XCLIENT.
-		HAProxy:        cfg.Services.LMTP.HAProxy,
-		HAProxyTimeout: time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
-		HAProxyNets:    parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
-		XClient:        cfg.Services.LMTP.XClient,
-		XClientNets:    parseCIDRs(cfg.General.XClient.TrustedNets),
+		HAProxy:         cfg.Services.LMTP.HAProxy,
+		HAProxyTimeout:  time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
+		HAProxyNets:     parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
+		XClient:         cfg.Services.LMTP.XClient,
+		XClientNets:     parseCIDRs(cfg.General.XClient.TrustedNets),
+		MaxMessageBytes: quota.ParseSize(cfg.Quota.MailSize),
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Services.LMTP.Port)

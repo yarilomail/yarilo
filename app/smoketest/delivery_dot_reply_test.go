@@ -12,7 +12,7 @@ func TestARefusedDeliveryIsNotReadAsSent(t *testing.T) {
 		name  string
 		reply string
 	}{
-		{"over quota", "452 4.2.2 Mailbox full"},
+		{"over quota", "552 5.2.2 Mailbox full"},
 		{"sieve reject", "550 5.7.1 smoke test reject"},
 		{"too large", "552 5.2.3 Requested allocation size exceeds max mail size"},
 	}

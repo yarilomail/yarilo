@@ -70,7 +70,7 @@ func TestADeliveryIntoAnUnopenedFolderJudgesTheMail(t *testing.T) {
 	conn, sc := dialLMTP(t, ln.Addr().String())
 	sendLHLO(t, conn, sc)
 	resp := deliver(t, conn, sc, "sender@external.com", "alice@example.com", testMsg)
-	if len(resp) == 0 || !strings.HasPrefix(resp[0], "452") {
+	if len(resp) == 0 || !strings.HasPrefix(resp[0], "552") {
 		t.Fatalf("the delivery was accepted into a full mailbox: %v", resp)
 	}
 }
