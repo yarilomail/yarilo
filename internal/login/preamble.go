@@ -15,8 +15,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/xclient"
 )
 
-// imapPreAuthCaps returns the IMAP capability string for the pre-auth state.
-// extTLS is non-nil when STARTTLS is available (plain listener).
 // cleartextDisabledMsg is the refusal of a cleartext login on an open line.
 const cleartextDisabledMsg = "Cleartext authentication disallowed on non-secure (SSL/TLS) connections."
 
@@ -39,6 +37,8 @@ func isCleartextMech(m string) bool {
 	return m == "PLAIN" || m == "LOGIN"
 }
 
+// imapPreAuthCaps returns the IMAP capability string for the pre-auth state.
+// extTLS is non-nil when STARTTLS is available (plain listener).
 func imapPreAuthCaps(extTLS *tls.Config, opts Options, scram []string) string {
 	caps := "IMAP4rev2 IMAP4rev1 SASL-IR LITERAL+ ID IDLE"
 	if extTLS != nil {

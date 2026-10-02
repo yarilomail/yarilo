@@ -1802,20 +1802,8 @@ func (s *Server) authenticate(target, master, password, service, remoteIP string
 	return resp, err
 }
 
-// parsePlain decodes a SASL PLAIN response (RFC 4616) into its
-// three logical fields, `authzid\0authid\0passwd`, after the caller has
-// decoded the base64 `resp=` field.
-//
-//   - authzid — the user the caller wants to log in AS. When
-//     non-empty and different from authid, this is a master-user
-//     impersonation request — see RunMasterAuth.
-//   - authid  — the user supplying the password (the master in
-//     an impersonation request, the regular user otherwise).
-//   - password — the master's / user's password.
-//
-// LOGIN mech (legacy) does not carry authzid; both the two-field
-// and three-field PLAIN shapes are accepted so a client that
-// elides the empty leading authzid still works.
+// parsePlain splits a decoded SASL PLAIN response, authzid\0authid\0passwd
+// (RFC 4616); a two-field response, as LOGIN gives, has no authzid.
 func parsePlain(mech, resp string) (authzid, authid, password string, ok bool) {
 	if mech == "PLAIN" || mech == "LOGIN" {
 		parts := strings.SplitN(resp, "\x00", 3)
