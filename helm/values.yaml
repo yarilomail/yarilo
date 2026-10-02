@@ -2043,7 +2043,7 @@ protocol:
     proxy:
       lmtp_proxy_timeout: 125
     ## rate_limit — deliveries allowed per (sender IP, recipient mailbox) pair
-    ## inside one window; beyond it a sender gets 421 4.7.0 and retries later.
+    ## inside one window; beyond it a sender gets 451 4.7.0 and retries later.
     ## Counters live in yarilo-locks, so the limit is cluster-wide rather than
     ## per pod.
     ##

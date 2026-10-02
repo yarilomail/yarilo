@@ -609,7 +609,7 @@ type LMTPRateLimitConfig struct {
 	// Enabled gates the entire check. Default: true.
 	Enabled bool `koanf:"rate_limit_enabled"`
 	// PerRecipientBurst is the max deliveries per (sender IP, recipient
-	// mailbox) pair inside one window; excess gets 421 4.7.0. Default: 100.
+	// mailbox) pair inside one window; excess gets 451 4.7.0. Default: 100.
 	PerRecipientBurst int `koanf:"rate_limit_per_recipient_burst"`
 	// PerRecipientWindowSeconds is the sliding window width. Default: 60.
 	PerRecipientWindowSeconds int `koanf:"rate_limit_per_recipient_window_seconds"`
@@ -620,9 +620,8 @@ type LMTPRateLimitConfig struct {
 	PerRecipientWindowSecondsAlias int  `koanf:"per_recipient_window_seconds"`
 }
 
-// LMTPProxyConfig holds LMTP proxy settings used on director nodes.
-// Backends are taken from the director's ring (general settings); this section
-// only controls transport behaviour.
+// LMTPProxyConfig is read by yarilo-lmtp-login, which delivers each recipient
+// to the backend the director's LOOKUP names; the backend ignores it.
 type LMTPProxyConfig struct {
 	// ProxyTimeout caps lmtp-login's backend dial and transaction, in seconds. Default: 125.
 	ProxyTimeout int `koanf:"lmtp_proxy_timeout"`
