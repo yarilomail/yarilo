@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // ErrNoAuthService names the key a session process cannot start without: it
@@ -512,7 +513,7 @@ func (c *Client) redial() {
 // readLoop demultiplexes replies by request id until the connection breaks.
 func (c *Client) readLoop(rd *bufio.Reader, gen uint64) {
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 		if err != nil {
 			c.beginReconnect(gen)
 			return
@@ -580,7 +581,7 @@ func handshake(conn net.Conn, rd *bufio.Reader) ([]string, error) {
 	gotVersion := false
 	var mechs []string
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 		if err != nil {
 			return nil, fmt.Errorf("auth/client: handshake read: %w", err)
 		}

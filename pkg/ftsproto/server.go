@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/yarilomail/yarilo/pkg/authclient"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -32,7 +33,7 @@ func handleConn(conn net.Conn, svc Service) {
 	defer conn.Close()
 	br := bufio.NewReader(conn)
 	for {
-		line, err := br.ReadString('\n')
+		line, err := lineio.ReadLine(br, lineio.MaxInternal)
 		if err != nil {
 			return
 		}

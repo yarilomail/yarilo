@@ -27,6 +27,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -385,7 +386,7 @@ func (s *session) driveSASL(parts []string, srv sasl.Server) error {
 		}
 		fmt.Fprintf(s.conn, "+ %s\r\n",
 			base64.StdEncoding.EncodeToString(challenge))
-		line, err := s.br.ReadString('\n')
+		line, err := lineio.ReadLine(s.br, lineio.MaxClient)
 		if err != nil {
 			return err
 		}
@@ -485,7 +486,7 @@ func (s *session) readSASLPayload(parts []string) (string, bool) {
 		return parts[1], true
 	}
 	fmt.Fprintf(s.conn, "+ \r\n")
-	line, err := s.br.ReadString('\n')
+	line, err := lineio.ReadLine(s.br, lineio.MaxClient)
 	if err != nil {
 		return "", false
 	}
@@ -1343,7 +1344,7 @@ func (s *session) badCmd() {
 }
 
 func (s *session) readLine() (string, error) {
-	line, err := s.br.ReadString('\n')
+	line, err := lineio.ReadLine(s.br, lineio.MaxClient)
 	if err != nil {
 		return "", err
 	}

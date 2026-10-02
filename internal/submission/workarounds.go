@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"net"
 	"strings"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 type submissionWorkarounds uint32
@@ -63,7 +65,7 @@ func (c *workaroundConn) Read(b []byte) (int, error) {
 			c.pending = c.pending[n:]
 			return n, nil
 		}
-		line, err := c.br.ReadString('\n')
+		line, err := lineio.ReadLine(c.br, lineio.MaxClient)
 		if len(line) > 0 {
 			line = c.applyWorkarounds(line)
 			n := copy(b, []byte(line))

@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 const (
@@ -235,7 +236,7 @@ func (r *Remote) roundTrip(req string) (string, error) {
 	if _, err := r.conn.Write([]byte(req + "\n")); err != nil {
 		return "", fmt.Errorf("ftsproto: write: %w", err)
 	}
-	line, err := r.br.ReadString('\n')
+	line, err := lineio.ReadLine(r.br, lineio.MaxInternal)
 	if err != nil {
 		return "", fmt.Errorf("ftsproto: read: %w", err)
 	}

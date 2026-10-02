@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 const (
@@ -117,7 +119,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 	rd := bufio.NewReaderSize(conn, 4096)
 	// consume the director's handshake (VERSION / HOST-HAND* / DONE)
 	for {
-		line, rErr := rd.ReadString('\n')
+		line, rErr := lineio.ReadLine(rd, lineio.MaxInternal)
 		if rErr != nil {
 			return fmt.Errorf("backendreg: handshake read: %w", rErr)
 		}
@@ -148,7 +150,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 	readErr := make(chan error, 1)
 	go func() {
 		for {
-			line, e := rd.ReadString('\n')
+			line, e := lineio.ReadLine(rd, lineio.MaxInternal)
 			if e != nil {
 				readErr <- e
 				return

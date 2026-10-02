@@ -2,10 +2,13 @@ package imap
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // maxLineLenListener wraps a net.Listener and enforces a per-line byte limit
@@ -64,11 +67,11 @@ func (c *maxLineLenConn) Read(b []byte) (int, error) {
 		return n, err
 	}
 
-	line, err := c.br.ReadString('\n')
-	if len(line) > c.limit {
+	line, err := lineio.ReadLine(c.br, c.limit)
+	if errors.Is(err, lineio.ErrTooLong) {
 		c.writeTaggedBad(line)
 		c.Conn.Close()
-		return 0, fmt.Errorf("imap: command line length %d exceeds limit %d", len(line), c.limit)
+		return 0, fmt.Errorf("imap: command line exceeds limit %d", c.limit)
 	}
 	c.lit.observeLine(line)
 	if len(line) > 0 {
