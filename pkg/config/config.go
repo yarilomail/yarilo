@@ -405,12 +405,11 @@ type LimitsConfig struct {
 // ServiceConfig is per-listener configuration.
 // A nil pointer in ServicesConfig means the listener is not started.
 type ServiceConfig struct {
-	Enabled         bool       `koanf:"enabled"`
-	Port            int        `koanf:"port"`
-	ConnectionLimit int        `koanf:"connection_limit"` // 0 = unlimited
-	SSLMode         string     `koanf:"ssl_mode"`         // no | ssl | starttls
-	SSL             *SSLConfig `koanf:"ssl"`              // overrides general.ssl
-	HAProxy         bool       `koanf:"haproxy_protocol"`
+	Enabled bool       `koanf:"enabled"`
+	Port    int        `koanf:"port"`
+	SSLMode string     `koanf:"ssl_mode"` // no | ssl | starttls
+	SSL     *SSLConfig `koanf:"ssl"`      // overrides general.ssl
+	HAProxy bool       `koanf:"haproxy_protocol"`
 	// XClient enables native inbound client-IP forwarding on this listener
 	// (IMAP ID x-originating-ip, POP3/Submission XCLIENT); applied only when
 	// the socket peer is inside general.xclient.trusted_nets.

@@ -109,7 +109,6 @@ data:
         enabled: {{ $jmapL.enabled | default false }}
         port: {{ $jmapL.containerPort | default 8443 }}
         ssl_mode: ssl
-        connection_limit: {{ $jmapL.connectionLimit | default 0 | int64 }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         auth_allow_cleartext: {{ not ($jmapL.disablePlainAuth | default false) }}
       {{- /* The backend listener belongs to the yarilo-jmap container, so it is

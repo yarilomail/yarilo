@@ -555,7 +555,7 @@ func removedKeys() []retiredKey {
 // here when the setting it named is gone, and it leaves once the beta window
 // that promised the warning has passed.
 func retiredKeys() []retiredKey {
-	return []retiredKey{
+	keys := []retiredKey{
 		{
 			key: "telemetry.telemetry_pprof_heap_enabled",
 			note: "/debug/pprof/heap is served by telemetry_pprof_enabled; " +
@@ -563,4 +563,12 @@ func retiredKeys() []retiredKey {
 				"are one profile with different default sample types (#1488)",
 		},
 	}
+	for _, l := range []string{"imap", "imaps", "submission", "submissions", "pop3", "pop3s",
+		"lmtp", "managesieve", "managesieve_be", "jmap", "jmap_be"} {
+		keys = append(keys, retiredKey{
+			key:  "services." + l + ".connection_limit",
+			note: "nothing ever read it; per-user and per-IP connection limits are warden's (#2112)",
+		})
+	}
+	return keys
 }
