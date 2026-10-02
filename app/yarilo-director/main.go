@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -193,14 +194,13 @@ func main() {
 		close(errCh)
 	}()
 
-	// start HTTP admin API
-	apiToken := cfg.DirectorService.API.Token
-	apiNets := parseCIDRs(cfg.DirectorService.API.AllowedNets)
-	go func() {
-		if err := srv.StartAPI(ctx, cfg.DirectorService.API.Listen, apiToken, apiNets); err != nil {
-			slog.Error("director API error", "err", err)
-		}
-	}()
+	exitAPI := func(err error) {
+		slog.Error("director API failed", "err", err)
+		os.Exit(1)
+	}
+	if err := startAPI(ctx, srv, cfg.DirectorService.API, exitAPI); err != nil {
+		exitAPI(err)
+	}
 
 	// all configured ports are bound; report ready only now so Kubernetes
 	// never routes to a port that is not listening yet
@@ -352,4 +352,23 @@ func certHasSAN(certFile, name string) bool {
 		return false
 	}
 	return true
+}
+
+// startAPI binds the admin API before the director reports ready; a bind or a
+// later serve failure goes to fail rather than leaving a director without it.
+func startAPI(ctx context.Context, srv *director.Server, api config.DirectorAPIConfig, fail func(error)) error {
+	token, nets, err := api.Gate()
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", api.Listen)
+	if err != nil {
+		return fmt.Errorf("director API: %w", err)
+	}
+	go func() {
+		if err := srv.StartAPI(ctx, ln, token, nets); err != nil {
+			fail(err)
+		}
+	}()
+	return nil
 }

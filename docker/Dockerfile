@@ -3,7 +3,7 @@
 ## Pinned to the patch go.mod names: the scan reads go.mod, the image ships the
 ## base, and a floating base makes them disagree silently (#1497). Dependabot
 ## moves it.
-FROM golang:1.26.8-alpine AS builder
+FROM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
 
 ## A newer go.mod must fail the build, not fetch a toolchain.
 ENV GOTOOLCHAIN=local
@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 ## --- yarilo-fts: the only cgo binary (libxapian). Built in its own stage so
 ## every other binary stays CGO_ENABLED=0 static; ships in the single image.
-FROM golang:1.26.8-alpine AS fts-builder
+FROM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS fts-builder
 ENV GOTOOLCHAIN=local
 # hadolint ignore=DL3018
 RUN apk add --no-cache build-base xapian-core-dev
@@ -76,7 +76,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
             -trimpath -o "/out/$cmd" "./app/$cmd"; \
     done
 
-FROM alpine:3.24
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 # tini is PID 1 (see ENTRYPOINT): the components that run external programs --
 # the director's flush hook, sieve pipe/filter/execute, the quota-warning
 # script -- leave orphaned grandchildren behind when one is killed, and Go

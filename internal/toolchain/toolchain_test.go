@@ -64,9 +64,10 @@ func golangStages(t *testing.T, dockerfile string) []dockerStage {
 		if loc[4] >= 0 {
 			name = dockerfile[loc[4]:loc[5]]
 		}
+		tag, _, _ := strings.Cut(strings.TrimPrefix(image, "golang:"), "@")
 		out = append(out, dockerStage{
 			name: name,
-			tag:  strings.TrimPrefix(image, "golang:"),
+			tag:  tag,
 			body: dockerfile[loc[0]:end],
 		})
 	}
@@ -80,4 +81,15 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(body)
+}
+
+// Every base image is pinned by digest: a tag can be moved under the build.
+func TestEveryBaseImageIsPinnedByDigest(t *testing.T) {
+	dockerfile := readFile(t, filepath.Join("..", "..", "docker", "Dockerfile"))
+	from := regexp.MustCompile(`(?m)^FROM (\S+)`)
+	for _, m := range from.FindAllStringSubmatch(dockerfile, -1) {
+		if !regexp.MustCompile(`@sha256:[0-9a-f]{64}$`).MatchString(m[1]) {
+			t.Errorf("FROM %s is not pinned by digest", m[1])
+		}
+	}
 }

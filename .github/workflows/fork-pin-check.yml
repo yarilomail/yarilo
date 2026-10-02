@@ -68,6 +68,12 @@ jobs:
               echo "::notice::${repo} is pinned at the head of ${BRANCH} (${pinned})"
             fi
 
+            # A pinned commit carries a yarilo-pin tag, so a rebase of the
+            # branch cannot leave the build pointing at an unreachable commit.
+            if ! gh api "repos/${repo}/git/ref/tags/yarilo-pin-${pinned}" --jq '.ref' >/dev/null 2>&1; then
+              echo "- \`${repo}\`: pinned \`${pinned}\` has no \`yarilo-pin-${pinned}\` tag" >> behind.md
+            fi
+
             # The mirror is whichever branch the fork tracks upstream on: v2
             # for go-imap, master for the rest. Asked by name rather than
             # assumed, so a fork that renames it is reported, not skipped.

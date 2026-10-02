@@ -136,12 +136,12 @@ jobs:
           CGO_ENABLED=1 govulncheck -tags flatcurve ./...
 
       - name: Run hadolint
-        uses: hadolint/hadolint-action@v3.5.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: docker/Dockerfile
 
       - name: Set up Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
           ## Pinned so `helm lint` cannot start failing on a chart that did not
           ## change.
@@ -176,7 +176,7 @@ jobs:
           cache: false
 
       - name: Set up Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
           ## The chart rows render the chart; without helm they would skip and
           ## the gate would be green on nothing.
@@ -214,7 +214,7 @@ jobs:
           CGO_ENABLED=1 go test -tags flatcurve ./internal/fts/flatcurve/ ./internal/ftsservice/ ./internal/ftsbench/
 
       - name: Publish test results
-        uses: dorny/test-reporter@v3
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3
         if: always()
         with:
           name: Go Tests

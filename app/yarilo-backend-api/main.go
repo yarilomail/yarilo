@@ -21,7 +21,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -188,11 +187,16 @@ func main() {
 	_, peerPort, _ := net.SplitHostPort(listen)
 	router := backendapi.NewDirectorRouter(cfg.BackendRegister.DirectorAddr, cfg.BackendRegister.Tag, peerTLS)
 
+	apiToken, apiNets, err := cfg.BackendAPI.Gate()
+	if err != nil {
+		slog.Error("backend-api refuses to start", "err", err)
+		os.Exit(1)
+	}
 	srv := backendapi.New(backendapi.Options{
 		Addr:               listen,
 		TLSConfig:          tlsCfg,
-		Token:              cfg.BackendAPI.Token,
-		AllowedNets:        parseCIDRs(cfg.BackendAPI.AllowedNets),
+		Token:              apiToken,
+		AllowedNets:        apiNets,
 		Dicts:              dicts,
 		Mailbox:            mb,
 		Index:              idx,
@@ -281,19 +285,6 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 	default:
 		return nil, fmt.Errorf("locks_client: unknown mode %q", lc.Mode)
 	}
-}
-
-func parseCIDRs(in []string) []*net.IPNet {
-	out := make([]*net.IPNet, 0, len(in))
-	for _, s := range in {
-		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
-		if err != nil {
-			slog.Warn("backend-api: ignoring bad CIDR", "value", s, "err", err)
-			continue
-		}
-		out = append(out, n)
-	}
-	return out
 }
 
 // runTelemetry serves /healthz, /readyz and /metrics beside the admin API.

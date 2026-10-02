@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"slices"
 	"strings"
@@ -1513,6 +1514,14 @@ type DirectorAPIConfig struct {
 	Listen      string   `koanf:"listen"`       // default ":9103"
 	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR}
 	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
+	// AuthDisabled is the only way to run the API without a token.
+	AuthDisabled bool `koanf:"auth_disabled"`
+}
+
+// Gate returns the token and networks the director API checks, or why the
+// API must not start.
+func (c DirectorAPIConfig) Gate() (string, []*net.IPNet, error) {
+	return apiGate("director_service.api", c.Token, c.AuthDisabled, c.AllowedNets)
 }
 
 // BackendRegisterConfig configures the co-located pod's director registration
@@ -1894,6 +1903,8 @@ type BackendAPIConfig struct {
 	Listen      string   `koanf:"listen"`       // ":9105" default
 	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR} via koanf
 	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
+	// AuthDisabled is the only way to run the API without a token.
+	AuthDisabled bool `koanf:"auth_disabled"`
 
 	// AuthMasterAddr is the yarilo-auth master-protocol listener
 	// (typically the same `yarilo-auth.<release>:9102` the
@@ -3657,4 +3668,30 @@ func warnChartSkew(fromConfig string) {
 		slog.Warn("config: the ConfigMap was rendered by one chart version and this binary was built beside another",
 			"configmap_chart", fromConfig, "binary_built_from_chart", build.ChartVersion)
 	}
+}
+
+// Gate returns the token and networks backend-api checks, or why it must not
+// start.
+func (c BackendAPIConfig) Gate() (string, []*net.IPNet, error) {
+	return apiGate("backend_api", c.Token, c.AuthDisabled, c.AllowedNets)
+}
+
+// apiGate refuses an admin API that would answer anyone: no token without an
+// explicit auth_disabled, and no allow-list entry that is not a network.
+func apiGate(section, token string, disabled bool, cidrs []string) (string, []*net.IPNet, error) {
+	switch {
+	case token == "" && !disabled:
+		return "", nil, fmt.Errorf("config: %s.token is empty; set it, or auth_disabled: true to run the API without one", section)
+	case token != "" && disabled:
+		return "", nil, fmt.Errorf("config: %s sets both a token and auth_disabled", section)
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			return "", nil, fmt.Errorf("config: %s.allowed_nets: %w", section, err)
+		}
+		nets = append(nets, n)
+	}
+	return token, nets, nil
 }

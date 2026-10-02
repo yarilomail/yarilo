@@ -21,3 +21,6 @@ docs_internal/
 # Profile captures: taken on the stand, read with pprof, never committed.
 *.pprof
 *.pprof.b64
+
+# Compiled test binaries (go test -c)
+*.test
