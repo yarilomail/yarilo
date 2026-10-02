@@ -233,6 +233,12 @@ spec:
             {{- include "yarilo.adminDirectorEnv" $root | nindent 12 }}
             {{- end }}
             {{- include "yarilo.dbEnv" $root | nindent 12 }}
+            # The server's own token: without it the API answered anyone (A11).
+            - name: BACKEND_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "yarilo.backendAPITokenSecret" $root }}
+                  key: token
             {{- with $root.Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

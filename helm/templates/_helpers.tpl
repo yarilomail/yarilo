@@ -194,6 +194,9 @@ Include in any component that reads passdb/userdb from SQL.
   value: {{ .Values.database.dsn | quote }}
 {{- end -}}
 {{- end }}
+{{- define "yarilo.backendAPITokenSecret" -}}
+{{- default (printf "%s-backend-api-token" (include "yarilo.fullname" .)) .Values.components.backendAPI.token_secret -}}
+{{- end }}
 {{- define "yarilo.adminBackendEnv" -}}
 {{- $tokenSecret := .Values.components.backendAPI.token_secret }}
 {{- if eq $tokenSecret "" }}
