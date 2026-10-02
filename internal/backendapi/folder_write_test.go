@@ -305,3 +305,29 @@ func TestFolderDelete_RejectsINBOX(t *testing.T) {
 		t.Errorf("INBOX gone after refused delete: %v", listResp.Folders)
 	}
 }
+
+// With the index outside the mail, a folder deleted here and created again
+// must come back new: the index and its identity go with the delete.
+func TestFolderDelete_RecreatedFolderIsNew(t *testing.T) {
+	ts, _ := storageTestServer(t, func(o *Options) { o.Resolver.DefaultIndexDir = "%h/index" })
+	const user = "alice@example.com"
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	guid := func() string {
+		var r struct {
+			GUID string `json:"guid"`
+		}
+		_, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/guid", "", map[string]any{"user": user, "folder": "Temp"})
+		decodeJSONBody(t, body, &r)
+		return r.GUID
+	}
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": "Temp"})
+	before := guid()
+	if status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/delete", "",
+		map[string]any{"user": user, "folder": "Temp"}); status != 200 {
+		t.Fatalf("delete status=%d body=%s", status, body)
+	}
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": "Temp"})
+	if after := guid(); before == "" || after == before {
+		t.Errorf("recreated Temp has guid %q, before the delete %q; want a new one", after, before)
+	}
+}

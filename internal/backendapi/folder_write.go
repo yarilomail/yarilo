@@ -179,7 +179,7 @@ func (s *Server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := bundle.box.Delete(req.Folder); err != nil {
+	if err := bundle.mbox.Delete(req.Folder); err != nil {
 		apiError(w, "delete: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

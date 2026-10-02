@@ -94,7 +94,18 @@ func (b *Box) CreateFolder(name string, uidValidity uint32) {
 	}
 }
 
-func (b *Box) DeleteFolder(name string) error { return b.index.DeleteFolder(name) }
+// Delete removes the folder and then its index state: the folder is gone once
+// the store says so, and an index left behind is logged, not returned.
+func (b *Box) Delete(name string) error {
+	if err := b.store.Delete(name); err != nil {
+		return err
+	}
+	if err := b.index.DeleteFolder(name); err != nil {
+		slog.Warn("mailbox: folder index left after delete", "user", b.store.Username(), "folder", name, "err", err)
+	}
+	return nil
+}
+
 func (b *Box) RenameFolder(oldName, newName string) error {
 	return b.index.RenameFolder(oldName, newName)
 }

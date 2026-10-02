@@ -95,8 +95,9 @@ type Box interface {
 	Keywords(folderID uint64) ([]string, error)
 	// CreateFolder writes a new folder's index with the folder, best effort.
 	CreateFolder(name string, uidValidity uint32)
-	// DeleteFolder and RenameFolder carry a folder's index state along.
-	DeleteFolder(name string) error
+	// Delete removes a folder with its index state and identity record.
+	Delete(name string) error
+	// RenameFolder carries a folder's index state along.
 	RenameFolder(oldName, newName string) error
 	// Metadata is the folder's size and message count as its index keeps them.
 	Metadata(folderID uint64) (FolderMetadata, error)

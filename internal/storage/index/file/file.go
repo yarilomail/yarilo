@@ -803,10 +803,13 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	view, release, err := fs.openView()
 	observeReadPart("reload", time.Since(reloadStart))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		fs.mu.RLock()
+		err = fs.missingBase(err)
+		fs.mu.RUnlock()
+		if err == nil {
 			return fn(fs)
 		}
-		return err
+		return u.evictIfGone(folderID, fs, err)
 	}
 	defer release()
 	buildStart := time.Now()
@@ -843,14 +846,14 @@ func (u *userIndex) withFolderROSite(folderID uint64, site string, fn func(*fold
 		reloadStart := time.Now()
 		fs.mu.Lock()
 		defer fs.mu.Unlock()
-		rerr := fs.reload()
+		rerr := fs.missingBase(fs.reload())
 		reloadDur = time.Since(reloadStart)
 		observeReadPart("reload", reloadDur)
 		return rerr
 	})
 	observeReadPart("lock", time.Since(lockStart)-reloadDur)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	if err != nil {
+		return u.evictIfGone(folderID, fs, err)
 	}
 	// fn only reads the in-memory snapshot; shared lock allows
 	// concurrent readers without blocking writers.

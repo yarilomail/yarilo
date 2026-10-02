@@ -9,6 +9,7 @@ import (
 	imap "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/internal/userstate/folders"
 )
 
 // A CREATE that cannot grant its creator the admin right leaves a mailbox
@@ -45,6 +46,9 @@ func TestCreateRollsBackWhenTheCreatorCannotBeGrantedAdmin(t *testing.T) {
 	// can neither use it nor recreate it.
 	if _, statErr := os.Stat(filepath.Join(publicRoot, ".Sales")); !os.IsNotExist(statErr) {
 		t.Errorf("the mailbox survived a failed CREATE: %v", statErr)
+	}
+	if v, known, _ := folders.New(publicRoot, "", "", nil).UIDValidity("Sales"); known {
+		t.Errorf("the rolled-back mailbox left its identity record, uidvalidity %d", v)
 	}
 	// And the name is free again, which is the property that makes retrying
 	// work once the ACL store answers.

@@ -592,7 +592,12 @@ func (fs *folderState) flush() error {
 			"trace_id", fs.traceID, "folder", fs.folder, "caller", caller, "next_uid", fs.file.Header.NextUID,
 			"messages_count", fs.file.Header.MessagesCount)
 	}
-	if err := os.MkdirAll(fs.indexDir, 0o700); err != nil {
+	if fs.baseIdent != nil {
+		// A loaded folder's directory is never made again: it was deleted.
+		if _, err := os.Stat(fs.indexDir); errors.Is(err, os.ErrNotExist) {
+			return fs.goneError()
+		}
+	} else if err := os.MkdirAll(fs.indexDir, 0o700); err != nil {
 		return fmt.Errorf("fileindex/flush: mkdir: %w", err)
 	}
 	// Persisted as maintained, not re-derived: a record carrying no size summed
@@ -671,21 +676,61 @@ func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folder
 	if !ok {
 		return fmt.Errorf("fileindex: folder %d not open", folderID)
 	}
-	return u.withFolderLockSite(fs, site, func() error {
+	err := u.withFolderLockSite(fs, site, func() error {
 		// The reload is inside the hold: two processes that read NextUID unheld
 		// hand out the same uid (#1840). A refresh only reads.
 		if site != lockSiteRefresh {
 			release, err := fs.holdJournal(site)
 			if err != nil {
+				if gone := fs.missingBase(err); gone != nil {
+					return gone
+				}
 				return err
 			}
 			defer release()
 		}
-		if err := fs.reload(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := fs.missingBase(fs.reload()); err != nil {
 			return err
 		}
 		return fn(fs)
 	})
+	return u.evictIfGone(folderID, fs, err)
+}
+
+// missingBase lets a reload find no file only before anything is loaded; a
+// loaded state whose base is gone is a folder another process deleted.
+func (fs *folderState) missingBase(err error) error {
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if fs.file == nil {
+		return nil
+	}
+	if _, serr := os.Stat(fs.indexPath); errors.Is(serr, os.ErrNotExist) {
+		return fs.goneError()
+	}
+	return err
+}
+
+func (fs *folderState) goneError() error {
+	return fmt.Errorf("fileindex: folder %q: %w", fs.folder, mailbox.ErrFolderGone)
+}
+
+// evictIfGone drops a deleted folder's state, so the next open starts afresh.
+func (u *userIndex) evictIfGone(folderID uint64, fs *folderState, err error) error {
+	if !errors.Is(err, mailbox.ErrFolderGone) {
+		return err
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.open[folderID] == fs {
+		fs.closeFDs()
+		delete(u.open, folderID)
+	}
+	if u.byDir != nil && u.byDir[fs.indexDir] == folderID {
+		delete(u.byDir, fs.indexDir)
+	}
+	return err
 }
 
 // reload rereads the on-disk state into fs. Caller MUST hold the folder

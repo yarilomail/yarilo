@@ -87,8 +87,8 @@ func TestTheBoxSurfaceReachesTheIndex(t *testing.T) {
 		if err := box.RenameFolder("Work", "Play"); err != nil || !exists(filepath.Join(dirOf("Play"), "yarilo.index")) {
 			t.Fatalf("RenameFolder did not carry the index: %v", err)
 		}
-		if err := box.DeleteFolder("Play"); err != nil || exists(dirOf("Play")) {
-			t.Errorf("DeleteFolder left the index: %v", err)
+		if err := box.Delete("Play"); err != nil || exists(dirOf("Play")) {
+			t.Errorf("Delete left the index: %v", err)
 		}
 	})
 	t.Run("RebuildFolder restores a lost index from the store", func(t *testing.T) {
