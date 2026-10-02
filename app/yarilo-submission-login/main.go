@@ -146,6 +146,7 @@ func main() {
 			SessionSyncInterval: time.Duration(cfg.Login.SessionSyncInterval) * time.Second,
 			TransientRetries:    cfg.Login.TransientRetries,
 			TransientReloginCap: cfg.Login.TransientReloginCap,
+			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 			LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
 			HAProxy:             svcs.Submissions.HAProxy,
 			HAProxyTimeout:      haproxyTimeout,
@@ -202,6 +203,9 @@ func main() {
 			HAProxyNets:         haproxyNets,
 			XClient:             svcs.Submission.XClient,
 			XClientNets:         xclientNets,
+			TransientRetries:    cfg.Login.TransientRetries,
+			TransientReloginCap: cfg.Login.TransientReloginCap,
+			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 		})
 		loginServers = append(loginServers, srv)
 		go func(srv *login.Server, ln net.Listener) {

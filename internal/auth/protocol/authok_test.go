@@ -15,7 +15,7 @@ func TestEveryFieldWrittenIsRead(t *testing.T) {
 		Groups: []string{"g1", "g2"}, ACLUser: "acl@d.test", ACLGroups: []string{"a1"},
 		QuotaRules: []string{"*:storage=5G"}, QuotaOverFlag: "over", DirectorTag: "t1",
 		VolatileDir: "/v", IndexDir: "/i", ControlDir: "/c", AltDir: "/alt",
-		MailPath: "/mp", InboxPath: "/ip",
+		MailPath: "/mp", InboxPath: "/ip", ProxyTimeout: 7,
 	}
 	for _, f := range authOKFields {
 		if f.get(full) == "" {

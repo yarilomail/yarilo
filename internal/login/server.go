@@ -137,6 +137,10 @@ type Options struct {
 	// after which the server disconnects with BYE.
 	SieveMaxInvalidCmds int
 
+	// ProxyTimeout bounds reaching a backend and bringing the session up there,
+	// re-routes included; a userdb proxy_timeout overrides it. 0 = 30s.
+	ProxyTimeout time.Duration
+
 	// HAProxy enables PROXY protocol v1/v2 header reading from trusted upstreams.
 	HAProxy        bool
 	HAProxyTimeout time.Duration
@@ -1064,9 +1068,19 @@ type backendSession struct {
 // openBackendSession brings a session up to the point the client may be told
 // it succeeded; every failure closes the connection, so a caller may retry.
 
-// backendBringupTimeout bounds preamble, greeting and EHLO: a backend silent
-// that long is wedged, not slow. A var only so a test can shorten it (#927).
-var backendBringupTimeout = 5 * time.Second
+// DefaultProxyTimeout applies when Options.ProxyTimeout is zero.
+const DefaultProxyTimeout = 30 * time.Second
+
+// proxyTimeout is the user's proxy_timeout, else the configured one.
+func (s *Server) proxyTimeout(res *authclient.AuthResult) time.Duration {
+	if res != nil && res.Userdb != nil && res.Userdb.ProxyTimeout > 0 {
+		return time.Duration(res.Userdb.ProxyTimeout) * time.Second
+	}
+	if s.opts.ProxyTimeout > 0 {
+		return s.opts.ProxyTimeout
+	}
+	return DefaultProxyTimeout
+}
 
 // resolvedIdentity is what the service resolved, or the login string when it
 // named nobody -- never an empty name claimed to the backend.
@@ -1078,9 +1092,10 @@ func resolvedIdentity(res *authclient.AuthResult, claimed string) string {
 }
 
 func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, log *slog.Logger) (*backendSession, error) {
-	// The re-route re-LOOKUPs on a failed dial, so it needs the resolved
-	// identity: the typed string hashes to another pod (#782, #1306).
-	conn, addr, err := s.dialBackendWithReroute(authUser, tag, addr, log)
+	// One deadline over dial, re-routes and bring-up (#926, #927); a re-route
+	// re-LOOKUPs, so it takes the resolved identity (#782, #1306).
+	deadline := time.Now().Add(s.proxyTimeout(authResult))
+	conn, addr, err := s.dialBackendWithReroute(authUser, tag, addr, deadline, log)
 	if err != nil {
 		return nil, fmt.Errorf("dial backend %s: %w", addr, err)
 	}
@@ -1091,9 +1106,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 		}
 	}()
 
-	// One deadline over the whole bring-up: a backend that accepts TCP and never
-	// greets held handlers 7-11 minutes before this (#926, #927).
-	conn.SetDeadline(time.Now().Add(backendBringupTimeout)) //nolint:errcheck
+	conn.SetDeadline(deadline) //nolint:errcheck
 
 	rd := bufio.NewReaderSize(conn, 4096)
 
@@ -1151,8 +1164,8 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 
 // dialBackendWithReroute reports a dead backend and re-LOOKUPs once. The same
 // address back means the ring has not dropped it yet, so it stops (#782).
-func (s *Server) dialBackendWithReroute(username, tag, addr string, log *slog.Logger) (net.Conn, string, error) {
-	conn, err := dialBackend(addr, s.opts.BackendTLS)
+func (s *Server) dialBackendWithReroute(username, tag, addr string, deadline time.Time, log *slog.Logger) (net.Conn, string, error) {
+	conn, err := dialBackend(addr, s.opts.BackendTLS, deadline)
 	if err == nil {
 		return conn, addr, nil
 	}
@@ -1171,7 +1184,7 @@ func (s *Server) dialBackendWithReroute(username, tag, addr string, log *slog.Lo
 			return nil, addr, fmt.Errorf("re-lookup returned the same unreachable backend %s", addr)
 		}
 		addr = newAddr
-		conn, err = dialBackend(addr, s.opts.BackendTLS)
+		conn, err = dialBackend(addr, s.opts.BackendTLS, deadline)
 		if err == nil {
 			return conn, addr, nil
 		}
@@ -1549,15 +1562,16 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func dialBackend(addr string, tlsCfg *tls.Config) (net.Conn, error) {
+func dialBackend(addr string, tlsCfg *tls.Config, deadline time.Time) (net.Conn, error) {
+	d := &net.Dialer{Deadline: deadline}
 	if tlsCfg != nil {
-		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, tlsCfg)
+		conn, err := tls.DialWithDialer(d, "tcp", addr, tlsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("mtls dial %s: %w", addr, err)
 		}
 		return conn, nil
 	}
-	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	conn, err := d.Dial("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}

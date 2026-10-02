@@ -1134,6 +1134,7 @@ data:
       transient_retries: {{ .Values.login.transientRetries | default 0 }}
       transient_relogin_cap: {{ .Values.login.transientReloginCap | default 0 }}
       session_sync_interval: {{ .Values.login.sessionSyncIntervalSeconds | default 0 }}
+      login_proxy_timeout: {{ .Values.login.login_proxy_timeout | default 30 | int64 }}
     {{- if .Values.components.saslLogin.enabled }}
     sasl_login:
       listen: {{ printf ":%d" (int .Values.components.saslLogin.containerPort) | quote }}

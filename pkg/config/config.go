@@ -958,6 +958,9 @@ type LoginConfig struct {
 	// re-LOGIN. This caps how many such failures one connection tolerates
 	// before it is closed. Independent of auth_max_attempts. 0 = default (3).
 	TransientReloginCap int `koanf:"transient_relogin_cap"`
+	// LoginProxyTimeout bounds, in seconds, reaching a backend and bringing the
+	// session up there; a userdb proxy_timeout overrides it. 0 = default (30).
+	LoginProxyTimeout int `koanf:"login_proxy_timeout"`
 }
 
 // SASLLoginConfig configures yarilo-sasl-login: a fronting MTA (Postfix)
@@ -3581,7 +3584,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 5
+const minConfigSchema = 6
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3597,6 +3600,7 @@ var schemaAdditions = map[int][]string{
 	3: {"quota_full_tempfail"},
 	4: {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
 	5: {"lmtp_proxy_timeout"},
+	6: {"login_proxy_timeout"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
