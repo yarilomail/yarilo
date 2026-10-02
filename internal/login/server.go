@@ -20,6 +20,7 @@ import (
 	proxyproto "github.com/pires/go-proxyproto"
 
 	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/cluster/proto"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/warden"
@@ -751,6 +752,15 @@ func (s *Server) handleConn(conn net.Conn) {
 				"claimed", pre.username, "user", authUser)
 		}
 
+		proxyTimeout, perr := s.proxyTimeout(authResult)
+		if perr != nil {
+			log.Error("login: auth service returned an invalid proxy_timeout value",
+				"user", authUser, "value", authResult.Userdb.ProxyTimeout, "err", perr)
+			writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeUnavailable, "backend unavailable")
+			s.incResult("unavailable")
+			return outcomeRetry, nil
+		}
+
 		// Find backend address: fixed addr (standalone) or director LOOKUP.
 		// tag is hoisted so the fast-fail re-route below can re-LOOKUP with it.
 		var backendAddr, tag string
@@ -834,7 +844,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		var bs *backendSession
 		retries := s.transientRetries()
 		// One deadline over every attempt, pauses included (#926, #927).
-		deadline := backendDialStart.Add(s.proxyTimeout(authResult))
+		deadline := backendDialStart.Add(proxyTimeout)
 		for attempt := 0; ; attempt++ {
 			var berr error
 			bs, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, deadline, log)
@@ -1073,15 +1083,22 @@ type backendSession struct {
 // DefaultProxyTimeout applies when Options.ProxyTimeout is zero.
 const DefaultProxyTimeout = 30 * time.Second
 
-// proxyTimeout is the user's proxy_timeout, else the configured one.
-func (s *Server) proxyTimeout(res *authclient.AuthResult) time.Duration {
-	if res != nil && res.Userdb != nil && res.Userdb.ProxyTimeout > 0 {
-		return time.Duration(res.Userdb.ProxyTimeout) * time.Second
+// proxyTimeout is the user's proxy_timeout, else the configured one; an
+// unreadable user value is an error, not the global one.
+func (s *Server) proxyTimeout(res *authclient.AuthResult) (time.Duration, error) {
+	if res != nil && res.Userdb != nil {
+		d, err := protocol.ParseProxyTimeout(res.Userdb.ProxyTimeout)
+		if err != nil {
+			return 0, err
+		}
+		if d > 0 {
+			return d, nil
+		}
 	}
 	if s.opts.ProxyTimeout > 0 {
-		return s.opts.ProxyTimeout
+		return s.opts.ProxyTimeout, nil
 	}
-	return DefaultProxyTimeout
+	return DefaultProxyTimeout, nil
 }
 
 // resolvedIdentity is what the service resolved, or the login string when it

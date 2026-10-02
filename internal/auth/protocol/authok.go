@@ -1,9 +1,6 @@
 package protocol
 
-import (
-	"strconv"
-	"strings"
-)
+import "strings"
 
 // authOKField is one field of an OK answer. Writing and reading go through the
 // same list so a field cannot be put on the wire that no reader takes off it.
@@ -23,20 +20,13 @@ var authOKFields = []authOKField{
 	{"quota_rule", func(r *AuthResponse) string { return strings.Join(r.QuotaRules, ",") }, func(r *AuthResponse, v string) { r.QuotaRules = SplitCSV(v) }},
 	{"quota_over_flag", func(r *AuthResponse) string { return r.QuotaOverFlag }, func(r *AuthResponse, v string) { r.QuotaOverFlag = v }},
 	{"director_tag", func(r *AuthResponse) string { return r.DirectorTag }, func(r *AuthResponse, v string) { r.DirectorTag = v }},
-	{"proxy_timeout", func(r *AuthResponse) string { return positiveInt(r.ProxyTimeout) }, func(r *AuthResponse, v string) { r.ProxyTimeout, _ = strconv.Atoi(v) }},
+	{"proxy_timeout", func(r *AuthResponse) string { return r.ProxyTimeout }, func(r *AuthResponse, v string) { r.ProxyTimeout = v }},
 	{"volatile_dir", func(r *AuthResponse) string { return r.VolatileDir }, func(r *AuthResponse, v string) { r.VolatileDir = v }},
 	{"index_dir", func(r *AuthResponse) string { return r.IndexDir }, func(r *AuthResponse, v string) { r.IndexDir = v }},
 	{"control_dir", func(r *AuthResponse) string { return r.ControlDir }, func(r *AuthResponse, v string) { r.ControlDir = v }},
 	{"alt_dir", func(r *AuthResponse) string { return r.AltDir }, func(r *AuthResponse, v string) { r.AltDir = v }},
 	{"mail_path", func(r *AuthResponse) string { return r.MailPath }, func(r *AuthResponse, v string) { r.MailPath = v }},
 	{"inbox_path", func(r *AuthResponse) string { return r.InboxPath }, func(r *AuthResponse, v string) { r.InboxPath = v }},
-}
-
-func positiveInt(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	return strconv.Itoa(n)
 }
 
 // AuthOKTokens renders the userdb half of an OK answer.

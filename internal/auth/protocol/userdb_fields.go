@@ -161,11 +161,7 @@ func AssignField(info *UserInfo, key, value string) error {
 	case "proxy_mech":
 		info.ProxyMech = value
 	case "proxy_timeout":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return err
-		}
-		info.ProxyTimeout = n
+		info.ProxyTimeout = value
 	case "proxy_redirect_reauth":
 		info.ProxyRedirectReauth = IsTruthy(value)
 	case "proxy_nopipelining":

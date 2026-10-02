@@ -49,7 +49,7 @@ func TestRcptUsername(t *testing.T) {
 // failure, falls back to "" so the caller uses the component's static
 // DirectorTag instead.
 func userTag(s *session, username string) string {
-	tag, _ := s.userFields(username)
+	tag, _, _ := s.userFields(username)
 	return tag
 }
 

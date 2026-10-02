@@ -127,7 +127,7 @@ type UserInfo struct {
 	Port                int    // proxy backend port (0 = default)
 	DestUser            string // override target user in proxy
 	ProxyMech           string // SASL mech to use against backend
-	ProxyTimeout        int    // seconds
+	ProxyTimeout        string // raw; the proxy parses it (ParseProxyTimeout)
 	ProxyRedirectReauth bool
 	ProxyNoPipelining   bool
 	SSL                 string // yes | any | required
@@ -289,7 +289,7 @@ func (ui *UserInfo) VisitFields(fn func(key, value string)) {
 	signed("port", ui.Port)
 	str("destuser", ui.DestUser)
 	str("proxy_mech", ui.ProxyMech)
-	signed("proxy_timeout", ui.ProxyTimeout)
+	str("proxy_timeout", ui.ProxyTimeout)
 	yes("proxy_redirect_reauth", ui.ProxyRedirectReauth)
 	yes("proxy_nopipelining", ui.ProxyNoPipelining)
 	str("ssl", ui.SSL)

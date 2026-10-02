@@ -231,7 +231,10 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 	}
 
 	// Resolve backend address before reserving any resources.
-	userTag, timeout := s.userFields(username)
+	userTag, timeout, err := s.userFields(username)
+	if err != nil {
+		return err
+	}
 	if timeout <= 0 {
 		timeout = s.opts.ProxyTimeout
 	}
@@ -452,11 +455,11 @@ func (s *session) issueToken(username, wardenID string) (string, error) {
 // same thing on the session handshake).
 const masterCallTimeout = 5 * time.Second
 
-// userFields looks up the recipient's director_tag and proxy_timeout userdb
-// fields. Zero values on any failure: a lookup miss must never block delivery.
-func (s *session) userFields(username string) (string, time.Duration) {
+// userFields looks up the recipient's director_tag and proxy_timeout. A failed
+// lookup is 451, a proxy_timeout this proxy cannot read 550; not found is none.
+func (s *session) userFields(username string) (string, time.Duration, error) {
 	if s.opts.AuthMasterAddr == "" {
-		return "", 0
+		return "", 0, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), masterCallTimeout)
 	defer cancel()
@@ -470,19 +473,25 @@ func (s *session) userFields(username string) (string, time.Duration) {
 		c, derr := s.ensureAuthClient()
 		s.authMu.Unlock()
 		if derr != nil {
-			slog.Debug("lmtplogin: userdb lookup: auth dial failed", "user", username, "err", derr)
-			return "", 0
+			err = derr
+		} else {
+			ui, err = c.Userdb(ctx, username)
 		}
-		ui, err = c.Userdb(ctx, username)
 	}
 	if err != nil {
-		slog.Debug("lmtplogin: userdb lookup failed", "user", username, "err", err)
-		return "", 0
+		slog.Error("lmtplogin: userdb lookup failed", "user", username, "err", err)
+		return "", 0, &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary user lookup failure"}
 	}
 	if ui == nil {
-		return "", 0
+		return "", 0, nil
 	}
-	return ui.DirectorTag, time.Duration(ui.ProxyTimeout) * time.Second
+	timeout, err := protocol.ParseProxyTimeout(ui.ProxyTimeout)
+	if err != nil {
+		slog.Error("lmtplogin: auth service returned an invalid proxy_timeout value",
+			"user", username, "value", ui.ProxyTimeout, "err", err)
+		return "", 0, &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 3, 5}, Message: "Internal user lookup failure"}
+	}
+	return ui.DirectorTag, timeout, nil
 }
 
 // ---- director / backend resolution ------------------------------------------
