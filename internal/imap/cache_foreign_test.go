@@ -186,6 +186,12 @@ func TestAForeignCacheOfHeadersAnswersTheListing(t *testing.T) {
 		{Name: "hdr.FROM", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
 		{Name: "hdr.TO", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
 		{Name: "hdr.MESSAGE-ID", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.DATE", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.SENDER", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.REPLY-TO", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.CC", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.BCC", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
+		{Name: "hdr.IN-REPLY-TO", Type: mailindex.CacheFieldHeader, Decision: mailindex.CacheDecisionYes},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -205,6 +211,13 @@ func TestAForeignCacheOfHeadersAnswersTheListing(t *testing.T) {
 		{FieldID: first + 4, Data: header("From: Ann <ann@example.com>\r\n")},
 		{FieldID: first + 5, Data: header("To: Bo <bo@example.org>\r\n")},
 		{FieldID: first + 6, Data: header("Message-ID: <listing@example.com>\r\n")},
+		// Headers the message does not carry are cached empty: absent, not unknown.
+		{FieldID: first + 7, Data: []byte{}},
+		{FieldID: first + 8, Data: []byte{}},
+		{FieldID: first + 9, Data: []byte{}},
+		{FieldID: first + 10, Data: []byte{}},
+		{FieldID: first + 11, Data: []byte{}},
+		{FieldID: first + 12, Data: []byte{}},
 	})
 	if err != nil {
 		t.Fatal(err)
