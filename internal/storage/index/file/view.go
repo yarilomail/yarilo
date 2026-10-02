@@ -1,6 +1,7 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -30,6 +31,10 @@ const baseReadAttempts = 3
 // afterBaseRead is a test seam: another process replacing the base between the
 // read and the stat that labels it. Nil everywhere else.
 var afterBaseRead func()
+
+// afterViewImage is a test seam: the base and log replaced between the image a
+// view is built on and the log it opens. Nil everywhere else.
+var afterViewImage func()
 
 // imageFor returns the parsed base for the file at fs.indexPath as it is now.
 // It takes no lock and writes nothing the writer can see.
@@ -93,10 +98,11 @@ func imageFor(fs *folderState) (*baseImage, error) {
 // offset the view stands at -- a base that already holds the whole log stands
 // at the log's end, not at zero, and the next fold continues from there.
 func (fs *folderState) buildView() (*folderState, int64, error) {
-	img, err := imageFor(fs)
+	img, lg, err := fs.imageAndItsLog()
 	if err != nil {
 		return nil, 0, err
 	}
+	defer lg.close()
 	// A handle stamps traceID under fs.mu while this reader holds nothing.
 	fs.mu.RLock()
 	traceID := fs.traceID
@@ -112,11 +118,6 @@ func (fs *folderState) buildView() (*folderState, int64, error) {
 		lineage:   img.lineage,
 	}
 
-	lg, lgErr := openLogRead(fs.indexPath)
-	if lgErr != nil {
-		return nil, 0, fmt.Errorf("fileindex/view: log: %w", lgErr)
-	}
-	defer lg.close()
 	if lg.f == nil || !lg.ok {
 		if rerr := view.refreshExtState(); rerr != nil {
 			return nil, 0, rerr
@@ -159,6 +160,39 @@ func (fs *folderState) buildView() (*folderState, int64, error) {
 		view.vsize = fromHeader
 	}
 	return view, end, nil
+}
+
+// errBaseMoving says the base kept being replaced while a view was built; the
+// caller reads under the lock instead.
+var errBaseMoving = errors.New("fileindex/view: the base kept moving while the view was built")
+
+// imageAndItsLog returns a base image and a log opened while that base was
+// still the file: a base replaced in between pairs it with the next base's log.
+func (fs *folderState) imageAndItsLog() (*baseImage, *logReader, error) {
+	for attempt := 0; ; attempt++ {
+		img, err := imageFor(fs)
+		if err != nil {
+			return nil, nil, err
+		}
+		if afterViewImage != nil {
+			afterViewImage()
+		}
+		lg, lgErr := openLogRead(fs.indexPath)
+		if lgErr != nil {
+			return nil, nil, fmt.Errorf("fileindex/view: log: %w", lgErr)
+		}
+		st, serr := os.Stat(fs.indexPath)
+		if serr == nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
+			return img, lg, nil
+		}
+		lg.close()
+		if serr != nil {
+			return nil, nil, serr
+		}
+		if attempt >= baseReadAttempts {
+			return nil, nil, errBaseMoving
+		}
+	}
 }
 
 // cloneIndexFile copies what a replay writes into: the records and their
