@@ -137,7 +137,7 @@ func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool) (*
 	mech := strings.ToUpper(string(mechBytes))
 	if cleartextOff && isCleartextMech(mech) {
 		msSkipLine(rd)
-		fmt.Fprintf(conn, "NO (ENCRYPT-NEEDED) %q\r\n", cleartextDisabledMsg) //nolint:errcheck
+		fmt.Fprintf(conn, "NO %q\r\n", cleartextDisabledMsg) //nolint:errcheck
 		return nil, nil
 	}
 

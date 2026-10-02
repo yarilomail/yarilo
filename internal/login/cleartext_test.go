@@ -79,7 +79,7 @@ var cleartextCases = []cleartextCase{
 		},
 		before: []string{"EHLO client"}, login: []string{"AUTH PLAIN " + imapPLAIN()},
 		starttls: "STARTTLS", tlsOK: "220 ", afterTLS: []string{"EHLO client"}},
-	{name: "ManageSieve AUTHENTICATE PLAIN", refused: "NO (ENCRYPT-NEEDED)",
+	{name: "ManageSieve AUTHENTICATE PLAIN", refused: `NO "Cleartext authentication disallowed`,
 		run: func(c net.Conn, rd *bufio.Reader, x *tls.Config, o Options) (*preamble, error) {
 			p, _, _, err := extractManageSievePreamble(c, rd, x, o)
 			return p, err
