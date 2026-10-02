@@ -2866,6 +2866,8 @@ quota:
   quota_over_status_execute: ""   # program name in quota_warning_bin_dir
 
 acl:
+  ## Required by any shared, public or other users namespace: with it off
+  ## the loader refuses one, since everyone could read and expunge it.
   enabled: false
   ## Root-level default ACLs resolve from INBOX's ACL for private and
   ## shared namespaces. This is the maildir answer to the namespace

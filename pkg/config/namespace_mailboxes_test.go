@@ -48,6 +48,8 @@ func TestNamespaceMailboxesLoad(t *testing.T) {
     location: "maildir:/var/mail/public"
     mailboxes:
       Board: { auto: subscribe }
+acl:
+  enabled: true
 `, sentAttr: `\Sent`},
 		{name: "auto in an owner-templated namespace refuses", yaml: personalNS + `
   - type: shared
