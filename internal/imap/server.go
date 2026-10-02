@@ -3253,7 +3253,8 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	}
 
 	// Once per command: it is a property of the request, not of each message.
-	markSeen := setsSeen(opts)
+	// \Seen takes the s right; without it the body is served, the flag kept.
+	markSeen := setsSeen(opts) && s.requireRightOnSelected(mailbox.RightWriteSeen) == nil
 	// ENVELOPE and BODYSTRUCTURE from the index cache, once per FETCH (#1030);
 	// a nil handle answers every call as a miss, so a fault only costs a parse.
 	var envCache mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
