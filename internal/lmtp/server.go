@@ -257,10 +257,14 @@ func (s *session) quotaExceededMessage() string {
 
 // quotaFullError is permanent unless quota_full_tempfail asks the MTA to retry.
 func (s *session) quotaFullError() *goSmtp.SMTPError {
+	return s.quotaFullErrorText(s.quotaExceededMessage())
+}
+
+func (s *session) quotaFullErrorText(text string) *goSmtp.SMTPError {
 	if s.opts.Config.QuotaFullTempfail {
-		return &goSmtp.SMTPError{Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 2, 2}, Message: s.quotaExceededMessage()}
+		return &goSmtp.SMTPError{Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 2, 2}, Message: text}
 	}
-	return &goSmtp.SMTPError{Code: 552, EnhancedCode: goSmtp.EnhancedCode{5, 2, 2}, Message: s.quotaExceededMessage()}
+	return &goSmtp.SMTPError{Code: 552, EnhancedCode: goSmtp.EnhancedCode{5, 2, 2}, Message: text}
 }
 
 func (s *session) Mail(from string, _ *goSmtp.MailOptions) error {
@@ -638,16 +642,13 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				continue
 			}
 			// Per-mailbox message-count cap is structural (independent of a
-			// quota_rule): reject when the target folder would reach the limit.
+			// quota_rule): reject when the target folder already holds the limit.
 			if mmc := s.opts.QuotaPolicy.MailboxMessageCount; mmc > 0 {
-				if cur, ok := folderMessageCount(rcptMbox, rcptIdx, folder); ok && cur+1 >= mmc {
+				if cur, ok := folderMessageCount(rcptMbox, rcptIdx, folder); ok && cur >= mmc {
 					slog.Warn("lmtp: delivery rejected: too many messages in mailbox", "rcpt", rcpt, "user", username, "folder", folder)
 					rcptBox.Close() //nolint:errcheck
 					rcptIdx.Close() //nolint:errcheck
-					setStatus(status, rcpt, deliveryStart, &goSmtp.SMTPError{
-						Code: 552, EnhancedCode: goSmtp.EnhancedCode{5, 2, 2},
-						Message: "Too many messages in the mailbox",
-					})
+					setStatus(status, rcpt, deliveryStart, s.quotaFullErrorText("Too many messages in the mailbox"))
 					continue
 				}
 			}
