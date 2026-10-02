@@ -1128,7 +1128,11 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	userInfo := resolver.UserInfo(res.Username, res.Home)
+	userInfo, err := resolver.UserInfo(res.Username, res.Home)
+	if err != nil {
+		slog.Warn("imap: login refused", "sid", s.sid, "user", res.Username, "err", err)
+		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Code: imaplib.ResponseCodeAuthenticationFailed, Text: "Authentication failed."}
+	}
 	userInfo.Groups = res.Groups
 	userInfo.ACLUser = res.ACLUser
 	userInfo.ACLGroups = res.ACLGroups

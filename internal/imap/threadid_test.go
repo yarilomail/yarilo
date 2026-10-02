@@ -39,7 +39,7 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo("user@test.com", "")
+	info, _ := resolver.UserInfo("user@test.com", "")
 
 	mb, idx := maildir.New(), fileindex.New()
 	box := mb.OpenUser(info)

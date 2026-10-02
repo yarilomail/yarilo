@@ -563,7 +563,10 @@ func (s *session) deploymentBase() *mailbox.UserInfo {
 	if r == nil {
 		return nil
 	}
-	full := r.UserInfo("", "")
+	full, err := r.UserInfo("", "")
+	if err != nil {
+		return nil
+	}
 	return &mailbox.UserInfo{
 		StorageEscapeChar: full.StorageEscapeChar,
 		SkipNFCNormalize:  full.SkipNFCNormalize,

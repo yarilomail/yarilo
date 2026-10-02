@@ -158,7 +158,7 @@ func TestTheDeliveryLoopRecordsTheConversation(t *testing.T) {
 		t.Fatalf("delivery reported: %v", err)
 	}
 
-	info := resolver.UserInfo("alice@example.com", "")
+	info, _ := resolver.UserInfo("alice@example.com", "")
 	st, err := threads.Load(threads.PathFor(info))
 	if err != nil {
 		t.Fatalf("load sidecar: %v", err)

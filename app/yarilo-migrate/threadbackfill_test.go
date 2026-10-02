@@ -23,7 +23,7 @@ import (
 func seedAccount(t *testing.T, root, user string) *mailbox.UserInfo {
 	t.Helper()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	mb, idx := maildir.New(), fileindex.New()
 
 	box := mb.OpenUser(info)
@@ -398,7 +398,7 @@ func TestTheRebuildHoldsTheAccountLock(t *testing.T) {
 	var st threadStats
 	o := backfillOpts(root, false)
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	resolveUser := func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil }
+	resolveUser := func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") }
 	if err := threadUser(maildir.New(), nil, fileindex.New(), resolveUser,
 		locker, o, info.Username, &st); err != nil {
 		t.Fatalf("backfill: %v", err)
@@ -437,7 +437,7 @@ func TestTheRebuildHoldsTheAccountLock(t *testing.T) {
 func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	base := resolver.UserInfo("u1@d00001.test", "")
+	base, _ := resolver.UserInfo("u1@d00001.test", "")
 
 	// What userdb gives a non-default account: its own driver, and a mail root
 	// one level below the home directory.

@@ -18,7 +18,7 @@ import (
 func TestInboxNamespaceWithALocationIsThePrimary(t *testing.T) {
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo("user@test.com", "")
+	info, _ := resolver.UserInfo("user@test.com", "")
 	box := maildir.New().OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatal(err)

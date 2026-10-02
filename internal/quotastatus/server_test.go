@@ -86,7 +86,7 @@ func startStorageServerOpts(t *testing.T, quotaRules []string, aliasD dict.Dict,
 	mb := maildir.New()
 	idx := file.New()
 	for user, b := range userBytes {
-		ui := resolver.UserInfo(user, "")
+		ui, _ := resolver.UserInfo(user, "")
 		box := mb.OpenUser(ui)
 		_ = box.Init()
 		box.Close() //nolint:errcheck
@@ -103,7 +103,7 @@ func startStorageServerOpts(t *testing.T, quotaRules []string, aliasD dict.Dict,
 		uidx.Close() //nolint:errcheck
 	}
 	lookup := func(_ context.Context, username string) (*mailbox.UserInfo, error) {
-		mi := resolver.UserInfo(username, "")
+		mi, _ := resolver.UserInfo(username, "")
 		mi.QuotaRules = quotaRules
 		return mi, nil
 	}

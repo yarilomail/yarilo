@@ -244,8 +244,11 @@ type importOpts struct {
 // joined with the *driver's* sub-layout, so an empty driver writes a dbox store's
 // index into the maildir layout -- dotted folders at the home root, where no
 // server looks (#1562).
-func userInfoFor(resolver *mailbox.Resolver, o importOpts, user string) *mailbox.UserInfo {
-	info := resolver.UserInfo(user, "")
+func userInfoFor(resolver *mailbox.Resolver, o importOpts, user string) (*mailbox.UserInfo, error) {
+	info, err := resolver.UserInfo(user, "")
+	if err != nil {
+		return nil, err
+	}
 	info.Driver = o.Driver
 	// Same helper the resolver and the userdb overlay use, so "%h/index" here
 	// means what it means everywhere else.
@@ -255,12 +258,15 @@ func userInfoFor(resolver *mailbox.Resolver, o importOpts, user string) *mailbox
 	if o.MailTmpl != "" {
 		info.MailPath = mailbox.ExpandLocation(o.MailTmpl, info.Home, user)
 	}
-	return info
+	return info, nil
 }
 
 func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBackend, idxBE mailbox.IndexBackend, resolver *mailbox.Resolver, o importOpts, user string) (migrated, skipped int, _ error) {
 	srcHome := userDir(srcRoot, user)
-	info := userInfoFor(resolver, o, user)
+	info, err := userInfoFor(resolver, o, user)
+	if err != nil {
+		return 0, 0, err
+	}
 	box := boxBE.OpenUser(info)
 	defer box.Close() //nolint:errcheck
 	idx := idxBE.OpenUser(info)
@@ -297,7 +303,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		}
 	}
 
-	err := walker.Walk(srcHome, func(msg sourceMessage) error {
+	err = walker.Walk(srcHome, func(msg sourceMessage) error {
 		// The migrator is an entry boundary like a protocol: a source folder
 		// name in a decomposed form must land on disk in the same NFC form a
 		// live session would create, since the drivers no longer normalise on

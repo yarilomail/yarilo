@@ -304,7 +304,11 @@ func (s *session) rcptLocal(to string) error {
 		}
 		userInfo = ui
 	} else {
-		userInfo = resolver.UserInfo(user, "")
+		ui, err := resolver.UserInfo(user, "")
+		if err != nil {
+			return &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 1, 1}, Message: "No such user here"}
+		}
+		userInfo = ui
 	}
 	s.stampLockID(userInfo)
 	if s.rcptUserInfo == nil {
@@ -595,7 +599,11 @@ func (s *session) resolveRcptUserInfo(rcpt, username string) *mailbox.UserInfo {
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	return s.stampLockID(resolver.UserInfo(username, ""))
+	ui, err := resolver.UserInfo(username, "")
+	if err != nil {
+		return nil
+	}
+	return s.stampLockID(ui)
 }
 
 func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
@@ -618,6 +626,10 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 
 		username, folder, _ := resolveMailbox(deliverRcpt)
 		userInfo := s.resolveRcptUserInfo(rcpt, username)
+		if userInfo == nil {
+			status.SetStatus(rcpt, &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 1, 1}, Message: "No such user here"})
+			continue
+		}
 
 		mboxBackend := mailbox.SelectPersonalBackend(s.opts.Mailbox, s.opts.MailboxByDriver, userInfo.Driver)
 		rcptBox := mboxBackend.OpenUser(userInfo)

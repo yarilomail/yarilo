@@ -559,7 +559,12 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	userInfo := resolver.UserInfo(res.Username, res.Home)
+	userInfo, err := resolver.UserInfo(res.Username, res.Home)
+	if err != nil {
+		slog.Warn("pop3: login refused", "sid", s.sid, "user", res.Username, "err", err)
+		s.writeErr("[AUTH] Authentication failed.")
+		return false
+	}
 	userInfo.Groups = res.Groups
 	userInfo.QuotaRules = res.QuotaRules
 	if s.sid == "" {

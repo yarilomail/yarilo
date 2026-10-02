@@ -53,7 +53,7 @@ func messageServerRaw(t *testing.T, msg string) (*httptest.Server, string, uint3
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 
 	const user = "alice@example.com"
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := mb.OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatalf("init: %v", err)

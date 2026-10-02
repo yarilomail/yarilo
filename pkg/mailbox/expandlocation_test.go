@@ -41,7 +41,7 @@ func TestResolverExpandsTildeForEveryLocation(t *testing.T) {
 		DefaultVolatileDir: "~/volatile",
 		DefaultMailPath:    "~/maildir",
 	}
-	ui := r.UserInfo("u1@d1.test", "")
+	ui, _ := r.UserInfo("u1@d1.test", "")
 	home := "/var/mail/vhosts/d1.test/u1@d1.test"
 	for _, tc := range []struct {
 		key, got, want string
@@ -70,7 +70,7 @@ func TestResolverKeepsExistingLocationForms(t *testing.T) {
 		DefaultVolatileDir: "/srv/volatile",
 		DefaultMailPath:    "%h/maildir",
 	}
-	ui := r.UserInfo("u1@d1.test", "")
+	ui, _ := r.UserInfo("u1@d1.test", "")
 	home := "/var/mail/vhosts/d1.test/u1"
 	for _, tc := range []struct {
 		key, got, want string
@@ -90,7 +90,7 @@ func TestResolverKeepsExistingLocationForms(t *testing.T) {
 // An unset template leaves its field empty rather than resolving to the home.
 func TestResolverLeavesUnsetLocationsEmpty(t *testing.T) {
 	r := &Resolver{Root: "/var/mail/vhosts", HomeTemplate: "%d/%u"}
-	ui := r.UserInfo("u1@d1.test", "")
+	ui, _ := r.UserInfo("u1@d1.test", "")
 	for _, tc := range []struct{ key, got string }{
 		{"INDEX", ui.IndexDir},
 		{"CONTROL", ui.ControlDir},

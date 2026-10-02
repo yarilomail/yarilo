@@ -21,7 +21,7 @@ func buildTestServer(t *testing.T) string {
 	mb := maildir.New()
 	idx := fileindex.New()
 
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -160,4 +160,13 @@ func TestLMTP_MultipleRecipients(t *testing.T) {
 	if !strings.HasPrefix(sc.Text(), "250") {
 		t.Fatalf("expected 250 for bob delivery, got: %q", sc.Text())
 	}
+}
+
+// mustUserInfo resolves a name the test knows to be valid.
+func mustUserInfo(r *mailbox.Resolver, user string) *mailbox.UserInfo {
+	ui, err := r.UserInfo(user, "")
+	if err != nil {
+		panic(err)
+	}
+	return ui
 }

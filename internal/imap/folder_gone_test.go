@@ -25,7 +25,7 @@ func TestASelectionDeletedElsewhereIsNonexistent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}).UserInfo("user@test.com", "")
+	info, _ := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}).UserInfo("user@test.com", "")
 	store, idx := maildir.New().OpenUser(info), file.New().OpenUser(info)
 	defer store.Close() //nolint:errcheck
 	defer idx.Close()   //nolint:errcheck
@@ -50,7 +50,7 @@ func TestRenameCarriesTheIdentityRecord(t *testing.T) {
 	if err := c.Rename("Work", "Play", nil).Wait(); err != nil {
 		t.Fatal(err)
 	}
-	info := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}).UserInfo("user@test.com", "")
+	info, _ := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}).UserInfo("user@test.com", "")
 	ids := folders.New(mailbox.ControlRoot(info), info.Username, "", nil)
 	if _, known, _ := ids.UIDValidity("Play"); !known {
 		t.Error("no identity record under the new name")

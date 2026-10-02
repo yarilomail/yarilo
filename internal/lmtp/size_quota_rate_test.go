@@ -73,7 +73,7 @@ func sizeServer(t *testing.T, cfg config.LMTPProtocolConfig, mailSize int64, rul
 	dir := t.TempDir()
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n", DefaultQuotaRules: rules}
 	mb := maildir.New()
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestARateLimitedRecipientGets451AndTheSessionGoesOn(t *testing.T) {
 	dir := t.TempDir()
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 	mb := maildir.New()
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestGraceDoesNotDeliverIntoAMailboxAlreadyOver(t *testing.T) {
 	dir := t.TempDir()
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n", DefaultQuotaRules: []string{"*:bytes=1000"}}
 	mb := maildir.New()
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestTheMailboxMessageCapIsReachedThenRefused(t *testing.T) {
 			dir := t.TempDir()
 			resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 			mb := maildir.New()
-			box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+			box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 			if err := box.Init(); err != nil {
 				t.Fatal(err)
 			}

@@ -65,7 +65,7 @@ func TestFolderInfoOfAConfiguredMailboxBeforeAndAfterItIsMade(t *testing.T) {
 	}
 	// The home must exist for the info path; INBOX is what any login makes.
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	ui := resolver.UserInfo(user, "")
+	ui, _ := resolver.UserInfo(user, "")
 	store := mailbox.Validating(maildir.New(), mailbox.DefaultNameRules()).OpenUser(ui)
 	if err := store.Init(); err != nil {
 		t.Fatal(err)

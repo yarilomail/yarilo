@@ -346,7 +346,7 @@ func TestFolderCreate_WritesTheIndexWithTheFolder(t *testing.T) {
 		map[string]any{"user": user, "folder": "Temp"}); status != 200 {
 		t.Fatalf("create status=%d body=%s", status, body)
 	}
-	info := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n", DefaultIndexDir: "%h/index"}).UserInfo(user, "")
+	info, _ := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n", DefaultIndexDir: "%h/index"}).UserInfo(user, "")
 	info.Driver = "maildir"
 	idx := file.New().OpenUser(info)
 	defer idx.Close() //nolint:errcheck
@@ -370,7 +370,7 @@ func TestFolderRename_MovesTheIndexWithTheFolder(t *testing.T) {
 		map[string]any{"user": user, "old_folder": "Work", "new_folder": "Play"}); status != 200 {
 		t.Fatalf("rename status=%d body=%s", status, body)
 	}
-	info := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n", DefaultIndexDir: "%h/index"}).UserInfo(user, "")
+	info, _ := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n", DefaultIndexDir: "%h/index"}).UserInfo(user, "")
 	info.Driver = "maildir"
 	idx := file.New().OpenUser(info)
 	defer idx.Close() //nolint:errcheck

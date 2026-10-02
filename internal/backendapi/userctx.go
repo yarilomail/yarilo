@@ -186,7 +186,10 @@ func (s *Server) openUserContextInner(username string, mode openMode) (*userCont
 	if pui != nil {
 		home = pui.Home
 	}
-	ui := resolver.UserInfo(username, home)
+	ui, err := resolver.UserInfo(username, home)
+	if err != nil {
+		return nil, err
+	}
 	if pui != nil {
 		userdbinfo.Apply(ui, pui, username)
 	}
@@ -207,7 +210,6 @@ func (s *Server) openUserContextInner(username string, mode openMode) (*userCont
 	}
 	personalMB := s.mailboxForUser(pui)
 	var bundle *nsBundle
-	var err error
 	switch mode {
 	case openRead:
 		bundle, err = s.openNSReadOnly(personalSpec, ui, personalMB)
@@ -452,7 +454,11 @@ func (s *Server) deploymentBase() *mailbox.UserInfo {
 	if s.opts.Resolver == nil {
 		return nil
 	}
-	return s.opts.Resolver.UserInfo("", "")
+	ui, err := s.opts.Resolver.UserInfo("", "")
+	if err != nil {
+		return nil
+	}
+	return ui
 }
 
 // sepByte returns the namespace separator as a byte, defaulting to '/'.
