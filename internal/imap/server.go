@@ -1544,11 +1544,8 @@ func (s *session) Rename(oldName, newName string, _ *imaplib.RenameOptions) erro
 	if err := s.requireRightOnParent(hNew, relNew, mailbox.RightCreate); err != nil {
 		return err
 	}
-	if err := hOld.box.Rename(relOld, relNew); err != nil {
+	if err := hOld.mailbox().Rename(relOld, relNew); err != nil {
 		return nameError(err)
-	}
-	if err := hOld.mailbox().RenameFolder(relOld, relNew); err != nil {
-		return err
 	}
 	// Move the per-mailbox yarilo-acl file and rewrite namespace-wide index
 	// entries. Non-fatal: the mailbox has moved; a stale index must not fail
