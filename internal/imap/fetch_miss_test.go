@@ -35,12 +35,15 @@ func messageFile(t *testing.T, root string) string {
 // cached: once the file is whole the same FETCH answers the real item.
 func TestAnEmptyReadIsAnsweredNoAndNotCached(t *testing.T) {
 	for _, tc := range []struct {
-		item, want string
+		name, item, want string
+		keep             func(whole []byte) []byte
 	}{
-		{"ENVELOPE", `"miss probe"`},
-		{"BODYSTRUCTURE", `"MIXED"`},
+		{"ENVELOPE", "ENVELOPE", `"miss probe"`, func([]byte) []byte { return nil }},
+		{"BODYSTRUCTURE", "BODYSTRUCTURE", `"MIXED"`, func([]byte) []byte { return nil }},
+		// Cut before the second part: a structure of the first alone is a lie.
+		{"BODYSTRUCTURE of half a file", "BODYSTRUCTURE", `"HTML"`, func(w []byte) []byte { return w[:len(w)/2] }},
 	} {
-		t.Run(tc.item, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			root, addr := startEnvelopeCacheServer(t)
 			c := dialRaw(t, addr)
 			c.login()
@@ -51,13 +54,13 @@ func TestAnEmptyReadIsAnsweredNoAndNotCached(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(file, nil, 0o600); err != nil {
+			if err := os.WriteFile(file, tc.keep(whole), 0o600); err != nil {
 				t.Fatal(err)
 			}
 
 			out := c.cmd(`FETCH 1 (` + tc.item + `)`)
 			if !strings.Contains(out, "NO ") || !strings.Contains(out, "could not be read") {
-				t.Errorf("an empty read of %s was not answered NO:\n%s", tc.item, out)
+				t.Errorf("a short read of %s was not answered NO:\n%s", tc.item, out)
 			}
 
 			if err := os.WriteFile(file, whole, 0o600); err != nil {

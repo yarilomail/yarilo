@@ -3446,8 +3446,9 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
 				rd := &missReader{r: rc}
 				bs := imapserver.ExtractBodyStructure(rd)
+				rerr := rd.missedWhole(m)
 				rc.Close()
-				if rerr := rd.missed(m); rerr != nil {
+				if rerr != nil {
 					mark("bodystructure", rerr)
 					noteReadErr(m.UID, rerr)
 				} else {

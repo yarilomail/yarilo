@@ -39,3 +39,16 @@ func (mr *missReader) missed(m *mailbox.MessageMeta) error {
 	}
 	return nil
 }
+
+// missedWhole is missed for a parse that reads to the end: the rest is drained
+// so a file cut short of its record's size is a read error too.
+func (mr *missReader) missedWhole(m *mailbox.MessageMeta) error {
+	_, _ = io.Copy(io.Discard, mr)
+	if err := mr.missed(m); err != nil {
+		return err
+	}
+	if m.Size > 0 && mr.n < int64(m.Size) {
+		return fmt.Errorf("imap: message file read %d bytes, its record says %d", mr.n, m.Size)
+	}
+	return nil
+}
