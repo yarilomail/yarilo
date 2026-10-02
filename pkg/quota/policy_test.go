@@ -43,6 +43,8 @@ func TestIsOverWithGrace(t *testing.T) {
 		{"over storage no grace", Usage{StorageBytes: 950}, 100, 1, 0, true},
 		{"over storage within grace", Usage{StorageBytes: 950}, 100, 1, 200, false},
 		{"over storage beyond grace", Usage{StorageBytes: 950}, 300, 1, 200, true},
+		{"already over: grace does not apply", Usage{StorageBytes: 1200}, 10, 1, 10000, true},
+		{"at the limit: grace does not apply", Usage{StorageBytes: 1000}, 10, 1, 10000, true},
 		{"grace does not apply to messages", Usage{Messages: 10}, 0, 1, 1000, true},
 		{"message count over", Usage{Messages: 10}, 0, 1, 0, true},
 	}

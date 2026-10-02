@@ -131,6 +131,10 @@ func (p Policy) Scale(l Limits) Limits {
 // only. Message count gets no grace. storageGrace 0 makes this identical to
 // IsOver.
 func IsOverWithGrace(u Usage, limits Limits, newBytes, newMsgs, storageGrace int64) bool {
+	// Grace lets through the save that crosses the limit, never one made past it.
+	if limits.StorageBytes > 0 && newBytes > 0 && u.StorageBytes >= limits.StorageBytes {
+		return true
+	}
 	if limits.StorageBytes > 0 && u.StorageBytes+newBytes > limits.StorageBytes+storageGrace {
 		return true
 	}

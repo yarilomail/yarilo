@@ -12,6 +12,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 // lmtpWire is a raw LMTP client: a reply is every line up to the last one.
@@ -182,5 +183,41 @@ func TestARateLimitedRecipientGets451AndTheSessionGoesOn(t *testing.T) {
 	}
 	if r := w.cmd("RCPT TO:<bob@example.com>"); len(r) < 3 {
 		t.Errorf("the next RCPT got no answer: %q", r)
+	}
+}
+
+// Grace lets the delivery that crosses the limit through, and none after it:
+// a mailbox already over its limit is full however much grace is left.
+func TestGraceDoesNotDeliverIntoAMailboxAlreadyOver(t *testing.T) {
+	dir := t.TempDir()
+	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n", DefaultQuotaRules: []string{"*:bytes=1000"}}
+	mb := maildir.New()
+	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	if err := box.Init(); err != nil {
+		t.Fatal(err)
+	}
+	box.Close() //nolint:errcheck
+	srv := New(Options{Hostname: "lmtp.test", Config: config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
+		Mailbox: mb, Index: fileindex.New(), Resolver: resolver, QuotaEngine: true,
+		QuotaPolicy: quota.Policy{StorageGrace: 10 << 20}})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() { _ = srv.Serve(ln) }()
+
+	deliver := func() string {
+		w := dialWire(t, ln.Addr().String())
+		w.cmd("LHLO mta.test")
+		w.cmd("MAIL FROM:<a@external.test>")
+		w.cmd("RCPT TO:<alice@example.com>")
+		return w.body(1500)
+	}
+	if r := deliver(); !strings.HasPrefix(r, "250") {
+		t.Fatalf("the delivery that crosses the limit within grace was refused: %q", r)
+	}
+	if r := deliver(); !strings.HasPrefix(r, "552 5.2.2") {
+		t.Errorf("a delivery into a mailbox already over its limit answered %q, want 552 5.2.2", r)
 	}
 }
