@@ -322,3 +322,16 @@ func TestPolicyCheck_Nouser(t *testing.T) {
 		t.Errorf("empty nouser should DUNNO, got %q", a)
 	}
 }
+
+// An MTA that sends no size at RCPT still has a full mailbox refused, grace or
+// not: the check allocates at least one byte, never zero.
+func TestPolicyCheck_OverQuotaWithoutSizeAndWithGrace(t *testing.T) {
+	addr := startStorageServerOpts(t, []string{"*:storage=1K"}, nil, 0, map[string]uint32{"alice@example.com": 1024},
+		func(o *quotastatus.Options) { o.Policy.StorageGrace = 10 << 20 })
+	action := policyCheck(t, addr, map[string]string{
+		"request": "smtpd_access_policy", "recipient": "alice@example.com",
+	})
+	if !strings.HasPrefix(action, "REJECT") {
+		t.Errorf("a full mailbox with no size given answered %q, want a REJECT", action)
+	}
+}

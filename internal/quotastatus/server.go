@@ -207,8 +207,9 @@ func (s *Server) check(attrs map[string]string) string {
 		return fmt.Sprintf("REJECT 552 5.2.3 Requested allocation size %d exceeds max mail size %d", msgSize, s.opts.MailSize)
 	}
 
-	// quota-status is an inbound-delivery pre-check, so storage grace applies.
-	if quota.IsOverWithGrace(u, effLim, msgSize, 1, s.opts.Policy.StorageGrace) {
+	// quota-status is an inbound-delivery pre-check, so storage grace applies;
+	// an unknown size is one byte, so a full mailbox is full without it.
+	if quota.IsOverWithGrace(u, effLim, max(msgSize, 1), 1, s.opts.Policy.StorageGrace) {
 		slog.Info("quotastatus: reject over-quota",
 			"user", username, "folder", folder,
 			"storage_bytes", u.StorageBytes, "messages", u.Messages,
