@@ -133,6 +133,7 @@ func main() {
 		SessionSyncInterval: time.Duration(cfg.Login.SessionSyncInterval) * time.Second,
 		TransientRetries:    cfg.Login.TransientRetries,
 		TransientReloginCap: cfg.Login.TransientReloginCap,
+		ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 		LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
 		HAProxy:             cfg.ManageSieveLoginService.HAProxy,
 		HAProxyTimeout:      haproxyTimeout,

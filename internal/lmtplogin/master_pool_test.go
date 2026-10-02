@@ -93,7 +93,7 @@ func TestDeliveriesShareTheMasterConnection(t *testing.T) {
 		if _, err := s.issueToken("u@example.com", "warden-1"); err != nil {
 			t.Fatalf("session %d token: %v", i, err)
 		}
-		if tag := s.resolveDirectorTag("u@example.com"); tag != "t1" {
+		if tag := userTag(s, "u@example.com"); tag != "t1" {
 			t.Fatalf("session %d tag = %q, want t1", i, tag)
 		}
 	}

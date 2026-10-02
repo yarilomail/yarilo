@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,6 +66,10 @@ type AuthResponse struct {
 	// DirectorTag is the per-user director backend tag. Empty means
 	// the login component's static director_tag applies.
 	DirectorTag string
+
+	// ProxyTimeout is the per-user login_proxy_timeout, in seconds; 0 keeps
+	// the global one.
+	ProxyTimeout int
 
 	// MailboxFormat is the per-user storage driver (mail_driver /
 	// mailbox_format userdb field). Empty falls back to the driver named by
@@ -296,6 +301,7 @@ func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP 
 	resp.QuotaRules = extractQuotaRules(req.Fields)
 	resp.QuotaOverFlag = extractQuotaOverFlag(req.Fields)
 	resp.DirectorTag = extractDirectorTag(req.Fields)
+	resp.ProxyTimeout = extractProxyTimeout(req.Fields)
 	resp.VolatileDir = extractVolatileDir(req.Fields)
 	resp.MailboxFormat = extractMailboxFormat(req.Fields)
 	resp.IndexDir = extractIndexDir(req.Fields)
@@ -331,6 +337,7 @@ func responseFromCache(reqUser string, entry *CacheEntry) *AuthResponse {
 		resp.QuotaRules = extractQuotaRules(entry.Fields)
 		resp.QuotaOverFlag = extractQuotaOverFlag(entry.Fields)
 		resp.DirectorTag = extractDirectorTag(entry.Fields)
+		resp.ProxyTimeout = extractProxyTimeout(entry.Fields)
 		resp.VolatileDir = extractVolatileDir(entry.Fields)
 		resp.MailboxFormat = extractMailboxFormat(entry.Fields)
 		resp.IndexDir = extractIndexDir(entry.Fields)
@@ -1548,6 +1555,22 @@ func extractDirectorTag(f *Fields) string {
 		return v
 	}
 	return ""
+}
+
+// extractProxyTimeout reads proxy_timeout from the Fields bag; anything but a
+// positive integer is 0.
+func extractProxyTimeout(f *Fields) int {
+	if f == nil {
+		return 0
+	}
+	for _, k := range []string{"userdb_proxy_timeout", "proxy_timeout"} {
+		if v, ok := f.Get(k); ok {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // extractMailboxFormat reads the per-user storage driver from the Fields bag,

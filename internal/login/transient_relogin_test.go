@@ -207,6 +207,12 @@ func startWardenWithHandle(t *testing.T) (string, *warden.Server) {
 // AUTH request successfully. Enough for tests that need to get PAST auth.
 func startOKAuth(t *testing.T) string {
 	t.Helper()
+	return startOKAuthWith(t, "")
+}
+
+// startOKAuthWith answers every AUTH with OK carrying extra (tab-led fields).
+func startOKAuthWith(t *testing.T, extra string) string {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -218,13 +224,13 @@ func startOKAuth(t *testing.T) string {
 			if err != nil {
 				return
 			}
-			go serveOKAuth(c)
+			go serveOKAuth(c, extra)
 		}
 	}()
 	return ln.Addr().String()
 }
 
-func serveOKAuth(c net.Conn) {
+func serveOKAuth(c net.Conn, extra string) {
 	defer c.Close()
 	rd := bufio.NewReader(c)
 	fmt.Fprint(c, "VERSION\t1\t0\nMECH\tPLAIN\tplaintext\nSPID\t1\nDONE\n")
@@ -243,7 +249,7 @@ func serveOKAuth(c net.Conn) {
 		case "AUTH":
 			// With a token, because a session cannot open without one: a fake
 			// that omits it models a service no deployment runs.
-			fmt.Fprintf(c, "OK\t%s\tuser=alice\ttoken=stubtoken1234567890123456789012345678901234567890123456789012\n", fields[1])
+			fmt.Fprintf(c, "OK\t%s\tuser=alice\ttoken=stubtoken1234567890123456789012345678901234567890123456789012%s\n", fields[1], extra)
 		default:
 			fmt.Fprintf(c, "FAIL\t%s\n", fields[1])
 		}

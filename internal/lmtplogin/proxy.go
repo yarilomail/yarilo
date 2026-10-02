@@ -41,7 +41,8 @@ type Options struct {
 	// BackendAddr is the TCP address of the LMTP backend used in standalone
 	// mode. Ignored when DirectorAddr is set.
 	BackendAddr string
-	// ProxyTimeout caps each backend dial and transaction. Default: 125s.
+	// ProxyTimeout caps each backend dial and transaction; a userdb proxy_timeout
+	// overrides it per recipient. Default: 125s.
 	ProxyTimeout time.Duration
 	// BackendTLS optionally wraps the backend fan-out dial with internal mTLS.
 	// nil = plain TCP.
@@ -190,6 +191,7 @@ type rcptEntry struct {
 	wardenID    string // warden session handle (empty if warden skipped)
 	token       string // one-time session token from yarilo-auth
 	backendAddr string // resolved backend address (per-recipient in director mode)
+	timeout     time.Duration
 }
 
 type session struct {
@@ -229,7 +231,11 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 	}
 
 	// Resolve backend address before reserving any resources.
-	backendAddr, err := s.resolveBackend(username)
+	userTag, timeout := s.userFields(username)
+	if timeout <= 0 {
+		timeout = s.opts.ProxyTimeout
+	}
+	backendAddr, err := s.resolveBackend(username, userTag)
 	if err != nil {
 		slog.Error("lmtplogin: backend lookup failed", "user", username, "err", err)
 		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 4, 0}, Message: "Backend routing error"}
@@ -254,7 +260,7 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary auth error"}
 	}
 
-	s.rcpts = append(s.rcpts, rcptEntry{to: to, username: username, wardenID: wardenID, token: tok, backendAddr: backendAddr})
+	s.rcpts = append(s.rcpts, rcptEntry{to: to, username: username, wardenID: wardenID, token: tok, backendAddr: backendAddr, timeout: timeout})
 	return nil
 }
 
@@ -285,7 +291,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				User:      e.username,
 				Token:     e.token,
 			}
-			rerr := fanOutOne(e.backendAddr, s.opts.Hostname, s.from, e.to, data, pre, s.opts.ProxyTimeout, s.opts.BackendTLS)
+			rerr := fanOutOne(e.backendAddr, s.opts.Hostname, s.from, e.to, data, pre, e.timeout, s.opts.BackendTLS)
 			if rerr == nil {
 				slog.Info("lmtplogin: delivered", "rcpt", e.to, "size", len(data))
 			} else {
@@ -446,13 +452,11 @@ func (s *session) issueToken(username, wardenID string) (string, error) {
 // same thing on the session handshake).
 const masterCallTimeout = 5 * time.Second
 
-// resolveDirectorTag looks up the per-recipient director_tag userdb field so a
-// shared login fleet can route different users to different tag-pools. Falls
-// back to "" (caller uses the static opts.DirectorTag) on any lookup failure or
-// missing override — a tag-lookup miss must never block delivery.
-func (s *session) resolveDirectorTag(username string) string {
+// userFields looks up the recipient's director_tag and proxy_timeout userdb
+// fields. Zero values on any failure: a lookup miss must never block delivery.
+func (s *session) userFields(username string) (string, time.Duration) {
 	if s.opts.AuthMasterAddr == "" {
-		return ""
+		return "", 0
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), masterCallTimeout)
 	defer cancel()
@@ -466,29 +470,26 @@ func (s *session) resolveDirectorTag(username string) string {
 		c, derr := s.ensureAuthClient()
 		s.authMu.Unlock()
 		if derr != nil {
-			slog.Debug("lmtplogin: director_tag lookup: auth dial failed", "user", username, "err", derr)
-			return ""
+			slog.Debug("lmtplogin: userdb lookup: auth dial failed", "user", username, "err", derr)
+			return "", 0
 		}
 		ui, err = c.Userdb(ctx, username)
 	}
 	if err != nil {
-		slog.Debug("lmtplogin: director_tag lookup failed", "user", username, "err", err)
-		return ""
+		slog.Debug("lmtplogin: userdb lookup failed", "user", username, "err", err)
+		return "", 0
 	}
 	if ui == nil {
-		return ""
+		return "", 0
 	}
-	return ui.DirectorTag
+	return ui.DirectorTag, time.Duration(ui.ProxyTimeout) * time.Second
 }
 
 // ---- director / backend resolution ------------------------------------------
 
-// resolveBackend returns the backend address for username. BackendAddr
-// (standalone) wins when both it and DirectorAddr are set. In director mode
-// (DirectorAddr set, BackendAddr empty) it performs a per-recipient LOOKUP,
-// restricted to the user's director_tag when the userdb sets one, else the
-// static DirectorTag.
-func (s *session) resolveBackend(username string) (string, error) {
+// resolveBackend returns BackendAddr when set, else the director's LOOKUP in
+// userTag's pool (the static DirectorTag when userTag is empty).
+func (s *session) resolveBackend(username, userTag string) (string, error) {
 	if s.opts.BackendAddr != "" {
 		return s.opts.BackendAddr, nil
 	}
@@ -496,7 +497,7 @@ func (s *session) resolveBackend(username string) (string, error) {
 		return "", nil
 	}
 	tag := s.opts.DirectorTag
-	if userTag := s.resolveDirectorTag(username); userTag != "" {
+	if userTag != "" {
 		tag = userTag
 	}
 	return s.directorLookup(username, tag)
