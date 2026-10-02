@@ -308,7 +308,7 @@ func TestListenAndServe_AuthOK(t *testing.T) {
 	sc := bufio.NewScanner(conn)
 	readHandshake(t, sc)
 
-	fmt.Fprintf(conn, "AUTH\t1\tPLAIN\tservice=imap\tresp=alice\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t1\tPLAIN\tservice=imap\tresp=YWxpY2UAYWxpY2UAc2VjcmV0\n")
 
 	if !sc.Scan() {
 		t.Fatalf("no auth response line: %v", sc.Err())
@@ -341,7 +341,7 @@ func TestListenAndServe_AuthFail(t *testing.T) {
 	sc := bufio.NewScanner(conn)
 	readHandshake(t, sc)
 
-	fmt.Fprintf(conn, "AUTH\t2\tPLAIN\tservice=imap\tresp=alice\x00alice\x00wrongpass\n")
+	fmt.Fprintf(conn, "AUTH\t2\tPLAIN\tservice=imap\tresp=YWxpY2UAYWxpY2UAd3JvbmdwYXNz\n")
 
 	if !sc.Scan() {
 		t.Fatalf("no auth response line: %v", sc.Err())

@@ -48,8 +48,8 @@ func TestConcurrentCommandsOnOneConnection(t *testing.T) {
 	defer conn.Close()
 
 	// Send the slow request first, then the fast one, on the same connection.
-	fmt.Fprintf(conn, "AUTH\t1\tPLAIN\tservice=imap\tresp=\x00slowpoke\x00nope\n")
-	fmt.Fprintf(conn, "AUTH\t2\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t1\tPLAIN\tservice=imap\tresp=AHNsb3dwb2tlAG5vcGU=\n")
+	fmt.Fprintf(conn, "AUTH\t2\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 
 	type reply struct {
 		id   string
@@ -105,7 +105,7 @@ func TestConcurrentRepliesAreNotInterleaved(t *testing.T) {
 			defer wg.Done()
 			wmu.Lock()
 			defer wmu.Unlock()
-			fmt.Fprintf(conn, "AUTH\t%d\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n", i)
+			fmt.Fprintf(conn, "AUTH\t%d\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n", i)
 		}(i)
 	}
 	wg.Wait()
@@ -176,7 +176,7 @@ func TestSerialisedConnectionStillAnswersEveryRequest(t *testing.T) {
 
 	const requests = 10
 	for i := 1; i <= requests; i++ {
-		fmt.Fprintf(conn, "AUTH\t%d\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n", i)
+		fmt.Fprintf(conn, "AUTH\t%d\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n", i)
 	}
 	for i := range requests {
 		if !sc.Scan() {

@@ -58,7 +58,7 @@ func TestWire_Audit_RegularLoginLogsEmptyMaster(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t70\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t70\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -98,7 +98,7 @@ func TestWire_Audit_MasterFlowLogsMaster(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t71\tPLAIN\tservice=imap\tresp=alice\x00admin\x00masterpass\n")
+	fmt.Fprintf(conn, "AUTH\t71\tPLAIN\tservice=imap\tresp=YWxpY2UAYWRtaW4AbWFzdGVycGFzcw==\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -130,7 +130,7 @@ func TestWire_Audit_FailLogs(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t72\tPLAIN\tservice=imap\tresp=\x00alice\x00WRONG\n")
+	fmt.Fprintf(conn, "AUTH\t72\tPLAIN\tservice=imap\tresp=AGFsaWNlAFdST05H\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}

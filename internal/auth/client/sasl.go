@@ -40,6 +40,9 @@ func (c *Client) Mechanisms() []string {
 // BeginSASL starts a relayed exchange. cbind is the channel binding the session
 // holds: it terminates TLS, so those bytes exist nowhere else.
 func (c *Client) BeginSASL(mech, service, remoteIP, sessionID string, cbind, initial []byte) (*SASLExchange, *SASLStep, error) {
+	if wireUnsafe(mech, service, remoteIP, sessionID) {
+		return nil, nil, ErrAuthFailed
+	}
 	id := c.nextID()
 	var sb strings.Builder
 	sb.WriteString("AUTH\t")

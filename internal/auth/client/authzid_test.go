@@ -2,6 +2,7 @@ package client
 
 import (
 	"bufio"
+	"encoding/base64"
 	"net"
 	"strings"
 	"testing"
@@ -59,7 +60,7 @@ func TestAuthenticateAsCarriesTheTargetOnTheWire(t *testing.T) {
 
 			select {
 			case line := <-got:
-				if !strings.Contains(line, "\tresp="+tc.wantResp) {
+				if !strings.Contains(line, "\tresp="+base64.StdEncoding.EncodeToString([]byte(tc.wantResp))) {
 					t.Errorf("wire request\n  %q\ndoes not carry resp=%q", line, tc.wantResp)
 				}
 				if !strings.Contains(line, "\tuser="+tc.wantUserIs) {
