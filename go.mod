@@ -73,4 +73,4 @@ replace github.com/emersion/go-imap/v2 => github.com/0kaba0hub/go-imap/v2 v2.0.0
 
 replace github.com/emersion/go-sasl => github.com/0kaba0hub/go-sasl v0.0.0-20260916160242-280d9aae5df4
 
-replace github.com/emersion/go-smtp => github.com/0kaba0hub/go-smtp v0.0.0-20260814073645-91cc4e0044d6
+replace github.com/emersion/go-smtp => github.com/0kaba0hub/go-smtp v0.0.0-20261002110441-262a799d66d8

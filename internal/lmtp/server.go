@@ -146,6 +146,8 @@ func New(opts Options) *Server {
 	srv.TLSConfig = opts.TLSConfig
 	srv.ReadTimeout = time.Duration(opts.Config.ReadTimeout) * time.Second
 	srv.WriteTimeout = time.Duration(opts.Config.WriteTimeout) * time.Second
+	// Advertised as SIZE and enforced while reading, so an oversized body is never held.
+	srv.MaxMessageBytes = opts.QuotaMailSize
 
 	s.srv = srv
 	return s
@@ -253,6 +255,14 @@ func (s *session) quotaExceededMessage() string {
 	return "Mailbox full"
 }
 
+// quotaFullError is permanent unless quota_full_tempfail asks the MTA to retry.
+func (s *session) quotaFullError() *goSmtp.SMTPError {
+	if s.opts.Config.QuotaFullTempfail {
+		return &goSmtp.SMTPError{Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 2, 2}, Message: s.quotaExceededMessage()}
+	}
+	return &goSmtp.SMTPError{Code: 552, EnhancedCode: goSmtp.EnhancedCode{5, 2, 2}, Message: s.quotaExceededMessage()}
+}
+
 func (s *session) Mail(from string, _ *goSmtp.MailOptions) error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "MAIL", "from", from)
 	s.from = from
@@ -328,7 +338,8 @@ func (s *session) rcptLocal(to string) error {
 		if errors.Is(err, ErrRateLimited) {
 			slog.Warn("lmtp: recipient rate limit exceeded", "ip", s.peerIP, "rcpt", to,
 				"burst", rl.PerRecipientBurst, "window_seconds", rl.PerRecipientWindowSeconds)
-			return &goSmtp.SMTPError{Code: 421, EnhancedCode: goSmtp.EnhancedCode{4, 7, 0}, Message: "Rate limit exceeded for recipient"}
+			// Not 421: that code says the server is closing the channel.
+			return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 7, 0}, Message: "Rate limit exceeded for recipient"}
 		}
 		if err != nil {
 			slog.Warn("lmtp: rate-limit counter unavailable, accepting", "ip", s.peerIP, "rcpt", to, "err", err)
@@ -654,10 +665,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 						slog.Warn("lmtp: delivery rejected: mailbox full", "rcpt", rcpt, "user", username)
 						rcptBox.Close() //nolint:errcheck
 						rcptIdx.Close() //nolint:errcheck
-						setStatus(status, rcpt, deliveryStart, &goSmtp.SMTPError{
-							Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 2, 2},
-							Message: s.quotaExceededMessage(),
-						})
+						setStatus(status, rcpt, deliveryStart, s.quotaFullError())
 						continue
 					}
 					// Delivery accepted — fire any quota_warning crossed by this

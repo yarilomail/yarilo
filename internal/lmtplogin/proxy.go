@@ -99,6 +99,9 @@ type Options struct {
 	// XClientNets (general.xclient.trusted_nets).
 	XClient     bool
 	XClientNets []*net.IPNet
+	// MaxMessageBytes is quota_mail_size: advertised as SIZE and enforced
+	// while reading, so an oversized body is refused before it is held.
+	MaxMessageBytes int64
 }
 
 // ErrTooManyConcurrent is returned when the cluster-wide delivery count for a
@@ -128,6 +131,7 @@ func New(opts Options) *Server {
 	srv.ReadTimeout = opts.ReadTimeout
 	srv.WriteTimeout = opts.WriteTimeout
 	srv.EnableXCLIENT = opts.XClient
+	srv.MaxMessageBytes = opts.MaxMessageBytes
 
 	s.srv = srv
 	return s
