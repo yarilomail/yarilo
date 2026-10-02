@@ -567,6 +567,9 @@ type folderState struct {
 	foldMu  sync.Mutex
 	current *indexMap
 
+	// gone marks a folder deleted under this state; guarded by userIndex.mu.
+	gone bool
+
 	user     string // whose mailbox this folder is; named in every report
 	folder   string // mailbox folder name (e.g. "INBOX", "Sent")
 	indexDir string // <home>/<folder-relative>/
@@ -786,11 +789,9 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	whole := time.Now()
 	defer func() { metricReadSeconds.Observe(time.Since(whole).Seconds()) }()
 
-	u.mu.Lock()
-	fs, ok := u.open[folderID]
-	u.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("fileindex: folder %d not open", folderID)
+	fs, err := u.state(folderID)
+	if err != nil {
+		return err
 	}
 	if !fs.canReadUnlocked() {
 		// Counted apart: this is the migration not having reached this folder,
@@ -803,10 +804,13 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	view, release, err := fs.openView()
 	observeReadPart("reload", time.Since(reloadStart))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		fs.mu.RLock()
+		err = fs.missingBase(err)
+		fs.mu.RUnlock()
+		if err == nil {
 			return fn(fs)
 		}
-		return err
+		return u.evictIfGone(folderID, fs, err)
 	}
 	defer release()
 	buildStart := time.Now()
@@ -829,28 +833,26 @@ func (u *userIndex) withFolderROSite(folderID uint64, site string, fn func(*fold
 	whole := time.Now()
 	defer func() { metricReadSeconds.Observe(time.Since(whole).Seconds()) }()
 
-	u.mu.Lock()
-	fs, ok := u.open[folderID]
-	u.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("fileindex: folder %d not open", folderID)
+	fs, err := u.state(folderID)
+	if err != nil {
+		return err
 	}
 	// The lock part covers every trip to the service, release included: timing
 	// only the acquisition leaves that, about as costly, unnamed.
 	var reloadDur time.Duration
 	lockStart := time.Now()
-	err := u.withDistLock(fs, true, site, func() error {
+	err = u.withDistLock(fs, true, site, func() error {
 		reloadStart := time.Now()
 		fs.mu.Lock()
 		defer fs.mu.Unlock()
-		rerr := fs.reload()
+		rerr := fs.missingBase(fs.reload())
 		reloadDur = time.Since(reloadStart)
 		observeReadPart("reload", reloadDur)
 		return rerr
 	})
 	observeReadPart("lock", time.Since(lockStart)-reloadDur)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	if err != nil {
+		return u.evictIfGone(folderID, fs, err)
 	}
 	// fn only reads the in-memory snapshot; shared lock allows
 	// concurrent readers without blocking writers.
@@ -989,8 +991,7 @@ func (u *userIndex) DeleteFolder(folder string) error {
 		u.mu.Lock()
 		for id, fs := range u.open {
 			if fs.folder == folder {
-				fs.closeFDs()
-				delete(u.open, id)
+				u.markGoneLocked(id, fs)
 			}
 		}
 		if u.byDir != nil {

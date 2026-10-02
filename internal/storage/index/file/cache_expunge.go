@@ -40,10 +40,8 @@ func (u *userIndex) noteCacheExpunged(folderID uint64, n uint32) {
 	if n == 0 {
 		return
 	}
-	u.mu.Lock()
-	fs, ok := u.open[folderID]
-	u.mu.Unlock()
-	if !ok {
+	fs, err := u.state(folderID)
+	if err != nil {
 		return
 	}
 	if err := u.cacheExpunged(fs, folderID, n); err != nil {
@@ -86,11 +84,9 @@ func (u *userIndex) cacheExpunged(fs *folderState, folderID uint64, n uint32) er
 // PurgeCacheIfDue purges the folder's cache when a share reached its threshold,
 // as the reference asks on every header write. The caller holds the cache locks.
 func (u *userIndex) PurgeCacheIfDue(folderID uint64) error {
-	u.mu.Lock()
-	fs, ok := u.open[folderID]
-	u.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("fileindex: folder %d not open", folderID)
+	fs, err := u.state(folderID)
+	if err != nil {
+		return err
 	}
 	path, err := u.CachePath(folderID)
 	if err != nil {

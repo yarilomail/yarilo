@@ -54,25 +54,27 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 	// Reuse an already-open folderState for the same (user, folder);
 	// reload first so the snapshot reflects writes from other sessions.
 	u.mu.Lock()
-	if u.byDir != nil {
-		if id, ok := u.byDir[indexDir]; ok {
-			fsDedup := u.open[id]
-			u.mu.Unlock()
-			if traceID != "" && fsDedup != nil {
-				fsDedup.mu.Lock()
-				fsDedup.traceID = traceID
-				fsDedup.mu.Unlock()
-			}
-			// Re-opening what this index holds: the lock-free read FolderVSize
-			// makes, with the locked one as its own fallback (#1639).
-			var snap *mailbox.Folder
-			err := u.withFolderROUnlocked(id, func(fs *folderState) error {
-				var sErr error
-				snap, sErr = fs.snapshot(id)
-				return sErr
-			})
+	if id, ok := u.byDir[indexDir]; ok {
+		fsDedup := u.open[id]
+		u.mu.Unlock()
+		if traceID != "" && fsDedup != nil {
+			fsDedup.mu.Lock()
+			fsDedup.traceID = traceID
+			fsDedup.mu.Unlock()
+		}
+		// Re-opening what this index holds: the lock-free read FolderVSize
+		// makes, with the locked one as its own fallback (#1639).
+		var snap *mailbox.Folder
+		err := u.withFolderROUnlocked(id, func(fs *folderState) error {
+			var sErr error
+			snap, sErr = fs.snapshot(id)
+			return sErr
+		})
+		if !errors.Is(err, mailbox.ErrFolderGone) {
 			return snap, err
 		}
+		// Deleted elsewhere: this call opens the folder as it is now.
+		u.mu.Lock()
 	}
 	u.next++
 	id := u.next
@@ -592,7 +594,12 @@ func (fs *folderState) flush() error {
 			"trace_id", fs.traceID, "folder", fs.folder, "caller", caller, "next_uid", fs.file.Header.NextUID,
 			"messages_count", fs.file.Header.MessagesCount)
 	}
-	if err := os.MkdirAll(fs.indexDir, 0o700); err != nil {
+	if fs.baseIdent != nil {
+		// A loaded folder's directory is never made again: it was deleted.
+		if _, err := os.Stat(fs.indexDir); errors.Is(err, os.ErrNotExist) {
+			return fs.goneError()
+		}
+	} else if err := os.MkdirAll(fs.indexDir, 0o700); err != nil {
 		return fmt.Errorf("fileindex/flush: mkdir: %w", err)
 	}
 	// Persisted as maintained, not re-derived: a record carrying no size summed
@@ -665,27 +672,81 @@ func (fs *folderState) flush() error {
 // withFolderSite is withFolder with the caller recorded: a total naming no
 // caller says how many acquisitions there were, not which to change (#1827).
 func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folderState) error) error {
-	u.mu.Lock()
-	fs, ok := u.open[folderID]
-	u.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("fileindex: folder %d not open", folderID)
+	fs, err := u.state(folderID)
+	if err != nil {
+		return err
 	}
-	return u.withFolderLockSite(fs, site, func() error {
+	err = u.withFolderLockSite(fs, site, func() error {
 		// The reload is inside the hold: two processes that read NextUID unheld
 		// hand out the same uid (#1840). A refresh only reads.
 		if site != lockSiteRefresh {
 			release, err := fs.holdJournal(site)
 			if err != nil {
+				if gone := fs.missingBase(err); gone != nil {
+					return gone
+				}
 				return err
 			}
 			defer release()
 		}
-		if err := fs.reload(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := fs.missingBase(fs.reload()); err != nil {
 			return err
 		}
 		return fn(fs)
 	})
+	return u.evictIfGone(folderID, fs, err)
+}
+
+// missingBase lets a reload find no file only before anything is loaded; a
+// loaded state whose base is gone is a folder another process deleted.
+func (fs *folderState) missingBase(err error) error {
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if fs.file == nil {
+		return nil
+	}
+	if _, serr := os.Stat(fs.indexPath); errors.Is(serr, os.ErrNotExist) {
+		return fs.goneError()
+	}
+	return err
+}
+
+func (fs *folderState) goneError() error { return &mailbox.FolderGoneError{Folder: fs.folder} }
+
+// state is folderID's open state; a deleted one answers ErrFolderGone until Close.
+func (u *userIndex) state(folderID uint64) (*folderState, error) {
+	u.mu.Lock()
+	fs, ok := u.open[folderID]
+	gone := ok && fs.gone
+	u.mu.Unlock()
+	switch {
+	case !ok:
+		return nil, fmt.Errorf("fileindex: folder %d not open", folderID)
+	case gone:
+		return nil, fs.goneError()
+	}
+	return fs, nil
+}
+
+// evictIfGone marks a deleted folder's state gone and drops its route, so the
+// next open starts afresh while holders of the old id keep the same answer.
+func (u *userIndex) evictIfGone(folderID uint64, fs *folderState, err error) error {
+	if !errors.Is(err, mailbox.ErrFolderGone) {
+		return err
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.markGoneLocked(folderID, fs)
+	return err
+}
+
+func (u *userIndex) markGoneLocked(folderID uint64, fs *folderState) {
+	fs.closeFDs()
+	fs.gone = true
+	if u.byDir != nil && u.byDir[fs.indexDir] == folderID {
+		delete(u.byDir, fs.indexDir)
+	}
 }
 
 // reload rereads the on-disk state into fs. Caller MUST hold the folder
@@ -1946,11 +2007,9 @@ func (u *userIndex) ExpungeFloor(folderID uint64) (uint64, error) {
 // drivers reach on purpose. Measured here since the paths are this package's and
 // a caller reconstructing them would drift.
 func (u *userIndex) JournalSizes(folderID uint64) (int64, int64, error) {
-	u.mu.Lock()
-	fs, ok := u.open[folderID]
-	u.mu.Unlock()
-	if !ok {
-		return 0, 0, fmt.Errorf("fileindex: folder %d not open", folderID)
+	fs, err := u.state(folderID)
+	if err != nil {
+		return 0, 0, err
 	}
 	return fileSize(fs.indexPath), fileSize(fs.indexPath + ".log"), nil
 }

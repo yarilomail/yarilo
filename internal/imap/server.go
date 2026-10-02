@@ -1477,16 +1477,11 @@ func (s *session) Delete(name string) error {
 	if selected {
 		s.Unselect() //nolint:errcheck // it only clears session state
 	}
-	if err := h.box.Delete(rel); err != nil {
+	if err := h.mailbox().Delete(rel); err != nil {
 		return nameError(err)
 	}
 	if ferr == nil {
 		s.ftsDropFolder(deleted)
-	}
-	// drop the folder's index state. Non-fatal: the mailbox is already
-	// gone; any orphan index dir is reclaimed on next rebuild.
-	if err := h.mailbox().DeleteFolder(rel); err != nil {
-		slog.Warn("imap: index delete after DELETE failed", "folder", name, "err", err)
 	}
 	// drop explicit ACL state (file + namespace-wide index). Non-fatal:
 	// the mailbox is already gone.
