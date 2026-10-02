@@ -163,3 +163,36 @@ func TestARecordWithHeadersKeepsItsChecksum(t *testing.T) {
 }
 
 var _ = mailbox.MessageMeta{}
+
+// A record holding only some envelope headers is a miss: the rest are unknown,
+// not absent, and an envelope built without them must not be served or kept.
+func TestAPartialSetOfCachedHeadersIsAMiss(t *testing.T) {
+	idx, f, m := compatFolder(t)
+	fc := Open(idx, f.ID, Options{User: "u", Folder: f.Name})
+	if fc == nil {
+		t.Fatal("cache unavailable")
+	}
+	line := append([]byte{1, 0, 0, 0, 0, 0, 0, 0}, "Subject: partial\r\n"...)
+	fc.storeField(m, fc.fieldID(headerField("Subject")), line)
+	fc.Close()
+
+	m = reread(t, idx, f.ID, m.UID)
+	reader := Open(idx, f.ID, Options{User: "u", Folder: f.Name})
+	if reader == nil {
+		t.Fatal("cache unavailable")
+	}
+	if text, ok := reader.EnvelopeText(m); ok {
+		t.Errorf("an envelope was built from one cached header: %q", text)
+	}
+	reader.Close()
+
+	m = reread(t, idx, f.ID, m.UID)
+	second := Open(idx, f.ID, Options{User: "u", Folder: f.Name})
+	if second == nil {
+		t.Fatal("cache unavailable")
+	}
+	defer second.Close()
+	if _, ok := second.read(m)[second.fieldID(fieldIMAPEnvelope)]; ok {
+		t.Error("an envelope built from a partial set was written back")
+	}
+}

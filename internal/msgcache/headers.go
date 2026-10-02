@@ -33,18 +33,13 @@ func (c cachedHeaders) RawValues(name string) []string {
 // Builds the envelope from the headers a record holds, which is what a cache
 // of theirs carries instead of a built one (as the reference does).
 func (fc *Handle) envelopeFromCachedHeaders(vals map[uint32][]byte) (string, bool) {
-	h := cachedHeaders{fc: fc, vals: vals}
-	var any bool
+	// Every field or none: an uncached one is unknown, not absent (#2078).
 	for _, name := range envelopeHeaders {
-		if len(h.RawValues(name)) > 0 {
-			any = true
-			break
+		if _, cached := vals[fc.fieldID(headerField(name))]; !cached {
+			return "", false
 		}
 	}
-	if !any {
-		return "", false
-	}
-	return imaptext.EnvelopeFromHeader(h), true
+	return imaptext.EnvelopeFromHeader(cachedHeaders{fc: fc, vals: vals}), true
 }
 
 // One field per header, the line kept whole, as the reference caches them: a
@@ -53,6 +48,7 @@ func (fc *Handle) storeEnvelopeHeaders(m *mailbox.MessageMeta, h textproto.Heade
 	for _, name := range envelopeHeaders {
 		fields := h.FieldsByKey(name)
 		if !fields.Next() {
+			fc.storeField(m, fc.fieldID(headerField(name)), []byte{})
 			continue
 		}
 		line := name + ": " + fields.Value() + "\r\n"

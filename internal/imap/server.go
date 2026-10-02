@@ -3314,6 +3314,14 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	var seenWrites []pendingStore
 	// RFC 3516: a section that cannot be decoded fails the command.
 	var binaryErr error
+	// A message read short is answered NO, not with what an empty read parses to.
+	var readErr error
+	var readUID uint32
+	noteReadErr := func(uid uint32, err error) {
+		if readErr == nil {
+			readErr, readUID = err, uid
+		}
+	}
 	for _, fe := range fetchList {
 		m := fe.msg
 		// CHANGEDSINCE filter — skip messages whose modseq has not moved
@@ -3405,31 +3413,48 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			// threading existed.
 			mw.WriteThreadID(threadIDs[m.UID])
 		}
-		if opts.Envelope && s.readableSelected(m) {
+		if opts.Envelope && !s.readableSelected(m) {
+			mark("envelope", errNoRecordAddress)
+		} else if opts.Envelope {
 			// One text, whoever wrote it: built from the raw header by the
 			// reference's rules, so an encoded word and an address group reach
 			// the client as the message wrote them (#1714).
 			if text, ok := envCache.EnvelopeText(m); ok {
 				mw.WriteEnvelopeRaw(text)
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
-				hdr, _ := textproto.ReadHeader(bufio.NewReader(rc))
+				rd := &missReader{r: rc}
+				hdr, _ := textproto.ReadHeader(bufio.NewReader(rd))
 				rc.Close()
-				text := msgcache.EnvelopeTextOf(hdr)
-				mw.WriteEnvelopeRaw(text)
-				envCache.StoreFromHeader(m, hdr, text)
-				envCache.StoreSentDate(m, imapserver.ExtractEnvelope(hdr).Date)
+				if rerr := rd.missed(m); rerr != nil {
+					mark("envelope", rerr)
+					noteReadErr(m.UID, rerr)
+				} else {
+					text := msgcache.EnvelopeTextOf(hdr)
+					mw.WriteEnvelopeRaw(text)
+					envCache.StoreFromHeader(m, hdr, text)
+					envCache.StoreSentDate(m, imapserver.ExtractEnvelope(hdr).Date)
+				}
 			} else {
 				mark("envelope", ferr)
 			}
 		}
-		if opts.BodyStructure != nil && s.readableSelected(m) {
+		if opts.BodyStructure != nil && !s.readableSelected(m) {
+			mark("bodystructure", errNoRecordAddress)
+		} else if opts.BodyStructure != nil {
 			if bs := envCache.BodyStructure(m); bs != nil {
 				mw.WriteBodyStructure(bs)
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
-				bs := imapserver.ExtractBodyStructure(rc)
+				rd := &missReader{r: rc}
+				bs := imapserver.ExtractBodyStructure(rd)
+				rerr := rd.missedWhole(m)
 				rc.Close()
-				mw.WriteBodyStructure(bs)
-				envCache.StoreBodyStructure(m, bs)
+				if rerr != nil {
+					mark("bodystructure", rerr)
+					noteReadErr(m.UID, rerr)
+				} else {
+					mw.WriteBodyStructure(bs)
+					envCache.StoreBodyStructure(m, bs)
+				}
 			} else {
 				mark("bodystructure", ferr)
 			}
@@ -3549,6 +3574,10 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	}
 	if len(seenWrites) > 0 {
 		s.writeFlagsToStorage(seenWrites)
+	}
+	if readErr != nil {
+		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo,
+			Text: fmt.Sprintf("Message UID %d could not be read: %v", readUID, readErr)}
 	}
 	switch {
 	case errors.Is(binaryErr, errUnknownCTE):
