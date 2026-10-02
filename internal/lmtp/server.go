@@ -148,6 +148,7 @@ func New(opts Options) *Server {
 	srv.WriteTimeout = time.Duration(opts.Config.WriteTimeout) * time.Second
 	// Advertised as SIZE and enforced while reading, so an oversized body is never held.
 	srv.MaxMessageBytes = opts.QuotaMailSize
+	srv.MaxRecipients = opts.Config.MaxRecipients
 
 	s.srv = srv
 	return s

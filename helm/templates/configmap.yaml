@@ -162,6 +162,7 @@ data:
         lmtp_hdr_delivery_address: {{ .Values.protocol.lmtp.hdr_delivery_address | quote }}
         lmtp_verbose_replies: {{ .Values.protocol.lmtp.verbose_replies }}
         lmtp_user_concurrency_limit: {{ .Values.protocol.lmtp.user_concurrency_limit }}
+        lmtp_max_recipients: {{ .Values.protocol.lmtp.lmtp_max_recipients | default 0 | int64 }}
         read_timeout: {{ .Values.protocol.lmtp.read_timeout }}
         write_timeout: {{ .Values.protocol.lmtp.write_timeout }}
         {{- with .Values.protocol.lmtp.client_workarounds }}

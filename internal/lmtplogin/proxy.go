@@ -103,6 +103,9 @@ type Options struct {
 	// MaxMessageBytes is quota_mail_size: advertised as SIZE and enforced
 	// while reading, so an oversized body is refused before it is held.
 	MaxMessageBytes int64
+	// MaxRecipients is lmtp_max_recipients: advertised as LIMITS RCPTMAX and
+	// enforced at RCPT. 0 = unlimited.
+	MaxRecipients int
 }
 
 // ErrTooManyConcurrent is returned when the cluster-wide delivery count for a
@@ -136,6 +139,7 @@ func New(opts Options) *Server {
 	srv.WriteTimeout = opts.WriteTimeout
 	srv.EnableXCLIENT = opts.XClient
 	srv.MaxMessageBytes = opts.MaxMessageBytes
+	srv.MaxRecipients = opts.MaxRecipients
 
 	s.srv = srv
 	return s

@@ -583,6 +583,9 @@ type LMTPProtocolConfig struct {
 	// no limit MUST set -1 ("unlimited"), so a missing or zeroed config can
 	// never silently turn off the DoS guard.
 	UserConcurrencyLimit int `koanf:"lmtp_user_concurrency_limit"`
+	// MaxRecipients caps RCPTs per transaction, advertised as LIMITS RCPTMAX;
+	// past it 452 4.5.3. 0 = unlimited.
+	MaxRecipients int `koanf:"lmtp_max_recipients"`
 	// ReadTimeout is the per-command read timeout in seconds. Default: 300.
 	ReadTimeout int `koanf:"read_timeout"`
 	// WriteTimeout is the per-command write timeout in seconds. Default: 300.
@@ -3587,7 +3590,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 7
+const minConfigSchema = 8
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3605,6 +3608,7 @@ var schemaAdditions = map[int][]string{
 	5: {"lmtp_proxy_timeout"},
 	6: {"login_proxy_timeout"},
 	7: {"managesieve_max_line_length"},
+	8: {"lmtp_max_recipients"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

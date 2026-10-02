@@ -153,6 +153,7 @@ func options(cfg *config.Config, hostname string, intTLS *tls.Config, authMaster
 		XClient:         cfg.Services.LMTP.XClient,
 		XClientNets:     parseCIDRs(cfg.General.XClient.TrustedNets),
 		MaxMessageBytes: quota.ParseSize(cfg.Quota.MailSize),
+		MaxRecipients:   cfg.Protocol.LMTP.MaxRecipients,
 		ProxyTimeout:    time.Duration(cfg.Protocol.LMTP.Proxy.ProxyTimeout) * time.Second,
 	}
 }
