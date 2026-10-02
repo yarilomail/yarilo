@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 3
+config_schema_version: 4
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -1397,6 +1397,11 @@ components:
     ## unknown in userdb. Default "REJECT Unknown user"; set "" to fall back to
     ## DUNNO (accept, let a later Postfix check decide).
     quota_status_nouser: "REJECT Unknown user"
+    ## Actions for a recipient that fits, a message larger than allowed (empty:
+    ## the over-quota action), and a full mailbox. %{error} is the reason.
+    quota_status_success: "OK"
+    quota_status_toolarge: ""
+    quota_status_overquota: "554 5.2.2 %{error}"
 
     ## auth_master_addr is the yarilo-auth master-protocol listener address
     ## used for per-user quota_rule lookups via userdb. When set, per-user

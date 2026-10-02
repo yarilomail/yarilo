@@ -123,6 +123,9 @@ func main() {
 		MailSize:           quota.ParseSize(cfg.Quota.MailSize),
 		Policy:             cfg.Quota.QuotaPolicy(),
 		Nouser:             qs.Nouser,
+		Success:            qs.Success,
+		Toolarge:           qs.Toolarge,
+		Overquota:          qs.Overquota,
 	})
 
 	listen := qs.Listen
