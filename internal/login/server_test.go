@@ -136,7 +136,7 @@ func TestExtractSubmissionPreamble_Plain(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractSubmissionPreamble(srv, rd, nil, Options{})
+		p, _, _, err := extractSubmissionPreamble(srv, rd, nil, Options{}, relayContext{})
 		got = p
 		errCh <- err
 	}()

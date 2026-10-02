@@ -34,6 +34,10 @@ type PassdbConfig struct {
 	// LookupTimeout caps the per-request Validate call. Zero inherits the
 	// validator's own timeouts.
 	LookupTimeout int
+
+	// Scope and OpenIDConfigurationURL are named in a refused login's reply.
+	Scope                  string
+	OpenIDConfigurationURL string
 }
 
 // Passdb adapts a Validator to the protocol.Passdb surface so an
@@ -121,3 +125,8 @@ func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
 
 // DriverName satisfies protocol.DriverName for passdb metrics.
 func (p *Passdb) DriverName() string { return "oauth2" }
+
+// OAuth2Failure satisfies protocol.OAuth2Passdb.
+func (p *Passdb) OAuth2Failure() (scope, openidConfiguration string) {
+	return p.cfg.Scope, p.cfg.OpenIDConfigurationURL
+}

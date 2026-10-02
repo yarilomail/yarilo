@@ -178,3 +178,27 @@ func (p plainOnly) Authenticate(username, password, _, _ string) (*protocol.Auth
 	}
 	return &protocol.AuthResponse{Result: protocol.AuthOK, Username: username}, nil
 }
+
+// RelayToChain serves auth over the given passdb chain and dials it.
+func RelayToChain(t *testing.T, chain ...protocol.Passdb) *authrelay.Client {
+	t.Helper()
+	return relayServing(t, chain)
+}
+
+// OAuthPassdb accepts one bearer token for one user, the way the token
+// validator does: the token arrives as the password, the user as the name.
+type OAuthPassdb struct {
+	User, Token, Scope, OpenID string
+}
+
+// Authenticate satisfies protocol.Passdb.
+func (p OAuthPassdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
+	if req.Username != p.User || req.Password != p.Token {
+		return protocol.ResultNext, nil
+	}
+	req.Fields.Set("user", p.User)
+	return protocol.ResultOK, nil
+}
+
+// OAuth2Failure satisfies protocol.OAuth2Passdb.
+func (p OAuthPassdb) OAuth2Failure() (string, string) { return p.Scope, p.OpenID }

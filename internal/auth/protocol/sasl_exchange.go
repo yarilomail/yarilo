@@ -36,6 +36,10 @@ type saslExchange struct {
 	service  string
 	rip      string
 	session  string
+	// oauthDB is set on an OAuth login; oauthRefused once its refusal was
+	// sent and only the client's acknowledgement is awaited.
+	oauthDB      OAuth2Passdb
+	oauthRefused bool
 }
 
 // SASLExchangeTTL bounds an unfinished conversation. The relay's connection is
@@ -225,6 +229,9 @@ func (s *Server) handleContinue(conn net.Conn, live *exchanges, fields []string)
 		live.drop(id)
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
+	}
+	if x.oauthDB != nil {
+		return s.continueOAuth(conn, live, id, x, response)
 	}
 	return s.advanceSCRAM(conn, live, id, x, response)
 }

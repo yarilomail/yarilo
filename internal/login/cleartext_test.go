@@ -74,7 +74,7 @@ var cleartextCases = []cleartextCase{
 		login: []string{"USER alice", "PASS secret"}, starttls: "STLS", tlsOK: "+OK"},
 	{name: "SMTP AUTH PLAIN", refused: "523 5.7.10",
 		run: func(c net.Conn, rd *bufio.Reader, x *tls.Config, o Options) (*preamble, error) {
-			p, _, _, err := extractSubmissionPreamble(c, rd, x, o)
+			p, _, _, err := extractSubmissionPreamble(c, rd, x, o, relayContext{})
 			return p, err
 		},
 		before: []string{"EHLO client"}, login: []string{"AUTH PLAIN " + imapPLAIN()},

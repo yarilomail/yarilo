@@ -126,9 +126,6 @@ type Options struct {
 	// before it is closed; 0 = 3. Mirrors auth_max_attempts.
 	AuthMaxAttempts int
 
-	// OAuth2Enabled advertises and accepts OAUTHBEARER and XOAUTH2 mechanisms.
-	// Mirrors cfg.Auth.OAuth2 being non-empty.
-	OAuth2Enabled bool
 	// DisablePlainAuth refuses PLAIN and LOGIN, and hides them, on a connection
 	// that is not TLS, not proxied and not local.
 	DisablePlainAuth bool
