@@ -23,9 +23,9 @@ type relayContext struct {
 	sessionID string
 }
 
-// scramMechanisms are what the service announced. The proxy runs none of them,
-// so naming one it cannot relay is a promise it cannot keep.
-func scramMechanisms(rc relayContext, conn net.Conn) []string {
+// relayMechanisms are what the service announced and the proxy relays: SCRAM,
+// and OAuth when a token validator is in the chain.
+func relayMechanisms(rc relayContext, conn net.Conn) []string {
 	dial := rc.dial
 	if dial == nil {
 		return nil
@@ -37,10 +37,28 @@ func scramMechanisms(rc relayContext, conn net.Conn) []string {
 	bound := channelBinding(conn) != nil
 	var out []string
 	for _, mech := range cl.Mechanisms() {
-		if !strings.HasPrefix(mech, "SCRAM-") {
+		if !isRelayMech(mech) {
 			continue
 		}
 		if strings.HasSuffix(mech, "-PLUS") && !bound {
+			continue
+		}
+		out = append(out, mech)
+	}
+	return out
+}
+
+// isRelayMech is a mechanism the service runs and the proxy only carries.
+func isRelayMech(mech string) bool {
+	return strings.HasPrefix(mech, "SCRAM-") || mech == "OAUTHBEARER" || mech == "XOAUTH2"
+}
+
+// advertisedRelay is what may be offered now: an OAuth token is a password,
+// held back with PLAIN on an open line.
+func advertisedRelay(rc relayContext, conn net.Conn, cleartextOK bool) []string {
+	var out []string
+	for _, mech := range relayMechanisms(rc, conn) {
+		if isCleartextMech(mech) && !cleartextOK {
 			continue
 		}
 		out = append(out, mech)
@@ -148,5 +166,15 @@ func saslIO(conn net.Conn, rd *bufio.Reader) (func([]byte) error, func() ([]byte
 		}
 		return base64.StdEncoding.DecodeString(line)
 	}
+	return write, read
+}
+
+// smtpSASLIO is SMTP's spelling: "334 " and base64, "*" to cancel.
+func smtpSASLIO(conn net.Conn, rd *bufio.Reader) (func([]byte) error, func() ([]byte, error)) {
+	write := func(challenge []byte) error {
+		_, err := fmt.Fprintf(conn, "334 %s\r\n", base64.StdEncoding.EncodeToString(challenge))
+		return err
+	}
+	_, read := saslIO(conn, rd)
 	return write, read
 }

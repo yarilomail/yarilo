@@ -134,7 +134,7 @@ func TestTheProxyAdvertisesNothingTheServiceLacks(t *testing.T) {
 	_, server := net.Pipe()
 	t.Cleanup(func() { server.Close() }) //nolint:errcheck
 
-	if got := scramMechanisms(relayContext{dial: dial}, server); len(got) != 0 {
+	if got := relayMechanisms(relayContext{dial: dial}, server); len(got) != 0 {
 		t.Errorf("the proxy offers %v against a service that announced no SCRAM", got)
 	}
 }

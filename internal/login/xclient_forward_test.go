@@ -181,7 +181,7 @@ func TestSubmissionPreamble_ForwardedXClient(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractSubmissionPreamble(srv, rd, nil, Options{XClient: true})
+		p, _, _, err := extractSubmissionPreamble(srv, rd, nil, Options{XClient: true}, relayContext{})
 		got = p
 		errCh <- err
 	}()

@@ -33,14 +33,16 @@ func cleartextRefused(conn net.Conn, opts Options) bool {
 	return !rok || !lok || !r.IP.Equal(l.IP)
 }
 
+// isCleartextMech is a mechanism whose secret travels as is: a password, or a
+// bearer token, which is one.
 func isCleartextMech(m string) bool {
 	m = strings.ToUpper(m)
-	return m == "PLAIN" || m == "LOGIN"
+	return m == "PLAIN" || m == "LOGIN" || m == "OAUTHBEARER" || m == "XOAUTH2"
 }
 
 // imapPreAuthCaps returns the IMAP capability string for the pre-auth state.
 // extTLS is non-nil when STARTTLS is available (plain listener).
-func imapPreAuthCaps(extTLS *tls.Config, opts Options, scram []string) string {
+func imapPreAuthCaps(extTLS *tls.Config, opts Options, relayed []string) string {
 	caps := "IMAP4rev2 IMAP4rev1 SASL-IR LITERAL+ ID IDLE"
 	if extTLS != nil {
 		caps += " STARTTLS"
@@ -50,12 +52,9 @@ func imapPreAuthCaps(extTLS *tls.Config, opts Options, scram []string) string {
 	if !opts.DisablePlainAuth || extTLS == nil {
 		caps += " AUTH=PLAIN AUTH=LOGIN"
 	}
-	if opts.OAuth2Enabled {
-		caps += " AUTH=OAUTHBEARER AUTH=XOAUTH2"
-	}
 	// From the service, because the service runs them: advertising one it
 	// cannot serve is a promise the proxy cannot keep (#1733).
-	for _, mech := range scram {
+	for _, mech := range relayed {
 		caps += " AUTH=" + mech
 	}
 	return caps
@@ -159,7 +158,7 @@ func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Co
 	case ProtocolPOP3, ProtocolPOP3S:
 		return extractPOP3Preamble(conn, rd, extTLS, opts, rc)
 	case ProtocolSubmission, ProtocolSubmissions:
-		return extractSubmissionPreamble(conn, rd, extTLS, opts)
+		return extractSubmissionPreamble(conn, rd, extTLS, opts, rc)
 	case ProtocolManageSieve:
 		return extractManageSievePreamble(conn, rd, extTLS, opts)
 	default:
@@ -169,7 +168,7 @@ func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Co
 
 // extractIMAPPreamble sends the greeting then enters the auth command loop.
 func extractIMAPPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
-	caps := imapPreAuthCaps(extTLS, opts, scramMechanisms(rc, conn))
+	caps := imapPreAuthCaps(extTLS, opts, advertisedRelay(rc, conn, !opts.DisablePlainAuth || extTLS == nil))
 	if _, err := fmt.Fprintf(conn, "* OK [CAPABILITY %s] Yarilo Login ready\r\n", caps); err != nil {
 		return nil, conn, rd, fmt.Errorf("imap: send greeting: %w", err)
 	}
@@ -201,7 +200,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 
 		switch cmd {
 		case "CAPABILITY":
-			c := imapPreAuthCaps(extTLS, opts, scramMechanisms(rc, conn))
+			c := imapPreAuthCaps(extTLS, opts, advertisedRelay(rc, conn, !opts.DisablePlainAuth || extTLS == nil))
 			fmt.Fprintf(conn, "* CAPABILITY %s\r\n", c)                       //nolint:errcheck
 			fmt.Fprintf(conn, "%s OK [CAPABILITY %s] CAPABILITY\r\n", tag, c) //nolint:errcheck
 		case "ID":
@@ -332,7 +331,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				}, conn, rd, nil
 			default:
 				mech := strings.ToUpper(fields[2])
-				if strings.HasPrefix(mech, "SCRAM-") {
+				if isRelayMech(mech) {
 					var initial []byte
 					if len(fields) >= 4 && fields[3] != "" && fields[3] != "=" {
 						decoded, derr := base64.StdEncoding.DecodeString(fields[3])
@@ -416,15 +415,17 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 			if extTLS != nil {
 				capa += "STLS\r\n"
 			}
-			if !opts.DisablePlainAuth || extTLS == nil {
-				sasl := "SASL PLAIN LOGIN"
-				for _, mech := range scramMechanisms(rc, conn) {
-					sasl += " " + mech
-				}
-				capa += "USER\r\n" + sasl + "\r\n"
+			cleartextOK := !opts.DisablePlainAuth || extTLS == nil
+			sasl := "SASL"
+			if cleartextOK {
+				capa += "USER\r\n"
+				sasl += " PLAIN LOGIN"
 			}
-			if opts.OAuth2Enabled {
-				capa += "SASL OAUTHBEARER XOAUTH2\r\n"
+			for _, mech := range advertisedRelay(rc, conn, cleartextOK) {
+				sasl += " " + mech
+			}
+			if sasl != "SASL" {
+				capa += sasl + "\r\n"
 			}
 			capa += ".\r\n"
 			fmt.Fprint(conn, capa) //nolint:errcheck
@@ -485,7 +486,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					continue
 				}
 				return &preamble{username: user, password: pass, authzid: authzid, forwardIP: fwdIP, forwardPort: fwdPort, forwardSource: "xclient"}, conn, rd, nil
-			case "SCRAM-SHA-256", "SCRAM-SHA-256-PLUS", "SCRAM-SHA-1", "SCRAM-SHA-1-PLUS":
+			case "SCRAM-SHA-256", "SCRAM-SHA-256-PLUS", "SCRAM-SHA-1", "SCRAM-SHA-1-PLUS", "OAUTHBEARER", "XOAUTH2":
 				mech := strings.ToUpper(fields[1])
 				var initial []byte
 				if len(fields) >= 3 && fields[2] != "" && fields[2] != "=" {
@@ -595,7 +596,7 @@ func continueAuth(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, p Protoco
 	case ProtocolSubmission, ProtocolSubmissions:
 		// Re-enter the SMTP loop without the 220 greeting: mid-session, the
 		// client re-EHLOs and re-AUTHs after the 4xx (#896).
-		return smtpAuthLoop(conn, rd, extTLS, opts)
+		return smtpAuthLoop(conn, rd, extTLS, opts, rc)
 	default:
 		return nil, conn, rd, fmt.Errorf("login: continueAuth: non-retriable protocol %q", p)
 	}
@@ -603,16 +604,16 @@ func continueAuth(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, p Protoco
 
 // extractSubmissionPreamble speaks SMTP until AUTH completes. extTLS is the
 // STARTTLS config on 587 and nil on 465, which is TLS already.
-func extractSubmissionPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options) (*preamble, net.Conn, *bufio.Reader, error) {
+func extractSubmissionPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	if _, err := fmt.Fprintf(conn, "220 Yarilo Login ready\r\n"); err != nil {
 		return nil, conn, rd, fmt.Errorf("smtp: send greeting: %w", err)
 	}
-	return smtpAuthLoop(conn, rd, extTLS, opts)
+	return smtpAuthLoop(conn, rd, extTLS, opts, rc)
 }
 
 // smtpAuthLoop runs after the 220 greeting so continueAuth can re-enter it
 // without one: a client re-issues EHLO/AUTH on the same connection (#896).
-func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options) (*preamble, net.Conn, *bufio.Reader, error) {
+func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	var ehloLine string
 	var tlsDone bool
 	var fwdIP, fwdPort string
@@ -632,14 +633,16 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			if extTLS != nil && !tlsDone {
 				caps += "250-STARTTLS\r\n"
 			}
-			if !opts.DisablePlainAuth || extTLS == nil || tlsDone {
-				caps += "250-AUTH PLAIN LOGIN"
-				if opts.OAuth2Enabled {
-					caps += " OAUTHBEARER XOAUTH2"
-				}
-				caps += "\r\n"
-			} else if opts.OAuth2Enabled {
-				caps += "250-AUTH OAUTHBEARER XOAUTH2\r\n"
+			cleartextOK := !opts.DisablePlainAuth || extTLS == nil || tlsDone
+			mechs := ""
+			if cleartextOK {
+				mechs = " PLAIN LOGIN"
+			}
+			for _, mech := range advertisedRelay(rc, conn, cleartextOK) {
+				mechs += " " + mech
+			}
+			if mechs != "" {
+				caps += "250-AUTH" + mechs + "\r\n"
 			}
 			if opts.XClient {
 				caps += "250-XCLIENT ADDR PORT\r\n"
@@ -674,9 +677,12 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			isCleartextMech(strings.Fields(upper)[1]) && cleartextRefused(conn, opts):
 			fmt.Fprintf(conn, "523 5.7.10 %s\r\n", cleartextDisabledMsg) //nolint:errcheck
 		case strings.HasPrefix(upper, "AUTH "):
-			pre, err := handleSMTPAuth(conn, rd, trimmed, ehloLine)
+			pre, err := handleSMTPAuth(conn, rd, trimmed, ehloLine, rc)
 			if err != nil {
 				return nil, conn, rd, err
+			}
+			if pre == nil {
+				continue // a relayed exchange refused; the client may try again
 			}
 			pre.forwardIP, pre.forwardPort, pre.forwardSource = fwdIP, fwdPort, "xclient"
 			return pre, conn, rd, nil
@@ -694,7 +700,7 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 }
 
 // handleSMTPAuth processes AUTH PLAIN or AUTH LOGIN and returns the preamble.
-func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string) (*preamble, error) {
+func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string, rc relayContext) (*preamble, error) {
 	fields := strings.Fields(line)
 	if len(fields) < 2 {
 		fmt.Fprintf(conn, "501 5.5.4 Syntax error\r\n") //nolint:errcheck
@@ -767,8 +773,39 @@ func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string) (*pr
 		}, nil
 
 	default:
-		fmt.Fprintf(conn, "504 5.7.4 Authentication mechanism not supported\r\n") //nolint:errcheck
-		return nil, fmt.Errorf("smtp: unsupported auth mechanism %q", mech)
+		if !isRelayMech(mech) {
+			fmt.Fprintf(conn, "504 5.7.4 Authentication mechanism not supported\r\n") //nolint:errcheck
+			return nil, fmt.Errorf("smtp: unsupported auth mechanism %q", mech)
+		}
+		write, read := smtpSASLIO(conn, rd)
+		var initial []byte
+		switch {
+		case len(fields) >= 3 && fields[2] == "=":
+		case len(fields) >= 3:
+			decoded, err := base64.StdEncoding.DecodeString(fields[2])
+			if err != nil {
+				fmt.Fprintf(conn, "501 5.5.2 Invalid base64\r\n") //nolint:errcheck
+				return nil, nil
+			}
+			initial = decoded
+		default:
+			// No initial response: an empty challenge asks for the first message.
+			if err := write(nil); err != nil {
+				return nil, fmt.Errorf("smtp: auth challenge: %w", err)
+			}
+			first, err := read()
+			if err != nil {
+				fmt.Fprintf(conn, "501 5.7.0 Authentication cancelled\r\n") //nolint:errcheck
+				return nil, nil
+			}
+			initial = first
+		}
+		out, err := runRelayedSASL(rc, conn, mech, "submission", clientIPOf(conn), initial, write, read)
+		if err != nil {
+			fmt.Fprintf(conn, "535 5.7.8 Authentication credentials invalid\r\n") //nolint:errcheck
+			return nil, nil
+		}
+		return &preamble{username: out.username, authResult: out.result, ehloLine: ehloLine}, nil
 	}
 }
 

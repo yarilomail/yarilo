@@ -40,7 +40,7 @@ func TestAnEndlessLineEndsThePreAuthLoop(t *testing.T) {
 			return err
 		}},
 		{"SMTP", "", func(c net.Conn, rd *bufio.Reader) error {
-			_, _, _, err := extractSubmissionPreamble(c, rd, nil, Options{})
+			_, _, _, err := extractSubmissionPreamble(c, rd, nil, Options{}, relayContext{})
 			return err
 		}},
 		{"ManageSieve atom", "", func(c net.Conn, rd *bufio.Reader) error {
