@@ -483,13 +483,9 @@ components:
     ## (#740), letting a user's in-flight command on the old backend finish
     ## after a move. Admin path only — a backend-down/expiry kick fires
     ## immediately (nothing to grace on a dead backend) and the split-writer
-    ## conflict-kick is never delayed. Matches the reference's
-    ## director_user_kick_delay. 0 = 2; negative = disabled (immediate).
-    ## Note: there is no max_parallel_moves knob — yarilo rehashes lazily
-    ## (kick -> re-login -> LOOKUP), so the move rate is already bounded by
-    ## max_parallel_kicks below; a parsed-but-unread key is deliberately omitted.
+    ## conflict-kick is never delayed. 0 = 2; negative = disabled (immediate).
     user_kick_delay: 2
-    ## Confirmed ring-wide kick (#847, reference user_kill_state parity). While a
+    ## Confirmed ring-wide kick (#847). While a
     ## user is being kicked/moved, LOOKUP is HELD so a concurrent login cannot
     ## land on a fresh backend before the old sessions are gone (the split-writer
     ## window). user_kill_timeout is the hard fallthrough (seconds): if the kill
@@ -508,7 +504,7 @@ components:
     ## Cap on sessions kicked per batch when a backend goes down (#740). The
     ## rest are kicked in later batches with a short pause between them,
     ## spreading the re-login stampede across surviving backends instead of
-    ## firing every kick at once. Matches director_max_parallel_kicks.
+    ## firing every kick at once.
     ## 0 = 100; negative = no batching (kick all at once).
     max_parallel_kicks: 100
     ## Cap on concurrent user moves during a GRACEFUL backend evacuation (#849) —
@@ -516,11 +512,11 @@ components:
     ## keeps at most this many users draining at once; each user's old sessions
     ## confirm gone before the next is pulled in, so a planned backend drain
     ## (rolling upgrade, maintenance) spreads the re-login across surviving pods
-    ## instead of stampeding them. Matches director_max_parallel_moves.
+    ## instead of stampeding them.
     ## 0 = 5; negative = unlimited (all at once, ~equivalent to --force).
     max_parallel_moves: 5
-    ## Optional external per-user cleanup hook (#848), the analog of the reference's
-    ## director_flush_socket. Path to an executable run once per user AFTER a
+    ## Optional external per-user cleanup hook (#848). Path to an executable run
+    ## once per user AFTER a
     ## deliberate relocation (admin move or graceful evacuation) confirms ring-wide —
     ## i.e. after the user's old sessions are gone. Called as:
     ##   flush_program FLUSH <username> <username_hash> <old_backend> <new_backend>
