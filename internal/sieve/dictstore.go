@@ -79,6 +79,9 @@ func (ds *DictScriptStore) LoadActiveScript(ctx context.Context, username, homeD
 }
 
 func (ds *DictScriptStore) SaveScript(ctx context.Context, username, _, name string, src []byte) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ds.defaultName {
 		return fmt.Errorf("sieve/dict: %q is a reserved script name", name)
 	}
@@ -97,6 +100,9 @@ func (ds *DictScriptStore) SaveScript(ctx context.Context, username, _, name str
 }
 
 func (ds *DictScriptStore) GetScript(ctx context.Context, username, _, name string) ([]byte, bool, error) {
+	if !ValidScriptName(name) {
+		return nil, false, ErrInvalidScriptName
+	}
 	vals, found, err := ds.d.Lookup(ctx, ds.opSet(username), ds.keyScript(username, name))
 	if err != nil {
 		return nil, false, fmt.Errorf("sieve/dict: get script: %w", err)
@@ -130,6 +136,9 @@ func (ds *DictScriptStore) ListScripts(ctx context.Context, username, _ string) 
 }
 
 func (ds *DictScriptStore) SetActive(ctx context.Context, username, _, name string) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ds.defaultName {
 		return fmt.Errorf("sieve/dict: %q is a reserved script name", name)
 	}
@@ -163,6 +172,9 @@ func (ds *DictScriptStore) Deactivate(ctx context.Context, username, _ string) e
 }
 
 func (ds *DictScriptStore) DeleteScript(ctx context.Context, username, _, name string) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ds.defaultName {
 		return fmt.Errorf("sieve/dict: %q is a reserved script name", name)
 	}
@@ -181,6 +193,9 @@ func (ds *DictScriptStore) DeleteScript(ctx context.Context, username, _, name s
 }
 
 func (ds *DictScriptStore) RenameScript(ctx context.Context, username, homeDir, oldName, newName string) error {
+	if !ValidScriptName(oldName) || !ValidScriptName(newName) {
+		return ErrInvalidScriptName
+	}
 	if oldName == ds.defaultName || newName == ds.defaultName {
 		return fmt.Errorf("sieve/dict: %q is a reserved script name", ds.defaultName)
 	}

@@ -187,6 +187,10 @@ func (s *session) handlePutScript(ctx context.Context) {
 	}
 
 	nameStr := string(name)
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
 	if nameStr == s.store.DefaultScriptName() {
 		_ = writeNO(s.w, "", "Script name is reserved.")
 		return
@@ -219,6 +223,10 @@ func (s *session) handleGetScript(ctx context.Context) {
 	}
 
 	nameStr := string(name)
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
 	src, found, err := s.store.GetScript(ctx, s.username, s.homeDir, nameStr)
 	if err != nil {
 		slog.Error("managesieve: get script", "sid", s.sid, "user", s.username, "script", nameStr, "err", err)
@@ -252,6 +260,10 @@ func (s *session) handleSetActive(ctx context.Context) {
 		}
 		slog.Info("managesieve: script deactivated", "sid", s.sid, "user", s.username)
 		_ = writeOK(s.w, "SETACTIVE completed.")
+		return
+	}
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
 		return
 	}
 
@@ -288,6 +300,10 @@ func (s *session) handleDeleteScript(ctx context.Context) {
 	}
 
 	nameStr := string(name)
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
 	if nameStr == s.store.DefaultScriptName() {
 		_ = writeNO(s.w, "", "Cannot delete reserved script.")
 		return
@@ -362,6 +378,10 @@ func (s *session) handleRenameScript(ctx context.Context) {
 	}
 
 	oldStr, newStr := string(oldName), string(newName)
+	if !sieve.ValidScriptName(oldStr) || !sieve.ValidScriptName(newStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
 
 	if oldStr == s.store.DefaultScriptName() || newStr == s.store.DefaultScriptName() {
 		_ = writeNO(s.w, "", "Script name is reserved.")
