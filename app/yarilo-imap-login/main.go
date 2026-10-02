@@ -264,7 +264,7 @@ func parseCIDRs(ss []string) []*net.IPNet {
 	return nets
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel, and
+// startTelemetry serves /healthz, /readyz and /metrics, and
 // returns the server so the caller can report readiness once its listeners are
 // actually bound.
 //

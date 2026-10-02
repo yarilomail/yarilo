@@ -99,7 +99,7 @@ func main() {
 	slog.Info("yarilo-sasl-login stopped")
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel, and
+// startTelemetry serves /healthz, /readyz and /metrics, and
 // returns the server so the caller can report readiness once its listeners are
 // actually bound.
 //

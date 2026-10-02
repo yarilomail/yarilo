@@ -284,7 +284,7 @@ func main() {
 	slog.Info("yarilo-auth stopped")
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel,
+// startTelemetry serves /healthz, /readyz and /metrics,
 // returning the server so the caller can report readiness once its
 // listeners are bound. When enabled, the liveness watchdog probes the
 // auth cache.

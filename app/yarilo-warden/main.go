@@ -148,7 +148,7 @@ func main() {
 	slog.Info("yarilo-warden stopped")
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel, and
+// startTelemetry serves /healthz, /readyz and /metrics, and
 // returns the server so the caller can report readiness once its listener is
 // actually bound. When the liveness watchdog is enabled it probes the warden
 // session-tracking mutex (#904).

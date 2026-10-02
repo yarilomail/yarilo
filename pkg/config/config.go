@@ -2533,7 +2533,7 @@ type TelemetryConfig struct {
 	LivenessWatchdog LivenessWatchdogConfig `koanf:"liveness_watchdog"`
 	// PprofEnabled serves the Go runtime profilers on the telemetry port:
 	// CPU, execution trace, and the allocation, goroutine, block and mutex
-	// profiles. Off by default — it is a switch thrown for the duration of an
+	// profiles, and /debug/loglevel. Off by default — it is a switch thrown for the duration of an
 	// investigation, and the process logs a warning at every start while it is
 	// on, because the failure mode is leaving it enabled and forgetting.
 	//
