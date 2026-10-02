@@ -80,7 +80,9 @@ package director
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -771,10 +773,15 @@ func (s *Server) handleConn(conn net.Conn) {
 		_ = c.WriteLine(hostLine(b))
 	}
 	_ = c.WriteLine("HOST-HAND-END")
+	nonceBytes := make([]byte, 16)
+	_, _ = rand.Read(nonceBytes)
+	nonce := hex.EncodeToString(nonceBytes)
+	_ = c.WriteLine("RING-NONCE\t" + nonce)
 	_ = c.WriteLine("DONE")
 
 	// Read client handshake — consume until DONE.
 	var dialer Member
+	var pendingMembers, pendingRemoved []Member
 	for {
 		line, err := readBoundedLine(rd)
 		if err != nil {
@@ -798,12 +805,14 @@ func (s *Server) handleConn(conn net.Conn) {
 				dialer = Member{IP: fields[1], Port: port}
 			}
 		case fields[0] == "MEMBERS" && len(fields) >= 3:
-			// Sent by a ring dialer right before PEER (#754) — merged
-			// BEFORE the PEER case's CONNECT-redirect check below, so that
-			// decision uses the dialer's membership view too, not just
-			// this node's own (possibly stale) one.
-			s.membership.mergeMembers(parseMemberList(fields[1]), parseMemberList(fields[2]))
+			// Held until PEER proves the dialer, then merged before the
+			// redirect check so it uses the dialer's view too (#754).
+			pendingMembers, pendingRemoved = parseMemberList(fields[1]), parseMemberList(fields[2])
 		case fields[0] == "PEER":
+			if len(fields) < 3 || !s.membership.acceptPeer(conn, nonce, dialer, fields[2]) {
+				continue
+			}
+			s.membership.mergeMembers(pendingMembers, pendingRemoved)
 			// Sent only by another director replica's ring connection
 			// (#700, repurposed for the ring's right-neighbor dial in
 			// #750) — a login proxy's generic cluster/proto dialer never

@@ -752,6 +752,32 @@ func joinHMAC(secret []byte, nonce string, joiner Member) []byte {
 	return mac.Sum(nil)
 }
 
+// peerProof binds a ring connection to the ring secret: the acceptor's nonce
+// for this connection and the dialer's ME, under a label of its own so a join
+// proof cannot stand in for it.
+func peerProof(secret []byte, nonce string, dialer Member) []byte {
+	return joinHMAC(secret, "PEER\t"+nonce, dialer)
+}
+
+// acceptPeer reports whether a PEER line proves the dialer holds the ring
+// secret for this connection's nonce, from a network allowed to join.
+func (m *Membership) acceptPeer(conn net.Conn, nonce string, dialer Member, proofHex string) bool {
+	if len(m.secret) == 0 {
+		slog.Warn("director: PEER refused, ring auth not configured", "remote", conn.RemoteAddr())
+		return false
+	}
+	if len(m.joinAllowedNets) > 0 && !ipInNets(conn.RemoteAddr(), m.joinAllowedNets) {
+		slog.Warn("director: PEER refused, source not in join_allowed_nets", "remote", conn.RemoteAddr())
+		return false
+	}
+	got, err := hex.DecodeString(proofHex)
+	if err != nil || subtle.ConstantTimeCompare(got, peerProof(m.secret, nonce, dialer)) != 1 {
+		slog.Warn("director: PEER refused, invalid proof", "remote", conn.RemoteAddr(), "dialer", dialer)
+		return false
+	}
+	return true
+}
+
 func parseMemberList(csv string) []Member {
 	if csv == "" {
 		return nil
@@ -1383,6 +1409,7 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 
 	rd := bufio.NewReaderSize(conn, 4096)
 	inHandshake := false
+	nonce := ""
 	for {
 		line, rErr := readBoundedLine(rd)
 		if rErr != nil {
@@ -1393,6 +1420,8 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 			break
 		}
 		switch {
+		case strings.HasPrefix(line, "RING-NONCE\t"):
+			nonce = strings.TrimPrefix(line, "RING-NONCE\t")
 		case line == "HOST-HAND-START":
 			inHandshake = true
 		case line == "HOST-HAND-END":
@@ -1416,7 +1445,7 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 		// stale view — merging the dialer's tombstones first closes that
 		// gap regardless of which way the connection ends up being used.
 		fmt.Sprintf("MEMBERS\t%s\t%s", formatMemberList(m.Members()), formatMemberList(m.removedList())),
-		"PEER\t1",
+		"PEER\t1\t" + hex.EncodeToString(peerProof(m.secret, nonce, m.self)),
 		"DONE",
 	} {
 		if _, wErr := fmt.Fprintf(conn, "%s\n", s); wErr != nil {
