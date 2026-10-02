@@ -125,6 +125,13 @@ services:
       YARILO_COMPONENT: yarilo-jmap
       LOG_LEVEL: "${LOG_LEVEL:-info}"
 
+  # Full-text search: config/yarilo.yaml runs fts_mode remote at yarilo-fts:9106.
+  yarilo-fts:
+    <<: *backend
+    environment:
+      YARILO_COMPONENT: yarilo-fts
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+
   # Operator API for `yarctl backend …`; reached with `docker compose exec`, not published.
   yarilo-backend-api:
     <<: *backend

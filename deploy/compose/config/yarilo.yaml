@@ -174,7 +174,7 @@ sieve:
   sieve_virustest_status_header: ""
   sieve_virustest_max_value: 5
   sieve_report_user_agent: "yarilo"
-  sieve_submission_host: "relay-fwd.yarilo-relay.svc.cluster.local:25"
+  sieve_submission_host: "localhost:25"
   sieve_submission_ssl: "no"
   sieve_submission_timeout: 30
   sieve_submission_auth_secret: "sieve-smtp-auth"
