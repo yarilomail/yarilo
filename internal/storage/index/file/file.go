@@ -803,6 +803,9 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	reloadStart := time.Now()
 	view, release, err := fs.openView()
 	observeReadPart("reload", time.Since(reloadStart))
+	if errors.Is(err, errBaseMoving) {
+		return u.withFolderROSite(folderID, lockSiteFallback, fn)
+	}
 	if err != nil {
 		fs.mu.RLock()
 		err = fs.missingBase(err)
