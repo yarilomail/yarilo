@@ -34,7 +34,7 @@ func serviceOn(t *testing.T, root string, idle time.Duration) (*Service, *mailbo
 		Engine:            flatcurve.New(flatcurve.Options{}),
 		Mailbox:           maildir.New(),
 		Index:             file.New(),
-		ResolveUser:       func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil },
+		ResolveUser:       func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:             chain,
 		CommitLimit:       2,
 		HandleIdleTimeout: idle,
@@ -69,7 +69,7 @@ func TestHelperFTSHolder(t *testing.T) {
 	}
 
 	svc, resolver := serviceOn(t, root, idle)
-	info := resolver.UserInfo(testUser, "")
+	info, _ := resolver.UserInfo(testUser, "")
 	box := maildir.New().OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatalf("holder init: %v", err)
@@ -166,7 +166,7 @@ func TestIdleHandleReleasesTheWriteLockForAnotherBackend(t *testing.T) {
 func TestSweepLeavesHandlesInUseAlone(t *testing.T) {
 	root := t.TempDir()
 	svc, resolver := serviceOn(t, root, time.Millisecond)
-	info := resolver.UserInfo(testUser, "")
+	info, _ := resolver.UserInfo(testUser, "")
 	box := maildir.New().OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatal(err)

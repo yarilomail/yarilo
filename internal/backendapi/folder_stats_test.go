@@ -23,7 +23,7 @@ func statsServer(t *testing.T, be mailbox.MailboxBackend) (*httptest.Server, str
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 	const user = "alice@example.com"
 
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := be.OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatalf("init: %v", err)

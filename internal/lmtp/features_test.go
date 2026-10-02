@@ -28,7 +28,7 @@ func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServ
 	mb := maildir.New()
 	idx := fileindex.New()
 
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -43,7 +43,7 @@ func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServ
 	go func() { _ = srv.Serve(ln) }()
 	return featureServer{
 		addr:       ln.Addr().String(),
-		maildirNew: filepath.Join(resolver.Resolve("alice@example.com", ""), "Maildir", "new"),
+		maildirNew: filepath.Join(mustUserInfo(resolver, "alice@example.com").Home, "Maildir", "new"),
 	}
 }
 
@@ -191,7 +191,7 @@ func TestLMTP_QuotaEnforcement(t *testing.T) {
 	mb := maildir.New()
 	idx := fileindex.New()
 
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}

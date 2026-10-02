@@ -3,6 +3,7 @@ package mailbox
 import (
 	"crypto/md5"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -204,27 +205,52 @@ type Resolver struct {
 	DefaultSeparator string
 }
 
+// ErrBadUsername is a username that cannot name a home: it would be a path.
+var ErrBadUsername = errors.New("mailbox: username is not a plain name")
+
+// checkUsername refuses a username whose %u, %n or %d would step out of Root.
+// The empty name is allowed: it asks for the deployment's defaults.
+func checkUsername(username string) error {
+	if username == "" {
+		return nil
+	}
+	if strings.ContainsAny(username, "/\\\x00") {
+		return ErrBadUsername
+	}
+	local, domain := splitUser(username)
+	if local == "" || local == "." || local == ".." || domain == "." || domain == ".." {
+		return ErrBadUsername
+	}
+	return nil
+}
+
 // Resolve returns the absolute home directory. An empty homeOverride expands
 // HomeTemplate against the username and joins with Root.
-func (r *Resolver) Resolve(username, homeOverride string) string {
+func (r *Resolver) Resolve(username, homeOverride string) (string, error) {
+	if err := checkUsername(username); err != nil {
+		return "", err
+	}
 	if homeOverride != "" {
 		if filepath.IsAbs(homeOverride) {
-			return homeOverride
+			return homeOverride, nil
 		}
-		return filepath.Join(r.Root, homeOverride)
+		return filepath.Join(r.Root, homeOverride), nil
 	}
 	tmpl := r.HomeTemplate
 	if tmpl == "" {
 		tmpl = "%d/%u"
 	}
-	return filepath.Join(r.Root, ExpandVars(tmpl, username))
+	return filepath.Join(r.Root, ExpandVars(tmpl, username)), nil
 }
 
 // UserInfo builds a fully-resolved UserInfo from the username + userdb
 // override. The Default* templates (if set) are ~/-, %h- and %u/%n/%d-expanded
 // into their fields; per-user overrides may overwrite them after the call.
-func (r *Resolver) UserInfo(username, homeOverride string) *UserInfo {
-	home := r.Resolve(username, homeOverride)
+func (r *Resolver) UserInfo(username, homeOverride string) (*UserInfo, error) {
+	home, err := r.Resolve(username, homeOverride)
+	if err != nil {
+		return nil, err
+	}
 	ui := &UserInfo{
 		Username: username,
 		Home:     home,
@@ -252,7 +278,7 @@ func (r *Resolver) UserInfo(username, homeOverride string) *UserInfo {
 	if r.DefaultMailPath != "" {
 		ui.MailPath = ExpandLocation(r.DefaultMailPath, home, username)
 	}
-	return ui
+	return ui, nil
 }
 
 // ExpandLocation resolves a storage location template: a leading "~/" and "%h"

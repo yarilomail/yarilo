@@ -3,6 +3,7 @@ package director
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -492,19 +493,24 @@ func dialAsLeftNeighbor(t *testing.T, addr string, left Member) net.Conn {
 		t.Fatalf("raw dial: %v", err)
 	}
 	rd := bufio.NewReader(conn)
+	nonce := ""
 	for { // consume the server handshake
 		line, rErr := rd.ReadString('\n')
 		if rErr != nil {
 			t.Fatalf("raw handshake read: %v", rErr)
 		}
-		if strings.TrimRight(line, "\n") == "DONE" {
+		line = strings.TrimRight(line, "\n")
+		if n, ok := strings.CutPrefix(line, "RING-NONCE\t"); ok {
+			nonce = n
+		}
+		if line == "DONE" {
 			break
 		}
 	}
 	for _, s := range []string{
 		fmt.Sprintf("ME\t%s\t%d", left.IP, left.Port),
 		fmt.Sprintf("MEMBERS\t%s\t", left.String()),
-		"PEER\t1",
+		"PEER\t1\t" + hex.EncodeToString(peerProof([]byte("shared-secret"), nonce, left)),
 		"DONE",
 	} {
 		if _, wErr := fmt.Fprintf(conn, "%s\n", s); wErr != nil {

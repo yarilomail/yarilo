@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // relayDialer hands the proxy the auth-service client. It is the Server's own
@@ -137,7 +138,7 @@ func saslIO(conn net.Conn, rd *bufio.Reader) (func([]byte) error, func() ([]byte
 		return err
 	}
 	read := func() ([]byte, error) {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return nil, err
 		}

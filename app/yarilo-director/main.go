@@ -264,7 +264,7 @@ func parseCIDRs(ss []string) []*net.IPNet {
 	return nets
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel.
+// startTelemetry serves /healthz, /readyz and /metrics.
 // Lifecycle is on: ready is reported only once the caller's ports are bound.
 func startTelemetry(cfg config.TelemetryConfig, srv *director.Server) *telemetry.Server {
 	opts := telemetry.Options{

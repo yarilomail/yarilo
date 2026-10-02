@@ -24,6 +24,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/cluster/proto"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/warden"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // Protocol identifies the mail protocol handled by the login pod.
@@ -1162,7 +1163,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 			return nil, fmt.Errorf("smtp ehlo send: %w", werr)
 		}
 		for {
-			line, rerr := rd.ReadString('\n')
+			line, rerr := lineio.ReadLine(rd, lineio.MaxClient)
 			if rerr != nil {
 				return nil, fmt.Errorf("smtp ehlo response: %w", rerr)
 			}
@@ -1600,7 +1601,7 @@ func dialBackend(addr string, tlsCfg *tls.Config, deadline time.Time) (net.Conn,
 func readBackendGreeting(rd *bufio.Reader, p Protocol) (caps, refusal string, err error) {
 	switch p {
 	case ProtocolIMAP, ProtocolIMAPS:
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return "", "", err
 		}
@@ -1613,7 +1614,7 @@ func readBackendGreeting(rd *bufio.Reader, p Protocol) (caps, refusal string, er
 		}
 		return caps, "", nil
 	case ProtocolPOP3, ProtocolPOP3S:
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return "", "", err
 		}
@@ -1623,7 +1624,7 @@ func readBackendGreeting(rd *bufio.Reader, p Protocol) (caps, refusal string, er
 		return "", "", nil
 	case ProtocolSubmission, ProtocolSubmissions:
 		for {
-			line, err := rd.ReadString('\n')
+			line, err := lineio.ReadLine(rd, lineio.MaxClient)
 			if err != nil {
 				return "", "", err
 			}
@@ -1634,7 +1635,7 @@ func readBackendGreeting(rd *bufio.Reader, p Protocol) (caps, refusal string, er
 	case ProtocolManageSieve:
 		// Consume the backend's pre-auth greeting (capability lines + OK).
 		for {
-			line, err := rd.ReadString('\n')
+			line, err := lineio.ReadLine(rd, lineio.MaxClient)
 			if err != nil {
 				return "", "", err
 			}

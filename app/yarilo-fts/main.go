@@ -190,7 +190,7 @@ func main() {
 func userResolver(masterAddr string, resolver *mailbox.Resolver, pool *authclient.Pool) func(string) (*mailbox.UserInfo, error) {
 	if masterAddr == "" {
 		return func(u string) (*mailbox.UserInfo, error) {
-			return resolver.UserInfo(u, ""), nil
+			return resolver.UserInfo(u, "")
 		}
 	}
 	return func(u string) (*mailbox.UserInfo, error) {

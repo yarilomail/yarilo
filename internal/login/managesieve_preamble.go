@@ -248,6 +248,9 @@ func msReadAtom(rd *bufio.Reader) (string, error) {
 	msSkipWS(rd)
 	var sb strings.Builder
 	for {
+		if sb.Len() > msMaxLiteral {
+			return "", errMSLiteralTooLarge
+		}
 		b, err := rd.ReadByte()
 		if err != nil {
 			if sb.Len() > 0 {
@@ -333,6 +336,9 @@ func msReadLastArg(rd *bufio.Reader, conn net.Conn) ([]byte, error) {
 func msReadQuoted(rd *bufio.Reader) ([]byte, error) {
 	var sb strings.Builder
 	for {
+		if sb.Len() > msMaxLiteral {
+			return nil, errMSLiteralTooLarge
+		}
 		b, err := rd.ReadByte()
 		if err != nil {
 			return nil, fmt.Errorf("managesieve: unterminated quoted string: %w", err)

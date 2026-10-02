@@ -58,7 +58,7 @@ func TestADeliveryToAMissingFolder(t *testing.T) {
 				if err := s.LMTPData(strings.NewReader("Subject: missing\r\n\r\nbody\r\n"), &statusSink{}); err != nil {
 					t.Fatalf("LMTPData: %v", err)
 				}
-				ui := resolver.UserInfo("alice@example.com", "")
+				ui, _ := resolver.UserInfo("alice@example.com", "")
 				store := backend.OpenUser(ui)
 				defer store.Close() //nolint:errcheck
 				made, _ := store.FolderExists("Lists")

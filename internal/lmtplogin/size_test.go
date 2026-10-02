@@ -71,3 +71,22 @@ func TestTheProxyOffersAndEnforcesTheMailSize(t *testing.T) {
 		}
 	})
 }
+
+func TestTheProxyHoldsTheRecipientLimit(t *testing.T) {
+	_, backendAddr := newStubBackend(t)
+	proxyAddr := startLMTPLogin(t, Options{
+		Hostname: "test.local", BackendAddr: backendAddr, AuthMasterAddr: startTestAuth(t), MaxRecipients: 2,
+	})
+	mta := dialMTA(t, proxyAddr)
+	mta.readCode(t, 220)
+	fmt.Fprintf(mta.conn, "LHLO smoketest\r\n")
+	if caps := mta.lineOf(t); !strings.Contains(caps, "LIMITS RCPTMAX=2") {
+		t.Errorf("LHLO does not advertise LIMITS RCPTMAX=2:\n%s", caps)
+	}
+	mta.mailFrom(t, "sender@example.com")
+	mta.rcpt(t, "a@example.com")
+	mta.rcpt(t, "b@example.com")
+	if code := mta.tryRcpt(t, "c@example.com"); code != 452 {
+		t.Fatalf("third RCPT = %d, want 452", code)
+	}
+}

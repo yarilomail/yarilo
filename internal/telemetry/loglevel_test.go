@@ -25,7 +25,7 @@ func TestLogLevelGet(t *testing.T) {
 	t.Cleanup(func() { logging.SetLevel(slog.LevelInfo) })
 	logging.SetLevel(slog.LevelWarn)
 
-	srv := New(":0")
+	srv := diagServer()
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/loglevel", nil))
 
@@ -43,7 +43,7 @@ func TestLogLevelPostChanges(t *testing.T) {
 	t.Cleanup(func() { logging.SetLevel(slog.LevelInfo) })
 	logging.SetLevel(slog.LevelInfo)
 
-	srv := New(":0")
+	srv := diagServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug"}`))
 	srv.Handler().ServeHTTP(rec, req)
@@ -63,7 +63,7 @@ func TestLogLevelPostWithTTL(t *testing.T) {
 	t.Cleanup(func() { logging.SetLevel(slog.LevelInfo) })
 	logging.SetLevel(slog.LevelInfo)
 
-	srv := New(":0")
+	srv := diagServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug","ttl":"50ms"}`))
 	srv.Handler().ServeHTTP(rec, req)
@@ -94,7 +94,7 @@ func TestLogLevelRejectsBadInput(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := New(":0")
+			srv := diagServer()
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(tc.body))
 			srv.Handler().ServeHTTP(rec, req)
@@ -110,7 +110,7 @@ func TestLogLevelRejectsBadInput(t *testing.T) {
 }
 
 func TestLogLevelMethodNotAllowed(t *testing.T) {
-	srv := New(":0")
+	srv := diagServer()
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/debug/loglevel", nil))
 
@@ -128,7 +128,7 @@ func TestLogLevelMethodNotAllowed(t *testing.T) {
 func TestLogLevelGaugeTracksActiveLevel(t *testing.T) {
 	t.Cleanup(func() { logging.SetLevel(slog.LevelInfo) })
 
-	srv := New(":0")
+	srv := diagServer()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"error"}`))
 	srv.Handler().ServeHTTP(rec, req)
@@ -146,7 +146,7 @@ func TestLogLevelGaugeTracksActiveLevel(t *testing.T) {
 func TestLogLevelGaugeIsNotStaleAfterATTLRevert(t *testing.T) {
 	t.Cleanup(func() { logging.SetLevel(slog.LevelInfo) })
 
-	srv := New(":0")
+	srv := diagServer()
 	logging.SetLevel(slog.LevelInfo)
 	logging.SetLevelFor(slog.LevelWarn, 50*time.Millisecond)
 
@@ -180,4 +180,33 @@ func scrapeLogLevel(t *testing.T, srv *Server) string {
 		}
 	}
 	return ""
+}
+
+// diagServer has the diagnostic switch on, which /debug/loglevel lives behind.
+func diagServer() *Server {
+	return NewWithOptions(Options{Addr: ":0", Lifecycle: true, Pprof: PprofOptions{Enabled: true}})
+}
+
+// Off by default: the level of the whole process is not anyone's to change.
+func TestLogLevelIsOffWithoutTheSwitch(t *testing.T) {
+	t.Cleanup(func() { logging.SetLevel(slog.LevelInfo) })
+	for _, tc := range []struct {
+		name string
+		srv  *Server
+		want int
+	}{
+		{"default", New(":0"), http.StatusNotFound},
+		{"switch on", diagServer(), http.StatusOK},
+	} {
+		for _, req := range []*http.Request{
+			httptest.NewRequest(http.MethodGet, "/debug/loglevel", nil),
+			httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug"}`)),
+		} {
+			rec := httptest.NewRecorder()
+			tc.srv.Handler().ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Errorf("%s %s = %d, want %d", tc.name, req.Method, rec.Code, tc.want)
+			}
+		}
+	}
 }

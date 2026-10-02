@@ -69,7 +69,11 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	if pui != nil {
 		home = pui.Home
 	}
-	ui := resolver.UserInfo(req.User, home)
+	ui, err := resolver.UserInfo(req.User, home)
+	if err != nil {
+		apiError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	nsEntries := []userNSEntry{}
 	for _, spec := range s.opts.Namespaces {

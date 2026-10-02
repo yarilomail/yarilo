@@ -57,7 +57,7 @@ func (s *session) serve(ctx context.Context) {
 			return
 		}
 
-		cmd, err := readAtom(s.r)
+		cmd, err := readAtom(s.r, int(s.argLimit().max))
 		if err != nil {
 			return
 		}

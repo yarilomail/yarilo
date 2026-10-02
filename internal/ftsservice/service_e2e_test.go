@@ -51,7 +51,7 @@ func newTestServiceIn(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.User
 		Engine:      flatcurve.New(flatcurve.Options{}),
 		Mailbox:     mb,
 		Index:       idx,
-		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil },
+		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 2,
 	})
@@ -60,7 +60,7 @@ func newTestServiceIn(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.User
 	}
 	t.Cleanup(func() { svc.Close() }) //nolint:errcheck
 
-	info := resolver.UserInfo(testUser, "")
+	info, _ := resolver.UserInfo(testUser, "")
 	box := mb.OpenUser(info)
 	uidx := idx.OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -353,7 +353,7 @@ func TestServiceAutoOptimize(t *testing.T) {
 		Engine:      flatcurve.New(flatcurve.Options{RotateCount: 2, OptimizeLimit: 3}),
 		Mailbox:     mb,
 		Index:       idx,
-		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil },
+		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 2,
 	})
@@ -362,7 +362,7 @@ func TestServiceAutoOptimize(t *testing.T) {
 	}
 	t.Cleanup(func() { svc.Close() }) //nolint:errcheck
 
-	info := resolver.UserInfo(testUser, "")
+	info, _ := resolver.UserInfo(testUser, "")
 	box := mb.OpenUser(info)
 	uidx := idx.OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -471,7 +471,7 @@ func TestBuildFailureCostsThePartNotTheRun(t *testing.T) {
 		Engine:      flatcurve.New(flatcurve.Options{}),
 		Mailbox:     mb,
 		Index:       idx,
-		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil },
+		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 10,
 		Build:       buildmail.Options{Decoder: &hardFailDecoder{forContentType: "application/pdf"}},
@@ -481,7 +481,7 @@ func TestBuildFailureCostsThePartNotTheRun(t *testing.T) {
 	}
 	t.Cleanup(func() { svc.Close() }) //nolint:errcheck
 
-	info := resolver.UserInfo(testUser, "")
+	info, _ := resolver.UserInfo(testUser, "")
 	box := mb.OpenUser(info)
 	uidx := idx.OpenUser(info)
 	if err := box.Init(); err != nil {

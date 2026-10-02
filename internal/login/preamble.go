@@ -13,6 +13,7 @@ import (
 
 	authclient "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/xclient"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // cleartextDisabledMsg is the refusal of a cleartext login on an open line.
@@ -183,7 +184,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 	// password path applies must be applied here too (#1733).
 	saslFailures := 0
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return nil, conn, rd, fmt.Errorf("imap: read: %w", err)
 		}
@@ -272,7 +273,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					if _, err := fmt.Fprintf(conn, "+ \r\n"); err != nil {
 						return nil, conn, rd, fmt.Errorf("imap: send challenge: %w", err)
 					}
-					resp, err := rd.ReadString('\n')
+					resp, err := lineio.ReadLine(rd, lineio.MaxClient)
 					if err != nil {
 						return nil, conn, rd, fmt.Errorf("imap: read auth: %w", err)
 					}
@@ -297,7 +298,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				if _, err := fmt.Fprintf(conn, "+ VXNlcm5hbWU6\r\n"); err != nil {
 					return nil, conn, rd, fmt.Errorf("imap: auth login username prompt: %w", err)
 				}
-				userB64, err := rd.ReadString('\n')
+				userB64, err := lineio.ReadLine(rd, lineio.MaxClient)
 				if err != nil {
 					return nil, conn, rd, fmt.Errorf("imap: auth login username: %w", err)
 				}
@@ -311,7 +312,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				if _, err := fmt.Fprintf(conn, "+ UGFzc3dvcmQ6\r\n"); err != nil {
 					return nil, conn, rd, fmt.Errorf("imap: auth login password prompt: %w", err)
 				}
-				passB64, err := rd.ReadString('\n')
+				passB64, err := lineio.ReadLine(rd, lineio.MaxClient)
 				if err != nil {
 					return nil, conn, rd, fmt.Errorf("imap: auth login password: %w", err)
 				}
@@ -346,7 +347,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 						if _, werr := fmt.Fprintf(conn, "+ \r\n"); werr != nil {
 							return nil, conn, rd, fmt.Errorf("imap: send challenge: %w", werr)
 						}
-						line, rerr := rd.ReadString('\n')
+						line, rerr := lineio.ReadLine(rd, lineio.MaxClient)
 						if rerr != nil {
 							return nil, conn, rd, fmt.Errorf("imap: read auth: %w", rerr)
 						}
@@ -402,7 +403,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 	var username string
 	var fwdIP, fwdPort string
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return nil, conn, rd, fmt.Errorf("pop3: read: %w", err)
 		}
@@ -472,7 +473,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					if _, err := fmt.Fprintf(conn, "+ \r\n"); err != nil {
 						return nil, conn, rd, fmt.Errorf("pop3: auth plain challenge: %w", err)
 					}
-					resp, err := rd.ReadString('\n')
+					resp, err := lineio.ReadLine(rd, lineio.MaxClient)
 					if err != nil {
 						return nil, conn, rd, fmt.Errorf("pop3: auth plain response: %w", err)
 					}
@@ -498,7 +499,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					if _, werr := fmt.Fprintf(conn, "+ \r\n"); werr != nil {
 						return nil, conn, rd, fmt.Errorf("pop3: auth challenge: %w", werr)
 					}
-					line, rerr := rd.ReadString('\n')
+					line, rerr := lineio.ReadLine(rd, lineio.MaxClient)
 					if rerr != nil {
 						return nil, conn, rd, fmt.Errorf("pop3: auth response: %w", rerr)
 					}
@@ -531,7 +532,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				if _, err := fmt.Fprintf(conn, "+ VXNlcm5hbWU6\r\n"); err != nil {
 					return nil, conn, rd, fmt.Errorf("pop3: auth login username prompt: %w", err)
 				}
-				userB64, err := rd.ReadString('\n')
+				userB64, err := lineio.ReadLine(rd, lineio.MaxClient)
 				if err != nil {
 					return nil, conn, rd, fmt.Errorf("pop3: auth login username: %w", err)
 				}
@@ -543,7 +544,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				if _, err := fmt.Fprintf(conn, "+ UGFzc3dvcmQ6\r\n"); err != nil {
 					return nil, conn, rd, fmt.Errorf("pop3: auth login password prompt: %w", err)
 				}
-				passB64, err := rd.ReadString('\n')
+				passB64, err := lineio.ReadLine(rd, lineio.MaxClient)
 				if err != nil {
 					return nil, conn, rd, fmt.Errorf("pop3: auth login password: %w", err)
 				}
@@ -617,7 +618,7 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 	var fwdIP, fwdPort string
 
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return nil, conn, rd, fmt.Errorf("smtp: read: %w", err)
 		}
@@ -711,7 +712,7 @@ func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string) (*pr
 			if _, err := fmt.Fprintf(conn, "334 \r\n"); err != nil {
 				return nil, fmt.Errorf("smtp: plain challenge: %w", err)
 			}
-			resp, err := rd.ReadString('\n')
+			resp, err := lineio.ReadLine(rd, lineio.MaxClient)
 			if err != nil {
 				return nil, fmt.Errorf("smtp: plain response: %w", err)
 			}
@@ -734,7 +735,7 @@ func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string) (*pr
 		if _, err := fmt.Fprintf(conn, "334 VXNlcm5hbWU6\r\n"); err != nil { // "Username:"
 			return nil, fmt.Errorf("smtp: login username prompt: %w", err)
 		}
-		userB64, err := rd.ReadString('\n')
+		userB64, err := lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return nil, fmt.Errorf("smtp: login username: %w", err)
 		}
@@ -749,7 +750,7 @@ func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string) (*pr
 		if _, err := fmt.Fprintf(conn, "334 UGFzc3dvcmQ6\r\n"); err != nil { // "Password:"
 			return nil, fmt.Errorf("smtp: login password prompt: %w", err)
 		}
-		passB64, err := rd.ReadString('\n')
+		passB64, err := lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return nil, fmt.Errorf("smtp: login password: %w", err)
 		}
@@ -818,7 +819,7 @@ func parseIMAPLoginArgs(line string, rd *bufio.Reader, conn net.Conn) (username,
 	if s == "" {
 		// username was a literal — password follows on the next read
 		var next string
-		next, err = rd.ReadString('\n')
+		next, err = lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {
 			return "", "", fmt.Errorf("imap/login: read password segment: %w", err)
 		}

@@ -15,10 +15,13 @@ import (
 const crlf = "\r\n"
 
 // readAtom reads a whitespace-delimited command token and returns it uppercased.
-func readAtom(r *bufio.Reader) (string, error) {
+func readAtom(r *bufio.Reader, max int) (string, error) {
 	skipWS(r)
 	var sb strings.Builder
 	for {
+		if sb.Len() > max {
+			return "", fmt.Errorf("managesieve: command over %d bytes", max)
+		}
 		b, err := r.ReadByte()
 		if err != nil {
 			// EOF included: a peer that hung up is not a blank line, and
@@ -90,7 +93,7 @@ func readString(r *bufio.Reader, contFn func() error, lim literalLimit) ([]byte,
 	}
 	switch b {
 	case '"':
-		return readQuoted(r)
+		return readQuoted(r, lim)
 	case '{':
 		return readLiteral(r, contFn, lim)
 	default:
@@ -99,9 +102,12 @@ func readString(r *bufio.Reader, contFn func() error, lim literalLimit) ([]byte,
 	}
 }
 
-func readQuoted(r *bufio.Reader) ([]byte, error) {
+func readQuoted(r *bufio.Reader, lim literalLimit) ([]byte, error) {
 	var sb strings.Builder
 	for {
+		if int64(sb.Len()) > lim.max {
+			return nil, &literalTooLarge{lim: lim}
+		}
 		b, err := r.ReadByte()
 		if err != nil {
 			return nil, fmt.Errorf("managesieve: unterminated quoted string: %w", err)
@@ -248,7 +254,7 @@ func readLastArg(r *bufio.Reader, contFn func() error, lim literalLimit) ([]byte
 	}
 	switch b {
 	case '"':
-		data, err := readQuoted(r)
+		data, err := readQuoted(r, lim)
 		if err != nil {
 			return nil, err
 		}

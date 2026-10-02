@@ -36,3 +36,17 @@ func TestTheConfiguredProxyTimeoutReachesTheProxy(t *testing.T) {
 		})
 	}
 }
+
+func TestTheConfiguredRecipientLimitReachesTheProxy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "yarilo.yaml")
+	if err := os.WriteFile(path, []byte(services+"protocol:\n  lmtp:\n    lmtp_max_recipients: 7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := options(cfg, "h", nil, nil).MaxRecipients; got != 7 {
+		t.Fatalf("MaxRecipients = %d, want 7", got)
+	}
+}

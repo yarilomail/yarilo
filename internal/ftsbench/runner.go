@@ -59,7 +59,10 @@ func Run(cfg Config) (Report, error) {
 	corpus := Generate(cfg.Corpus, cfg.HitEvery)
 
 	resolver := &mailbox.Resolver{Root: cfg.Root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo(benchUser, "")
+	info, err := resolver.UserInfo(benchUser, "")
+	if err != nil {
+		return Report{}, err
+	}
 	mb := maildir.New()
 	idx := file.New()
 	box := mb.OpenUser(info)

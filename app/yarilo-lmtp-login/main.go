@@ -153,6 +153,7 @@ func options(cfg *config.Config, hostname string, intTLS *tls.Config, authMaster
 		XClient:         cfg.Services.LMTP.XClient,
 		XClientNets:     parseCIDRs(cfg.General.XClient.TrustedNets),
 		MaxMessageBytes: quota.ParseSize(cfg.Quota.MailSize),
+		MaxRecipients:   cfg.Protocol.LMTP.MaxRecipients,
 		ProxyTimeout:    time.Duration(cfg.Protocol.LMTP.Proxy.ProxyTimeout) * time.Second,
 	}
 }
@@ -170,12 +171,8 @@ func parseCIDRs(ss []string) []*net.IPNet {
 	return nets
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel, and
-// returns the server so the caller can report readiness once its listeners are
-// actually bound.
-//
-// Lifecycle is on: without it /readyz answers 200 from the moment the process
-// starts, which says nothing. With it, ready means this pod holds its ports.
+// startTelemetry serves /healthz, /readyz and /metrics. Lifecycle is on, so
+// ready means this pod holds its ports, not merely that the process started.
 func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 	tel := telemetry.NewWithOptions(telemetry.Options{
 		Addr:      telemetry.Addr(cfg.Listen),

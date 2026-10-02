@@ -293,7 +293,10 @@ func guidLocker(cfg *config.Config) (locks.Locker, error) {
 // the per-user overrides come from there, exactly as a session resolves them;
 // offline they come from the templates, which is why the two are exclusive.
 func guidUserInfo(resolver *mailbox.Resolver, authcl *authclient.Client, o guidOpts, user string) (*mailbox.UserInfo, error) {
-	ui := resolver.UserInfo(user, "")
+	ui, err := resolver.UserInfo(user, "")
+	if err != nil {
+		return nil, err
+	}
 	if authcl != nil {
 		pui, err := authcl.Userdb(context.Background(), user)
 		if err != nil {

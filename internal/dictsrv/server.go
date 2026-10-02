@@ -15,6 +15,7 @@ import (
 
 	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/dict/proxy"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // Server answers for the dicts it holds. An unknown name is refused by name:
@@ -107,7 +108,7 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 	sess := &session{txs: map[uint32]dict.Tx{}}
 
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 		if err != nil {
 			return
 		}

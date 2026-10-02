@@ -21,6 +21,7 @@ import (
 
 	"github.com/emersion/go-sasl"
 
+	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -1049,7 +1050,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	fmt.Fprintf(conn, "DONE\n")
 
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 		if err != nil {
 			if err != io.EOF {
 				_ = err

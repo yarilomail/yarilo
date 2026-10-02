@@ -103,7 +103,12 @@ func (srv *Server) handleConn(ctx context.Context, conn net.Conn) {
 	}
 
 	username := pc.Username
-	userInfo := srv.opts.Resolver.UserInfo(username, pc.Home)
+	userInfo, err := srv.opts.Resolver.UserInfo(username, pc.Home)
+	if err != nil {
+		slog.Warn("managesieve: session refused", "user", username, "err", err)
+		conn.Close()
+		return
+	}
 	// One id for the session, minted here when the proxy carried none, so the
 	// two log lines and every lock name the same session (#1672).
 	sid := pc.SessionID

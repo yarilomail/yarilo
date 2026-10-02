@@ -40,7 +40,7 @@ func TestADeliveryOverTheWireFetchesBackOverIMAP(t *testing.T) {
 				Index:    file.New(),
 				Resolver: res,
 				UserdbLookup: func(_ context.Context, u string) (*mailbox.UserInfo, error) {
-					ui := res.UserInfo(u, "")
+					ui, _ := res.UserInfo(u, "")
 					ui.Driver = driver
 					return ui, nil
 				},

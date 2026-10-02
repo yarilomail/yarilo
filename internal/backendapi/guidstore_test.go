@@ -21,7 +21,7 @@ func guidRebuildServer(t *testing.T) (*httptest.Server, string, mailbox.UserInde
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 	const user = "alice@example.com"
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 
 	be := maildir.New()
 	box := be.OpenUser(info)

@@ -45,7 +45,7 @@ func TestResolver_Resolve(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := r.Resolve(tc.username, tc.override)
+			got, _ := r.Resolve(tc.username, tc.override)
 			if got != tc.want {
 				t.Errorf("Resolve(%q, %q) = %q, want %q", tc.username, tc.override, got, tc.want)
 			}
@@ -56,7 +56,7 @@ func TestResolver_Resolve(t *testing.T) {
 func TestResolver_DefaultTemplate(t *testing.T) {
 	// HomeTemplate empty must default to "%d/%u" (full login address).
 	r := &Resolver{Root: "/root"}
-	got := r.Resolve("alice@example.com", "")
+	got, _ := r.Resolve("alice@example.com", "")
 	if got != "/root/example.com/alice@example.com" {
 		t.Errorf("default template: got %q, want /root/example.com/alice@example.com", got)
 	}
@@ -64,7 +64,7 @@ func TestResolver_DefaultTemplate(t *testing.T) {
 
 func TestResolver_UserInfo(t *testing.T) {
 	r := &Resolver{Root: "/var/mail", HomeTemplate: "%d/%n"}
-	ui := r.UserInfo("bob@example.com", "")
+	ui, _ := r.UserInfo("bob@example.com", "")
 	if ui.Username != "bob@example.com" {
 		t.Errorf("Username: got %q", ui.Username)
 	}
@@ -169,7 +169,7 @@ func TestResolverDefaultVolatileDir(t *testing.T) {
 		HomeTemplate:       "%d/%n",
 		DefaultVolatileDir: "/run/volatile/%d/%n",
 	}
-	ui := r.UserInfo("alice@example.com", "")
+	ui, _ := r.UserInfo("alice@example.com", "")
 	want := "/run/volatile/example.com/alice"
 	if ui.VolatileDir != want {
 		t.Errorf("VolatileDir = %q, want %q", ui.VolatileDir, want)
@@ -182,7 +182,7 @@ func TestResolverDefaultVolatileDirWithHome(t *testing.T) {
 		HomeTemplate:       "%d/%n",
 		DefaultVolatileDir: "/run/volatile/%h",
 	}
-	ui := r.UserInfo("bob@test.com", "")
+	ui, _ := r.UserInfo("bob@test.com", "")
 	want := "/run/volatile/" + ui.Home
 	if ui.VolatileDir != want {
 		t.Errorf("VolatileDir = %q, want %q", ui.VolatileDir, want)
@@ -195,7 +195,7 @@ func TestResolverDefaultIndexDir(t *testing.T) {
 		HomeTemplate:    "%d/%n",
 		DefaultIndexDir: "/var/index/%d/%n",
 	}
-	ui := r.UserInfo("alice@example.com", "")
+	ui, _ := r.UserInfo("alice@example.com", "")
 	want := "/var/index/example.com/alice"
 	if ui.IndexDir != want {
 		t.Errorf("IndexDir = %q, want %q", ui.IndexDir, want)
@@ -208,7 +208,7 @@ func TestResolverDefaultIndexDirWithHome(t *testing.T) {
 		HomeTemplate:    "%d/%n",
 		DefaultIndexDir: "/var/index/%h",
 	}
-	ui := r.UserInfo("bob@test.com", "")
+	ui, _ := r.UserInfo("bob@test.com", "")
 	want := "/var/index/" + ui.Home
 	if ui.IndexDir != want {
 		t.Errorf("IndexDir = %q, want %q", ui.IndexDir, want)
@@ -231,7 +231,7 @@ func TestResolverDefaultControlDir(t *testing.T) {
 		HomeTemplate:      "%d/%n",
 		DefaultControlDir: "/var/control/%d/%n",
 	}
-	ui := r.UserInfo("alice@example.com", "")
+	ui, _ := r.UserInfo("alice@example.com", "")
 	want := "/var/control/example.com/alice"
 	if ui.ControlDir != want {
 		t.Errorf("ControlDir = %q, want %q", ui.ControlDir, want)
@@ -244,7 +244,7 @@ func TestResolverDefaultControlDirWithHome(t *testing.T) {
 		HomeTemplate:      "%d/%n",
 		DefaultControlDir: "/var/control/%h",
 	}
-	ui := r.UserInfo("bob@test.com", "")
+	ui, _ := r.UserInfo("bob@test.com", "")
 	want := "/var/control/" + ui.Home
 	if ui.ControlDir != want {
 		t.Errorf("ControlDir = %q, want %q", ui.ControlDir, want)
@@ -267,7 +267,7 @@ func TestResolverDefaultAltDir(t *testing.T) {
 		HomeTemplate:  "%d/%n",
 		DefaultAltDir: "/mnt/cold/%d/%n",
 	}
-	ui := r.UserInfo("alice@example.com", "")
+	ui, _ := r.UserInfo("alice@example.com", "")
 	want := "/mnt/cold/example.com/alice"
 	if ui.AltDir != want {
 		t.Errorf("AltDir = %q, want %q", ui.AltDir, want)
@@ -280,7 +280,7 @@ func TestResolverDefaultAltDirWithHome(t *testing.T) {
 		HomeTemplate:  "%d/%n",
 		DefaultAltDir: "/mnt/cold/%h",
 	}
-	ui := r.UserInfo("bob@test.com", "")
+	ui, _ := r.UserInfo("bob@test.com", "")
 	want := "/mnt/cold/" + ui.Home
 	if ui.AltDir != want {
 		t.Errorf("AltDir = %q, want %q", ui.AltDir, want)
@@ -351,7 +351,7 @@ func TestResolverDefaultMailPath(t *testing.T) {
 		HomeTemplate:    "%d/%n",
 		DefaultMailPath: "~/Maildir",
 	}
-	ui := r.UserInfo("alice@example.com", "")
+	ui, _ := r.UserInfo("alice@example.com", "")
 	want := ui.Home + "/Maildir"
 	if ui.MailPath != want {
 		t.Errorf("MailPath = %q, want %q", ui.MailPath, want)
@@ -364,7 +364,7 @@ func TestResolverDefaultMailPathVars(t *testing.T) {
 		HomeTemplate:    "%d/%n",
 		DefaultMailPath: "/store/%d/%n/Maildir",
 	}
-	ui := r.UserInfo("alice@example.com", "")
+	ui, _ := r.UserInfo("alice@example.com", "")
 	want := "/store/example.com/alice/Maildir"
 	if ui.MailPath != want {
 		t.Errorf("MailPath = %q, want %q", ui.MailPath, want)

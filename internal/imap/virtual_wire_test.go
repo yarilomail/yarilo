@@ -42,7 +42,7 @@ func virtualServerWith(t *testing.T, configs map[string]string, seed func(t *tes
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo("user@test.com", "")
+	info, _ := resolver.UserInfo("user@test.com", "")
 
 	box := maildir.New().OpenUser(info)
 	if err := box.Init(); err != nil {

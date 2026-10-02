@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // Conn is a single TCP connection to yarilo-warden for one login session.
@@ -58,7 +60,7 @@ func DialContext(ctx context.Context, addr string, tlsCfg *tls.Config, timeout t
 
 func (c *Conn) readHandshake() error {
 	// VERSION\tyarilo-warden\t1\t0\n
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read version: %w", err)
 	}
@@ -68,7 +70,7 @@ func (c *Conn) readHandshake() error {
 		return fmt.Errorf("warden/client: unexpected handshake: %q", line)
 	}
 	// DONE\n
-	done, err := c.rd.ReadString('\n')
+	done, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read done: %w", err)
 	}
@@ -84,7 +86,7 @@ func (c *Conn) Connect(id, user, ip, service string) error {
 	if _, err := fmt.Fprintf(c.conn, "CONNECT\t%s\t%s\t%s\t%s\n", id, user, ip, service); err != nil {
 		return fmt.Errorf("warden/client: write CONNECT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read CONNECT response: %w", err)
 	}
@@ -105,7 +107,7 @@ func (c *Conn) Disconnect(id, user, ip, service string) error {
 	if _, err := fmt.Fprintf(c.conn, "DISCONNECT\t%s\t%s\t%s\t%s\n", id, user, ip, service); err != nil {
 		return fmt.Errorf("warden/client: write DISCONNECT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read DISCONNECT response: %w", err)
 	}
@@ -140,7 +142,7 @@ func (c *Conn) Who(f WhoFilter) ([]SessionInfo, error) {
 	}
 	out := make([]SessionInfo, 0, 8)
 	for {
-		line, err := c.rd.ReadString('\n')
+		line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 		if err != nil {
 			return nil, fmt.Errorf("warden/client: read WHO response: %w", err)
 		}
@@ -191,7 +193,7 @@ func (c *Conn) Dump() (*StateDump, error) {
 	}
 	d := &StateDump{}
 	for {
-		line, err := c.rd.ReadString('\n')
+		line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 		if err != nil {
 			return nil, fmt.Errorf("warden/client: read DUMP response: %w", err)
 		}
@@ -228,7 +230,7 @@ func (c *Conn) Heartbeat(id string) (bool, error) {
 	if _, err := fmt.Fprintf(c.conn, "HEARTBEAT\t%s\n", id); err != nil {
 		return false, fmt.Errorf("warden/client: write HEARTBEAT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return false, fmt.Errorf("warden/client: read HEARTBEAT response: %w", err)
 	}
@@ -256,7 +258,7 @@ func (c *Conn) Select(id, folder string) error {
 	if _, err := fmt.Fprintf(c.conn, "SELECT\t%s\t%s\n", id, folder); err != nil {
 		return fmt.Errorf("warden/client: write SELECT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read SELECT response: %w", err)
 	}
@@ -285,7 +287,7 @@ func (c *Conn) Backend(id, backendIP string) error {
 	if _, err := fmt.Fprintf(c.conn, "BACKEND\t%s\t%s\n", id, backendIP); err != nil {
 		return fmt.Errorf("warden/client: write BACKEND: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read BACKEND response: %w", err)
 	}
@@ -305,7 +307,7 @@ func (c *Conn) Lookup(user, service string) (int, error) {
 	if _, err := fmt.Fprintf(c.conn, "LOOKUP\t%s\t%s\n", user, service); err != nil {
 		return 0, fmt.Errorf("warden/client: write LOOKUP: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return 0, fmt.Errorf("warden/client: read LOOKUP response: %w", err)
 	}
@@ -333,7 +335,7 @@ func (c *Conn) PenaltyLookup(ip string) (int, error) {
 	if _, err := fmt.Fprintf(c.conn, "PENALTY-LOOKUP\t%s\n", ip); err != nil {
 		return 0, fmt.Errorf("warden/client: write PENALTY-LOOKUP: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return 0, fmt.Errorf("warden/client: read PENALTY-LOOKUP response: %w", err)
 	}
@@ -357,7 +359,7 @@ func (c *Conn) PenaltyUpdate(ip string, count int) error {
 	if _, err := fmt.Fprintf(c.conn, "PENALTY-UPDATE\t%s\t%d\n", ip, count); err != nil {
 		return fmt.Errorf("warden/client: write PENALTY-UPDATE: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read PENALTY-UPDATE response: %w", err)
 	}
@@ -381,7 +383,7 @@ func (c *Conn) Emit(channel, payload string) error {
 	if _, err := fmt.Fprintf(c.conn, "EMIT\t%s\t%s\n", channel, payload); err != nil {
 		return fmt.Errorf("warden/client: write EMIT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read EMIT response: %w", err)
 	}
@@ -404,7 +406,7 @@ func (c *Conn) Subscribe(ctx context.Context, channel string) (<-chan string, er
 	if _, err := fmt.Fprintf(c.conn, "SUBSCRIBE\t%s\n", channel); err != nil {
 		return nil, fmt.Errorf("warden/client: write SUBSCRIBE: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return nil, fmt.Errorf("warden/client: read SUBSCRIBE ack: %w", err)
 	}
@@ -422,7 +424,7 @@ func (c *Conn) Subscribe(ctx context.Context, channel string) (<-chan string, er
 	go func() {
 		defer close(out)
 		for {
-			line, err := c.rd.ReadString('\n')
+			line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 			if err != nil {
 				return
 			}

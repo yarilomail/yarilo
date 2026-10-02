@@ -50,7 +50,7 @@ func TestADeliveryDoesNotWriteTheMirror(t *testing.T) {
 		Root: dir, HomeTemplate: "%d/%n",
 		DefaultQuotaRules: []string{"*:storage=1000000"},
 	}
-	info := resolver.UserInfo("alice@example.com", "")
+	info, _ := resolver.UserInfo("alice@example.com", "")
 	info.Driver = "maildir"
 	mb := maildir.New()
 	box := mb.OpenUser(info)

@@ -1097,7 +1097,10 @@ func ResolveUserInfo(resolver *mailbox.Resolver, username string, ui *protocol.U
 	if ui == nil {
 		return nil
 	}
-	mbi := resolver.UserInfo(username, ui.Home)
+	mbi, err := resolver.UserInfo(username, ui.Home)
+	if err != nil {
+		return nil
+	}
 	mbi.Groups = ui.Groups
 	mbi.ACLUser = ui.ACLUser
 	mbi.ACLGroups = ui.ACLGroups

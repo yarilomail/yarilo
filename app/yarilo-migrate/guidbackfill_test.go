@@ -22,7 +22,7 @@ func stageStore(t *testing.T, n int) (root, user string) {
 	root = t.TempDir()
 	user = "u1@example.test"
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := maildir.New().OpenUser(info)
 	idx := indexfile.New().OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -113,7 +113,7 @@ func dropGUIDExt(t *testing.T, root string) {
 func guidsOf(t *testing.T, root, user string) map[uint32][16]byte {
 	t.Helper()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	idx := indexfile.New().OpenUser(resolver.UserInfo(user, ""))
+	idx := indexfile.New().OpenUser(mustUserInfo(resolver, user))
 	defer idx.Close() //nolint:errcheck
 	folder, err := idx.OpenFolder("INBOX", 0)
 	if err != nil {
@@ -225,7 +225,7 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: template}
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := maildir.New().OpenUser(info)
 	idx := indexfile.New().OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -267,7 +267,7 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 func guidsOfLayout(t *testing.T, root, template, user string) map[uint32][16]byte {
 	t.Helper()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: template}
-	idx := indexfile.New().OpenUser(resolver.UserInfo(user, ""))
+	idx := indexfile.New().OpenUser(mustUserInfo(resolver, user))
 	defer idx.Close() //nolint:errcheck
 	folder, err := idx.OpenFolder("INBOX", 0)
 	if err != nil {
@@ -418,7 +418,7 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 	resolver := &mailbox.Resolver{
 		Root: root, HomeTemplate: "%d/%u", DefaultIndexDir: "%h/index",
 	}
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := maildir.New().OpenUser(info)
 	idx := indexfile.New().OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -460,7 +460,7 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 		t.Fatalf("backfill: %v", err)
 	}
 
-	check := indexfile.New().OpenUser(resolver.UserInfo(user, ""))
+	check := indexfile.New().OpenUser(mustUserInfo(resolver, user))
 	defer check.Close() //nolint:errcheck
 	f, err := check.OpenFolder("INBOX", 0)
 	if err != nil {
@@ -504,7 +504,7 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 		t.Run(tmpl, func(t *testing.T) {
 			root := t.TempDir()
 			resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%u", DefaultIndexDir: "%h/index"}
-			info := resolver.UserInfo(user, "")
+			info, _ := resolver.UserInfo(user, "")
 			box := maildir.New().OpenUser(info)
 			idx := indexfile.New().OpenUser(info)
 			if err := box.Init(); err != nil {
@@ -546,7 +546,7 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 				t.Fatalf("backfill with %q: %v", tmpl, err)
 			}
 
-			check := indexfile.New().OpenUser(resolver.UserInfo(user, ""))
+			check := indexfile.New().OpenUser(mustUserInfo(resolver, user))
 			defer check.Close() //nolint:errcheck
 			f, err := check.OpenFolder("INBOX", 0)
 			if err != nil {
@@ -565,4 +565,13 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mustUserInfo resolves a name the test knows to be valid.
+func mustUserInfo(r *mailbox.Resolver, user string) *mailbox.UserInfo {
+	ui, err := r.UserInfo(user, "")
+	if err != nil {
+		panic(err)
+	}
+	return ui
 }

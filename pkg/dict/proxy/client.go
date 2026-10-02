@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // Client is a dict.Dict served by yarilo-dict. Connections are pooled: an
@@ -152,7 +153,7 @@ func exchange(ctx context.Context, cn *conn, line string) (string, error) {
 	if _, err := cn.net.Write([]byte(line)); err != nil {
 		return "", err
 	}
-	return cn.rd.ReadString('\n')
+	return lineio.ReadLine(cn.rd, lineio.MaxInternal)
 }
 
 func setDeadline(ctx context.Context, cn *conn) {
@@ -253,7 +254,7 @@ func (it *iterator) Next() bool {
 	if it.done {
 		return false
 	}
-	line, err := it.cn.rd.ReadString('\n')
+	line, err := lineio.ReadLine(it.cn.rd, lineio.MaxInternal)
 	if err != nil {
 		it.err = fmt.Errorf("dict/proxy: iterate read: %w", err)
 		it.broken = true

@@ -18,7 +18,7 @@ import (
 // given: no protocol has to hand it over (#1805).
 func TestTheAssembledVirtualNamespaceHasItsFolders(t *testing.T) {
 	root := t.TempDir()
-	personal := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}).UserInfo("alice@example.com", "")
+	personal, _ := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}).UserInfo("alice@example.com", "")
 	mb, idx := maildir.New(), file.New()
 	box := mailboxbase.Open(mb.OpenUser(personal), idx.OpenUser(personal), mailboxbase.SaveOnly())
 	if err := box.Store().Init(); err != nil {
