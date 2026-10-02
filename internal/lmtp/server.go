@@ -628,7 +628,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		username, folder, _ := resolveMailbox(deliverRcpt)
 		userInfo := s.resolveRcptUserInfo(rcpt, username)
 		if userInfo == nil {
-			status.SetStatus(rcpt, &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 1, 1}, Message: "No such user here"})
+			setStatus(status, rcpt, deliveryStart, &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 1, 1}, Message: "No such user here"})
 			continue
 		}
 

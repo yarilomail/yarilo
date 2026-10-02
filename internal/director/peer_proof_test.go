@@ -2,9 +2,12 @@ package director
 
 import (
 	"bufio"
+	keyed "crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,7 +66,7 @@ func TestAPeerMustProveTheRingSecret(t *testing.T) {
 			return "PEER\t1\t" + hex.EncodeToString(peerProof([]byte("shared-secret"), "00", left))
 		}, false},
 		{"a join proof", func(n string) string {
-			return "PEER\t1\t" + hex.EncodeToString(joinHMAC([]byte("shared-secret"), n, left))
+			return "PEER\t1\t" + hex.EncodeToString(joinProofFor([]byte("shared-secret"), n, left))
 		}, false},
 		{"the right proof", func(n string) string {
 			return "PEER\t1\t" + hex.EncodeToString(peerProof([]byte("shared-secret"), n, left))
@@ -81,4 +84,11 @@ func TestAPeerMustProveTheRingSecret(t *testing.T) {
 			}
 		})
 	}
+}
+
+// joinProofFor is what a DIRECTOR-JOIN proof over nonce looks like.
+func joinProofFor(secret []byte, nonce string, m Member) []byte {
+	h := keyed.New(sha256.New, secret)
+	h.Write([]byte(nonce + "\t" + m.IP + "\t" + strconv.Itoa(m.Port)))
+	return h.Sum(nil)
 }

@@ -752,13 +752,6 @@ func joinHMAC(secret []byte, nonce string, joiner Member) []byte {
 	return mac.Sum(nil)
 }
 
-// peerProof binds a ring connection to the ring secret: the acceptor's nonce
-// for this connection and the dialer's ME, under a label of its own so a join
-// proof cannot stand in for it.
-func peerProof(secret []byte, nonce string, dialer Member) []byte {
-	return joinHMAC(secret, "PEER\t"+nonce, dialer)
-}
-
 // acceptPeer reports whether a PEER line proves the dialer holds the ring
 // secret for this connection's nonce, from a network allowed to join.
 func (m *Membership) acceptPeer(conn net.Conn, nonce string, dialer Member, proofHex string) bool {

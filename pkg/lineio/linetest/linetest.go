@@ -10,9 +10,8 @@ import (
 	"time"
 )
 
-// ExpectCutOff dials addr, sends prefix and then 8 MiB with no line end, and
-// fails unless the server closes the connection: an unbounded reader would
-// keep holding the bytes and wait for an LF that never comes.
+// ExpectCutOff sends prefix and 8 MiB with no line end to addr and fails unless
+// the server closes: an unbounded reader would hold it all, waiting for an LF.
 func ExpectCutOff(t *testing.T, addr string, tlsCfg *tls.Config, prefix string) {
 	t.Helper()
 	var conn net.Conn

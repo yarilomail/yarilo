@@ -258,12 +258,8 @@ func parseCIDRs(ss []string) []*net.IPNet {
 	return nets
 }
 
-// startTelemetry serves /healthz, /readyz and /metrics, and
-// returns the server so the caller can report readiness once its listeners are
-// actually bound.
-//
-// Lifecycle is on: without it /readyz answers 200 from the moment the process
-// starts, which says nothing. With it, ready means this pod holds its ports.
+// startTelemetry serves /healthz, /readyz and /metrics. Lifecycle is on, so
+// ready means this pod holds its ports, not merely that the process started.
 func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 	tel := telemetry.NewWithOptions(telemetry.Options{
 		Addr:      telemetry.Addr(cfg.Listen),
