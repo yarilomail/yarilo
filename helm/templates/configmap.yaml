@@ -198,6 +198,7 @@ data:
           submission_relay_command_timeout: {{ .Values.protocol.submission.relay.command_timeout }}
       managesieve:
         max_invalid_commands: {{ (.Values.protocol.managesieve | default dict).max_invalid_commands | default 3 }}
+        managesieve_max_line_length: {{ (.Values.protocol.managesieve | default dict).managesieve_max_line_length | default 65536 | int64 }}
         {{- /* The duplicate limit: rendered only when the operator set it, so a
                values file carrying it keeps working (the server folds it onto
                sieve_max_script_size with a deprecation line). No default here --

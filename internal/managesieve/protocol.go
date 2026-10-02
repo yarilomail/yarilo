@@ -82,7 +82,7 @@ func skipCRLF(r *bufio.Reader) {
 // ("...") or a literal ({N} or {N+}).  For synchronizing literals {N},
 // contFn is called (and flushed) before reading the literal body so the
 // caller can send the required continuation OK first.
-func readString(r *bufio.Reader, contFn func() error) ([]byte, error) {
+func readString(r *bufio.Reader, contFn func() error, lim literalLimit) ([]byte, error) {
 	skipWS(r)
 	b, err := r.ReadByte()
 	if err != nil {
@@ -92,7 +92,7 @@ func readString(r *bufio.Reader, contFn func() error) ([]byte, error) {
 	case '"':
 		return readQuoted(r)
 	case '{':
-		return readLiteral(r, contFn)
+		return readLiteral(r, contFn, lim)
 	default:
 		_ = r.UnreadByte()
 		return nil, fmt.Errorf("managesieve: expected string (quoted or literal), got %q", rune(b))
@@ -121,7 +121,22 @@ func readQuoted(r *bufio.Reader) ([]byte, error) {
 	}
 }
 
-func readLiteral(r *bufio.Reader, contFn func() error) ([]byte, error) {
+// literalLimit bounds one literal and names the refusal past it.
+type literalLimit struct {
+	max       int64
+	code, msg string
+}
+
+// literalTooLarge is a literal refused before any of it is read; sync says
+// whether the client is waiting rather than already sending it.
+type literalTooLarge struct {
+	sync bool
+	lim  literalLimit
+}
+
+func (e *literalTooLarge) Error() string { return "managesieve: literal size too large" }
+
+func readLiteral(r *bufio.Reader, contFn func() error, lim literalLimit) ([]byte, error) {
 	// '{' already consumed; read size digits, optional '+', then '}'.
 	var sizeBuf strings.Builder
 	sync := true
@@ -140,10 +155,13 @@ func readLiteral(r *bufio.Reader, contFn func() error) ([]byte, error) {
 		sizeBuf.WriteByte(b)
 	}
 	size, err := strconv.ParseInt(strings.TrimSpace(sizeBuf.String()), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("managesieve: literal size parse: %w", err)
+	if err != nil || size < 0 {
+		return nil, fmt.Errorf("managesieve: literal size parse: %q", sizeBuf.String())
 	}
 	skipCRLF(r)
+	if size > lim.max {
+		return nil, &literalTooLarge{sync: sync, lim: lim}
+	}
 	if sync && contFn != nil {
 		if err := contFn(); err != nil {
 			return nil, fmt.Errorf("managesieve: continuation: %w", err)
@@ -222,7 +240,7 @@ func writeCapabilities(w *bufio.Writer, exts []string) error {
 // For quoted strings the trailing CRLF (rest of command line) is consumed.
 // For literals the CRLF was already consumed by the literal framing — no
 // additional skipLine is needed.
-func readLastArg(r *bufio.Reader, contFn func() error) ([]byte, error) {
+func readLastArg(r *bufio.Reader, contFn func() error, lim literalLimit) ([]byte, error) {
 	skipWS(r)
 	b, err := r.ReadByte()
 	if err != nil {
@@ -237,7 +255,7 @@ func readLastArg(r *bufio.Reader, contFn func() error) ([]byte, error) {
 		skipLine(r)
 		return data, nil
 	case '{':
-		return readLiteral(r, contFn)
+		return readLiteral(r, contFn, lim)
 	default:
 		_ = r.UnreadByte()
 		return nil, fmt.Errorf("managesieve: expected string (quoted or literal), got %q", rune(b))

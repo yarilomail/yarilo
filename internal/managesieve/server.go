@@ -118,6 +118,7 @@ func (srv *Server) handleConn(ctx context.Context, conn net.Conn) {
 		maxSize = 64 * 1024
 	}
 
+	maxLine := int64(srv.opts.Config.MaxLineLength)
 	defaultName := srv.opts.DefaultName
 	if defaultName == "" {
 		defaultName = sieve.FallbackDefaultName
@@ -130,6 +131,7 @@ func (srv *Server) handleConn(ctx context.Context, conn net.Conn) {
 		homeDir:           userInfo.Home,
 		store:             sieve.NewScriptStore(srv.opts.ScriptsDriver, defaultName, srv.opts.Locker, srv.opts.ScriptsDict),
 		maxSize:           maxSize,
+		maxLine:           maxLine,
 		allowedExtensions: srv.opts.SieveExtensions,
 		sid:               sid,
 	}

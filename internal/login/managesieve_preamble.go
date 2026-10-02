@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -126,6 +127,9 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader) (*preamble, error) {
 	mechBytes, err := msReadString(rd, conn)
 	if err != nil {
+		if errors.Is(err, errMSLiteralTooLarge) {
+			return nil, err
+		}
 		msSkipLine(rd)
 		fmt.Fprintf(conn, "NO \"Bad mechanism.\"\r\n") //nolint:errcheck
 		return nil, nil
@@ -150,6 +154,9 @@ func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader) (*preamble, error) {
 		_ = rd.UnreadByte()
 		initResp, err = msReadLastArg(rd, conn)
 		if err != nil {
+			if errors.Is(err, errMSLiteralTooLarge) {
+				return nil, err
+			}
 			fmt.Fprintf(conn, "NO \"Bad initial response.\"\r\n") //nolint:errcheck
 			return nil, nil
 		}
@@ -175,6 +182,9 @@ func msHandlePlain(conn net.Conn, rd *bufio.Reader, initResp []byte) (*preamble,
 		fmt.Fprintf(conn, "%q\r\n", "") //nolint:errcheck
 		resp, err := msReadLastArg(rd, conn)
 		if err != nil {
+			if errors.Is(err, errMSLiteralTooLarge) {
+				return nil, err
+			}
 			fmt.Fprintf(conn, "NO \"Bad response.\"\r\n") //nolint:errcheck
 			return nil, nil
 		}
@@ -196,6 +206,9 @@ func msHandleLogin(conn net.Conn, rd *bufio.Reader) (*preamble, error) {
 	}
 	userB64, err := msReadLastArg(rd, conn)
 	if err != nil {
+		if errors.Is(err, errMSLiteralTooLarge) {
+			return nil, err
+		}
 		fmt.Fprintf(conn, "NO \"Bad username.\"\r\n") //nolint:errcheck
 		return nil, nil
 	}
@@ -211,6 +224,9 @@ func msHandleLogin(conn net.Conn, rd *bufio.Reader) (*preamble, error) {
 	}
 	passB64, err := msReadLastArg(rd, conn)
 	if err != nil {
+		if errors.Is(err, errMSLiteralTooLarge) {
+			return nil, err
+		}
 		fmt.Fprintf(conn, "NO \"Bad password.\"\r\n") //nolint:errcheck
 		return nil, nil
 	}
@@ -331,6 +347,13 @@ func msReadQuoted(rd *bufio.Reader) ([]byte, error) {
 	}
 }
 
+// msMaxLiteral bounds a literal before authentication; nothing sent then needs
+// more, and a larger one is refused before it is read.
+const msMaxLiteral = 8192
+
+// errMSLiteralTooLarge ends the pre-auth session after its NO.
+var errMSLiteralTooLarge = errors.New("managesieve: literal size too large")
+
 func msReadLiteral(rd *bufio.Reader, conn net.Conn) ([]byte, error) {
 	// '{' already consumed.
 	var sizeBuf strings.Builder
@@ -350,11 +373,15 @@ func msReadLiteral(rd *bufio.Reader, conn net.Conn) ([]byte, error) {
 		sizeBuf.WriteByte(b)
 	}
 	size, err := strconv.ParseInt(strings.TrimSpace(sizeBuf.String()), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("managesieve: literal size parse: %w", err)
+	if err != nil || size < 0 {
+		return nil, fmt.Errorf("managesieve: literal size parse: %q", sizeBuf.String())
 	}
 	// Consume the CRLF after {N} or {N+}.
 	msSkipCRLF(rd)
+	if size > msMaxLiteral {
+		fmt.Fprintf(conn, "NO \"Literal size too large.\"\r\n") //nolint:errcheck
+		return nil, errMSLiteralTooLarge
+	}
 	if sync && conn != nil {
 		fmt.Fprintf(conn, "OK\r\n") //nolint:errcheck
 	}
