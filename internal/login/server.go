@@ -833,13 +833,15 @@ func (s *Server) handleConn(conn net.Conn) {
 		backendDialStart := time.Now()
 		var bs *backendSession
 		retries := s.transientRetries()
+		// One deadline over every attempt, pauses included (#926, #927).
+		deadline := backendDialStart.Add(s.proxyTimeout(authResult))
 		for attempt := 0; ; attempt++ {
 			var berr error
-			bs, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, log)
+			bs, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, deadline, log)
 			if berr == nil {
 				break
 			}
-			if attempt >= retries {
+			if attempt >= retries || time.Until(deadline) <= transientRetryBackoff {
 				log.Error("login: backend session failed", "addr", backendAddr, "attempts", attempt+1, "err", berr)
 				s.observePhase(phaseBackendDial, backendDialStart)
 				s.incTransientExhausted(stageBackendSession)
@@ -1091,10 +1093,8 @@ func resolvedIdentity(res *authclient.AuthResult, claimed string) string {
 	return claimed
 }
 
-func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, log *slog.Logger) (*backendSession, error) {
-	// One deadline over dial, re-routes and bring-up (#926, #927); a re-route
-	// re-LOOKUPs, so it takes the resolved identity (#782, #1306).
-	deadline := time.Now().Add(s.proxyTimeout(authResult))
+func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, deadline time.Time, log *slog.Logger) (*backendSession, error) {
+	// A re-route re-LOOKUPs, so it takes the resolved identity (#782, #1306).
 	conn, addr, err := s.dialBackendWithReroute(authUser, tag, addr, deadline, log)
 	if err != nil {
 		return nil, fmt.Errorf("dial backend %s: %w", addr, err)
