@@ -10,6 +10,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/mailboxcreate"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -99,7 +100,7 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder already exists", http.StatusConflict)
 		return
 	}
-	if err := bundle.box.Create(req.Folder); err != nil {
+	if err := mailboxcreate.Folder(bundle.box, bundle.mbox, req.Folder, 0); err != nil {
 		apiError(w, "create: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -246,15 +247,9 @@ func (s *Server) handleFolderRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := bundle.box.Rename(req.OldFolder, req.NewFolder); err != nil {
+	if err := bundle.mbox.Rename(req.OldFolder, req.NewFolder); err != nil {
 		apiError(w, "rename: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if err := bundle.idx.RenameFolder(req.OldFolder, req.NewFolder); err != nil {
-		// On-disk box rename succeeded; index disagreed. Log rather than
-		// roll back; the operator can run repair.
-		slog.Warn("backendapi/folder: idx rename failed after box rename",
-			"user", req.User, "from", req.OldFolder, "to", req.NewFolder, "err", err)
 	}
 	if err := s.renameFolderACL(bundle, req.OldFolder, req.NewFolder); err != nil {
 		slog.Warn("backendapi/folder: acl rename failed",

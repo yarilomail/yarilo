@@ -106,8 +106,17 @@ func (b *Box) Delete(name string) error {
 	return nil
 }
 
-func (b *Box) RenameFolder(oldName, newName string) error {
-	return b.index.RenameFolder(oldName, newName)
+// Rename moves the folder and then its index state and identity; once the
+// store has moved it, an index left behind is logged, not returned.
+func (b *Box) Rename(oldName, newName string) error {
+	if err := b.store.Rename(oldName, newName); err != nil {
+		return err
+	}
+	if err := b.index.RenameFolder(oldName, newName); err != nil {
+		slog.Warn("mailbox: folder index not moved with the folder", "user", b.store.Username(),
+			"from", oldName, "to", newName, "err", err)
+	}
+	return nil
 }
 
 func (b *Box) Metadata(folderID uint64) (mailbox.FolderMetadata, error) {

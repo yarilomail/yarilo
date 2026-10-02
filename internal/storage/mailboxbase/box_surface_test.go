@@ -71,7 +71,7 @@ func TestTheBoxSurfaceReachesTheIndex(t *testing.T) {
 			t.Errorf("metadata %+v, %v; want 2 messages and a size", md, err)
 		}
 	})
-	t.Run("CreateFolder writes the index, DeleteFolder and RenameFolder carry it", func(t *testing.T) {
+	t.Run("CreateFolder writes the index, Rename and Delete carry it", func(t *testing.T) {
 		box, idx, _, _ := surfaceBox(t)
 		dirOf := idx.(interface{ IndexDirFor(string) string }).IndexDirFor
 		if err := box.Store().Create("Work"); err != nil {
@@ -81,11 +81,8 @@ func TestTheBoxSurfaceReachesTheIndex(t *testing.T) {
 		if !exists(filepath.Join(dirOf("Work"), "yarilo.index")) {
 			t.Fatal("CreateFolder wrote no index")
 		}
-		if err := box.Store().Rename("Work", "Play"); err != nil {
-			t.Fatal(err)
-		}
-		if err := box.RenameFolder("Work", "Play"); err != nil || !exists(filepath.Join(dirOf("Play"), "yarilo.index")) {
-			t.Fatalf("RenameFolder did not carry the index: %v", err)
+		if err := box.Rename("Work", "Play"); err != nil || !exists(filepath.Join(dirOf("Play"), "yarilo.index")) {
+			t.Fatalf("Rename did not carry the index: %v", err)
 		}
 		if err := box.Delete("Play"); err != nil || exists(dirOf("Play")) {
 			t.Errorf("Delete left the index: %v", err)

@@ -97,8 +97,8 @@ type Box interface {
 	CreateFolder(name string, uidValidity uint32)
 	// Delete removes a folder with its index state and identity record.
 	Delete(name string) error
-	// RenameFolder carries a folder's index state along.
-	RenameFolder(oldName, newName string) error
+	// Rename moves a folder with its index state and identity record.
+	Rename(oldName, newName string) error
 	// Metadata is the folder's size and message count as its index keeps them.
 	Metadata(folderID uint64) (FolderMetadata, error)
 	// RecordExists reports whether the folder still holds uid.
