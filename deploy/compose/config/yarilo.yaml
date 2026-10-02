@@ -77,7 +77,6 @@ services:
     enabled: true
     port: 8443
     ssl_mode: ssl
-    connection_limit: 0
     haproxy_protocol: false
     disable_plaintext_auth: true
   ## Backend listener on yarilo-jmap, reached only by the login proxy. This
@@ -309,14 +308,14 @@ namespaces:
   - type: "personal"
     prefix: ""
     separator: "/"
-    list: true
+    list: "yes"
     subscriptions: true
     inbox: true
     acl_ignore: false
-  - type: "public"
+  - type: "shared"
     prefix: "Public/"
     separator: "/"
-    list: true
+    list: "yes"
     subscriptions: false
     inbox: false
     acl_ignore: false
@@ -426,6 +425,13 @@ quota_status:
   listen: ":12340"
   recipient_delimiter: "+"
   quota_status_nouser: "REJECT Unknown user"
+  auth_master_addr: "yarilo-auth:9102"
+
+## yarilo-backend-api, the operator API yarctl backend talks to. The token
+## comes from BACKEND_API_TOKEN in .env, so it never sits in this file.
+backend_api:
+  listen: ":9105"
+  token: "${BACKEND_API_TOKEN}"
   auth_master_addr: "yarilo-auth:9102"
 
 telemetry:

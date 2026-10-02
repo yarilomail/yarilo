@@ -121,3 +121,22 @@ func TestEveryRetiredKeySaysWhatReplacedIt(t *testing.T) {
 		}
 	}
 }
+
+// connection_limit was parsed for every listener and read by nothing; one left
+// in a config says so at start instead of promising a limit (#2112).
+func TestAListenerConnectionLimitIsRetired(t *testing.T) {
+	for _, l := range []string{"jmap", "imaps", "lmtp"} {
+		t.Run(l, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			defer slog.SetDefault(prev)
+			if _, err := loadYAML(t, "services:\n  "+l+":\n    enabled: true\n    connection_limit: 0\n"); err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if !strings.Contains(buf.String(), "services."+l+".connection_limit") {
+				t.Errorf("no retired-key warning for services.%s.connection_limit; log was:\n%s", l, buf.String())
+			}
+		})
+	}
+}

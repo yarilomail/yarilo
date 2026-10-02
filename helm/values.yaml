@@ -1928,8 +1928,6 @@ components:
         enabled: true
         servicePort: 443
         containerPort: 8443
-        ## Per-user/IP accounting held in warden. 0 = unlimited.
-        connectionLimit: 0
         ## Refuse Basic credentials on a non-TLS listener.
         disablePlainAuth: true
 

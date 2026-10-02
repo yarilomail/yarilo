@@ -125,6 +125,17 @@ services:
       YARILO_COMPONENT: yarilo-jmap
       LOG_LEVEL: "${LOG_LEVEL:-info}"
 
+  # Operator API for `yarctl backend …`; reached with `docker compose exec`, not published.
+  yarilo-backend-api:
+    <<: *backend
+    environment:
+      YARILO_COMPONENT: yarilo-backend-api
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      BACKEND_API_TOKEN: "${BACKEND_API_TOKEN:?set BACKEND_API_TOKEN in .env}"
+      YARILO_ADMIN_TYPE: backend
+      YARILO_API_URL: "http://localhost:9105"
+      YARILO_API_TOKEN: "${BACKEND_API_TOKEN:?set BACKEND_API_TOKEN in .env}"
+
   yarilo-imap-login:
     <<: *proxy
     environment:
