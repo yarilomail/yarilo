@@ -2944,6 +2944,9 @@ func (cfg *Config) validate() error {
 	if err := ValidateNamespaceTypes(cfg.Namespaces); err != nil {
 		return err
 	}
+	if err := validateSharedNamespacesNeedACL(cfg.Namespaces, cfg.ACL.Enabled); err != nil {
+		return err
+	}
 	if err := cfg.foldSpecialUse(); err != nil {
 		return err
 	}
@@ -3246,6 +3249,22 @@ func ValidateNamespaceTypes(namespaces []NamespaceConfig) error {
 		}
 	}
 	return validateNamespaceFileSlugs(namespaces)
+}
+
+// validateSharedNamespacesNeedACL refuses a non-personal namespace with ACL off:
+// every user would read, write and expunge every mailbox under it.
+func validateSharedNamespacesNeedACL(namespaces []NamespaceConfig, aclEnabled bool) error {
+	if aclEnabled {
+		return nil
+	}
+	for i, ns := range namespaces {
+		if t := strings.ToLower(strings.TrimSpace(ns.Type)); t != "personal" {
+			return fmt.Errorf("config: namespace %d (type %s, prefix %q) opens its mailboxes to every user "+
+				"while acl.enabled is false; set acl.enabled: true and grant access by ACL "+
+				"(anyone lrs for a folder everyone may read)", i, t, ns.Prefix)
+		}
+	}
+	return nil
 }
 
 // validateNamespaceMailboxes refuses an unknown auto mode or attribute, auto in
