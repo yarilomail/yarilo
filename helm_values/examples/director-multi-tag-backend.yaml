@@ -48,9 +48,6 @@ extraEnv:
     valueFrom:
       secretKeyRef: { name: yarilo-mysql, key: dsn }
 
-internal_tls:
-  server_name: yarilo-internal
-
 fts:
   enabled: true
   fts_engine: flatcurve
@@ -67,6 +64,13 @@ backend_register:
   director_addr: "yarilo-director:9102"   # SHARED director ring (control-plane)
   # tag is taken from components.backend.tag below (rendered into the heartbeat)
 
+## Per-role internal certificates from cert-manager: one CA Issuer shared by
+## every release, so the control plane and each tag trust each other (#2138).
+internalTLS:
+  certManager:
+    enabled: true
+    issuerRef: { kind: ClusterIssuer, name: yarilo-internal-ca }
+
 components:
   director:
     enabled: false                  # NO director here — it lives in the control plane
@@ -75,15 +79,11 @@ components:
     coLocated: true
     replicas: 3                     # scale per shard's user load
     tag: "shard-a"                  # OVERRIDE per release (--set components.backend.tag=...)
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls   # shared internal cert (same CA as control plane)
 
   # This tag's OWN locks (cross-pod write coordination within the shard):
   locks:
     enabled: true
     replicas: 2
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
 
   # Shared services are NOT rendered here (they run in the control-plane release):
   auth:       { enabled: false }
