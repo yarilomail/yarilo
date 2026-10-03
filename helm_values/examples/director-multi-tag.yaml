@@ -45,9 +45,6 @@ extraEnv:
     valueFrom:
       secretKeyRef: { name: yarilo-mysql, key: dsn }
 
-internal_tls:
-  server_name: yarilo-internal
-
 fts:
   enabled: true
   fts_engine: flatcurve

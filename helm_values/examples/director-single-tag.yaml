@@ -56,13 +56,6 @@ extraEnv:
         name: yarilo-mysql          # operator-provided Secret
         key: dsn
 
-# ---- Internal mTLS: ONE shared cert (server_name pinned) -------------------
-# Every internal client dial pins internal_tls.server_name; the shared cert must
-# carry that SAN. The director gets its OWN cert with the ring SANs.
-# Apply the internal CA (cert-manager Issuer "yarilo-internal-ca") first.
-internal_tls:
-  server_name: yarilo-internal      # a SAN in every internal certificate
-
 # ---- Full-text search: co-located (localhost) → per-user single writer ------
 fts:
   enabled: true
