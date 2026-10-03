@@ -48,6 +48,13 @@ type k8sDoc struct {
 	} `yaml:"spec"`
 }
 
+// consoleRole is the certificate yarctl presents in each container that has one:
+// the director pod reaches only its own API (#2132).
+var consoleRole = map[string]mtls.Role{
+	"yarilo-backend-api": mtls.RoleAdmin,
+	"yarilo-director":    mtls.RoleDirectorAdmin,
+}
+
 func renderDocs(t *testing.T, args ...string) []k8sDoc {
 	t.Helper()
 	out, err := exec.Command("helm", append([]string{"template", "yarilo", "../../helm"}, args...)...).Output()
@@ -108,7 +115,7 @@ func TestEveryContainerPresentsItsOwnRole(t *testing.T) {
 					certs[d.Spec.SecretName] = d
 				}
 			}
-			checked := 0
+			checked, consoles := 0, 0
 			for _, d := range docs {
 				if d.Kind != "Deployment" && d.Kind != "StatefulSet" {
 					continue
@@ -129,8 +136,16 @@ func TestEveryContainerPresentsItsOwnRole(t *testing.T) {
 					}
 					role := mtls.Role(strings.TrimPrefix(component, "yarilo-"))
 					for _, m := range c.VolumeMounts {
-						if m.MountPath == "/etc/yarilo/admin-tls" && component != "yarilo-backend-api" {
-							t.Errorf("%s/%s mounts the admin certificate", d.Metadata.Name, c.Name)
+						if m.MountPath == "/etc/yarilo/admin-tls" {
+							want, ok := consoleRole[component]
+							if !ok {
+								t.Errorf("%s/%s mounts a console certificate", d.Metadata.Name, c.Name)
+							} else if s, made := secrets[volSecret[m.Name]]; made {
+								if got, err := mtls.RoleOf(pemCert(t, s.Data["tls.crt"])); err != nil || got != want {
+									t.Errorf("%s/%s console certificate has role %q (%v), want %q", d.Metadata.Name, c.Name, got, err, want)
+								}
+								consoles++
+							}
 						}
 						if m.MountPath != "/etc/yarilo/internal-tls" {
 							continue
@@ -169,6 +184,9 @@ func TestEveryContainerPresentsItsOwnRole(t *testing.T) {
 			}
 			if checked < 5 {
 				t.Fatalf("checked %d containers; the guard looks at nothing", checked)
+			}
+			if tc.name == "sandbox" && consoles < 2 {
+				t.Fatalf("checked %d console certificates; backend-api and director should both have one", consoles)
 			}
 		})
 	}

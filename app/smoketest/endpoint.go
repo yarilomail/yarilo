@@ -43,8 +43,15 @@ type endpoint struct {
 
 func (e endpoint) addr() string { return net.JoinHostPort(e.host, e.port) }
 
-func (e endpoint) tlsConfig() *tls.Config {
-	return &tls.Config{ServerName: e.host, InsecureSkipVerify: *flagInsecure} //nolint:gosec
+func (e endpoint) tlsConfig() *tls.Config { return publicTLS(e.host) }
+
+// publicTLS verifies a client-facing listener reached at host: against
+// -tls-server-name when set, since the stand is dialled by service name or IP.
+func publicTLS(host string) *tls.Config {
+	if *flagTLSServerName != "" {
+		host = *flagTLSServerName
+	}
+	return &tls.Config{ServerName: host, InsecureSkipVerify: *flagInsecure} //nolint:gosec // opt-in via -insecure
 }
 
 // dial opens the connection the mode describes and returns it with the reader

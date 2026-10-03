@@ -72,7 +72,10 @@ spec:
         - -imap-user=u1@d00001.test
         - -imap-pass=Yarilo!test1
         - -lmtp-login
-        - -insecure=true
+        # Certificates are verified: client-facing ones against the stand's
+        # public name, the admin APIs against the pinned internal name.
+        - -tls-server-name=mail-sb.seconddns.com
+        - -internal-server-name=yarilo-internal
         - -timeout=20s
         - -telemetry=http://yarilo-imap-login-telemetry:8080
         - -pop3s

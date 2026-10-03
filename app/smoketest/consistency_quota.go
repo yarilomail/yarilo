@@ -153,9 +153,10 @@ func backendAPIClient() (*http.Client, error) { return adminClient(*flagBackendA
 // adminClient presents the admin certificate (-backend-api-cert/-key/-ca) to
 // either admin API at base.
 func adminClient(base string) (*http.Client, error) {
-	cfg := &tls.Config{
-		ServerName:         hostOf(base),
-		InsecureSkipVerify: *flagInsecure, //nolint:gosec // opt-in via -insecure
+	// The admin APIs serve internal certificates: verified against the pinned name when given.
+	cfg := &tls.Config{ServerName: *flagInternalServerName}
+	if cfg.ServerName == "" {
+		cfg.ServerName, cfg.InsecureSkipVerify = hostOf(base), *flagInsecure //nolint:gosec // opt-in via -insecure
 	}
 	if (*flagBackendAPICert == "") != (*flagBackendAPIKey == "") {
 		return nil, fmt.Errorf("-backend-api-cert and -backend-api-key go together; one without the other cannot authenticate")

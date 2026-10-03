@@ -253,7 +253,7 @@ spec:
               protocol: TCP
           volumeMounts:
             {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls "role" "backend-api") | nindent 12 }}
-            {{- include "yarilo.adminTLSMount" $root | nindent 12 }}
+            {{- include "yarilo.adminTLSMount" (dict "root" $root "role" "admin") | nindent 12 }}
           resources:
             {{- toYaml $root.Values.components.backendAPI.resources | nindent 12 }}
         # ---- yarilo-backend-reg (registration sidecar: one BACKEND-UP for the pod IP) ----
@@ -335,7 +335,7 @@ spec:
         {{- end }}
         {{- $itlsRoles := list "fts" "backend-api" "backend-reg" }}
         {{- range $p := $protocols }}{{ $itlsRoles = append $itlsRoles $p.name }}{{ end }}
-        {{- include "yarilo.adminTLSVolume" $root | nindent 8 }}
+        {{- include "yarilo.adminTLSVolume" (dict "root" $root "role" "admin") | nindent 8 }}
         {{- range $role := $itlsRoles }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $root "itls" $itls "role" $role "vol" (printf "internal-tls-%s" $role)) | nindent 8 }}
         {{- end }}
