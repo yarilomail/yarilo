@@ -130,21 +130,48 @@ name clients verify, and the director's ring names. Renders a YAML list.
 {{- end }}
 
 {{/*
-The admin certificate yarctl presents, mounted in the backend-api containers
-only: anywhere else it would make that pod an admin.
+The certificate yarctl presents: admin in backend-api, director-admin in the
+director pod (its own API only). Args: dict "root" $ "role" <role>.
 */}}
 {{- define "yarilo.adminTLSVolume" -}}
-{{- if has "admin" (include "yarilo.internalTLSRoles" . | fromYamlArray) }}
+{{- if has .role (include "yarilo.internalTLSRoles" .root | fromYamlArray) }}
 - name: admin-tls
   secret:
-    secretName: {{ printf "%s-admin-internal-tls" (include "yarilo.fullname" .) }}
+    secretName: {{ printf "%s-%s-internal-tls" (include "yarilo.fullname" .root) .role }}
 {{- end }}
 {{- end }}
 {{- define "yarilo.adminTLSMount" -}}
-{{- if has "admin" (include "yarilo.internalTLSRoles" . | fromYamlArray) }}
+{{- if has .role (include "yarilo.internalTLSRoles" .root | fromYamlArray) }}
 - name: admin-tls
   mountPath: /etc/yarilo/admin-tls
   readOnly: true
+{{- end }}
+{{- end }}
+
+{{/*
+yarctl in the director pod: its own admin API, as director-admin.
+*/}}
+{{- define "yarilo.directorConsoleEnv" -}}
+{{- $tls := eq (include "yarilo.internalTLSEnabled" .) "true" }}
+{{- $dir := ternary "/etc/yarilo/admin-tls" "/etc/yarilo/internal-tls" (has "director-admin" (include "yarilo.internalTLSRoles" . | fromYamlArray)) }}
+- name: YARILO_ADMIN_TYPE
+  value: director
+- name: YARILO_ADMIN_URL
+  value: {{ printf "%s://localhost:%v" (ternary "https" "http" $tls) .Values.components.director.api.port }}
+- name: YARILO_ADMIN_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ printf "%s-director-api-token" (include "yarilo.fullname" .) }}
+      key: token
+{{- if $tls }}
+- name: YARILO_ADMIN_TLS_CERT
+  value: {{ $dir }}/tls.crt
+- name: YARILO_ADMIN_TLS_KEY
+  value: {{ $dir }}/tls.key
+- name: YARILO_ADMIN_TLS_CA
+  value: {{ $dir }}/ca.crt
+- name: YARILO_ADMIN_TLS_SERVER_NAME
+  value: {{ .Values.internalTLS.serverName | default (printf "%s-internal" (include "yarilo.fullname" .)) | quote }}
 {{- end }}
 {{- end }}
 
@@ -175,6 +202,10 @@ Renders a YAML list.
 {{- end }}
 {{- if $roles }}
 {{- $roles = append $roles "admin" }}
+{{- $d := $c.director | default dict }}
+{{- if and $d.enabled ($d.internalTLS | default dict).enabled }}
+{{- $roles = append $roles "director-admin" }}
+{{- end }}
 {{- end }}
 {{- toYaml ($roles | uniq | sortAlpha) }}
 {{- end }}

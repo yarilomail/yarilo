@@ -48,7 +48,7 @@ spec:
                 secretKeyRef:
                   name: {{ printf "%s-director-ring-secret" (include "yarilo.fullname" .) }}
                   key: secret
-            {{- include "yarilo.adminDirectorEnv" . | nindent 12 }}
+            {{- include "yarilo.directorConsoleEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -77,6 +77,7 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.director.internalTLS "role" "director") | nindent 12 }}
+            {{- include "yarilo.adminTLSMount" (dict "root" $ "role" "director-admin") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -87,6 +88,7 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.director.internalTLS "role" "director") | nindent 8 }}
+        {{- include "yarilo.adminTLSVolume" (dict "root" $ "role" "director-admin") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

@@ -49,24 +49,26 @@ var (
 	flagTimeout         = flag.Duration("timeout", 10*time.Second, "per-check timeout")
 	// FTS catch-up can wait up to fts_timeout (30s) under index lag; the read
 	// deadline must exceed that budget or a legitimate wait reads as i/o timeout.
-	flagIMAPReadTimeout = flag.Duration("imap-read-timeout", 45*time.Second, "IMAP read deadline for the sieve verify/search steps (must exceed the server fts catch-up budget)")
-	flagInsecure        = flag.Bool("insecure", false, "skip TLS certificate verification")
-	flagSMTPMX          = flag.Bool("smtp-mx", false, "check SMTP MX EHLO (port -smtp-mx-port)")
-	flagSMTPSub         = flag.Bool("smtp-sub", false, "check SMTP submission EHLO+STARTTLS, then AUTH and a transaction as -imap-user (port -smtp-sub-port)")
-	flagProxyProtocol   = flag.Bool("proxy-protocol", false, "send HAProxy PROXY header before SMTP banner")
-	flagXClient         = flag.Bool("xclient", false, "check that MX port advertises XCLIENT in EHLO")
-	flagPOP3S           = flag.Bool("pop3s", false, "check POP3S greeting and CAPA")
-	flagPOP3TLS         = flag.String("pop3-tls", "ssl", "POP3 connection: ssl, starttls or none")
-	flagPOP3Port        = flag.String("pop3-port", "", "POP3 port; empty falls back to -pop3s-port")
-	flagIMAPUser        = flag.String("imap-user", "", "IMAP username used where a check names no identity of its own")
-	flagIMAPPass        = flag.String("imap-pass", "", "password for -imap-user")
-	flagManageSieveTLS  = flag.String("managesieve-tls", "starttls", "ManageSieve connection: ssl, starttls or none")
-	flagIMAPTLS         = flag.String("imap-tls", "ssl", "IMAP connection: ssl, starttls or none")
-	flagPOP3User        = flag.String("pop3-user", "", "POP3 username for the maildrop cycle (enables it)")
-	flagPOP3Pass        = flag.String("pop3-pass", "", "password for -pop3-user")
-	flagLMTPLogin       = flag.Bool("lmtp-login", false, "check yarilo-lmtp-login LHLO greeting (port -lmtp-login-port)")
-	flagManageSieve     = flag.Bool("managesieve", false, "check ManageSieve auth + script CRUD (port -managesieve-port)")
-	flagSieve           = flag.Bool("sieve", false, "check Sieve plugin execution via SMTP injection + IMAP verify")
+	flagIMAPReadTimeout    = flag.Duration("imap-read-timeout", 45*time.Second, "IMAP read deadline for the sieve verify/search steps (must exceed the server fts catch-up budget)")
+	flagInsecure           = flag.Bool("insecure", false, "skip TLS certificate verification")
+	flagTLSServerName      = flag.String("tls-server-name", "", "name client-facing certificates are verified against, when dialled by service name or IP")
+	flagInternalServerName = flag.String("internal-server-name", "", "pinned internal name the admin APIs' certificates are verified against (internal_tls.server_name)")
+	flagSMTPMX             = flag.Bool("smtp-mx", false, "check SMTP MX EHLO (port -smtp-mx-port)")
+	flagSMTPSub            = flag.Bool("smtp-sub", false, "check SMTP submission EHLO+STARTTLS, then AUTH and a transaction as -imap-user (port -smtp-sub-port)")
+	flagProxyProtocol      = flag.Bool("proxy-protocol", false, "send HAProxy PROXY header before SMTP banner")
+	flagXClient            = flag.Bool("xclient", false, "check that MX port advertises XCLIENT in EHLO")
+	flagPOP3S              = flag.Bool("pop3s", false, "check POP3S greeting and CAPA")
+	flagPOP3TLS            = flag.String("pop3-tls", "ssl", "POP3 connection: ssl, starttls or none")
+	flagPOP3Port           = flag.String("pop3-port", "", "POP3 port; empty falls back to -pop3s-port")
+	flagIMAPUser           = flag.String("imap-user", "", "IMAP username used where a check names no identity of its own")
+	flagIMAPPass           = flag.String("imap-pass", "", "password for -imap-user")
+	flagManageSieveTLS     = flag.String("managesieve-tls", "starttls", "ManageSieve connection: ssl, starttls or none")
+	flagIMAPTLS            = flag.String("imap-tls", "ssl", "IMAP connection: ssl, starttls or none")
+	flagPOP3User           = flag.String("pop3-user", "", "POP3 username for the maildrop cycle (enables it)")
+	flagPOP3Pass           = flag.String("pop3-pass", "", "password for -pop3-user")
+	flagLMTPLogin          = flag.Bool("lmtp-login", false, "check yarilo-lmtp-login LHLO greeting (port -lmtp-login-port)")
+	flagManageSieve        = flag.Bool("managesieve", false, "check ManageSieve auth + script CRUD (port -managesieve-port)")
+	flagSieve              = flag.Bool("sieve", false, "check Sieve plugin execution via SMTP injection + IMAP verify")
 	// Named for its role, not for the check that used it first: sieve and FTS
 	// both inject a message, which is one role (#1202).
 	flagDeliveryHost = flag.String("delivery-host", "", "host that accepts the injected mail (defaults to -smtp-host, then -host)")
@@ -800,11 +802,7 @@ func checkSMTPSubmission() error {
 	if !strings.HasPrefix(line, "220") {
 		return fmt.Errorf("STARTTLS: unexpected response %q", line)
 	}
-	tlsCfg := &tls.Config{
-		ServerName:         smtpHost(),
-		InsecureSkipVerify: *flagInsecure, //nolint:gosec
-	}
-	tlsConn := tls.Client(conn, tlsCfg)
+	tlsConn := tls.Client(conn, publicTLS(smtpHost()))
 	if err := tlsConn.Handshake(); err != nil {
 		return fmt.Errorf("STARTTLS TLS handshake: %w", err)
 	}

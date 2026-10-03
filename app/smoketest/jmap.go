@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,10 +22,7 @@ func jmapClient() *http.Client {
 	return &http.Client{
 		Timeout: *flagTimeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				ServerName:         jmapHost(),
-				InsecureSkipVerify: *flagInsecure, //nolint:gosec // opt-in via -insecure
-			},
+			TLSClientConfig: publicTLS(jmapHost()),
 		},
 	}
 }

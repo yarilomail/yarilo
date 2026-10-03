@@ -43,6 +43,8 @@ const (
 	RoleSASLLogin        Role = "sasl-login"
 	RoleQuotaStatus      Role = "quota-status"
 	RoleAdmin            Role = "admin"
+	// RoleDirectorAdmin is the director pod's console: its own admin API only.
+	RoleDirectorAdmin Role = "director-admin"
 )
 
 // Roles is every role a certificate may carry.
@@ -50,7 +52,7 @@ var Roles = []Role{
 	RoleAuth, RoleWarden, RoleLocks, RoleDict, RoleDirector, RoleFTS, RoleBackendAPI, RoleBackendReg,
 	RoleIMAP, RolePOP3, RoleLMTP, RoleManageSieve, RoleSubmission, RoleJMAP,
 	RoleIMAPLogin, RolePOP3Login, RoleSubmissionLogin, RoleManageSieveLogin, RoleLMTPLogin, RoleJMAPLogin,
-	RoleSASLLogin, RoleQuotaStatus, RoleAdmin,
+	RoleSASLLogin, RoleQuotaStatus, RoleAdmin, RoleDirectorAdmin,
 }
 
 // Listener names an internal server socket; the allow-list is keyed by it.
@@ -95,7 +97,7 @@ var allowed = map[Listener][]Role{
 	ListenerDict:  sessions,
 	ListenerDirector: {RoleDirector, RoleIMAPLogin, RolePOP3Login, RoleSubmissionLogin, RoleManageSieveLogin,
 		RoleLMTPLogin, RoleJMAPLogin, RoleBackendAPI, RoleBackendReg},
-	ListenerDirectorAPI:   {RoleAdmin},
+	ListenerDirectorAPI:   {RoleAdmin, RoleDirectorAdmin},
 	ListenerBackendAPI:    {RoleAdmin, RoleBackendAPI},
 	ListenerIMAPBackend:   {RoleIMAPLogin},
 	ListenerPOP3Backend:   {RolePOP3Login},

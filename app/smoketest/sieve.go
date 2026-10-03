@@ -75,11 +75,7 @@ func msieveDial() (net.Conn, error) {
 		conn.Close()
 		return nil, fmt.Errorf("STARTTLS rejected: %q", line)
 	}
-	tlsCfg := &tls.Config{
-		ServerName:         manageSieveHost(),
-		InsecureSkipVerify: *flagInsecure, //nolint:gosec
-	}
-	tlsConn := tls.Client(conn, tlsCfg)
+	tlsConn := tls.Client(conn, publicTLS(manageSieveHost()))
 	if err := tlsConn.Handshake(); err != nil {
 		tlsConn.Close()
 		return nil, fmt.Errorf("STARTTLS handshake: %w", err)
