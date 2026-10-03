@@ -32,6 +32,12 @@ spec:
             secretKeyRef:
               name: yarilo-director-api-token
               key: token
+        # The backend admin API refuses a request without its token (HTTP 401).
+        - name: BACKEND_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: yarilo-backend-api-token
+              key: token
         - name: YARILO_STATIC_PASSWORD
           valueFrom:
             secretKeyRef:
