@@ -43,7 +43,7 @@ func TestTheDirectorAPIIsMTLSForAdmin(t *testing.T) {
 			}
 			tr.TLSClientConfig = cli
 		}
-		req, _ := http.NewRequest(http.MethodGet, scheme+"://"+addr+"/api/director/status", nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+addr+"/api/director/status", nil)
 		req.Header.Set("Authorization", "Bearer t")
 		resp, err := (&http.Client{Transport: tr, Timeout: 5 * time.Second}).Do(req)
 		if err != nil {
