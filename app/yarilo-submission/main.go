@@ -87,7 +87,7 @@ func main() {
 	}
 
 	primary := firstActive(svcs.Submission, svcs.Submissions)
-	srv := submsvr.New(submsvr.Options{
+	srv, err := newServer(cfg, submsvr.Options{
 		HAProxy:          primary.HAProxy,
 		HAProxyTimeout:   haproxyTimeout,
 		HAProxyNets:      haproxyNets,
@@ -101,6 +101,10 @@ func main() {
 		FailureDelay:     time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 		OAuth2Enabled:    len(cfg.Auth.OAuth2) > 0,
 	})
+	if err != nil {
+		slog.Error("submission: internal_tls server config failed", "err", err)
+		os.Exit(1)
+	}
 
 	go runTelemetry(cfg.Telemetry)
 
@@ -164,6 +168,19 @@ func dialAuthService(addr string, tlsCfg *tls.Config) (*authrelay.Client, error)
 		return nil, authrelay.ErrNoAuthService
 	}
 	return authrelay.Dial(addr, tlsCfg)
+}
+
+// newServer adds the internal mTLS the login pod dials this backend with; the
+// session binaries get theirs from backend.New, which submission does not use.
+func newServer(cfg *config.Config, opts submsvr.Options) (*submsvr.Server, error) {
+	if cfg.InternalTLS.Enabled {
+		t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA)
+		if err != nil {
+			return nil, err
+		}
+		opts.PreambleTLS = t
+	}
+	return submsvr.New(opts), nil
 }
 
 // authClientTLS builds the mTLS config for the auth service, if configured.
