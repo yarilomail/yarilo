@@ -36,7 +36,7 @@ docker/          — Dockerfile
 **yarilo's infrastructure architecture is defined by these documents and diagrams in `docs/`. They are the source of truth for every decision about deployment, scaling, HA, and cross-component coordination:**
 
 - **[DEPLOYMENT](https://doc.yarilomail.org/DEPLOYMENT)** — deployment topology, sizing (per pod, per tag), HA strategy, sharding via tags, and the rationale behind each decision
-- **[docs/yarilo_director.svg](docs/yarilo_director.svg)** — director deployment: login proxies, a 3-pod director StatefulSet with peer-sync, backend-lease (self-registration + heartbeat #776, replacing the monitor sidecars), ring routing to backend tags
+- **[docs/yarilo_director.svg](docs/yarilo_director.svg)** — director deployment: login proxies, a 3-replica director Deployment with peer-sync, backend-lease (self-registration + heartbeat #776, replacing the monitor sidecars), ring routing to backend tags
 - **[docs/yarilo_backend.svg](docs/yarilo_backend.svg)** — backend deployment (per tag): ONE co-located StatefulSet whose pod carries every protocol container (imap/pop3/submission/lmtp/managesieve) plus `yarilo-fts` and the `yarilo-backend-reg` sidecar on a shared IP; `yarilo-locks`, `backend-api` and `quota-status` are separate deployments; one shared NFS PV (RWX)
 - **[docs/yarilo_standalone.svg](docs/yarilo_standalone.svg)** — standalone deployment: the full stack (login + sessions + auth + warden + embedded `yarilo-locks` + storage) for self-contained installations without a director
 
@@ -50,7 +50,7 @@ docker/          — Dockerfile
 - `yarilo-auth` and `yarilo-warden` are shared services (two Deployments), one deployment per installation
 - `yarilo-locks` — single abstraction for cross-process write coordination. **All k8s deployments (standalone and backend) use `remote` mode** — its own Deployment behind a ClusterIP Service, mTLS TCP `:9104`, Redis-backed state. `embedded` mode (in-memory + Unix socket) is reserved for unit tests and non-k8s CLI runs; it is never the production default because Unix sockets cannot cross pods, which breaks any `replicaCount > 1`. In-process goroutine concurrency stays on `sync.Mutex` as a two-tier fast-path.
 - One NFS PV (RWX) per tag, shared by every co-located pod within that tag; a `tag` is an NFS shard, NOT a protocol
-- Director is a 3-replica StatefulSet with peer-sync, ONE ring and one userDir — a single pod IP per user serves every protocol, and the login proxy overrides the port
+- Director is a 3-replica Deployment with peer-sync, ONE ring and one userDir — a single pod IP per user serves every protocol, and the login proxy overrides the port. The ring organizes itself (#750): a pod joins through the headless `-director-ring` Service as its seed, so no stable pod identities are needed
 - Sticky routing is per user, not per protocol: a user is pinned to one co-located pod for every protocol, and cross-pod coordination goes through `yarilo-locks`
 - TLS termination and passdb happen at the director; userdb happens at the backend via the shared `yarilo-auth`
 
