@@ -42,6 +42,25 @@ internalTLS:
   ##   LRU eviction. 0 = LRU-only (no age limit). Set a TTL so a cert rotation
   ##   stops resuming stale sessions within the window.
   sessionCacheTtl: 0
+  ## Per-component certificates (#2132). A component with internalTLS.enabled
+  ## and an empty secretName gets <release>-<role>-internal-tls from the chart,
+  ## carrying the DNS SAN <role>.role.yarilo.internal its peers check.
+  ## ca.secretName: an existing kubernetes.io/tls Secret holding the CA
+  ##   certificate and key the chart signs with. Empty: the chart makes a CA once
+  ##   and keeps it in <release>-internal-ca.
+  ca:
+    secretName: ""
+  ## Raise to re-issue every chart-made certificate on the next upgrade. They
+  ## are otherwise kept until their Secret is gone or the CA changes; there is
+  ## no renewal by age without cert-manager.
+  certGeneration: 0
+  ## cert-manager instead of chart-made certificates: one Certificate per role
+  ## from this issuer, renewed by cert-manager.
+  certManager:
+    enabled: false
+    issuerRef:
+      kind: Issuer
+      name: ""
 
 ## -------------------------------------------------------------------
 ## Login proxies (shared across imap/pop3/submission/managesieve login)

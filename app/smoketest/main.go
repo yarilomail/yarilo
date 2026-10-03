@@ -561,6 +561,12 @@ func checkDirectorAPI() error {
 	token := directorAPIToken()
 	url := strings.TrimRight(*flagDirectorAPI, "/") + "/api/director/ring"
 	c := &http.Client{Timeout: *flagTimeout}
+	if strings.HasPrefix(url, "https://") {
+		var err error
+		if c, err = adminClient(*flagDirectorAPI); err != nil {
+			return err
+		}
+	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		return err

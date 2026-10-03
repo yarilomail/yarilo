@@ -73,15 +73,18 @@ Mounted at /etc/yarilo/tls. Call with secretName string.
 {{- end }}
 
 {{/*
-Internal mTLS volume (inter-component: director↔auth, director↔backend).
-Mounted at /etc/yarilo/internal-tls.
-Call with component internalTLS config: (dict "enabled" true "secretName" "...")
+Internal mTLS volume and mount, mounted at /etc/yarilo/internal-tls.
+Args: dict "root" $ "itls" <component internalTLS> "role" <role> ["vol" <volume name>].
+An empty secretName is the chart-made <release>-<role>-internal-tls (#2132).
 */}}
+{{- define "yarilo.internalTLSSecret" -}}
+{{- .itls.secretName | default (printf "%s-%s-internal-tls" (include "yarilo.fullname" .root) .role) -}}
+{{- end }}
 {{- define "yarilo.internalTLSVolume" -}}
-{{- if and .enabled .secretName }}
-- name: internal-tls
+{{- if .itls.enabled }}
+- name: {{ .vol | default "internal-tls" }}
   secret:
-    secretName: {{ .secretName }}
+    secretName: {{ include "yarilo.internalTLSSecret" . }}
     optional: false
 {{- end }}
 {{- end }}
@@ -106,11 +109,74 @@ true
 {{- end }}
 
 {{- define "yarilo.internalTLSMount" -}}
-{{- if and .enabled .secretName }}
-- name: internal-tls
+{{- if .itls.enabled }}
+- name: {{ .vol | default "internal-tls" }}
   mountPath: /etc/yarilo/internal-tls
   readOnly: true
 {{- end }}
+{{- end }}
+
+{{/*
+DNS names of a role certificate: the role SAN peers check, the pinned internal
+name clients verify, and the director's ring names. Renders a YAML list.
+*/}}
+{{- define "yarilo.internalTLSNames" -}}
+{{- $full := include "yarilo.fullname" .root }}
+{{- $names := list (printf "%s.role.yarilo.internal" .role) .serverName }}
+{{- if eq .role "director" }}
+{{- $names = concat $names (list (printf "%s-director-ring" $full) (printf "%s-director" $full)) }}
+{{- end }}
+{{- toYaml $names }}
+{{- end }}
+
+{{/*
+The admin certificate yarctl presents, mounted in the backend-api containers
+only: anywhere else it would make that pod an admin.
+*/}}
+{{- define "yarilo.adminTLSVolume" -}}
+{{- if has "admin" (include "yarilo.internalTLSRoles" . | fromYamlArray) }}
+- name: admin-tls
+  secret:
+    secretName: {{ printf "%s-admin-internal-tls" (include "yarilo.fullname" .) }}
+{{- end }}
+{{- end }}
+{{- define "yarilo.adminTLSMount" -}}
+{{- if has "admin" (include "yarilo.internalTLSRoles" . | fromYamlArray) }}
+- name: admin-tls
+  mountPath: /etc/yarilo/admin-tls
+  readOnly: true
+{{- end }}
+{{- end }}
+
+{{/*
+Roles whose certificate the chart makes: an enabled component with internal TLS
+and no secretName of its own; admin rides along for yarctl and the smoketest.
+Renders a YAML list.
+*/}}
+{{- define "yarilo.internalTLSRoles" -}}
+{{- $c := .Values.components }}
+{{- $roles := list }}
+{{- $own := dict "auth" $c.auth "warden" $c.warden "locks" $c.locks "dict" $c.dict "director" $c.director
+      "backend-api" $c.backendAPI "imap" $c.imap "pop3" $c.pop3 "lmtp" $c.lmtp "managesieve" $c.manageSieve
+      "submission" $c.submission "jmap" $c.jmap "imap-login" $c.imapLogin "pop3-login" $c.pop3Login
+      "submission-login" $c.submissionLogin "managesieve-login" $c.manageSieveLogin "lmtp-login" $c.lmtpLogin
+      "jmap-login" $c.jmapLogin "sasl-login" $c.saslLogin "quota-status" $c.quotaStatus }}
+{{- range $role, $comp := $own }}
+{{- $comp = $comp | default dict }}
+{{- $itls := $comp.internalTLS | default dict }}
+{{- if and $comp.enabled $itls.enabled (not $itls.secretName) (not (and (eq $role "director") ($itls.certificate | default dict).enabled)) }}
+{{- $roles = append $roles $role }}
+{{- end }}
+{{- end }}
+{{- $b := $c.backend | default dict }}
+{{- $bitls := $b.internalTLS | default dict }}
+{{- if and $b.coLocated $bitls.enabled (not $bitls.secretName) }}
+{{- $roles = concat $roles (list "imap" "pop3" "lmtp" "managesieve" "submission" "jmap" "fts" "backend-api" "backend-reg") }}
+{{- end }}
+{{- if $roles }}
+{{- $roles = append $roles "admin" }}
+{{- end }}
+{{- toYaml ($roles | uniq | sortAlpha) }}
 {{- end }}
 
 {{/*
@@ -228,12 +294,13 @@ Include in any component that reads passdb/userdb from SQL.
          internal CA, and verify against the pinned SAN (the URL host is
          localhost/an IP that never matches the cert). Same secret the server
          mounts at /etc/yarilo/internal-tls (#954). */}}
+{{- $adminDir := ternary "/etc/yarilo/admin-tls" "/etc/yarilo/internal-tls" (has "admin" (include "yarilo.internalTLSRoles" . | fromYamlArray)) }}
 - name: YARILO_ADMIN_TLS_CERT
-  value: /etc/yarilo/internal-tls/tls.crt
+  value: {{ $adminDir }}/tls.crt
 - name: YARILO_ADMIN_TLS_KEY
-  value: /etc/yarilo/internal-tls/tls.key
+  value: {{ $adminDir }}/tls.key
 - name: YARILO_ADMIN_TLS_CA
-  value: /etc/yarilo/internal-tls/ca.crt
+  value: {{ $adminDir }}/ca.crt
 - name: YARILO_ADMIN_TLS_SERVER_NAME
   value: {{ .Values.internalTLS.serverName | default (printf "%s-internal" (include "yarilo.fullname" .)) | quote }}
 {{- end }}
@@ -247,7 +314,7 @@ YARILO_API_URL/YARILO_API_TOKEN pair, which is claimed by the backend plane.
 {{- define "yarilo.adminDirectorEnv" -}}
 {{- $tokenSecret := printf "%s-director-api-token" (include "yarilo.fullname" .) }}
 - name: YARILO_ADMIN_URL
-  value: {{ printf "http://%s-director-api:%v" (include "yarilo.fullname" .) .Values.components.director.api.port }}
+  value: {{ printf "%s://%s-director-api:%v" (ternary "https" "http" (eq (include "yarilo.internalTLSEnabled" .) "true")) (include "yarilo.fullname" .) .Values.components.director.api.port }}
 - name: YARILO_ADMIN_TOKEN
   valueFrom:
     secretKeyRef:
@@ -280,7 +347,7 @@ Args: dict "root" $ "itls" <internalTLS config>.
 - name: mail
   mountPath: {{ $root.Values.storage.maildir_root | default "/var/mail/vhosts" }}
 {{- end }}
-{{- include "yarilo.internalTLSMount" .itls }}
+{{- include "yarilo.internalTLSMount" (dict "root" $root "itls" .itls "role" .role "vol" (printf "internal-tls-%s" .role)) }}
 {{- /* extraVolumes are rendered on the StatefulSet, so the matching mounts
        belong on every backend container. Without them a volume an operator
        added is present in the pod and mounted nowhere: a passwd-file passdb

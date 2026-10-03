@@ -74,7 +74,7 @@ func writeInternalCerts(t *testing.T) (certFile, keyFile, caFile string) {
 // test (simplified server cfg, no maxLineLen) missed.
 func TestWrapProxy_InternalMTLSHandshake(t *testing.T) {
 	certFile, keyFile, caFile := writeInternalCerts(t)
-	serverCfg, err := mtls.ServerConfig(certFile, keyFile, caFile)
+	serverCfg, err := mtls.ServerConfig(certFile, keyFile, caFile, mtls.ListenerIMAPBackend)
 	if err != nil {
 		t.Fatal(err)
 	}

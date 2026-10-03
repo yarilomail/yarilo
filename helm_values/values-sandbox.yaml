@@ -336,6 +336,12 @@ extraEnv:
         name: yarilo-static-passdb
         key: password
 
+## Internal mTLS certificates are made per component by the chart, signed by
+## the CA cert-manager keeps in yarilo-internal-ca (#2132).
+internalTLS:
+  ca:
+    secretName: yarilo-internal-ca
+
 components:
   director:
     enabled: true
@@ -409,7 +415,6 @@ components:
     replicas: 2
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
   warden:
     # #908 PR4: singleton lifted. Redis-backed state (penalties + sessions + kick
     # bus) is shared across replicas, so the sandbox runs 2 to exercise the
@@ -417,7 +422,6 @@ components:
     replicas: 2
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     service:
       state_backend: redis
       key_prefix: "yarilo-sb:warden:"
@@ -427,12 +431,10 @@ components:
     replicas: 1
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
 
   locks:
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     # Sandbox shares one Redis; every component lives under the yarilo-sb: namespace.
     service:
       key_prefix: "yarilo-sb:locks:"
@@ -465,7 +467,6 @@ components:
         memory: 512Mi
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     tls:
       secretName: yarilo-tls
       certificate:
@@ -496,7 +497,6 @@ components:
     enabled: true
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     tls:
       secretName: yarilo-tls
       certificate:
@@ -534,7 +534,6 @@ components:
         memory: 512Mi
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     tls:
       secretName: yarilo-tls
     listeners:
@@ -554,7 +553,6 @@ components:
   auth:
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     ## Master users (#1301 window): impersonation via SASL authzid or the
     ## target*master separator. The masterdb is a dedicated table in the same
     ## MySQL as the main passdb; skip_schema + an explicit query, per the
@@ -684,7 +682,6 @@ components:
         memory: 512Mi
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10024
@@ -706,7 +703,6 @@ components:
         memory: 512Mi
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     service:
       type: LoadBalancer
       annotations:
@@ -717,7 +713,6 @@ components:
     enabled: true
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     auth_master_addr: "yarilo-auth:9102"
     service:
       type: LoadBalancer
@@ -749,7 +744,6 @@ components:
     backend_port: 10587
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     tls:
       secretName: yarilo-tls
 
@@ -760,7 +754,6 @@ components:
     enabled: true
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
 
   ## ManageSieve login pod — client-facing on :4190 STARTTLS.
   manageSieveLogin:
@@ -780,7 +773,6 @@ components:
         memory: 512Mi
     internalTLS:
       enabled: true
-      secretName: yarilo-internal-tls
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 14190

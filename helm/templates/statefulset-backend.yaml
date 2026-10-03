@@ -163,7 +163,7 @@ spec:
             {{- toYaml $root.Values.livenessProbe | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls) | nindent 12 }}
+            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls "role" $p.name) | nindent 12 }}
             {{- /* external TLS: a protocol backend that terminates its own TLS
                    (e.g. submission on 587/465) reads general.ssl → mount its
                    secret at /etc/yarilo/tls, matching the legacy deployment. */}}
@@ -208,7 +208,7 @@ spec:
               port: {{ $ftsTelemetry }}
             periodSeconds: 10
           volumeMounts:
-            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls) | nindent 12 }}
+            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls "role" "fts") | nindent 12 }}
           resources:
             {{- toYaml $root.Values.components.fts.resources | nindent 12 }}
         # ---- yarilo-backend-api (per-user writer; listens on the pod IP only, #788/#792) ----
@@ -252,7 +252,8 @@ spec:
               containerPort: {{ $backendAPITelemetry }}
               protocol: TCP
           volumeMounts:
-            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls) | nindent 12 }}
+            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls "role" "backend-api") | nindent 12 }}
+            {{- include "yarilo.adminTLSMount" $root | nindent 12 }}
           resources:
             {{- toYaml $root.Values.components.backendAPI.resources | nindent 12 }}
         # ---- yarilo-backend-reg (registration sidecar: one BACKEND-UP for the pod IP) ----
@@ -290,7 +291,7 @@ spec:
               readOnly: true
             - name: ready
               mountPath: {{ $readyDir }}
-            {{- include "yarilo.internalTLSMount" $itls | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $root "itls" $itls "role" "backend-reg" "vol" "internal-tls-backend-reg") | nindent 12 }}
             {{- /* extraVolumeMounts are deliberately NOT here: this sidecar
                    reads the config and the readiness directory and nothing
                    else, so mounting an operator secret into it would widen
@@ -332,7 +333,12 @@ spec:
             secretName: {{ $ptls.secretName }}
         {{- end }}
         {{- end }}
-        {{- include "yarilo.internalTLSVolume" $itls | nindent 8 }}
+        {{- $itlsRoles := list "fts" "backend-api" "backend-reg" }}
+        {{- range $p := $protocols }}{{ $itlsRoles = append $itlsRoles $p.name }}{{ end }}
+        {{- include "yarilo.adminTLSVolume" $root | nindent 8 }}
+        {{- range $role := $itlsRoles }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $root "itls" $itls "role" $role "vol" (printf "internal-tls-%s" $role)) | nindent 8 }}
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

@@ -126,9 +126,10 @@ func runTelemetry(cfg config.TelemetryConfig, reg *prometheus.Registry, ready fu
 // internal TLS on, the dict service is behind mTLS like every other service.
 func buildListener(cfg *config.Config, addr string) (net.Listener, error) {
 	if !cfg.InternalTLS.Enabled {
+		mtls.WarnRolesUnchecked(mtls.ListenerDict)
 		return net.Listen("tcp", addr)
 	}
-	tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA)
+	tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerDict)
 	if err != nil {
 		return nil, fmt.Errorf("mtls config: %w", err)
 	}

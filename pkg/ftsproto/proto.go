@@ -23,6 +23,7 @@ package ftsproto
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -209,9 +210,15 @@ type Remote struct {
 	br   *bufio.Reader
 }
 
-// Dial connects and performs the VERSION handshake.
-func Dial(addr string, timeout time.Duration) (*Remote, error) {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+// Dial connects and performs the VERSION handshake; tlsCfg non-nil is internal mTLS.
+func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Remote, error) {
+	var conn net.Conn
+	var err error
+	if tlsCfg != nil {
+		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, tlsCfg)
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, timeout)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ftsproto: dial: %w", err)
 	}

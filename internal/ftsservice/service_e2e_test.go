@@ -196,7 +196,7 @@ func TestServiceWireRoundTrip(t *testing.T) {
 	go ftsproto.Serve(ln, svc) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	cl, err := ftsproto.Dial(ln.Addr().String(), 5*time.Second)
+	cl, err := ftsproto.Dial(ln.Addr().String(), nil, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

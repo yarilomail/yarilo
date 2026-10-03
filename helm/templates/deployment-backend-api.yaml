@@ -99,7 +99,8 @@ spec:
             - name: mail
               mountPath: {{ .Values.storage.maildir_root }}
             {{- end }}
-            {{- include "yarilo.internalTLSMount" .Values.components.backendAPI.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.backendAPI.internalTLS "role" "backend-api") | nindent 12 }}
+            {{- include "yarilo.adminTLSMount" $ | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -114,7 +115,8 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "yarilo.fullname" . }}-mail
         {{- end }}
-        {{- include "yarilo.internalTLSVolume" .Values.components.backendAPI.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.backendAPI.internalTLS "role" "backend-api") | nindent 8 }}
+        {{- include "yarilo.adminTLSVolume" $ | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

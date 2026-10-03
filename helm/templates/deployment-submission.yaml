@@ -83,7 +83,7 @@ spec:
               mountPath: /etc/yarilo/tls
               readOnly: true
             {{- end }}
-            {{- include "yarilo.internalTLSMount" .Values.components.submission.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.submission.internalTLS "role" "submission") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -98,7 +98,7 @@ spec:
           secret:
             secretName: {{ .Values.components.submission.tls.secretName }}
         {{- end }}
-        {{- include "yarilo.internalTLSVolume" .Values.components.submission.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.submission.internalTLS "role" "submission") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

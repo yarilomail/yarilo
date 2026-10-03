@@ -94,6 +94,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/cluster/proto"
 	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/pkg/mtls"
 )
 
 const (
@@ -765,6 +766,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer s.removeClient(c)
 
 	rd := bufio.NewReaderSize(conn, 4096)
+	allow := s.commandGate(conn)
 
 	// Send server handshake: VERSION + current ring state + DONE.
 	_ = c.WriteLine(fmt.Sprintf("VERSION\t%s\t%d\t%d", protoName, majorVer, minorVer))
@@ -794,6 +796,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		fields := strings.Split(line, "\t")
 		switch {
 		case fields[0] == "DIRECTOR-JOIN":
+			if !allow(fields[0]) {
+				return
+			}
 			// Sent instead of ME/DONE, on a fresh connection to a seed
 			// (#750) — handleJoin owns the rest of this connection's
 			// lifetime (challenge/response, DIRECTOR-LIST, close).
@@ -809,7 +814,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			// redirect check so it uses the dialer's view too (#754).
 			pendingMembers, pendingRemoved = parseMemberList(fields[1]), parseMemberList(fields[2])
 		case fields[0] == "PEER":
-			if len(fields) < 3 || !s.membership.acceptPeer(conn, nonce, dialer, fields[2]) {
+			if len(fields) < 3 || !allow(fields[0]) || !s.membership.acceptPeer(conn, nonce, dialer, fields[2]) {
 				continue
 			}
 			s.membership.mergeMembers(pendingMembers, pendingRemoved)
@@ -855,6 +860,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		fields := strings.Split(line, "\t")
 		if len(fields) == 0 {
 			continue
+		}
+		if !allow(fields[0]) {
+			return
 		}
 		switch fields[0] {
 		case "LOOKUP":
@@ -916,6 +924,27 @@ func (s *Server) handleConn(conn net.Conn) {
 			slog.Info("director: client quit", "reason", reason)
 			return
 		}
+	}
+}
+
+// commandGate checks each command against the peer's certificate role. A
+// connection without TLS or without a role passes; the handshake logged it.
+func (s *Server) commandGate(conn net.Conn) func(cmd string) bool {
+	tc, ok := conn.(*tls.Conn)
+	if !ok {
+		return func(string) bool { return true }
+	}
+	_ = tc.Handshake()
+	role, ok := mtls.PeerRole(tc.ConnectionState())
+	if !ok {
+		return func(string) bool { return true }
+	}
+	return func(cmd string) bool {
+		if mtls.DirectorCommandAllowed(cmd, role) {
+			return true
+		}
+		slog.Error("director: command refused for the peer's role", "cmd", cmd, "role", string(role), "remote", conn.RemoteAddr().String())
+		return false
 	}
 }
 

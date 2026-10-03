@@ -64,7 +64,7 @@ spec:
               mountPath: /var/lib/yarilo
             - name: tmp
               mountPath: /tmp
-            {{- include "yarilo.internalTLSMount" .Values.components.locks.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.locks.internalTLS "role" "locks") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -76,7 +76,7 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
-        {{- include "yarilo.internalTLSVolume" .Values.components.locks.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.locks.internalTLS "role" "locks") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

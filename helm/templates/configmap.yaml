@@ -773,8 +773,8 @@ data:
              admin-client decision can never drift. */}}
       {{- $anyTLS := eq (include "yarilo.internalTLSEnabled" .) "true" }}
       enabled: {{ $anyTLS }}
-      {{- $tlsSecret := coalesce .Values.components.director.internalTLS.secretName .Values.components.auth.internalTLS.secretName .Values.components.warden.internalTLS.secretName .Values.components.imap.internalTLS.secretName }}
-      {{- if $tlsSecret }}
+      {{- /* Every component mounts its own certificate at this path (#2132). */}}
+      {{- if $anyTLS }}
       cert: /etc/yarilo/internal-tls/tls.crt
       key: /etc/yarilo/internal-tls/tls.key
       ca: /etc/yarilo/internal-tls/ca.crt
@@ -784,7 +784,7 @@ data:
       ca: ""
       {{- end }}
       # Pinned name every internal client dial verifies (#816). Defaults to
-      # <release>-internal; this MUST be a SAN in the shared internal-tls cert.
+      # <release>-internal; every internal certificate carries it as a SAN.
       server_name: {{ .Values.internalTLS.serverName | default (printf "%s-internal" (include "yarilo.fullname" .)) | quote }}
       # TLS 1.3 session resumption for internal mTLS dials (#856).
       session_cache_size: {{ .Values.internalTLS.sessionCacheSize | default 0 }}

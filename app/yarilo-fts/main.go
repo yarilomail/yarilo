@@ -145,6 +145,11 @@ func main() {
 		slog.Error("listen failed", "addr", listen, "err", err)
 		os.Exit(1)
 	}
+	ln, err = internalListener(cfg, ln)
+	if err != nil {
+		slog.Error("internal_tls config failed", "err", err)
+		os.Exit(1)
+	}
 
 	// Telemetry: /healthz, /readyz, /metrics on the dedicated port (#677).
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -310,4 +315,17 @@ func personalSeparator(cfg *config.Config) string {
 		}
 	}
 	return "/"
+}
+
+// internalListener puts the FTS port behind internal mTLS when it is on.
+func internalListener(cfg *config.Config, ln net.Listener) (net.Listener, error) {
+	if !cfg.InternalTLS.Enabled {
+		mtls.WarnRolesUnchecked(mtls.ListenerFTS)
+		return ln, nil
+	}
+	t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerFTS)
+	if err != nil {
+		return nil, err
+	}
+	return tls.NewListener(ln, t), nil
 }

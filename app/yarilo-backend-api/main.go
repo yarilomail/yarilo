@@ -76,11 +76,14 @@ func main() {
 			cfg.InternalTLS.Cert,
 			cfg.InternalTLS.Key,
 			cfg.InternalTLS.CA,
+			mtls.ListenerBackendAPI,
 		)
 		if err != nil {
 			slog.Error("internal_tls server config failed", "err", err)
 			os.Exit(1)
 		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerBackendAPI)
 	}
 
 	dicts := openDicts(cfg.Dicts)
@@ -157,7 +160,15 @@ func main() {
 	var ftsClient ftsproto.Client
 	var ftsChain *language.MultiChain
 	if cfg.FTS.Enabled && cfg.FTS.Mode == "remote" && cfg.FTS.Addr != "" {
-		ftsClient = ftsproto.NewPool(cfg.FTS.Addr, cfg.FTS.MaxConns, 10*time.Second)
+		var ftsTLS *tls.Config
+		if cfg.InternalTLS.Enabled {
+			ftsTLS, err = mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
+			if err != nil {
+				slog.Error("backend-api: fts mtls client config failed", "err", err)
+				os.Exit(1)
+			}
+		}
+		ftsClient = ftsproto.NewPool(cfg.FTS.Addr, ftsTLS, cfg.FTS.MaxConns, 10*time.Second)
 		defer ftsClient.Close() //nolint:errcheck
 		if ftsChain, err = ftsquery.NewChain(cfg.FTS); err != nil {
 			slog.Error("backend-api: fts language chain", "err", err)

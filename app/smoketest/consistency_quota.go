@@ -148,9 +148,13 @@ func explainBackendAPITransport(err error) error {
 // ("remote error: tls: certificate required") and the row cannot run at all
 // (#1280). The certificate is optional: an endpoint that asks for none works
 // exactly as before.
-func backendAPIClient() (*http.Client, error) {
+func backendAPIClient() (*http.Client, error) { return adminClient(*flagBackendAPI) }
+
+// adminClient presents the admin certificate (-backend-api-cert/-key/-ca) to
+// either admin API at base.
+func adminClient(base string) (*http.Client, error) {
 	cfg := &tls.Config{
-		ServerName:         hostOf(*flagBackendAPI),
+		ServerName:         hostOf(base),
 		InsecureSkipVerify: *flagInsecure, //nolint:gosec // opt-in via -insecure
 	}
 	if (*flagBackendAPICert == "") != (*flagBackendAPIKey == "") {
