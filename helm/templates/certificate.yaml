@@ -107,6 +107,7 @@ spec:
     - {{ printf "%s-director" (include "yarilo.fullname" .) | quote }}
     - {{ .Values.internalTLS.serverName | default (printf "%s-internal" (include "yarilo.fullname" .)) | quote }}
     {{- end }}
+    - "director.role.yarilo.internal"
   {{- with $dirCert.duration }}
   duration: {{ . }}
   {{- end }}

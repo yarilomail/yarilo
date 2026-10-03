@@ -51,11 +51,14 @@ func main() {
 			cfg.InternalTLS.Cert,
 			cfg.InternalTLS.Key,
 			cfg.InternalTLS.CA,
+			mtls.ListenerWarden,
 		)
 		if err != nil {
 			slog.Error("internal_tls config failed", "err", err)
 			os.Exit(1)
 		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerWarden)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

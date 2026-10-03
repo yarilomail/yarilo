@@ -1,6 +1,7 @@
 package ftsproto
 
 import (
+	"crypto/tls"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 // wire this so yarilo-fts restarts (or starting order) never wedge them.
 type Lazy struct {
 	addr    string
+	tls     *tls.Config
 	timeout time.Duration
 
 	mu   sync.Mutex
@@ -19,11 +21,11 @@ type Lazy struct {
 }
 
 // NewLazy returns a client for addr; no connection is made until first use.
-func NewLazy(addr string, dialTimeout time.Duration) *Lazy {
+func NewLazy(addr string, tlsCfg *tls.Config, dialTimeout time.Duration) *Lazy {
 	if dialTimeout <= 0 {
 		dialTimeout = 10 * time.Second
 	}
-	return &Lazy{addr: addr, timeout: dialTimeout}
+	return &Lazy{addr: addr, tls: tlsCfg, timeout: dialTimeout}
 }
 
 func (l *Lazy) get() (*Remote, error) {
@@ -32,7 +34,7 @@ func (l *Lazy) get() (*Remote, error) {
 	if l.conn != nil {
 		return l.conn, nil
 	}
-	c, err := Dial(l.addr, l.timeout)
+	c, err := Dial(l.addr, l.tls, l.timeout)
 	if err != nil {
 		return nil, err
 	}

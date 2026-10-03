@@ -56,11 +56,14 @@ func main() {
 			cfg.InternalTLS.Cert,
 			cfg.InternalTLS.Key,
 			cfg.InternalTLS.CA,
+			mtls.ListenerDirector,
 		)
 		if err != nil {
 			slog.Error("internal_tls server config failed", "err", err)
 			os.Exit(1)
 		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerDirector)
 	}
 
 	// mTLS client config for dialling ring peers. Must be a client config, not
@@ -198,7 +201,16 @@ func main() {
 		slog.Error("director API failed", "err", err)
 		os.Exit(1)
 	}
-	if err := startAPI(ctx, srv, cfg.DirectorService.API, exitAPI); err != nil {
+	var apiTLS *tls.Config
+	if cfg.InternalTLS.Enabled {
+		if apiTLS, err = mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerDirectorAPI); err != nil {
+			slog.Error("director API: internal_tls config failed", "err", err)
+			os.Exit(1)
+		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerDirectorAPI)
+	}
+	if err := startAPI(ctx, srv, cfg.DirectorService.API, apiTLS, exitAPI); err != nil {
 		exitAPI(err)
 	}
 
@@ -356,7 +368,7 @@ func certHasSAN(certFile, name string) bool {
 
 // startAPI binds the admin API before the director reports ready; a bind or a
 // later serve failure goes to fail rather than leaving a director without it.
-func startAPI(ctx context.Context, srv *director.Server, api config.DirectorAPIConfig, fail func(error)) error {
+func startAPI(ctx context.Context, srv *director.Server, api config.DirectorAPIConfig, tlsCfg *tls.Config, fail func(error)) error {
 	token, nets, err := api.Gate()
 	if err != nil {
 		return err
@@ -364,6 +376,9 @@ func startAPI(ctx context.Context, srv *director.Server, api config.DirectorAPIC
 	ln, err := net.Listen("tcp", api.Listen)
 	if err != nil {
 		return fmt.Errorf("director API: %w", err)
+	}
+	if tlsCfg != nil {
+		ln = tls.NewListener(ln, tlsCfg)
 	}
 	go func() {
 		if err := srv.StartAPI(ctx, ln, token, nets); err != nil {

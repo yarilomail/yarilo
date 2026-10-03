@@ -43,7 +43,7 @@ func serveFailing(t *testing.T, err error) *Remote {
 	}
 	go Serve(ln, failingService{err: err}) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
-	r, derr := Dial(ln.Addr().String(), 5*time.Second)
+	r, derr := Dial(ln.Addr().String(), nil, 5*time.Second)
 	if derr != nil {
 		t.Fatal(derr)
 	}

@@ -81,7 +81,7 @@ func writeSelfSigned(t testing.TB) (certFile, keyFile string) {
 // session ticket. Loopback only.
 func TestClientConfig_SessionResumption(t *testing.T) {
 	certFile, keyFile := writeSelfSigned(t)
-	srvCfg, err := ServerConfig(certFile, keyFile, certFile)
+	srvCfg, err := ServerConfig(certFile, keyFile, certFile, ListenerLocks)
 	if err != nil {
 		t.Fatalf("ServerConfig: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestClientConfig_SessionResumption(t *testing.T) {
 // against a loopback server; the ratio is the point.
 func BenchmarkMTLSHandshake(b *testing.B) {
 	certFile, keyFile := writeSelfSigned(b)
-	srvCfg, err := ServerConfig(certFile, keyFile, certFile)
+	srvCfg, err := ServerConfig(certFile, keyFile, certFile, ListenerLocks)
 	if err != nil {
 		b.Fatal(err)
 	}

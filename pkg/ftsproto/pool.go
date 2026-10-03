@@ -1,6 +1,7 @@
 package ftsproto
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"time"
@@ -35,7 +36,7 @@ type Pool struct {
 
 // NewPool returns a Client holding size connections to addr. A size below one
 // is treated as one, which behaves exactly like a single connection.
-func NewPool(addr string, size int, dialTimeout time.Duration) *Pool {
+func NewPool(addr string, tlsCfg *tls.Config, size int, dialTimeout time.Duration) *Pool {
 	if size < 1 {
 		size = 1
 	}
@@ -44,7 +45,7 @@ func NewPool(addr string, size int, dialTimeout time.Duration) *Pool {
 	}
 	p := &Pool{free: make(chan *Lazy, size), wait: dialTimeout}
 	for i := 0; i < size; i++ {
-		c := NewLazy(addr, dialTimeout)
+		c := NewLazy(addr, tlsCfg, dialTimeout)
 		p.all = append(p.all, c)
 		p.free <- c
 	}

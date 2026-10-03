@@ -24,7 +24,7 @@ import (
 // plain dial would fail every operation on the stand (#1733).
 func TestAProxiedDictSpeaksMTLSWhenTheServiceDoes(t *testing.T) {
 	certFile, keyFile, caFile := writeInternalCerts(t)
-	serverCfg, err := mtls.ServerConfig(certFile, keyFile, caFile)
+	serverCfg, err := mtls.ServerConfig(certFile, keyFile, caFile, mtls.ListenerDict)
 	if err != nil {
 		t.Fatalf("server tls: %v", err)
 	}

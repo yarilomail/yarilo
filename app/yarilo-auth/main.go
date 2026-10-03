@@ -71,17 +71,19 @@ func main() {
 		slog.Info("yarilo-auth oauth2 providers wired", "count", len(oauth2pdbs))
 	}
 
-	var tlsCfg *tls.Config
+	// The two ports accept different roles, so each has its own config.
+	var tlsCfg, masterTLSCfg *tls.Config
 	if cfg.InternalTLS.Enabled {
-		tlsCfg, err = mtls.ServerConfig(
-			cfg.InternalTLS.Cert,
-			cfg.InternalTLS.Key,
-			cfg.InternalTLS.CA,
-		)
+		tlsCfg, err = mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerAuthClient)
+		if err == nil {
+			masterTLSCfg, err = mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerAuthMaster)
+		}
 		if err != nil {
 			slog.Error("internal_tls config failed", "err", err)
 			os.Exit(1)
 		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerAuthClient, mtls.ListenerAuthMaster)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -248,7 +250,7 @@ func main() {
 		}
 		master := protocol.NewMasterServer(combinedUserdb, masterOpts...)
 		slog.Info("yarilo-auth master listener", "addr", cfg.AuthService.MasterListen)
-		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, tlsCfg)
+		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, masterTLSCfg)
 		if merr != nil {
 			slog.Error("auth/master: listen failed", "addr", cfg.AuthService.MasterListen, "err", merr)
 			os.Exit(1)

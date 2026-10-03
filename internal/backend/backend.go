@@ -91,16 +91,15 @@ func (s *Server) startReadyFile(ctx context.Context, proto string) {
 	go readyfile.Touch(ctx, reg.ReadinessDir, proto, time.Duration(reg.ReadinessTouchInterval)*time.Second, ready)
 }
 
-// dictClientTLS mirrors the auth relay: the same internal_tls section, because
-// the dict service listens with it too.
-func dictClientTLS(cfg *config.Config) (*tls.Config, error) {
+// internalClientTLS is the client side of internal_tls, for the dict and FTS services.
+func internalClientTLS(cfg *config.Config) (*tls.Config, error) {
 	if !cfg.InternalTLS.Enabled {
 		return nil, nil
 	}
 	t, err := mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA,
 		cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
 	if err != nil {
-		return nil, fmt.Errorf("backend: dict mtls: %w", err)
+		return nil, fmt.Errorf("backend: internal mtls client: %w", err)
 	}
 	return t, nil
 }
@@ -240,16 +239,22 @@ func New(cfg *config.Config) (*Server, error) {
 		masterPool = authclient.NewPool(masterAddr, authTLS,
 			cfg.AuthClient.PoolSizeOrDefault(), cfg.AuthClient.PoolIdleTimeout())
 	}
-	// mTLS server config for the login->backend data path: the PreambleListener
-	// verifies the login's client cert against the internal CA before reading
-	// the YARILO preamble.
-	var internalServerTLS *tls.Config
-	if cfg.InternalTLS.Enabled {
-		t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA)
+	// login->backend data path, one config per port: each accepts only its own login proxy.
+	preambleListeners := []mtls.Listener{mtls.ListenerIMAPBackend, mtls.ListenerPOP3Backend,
+		mtls.ListenerSubmitBackend, mtls.ListenerLMTPBackend, mtls.ListenerSieveBackend}
+	preambleTLS := map[mtls.Listener]*tls.Config{}
+	if !cfg.InternalTLS.Enabled {
+		mtls.WarnRolesUnchecked(preambleListeners...)
+	}
+	for _, l := range preambleListeners {
+		if !cfg.InternalTLS.Enabled {
+			break
+		}
+		t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, l)
 		if err != nil {
 			return nil, fmt.Errorf("backend: internal_tls server: %w", err)
 		}
-		internalServerTLS = t
+		preambleTLS[l] = t
 	}
 
 	// ---- sieve ----
@@ -314,7 +319,7 @@ func New(cfg *config.Config) (*Server, error) {
 			HAProxyTrustedNets: haproxyNets,
 			AuthAddr:           authAddr,
 			AuthTLS:            authTLS,
-			PreambleTLS:        internalServerTLS,
+			PreambleTLS:        preambleTLS[mtls.ListenerIMAPBackend],
 			MasterAddr:         masterAddr,
 			MasterPool:         masterPool,
 			MasterTLS:          authTLS,
@@ -394,7 +399,7 @@ func New(cfg *config.Config) (*Server, error) {
 			HAProxyTrustedNets: haproxyNets,
 			AuthAddr:           authAddr,
 			AuthTLS:            authTLS,
-			PreambleTLS:        internalServerTLS,
+			PreambleTLS:        preambleTLS[mtls.ListenerPOP3Backend],
 			MasterAddr:         masterAddr,
 			MasterPool:         masterPool,
 			MasterTLS:          authTLS,
@@ -437,7 +442,7 @@ func New(cfg *config.Config) (*Server, error) {
 			HAProxyNets:    haproxyNets,
 			AuthAddr:       authAddr,
 			AuthTLS:        authTLS,
-			PreambleTLS:    internalServerTLS,
+			PreambleTLS:    preambleTLS[mtls.ListenerSubmitBackend],
 			TLSConfig:      submissionTLS,
 			Config:         cfg.Protocol.Submission,
 			AuthRelay:      authRelay,
@@ -488,7 +493,7 @@ func New(cfg *config.Config) (*Server, error) {
 			MetadataDict:         metadataDict,
 			AuthAddr:             authAddr,
 			AuthTLS:              authTLS,
-			PreambleTLS:          internalServerTLS,
+			PreambleTLS:          preambleTLS[mtls.ListenerLMTPBackend],
 			SieveEngine:          sieveEngine,
 			Namespaces:           cfg.Namespaces,
 			ACLEnabled:           cfg.ACL.Enabled,
@@ -524,7 +529,7 @@ func New(cfg *config.Config) (*Server, error) {
 			MaxScriptSize:   cfg.Sieve.MaxScriptSize,
 			AuthAddr:        authAddr,
 			AuthTLS:         authTLS,
-			PreambleTLS:     internalServerTLS,
+			PreambleTLS:     preambleTLS[mtls.ListenerSieveBackend],
 			MasterAddr:      masterAddr,
 			MasterPool:      masterPool,
 			MasterTLS:       authTLS,
@@ -1396,7 +1401,7 @@ func buildDict(cfg *config.Config, name string) (dict.Dict, error) {
 	if cfg.DictService.DictAddr == "" {
 		return nil, ErrNoDictService
 	}
-	tlsCfg, err := dictClientTLS(cfg)
+	tlsCfg, err := internalClientTLS(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1476,5 +1481,9 @@ func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error)
 	// response, so a search that fans out over several folders would queue on
 	// it however many goroutines the caller starts. Connections open on demand,
 	// so a pool of four costs nothing until four calls overlap.
-	return ftsproto.NewPool(fc.Addr, fc.MaxConns, 10*time.Second), chain, nil
+	tlsCfg, err := internalClientTLS(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ftsproto.NewPool(fc.Addr, tlsCfg, fc.MaxConns, 10*time.Second), chain, nil
 }

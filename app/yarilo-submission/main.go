@@ -174,11 +174,13 @@ func dialAuthService(addr string, tlsCfg *tls.Config) (*authrelay.Client, error)
 // session binaries get theirs from backend.New, which submission does not use.
 func newServer(cfg *config.Config, opts submsvr.Options) (*submsvr.Server, error) {
 	if cfg.InternalTLS.Enabled {
-		t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA)
+		t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerSubmitBackend)
 		if err != nil {
 			return nil, err
 		}
 		opts.PreambleTLS = t
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerSubmitBackend)
 	}
 	return submsvr.New(opts), nil
 }

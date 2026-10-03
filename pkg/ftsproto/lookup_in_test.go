@@ -37,7 +37,7 @@ func TestLookupInRoundTrip(t *testing.T) {
 	}
 	go ftsproto.Serve(ln, svc)       //nolint:errcheck
 	t.Cleanup(func() { ln.Close() }) //nolint:errcheck
-	r, err := ftsproto.Dial(ln.Addr().String(), 2*time.Second)
+	r, err := ftsproto.Dial(ln.Addr().String(), nil, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

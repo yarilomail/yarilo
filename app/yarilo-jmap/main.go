@@ -181,9 +181,10 @@ func main() {
 
 func internalTLS(cfg *config.Config) (*tls.Config, error) {
 	if !cfg.InternalTLS.Enabled {
+		mtls.WarnRolesUnchecked(mtls.ListenerJMAPBackend)
 		return nil, nil
 	}
-	return mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA)
+	return mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerJMAPBackend)
 }
 
 // parseCIDRs turns the trusted-net list into matchers, skipping and logging a
