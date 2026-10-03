@@ -203,7 +203,8 @@ sieve:
   sieve_max_redirects: 32
   sieve_max_actions: 32
   sieve_spamtest_status_header: "X-Spam-Score"
-  sieve_duplicate_driver: file
+  ## redis: the duplicate test dedups across both backend pods (dict sieve_duplicate).
+  sieve_duplicate_driver: redis
   sieve_vacation_enabled: true
   sieve_submission_host: "relay-fwd.yarilo-relay.svc.cluster.local:25"
   sieve_submission_ssl: "no"
@@ -288,13 +289,6 @@ dicts:
       maps:
         - { key: "priv/quota/storage",  table: quota, username_field: username, value_field: bytes }
         - { key: "priv/quota/messages", table: quota, username_field: username, value_field: messages }
-  sieve_vacation:
-    driver: redis
-    settings:
-      addr: redis.redis.svc.cluster.local:6379
-      password: "${YARILO_REDIS_PASSWORD}"
-      db: 0
-      prefix: "yarilo-sb:sieve:vacation:%u:"
   sieve_duplicate:
     driver: redis
     settings:

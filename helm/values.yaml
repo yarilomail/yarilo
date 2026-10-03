@@ -3020,14 +3020,6 @@ dicts:
 #       db: 0
 #       prefix: "yarilo:quota:"
 #     expire_secs: 86400
-#   # Optional: vacation dedup tracking (sieve vacation extension).
-#   # Scripts are stored on the filesystem; this dict is only for vacation dedup.
-#   sieve_vacation:
-#     driver: redis
-#     settings:
-#       addr: yarilo-redis.{{ .Release.Namespace }}.svc.cluster.local:6379
-#       db: 0
-#       prefix: "yarilo:sieve:vacation:%u:"
 #   # Optional: duplicate-test dedup (RFC 7352). driver=redis makes the dedup
 #   # window cross-pod; omit (or driver=memory) for per-process behaviour.
 #   sieve_duplicate:
