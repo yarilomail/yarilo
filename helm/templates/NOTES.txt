@@ -55,3 +55,16 @@ WARNING: TLS is not configured for any login pod.
   Set components.imapLogin.tls.secretName (and/or pop3Login/submissionLogin) to a Secret with tls.crt and tls.key.
 
 {{- end }}
+{{- if and .Values.internalTLS.enabled (not (.Values.internalTLS.ca | default dict).secretName) (not (.Values.internalTLS.certManager | default dict).enabled) }}
+
+Internal mTLS: the chart made its own CA in {{ include "yarilo.fullname" . }}-internal-ca and
+keeps it across upgrades by reading the cluster. A renderer that cannot read the
+cluster (helm template, Argo CD and similar) makes a new CA on every render and
+breaks internal links between pods from different syncs: set
+internalTLS.ca.secretName to a CA Secret made once, or internalTLS.certManager.
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+
+NetworkPolicies admit internal ports only from the components that use them. Tools
+outside the chart's pods (smoketest, yarilo-migrate) need networkPolicy.adminFrom.
+{{- end }}

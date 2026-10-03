@@ -342,11 +342,17 @@ internalTLS:
   ca:
     secretName: yarilo-internal-ca
 
+## The smoketest Job reaches the backend and director admin APIs (#2138).
+networkPolicy:
+  adminFrom:
+    - podSelector:
+        matchLabels:
+          job-name: smoketest
+
 components:
   director:
     enabled: true
     internalTLS:
-      enabled: true
       secretName: yarilo-director-internal-tls
       certificate:
         enabled: true
@@ -413,15 +419,11 @@ components:
     ## stopped serving pods/log while staying Ready. Both complete normally at
     ## two.
     replicas: 2
-    internalTLS:
-      enabled: true
   warden:
     # #908 PR4: singleton lifted. Redis-backed state (penalties + sessions + kick
     # bus) is shared across replicas, so the sandbox runs 2 to exercise the
     # cross-replica paths (kick published on one pod, delivered by another).
     replicas: 2
-    internalTLS:
-      enabled: true
     service:
       state_backend: redis
       key_prefix: "yarilo-sb:warden:"
@@ -429,12 +431,8 @@ components:
   dict:
     enabled: true
     replicas: 1
-    internalTLS:
-      enabled: true
 
   locks:
-    internalTLS:
-      enabled: true
     # Sandbox shares one Redis; every component lives under the yarilo-sb: namespace.
     service:
       key_prefix: "yarilo-sb:locks:"
@@ -465,8 +463,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
     tls:
       secretName: yarilo-tls
       certificate:
@@ -495,8 +491,6 @@ components:
   ## authenticated requests answer 502 — the login-layer probes still gate.
   jmapLogin:
     enabled: true
-    internalTLS:
-      enabled: true
     tls:
       secretName: yarilo-tls
       certificate:
@@ -532,8 +526,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
     tls:
       secretName: yarilo-tls
     listeners:
@@ -551,8 +543,6 @@ components:
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
 
   auth:
-    internalTLS:
-      enabled: true
     ## Master users (#1301 window): impersonation via SASL authzid or the
     ## target*master separator. The masterdb is a dedicated table in the same
     ## MySQL as the main passdb; skip_schema + an explicit query, per the
@@ -680,8 +670,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10024
@@ -701,8 +689,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
     service:
       type: LoadBalancer
       annotations:
@@ -711,8 +697,6 @@ components:
 
   quotaStatus:
     enabled: true
-    internalTLS:
-      enabled: true
     auth_master_addr: "yarilo-auth:9102"
     service:
       type: LoadBalancer
@@ -742,8 +726,6 @@ components:
     ## submission port from components.submission.listeners.
     director_addr: "yarilo-director:9102"
     backend_port: 10587
-    internalTLS:
-      enabled: true
     tls:
       secretName: yarilo-tls
 
@@ -752,8 +734,6 @@ components:
   ## the trust anchor and xclient stays off.
   jmap:
     enabled: true
-    internalTLS:
-      enabled: true
 
   ## ManageSieve login pod — client-facing on :4190 STARTTLS.
   manageSieveLogin:
@@ -771,8 +751,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 14190

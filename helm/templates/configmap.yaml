@@ -767,6 +767,7 @@ data:
       {{- end }}
     {{- end }}
 
+    {{- include "yarilo.internalTLSNoComponentFlags" . }}
     internal_tls:
       {{- /* Single source for "internal mTLS on anywhere" — the same helper yarctl's
              backend client keys on (#954), so the server-HTTPS decision and the

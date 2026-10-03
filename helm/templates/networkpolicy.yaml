@@ -1,0 +1,104 @@
+{{- /* Ingress policies (#2138): one per internal listener from the role matrix,
+       one per MTA-facing port, and telemetry for every pod they select. */ -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $selected := dict }}
+{{- range $row := include "yarilo.netpolListeners" . | fromYamlArray }}
+{{- $_ := set $selected $row.server true }}
+{{- $pods := list }}
+{{- $admin := false }}
+{{- range $role := $row.roles }}
+{{- $pod := include "yarilo.netpolRolePod" (dict "root" $ "role" $role) }}
+{{- if $pod }}{{ $pods = append $pods $pod }}{{ end }}
+{{- if eq $role "admin" }}{{ $admin = true }}{{ end }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-%s" (include "yarilo.fullname" $) $row.listener }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "yarilo.labels" $ | nindent 4 }}
+  annotations:
+    yarilo.io/listener: {{ $row.listener | quote }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "yarilo.componentSelectorLabels" (dict "root" $ "component" $row.server) | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        {{- range $port := $row.ports }}
+        - port: {{ $port }}
+          protocol: TCP
+        {{- end }}
+      from:
+        {{- range $pod := $pods | uniq | sortAlpha }}
+        - podSelector:
+            matchLabels:
+              {{- include "yarilo.componentSelectorLabels" (dict "root" $ "component" $pod) | nindent 14 }}
+        {{- end }}
+        {{- if $admin }}
+        {{- with $np.adminFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+{{- end }}
+{{- $mta := list }}
+{{- with .Values.components.lmtpLogin }}{{ if .enabled }}{{ $mta = append $mta (dict "pod" "lmtp-login" "port" .listeners.lmtp.containerPort) }}{{ end }}{{ end }}
+{{- with .Values.components.saslLogin }}{{ if .enabled }}{{ $mta = append $mta (dict "pod" "sasl-login" "port" .containerPort) }}{{ end }}{{ end }}
+{{- with .Values.components.quotaStatus }}{{ if .enabled }}{{ $mta = append $mta (dict "pod" "quota-status" "port" .containerPort) }}{{ end }}{{ end }}
+{{- range $m := $mta }}
+{{- $_ := set $selected $m.pod true }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-%s-mta" (include "yarilo.fullname" $) $m.pod }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "yarilo.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "yarilo.componentSelectorLabels" (dict "root" $ "component" $m.pod) | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: {{ $m.port }}
+          protocol: TCP
+      {{- with $np.mtaFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- /* A pod a policy selects loses all other ingress, so its telemetry and
+       health ports get their own; the backend pod spans 8080-8088. */}}
+{{- range $pod := keys $selected | sortAlpha }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-%s-telemetry" (include "yarilo.fullname" $) $pod }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "yarilo.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "yarilo.componentSelectorLabels" (dict "root" $ "component" $pod) | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 8080
+          {{- if eq $pod "backend" }}
+          endPort: 8088
+          {{- end }}
+          protocol: TCP
+      {{- with $np.telemetryFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

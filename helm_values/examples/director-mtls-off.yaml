@@ -15,10 +15,14 @@
 #       --set image.tag=<version>
 #
 # To turn mTLS on later, switch to director-single-tag.yaml (add the internal CA
-# + per-component internalTLS + internal_tls.server_name).
+# + internalTLS.enabled: true, the chart default).
 # ============================================================================
 
 hostname: mail.example.com
+
+## Internal TLS off: every internal port is plain (#2138).
+internalTLS:
+  enabled: false
 
 image:
   repository: ghcr.io/yarilomail/yarilo

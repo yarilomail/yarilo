@@ -17,7 +17,7 @@
 # Install:
 #   1. Provision external MySQL + Redis (see redis:/mysql: below).
 #   2. Apply the internal-CA (cert-manager) — see hack/internal-ca-sandbox.yaml
-#      for the shape; issue the shared internal-tls secret + director cert.
+#      for the shape; the chart requests the per-component certificates.
 #   3. helm upgrade --install yarilo ./helm -n yarilo -f this-file.yaml \
 #        --set image.tag=<version>
 #
@@ -61,7 +61,7 @@ extraEnv:
 # carry that SAN. The director gets its OWN cert with the ring SANs.
 # Apply the internal CA (cert-manager Issuer "yarilo-internal-ca") first.
 internal_tls:
-  server_name: yarilo-internal      # must be a SAN in the shared internal-tls cert
+  server_name: yarilo-internal      # a SAN in every internal certificate
 
 # ---- Full-text search: co-located (localhost) → per-user single writer ------
 fts:
@@ -71,6 +71,13 @@ fts:
   fts_addr: ""                      # EMPTY → co-located chart auto-derives localhost:9106
   fts_auth_master_addr: "yarilo-auth:9102"
   fts_autoindex: true
+
+## Per-role internal certificates from cert-manager: one CA Issuer shared by
+## every release, so the control plane and each tag trust each other (#2138).
+internalTLS:
+  certManager:
+    enabled: true
+    issuerRef: { kind: ClusterIssuer, name: yarilo-internal-ca }
 
 components:
 
@@ -89,7 +96,6 @@ components:
         containerPort: 10024
     backends: []                    # EMPTY: backends self-register via heartbeat (#776)
     internalTLS:
-      enabled: true
       secretName: yarilo-director-internal-tls   # director-specific cert (ring SANs)
       certificate:
         enabled: true               # chart issues it via cert-manager
@@ -102,13 +108,9 @@ components:
     coLocated: true                 # merged STS: all protocols + fts + backend-api + reg
     replicas: 3                     # scale to the tag's user load; shares the NFS shard
     tag: ""                         # default pool; set a name only in multi-tag installs
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
 
   # ---- Shared services -------------------------------------------------------
   auth:
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     passdb:
       - driver: mysql
         dsn: "${YARILO_DB_DSN}"
@@ -127,12 +129,9 @@ components:
     token:
       backend: redis
       redis_addr: "redis://<redis-host>:6379/0"
-  warden:
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   locks:                            # cross-pod write coordination (Redis-backed)
     enabled: true
     replicas: 2                     # HA
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
 
   # ---- Login proxies (client-facing TLS + director LOOKUP) ------------------
   # backend_addr: "" + director_addr set  → per-session LOOKUP (director routing).
@@ -141,7 +140,6 @@ components:
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10143
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls:
       secretName: yarilo-tls        # client-facing cert (public FQDN)
       certificate:
@@ -158,7 +156,6 @@ components:
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10110
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls: { secretName: yarilo-tls }
     listeners:
       pop3s: { enabled: true }
@@ -169,25 +166,21 @@ components:
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10024
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   manageSieveLogin:
     enabled: true
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 14190
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls: { secretName: yarilo-tls }
     listeners:
       managesieve: { enabled: true }
     service: { type: LoadBalancer }
   saslLogin:                        # Submission SASL (:587/:465 via relay)
     enabled: true
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     service: { type: LoadBalancer }
 
   # ---- quota-status: Postfix policy service (stays a separate Deployment) ----
   quotaStatus:
     enabled: true
     auth_master_addr: "yarilo-auth:9102"
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     service: { type: LoadBalancer }

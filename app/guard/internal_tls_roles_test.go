@@ -100,8 +100,7 @@ func TestEveryContainerPresentsItsOwnRole(t *testing.T) {
 		args []string
 	}{
 		{"sandbox", []string{"-f", "../../helm_values/values-sandbox.yaml"}},
-		{"default with internal TLS", []string{"--set", "components.auth.internalTLS.enabled=true",
-			"--set", "components.warden.internalTLS.enabled=true", "--set", "components.backend.internalTLS.enabled=true"}},
+		{"default", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			docs := renderDocs(t, tc.args...)
@@ -189,5 +188,20 @@ func TestEveryContainerPresentsItsOwnRole(t *testing.T) {
 				t.Fatalf("checked %d console certificates; backend-api and director should both have one", consoles)
 			}
 		})
+	}
+}
+
+// Internal TLS is one switch: a per-component flag fails the render and names
+// the key that replaced it, rather than half-enabling TLS (#2138).
+func TestAComponentTLSFlagIsRefused(t *testing.T) {
+	for _, flag := range []string{"components.auth.internalTLS.enabled=true", "components.backend.internalTLS.enabled=false"} {
+		out, err := exec.Command("helm", "template", "yarilo", "../../helm", "--set", flag).CombinedOutput()
+		if err == nil {
+			t.Errorf("--set %s rendered", flag)
+			continue
+		}
+		if !strings.Contains(string(out), "internalTLS.enabled") || !strings.Contains(string(out), "no longer read") {
+			t.Errorf("--set %s: refusal does not name the switch: %s", flag, out)
+		}
 	}
 }
