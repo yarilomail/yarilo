@@ -57,9 +57,9 @@ func TestRoleOf(t *testing.T) {
 var wantAllowed = map[mtls.Listener][]mtls.Role{
 	mtls.ListenerAuthClient: {"imap-login", "pop3-login", "submission-login", "managesieve-login", "jmap-login",
 		"sasl-login", "submission", "admin", "imap", "pop3", "lmtp", "managesieve"},
-	mtls.ListenerAuthMaster: {"backend-api", "fts", "jmap", "quota-status", "admin", "imap", "pop3", "lmtp", "managesieve"},
+	mtls.ListenerAuthMaster: {"backend-api", "fts", "jmap", "quota-status", "lmtp-login", "admin", "imap", "pop3", "lmtp", "managesieve"},
 	mtls.ListenerWarden: {"auth", "imap-login", "pop3-login", "submission-login", "managesieve-login",
-		"lmtp-login", "jmap-login", "backend-api"},
+		"lmtp-login", "jmap-login", "backend-api", "imap"},
 	mtls.ListenerLocks: {"backend-api", "fts", "jmap", "admin", "imap", "pop3", "lmtp", "managesieve"},
 	mtls.ListenerDict:  {"imap", "pop3", "lmtp", "managesieve"},
 	mtls.ListenerDirector: {"director", "imap-login", "pop3-login", "submission-login", "managesieve-login",
