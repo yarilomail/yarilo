@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"slices"
@@ -2975,6 +2976,9 @@ func (cfg *Config) validate() error {
 				"a misspelt name would silently disable owner discovery", name)
 		}
 	}
+	if err := validateDictPrefixes(cfg.Dicts); err != nil {
+		return err
+	}
 	if cfg.InternalTLS.Enabled {
 		if cfg.InternalTLS.Cert == "" || cfg.InternalTLS.Key == "" || cfg.InternalTLS.CA == "" {
 			return fmt.Errorf("config: internal_tls.enabled is true but cert/key/ca are not set")
@@ -3270,6 +3274,20 @@ func validateSharedNamespacesNeedACL(namespaces []NamespaceConfig, aclEnabled bo
 			return fmt.Errorf("config: namespace %d (type %s, prefix %q) opens its mailboxes to every user "+
 				"while acl.enabled is false; set acl.enabled: true and grant access by ACL "+
 				"(anyone lrs for a folder everyone may read)", i, t, ns.Prefix)
+		}
+	}
+	return nil
+}
+
+// validateDictPrefixes refuses a %-variable in a dict prefix: a dict opens once
+// per process, nothing expands it, and the key already carries priv/<user>/.
+func validateDictPrefixes(dicts map[string]DictConfig) error {
+	for _, name := range slices.Sorted(maps.Keys(dicts)) {
+		dc := dicts[name]
+		if prefix, _ := dc.Settings["prefix"].(string); dc.Driver != "file" && strings.Contains(prefix, "%") {
+			return fmt.Errorf("config: dict %q prefix %q holds a %%-variable, which is never expanded: "+
+				"the dict opens once per process and every user would share the literal; "+
+				"drop it, the key already carries priv/<user>/", name, prefix)
 		}
 	}
 	return nil

@@ -246,7 +246,19 @@ func (s *Server) begin(ctx context.Context, sess *session, line string) string {
 	if len(f) > 1 {
 		user = f[1]
 	}
-	tx, err := sess.d.Begin(ctx, opSet(user))
+	set := opSet(user)
+	// A client older than the expire field sends none: no TTL, as before.
+	if len(f) > 2 && f[2] != "" && f[2] != "0" {
+		secs, perr := strconv.ParseUint(f[2], 10, 32)
+		if perr != nil {
+			return fmt.Sprintf("%c malformed expire secs\n", proxy.ReplyFail)
+		}
+		if set == nil {
+			set = &dict.OpSettings{}
+		}
+		set.ExpireSecs = uint32(secs)
+	}
+	tx, err := sess.d.Begin(ctx, set)
 	if err != nil {
 		return fmt.Sprintf("%c%s\n", proxy.ReplyFail, err)
 	}
