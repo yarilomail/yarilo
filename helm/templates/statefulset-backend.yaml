@@ -113,6 +113,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: {{ $p.component | quote }}
+            {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" $p.component "root" $root) | quote }}
             - name: TELEMETRY_LISTEN
@@ -184,6 +185,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-fts"
+            {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-fts" "root" $root) | quote }}
             - name: TELEMETRY_LISTEN
@@ -218,6 +220,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-backend-api"
+            {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-backend-api" "root" $root) | quote }}
             - name: TELEMETRY_LISTEN

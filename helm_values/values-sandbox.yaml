@@ -258,6 +258,7 @@ dicts:
     driver: redis
     settings:
       addr: redis.redis.svc.cluster.local:6379
+      password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:acl-shared:"
   ## Annotations go to a file in the user's home, the chart default: the
@@ -273,6 +274,7 @@ dicts:
     driver: redis
     settings:
       addr: redis.redis.svc.cluster.local:6379
+      password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:quota:"
   quota_clone_mysql:
@@ -290,12 +292,14 @@ dicts:
     driver: redis
     settings:
       addr: redis.redis.svc.cluster.local:6379
+      password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:sieve:vacation:%u:"
   sieve_duplicate:
     driver: redis
     settings:
       addr: redis.redis.svc.cluster.local:6379
+      password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:sieve:duplicate:%u:"
 
@@ -319,6 +323,10 @@ database:
 redis:
   bundled: false
   externalUrl: "redis://redis.redis.svc.cluster.local:6379/0"
+  ## The password: Secret yarilo-redis-password, made outside git with the
+  ## value of redis-password in the redis namespace.
+  passwordSecret:
+    name: yarilo-redis-password
 
 ## DSN injected from the yarilo-mysql Secret created by mysql-sandbox.yaml.
 extraEnv:

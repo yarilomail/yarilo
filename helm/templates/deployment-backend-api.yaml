@@ -38,6 +38,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-backend-api"
+            {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-backend-api" "root" $) | quote }}
             # POD_IP lets `who` scope to this backend by default (#814).

@@ -20,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/logging"
 	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/pkg/redisopt"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -71,7 +72,7 @@ func main() {
 	var stateChecks []telemetry.Check
 	var closeState func()
 	if cfg.WardenService.StateBackend == "redis" {
-		opt, perr := redis.ParseURL(cfg.WardenService.RedisAddr)
+		opt, perr := redisopt.Parse(cfg.WardenService.RedisAddr, cfg.WardenService.RedisPassword)
 		if perr != nil {
 			slog.Error("warden: invalid redis_addr", "addr", cfg.WardenService.RedisAddr, "err", perr)
 			os.Exit(1)

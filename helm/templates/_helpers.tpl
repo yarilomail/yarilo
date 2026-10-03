@@ -594,3 +594,17 @@ backend
 {{ .role }}
 {{- end -}}
 {{- end }}
+
+{{/*
+The Redis password, from redis.passwordSecret, for every process that opens a
+Redis client or a redis dict; the config names it as ${YARILO_REDIS_PASSWORD}.
+*/}}
+{{- define "yarilo.redisPasswordEnv" -}}
+{{- with (.Values.redis.passwordSecret | default dict).name }}
+- name: YARILO_REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $.Values.redis.passwordSecret.key | default "password" }}
+{{- end }}
+{{- end }}

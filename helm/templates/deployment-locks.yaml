@@ -35,6 +35,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-locks"
+            {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-locks" "root" $) | quote }}
             {{- with .Values.extraEnv }}

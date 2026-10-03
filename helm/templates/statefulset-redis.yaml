@@ -27,12 +27,20 @@ spec:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          {{- if (.Values.redis.passwordSecret | default dict).name }}
+          env:
+            {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
+          {{- end }}
           args:
             - redis-server
             - --appendonly
             - "yes"
             - --dir
             - /data
+            {{- if (.Values.redis.passwordSecret | default dict).name }}
+            - --requirepass
+            - $(YARILO_REDIS_PASSWORD)
+            {{- end }}
           ports:
             - name: redis
               containerPort: 6379

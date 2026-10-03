@@ -2342,6 +2342,13 @@ general:
 ## externalUrl is then required.
 redis:
   bundled: true
+  ## A Secret with the Redis password. Set, it reaches every Redis client as
+  ## YARILO_REDIS_PASSWORD (auth tokens, warden, locks, and redis dicts through
+  ## password: "${YARILO_REDIS_PASSWORD}" in their settings), never the
+  ## ConfigMap; the bundled Redis requires it. Empty: no password.
+  passwordSecret:
+    name: ""
+    key: password
   replicas: 1
   ## image — pulled from the public Redis library on Docker Hub by default.
   image:
