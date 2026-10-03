@@ -820,9 +820,8 @@ func checkSMTPSubmission() error {
 	return nil
 }
 
-// smtpSubmitTransaction authenticates and opens a transaction: AUTH is where
-// the login pod hands the session to the backend (#2133). RSET, not DATA, so
-// nothing reaches a mailbox the other rows count.
+// smtpSubmitTransaction: AUTH is where the login pod hands off to the backend
+// (#2133); RSET, not DATA, so no mailbox the other rows count changes.
 func smtpSubmitTransaction(conn net.Conn, user, pass string) error {
 	creds := base64.StdEncoding.EncodeToString([]byte("\x00" + user + "\x00" + pass))
 	for _, step := range []struct{ cmd, want string }{
