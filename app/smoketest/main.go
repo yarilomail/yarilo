@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -51,7 +52,7 @@ var (
 	flagIMAPReadTimeout = flag.Duration("imap-read-timeout", 45*time.Second, "IMAP read deadline for the sieve verify/search steps (must exceed the server fts catch-up budget)")
 	flagInsecure        = flag.Bool("insecure", false, "skip TLS certificate verification")
 	flagSMTPMX          = flag.Bool("smtp-mx", false, "check SMTP MX EHLO (port -smtp-mx-port)")
-	flagSMTPSub         = flag.Bool("smtp-sub", false, "check SMTP submission EHLO+STARTTLS (port -smtp-sub-port)")
+	flagSMTPSub         = flag.Bool("smtp-sub", false, "check SMTP submission EHLO+STARTTLS, then AUTH and a transaction as -imap-user (port -smtp-sub-port)")
 	flagProxyProtocol   = flag.Bool("proxy-protocol", false, "send HAProxy PROXY header before SMTP banner")
 	flagXClient         = flag.Bool("xclient", false, "check that MX port advertises XCLIENT in EHLO")
 	flagPOP3S           = flag.Bool("pop3s", false, "check POP3S greeting and CAPA")
@@ -810,7 +811,35 @@ func checkSMTPSubmission() error {
 	if !caps2["AUTH PLAIN"] {
 		return fmt.Errorf("post-STARTTLS EHLO missing AUTH PLAIN")
 	}
+	if *flagIMAPUser != "" {
+		if err := smtpSubmitTransaction(tlsConn, *flagIMAPUser, *flagIMAPPass); err != nil {
+			return err
+		}
+	}
 	smtpQuit(tlsConn)
+	return nil
+}
+
+// smtpSubmitTransaction authenticates and opens a transaction: AUTH is where
+// the login pod hands the session to the backend (#2133). RSET, not DATA, so
+// nothing reaches a mailbox the other rows count.
+func smtpSubmitTransaction(conn net.Conn, user, pass string) error {
+	creds := base64.StdEncoding.EncodeToString([]byte("\x00" + user + "\x00" + pass))
+	for _, step := range []struct{ cmd, want string }{
+		{"AUTH PLAIN " + creds, "235"},
+		{"MAIL FROM:<" + user + ">", "250"},
+		{"RCPT TO:<" + user + ">", "250"},
+		{"RSET", "250"},
+	} {
+		fmt.Fprintf(conn, "%s\r\n", step.cmd)
+		line, err := readLine(conn)
+		if err != nil {
+			return fmt.Errorf("%s: read response: %w", strings.Fields(step.cmd)[0], err)
+		}
+		if !strings.HasPrefix(line, step.want) {
+			return fmt.Errorf("%s: unexpected response %q", strings.Fields(step.cmd)[0], line)
+		}
+	}
 	return nil
 }
 
