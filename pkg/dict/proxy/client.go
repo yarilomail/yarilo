@@ -193,6 +193,13 @@ func userOf(set *dict.OpSettings) string {
 	return set.Username
 }
 
+func expireOf(set *dict.OpSettings) uint32 {
+	if set == nil {
+		return 0
+	}
+	return set.ExpireSecs
+}
+
 // Lookup implements dict.Dict.
 func (c *Client) Lookup(ctx context.Context, set *dict.OpSettings, key string) ([][]byte, bool, error) {
 	user := userOf(set)
@@ -314,7 +321,8 @@ func (c *Client) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, erro
 	if err != nil {
 		return nil, err
 	}
-	if _, err := exchange(ctx, cn, fmt.Sprintf("%c%d\t%s\n", OpBegin, id, user)); err != nil {
+	// BEGIN <id> <user> <expire secs>: the TTL rides on the transaction.
+	if _, err := exchange(ctx, cn, fmt.Sprintf("%c%d\t%s\t%d\n", OpBegin, id, user, expireOf(set))); err != nil {
 		c.put(cn, true)
 		return nil, fmt.Errorf("dict/proxy: begin: %w", err)
 	}

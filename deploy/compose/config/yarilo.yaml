@@ -354,13 +354,7 @@ dicts:
     settings:
       addr: "redis:6379"
       db: 0
-      prefix: "yarilo:sieve:duplicate:%u:"
-  sieve_vacation:
-    driver: "redis"
-    settings:
-      addr: "redis:6379"
-      db: 0
-      prefix: "yarilo:sieve:vacation:%u:"
+      prefix: "yarilo:sieve:duplicate:"
 
 internal_tls:
   enabled: false

@@ -295,7 +295,7 @@ dicts:
       addr: redis.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
-      prefix: "yarilo-sb:sieve:duplicate:%u:"
+      prefix: "yarilo-sb:sieve:duplicate:"
 
 ## External MySQL — managed by mysql-sandbox.yaml; bundled StatefulSet disabled.
 mysql:
