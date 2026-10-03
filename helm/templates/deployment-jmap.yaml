@@ -34,6 +34,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-jmap"
+            {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-jmap" "root" $) | quote }}
             {{- include "yarilo.adminBackendEnv" . | nindent 12 }}

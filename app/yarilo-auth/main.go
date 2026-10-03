@@ -25,6 +25,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/logging"
 	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/pkg/redisopt"
 	"github.com/yarilomail/yarilo/pkg/retry"
 )
 
@@ -349,7 +350,7 @@ func buildTokenStore(cfg config.AuthTokenConfig, dialRetries int) (protocol.Toke
 			slog.Error("auth.token.backend=redis requires auth.token.redis_addr")
 			os.Exit(1)
 		}
-		opt, err := redis.ParseURL(cfg.RedisAddr)
+		opt, err := redisopt.Parse(cfg.RedisAddr, cfg.RedisPassword)
 		if err != nil {
 			slog.Error("auth.token.redis_addr invalid", "err", err)
 			os.Exit(1)

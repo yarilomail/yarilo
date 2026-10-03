@@ -34,6 +34,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-pop3"
+            {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-pop3" "root" $) | quote }}
             - name: POD_IP

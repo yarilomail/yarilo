@@ -1018,6 +1018,8 @@ type WardenServiceConfig struct {
 	// RedisAddr is the Redis URL used when StateBackend="redis".
 	// Format: redis://[password@]host:port/db
 	RedisAddr string `koanf:"redis_addr"`
+	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
+	RedisPassword string `koanf:"redis_password"`
 	// KeyPrefix / ChannelPrefix namespace warden's Redis keys and Pub/Sub
 	// channels. Empty = defaults "yarilo:warden:" / "yarilo:warden:events:".
 	KeyPrefix     string `koanf:"key_prefix"`
@@ -1492,6 +1494,7 @@ type LocksServiceConfig struct {
 	Socket        string         `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
 	Listen        string         `koanf:"listen"`         // remote: ":9104"
 	Redis         string         `koanf:"redis"`          // remote: "redis://host:6379/0"
+	RedisPassword string         `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
 	KeyPrefix     string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
 	ChannelPrefix string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
 	Shutdown      ShutdownConfig `koanf:"shutdown"`
@@ -2143,6 +2146,8 @@ type AuthTokenConfig struct {
 	// RedisAddr is a Redis URL used when Backend="redis".
 	// Format: redis://[password@]host:port/db
 	RedisAddr string `koanf:"redis_addr"`
+	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
+	RedisPassword string `koanf:"redis_password"`
 	// KeyPrefix namespaces token keys in Redis (#939). The installation
 	// boundary: two installs sharing one Redis need distinct prefixes or their
 	// token keys collide. Empty keeps the default "yarilo:authtoken:".
@@ -3105,6 +3110,9 @@ func expandEnv(cfg *Config) {
 	cfg.DirectorService.API.Token = expand(cfg.DirectorService.API.Token)
 	cfg.DirectorService.RingSecret = expand(cfg.DirectorService.RingSecret)
 	cfg.BackendAPI.Token = expand(cfg.BackendAPI.Token)
+	cfg.Auth.Token.RedisPassword = expand(cfg.Auth.Token.RedisPassword)
+	cfg.WardenService.RedisPassword = expand(cfg.WardenService.RedisPassword)
+	cfg.LocksService.RedisPassword = expand(cfg.LocksService.RedisPassword)
 	cfg.Protocol.Submission.Relay.Password = expand(cfg.Protocol.Submission.Relay.Password)
 	for i := range cfg.Auth.Passdb {
 		cfg.Auth.Passdb[i].DSN = expand(cfg.Auth.Passdb[i].DSN)

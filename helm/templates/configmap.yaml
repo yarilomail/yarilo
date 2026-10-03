@@ -442,6 +442,9 @@ data:
         backend: {{ .Values.components.auth.token.backend | default "memory" | quote }}
         {{- with .Values.components.auth.token.redis_addr }}
         redis_addr: {{ . | quote }}
+        {{- if ($.Values.redis.passwordSecret | default dict).name }}
+        redis_password: "${YARILO_REDIS_PASSWORD}"
+        {{- end }}
         {{- end }}
         key_prefix: {{ .Values.components.auth.token.key_prefix | default "yarilo:authtoken:" | quote }}
 
@@ -825,6 +828,9 @@ data:
       channel_prefix: {{ $wardenSvc.channel_prefix | default "yarilo:warden:events:" | quote }}
       {{- if eq ($wardenSvc.state_backend | default "memory") "redis" }}
       redis_addr: {{ if $wardenSvc.redis_addr }}{{ $wardenSvc.redis_addr | quote }}{{ else if .Values.redis.bundled }}{{ printf "redis://%s-redis.%s.svc.cluster.local:6379/0" (include "yarilo.fullname" .) .Release.Namespace | quote }}{{ else }}{{ .Values.redis.externalUrl | quote }}{{ end }}
+      {{- if (.Values.redis.passwordSecret | default dict).name }}
+      redis_password: "${YARILO_REDIS_PASSWORD}"
+      {{- end }}
       {{- end }}
       shutdown:
         session_grace_period: 30
@@ -936,6 +942,9 @@ data:
       redis: {{ printf "redis://%s-redis.%s.svc.cluster.local:6379/0" (include "yarilo.fullname" .) .Release.Namespace | quote }}
       {{- else }}
       redis: {{ .Values.redis.externalUrl | quote }}
+      {{- end }}
+      {{- if (.Values.redis.passwordSecret | default dict).name }}
+      redis_password: "${YARILO_REDIS_PASSWORD}"
       {{- end }}
       shutdown:
         session_grace_period: 30
