@@ -23,20 +23,24 @@ func TestParseIntervalSeconds(t *testing.T) {
 	}
 }
 
-// TestByDriverThreadsMdboxAltStorage guards #639: ByDriver must thread
-// mdbox_alt_storage_path into the mdbox backend so altmove works. A backend built
-// with the key set reports alt storage enabled; one built without it does not.
-func TestByDriverThreadsMdboxAltStorage(t *testing.T) {
-	altEnabled := func(sc config.StorageConfig) bool {
-		u := ByDriver("mdbox", sc, nil).OpenUser(&mailbox.UserInfo{Username: "u@d.test", Home: t.TempDir()})
+// mail_alt_path reaches the mdbox a factory builds through the resolver's
+// UserInfo.AltDir, so altmove works (#639); without it alt storage is off.
+func TestMdboxAltStorageComesFromTheResolver(t *testing.T) {
+	altEnabled := func(defaultAlt string) bool {
+		r := mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n", DefaultAltDir: defaultAlt}
+		ui, err := r.UserInfo("u@d.test", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		u := ByDriver("mdbox", config.StorageConfig{MailAltPath: defaultAlt}, nil).OpenUser(ui)
 		// The factory hands back a validating wrapper, so the driver's own
 		// optional capabilities are asserted underneath it (#1069).
 		return mailbox.Driver(u).(interface{ AltEnabled() bool }).AltEnabled()
 	}
-	if !altEnabled(config.StorageConfig{MailAltPath: "/mnt/cold/%d/%n"}) {
-		t.Error("mdbox_alt_storage_path set but AltEnabled() is false — alt storage not threaded (#639)")
+	if !altEnabled("/mnt/cold/%{user | domain}/%n") {
+		t.Error("mail_alt_path set but AltEnabled() is false: alt storage not threaded (#639)")
 	}
-	if altEnabled(config.StorageConfig{}) {
+	if altEnabled("") {
 		t.Error("no alt path configured but AltEnabled() is true")
 	}
 }

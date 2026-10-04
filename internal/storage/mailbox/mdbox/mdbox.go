@@ -58,9 +58,8 @@ var errCorruptRecord = errors.New("mdbox: corrupt record")
 // Backend is the mdbox MailboxBackend factory. Per-user state lives in
 // UserMailbox; the Backend holds only the shared locks.Locker and config.
 type Backend struct {
-	locker         locks.Locker
-	altStorageTmpl string        // base path template for cold-storage tier; "" = disabled
-	writeSem       chan struct{} // nil = unlimited
+	locker   locks.Locker
+	writeSem chan struct{} // nil = unlimited
 	// fsync says what reaches the disk before a delivery is answered (#1847).
 	fsync    mailbox.FsyncMode
 	listUTF8 bool
@@ -111,13 +110,6 @@ func WithFsync(m mailbox.FsyncMode) Option {
 // both are held: MailboxKey(user, folder) then MdboxMapKey(user) (#1884).
 func WithLocker(l locks.Locker) Option {
 	return func(b *Backend) { b.locker = l }
-}
-
-// WithAltStorage sets the base path template for the cold-storage tier.
-// Supports %u/%n/%d/%Lu/%Ln/%Ld, same expansion as mail_home_template. Empty
-// string disables alt storage. Example: "/mnt/cold/%d/%n".
-func WithAltStorage(tmpl string) Option {
-	return func(b *Backend) { b.altStorageTmpl = tmpl }
 }
 
 // WithMaxConcurrentWrites caps the number of concurrent Save() calls.
@@ -214,19 +206,9 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 		escapeChar:  u.StorageEscapeChar,
 		username:    u.Username,
 		owner:       locks.Owner(u.Username, u.LockID()),
-		altBasePath: resolveAltBase(u.AltDir, b.altStorageTmpl, u.Username),
+		altBasePath: u.AltDir, // the resolver's mail_alt_path, already expanded
 		listUTF8:    b.listUTF8,
 	}
-}
-
-// resolveAltBase returns the expanded alt storage root for a user. perUser
-// (UserInfo.AltDir, already expanded) takes priority over the backend template
-// so per-user userdb overrides work.
-func resolveAltBase(perUser, tmpl, username string) string {
-	if perUser != "" {
-		return perUser
-	}
-	return expandAltPath(tmpl, username)
 }
 
 type userMailbox struct {
@@ -300,24 +282,6 @@ func (u *userMailbox) altStoragePath() string {
 // mfileAltPath returns the alt-storage path for m.<fileID>.
 func (u *userMailbox) mfileAltPath(fileID uint32) string {
 	return filepath.Join(u.altStoragePath(), fmt.Sprintf("m.%d", fileID))
-}
-
-// expandAltPath expands a path template (%u, %n, %d, %Lu, %Ln, %Ld) against a
-// username ("localpart@domain"). Returns "" when tmpl is empty.
-func expandAltPath(tmpl, username string) string {
-	if tmpl == "" {
-		return ""
-	}
-	local, domain, _ := strings.Cut(username, "@")
-	r := strings.NewReplacer(
-		"%u", username,
-		"%Lu", strings.ToLower(username),
-		"%n", local,
-		"%Ln", strings.ToLower(local),
-		"%d", domain,
-		"%Ld", strings.ToLower(domain),
-	)
-	return r.Replace(tmpl)
 }
 
 // openMap ensures the per-user mdboxmap is open, cached on the userMailbox for
