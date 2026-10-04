@@ -219,6 +219,11 @@ type session struct {
 	authCl  *authclient.Client
 	authErr error // sticky dial failure
 
+	// dirConn is the session's director connection, dialled on the first RCPT
+	// and kept, so one MTA session costs one handshake (#2149).
+	dirMu   sync.Mutex
+	dirConn *proto.Conn
+
 	// reqID generates the LOOKUP correlation id.
 	reqID atomic.Uint64
 }
@@ -360,6 +365,12 @@ func (s *session) Logout() error {
 		s.authCl = nil
 	}
 	s.authMu.Unlock()
+	s.dirMu.Lock()
+	if s.dirConn != nil {
+		s.dirConn.Close()
+		s.dirConn = nil
+	}
+	s.dirMu.Unlock()
 	return nil
 }
 
@@ -527,30 +538,18 @@ func (s *session) resolveBackend(username, userTag string) (string, error) {
 	return s.directorLookup(username, tag)
 }
 
-// directorLookup dials yarilo-director, sends a LOOKUP for username, and
-// returns the resolved backend address. BackendPort overrides the port in
-// the LOOKUP result when set.
+// directorLookup asks the director over the session's connection, redialling
+// once one that failed after reuse; BackendPort overrides the answer's port.
 func (s *session) directorLookup(username, tag string) (string, error) {
-	var dc *proto.Conn
-	var err error
-	start := time.Now()
-	if s.opts.DirectorTLS != nil {
-		dc, err = proto.DialTLS(s.opts.DirectorAddr, s.opts.LocalIP, 0, s.opts.DirectorTLS)
-	} else {
-		dc, err = proto.Dial(s.opts.DirectorAddr, s.opts.LocalIP, 0)
+	s.dirMu.Lock()
+	defer s.dirMu.Unlock()
+	reused := s.dirConn != nil
+	res, err := s.directorLookupOnce(username, tag)
+	if err != nil && reused {
+		res, err = s.directorLookupOnce(username, tag)
 	}
-	observeRcptPhase(phaseDirectorDial, start)
 	if err != nil {
-		return "", fmt.Errorf("lmtplogin/director: dial: %w", err)
-	}
-	defer dc.Close()
-
-	id := fmt.Sprintf("%d", s.reqID.Add(1))
-	start = time.Now()
-	res, err := dc.Lookup(id, username, tag, "lmtp")
-	observeRcptPhase(phaseDirectorLookup, start)
-	if err != nil {
-		return "", fmt.Errorf("lmtplogin/director: lookup %s: %w", username, err)
+		return "", err
 	}
 
 	addr := res.Addr
@@ -562,6 +561,35 @@ func (s *session) directorLookup(username, tag string) (string, error) {
 		addr = fmt.Sprintf("%s:%d", host, s.opts.BackendPort)
 	}
 	return addr, nil
+}
+
+// directorLookupOnce dials when no connection is held; any error drops it.
+func (s *session) directorLookupOnce(username, tag string) (proto.LookupResult, error) {
+	if s.dirConn == nil {
+		var err error
+		start := time.Now()
+		if s.opts.DirectorTLS != nil {
+			s.dirConn, err = proto.DialTLS(s.opts.DirectorAddr, s.opts.LocalIP, 0, s.opts.DirectorTLS)
+		} else {
+			s.dirConn, err = proto.Dial(s.opts.DirectorAddr, s.opts.LocalIP, 0)
+		}
+		observeRcptPhase(phaseDirectorDial, start)
+		if err != nil {
+			s.dirConn = nil
+			return proto.LookupResult{}, fmt.Errorf("lmtplogin/director: dial: %w", err)
+		}
+	}
+
+	id := fmt.Sprintf("%d", s.reqID.Add(1))
+	start := time.Now()
+	res, err := s.dirConn.Lookup(id, username, tag, "lmtp")
+	observeRcptPhase(phaseDirectorLookup, start)
+	if err != nil {
+		s.dirConn.Close()
+		s.dirConn = nil
+		return proto.LookupResult{}, fmt.Errorf("lmtplogin/director: lookup %s: %w", username, err)
+	}
+	return res, nil
 }
 
 // ---- backend fan-out --------------------------------------------------------

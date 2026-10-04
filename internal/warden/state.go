@@ -405,20 +405,31 @@ func NewRedisBackend(rdb *redis.Client, keyPrefix, channelPrefix string, penalty
 func (b *redisBackend) penaltyKey(ip string) string   { return b.keyPrefix + "penalty:" + ip }
 func (b *redisBackend) cntKey(user, ip string) string { return b.keyPrefix + "cnt:" + user + "@" + ip }
 func (b *redisBackend) sessKey(id string) string      { return b.keyPrefix + "sess:" + id }
+func (b *redisBackend) userKey(user string) string    { return b.keyPrefix + "usess:" + user }
 func (b *redisBackend) chanKey(channel string) string { return b.channelPrefix + channel }
 
 // connectScript makes CONNECT atomic: check the counter against the limit, and
 // only on pass create the session hash (with TTL) and increment the counter,
 // so concurrent CONNECTs cannot both slip past the limit.
-// KEYS[1]=cnt KEYS[2]=sess; ARGV: 1=limit 2=ttlMs 3=user 4=ip 5=service 6=connectedAt
 var connectScript = redis.NewScript(`
+-- KEYS[1]=cnt KEYS[2]=sess KEYS[3]=usess (service<TAB>id by expiry, #2149)
+-- ARGV: 1=limit 2=ttlMs 3=user 4=ip 5=service 6=connectedAt 7=id
+local t = redis.call('TIME')
+local expires = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) + tonumber(ARGV[2])
+local function index()
+  redis.call('ZADD', KEYS[3], expires, string.lower(ARGV[5]) .. '\t' .. ARGV[7])
+  if redis.call('PTTL', KEYS[3]) < tonumber(ARGV[2]) then redis.call('PEXPIRE', KEYS[3], ARGV[2]) end
+end
 -- Idempotent (#942 review): a retried CONNECT for an already-registered session
 -- (a network retry after the command actually succeeded) must refresh it WITHOUT
 -- a second INCR, or one session would be double-counted. Mirrors the idempotent
 -- DISCONNECT (which DECRs only on DEL==1).
 if redis.call('EXISTS', KEYS[2]) == 1 then
+  local old = redis.call('HGET', KEYS[2], 'service')
+  if old then redis.call('ZREM', KEYS[3], string.lower(old) .. '\t' .. ARGV[7]) end
   redis.call('HSET', KEYS[2], 'user', ARGV[3], 'ip', ARGV[4], 'service', ARGV[5], 'connected_at', ARGV[6])
   redis.call('PEXPIRE', KEYS[2], ARGV[2])
+  index()
   return 1
 end
 local limit = tonumber(ARGV[1])
@@ -428,6 +439,7 @@ end
 redis.call('HSET', KEYS[2], 'user', ARGV[3], 'ip', ARGV[4], 'service', ARGV[5], 'connected_at', ARGV[6])
 redis.call('PEXPIRE', KEYS[2], ARGV[2])
 redis.call('INCR', KEYS[1])
+index()
 return 1
 `)
 
@@ -435,10 +447,43 @@ return 1
 // existed, so a duplicate DISCONNECT (or one for a TTL-expired session) cannot
 // drive the counter negative. KEYS[1]=cnt KEYS[2]=sess
 var disconnectScript = redis.NewScript(`
+-- KEYS[3]=usess; ARGV[1]=id
+local service = redis.call('HGET', KEYS[2], 'service')
+if service then redis.call('ZREM', KEYS[3], string.lower(service) .. '\t' .. ARGV[1]) end
 if redis.call('DEL', KEYS[2]) == 1 then
   if redis.call('DECR', KEYS[1]) <= 0 then redis.call('DEL', KEYS[1]) end
 end
 return 1
+`)
+
+// touchScript renews a live session and its index entry; 0 when it is gone.
+var touchScript = redis.NewScript(`
+-- KEYS[1]=sess; ARGV: 1=ttlMs 2=id 3=keyPrefix
+local f = redis.call('HMGET', KEYS[1], 'user', 'service')
+if not f[1] then return 0 end
+redis.call('PEXPIRE', KEYS[1], ARGV[1])
+local t = redis.call('TIME')
+local expires = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) + tonumber(ARGV[1])
+local key = ARGV[3] .. 'usess:' .. f[1]
+redis.call('ZADD', key, 'XX', expires, string.lower(f[2] or '') .. '\t' .. ARGV[2])
+if redis.call('PTTL', key) < tonumber(ARGV[1]) then redis.call('PEXPIRE', key, ARGV[1]) end
+return 1
+`)
+
+// countScript drops the user's expired index entries and counts the rest for
+// one service ("" counts all): one round trip, priced by this user's sessions.
+var countScript = redis.NewScript(`
+-- KEYS[1]=usess; ARGV[1]=service
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+if ARGV[1] == '' then return redis.call('ZCARD', KEYS[1]) end
+local prefix = ARGV[1] .. '\t'
+local n = 0
+for _, m in ipairs(redis.call('ZRANGE', KEYS[1], 0, -1)) do
+  if string.sub(m, 1, #prefix) == prefix then n = n + 1 end
+end
+return n
 `)
 
 // setFieldScript updates one session-hash field only if the session still
@@ -503,8 +548,8 @@ func (b *redisBackend) SessionConnect(id, user, ip, service string) (bool, error
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
 	res, err := connectScript.Run(ctx, b.rdb,
-		[]string{b.cntKey(user, ip), b.sessKey(id)},
-		b.limit, b.sessionTTL.Milliseconds(), user, ip, service, strconv.FormatInt(time.Now().UTC().Unix(), 10),
+		[]string{b.cntKey(user, ip), b.sessKey(id), b.userKey(user)},
+		b.limit, b.sessionTTL.Milliseconds(), user, ip, service, strconv.FormatInt(time.Now().UTC().Unix(), 10), id,
 	).Int()
 	if err != nil {
 		return false, redisErr("connect", err) // bounded backend error → caller applies WardenFailOpen
@@ -515,7 +560,7 @@ func (b *redisBackend) SessionConnect(id, user, ip, service string) (bool, error
 func (b *redisBackend) SessionDisconnect(id, user, ip string) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
-	if err := disconnectScript.Run(ctx, b.rdb, []string{b.cntKey(user, ip), b.sessKey(id)}).Err(); err != nil {
+	if err := disconnectScript.Run(ctx, b.rdb, []string{b.cntKey(user, ip), b.sessKey(id), b.userKey(user)}, id).Err(); err != nil {
 		redisErrors.WithLabelValues("disconnect").Inc()
 	}
 }
@@ -523,12 +568,12 @@ func (b *redisBackend) SessionDisconnect(id, user, ip string) {
 func (b *redisBackend) SessionTouch(id string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
-	ok, err := b.rdb.PExpire(ctx, b.sessKey(id), b.sessionTTL).Result()
+	res, err := touchScript.Run(ctx, b.rdb, []string{b.sessKey(id)}, b.sessionTTL.Milliseconds(), id, b.keyPrefix).Int()
 	if err != nil {
 		redisErrors.WithLabelValues("touch").Inc()
 		return false
 	}
-	return ok
+	return res == 1
 }
 
 func (b *redisBackend) SessionSetFolder(id, folder string) bool {
@@ -569,18 +614,16 @@ func (b *redisBackend) SessionList() []*SessionInfo {
 	return out
 }
 
+// SessionLookupCount reads the user's index, never the whole keyspace (#2149).
 func (b *redisBackend) SessionLookupCount(user, service string) int {
-	count := 0
-	for _, s := range b.SessionList() {
-		if s.User != user {
-			continue
-		}
-		if service != "" && !strings.EqualFold(s.Service, service) {
-			continue
-		}
-		count++
+	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
+	defer cancel()
+	n, err := countScript.Run(ctx, b.rdb, []string{b.userKey(user)}, strings.ToLower(service)).Int()
+	if err != nil {
+		redisErrors.WithLabelValues("lookup").Inc()
+		return 0
 	}
-	return count
+	return n
 }
 
 func (b *redisBackend) SessionCount() int { return len(b.SessionList()) }
