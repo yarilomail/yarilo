@@ -45,9 +45,9 @@ var (
 
 	flagGUID      = flag.Bool("guid-backfill", false, "stamp per-message GUIDs across an existing store instead of converting")
 	flagLocksConf = flag.String("config", "", "yarilo.yaml supplying the storage layout, driver and the yarilo-locks client")
-	flagDriver    = flag.String("driver", "", "override storage.mailbox: maildir | sdbox | mdbox (--guid-backfill)")
+	flagDriver    = flag.String("driver", "", "override storage.mail_driver: maildir | sdbox | mdbox (--guid-backfill)")
 	flagRoot      = flag.String("root", "", "override storage.maildir_root (--guid-backfill)")
-	flagHomeTmpl  = flag.String("home-template", "", "override storage.mail_home_template, e.g. %d/%u")
+	flagHomeTmpl  = flag.String("home-template", "", "override storage.mail_home, e.g. %d/%u")
 	flagUser      = flag.String("user", "", "restrict to one user@domain (--guid-backfill); default is every user under the root")
 	flagThreads   = flag.Bool("thread-backfill", false, "build the threading sidecar for existing accounts instead of converting")
 	flagForce     = flag.Bool("force", false, "rebuild a sidecar that already exists (--thread-backfill)")
@@ -118,7 +118,7 @@ func main() {
 	}
 	if *flagFrom == "" || *flagTo == "" || *flagDst == "" {
 		fmt.Fprintln(os.Stderr,
-			"usage: yarilo-migrate --src <maildir|dbox-v1|mdbox-v1> --dst <sdbox|mdbox> --from <src> --to <dst>")
+			"usage: yarilo-migrate --src <maildir|dbox-v1|mdbox-v1|dbox-ref> --dst <sdbox|mdbox> --from <src> --to <dst>")
 		os.Exit(1)
 	}
 

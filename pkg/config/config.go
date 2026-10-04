@@ -904,9 +904,8 @@ type QuotaStatusConfig struct {
 	Success   string `koanf:"quota_status_success"`
 	Toolarge  string `koanf:"quota_status_toolarge"`
 	Overquota string `koanf:"quota_status_overquota"`
-	// DefaultQuotaRules are the site-wide quota limits applied when no
-	// per-user rules are available (userdb lookup not yet wired in this phase).
-	// Format matches yarilo.yaml quota_rule: ["*:storage=5G", "Trash:storage=+1G"].
+	// DefaultQuotaRules apply when the recipient's userdb entry carries no
+	// quota_rule; same format, e.g. ["*:storage=5G", "Trash:storage=+1G"].
 	DefaultQuotaRules []string `koanf:"default_quota_rules"`
 	// AliasDict is the name of a dict defined in the top-level dicts: map
 	// that resolves virtual aliases. The dict key is the recipient address
@@ -921,9 +920,8 @@ type QuotaStatusConfig struct {
 	// AliasMaxHops limits alias chain depth to prevent infinite loops.
 	// Default: 5
 	AliasMaxHops int `koanf:"alias_max_hops"`
-	// AuthMasterAddr is the yarilo-auth master-protocol listener address
-	// used for per-user userdb lookups (quota_rule fields). When empty,
-	// per-user quota rules are disabled and only DefaultQuotaRules apply.
+	// AuthMasterAddr is the auth master listener each recipient is looked up on;
+	// empty accepts every recipient, so the chart defaults it (#2160).
 	AuthMasterAddr string `koanf:"auth_master_addr"`
 }
 
@@ -2373,11 +2371,8 @@ type StorageConfig struct {
 	// index-authoritative drivers (dbox) ignore it and self-heal reactively.
 	MaildirSyncOnSelect bool `koanf:"maildir_sync_on_select"`
 
-	// DboxReactiveRebuild enables reactive self-heal for sdbox: when a read hits
-	// a missing/corrupt message the folder index is flagged and the next open
-	// expunges the vanished records under the mailbox lock. Default true. Only
-	// dbox honours it; maildir reconciles proactively via maildir_sync_on_select.
-	// (mdbox reactive rebuild is phase 2 — see #594.)
+	// DboxReactiveRebuild: a read that misses a message in sdbox or mdbox flags the
+	// folder, and the next open expunges what vanished. Default true.
 	DboxReactiveRebuild bool `koanf:"dbox_reactive_rebuild"`
 
 	// MaxConcurrentWrites caps the number of concurrent box.Save() calls
@@ -2385,11 +2380,8 @@ type StorageConfig struct {
 	// spinning disks typically benefit from 16-32, SSDs from 128-256.
 	// 0 means unlimited (default for backwards compatibility).
 	MaxConcurrentWrites int `koanf:"max_concurrent_writes"`
-	// MdboxAltStoragePath is the base directory for the mdbox alt
-	// (cold) storage tier. Supports the same %u/%n/%d/%Lu/%Ln/%Ld
-	// template variables as mail_home_template. Empty disables alt
-	// storage (default).
-	// Example: /mnt/cold/%d/%n
+	// MdboxAltStoragePath is the mdbox cold-storage base; %u/%n/%d as in
+	// mail_home, no %L. Empty disables it. Example: /mnt/cold/%d/%n
 	MdboxAltStoragePathAlias string `koanf:"mdbox_alt_storage_path"`
 
 	// MdboxRotateSize is the maximum size of a single m.<N> file before a new save
@@ -2445,7 +2437,7 @@ type StorageConfig struct {
 	MailIndexLogRotateMaxSize    int64  `koanf:"-"` // resolved from MailIndexLogRotateMaxSizeRaw at load
 	MailIndexLogRotateMaxSizeRaw string `koanf:"mail_index_log_rotate_max_size"`
 	// MailIndexLogRotateMinAge is the minimum log age in seconds before a
-	// min-size fold fires. Default 300 s.
+	// min-size fold fires. Default 60 s.
 	MailIndexLogRotateMinAge int `koanf:"mail_index_log_rotate_min_age"`
 
 	// Pre-beta spellings of the triple above, accepted as aliases and removed

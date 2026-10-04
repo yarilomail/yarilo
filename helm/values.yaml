@@ -1395,7 +1395,7 @@ components:
       secretName: ""
 
     ## default_quota_rules mirror yarilo.yaml quota_rule format.
-    ## Applied to every recipient; per-user rules require userdb lookup (future phase).
+    ## Applied to a recipient whose userdb entry carries no quota_rule.
     default_quota_rules: []
     #  - "*:storage=5G"
     #  - "*:messages=100000"
@@ -1421,10 +1421,9 @@ components:
     quota_status_toolarge: ""
     quota_status_overquota: "554 5.2.2 %{error}"
 
-    ## auth_master_addr is the yarilo-auth master-protocol listener address
-    ## used for per-user quota_rule lookups via userdb. When set, per-user
-    ## rules override default_quota_rules; default_quota_rules remain as fallback.
-    ## Example: "yarilo-auth:9101"
+    ## auth_master_addr: the yarilo-auth master listener each recipient is looked
+    ## up on. Empty: the release's auth service on components.auth.masterListen.
+    ## Without a lookup every recipient is accepted (#2160).
     auth_master_addr: ""
 
     service:
