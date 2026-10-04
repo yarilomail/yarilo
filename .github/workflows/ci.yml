@@ -46,6 +46,23 @@ jobs:
       contents: read
       checks: write
 
+  ## main takes merges from develop only; a required check, since branch
+  ## protection cannot name the source branch.
+  source:
+    name: Source is develop
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Refuse any other head
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$HEAD_REF" != develop ] || [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::main accepts pull requests from develop only, got $HEAD_REPO:$HEAD_REF"
+            exit 1
+          fi
+
   build:
     name: Build & Push
     if: github.event_name == 'push'

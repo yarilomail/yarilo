@@ -170,10 +170,10 @@ components:
     service: { type: LoadBalancer }
   saslLogin:                        # Submission SASL (:587/:465 via relay)
     enabled: true
-    service: { type: LoadBalancer }
+    service: { type: ClusterIP }   # LoadBalancer only for an MTA outside the cluster
 
   # ---- quota-status: Postfix policy service (stays a separate Deployment) ----
   quotaStatus:
     enabled: true
     auth_master_addr: "yarilo-auth:9102"
-    service: { type: LoadBalancer }
+    service: { type: ClusterIP }   # LoadBalancer only for an MTA outside the cluster

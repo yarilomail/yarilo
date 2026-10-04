@@ -144,8 +144,8 @@ components:
     service: { type: LoadBalancer }
   saslLogin:
     enabled: true
-    service: { type: LoadBalancer }
+    service: { type: ClusterIP }   # LoadBalancer only for an MTA outside the cluster
   quotaStatus:
     enabled: true
     auth_master_addr: "yarilo-auth:9102"
-    service: { type: LoadBalancer }
+    service: { type: ClusterIP }   # LoadBalancer only for an MTA outside the cluster
