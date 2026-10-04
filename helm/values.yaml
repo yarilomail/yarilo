@@ -949,7 +949,9 @@ components:
       #   introspection_url: https://keycloak.internal/realms/yarilo/protocol/openid-connect/token/introspect
       #   introspection_mode: post
       #   client_id: yarilo-auth
-      #   client_secret: change-me
+      #   client_secret_ref:          # Secret, not the ConfigMap; or client_secret: <literal>
+      #     name: yarilo-oauth2
+      #     key: client_secret
       #   username_attribute: email
 
     ## policy — wforce-compatible HTTP policy-server hook. URL=""
@@ -966,8 +968,14 @@ components:
     policy:
       url: ""
       api_header: ""
+      api_header_secret_ref:   # a Secret instead of the literal in the ConfigMap
+        name: ""
+        key: api_header
       hash_mech: sha256
       hash_nonce: ""
+      hash_nonce_secret_ref:   # a Secret instead of the literal in the ConfigMap
+        name: ""
+        key: hash_nonce
       hash_truncate_bits: 12
       timeout_ms: 5000
       reject_on_fail: false

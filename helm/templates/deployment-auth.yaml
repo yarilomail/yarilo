@@ -38,6 +38,9 @@ spec:
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-auth" "root" $) | quote }}
             {{- include "yarilo.dbEnv" . | nindent 12 }}
+            {{- with include "yarilo.authSecretEnv" . | trim }}
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

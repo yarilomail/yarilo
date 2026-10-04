@@ -3124,7 +3124,14 @@ func expandEnv(cfg *Config) {
 	}
 	for i := range cfg.Auth.MasterUsers.Masterdb {
 		cfg.Auth.MasterUsers.Masterdb[i].DSN = expand(cfg.Auth.MasterUsers.Masterdb[i].DSN)
+		cfg.Auth.MasterUsers.Masterdb[i].PasswdFile = expand(cfg.Auth.MasterUsers.Masterdb[i].PasswdFile)
+		cfg.Auth.MasterUsers.Masterdb[i].StaticPassword = expand(cfg.Auth.MasterUsers.Masterdb[i].StaticPassword)
 	}
+	for i := range cfg.Auth.OAuth2 {
+		cfg.Auth.OAuth2[i].ClientSecret = expand(cfg.Auth.OAuth2[i].ClientSecret)
+	}
+	cfg.Auth.Policy.APIHeader = expand(cfg.Auth.Policy.APIHeader)
+	cfg.Auth.Policy.HashNonce = expand(cfg.Auth.Policy.HashNonce)
 	// Dict connection settings (dsn, addr, password, ...) commonly come from a
 	// secret via ${ENV}. Settings is a shared map, so mutating it in place is
 	// visible through cfg.Dicts.

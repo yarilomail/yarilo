@@ -298,9 +298,9 @@ data:
         enabled: {{ .Values.components.auth.penalty.enabled | default false }}
       policy:
         auth_policy_server_url: {{ .Values.components.auth.policy.url | default "" | quote }}
-        auth_policy_server_api_header: {{ .Values.components.auth.policy.api_header | default "" | quote }}
+        auth_policy_server_api_header: {{ include "yarilo.authSecretValue" (dict "key" "components.auth.policy.api_header" "literal" .Values.components.auth.policy.api_header "ref" .Values.components.auth.policy.api_header_secret_ref "env" "YARILO_AUTH_POLICY_API_HEADER") }}
         auth_policy_hash_mech: {{ .Values.components.auth.policy.hash_mech | default "sha256" | quote }}
-        auth_policy_hash_nonce: {{ .Values.components.auth.policy.hash_nonce | default "" | quote }}
+        auth_policy_hash_nonce: {{ include "yarilo.authSecretValue" (dict "key" "components.auth.policy.hash_nonce" "literal" .Values.components.auth.policy.hash_nonce "ref" .Values.components.auth.policy.hash_nonce_secret_ref "env" "YARILO_AUTH_POLICY_HASH_NONCE") }}
         auth_policy_hash_truncate: {{ .Values.components.auth.policy.hash_truncate_bits | default 12 }}
         timeout_ms: {{ .Values.components.auth.policy.timeout_ms | default 5000 }}
         auth_policy_reject_on_fail: {{ .Values.components.auth.policy.reject_on_fail | default false }}
@@ -309,7 +309,7 @@ data:
         auth_policy_check_after_auth: {{ .Values.components.auth.policy.check_after | default true }}
         auth_policy_report_after_auth: {{ .Values.components.auth.policy.report_after | default true }}
       oauth2:
-        {{- range (.Values.components.auth.oauth2 | default list) }}
+        {{- range $i, $e := (.Values.components.auth.oauth2 | default list) }}
         - oauth2_mode: {{ .mode | quote }}
           {{- with .jwks_url }}
           oauth2_jwks_url: {{ . | quote }}
@@ -332,8 +332,8 @@ data:
           {{- with .client_id }}
           oauth2_client_id: {{ . | quote }}
           {{- end }}
-          {{- with .client_secret }}
-          oauth2_client_secret: {{ . | quote }}
+          {{- if or .client_secret (.client_secret_ref | default dict).name }}
+          oauth2_client_secret: {{ include "yarilo.authSecretValue" (dict "key" (printf "components.auth.oauth2[%d].client_secret" $i) "literal" .client_secret "ref" .client_secret_ref "env" (printf "YARILO_OAUTH2_%d_CLIENT_SECRET" $i)) }}
           {{- end }}
           {{- with .issuers }}
           oauth2_issuers: {{ . | toJson }}
