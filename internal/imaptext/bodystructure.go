@@ -34,6 +34,19 @@ func WriteBodyStructure(bs imaplib.BodyStructure, extended bool) (string, bool) 
 	return b.String(), true
 }
 
+// Canonical is the structure as the cache hands it back, so the first FETCH
+// answers what later ones do (#2146); a kind the cache refuses comes back as is.
+func Canonical(bs imaplib.BodyStructure) imaplib.BodyStructure {
+	enc, ok := WriteBodyStructure(bs, true)
+	if !ok {
+		return bs
+	}
+	if out, ok := ParseBodyStructure(enc); ok {
+		return out
+	}
+	return bs
+}
+
 // Parameters go in name order; an unknown kind is refused, never written as an
 // empty text part -- a wrong answer from cache is worse than a miss.
 func writeBodyStructure(b *strings.Builder, bs imaplib.BodyStructure, extended bool) bool {
@@ -69,13 +82,14 @@ func writeMultiPart(b *strings.Builder, p *imaplib.BodyStructureMultiPart, exten
 	}
 	b.WriteByte(' ')
 	var params map[string]string
+	var order []string
 	var disp *imaplib.BodyStructureDisposition
 	var lang []string
 	var loc string
 	if p.Extended != nil {
-		params, disp, lang, loc = p.Extended.Params, p.Extended.Disposition, p.Extended.Language, p.Extended.Location
+		params, order, disp, lang, loc = p.Extended.Params, p.Extended.ParamOrder, p.Extended.Disposition, p.Extended.Language, p.Extended.Location
 	}
-	writeParams(b, params, false)
+	writeParams(b, params, order, false)
 	writeCommon(b, disp, lang, loc)
 	return true
 }
@@ -90,7 +104,7 @@ func writeSinglePart(b *strings.Builder, p *imaplib.BodyStructureSinglePart, ext
 	b.WriteByte(' ')
 	appendString(b, sub)
 	b.WriteByte(' ')
-	writeParams(b, p.Params, text)
+	writeParams(b, p.Params, p.ParamOrder, text)
 	b.WriteByte(' ')
 	AppendNString(b, p.ID, p.ID != "")
 	b.WriteByte(' ')
@@ -146,7 +160,7 @@ func writeCommon(b *strings.Builder, disp *imaplib.BodyStructureDisposition, lan
 		b.WriteByte('(')
 		appendString(b, disp.Value)
 		b.WriteByte(' ')
-		writeParams(b, disp.Params, false)
+		writeParams(b, disp.Params, disp.ParamOrder, false)
 		b.WriteByte(')')
 	}
 	b.WriteByte(' ')
@@ -166,18 +180,14 @@ func writeCommon(b *strings.Builder, disp *imaplib.BodyStructureDisposition, lan
 	AppendNString(b, loc, loc != "")
 }
 
-// params_write: a text part always names a charset, an absent list is NIL
-// unless the default is owed (as the reference does).
-func writeParams(b *strings.Builder, params map[string]string, defaultCharsetWanted bool) {
+// params_write: message order, a text part always names a charset (last when
+// the message gave none), an absent list is NIL unless the default is owed.
+func writeParams(b *strings.Builder, params map[string]string, order []string, defaultCharsetWanted bool) {
 	if !defaultCharsetWanted && len(params) == 0 {
 		b.WriteString("NIL")
 		return
 	}
-	names := make([]string, 0, len(params))
-	for name := range params {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := orderedNames(params, order)
 
 	b.WriteByte('(')
 	seenCharset := false
@@ -240,7 +250,8 @@ func multiPartFromArg(a arg, depth int) (imaplib.BodyStructure, bool) {
 	if i >= len(a.items) {
 		return out, true
 	}
-	ext := &imaplib.BodyStructureMultiPartExt{Params: paramsFromArg(a.items[i])}
+	ext := &imaplib.BodyStructureMultiPartExt{}
+	ext.Params, ext.ParamOrder = paramsFromArg(a.items[i])
 	i++
 	ext.Disposition, ext.Language, ext.Location = commonFromArgs(a.items, i)
 	out.Extended = ext
@@ -254,11 +265,11 @@ func singlePartFromArg(a arg, depth int) (imaplib.BodyStructure, bool) {
 	out := &imaplib.BodyStructureSinglePart{
 		Type:        a.items[0].str,
 		Subtype:     a.items[1].str,
-		Params:      paramsFromArg(a.items[2]),
 		ID:          a.items[3].str,
 		Description: a.items[4].str,
 		Encoding:    a.items[5].str,
 	}
+	out.Params, out.ParamOrder = paramsFromArg(a.items[2])
 	size, err := strconv.ParseUint(a.items[6].str, 10, 32)
 	if err != nil {
 		return nil, false
@@ -313,10 +324,8 @@ func commonFromArgs(items []arg, i int) (*imaplib.BodyStructureDisposition, []st
 	var lang []string
 	var loc string
 	if i < len(items) && items[i].list && len(items[i].items) >= 1 {
-		disp = &imaplib.BodyStructureDisposition{
-			Value:  items[i].items[0].str,
-			Params: paramsFromArg(items[i].items[1]),
-		}
+		disp = &imaplib.BodyStructureDisposition{Value: items[i].items[0].str}
+		disp.Params, disp.ParamOrder = paramsFromArg(items[i].items[1])
 	}
 	i++
 	if i < len(items) {
@@ -336,13 +345,38 @@ func commonFromArgs(items []arg, i int) (*imaplib.BodyStructureDisposition, []st
 	return disp, lang, loc
 }
 
-func paramsFromArg(a arg) map[string]string {
+// paramsFromArg keeps the order the list gave, which is the message's.
+func paramsFromArg(a arg) (map[string]string, []string) {
 	if !a.list || len(a.items) < 2 {
-		return nil
+		return nil, nil
 	}
 	out := make(map[string]string, len(a.items)/2)
+	order := make([]string, 0, len(a.items)/2)
 	for i := 0; i+1 < len(a.items); i += 2 {
+		if _, dup := out[a.items[i].str]; !dup {
+			order = append(order, a.items[i].str)
+		}
 		out[a.items[i].str] = a.items[i+1].str
 	}
-	return out
+	return out, order
+}
+
+// orderedNames lists params in the given order, then any it leaves out, sorted.
+func orderedNames(params map[string]string, order []string) []string {
+	names := make([]string, 0, len(params))
+	seen := make(map[string]bool, len(params))
+	for _, name := range order {
+		if _, ok := params[name]; ok && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	var rest []string
+	for name := range params {
+		if !seen[name] {
+			rest = append(rest, name)
+		}
+	}
+	sort.Strings(rest)
+	return append(names, rest...)
 }

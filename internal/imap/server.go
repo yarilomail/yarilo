@@ -27,6 +27,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/connlimit"
+	"github.com/yarilomail/yarilo/internal/imaptext"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/mailboxcreate"
 	"github.com/yarilomail/yarilo/internal/msgcache"
@@ -3450,7 +3451,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				mw.WriteBodyStructure(bs)
 			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
 				rd := &missReader{r: rc}
-				bs := imapserver.ExtractBodyStructure(rd)
+				bs := imaptext.Canonical(imapserver.ExtractBodyStructure(rd))
 				rerr := rd.missedWhole(m)
 				rc.Close()
 				if rerr != nil {
