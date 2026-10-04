@@ -230,6 +230,8 @@ func main() {
 		// evict us instantly, then give it a moment to flush
 		srv.GracefulLeave()
 		time.Sleep(500 * time.Millisecond)
+		// out of the ring, so nothing it would answer is current any more
+		srv.Drain()
 		cancel()
 		grace := time.Duration(cfg.DirectorService.Shutdown.SessionGracePeriod) * time.Second
 		if grace > 0 {

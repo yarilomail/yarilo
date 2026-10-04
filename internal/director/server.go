@@ -90,6 +90,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/cluster/proto"
@@ -404,6 +405,8 @@ type Server struct {
 	// clients is the registry of all currently connected clients.
 	clientMu sync.RWMutex
 	clients  map[*client]struct{}
+	// draining: this director left the ring and serves no one (#2152).
+	draining atomic.Bool
 
 	// sessRec tracks active proxied sessions reported via SESSION-OPEN/CLOSE.
 	// Director uses this to send USER-KICKED when a backend goes down.
@@ -546,6 +549,21 @@ func (s *Server) StartMembership(ctx context.Context, seeds []string) {
 // on SIGTERM, BEFORE cancelling the server ctx, then allow a brief flush.
 // See Membership.Leave.
 func (s *Server) GracefulLeave() { s.membership.Leave() }
+
+// Drain closes every client connection and refuses new ones, so logins and
+// backends reconnect to a live director instead of a view that stopped (#2152).
+func (s *Server) Drain() {
+	s.clientMu.Lock()
+	s.draining.Store(true)
+	conns := make([]net.Conn, 0, len(s.clients))
+	for c := range s.clients {
+		conns = append(conns, c.conn)
+	}
+	s.clientMu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+}
 
 // RingBackendCount reads the ring under its lock — the liveness probe (#904).
 // The ring is the routing hot path every LOOKUP takes; if its mutex is wedged
@@ -764,6 +782,10 @@ func (s *Server) handleConn(conn net.Conn) {
 	c := &client{conn: conn, writeTimeout: s.opts.writeTimeout(), pongCh: make(chan struct{}, 4)}
 	s.addClient(c)
 	defer s.removeClient(c)
+	// After addClient: Drain either saw this client or set the flag first.
+	if s.draining.Load() {
+		return
+	}
 
 	rd := bufio.NewReaderSize(conn, 4096)
 	allow := s.commandGate(conn)
