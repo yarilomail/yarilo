@@ -235,7 +235,9 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 	}
 
 	// Resolve backend address before reserving any resources.
+	start := time.Now()
 	userTag, timeout, err := s.userFields(username)
+	observeRcptPhase(phaseUserdb, start)
 	if err != nil {
 		return err
 	}
@@ -258,7 +260,9 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 	}
 
 	// Issue a session token for this recipient.
+	start = time.Now()
 	tok, err := s.issueToken(username, wardenID)
+	observeRcptPhase(phaseToken, start)
 	if err != nil {
 		if wardenID != "" {
 			s.wardenDisconnect(wardenID, username)
@@ -371,7 +375,9 @@ func (s *session) wardenConnect(user string) (string, error) {
 		if s.wardenErr != nil {
 			return "", s.wardenErr
 		}
+		start := time.Now()
 		c, err := warden.Dial(s.opts.WardenAddr, s.opts.WardenTLS, 5*time.Second)
+		observeRcptPhase(phaseWardenDial, start)
 		if err != nil {
 			s.wardenErr = fmt.Errorf("lmtplogin/warden: dial: %w", err)
 			return "", s.wardenErr
@@ -380,7 +386,9 @@ func (s *session) wardenConnect(user string) (string, error) {
 	}
 	limit := s.opts.ConcurrencyLimit
 	if limit > 0 {
+		start := time.Now()
 		count, err := s.wardenConn.Lookup(user, "lmtp")
+		observeRcptPhase(phaseWardenLookup, start)
 		if err != nil {
 			return "", fmt.Errorf("lmtplogin/warden: lookup: %w", err)
 		}
@@ -389,7 +397,10 @@ func (s *session) wardenConnect(user string) (string, error) {
 		}
 	}
 	id := newSessionID()
-	if err := s.wardenConn.Connect(id, user, s.peerIP, "lmtp"); err != nil {
+	start := time.Now()
+	err := s.wardenConn.Connect(id, user, s.peerIP, "lmtp")
+	observeRcptPhase(phaseWardenConnect, start)
+	if err != nil {
 		return "", fmt.Errorf("lmtplogin/warden: connect: %w", err)
 	}
 	return id, nil
@@ -522,18 +533,22 @@ func (s *session) resolveBackend(username, userTag string) (string, error) {
 func (s *session) directorLookup(username, tag string) (string, error) {
 	var dc *proto.Conn
 	var err error
+	start := time.Now()
 	if s.opts.DirectorTLS != nil {
 		dc, err = proto.DialTLS(s.opts.DirectorAddr, s.opts.LocalIP, 0, s.opts.DirectorTLS)
 	} else {
 		dc, err = proto.Dial(s.opts.DirectorAddr, s.opts.LocalIP, 0)
 	}
+	observeRcptPhase(phaseDirectorDial, start)
 	if err != nil {
 		return "", fmt.Errorf("lmtplogin/director: dial: %w", err)
 	}
 	defer dc.Close()
 
 	id := fmt.Sprintf("%d", s.reqID.Add(1))
+	start = time.Now()
 	res, err := dc.Lookup(id, username, tag, "lmtp")
+	observeRcptPhase(phaseDirectorLookup, start)
 	if err != nil {
 		return "", fmt.Errorf("lmtplogin/director: lookup %s: %w", username, err)
 	}
