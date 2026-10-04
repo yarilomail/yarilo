@@ -30,6 +30,8 @@ type Config struct {
 	// carries no {SCHEME} prefix and no crypt(3) marker. Empty defaults to
 	// CRYPT (crypt(3) autodetection).
 	DefaultScheme string
+	// UsernameFilter skips this entry for names it does not accept.
+	UsernameFilter protocol.UsernameFilter
 }
 
 // DB is a passwd-file backend. It satisfies protocol.Passdb, protocol.Userdb,
@@ -38,6 +40,7 @@ type Config struct {
 type DB struct {
 	path          string
 	defaultScheme string
+	filter        protocol.UsernameFilter
 
 	mu    sync.RWMutex
 	mtime int64
@@ -55,7 +58,7 @@ func New(c Config) (*DB, error) {
 	if ds == "" {
 		ds = "CRYPT"
 	}
-	db := &DB{path: c.Path, defaultScheme: ds}
+	db := &DB{path: c.Path, defaultScheme: ds, filter: c.UsernameFilter}
 	if err := db.reload(); err != nil {
 		return nil, err
 	}
@@ -92,6 +95,9 @@ func (db *DB) reload() error {
 
 // lookup returns the record for username, reloading the file if it changed.
 func (db *DB) lookup(username string) (*user, bool) {
+	if !db.filter.Accepts(username) {
+		return nil, false
+	}
 	if err := db.reload(); err != nil {
 		slog.Warn("auth/passwdfile: reload failed, using cached snapshot", "path", db.path, "err", err)
 	}
@@ -198,6 +204,12 @@ func (db *DB) lookupSCRAM(username string, parse func(string) (*sasl.ScramCreden
 		return nil
 	}
 	return creds
+}
+
+// LookupCredentials reports whether the file has the user.
+func (db *DB) LookupCredentials(username string) (bool, error) {
+	_, ok := db.lookup(username)
+	return ok, nil
 }
 
 // DriverName satisfies protocol.DriverName for passdb metrics.

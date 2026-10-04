@@ -35,6 +35,11 @@ type Config struct {
 	// userdb_-prefixed keys populate the userdb; bare keys are forwarded on the
 	// passdb path (allow_nets, proxy, ...).
 	Fields map[string]string
+	// UsernameFilter skips this entry for names it does not accept.
+	UsernameFilter protocol.UsernameFilter
+	// AllowAllUsers answers a userdb-only lookup for any name; false, the
+	// reference's default, first asks the passdbs whether the user exists.
+	AllowAllUsers bool
 }
 
 // DB is a static passdb + userdb.
@@ -43,6 +48,10 @@ type DB struct {
 	nopassword    bool
 	defaultScheme string
 	fields        map[string]string
+	filter        protocol.UsernameFilter
+	allowAll      bool
+	// userExists asks the passdb chain; set by SetUserExists once it is built.
+	userExists func(username string) (bool, error)
 }
 
 // New validates and builds a static backend.
@@ -58,12 +67,20 @@ func New(c Config) (*DB, error) {
 		nopassword:    c.Nopassword,
 		defaultScheme: c.DefaultScheme,
 		fields:        c.Fields,
+		filter:        c.UsernameFilter,
+		allowAll:      c.AllowAllUsers,
 	}, nil
 }
 
-// Authenticate implements protocol.Passdb. Static matches every username, so it
-// never returns ResultNext: a mismatch is a definitive ResultFail.
+// SetUserExists gives the userdb the passdb chain to check a name against.
+func (db *DB) SetUserExists(f func(username string) (bool, error)) { db.userExists = f }
+
+// Authenticate implements protocol.Passdb. Static matches every username its
+// filter accepts, so a mismatch is a definitive ResultFail.
 func (db *DB) Authenticate(req *protocol.Request) (protocol.Result, error) {
+	if !db.filter.Accepts(req.Username) {
+		return protocol.ResultNext, nil
+	}
 	if !db.nopassword && !scheme.VerifyWithDefault(db.password, req.Password, db.defaultScheme) {
 		return protocol.ResultFail, nil
 	}
@@ -80,6 +97,15 @@ func (db *DB) Authenticate(req *protocol.Request) (protocol.Result, error) {
 // Lookup implements protocol.Userdb. Static resolves every username, rendering
 // the userdb_-prefixed template fields for the given user.
 func (db *DB) Lookup(username string) (*protocol.UserInfo, error) {
+	if !db.filter.Accepts(username) {
+		return nil, nil
+	}
+	if !db.allowAll && db.userExists != nil {
+		found, err := db.userExists(username)
+		if err != nil || !found {
+			return nil, err
+		}
+	}
 	info := &protocol.UserInfo{Username: username}
 	for k, v := range db.fields {
 		if v == "" {
@@ -96,15 +122,26 @@ func (db *DB) Lookup(username string) (*protocol.UserInfo, error) {
 	return info, nil
 }
 
+// LookupCredentials reports that the shared credential covers the user.
+func (db *DB) LookupCredentials(username string) (bool, error) {
+	return db.filter.Accepts(username), nil
+}
+
 // LookupSCRAMSha256 satisfies protocol.SCRAMSha256Lookup. When the shared
 // credential is a {SCRAM-SHA-256} verifier it is returned for every user;
 // otherwise (nil, nil) so the SASL mech fabricates a fake verifier.
-func (db *DB) LookupSCRAMSha256(string) (*sasl.ScramCredentials, error) {
+func (db *DB) LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error) {
+	if !db.filter.Accepts(username) {
+		return nil, nil
+	}
 	return db.scram(scheme.ParseSCRAMSha256Credentials), nil
 }
 
 // LookupSCRAMSha1 is the SHA-1 counterpart.
-func (db *DB) LookupSCRAMSha1(string) (*sasl.ScramCredentials, error) {
+func (db *DB) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error) {
+	if !db.filter.Accepts(username) {
+		return nil, nil
+	}
 	return db.scram(scheme.ParseSCRAMSha1Credentials), nil
 }
 
