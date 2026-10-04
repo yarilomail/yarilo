@@ -175,12 +175,18 @@ type watchConn struct {
 
 	pendMu  sync.Mutex
 	pending map[string]chan string
+	closed  bool // set by failPending; a later lookup must not wait on it
 }
 
 // awaitReply registers id and returns the channel its reply will arrive on.
 func (w *watchConn) awaitReply(id string) chan string {
 	ch := make(chan string, 1)
 	w.pendMu.Lock()
+	if w.closed {
+		w.pendMu.Unlock()
+		close(ch)
+		return ch
+	}
 	if w.pending == nil {
 		w.pending = make(map[string]chan string)
 	}
@@ -217,6 +223,7 @@ func (w *watchConn) failPending() {
 	w.pendMu.Lock()
 	pending := w.pending
 	w.pending = nil
+	w.closed = true
 	w.pendMu.Unlock()
 	for _, ch := range pending {
 		close(ch)
