@@ -549,6 +549,10 @@ func removedKeys() []retiredKey {
 			key:  "director_service.lmtp_backend_port",
 			note: "the director no longer dials backends for LMTP (#1756)",
 		},
+		{
+			key:  "auth_service.sasl_listen",
+			note: "Postfix authenticates through yarilo-sasl-login (sasl_login.listen, default :12345), which relays to auth",
+		},
 	}
 }
 

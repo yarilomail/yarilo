@@ -62,7 +62,7 @@ func main() {
 
 	listen := sl.Listen
 	if listen == "" {
-		listen = ":12325"
+		listen = ":12345"
 	}
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {

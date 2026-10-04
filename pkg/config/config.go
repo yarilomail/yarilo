@@ -972,9 +972,8 @@ type LoginConfig struct {
 // connects here and each session is proxied to yarilo-auth, keeping the
 // yarilo-auth socket internal.
 type SASLLoginConfig struct {
-	// Listen is the TCP address Postfix connects to.
-	// Postfix: smtpd_sasl_path = inet:<host>:<port>
-	// Default: ":12325"
+	// Listen is the TCP address Postfix's smtpd_sasl_path names; default ":12345",
+	// the port Postfix SASL setups commonly use.
 	Listen string `koanf:"listen"`
 	// AuthAddr is the yarilo-auth client-protocol address to dial.
 	// Defaults to auth_service.addr when empty.
@@ -2841,7 +2840,7 @@ func Load(path string) (*Config, error) {
 			DecoderTimeoutSecs: 30,
 		},
 		SASLLogin: SASLLoginConfig{
-			Listen:         ":12325",
+			Listen:         ":12345",
 			HAProxyTimeout: 3,
 		},
 		Telemetry: TelemetryConfig{
