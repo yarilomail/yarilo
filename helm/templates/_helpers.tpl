@@ -648,3 +648,17 @@ The env entries behind yarilo.authSecretValue, for yarilo-auth only (#2163).
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Fails when a values entry uses the yarilo key name where the chart reads its own
+name for the same setting: the value would be dropped without a word (#2161, #2162).
+names maps the yarilo name to the chart's; free maps (fields, settings) are never passed.
+*/}}
+{{- define "yarilo.refuseCanonical" -}}
+{{- $obj := .obj | default dict -}}
+{{- range $canonical := keys .names | sortAlpha -}}
+{{- if hasKey $obj $canonical -}}
+{{- fail (printf "%s.%s is not read; the chart expects %s" $.path $canonical (get $.names $canonical)) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}

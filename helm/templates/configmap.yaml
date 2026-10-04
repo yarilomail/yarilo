@@ -281,10 +281,24 @@ data:
       sieve_filter_exec_timeout: {{ index $sieve "sieve_filter_exec_timeout" | default 10 }}
       sieve_filter_input_eol: {{ index $sieve "sieve_filter_input_eol" | default "crlf" | quote }}
 
+    {{- $auth := .Values.components.auth }}
+    {{- include "yarilo.refuseCanonical" (dict "path" "components.auth" "obj" $auth "names" (dict "auth_failure_delay" "failure_delay")) }}
+    {{- include "yarilo.refuseCanonical" (dict "path" "components.auth.policy" "obj" $auth.policy "names" (dict "auth_policy_server_url" "url" "auth_policy_server_api_header" "api_header" "auth_policy_hash_mech" "hash_mech" "auth_policy_hash_nonce" "hash_nonce" "auth_policy_hash_truncate" "hash_truncate_bits" "auth_policy_reject_on_fail" "reject_on_fail" "auth_policy_log_only" "log_only" "auth_policy_check_before_auth" "check_before" "auth_policy_check_after_auth" "check_after" "auth_policy_report_after_auth" "report_after")) }}
+    {{- include "yarilo.refuseCanonical" (dict "path" "components.auth.master_users" "obj" $auth.master_users "names" (dict "auth_master_user_separator" "separator")) }}
+    {{- range $i, $e := ($auth.oauth2 | default list) }}
+    {{- include "yarilo.refuseCanonical" (dict "path" (printf "components.auth.oauth2[%d]" $i) "obj" $e "names" (dict "oauth2_mode" "mode" "oauth2_jwks_url" "jwks_url" "oauth2_introspection_url" "introspection_url" "oauth2_tokeninfo_url" "tokeninfo_url" "oauth2_issuer_url" "issuer_url" "oauth2_introspection_mode" "introspection_mode" "oauth2_prefer_introspection" "prefer_introspection" "oauth2_client_id" "client_id" "oauth2_client_secret" "client_secret" "oauth2_issuers" "issuers" "oauth2_audience" "audience" "oauth2_scope" "scopes" "oauth2_username_attribute" "username_attribute" "oauth2_username_validation_format" "username_validation_format" "oauth2_active_attribute" "active_attribute" "oauth2_active_value" "active_value" "oauth2_fields" "extra_fields" "oauth2_token_expire_grace_seconds" "token_expire_grace_seconds" "oauth2_http_timeout_ms" "http_timeout_ms")) }}
+    {{- end }}
+    {{- range $i, $e := ($auth.passdb | default list) }}
+    {{- include "yarilo.refuseCanonical" (dict "path" (printf "components.auth.passdb[%d]" $i) "obj" $e "names" (dict "passwd_file_path" "passwd_file" "passdb_sql_query" "password_query" "userdb_sql_query" "user_query" "userdb_sql_iterate_query" "iterate_query" "passdb_default_password_scheme" "default_pass_scheme")) }}
+    {{- end }}
+    {{- range $i, $e := ($auth.master_users.masterdb | default list) }}
+    {{- include "yarilo.refuseCanonical" (dict "path" (printf "components.auth.master_users.masterdb[%d]" $i) "obj" $e "names" (dict "passwd_file_path" "passwd_file" "passdb_sql_query" "password_query" "userdb_sql_query" "user_query" "userdb_sql_iterate_query" "iterate_query" "passdb_default_password_scheme" "default_pass_scheme")) }}
+    {{- end }}
     auth:
-      auth_failure_delay: {{ .Values.components.auth.failure_delay | default 2 }}
+      {{- /* hasKey, not | default: an explicit 0, false or "" is a setting (#2162). */}}
+      auth_failure_delay: {{ if hasKey $auth "failure_delay" }}{{ $auth.failure_delay }}{{ else }}2{{ end }}
       auth_max_attempts: {{ .Values.components.auth.auth_max_attempts | default 3 }}
-      internal_failure_delay_ms: {{ .Values.components.auth.internal_failure_delay_ms | default 2000 }}
+      internal_failure_delay_ms: {{ if hasKey $auth "internal_failure_delay_ms" }}{{ $auth.internal_failure_delay_ms }}{{ else }}2000{{ end }}
       cache:
         # dig, not `| default`: `default` swallows an explicit 0, so caching/TTLs
         # could never be turned off. dig falls back only when the key is ABSENT,
@@ -301,13 +315,13 @@ data:
         auth_policy_server_api_header: {{ include "yarilo.authSecretValue" (dict "key" "components.auth.policy.api_header" "literal" .Values.components.auth.policy.api_header "ref" .Values.components.auth.policy.api_header_secret_ref "env" "YARILO_AUTH_POLICY_API_HEADER") }}
         auth_policy_hash_mech: {{ .Values.components.auth.policy.hash_mech | default "sha256" | quote }}
         auth_policy_hash_nonce: {{ include "yarilo.authSecretValue" (dict "key" "components.auth.policy.hash_nonce" "literal" .Values.components.auth.policy.hash_nonce "ref" .Values.components.auth.policy.hash_nonce_secret_ref "env" "YARILO_AUTH_POLICY_HASH_NONCE") }}
-        auth_policy_hash_truncate: {{ .Values.components.auth.policy.hash_truncate_bits | default 12 }}
+        auth_policy_hash_truncate: {{ if hasKey $auth.policy "hash_truncate_bits" }}{{ $auth.policy.hash_truncate_bits }}{{ else }}12{{ end }}
         timeout_ms: {{ .Values.components.auth.policy.timeout_ms | default 5000 }}
         auth_policy_reject_on_fail: {{ .Values.components.auth.policy.reject_on_fail | default false }}
         auth_policy_log_only: {{ .Values.components.auth.policy.log_only | default false }}
-        auth_policy_check_before_auth: {{ .Values.components.auth.policy.check_before | default true }}
-        auth_policy_check_after_auth: {{ .Values.components.auth.policy.check_after | default true }}
-        auth_policy_report_after_auth: {{ .Values.components.auth.policy.report_after | default true }}
+        auth_policy_check_before_auth: {{ if hasKey $auth.policy "check_before" }}{{ $auth.policy.check_before }}{{ else }}true{{ end }}
+        auth_policy_check_after_auth: {{ if hasKey $auth.policy "check_after" }}{{ $auth.policy.check_after }}{{ else }}true{{ end }}
+        auth_policy_report_after_auth: {{ if hasKey $auth.policy "report_after" }}{{ $auth.policy.report_after }}{{ else }}true{{ end }}
       oauth2:
         {{- range $i, $e := (.Values.components.auth.oauth2 | default list) }}
         - oauth2_mode: {{ .mode | quote }}
@@ -367,8 +381,13 @@ data:
           {{- end }}
         {{- end }}
       passdb:
-        {{- range .Values.components.auth.passdb }}
+        {{- range $e := .Values.components.auth.passdb }}
         - driver: {{ .driver | quote }}
+          {{- range $k := list "max_open_conns" "max_idle_conns" "conn_max_lifetime" "conn_max_idle_time" }}
+          {{- if hasKey $e $k }}
+          {{ $k }}: {{ get $e $k | int }}
+          {{- end }}
+          {{- end }}
           {{- with .dsn }}
           dsn: {{ . | quote }}
           {{- end }}
@@ -408,10 +427,15 @@ data:
         {{- end }}
       master_users:
         enabled: {{ .Values.components.auth.master_users.enabled | default false }}
-        auth_master_user_separator: {{ .Values.components.auth.master_users.separator | default "*" | quote }}
+        auth_master_user_separator: {{ if hasKey $auth.master_users "separator" }}{{ $auth.master_users.separator | quote }}{{ else }}"*"{{ end }}
         masterdb:
-          {{- range (.Values.components.auth.master_users.masterdb | default list) }}
+          {{- range $e := (.Values.components.auth.master_users.masterdb | default list) }}
           - driver: {{ .driver | quote }}
+            {{- range $k := list "max_open_conns" "max_idle_conns" "conn_max_lifetime" "conn_max_idle_time" }}
+            {{- if hasKey $e $k }}
+            {{ $k }}: {{ get $e $k | int }}
+            {{- end }}
+            {{- end }}
             {{- with .dsn }}
             dsn: {{ . | quote }}
             {{- end }}
@@ -531,6 +555,7 @@ data:
       fts_decoder_max_attempts: {{ $.Values.fts.fts_decoder_max_attempts }}
       fts_dedup_body_parts: {{ $.Values.fts.fts_dedup_body_parts }}
     {{- end }}
+    {{- include "yarilo.refuseCanonical" (dict "path" "quota" "obj" .Values.quota "names" (dict "quota_storage_grace" "quota_grace")) }}
     {{- with .Values.quota }}
     quota:
       enabled: {{ .enabled | default false }}
@@ -609,7 +634,10 @@ data:
       - type: {{ .type | quote }}
         prefix: {{ .prefix | default "" | quote }}
         separator: {{ .separator | default "." | quote }}
-        list: {{ .list | default false }}
+        {{- /* Only when set, as yes/children/no: unset keeps the per-kind default (#2164). */}}
+        {{- if hasKey . "list" }}
+        list: {{ if kindIs "bool" .list }}{{ ternary "yes" "no" .list | quote }}{{ else }}{{ .list | quote }}{{ end }}
+        {{- end }}
         {{- if hasKey . "subscriptions" }}
         subscriptions: {{ .subscriptions }}
         {{- end }}
@@ -1192,6 +1220,9 @@ data:
       {{- end }}
       {{- if .Values.components.quotaStatus.auth_master_addr }}
       auth_master_addr: {{ .Values.components.quotaStatus.auth_master_addr | quote }}
+      {{- else if .Values.components.auth.masterListen }}
+      {{- /* Without it no recipient is looked up and every one is accepted (#2160). */}}
+      auth_master_addr: {{ printf "%s-auth.%s.svc.cluster.local:%s" (include "yarilo.fullname" .) .Release.Namespace (trimPrefix ":" .Values.components.auth.masterListen) | quote }}
       {{- end }}
     {{- end }}
 

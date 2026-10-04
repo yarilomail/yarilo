@@ -66,7 +66,7 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 		// the write knobs: what it needs is its configuration file.
 		return virtual.New()
 	case "mdbox":
-		return mdbox.New(mdbox.WithLocker(locker), mdbox.WithAltStorage(sc.MailAltPath),
+		return mdbox.New(mdbox.WithLocker(locker),
 			mdbox.WithFsync(fsyncMode(sc)),
 			mdbox.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			mdbox.WithListUTF8(sc.MailboxListUTF8),
