@@ -608,3 +608,43 @@ Redis client or a redis dict; the config names it as ${YARILO_REDIS_PASSWORD}.
       key: {{ $.Values.redis.passwordSecret.key | default "password" }}
 {{- end }}
 {{- end }}
+
+{{/*
+An auth credential as the config writes it: ${env} when its *_secret_ref names a
+Secret, the literal otherwise. Both set fails: the literal would land in the ConfigMap.
+*/}}
+{{- define "yarilo.authSecretValue" -}}
+{{- if (.ref | default dict).name -}}
+{{- if .literal -}}
+{{- fail (printf "%s and %s_secret_ref are both set; keep only the Secret reference" .key .key) -}}
+{{- end -}}
+{{- printf "${%s}" .env | quote -}}
+{{- else -}}
+{{- .literal | default "" | quote -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+The env entries behind yarilo.authSecretValue, for yarilo-auth only (#2163).
+*/}}
+{{- define "yarilo.authSecretEnv" -}}
+{{- $p := .Values.components.auth.policy | default dict }}
+{{- range $ref := list (list "YARILO_AUTH_POLICY_API_HEADER" $p.api_header_secret_ref "api_header") (list "YARILO_AUTH_POLICY_HASH_NONCE" $p.hash_nonce_secret_ref "hash_nonce") }}
+{{- with (index $ref 1 | default dict).name }}
+- name: {{ index $ref 0 }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ (index $ref 1).key | default (index $ref 2) }}
+{{- end }}
+{{- end }}
+{{- range $i, $e := .Values.components.auth.oauth2 | default list }}
+{{- with ($e.client_secret_ref | default dict).name }}
+- name: YARILO_OAUTH2_{{ $i }}_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $e.client_secret_ref.key | default "client_secret" }}
+{{- end }}
+{{- end }}
+{{- end }}
