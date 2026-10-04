@@ -154,6 +154,7 @@ overlay_allows() {
   case "$1" in
     blockprofile) echo '^telemetry(\.pprof)?$' ;;
     fsync-never) echo '^storage(\.mail_fsync)?$' ;;
+    notls) echo '^internalTLS(\.enabled)?$' ;;
     *) return 1 ;;
   esac
 }

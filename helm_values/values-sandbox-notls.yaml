@@ -1,0 +1,8 @@
+## Transport overlay for one A/B arm: internal mTLS off, everything else as the
+## sandbox runs it. Laid over values-sandbox.yaml as a second -f by
+## hack/stand/ab-arm.sh, never deployed on its own: it answers what internal TLS
+## costs a login, the control half of one question.
+##
+## Only internalTLS.enabled belongs here; ab-arm.sh refuses anything else.
+internalTLS:
+  enabled: false
