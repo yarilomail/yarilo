@@ -7,11 +7,13 @@ package ftsservice
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/fts/buildmail"
 	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -85,6 +88,10 @@ type Options struct {
 	// userdb mail_location driver, resolved as the session pods do. nil, or a
 	// nil result, falls back to Mailbox.
 	MailboxByDriver func(driver string) mailbox.MailboxBackend
+
+	// beforeIndexWrite runs between a message being built and the check that
+	// it is still there. Unexported: the seam is for #2026's row alone.
+	beforeIndexWrite func(uid uint32)
 }
 
 // Service implements ftsproto.Service.
@@ -108,10 +115,12 @@ type Service struct {
 }
 
 type userHandle struct {
-	info *mailbox.UserInfo
-	ui   fts.UserIndex
-	box  mailbox.UserMailbox
-	idx  mailbox.UserIndex
+	info     *mailbox.UserInfo
+	ui       fts.UserIndex
+	box      mailbox.UserMailbox
+	idx      mailbox.UserIndex
+	mbox     mailbox.Box // paired once, under mboxOnce
+	mboxOnce sync.Once
 
 	// inUse counts the operations holding this handle right now. The idle
 	// sweeper must not close an index mid-commit, so a handle is only ever
@@ -234,6 +243,12 @@ func (s *Service) handle(user string) (*userHandle, error) {
 	h.lastUsed = time.Now()
 	s.users[user] = h
 	return h, nil
+}
+
+// mailboxOf pairs the handle's halves once (#1715).
+func (h *userHandle) mailboxOf() mailbox.Box {
+	h.mboxOnce.Do(func() { h.mbox = mailboxbase.Open(h.box, h.idx) })
+	return h.mbox
 }
 
 // release marks an operation on a handle finished. Idleness is measured from
@@ -392,14 +407,6 @@ func checkIndexRoot(tmpl string) error {
 	return nil
 }
 
-// indexRoot resolves where this user's FTS data lives.
-//
-// The configured root wins when set; otherwise the resolution mirrors
-// fileindex's — INDEX= override, then mail path, then home — which is where FTS
-// data has always gone. Changing the setting on a running deployment leaves
-// the old data where it was and starts writing to the new place — the index
-// rebuilds itself on demand, which is the property that makes FTS data movable
-// at all.
 // userRefFor builds the engine's view of a user. Extracted so the wiring can be
 // asserted on its own: a path-derived engine that is not told the escape
 // character silently names folders differently from the mail tree, and that is
@@ -421,6 +428,8 @@ func ftsPathOf(root string) string {
 	return path
 }
 
+// indexRoot resolves where this user's FTS data lives: the configured root, or
+// the index's own order. Changing it leaves old data; the index rebuilds.
 func (s *Service) indexRoot(info *mailbox.UserInfo) string {
 	if s.opts.IndexRoot != "" {
 		return mailbox.ExpandLocation(ftsPathOf(s.opts.IndexRoot), info.Home, info.Username)
@@ -476,20 +485,65 @@ func (s *Service) Prepend(user string, mbox fts.MailboxRef, maxUID uint32) error
 	return nil
 }
 
-func (s *Service) Expunge(user string, mbox fts.MailboxRef, uid uint32) error {
+func (s *Service) Expunge(user string, mbox fts.MailboxRef, uid uint32, guid [16]byte) error {
 	if err := requireGUID(mbox); err != nil {
 		return err
+	}
+	if guid == ([16]byte{}) {
+		// A caller that lost the identity finds out here, not from an index
+		// answering with deleted mail (#1986).
+		metricExpungeNoGUID.Inc()
+		slog.Warn("fts: expunge names no message", "user", user, "folder", mbox.Name, "uid", uid)
+		return fmt.Errorf("ftsservice: expunge of %s uid %d names no message", mbox.Name, uid)
 	}
 	h, err := s.handle(user)
 	if err != nil {
 		return err
 	}
 	defer s.release(h)
-	err = s.opts.LockMailbox(user, mbox.Name, func() error {
-		return h.ui.Expunge(mbox, uid)
+	// The index is the user's, so the lock is too: two folders' writers share
+	// one file now (#1986).
+	// The store answers both questions, and it has already lost this copy:
+	// the retraction is tracked inside the same transaction (#1711).
+	inFolder, anywhere, cerr := s.copiesLeft(h, mbox, guid, uid)
+	if cerr != nil {
+		return cerr
+	}
+	err = s.opts.lockIndex(user, func() error {
+		return h.ui.Expunge(mbox, guid, inFolder, anywhere)
 	})
-	slog.Debug("fts: expunge document", "user", user, "folder", mbox.Name, "uid", uid, "ok", err == nil)
+	slog.Debug("fts: expunge document", "user", user, "folder", mbox.Name, "uid", uid,
+		"in_folder", inFolder, "anywhere", anywhere, "ok", err == nil)
 	return err
+}
+
+// copiesLeft asks the per-user GUID store what is left of a message after one
+// copy went: in this folder, and anywhere at all.
+func (s *Service) copiesLeft(h *userHandle, mbox fts.MailboxRef, guid [16]byte, uid uint32) (inFolder, anywhere bool, err error) {
+	folder, err := hex.DecodeString(mbox.GUID)
+	if err != nil || len(folder) != 16 {
+		return false, false, fmt.Errorf("ftsservice: folder %q names no guid", mbox.Name)
+	}
+	var fg [16]byte
+	copy(fg[:], folder)
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return false, false, fmt.Errorf("ftsservice: this index resolves no GUID, so a retraction names no copy")
+	}
+	recs, err := resolver.GUIDCopies([][16]byte{guid})
+	if err != nil {
+		return false, false, fmt.Errorf("ftsservice: guid copies: %w", err)
+	}
+	for _, r := range recs {
+		if r.FolderGUID == fg && r.UID == uid {
+			continue // the copy just expunged, if the store has not caught up
+		}
+		anywhere = true
+		if r.FolderGUID == fg {
+			inFolder = true
+		}
+	}
+	return inFolder, anywhere, nil
 }
 
 func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Result, error) {
@@ -504,7 +558,7 @@ func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Res
 	}
 	defer s.release(h)
 	t0 := time.Now()
-	res, err := h.ui.Lookup(mbox, q)
+	res, err := s.lookupThrough(h, mbox, q)
 	metricLookupDuration.Observe(time.Since(t0).Seconds())
 	if err != nil {
 		metricLookupErrors.Inc()
@@ -517,6 +571,82 @@ func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Res
 		"definite", len(res.Definite), "maybe", len(res.Maybe),
 		"dur_ms", time.Since(t0).Milliseconds(), "err", err)
 	return res, err
+}
+
+// LookupIn searches a set of folders with one query: the index is the user's,
+// so a virtual mailbox asks once, not once per folder it draws from (#1986).
+func (s *Service) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	if len(folders) == 0 {
+		return fts.SetResult{}, nil
+	}
+	guids := make([]string, 0, len(folders))
+	for _, f := range folders {
+		if err := requireGUID(f); err != nil {
+			return fts.SetResult{}, err
+		}
+		guids = append(guids, f.GUID)
+	}
+	metricLookupTotal.Inc()
+	h, err := s.handle(user)
+	if err != nil {
+		metricLookupErrors.Inc()
+		return fts.SetResult{}, err
+	}
+	defer s.release(h)
+	t0 := time.Now()
+	res, err := h.ui.Lookup(guids, q)
+	if err != nil {
+		metricLookupErrors.Inc()
+		return fts.SetResult{}, err
+	}
+	out, err := h.resolveSetHits(res, guids)
+	metricLookupDuration.Observe(time.Since(t0).Seconds())
+	if err == nil {
+		metricLookupCandidates.Observe(float64(len(out.Definite) + len(out.Maybe)))
+	}
+	slog.Debug("fts: lookup over a folder set", "user", user, "folders", len(folders),
+		"definite", len(out.Definite), "maybe", len(out.Maybe), "err", err)
+	return out, err
+}
+
+// resolveSetHits turns the messages an engine answered with into every copy of
+// them inside the set: the store holds each copy, and each is a hit.
+func (h *userHandle) resolveSetHits(res fts.Result, folders []string) (fts.SetResult, error) {
+	var out fts.SetResult
+	if len(res.DefiniteGUIDs) == 0 && len(res.MaybeGUIDs) == 0 {
+		return out, nil
+	}
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return out, fmt.Errorf("ftsservice: this index resolves no GUID, so a hit names no message")
+	}
+	in := make(map[string]bool, len(folders))
+	for _, f := range folders {
+		in[f] = true
+	}
+	hits := func(guids [][16]byte) ([]fts.FolderHit, error) {
+		if len(guids) == 0 {
+			return nil, nil
+		}
+		copies, err := resolver.GUIDCopies(guids)
+		if err != nil {
+			return nil, err
+		}
+		var list []fts.FolderHit
+		for _, c := range copies {
+			folder := hex.EncodeToString(c.FolderGUID[:])
+			if in[folder] {
+				list = append(list, fts.FolderHit{Folder: folder, UID: c.UID})
+			}
+		}
+		return list, nil
+	}
+	var err error
+	if out.Definite, err = hits(res.DefiniteGUIDs); err != nil {
+		return out, err
+	}
+	out.Maybe, err = hits(res.MaybeGUIDs)
+	return out, err
 }
 
 func (s *Service) Status(user string, mbox fts.MailboxRef) (uint32, uint32, error) {
@@ -549,16 +679,199 @@ func (s *Service) Rescan(user string, mbox fts.MailboxRef) error {
 		return err
 	}
 	defer s.release(h)
-	present, maxUID, uidValidity, err := s.presentUIDs(h, mbox)
+	return s.opts.lockIndex(user, func() error {
+		return s.rescanLocked(h, user, mbox)
+	})
+}
+
+// RescanUser reconciles every selectable folder of one user under a single
+// hold: a hold per folder makes the command queue behind itself (#1986).
+func (s *Service) RescanUser(user string) ([]string, error) {
+	h, err := s.handle(user)
+	if err != nil {
+		return nil, err
+	}
+	defer s.release(h)
+	folders, err := h.box.ListFolders()
+	if err != nil {
+		return nil, fmt.Errorf("ftsservice: list folders: %w", err)
+	}
+	names := mailbox.SelectableNames(folders)
+	done := make([]string, 0, len(names))
+	err = s.opts.lockIndex(user, func() error {
+		live := make([]string, 0, len(names))
+		for _, name := range names {
+			mbox, rerr := h.mailboxRef(name)
+			if rerr != nil {
+				return rerr
+			}
+			if rerr := s.rescanLocked(h, user, mbox); rerr != nil {
+				return rerr
+			}
+			live = append(live, mbox.GUID)
+			done = append(done, name)
+		}
+		// A folder term naming a mailbox the account no longer has is one a
+		// deletion never reached; no per-folder pass can see it (#2022).
+		dropped, oerr := h.ui.DropOrphanFolders(live)
+		if oerr != nil {
+			return oerr
+		}
+		if dropped > 0 {
+			slog.Info("fts: dropped orphan folder terms", "user", user, "folders", dropped)
+		}
+		return nil
+	})
+	return done, err
+}
+
+// Counts reports documents, live copies, and the distinct messages those
+// copies are: after a reconcile documents == messages, and copies >= both.
+func (s *Service) Counts(user string) (docs, copies, messages, unrecorded uint64, err error) {
+	h, err := s.handle(user)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	defer s.release(h)
+	folders, err := h.box.ListFolders()
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("ftsservice: list folders: %w", err)
+	}
+	names := mailbox.SelectableNames(folders)
+	seen := make(map[[16]byte]struct{})
+	// Copies the GUID store has no row for: a hit resolves through it, so
+	// such a copy is unsearchable however well it is indexed (#2031).
+	byFolder := make(map[[16]byte][]fts.Copy)
+	err = s.opts.lockIndex(user, func() error {
+		for _, name := range names {
+			mbox, rerr := h.mailboxRef(name)
+			if rerr != nil {
+				return rerr
+			}
+			present, _, _, perr := s.presentCopies(h, mbox)
+			if perr != nil {
+				return perr
+			}
+			fg, ferr := hex.DecodeString(mbox.GUID)
+			if ferr != nil || len(fg) != 16 {
+				return fmt.Errorf("ftsservice: folder %q names no guid", mbox.Name)
+			}
+			var key [16]byte
+			copy(key[:], fg)
+			byFolder[key] = present
+			for _, c := range present {
+				copies++
+				if c.GUID != ([16]byte{}) {
+					seen[c.GUID] = struct{}{}
+				}
+			}
+		}
+		unrecorded = s.copiesWithoutARow(h, byFolder)
+		n, derr := h.ui.DocCount()
+		if derr != nil {
+			return derr
+		}
+		docs = n
+		return nil
+	})
+	return docs, copies, uint64(len(seen)), unrecorded, err
+}
+
+// copiesWithoutARow counts the live copies the GUID store does not record.
+func (s *Service) copiesWithoutARow(h *userHandle, byFolder map[[16]byte][]fts.Copy) uint64 {
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return 0
+	}
+	var guids [][16]byte
+	for _, copies := range byFolder {
+		for _, c := range copies {
+			guids = append(guids, c.GUID)
+		}
+	}
+	recs, err := resolver.GUIDCopies(guids)
+	if err != nil {
+		return 0
+	}
+	type place struct {
+		folder [16]byte
+		uid    uint32
+	}
+	recorded := make(map[place]struct{}, len(recs))
+	for _, r := range recs {
+		recorded[place{r.FolderGUID, r.UID}] = struct{}{}
+	}
+	var missing uint64
+	for folder, copies := range byFolder {
+		for _, c := range copies {
+			if _, ok := recorded[place{folder, c.UID}]; !ok {
+				missing++
+			}
+		}
+	}
+	return missing
+}
+
+// DropFolder retracts a mailbox the account no longer has: its documents lose
+// its terms, and a document no folder names goes with them (#2022).
+func (s *Service) DropFolder(user string, mbox fts.MailboxRef) error {
+	h, err := s.handle(user)
 	if err != nil {
 		return err
 	}
-	var missing []uint32
-	if err := s.opts.LockMailbox(user, mbox.Name, func() error {
-		var rerr error
-		missing, rerr = h.ui.Rescan(mbox, present)
-		return rerr
-	}); err != nil {
+	defer s.release(h)
+	return s.opts.lockIndex(user, func() error {
+		return h.ui.DropFolder(mbox)
+	})
+}
+
+// expungedMidJob reports whether the record this job read is gone by now, by
+// the message it was: a uid alone is reused (#2026).
+func (s *Service) expungedMidJob(h *userHandle, folderID uint64, m *mailbox.MessageMeta) bool {
+	if s.opts.beforeIndexWrite != nil {
+		s.opts.beforeIndexWrite(m.UID)
+	}
+	return !s.recordStillLive(h, folderID, m)
+}
+
+// recordStillLive asks the mail index whether the record this job read is
+// still there, by the message it was: a uid alone is reused (#2026).
+func (s *Service) recordStillLive(h *userHandle, folderID uint64, m *mailbox.MessageMeta) bool {
+	recs, err := h.idx.GetMessages(folderID, mailbox.SeqSet{{From: m.UID, To: m.UID}})
+	if err != nil {
+		return true // an unreadable index is not an expunge
+	}
+	for _, r := range recs {
+		if r.UID == m.UID && (m.GUID == [16]byte{} || r.GUID == m.GUID) {
+			return true
+		}
+	}
+	return false
+}
+
+// mailboxRef names one folder the way the index knows it: by its own GUID,
+// never by a number this process assigned (#1995).
+func (h *userHandle) mailboxRef(name string) (fts.MailboxRef, error) {
+	f, err := h.mailboxOf().Folder(name, 0)
+	if err != nil {
+		return fts.MailboxRef{}, fmt.Errorf("ftsservice: open folder %q: %w", name, err)
+	}
+	return fts.MailboxRef{
+		Name:        f.Name,
+		GUID:        hex.EncodeToString(f.GUID[:]),
+		UIDValidity: f.UIDValidity,
+	}, nil
+}
+
+// rescanLocked is the reconciliation itself, with the user's index already
+// held by the caller.
+func (s *Service) rescanLocked(h *userHandle, user string, mbox fts.MailboxRef) error {
+	present, maxUID, uidValidity, err := s.presentCopies(h, mbox)
+	if err != nil {
+		return err
+	}
+	missing, err := h.ui.Rescan(mbox, present)
+	if err != nil {
 		return err
 	}
 	if len(missing) > 0 {
@@ -584,19 +897,14 @@ func (s *Service) Optimize(user string) error {
 		return err
 	}
 	defer s.release(h)
-	// Per mailbox, under that mailbox's own lock. A single user-keyed lock
-	// would exclude nobody: every writer -- index jobs, rescan, auto-optimize
-	// -- keys on (user, folder), so a whole-user compaction holding
-	// FTSKey(user, "") ran concurrently with them across processes, deleting
-	// shards another pod was reading or extending (#1176).
+	// One index, one lock: every writer of it -- index jobs, rescan,
+	// auto-optimize -- takes FTSKey(user, "") now (#1176, #1986).
 	for _, mbox := range h.ui.Mailboxes() {
-		if err := s.opts.LockMailbox(user, mbox.Name, func() error {
-			return h.ui.OptimizeMailbox(mbox)
-		}); err != nil {
+		if err := s.optimize(h, user, mbox); err != nil {
 			return err
 		}
 	}
-	return nil
+	return s.sweep(h, user)
 }
 
 // enqueueOptimize implements fts.OptimizeNotifier — the engine's write path
@@ -688,11 +996,14 @@ func (s *Service) runOptimize(j optimizeJob) {
 		return
 	}
 	defer s.release(h)
-	if err := s.opts.LockMailbox(j.user.Username, j.mbox.Name, func() error {
-		return h.ui.OptimizeMailbox(j.mbox)
-	}); err != nil {
+	if err := s.optimize(h, j.user.Username, j.mbox); err != nil {
 		slog.Warn("fts: auto-optimize failed",
 			"user", j.user.Username, "folder", j.mbox.Name, "err", err)
+		return
+	}
+	if err := s.sweep(h, j.user.Username); err != nil {
+		slog.Warn("fts: auto-optimize swept nothing",
+			"user", j.user.Username, "err", err)
 	}
 }
 
@@ -741,8 +1052,8 @@ func (s *Service) evict(user string) {
 	}
 }
 
-func (s *Service) presentUIDs(h *userHandle, mbox fts.MailboxRef) (uids []uint32, maxUID, uidValidity uint32, err error) {
-	folder, err := h.idx.OpenFolder(mbox.Name, mbox.UIDValidity)
+func (s *Service) presentCopies(h *userHandle, mbox fts.MailboxRef) (copies []fts.Copy, maxUID, uidValidity uint32, err error) {
+	folder, err := h.mailboxOf().Folder(mbox.Name, mbox.UIDValidity)
 	if err != nil {
 		// A folder with no index yet holds no messages to compare against. The
 		// index backend runs with WithNoCreate (#993), so this is the normal
@@ -764,14 +1075,14 @@ func (s *Service) presentUIDs(h *userHandle, mbox fts.MailboxRef) (uids []uint32
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("ftsservice: list messages: %w", err)
 	}
-	uids = make([]uint32, 0, len(msgs))
+	copies = make([]fts.Copy, 0, len(msgs))
 	for _, m := range msgs {
-		uids = append(uids, m.UID)
+		copies = append(copies, fts.Copy{UID: m.UID, GUID: m.GUID})
 		if m.UID > maxUID {
 			maxUID = m.UID
 		}
 	}
-	return uids, maxUID, folder.UIDValidity, nil
+	return copies, maxUID, folder.UIDValidity, nil
 }
 
 func (s *Service) runIndex(j job) error {
@@ -787,9 +1098,9 @@ func (s *Service) runIndex(j job) error {
 	// authoritative current value — the Index/autoindex path often sends
 	// MailboxRef.UIDValidity=0, so the checkpoint compare must use the folder's
 	// own value, not the job's.
-	folder, err := h.idx.OpenFolder(j.mbox.Name, j.mbox.UIDValidity)
+	folder, err := h.mailboxOf().Folder(j.mbox.Name, j.mbox.UIDValidity)
 	if err != nil {
-		// Nothing indexed yet means nothing to index — see presentUIDs.
+		// Nothing indexed yet means nothing to index — see presentCopies.
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("ftsservice: folder has no index yet, skipping",
 				"user", j.user, "folder", j.mbox.Name)
@@ -803,7 +1114,7 @@ func (s *Service) runIndex(j job) error {
 	// catches up, and the checkpoint only ever moves forward. So a snapshot one
 	// delivery behind costs a later index, never a lost document, and the read
 	// can skip the cross-process lock (#1249).
-	msgs, err := mailbox.ReadMessages(h.idx, folder.ID, mailbox.SeqSet{})
+	msgs, err := h.mailboxOf().Messages(folder.ID, mailbox.SeqSet{})
 	if err != nil {
 		return fmt.Errorf("ftsservice: list messages: %w", err)
 	}
@@ -814,7 +1125,7 @@ func (s *Service) runIndex(j job) error {
 	// must not race the read-modify-write of last_indexed_uid and clobber each
 	// other's progress. Different mailboxes/users are keyed separately and
 	// index in parallel.
-	err = s.opts.LockMailbox(j.user, j.mbox.Name, func() error {
+	err = s.opts.lockIndex(j.user, func() error {
 		last, storedUIDV, storedSum, cerr := h.ui.Checkpoint(j.mbox)
 		if cerr != nil {
 			return cerr
@@ -836,7 +1147,13 @@ func (s *Service) runIndex(j job) error {
 			"stored_uidvalidity", storedUIDV, "current_uidvalidity", curUIDV, "reset", reset)
 		if reset != "" {
 			slog.Info("fts: resetting mailbox index", "job_id", j.id, "user", j.user, "folder", j.mbox.Name, "reason", reset)
-			if _, rerr := h.ui.Rescan(j.mbox, nil); rerr != nil { // drop every stale doc
+			// Never nil: with one index per user an empty live set reads as
+			// "every document is stale" and takes the account with it (#2019).
+			live, _, _, perr := s.presentCopies(h, j.mbox)
+			if perr != nil {
+				return perr
+			}
+			if _, rerr := h.ui.Rescan(j.mbox, live); rerr != nil {
 				return rerr
 			}
 			last = 0
@@ -902,9 +1219,19 @@ func (s *Service) runIndex(j job) error {
 				// Flag the folder for a reactive heal once per scan, not per
 				// message: a mailbox full of vanished files must not pay an
 				// OpenFolder+mark for each one.
-				if !marked && mailbox.MarkCorruptOnFetchErr(h.box, h.idx, j.mbox.Name, err) {
+				if !marked && h.mailboxOf().MarkCorruptOnFetchErr(j.mbox.Name, err) {
 					marked = true
 				}
+			} else if s.expungedMidJob(h, folder.ID, m) {
+				// Expunged mid-job: where the body outlives the record the
+				// fetch still succeeds, and so would the document (#2026).
+				if rerr := upd.Rollback(); rerr != nil {
+					slog.Error("fts: rollback of a document for an expunged message failed",
+						"job_id", j.id, "user", j.user, "folder", j.mbox.Name, "uid", m.UID, "err", rerr)
+				}
+				metricIndexExpungedMidJob.Inc()
+				slog.Debug("fts: message expunged while indexing, document not written",
+					"job_id", j.id, "user", j.user, "folder", j.mbox.Name, "uid", m.UID)
 			} else {
 				indexedCount++
 			}
@@ -960,7 +1287,7 @@ func (s *Service) indexOne(mbox fts.MailboxRef, item fetched, upd fts.Update) er
 	}
 
 	tBuild := time.Now()
-	report, err := s.builder.Build(m.UID, bytes.NewReader(item.body), upd)
+	report, err := s.builder.BuildMessage(m.UID, m.GUID, bytes.NewReader(item.body), upd)
 	metricBuild.Observe(time.Since(tBuild).Seconds())
 	if err != nil {
 		return &buildError{err: err}
@@ -971,14 +1298,14 @@ func (s *Service) indexOne(mbox fts.MailboxRef, item fetched, upd fts.Update) er
 		// for themselves why it was damaged.
 		slog.Warn("fts: message MIME was damaged, indexed after repair",
 			"folder", mbox.Name, "mailbox_guid", mbox.GUID,
-			"uid", m.UID, "guid", mailbox.FormatObjectID(m.GUID), "file", m.Filename,
+			"uid", m.UID, "guid", mailbox.FormatObjectID(m.GUID),
 			"dropped_header_lines", report.DroppedHeaderLines, "err", report.Cause)
 	}
 	// Per-message breadcrumb: which UID/file was fed to the engine. Metadata
 	// only (size is the index-time signal for "was there anything to
 	// tokenize").
 	slog.Debug("fts: message indexed", "folder", mbox.Name, "guid", mbox.GUID,
-		"uid", m.UID, "file", m.Filename, "size", m.Size, "alt_tier", m.AltTier)
+		"uid", m.UID, "size", m.Size, "alt_tier", m.AltTier)
 	return nil
 }
 
@@ -1003,11 +1330,183 @@ func (e *buildError) Unwrap() error { return e.err }
 // log line beside it.
 func skipReason(err error) string {
 	switch {
-	case errors.Is(err, mailbox.ErrCorruptStorage), errors.Is(err, os.ErrNotExist):
+	case errors.Is(err, mailbox.ErrCorruptStorage), errors.Is(err, os.ErrNotExist),
+		errors.Is(err, os.ErrPermission):
+		// A body the process may not open is a body it did not read, and an
+		// operator watching reason=read is watching for exactly that.
 		return "read"
 	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
 		return "read"
 	default:
 		return "other"
 	}
+}
+
+// resolveHits turns the messages an engine answered with into the folder's
+// uids: the engine knows none, the per-user GUID store does (#1711, #1986).
+func (h *userHandle) resolveHits(res *fts.Result, mbox fts.MailboxRef) error {
+	if len(res.DefiniteGUIDs) == 0 && len(res.MaybeGUIDs) == 0 {
+		return nil
+	}
+	resolver, ok := h.idx.(mailbox.GUIDResolver)
+	if !ok {
+		return fmt.Errorf("ftsservice: this index resolves no GUID, so a hit names no message")
+	}
+	uids, err := resolveToUIDs(resolver, res.DefiniteGUIDs, mbox.GUID)
+	if err != nil {
+		return err
+	}
+	res.Definite = append(res.Definite, uids...)
+	uids, err = resolveToUIDs(resolver, res.MaybeGUIDs, mbox.GUID)
+	if err != nil {
+		return err
+	}
+	res.Maybe = append(res.Maybe, uids...)
+	res.DefiniteGUIDs, res.MaybeGUIDs = nil, nil
+	return nil
+}
+
+// resolveToUIDs asks the store once for every hit, not once per hit.
+func resolveToUIDs(res mailbox.GUIDResolver, guids [][16]byte, folder string) ([]uint32, error) {
+	if len(guids) == 0 {
+		return nil, nil
+	}
+	copies, err := res.GUIDCopies(guids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uint32, 0, len(guids))
+	for _, c := range copies {
+		if hex.EncodeToString(c.FolderGUID[:]) == folder {
+			out = append(out, c.UID)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+// lockIndex takes the user's index for one batch and waits out a lock the
+// database itself refuses: two passes meeting is a wait, not an error (#1986).
+func (o *Options) lockIndex(user string, fn func() error) error {
+	var err error
+	for attempt := 0; attempt < indexLockAttempts; attempt++ {
+		err = o.LockMailbox(user, "", fn)
+		if err == nil || !isDatabaseLocked(err) {
+			return err
+		}
+		metricIndexLockRetry.Inc()
+		time.Sleep(indexLockBackoff)
+	}
+	return err
+}
+
+// isDatabaseLocked says the write was refused by the search database's own
+// lock rather than by anything this service decided.
+func isDatabaseLocked(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "DatabaseLockError")
+}
+
+const (
+	indexLockAttempts = 3
+	indexLockBackoff  = 200 * time.Millisecond
+)
+
+// optimize compacts the user's index, holding the lock only for the switch
+// when the engine can separate it from the merge (#1986).
+func (s *Service) optimize(h *userHandle, user string, mbox fts.MailboxRef) error {
+	if split, ok := h.ui.(fts.SplitOptimizer); ok {
+		return split.OptimizeUnderLock(mbox, func(fn func() error) error {
+			return s.opts.lockIndex(user, fn)
+		})
+	}
+	return s.opts.lockIndex(user, func() error { return h.ui.OptimizeMailbox(mbox) })
+}
+
+// sweep runs once per compaction, not once per folder: the index is the
+// user's, and so is what the sweep drops (#2026).
+func (s *Service) sweep(h *userHandle, user string) error {
+	return s.opts.lockIndex(user, func() error { return s.sweepLocked(h, user) })
+}
+
+// sweepLocked drops folder terms naming a mailbox that is gone, and documents
+// whose message the GUID store no longer has.
+func (s *Service) sweepLocked(h *userHandle, user string) error {
+	folders, err := h.box.ListFolders()
+	if err != nil {
+		// No folder list, no sweep: it decides what is orphaned, and a
+		// compaction that did its own work is not failed for this.
+		slog.Debug("fts: compaction swept nothing, the folders could not be listed", "user", user, "err", err)
+		return nil
+	}
+	live := make([]string, 0, len(folders))
+	recorded := make(map[[16]byte]struct{})
+	for _, name := range mailbox.SelectableNames(folders) {
+		ref, rerr := h.mailboxRef(name)
+		if rerr != nil {
+			return rerr
+		}
+		live = append(live, ref.GUID)
+		copies, _, _, cerr := s.presentCopies(h, ref)
+		if cerr != nil {
+			return cerr
+		}
+		for _, c := range copies {
+			recorded[c.GUID] = struct{}{}
+		}
+	}
+	orphans, err := h.ui.DropOrphanFolders(live)
+	if err != nil {
+		return err
+	}
+	dead, err := s.deadDocuments(h, recorded)
+	if err != nil {
+		return err
+	}
+	dropped, err := h.ui.DropDocuments(dead)
+	if err != nil {
+		return err
+	}
+	if orphans > 0 || dropped > 0 {
+		slog.Info("fts: compaction swept the index",
+			"user", user, "orphan_folders", orphans, "dead_documents", dropped)
+	}
+	return nil
+}
+
+// deadDocuments: indexed messages neither the records nor the store knows. The
+// store cannot decide alone, being derived and rebuildable (#2030).
+func (s *Service) deadDocuments(h *userHandle, recorded map[[16]byte]struct{}) ([][16]byte, error) {
+	indexed, err := h.ui.DocGUIDs()
+	if err != nil || len(indexed) == 0 {
+		return nil, err
+	}
+	alive := make(map[[16]byte]struct{}, len(recorded))
+	for g := range recorded {
+		alive[g] = struct{}{}
+	}
+	if resolver, ok := h.idx.(mailbox.GUIDResolver); ok {
+		recs, rerr := resolver.GUIDCopies(indexed)
+		if rerr != nil {
+			return nil, fmt.Errorf("ftsservice: guid copies: %w", rerr)
+		}
+		for _, r := range recs {
+			alive[r.GUID] = struct{}{}
+		}
+	}
+	var dead [][16]byte
+	for _, g := range indexed {
+		if _, ok := alive[g]; !ok {
+			dead = append(dead, g)
+		}
+	}
+	return dead, nil
+}
+
+// lookupThrough scopes the search to the folder and resolves what it answers.
+func (s *Service) lookupThrough(h *userHandle, mbox fts.MailboxRef, q fts.Query) (fts.Result, error) {
+	res, err := h.ui.Lookup([]string{mbox.GUID}, q)
+	if err != nil {
+		return res, err
+	}
+	return res, h.resolveHits(&res, mbox)
 }

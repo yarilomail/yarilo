@@ -1,6 +1,8 @@
 package maildir
 
 import (
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"bufio"
 	"os"
 	"path/filepath"
@@ -128,9 +130,12 @@ func TestSave_Fetch_Remove(t *testing.T) {
 	}
 
 	body := "From: test@example.com\r\nSubject: Test\r\n\r\nHello\r\n"
-	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), []string{`\Seen`}, [16]byte{})
+	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("Save: %v", err)
+	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	if !strings.Contains(filename, ":2,S") {
 		t.Errorf("filename %q should contain ':2,S'", filename)
@@ -284,14 +289,8 @@ func TestSave_AppendsUIDList(t *testing.T) {
 	box.Init() //nolint:errcheck
 
 	body := "m"
-	f1, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), []string{`\Seen`}, [16]byte{})
-	if err != nil {
-		t.Fatalf("Save uid=1: %v", err)
-	}
-	f2, _, _, err := box.Save("INBOX", strings.NewReader(body), 2, int64(len(body)), nil, [16]byte{})
-	if err != nil {
-		t.Fatalf("Save uid=2: %v", err)
-	}
+	f1 := saveAndRecord(t, box, "INBOX", body, 1, []string{`\Seen`})
+	f2 := saveAndRecord(t, box, "INBOX", body, 2, nil)
 
 	path := box.uidListPath("INBOX")
 	fp, err := os.Open(path)
@@ -328,8 +327,12 @@ func TestSave_AppendsUIDList(t *testing.T) {
 		if len(parts) == 0 || parts[0] != w.uid {
 			t.Errorf("line %d uid = %q, want %q", i+1, parts, w.uid)
 		}
-		if gotFilename != w.filename {
-			t.Errorf("line %d filename = %q, want %q", i+1, gotFilename, w.filename)
+		// The record names the base, as the other implementation's does: the
+		// name is cut at the info separator, because a record keyed by the
+		// whole name stops matching its own message the moment a flag renames
+		// it (#1593).
+		if wantBase := maildirBase(w.filename); gotFilename != wantBase {
+			t.Errorf("line %d filename = %q, want %q", i+1, gotFilename, wantBase)
 		}
 	}
 }
@@ -369,9 +372,12 @@ func TestSave_VSize_PureCRLF(t *testing.T) {
 	box.Init() //nolint:errcheck
 
 	body := "From: a@b\r\n\r\nhello\r\n"
-	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	phys, virt, hasPhys, hasVirt := parseSizeInfo(filename)
 	if !hasPhys || !hasVirt {
@@ -393,9 +399,12 @@ func TestSave_VSize_PureLF(t *testing.T) {
 	box.Init() //nolint:errcheck
 
 	body := "From: a@b\n\nhello\n"
-	filename, vsize, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	filename, vsize, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	phys, virt, _, _ := parseSizeInfo(filename)
 	if int(phys) != len(body) {
@@ -419,9 +428,12 @@ func TestSave_VSize_MixedLineEndings(t *testing.T) {
 	box.Init() //nolint:errcheck
 
 	body := "header: ok\r\nbare-lf-after\n"
-	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	phys, virt, _, _ := parseSizeInfo(filename)
 	if virt != phys+1 {
@@ -435,9 +447,14 @@ func TestList_PopulatesSizesFromFilename(t *testing.T) {
 	box.Init() //nolint:errcheck
 
 	body := "From: a@b\n\nhello\n"
-	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	// With a flag, so the save lands in cur/: this row is about the listing
+	// there, and a flagless delivery waits in new/ until a sync (#1959).
+	filename, _, _, err := box.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", filename, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	phys, virt, _, _ := parseSizeInfo(filename)
 
@@ -492,7 +509,7 @@ func TestUIDListRoundtrip(t *testing.T) {
 
 	saved := make(map[string]uint32)
 	for _, uid := range []uint32{1, 2, 3} {
-		fn, _, _, err := box.Save("INBOX", strings.NewReader("m"), uid, 1, nil, [16]byte{})
+		fn, err := saveAndRecordErr(box, "INBOX", "m", uid)
 		if err != nil {
 			t.Fatalf("Save uid=%d: %v", uid, err)
 		}
@@ -506,8 +523,9 @@ func TestUIDListRoundtrip(t *testing.T) {
 	if len(m) != len(saved) {
 		t.Fatalf("readUIDList returned %d entries, want %d", len(m), len(saved))
 	}
+	// Keyed by base name on both sides of the round trip.
 	for fn, wantUID := range saved {
-		if uid, ok := m[fn]; !ok || uid != wantUID {
+		if uid, ok := m[maildirBase(fn)]; !ok || uid != wantUID {
 			t.Errorf("filename %q: got (uid=%d, ok=%v), want uid=%d", fn, uid, ok, wantUID)
 		}
 	}
@@ -517,9 +535,7 @@ func TestReadUIDList_CacheHitSkipsDiskRead(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, nil, [16]byte{}); err != nil {
-		t.Fatal(err)
-	}
+	saveAndRecord(t, box, "INBOX", "msg", 1, nil)
 
 	// First call populates the cache.
 	m1, err := box.readUIDList("INBOX")
@@ -550,27 +566,25 @@ func TestReadUIDList_CacheUpdatedAfterAppend(t *testing.T) {
 	box.Init() //nolint:errcheck
 
 	// Seed initial entry and populate cache.
-	fn1, _, _, err := box.Save("INBOX", strings.NewReader("msg1"), 1, 1, nil, [16]byte{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	fn1 := saveAndRecord(t, box, "INBOX", "msg1", 1, nil)
 	if _, err := box.readUIDList("INBOX"); err != nil {
 		t.Fatal(err)
 	}
 
-	// Append a second entry via appendUIDListLocked (same path Save() uses).
+	// Append a second entry the way the uid cycle does.
 	fn2 := "second.file:2,"
 	if err := box.appendUIDListLocked("INBOX", 2, fn2, false, [16]byte{}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Cache must reflect both entries without re-reading the file.
+	// Keyed by base name, as the file is.
 	c := box.folderCacheFor("INBOX")
-	if c.uidMap[fn1] != 1 {
-		t.Errorf("fn1 uid in cache = %d, want 1", c.uidMap[fn1])
+	if c.uidMap[maildirBase(fn1)] != 1 {
+		t.Errorf("fn1 uid in cache = %d, want 1", c.uidMap[maildirBase(fn1)])
 	}
-	if c.uidMap[fn2] != 2 {
-		t.Errorf("fn2 uid in cache = %d, want 2", c.uidMap[fn2])
+	if c.uidMap[maildirBase(fn2)] != 2 {
+		t.Errorf("fn2 uid in cache = %d, want 2", c.uidMap[maildirBase(fn2)])
 	}
 
 	// readUIDList must also return the updated entry (from cache or disk).
@@ -578,17 +592,24 @@ func TestReadUIDList_CacheUpdatedAfterAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m[fn2] != 2 {
-		t.Errorf("readUIDList fn2 = %d, want 2", m[fn2])
+	if m[maildirBase(fn2)] != 2 {
+		t.Errorf("readUIDList fn2 = %d, want 2", m[maildirBase(fn2)])
 	}
 }
 
-func TestList_ReadDirCacheHitSkipsReadDir(t *testing.T) {
+// A pass that decides the truth reads the directory itself, and what it read
+// becomes the listing a name lookup uses.
+func TestList_ReadsTheDirectoryAndRefreshesTheCache(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, nil, [16]byte{}); err != nil {
+	// Flagged, so it is in cur/ -- the directory whose cache this row counts.
+	saved, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, []string{`\Seen`}, nil, [16]byte{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", saved, 1); aerr != nil {
+		t.Fatal(aerr)
 	}
 
 	// First List populates the cache.
@@ -605,22 +626,32 @@ func TestList_ReadDirCacheHitSkipsReadDir(t *testing.T) {
 		t.Fatal("readdir cache not populated after first List")
 	}
 
-	// Second List on unchanged folder must use cached entries.
+	// Second List on an unchanged folder reads it again: the cache names a
+	// message, it does not say what is on disk.
 	cached := c.entries
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("scan"))
 	if _, err := box.List("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	if &c.entries[0] != &cached[0] {
-		t.Error("second List replaced cached entries — readdir was not skipped")
+	if &c.entries[0] == &cached[0] {
+		t.Error("List answered from the cache, so a name that moved is written into the index")
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("scan")); now != reads+1 {
+		t.Errorf("the pass read cur/ %v times, want one per pass", now-reads)
 	}
 }
 
-func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
+func TestList_ReadDirCacheKeepsOurOwnSave(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("msg1"), 1, 1, nil, [16]byte{}); err != nil {
+	// Flagged, so both saves land in cur/ -- the cache this row is about.
+	first, _, _, err := box.Save("INBOX", strings.NewReader("msg1"), 1, 1, []string{`\Seen`}, nil, [16]byte{})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", first, 1); aerr != nil {
+		t.Fatal(aerr)
 	}
 	if _, err := box.List("INBOX"); err != nil {
 		t.Fatal(err)
@@ -630,12 +661,20 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 		t.Fatal("readdir cache not populated")
 	}
 
-	// Save a second message — must invalidate the cache.
-	if _, _, _, err := box.Save("INBOX", strings.NewReader("msg2"), 2, 1, nil, [16]byte{}); err != nil {
+	// Save a second message: our own write goes into the cached listing
+	// rather than dropping it (#1875).
+	second, _, _, err := box.Save("INBOX", strings.NewReader("msg2"), 2, 1, []string{`\Seen`}, nil, [16]byte{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if c.entries != nil {
-		t.Error("readdir cache not invalidated after Save")
+	if _, aerr := box.AssignUID("INBOX", second, 2); aerr != nil {
+		t.Fatal(aerr)
+	}
+	c.mu.Lock()
+	kept := len(c.entries)
+	c.mu.Unlock()
+	if kept != 2 {
+		t.Errorf("the listing holds %d entries after the second save, want 2", kept)
 	}
 
 	// Next List must return both messages.
@@ -648,13 +687,16 @@ func TestList_ReadDirCacheInvalidatedAfterSave(t *testing.T) {
 	}
 }
 
-func TestList_ReadDirCacheInvalidatedAfterRemove(t *testing.T) {
+func TestList_ReadDirCacheStopsNamingARemovedFile(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	box.Init() //nolint:errcheck
 
-	fn, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, nil, [16]byte{})
+	fn, _, _, err := box.Save("INBOX", strings.NewReader("msg"), 1, 1, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", fn, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	if _, err := box.List("INBOX"); err != nil {
 		t.Fatal(err)
@@ -667,8 +709,12 @@ func TestList_ReadDirCacheInvalidatedAfterRemove(t *testing.T) {
 	if err := box.Remove("INBOX", fn); err != nil {
 		t.Fatal(err)
 	}
-	if c.entries != nil {
-		t.Error("readdir cache not invalidated after Remove")
+	// The state, not the mechanism: the cached listing may survive a removal,
+	// but it may not go on naming the file that was removed (#1809).
+	for _, e := range c.entries {
+		if e.Name() == fn {
+			t.Errorf("the cached listing still names %q after Remove", fn)
+		}
 	}
 
 	msgs, err := box.List("INBOX")
@@ -713,9 +759,12 @@ func TestSyncTokenChangesOnDelivery(t *testing.T) {
 		t.Fatalf("settled token drifted with no change: %q -> %q", empty, again)
 	}
 
-	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, [16]byte{})
+	name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 1, 5, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, aerr := box.AssignUID("INBOX", name, 1); aerr != nil {
+		t.Fatalf("assign uid: %v", aerr)
 	}
 	// Backdate again to a distinct settled time so the change is visible purely
 	// through the mtime component, not the dirty nonce.
@@ -734,10 +783,11 @@ func TestSyncTokenChangesOnDelivery(t *testing.T) {
 	}
 }
 
-// TestSyncTokenDirtyWithinSecond verifies the same-second guard: a folder just
-// modified yields a non-repeating token so the caller cannot wrongly skip a
-// reconcile on a filesystem with coarse mtime granularity.
-func TestSyncTokenDirtyWithinSecond(t *testing.T) {
+// The same-second guard moved from the token to the driver's own report: the
+// token is what changed, the dirty state is what the mtime cannot vouch for,
+// and the caller bounds the re-walk by its own last check (#1875). A token
+// that carried a nonce could only ever say "walk again now".
+func TestSyncTokenIsStableAndDirtinessIsReportedApart(t *testing.T) {
 	box, _ := newBox(t, "u@x.com")
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
@@ -745,10 +795,16 @@ func TestSyncTokenDirtyWithinSecond(t *testing.T) {
 	if err := box.Create("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	// cur/new were just created (mtime ~now), so both reads are dirty and must
-	// differ from each other, forcing a reconcile.
-	if a, b := box.SyncToken("INBOX"), box.SyncToken("INBOX"); a == b {
-		t.Fatalf("dirty token repeated within the same second: %q", a)
+	if a, b := box.SyncToken("INBOX"), box.SyncToken("INBOX"); a != b {
+		t.Errorf("the token moved with nothing written: %q then %q", a, b)
+	}
+	// cur/ and new/ were made a moment ago, so both are inside the window.
+	arrivalHot, storeDirty, window := box.SyncDirty("INBOX")
+	if !arrivalHot || !storeDirty {
+		t.Errorf("SyncDirty = (%v, %v); a directory written this second cannot be vouched for by its mtime", arrivalHot, storeDirty)
+	}
+	if window != dirSettleWindow {
+		t.Errorf("window %s, want %s", window, dirSettleWindow)
 	}
 }
 
@@ -757,4 +813,27 @@ func TestMaildirAdvertisesProactiveScan(t *testing.T) {
 	if !box.ProactiveScan() {
 		t.Fatal("maildir must advertise ProactiveScan")
 	}
+}
+
+// saveAndRecord is the two steps a save takes: the body, then the record the
+// uid cycle writes.
+func saveAndRecord(t *testing.T, box *userMailbox, folder, body string, uid uint32, flags []string) string {
+	t.Helper()
+	name, _, _, err := box.Save(folder, strings.NewReader(body), 0, int64(len(body)), flags, nil, [16]byte{})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, err := box.AssignUID(folder, name, uid); err != nil {
+		t.Fatalf("assign uid %d: %v", uid, err)
+	}
+	return name
+}
+
+func saveAndRecordErr(box *userMailbox, folder, body string, uid uint32) (string, error) {
+	name, _, _, err := box.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
+	if err != nil {
+		return "", err
+	}
+	_, err = box.AssignUID(folder, name, uid)
+	return name, err
 }

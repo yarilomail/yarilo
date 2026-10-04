@@ -85,10 +85,17 @@ type stubUserIndex struct{}
 func (stubUserIndex) Checkpoint(fts.MailboxRef) (uint32, uint32, uint32, error)  { return 0, 0, 0, nil }
 func (stubUserIndex) SetCheckpoint(fts.MailboxRef, uint32, uint32, uint32) error { return nil }
 func (stubUserIndex) BeginUpdate(fts.MailboxRef) (fts.Update, error)             { return nil, nil }
-func (stubUserIndex) Expunge(fts.MailboxRef, uint32) error                       { return nil }
-func (stubUserIndex) Rescan(fts.MailboxRef, []uint32) ([]uint32, error)          { return nil, nil }
+func (stubUserIndex) Expunge(fts.MailboxRef, [16]byte, bool, bool) error         { return nil }
+func (stubUserIndex) Rescan(fts.MailboxRef, []fts.Copy) ([]uint32, error)        { return nil, nil }
 func (stubUserIndex) Mailboxes() []fts.MailboxRef                                { return nil }
+func (stubUserIndex) DocCount() (uint64, error)                                  { return 0, nil }
 func (stubUserIndex) OptimizeMailbox(fts.MailboxRef) error                       { return nil }
 func (stubUserIndex) Refresh() error                                             { return nil }
-func (stubUserIndex) Lookup(fts.MailboxRef, fts.Query) (fts.Result, error)       { return fts.Result{}, nil }
+func (stubUserIndex) Lookup([]string, fts.Query) (fts.Result, error)             { return fts.Result{}, nil }
 func (stubUserIndex) Close() error                                               { return nil }
+
+func (stubUserIndex) DropFolder(fts.MailboxRef) error         { return nil }
+func (stubUserIndex) DropOrphanFolders([]string) (int, error) { return 0, nil }
+
+func (stubUserIndex) DocGUIDs() ([][16]byte, error)         { return nil, nil }
+func (stubUserIndex) DropDocuments([][16]byte) (int, error) { return 0, nil }

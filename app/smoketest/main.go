@@ -1,15 +1,13 @@
-// smoketest verifies a live yarilo deployment.
-// Usage: smoketest -host mail.example.com -telemetry http://...:8080
-//
-// Exit 0 = all checks passed.
-// Exit 1 = one or more checks failed (prints failures to stderr).
-// IMAP conformance is covered by imaptest (see smoke.yml).
+// smoketest verifies a live yarilo deployment: exit 0 when every check passed,
+// 1 otherwise. IMAP conformance belongs to imaptest, not here.
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,10 +27,8 @@ import (
 
 var (
 	flagHost = flag.String("host", "localhost", "yarilo hostname; the default for every per-protocol host below")
-	// One address does not serve every protocol: in the reference deployment
-	// POP3S and ManageSieve answer on the shared LoadBalancer while lmtp-login
-	// answers only on its ClusterIP, so a single -host left one row
-	// unreachable whatever it was set to (#1311).
+	// One address does not serve every protocol: lmtp-login answers only on its
+	// ClusterIP, so a single -host left a row unreachable (#1311).
 	flagPOP3Host        = flag.String("pop3-host", "", "hostname serving POP3S; defaults to -host")
 	flagManageSieveHost = flag.String("managesieve-host", "", "hostname serving ManageSieve; defaults to -host")
 	flagLMTPLoginHost   = flag.String("lmtp-login-host", "", "hostname serving lmtp-login; defaults to -host")
@@ -40,6 +37,9 @@ var (
 	flagIMAPSPort       = flag.String("imap-port", "993", "IMAPS port (used by sieve verify step)")
 	flagPOP3SPort       = flag.String("pop3s-port", "995", "POP3S port")
 	flagSMTPMXPort      = flag.String("smtp-mx-port", "25", "SMTP MX port")
+	flagSMTPMXHost      = flag.String("smtp-mx-host", "", "hostname of the inbound MX (defaults to -smtp-host, then -host)")
+	flagProxyPort       = flag.String("proxy-protocol-port", "", "MX port that requires a PROXY header (defaults to -smtp-mx-port)")
+	flagXClientPort     = flag.String("xclient-port", "", "MX port that offers XCLIENT (defaults to -smtp-mx-port)")
 	flagSMTPSubPort     = flag.String("smtp-sub-port", "587", "SMTP submission port")
 	flagLMTPLoginPort   = flag.String("lmtp-login-port", "24", "yarilo-lmtp-login port")
 	flagManageSievePort = flag.String("managesieve-port", "4190", "ManageSieve port")
@@ -49,24 +49,32 @@ var (
 	flagTimeout         = flag.Duration("timeout", 10*time.Second, "per-check timeout")
 	// FTS catch-up can wait up to fts_timeout (30s) under index lag; the read
 	// deadline must exceed that budget or a legitimate wait reads as i/o timeout.
-	flagIMAPReadTimeout = flag.Duration("imap-read-timeout", 45*time.Second, "IMAP read deadline for the sieve verify/search steps (must exceed the server fts catch-up budget)")
-	flagInsecure        = flag.Bool("insecure", false, "skip TLS certificate verification")
-	flagSMTPMX          = flag.Bool("smtp-mx", false, "check SMTP MX EHLO (port -smtp-mx-port)")
-	flagSMTPSub         = flag.Bool("smtp-sub", false, "check SMTP submission EHLO+STARTTLS (port -smtp-sub-port)")
-	flagProxyProtocol   = flag.Bool("proxy-protocol", false, "send HAProxy PROXY header before SMTP banner")
-	flagXClient         = flag.Bool("xclient", false, "check that MX port advertises XCLIENT in EHLO")
-	flagPOP3S           = flag.Bool("pop3s", false, "check POP3S greeting and CAPA")
-	flagLMTPLogin       = flag.Bool("lmtp-login", false, "check yarilo-lmtp-login LHLO greeting (port -lmtp-login-port)")
-	flagManageSieve     = flag.Bool("managesieve", false, "check ManageSieve auth + script CRUD (port -managesieve-port)")
-	flagSieve           = flag.Bool("sieve", false, "check Sieve plugin execution via SMTP injection + IMAP verify")
-	// The delivery endpoint is named for its role, not for the check that
-	// happened to use it first: sieve and FTS both inject a message into a
-	// user's mailbox, which is one role (#1202).
+	flagIMAPReadTimeout    = flag.Duration("imap-read-timeout", 45*time.Second, "IMAP read deadline for the sieve verify/search steps (must exceed the server fts catch-up budget)")
+	flagInsecure           = flag.Bool("insecure", false, "skip TLS certificate verification")
+	flagTLSServerName      = flag.String("tls-server-name", "", "name client-facing certificates are verified against, when dialled by service name or IP")
+	flagInternalServerName = flag.String("internal-server-name", "", "pinned internal name the admin APIs' certificates are verified against (internal_tls.server_name)")
+	flagSMTPMX             = flag.Bool("smtp-mx", false, "check SMTP MX EHLO (port -smtp-mx-port)")
+	flagSMTPSub            = flag.Bool("smtp-sub", false, "check SMTP submission EHLO+STARTTLS, then AUTH and a transaction as -imap-user (port -smtp-sub-port)")
+	flagProxyProtocol      = flag.Bool("proxy-protocol", false, "send HAProxy PROXY header before SMTP banner")
+	flagXClient            = flag.Bool("xclient", false, "check that MX port advertises XCLIENT in EHLO")
+	flagPOP3S              = flag.Bool("pop3s", false, "check POP3S greeting and CAPA")
+	flagPOP3TLS            = flag.String("pop3-tls", "ssl", "POP3 connection: ssl, starttls or none")
+	flagPOP3Port           = flag.String("pop3-port", "", "POP3 port; empty falls back to -pop3s-port")
+	flagIMAPUser           = flag.String("imap-user", "", "IMAP username used where a check names no identity of its own")
+	flagIMAPPass           = flag.String("imap-pass", "", "password for -imap-user")
+	flagManageSieveTLS     = flag.String("managesieve-tls", "starttls", "ManageSieve connection: ssl, starttls or none")
+	flagIMAPTLS            = flag.String("imap-tls", "ssl", "IMAP connection: ssl, starttls or none")
+	flagPOP3User           = flag.String("pop3-user", "", "POP3 username for the maildrop cycle (enables it)")
+	flagPOP3Pass           = flag.String("pop3-pass", "", "password for -pop3-user")
+	flagLMTPLogin          = flag.Bool("lmtp-login", false, "check yarilo-lmtp-login LHLO greeting (port -lmtp-login-port)")
+	flagManageSieve        = flag.Bool("managesieve", false, "check ManageSieve auth + script CRUD (port -managesieve-port)")
+	flagSieve              = flag.Bool("sieve", false, "check Sieve plugin execution via SMTP injection + IMAP verify")
+	// Named for its role, not for the check that used it first: sieve and FTS
+	// both inject a message, which is one role (#1202).
 	flagDeliveryHost = flag.String("delivery-host", "", "host that accepts the injected mail (defaults to -smtp-host, then -host)")
 	flagDeliveryPort = flag.String("delivery-port", "25", "port that accepts the injected mail")
-	// Declared, not inferred from the port number: 24/25 is a guess about the
-	// topology, and a site running LMTP on 2424 or submission on 587 would get
-	// the wrong greeting and an error pointing elsewhere.
+	// Declared, not inferred from the port: a site running LMTP elsewhere would
+	// get the wrong greeting and an error pointing somewhere else.
 	flagDeliveryProto = flag.String("delivery-proto", "smtp", `protocol the delivery endpoint speaks: "smtp" (EHLO) or "lmtp" (LHLO)`)
 
 	flagJMAP           = flag.Bool("jmap", false, "check the JMAP session resource (GET /.well-known/jmap)")
@@ -84,6 +92,8 @@ var (
 
 	flagQuotaUser     = flag.String("quota-user", "", "IMAP username for the QUOTA extension check (enables it)")
 	flagQuotaPass     = flag.String("quota-pass", "", "password for -quota-user")
+	flagSCRAMUser     = flag.String("scram-user", "", "IMAP username whose passdb entry carries a SCRAM-SHA-256 verifier (enables the SCRAM checks)")
+	flagSCRAMPass     = flag.String("scram-pass", "", "password for -scram-user")
 	flagQuotaOverUser = flag.String("quota-over-user", "", "IMAP username provisioned over quota, for the enforcement check (enables it)")
 	flagQuotaOverPass = flag.String("quota-over-pass", "", "password for -quota-over-user")
 	flagACLUser       = flag.String("acl-user", "", "IMAP username for the ACL extension check (enables it)")
@@ -99,18 +109,23 @@ var (
 
 	// A deployment that wants the whole gate says so once, instead of
 	// diffing the skipped list by hand on every rollout (#1197).
+	flagOnly = flag.String("only", "",
+		"run only these areas, comma-separated (e.g. \"pop3\" or \"imap,jmap\"); empty runs every area")
 	flagRequireAll       = flag.Bool("require-all", false, "treat a check disabled by a missing flag as a failure")
 	flagRequireAllExcept = flag.String("require-all-except", "",
 		"comma-separated check areas -require-all does not demand (e.g. jmap), for deployments that do not run them")
 
 	flagFTSUser = flag.String("fts-user", "", "IMAP username for the full-text search check (enables it)")
 	flagFTSPass = flag.String("fts-pass", "", "password for -fts-user")
+	// One entry per storage driver: the index lives per user, but what the
+	// drivers do with a copy differs, so each type carries its own row.
+	flagFTSCopyUsers = flag.String("fts-copy-users", "",
+		"comma-separated user:pass list for the FTS copy-scope check, one per storage type (defaults to -fts-user)")
 
 	flagDirectorAPI      = flag.String("director-api", "", "director admin API base URL, e.g. http://yarilo-director-api:9103 (enables the check, #755)")
 	flagDirectorAPIToken = flag.String("director-api-token", "", "director admin API bearer token (defaults to env DIRECTOR_API_TOKEN / YARILO_ADMIN_TOKEN)")
-	// The in-cluster address is the backend service itself -- yarilo-backend,
-	// not yarilo-backend-api -- and 9105 speaks HTTPS with mutual TLS, so a
-	// bearer token alone cannot reach it (#1280).
+	// The in-cluster address is yarilo-backend itself, and 9105 speaks mutual
+	// TLS, so a bearer token alone cannot reach it (#1280).
 	flagBackendAPI      = flag.String("backend-api", "", "backend admin API base URL, e.g. https://yarilo-backend:9105 (enables the quota consistency row, #1209)")
 	flagBackendAPIToken = flag.String("backend-api-token", "", "backend admin API bearer token (defaults to env BACKEND_API_TOKEN / YARILO_ADMIN_TOKEN)")
 	flagBackendAPICert  = flag.String("backend-api-cert", "", "client certificate for an mTLS backend admin API (PEM); needs -backend-api-key")
@@ -118,9 +133,8 @@ var (
 	flagBackendAPICA    = flag.String("backend-api-ca", "", "CA bundle that signs the backend admin API certificate (PEM); unset trusts the system roots, or none with -insecure")
 )
 
-// check is one gate item. A non-empty skip means the deployment did not
-// configure it: the item stays in the list so the summary describes the
-// intended gate, with skip naming the flag that would enable it (#1197).
+// check is one gate item. A skip keeps it in the list, naming the flag that
+// would enable it, so the summary describes the intended gate (#1197).
 type check struct {
 	area string
 	name string
@@ -128,11 +142,8 @@ type check struct {
 	skip string
 }
 
-// unmeasurableError is a check saying, from inside the run, that the
-// deployment cannot answer the question it asks -- as opposed to answering it
-// wrongly. It carries the same kind of reason a registration-time skip does,
-// and is treated identically, so a row that cannot measure never reports as a
-// verified surface.
+// unmeasurableError is a check saying the deployment cannot answer its
+// question, as opposed to answering it wrongly. Treated as a skip.
 type unmeasurableError struct{ reason string }
 
 func (e unmeasurableError) Error() string { return "cannot be measured here: " + e.reason }
@@ -155,9 +166,8 @@ type result struct {
 	err  error
 }
 
-// pop3Host / manageSieveHost / lmtpLoginHost resolve their own flag, falling
-// back to -host so a deployment answering everything on one address needs no
-// extra flags.
+// pop3Host and its siblings fall back to -host, so a deployment answering on
+// one address needs no extra flags.
 func pop3Host() string {
 	if *flagPOP3Host != "" {
 		return *flagPOP3Host
@@ -195,6 +205,15 @@ func deliveryHost() string {
 	return smtpHost()
 }
 
+// mxHost is the inbound listener, which is a different host from submission
+// whenever the MX runs outside this release's namespace.
+func mxHost() string {
+	if *flagSMTPMXHost != "" {
+		return *flagSMTPMXHost
+	}
+	return smtpHost()
+}
+
 func smtpHost() string {
 	if *flagSMTPHost != "" {
 		return *flagSMTPHost
@@ -211,6 +230,11 @@ func main() {
 		os.Exit(2)
 	}
 	checks := register()
+	checks, err := keepAreas(checks, *flagOnly)
+	if err != nil {
+		slog.Error("smoke: bad -only", "err", err)
+		os.Exit(2)
+	}
 	exempt, err := parseExemptions(*flagRequireAllExcept, *flagRequireAll, checks)
 	if err != nil {
 		slog.Error("smoke: bad -require-all-except", "err", err)
@@ -221,9 +245,8 @@ func main() {
 	}
 }
 
-// validateDeliveryProto refuses a protocol nobody implements rather than
-// falling back to EHLO: a typo would otherwise read as "SMTP" and produce the
-// LMTP mismatch this flag exists to prevent (#1202).
+// validateDeliveryProto refuses an unknown protocol rather than falling back
+// to EHLO, which is the mismatch this flag exists to prevent (#1202).
 func validateDeliveryProto(proto string) error {
 	switch strings.ToLower(strings.TrimSpace(proto)) {
 	case "smtp", "lmtp":
@@ -233,10 +256,8 @@ func validateDeliveryProto(proto string) error {
 	}
 }
 
-// register lists the gate. Every check is registered, enabled or not: a
-// summary that counts only what ran cannot report what was not asked for, so
-// a rollout that loses a flag keeps saying green with fewer checks than last
-// time (#1197).
+// register lists the whole gate, enabled or not: a summary counting only what
+// ran keeps saying green with fewer checks than last time (#1197).
 func register() []check {
 	var checks []check
 	want := func(area string, enabled bool, name, needs string, fn func() error) {
@@ -251,13 +272,20 @@ func register() []check {
 	want("telemetry", telemetry, "telemetry /healthz", "needs -telemetry", checkHealth)
 	want("telemetry", telemetry, "telemetry /readyz", "needs -telemetry", checkReady)
 	want("smtp", *flagSMTPMX, "smtp MX EHLO", "needs -smtp-mx", checkSMTPMX)
-	want("smtp", *flagSMTPSub, "smtp submission EHLO+STARTTLS", "needs -smtp-submission", checkSMTPSubmission)
+	want("smtp", *flagSMTPSub, "smtp submission EHLO+STARTTLS", "needs -smtp-sub", checkSMTPSubmission)
 	want("smtp", *flagProxyProtocol, "smtp MX PROXY protocol", "needs -proxy-protocol", checkSMTPProxyProtocol)
 	want("smtp", *flagXClient, "smtp MX XCLIENT cap", "needs -xclient", checkSMTPXClient)
 	want("pop3s", *flagPOP3S, "pop3s CAPA", "needs -pop3s", checkPOP3S)
+	want("pop3", *flagPOP3User != "", "pop3 maildrop cycle (STAT/LIST/RETR/UIDL/DELE)",
+		"needs -pop3-user", func() error {
+			return checkPOP3Cycle(*flagPOP3User, *flagPOP3Pass)
+		})
 	want("lmtp-login", *flagLMTPLogin, "lmtp-login LHLO", "needs -lmtp-login", checkLMTPLogin)
 	want("managesieve", *flagManageSieve, "managesieve auth+CRUD", "needs -managesieve", checkManageSieve)
 	want("sieve", *flagSieve, "sieve plugins", "needs -sieve", checkSieve)
+	want("imap", *flagIMAPUser != "", "imap login", "needs -imap-user", func() error {
+		return checkIMAPLogin(*flagIMAPUser, *flagIMAPPass)
+	})
 	want("imap", *flagPasswdFileUser != "", "imap login (passwd-file passdb)", "needs -passwd-file-user", func() error {
 		return checkIMAPLogin(*flagPasswdFileUser, *flagPasswdFilePass)
 	})
@@ -266,6 +294,12 @@ func register() []check {
 	})
 	want("imap", *flagQuotaUser != "", "imap QUOTA (GETQUOTA)", "needs -quota-user", func() error {
 		return checkQuota(*flagQuotaUser, *flagQuotaPass)
+	})
+	want("imap", *flagSCRAMUser != "", "imap SCRAM-SHA-256 through the login proxy", "needs -scram-user", func() error {
+		return checkSCRAMThroughProxy(*flagSCRAMUser, *flagSCRAMPass, false)
+	})
+	want("imap", *flagSCRAMUser != "", "imap SCRAM-SHA-256-PLUS through the login proxy", "needs -scram-user", func() error {
+		return checkSCRAMThroughProxy(*flagSCRAMUser, *flagSCRAMPass, true)
 	})
 	want("imap", *flagQuotaOverUser != "", "imap QUOTA enforcement (OVERQUOTA)", "needs -quota-over-user", func() error {
 		return checkQuotaOver(*flagQuotaOverUser, *flagQuotaOverPass)
@@ -285,9 +319,16 @@ func register() []check {
 	want("imap", *flagFTSUser != "", "imap FTS (SEARCH BODY/TEXT/HEADER/FROM)", "needs -fts-user", func() error {
 		return checkFTS(*flagFTSUser, *flagFTSPass)
 	})
-	// A missing credential is an unchecked surface, not a failure: every other
-	// under-configured row says what it needs and skips, and a red gate for an
-	// absent token reads as a broken deployment (#1311).
+	for _, acct := range ftsCopyAccounts() {
+		user, pass := acct.user, acct.pass
+		withJMAP := *flagJMAP && user == *flagJMAPUser
+		want("imap", user != "", "imap FTS document is the message ("+user+")",
+			"needs -fts-user or -fts-copy-users", func() error {
+				return checkFTSDocumentIsMessage(user, pass, withJMAP)
+			})
+	}
+	// A missing credential is an unchecked surface, not a failure: a red gate
+	// for an absent token reads as a broken deployment (#1311).
 	want("director", *flagDirectorAPI != "" && directorAPIToken() != "",
 		"director admin API status (authenticated)",
 		directorRowNeeds(), checkDirectorAPI)
@@ -308,18 +349,47 @@ func register() []check {
 		"needs -jmap, -jmap-user and -fts-user (the latter states that FTS is configured)", func() error {
 			return checkJMAPFTSQuery(*flagJMAPUser)
 		})
-	// Gated on credentials, not on cost: components.jmap ships disabled, so a
-	// deployment that never enabled JMAP would fail smoke over a service it
-	// does not run.
+	// Gated on credentials: JMAP ships disabled, and a deployment that never
+	// enabled it must not fail smoke over a service it does not run.
 	want("jmap", jmap && *flagJMAPUser != "", "jmap header:* forms, headers, projection and property validation",
 		"needs -jmap and -jmap-user", checkJMAPHeaderForms)
 
 	return checks
 }
 
-// parseExemptions reads -require-all-except. An area no check declares is an
-// error, not a silent no-op: the flag exists to narrow a gate, so a typo in
-// it must not read as a narrower gate that quietly still demands everything.
+// keepAreas narrows the gate to the areas named, so one protocol runs on its
+// own. An area nothing declares is an error, not a run of nothing (#1734).
+func keepAreas(checks []check, list string) ([]check, error) {
+	if strings.TrimSpace(list) == "" {
+		return checks, nil
+	}
+	known := map[string]bool{}
+	for _, c := range checks {
+		known[c.area] = true
+	}
+	want := map[string]bool{}
+	for _, a := range strings.Split(list, ",") {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if !known[a] {
+			areas := slices.Sorted(maps.Keys(known))
+			return nil, fmt.Errorf("no smoke check belongs to area %q; known areas: %s", a, strings.Join(areas, ", "))
+		}
+		want[a] = true
+	}
+	var kept []check
+	for _, c := range checks {
+		if want[c.area] {
+			kept = append(kept, c)
+		}
+	}
+	return kept, nil
+}
+
+// parseExemptions refuses an area no check declares: a typo must not read as
+// a narrowed gate that quietly still demands everything.
 func parseExemptions(list string, requireAll bool, checks []check) (map[string]bool, error) {
 	known := map[string]bool{}
 	for _, c := range checks {
@@ -356,12 +426,8 @@ func runChecks(checks []check, requireAll bool, exempt map[string]bool, out io.W
 	// report itself as exempt when nothing is demanded.
 	forgiven := func(area string) bool { return requireAll && exempt[area] }
 	for i, c := range checks {
-		// A check may only discover that it cannot measure anything once it is
-		// talking to the deployment -- a peer that turns out to hold rights,
-		// say. That is the same state as an unconfigured row, so it takes the
-		// same path: a named skip, and a failure under -require-all. Reporting
-		// it as a pass would be the worse outcome of the two, because it reads
-		// as a verified surface.
+		// Discovered mid-run, this is the same state as an unconfigured row and
+		// takes the same path: a pass here would read as a verified surface.
 		if c.skip == "" {
 			slog.Info("smoke: run", "n", i+1, "total", len(checks), "check", c.name)
 			err := c.fn()
@@ -425,9 +491,8 @@ func runChecks(checks []check, requireAll bool, exempt map[string]bool, out io.W
 
 // ---- IMAP login (passdb drivers) -----------------------------------------
 
-// checkIMAPLogin proves an IMAP LOGIN succeeds for a user served by a specific
-// passdb driver (passwd-file / static). It dials IMAPS, authenticates, and
-// selects INBOX to confirm the userdb resolved a mailbox for the account.
+// checkIMAPLogin proves a LOGIN succeeds for one passdb driver, selecting
+// INBOX to confirm the userdb resolved a mailbox too.
 func checkIMAPLogin(user, pass string) error {
 	c, err := imapDial()
 	if err != nil {
@@ -466,11 +531,11 @@ func httpGet(url string) error {
 	return nil
 }
 
-// checkDirectorAPI verifies the director admin API authenticates a bearer token.
-// Hits GET /api/director/ring with the token and asserts 200 with a peer list;
-// 403/401 is reported distinctly. Uses /ring because /status is backends-only.
-// directorAPIToken reads the bearer token: flag first, then the
-// service-specific env var, then the shared admin one.
+// checkDirectorAPI asserts the admin API takes a bearer token and answers with
+// a peer list. /ring, because /status is backends-only.
+
+// directorAPIToken reads the token: the flag, then the service env var, then
+// the shared admin one.
 func directorAPIToken() string {
 	if *flagDirectorAPIToken != "" {
 		return *flagDirectorAPIToken
@@ -498,6 +563,12 @@ func checkDirectorAPI() error {
 	token := directorAPIToken()
 	url := strings.TrimRight(*flagDirectorAPI, "/") + "/api/director/ring"
 	c := &http.Client{Timeout: *flagTimeout}
+	if strings.HasPrefix(url, "https://") {
+		var err error
+		if c, err = adminClient(*flagDirectorAPI); err != nil {
+			return err
+		}
+	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -522,9 +593,8 @@ func checkDirectorAPI() error {
 	return checkDirectorStatusBody(body)
 }
 
-// directorStatus is the part of the admin API status response this check
-// asserts on. The field is "members" -- internal/director/membership.go and
-// yarctl both name it that.
+// directorStatus is the part of the status response this check reads. The
+// field is "members", as membership.go and yarctl both name it.
 type directorStatus struct {
 	Self    string `json:"self"`
 	Size    int    `json:"size"`
@@ -533,9 +603,8 @@ type directorStatus struct {
 	} `json:"members"`
 }
 
-// checkDirectorStatusBody asserts the ring the response describes, rather than
-// looking for a word in it: a substring match passes on any payload that
-// happens to contain it, an error one included (#1203).
+// checkDirectorStatusBody reads the ring the response describes: a substring
+// match passes on any payload containing the word, errors included (#1203).
 func checkDirectorStatusBody(body []byte) error {
 	var st directorStatus
 	if err := json.Unmarshal(body, &st); err != nil {
@@ -558,29 +627,35 @@ func checkDirectorStatusBody(body []byte) error {
 // ---- POP3S (port 995) ----------------------------------------------------
 
 func checkPOP3S() error {
-	addr := net.JoinHostPort(pop3Host(), *flagPOP3SPort)
-	dialer := &net.Dialer{Timeout: *flagTimeout}
-	tlsCfg := &tls.Config{
-		ServerName:         pop3Host(),
-		InsecureSkipVerify: *flagInsecure, //nolint:gosec
-	}
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+	ep, err := pop3Endpoint()
 	if err != nil {
-		return fmt.Errorf("connect %s: %w", addr, err)
+		return err
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
-
-	greeting, err := readLine(conn)
+	conn, r, err := ep.dial()
+	if err != nil {
+		return err
+	}
+	defer conn.Close() //nolint:errcheck
+	if ep.mode == tlsSTARTTLS {
+		// The upgrade consumed the greeting to send STLS into a settled
+		// stream; CAPA follows with none of its own.
+		return pop3Capabilities(conn, r)
+	}
+	greeting, err := readString(r)
 	if err != nil {
 		return fmt.Errorf("read greeting: %w", err)
 	}
 	if !strings.HasPrefix(greeting, "+OK") {
 		return fmt.Errorf("unexpected POP3 greeting: %q", greeting)
 	}
+	return pop3Capabilities(conn, r)
+}
 
+// pop3Capabilities asks for CAPA and insists on the one capability a client
+// needs to log in at all.
+func pop3Capabilities(conn net.Conn, r *bufio.Reader) error {
 	fmt.Fprintf(conn, "CAPA\r\n")
-	resp, err := readLine(conn)
+	resp, err := readString(r)
 	if err != nil {
 		return fmt.Errorf("CAPA response: %w", err)
 	}
@@ -589,7 +664,7 @@ func checkPOP3S() error {
 	}
 	foundUSER := false
 	for {
-		line, err := readLine(conn)
+		line, err := readString(r)
 		if err != nil {
 			return fmt.Errorf("CAPA read: %w", err)
 		}
@@ -603,16 +678,21 @@ func checkPOP3S() error {
 	if !foundUSER {
 		return fmt.Errorf("CAPA missing USER capability")
 	}
-
 	fmt.Fprintf(conn, "QUIT\r\n")
 	return nil
 }
 
+// readString is readLine against a reader the dial already holds: the greeting
+// and any upgrade were read through it, so a second reader would lose bytes.
+func readString(r *bufio.Reader) (string, error) {
+	l, err := r.ReadString('\n')
+	return strings.TrimRight(l, "\r\n"), err
+}
+
 // ---- LMTP login (port 24) ------------------------------------------------
 
-// checkLMTPLogin connects to yarilo-lmtp-login, verifies the 220 banner,
-// sends LHLO, and expects a 250 multi-line response with at least one known
-// LMTP extension before quitting cleanly.
+// checkLMTPLogin reads the banner, sends LHLO and requires a 250 naming at
+// least one known LMTP extension.
 func checkLMTPLogin() error {
 	addr := net.JoinHostPort(lmtpLoginHost(), *flagLMTPLoginPort)
 	dialer := &net.Dialer{Timeout: *flagTimeout}
@@ -657,8 +737,10 @@ func checkLMTPLogin() error {
 
 // ---- SMTP MX (port 25) ---------------------------------------------------
 
+// checkSMTPMX verifies the inbound listener answers EHLO, offers STARTTLS and
+// keeps AUTH off the cleartext session: an MX takes mail, it does not log in.
 func checkSMTPMX() error {
-	conn, err := smtpDial(net.JoinHostPort(*flagHost, *flagSMTPMXPort), false)
+	conn, err := smtpDial(net.JoinHostPort(mxHost(), *flagSMTPMXPort), false)
 	if err != nil {
 		return err
 	}
@@ -668,14 +750,31 @@ func checkSMTPMX() error {
 	if err != nil {
 		return err
 	}
-	_ = caps
+	if !caps["STARTTLS"] {
+		return fmt.Errorf("MX EHLO does not advertise STARTTLS: %v", capNames(caps))
+	}
+	for name := range caps {
+		if strings.HasPrefix(name, "AUTH") {
+			return fmt.Errorf("MX EHLO advertises %q before STARTTLS", name)
+		}
+	}
 	smtpQuit(conn)
 	return nil
 }
 
-// checkSMTPSubmission verifies the submission port:
-//  1. EHLO advertises AUTH PLAIN and STARTTLS.
-//  2. Performs the STARTTLS upgrade and sends a second EHLO.
+// capNames names what was advertised, so a missing capability is read against
+// the list that was there.
+func capNames(caps map[string]bool) []string {
+	names := make([]string, 0, len(caps))
+	for name := range caps {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// checkSMTPSubmission requires AUTH PLAIN and STARTTLS in EHLO, then upgrades
+// and reads the capabilities again.
 func checkSMTPSubmission() error {
 	addr := net.JoinHostPort(smtpHost(), *flagSMTPSubPort)
 	conn, err := smtpDial(addr, false)
@@ -691,9 +790,8 @@ func checkSMTPSubmission() error {
 	if !caps["STARTTLS"] {
 		return fmt.Errorf("submission port did not advertise STARTTLS")
 	}
-	if !caps["AUTH PLAIN"] {
-		return fmt.Errorf("submission port did not advertise AUTH PLAIN")
-	}
+	// AUTH before STARTTLS is lawful only with cleartext auth allowed, which
+	// this check cannot see; the upgrade below settles it (#1855).
 
 	// Perform STARTTLS upgrade.
 	fmt.Fprintf(conn, "STARTTLS\r\n")
@@ -704,11 +802,7 @@ func checkSMTPSubmission() error {
 	if !strings.HasPrefix(line, "220") {
 		return fmt.Errorf("STARTTLS: unexpected response %q", line)
 	}
-	tlsCfg := &tls.Config{
-		ServerName:         smtpHost(),
-		InsecureSkipVerify: *flagInsecure, //nolint:gosec
-	}
-	tlsConn := tls.Client(conn, tlsCfg)
+	tlsConn := tls.Client(conn, publicTLS(smtpHost()))
 	if err := tlsConn.Handshake(); err != nil {
 		return fmt.Errorf("STARTTLS TLS handshake: %w", err)
 	}
@@ -721,27 +815,65 @@ func checkSMTPSubmission() error {
 	if !caps2["AUTH PLAIN"] {
 		return fmt.Errorf("post-STARTTLS EHLO missing AUTH PLAIN")
 	}
+	if *flagIMAPUser != "" {
+		if err := smtpSubmitTransaction(tlsConn, *flagIMAPUser, *flagIMAPPass); err != nil {
+			return err
+		}
+	}
 	smtpQuit(tlsConn)
 	return nil
 }
 
-// checkSMTPProxyProtocol sends a HAProxy PROXY header before the SMTP banner
-// and verifies the server responds with 220.
-// Only run when -proxy-protocol flag is set (requires proxy_protocol: true in config).
+// smtpSubmitTransaction: AUTH is where the login pod hands off to the backend
+// (#2133); RSET, not DATA, so no mailbox the other rows count changes.
+func smtpSubmitTransaction(conn net.Conn, user, pass string) error {
+	creds := base64.StdEncoding.EncodeToString([]byte("\x00" + user + "\x00" + pass))
+	for _, step := range []struct{ cmd, want string }{
+		{"AUTH PLAIN " + creds, "235"},
+		{"MAIL FROM:<" + user + ">", "250"},
+		{"RCPT TO:<" + user + ">", "250"},
+		{"RSET", "250"},
+	} {
+		fmt.Fprintf(conn, "%s\r\n", step.cmd)
+		line, err := readLine(conn)
+		if err != nil {
+			return fmt.Errorf("%s: read response: %w", strings.Fields(step.cmd)[0], err)
+		}
+		if !strings.HasPrefix(line, step.want) {
+			return fmt.Errorf("%s: unexpected response %q", strings.Fields(step.cmd)[0], line)
+		}
+	}
+	return nil
+}
+
+// checkSMTPProxyProtocol sends a PROXY header and requires the address it
+// claims to reach the server, not merely a banner in reply.
 func checkSMTPProxyProtocol() error {
-	addr := net.JoinHostPort(smtpHost(), *flagSMTPMXPort)
+	port := *flagProxyPort
+	if port == "" {
+		port = *flagSMTPMXPort
+	}
+	marker := "xproxy-" + uniqueID()
+
+	// tcp4, so the header's family is the connection's: a v6 client reaching a
+	// v4 listener can only guess at the address the server saw.
+	addr := net.JoinHostPort(mxHost(), port)
 	dialer := &net.Dialer{Timeout: *flagTimeout}
-	conn, err := dialer.Dial("tcp", addr)
+	conn, err := dialer.Dial("tcp4", addr)
 	if err != nil {
 		return fmt.Errorf("connect %s: %w", addr, err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
 
-	// Send HAProxy PROXY header with a fake source IP.
-	fmt.Fprintf(conn, "PROXY TCP4 203.0.113.1 %s 12345 25\r\n", smtpHost())
-
-	// Expect normal SMTP banner.
+	// Both fields are addresses, never names: PROXY v1 carries addresses, and a
+	// header a parser refuses is a red row about nothing.
+	local, lerr := proxyAddrOf(conn.RemoteAddr())
+	if lerr != nil {
+		return fmt.Errorf("PROXY: %w", lerr)
+	}
+	const claimed = "203.0.113.7" // RFC 5737: only the header can put it there
+	fmt.Fprintf(conn, "PROXY TCP4 %s %s 12345 %s\r\n", claimed, local, port)
 	banner, err := readLine(conn)
 	if err != nil {
 		return fmt.Errorf("PROXY: read banner: %w", err)
@@ -749,13 +881,96 @@ func checkSMTPProxyProtocol() error {
 	if !strings.HasPrefix(banner, "220") {
 		return fmt.Errorf("PROXY: unexpected banner %q", banner)
 	}
+	if err := proxySendProbe(conn, marker); err != nil {
+		return err
+	}
+
+	// The banner alone says the header was tolerated, not that the address in
+	// it was taken: the stamp on the delivered message is what says that.
+	received, err := waitForReceivedHeaders(*flagIMAPUser, *flagIMAPPass, marker)
+	if err != nil {
+		return fmt.Errorf("PROXY: %w", err)
+	}
+	if !strings.Contains(received, claimed) {
+		return fmt.Errorf("PROXY: the delivered message records no %s in Received: %s", claimed, received)
+	}
+	return nil
+}
+
+// proxyAddrOf takes the address side of a dialled peer, which is what the
+// header's destination field is.
+func proxyAddrOf(addr net.Addr) (string, error) {
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return "", fmt.Errorf("the connected address %q is not host:port: %w", addr, err)
+	}
+	if net.ParseIP(host) == nil {
+		return "", fmt.Errorf("the connected address %q is not an IP", host)
+	}
+	return host, nil
+}
+
+// proxyProbeSender is a sender in the recipient's own domain: an MX worth the
+// name refuses a sender whose domain does not resolve.
+func proxyProbeSender(rcpt string) string {
+	at := strings.LastIndex(rcpt, "@")
+	if at < 0 {
+		return rcpt
+	}
+	return "proxy-probe" + rcpt[at:]
+}
+
+// proxySendProbe drives the SMTP session that follows the PROXY header.
+func proxySendProbe(conn net.Conn, marker string) error {
+	step := func(what, line, want string) error {
+		fmt.Fprintf(conn, "%s\r\n", line)
+		resp, err := readLine(conn)
+		if err != nil {
+			return fmt.Errorf("PROXY: %s: %w", what, err)
+		}
+		for strings.HasPrefix(resp, want+"-") {
+			if resp, err = readLine(conn); err != nil {
+				return fmt.Errorf("PROXY: %s: %w", what, err)
+			}
+		}
+		if !strings.HasPrefix(resp, want) {
+			return fmt.Errorf("PROXY: %s answered %q, want %s", what, resp, want)
+		}
+		return nil
+	}
+	if err := step("EHLO", "EHLO smoketest.invalid", "250"); err != nil {
+		return err
+	}
+	if err := step("MAIL FROM", "MAIL FROM:<"+proxyProbeSender(*flagIMAPUser)+">", "250"); err != nil {
+		return err
+	}
+	if err := step("RCPT TO", "RCPT TO:<"+*flagIMAPUser+">", "250"); err != nil {
+		return err
+	}
+	if err := step("DATA", "DATA", "354"); err != nil {
+		return err
+	}
+	fmt.Fprintf(conn, "Subject: %s\r\nFrom: <%s>\r\nTo: <%s>\r\n\r\nprobe\r\n.\r\n",
+		marker, proxyProbeSender(*flagIMAPUser), *flagIMAPUser)
+	resp, err := readLine(conn)
+	if err != nil {
+		return fmt.Errorf("PROXY: end-of-data: %w", err)
+	}
+	if !strings.HasPrefix(resp, "250") {
+		return fmt.Errorf("PROXY: the probe was not accepted: %s", resp)
+	}
+	fmt.Fprintf(conn, "QUIT\r\n")
 	return nil
 }
 
 // checkSMTPXClient connects to MX and verifies EHLO advertises XCLIENT.
 // Only run when -xclient flag is set (requires xclient: true in config).
 func checkSMTPXClient() error {
-	conn, err := smtpDial(net.JoinHostPort(*flagHost, *flagSMTPMXPort), false)
+	port := *flagXClientPort
+	if port == "" {
+		port = *flagSMTPMXPort
+	}
+	conn, err := smtpDial(net.JoinHostPort(mxHost(), port), false)
 	if err != nil {
 		return err
 	}
@@ -805,20 +1020,31 @@ func smtpEHLO(conn net.Conn) (map[string]bool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("EHLO read: %w", err)
 		}
-		// strip "250-" or "250 " prefix
-		cap := ""
-		if strings.HasPrefix(line, "250-") {
-			cap = line[4:]
-		} else if strings.HasPrefix(line, "250 ") {
-			cap = line[4:]
-			caps[cap] = true
-			break
-		} else {
+		last := strings.HasPrefix(line, "250 ")
+		if !last && !strings.HasPrefix(line, "250-") {
 			return nil, fmt.Errorf("EHLO unexpected: %q", line)
 		}
-		caps[cap] = true
+		addEHLOCap(caps, line[4:])
+		if last {
+			break
+		}
 	}
 	return caps, nil
+}
+
+// addEHLOCap records a line under its name and under name + each parameter:
+// "AUTH PLAIN LOGIN" answers for "AUTH" and "AUTH PLAIN" (#1855).
+func addEHLOCap(caps map[string]bool, line string) {
+	caps[line] = true
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return
+	}
+	name := strings.ToUpper(fields[0])
+	caps[name] = true
+	for _, param := range fields[1:] {
+		caps[name+" "+strings.ToUpper(param)] = true
+	}
 }
 
 func smtpQuit(conn net.Conn) {
@@ -827,9 +1053,8 @@ func smtpQuit(conn net.Conn) {
 
 // ---- ManageSieve (RFC 5804, port 4190) -----------------------------------
 
-// checkManageSieve connects to the ManageSieve login proxy, authenticates via
-// PLAIN, then runs a full script CRUD cycle: LISTSCRIPTS → PUTSCRIPT →
-// GETSCRIPT → SETACTIVE → deactivate → DELETESCRIPT → LOGOUT.
+// checkManageSieve authenticates and runs a full script cycle, from LISTSCRIPTS
+// through SETACTIVE to DELETESCRIPT.
 func checkManageSieve() error {
 	if *flagManageSieveUser == "" {
 		return fmt.Errorf("-managesieve-user is required for ManageSieve check")
@@ -919,11 +1144,8 @@ func checkManageSieve() error {
 		return fmt.Errorf("DELETESCRIPT failed: %q", line)
 	}
 
-	// LOGOUT, and read the answer before closing. Writing it and dropping the
-	// socket leaves the server mid-reply, which is the shape that used to leak
-	// a session per run: the client is gone while the backend leg is still
-	// live (#1404). A check that leaves its own droppings behind cannot tell
-	// them from the ones it is meant to catch.
+	// The answer is read before closing: dropping the socket mid-reply is the
+	// shape that leaked a session per run (#1404).
 	fmt.Fprintf(conn, "LOGOUT\r\n")
 	if line, err := readLine(conn); err != nil {
 		return fmt.Errorf("LOGOUT response: %w", err)
@@ -966,4 +1188,29 @@ func readLine(r io.Reader) (string, error) {
 		buf = append(buf, b[0])
 	}
 	return strings.TrimRight(string(buf), "\r"), nil
+}
+
+// waitForReceivedHeaders returns the Received headers of the probe, which is
+// where the server writes the address it took the connection to be from.
+func waitForReceivedHeaders(user, pass, marker string) (string, error) {
+	c, err := imapDial()
+	if err != nil {
+		return "", err
+	}
+	defer c.close()
+	if err := c.login(user, pass); err != nil {
+		return "", fmt.Errorf("login %q: %w", user, err)
+	}
+	if _, err := c.selectFolder("INBOX"); err != nil {
+		return "", fmt.Errorf("select INBOX: %w", err)
+	}
+	uid, err := waitForIMAPProbe(c, marker)
+	if err != nil {
+		return "", err
+	}
+	lines, err := c.cmd(fmt.Sprintf("UID FETCH %s (BODY.PEEK[HEADER.FIELDS (RECEIVED)])", uid))
+	if err != nil {
+		return "", fmt.Errorf("uid fetch received: %w", err)
+	}
+	return strings.Join(lines, " "), nil
 }

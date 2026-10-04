@@ -9,6 +9,7 @@ import (
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -21,7 +22,7 @@ func stageStore(t *testing.T, n int) (root, user string) {
 	root = t.TempDir()
 	user = "u1@example.test"
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := maildir.New().OpenUser(info)
 	idx := indexfile.New().OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -37,13 +38,16 @@ func stageStore(t *testing.T, n int) (root, user string) {
 			t.Fatalf("allocate: %v", err)
 		}
 		body := fmt.Sprintf("Subject: m%d\r\n\r\nbody\r\n", i)
-		name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-		}); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+		if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = [16]byte{}
+		if err := idx.AppendMessage(folder.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -109,7 +113,7 @@ func dropGUIDExt(t *testing.T, root string) {
 func guidsOf(t *testing.T, root, user string) map[uint32][16]byte {
 	t.Helper()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	idx := indexfile.New().OpenUser(resolver.UserInfo(user, ""))
+	idx := indexfile.New().OpenUser(mustUserInfo(resolver, user))
 	defer idx.Close() //nolint:errcheck
 	folder, err := idx.OpenFolder("INBOX", 0)
 	if err != nil {
@@ -221,7 +225,7 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: template}
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := maildir.New().OpenUser(info)
 	idx := indexfile.New().OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -237,13 +241,16 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 			t.Fatalf("allocate: %v", err)
 		}
 		body := fmt.Sprintf("Subject: m%d\r\n\r\nbody\r\n", i)
-		name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-		}); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+		if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = [16]byte{}
+		if err := idx.AppendMessage(folder.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -260,7 +267,7 @@ func stageStoreLayout(t *testing.T, template, user string, n int) string {
 func guidsOfLayout(t *testing.T, root, template, user string) map[uint32][16]byte {
 	t.Helper()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: template}
-	idx := indexfile.New().OpenUser(resolver.UserInfo(user, ""))
+	idx := indexfile.New().OpenUser(mustUserInfo(resolver, user))
 	defer idx.Close() //nolint:errcheck
 	folder, err := idx.OpenFolder("INBOX", 0)
 	if err != nil {
@@ -321,7 +328,7 @@ func TestGUIDBackfillResolverFromConfig(t *testing.T) {
 	cfg.Storage.MailHome = "%d/%u"
 	cfg.Storage.MailIndexPath = "/srv/index/%d/%u"
 
-	r := guidResolver(cfg, guidOpts{})
+	r := layoutResolver(cfg, "", "")
 	if r.Root != "/srv/mail" || r.HomeTemplate != "%d/%u" {
 		t.Errorf("config ignored: root=%q template=%q", r.Root, r.HomeTemplate)
 	}
@@ -329,12 +336,12 @@ func TestGUIDBackfillResolverFromConfig(t *testing.T) {
 		t.Errorf("index dir not carried: %q", r.DefaultIndexDir)
 	}
 
-	r = guidResolver(cfg, guidOpts{Root: "/tmp/other", Template: "%n"})
+	r = layoutResolver(cfg, "/tmp/other", "%n")
 	if r.Root != "/tmp/other" || r.HomeTemplate != "%n" {
 		t.Errorf("flags did not override: root=%q template=%q", r.Root, r.HomeTemplate)
 	}
 
-	r = guidResolver(&config.Config{}, guidOpts{})
+	r = layoutResolver(&config.Config{}, "", "")
 	if r.Root != "/var/mail/vhosts" || r.HomeTemplate != "%d/%n" {
 		t.Errorf("defaults changed: root=%q template=%q", r.Root, r.HomeTemplate)
 	}
@@ -411,7 +418,7 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 	resolver := &mailbox.Resolver{
 		Root: root, HomeTemplate: "%d/%u", DefaultIndexDir: "%h/index",
 	}
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := maildir.New().OpenUser(info)
 	idx := indexfile.New().OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -426,13 +433,16 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 		t.Fatalf("allocate: %v", err)
 	}
 	body := "Subject: t\r\n\r\nbody\r\n"
-	name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, zero)
+	name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, zero)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-	}); err != nil {
+	meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	meta.GUID = [16]byte{}
+	if err := idx.AppendMessage(folder.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := idx.Close(); err != nil {
@@ -450,7 +460,7 @@ func TestGUIDBackfillFollowsIndexTemplate(t *testing.T) {
 		t.Fatalf("backfill: %v", err)
 	}
 
-	check := indexfile.New().OpenUser(resolver.UserInfo(user, ""))
+	check := indexfile.New().OpenUser(mustUserInfo(resolver, user))
 	defer check.Close() //nolint:errcheck
 	f, err := check.OpenFolder("INBOX", 0)
 	if err != nil {
@@ -494,7 +504,7 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 		t.Run(tmpl, func(t *testing.T) {
 			root := t.TempDir()
 			resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%u", DefaultIndexDir: "%h/index"}
-			info := resolver.UserInfo(user, "")
+			info, _ := resolver.UserInfo(user, "")
 			box := maildir.New().OpenUser(info)
 			idx := indexfile.New().OpenUser(info)
 			if err := box.Init(); err != nil {
@@ -509,13 +519,16 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 				t.Fatalf("allocate: %v", err)
 			}
 			body := "Subject: t\r\n\r\nbody\r\n"
-			name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, zero)
+			name, vsize, _, err := box.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, zero)
 			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
-			if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-				UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-			}); err != nil {
+			meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+			if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+				t.Fatalf("name: %v", err)
+			}
+			meta.GUID = [16]byte{}
+			if err := idx.AppendMessage(folder.ID, meta); err != nil {
 				t.Fatalf("append: %v", err)
 			}
 			if err := idx.Close(); err != nil {
@@ -533,7 +546,7 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 				t.Fatalf("backfill with %q: %v", tmpl, err)
 			}
 
-			check := indexfile.New().OpenUser(resolver.UserInfo(user, ""))
+			check := indexfile.New().OpenUser(mustUserInfo(resolver, user))
 			defer check.Close() //nolint:errcheck
 			f, err := check.OpenFolder("INBOX", 0)
 			if err != nil {
@@ -552,4 +565,13 @@ func TestGUIDBackfillOfflineTemplateAcceptsTilde(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mustUserInfo resolves a name the test knows to be valid.
+func mustUserInfo(r *mailbox.Resolver, user string) *mailbox.UserInfo {
+	ui, err := r.UserInfo(user, "")
+	if err != nil {
+		panic(err)
+	}
+	return ui
 }

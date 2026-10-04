@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,7 +20,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
+
+// ErrNoAuthService names the key a session process cannot start without: it
+// verifies no credential itself, so there is nothing to fall back to (#1733).
+var ErrNoAuthService = errors.New("auth_service_addr is required: sessions authenticate through yarilo-auth")
 
 // Sentinel errors returned by Authenticate, Verify, and LookupUser.
 var (
@@ -68,6 +76,10 @@ type AuthResult struct {
 	// DirectorTag is the per-user director backend tag, if the passdb/userdb
 	// chain set one. Empty means the static director_tag config applies.
 	DirectorTag string
+
+	// Userdb is the service's answer in full: a session resolves storage and
+	// ACL identity from it, so nothing it sent may be dropped here (#1890).
+	Userdb *protocol.AuthResponse
 }
 
 // Options tunes a Client. Zero values select the documented defaults.
@@ -107,6 +119,9 @@ type Client struct {
 	gen     uint64        // bumped on every successful dial
 	ready   chan struct{} // non-nil while reconnecting; closed on success
 	pending map[string]chan string
+	// mechs is what the service announced it can run; a session advertises
+	// this list rather than what it could run itself (#1733).
+	mechs []string
 
 	// done is closed by Close so the redial loop wakes from its backoff and
 	// exits.
@@ -238,6 +253,9 @@ func (c *Client) Authenticate(username, password, service, remoteIP, sessionID s
 // plain login of the master and refused it (#1305). Whether impersonation is
 // granted stays the service's decision; the client only carries the request.
 func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, sessionID string) (*AuthResult, error) {
+	if wireUnsafe(authzid, authcid, service, remoteIP, sessionID) {
+		return nil, ErrAuthFailed
+	}
 	id := c.nextID()
 
 	var sb strings.Builder
@@ -247,12 +265,8 @@ func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, s
 	sb.WriteString("\tuser=")
 	sb.WriteString(authcid)
 	sb.WriteString("\tresp=")
-	// SASL PLAIN: [authzid] NUL authcid NUL password
-	sb.WriteString(authzid)
-	sb.WriteString("\x00")
-	sb.WriteString(authcid)
-	sb.WriteString("\x00")
-	sb.WriteString(password)
+	// SASL PLAIN, base64: the password may hold any byte, the line may not.
+	sb.WriteString(base64.StdEncoding.EncodeToString([]byte(authzid + "\x00" + authcid + "\x00" + password)))
 	if service != "" {
 		sb.WriteString("\tservice=")
 		sb.WriteString(service)
@@ -273,10 +287,23 @@ func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, s
 	return parseAuthResponse(line)
 }
 
+// wireUnsafe reports a value that would end its field or its line on the wire.
+func wireUnsafe(vals ...string) bool {
+	for _, v := range vals {
+		if strings.ContainsAny(v, "\t\r\n\x00") {
+			return true
+		}
+	}
+	return false
+}
+
 // LookupUser sends a USER command to yarilo-auth and returns whether the user
 // exists in the userdb. Returns ErrUserNotFound when the user is unknown,
 // ErrTempFail on a transient backend error.
 func (c *Client) LookupUser(username string) (bool, error) {
+	if wireUnsafe(username) {
+		return false, ErrUserNotFound
+	}
 	id := c.nextID()
 	line, err := c.exchange(id, fmt.Sprintf("USER\t%s\t%s", id, username))
 	if err != nil {
@@ -301,6 +328,9 @@ func (c *Client) LookupUser(username string) (bool, error) {
 // at issue time. Returns ErrAuthFailed when the token is unknown, expired,
 // or the claims don't match.
 func (c *Client) Verify(token, username, sessionID string) (string, string, string, error) {
+	if wireUnsafe(token, username, sessionID) {
+		return "", "", "", ErrAuthFailed
+	}
 	id := c.nextID()
 	req := fmt.Sprintf("VERIFY\t%s\t%s\tuser=%s\tsession=%s", id, token, username, sessionID)
 	line, err := c.exchange(id, req)
@@ -483,7 +513,7 @@ func (c *Client) redial() {
 // readLoop demultiplexes replies by request id until the connection breaks.
 func (c *Client) readLoop(rd *bufio.Reader, gen uint64) {
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 		if err != nil {
 			c.beginReconnect(gen)
 			return
@@ -531,24 +561,29 @@ func (c *Client) dial() (net.Conn, *bufio.Reader, error) {
 		return nil, nil, fmt.Errorf("auth/client: dial %s: %w", c.addr, err)
 	}
 	rd := bufio.NewReader(raw)
-	if err := handshake(raw, rd); err != nil {
+	mechs, err := handshake(raw, rd)
+	if err != nil {
 		_ = raw.Close()
 		return nil, nil, err
 	}
+	c.mu.Lock()
+	c.mechs = mechs
+	c.mu.Unlock()
 	return raw, rd, nil
 }
 
 // handshake exchanges VERSION lines. Runs before readLoop starts, so the
 // id-less banner is never seen by the demultiplexer.
-func handshake(conn net.Conn, rd *bufio.Reader) error {
+func handshake(conn net.Conn, rd *bufio.Reader) ([]string, error) {
 	if _, err := fmt.Fprintln(conn, "VERSION\t1\t0"); err != nil {
-		return fmt.Errorf("auth/client: handshake write: %w", err)
+		return nil, fmt.Errorf("auth/client: handshake write: %w", err)
 	}
 	gotVersion := false
+	var mechs []string
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 		if err != nil {
-			return fmt.Errorf("auth/client: handshake read: %w", err)
+			return nil, fmt.Errorf("auth/client: handshake read: %w", err)
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if strings.HasPrefix(line, "VERSION\t") {
@@ -558,19 +593,40 @@ func handshake(conn net.Conn, rd *bufio.Reader) error {
 		if line == "DONE" {
 			break
 		}
-		// MECH, SPID, CUID, COOKIE — skip
+		if strings.HasPrefix(line, "MECH\t") {
+			if f := strings.Split(line, "\t"); len(f) > 1 {
+				mechs = append(mechs, f[1])
+			}
+			continue
+		}
+		// SPID, CUID, COOKIE — skip
 	}
 	if !gotVersion {
-		return fmt.Errorf("auth/client: handshake: no VERSION received")
+		return nil, fmt.Errorf("auth/client: handshake: no VERSION received")
 	}
-	return nil
+	return mechs, nil
+}
+
+// Response is the service's answer as a session consumes it. Built here so the
+// three protocols cannot each keep their own half-filled copy (#1890).
+func (r *AuthResult) Response() *protocol.AuthResponse {
+	if r == nil {
+		return nil
+	}
+	if r.Userdb == nil {
+		return &protocol.AuthResponse{Result: protocol.AuthOK, Username: r.Username}
+	}
+	out := *r.Userdb
+	out.Result = protocol.AuthOK
+	out.Username = r.Username
+	return &out
 }
 
 func parseAuthResponse(line string) (*AuthResult, error) {
 	fields := strings.Split(line, "\t")
 	switch fields[0] {
 	case "OK":
-		res := &AuthResult{}
+		res := &AuthResult{Userdb: &protocol.AuthResponse{Result: protocol.AuthOK}}
 		for _, f := range fields[2:] {
 			switch {
 			case f == "nologin":
@@ -581,10 +637,14 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 				res.AllowNets = f[len("allow_nets="):]
 			case strings.HasPrefix(f, "token="):
 				res.Token = f[len("token="):]
-			case strings.HasPrefix(f, "director_tag="):
-				res.DirectorTag = f[len("director_tag="):]
+			default:
+				// A dropped field sends the session to the global mail
+				// location, not to this user's own (#1890).
+				protocol.ApplyAuthOKToken(res.Userdb, f)
 			}
 		}
+		res.Userdb.Username = res.Username
+		res.DirectorTag = res.Userdb.DirectorTag
 		return res, nil
 	case "FAIL":
 		for _, f := range fields[2:] {

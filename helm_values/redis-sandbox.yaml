@@ -45,12 +45,23 @@ spec:
       containers:
         - name: redis
           image: redis:8.6
+          # The password lives in the Secret redis-password (made outside git);
+          # REDISCLI_AUTH lets the probes' redis-cli authenticate.
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: redis-password, key: password }
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef: { name: redis-password, key: password }
           args:
             - redis-server
             - --appendonly
             - "yes"
             - --dir
             - /data
+            - --requirepass
+            - $(REDIS_PASSWORD)
           ports:
             - containerPort: 6379
               name: redis

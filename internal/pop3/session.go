@@ -22,10 +22,12 @@ import (
 
 	"github.com/emersion/go-sasl"
 
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/auth/scram"
 	"github.com/yarilomail/yarilo/internal/loginproto"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -65,13 +67,11 @@ type session struct {
 	sid                string   // cross-service correlation ID from login-proxy
 
 	// set after successful login
-	lockKey         string
 	sessionLockFile string // path to dotlock file; "" when not held
 	limitIP         string // IP used for ConnLimit.Acquire; released in releaseLock
 	pendingUser     string // temporary storage of USER arg before PASS arrives
 	userInfo        *mailbox.UserInfo
-	box             mailbox.UserMailbox
-	idx             mailbox.UserIndex
+	box             mailbox.Box
 	folder          *mailbox.Folder
 	msgs            []*mailbox.MessageMeta
 	deleted         []bool
@@ -118,15 +118,14 @@ func (s *session) serve() {
 	defer s.releaseLock()
 
 	s.setDeadline()
-	s.ok("yarilo POP3 server ready")
-
 	if s.state == statePreAuth {
-		// login pod already authenticated and discards this greeting;
-		// set up the mailbox without an extra wire response
+		// Before the greeting, as the IMAP path does: the proxy answers the
+		// client with this first line, so it must be the session's state (#1776).
 		if !s.completePreAuth() {
 			return
 		}
 	}
+	s.ok("yarilo POP3 server ready")
 
 	for s.state != stateDone {
 		line, err := s.readLine()
@@ -239,35 +238,53 @@ func (s *session) cmdSASLAuth(arg string) {
 	}
 }
 
+// onSuccessFn takes the whole answer: a session resolves storage from it, and
+// a name alone sends it to the global mail location (#1890).
+type onSuccessFn func(*protocol.AuthResponse) error
+
+// errNoAuthService is what a session answers when no auth service is wired: a
+// startup check refuses that config, so reaching it is a bug, not a state.
+var errNoAuthService = errors.New("pop3: no auth service configured")
+
 // scramBuilder wires one digest family (SHA-1 or SHA-256) for handleSASLScram.
 type scramBuilder struct {
 	supported bool
-	nonPlus   func(onSuccess func(string) error) *scram.Session
-	plus      func(cb []byte, onSuccess func(string) error) *scram.Session
+	nonPlus   func(onSuccess onSuccessFn) sasl.Server
+	plus      func(cb []byte, onSuccess onSuccessFn) sasl.Server
 }
 
 func (s *session) scramSha256Builder() scramBuilder {
-	lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha256Lookup)
-	if !ok {
+	return s.relayBuilder(sasl.ScramSha256, sasl.ScramSha256Plus)
+}
+
+// relayBuilder runs the mechanism in the auth service when a relay is
+// configured, and says so: the session then holds no verifier at all (#1733).
+func (s *session) relayBuilder(mech, plusMech string) scramBuilder {
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
 		return scramBuilder{}
+	}
+	announced := map[string]bool{}
+	for _, m := range relay.Mechanisms() {
+		announced[m] = true
+	}
+	if !announced[mech] {
+		return scramBuilder{}
+	}
+	build := func(m string, cb []byte, f onSuccessFn) sasl.Server {
+		srv := authrelay.NewRelayServer(relay, m, "pop3", s.remoteIP.String(), s.sid, cb)
+		srv.OnSuccess = func(res *authrelay.AuthResult) error { return f(res.Response()) }
+		return srv
 	}
 	return scramBuilder{
 		supported: true,
-		nonPlus:   func(f func(string) error) *scram.Session { return scram.NewSha256(lookup, f) },
-		plus:      func(cb []byte, f func(string) error) *scram.Session { return scram.NewSha256Plus(lookup, cb, f) },
+		nonPlus:   func(f onSuccessFn) sasl.Server { return build(mech, nil, f) },
+		plus:      func(cb []byte, f onSuccessFn) sasl.Server { return build(plusMech, cb, f) },
 	}
 }
 
 func (s *session) scramSha1Builder() scramBuilder {
-	lookup, ok := s.srv.opts.Auth.(protocol.SCRAMSha1Lookup)
-	if !ok {
-		return scramBuilder{}
-	}
-	return scramBuilder{
-		supported: true,
-		nonPlus:   func(f func(string) error) *scram.Session { return scram.NewSha1(lookup, f) },
-		plus:      func(cb []byte, f func(string) error) *scram.Session { return scram.NewSha1Plus(lookup, cb, f) },
-	}
+	return s.relayBuilder(sasl.ScramSha1, sasl.ScramSha1Plus)
 }
 
 // handleSASLScram handles AUTH SCRAM-SHA-{1,256}[-PLUS] (RFC 5802 / RFC 7677).
@@ -287,21 +304,26 @@ func (s *session) handleSASLScram(parts []string, plus bool, b scramBuilder) {
 
 	// capture the SCRAM-verified username for completeAuthenticated
 	var (
-		verifiedUser string
-		completed    bool
+		verified  *protocol.AuthResponse
+		completed bool
 	)
-	onSuccess := func(user string) error {
-		verifiedUser = user
+	onSuccess := func(res *protocol.AuthResponse) error {
+		verified = res
 		completed = true
 		return nil
 	}
-	var saslSrv *scram.Session
+	var saslSrv sasl.Server
 	if plus {
 		saslSrv = b.plus(cb, onSuccess)
 	} else {
 		saslSrv = b.nonPlus(onSuccess)
 	}
 
+	// An exchange the client abandons frees the service's half at once, rather
+	// than waiting out its deadline there (#1733).
+	if relayed, ok := saslSrv.(*authrelay.RelayServer); ok {
+		defer relayed.Cancel()
+	}
 	if err := s.driveSASL(parts, saslSrv); err != nil {
 		if d := s.srv.opts.FailureDelay; d > 0 {
 			time.Sleep(d)
@@ -314,10 +336,7 @@ func (s *session) handleSASLScram(parts []string, plus bool, b scramBuilder) {
 		s.writeErr("authentication failed")
 		return
 	}
-	s.completeAuthenticated(&protocol.AuthResponse{
-		Result:   protocol.AuthOK,
-		Username: verifiedUser,
-	})
+	s.completeAuthenticated(verified)
 }
 
 // tlsExporter returns the 32-byte RFC 9266 channel-binding material,
@@ -367,7 +386,7 @@ func (s *session) driveSASL(parts []string, srv sasl.Server) error {
 		}
 		fmt.Fprintf(s.conn, "+ %s\r\n",
 			base64.StdEncoding.EncodeToString(challenge))
-		line, err := s.br.ReadString('\n')
+		line, err := lineio.ReadLine(s.br, lineio.MaxClient)
 		if err != nil {
 			return err
 		}
@@ -467,7 +486,7 @@ func (s *session) readSASLPayload(parts []string) (string, bool) {
 		return parts[1], true
 	}
 	fmt.Fprintf(s.conn, "+ \r\n")
-	line, err := s.br.ReadString('\n')
+	line, err := lineio.ReadLine(s.br, lineio.MaxClient)
 	if err != nil {
 		return "", false
 	}
@@ -541,9 +560,18 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	userInfo := resolver.UserInfo(res.Username, res.Home)
+	userInfo, err := resolver.UserInfo(res.Username, res.Home)
+	if err != nil {
+		slog.Warn("pop3: login refused", "sid", s.sid, "user", res.Username, "err", err)
+		s.writeErr("[AUTH] Authentication failed.")
+		return false
+	}
 	userInfo.Groups = res.Groups
 	userInfo.QuotaRules = res.QuotaRules
+	if s.sid == "" {
+		// No id from the proxy: mint one rather than lock anonymously (#1670).
+		s.sid = locks.NewID()
+	}
 	userInfo.SessionID = s.sid
 	locErr, drvErr := mailbox.ApplyUserdb(userInfo, mailbox.UserdbOverrides{
 		VolatileDir:  res.VolatileDir,
@@ -574,52 +602,34 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 		s.limitIP = ip
 	}
 
-	if !s.srv.tryLock(userInfo.Username) {
-		if s.srv.opts.ConnLimit != nil {
-			s.srv.opts.ConnLimit.Release(userInfo.Username, s.limitIP)
-			s.limitIP = ""
-		}
-		s.writeErr("mailbox already in use, try again later")
-		return false
-	}
-	s.lockKey = userInfo.Username
-
 	personalBox := mailbox.SelectPersonalBackend(s.srv.opts.Mailbox, s.srv.opts.MailboxByDriver, userInfo.Driver)
 	box := personalBox.OpenUser(userInfo)
 	idx := s.srv.opts.Index.OpenUser(userInfo)
 
 	if err := box.Init(); err != nil {
 		slog.Error("pop3: mailbox init", "user", userInfo.Username, "err", err)
-		s.srv.unlock(s.lockKey)
-		s.lockKey = ""
-		if s.srv.opts.ConnLimit != nil {
-			s.srv.opts.ConnLimit.Release(userInfo.Username, s.limitIP)
-			s.limitIP = ""
-		}
+		s.releaseConnLimit(userInfo.Username)
 		s.writeErr("internal error")
 		return false
 	}
 
 	// dotlock after Init so the home directory exists on disk
 	if s.srv.opts.LockSession && !s.acquireDotlock(userInfo.Home) {
-		s.srv.unlock(s.lockKey)
-		s.lockKey = ""
-		if s.srv.opts.ConnLimit != nil {
-			s.srv.opts.ConnLimit.Release(userInfo.Username, s.limitIP)
-			s.limitIP = ""
-		}
-		s.writeErr("mailbox already in use, try again later")
+		s.releaseConnLimit(userInfo.Username)
+		// RFC 2449 response code, advertised in CAPA as RESP-CODES: a client
+		// reading it retries instead of asking for the password again.
+		s.writeErr("[IN-USE] mailbox already in use, try again later")
 		return false
 	}
 
 	s.userInfo = userInfo
-	s.box = box
-	s.idx = idx
+	s.box = mailboxbase.Open(box, idx)
 
 	if err := s.loadMailbox(); err != nil {
+		// The whole login is rolled back, the session lock included: a retry on
+		// this connection would otherwise meet a lock its own attempt left.
+		s.releaseLock()
 		s.writeErr("internal error")
-		s.srv.unlock(s.lockKey)
-		s.lockKey = ""
 		return false
 	}
 	master, _ := res.Fields.Get("master_user")
@@ -634,23 +644,22 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 	return true
 }
 
-// authenticate dispatches to MasterAuthenticator when authzid is set and
-// supported. A distinct authzid against a non-master backend gets an opaque
-// AuthFail, indistinguishable from a wrong password.
+// authenticate runs a password login in the auth service. authzid is the
+// impersonation target: empty for an ordinary login, the master's target else.
 func (s *session) authenticate(authzid, username, password string) (*protocol.AuthResponse, error) {
-	ip := s.remoteIP.String()
-	if authzid == "" || authzid == username {
-		return s.srv.opts.Auth.Authenticate(username, password, "pop3", ip)
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return nil, errNoAuthService
 	}
-	master, ok := s.srv.opts.Auth.(protocol.MasterAuthenticator)
-	if !ok {
+	res, err := relay.AuthenticateAs(authzid, username, password, "pop3", s.remoteIP.String(), s.sid)
+	if err != nil {
 		return &protocol.AuthResponse{Result: protocol.AuthFail}, nil
 	}
-	return master.AuthenticateMaster(authzid, username, password, "pop3", ip)
+	return res.Response(), nil
 }
 
 func (s *session) loadMailbox() error {
-	folder, err := s.idx.OpenFolder("INBOX", uint32(time.Now().Unix()))
+	folder, err := s.box.Folder("INBOX", uint32(time.Now().Unix()))
 	if err != nil {
 		slog.Error("pop3: open folder", "user", s.userInfo.Username, "err", err)
 		return err
@@ -658,15 +667,15 @@ func (s *session) loadMailbox() error {
 	// heal a corrupt-flagged dbox folder at login so a POP3-only mailbox
 	// does not stay broken waiting for an IMAP SELECT
 	if folder.Fsckd {
-		if rb, ok := mailbox.Driver(s.box).(mailbox.ReactiveHealer); ok {
+		{
 			// no FTS client here: expunged UIDs leave FTS ghost documents
 			// until the next rescan. Heal runs at most once per session
 			// (at login), so no retry bound is needed.
-			if expunged, herr := rb.HealCorruptFolder(s.idx, folder); herr != nil {
+			if expunged, herr := s.box.HealCorrupt(folder); herr != nil {
 				slog.Warn("pop3: dbox reactive heal failed", "user", s.userInfo.Username, "err", herr)
 			} else if len(expunged) > 0 {
 				slog.Info("pop3: dbox reactive heal", "user", s.userInfo.Username, "expunged", len(expunged))
-				if refreshed, rerr := s.idx.OpenFolder("INBOX", 0); rerr == nil {
+				if refreshed, rerr := s.box.Folder("INBOX", 0); rerr == nil {
 					folder = refreshed
 				}
 			}
@@ -676,14 +685,15 @@ func (s *session) loadMailbox() error {
 	// address UIDs taken from it, never positions in a fresh index, so a
 	// snapshot one delivery behind narrows the session's view and cannot
 	// misdirect a deletion (#1249).
-	msgs, err := mailbox.ReadMessages(s.idx, folder.ID, mailbox.SeqSet{})
+	msgs, err := s.box.Messages(folder.ID, mailbox.SeqSet{})
 	if err != nil {
 		slog.Error("pop3: get messages", "user", s.userInfo.Username, "err", err)
 		return err
 	}
+	s.box.FillResponseSizes(folder.Name, msgs)
 	var savedUIDLs map[uint32]string
 	if s.srv.opts.SaveUIDL {
-		if saved, err := readPOP3UIDLs(s.idx, folder.ID); err != nil {
+		if saved, err := s.box.POP3UIDLs(folder.ID); err != nil {
 			slog.Warn("pop3: load saved uidls", "user", s.userInfo.Username, "err", err)
 		} else {
 			savedUIDLs = saved
@@ -738,6 +748,16 @@ func (s *session) readXUIDL(m *mailbox.MessageMeta) string {
 	return hdr.Get("X-Uidl")
 }
 
+// storedName is what the driver calls this message on disk. %f and %m are the
+// two variables that read it, and the record no longer carries one (#1700).
+func (s *session) storedName(m *mailbox.MessageMeta) string {
+	name, err := s.box.MessagePath("INBOX", m)
+	if err != nil {
+		return ""
+	}
+	return name
+}
+
 // formatUIDL formats a UIDL string from opts.UIDLFormat.
 func (s *session) formatUIDL(m *mailbox.MessageMeta) string {
 	format := s.srv.opts.UIDLFormat
@@ -770,11 +790,11 @@ func (s *session) formatUIDL(m *mailbox.MessageMeta) string {
 		case 'v':
 			b.WriteString(applyNumFmt(mod, uint64(s.folder.UIDValidity)))
 		case 'f':
-			b.WriteString(m.Filename)
+			b.WriteString(s.storedName(m))
 		case 'g':
 			b.WriteString(hex.EncodeToString(m.GUID[:]))
 		case 'm':
-			h := md5.Sum([]byte(m.Filename))
+			h := md5.Sum([]byte(s.storedName(m)))
 			b.WriteString(hex.EncodeToString(h[:]))
 		default:
 			b.WriteByte('%')
@@ -806,6 +826,17 @@ func appendFlag(flags []string, flag string) []string {
 	copy(out, flags)
 	out[len(flags)] = flag
 	return out
+}
+
+// hasFlagFold matches the way appendFlag and removeFlag compare: a flag name is
+// case-insensitive.
+func hasFlagFold(flags []string, flag string) bool {
+	for _, f := range flags {
+		if strings.EqualFold(f, flag) {
+			return true
+		}
+	}
+	return false
 }
 
 func removeFlag(flags []string, flag string) []string {
@@ -898,10 +929,10 @@ func (s *session) cmdList(arg string) {
 // fetchINBOX reads a message body and flags the folder for a reactive heal if
 // the read tripped over corrupt sdbox storage (missing/truncated/bad file).
 func (s *session) fetchINBOX(m *mailbox.MessageMeta) (io.ReadCloser, error) {
-	rc, err := s.box.Fetch("INBOX", m.Filename, m.AltTier)
+	rc, err := s.box.OpenMessage("INBOX", m)
 	// flag once per session: one mark heals every missing record on the
 	// next open, so a RETR loop over a corrupt mailbox pays no per-message cost
-	if err != nil && !s.markedCorrupt && mailbox.MarkCorruptOnFetchErr(s.box, s.idx, "INBOX", err) {
+	if err != nil && !s.markedCorrupt && s.box.MarkCorruptOnFetchErr("INBOX", err) {
 		s.markedCorrupt = true
 	}
 	return rc, err
@@ -944,23 +975,13 @@ func (s *session) cmdDele(arg string) {
 
 func (s *session) cmdRset() {
 	tRset := time.Now()
+	// The session's own reads are forgotten either way; the mailbox-wide clear
+	// belongs to LAST, which has to report zero after a reset.
+	for i := range s.seenMsgs {
+		s.seenMsgs[i] = false
+	}
 	if s.srv.opts.EnableLast {
-		for i, seen := range s.seenMsgs {
-			if !seen {
-				continue
-			}
-			m := s.msgs[i]
-			// The flags in hand are from the login snapshot, which for POP3 is
-			// the whole session old. Clear the one flag rather than declare the
-			// set, or every change another session made meanwhile is dropped
-			// (#1250).
-			if err := s.idx.RemoveFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
-				slog.Error("pop3: rset remove seen", "uid", m.UID, "err", err)
-			} else {
-				m.Flags = removeFlag(m.Flags, `\Seen`)
-			}
-			s.seenMsgs[i] = false
-		}
+		s.clearSeenForLast()
 		s.lastMsg = 0
 	}
 	for i := range s.deleted {
@@ -1027,17 +1048,14 @@ func (s *session) cmdLast() {
 // cmdQuit applies \Seen flags (unless NoFlagUpdates) and commits deletions.
 func (s *session) cmdQuit() {
 	tQuit := time.Now()
-	var seenCount, deletedCount int
+	var deletedCount int
+	// One batch for the session: \Seen for what was read, plus the deleted mark
+	// when deletion is a flag. A message being deleted is not marked read.
+	adds := make(map[uint32][]string, len(s.msgs))
 	if !s.srv.opts.NoFlagUpdates {
 		for i, seen := range s.seenMsgs {
 			if seen && !s.deleted[i] {
-				m := s.msgs[i]
-				if err := s.idx.AddFlags(s.folder.ID, m.UID, []string{`\Seen`}, nil); err != nil {
-					slog.Error("pop3: set seen", "uid", m.UID, "err", err)
-				} else {
-					m.Flags = appendFlag(m.Flags, `\Seen`)
-					seenCount++
-				}
+				adds[s.msgs[i].UID] = []string{`\Seen`}
 			}
 		}
 	}
@@ -1049,12 +1067,13 @@ func (s *session) cmdQuit() {
 				uidlMap[m.UID] = s.uidls[i]
 			}
 		}
-		if err := s.idx.SavePOP3UIDLs(s.folder.ID, uidlMap); err != nil {
+		if err := s.box.SavePOP3UIDLs(s.folder.ID, uidlMap); err != nil {
 			slog.Warn("pop3: save uidls", "user", s.userInfo.Username, "err", err)
 		}
 	}
 
 	var errCount int
+	var flags flagBatchResult
 	if s.srv.opts.DeleteType == "flag" {
 		deletedFlag := s.srv.opts.DeletedFlag
 		if deletedFlag == "" {
@@ -1064,15 +1083,12 @@ func (s *session) cmdQuit() {
 			if !del {
 				continue
 			}
-			m := s.msgs[i]
-			if err := s.idx.AddFlags(s.folder.ID, m.UID, []string{deletedFlag}, nil); err != nil {
-				slog.Error("pop3: flag deleted", "uid", m.UID, "err", err)
-				errCount++
-			} else {
-				deletedCount++
-			}
+			adds[s.msgs[i].UID] = append(adds[s.msgs[i].UID], deletedFlag)
+			deletedCount++
 		}
+		flags = s.writeFlagBatch(adds)
 	} else {
+		flags = s.writeFlagBatch(adds)
 		for _, del := range s.deleted {
 			if del {
 				deletedCount++
@@ -1087,7 +1103,8 @@ func (s *session) cmdQuit() {
 
 	slog.Debug("pop3: quit timing",
 		"user", s.userInfo.Username,
-		"seen_updates", seenCount, "deleted", deletedCount,
+		"seen_updates", flags.applied, "deleted", deletedCount,
+		"index_refused", flags.indexRefused, "store_refused", flags.storeRefused,
 		"total_ms", time.Since(tQuit).Milliseconds())
 
 	if errCount > 0 {
@@ -1098,55 +1115,113 @@ func (s *session) cmdQuit() {
 	s.state = stateDone
 }
 
-func (s *session) expungeDeleted() int {
-	if s.srv.opts.Locker != nil && s.userInfo != nil {
-		var errCount int
-		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
-		owner := fmt.Sprintf("yarilo-pop3/%d/%s", os.Getpid(), s.userInfo.Username)
-		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-		defer cancel()
-		lk, err := locks.Acquire(ctx, s.srv.opts.Locker, key, owner, 30*time.Second)
-		if err != nil {
-			slog.Error("pop3: outer lock failed; falling back to per-message", "err", err)
-			return s.expungeDeletedPerMessage()
-		}
-		defer func() { _ = s.srv.opts.Locker.Unlock(ctx, lk.ID) }()
-		// withMailboxLock sees HoldsResource and skips re-acquiring:
-		// the whole batch runs under one X lock
-		for i, m := range s.msgs {
-			if !s.deleted[i] {
-				continue
-			}
-			if rerr := s.box.Remove("INBOX", m.Filename); rerr != nil {
-				slog.Error("pop3: remove", "uid", m.UID, "err", rerr)
-				errCount++
-				continue
-			}
-			s.idx.ExpungeMessage(s.folder.ID, m.UID) //nolint:errcheck
-			// best-effort EXPUNGED event so IMAP IDLE on sibling pods wakes up
-			_ = s.srv.opts.Locker.Emit(ctx, key, locks.EventExpunged, strconv.FormatUint(uint64(m.UID), 10))
-		}
-		return errCount
-	}
-	return s.expungeDeletedPerMessage()
+// flagBatchResult is what one settling pass did: what landed, and which half
+// refused the rest -- the store's refusal is the case #1780 is about.
+type flagBatchResult struct {
+	applied      int
+	indexRefused int
+	storeRefused int
 }
 
-// expungeDeletedPerMessage is used when no Locker is wired (single-process
-// dev, tests); each storage call takes its own X lock.
-func (s *session) expungeDeletedPerMessage() int {
-	var errCount int
-	for i, m := range s.msgs {
-		if !s.deleted[i] {
+// writeFlagBatch settles the session's flag changes: the index takes each, the
+// store takes them all at once -- one folder lock, and the name carries it (#1780).
+func (s *session) writeFlagBatch(adds map[uint32][]string) flagBatchResult {
+	var res flagBatchResult
+	if len(adds) == 0 {
+		return res
+	}
+	writes := make([]mailbox.FlagWrite, 0, len(adds))
+	failed := make([]uint32, 0)
+	for _, m := range s.msgs {
+		add, ok := adds[m.UID]
+		if !ok {
 			continue
 		}
-		if err := s.box.Remove("INBOX", m.Filename); err != nil {
-			slog.Error("pop3: remove", "uid", m.UID, "err", err)
-			errCount++
-		} else {
-			s.idx.ExpungeMessage(s.folder.ID, m.UID) //nolint:errcheck
+		if err := s.box.UpdateFlags(s.folder.ID, m.UID, mailbox.FlagsUpdate{Mode: mailbox.FlagsAdd, Flags: add}); err != nil {
+			failed = append(failed, m.UID)
+			continue
+		}
+		for _, f := range add {
+			m.Flags = appendFlag(m.Flags, f)
+		}
+		res.applied++
+		name, err := s.box.MessagePath("INBOX", m)
+		if err != nil || name == "" {
+			continue
+		}
+		writes = append(writes, mailbox.FlagWrite{
+			UID: m.UID, Filename: name, Flags: m.Flags, Keywords: m.Keywords,
+		})
+	}
+	stored := s.box.WriteFlags(s.folder, "INBOX", writes)
+	res.indexRefused, res.storeRefused = s.reportFlagFailures("pop3: flags not recorded", failed, stored)
+	return res
+}
+
+// reportFlagFailures names both halves in one line: what the index refused and
+// what the store did not take, the second being the case #1780 is about.
+func (s *session) reportFlagFailures(msg string, index []uint32, stored []mailbox.FlagWriteResult) (indexRefused, storeRefused int) {
+	notStored := make([]uint32, 0, len(stored))
+	for _, res := range stored {
+		if res.Err != nil {
+			notStored = append(notStored, res.UID)
 		}
 	}
-	return errCount
+	if len(index) == 0 && len(notStored) == 0 {
+		return 0, 0
+	}
+	slog.Error(msg, "user", s.userInfo.Username,
+		"index_refused", index, "store_refused", notStored,
+		"count", len(index)+len(notStored))
+	return len(index), len(notStored)
+}
+
+// clearSeenForLast drops \Seen from the whole mailbox, which is what LAST after
+// RSET has to report zero (RFC 1460). Under pop3_enable_last only.
+func (s *session) clearSeenForLast() {
+	writes := make([]mailbox.FlagWrite, 0, len(s.msgs))
+	failed := make([]uint32, 0)
+	for _, m := range s.msgs {
+		if !hasFlagFold(m.Flags, `\Seen`) {
+			continue
+		}
+		// Clear the one flag rather than declare the set: the snapshot in hand
+		// is a session old, and another writer's changes are not ours to drop (#1250).
+		if err := s.box.UpdateFlags(s.folder.ID, m.UID, mailbox.FlagsUpdate{Mode: mailbox.FlagsRemove, Flags: []string{`\Seen`}}); err != nil {
+			failed = append(failed, m.UID)
+			continue
+		}
+		m.Flags = removeFlag(m.Flags, `\Seen`)
+		name, err := s.box.MessagePath("INBOX", m)
+		if err != nil || name == "" {
+			continue
+		}
+		writes = append(writes, mailbox.FlagWrite{
+			UID: m.UID, Filename: name, Flags: m.Flags, Keywords: m.Keywords,
+		})
+	}
+	stored := s.box.WriteFlags(s.folder, "INBOX", writes)
+	s.reportFlagFailures("pop3: seen not cleared", failed, stored)
+}
+
+func (s *session) expungeDeleted() int {
+	marked := make([]*mailbox.MessageMeta, 0, len(s.msgs))
+	for i, m := range s.msgs {
+		if s.deleted[i] {
+			marked = append(marked, m)
+		}
+	}
+	removed, failed, _ := s.box.ExpungeMarked(s.folder, "INBOX", marked)
+	if s.srv.opts.Locker != nil && s.userInfo != nil {
+		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, m := range removed {
+			// Best-effort: an IDLE session on a sibling pod wakes on this.
+			_ = s.srv.opts.Locker.Emit(ctx, key, locks.EventExpunged, strconv.FormatUint(uint64(m.UID), 10))
+		}
+	}
+	return failed
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -1192,22 +1267,22 @@ func (s *session) releaseLock() {
 		os.Remove(s.sessionLockFile) //nolint:errcheck
 		s.sessionLockFile = ""
 	}
-	if s.lockKey != "" {
-		s.srv.unlock(s.lockKey)
-		s.lockKey = ""
-	}
-	if s.limitIP != "" && s.srv.opts.ConnLimit != nil && s.userInfo != nil {
-		s.srv.opts.ConnLimit.Release(s.userInfo.Username, s.limitIP)
-		s.limitIP = ""
+	if s.userInfo != nil {
+		s.releaseConnLimit(s.userInfo.Username)
 	}
 	if s.box != nil {
-		s.box.Close() //nolint:errcheck
+		s.box.Close()
 		s.box = nil
 	}
-	if s.idx != nil {
-		s.idx.Close() //nolint:errcheck
-		s.idx = nil
+}
+
+// releaseConnLimit gives back the per-user@IP slot this session took.
+func (s *session) releaseConnLimit(username string) {
+	if s.limitIP == "" || s.srv.opts.ConnLimit == nil {
+		return
 	}
+	s.srv.opts.ConnLimit.Release(username, s.limitIP)
+	s.limitIP = ""
 }
 
 // acquireDotlock creates $HOME/yarilo-pop3-session.lock. A lock older than
@@ -1269,7 +1344,7 @@ func (s *session) badCmd() {
 }
 
 func (s *session) readLine() (string, error) {
-	line, err := s.br.ReadString('\n')
+	line, err := lineio.ReadLine(s.br, lineio.MaxClient)
 	if err != nil {
 		return "", err
 	}
@@ -1338,19 +1413,4 @@ func writeDotLines(w io.Writer, data []byte) {
 		w.Write(line)           //nolint:errcheck
 		w.Write([]byte("\r\n")) //nolint:errcheck
 	}
-}
-
-// unlockedReader is the optional capability an index has when its files can
-// prove their own freshness (see internal/storage/index/file). A read that only
-// answers this session skips the cross-process lock; a read whose answer
-// decides a write does not.
-type unlockedReader interface {
-	GetPOP3UIDLsUnlocked(folderID uint64) (map[uint32]string, error)
-}
-
-func readPOP3UIDLs(idx mailbox.UserIndex, folderID uint64) (map[uint32]string, error) {
-	if u, ok := idx.(unlockedReader); ok {
-		return u.GetPOP3UIDLsUnlocked(folderID)
-	}
-	return idx.GetPOP3UIDLs(folderID)
 }

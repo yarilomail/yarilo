@@ -46,7 +46,7 @@ func TestStateCacheDoesNotCrossAccounts(t *testing.T) {
 		return base(name)
 	}
 
-	first, err := s.opts.Storage.open(testUser)
+	first, err := s.opts.Storage.open(testUser, "test-session")
 	if err != nil {
 		t.Fatalf("open first: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestStateCacheDoesNotCrossAccounts(t *testing.T) {
 		t.Fatalf("state of the first account: %v", err)
 	}
 
-	second, err := s.opts.Storage.open(otherUser)
+	second, err := s.opts.Storage.open(otherUser, "test-session")
 	if err != nil {
 		t.Fatalf("open second: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestStateCacheDoesNotCrossAccounts(t *testing.T) {
 	if err := second.box.Init(); err != nil {
 		t.Fatalf("init second: %v", err)
 	}
-	if _, err := second.idx.OpenFolder("INBOX", 0); err != nil {
+	if _, err := second.index().OpenFolder("INBOX", 0); err != nil {
 		t.Fatalf("open second INBOX: %v", err)
 	}
 	secondState, err := s.emailState(second)
@@ -105,7 +105,7 @@ func TestStateCacheInvalidatesOnAShrunkLog(t *testing.T) {
 func TestStateCacheInvalidatesWhenTheLogShrinks(t *testing.T) {
 	s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
 
-	warm, err := s.opts.Storage.open(testUser)
+	warm, err := s.opts.Storage.open(testUser, "test-session")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestStateCacheInvalidatesWhenTheLogShrinks(t *testing.T) {
 		t.Fatalf("folder marks: %v %v", marks, err)
 	}
 	// A change, so the log carries something, then the fold that takes it away.
-	if _, err := warm.idx.UpdateFlagsMulti(marks[0].folder.ID, map[uint32]mailbox.FlagsUpdate{
+	if _, err := writeFlagBatch(warm.mbox, marks[0].folder.ID, map[uint32]mailbox.FlagsUpdate{
 		1: {Mode: mailbox.FlagsAdd, Keywords: []string{"$cachetest"}},
 	}); err != nil {
 		t.Fatalf("store: %v", err)
@@ -130,14 +130,14 @@ func TestStateCacheInvalidatesWhenTheLogShrinks(t *testing.T) {
 	if changed == before {
 		t.Fatal("the state did not move after a write; the cache served a stale marker")
 	}
-	if err := warm.idx.OptimizeIndex(marks[0].folder.ID); err != nil {
+	if err := warm.index().OptimizeIndex(marks[0].folder.ID); err != nil {
 		t.Fatalf("optimize: %v", err)
 	}
 	warm.close()
 
 	// A fresh handle, as a later request gets. The fold rewrote the base and
 	// truncated the log: the marker must be recomputed, not served.
-	after, err := s.opts.Storage.open(testUser)
+	after, err := s.opts.Storage.open(testUser, "test-session")
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestStateCacheInvalidatesWhenTheLogShrinks(t *testing.T) {
 	// before it; what must not happen is a state built from the pre-fold entry
 	// without checking. That is asserted by rebuilding from a cold read and
 	// comparing.
-	cold, err := s.opts.Storage.open(testUser)
+	cold, err := s.opts.Storage.open(testUser, "test-session")
 	if err != nil {
 		t.Fatalf("cold open: %v", err)
 	}

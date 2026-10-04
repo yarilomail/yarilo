@@ -24,8 +24,13 @@ func regEntry(id mailbox.Identifier, rights string, neg bool) ListEntry {
 	return ListEntry{Mailbox: "INBOX", Identifier: id, Rights: mailbox.Rights(rights), Negative: neg}
 }
 
+// These rows assert what the registry projects, which is a question about the
+// rows in the dict. The interval in front of the read is a separate property
+// with its own rows (ownercache_test.go), so it is dropped here rather than
+// slept through.
 func ownersOf(t *testing.T, d dict.Dict, user string, groups ...string) []string {
 	t.Helper()
+	InvalidateAll()
 	owners, err := OwnersFor(context.Background(), d, user, groups)
 	if err != nil {
 		t.Fatal(err)

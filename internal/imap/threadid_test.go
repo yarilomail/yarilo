@@ -8,9 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -36,7 +39,7 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo("user@test.com", "")
+	info, _ := resolver.UserInfo("user@test.com", "")
 
 	mb, idx := maildir.New(), fileindex.New()
 	box := mb.OpenUser(info)
@@ -56,7 +59,7 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 	var ids []string
 	for i, raw := range raws {
 		uid := uint32(i + 1)
-		name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), uid, int64(len(raw)), nil, [16]byte{})
+		name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), uid, int64(len(raw)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -64,10 +67,15 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 		if err != nil {
 			t.Fatalf("open folder: %v", err)
 		}
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(raw)), VSize: vsize,
+		meta := &mailbox.MessageMeta{
+			UID: uid, Size: uint32(len(raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Now(),
-		}); err != nil {
+		}
+		if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = guid
+		if err := ui.AppendMessage(f.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 		if withSidecar {
@@ -81,10 +89,10 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 	box.Close() //nolint:errcheck
 
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    fileindex.New(),
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     fileindex.New(),
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	}
 	if withSidecar {
 		opts.Threads = cache

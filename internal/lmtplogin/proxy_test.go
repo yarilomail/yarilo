@@ -48,6 +48,11 @@ func TestRcptUsername(t *testing.T) {
 // overrides the session's static tag; a user with no field, or any lookup
 // failure, falls back to "" so the caller uses the component's static
 // DirectorTag instead.
+func userTag(s *session, username string) string {
+	tag, _, _ := s.userFields(username)
+	return tag
+}
+
 func TestResolveDirectorTag(t *testing.T) {
 	authAddr := startTestAuthWithUserdb(t, fakeUserdb{
 		"alice@example.com": {Username: "alice@example.com", DirectorTag: "b"},
@@ -56,19 +61,19 @@ func TestResolveDirectorTag(t *testing.T) {
 
 	s := &session{opts: Options{AuthMasterAddr: authAddr}}
 
-	if got := s.resolveDirectorTag("alice@example.com"); got != "b" {
+	if got := userTag(s, "alice@example.com"); got != "b" {
 		t.Errorf("alice: resolveDirectorTag = %q, want %q", got, "b")
 	}
-	if got := s.resolveDirectorTag("bob@example.com"); got != "" {
+	if got := userTag(s, "bob@example.com"); got != "" {
 		t.Errorf("bob (no override): resolveDirectorTag = %q, want %q", got, "")
 	}
-	if got := s.resolveDirectorTag("carol@example.com"); got != "" {
+	if got := userTag(s, "carol@example.com"); got != "" {
 		t.Errorf("carol (unknown user): resolveDirectorTag = %q, want %q", got, "")
 	}
 
 	// AuthMasterAddr unset — must not attempt a dial, just return "".
 	s2 := &session{opts: Options{}}
-	if got := s2.resolveDirectorTag("alice@example.com"); got != "" {
+	if got := userTag(s2, "alice@example.com"); got != "" {
 		t.Errorf("no AuthMasterAddr: resolveDirectorTag = %q, want %q", got, "")
 	}
 }
@@ -744,7 +749,7 @@ func TestResolveBackend_BackendAddrWinsPrecedence(t *testing.T) {
 		BackendAddr:  "10.0.0.9:24",
 		DirectorAddr: "127.0.0.1:1", // nothing listens here; a dial would fail
 	}}
-	addr, err := s.resolveBackend("user@example.com")
+	addr, err := s.resolveBackend("user@example.com", "")
 	if err != nil {
 		t.Fatalf("resolveBackend: unexpected error (should not have dialled director): %v", err)
 	}

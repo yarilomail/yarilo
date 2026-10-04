@@ -56,7 +56,7 @@ func (s *stubService) Prepend(string, fts.MailboxRef, uint32) error {
 	s.lastCmd = "prepend"
 	return nil
 }
-func (s *stubService) Expunge(string, fts.MailboxRef, uint32) error {
+func (s *stubService) Expunge(string, fts.MailboxRef, uint32, [16]byte) error {
 	s.lastCmd = "expunge"
 	return nil
 }
@@ -71,6 +71,10 @@ func (s *stubService) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 func (s *stubService) Rescan(string, fts.MailboxRef) error {
 	s.lastCmd = "rescan"
 	return nil
+}
+func (s *stubService) RescanUser(user string) ([]string, error) {
+	s.lastCmd = "rescanuser"
+	return []string{"INBOX", "Archive"}, nil
 }
 func (s *stubService) Optimize(string) error {
 	s.lastCmd = "optimize"
@@ -88,11 +92,13 @@ func TestDispatch(t *testing.T) {
 		wantPfx string
 		wantCmd string
 	}{
-		{"handshake", "VERSION\t1", "VERSION\t1\tOK", ""},
+		{"handshake", "VERSION\t2", "VERSION\t2\tOK", ""},
 		{"handshake bad version", "VERSION\t9", "NO\t", ""},
 		{"index", "INDEX\tu@x\tINBOX\tg1\t1\t10\t0", "OK", "index"},
 		{"prepend", "PREPEND\tu@x\tINBOX\tg1\t1\t10", "OK", "prepend"},
-		{"expunge", "EXPUNGE\tu@x\tINBOX\tg1\t1\t5", "OK", "expunge"},
+		{"expunge", "EXPUNGE\tu@x\tINBOX\tg1\t1\t5\t0102030405060708090a0b0c0d0e0f10", "OK", "expunge"},
+		// The form without a guid is refused, not carried out on a guess.
+		{"expunge without a message", "EXPUNGE\tu@x\tINBOX\tg1\t1\t5", "NO", ""},
 		{"lookup", "LOOKUP\tu@x\tINBOX\tg1\t1\t" + q, "OK\t", "lookup"},
 		{"status", "STATUS\tu@x\tINBOX\tg1\t1", "OK\t42\t7", "status"},
 		{"rescan", "RESCAN\tu@x\tINBOX\tg1\t1", "OK", "rescan"},
@@ -113,4 +119,12 @@ func TestDispatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (s *stubService) Counts(string) (uint64, uint64, uint64, uint64, error) { return 0, 0, 0, 0, nil }
+
+func (s *stubService) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (s *stubService) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
 }

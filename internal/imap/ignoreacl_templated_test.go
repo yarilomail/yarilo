@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -39,7 +41,7 @@ func startIgnoreACLServer(t *testing.T) (root, addr string) {
 		Mailbox:      maildir.New(),
 		Index:        file.New(),
 		Resolver:     &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:         &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}},
+		AuthRelay:    authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}}),
 		ACLEnabled:   true,
 		UserdbLookup: lookup,
 		Namespaces: []imapserver.NamespaceSpec{

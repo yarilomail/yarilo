@@ -1,0 +1,446 @@
+package maildir
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
+
+func listingCounts(t *testing.T) (whole, tail, byName, misses float64) {
+	t.Helper()
+	return testutil.ToFloat64(metricUIDListRead.WithLabelValues("whole")),
+		testutil.ToFloat64(metricUIDListRead.WithLabelValues("tail")),
+		testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")),
+		testutil.ToFloat64(metricListingMiss.WithLabelValues("no-listing"))
+}
+
+// The two reads a name costs are counted apart, with the reason for the miss:
+// "one read per login" and "one per FETCH" are otherwise one number (#1875).
+func TestANameLookupCountsItsReads(t *testing.T) {
+	u, _ := item1Folder(t, 5)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+
+	whole0, tail0, name0, miss0 := listingCounts(t)
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	whole1, tail1, name1, miss1 := listingCounts(t)
+
+	if name1 != name0+1 {
+		t.Errorf("cur/ reads = %v, want one more than %v", name1, name0)
+	}
+	if miss1 != miss0+1 {
+		t.Errorf("no-listing misses = %v, want one more than %v", miss1, miss0)
+	}
+	if whole1 != whole0 || tail1 != tail0 {
+		t.Errorf("naming a file read the list: whole %v->%v tail %v->%v", whole0, whole1, tail0, tail1)
+	}
+
+	// The second lookup uses the listing it just read, and counts nothing.
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, name2, miss2 := listingCounts(t); name2 != name1 || miss2 != miss1 {
+		t.Errorf("the second lookup read again: dir %v->%v miss %v->%v", name1, name2, miss1, miss2)
+	}
+}
+
+// A directory that changed under the listing is a different miss from having
+// no listing at all, and the stand is meant to tell them apart.
+func TestAChangedDirectoryIsAStaleMiss(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000001.M1P1.host,S=20,W=20:2,"
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+
+	was := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime"))
+	// Somebody else's file, which moves cur/'s mtime.
+	other := filepath.Join(home, "Maildir", "cur", "1700000090.M90P1.host,S=20,W=20:2,")
+	if err := os.WriteFile(other, []byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime")); now != was+1 {
+		t.Errorf("stale-mtime misses = %v, want %v", now, was+1)
+	}
+}
+
+// Every check of a cache costs a stat, and the number is what says whether
+// the check belongs per message or per folder open (#1875).
+func TestANameLookupCountsItsStats(t *testing.T) {
+	u, _ := item1Folder(t, 4)
+	dir0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir"))
+	list0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list"))
+	if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 2}); err != nil {
+		t.Fatal(err)
+	}
+	dir1 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir")) - dir0
+	list1 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list")) - list0
+
+	if dir1 < 1 {
+		t.Errorf("naming a message stated cur/ %v times, want at least one", dir1)
+	}
+	if list1 < 1 {
+		t.Errorf("naming a message stated the list %v times, want at least one", list1)
+	}
+	t.Logf("one RecordPath costs stat(dir)=%v stat(list)=%v", dir1, list1)
+}
+
+// Inside the window a walk earns, a lookup asks the list no questions: the
+// three stats a name cost are two fewer, and the listing keeps its own check.
+func TestAWalkEarnsTheListWindow(t *testing.T) {
+	u, _ := item1Folder(t, 4)
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	u.folderCacheFor("INBOX").markChecked()
+
+	list0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list"))
+	dir0 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir"))
+	for uid := uint32(1); uid <= 3; uid++ {
+		if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: uid}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list1 := testutil.ToFloat64(metricCacheStat.WithLabelValues("list")) - list0
+	dir1 := testutil.ToFloat64(metricCacheStat.WithLabelValues("dir")) - dir0
+
+	if list1 != 0 {
+		t.Errorf("three lookups stated the list %v times inside the window, want 0", list1)
+	}
+	if dir1 != 3 {
+		t.Errorf("the listing was checked %v times, want one per lookup", dir1)
+	}
+}
+
+// What the window does not cover: a name that moved after the walk is still
+// found, because the listing is checked on every lookup (#1800).
+func TestANameThatMovedIsStillFound(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	u.folderCacheFor("INBOX").markChecked()
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+
+	cur := filepath.Join(home, "Maildir", "cur")
+	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, base+"S")); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := u.currentName("INBOX", maildirBase(base))
+	if err != nil {
+		t.Fatalf("the moved name is not findable: %v", err)
+	}
+	if got != base+"S" {
+		t.Errorf("currentName says %q, the file is %q", got, base+"S")
+	}
+}
+
+// A walk keeps the listing of a directory that has just changed: the name that
+// moved inside that tick is answered by the re-sync a miss earns (#1987).
+func TestAWalkKeepsTheListingOfAChangedDirectory(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	cur := filepath.Join(home, "Maildir", "cur")
+	// Written now, so cur/ has just changed.
+	if err := os.WriteFile(filepath.Join(cur, "1700000050.M50P1.host,S=20,W=20:2,"),
+		[]byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	c := u.folderCacheFor("INBOX")
+	c.mu.Lock()
+	kept := c.entries != nil
+	c.mu.Unlock()
+	if !kept {
+		t.Error("the walk kept no listing, so every lookup after it reads cur/ again")
+	}
+}
+
+// Our own write is a name we know, so it goes into the listing instead of
+// closing the window a walk earned (#1875).
+func TestOurOwnSaveKeepsTheWindow(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	// A folder that has stood still, so the walk keeps its listing: a walk
+	// over a directory that just changed keeps none (#1797).
+	cur := filepath.Join(home, "Maildir", "cur")
+	old := time.Now().Add(-2 * dirSettleWindow)
+	if err := os.Chtimes(cur, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.Scan("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	c := u.folderCacheFor("INBOX")
+	c.markChecked()
+	own := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write"))
+
+	// Through the save path, so the publish runs: a file placed into cur/ by
+	// hand never goes through it.
+	name, _, _, err := u.Save("INBOX", strings.NewReader("From: a@b\r\n\r\nx\r\n"), 0, 0, []string{`\Seen`}, nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.AssignUID("INBOX", name, 70); err != nil {
+		t.Fatal(err)
+	}
+	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != own {
+		t.Errorf("our own save closed the window %v times, want 0", now-own)
+	}
+	if _, open := c.snapshotChecked(); !open {
+		t.Error("the window a walk earned is shut after our own save")
+	}
+
+	// And the name it wrote is findable from the listing it kept, without a
+	// read of cur/.
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	got, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 70})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != name {
+		t.Errorf("the record names %q, the save wrote %q", got, name)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads {
+		t.Errorf("naming our own save read cur/ %v times, want none", now-reads)
+	}
+}
+
+// Somebody else's write is not a name we know: it moves cur/'s mtime, and the
+// listing keyed by the old one is not served.
+func TestAForeignAppendClosesTheWindow(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	was := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime"))
+	other := filepath.Join(home, "Maildir", "cur", "1700000091.M91P9.host,S=20,W=20:2,")
+	if err := os.WriteFile(other, []byte("From: a@b\r\n\r\nx\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	if now := testutil.ToFloat64(metricListingMiss.WithLabelValues("stale-mtime")); now != was+1 {
+		t.Errorf("stale-mtime misses = %v, want %v", now, was+1)
+	}
+}
+
+// A window that is already shut is not shut twice: the number is windows lost,
+// not calls made.
+func TestAClosedWindowIsNotClosedAgain(t *testing.T) {
+	u, _ := item1Folder(t, 3)
+	c := u.folderCacheFor("INBOX")
+	c.markChecked()
+	c.invalidateDir("own-write")
+	again := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write"))
+	c.invalidateDir("own-write")
+	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != again {
+		t.Errorf("a closed window was counted again: %v -> %v", again, now)
+	}
+}
+
+// The re-sync a miss earns: a name another session moved inside the tick the
+// listing is keyed by opens on the second attempt (as the reference does).
+func TestAnOpenOfAMovedNameIsRetried(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	cur := filepath.Join(home, "Maildir", "cur")
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	// The listing is cached now. Move the file and put cur/ back to the mtime
+	// that listing is keyed by: this is what a same-tick change looks like.
+	fi, err := statPath(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, base+"S")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cur, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("path"))
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	rc, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2})
+	if err != nil {
+		t.Fatalf("a name that moved inside the tick did not open: %v", err)
+	}
+	_ = rc.Close()
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("path")); now != was+1 {
+		t.Errorf("retried misses = %v, want %v", now, was+1)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads+1 {
+		t.Errorf("the retry read cur/ %v times, want one", now-reads)
+	}
+}
+
+// A record whose file is really gone costs one re-sync and then answers, not a
+// directory read for as long as the caller keeps asking.
+func TestAGoneRecordIsRetriedOnce(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	cur := filepath.Join(home, "Maildir", "cur")
+	if _, _, err := u.currentName("INBOX", maildirBase(base)); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := statPath(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(cur, base)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cur, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	if _, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2}); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a gone record answers %v, want a not-exist error", err)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads+1 {
+		t.Errorf("the open read cur/ %v times, want exactly one retry", now-reads)
+	}
+}
+
+// The retry belongs to the miss: an open that finds its file reads no
+// directory a second time.
+func TestAnOpenThatFindsItsFileDoesNotRelist(t *testing.T) {
+	u, _ := item1Folder(t, 3)
+	if _, _, err := u.currentName("INBOX", maildirBase("1700000002.M2P1.host,S=20,W=20:2,")); err != nil {
+		t.Fatal(err)
+	}
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("path"))
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	rc, err := u.OpenRecord("INBOX", &mailbox.MessageMeta{UID: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rc.Close()
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("path")); now != was {
+		t.Errorf("a hit counted %v retries", now-was)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads {
+		t.Errorf("a hit read cur/ %v times, want none", now-reads)
+	}
+}
+
+// A flag write takes its name from the listing too: a name that moved inside
+// the tick is renamed on the second attempt, never on the name that is gone.
+func TestFlagsFollowANameThatMovedInsideTheTick(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	cur := filepath.Join(home, "Maildir", "cur")
+	name, _, err := u.currentName("INBOX", maildirBase(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Somebody else gives it a flag and puts cur/ back to the mtime the
+	// listing is keyed by: the cache cannot tell that from our own write.
+	fi, err := statPath(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := base + "S"
+	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, moved)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cur, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("rename"))
+	got, err := u.WriteFlags("INBOX", name, []string{`\Answered`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == name {
+		t.Fatalf("the flag write answered the name it was given, %q, which is gone", name)
+	}
+	if _, serr := lstatPath(filepath.Join(cur, got)); serr != nil {
+		t.Errorf("the flag write names %q, which is not there: %v", got, serr)
+	}
+	if !strings.Contains(got, "S") {
+		t.Errorf("the flags landed on %q, losing the flag the other session set", got)
+	}
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("rename")); now != was+1 {
+		t.Errorf("rename retries = %v, want %v", now, was+1)
+	}
+}
+
+// The boundary in one line: the pass that decides the truth reads the
+// directory, and the lookup after it is served from what that pass read.
+func TestAPassLeavesTheListingForTheLookups(t *testing.T) {
+	u, _ := item1Folder(t, 3)
+	if _, err := u.List("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	u.folderCacheFor("INBOX").markChecked()
+	reads := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name"))
+	scans := testutil.ToFloat64(metricDirRead.WithLabelValues("scan"))
+	for uid := uint32(1); uid <= 3; uid++ {
+		if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: uid}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("current-name")); now != reads {
+		t.Errorf("three lookups after a pass read cur/ %v times, want none", now-reads)
+	}
+	if now := testutil.ToFloat64(metricDirRead.WithLabelValues("scan")); now != scans {
+		t.Errorf("a lookup counted %v passes, so the arm cannot read passes from the counter", now-scans)
+	}
+}
+
+// A name off the cached listing is checked before it leaves the driver: every
+// consumer outside it acts on what RecordPath answers.
+func TestRecordPathAnswersTheNameOnDisk(t *testing.T) {
+	u, home := item1Folder(t, 3)
+	const base = "1700000002.M2P1.host,S=20,W=20:2,"
+	cur := filepath.Join(home, "Maildir", "cur")
+	if _, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 2}); err != nil {
+		t.Fatal(err)
+	}
+	// Another session gives it a flag, inside the tick the listing is keyed by.
+	fi, err := statPath(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := base + "S"
+	if err := os.Rename(filepath.Join(cur, base), filepath.Join(cur, moved)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(cur, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	was := testutil.ToFloat64(metricListingRetry.WithLabelValues("path"))
+	got, err := u.RecordPath("INBOX", &mailbox.MessageMeta{UID: 2})
+	if err != nil {
+		t.Fatalf("the record has no name after the move: %v", err)
+	}
+	if got != moved {
+		t.Errorf("RecordPath answers %q, the file is %q", got, moved)
+	}
+	if now := testutil.ToFloat64(metricListingRetry.WithLabelValues("path")); now != was+1 {
+		t.Errorf("path retries = %v, want %v", now, was+1)
+	}
+}

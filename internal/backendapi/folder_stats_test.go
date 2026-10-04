@@ -11,6 +11,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -22,7 +23,7 @@ func statsServer(t *testing.T, be mailbox.MailboxBackend) (*httptest.Server, str
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 	const user = "alice@example.com"
 
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := be.OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatalf("init: %v", err)
@@ -30,7 +31,7 @@ func statsServer(t *testing.T, be mailbox.MailboxBackend) (*httptest.Server, str
 	idx := file.New()
 	ui := idx.OpenUser(info)
 	raw := "Subject: t\r\n\r\nbody\r\n"
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -38,9 +39,11 @@ func statsServer(t *testing.T, be mailbox.MailboxBackend) (*httptest.Server, str
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
-	}); err != nil {
+	meta := &mailbox.MessageMeta{UID: 1, Size: uint32(len(raw)), VSize: vsize, GUID: guid}
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := ui.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	_ = ui.Close()

@@ -60,7 +60,7 @@ func TestEveryDriverRefusesNamesOutsideTheMailbox(t *testing.T) {
 					t.Errorf("Create(%q) was accepted", name)
 				}
 				msg := "From: a@b\r\n\r\nplanted\r\n"
-				if _, _, _, err := u.Save(name, strings.NewReader(msg), 1, int64(len(msg)), nil, [16]byte{}); err == nil {
+				if _, _, _, err := u.Save(name, strings.NewReader(msg), 1, int64(len(msg)), nil, nil, [16]byte{}); err == nil {
 					t.Errorf("Save(%q) was accepted — this is the Sieve fileinto path", name)
 				}
 				if err := u.Delete(name); err == nil {
@@ -98,7 +98,7 @@ func TestOrdinaryFolderStillWorksOnEveryDriver(t *testing.T) {
 				t.Fatalf("Create(Archive): %v", err)
 			}
 			msg := "From: a@b\r\n\r\nhello\r\n"
-			if _, _, _, err := u.Save("Archive", strings.NewReader(msg), 1, int64(len(msg)), nil, [16]byte{}); err != nil {
+			if _, _, _, err := u.Save("Archive", strings.NewReader(msg), 1, int64(len(msg)), nil, nil, [16]byte{}); err != nil {
 				t.Errorf("Save(Archive): %v", err)
 			}
 			if err := u.Delete("Archive"); err != nil {

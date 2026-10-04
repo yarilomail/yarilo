@@ -10,14 +10,15 @@ spec:
     spec:
       restartPolicy: Never
       volumes:
-      # The backend admin API speaks mTLS; the quota consistency row needs a
-      # client certificate, not just the bearer token.
+      # Both admin APIs speak mTLS and accept only the admin role (#2132).
       - name: internal-tls
         secret:
-          secretName: yarilo-internal-tls
+          secretName: yarilo-admin-internal-tls
       containers:
       - name: smoketest
-        image: ghcr.io/yarilomail/yarilo:2.3.175
+        # Substituted by run.sh: a literal here rots at the next bump, and the
+        # last one pointed at a tag the registry no longer carried.
+        image: ghcr.io/yarilomail/yarilo:__IMAGE_TAG__
         volumeMounts:
         - name: internal-tls
           mountPath: /tls
@@ -29,6 +30,12 @@ spec:
           valueFrom:
             secretKeyRef:
               name: yarilo-director-api-token
+              key: token
+        # The backend admin API refuses a request without its token (HTTP 401).
+        - name: BACKEND_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: yarilo-backend-api-token
               key: token
         - name: YARILO_STATIC_PASSWORD
           valueFrom:
@@ -55,11 +62,28 @@ spec:
         - -imap-host=yarilo-imap-login
         - -lmtp-login-host=yarilo-lmtp-login
         - -imap-port=993
-        - -insecure=true
+        # The login itself: the host and port were given and the identity was
+        # not, so the row skipped on every run of this job (#1855).
+        # The submission path is on the stand since #1863; its backend is
+        # behind submission-login, which terminates TLS on 587.
+        - -smtp-sub
+        - -smtp-host=yarilo-submission-login
+        - -smtp-sub-port=587
+        - -imap-user=u1@d00001.test
+        - -imap-pass=Yarilo!test1
+        - -lmtp-login
+        # Certificates are verified: client-facing ones against the stand's
+        # public name, the admin APIs against the pinned internal name.
+        - -tls-server-name=mail-sb.seconddns.com
+        - -internal-server-name=yarilo-internal
         - -timeout=20s
         - -telemetry=http://yarilo-imap-login-telemetry:8080
         - -pop3s
         - -pop3s-port=995
+        # The maildrop cycle: STAT/LIST/RETR/UIDL and a deletion, on a message
+        # this run delivers and removes again (#1734).
+        - -pop3-user=u1@d00001.test
+        - -pop3-pass=Yarilo!test1
         - -managesieve
         - -managesieve-port=4190
         - -managesieve-user=u1@d00001.test
@@ -78,13 +102,34 @@ spec:
         - -static-pass=$(YARILO_STATIC_PASSWORD)
         - -quota-user=u1@d00001.test
         - -quota-pass=Yarilo!test1
+        # The MX runs in its own namespace: inbound mail is not this release's
+        # submission host, so it carries its own address (#1855).
+        - -smtp-mx
+        - -smtp-mx-host=relay-mx.yarilo-relay
+        - -smtp-mx-port=25
+        - -xclient
+        - -xclient-port=10024
+        - -proxy-protocol
+        - -proxy-protocol-port=10025
+        - -scram-user=scram@d00001.test
+        - -scram-pass=Yarilo!test1
+        - -quota-over-user=over@d00001.test
+        - -quota-over-pass=Yarilo!test1
         - -acl-user=u1@d00001.test
         - -acl-pass=Yarilo!test1
+        # The owner-templated namespace, not Public/: the owner creates in its
+        # own store and the peer reaches it through user/<owner>/ (#1858).
+        - -acl-peer-user=u2@d00001.test
+        - -acl-peer-pass=Yarilo!test1
+        - -acl-shared-prefix=user/u1@d00001.test/
         - -envelope-user=u1@d00001.test
         - -envelope-pass=Yarilo!test1
         - -fts-user=u1@d00001.test
         - -fts-pass=Yarilo!test1
-        - -director-api=http://yarilo-director-api:9103
+        # One account per storage driver, and the drivers are split by domain
+        # on this stand: d00001 mdbox, d00002 maildir, d00003 sdbox.
+        - -fts-copy-users=u1@d00001.test:Yarilo!test1,u51@d00002.test:Yarilo!test1,u101@d00003.test:Yarilo!test1
+        - -director-api=https://yarilo-director-api:9103
         # The service is yarilo-backend (not -backend-api) and 9105 is HTTPS.
         - -backend-api=https://yarilo-backend:9105
         - -backend-api-cert=/tls/tls.crt

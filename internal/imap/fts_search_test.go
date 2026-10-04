@@ -3,17 +3,22 @@ package imap_test
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -27,34 +32,76 @@ type fakeFTS struct {
 	lastUID   uint32
 	prepends  int
 	expunges  []uint32
-	indexes   []uint32
-	queries   []fts.Query
+	// expungedGUIDs is what each retraction named: the index retracts by the
+	// message, so an empty one is a caller that lost it (#1986).
+	expungedGUIDs [][16]byte
+	// droppedFolders is what DELETE retracted: a deleted mailbox that never
+	// reaches the index keeps its documents forever (#2022).
+	droppedFolders []string
+	indexes        []uint32
+	queries        []fts.Query
+	// jobFolders is every folder an index or prepend job was asked for: a
+	// virtual mailbox has nothing to read and must never be one of them.
+	jobFolders []string
+	// lookupIns records each search over a folder set; setHits and setMaybe
+	// are the uids each folder answers with, and only a folder asked answers.
+	lookupIns [][]string
+	setHits   map[string][]uint32
+	setMaybe  map[string][]uint32
+	// behind names folders whose checkpoint stays at zero: catch-up there
+	// does not complete, as for a folder the indexer has not reached.
+	behind map[string]bool
 	// stuck models a broken FTS backend that never advances its checkpoint, even
 	// after a PREPEND — the #629 failure mode.
 	stuck bool
 }
 
-func (f *fakeFTS) Index(_ string, _ fts.MailboxRef, maxUID uint32, _ int) error {
+func (f *fakeFTS) Index(_ string, m fts.MailboxRef, maxUID uint32, _ int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.indexes = append(f.indexes, maxUID)
+	f.jobFolders = append(f.jobFolders, m.Name)
 	return nil
 }
 
-func (f *fakeFTS) Prepend(_ string, _ fts.MailboxRef, maxUID uint32) error {
+func (f *fakeFTS) LookupIn(_ string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out fts.SetResult
+	names := make([]string, 0, len(folders))
+	for _, m := range folders {
+		names = append(names, m.Name)
+		for _, uid := range f.setHits[m.Name] {
+			out.Definite = append(out.Definite, fts.FolderHit{Folder: m.GUID, UID: uid})
+		}
+		for _, uid := range f.setMaybe[m.Name] {
+			out.Maybe = append(out.Maybe, fts.FolderHit{Folder: m.GUID, UID: uid})
+		}
+	}
+	f.lookupIns = append(f.lookupIns, names)
+	f.queries = append(f.queries, q)
+	return out, nil
+}
+
+func (f *fakeFTS) Prepend(_ string, m fts.MailboxRef, maxUID uint32) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepends++
+	f.jobFolders = append(f.jobFolders, m.Name)
+	if f.behind[m.Name] {
+		return nil
+	}
 	if !f.stuck {
 		f.lastUID = maxUID // catch-up completes on the next Status poll
 	}
 	return nil
 }
 
-func (f *fakeFTS) Expunge(_ string, _ fts.MailboxRef, uid uint32) error {
+func (f *fakeFTS) Expunge(_ string, _ fts.MailboxRef, uid uint32, guid [16]byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.expunges = append(f.expunges, uid)
+	f.expungedGUIDs = append(f.expungedGUIDs, guid)
 	return nil
 }
 
@@ -65,15 +112,27 @@ func (f *fakeFTS) Lookup(_ string, _ fts.MailboxRef, q fts.Query) (fts.Result, e
 	return f.lookup, f.lookupErr
 }
 
-func (f *fakeFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
+func (f *fakeFTS) Status(_ string, m fts.MailboxRef) (uint32, uint32, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.behind[m.Name] {
+		return 0, 1, nil
+	}
 	return f.lastUID, 1, nil
 }
 
-func (f *fakeFTS) Rescan(string, fts.MailboxRef) error { return nil }
-func (f *fakeFTS) Optimize(string) error               { return nil }
-func (f *fakeFTS) Close() error                        { return nil }
+func (f *fakeFTS) DropFolder(_ string, m fts.MailboxRef) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.droppedFolders = append(f.droppedFolders, m.Name)
+	return nil
+}
+
+func (f *fakeFTS) Rescan(string, fts.MailboxRef) error                   { return nil }
+func (f *fakeFTS) RescanUser(string) ([]string, error)                   { return nil, nil }
+func (f *fakeFTS) Counts(string) (uint64, uint64, uint64, uint64, error) { return 0, 0, 0, 0, nil }
+func (f *fakeFTS) Optimize(string) error                                 { return nil }
+func (f *fakeFTS) Close() error                                          { return nil }
 
 func startFTSTestServer(t *testing.T, fake *fakeFTS, autoindex bool) *imapclient.Client {
 	t.Helper()
@@ -98,10 +157,10 @@ func startFTSTestServerWith(t *testing.T, client ftsproto.Client, autoindex bool
 		t.Fatal(err)
 	}
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		FTS: imapserver.FTSOptions{
 			Chain:         chain,
 			AddMissing:    "body-search-only",
@@ -519,10 +578,10 @@ func TestSearchDisabledFallsBackToScanWithoutTouchingFTS(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		FTS: imapserver.FTSOptions{
 			Chain:         chain,
 			AddMissing:    "body-search-only",
@@ -563,5 +622,95 @@ func TestSearchDisabledFallsBackToScanWithoutTouchingFTS(t *testing.T) {
 	defer fake.mu.Unlock()
 	if len(fake.queries) != 0 {
 		t.Fatalf("FTS Lookup called %d times, want 0 — fts_search=false must bypass FTS entirely", len(fake.queries))
+	}
+}
+
+// Every retraction names the message, whichever command produced it: EXPUNGE
+// and MOVE both carry the source record's own GUID (#1986).
+func TestRetractionsNameTheMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, c *imapclient.Client)
+	}{
+		{"expunge", func(t *testing.T, c *imapclient.Client) {
+			if err := c.Store(imap.SeqSetNum(1),
+				&imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}}, nil).Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Expunge().Close(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"rename inbox", func(t *testing.T, c *imapclient.Client) {
+			// RENAME INBOX moves its messages out and retracts them from it.
+			if err := c.Rename("INBOX", "Kept", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"move", func(t *testing.T, c *imapclient.Client) {
+			if err := c.Create("Archive", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Move(imap.SeqSetNum(1), "Archive").Wait(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeFTS{lastUID: 100}
+			c := startFTSTestServer(t, fake, true)
+			appendBody(t, c, "a message with an identity")
+			if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+				t.Fatal(err)
+			}
+			tc.run(t, c)
+
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				fake.mu.Lock()
+				got := append([][16]byte(nil), fake.expungedGUIDs...)
+				fake.mu.Unlock()
+				if len(got) > 0 {
+					if got[0] == ([16]byte{}) {
+						t.Fatalf("%s retracted uid without naming the message", tc.name)
+					}
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			t.Fatalf("%s fired no retraction", tc.name)
+		})
+	}
+}
+
+// SEARCH asks exactly what ftsquery.Build makes of the criteria, as the lookup
+// does, so an empty lookup and an empty SEARCH are one question (#2056).
+func TestSearchAsksWhatTheLookupAsks(t *testing.T) {
+	chain, err := ftsquery.NewChain(config.FTSConfig{LanguageFilters: []string{"lowercase", "stopwords", "snowball"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeFTS{lookup: fts.Result{Definite: []uint32{1}}, lastUID: 100}
+	c := startFTSTestServerWith(t, fake, false, t.TempDir(), func(o *imapserver.FTSOptions) { o.Chain = chain })
+	appendBody(t, c, "irrelevant body text")
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.UIDSearch(&imap.SearchCriteria{
+		Header: []imap.SearchCriteriaHeaderField{{Key: "Subject", Value: "running late"}},
+		Body:   []string{"invoices"},
+		Text:   []string{"quarterly report"},
+	}, nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := ftsquery.Build(chain, ftsquery.Criteria{
+		Body:   []string{"invoices"},
+		Text:   []string{"quarterly report"},
+		Header: []ftsquery.Header{{Key: "Subject", Value: "running late"}},
+	})
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.queries) != 1 || !reflect.DeepEqual(fake.queries[0], want) {
+		t.Errorf("SEARCH asked %+v, want %+v", fake.queries, want)
 	}
 }

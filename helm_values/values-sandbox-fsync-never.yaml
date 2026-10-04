@@ -1,0 +1,9 @@
+## Durability overlay for one A/B arm. Laid over values-sandbox.yaml as a second
+## -f by hack/stand/ab-arm.sh when the arm asks for it, and never deployed on
+## its own: a pod that acknowledges a delivery before the body is on the disk is
+## not a pod anybody runs, it is the control half of one question (#1969).
+##
+## Only storage.mail_fsync belongs here. ab-arm.sh refuses an arm if anything
+## else appears, so "just for the window" cannot quietly move in.
+storage:
+  mail_fsync: never

@@ -4,6 +4,9 @@ import (
 	"net"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
+
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
@@ -40,6 +43,21 @@ func (a stubMasterAuth) AuthPlainMaster(authzid, authid, password string) error 
 	return nil
 }
 
+// masterRelay serves the stub with master users on, which is where the
+// impersonation decision now lives; a stub with no master surface stays plain.
+func masterRelay(t *testing.T, auth Authenticator) *authrelay.Client {
+	t.Helper()
+	m, ok := auth.(stubMasterAuth)
+	if !ok {
+		return authtest.RelayTo(t, authtest.PlainOnly(auth))
+	}
+	targets := make([]string, 0, len(m.targets))
+	for u := range m.targets {
+		targets = append(targets, u)
+	}
+	return authtest.RelayToMaster(t, authtest.PlainOnly(auth), m.masterUser, m.masterPass, targets...)
+}
+
 func buildMasterTestServer(t *testing.T, auth Authenticator) (string, func()) {
 	t.Helper()
 	opts := Options{
@@ -47,7 +65,7 @@ func buildMasterTestServer(t *testing.T, auth Authenticator) (string, func()) {
 			Hostname:   "mx.example.com",
 			MaxMsgSize: 1 << 20,
 		},
-		Auth: auth,
+		AuthRelay: masterRelay(t, auth),
 	}
 	srv := New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

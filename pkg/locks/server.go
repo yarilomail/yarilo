@@ -23,7 +23,12 @@ type Server struct {
 
 	closing chan struct{}
 	closeMu sync.Mutex
-	closed  bool
+
+	// conns are the open connections, so a shutdown can end the reads that
+	// are waiting for the next command on a kept connection (#1875).
+	connMu sync.Mutex
+	conns  map[net.Conn]struct{}
+	closed bool
 
 	wg sync.WaitGroup
 }
@@ -69,12 +74,42 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 			s.logger.Error("locks: accept failed", "err", err)
 			return fmt.Errorf("locks/server: accept: %w", err)
 		}
-		s.wg.Add(1)
+		if testBeforeHandlerAdd != nil {
+			testBeforeHandlerAdd()
+		}
+		if !s.addHandler() {
+			// Close has begun waiting; registering now would add to a
+			// WaitGroup whose Wait is already in flight, which panics.
+			_ = conn.Close()
+			continue
+		}
 		go func() {
 			defer s.wg.Done()
 			s.handleConn(ctx, conn)
 		}()
 	}
+}
+
+// addHandler registers one handler unless Close has started, so an Add can
+// never race the Wait it is already running.
+func (s *Server) addHandler() bool {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.wg.Add(1)
+	return true
+}
+
+// testBeforeHandlerAdd runs between accepting a connection and registering its
+// handler. Test seam: the window Close's Wait falls into.
+var testBeforeHandlerAdd func()
+
+// SetTestBeforeHandlerAdd arms that seam and returns a function disarming it.
+func SetTestBeforeHandlerAdd(fn func()) func() {
+	testBeforeHandlerAdd = fn
+	return func() { testBeforeHandlerAdd = nil }
 }
 
 // Close stops accepting new connections and waits for in-flight handlers to
@@ -88,7 +123,36 @@ func (s *Server) Close() {
 	s.closed = true
 	close(s.closing)
 	s.closeMu.Unlock()
+	// A client keeps its connections now (#1875), so a reader blocked on the
+	// next command would hold the shutdown open until the peer went away. The
+	// deadline in the past ends those reads; the loops then see s.closing.
+	s.unblockConns()
 	s.wg.Wait()
+}
+
+// trackConn and untrackConn keep the open connections so shutdown can unblock
+// their readers.
+func (s *Server) trackConn(conn net.Conn) {
+	s.connMu.Lock()
+	if s.conns == nil {
+		s.conns = map[net.Conn]struct{}{}
+	}
+	s.conns[conn] = struct{}{}
+	s.connMu.Unlock()
+}
+
+func (s *Server) untrackConn(conn net.Conn) {
+	s.connMu.Lock()
+	delete(s.conns, conn)
+	s.connMu.Unlock()
+}
+
+func (s *Server) unblockConns() {
+	s.connMu.Lock()
+	for conn := range s.conns {
+		_ = conn.SetReadDeadline(time.Now().Add(-time.Second))
+	}
+	s.connMu.Unlock()
 }
 
 // handleConn serves a single connection.
@@ -97,7 +161,11 @@ func (s *Server) Close() {
 // invokes SUBSCRIBE leaves the command loop and streams events until the
 // peer closes the conn or its subscription context is cancelled.
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
-	defer func() { _ = conn.Close() }()
+	s.trackConn(conn)
+	defer func() {
+		s.untrackConn(conn)
+		_ = conn.Close()
+	}()
 	peer := conn.RemoteAddr().String()
 	r := newReader(conn)
 
@@ -128,6 +196,16 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		switch fields[0] {
 		case cmdLock:
 			s.handleLock(ctx, conn, fields, peer)
+		case cmdLockWait:
+			// The wait watched the connection and let it go before answering,
+			// so the reader is the command loop's again (#1875).
+			if !s.handleLockWait(ctx, conn, fields, peer, false) {
+				return
+			}
+		case cmdLockSharedWait:
+			if !s.handleLockWait(ctx, conn, fields, peer, true) {
+				return
+			}
 		case cmdLockShared:
 			s.handleLockShared(ctx, conn, fields, peer)
 		case cmdUnlock:
@@ -160,29 +238,36 @@ func (s *Server) handshake(r *reader, w io.Writer) error {
 }
 
 func (s *Server) handleLock(ctx context.Context, w io.Writer, fields []string, peer string) {
-	if len(fields) != 4 {
+	// Four fields is a client from before the site travelled: it gets a lock,
+	// never a refusal, and its holder is recorded as unknown (#1676).
+	if len(fields) != 4 && len(fields) != 5 {
 		_ = writeFields(w, respError, "bad_lock")
 		return
 	}
 	resource, owner := fields[1], fields[2]
+	site := SiteUnknown
+	if len(fields) == 5 && fields[4] != "" {
+		site = fields[4]
+	}
 	ttl, err := parseTTL(fields[3])
 	if err != nil {
 		_ = writeFields(w, respError, "bad_ttl")
 		return
 	}
 	start := time.Now()
-	id, current, err := s.backend.Acquire(ctx, resource, owner, ttl)
+	id, current, err := s.backend.Acquire(ctx, resource, owner, site, "", ttl)
 	dur := time.Since(start).Seconds()
 	switch {
 	case err == nil:
 		s.metrics.observeAcquire(dur, "ok")
-		s.logger.Debug("locks: acquired", "peer", peer, "resource", resource, "owner", owner, "id", id, "dur_ms", dur*1000)
+		s.logger.Debug("locks: acquired", "peer", peer, "resource", resource, "owner", owner, "site", site, "id", id, "dur_ms", dur*1000)
 		_ = writeFields(w, respOK, id)
 	case errors.Is(err, ErrBusy):
 		s.metrics.observeAcquire(dur, "busy")
 		s.metrics.incBusy()
-		s.logger.Debug("locks: busy", "peer", peer, "resource", resource, "owner", owner, "held_by", current)
-		_ = writeFields(w, respBusy, current)
+		s.logger.Debug("locks: busy", "peer", peer, "resource", resource, "owner", owner,
+			"held_by", current.Owner, "held_site", current.Site)
+		_ = writeFields(w, respBusy, current.Owner, current.Site)
 	default:
 		s.metrics.observeAcquire(dur, "error")
 		s.logger.Error("locks: acquire failed", "peer", peer, "resource", resource, "err", err)
@@ -191,29 +276,36 @@ func (s *Server) handleLock(ctx context.Context, w io.Writer, fields []string, p
 }
 
 func (s *Server) handleLockShared(ctx context.Context, w io.Writer, fields []string, peer string) {
-	if len(fields) != 4 {
+	// Four fields is a client from before the site travelled: it gets a lock,
+	// never a refusal, and its holder is recorded as unknown (#1676).
+	if len(fields) != 4 && len(fields) != 5 {
 		_ = writeFields(w, respError, "bad_lock")
 		return
 	}
 	resource, owner := fields[1], fields[2]
+	site := SiteUnknown
+	if len(fields) == 5 && fields[4] != "" {
+		site = fields[4]
+	}
 	ttl, err := parseTTL(fields[3])
 	if err != nil {
 		_ = writeFields(w, respError, "bad_ttl")
 		return
 	}
 	start := time.Now()
-	id, current, err := s.backend.AcquireShared(ctx, resource, owner, ttl)
+	id, current, err := s.backend.AcquireShared(ctx, resource, owner, site, "", ttl)
 	dur := time.Since(start).Seconds()
 	switch {
 	case err == nil:
 		s.metrics.observeAcquire(dur, "ok")
-		s.logger.Debug("locks: acquired shared", "peer", peer, "resource", resource, "owner", owner, "id", id, "dur_ms", dur*1000)
+		s.logger.Debug("locks: acquired shared", "peer", peer, "resource", resource, "owner", owner, "site", site, "id", id, "dur_ms", dur*1000)
 		_ = writeFields(w, respOK, id)
 	case errors.Is(err, ErrBusy):
 		s.metrics.observeAcquire(dur, "busy")
 		s.metrics.incBusy()
-		s.logger.Debug("locks: busy (shared)", "peer", peer, "resource", resource, "owner", owner, "held_by", current)
-		_ = writeFields(w, respBusy, current)
+		s.logger.Debug("locks: busy (shared)", "peer", peer, "resource", resource, "owner", owner,
+			"held_by", current.Owner, "held_site", current.Site)
+		_ = writeFields(w, respBusy, current.Owner, current.Site)
 	default:
 		s.metrics.observeAcquire(dur, "error")
 		s.logger.Error("locks: acquire shared failed", "peer", peer, "resource", resource, "err", err)
@@ -229,6 +321,10 @@ func (s *Server) handleUnlock(ctx context.Context, w io.Writer, fields []string,
 	lockID := fields[1]
 	if err := s.backend.Release(ctx, lockID); err != nil {
 		if errors.Is(err, ErrNotFound) {
+			// The holder came to release a lock that was already gone: it
+			// expired, so nothing announced the resource as free (#1809).
+			s.metrics.incExpiredUnreleased()
+			s.logger.Debug("locks: released a lock that had already expired", "peer", peer, "id", lockID)
 			_ = writeFields(w, respNotFound)
 			return
 		}

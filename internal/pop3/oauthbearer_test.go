@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 )
 
@@ -31,8 +33,8 @@ func oauthBearerPayload(username, token string) string {
 // TestSession_AuthOAuthBearer_Success — real OAUTHBEARER session
 // reaches TRANSACTION state, STAT works.
 func TestSession_AuthOAuthBearer_Success(t *testing.T) {
-	opts := newTestOpts(nil, &mockMailbox{}, &mockIndex{})
-	opts.Auth = &oauthBearerAuth{user: "alice@test.com", token: "valid-token"}
+	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
+	opts.AuthRelay = authtest.RelayTo(t, &oauthBearerAuth{user: "alice@test.com", token: "valid-token"})
 	opts.OAuth2Enabled = true
 	c, r := newPOP3Session(t, opts)
 
@@ -51,8 +53,8 @@ func TestSession_AuthOAuthBearer_Success(t *testing.T) {
 // TestSession_AuthOAuthBearer_InvalidToken — wrong token surfaces
 // as -ERR (no detail to attacker).
 func TestSession_AuthOAuthBearer_InvalidToken(t *testing.T) {
-	opts := newTestOpts(nil, &mockMailbox{}, &mockIndex{})
-	opts.Auth = &oauthBearerAuth{user: "alice@test.com", token: "valid-token"}
+	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
+	opts.AuthRelay = authtest.RelayTo(t, &oauthBearerAuth{user: "alice@test.com", token: "valid-token"})
 	opts.OAuth2Enabled = true
 	c, r := newPOP3Session(t, opts)
 
@@ -67,8 +69,8 @@ func TestSession_AuthOAuthBearer_InvalidToken(t *testing.T) {
 // TestSession_AuthOAuthBearer_DisabledRejects — OAuth2Enabled=false
 // rejects the mechanism outright.
 func TestSession_AuthOAuthBearer_DisabledRejects(t *testing.T) {
-	opts := newTestOpts(nil, &mockMailbox{}, &mockIndex{})
-	opts.Auth = &oauthBearerAuth{user: "alice@test.com", token: "valid-token"}
+	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
+	opts.AuthRelay = authtest.RelayTo(t, &oauthBearerAuth{user: "alice@test.com", token: "valid-token"})
 	opts.OAuth2Enabled = false
 	c, r := newPOP3Session(t, opts)
 
@@ -83,8 +85,8 @@ func TestSession_AuthOAuthBearer_DisabledRejects(t *testing.T) {
 // TestSession_AuthOAuthBearer_InvalidBase64 — malformed payload
 // gets the base64-error path.
 func TestSession_AuthOAuthBearer_InvalidBase64(t *testing.T) {
-	opts := newTestOpts(nil, &mockMailbox{}, &mockIndex{})
-	opts.Auth = &oauthBearerAuth{user: "x", token: "y"}
+	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
+	opts.AuthRelay = authtest.RelayTo(t, &oauthBearerAuth{user: "x", token: "y"})
 	opts.OAuth2Enabled = true
 	c, r := newPOP3Session(t, opts)
 

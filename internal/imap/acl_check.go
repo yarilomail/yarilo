@@ -227,7 +227,7 @@ func (s *session) grantCreatorAdmin(h *nsHandle, folder string) error {
 // unadministered.
 func (s *session) rollBackUnadministered(h *nsHandle, folder, wireName string, cause error) error {
 	aclUser, _ := s.userInfo.ACLIdentity()
-	if err := h.box.Delete(folder); err != nil {
+	if err := h.mailbox().Delete(folder); err != nil {
 		// The mailbox exists, nobody can administer it, and the undo failed
 		// too. Nothing here can fix that, so it is said once, loudly, with the
 		// command that does -- run by someone who still holds 'a' above it.
@@ -238,9 +238,6 @@ func (s *session) rollBackUnadministered(h *nsHandle, folder, wireName string, c
 			Type: imaplib.StatusResponseTypeNo,
 			Text: "mailbox created but could not be granted an administrator, and could not be removed: " + cause.Error(),
 		}
-	}
-	if err := h.idx.DeleteFolder(folder); err != nil {
-		slog.Warn("imap: index state left behind by a rolled-back CREATE", "folder", wireName, "err", err)
 	}
 	slog.Warn("imap: CREATE rolled back, the creator could not be granted the admin right",
 		"folder", wireName, "identifier", aclUser, "err", cause)
@@ -419,6 +416,25 @@ func dependencyError(err error) error {
 			Type: imaplib.StatusResponseTypeNo,
 			Code: imaplib.ResponseCodeCorruption,
 			Text: fmt.Sprintf("Mailbox %q has a damaged index and cannot be opened; it must be repaired", corrupt.Folder),
+		}
+	}
+	// Deleted by another process while this session held it.
+	var gone *mailbox.FolderGoneError
+	if errors.As(err, &gone) {
+		return &imaplib.Error{
+			Type: imaplib.StatusResponseTypeNo,
+			Code: imaplib.ResponseCodeNonExistent,
+			Text: fmt.Sprintf("Mailbox %q was deleted", gone.Folder),
+		}
+	}
+	// A full volume is a wait, not a fault: the same write works once there is
+	// room, so the client is told to come back.
+	var nospace *mailbox.NoSpaceError
+	if errors.As(err, &nospace) {
+		return &imaplib.Error{
+			Type: imaplib.StatusResponseTypeNo,
+			Code: imaplib.ResponseCodeUnavailable,
+			Text: fmt.Sprintf("Mailbox %q could not be written: no space left on the volume", nospace.Folder),
 		}
 	}
 	if !errors.Is(err, locks.ErrUnavailable) {

@@ -87,10 +87,7 @@ func TestCacheOpenRejections(t *testing.T) {
 		{"wrong major", func(b []byte) { b[0] = 9 }, 42, 1000},
 		{"wrong sizeof(uoff_t)", func(b []byte) { b[1] = 4 }, 42, 1000},
 		{"producer generation moved", func(b []byte) { b[3] = CacheProducerGen + 1 }, 42, 1000},
-		// Byte 0 is what every reference-written file carries. The header
-		// comment forbids relaxing the check to accept it "for migration";
-		// this row is what makes that sentence load-bearing.
-		{"reference producer (byte 0) rejected", func(b []byte) { b[3] = 0 }, 42, 1000},
+		{"a byte no producer claims", func(b []byte) { b[3] = 7 }, 42, 1000},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -187,5 +184,38 @@ func TestCacheFixedSizeMismatchRefused(t *testing.T) {
 	}
 	if _, err := c.AppendRecord(0, []CacheFieldValue{{FieldID: 0, Data: []byte("12345")}}); err == nil {
 		t.Error("5 bytes into a 4-byte fixed field accepted")
+	}
+}
+
+// Byte 0 is what every reference-written file carries, and since #1714 the
+// values in it are the bytes ours would be -- so it is read, not rebuilt.
+func TestACacheWrittenByTheReferenceIsRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), CacheFileName)
+	cf, err := CreateCache(path, 42, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cf.AddFields([]CacheField{{Name: "imap.envelope", Type: CacheFieldString, Decision: CacheDecisionYes}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cf.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b[3] = 0 // what the reference leaves in its unused slot
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenCache(path, 42, 1000)
+	if err != nil {
+		t.Fatalf("a reference-written cache was refused: %v", err)
+	}
+	defer reopened.Close() //nolint:errcheck
+	if _, ok := reopened.FieldID("imap.envelope"); !ok {
+		t.Error("the field table of a reference-written cache did not read")
 	}
 }

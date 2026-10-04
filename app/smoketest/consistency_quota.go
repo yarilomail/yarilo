@@ -23,10 +23,6 @@ import (
 // visibly: IMAP QUOTA counts kibibytes (RFC 9208), and the admin API reports
 // both bytes and KiB. Converting is not normalising away a difference — the
 // number of kibibytes is the same fact in both, and only its rendering differs.
-//
-// JMAP has no side here: the quota extension (urn:ietf:params:jmap:quota) is
-// not implemented, so the pair registers as a skip naming it rather than
-// quietly not existing. When it lands, the skip becomes a check.
 func checkConsistencyQuota(user string) error {
 	left, err := imapReadQuota(user)
 	if err != nil {
@@ -152,10 +148,15 @@ func explainBackendAPITransport(err error) error {
 // ("remote error: tls: certificate required") and the row cannot run at all
 // (#1280). The certificate is optional: an endpoint that asks for none works
 // exactly as before.
-func backendAPIClient() (*http.Client, error) {
-	cfg := &tls.Config{
-		ServerName:         hostOf(*flagBackendAPI),
-		InsecureSkipVerify: *flagInsecure, //nolint:gosec // opt-in via -insecure
+func backendAPIClient() (*http.Client, error) { return adminClient(*flagBackendAPI) }
+
+// adminClient presents the admin certificate (-backend-api-cert/-key/-ca) to
+// either admin API at base.
+func adminClient(base string) (*http.Client, error) {
+	// The admin APIs serve internal certificates: verified against the pinned name when given.
+	cfg := &tls.Config{ServerName: *flagInternalServerName}
+	if cfg.ServerName == "" {
+		cfg.ServerName, cfg.InsecureSkipVerify = hostOf(base), *flagInsecure //nolint:gosec // opt-in via -insecure
 	}
 	if (*flagBackendAPICert == "") != (*flagBackendAPIKey == "") {
 		return nil, fmt.Errorf("-backend-api-cert and -backend-api-key go together; one without the other cannot authenticate")
@@ -203,4 +204,48 @@ func backendAPIToken() string {
 		return t
 	}
 	return os.Getenv("YARILO_ADMIN_TOKEN")
+}
+
+// Row: the quota numbers agree between IMAP and JMAP. The units differ (RFC
+// 9208 kibibytes, RFC 9425 octets); converting is a rendering, not a fact.
+func checkConsistencyQuotaJMAP(user string) error {
+	left, err := imapReadQuota(user)
+	if err != nil {
+		return fmt.Errorf("read quota over imap: %w", err)
+	}
+	right, err := jmapReadQuota(user)
+	if err != nil {
+		return fmt.Errorf("read quota over jmap: %w", err)
+	}
+	return judgeRow("imap<->jmap quota", left, right, defaultAllowances())
+}
+
+func jmapReadQuota(user string) (*reading, error) {
+	args, err := jmapCall(fmt.Sprintf(
+		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:quota"],`+
+			`"methodCalls":[["Quota/get",{"accountId":%q},"c0"]]}`, user))
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		List []struct {
+			ResourceType string `json:"resourceType"`
+			Used         int64  `json:"used"`
+			HardLimit    int64  `json:"hardLimit"`
+		} `json:"list"`
+	}
+	if err := json.Unmarshal(args, &out); err != nil {
+		return nil, fmt.Errorf("decode Quota/get: %w (%s)", err, string(args))
+	}
+	for _, q := range out.List {
+		if q.ResourceType != "octets" {
+			continue
+		}
+		// Rounded the way IMAP rounds, so the two readings are the same number
+		// and not the same number off by the remainder of one kibibyte.
+		return newReading(surfJMAP).
+			field("storageUsedKiB", strconv.FormatInt((q.Used+1023)/1024, 10)).
+			field("storageLimitKiB", strconv.FormatInt((q.HardLimit+1023)/1024, 10)), nil
+	}
+	return nil, fmt.Errorf("Quota/get returned no octets root: %s", string(args))
 }

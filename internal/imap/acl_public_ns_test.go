@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -31,7 +33,7 @@ func publicNSServer(t *testing.T) (publicRoot string, dial func(user string) *im
 		Mailbox:    maildir.New(),
 		Index:      file.New(),
 		Resolver:   &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:       passdb,
+		AuthRelay:  authtest.RelayTo(t, passdb),
 		ACLEnabled: true,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},

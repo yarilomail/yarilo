@@ -1,0 +1,12 @@
+## Profiling overlay for one A/B arm. Laid over values-sandbox.yaml as a second
+## -f by hack/stand/ab-arm.sh when the arm asks for it, and never deployed on
+## its own: a pod that accounts for every blocking operation is not the pod the
+## other arm is, so a window run with this is a latency window, not a
+## throughput one (#1875).
+##
+## Only telemetry.pprof.* belongs here. ab-arm.sh refuses an arm if anything
+## else appears, so "just for the window" cannot quietly move in.
+telemetry:
+  pprof:
+    enabled: true
+    blockProfileRate: 10000

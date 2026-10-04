@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // ErrNotYarilo is returned when the first line of a connection is not a YARILO preamble.
@@ -57,7 +59,7 @@ func (p Preamble) Format() string {
 // Parse reads and parses one preamble line from rd.
 // Returns ErrNotYarilo if the line does not start with "YARILO".
 func Parse(rd *bufio.Reader) (Preamble, error) {
-	line, err := rd.ReadString('\n')
+	line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 	if err != nil {
 		return Preamble{}, fmt.Errorf("loginproto: read: %w", err)
 	}

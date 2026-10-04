@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,8 +16,10 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
@@ -46,11 +49,13 @@ type stubFTS struct {
 	prepends  int32
 
 	asked    []string
+	statuses map[string]int // Status calls per folder
+	queries  []fts.Query
 	inFlight int32
 	maxSeen  int32
 }
 
-func (s *stubFTS) Lookup(_ string, mbox fts.MailboxRef, _ fts.Query) (fts.Result, error) {
+func (s *stubFTS) Lookup(_ string, mbox fts.MailboxRef, q fts.Query) (fts.Result, error) {
 	n := atomic.AddInt32(&s.inFlight, 1)
 	for {
 		seen := atomic.LoadInt32(&s.maxSeen)
@@ -62,6 +67,7 @@ func (s *stubFTS) Lookup(_ string, mbox fts.MailboxRef, _ fts.Query) (fts.Result
 
 	s.mu.Lock()
 	s.asked = append(s.asked, mbox.Name)
+	s.queries = append(s.queries, q)
 	d := s.delay[mbox.Name]
 	s.mu.Unlock()
 	if s.hold != nil {
@@ -85,10 +91,18 @@ func (s *stubFTS) Prepend(string, fts.MailboxRef, uint32) error {
 	atomic.AddInt32(&s.prepends, 1)
 	return nil
 }
-func (s *stubFTS) Expunge(string, fts.MailboxRef, uint32) error { return nil }
-func (s *stubFTS) Rescan(string, fts.MailboxRef) error          { return nil }
-func (s *stubFTS) Optimize(string) error                        { return nil }
-func (s *stubFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
+func (s *stubFTS) Expunge(string, fts.MailboxRef, uint32, [16]byte) error { return nil }
+func (s *stubFTS) Rescan(string, fts.MailboxRef) error                    { return nil }
+func (s *stubFTS) RescanUser(string) ([]string, error)                    { return nil, nil }
+func (s *stubFTS) Counts(string) (uint64, uint64, uint64, uint64, error)  { return 0, 0, 0, 0, nil }
+func (s *stubFTS) Optimize(string) error                                  { return nil }
+func (s *stubFTS) Status(_ string, mbox fts.MailboxRef) (uint32, uint32, error) {
+	s.mu.Lock()
+	if s.statuses == nil {
+		s.statuses = map[string]int{}
+	}
+	s.statuses[mbox.Name]++
+	s.mu.Unlock()
 	return s.statusUID, 0, nil
 }
 func (s *stubFTS) Close() error { return nil }
@@ -121,7 +135,7 @@ func searchServer(t *testing.T, stub *stubFTS, maxConns, maxFolders int, folders
 			}
 		}
 		raw := "Subject: probe\r\nFrom: alice@example.com\r\n\r\n" + folders[name] + "\r\n"
-		fname, vsize, guid, err := box.Save(name, strings.NewReader(raw), 1, int64(len(raw)), nil, [16]byte{})
+		fname, vsize, guid, err := box.Save(name, strings.NewReader(raw), 1, int64(len(raw)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save %s: %v", name, err)
 		}
@@ -129,10 +143,14 @@ func searchServer(t *testing.T, stub *stubFTS, maxConns, maxFolders int, folders
 		if err != nil {
 			t.Fatalf("open %s: %v", name, err)
 		}
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: 1, Filename: fname, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
+		meta := &mailbox.MessageMeta{
+			UID: 1, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
 			InternalDate: time.Now(),
-		}); err != nil {
+		}
+		if err := mailboxbase.NameSaved(box, name, fname, meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		if err := ui.AppendMessage(f.ID, meta); err != nil {
 			t.Fatalf("append %s: %v", name, err)
 		}
 	}
@@ -281,6 +299,18 @@ func TestEmailQueryTrustsDefiniteResults(t *testing.T) {
 	}
 }
 
+// waitForPeak blocks until that many lookups have been in flight at once.
+func waitForPeak(t *testing.T, stub *stubFTS, want int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for stub.concurrentPeak() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d lookups ever overlapped, want %d", stub.concurrentPeak(), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // One request takes at most half the pool, so a second request always has
 // connections left rather than being refused by a queue of our own making.
 func TestEmailQueryFanOutIsBounded(t *testing.T) {
@@ -293,8 +323,9 @@ func TestEmailQueryFanOutIsBounded(t *testing.T) {
 		defer close(done)
 		emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"}}`)
 	}()
-	// Let the first wave pile up against the hold, then release.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the wave rather than sleeping for it: the work before a lookup
+	// is not fixed, and a margin that fits today measures the machine.
+	waitForPeak(t, stub, 2)
 	close(stub.hold)
 	<-done
 
@@ -458,28 +489,38 @@ func TestEmailQueryWaitsForALaggingIndexThenAsksForARetry(t *testing.T) {
 	})
 }
 
-// The waiting budget belongs to the request, not to each folder: a per-folder
-// one multiplies by the fan-out, so a query at the ceiling would hold the
-// client and half the pool for minutes.
+// The waiting budget is the request's, not each folder's: a folder that starts
+// once it is spent does not wait at all, where a budget of its own would poll.
 func TestLaggingIndexBudgetIsPerRequest(t *testing.T) {
-	const folders, timeout = 8, 200 * time.Millisecond
-	stub := &stubFTS{byFolder: map[string]fts.Result{}} // statusUID 0: every folder is behind
-	s := searchServer(t, stub, 4, folders, folderSet(folders, "needle"))
+	stub := &stubFTS{byFolder: map[string]fts.Result{}} // statusUID 0: the folder is behind
+	s := searchServer(t, stub, 4, 1, folderSet(1, "needle"))
 	s.opts.FTS.AddMissing = "priority"
-	s.opts.FTS.Timeout = timeout
+	s.opts.FTS.Timeout = time.Hour
 
-	start := time.Now()
-	err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`)
-	elapsed := time.Since(start)
-
-	if err["type"] != "serverUnavailable" {
-		t.Errorf("type = %v, want serverUnavailable", err["type"])
+	info, err := s.opts.Storage.ResolveUser(testUser)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Two at a time over eight folders is four waves; a per-folder budget would
-	// spend four timeouts, a shared one spends about one.
-	if max := 2 * timeout; elapsed > max {
-		t.Errorf("waited %v for %d lagging folders, want under %v: the budget is per folder, not per request",
-			elapsed, folders, max)
+	box := s.opts.Storage.Mailbox.OpenUser(info)
+	idx := s.opts.Storage.Index.OpenUser(info)
+	t.Cleanup(func() { idx.Close(); box.Close() }) //nolint:errcheck
+	f, err := idx.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &userHandle{info: info, box: box, mbox: mailboxbase.Open(box, idx)}
+	eval := s.newFTSEvaluator(h)
+	eval.startRequest()
+	eval.deadline = time.Now().Add(-time.Second) // the siblings spent it
+
+	err = eval.catchUp(context.Background(), h, scopeFolder{name: "INBOX", id: f.ID, guid: "g", uidValidity: f.UIDValidity})
+	if !errors.Is(err, errIndexLagging) {
+		t.Errorf("catchUp after the budget answered %v, want the lagging refusal", err)
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if n := stub.statuses["INBOX"]; n != 1 {
+		t.Errorf("the index was asked %d times, want once: the folder waited on a budget of its own", n)
 	}
 }
 
@@ -558,7 +599,7 @@ func rawMessageServer(t *testing.T, stub *stubFTS, raw string) *Server {
 	idx := file.New(file.WithLocker(locker))
 	ui := idx.OpenUser(info)
 
-	fname, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, [16]byte{})
+	fname, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -566,9 +607,12 @@ func rawMessageServer(t *testing.T, stub *stubFTS, raw string) *Server {
 	if err != nil {
 		t.Fatalf("open INBOX: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: fname, Size: uint32(len(raw)), VSize: vsize, GUID: guid, InternalDate: time.Now(),
-	}); err != nil {
+	meta := &mailbox.MessageMeta{UID: 1, Size: uint32(len(raw)), VSize: vsize, GUID: guid, InternalDate: time.Now()}
+	if err := mailboxbase.NameSaved(box, f.Name, fname, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	meta.GUID = guid
+	if err := ui.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := ui.Close(); err != nil {
@@ -665,5 +709,44 @@ func TestCallerCancellationIsNotSilentlyNoFilter(t *testing.T) {
 	}
 	if merr.Type != jmapcore.ErrServerUnavailable {
 		t.Errorf("type = %s, want serverUnavailable", merr.Type)
+	}
+}
+
+func (s *stubFTS) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (s *stubFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
+}
+
+// Email/query asks the index with what ftsquery.Build makes of the same
+// conditions, as IMAP SEARCH does; an empty header value asks for presence.
+func TestEmailQueryAsksWhatSearchAsks(t *testing.T) {
+	chain, err := language.NewMultiChain([]string{"english"}, nil, nil, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, filter string
+		want         ftsquery.Criteria
+	}{
+		{"every condition", `{"text":"quarterly report","body":"invoices","subject":"running late","from":"alice","header":["X-Tag",""]}`,
+			ftsquery.Criteria{
+				Text: []string{"quarterly report"}, Body: []string{"invoices"},
+				Header: []ftsquery.Header{{Key: "subject", Value: "running late"}, {Key: "from", Value: "alice"}, {Key: "x-tag"}},
+			}},
+		{"an absent condition adds no term", `{"subject":"running late"}`,
+			ftsquery.Criteria{Header: []ftsquery.Header{{Key: "subject", Value: "running late"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{}}
+			s := searchServer(t, stub, 4, 8, map[string]string{"INBOX": "hello"})
+			emailQuery(t, s, `{"accountId":"u1@example.com","filter":`+tc.filter+`}`)
+			want, _ := ftsquery.Build(chain, tc.want)
+			stub.mu.Lock()
+			defer stub.mu.Unlock()
+			if len(stub.queries) != 1 || !reflect.DeepEqual(stub.queries[0], want) {
+				t.Errorf("Email/query asked %+v, want %+v", stub.queries, want)
+			}
+		})
 	}
 }

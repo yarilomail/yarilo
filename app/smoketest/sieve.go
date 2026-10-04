@@ -5,18 +5,44 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // ── ManageSieve connection (STARTTLS-aware) ───────────────────────────────
 
-// msieveDial opens a plain TCP connection to the ManageSieve port, reads the
-// pre-auth capability block, and performs a STARTTLS upgrade when advertised.
-// Returns the (possibly upgraded) connection with the greeting already consumed.
+// msieveEndpoint is where ManageSieve answers and how it is secured. The
+// default stays starttls, which is what this port has always served.
+func msieveEndpoint() (endpoint, error) {
+	mode, err := parseTLSMode("managesieve-tls", *flagManageSieveTLS)
+	if err != nil {
+		return endpoint{}, err
+	}
+	return endpoint{name: "managesieve", host: manageSieveHost(), port: *flagManageSievePort, mode: mode}, nil
+}
+
+// msieveDial returns the connection with the capability block consumed, upgraded
+// when the mode asks for it.
 func msieveDial() (net.Conn, error) {
+	ep, err := msieveEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	if ep.mode == tlsSSL {
+		conn, _, derr := ep.dial()
+		if derr != nil {
+			return nil, derr
+		}
+		if _, cerr := msieveReadCapabilities(conn); cerr != nil {
+			conn.Close() //nolint:errcheck
+			return nil, fmt.Errorf("capabilities: %w", cerr)
+		}
+		return conn, nil
+	}
 	addr := net.JoinHostPort(manageSieveHost(), *flagManageSievePort)
 	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
 	if err != nil {
@@ -29,8 +55,14 @@ func msieveDial() (net.Conn, error) {
 		conn.Close()
 		return nil, fmt.Errorf("capabilities: %w", err)
 	}
-	if !starttls {
+	if ep.mode == tlsNone {
 		return conn, nil
+	}
+	if !starttls {
+		// Asked for and not offered is a refusal, not a reason to continue in
+		// the clear: the gate would then report a surface nobody serves.
+		conn.Close() //nolint:errcheck
+		return nil, fmt.Errorf("managesieve: starttls asked for, and the server advertises none")
 	}
 
 	fmt.Fprintf(conn, "STARTTLS\r\n") //nolint:errcheck
@@ -43,11 +75,7 @@ func msieveDial() (net.Conn, error) {
 		conn.Close()
 		return nil, fmt.Errorf("STARTTLS rejected: %q", line)
 	}
-	tlsCfg := &tls.Config{
-		ServerName:         manageSieveHost(),
-		InsecureSkipVerify: *flagInsecure, //nolint:gosec
-	}
-	tlsConn := tls.Client(conn, tlsCfg)
+	tlsConn := tls.Client(conn, publicTLS(manageSieveHost()))
 	if err := tlsConn.Handshake(); err != nil {
 		tlsConn.Close()
 		return nil, fmt.Errorf("STARTTLS handshake: %w", err)
@@ -141,9 +169,8 @@ func msieveDeactivateAndDelete(name string) {
 
 // ── SMTP injector (via MX) ────────────────────────────────────────────────
 
-// deliveryGreeting is what the delivery listener expects. An LMTP server
-// answers EHLO with "500 5.5.1 This is a LMTP server, use LHLO", which is what
-// a deployment whose only ingress is yarilo-lmtp-login used to get (#1202).
+// deliveryGreeting is what the listener expects: an LMTP server answers EHLO
+// with "use LHLO", which is what an lmtp-only ingress got (#1202).
 func deliveryGreeting() string {
 	if strings.EqualFold(*flagDeliveryProto, "lmtp") {
 		return "LHLO smoketest"
@@ -151,11 +178,26 @@ func deliveryGreeting() string {
 	return "EHLO smoketest"
 }
 
+// lmtpSend delivers and requires the reply to the final dot to be 250: a
+// refusal read as a send blames the reader that waits for the message (#1870).
 func lmtpSend(id, from, to, subject, body string) error {
+	resp, err := lmtpDeliver(id, from, to, subject, body)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resp, "250") {
+		return fmt.Errorf("end-of-data: %s", resp)
+	}
+	return nil
+}
+
+// lmtpDeliver returns the reply to the final dot, for a caller that expects a
+// refusal and must read its code.
+func lmtpDeliver(id, from, to, subject, body string) (string, error) {
 	addr := net.JoinHostPort(deliveryHost(), *flagDeliveryPort)
 	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
 	if err != nil {
-		return fmt.Errorf("connect %s: %w", addr, err)
+		return "", fmt.Errorf("connect %s: %w", addr, err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
@@ -180,30 +222,31 @@ func lmtpSend(id, from, to, subject, body string) error {
 	}
 
 	if _, err := readResp(); err != nil {
-		return fmt.Errorf("greeting: %w", err)
+		return "", fmt.Errorf("greeting: %w", err)
 	}
 	if resp, err := cmd(deliveryGreeting()); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("%s: %s %v", deliveryGreeting(), resp, err)
+		return "", fmt.Errorf("%s: %s %v", deliveryGreeting(), resp, err)
 	}
 	if resp, err := cmd("MAIL FROM:<" + from + ">"); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("MAIL FROM: %s %v", resp, err)
+		return "", fmt.Errorf("MAIL FROM: %s %v", resp, err)
 	}
 	if resp, err := cmd("RCPT TO:<" + to + ">"); err != nil {
-		return fmt.Errorf("RCPT TO: %w", err)
+		return "", fmt.Errorf("RCPT TO: %w", err)
 	} else if !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("RCPT TO: %s", resp)
+		return "", fmt.Errorf("RCPT TO: %s", resp)
 	}
 	if resp, err := cmd("DATA"); err != nil || !strings.HasPrefix(resp, "354") {
-		return fmt.Errorf("DATA: %s %v", resp, err)
+		return "", fmt.Errorf("DATA: %s %v", resp, err)
 	}
 	ts := time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 +0000")
 	fmt.Fprintf(conn, "Message-ID: <%s>\r\nDate: %s\r\nFrom: <%s>\r\nTo: <%s>\r\nSubject: %s\r\n\r\n%s\r\n.\r\n",
 		id, ts, from, to, subject, body)
-	if _, err := readResp(); err != nil {
-		return fmt.Errorf("end-of-data: %w", err)
+	final, err := readResp()
+	if err != nil {
+		return "", fmt.Errorf("end-of-data: %w", err)
 	}
 	cmd("QUIT") //nolint:errcheck
-	return nil
+	return final, nil
 }
 
 // ── minimal IMAP4rev1 client ───────────────────────────────────────────────
@@ -212,20 +255,40 @@ type imapClient struct {
 	conn net.Conn
 	r    *bufio.Reader
 	seq  int
+	// tag is the last command's tag, for an exchange that spans more than one
+	// write and cannot go through cmd().
+	tag string
+}
+
+// imapEndpoint is where IMAP answers and how it is secured.
+func imapEndpoint() (endpoint, error) {
+	mode, err := parseTLSMode("imap-tls", *flagIMAPTLS)
+	if err != nil {
+		return endpoint{}, err
+	}
+	return endpoint{
+		name: "imap", host: imapHost(), port: *flagIMAPSPort, mode: mode,
+		upgrade: lineUpgrade("a000 STARTTLS", "a000 OK"),
+	}, nil
 }
 
 func imapDial() (*imapClient, error) {
-	tlsCfg := &tls.Config{InsecureSkipVerify: *flagInsecure, ServerName: imapHost()} //nolint:gosec
-	addr := net.JoinHostPort(imapHost(), *flagIMAPSPort)
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: *flagTimeout}, "tcp", addr, tlsCfg)
+	ep, err := imapEndpoint()
 	if err != nil {
 		return nil, err
 	}
-	c := &imapClient{conn: conn, r: bufio.NewReader(conn)}
-	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
-	if _, err := c.r.ReadString('\n'); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("greeting: %w", err)
+	conn, r, err := ep.dial()
+	if err != nil {
+		return nil, err
+	}
+	c := &imapClient{conn: conn, r: r}
+	// STARTTLS consumed the greeting to send the command into a settled
+	// stream; the upgraded connection sends none of its own.
+	if ep.mode != tlsSTARTTLS {
+		if _, err := c.r.ReadString('\n'); err != nil {
+			conn.Close() //nolint:errcheck
+			return nil, fmt.Errorf("greeting: %w", err)
+		}
 	}
 	return c, nil
 }
@@ -235,9 +298,8 @@ func (c *imapClient) close() { c.conn.Close() }
 func (c *imapClient) cmd(command string) ([]string, error) {
 	c.seq++
 	tag := fmt.Sprintf("S%04d", c.seq)
-	// Per-command deadline from imap-read-timeout, above the server's fts
-	// catch-up budget, so an index wait isn't misread as an i/o timeout.
-	// Overrides any shorter deadline set by the caller.
+	// Per-command deadline above the server's fts catch-up budget, so an index
+	// wait is not misread as an i/o timeout.
 	start := time.Now()
 	c.conn.SetDeadline(start.Add(*flagIMAPReadTimeout)) //nolint:errcheck
 	defer func() {
@@ -254,6 +316,23 @@ func (c *imapClient) cmd(command string) ([]string, error) {
 			return nil, err
 		}
 		line = strings.TrimRight(line, "\r\n")
+		// A literal belongs to the response it sits in; read line by line it
+		// splits one answer in two (#2008).
+		for {
+			n, ok := literalLength(line)
+			if !ok {
+				break
+			}
+			buf := make([]byte, n)
+			if _, err := io.ReadFull(c.r, buf); err != nil {
+				return nil, err
+			}
+			rest, err := c.r.ReadString('\n')
+			if err != nil {
+				return nil, err
+			}
+			line += string(buf) + strings.TrimRight(rest, "\r\n")
+		}
 		if strings.HasPrefix(line, tag+" OK") {
 			return untagged, nil
 		}
@@ -311,23 +390,14 @@ func (c *imapClient) deleteUIDs(uids []string) error {
 	return err
 }
 
-// isMailRoot reports whether folder names the user's mailbox itself rather than
-// a folder inside it. On maildir INBOX *is* the mail root, so deleting it takes
-// the account (#1063).
+// isMailRoot says whether folder is the mailbox itself: on maildir INBOX is
+// the mail root, and deleting it takes the account (#1063).
 func isMailRoot(folder string) bool {
 	return folder == "" || strings.EqualFold(folder, "INBOX")
 }
 
-// deleteFolder removes a folder the smoke run created.
-//
-// It refuses the mail root outright. The server refuses it too since 2.3.52,
-// but this is the caller that asked, and a test suite that asks to destroy an
-// account is a defect whether or not the server declines -- the refusal has to
-// be visible here, in the run's own output, rather than inferred from a server
-// log nobody reads during a smoke run.
-//
-// The error is returned rather than discarded. Discarding it is how a cleanup
-// that deleted the wrong thing kept reporting success (#1063, #1070).
+// deleteFolder refuses the mail root here, not only at the server, and returns
+// the error: discarding it let a wrong deletion report success (#1063, #1070).
 func (c *imapClient) deleteFolder(folder string) error {
 	if isMailRoot(folder) {
 		return fmt.Errorf("smoketest: refusing to DELETE %q: that is the mailbox itself, not a folder in it", folder)
@@ -338,9 +408,8 @@ func (c *imapClient) deleteFolder(folder string) error {
 	return nil
 }
 
-// removeSeeded expunges only the messages this run injected, found by their
-// Message-ID. Used where the folder must survive the cleanup -- which is every
-// check against INBOX, since the alternative there is emptying a live mailbox.
+// removeSeeded expunges only what this run injected, by Message-ID: the
+// alternative against INBOX is emptying a live mailbox.
 func (c *imapClient) removeSeeded(ids []string) error {
 	var uids []string
 	for _, id := range ids {
@@ -366,6 +435,28 @@ func sieveInject(script, from, to, id, subject, body string) error {
 	return err
 }
 
+// sieveInjectRefused runs a script that refuses the delivery and returns the
+// reply to the dot. LMTP answers 550 5.7.1 there; an MX accepts and bounces.
+func sieveInjectRefused(script, from, to, id, subject, body string) error {
+	if err := msieveSetActive(script); err != nil {
+		return fmt.Errorf("msieve: %w", err)
+	}
+	resp, err := lmtpDeliver(id, from, to, subject, body)
+	if err != nil {
+		return err
+	}
+	if *flagDeliveryProto != "lmtp" {
+		if !strings.HasPrefix(resp, "250") {
+			return fmt.Errorf("end-of-data: %s, want 250 from an MX", resp)
+		}
+		return nil
+	}
+	if !strings.HasPrefix(resp, "550 5.7.1") {
+		return fmt.Errorf("end-of-data: %s, want 550 5.7.1", resp)
+	}
+	return nil
+}
+
 func createFolder(user, pass, folder string) error {
 	c, err := imapDial()
 	if err != nil {
@@ -381,12 +472,8 @@ func createFolder(user, pass, folder string) error {
 	return nil
 }
 
-// cleanupAfterCheck disposes of what a check delivered.
-//
-// A folder the run created is removed whole; the mail root is not, so only the
-// messages named in seeded leave it. Splitting on the folder rather than on the
-// call site is deliberate: the destructive choice then lives in one place
-// instead of at each of the fourteen callers.
+// cleanupAfterCheck removes a created folder whole and takes only the seeded
+// messages out of the mail root -- one place for the destructive choice.
 func (c *imapClient) cleanupAfterCheck(folder string, seeded []string) error {
 	if isMailRoot(folder) {
 		return c.removeSeeded(seeded)
@@ -394,19 +481,8 @@ func (c *imapClient) cleanupAfterCheck(folder string, seeded []string) error {
 	return c.deleteFolder(folder)
 }
 
-// checkFolder waits for folder to hold a delivered message, then cleans up
-// after itself.
-//
-// seeded carries the Message-IDs this check injected. It is required when
-// folder is the mail root and unused otherwise: a folder the run created is
-// removed whole, which disposes of its messages, but INBOX must survive, so
-// only the seeded messages may be removed from it.
-//
-// The old cleanup ran UID SEARCH ALL followed by an expunge, then a DELETE, for
-// every folder including INBOX. Against a live account that emptied the mailbox
-// and destroyed it; with the server-side refusals in place it merely empties it
-// -- quieter, equally destructive, and invisible because the errors were
-// discarded (#1063, #1070).
+// checkFolder waits for the delivery, then cleans up: seeded names what this
+// check injected, required when the folder is the mail root (#1063, #1070).
 func checkFolder(user, pass, folder string, seeded ...string) error {
 	if isMailRoot(folder) && len(seeded) == 0 {
 		return fmt.Errorf("smoketest: checkFolder(%q) has nothing to clean up by: "+
@@ -544,9 +620,8 @@ func testSieveMailbox(user, pass, to string) error {
 		if err := c.login(user, pass); err != nil {
 			return
 		}
-		// Pre-clean of a leftover from an earlier run: the folder is usually
-		// absent, so the error is expected and only worth a line if it is not
-		// a plain "no such mailbox".
+		// A leftover from an earlier run: absence is the usual answer and only
+		// something other than "no such mailbox" is worth a line.
 		if err := c.deleteFolder(folder); err != nil && !strings.Contains(err.Error(), "NONEXISTENT") {
 			fmt.Printf("  pre-clean %q: %v\n", folder, err)
 		}
@@ -645,10 +720,10 @@ func testSieveVariables(user, pass, to string) error {
 func testSieveReject(user, pass, to string) error {
 	subject := "reject-" + uniqueID()
 	script := "require \"reject\";\nreject \"smoke test reject\";\n"
-	if err := sieveInject(script, "", to, uniqueID(), subject, "body"); err != nil {
-		return err
+	if err := sieveInjectRefused(script, "", to, uniqueID(), subject, "body"); err != nil {
+		return fmt.Errorf("reject: %w", err)
 	}
-	// MX accepts (250), rejection happens async — message must NOT land in INBOX
+	// The refusal is asserted above; nothing may land either way.
 	time.Sleep(5 * time.Second)
 	if err := checkAbsentInInbox(user, pass, subject); err != nil {
 		return fmt.Errorf("reject: %w", err)
@@ -659,10 +734,10 @@ func testSieveReject(user, pass, to string) error {
 func testSieveEreject(user, pass, to string) error {
 	subject := "ereject-" + uniqueID()
 	script := "require \"ereject\";\nereject \"smoke test ereject\";\n"
-	if err := sieveInject(script, "", to, uniqueID(), subject, "body"); err != nil {
-		return err
+	if err := sieveInjectRefused(script, "", to, uniqueID(), subject, "body"); err != nil {
+		return fmt.Errorf("ereject: %w", err)
 	}
-	// same as reject: single check after wait
+	// same as reject: the code is asserted above, the absence here.
 	time.Sleep(5 * time.Second)
 	if err := checkAbsentInInbox(user, pass, subject); err != nil {
 		return fmt.Errorf("ereject: %w", err)
@@ -994,10 +1069,23 @@ func checkSieve() error {
 // lmtpSendRaw injects a complete raw message (headers + body) via LMTP, for
 // tests that need custom headers (Content-Type multipart, X-Spam-Score, ...).
 func lmtpSendRaw(from, to, raw string) error {
+	resp, err := lmtpDeliverRaw(from, to, raw)
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(resp, "250") {
+		return fmt.Errorf("end-of-data: %s", resp)
+	}
+	return nil
+}
+
+// lmtpDeliverRaw is lmtpSendRaw without the verdict: it returns the reply to
+// the final dot.
+func lmtpDeliverRaw(from, to, raw string) (string, error) {
 	addr := net.JoinHostPort(deliveryHost(), *flagDeliveryPort)
 	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
 	if err != nil {
-		return fmt.Errorf("connect %s: %w", addr, err)
+		return "", fmt.Errorf("connect %s: %w", addr, err)
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
@@ -1017,26 +1105,27 @@ func lmtpSendRaw(from, to, raw string) error {
 	}
 	cmd := func(c string) (string, error) { fmt.Fprintf(conn, "%s\r\n", c); return readResp() }
 	if _, err := readResp(); err != nil {
-		return fmt.Errorf("greeting: %w", err)
+		return "", fmt.Errorf("greeting: %w", err)
 	}
 	if resp, err := cmd(deliveryGreeting()); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("%s: %s %v", deliveryGreeting(), resp, err)
+		return "", fmt.Errorf("%s: %s %v", deliveryGreeting(), resp, err)
 	}
 	if resp, err := cmd("MAIL FROM:<" + from + ">"); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("MAIL FROM: %s %v", resp, err)
+		return "", fmt.Errorf("MAIL FROM: %s %v", resp, err)
 	}
 	if resp, err := cmd("RCPT TO:<" + to + ">"); err != nil || !strings.HasPrefix(resp, "250") {
-		return fmt.Errorf("RCPT TO: %s %v", resp, err)
+		return "", fmt.Errorf("RCPT TO: %s %v", resp, err)
 	}
 	if resp, err := cmd("DATA"); err != nil || !strings.HasPrefix(resp, "354") {
-		return fmt.Errorf("DATA: %s %v", resp, err)
+		return "", fmt.Errorf("DATA: %s %v", resp, err)
 	}
 	fmt.Fprintf(conn, "%s\r\n.\r\n", raw)
-	if _, err := readResp(); err != nil {
-		return fmt.Errorf("end-of-data: %w", err)
+	final, err := readResp()
+	if err != nil {
+		return "", fmt.Errorf("end-of-data: %w", err)
 	}
 	cmd("QUIT") //nolint:errcheck
-	return nil
+	return final, nil
 }
 
 func joined(lines []string) string { return strings.Join(lines, "\n") }
@@ -1201,9 +1290,8 @@ func extractMailboxID(s string) string {
 	return rest[:j]
 }
 
-// testSieveMetadata verifies RFC 5490 §4 mboxmetadata + servermetadata: sets a
-// mailbox-scoped and a server-scoped annotation, then asserts a script keying
-// on both routes to the target folder.
+// testSieveMetadata sets a mailbox- and a server-scoped annotation, then
+// requires a script keyed on both to route the mail (RFC 5490 §4).
 func testSieveMetadata(user, pass, to string) error {
 	folder := "sieve-test-meta"
 	if err := createFolder(user, pass, folder); err != nil {
@@ -1241,9 +1329,8 @@ func testSieveMetadata(user, pass, to string) error {
 	return checkFolder(user, pass, folder)
 }
 
-// testSieveReport verifies vnd.yarilo.report (RFC 5965 ARF): the script reports
-// the trigger back to the recipient via submission -> LMTP into INBOX.
-// Guarded on the trigger's subject so the report cannot loop.
+// testSieveReport requires the script to report its trigger back through
+// submission into INBOX, guarded on the subject so it cannot loop.
 func testSieveReport(user, pass, to string) error {
 	script := "require [\"vnd.yarilo.report\"];\n" +
 		"if header :contains \"subject\" \"report-trigger\" {\n" +
@@ -1253,9 +1340,8 @@ func testSieveReport(user, pass, to string) error {
 		return fmt.Errorf("msieve: %w", err)
 	}
 	id := fmt.Sprintf("report-%d@test", time.Now().UnixNano())
-	// The subject carries a unique token so the cleanup at the end can name
-	// this run's trigger. The script matches on :contains, so the token does
-	// not stop it firing.
+	// A unique token in the subject lets the cleanup name this run's trigger;
+	// the script matches :contains, so it still fires.
 	trigger := "report-trigger-" + uniqueID()
 	if err := lmtpSend(id, "s@test.invalid", to, trigger, "body"); err != nil {
 		return fmt.Errorf("inject: %w", err)
@@ -1298,9 +1384,8 @@ func testSieveReport(user, pass, to string) error {
 	if !found {
 		return fmt.Errorf("no valid ARF report delivered back to INBOX within timeout")
 	}
-	// Only what this check put there: the report it matched, and the trigger by
-	// its own subject. Emptying INBOX would take the account's mail with it,
-	// and nothing in this tool's flags says the account is disposable (#1056).
+	// Only what this check put there: nothing in the flags says the account is
+	// disposable, so emptying INBOX is not ours to do (#1056).
 	if len(reportUIDs) > 0 {
 		if err := c.deleteUIDs(reportUIDs); err != nil {
 			fmt.Printf("  cleanup: expunging %d report message(s): %v\n", len(reportUIDs), err)
@@ -1331,4 +1416,21 @@ func testSieveSpamtest(user, pass, to string) error {
 		return fmt.Errorf("inject: %w", err)
 	}
 	return checkFolder(user, pass, folder)
+}
+
+// literalLength reads the {N} a line ends with, which says how many bytes of
+// the response follow it.
+func literalLength(line string) (int, bool) {
+	if !strings.HasSuffix(line, "}") {
+		return 0, false
+	}
+	open := strings.LastIndexByte(line, '{')
+	if open < 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(line[open+1 : len(line)-1])
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }

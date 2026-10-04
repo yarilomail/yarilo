@@ -1,0 +1,2 @@
+"Mon, 21 Sep 2026 14:05:06 +0300" {46}
+=?UTF-8?Q?Caf=C3=A9_menu?= "quoted" back\slash (("Doe, John" NIL "john" "example.test")) (("Doe, John" NIL "john" "example.test")) ((NIL NIL "reply" "example.test")) (("=?UTF-8?B?0IbQstCw0L0=?=" NIL "ivan" "example.test")(NIL NIL "quoted local" "example.test")) ((NIL NIL "undisclosed-recipients" NIL)(NIL NIL NIL NIL)) NIL "<m0@example.test>" "<m1@example.test>"

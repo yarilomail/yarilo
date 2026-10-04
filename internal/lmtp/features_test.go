@@ -15,8 +15,10 @@ import (
 )
 
 type featureServer struct {
-	addr       string
-	maildirCur string // alice's INBOX/cur path for direct file inspection
+	addr string
+	// alice's INBOX arrival directory: a flagless delivery waits there until a
+	// session settles the folder (#1959).
+	maildirNew string
 }
 
 func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServer {
@@ -26,7 +28,7 @@ func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServ
 	mb := maildir.New()
 	idx := fileindex.New()
 
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -41,7 +43,7 @@ func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServ
 	go func() { _ = srv.Serve(ln) }()
 	return featureServer{
 		addr:       ln.Addr().String(),
-		maildirCur: filepath.Join(resolver.Resolve("alice@example.com", ""), "Maildir", "cur"),
+		maildirNew: filepath.Join(mustUserInfo(resolver, "alice@example.com").Home, "Maildir", "new"),
 	}
 }
 
@@ -58,7 +60,7 @@ func TestLMTP_HdrDeliveryAddress_Final(t *testing.T) {
 		t.Fatalf("expected 250, got: %q", resp[0])
 	}
 	// final: detail stripped → alice@example.com
-	checkDirHeader(t, fs.maildirCur, "Delivered-To", "alice@example.com")
+	checkDirHeader(t, fs.maildirNew, "Delivered-To", "alice@example.com")
 }
 
 func TestLMTP_HdrDeliveryAddress_Original(t *testing.T) {
@@ -74,7 +76,7 @@ func TestLMTP_HdrDeliveryAddress_Original(t *testing.T) {
 		t.Fatalf("expected 250, got: %q", resp[0])
 	}
 	// original: +tag kept
-	checkDirHeader(t, fs.maildirCur, "Delivered-To", "alice+tag@example.com")
+	checkDirHeader(t, fs.maildirNew, "Delivered-To", "alice+tag@example.com")
 }
 
 func TestLMTP_HdrDeliveryAddress_None(t *testing.T) {
@@ -89,7 +91,7 @@ func TestLMTP_HdrDeliveryAddress_None(t *testing.T) {
 	if !strings.HasPrefix(resp[0], "250") {
 		t.Fatalf("expected 250, got: %q", resp[0])
 	}
-	checkDirNoHeader(t, fs.maildirCur, "Delivered-To")
+	checkDirNoHeader(t, fs.maildirNew, "Delivered-To")
 }
 
 func TestParseWorkarounds(t *testing.T) {
@@ -183,20 +185,20 @@ func checkFileNoHeader(t *testing.T, path, header string) {
 		}
 	}
 }
-func TestLMTP_QuotaEnforcement_452(t *testing.T) {
+func TestLMTP_QuotaEnforcement(t *testing.T) {
 	dir := t.TempDir()
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 	mb := maildir.New()
 	idx := fileindex.New()
 
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	box.Close() //nolint:errcheck
 
 	// Quota comes from the index (count backend). A tiny 10-byte limit means the
-	// incoming test message alone exceeds it → 452.
+	// incoming test message alone exceeds it → 552, a bounce by default.
 	srv := New(Options{
 		Hostname:    "lmtp.test",
 		Config:      config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
@@ -219,8 +221,8 @@ func TestLMTP_QuotaEnforcement_452(t *testing.T) {
 	conn, sc := dialLMTP(t, ln.Addr().String())
 	sendLHLO(t, conn, sc)
 	resp := deliver(t, conn, sc, "sender@external.com", "alice@example.com", testMsg)
-	if len(resp) == 0 || !strings.HasPrefix(resp[0], "452") {
-		t.Fatalf("expected 452 Mailbox full, got: %v", resp)
+	if len(resp) == 0 || !strings.HasPrefix(resp[0], "552") {
+		t.Fatalf("expected 552 Mailbox full, got: %v", resp)
 	}
 }
 

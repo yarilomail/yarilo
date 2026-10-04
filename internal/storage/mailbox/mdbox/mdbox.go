@@ -1,22 +1,6 @@
-// Package mdbox is the multi-message dbox (mdbox) storage driver. Built on
-// mdboxmap (map_uid + refcount), mailindex (binary index format), and the
-// dbox v2 per-message wire layout.
-//
-// On-disk layout (per user):
-//
-//	<home>/mdbox/storage/
-//	  m.<N>                   multi-message body file
-//	  yarilo.map.index        the mdboxmap index
-//	<home>/mdbox/mailboxes/
-//	  <folder>/               folder marker dir (per-folder state lives in the
-//	                          external fileindex, not duplicated here)
-//
-// Caller "filename" tokens are the stringified map_uid: the external fileindex
-// stores it in MessageMeta.Filename, this driver parses it back on
-// Fetch/Remove/Copy.
-//
-// COPY is O(1): it increments the map record's refcount and returns the source
-// filename unchanged; no body bytes are read or written.
+// Package mdbox is the multi-message dbox storage driver over mdboxmap. A
+// message's "filename" is its map_uid as decimal, and COPY bumps a refcount
+// without reading a body. On-disk layout: INTERNALS.md §8 in docs-internal.
 package mdbox
 
 import (
@@ -35,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/crlf"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
@@ -53,17 +38,21 @@ const (
 // dbox single-message wire constants, re-stated locally to avoid importing
 // dboxv2's unexported helpers.
 const (
-	dboxVersion       = 2
-	messageHeaderSize = 32
-	magicPreByte0     = 0x01
-	magicPreByte1     = 0x02
-	magicPost         = "\n\x01\x03\n"
+	dboxVersion = 2
+	// messageHeaderSize is what we WRITE, announced as M1e. Not a reader
+	// constant: a reader takes the size from M (#1522).
+	messageHeaderSize = 30
+
+	// messageHeaderSizeLegacy is what builds before #1522 wrote: 32 bytes,
+	// announced as M20. Read, never written.
+	messageHeaderSizeLegacy = 32
+	magicPreByte0           = 0x01
+	magicPreByte1           = 0x02
+	magicPost               = "\n\x01\x03\n"
 )
 
-// errCorruptRecord marks a record whose on-disk bytes are structurally
-// unreadable (bad magic, unparseable size). Fetch maps it and truncated reads
-// (io.EOF/ErrUnexpectedEOF) onto mailbox.ErrCorruptStorage, so real corruption
-// is distinguished from a transient EIO/EACCES that must not trigger a rebuild.
+// errCorruptRecord marks bytes that are structurally unreadable. Fetch maps it,
+// and truncation, to ErrCorruptStorage -- a transient EIO must not.
 var errCorruptRecord = errors.New("mdbox: corrupt record")
 
 // Backend is the mdbox MailboxBackend factory. Per-user state lives in
@@ -72,7 +61,9 @@ type Backend struct {
 	locker         locks.Locker
 	altStorageTmpl string        // base path template for cold-storage tier; "" = disabled
 	writeSem       chan struct{} // nil = unlimited
-	listUTF8       bool
+	// fsync says what reaches the disk before a delivery is answered (#1847).
+	fsync    mailbox.FsyncMode
+	listUTF8 bool
 
 	// rotateSize is the per-m.<N> size cap before Save rolls to a fresh file_id
 	// (mdbox_rotate_size). 0 selects defaultRotateSize (10 MiB default).
@@ -111,9 +102,13 @@ func (b *Backend) clock() time.Time {
 // Option configures a Backend at construction time.
 type Option func(*Backend)
 
-// WithLocker wires a yarilo-locks client into the backend. Lock order on every
-// mutation path (Save, Remove, Copy): MdboxMapKey(user) then
-// MailboxKey(user, folder).
+// WithFsync sets what a delivery makes durable before it is acknowledged.
+func WithFsync(m mailbox.FsyncMode) Option {
+	return func(b *Backend) { b.fsync = m }
+}
+
+// WithLocker wires a yarilo-locks client into the backend. Lock order wherever
+// both are held: MailboxKey(user, folder) then MdboxMapKey(user) (#1884).
 func WithLocker(l locks.Locker) Option {
 	return func(b *Backend) { b.locker = l }
 }
@@ -163,10 +158,8 @@ func WithLogRotation(minSize, maxSize int64, minAge time.Duration) Option {
 	}
 }
 
-// WithMapFormat selects the on-disk map index format (mdbox_map_format). An
-// empty value keeps the default; an unknown one is reported when the map is
-// opened rather than silently falling back, because the value names how the
-// bytes that locate every message are written.
+// WithMapFormat selects the map index format. An unknown value is reported at
+// open rather than fallen back from: it names how every message is located.
 func WithMapFormat(s string) Option {
 	return func(b *Backend) {
 		if s != "" {
@@ -187,7 +180,8 @@ func WithPreallocate(v bool) Option { return func(b *Backend) { b.preallocate = 
 
 // New constructs a Backend.
 func New(opts ...Option) *Backend {
-	b := &Backend{listUTF8: true}
+	b := &Backend{
+		fsync: mailbox.FsyncOptimized, listUTF8: true}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -213,12 +207,13 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 	}
 	return &userMailbox{
 		b:           b,
+		info:        u,
 		home:        mailPath,
 		indexRoot:   u.IndexDir,
 		separator:   mailbox.SepOrDefault(u.Separator),
 		escapeChar:  u.StorageEscapeChar,
 		username:    u.Username,
-		owner:       makeOwner(u),
+		owner:       locks.Owner(u.Username, u.LockID()),
 		altBasePath: resolveAltBase(u.AltDir, b.altStorageTmpl, u.Username),
 		listUTF8:    b.listUTF8,
 	}
@@ -245,19 +240,11 @@ type userMailbox struct {
 	altBasePath string // expanded alt root + "/mdbox"; "" = disabled
 	listUTF8    bool
 
+	// info is the user this handle was opened for.
+	info *mailbox.UserInfo
+
 	mu      sync.Mutex
 	mapping *mdboxmap.Map // lazily opened on first use
-}
-
-func makeOwner(u *mailbox.UserInfo) string {
-	proc := "yarilo"
-	if len(os.Args) > 0 {
-		proc = filepath.Base(os.Args[0])
-	}
-	if u.SessionID != "" {
-		return fmt.Sprintf("%s/%d/%s/%s", proc, os.Getpid(), u.Username, u.SessionID)
-	}
-	return fmt.Sprintf("%s/%d/%s", proc, os.Getpid(), u.Username)
 }
 
 // ---- path helpers ------------------------------------------
@@ -278,10 +265,8 @@ func (u *userMailbox) folderRoot() string {
 	return filepath.Join(u.mdboxRoot(), mailboxesDir)
 }
 func (u *userMailbox) folderDiskName(folder string) string {
-	// Escape first, encode second; the reverse path mirrors it (#1078). NFC is
-	// applied once at the name-entry boundary (mailbox.NormalizeName), not
-	// here, so folder arrives in its final form and there is no ordering of NFC
-	// against escaping left to get wrong (#1113).
+	// Escape first, encode second, mirrored on the way back (#1078). No NFC
+	// here: it happens once at name entry (#1113).
 	folder = mailbox.EscapeLogicalName(folder, u.separator, "/", u.escapeChar)
 	if !u.listUTF8 {
 		folder = mboxenc.ToModUTF7(folder)
@@ -366,14 +351,27 @@ func (u *userMailbox) openMap() (*mdboxmap.Map, error) {
 // (Create/Delete/Rename). Save/Fetch/Remove instead go through the map lock
 // taken inside mdboxmap.
 func (u *userMailbox) withMailboxLock(folder string, fn func() error) error {
+	return u.withMailboxLockSite(folder, "mdbox-folder", fn)
+}
+
+// withMailboxLockSite is the same with the reason recorded: an acquisition
+// from an expunge and one from a rebuild cost the same and mean opposites.
+func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) error {
 	if u.b.locker == nil {
 		return fn()
 	}
+	// One order for the pair, held by the code rather than by a comment: the
+	// map is taken under a folder, never a folder under the map (#1884).
+	if err := u.refuseFolderUnderMap(folder, site); err != nil {
+		return err
+	}
 	key := locks.MailboxKey(u.username, folder)
-	if u.b.locker.HoldsResource(key) {
+	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return fn()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
 	defer cancel()
 	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
 	if err != nil {
@@ -394,9 +392,13 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 		a, b = b, a
 	}
 	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "mdbox-folder"), 35*time.Second)
 	defer cancel()
-	if !u.b.locker.HoldsResource(keyA) {
+	heldA, herr := locks.Reentrant(u.b.locker, keyA, "mdbox-folder", false)
+	if herr != nil {
+		return herr
+	}
+	if heldA == locks.HoldNone {
 		lkA, err := locks.Acquire(ctx, u.b.locker, keyA, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("mdbox/lock %s: %w", a, err)
@@ -407,7 +409,11 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 		return fn()
 	}
 	keyB := locks.MailboxKey(u.username, b)
-	if !u.b.locker.HoldsResource(keyB) {
+	heldB, herr := locks.Reentrant(u.b.locker, keyB, "mdbox-folder", false)
+	if herr != nil {
+		return herr
+	}
+	if heldB == locks.HoldNone {
 		lkB, err := locks.Acquire(ctx, u.b.locker, keyB, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("mdbox/lock %s: %w", b, err)
@@ -502,18 +508,13 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 			}
 			logical = decoded
 		}
-		// Outermost on the way back: the escape sits at the logical-name
-		// boundary, above modUTF7, so it is applied last here and first on the
-		// way in (#1078). No NFC here: the disk name is already in the form the
-		// boundary chose, and re-normalising it is the second owner this change
-		// removed (#1113).
+		// Outermost on the way back: the escape sits above modUTF7 (#1078).
+		// No NFC here -- re-normalising is the second owner #1113 removed.
 		logical = mailbox.UnescapeStorageName(logical, u.escapeChar)
 		return logical, true
 	}
-	// A folder is selectable when it owns a dbox-Mails marker dir; a dir that
-	// only holds child folders (an auto-created parent) is a \NoSelect
-	// container. Payloads live in the shared storage/, so the marker dir stays
-	// empty — it exists purely to record that the mailbox is selectable.
+	// Selectable means it owns an (empty) dbox-Mails marker; a dir holding only
+	// children is a \NoSelect container.
 	root := u.folderRoot()
 	isMarker := func(name string) bool { return name == dboxMailsDir }
 	selectable := func(diskRel string) bool {
@@ -531,24 +532,10 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 // question a save timing answers is comparative.
 const driverName = "mdbox"
 
-// Save writes the message body into the user-wide multi-message store and
-// records its location in the mdboxmap. Returns the assigned map_uid as a
-// decimal string; the caller stores it in MessageMeta.Filename.
-//
-// Flow:
-//
-//  1. Build the dbox v2 record bytes.
-//  2. Pick a destination m.<file_id>: the current highest_file_id, unless
-//     adding len(record) would exceed the rotate threshold, in which case
-//     AllocFileID claims a fresh id under the map X lock.
-//  3. Open m.<file_id> O_APPEND, write the record, capture the pre-write offset.
-//  4. AppendRecord(file_id, offset, size) under the map X lock to allocate a
-//     fresh map_uid and persist the pointer.
-//
-// The folder-level lock is not taken here; concurrent Save peers are serialised
-// by the map X lock alone. The uid parameter (per-folder UID from the external
-// fileindex) is ignored: the filename is the map_uid.
-func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
+// Save appends the record to the current m.<N> and registers it in the map,
+// returning the map_uid as the filename. Peers serialise on the map lock alone;
+// the folder lock is not taken, and the per-folder uid is ignored.
+func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	var noGUID [16]byte
 	whole := time.Now()
 	defer func() { mailboxmetrics.ObserveSave(driverName, time.Since(whole)) }()
@@ -569,10 +556,10 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 	}
 	tPrepare := time.Now()
 	if err := os.MkdirAll(u.folderPath(folder), 0o700); err != nil {
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir folder: %w", err)
+		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir folder: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 	if err := os.MkdirAll(u.storagePath(), 0o700); err != nil {
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir storage: %w", err)
+		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir storage: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 	m, err := u.openMap()
 	if err != nil {
@@ -583,8 +570,10 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 	if guid == noGUID {
 		guid = randomGUID()
 	}
-	msgRecord := buildDboxMessageRecord(body, guid, folder)
-	recLen := uint32(len(msgRecord))
+	// The header size belongs to the file this lands in, which rotation below
+	// decides; the two sizes differ by two bytes, so the larger serves the
+	// arithmetic.
+	recLen := uint32(dboxRecordLen(body, guid, folder, messageHeaderSizeLegacy))
 
 	fileID := m.HighestFileID()
 	if fileID == 0 {
@@ -592,10 +581,8 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 	}
 	curSize, _ := u.fileSize(u.mfilePath(fileID))
 	mailboxmetrics.ObserveSavePart(driverName, "prepare", time.Since(tPrepare))
-	// Roll to a fresh file_id when appending would exceed the size cap, or when
-	// the current append file is older than the rotate interval. The age check
-	// uses a persisted create-time (not a filesystem btime) and a rolling window
-	// (now - createTime > interval), so the file actually lived at least that long.
+	// Roll to a fresh file_id past the size cap or the rotate interval, the age
+	// taken from a persisted stamp rather than btime.
 	nowT := u.b.clock()
 	rotate := uint32(curSize)+recLen > u.b.rotateSizeOrDefault()
 	if !rotate && u.b.rotateInterval > 0 {
@@ -616,7 +603,9 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 	}
 
 	tOpen := time.Now()
-	f, err := os.OpenFile(u.mfilePath(fileID), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	// O_RDWR, not O_WRONLY: an append has to read the file's header line to
+	// learn the header size it must write at (#1525).
+	f, err := os.OpenFile(u.mfilePath(fileID), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return "", 0, noGUID, fmt.Errorf("mdbox/save: open m.%d: %w", fileID, err)
 	}
@@ -629,7 +618,22 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 		return "", 0, noGUID, fmt.Errorf("mdbox/save: stat handle: %w", err)
 	}
 	offset := uint32(st.Size())
+	// A file this save created is a directory entry a crash can lose, and the
+	// map would then name a file that is not there (#1847).
+	createdFile := offset == 0
 	mailboxmetrics.ObserveSavePart(driverName, "open", time.Since(tOpen))
+
+	// The file decides the header size, not this binary: a 30-byte header in
+	// a file whose line says M20 is a record no reader can find (#1525).
+	hdrSize := messageHeaderSize
+	if offset > 0 {
+		hdrSize, err = fileHeaderSizeOf(f)
+		if err != nil {
+			f.Close() //nolint:errcheck
+			return "", 0, noGUID, fmt.Errorf("mdbox/save: m.%d: %w", fileID, err)
+		}
+	}
+	msgRecord := buildDboxMessageRecord(body, guid, folder, hdrSize)
 	// The dbox file-header line is a file-level header: emit it only for the first
 	// record in a new physical file (offset 0). Appended records start directly at
 	// their message header, matching the dbox v2 layout.
@@ -653,7 +657,21 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 	mailboxmetrics.ObserveSavePart(driverName, "write", time.Since(tWrite))
 	if werr != nil {
 		f.Close()
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: write record: %w", werr)
+		return "", 0, noGUID, fmt.Errorf("mdbox/save: write record: %w", mailboxmetrics.ClassifyWrite(driverName, folder, werr))
+	}
+	// Before the map names it, and so before the delivery is answered: the map
+	// entry would otherwise point at bytes a crash never wrote (#1847).
+	if u.b.fsync.SyncsBody() {
+		if serr := syncFile(f); serr != nil {
+			f.Close() //nolint:errcheck
+			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync m.%d: %w", fileID, mailboxmetrics.ClassifyWrite(driverName, folder, serr))
+		}
+	}
+	if createdFile && u.b.fsync.SyncsDir() {
+		if serr := syncDir(u.storagePath()); serr != nil {
+			f.Close() //nolint:errcheck
+			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync storage dir: %w", serr)
+		}
 	}
 	// Close is its own part: on a networked filesystem this is where the
 	// write is actually paid for, and folding it into the write above would
@@ -666,6 +684,9 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 	}
 
 	tMap := time.Now()
+	if afterMapAppend != nil {
+		afterMapAppend()
+	}
 	mapUID, err := m.AppendRecord(fileID, offset, recLen, guid)
 	mailboxmetrics.ObserveSavePart(driverName, "map", time.Since(tMap))
 	if err != nil {
@@ -675,10 +696,8 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 	return strconv.FormatUint(uint64(mapUID), 10), uint32(len(body)), guid, nil
 }
 
-// Fetch resolves the message identified by filename (decimal map_uid) and
-// returns a reader positioned at the body. altTier (from MessageMeta.AltTier,
-// persisted as FlagBackend in the index) opens the alt-storage path directly
-// when true, avoiding a wasted primary open() for cold-tier messages.
+// Fetch returns a reader positioned at the body of map_uid filename. altTier
+// opens the alt path directly, sparing a wasted primary open.
 func (u *userMailbox) Fetch(_, filename string, altTier bool) (io.ReadCloser, error) {
 	mapUID, err := parseFilename(filename)
 	if err != nil {
@@ -688,11 +707,9 @@ func (u *userMailbox) Fetch(_, filename string, altTier bool) (io.ReadCloser, er
 	if err != nil {
 		return nil, err
 	}
-	// Three parts with fixed boundaries, so the totals reconcile and the
-	// comparison with maildir says which step costs: lookup resolves the map
-	// entry (a freshness check included, when the map misses), open opens the
-	// packed file, body seeks to the record and reads it. In maildir the first
-	// two are one open by name and the third does not exist (#1205).
+	// Three parts so the totals reconcile against maildir, where lookup and
+	// open are one open by name and record does not exist (#1205). The body
+	// streams to the caller and is not timed (#1517).
 	lookupStart := time.Now()
 	entry, ok, err := m.Lookup(mapUID)
 	mdboxmap.ObserveReadPart("lookup", time.Since(lookupStart))
@@ -700,20 +717,38 @@ func (u *userMailbox) Fetch(_, filename string, altTier bool) (io.ReadCloser, er
 		return nil, fmt.Errorf("mdbox/fetch: lookup: %w", err)
 	}
 	if !ok {
-		// The folder index references a map_uid the map no longer carries: the
-		// map and fileindex have diverged, which is corruption.
-		//
-		// Benign race: a stale session may FETCH a UID that a concurrent
-		// purge just dropped (Remove only decrements the refcount; purge later
-		// physically removes the zero-ref map record), which also surfaces as a
-		// map miss. Rare and self-limiting: the marker is only
-		// persisted for drivers with a reactive healer (mailbox.CanReactiveHeal),
-		// which mdbox does not yet have, so it cannot produce a false FSCKD on a
-		// healthy folder. A future healer must reconcile against the purge log
-		// before acting on this signal.
+		// The folder index names a map_uid the map no longer carries: usually
+		// divergence, sometimes a stale fetch racing purge.
 		return nil, fmt.Errorf("mdbox/fetch: map_uid %d not found: %w", mapUID, mailbox.ErrCorruptStorage)
 	}
 
+	rc, err := u.openEntry(entry, altTier)
+	if !errors.Is(err, os.ErrNotExist) {
+		return rc, err
+	}
+	// A purge elsewhere may have moved the record on: reload once. As the
+	// reference does, the caller tells expunged from lost by its folder index.
+	metricReadRefreshed.Inc()
+	fresh, ok, rerr := m.LookupReloaded(mapUID)
+	if rerr != nil {
+		return nil, fmt.Errorf("mdbox/fetch: reload: %w", rerr)
+	}
+	if !ok {
+		return nil, fmt.Errorf("mdbox/fetch: map_uid %d: %w", mapUID, mailbox.ErrExpunged)
+	}
+	if fresh.FileID == entry.FileID {
+		return nil, fmt.Errorf("%w: %w", err, mailbox.ErrCorruptStorage)
+	}
+	rc, err = u.openEntry(fresh, altTier)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %w", err, mailbox.ErrCorruptStorage)
+	}
+	return rc, err
+}
+
+// openEntry opens the record a map entry names; a missing file comes back as
+// os.ErrNotExist for Fetch to decide on.
+func (u *userMailbox) openEntry(entry mdboxmap.MapEntry, altTier bool) (io.ReadCloser, error) {
 	primary := u.mfilePath(entry.FileID)
 	alt := u.mfileAltPath(entry.FileID)
 
@@ -725,13 +760,13 @@ func (u *userMailbox) Fetch(_, filename string, altTier bool) (io.ReadCloser, er
 		f, ferr := os.Open(alt)
 		mdboxmap.ObserveReadPart("open", time.Since(openStart))
 		if ferr == nil {
-			bodyStart := time.Now()
-			body, berr := readRecordBody(f, entry.Offset)
-			mdboxmap.ObserveReadPart("body", time.Since(bodyStart))
-			_ = f.Close()
+			recordStart := time.Now()
+			rc, berr := openRecordBody(f, entry.Offset)
+			mdboxmap.ObserveReadPart("record", time.Since(recordStart))
 			if berr == nil {
-				return io.NopCloser(bytes.NewReader(body)), nil
+				return rc, nil
 			}
+			_ = f.Close()
 		}
 	}
 
@@ -745,29 +780,128 @@ func (u *userMailbox) Fetch(_, filename string, altTier bool) (io.ReadCloser, er
 		}
 		if ferr != nil {
 			mdboxmap.ObserveReadPart("open", time.Since(openStart))
-			// A vanished m.<N> the map still points at is corruption; any other
-			// open error (EIO, EACCES) is transient and must not trigger a rebuild.
-			if errors.Is(ferr, os.ErrNotExist) {
-				return nil, fmt.Errorf("mdbox/fetch: open m.%d: %w: %w", entry.FileID, ferr, mailbox.ErrCorruptStorage)
-			}
 			return nil, fmt.Errorf("mdbox/fetch: open m.%d: %w", entry.FileID, ferr)
 		}
 	}
 	mdboxmap.ObserveReadPart("open", time.Since(openStart))
-	bodyStart := time.Now()
-	body, err := readRecordBody(f, entry.Offset)
-	mdboxmap.ObserveReadPart("body", time.Since(bodyStart))
-	_ = f.Close()
+	recordStart := time.Now()
+	rc, err := openRecordBody(f, entry.Offset)
+	mdboxmap.ObserveReadPart("record", time.Since(recordStart))
 	if err != nil {
+		_ = f.Close()
 		return nil, corruptFetchErr(entry.FileID, err)
 	}
-	return io.NopCloser(bytes.NewReader(body)), nil
+	return rc, nil
 }
 
-// corruptFetchErr classifies a record-read failure: a truncated read
-// (io.EOF/ErrUnexpectedEOF) or a structurally bad record (errCorruptRecord) is
-// corruption; anything else (EIO, EACCES) is transient and must not trigger a
-// rebuild.
+// openRecordBody returns a reader over exactly the body, read only as far as the
+// consumer goes (#1517). Truncation is checked here against the file size, so it
+// is reported from Fetch rather than as an EOF nobody classifies.
+func openRecordBody(f *os.File, offset uint32) (io.ReadCloser, error) {
+	bodyOff, size, err := readRecordHeader(f, offset)
+	if err != nil {
+		return nil, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat: %w", err)
+	}
+	if bodyOff+int64(size) > st.Size() {
+		return nil, fmt.Errorf("read body: %w", io.ErrUnexpectedEOF)
+	}
+	return &sectionCloser{
+		Reader: crlf.New(io.NewSectionReader(f, bodyOff, int64(size))),
+		f:      f,
+	}, nil
+}
+
+// sectionCloser closes the file the section was cut from. The body goes out
+// through crlf.New: a record written by another implementation can be bare LF,
+// and deciding per record would be the second read #1517 removed (#1527).
+type sectionCloser struct {
+	io.Reader
+	f *os.File
+}
+
+func (s *sectionCloser) Close() error { return s.f.Close() }
+
+// readRecordHeader skips a file header line if present, parses the message
+// header at the size the file announces, and returns the body's start and length.
+func readRecordHeader(f *os.File, offset uint32) (bodyOff int64, size uint64, err error) {
+	if _, err = f.Seek(int64(offset), io.SeekStart); err != nil {
+		return 0, 0, fmt.Errorf("seek: %w", err)
+	}
+	window := make([]byte, 64)
+	n, err := f.Read(window)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read record start: %w", err)
+	}
+	skip, ok := peekFileHeaderLen(window[:n])
+	if !ok {
+		return 0, 0, fmt.Errorf("%w: malformed record @%d", errCorruptRecord, offset)
+	}
+	hdrSize, err := recordHeaderSize(f, window[:n], skip)
+	if err != nil {
+		return 0, 0, err
+	}
+	hdrOff := int64(offset) + int64(skip)
+	if _, err = f.Seek(hdrOff, io.SeekStart); err != nil {
+		return 0, 0, fmt.Errorf("seek to message header: %w", err)
+	}
+	mh := make([]byte, hdrSize)
+	if _, err = io.ReadFull(f, mh); err != nil {
+		return 0, 0, fmt.Errorf("read message header: %w", err)
+	}
+	if err := checkMessageHeader(mh); err != nil {
+		// The file announced one header size and the record was written at
+		// the other (#1523..#1525). The record is undamaged and the trailing LF
+		// says which size is right; purge would not bring these back.
+		recovered, rerr := readMessageHeaderAtOtherSize(f, hdrOff, hdrSize)
+		if rerr != nil {
+			return 0, 0, err
+		}
+		logOtherHeaderSize(f.Name(), offset, hdrSize, len(recovered))
+		mh, hdrSize = recovered, len(recovered)
+	}
+	size, err = strconv.ParseUint(strings.TrimSpace(string(mh[13:29])), 16, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%w: parse size: %v", errCorruptRecord, err)
+	}
+	return hdrOff + int64(hdrSize), size, nil
+}
+
+// readMessageHeaderAtOtherSize re-reads the header at the size the file did
+// not announce, and returns it only when it passes the same check. Two sizes
+// exist, so there is exactly one alternative and no searching.
+func readMessageHeaderAtOtherSize(f *os.File, hdrOff int64, announced int) ([]byte, error) {
+	other := messageHeaderSize
+	if announced == messageHeaderSize {
+		other = messageHeaderSizeLegacy
+	}
+	mh := make([]byte, other)
+	if _, err := f.ReadAt(mh, hdrOff); err != nil {
+		return nil, err
+	}
+	if err := checkMessageHeader(mh); err != nil {
+		return nil, err
+	}
+	return mh, nil
+}
+
+// checkMessageHeader: the two magic bytes and LF last. The LF is what catches a
+// header read at the wrong size -- the byte after a header is rarely a newline.
+func checkMessageHeader(mh []byte) error {
+	if len(mh) < 30 || mh[0] != magicPreByte0 || mh[1] != magicPreByte1 {
+		return fmt.Errorf("%w: bad message magic", errCorruptRecord)
+	}
+	if mh[len(mh)-1] != '\n' {
+		return fmt.Errorf("%w: message header does not end in LF", errCorruptRecord)
+	}
+	return nil
+}
+
+// corruptFetchErr classifies a read failure: truncation or a bad record is
+// corruption; EIO and EACCES are transient and must not trigger a rebuild.
 func corruptFetchErr(fileID uint32, err error) error {
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, errCorruptRecord) {
 		return fmt.Errorf("mdbox/fetch: read m.%d: %w: %w", fileID, err, mailbox.ErrCorruptStorage)
@@ -778,6 +912,27 @@ func corruptFetchErr(fileID uint32, err error) error {
 // Remove decrements the map record's refcount. Bytes stay on disk; purge
 // reclaims them later. Idempotent: a Remove of an already-zero-ref record is a
 // no-op (UpdateRefcounts clamps at zero).
+// RemoveManyHeld drops the refcount of every named body in one pass, so an
+// expunge locks the user's map once instead of once per message (#1884).
+func (u *userMailbox) RemoveManyHeld(_ string, filenames []string) error {
+	if len(filenames) == 0 {
+		return nil
+	}
+	uids := make([]uint32, 0, len(filenames))
+	for _, name := range filenames {
+		mapUID, err := parseFilename(name)
+		if err != nil {
+			return fmt.Errorf("mdbox/remove: %w", err)
+		}
+		uids = append(uids, mapUID)
+	}
+	m, err := u.openMap()
+	if err != nil {
+		return err
+	}
+	return m.UpdateRefcounts(uids, -1)
+}
+
 func (u *userMailbox) Remove(_, filename string) error {
 	mapUID, err := parseFilename(filename)
 	if err != nil {
@@ -789,6 +944,29 @@ func (u *userMailbox) Remove(_, filename string) error {
 	}
 	return m.UpdateRefcounts([]uint32{mapUID}, -1)
 }
+
+// RestoreMoved takes back the reference Move dropped on orig and drops the one
+// the re-save took; the bytes of orig stay until a purge.
+func (u *userMailbox) RestoreMoved(_, orig, _, moved string, _ *mailbox.MessageMeta) error {
+	origUID, err := parseFilename(orig)
+	if err != nil {
+		return fmt.Errorf("mdbox/restore: %w", err)
+	}
+	movedUID, err := parseFilename(moved)
+	if err != nil {
+		return fmt.Errorf("mdbox/restore: %w", err)
+	}
+	m, err := u.openMap()
+	if err != nil {
+		return err
+	}
+	if err := m.UpdateRefcounts([]uint32{origUID}, +1); err != nil {
+		return fmt.Errorf("mdbox/restore: source refcount: %w", err)
+	}
+	return m.UpdateRefcounts([]uint32{movedUID}, -1)
+}
+
+var _ mailbox.MoveRestorer = (*userMailbox)(nil)
 
 // Copy implements the optional Copyable interface for O(1) IMAP COPY. Returns
 // the source filename unchanged: the destination folder stores the same map_uid
@@ -808,10 +986,8 @@ func (u *userMailbox) Copy(_, srcFilename, _ string, _ uint32) (string, error) {
 	return srcFilename, nil
 }
 
-// Move relocates a message between folders keeping its GUID (RFC 8474: MOVE
-// must not change EMAILID). The record trailer names the owning folder, so this
-// re-saves with the same GUID and unreferences the source. Both folder locks
-// are taken in sorted order.
+// Move re-saves with the same GUID (RFC 8474: EMAILID must survive) and
+// unreferences the source, both folder locks taken in sorted order.
 func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte) (string, [16]byte, error) {
 	var noGUID [16]byte
 	mapUID, err := parseFilename(filename)
@@ -845,7 +1021,7 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 		if rerr != nil {
 			return fmt.Errorf("mdbox/move: read: %w", rerr)
 		}
-		name, _, saved, serr := u.Save(dstFolder, bytes.NewReader(body), 0, int64(len(body)), nil, outGUID)
+		name, _, saved, serr := u.Save(dstFolder, bytes.NewReader(body), 0, int64(len(body)), nil, nil, outGUID)
 		if serr != nil {
 			return fmt.Errorf("mdbox/move: save: %w", serr)
 		}
@@ -866,11 +1042,8 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 // (UID -> filename -> map_uid).
 func (u *userMailbox) List(_ string) ([]*mailbox.MessageMeta, error) { return nil, nil }
 
-// Scan walks every m.<N> physical file under the user's mdbox storage and
-// yields one ScanRecord per stored message. The folder argument is ignored:
-// mdbox storage is folder-agnostic, and the per-folder fileindex is the source
-// of truth for which folder owns each map_uid. The admin rebuild pairs this
-// output with per-folder records to rebuild state. See scanStorage/scanMFileAt.
+// Scan yields one ScanRecord per stored message across the whole store; folder
+// is ignored, since only the folder index knows which folder owns a map_uid.
 func (u *userMailbox) Scan(_ string) ([]mailbox.ScanRecord, error) {
 	return u.scanStorage()
 }
@@ -880,10 +1053,8 @@ func (u *userMailbox) Scan(_ string) ([]mailbox.ScanRecord, error) {
 // storage-wide rebuild is RebuildStorage.
 func (u *userMailbox) FolderAgnosticScan() bool { return true }
 
-// CompactMap folds the user's map log into its base. Exposed so an operator
-// asking to fold this account's indexes gets the map too: it is the other
-// structure replayed when a session opens, and the folder indexes do not
-// contain it.
+// CompactMap folds the map log into its base: the map is the other structure
+// replayed at open, and folding only the folder indexes leaves it.
 func (u *userMailbox) CompactMap() error {
 	m, err := u.openMap()
 	if err != nil {
@@ -917,59 +1088,35 @@ func (u *userMailbox) Close() error {
 // ---- single-message dbox record (re-implemented here to avoid
 // reaching into dboxv2's unexported helpers) ------
 
-// metaOrigMailbox is the trailer key for the mailbox a message was originally
-// saved into. A storage-wide rebuild uses it to restore an orphan (a message no
-// folder index references) to its home folder instead of guessing. It is an
-// append-only key in the line-framed key/value trailer, so a reader that does
-// not know the key skips it; the record size and every prior key's offset are
-// unchanged.
+// metaOrigMailbox is the trailer key naming the folder a message was saved into,
+// so a rebuild restores an orphan instead of guessing. An unknown key is skipped
+// by any reader, so adding it changed no offset.
 const metaOrigMailbox = 'B'
 
-// buildDboxFileHeader returns the dbox v2 file-header line ("2 M20 C<stamp>\n").
-// It is a file-level header, written once at the start of each physical m.<N>
-// file before its first message, never per message. C is the file creation
-// timestamp.
+// buildDboxFileHeader returns the file header line, written once per m.<N>. M
+// announces the message header size and every reader takes it from there.
 func buildDboxFileHeader() []byte {
 	return []byte(fmt.Sprintf("%d M%x C%x\n", dboxVersion, messageHeaderSize, uint32(time.Now().Unix())))
 }
 
-// buildDboxMessageRecord packs body into one canonical dbox v2 message record
-// (32-byte message header, body, metadata trailer) without the file-header line
-// (that belongs to the file; see buildDboxFileHeader). guid goes in the trailer
-// G field: a fresh Save mints a random GUID, while compaction (purge/altmove)
-// must pass the original GUID from the source trailer so message identity
-// survives.
-//
-// origMailbox, when non-empty, is written as the metaOrigMailbox trailer key so
-// a rebuild can route an orphaned copy back to its home folder. Compaction
-// passes the value recovered from the source trailer; a fresh Save passes the
-// destination folder.
-func buildDboxMessageRecord(body []byte, guid [16]byte, origMailbox string) []byte {
+// buildDboxMessageRecord packs body into one dbox v2 record without the file
+// header line. Compaction must pass the source trailer's guid and origMailbox,
+// or identity and the orphan's way home do not survive the move. origMailbox is
+// framed as a line, safe because a folder name never contains a newline.
+func buildDboxMessageRecord(body []byte, guid [16]byte, origMailbox string, hdrSize int) []byte {
 	size := uint64(len(body))
 	now := uint32(time.Now().Unix())
 
 	var buf bytes.Buffer
-	// 32-byte message header: magic + 'N' + spaces + size hex + LF.
-	hdr := make([]byte, messageHeaderSize)
-	for i := range hdr {
-		hdr[i] = ' '
-	}
-	hdr[0] = magicPreByte0
-	hdr[1] = magicPreByte1
-	hdr[2] = 'N'
-	copy(hdr[13:29], fmt.Sprintf("%016x", size))
-	hdr[31] = '\n'
-	buf.Write(hdr)
+	buf.Write(buildMessageHeader(size, hdrSize))
 	buf.Write(body)
 	// Metadata trailer.
 	buf.WriteString(magicPost)
 	fmt.Fprintf(&buf, "G%s\n", hex.EncodeToString(guid[:]))
 	fmt.Fprintf(&buf, "R%x\n", now)
 	fmt.Fprintf(&buf, "V%x\n", uint32(size))
-	// Original mailbox (append-only; skipped by readers that don't know the key).
-	// A folder name never contains a newline, so line framing is safe. An empty
-	// origMailbox omits the key, indistinguishable from a pre-key record;
-	// acceptable because no Save path passes an empty folder name.
+	// Original mailbox, skipped by readers that do not know the key. Empty
+	// omits it, which no Save path produces.
 	if origMailbox != "" {
 		fmt.Fprintf(&buf, "%c%s\n", metaOrigMailbox, origMailbox)
 	}
@@ -977,28 +1124,82 @@ func buildDboxMessageRecord(body []byte, guid [16]byte, origMailbox string) []by
 	return buf.Bytes()
 }
 
-// buildDboxRecord builds a file-header line followed by a single message record:
-// the layout of a physical file holding exactly one message. Multi-message
-// files carry the file-header line only once, before the first message. Retained
-// for the single-record case and for tests that construct the legacy
-// per-record-header layout the reader still accepts.
+// buildDboxRecord builds a file header line and one message record: the layout
+// of a single-message file, and of the legacy per-record layout the reader
+// still accepts.
 func buildDboxRecord(body []byte, guid [16]byte, origMailbox string) []byte {
-	return append(buildDboxFileHeader(), buildDboxMessageRecord(body, guid, origMailbox)...)
+	return append(buildDboxFileHeader(), buildDboxMessageRecord(body, guid, origMailbox, messageHeaderSize)...)
 }
 
-// peekFileHeaderLen reports how many leading bytes of the record window belong
-// to a dbox file-header line, and whether the window is well-formed. A message
-// header begins with magicPreByte0 (0x01, never an ASCII digit); a file-header
-// line begins with the ASCII version digit, so the first byte tells them apart:
-//
-//   - skip == 0: the record starts directly at its 32-byte message header (an
-//     appended record in a multi-message file).
-//   - skip  > 0: a file-header line of that length precedes the message header
-//     (the first record in a physical file, or every record in a legacy
-//     per-message-header file; both parse identically).
-//
-// ok == false means neither (no leading magic and no LF), i.e. a corrupt record.
-// window must hold at least the start of the record.
+// dboxRecordLen is what the record will occupy, for the rotation arithmetic
+// that runs before the target file is known.
+func dboxRecordLen(body []byte, guid [16]byte, origMailbox string, hdrSize int) int {
+	return len(buildDboxMessageRecord(body, guid, origMailbox, hdrSize))
+}
+
+// fileHeaderSizeOf reads M from an open file's first line.
+func fileHeaderSizeOf(f *os.File) (int, error) {
+	first := make([]byte, 64)
+	n, err := f.ReadAt(first, 0)
+	if err != nil && n == 0 {
+		return 0, fmt.Errorf("read file header: %w", err)
+	}
+	lf := bytes.IndexByte(first[:n], '\n')
+	if lf < 0 {
+		return 0, fmt.Errorf("%w: file carries no header line", errCorruptRecord)
+	}
+	size, ok := parseFileHeaderSize(first[:lf+1])
+	if !ok {
+		return 0, fmt.Errorf("%w: file carries no usable M", errCorruptRecord)
+	}
+	return size, nil
+}
+
+// parseFileHeaderSize reads the M field of a file header line. The file
+// announces its own size and is read with it; only the two sizes that exist are
+// accepted, since guessing misplaces every body by the difference (#1522).
+func parseFileHeaderSize(line []byte) (int, bool) {
+	for _, field := range bytes.Fields(line) {
+		if len(field) < 2 || field[0] != 'M' {
+			continue
+		}
+		n, err := strconv.ParseUint(string(field[1:]), 16, 16)
+		if err != nil {
+			return 0, false
+		}
+		if n != messageHeaderSize && n != messageHeaderSizeLegacy {
+			return 0, false
+		}
+		return int(n), true
+	}
+	return 0, false
+}
+
+// recordHeaderSize reads the header size from the line introducing the record,
+// else from the file's first line: an appended record carries none of its own.
+func recordHeaderSize(f *os.File, window []byte, skip int) (int, error) {
+	if skip > 0 {
+		if size, ok := parseFileHeaderSize(window[:skip]); ok {
+			return size, nil
+		}
+		return 0, fmt.Errorf("%w: file header announces no usable M", errCorruptRecord)
+	}
+	first := make([]byte, 64)
+	n, err := f.ReadAt(first, 0)
+	if err != nil && n == 0 {
+		return 0, fmt.Errorf("read file header: %w", err)
+	}
+	if lf := bytes.IndexByte(first[:n], '\n'); lf >= 0 {
+		if size, ok := parseFileHeaderSize(first[:lf+1]); ok {
+			return size, nil
+		}
+	}
+	return 0, fmt.Errorf("%w: file carries no usable M", errCorruptRecord)
+}
+
+// peekFileHeaderLen reports how many leading bytes of the window are a file
+// header line, told apart by the first byte: a message header starts with 0x01,
+// a file header with an ASCII digit. ok is false on neither -- corrupt.
 func peekFileHeaderLen(window []byte) (skip int, ok bool) {
 	if len(window) == 0 {
 		return 0, false
@@ -1012,37 +1213,15 @@ func peekFileHeaderLen(window []byte) (skip int, ok bool) {
 	return 0, false
 }
 
-// readRecordBody seeks to offset, skips the file-header line if present (the
-// first record in a physical file carries it; legacy files carry it per record),
-// parses the 32-byte message header, and returns the message body bytes.
+// readRecordBody returns the whole body of the record at offset. Kept for
+// callers that genuinely need every byte; Fetch does not, and streams instead.
 func readRecordBody(f *os.File, offset uint32) ([]byte, error) {
-	if _, err := f.Seek(int64(offset), io.SeekStart); err != nil {
-		return nil, fmt.Errorf("seek: %w", err)
-	}
-	// A file-header line ("2 M20 C…\n") precedes the message header only for the
-	// file's first record; an appended record starts at the message header.
-	window := make([]byte, 64)
-	n, err := f.Read(window)
+	bodyOff, size, err := readRecordHeader(f, offset)
 	if err != nil {
-		return nil, fmt.Errorf("read record start: %w", err)
+		return nil, err
 	}
-	skip, ok := peekFileHeaderLen(window[:n])
-	if !ok {
-		return nil, fmt.Errorf("%w: malformed record @%d", errCorruptRecord, offset)
-	}
-	if _, err := f.Seek(int64(offset)+int64(skip), io.SeekStart); err != nil {
-		return nil, fmt.Errorf("seek to message header: %w", err)
-	}
-	mh := make([]byte, messageHeaderSize)
-	if _, err := io.ReadFull(f, mh); err != nil {
-		return nil, fmt.Errorf("read message header: %w", err)
-	}
-	if mh[0] != magicPreByte0 || mh[1] != magicPreByte1 {
-		return nil, fmt.Errorf("%w: bad message magic", errCorruptRecord)
-	}
-	size, err := strconv.ParseUint(strings.TrimSpace(string(mh[13:29])), 16, 64)
-	if err != nil {
-		return nil, fmt.Errorf("%w: parse size: %v", errCorruptRecord, err)
+	if _, err := f.Seek(bodyOff, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek to body: %w", err)
 	}
 	body := make([]byte, size)
 	if _, err := io.ReadFull(f, body); err != nil {
@@ -1051,39 +1230,16 @@ func readRecordBody(f *os.File, offset uint32) ([]byte, error) {
 	return body, nil
 }
 
-// readRecordBodyAndTrailer reads the message body and the metadata trailer in a
-// single sequential pass, returning the body bytes, GUID and original mailbox
-// from the trailer. Use it in compaction paths so the original GUID and
-// orig-mailbox survive into the destination record; minting a fresh GUID or
-// dropping the orig-mailbox would break message identity and orphan routing
-// across purge/altmove cycles.
+// readRecordBodyAndTrailer reads body and trailer in one pass, for compaction:
+// the destination record must carry the source's GUID and orig-mailbox, or
+// identity and the orphan's way home break across a move.
 func readRecordBodyAndTrailer(f *os.File, offset uint32) (body []byte, guid [16]byte, origMailbox string, err error) {
-	if _, err = f.Seek(int64(offset), io.SeekStart); err != nil {
-		return nil, guid, "", fmt.Errorf("seek: %w", err)
-	}
-	// Skip the file-header line only when present.
-	window := make([]byte, 64)
-	n, err := f.Read(window)
+	bodyOff, size, err := readRecordHeader(f, offset)
 	if err != nil {
-		return nil, guid, "", fmt.Errorf("read record start: %w", err)
+		return nil, guid, "", err
 	}
-	skip, ok := peekFileHeaderLen(window[:n])
-	if !ok {
-		return nil, guid, "", fmt.Errorf("malformed record @%d", offset)
-	}
-	if _, err = f.Seek(int64(offset)+int64(skip), io.SeekStart); err != nil {
-		return nil, guid, "", fmt.Errorf("seek to message header: %w", err)
-	}
-	mh := make([]byte, messageHeaderSize)
-	if _, err = io.ReadFull(f, mh); err != nil {
-		return nil, guid, "", fmt.Errorf("read message header: %w", err)
-	}
-	if mh[0] != magicPreByte0 || mh[1] != magicPreByte1 {
-		return nil, guid, "", fmt.Errorf("bad message magic")
-	}
-	size, err := strconv.ParseUint(strings.TrimSpace(string(mh[13:29])), 16, 64)
-	if err != nil {
-		return nil, guid, "", fmt.Errorf("parse size: %w", err)
+	if _, err = f.Seek(bodyOff, io.SeekStart); err != nil {
+		return nil, guid, "", fmt.Errorf("seek to body: %w", err)
 	}
 	body = make([]byte, size)
 	if _, err = io.ReadFull(f, body); err != nil {
@@ -1144,3 +1300,71 @@ func randomGUID() [16]byte {
 	_, _ = rand.Read(g[:])
 	return g
 }
+
+// logOtherHeaderSize reports a record read at the size the file does not
+// announce: one line per record, so a file full of them reads as such.
+func logOtherHeaderSize(file string, offset uint32, announced, actual int) {
+	slog.Warn("mdbox: record written at a header size the file does not announce; read at the other size",
+		"file", file, "offset", offset, "announced", announced, "actual", actual)
+}
+
+// Username implements mailbox.SelfNaming: a diagnostic line names the account.
+func (u *userMailbox) Username() string { return u.username }
+
+// refuseFolderUnderMap refuses a folder taken by a goroutine already holding
+// the map; another session of the same user waits instead.
+func (u *userMailbox) refuseFolderUnderMap(folder, site string) error {
+	mapKey := locks.MdboxMapKey(u.username)
+	if _, held := u.b.locker.HoldsResource(mapKey); !held {
+		return nil
+	}
+	folderKey := locks.MailboxKey(u.username, folder)
+	metricLockOrderRefused.WithLabelValues(site).Inc()
+	slog.Error("mdbox: refusing a folder lock under the map lock",
+		"site", site, "outer", mapKey, "inner", folderKey, "issue", "#1884")
+	return fmt.Errorf("mdbox/lock: %s wants %s while holding %s: %w", site, folderKey, mapKey, ErrLockOrder)
+}
+
+// ErrLockOrder is returned when the pair would be taken map-first, the order
+// that meets the expunge path head on.
+var ErrLockOrder = errors.New("mdbox: lock order is folder then map")
+
+// HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
+func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
+	return u.withMailboxLockSite(folder, site, fn)
+}
+
+// RemoveHeld is Remove: it changes a refcount in the map and takes no folder
+// hold of its own.
+func (u *userMailbox) RemoveHeld(folder, filename string) error {
+	return u.Remove(folder, filename)
+}
+
+// afterMapAppend marks where the map takes the record, for the row that
+// asserts the sync came first.
+var afterMapAppend func()
+
+// syncFile and syncDir are the durability calls. Test seams: a row counts the
+// call, and the order it came in.
+var (
+	syncFile = (*os.File).Sync
+	syncDir  = func(dir string) error {
+		d, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		serr := d.Sync()
+		cerr := d.Close()
+		if serr != nil {
+			return serr
+		}
+		return cerr
+	}
+)
+
+// DriverName is the label this driver's messages are counted under.
+func (u *userMailbox) DriverName() string { return driverName }
+
+// FsyncMode is what a delivery makes durable here, so the wiring of the
+// configured mode has a reader (#1969).
+func (b *Backend) FsyncMode() mailbox.FsyncMode { return b.fsync }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -72,7 +73,7 @@ func storedServer(t *testing.T) *Server {
 func deliver(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, folder string, uid uint32, flags []string) {
 	t.Helper()
 	body := "Subject: test\r\n\r\nbody\r\n"
-	name, vsize, guid, err := box.Save(folder, strings.NewReader(body), uid, int64(len(body)), flags, [16]byte{})
+	name, vsize, guid, err := box.Save(folder, strings.NewReader(body), uid, int64(len(body)), flags, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -80,9 +81,13 @@ func deliver(t *testing.T, box mailbox.UserMailbox, idx mailbox.UserIndex, folde
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize, Flags: flags, GUID: guid,
-	}); err != nil {
+	meta := &mailbox.MessageMeta{
+		UID: uid, Size: uint32(len(body)), VSize: vsize, Flags: flags, GUID: guid,
+	}
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := idx.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 }
@@ -346,6 +351,8 @@ type testLocker struct {
 	// taken counts acquisitions, so a caller that opens per message instead of
 	// per folder is visible rather than merely slower.
 	taken int
+	// owners is every name the caller announced itself under.
+	owners map[string]struct{}
 }
 
 func (l *testLocker) acquisitions() int {
@@ -362,6 +369,10 @@ func (l *testLocker) Lock(_ context.Context, resource, owner string, _ time.Dura
 	}
 	l.holds[resource]++
 	l.taken++
+	if l.owners == nil {
+		l.owners = map[string]struct{}{}
+	}
+	l.owners[owner] = struct{}{}
 	return locks.Lock{ID: resource, Resource: resource, Owner: owner}, nil
 }
 
@@ -385,10 +396,13 @@ func (l *testLocker) Subscribe(context.Context, string) (<-chan locks.Event, err
 }
 
 func (l *testLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
-func (l *testLocker) HoldsResource(resource string) bool {
+func (l *testLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.holds[resource] > 0
+	if l.holds[resource] > 0 {
+		return locks.HoldExclusive, true
+	}
+	return locks.HoldNone, false
 }
 
 func (l *testLocker) IncrementCounter(context.Context, string, int64) (int64, error) { return 0, nil }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
@@ -31,7 +33,7 @@ func sandboxLikeServerWithHome(t *testing.T) (addr, home string) {
 		Mailbox:       mdbox.New(),
 		Index:         file.New(),
 		Resolver:      &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:          &enforcePassdb{users: map[string]string{"alice": "pw"}},
+		AuthRelay:     authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw"}}),
 		MaxLineLength: 65536,
 		IDSend:        "name *",
 		Namespaces: []imapserver.NamespaceSpec{

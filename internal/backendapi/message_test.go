@@ -11,6 +11,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -52,13 +53,13 @@ func messageServerRaw(t *testing.T, msg string) (*httptest.Server, string, uint3
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 
 	const user = "alice@example.com"
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	box := mb.OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	ui := idx.OpenUser(info)
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(msg), 1, int64(len(msg)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(msg), 1, int64(len(msg)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -66,9 +67,11 @@ func messageServerRaw(t *testing.T, msg string) (*httptest.Server, string, uint3
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: uint32(len(msg)), VSize: vsize, GUID: guid,
-	}); err != nil {
+	meta := &mailbox.MessageMeta{UID: 1, Size: uint32(len(msg)), VSize: vsize, GUID: guid}
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := ui.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	_ = ui.Close()

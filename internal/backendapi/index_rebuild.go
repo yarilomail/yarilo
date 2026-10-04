@@ -56,7 +56,7 @@ func (s *Server) handleIndexRebuild(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuildStats, int, error) {
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
@@ -65,6 +65,9 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
+	}
+	if bundle == nil {
+		return nil, http.StatusNotFound, errNoMailHome
 	}
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -88,7 +91,7 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 	// snapshot we rewrite.
 	if s.opts.Locker != nil {
 		key := locks.MailboxKey(uc.info.Username, req.Folder)
-		lockCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		lockCtx, cancel := context.WithTimeout(locks.WithSite(ctx, "admin-rebuild"), 60*time.Second)
 		defer cancel()
 		lk, err := locks.Acquire(lockCtx, s.opts.Locker, key, uc.lockOwner(), 90*time.Second)
 		if err != nil {
@@ -97,12 +100,12 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 		defer func() { _ = s.opts.Locker.Unlock(context.Background(), lk.ID) }()
 	}
 
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("open folder: %w", err)
 	}
 
-	rstats, err := idxrebuild.RebuildFolder(bundle.box, bundle.idx, folder)
+	rstats, err := idxrebuild.RebuildFolder(bundle.mbox, bundle.idx, folder)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -117,7 +120,7 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 
 	// Invalidate FTS documents for the dropped records; otherwise they linger as
 	// ghost documents until the next fts rescan.
-	s.ftsExpunge(uc, folder.Name, rstats.ExpungedUIDs)
+	s.ftsExpunge(uc, folder.Name, rstats.ExpungedCopies)
 
 	stats := &rebuildStats{
 		Folder:         folder.Name,
@@ -148,6 +151,7 @@ type storageRebuildStats struct {
 	Expunged            int    `json:"expunged"`
 	UnreferencedZeroref int    `json:"unreferenced_zeroref"`
 	OrphansRestored     int    `json:"orphans_restored"`
+	FilesNormalised     int    `json:"files_normalised"`
 	RebuildCount        uint32 `json:"rebuild_count"`
 	DurationMs          int64  `json:"duration_ms"`
 	Note                string `json:"note"`
@@ -162,7 +166,7 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -174,6 +178,10 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return
+	}
 	rb, ok := mailbox.Driver(bundle.box).(mailbox.StorageWideRebuilder)
 	if !ok {
 		apiError(w, "storage-wide rebuild is only for folder-agnostic drivers (mdbox); use /api/backend/index/rebuild per folder", http.StatusBadRequest)
@@ -183,14 +191,14 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	// The rebuild takes the storage (map) lock itself; the per-folder lock is
 	// taken inside idx.ResetFolder.
-	st, err := rb.RebuildStorage(bundle.idx, req.RestoreOrphans)
+	st, err := rb.RebuildStorage(bundle.mbox, bundle.idx, req.RestoreOrphans)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Invalidate FTS documents for every record the rebuild dropped, per folder;
 	// otherwise they linger as ghost documents until the next fts rescan.
-	for folderName, uids := range st.ExpungedUIDs {
+	for folderName, uids := range st.ExpungedCopies {
 		s.ftsExpunge(uc, folderName, uids)
 	}
 
@@ -203,6 +211,7 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 		FoldersRebuilt:      st.FoldersRebuilt,
 		Expunged:            st.Expunged,
 		UnreferencedZeroref: st.UnreferencedZeroref,
+		FilesNormalised:     st.FilesNormalised,
 		OrphansRestored:     st.OrphansRestored,
 		RebuildCount:        st.RebuildCount,
 		DurationMs:          time.Since(start).Milliseconds(),
@@ -313,7 +322,7 @@ func (s *Server) handleIndexOptimize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) optimizeFolder(ctx context.Context, req optimizeRequest) (*optimizeStats, int, error) {
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
@@ -322,6 +331,9 @@ func (s *Server) optimizeFolder(ctx context.Context, req optimizeRequest) (*opti
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
+	}
+	if bundle == nil {
+		return nil, http.StatusNotFound, errNoMailHome
 	}
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -333,7 +345,7 @@ func (s *Server) optimizeFolder(ctx context.Context, req optimizeRequest) (*opti
 	start := time.Now()
 	if s.opts.Locker != nil {
 		key := locks.MailboxKey(uc.info.Username, req.Folder)
-		lockCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		lockCtx, cancel := context.WithTimeout(locks.WithSite(ctx, "admin-rebuild"), 60*time.Second)
 		defer cancel()
 		lk, err := locks.Acquire(lockCtx, s.opts.Locker, key, uc.lockOwner(), 90*time.Second)
 		if err != nil {
@@ -341,7 +353,7 @@ func (s *Server) optimizeFolder(ctx context.Context, req optimizeRequest) (*opti
 		}
 		defer func() { _ = s.opts.Locker.Unlock(context.Background(), lk.ID) }()
 	}
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("open folder: %w", err)
 	}
@@ -389,7 +401,7 @@ func readFoldSizes(sizer journalSizer, folderID uint64) *foldSizes {
 // on purpose: each fold takes that folder's cross-process lock, and running
 // them together would queue a user's own sessions behind their own maintenance.
 func (s *Server) optimizeAccount(ctx context.Context, req optimizeRequest) (*optimizeAccountStats, int, error) {
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}
@@ -397,6 +409,9 @@ func (s *Server) optimizeAccount(ctx context.Context, req optimizeRequest) (*opt
 	if err != nil {
 		uc.Close()
 		return nil, http.StatusBadRequest, err
+	}
+	if bundle == nil {
+		return nil, http.StatusNotFound, errNoMailHome
 	}
 	entries, err := bundle.box.ListFolders()
 	if err != nil {

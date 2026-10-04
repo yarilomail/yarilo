@@ -28,9 +28,13 @@ func TestDestructiveFolderNamesAreRefused(t *testing.T) {
 			home := t.TempDir()
 			u := openTestUser(t, home)
 
-			if _, _, _, err := u.Save("INBOX", strings.NewReader("Subject: a\r\n\r\nbody\r\n"),
-				1, 20, nil, [16]byte{}); err != nil {
-				t.Fatal(err)
+			saved, _, _, serr := u.Save("INBOX", strings.NewReader("Subject: a\r\n\r\nbody\r\n"),
+				1, 20, nil, nil, [16]byte{})
+			if serr != nil {
+				t.Fatal(serr)
+			}
+			if _, aerr := mailbox.Driver(u).(mailbox.UIDNamer).AssignUID("INBOX", saved, 1); aerr != nil {
+				t.Fatalf("assign uid: %v", aerr)
 			}
 			root := filepath.Join(home, "Maildir")
 			if _, err := os.Stat(filepath.Join(root, "cur")); err != nil {
@@ -67,7 +71,7 @@ func TestDestructiveFolderNamesAreRefusedByEveryWrite(t *testing.T) {
 			t.Errorf("Create(%q) was accepted", name)
 		}
 		if _, _, _, err := u.Save(name, strings.NewReader("Subject: x\r\n\r\ny\r\n"),
-			1, 20, nil, [16]byte{}); err == nil {
+			1, 20, nil, nil, [16]byte{}); err == nil {
 			t.Errorf("Save(%q) was accepted", name)
 		}
 		if err := u.Rename("Work", name); err == nil {
@@ -92,7 +96,7 @@ func TestOrdinaryFolderNamesStillWork(t *testing.T) {
 		t.Fatalf("Create nested: %v", err)
 	}
 	if _, _, _, err := u.Save("Work", strings.NewReader("Subject: x\r\n\r\ny\r\n"),
-		1, 20, nil, [16]byte{}); err != nil {
+		1, 20, nil, nil, [16]byte{}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if err := u.Rename("Work/Reports", "Work/Old"); err != nil {
@@ -103,7 +107,7 @@ func TestOrdinaryFolderNamesStillWork(t *testing.T) {
 	}
 	// INBOX names the root deliberately and must stay usable.
 	if _, _, _, err := u.Save("INBOX", strings.NewReader("Subject: x\r\n\r\ny\r\n"),
-		2, 20, nil, [16]byte{}); err != nil {
+		2, 20, nil, nil, [16]byte{}); err != nil {
 		t.Fatalf("Save to INBOX: %v", err)
 	}
 }

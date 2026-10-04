@@ -17,7 +17,7 @@ import (
 // path to fix a corrupt file. The constant function ignores the current value,
 // so Update no longer requires the load to succeed for it.
 func TestSet_RepairsCorruptFile(t *testing.T) {
-	s := New(t.TempDir(), "", "", "/", "", "alice", "test", Policy{}, nil)
+	s := New(t.TempDir(), "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	path := s.Path("Broken")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -60,12 +60,12 @@ func TestSet_RepairsCorruptFile(t *testing.T) {
 // locker that tracks holds.
 func TestListRebuild_ResolvesBeforeListLock(t *testing.T) {
 	lk := &trackingLocker{held: map[string]bool{}}
-	s := New(t.TempDir(), "", "", "/", "", "alice", "test", Policy{}, lk)
+	s := New(t.TempDir(), "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, lk)
 	listKey := locks.ACLListKey(s.mailboxesRoot())
 
 	heldDuringResolve := false
 	err := s.ListRebuild([]string{"Foo", "Bar"}, func(folder string) (mailbox.ACL, error) {
-		if lk.HoldsResource(listKey) {
+		if _, held := lk.HoldsResource(listKey); held {
 			heldDuringResolve = true
 		}
 		return nil, nil
@@ -106,10 +106,20 @@ func (l *trackingLocker) Subscribe(context.Context, string) (<-chan locks.Event,
 
 func (l *trackingLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
 
-func (l *trackingLocker) HoldsResource(resource string) bool { return l.held[resource] }
+func (l *trackingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
+	return heldMode(l.held[resource])
+}
 
 func (l *trackingLocker) IncrementCounter(context.Context, string, int64) (int64, error) {
 	return 0, nil
 }
 
 func (l *trackingLocker) Close() error { return nil }
+
+// heldMode answers HoldsResource for a fake tracking holds as a bool set.
+func heldMode(held bool) (locks.HoldMode, bool) {
+	if held {
+		return locks.HoldExclusive, true
+	}
+	return locks.HoldNone, false
+}

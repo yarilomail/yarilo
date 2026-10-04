@@ -19,6 +19,7 @@ import (
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 // Options wires the backend.
@@ -51,6 +52,14 @@ type Options struct {
 	// Storage reaches one user's mail. Nil leaves only the methods that need no
 	// mail store, which is what the session-resource-only tests run against.
 	Storage *Storage
+	// QuotaPolicy is the site-wide quota tunables, the same ones IMAP answers
+	// GETQUOTA from: two accountings would be two answers to one question.
+	QuotaPolicy quota.Policy
+	// QuotaName is the root name clients see; empty takes the shared default.
+	QuotaName string
+	// QuotaEnabled gates the Quota objects: with the engine off the limits in
+	// userdb are not enforced, and reporting them would be a limit that is not.
+	QuotaEnabled bool
 }
 
 // Server serves the JMAP endpoint behind the login proxy.

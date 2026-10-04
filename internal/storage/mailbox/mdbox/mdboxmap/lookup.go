@@ -3,8 +3,17 @@ package mdboxmap
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// GUIDWalks counts the walks a GUID lookup costs, so "no walk" is a number a
+// test reads rather than a claim (#1700).
+var guidWalks atomic.Int64
+
+// GUIDWalks returns the count, and ResetGUIDWalks zeroes it.
+func GUIDWalks() int  { return int(guidWalks.Load()) }
+func ResetGUIDWalks() { guidWalks.Store(0) }
 
 // lockRead takes the in-process map mutex and records the wait. A read needs no
 // cross-process lock, but it queues behind a writer that is waiting for one --
@@ -15,12 +24,9 @@ func lockRead(mu *sync.Mutex) {
 	metricMapReadBlocked.Observe(time.Since(start).Seconds())
 }
 
-// Lookup resolves one map_uid to its on-disk location and current
-// refcount. Returns (entry, true, nil) on success, (_, false, nil)
-// when the UID is not present. Reads under m.mu only — no
-// cross-process lock — the caller may see a brief stale view
-// when a sibling process appends concurrently, but never a torn
-// record (the base is replaced atomically by .tmp+rename).
+// Lookup resolves one map_uid to its location and refcount, under m.mu only: a
+// sibling's concurrent append can leave the view briefly stale, never torn,
+// since the base is replaced atomically.
 func (m *Map) Lookup(mapUID uint32) (MapEntry, bool, error) {
 	lockRead(&m.mu)
 	defer m.mu.Unlock()
@@ -36,12 +42,36 @@ func (m *Map) Lookup(mapUID uint32) (MapEntry, bool, error) {
 	return e, ok, nil
 }
 
+// LookupReloaded is Lookup on a freshly replayed view, for a reader whose file
+// vanished: a hit in a stale view can still name a file a purge removed.
+func (m *Map) LookupReloaded(mapUID uint32) (MapEntry, bool, error) {
+	lockRead(&m.mu)
+	defer m.mu.Unlock()
+	if err := m.reloadLocked(); err != nil {
+		return MapEntry{}, false, err
+	}
+	e, ok := m.lookupLocked(mapUID)
+	return e, ok, nil
+}
+
 func (m *Map) lookupLocked(mapUID uint32) (MapEntry, bool) {
 	i, ok := m.findLocked(mapUID)
 	if !ok {
 		return MapEntry{}, false
 	}
 	return m.st.at(i), true
+}
+
+// Records returns every record in map order, for pairing a whole map against
+// another one. The slice is a copy; the caller may keep it.
+func (m *Map) Records() []MapEntry {
+	lockRead(&m.mu)
+	defer m.mu.Unlock()
+	out := make([]MapEntry, 0, m.st.count())
+	for i, n := 0, m.st.count(); i < n; i++ {
+		out = append(out, m.st.at(i))
+	}
+	return out
 }
 
 // LookupMany resolves a batch of map_uids in a single lock hop.
@@ -69,14 +99,11 @@ func (m *Map) LookupMany(mapUIDs []uint32) ([]MapEntry, error) {
 	return out, nil
 }
 
-// LookupByGUID finds the map_uid for a 128-bit message GUID. Used
-// by the rebuild path as the preferred matching strategy: more
-// robust than offset matching because GUIDs survive file compaction.
-// Returns (entry, true, nil) on success; (_, false, nil) when no
-// record carries that GUID (e.g. pre-GUID records have zero GUIDs).
-// A zero GUID argument always returns false to prevent accidental
-// mass-matches against pre-GUID records.
+// LookupByGUID finds the map_uid for a message GUID -- the rebuild's preferred
+// match, since a GUID survives compaction where an offset does not. A zero GUID
+// always returns false, or it would mass-match every pre-GUID record.
 func (m *Map) LookupByGUID(guid [16]byte) (MapEntry, bool, error) {
+	guidWalks.Add(1)
 	if guid == ([16]byte{}) {
 		return MapEntry{}, false, nil
 	}

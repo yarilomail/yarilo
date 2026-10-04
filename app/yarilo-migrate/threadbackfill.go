@@ -11,6 +11,7 @@ import (
 	"time"
 
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -71,7 +72,7 @@ func runThreadBackfillInto(o threadOpts, st *threadStats) error {
 	if authcl != nil {
 		defer authcl.Close() //nolint:errcheck
 	}
-	resolver := guidResolver(cfg, guidOpts{Root: o.Root, Template: o.Template})
+	resolver := layoutResolver(cfg, o.Root, o.Template)
 	driver := o.Driver
 	if driver == "" {
 		driver = cfg.Storage.MailDriver
@@ -129,10 +130,10 @@ func threadUser(boxBE mailbox.MailboxBackend, byDriver func(string) mailbox.Mail
 	if locker == nil {
 		return threadUserLocked(boxBE, byDriver, idxBE, resolveUser, o, user, st)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), backfillLockTimeout)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "migrate-threads"), backfillLockTimeout)
 	defer cancel()
 	return locks.WithLock(ctx, locker, locks.ThreadsKey(user),
-		fmt.Sprintf("yarilo-migrate/%d", os.Getpid()), backfillLockTTL, backfillLockRenew,
+		locks.Owner(user, locks.NewID()), backfillLockTTL, backfillLockRenew,
 		func(context.Context) error {
 			return threadUserLocked(boxBE, byDriver, idxBE, resolveUser, o, user, st)
 		})
@@ -236,6 +237,7 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 // thread ids from the same history -- and every client's cached conversation
 // would be wrong after a rerun.
 func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string, path, user string, st *threadStats) (*threads.State, error) {
+	mbox := mailboxbase.Open(box, idx)
 	ordered := append([]string(nil), names...)
 	sort.Strings(ordered)
 
@@ -245,11 +247,11 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 
 	for _, name := range ordered {
 		st.Folders++
-		folder, ferr := idx.OpenFolder(name, 0)
+		folder, ferr := mbox.Folder(name, 0)
 		if ferr != nil {
 			return nil, fmt.Errorf("open %s: %w", name, ferr)
 		}
-		metas, merr := mailbox.ReadMessages(idx, folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		metas, merr := mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if merr != nil {
 			return nil, fmt.Errorf("read %s: %w", name, merr)
 		}
@@ -262,7 +264,7 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 				st.Unreadable++
 				continue
 			}
-			head, herr := readHeaders(box, name, m)
+			head, herr := readHeaders(mbox, name, m)
 			if herr != nil {
 				st.Unreadable++
 				slog.Warn("thread backfill: message unreadable, left unthreaded",
@@ -292,8 +294,8 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 // can be tens of gigabytes: reading whole bodies to find the top of each one
 // would make this step cost the size of the mail store rather than the size of
 // its metadata.
-func readHeaders(box mailbox.UserMailbox, folder string, m *mailbox.MessageMeta) ([]byte, error) {
-	rc, err := box.Fetch(folder, m.Filename, m.AltTier)
+func readHeaders(box mailbox.Box, folder string, m *mailbox.MessageMeta) ([]byte, error) {
+	rc, err := box.OpenMessage(folder, m)
 	if err != nil {
 		return nil, err
 	}

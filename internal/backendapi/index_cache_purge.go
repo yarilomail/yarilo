@@ -22,9 +22,8 @@ type cachePurgeStats struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
-// handleIndexCachePurge reclaims a folder's yarilo.index.cache (#1030).
-// Operator-triggered in v1: the file is append-only and has no threshold
-// trigger yet, so nothing shrinks it on its own (BACKEND-API.md).
+// handleIndexCachePurge reclaims a folder's yarilo.index.cache now (#1030);
+// expunges purge it on their own past mail_cache_purge_delete_percentage.
 func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 	var req optimizeRequest
 	if !decodeJSON(w, r, &req) {
@@ -36,7 +35,7 @@ func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Folder = mailbox.NormalizeName(req.Folder, s.skipNFC())
 
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -45,6 +44,10 @@ func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 	bundle, err := uc.ns(s, req.Namespace)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 		return
 	}
 	exists, err := bundle.box.FolderExists(req.Folder)
@@ -67,7 +70,7 @@ func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	if s.opts.Locker != nil {
 		key := locks.MailboxKey(uc.info.Username, req.Folder)
-		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(locks.WithSite(r.Context(), "admin-cache-purge"), 60*time.Second)
 		defer cancel()
 		lk, lerr := locks.Acquire(ctx, s.opts.Locker, key, uc.lockOwner(), 90*time.Second)
 		if lerr != nil {
@@ -76,7 +79,7 @@ func (s *Server) handleIndexCachePurge(w http.ResponseWriter, r *http.Request) {
 		}
 		defer func() { _ = s.opts.Locker.Unlock(context.Background(), lk.ID) }()
 	}
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		apiError(w, "open folder: "+err.Error(), http.StatusInternalServerError)
 		return

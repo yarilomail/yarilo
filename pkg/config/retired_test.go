@@ -100,3 +100,43 @@ func readChartText(t *testing.T) string {
 	}
 	return b.String()
 }
+
+// Every retired key must say what took its place.
+//
+// "Unknown key" is something an operator can already see; the value of the
+// warning is the sentence after it. A list entry with an empty or bare note
+// would still log, and the log would say nothing worth reading — which is the
+// same failure as the silence this list was written to end (#1493).
+//
+// Asserted because the release notes promise it: a retired key is answered,
+// not ignored.
+func TestEveryRetiredKeySaysWhatReplacedIt(t *testing.T) {
+	for _, r := range retiredKeys() {
+		if r.key == "" {
+			t.Error("a retired entry has no key")
+			continue
+		}
+		if len(r.note) < 40 {
+			t.Errorf("%s has no useful note (%q): the warning would name the key and tell the operator nothing", r.key, r.note)
+		}
+	}
+}
+
+// connection_limit was parsed for every listener and read by nothing; one left
+// in a config says so at start instead of promising a limit (#2112).
+func TestAListenerConnectionLimitIsRetired(t *testing.T) {
+	for _, l := range []string{"jmap", "imaps", "lmtp"} {
+		t.Run(l, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			defer slog.SetDefault(prev)
+			if _, err := loadYAML(t, "services:\n  "+l+":\n    enabled: true\n    connection_limit: 0\n"); err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if !strings.Contains(buf.String(), "services."+l+".connection_limit") {
+				t.Errorf("no retired-key warning for services.%s.connection_limit; log was:\n%s", l, buf.String())
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -51,7 +52,9 @@ func main() {
 	}
 
 	engine, err := ftsservice.BuildEngine(fc)
-	if err != nil {
+	// Without -tags flatcurve every branch of BuildEngine fails, by design: the
+	// untagged binary carries no engine and says so at startup.
+	if err != nil { //nolint:staticcheck // SA4023: always true in the untagged build
 		slog.Error("engine init failed", "err", err)
 		os.Exit(1)
 	}
@@ -142,6 +145,11 @@ func main() {
 		slog.Error("listen failed", "addr", listen, "err", err)
 		os.Exit(1)
 	}
+	ln, err = internalListener(cfg, ln)
+	if err != nil {
+		slog.Error("internal_tls config failed", "err", err)
+		os.Exit(1)
+	}
 
 	// Telemetry: /healthz, /readyz, /metrics on the dedicated port (#677).
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -187,7 +195,7 @@ func main() {
 func userResolver(masterAddr string, resolver *mailbox.Resolver, pool *authclient.Pool) func(string) (*mailbox.UserInfo, error) {
 	if masterAddr == "" {
 		return func(u string) (*mailbox.UserInfo, error) {
-			return resolver.UserInfo(u, ""), nil
+			return resolver.UserInfo(u, "")
 		}
 	}
 	return func(u string) (*mailbox.UserInfo, error) {
@@ -204,29 +212,47 @@ func userResolver(masterAddr string, resolver *mailbox.Resolver, pool *authclien
 	}
 }
 
+// lockWaitLimit is how long a pass queues for the user's index before it is
+// reported busy, leaving the background retry to carry it (retry.go).
+var lockWaitLimit = 30 * time.Second
+
+// The walk's length is the account's folder count, so the hold is renewed
+// rather than sized: a lapse mid-walk would admit the next writer.
+var (
+	lockTTL        = 5 * time.Minute
+	lockRenewEvery = time.Minute
+)
+
 // lockMailbox wraps every index write in the cross-process mailbox lock
 // (project rule). nil locker (locks disabled in config) runs direct.
 func lockMailbox(locker locks.Locker) func(user, folder string, fn func() error) error {
 	if locker == nil {
 		return nil
 	}
-	owner := fmt.Sprintf("yarilo-fts/%d", os.Getpid())
 	return func(user, folder string, fn func() error) error {
 		// The full-text index, not the mailbox: these are different resources
 		// with different writers, and yarilo-fts is the only writer of this
 		// one. Taking the mailbox key made every pass queue behind session
 		// mail-index writes it does not interact with (#1004).
 		key := locks.FTSKey(user, folder)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+		ctx := locks.WithSite(context.Background(), "fts-index")
 		t0 := time.Now()
-		lk, err := locker.Lock(ctx, key, owner, 5*time.Minute)
-		ftsservice.ObserveLockWait(time.Since(t0))
+		// Queued and renewed: one hold covers a whole-user walk, and giving
+		// up on the first try failed a rescan behind a job (#1986).
+		err := locks.WithLockWaiting(ctx, locker, key, locks.Owner(user, locks.NewID()),
+			lockTTL, lockRenewEvery, lockWaitLimit, func(context.Context) error {
+				ftsservice.ObserveLockWait(time.Since(t0))
+				return fn()
+			})
 		if err != nil {
-			return fmt.Errorf("fts: lock %s: %w", key, err)
+			// Either shape of "the wait limit ran out": the client reports the
+			// deadline, or cuts the connection first. retry.go keys on ErrBusy.
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, locks.ErrBusy) {
+				return fmt.Errorf("fts: lock %s: %w after %s", key, locks.ErrBusy, lockWaitLimit)
+			}
+			return err
 		}
-		defer locker.Unlock(context.Background(), lk.ID) //nolint:errcheck
-		return fn()
+		return nil
 	}
 }
 
@@ -289,4 +315,17 @@ func personalSeparator(cfg *config.Config) string {
 		}
 	}
 	return "/"
+}
+
+// internalListener puts the FTS port behind internal mTLS when it is on.
+func internalListener(cfg *config.Config, ln net.Listener) (net.Listener, error) {
+	if !cfg.InternalTLS.Enabled {
+		mtls.WarnRolesUnchecked(mtls.ListenerFTS)
+		return ln, nil
+	}
+	t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerFTS)
+	if err != nil {
+		return nil, err
+	}
+	return tls.NewListener(ln, t), nil
 }

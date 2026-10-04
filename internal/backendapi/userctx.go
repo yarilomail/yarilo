@@ -2,13 +2,17 @@ package backendapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userdbinfo"
 	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -20,11 +24,18 @@ type userContext struct {
 	username string
 	info     *mailbox.UserInfo
 	owner    string
+	// requestID identifies this admin request in held_by. An admin holder with
+	// no id is as unattributable as a session with none (#1670).
+	requestID string
 
 	// handles maps namespace slug ("personal", "shared", "public") to its
 	// opened handle. Personal is always present after open(); shared/public
 	// only when configured.
 	handles map[string]*nsBundle
+
+	// mode is how this context opens: a namespace reached later opens the same
+	// way the account did, or a read would create through the second one.
+	mode openMode
 }
 
 // nsBundle is one namespace's storage state, backed by the same per-user
@@ -34,7 +45,43 @@ type nsBundle struct {
 	info     *mailbox.UserInfo
 	box      mailbox.UserMailbox
 	idx      mailbox.UserIndex
+	mbox     mailbox.Box
 	location string
+}
+
+// accountNameOK refuses a name the layout cannot place: with %d in the home
+// template a nameless domain resolves above every account (#1774).
+func accountNameOK(r *mailbox.Resolver, username string) error {
+	tmpl := r.HomeTemplate
+	if tmpl == "" {
+		tmpl = "%d/%u"
+	}
+	if !strings.Contains(tmpl, "%d") || strings.Contains(username, "@") {
+		return nil
+	}
+	// Names what was checked: the userdb was not asked, and an operator sent
+	// looking for a missing account would be looking in the wrong place.
+	return fmt.Errorf("backendapi/userctx: %q carries no domain, and mail_home %q cannot place it",
+		username, tmpl)
+}
+
+// errNoMailHome is the answer a read gives for an account whose home is not on
+// disk. A read never makes one (#1774).
+var errNoMailHome = errors.New("no mail home for this user")
+
+// readBundle answers a namespace for an operation that reads. A missing home is
+// an answer, not a directory to create.
+func readBundle(w http.ResponseWriter, s *Server, uc *userContext, namespace string) (*nsBundle, bool) {
+	bundle, err := uc.ns(s, namespace)
+	if err != nil {
+		apiError(w, err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return nil, false
+	}
+	return bundle, true
 }
 
 // openUserContext builds a context for username. The personal handle is
@@ -42,17 +89,76 @@ type nsBundle struct {
 // if the personal handle fails to open (typically a missing/unreadable home
 // dir); shared/public failures are reported per-call via ns().
 func (s *Server) openUserContext(username string) (*userContext, error) {
-	return s.openUserContextInner(username, false)
+	return s.openUserContextInner(username, openEager)
+}
+
+// openUserContextFor picks the opener by what the caller is about to do, for the
+// entry points one function serves for both a read verb and a write one.
+func (s *Server) openUserContextFor(username string, readOnly bool) (*userContext, error) {
+	if readOnly {
+		return s.openUserContextInner(username, openRead)
+	}
+	return s.openUserContextInner(username, openDeferred)
+}
+
+// openUserContextDeferred opens without Init, for a write entry point that
+// checks what it was given before it makes anything.
+func (s *Server) openUserContextDeferred(username string) (*userContext, error) {
+	return s.openUserContextInner(username, openDeferred)
+}
+
+// checkedMaterialise checks the names on a bundle that has touched no disk, and
+// only then brings the account into being (#1774).
+func checkedMaterialise(w http.ResponseWriter, b *nsBundle, readOnly bool, names ...string) bool {
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if err := mailbox.CheckName(b.box, name); err != nil {
+			apiError(w, err.Error(), http.StatusBadRequest)
+			return false
+		}
+	}
+	if readOnly {
+		return true
+	}
+	if err := b.materialise(); err != nil {
+		apiError(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
+
+// materialise brings the namespace into being, for a write entry point that has
+// finished checking what it was given. Nothing before this call touches disk.
+func (b *nsBundle) materialise() error {
+	if b == nil {
+		return errNoMailHome
+	}
+	if err := b.box.Init(); err != nil {
+		return fmt.Errorf("mailbox init: %w", err)
+	}
+	return nil
 }
 
 // openUserContextReadOnly is like openUserContext but skips Init so no
 // directories are created. When the user's home directory does not exist
 // the personal namespace bundle is nil — callers must handle that case.
 func (s *Server) openUserContextReadOnly(username string) (*userContext, error) {
-	return s.openUserContextInner(username, true)
+	return s.openUserContextInner(username, openRead)
 }
 
-func (s *Server) openUserContextInner(username string, readOnly bool) (*userContext, error) {
+// openMode says what the caller will do with the account: make it, read it, or
+// check its arguments first and make it after.
+type openMode int
+
+const (
+	openEager openMode = iota
+	openRead
+	openDeferred
+)
+
+func (s *Server) openUserContextInner(username string, mode openMode) (*userContext, error) {
 	if username == "" {
 		return nil, fmt.Errorf("backendapi/userctx: user required")
 	}
@@ -60,7 +166,11 @@ func (s *Server) openUserContextInner(username string, readOnly bool) (*userCont
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	ui := resolver.UserInfo(username, "")
+	if err := accountNameOK(resolver, username); err != nil {
+		return nil, err
+	}
+	// The userdb first: its home is what a session opens, and an operator
+	// command must not open another mailbox under the same name (#2024).
 	var pui *protocol.UserInfo
 	if s.opts.AuthClient != nil {
 		var err error
@@ -71,13 +181,27 @@ func (s *Server) openUserContextInner(username string, readOnly bool) (*userCont
 		if pui == nil {
 			return nil, fmt.Errorf("backendapi/userctx: user not found: %s", username)
 		}
+	}
+	home := ""
+	if pui != nil {
+		home = pui.Home
+	}
+	ui, err := resolver.UserInfo(username, home)
+	if err != nil {
+		return nil, err
+	}
+	if pui != nil {
 		userdbinfo.Apply(ui, pui, username)
 	}
+	reqID := locks.NewID()
+	ui.SessionID = reqID
 	uc := &userContext{
-		username: username,
-		info:     ui,
-		owner:    fmt.Sprintf("yarilo-backend-api/%d/%s", os.Getpid(), username),
-		handles:  make(map[string]*nsBundle),
+		username:  username,
+		info:      ui,
+		owner:     locks.Owner(username, reqID),
+		requestID: reqID,
+		handles:   make(map[string]*nsBundle),
+		mode:      mode,
 	}
 
 	personalSpec, ok := s.personalSpec()
@@ -86,17 +210,16 @@ func (s *Server) openUserContextInner(username string, readOnly bool) (*userCont
 	}
 	personalMB := s.mailboxForUser(pui)
 	var bundle *nsBundle
-	var err error
-	if readOnly {
+	switch mode {
+	case openRead:
 		bundle, err = s.openNSReadOnly(personalSpec, ui, personalMB)
-		if err != nil {
-			return nil, fmt.Errorf("backendapi/userctx: open personal read-only: %w", err)
-		}
-	} else {
+	case openDeferred:
+		bundle, err = s.openNSDeferred(personalSpec, ui, personalMB)
+	default:
 		bundle, err = s.openNS(personalSpec, ui, personalMB)
-		if err != nil {
-			return nil, fmt.Errorf("backendapi/userctx: open personal: %w", err)
-		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("backendapi/userctx: open personal: %w", err)
 	}
 	uc.handles["personal"] = bundle
 	return uc, nil
@@ -132,7 +255,7 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 	if !ok {
 		return nil, fmt.Errorf("backendapi/userctx: namespace %q not configured", name)
 	}
-	if spec.Type == "personal" {
+	if spec.Type == "personal" && !s.ownsStore(spec) {
 		// already opened in openUserContext
 		return nil, fmt.Errorf("backendapi/userctx: personal namespace must be opened at construction")
 	}
@@ -154,7 +277,9 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
 		}
 	} else {
-		loc, valid, perr := mailbox.ParseLocation(spec.Location, nil)
+		// Against the user's own identity, as the session servers parse it: "%h"
+		// is otherwise left unexpanded, and a per-user location is not found.
+		loc, valid, perr := mailbox.ParseLocation(spec.Location, uc.info)
 		if perr != nil {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q location: %w", name, perr)
 		}
@@ -171,7 +296,14 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
 		}
 	}
-	b, err := s.openNS(spec, nsInfo, nil)
+	// No Init unless the caller opened eagerly; no refusal either, since outside
+	// the personal namespace the home is the owner's and gates nothing here.
+	var b *nsBundle
+	if uc.mode == openEager {
+		b, err = s.openNS(spec, nsInfo, nil)
+	} else {
+		b, err = s.openNSDeferred(spec, nsInfo, nil)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("backendapi/userctx: open %q: %w", name, err)
 	}
@@ -205,7 +337,7 @@ func (s *Server) mailboxForUser(pui *protocol.UserInfo) mailbox.MailboxBackend {
 // non-nil (per-user driver selection); nil falls back to the per-namespace or
 // global default. Init runs to materialise the on-disk root.
 func (s *Server) openNS(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend) (*nsBundle, error) {
-	return s.openNSInner(spec, ui, mb, false)
+	return s.openNSInner(spec, ui, mb, openEager)
 }
 
 // openNSReadOnly is like openNS but skips Init so no directories are created.
@@ -217,10 +349,16 @@ func (s *Server) openNSReadOnly(spec config.NamespaceConfig, ui *mailbox.UserInf
 			return nil, nil
 		}
 	}
-	return s.openNSInner(spec, ui, mb, true)
+	return s.openNSInner(spec, ui, mb, openRead)
 }
 
-func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend, skipInit bool) (*nsBundle, error) {
+// openNSDeferred opens a namespace without Init: the bundle a write validates on
+// before it materialises anything, since the name rules need no disk.
+func (s *Server) openNSDeferred(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend) (*nsBundle, error) {
+	return s.openNSInner(spec, ui, mb, openDeferred)
+}
+
+func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend, mode openMode) (*nsBundle, error) {
 	if mb == nil {
 		mb = s.mailboxBackendFor(spec, ui)
 	}
@@ -231,17 +369,24 @@ func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, 
 		return nil, fmt.Errorf("backendapi: no index backend wired")
 	}
 	box := mb.OpenUser(ui)
-	if !skipInit {
+	if mode == openEager {
 		if err := box.Init(); err != nil {
 			return nil, fmt.Errorf("mailbox init: %w", err)
 		}
 	}
 	idx := s.opts.Index.OpenUser(ui)
+	// A read settles nothing: the adoption and the reconcile belong to a
+	// session that owns the mailbox, not to a diagnostic reading it (#1774).
+	var boxOpts []mailboxbase.BoxOption
+	if mode == openRead {
+		boxOpts = append(boxOpts, mailboxbase.ReadOnly())
+	}
 	bundle := &nsBundle{
 		spec:     spec,
 		info:     ui,
 		box:      box,
 		idx:      idx,
+		mbox:     mailboxbase.Open(box, idx, boxOpts...),
 		location: ui.Home,
 	}
 	return bundle, nil
@@ -287,6 +432,20 @@ func (s *Server) namespaceByName(name string) (config.NamespaceConfig, bool) {
 	return config.NamespaceConfig{}, false
 }
 
+// ownsStore reports a personal namespace with storage of its own, a virtual
+// one: opened like any other, by the rule the session servers use.
+func (s *Server) ownsStore(spec config.NamespaceConfig) bool {
+	shapes := make([]mailbox.NamespaceShape, len(s.opts.Namespaces))
+	at := -1
+	for i, ns := range s.opts.Namespaces {
+		shapes[i] = mailbox.NamespaceShape{Type: ns.Type, Location: ns.Location, Inbox: ns.Inbox}
+		if ns.Prefix == spec.Prefix {
+			at = i
+		}
+	}
+	return mailbox.OwnsStore(shapes, at)
+}
+
 // deploymentBase is a user-less identity carrying only the deployment-wide
 // storage-name form (StorageEscapeChar, SkipNFCNormalize). It is the base a
 // namespace producer stamps so the same mailbox is spelled the same on disk for
@@ -295,7 +454,11 @@ func (s *Server) deploymentBase() *mailbox.UserInfo {
 	if s.opts.Resolver == nil {
 		return nil
 	}
-	return s.opts.Resolver.UserInfo("", "")
+	ui, err := s.opts.Resolver.UserInfo("", "")
+	if err != nil {
+		return nil
+	}
+	return ui
 }
 
 // sepByte returns the namespace separator as a byte, defaulting to '/'.
@@ -339,7 +502,10 @@ func (uc *userContext) setActor(actor string) {
 	if actor == "" {
 		return
 	}
-	uc.owner = fmt.Sprintf("yarilo-backend-api/%d/%s", os.Getpid(), actor)
+	if uc.requestID == "" {
+		uc.requestID = locks.NewID()
+	}
+	uc.owner = locks.Owner(actor, uc.requestID)
 }
 
 // dirExists reports whether path is an existing directory.

@@ -32,7 +32,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 
 	home := t.TempDir()
 	user := &mailbox.UserInfo{Username: "carol@example.com", Home: home}
-	mb := maildir.New(maildir.WithLocker(lk)).OpenUser(user)
+	mb := maildir.New().OpenUser(user)
 	idx := file.New(file.WithLocker(lk)).OpenUser(user)
 	t.Cleanup(func() { _ = idx.Close() })
 	if err := mb.Init(); err != nil {
@@ -48,11 +48,11 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	filename, _, _, err := mb.Save("INBOX", strings.NewReader("body"), uid, 4, nil, [16]byte{})
+	filename, _, _, err := mb.Save("INBOX", strings.NewReader("body"), uid, 4, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid, Filename: filename}); err != nil {
+	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 
@@ -60,12 +60,12 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 	key := locks.MailboxKey("carol@example.com", "INBOX")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	outer, err := lk.Lock(ctx, key, "test-outer/0/carol@example.com", 30*time.Second)
+	outer, err := lk.Lock(locks.WithSite(ctx, "write"), key, "test-outer/0/carol@example.com/sess1", 30*time.Second)
 	if err != nil {
 		t.Fatalf("outer lock: %v", err)
 	}
 	defer func() { _ = lk.Unlock(ctx, outer.ID) }()
-	if !lk.HoldsResource(key) {
+	if _, held := lk.HoldsResource(key); !held {
 		t.Fatal("HoldsResource returned false after Lock")
 	}
 
@@ -93,7 +93,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 	if err := lk.Unlock(ctx, outer.ID); err != nil {
 		t.Fatalf("outer unlock: %v", err)
 	}
-	if lk.HoldsResource(key) {
+	if _, held := lk.HoldsResource(key); held {
 		t.Fatal("HoldsResource still true after Unlock — holds map not pruned")
 	}
 }

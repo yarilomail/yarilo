@@ -1,6 +1,8 @@
 package jmap
 
 import (
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,9 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-message"
-	_ "github.com/emersion/go-message/charset" // registers the charset decoders
+	"github.com/emersion/go-message/charset"
 
 	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
@@ -40,10 +41,133 @@ func emailID(m *mailbox.MessageMeta) string {
 	return mailbox.FormatObjectID(m.GUID)
 }
 
-// findMessages walks the user's folders for the requested ids. Nothing indexes
-// GUID to folder yet, so this is a scan; it stops as soon as every id is found
-// so the common case of a handful of ids does not read every folder.
+// findMessages resolves ids through the per-user GUID store; a store that says
+// nothing sends this back to the walk it replaces (#1711).
 func (s *Server) findMessages(h *userHandle, want map[string]bool) (map[string]messageRef, error) {
+	metricIDLookup.Inc()
+	if want != nil {
+		found, ok, err := s.findThroughStore(h, want)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			metricIDLookupSource.WithLabelValues("store").Inc()
+			return found, nil
+		}
+	}
+	metricIDLookupSource.WithLabelValues("walk").Inc()
+	return s.findByWalk(h, want)
+}
+
+// findThroughStore answers from the store or says it cannot: a partial answer
+// would report a message as missing because the store is behind.
+func (s *Server) findThroughStore(h *userHandle, want map[string]bool) (map[string]messageRef, bool, error) {
+	res := h.mbox
+	guids := make([][16]byte, 0, len(want))
+	byGUID := make(map[[16]byte]string, len(want))
+	for id := range want {
+		g, err := parseObjectID(id)
+		if err != nil {
+			return nil, false, nil
+		}
+		guids = append(guids, g)
+		byGUID[g] = id
+	}
+	copies, err := res.GUIDCopies(guids)
+	if errors.Is(err, mailbox.ErrNoGUIDStore) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if len(copies) == 0 {
+		return nil, false, nil
+	}
+
+	// Grouped by folder: two ids in one mailbox are one open and one read,
+	// which is what the cost per request is made of.
+	byFolder := make(map[[16]byte][]mailbox.GUIDRecord, 4)
+	for _, c := range copies {
+		if _, wanted := byGUID[c.GUID]; !wanted {
+			continue
+		}
+		byFolder[c.FolderGUID] = append(byFolder[c.FolderGUID], c)
+	}
+	found := make(map[string]messageRef, len(want))
+	for folderGUID, group := range byFolder {
+		name, f, ferr := h.folderByGUID(folderGUID)
+		if ferr != nil {
+			return nil, false, ferr
+		}
+		if f == nil {
+			return nil, false, nil
+		}
+		set := make(mailbox.SeqSet, 0, len(group))
+		for _, c := range group {
+			set = append(set, mailbox.SeqRange{From: c.UID, To: c.UID})
+		}
+		metas, merr := h.mbox.Messages(f.ID, set)
+		if merr != nil {
+			return nil, false, merr
+		}
+		metricIDLookupRecords.Add(float64(len(metas)))
+		mboxID := mailboxID(f.GUID)
+		for _, m := range metas {
+			id := emailID(m)
+			if _, wanted := want[id]; !wanted {
+				continue
+			}
+			if _, seen := found[id]; seen {
+				continue
+			}
+			found[id] = messageRef{folder: name, folderID: f.ID, meta: m, mailboxID: mboxID}
+		}
+	}
+	// A store that names fewer copies than the request asked for is behind,
+	// and only the walk can say what is there now.
+	if len(found) != len(want) {
+		return nil, false, nil
+	}
+	return found, true, nil
+}
+
+// folderByGUID finds the folder a copy names, through the process-wide map:
+// the folder list carries no GUIDs, so a cold lookup opens folders (#1711).
+func (h *userHandle) folderByGUID(guid [16]byte) (string, *mailbox.Folder, error) {
+	if name, ok := h.folders.name(guid); ok {
+		f, err := h.mbox.Folder(name, 0)
+		if err == nil && f.GUID == guid {
+			metricIDLookupFolders.Inc()
+			return name, f, nil
+		}
+		// The name no longer wears that identity: a folder deleted and made
+		// again keeps the name and changes the GUID.
+		h.folders.forget(guid)
+	}
+	entries, err := h.box.ListFolders()
+	if err != nil {
+		return "", nil, fmt.Errorf("jmap: list folders: %w", err)
+	}
+	for _, e := range entries {
+		if !e.Selectable {
+			continue
+		}
+		f, ferr := h.mbox.Folder(e.Name, 0)
+		if ferr != nil {
+			return "", nil, fmt.Errorf("jmap: open folder %q: %w", e.Name, ferr)
+		}
+		metricIDLookupFolders.Inc()
+		h.folders.remember(f.GUID, e.Name)
+		if f.GUID == guid {
+			return e.Name, f, nil
+		}
+	}
+	return "", nil, nil
+}
+
+// findByWalk is the answer before the store: every folder read until the ids
+// are all found. It stays for a store that is empty, behind or refused.
+func (s *Server) findByWalk(h *userHandle, want map[string]bool) (map[string]messageRef, error) {
 	entries, err := h.box.ListFolders()
 	if err != nil {
 		return nil, fmt.Errorf("jmap: list folders: %w", err)
@@ -53,14 +177,19 @@ func (s *Server) findMessages(h *userHandle, want map[string]bool) (map[string]m
 		if !e.Selectable {
 			continue
 		}
-		f, err := h.idx.OpenFolder(e.Name, 0)
+		f, err := h.mbox.Folder(e.Name, 0)
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", e.Name, err)
 		}
-		metas, err := mailbox.ReadMessages(h.idx, f.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		metricIDLookupFolders.Inc()
+		// The walk opens every folder anyway: what it learns is what the next
+		// lookup would otherwise pay for again.
+		h.folders.remember(f.GUID, e.Name)
+		metas, err := h.mbox.Messages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
 			return nil, fmt.Errorf("jmap: read folder %q: %w", e.Name, err)
 		}
+		metricIDLookupRecords.Add(float64(len(metas)))
 		mboxID := mailboxID(f.GUID)
 		for _, m := range metas {
 			id := emailID(m)
@@ -79,19 +208,33 @@ func (s *Server) findMessages(h *userHandle, want map[string]bool) (map[string]m
 	return found, nil
 }
 
+// parseObjectID reads the hex form an id is written in.
+func parseObjectID(id string) ([16]byte, error) {
+	var out [16]byte
+	raw, err := hex.DecodeString(id)
+	if err != nil || len(raw) != len(out) {
+		return out, fmt.Errorf("jmap: %q is no object id", id)
+	}
+	copy(out[:], raw)
+	return out, nil
+}
+
 // buildEmail renders one Email. Bodies are read only when a body value or a
 // structural property was actually asked for: an Email/get for envelope fields
 // must not touch the message at all.
 func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGetRequest, ceiling uint32, caches *envelopeCaches) (jmapcore.Email, map[string]any, error) {
 	var headerFields map[string]any
 	m := ref.meta
+	// Where it is and what is set on it are the Email's, not one copy's: both
+	// read across every mailbox holding the message (RFC 8621 §4).
+	copies := h.copiesOf(ref)
 	email := jmapcore.Email{
 		ID:         emailID(m),
 		BlobID:     emailID(m),
 		ThreadID:   h.threadOf(emailID(m)),
-		MailboxIDs: map[string]bool{ref.mailboxID: true},
-		Keywords:   keywordsOf(m),
-		Size:       m.Size,
+		MailboxIDs: mailboxIDsOf(copies),
+		Keywords:   keywordsAcross(copies),
+		Size:       h.mbox.RFC822Size(ref.folder, m),
 		ReceivedAt: m.InternalDate.UTC().Format(time.RFC3339),
 		BodyValues: map[string]jmapcore.EmailBodyValue{},
 	}
@@ -105,7 +248,7 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 	// A listing asks for subject and sender on every row, which the cached
 	// ENVELOPE answers whole -- so the commonest request opens no message at
 	// all (#1030). The same file is what IMAP FETCH reads and writes.
-	var cache *msgcache.Handle
+	var cache mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
 	if req.NeedsHeaders() {
 		cache = caches.folder(ref)
 	}
@@ -116,7 +259,7 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 		}
 	}
 
-	rc, err := h.box.Fetch(ref.folder, m.Filename, m.AltTier)
+	rc, err := h.mbox.OpenMessage(ref.folder, m)
 	if err != nil {
 		return email, headerFields, fmt.Errorf("jmap: fetch %s/%d: %w", ref.folder, m.UID, err)
 	}
@@ -140,9 +283,9 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 		return email, headerFields, nil
 	}
 	fillHeaders(&email, entity.Header)
-	// Write back what the parse produced, so the next envelope-only request --
-	// here or over IMAP -- does not repeat it.
-	cache.StoreEnvelope(m, imapserver.ExtractEnvelope(entity.Header.Header))
+	// Write back what the parse produced, from the header rather than from the
+	// struct: a subject reaches IMAP as the message wrote it (#2008).
+	cache.StoreFromHeader(m, entity.Header.Header, msgcache.EnvelopeTextOf(entity.Header.Header))
 	// Header field properties are answered from the same parsed block, so a
 	// request naming only them costs no more than one naming subject.
 	headerFields = headerFieldValues(entity.Header, req.HeaderProperties())
@@ -327,7 +470,10 @@ func addresses(v string) []jmapcore.EmailAddress {
 	if v == "" {
 		return nil
 	}
-	list, err := mail.ParseAddressList(v)
+	// The parser carries the same decoder as the subject: without it an
+	// address list with a windows-1251 name fails to parse at all (#2008).
+	parser := mail.AddressParser{WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader}}
+	list, err := parser.ParseList(v)
 	if err != nil {
 		// An unparseable header is reported as a single address rather than
 		// dropped: a client showing the raw value beats showing nothing.
@@ -345,8 +491,10 @@ func addresses(v string) []jmapcore.EmailAddress {
 	return out
 }
 
+// decodeWord reads an encoded word with the charsets go-message registers, not
+// only the three a bare decoder knows: windows-1251 is ordinary mail here.
 func decodeWord(s string) string {
-	dec := new(mime.WordDecoder)
+	dec := &mime.WordDecoder{CharsetReader: charset.Reader}
 	if out, err := dec.DecodeHeader(s); err == nil {
 		return out
 	}

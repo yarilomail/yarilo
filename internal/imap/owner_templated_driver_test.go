@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
@@ -52,7 +54,7 @@ func heteroOwnerServer(t *testing.T) (root string, dial func(user string) *imapc
 		MailboxByDriver: byDriver,
 		Index:           file.New(),
 		Resolver:        &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:            &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}},
+		AuthRelay:       authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}}),
 		ACLEnabled:      true,
 		UserdbLookup:    lookup,
 		Namespaces: []imapserver.NamespaceSpec{
@@ -160,7 +162,7 @@ func TestOwnerTemplated_BackendBuiltOncePerDriver(t *testing.T) {
 		MailboxByDriver: byDriver,
 		Index:           file.New(),
 		Resolver:        &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:            &enforcePassdb{users: map[string]string{"alice": "pw", "carol": "pw"}},
+		AuthRelay:       authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw", "carol": "pw"}}),
 		ACLEnabled:      true,
 		UserdbLookup:    lookup,
 		Namespaces: []imapserver.NamespaceSpec{

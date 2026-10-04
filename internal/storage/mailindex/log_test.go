@@ -217,8 +217,13 @@ func TestEncodeTxExtIntroPayloadShape(t *testing.T) {
 		Flags:       TxExtIntroFlagNoShrink,
 		Name:        "map",
 	})
-	if len(payload) != 20+3 {
-		t.Fatalf("len=%d, want %d", len(payload), 23)
+	// Padded to a 32-bit boundary: the framed size counts words, so a record
+	// left unaligned loses its framing and every reader stops at it (#1770).
+	if len(payload) != 24 {
+		t.Fatalf("len=%d, want 24", len(payload))
+	}
+	if len(payload)%4 != 0 {
+		t.Fatalf("payload is %d bytes, which the framed size cannot express", len(payload))
 	}
 	// extid LE
 	for i, b := range []byte{0xff, 0xff, 0xff, 0xff} {
@@ -234,6 +239,13 @@ func TestEncodeTxExtIntroPayloadShape(t *testing.T) {
 	}
 	if string(payload[20:23]) != "map" {
 		t.Errorf("name=%q, want %q", payload[20:23], "map")
+	}
+	if payload[23] != 0 {
+		t.Errorf("padding byte 23=0x%02x, want 0", payload[23])
+	}
+	got, ok := DecodeTxExtIntroPayload(payload)
+	if !ok || got.Name != "map" || got.RecordSize != 12 || got.RecordAlign != 4 || got.HdrSize != 8 {
+		t.Errorf("decoded %+v ok=%v, want the record that went in", got, ok)
 	}
 }
 

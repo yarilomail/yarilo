@@ -10,6 +10,7 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -65,7 +66,7 @@ func newThreadedServer(t *testing.T) *threadedServer {
 func (ts *threadedServer) deliver(t *testing.T, raw string) string {
 	t.Helper()
 	ts.uid++
-	name, vsize, guid, err := ts.box.Save("INBOX", strings.NewReader(raw), ts.uid, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := ts.box.Save("INBOX", strings.NewReader(raw), ts.uid, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -73,10 +74,15 @@ func (ts *threadedServer) deliver(t *testing.T, raw string) string {
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	if err := ts.idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: ts.uid, Filename: name, Size: uint32(len(raw)), VSize: vsize,
+	meta := &mailbox.MessageMeta{
+		UID: ts.uid, Size: uint32(len(raw)), VSize: vsize,
 		GUID: guid, InternalDate: time.Now(),
-	}); err != nil {
+	}
+	if err := mailboxbase.NameSaved(ts.box, "INBOX", name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	meta.GUID = guid
+	if err := ts.idx.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	id := mailbox.FormatObjectID(guid)

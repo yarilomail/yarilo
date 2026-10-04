@@ -43,7 +43,7 @@ func (c *countingLocker) Unlock(_ context.Context, _ string) error {
 	return nil
 }
 
-func (c *countingLocker) HoldsResource(_ string) bool { return false }
+func (c *countingLocker) HoldsResource(_ string) (locks.HoldMode, bool) { return locks.HoldNone, false }
 
 // Resolving every folder in a listing must cost one trip to the lock service,
 // not one per folder. The document is per user: asking per name asks the same
@@ -53,7 +53,7 @@ func TestResolvingEveryFolderCostsOneRoundTrip(t *testing.T) {
 	for _, folders := range []int{1, 35, 200} {
 		t.Run(fmt.Sprintf("%d folders", folders), func(t *testing.T) {
 			lk := &countingLocker{}
-			store := New(t.TempDir(), "alice@example.com", "owner", lk,
+			store := New(t.TempDir(), "alice@example.com", "test.bin/1/alice@example.com/sess1", lk,
 				map[string]string{"Sent": `\Sent`, "Drafts": `\Drafts`})
 
 			attrs := store.Attrs()
@@ -77,7 +77,7 @@ func TestResolvingEveryFolderCostsOneRoundTrip(t *testing.T) {
 // wrong.
 func TestOneReadStillLayersOverridesOverDefaults(t *testing.T) {
 	lk := &countingLocker{}
-	store := New(t.TempDir(), "alice@example.com", "owner", lk,
+	store := New(t.TempDir(), "alice@example.com", "test.bin/1/alice@example.com/sess1", lk,
 		map[string]string{"Sent": `\Sent`, "Drafts": `\Drafts`})
 	if err := store.Set("Archive", `\Archive`); err != nil {
 		t.Fatalf("set: %v", err)
@@ -104,7 +104,7 @@ type failingLocker struct {
 	locks.Locker
 }
 
-func (failingLocker) HoldsResource(_ string) bool { return false }
+func (failingLocker) HoldsResource(_ string) (locks.HoldMode, bool) { return locks.HoldNone, false }
 
 func (failingLocker) Lock(_ context.Context, _, _ string, _ time.Duration) (locks.Lock, error) {
 	return locks.Lock{}, errors.New("lock service unreachable")
@@ -124,7 +124,7 @@ func TestUnreadableOverridesFallBackLoudly(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	defer slog.SetDefault(old)
 
-	store := New(t.TempDir(), "alice@example.com", "owner", failingLocker{},
+	store := New(t.TempDir(), "alice@example.com", "test.bin/1/alice@example.com/sess1", failingLocker{},
 		map[string]string{"Sent": `\Sent`})
 
 	attrs := store.Attrs()

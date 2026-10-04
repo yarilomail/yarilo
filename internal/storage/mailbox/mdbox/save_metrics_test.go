@@ -64,7 +64,7 @@ func TestSavePartsFitInsideTheWhole(t *testing.T) {
 		before[p], counts[p] = gatherHist(t, "mailbox_save_part_seconds", map[string]string{"driver": "mdbox", "part": p})
 	}
 
-	if _, _, _, err := u.Save("INBOX", strings.NewReader("Subject: t\r\n\r\nbody\r\n"), 1, 0, nil, [16]byte{}); err != nil {
+	if _, _, _, err := u.Save("INBOX", strings.NewReader("Subject: t\r\n\r\nbody\r\n"), 1, 0, nil, nil, [16]byte{}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestSavePartsFitInsideTheWhole(t *testing.T) {
 // same number from the others, so all three report under one metric name.
 func TestEveryDriverReportsItsSave(t *testing.T) {
 	u, _ := newTestUser(t)
-	if _, _, _, err := u.Save("INBOX", strings.NewReader("Subject: t\r\n\r\nbody\r\n"), 1, 0, nil, [16]byte{}); err != nil {
+	if _, _, _, err := u.Save("INBOX", strings.NewReader("Subject: t\r\n\r\nbody\r\n"), 1, 0, nil, nil, [16]byte{}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if _, count := gatherHist(t, "mailbox_save_seconds", map[string]string{"driver": "mdbox"}); count == 0 {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,10 +22,7 @@ func jmapClient() *http.Client {
 	return &http.Client{
 		Timeout: *flagTimeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				ServerName:         jmapHost(),
-				InsecureSkipVerify: *flagInsecure, //nolint:gosec // opt-in via -insecure
-			},
+			TLSClientConfig: publicTLS(jmapHost()),
 		},
 	}
 }
@@ -301,8 +297,9 @@ func checkJMAPMailboxQuery() error {
 	if query.QueryState == "" {
 		return fmt.Errorf("Mailbox/query carries no queryState: %s", raw)
 	}
+	// About Mailbox/queryChanges, not Mailbox/changes -- see the Email side.
 	if query.CanCalculateChanges {
-		return fmt.Errorf("canCalculateChanges is true, but Mailbox/changes is not implemented")
+		return fmt.Errorf("canCalculateChanges is true, but Mailbox/queryChanges is a standing refusal")
 	}
 	// The second call resolved the query's ids through a back-reference, so it
 	// must have returned exactly that mailbox.
@@ -436,8 +433,15 @@ func checkJMAPEmailDiscovery() error {
 	if query.QueryState == "" {
 		return fmt.Errorf("Email/query carries no queryState")
 	}
+	// canCalculateChanges is about Email/queryChanges, not Email/changes:
+	// a query result depends on its filter and sort, so naming what entered or
+	// left a window needs the previous result set, and this server keeps none
+	// -- per-client state on a mailbox that several clients and two protocols
+	// share. Refusing is what RFC 8620 §5.6 provides for, so the honest
+	// advertisement is false, and a true here would promise a sync that cannot
+	// be served.
 	if query.CanCalculateChanges {
-		return fmt.Errorf("canCalculateChanges is true, but Email/changes is not implemented")
+		return fmt.Errorf("canCalculateChanges is true, but Email/queryChanges is a standing refusal")
 	}
 	// The server applied a limit, so it must say which one.
 	if query.Limit == nil {

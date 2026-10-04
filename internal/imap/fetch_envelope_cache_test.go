@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -17,10 +19,10 @@ func startEnvelopeCacheServer(t *testing.T) (root, addr string) {
 	t.Helper()
 	root = t.TempDir()
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -186,5 +188,67 @@ func TestFetchBodyStructure_ServedFromCacheWithoutTheMessage(t *testing.T) {
 		if !strings.Contains(strings.ToUpper(second), strings.ToUpper(want)) {
 			t.Errorf("body structure lost %q in the cache round-trip:\n%s", want, second)
 		}
+	}
+}
+
+// The first FETCH parses the message and the later ones read the cache; both
+// must answer the same bytes, default charset included (#2146).
+func TestFetchBodyStructure_ColdAnswersWhatTheCacheDoes(t *testing.T) {
+	root, addr := startEnvelopeCacheServer(t)
+	c := dialRaw(t, addr)
+	c.login()
+
+	// A text part with no Content-Type, one with a parameter but no charset, and
+	// one whose names are capitalised.
+	c.seq++
+	body := "From: Alice <alice@example.com>\r\n" +
+		"Subject: charset-probe\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"bnd7\"\r\n\r\n" +
+		"--bnd7\r\n\r\nno content-type\r\n" +
+		"--bnd7\r\nContent-Type: text/plain; format=flowed\r\n\r\nflowed\r\n" +
+		"--bnd7\r\nContent-Type: text/plain; Charset=UTF-8; Format=Flowed\r\n\r\ncased\r\n" +
+		"--bnd7--\r\n"
+	tag := "c001"
+	c.conn.Write([]byte(tag + " APPEND INBOX {" + itoa(len(body)) + "}\r\n"))
+	c.readLine()
+	c.conn.Write([]byte(body + "\r\n"))
+	for !strings.HasPrefix(c.readLine(), tag+" ") {
+	}
+
+	c.cmd(`SELECT INBOX`)
+	fetchLine := func(resp string) string {
+		for _, l := range strings.Split(resp, "\n") {
+			if strings.HasPrefix(l, "* 1 FETCH") {
+				return strings.TrimSpace(l)
+			}
+		}
+		t.Fatalf("no FETCH line in:\n%s", resp)
+		return ""
+	}
+	cold := fetchLine(c.cmd(`FETCH 1 (BODY BODYSTRUCTURE)`))
+
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, _ error) error {
+		if info != nil && !info.IsDir() &&
+			(strings.Contains(p, "/cur/") || strings.Contains(p, "/new/")) {
+			os.Remove(p)
+		}
+		return nil
+	})
+	cached := fetchLine(c.cmd(`FETCH 1 (BODY BODYSTRUCTURE)`))
+
+	if cold != cached {
+		t.Errorf("first and cached FETCH differ:\ncold:   %s\ncached: %s", cold, cached)
+	}
+	if n := strings.Count(cold, `"charset" "us-ascii"`); n != 4 {
+		t.Errorf("want the default charset on both text parts in BODY and BODYSTRUCTURE (4), got %d:\n%s", n, cold)
+	}
+	// Spelling as the message gave it, and no default where it named a charset.
+	if n := strings.Count(cold, `("Charset" "UTF-8" "Format" "Flowed")`); n != 2 {
+		t.Errorf("want the cased part's parameters as spelled in BODY and BODYSTRUCTURE (2), got %d:\n%s", n, cold)
+	}
+	// Message order, the default charset after what the message gave.
+	if n := strings.Count(cold, `("format" "flowed" "charset" "us-ascii")`); n != 2 {
+		t.Errorf("want the flowed part's parameters in message order in BODY and BODYSTRUCTURE (2), got %d:\n%s", n, cold)
 	}
 }

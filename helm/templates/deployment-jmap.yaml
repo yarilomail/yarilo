@@ -34,6 +34,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-jmap"
+            {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-jmap" "root" $) | quote }}
             {{- include "yarilo.adminBackendEnv" . | nindent 12 }}
@@ -71,7 +72,7 @@ spec:
             - name: mail
               mountPath: {{ .Values.storage.maildir_root }}
             {{- end }}
-            {{- include "yarilo.internalTLSMount" .Values.components.jmap.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.jmap.internalTLS "role" "jmap") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -86,7 +87,7 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "yarilo.fullname" . }}-mail
         {{- end }}
-        {{- include "yarilo.internalTLSVolume" .Values.components.jmap.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.jmap.internalTLS "role" "jmap") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

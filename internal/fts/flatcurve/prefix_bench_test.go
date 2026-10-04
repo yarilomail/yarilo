@@ -67,7 +67,7 @@ func BenchmarkPrefixSearchByTermLength(b *testing.B) {
 				q := bodyQuery(term)
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					if _, err := ui.Lookup(inbox, q); err != nil {
+					if _, err := ui.Lookup([]string{inbox.GUID}, q); err != nil {
 						b.Fatal(err)
 					}
 				}

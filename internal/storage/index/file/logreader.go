@@ -2,30 +2,32 @@ package file
 
 import (
 	"errors"
+	"io"
 	"os"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 )
 
-// logReader is one open descriptor on the log, and everything a refresh needs
-// read through it: identity, size, header, body.
+// logReader is one open descriptor on the log: identity, size, header and body
+// all read through it, where three separate opens left a torn view possible --
+// a sibling's compaction between them pairs one log's header with another's
+// body, replaying from an offset that means nothing in the file being read.
 //
-// It exists because those four used to come from three separate opens. Under
-// the cross-process lock that was invisible — no sibling could compact in
-// between. Without the lock it is a torn view with extra steps: the header says
-// "this log belongs to your base, replay it whole", the body belongs to the log
-// that replaced it, and the replay starts at an offset that means nothing in
-// the file it is reading.
-//
-// A nil file is a log that is not there, which is a normal state: a folder
-// whose base was just written has no log until the next append.
+// A nil file is a log that is not there: a folder whose base was just written
+// has no log until the next append.
 type logReader struct {
 	f    *os.File
 	stat os.FileInfo
 	hdr  mailindex.LogHeader
 	ok   bool // a header was read; false for absent, empty or unreadable
 	size int64
+	// ra is every read of the body, so a test counting reads counts the ones
+	// the replay actually makes (#1846).
+	ra io.ReaderAt
 }
+
+// wrapLogReads lets a row count the reads a scan makes on its own descriptor.
+var wrapLogReads func(io.ReaderAt) io.ReaderAt
 
 func openLogRead(indexPath string) (*logReader, error) {
 	lg := &logReader{}
@@ -37,6 +39,10 @@ func openLogRead(indexPath string) (*logReader, error) {
 		return lg, err
 	}
 	lg.f = f
+	lg.ra = f
+	if wrapLogReads != nil {
+		lg.ra = wrapLogReads(f)
+	}
 	st, serr := f.Stat()
 	if serr != nil {
 		_ = f.Close()

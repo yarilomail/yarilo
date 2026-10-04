@@ -29,6 +29,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/logging"
 	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/pkg/redisopt"
 )
 
 // version is set via pkg/build.
@@ -126,7 +127,7 @@ func buildBackend(lcfg config.LocksServiceConfig) (locks.Backend, func() bool, e
 		if lcfg.Redis == "" {
 			return nil, nil, fmt.Errorf("locks_service.redis is required for remote mode")
 		}
-		opts, err := redis.ParseURL(lcfg.Redis)
+		opts, err := redisopt.Parse(lcfg.Redis, lcfg.RedisPassword)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse redis url: %w", err)
 		}
@@ -172,9 +173,10 @@ func buildListener(cfg *config.Config, lcfg config.LocksServiceConfig) (net.List
 		}
 		if !cfg.InternalTLS.Enabled {
 			// Plain TCP only when a service mesh handles transport security.
+			mtls.WarnRolesUnchecked(mtls.ListenerLocks)
 			return net.Listen("tcp", lcfg.Listen)
 		}
-		tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA)
+		tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerLocks)
 		if err != nil {
 			return nil, fmt.Errorf("mtls config: %w", err)
 		}

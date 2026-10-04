@@ -73,44 +73,145 @@ Mounted at /etc/yarilo/tls. Call with secretName string.
 {{- end }}
 
 {{/*
-Internal mTLS volume (inter-component: director↔auth, director↔backend).
-Mounted at /etc/yarilo/internal-tls.
-Call with component internalTLS config: (dict "enabled" true "secretName" "...")
+Internal mTLS volume and mount, mounted at /etc/yarilo/internal-tls.
+Args: dict "root" $ "itls" <component internalTLS> "role" <role> ["vol" <volume name>].
+An empty secretName is the chart-made <release>-<role>-internal-tls (#2132).
 */}}
+{{- define "yarilo.internalTLSSecret" -}}
+{{- .itls.secretName | default (printf "%s-%s-internal-tls" (include "yarilo.fullname" .root) .role) -}}
+{{- end }}
 {{- define "yarilo.internalTLSVolume" -}}
-{{- if and .enabled .secretName }}
-- name: internal-tls
+{{- if .root.Values.internalTLS.enabled }}
+- name: {{ .vol | default "internal-tls" }}
   secret:
-    secretName: {{ .secretName }}
+    secretName: {{ include "yarilo.internalTLSSecret" . }}
     optional: false
 {{- end }}
 {{- end }}
 
 {{/*
-Whether internal mTLS is on ANYWHERE. Renders "true" when any component enables
-internalTLS, else empty. This is the same condition the configmap uses for
-internal_tls.enabled, and it is what makes the shared servers (backend-api,
-warden, …) serve HTTPS/mTLS — so callers (e.g. yarctl in the backend-api
-container) must key their client on THIS, not on a single component's flag (#954:
-the backend plane broke because it keyed on components.backendAPI.internalTLS,
-which the co-located install never sets).
+Whether internal mTLS is on: the one switch, internalTLS.enabled (#2138). Servers
+and yarctl's clients key on this, so they cannot disagree.
 */}}
 {{- define "yarilo.internalTLSEnabled" -}}
-{{- $ms := ((.Values.components.manageSieve | default dict).internalTLS | default dict).enabled }}
-{{- $msl := ((.Values.components.manageSieveLogin | default dict).internalTLS | default dict).enabled }}
-{{- $sasl := ((.Values.components.saslLogin | default dict).internalTLS | default dict).enabled }}
-{{- $quota := ((.Values.components.quotaStatus | default dict).internalTLS | default dict).enabled }}
-{{- if or .Values.components.director.internalTLS.enabled .Values.components.auth.internalTLS.enabled .Values.components.warden.internalTLS.enabled .Values.components.imap.internalTLS.enabled .Values.components.pop3.internalTLS.enabled .Values.components.lmtp.internalTLS.enabled .Values.components.imapLogin.internalTLS.enabled .Values.components.pop3Login.internalTLS.enabled .Values.components.submissionLogin.internalTLS.enabled $ms $msl $sasl $quota -}}
+{{- if .Values.internalTLS.enabled -}}
 true
 {{- end -}}
 {{- end }}
 
+{{/*
+Refuses components.<name>.internalTLS.enabled: TLS is one switch, and a
+per-component flag once turned TLS on in the config without a certificate.
+*/}}
+{{- define "yarilo.internalTLSNoComponentFlags" -}}
+{{- range $name, $comp := .Values.components }}
+{{- if and (kindIs "map" $comp) (kindIs "map" $comp.internalTLS) (hasKey $comp.internalTLS "enabled") }}
+{{- fail (printf "components.%s.internalTLS.enabled is no longer read: internal TLS is the one switch internalTLS.enabled (#2138)" $name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{- define "yarilo.internalTLSMount" -}}
-{{- if and .enabled .secretName }}
-- name: internal-tls
+{{- if .root.Values.internalTLS.enabled }}
+- name: {{ .vol | default "internal-tls" }}
   mountPath: /etc/yarilo/internal-tls
   readOnly: true
 {{- end }}
+{{- end }}
+
+{{/*
+DNS names of a role certificate: the role SAN peers check, the pinned internal
+name clients verify, and the director's ring names. Renders a YAML list.
+*/}}
+{{- define "yarilo.internalTLSNames" -}}
+{{- $full := include "yarilo.fullname" .root }}
+{{- $names := list (printf "%s.role.yarilo.internal" .role) .serverName }}
+{{- if eq .role "director" }}
+{{- $names = concat $names (list (printf "%s-director-ring" $full) (printf "%s-director" $full)) }}
+{{- end }}
+{{- toYaml $names }}
+{{- end }}
+
+{{/*
+The certificate yarctl presents: admin in backend-api, director-admin in the
+director pod (its own API only). Args: dict "root" $ "role" <role>.
+*/}}
+{{- define "yarilo.adminTLSVolume" -}}
+{{- if has .role (include "yarilo.internalTLSRoles" .root | fromYamlArray) }}
+- name: admin-tls
+  secret:
+    secretName: {{ printf "%s-%s-internal-tls" (include "yarilo.fullname" .root) .role }}
+{{- end }}
+{{- end }}
+{{- define "yarilo.adminTLSMount" -}}
+{{- if has .role (include "yarilo.internalTLSRoles" .root | fromYamlArray) }}
+- name: admin-tls
+  mountPath: /etc/yarilo/admin-tls
+  readOnly: true
+{{- end }}
+{{- end }}
+
+{{/*
+yarctl in the director pod: its own admin API, as director-admin.
+*/}}
+{{- define "yarilo.directorConsoleEnv" -}}
+{{- $tls := eq (include "yarilo.internalTLSEnabled" .) "true" }}
+{{- $dir := ternary "/etc/yarilo/admin-tls" "/etc/yarilo/internal-tls" (has "director-admin" (include "yarilo.internalTLSRoles" . | fromYamlArray)) }}
+- name: YARILO_ADMIN_TYPE
+  value: director
+- name: YARILO_ADMIN_URL
+  value: {{ printf "%s://localhost:%v" (ternary "https" "http" $tls) .Values.components.director.api.port }}
+- name: YARILO_ADMIN_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ printf "%s-director-api-token" (include "yarilo.fullname" .) }}
+      key: token
+{{- if $tls }}
+- name: YARILO_ADMIN_TLS_CERT
+  value: {{ $dir }}/tls.crt
+- name: YARILO_ADMIN_TLS_KEY
+  value: {{ $dir }}/tls.key
+- name: YARILO_ADMIN_TLS_CA
+  value: {{ $dir }}/ca.crt
+- name: YARILO_ADMIN_TLS_SERVER_NAME
+  value: {{ .Values.internalTLS.serverName | default (printf "%s-internal" (include "yarilo.fullname" .)) | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
+Roles whose certificate the chart makes: an enabled component with internal TLS
+and no secretName of its own; admin rides along for yarctl and the smoketest.
+Renders a YAML list.
+*/}}
+{{- define "yarilo.internalTLSRoles" -}}
+{{- $c := .Values.components }}
+{{- $on := .Values.internalTLS.enabled }}
+{{- $roles := list }}
+{{- $own := dict "auth" $c.auth "warden" $c.warden "locks" $c.locks "dict" $c.dict "director" $c.director
+      "backend-api" $c.backendAPI "imap" $c.imap "pop3" $c.pop3 "lmtp" $c.lmtp "managesieve" $c.manageSieve
+      "submission" $c.submission "jmap" $c.jmap "imap-login" $c.imapLogin "pop3-login" $c.pop3Login
+      "submission-login" $c.submissionLogin "managesieve-login" $c.manageSieveLogin "lmtp-login" $c.lmtpLogin
+      "jmap-login" $c.jmapLogin "sasl-login" $c.saslLogin "quota-status" $c.quotaStatus }}
+{{- range $role, $comp := $own }}
+{{- $comp = $comp | default dict }}
+{{- $itls := $comp.internalTLS | default dict }}
+{{- if and $comp.enabled $on (not $itls.secretName) (not (and (eq $role "director") ($itls.certificate | default dict).enabled)) }}
+{{- $roles = append $roles $role }}
+{{- end }}
+{{- end }}
+{{- $b := $c.backend | default dict }}
+{{- $bitls := $b.internalTLS | default dict }}
+{{- if and $b.coLocated $on (not $bitls.secretName) }}
+{{- $roles = concat $roles (list "imap" "pop3" "lmtp" "managesieve" "submission" "jmap" "fts" "backend-api" "backend-reg") }}
+{{- end }}
+{{- if $roles }}
+{{- $roles = append $roles "admin" }}
+{{- $d := $c.director | default dict }}
+{{- if and $d.enabled $on }}
+{{- $roles = append $roles "director-admin" }}
+{{- end }}
+{{- end }}
+{{- toYaml ($roles | uniq | sortAlpha) }}
 {{- end }}
 
 {{/*
@@ -194,6 +295,9 @@ Include in any component that reads passdb/userdb from SQL.
   value: {{ .Values.database.dsn | quote }}
 {{- end -}}
 {{- end }}
+{{- define "yarilo.backendAPITokenSecret" -}}
+{{- default (printf "%s-backend-api-token" (include "yarilo.fullname" .)) .Values.components.backendAPI.token_secret -}}
+{{- end }}
 {{- define "yarilo.adminBackendEnv" -}}
 {{- $tokenSecret := .Values.components.backendAPI.token_secret }}
 {{- if eq $tokenSecret "" }}
@@ -225,12 +329,13 @@ Include in any component that reads passdb/userdb from SQL.
          internal CA, and verify against the pinned SAN (the URL host is
          localhost/an IP that never matches the cert). Same secret the server
          mounts at /etc/yarilo/internal-tls (#954). */}}
+{{- $adminDir := ternary "/etc/yarilo/admin-tls" "/etc/yarilo/internal-tls" (has "admin" (include "yarilo.internalTLSRoles" . | fromYamlArray)) }}
 - name: YARILO_ADMIN_TLS_CERT
-  value: /etc/yarilo/internal-tls/tls.crt
+  value: {{ $adminDir }}/tls.crt
 - name: YARILO_ADMIN_TLS_KEY
-  value: /etc/yarilo/internal-tls/tls.key
+  value: {{ $adminDir }}/tls.key
 - name: YARILO_ADMIN_TLS_CA
-  value: /etc/yarilo/internal-tls/ca.crt
+  value: {{ $adminDir }}/ca.crt
 - name: YARILO_ADMIN_TLS_SERVER_NAME
   value: {{ .Values.internalTLS.serverName | default (printf "%s-internal" (include "yarilo.fullname" .)) | quote }}
 {{- end }}
@@ -244,7 +349,7 @@ YARILO_API_URL/YARILO_API_TOKEN pair, which is claimed by the backend plane.
 {{- define "yarilo.adminDirectorEnv" -}}
 {{- $tokenSecret := printf "%s-director-api-token" (include "yarilo.fullname" .) }}
 - name: YARILO_ADMIN_URL
-  value: {{ printf "http://%s-director-api:%v" (include "yarilo.fullname" .) .Values.components.director.api.port }}
+  value: {{ printf "%s://%s-director-api:%v" (ternary "https" "http" (eq (include "yarilo.internalTLSEnabled" .) "true")) (include "yarilo.fullname" .) .Values.components.director.api.port }}
 - name: YARILO_ADMIN_TOKEN
   valueFrom:
     secretKeyRef:
@@ -264,6 +369,11 @@ Args: dict "root" $ "itls" <internalTLS config>.
 - name: config
   mountPath: /etc/yarilo
   readOnly: true
+{{- if $root.Values.virtual_definitions }}
+- name: virtual-definitions
+  mountPath: /etc/yarilo/virtual
+  readOnly: true
+{{- end }}
 - name: tmp
   mountPath: /tmp
 - name: ready
@@ -272,7 +382,7 @@ Args: dict "root" $ "itls" <internalTLS config>.
 - name: mail
   mountPath: {{ $root.Values.storage.maildir_root | default "/var/mail/vhosts" }}
 {{- end }}
-{{- include "yarilo.internalTLSMount" .itls }}
+{{- include "yarilo.internalTLSMount" (dict "root" $root "itls" .itls "role" .role "vol" (printf "internal-tls-%s" .role)) }}
 {{- /* extraVolumes are rendered on the StatefulSet, so the matching mounts
        belong on every backend container. Without them a volume an operator
        added is present in the pod and mounted nowhere: a passwd-file passdb
@@ -390,3 +500,111 @@ startupProbe:
   failureThreshold: {{ $p.failureThreshold }}
 {{- end }}
 {{- end -}}
+
+{{/*
+yarilo.dictPort — the port yarilo-dict listens on, taken from the listener
+value so the container port, the Service and dict_addr cannot disagree.
+*/}}
+{{- define "yarilo.dictPort" -}}
+{{- $listen := .Values.components.dict.listen | default ":9107" -}}
+{{- $parts := splitList ":" $listen -}}
+{{- index $parts (sub (len $parts) 1) -}}
+{{- end }}
+
+{{/*
+NetworkPolicy listeners: the matrix of pkg/mtls (#2132) on the network layer
+(#2138). Each row: the mtls listener, the pod serving it, its ports, the roles
+it accepts. The guard checks the roles against mtls.Allowed both ways.
+*/}}
+{{- define "yarilo.netpolListeners" -}}
+{{- $c := .Values.components }}
+{{- $co := $c.backend.coLocated }}
+{{- $logins := list "imap-login" "pop3-login" "submission-login" "managesieve-login" "lmtp-login" "jmap-login" }}
+{{- $sessions := list "imap" "pop3" "lmtp" "managesieve" }}
+{{- $rows := list }}
+{{- if $c.auth.enabled }}
+{{- $rows = append $rows (dict "listener" "auth-client" "server" "auth" "ports" (list (include "yarilo.portNum" $c.auth.listen)) "roles" (concat (list "imap-login" "pop3-login" "submission-login" "managesieve-login" "jmap-login" "sasl-login" "submission" "admin") $sessions)) }}
+{{- if $c.auth.masterListen }}
+{{- $rows = append $rows (dict "listener" "auth-master" "server" "auth" "ports" (list (include "yarilo.portNum" $c.auth.masterListen)) "roles" (concat (list "backend-api" "fts" "jmap" "quota-status" "lmtp-login" "admin") $sessions)) }}
+{{- end }}
+{{- end }}
+{{- if $c.warden.enabled }}
+{{- $rows = append $rows (dict "listener" "warden" "server" "warden" "ports" (list (include "yarilo.portNum" (($c.warden.service | default dict).listen | default ":9101"))) "roles" (concat (list "auth" "backend-api" "imap") $logins)) }}
+{{- end }}
+{{- if $c.locks.enabled }}
+{{- $rows = append $rows (dict "listener" "locks" "server" "locks" "ports" (list (include "yarilo.portNum" (($c.locks.service | default dict).listen | default ":9104"))) "roles" (concat (list "backend-api" "fts" "jmap" "admin") $sessions)) }}
+{{- end }}
+{{- if $c.dict.enabled }}
+{{- $rows = append $rows (dict "listener" "dict" "server" "dict" "ports" (list (include "yarilo.portNum" ($c.dict.listen | default ":9107"))) "roles" $sessions) }}
+{{- end }}
+{{- if $c.director.enabled }}
+{{- $rows = append $rows (dict "listener" "director" "server" "director" "ports" (list (toString $c.director.directorPort)) "roles" (concat (list "director" "backend-api" "backend-reg") $logins)) }}
+{{- $rows = append $rows (dict "listener" "director-api" "server" "director" "ports" (list (toString $c.director.api.port)) "roles" (list "admin" "director-admin")) }}
+{{- end }}
+{{- if $co }}
+{{- $rows = append $rows (dict "listener" "backend-api" "server" "backend" "ports" (list "9105") "roles" (list "admin" "backend-api")) }}
+{{- $rows = append $rows (dict "listener" "fts" "server" "backend" "ports" (list (toString $c.fts.port)) "roles" (concat (list "backend-api" "jmap") $sessions)) }}
+{{- $proto := list (list "imap" "imap" "10143" "imap-backend" "imap-login") (list "pop3" "pop3" "10110" "pop3-backend" "pop3-login") (list "lmtp" "lmtp" "10024" "lmtp-backend" "lmtp-login") (list "manageSieve" "managesieve" "14190" "managesieve-backend" "managesieve-login") (list "submission" "submission" "10587" "submission-backend" "submission-login") (list "jmap" "jmap" "10443" "jmap-backend" "jmap-login") }}
+{{- range $p := $proto }}
+{{- if (index $c (index $p 0) | default dict).enabled }}
+{{- $rows = append $rows (dict "listener" (index $p 3) "server" "backend" "ports" (list (index $p 2)) "roles" (list (index $p 4))) }}
+{{- end }}
+{{- end }}
+{{- else }}
+{{- if $c.backendAPI.enabled }}
+{{- $rows = append $rows (dict "listener" "backend-api" "server" "backend-api" "ports" (list "9105") "roles" (list "admin" "backend-api")) }}
+{{- end }}
+{{- if $c.fts.enabled }}
+{{- $rows = append $rows (dict "listener" "fts" "server" "fts" "ports" (list (toString $c.fts.port)) "roles" (concat (list "backend-api" "jmap") $sessions)) }}
+{{- end }}
+{{- $proto := list (list "imap" "imap" (list "imaps" "imap") "imap-backend" "imap-login") (list "pop3" "pop3" (list "pop3s" "pop3") "pop3-backend" "pop3-login") (list "lmtp" "lmtp" (list "lmtp") "lmtp-backend" "lmtp-login") (list "manageSieve" "managesieve" (list "managesieve") "managesieve-backend" "managesieve-login") (list "submission" "submission" (list "submission" "submissions") "submission-backend" "submission-login") (list "jmap" "jmap" (list "jmap") "jmap-backend" "jmap-login") }}
+{{- range $p := $proto }}
+{{- $comp := index $c (index $p 0) | default dict }}
+{{- if $comp.enabled }}
+{{- $ports := list }}
+{{- range $l := index $p 2 }}
+{{- with (index ($comp.listeners | default dict) $l) }}{{ if or (not (hasKey . "enabled")) .enabled }}{{ $ports = append $ports (toString .containerPort) }}{{ end }}{{ end }}
+{{- end }}
+{{- $rows = append $rows (dict "listener" (index $p 3) "server" (index $p 1) "ports" $ports "roles" (list (index $p 4))) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- toYaml $rows }}
+{{- end }}
+
+{{/* The port of a listen address such as ":9100" or "0.0.0.0:9100". */}}
+{{- define "yarilo.portNum" -}}
+{{- regexFind "[0-9]+$" (toString .) -}}
+{{- end }}
+
+{{/*
+The pod a role runs in. Args: dict "root" $ "role" <role>; empty for a role
+that reaches its server over loopback or does not exist in this layout.
+*/}}
+{{- define "yarilo.netpolRolePod" -}}
+{{- $co := .root.Values.components.backend.coLocated }}
+{{- $inBackend := list "imap" "pop3" "lmtp" "managesieve" "submission" "jmap" "fts" "backend-api" "backend-reg" }}
+{{- if eq .role "director-admin" -}}
+{{- else if eq .role "admin" -}}
+{{ ternary "backend" "backend-api" $co }}
+{{- else if and $co (has .role $inBackend) -}}
+backend
+{{- else if eq .role "backend-reg" -}}
+{{- else -}}
+{{ .role }}
+{{- end -}}
+{{- end }}
+
+{{/*
+The Redis password, from redis.passwordSecret, for every process that opens a
+Redis client or a redis dict; the config names it as ${YARILO_REDIS_PASSWORD}.
+*/}}
+{{- define "yarilo.redisPasswordEnv" -}}
+{{- with (.Values.redis.passwordSecret | default dict).name }}
+- name: YARILO_REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $.Values.redis.passwordSecret.key | default "password" }}
+{{- end }}
+{{- end }}

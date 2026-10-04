@@ -53,6 +53,9 @@ case "$YARILO_COMPONENT" in
   yarilo-migrate)
     exec /usr/local/bin/yarilo-migrate "$@"
     ;;
+  yarilo-dict)
+    exec /usr/local/bin/yarilo-dict
+    ;;
   yarilo-quota-status)
     exec /usr/local/bin/yarilo-quota-status
     ;;
@@ -77,7 +80,7 @@ case "$YARILO_COMPONENT" in
     echo "           yarilo-imap, yarilo-imap-login,"
     echo "           yarilo-pop3, yarilo-pop3-login,"
     echo "           yarilo-lmtp, yarilo-lmtp-login, yarilo-submission, yarilo-submission-login,"
-    echo "           yarilo-migrate, yarilo-quota-status, yarilo-sasl-login,"
+    echo "           yarilo-dict, yarilo-migrate, yarilo-quota-status, yarilo-sasl-login,"
     echo "           yarilo-managesieve, yarilo-managesieve-login,"
     echo "           yarilo-jmap-login, yarilo-jmap"
     exit 1

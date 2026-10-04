@@ -141,7 +141,6 @@ func main() {
 			AuthAddr:            cfg.AuthService.ClientAddr(),
 			AuthTLS:             intTLS,
 			AuthMaxAttempts:     cfg.Auth.MaxAttempts,
-			OAuth2Enabled:       len(cfg.Auth.OAuth2) > 0,
 			DisablePlainAuth:    svcs.IMAPS.PlainAuthDisabled(),
 			WardenAddr:          cfg.WardenService.ClientAddr(),
 			WardenTLS:           intTLS,
@@ -152,6 +151,7 @@ func main() {
 			SessionSyncInterval: time.Duration(cfg.Login.SessionSyncInterval) * time.Second,
 			TransientRetries:    cfg.Login.TransientRetries,
 			TransientReloginCap: cfg.Login.TransientReloginCap,
+			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 			LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
 			HAProxy:             svcs.IMAPS.HAProxy,
 			HAProxyTimeout:      haproxyTimeout,
@@ -192,7 +192,6 @@ func main() {
 			StarttlsTLS:         extTLS,
 			AuthAddr:            cfg.AuthService.ClientAddr(),
 			AuthTLS:             intTLS,
-			OAuth2Enabled:       len(cfg.Auth.OAuth2) > 0,
 			DisablePlainAuth:    svcs.IMAP.PlainAuthDisabled(),
 			WardenAddr:          cfg.WardenService.ClientAddr(),
 			WardenTLS:           intTLS,
@@ -207,6 +206,10 @@ func main() {
 			HAProxyNets:         haproxyNets,
 			XClient:             svcs.IMAP.XClient,
 			XClientNets:         xclientNets,
+			AuthMaxAttempts:     cfg.Auth.MaxAttempts,
+			TransientRetries:    cfg.Login.TransientRetries,
+			TransientReloginCap: cfg.Login.TransientReloginCap,
+			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 		})
 		loginServers = append(loginServers, srv)
 		go func(srv *login.Server, ln net.Listener) {
@@ -259,12 +262,8 @@ func parseCIDRs(ss []string) []*net.IPNet {
 	return nets
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel, and
-// returns the server so the caller can report readiness once its listeners are
-// actually bound.
-//
-// Lifecycle is on: without it /readyz answers 200 from the moment the process
-// starts, which says nothing. With it, ready means this pod holds its ports.
+// startTelemetry serves /healthz, /readyz and /metrics. Lifecycle is on, so
+// ready means this pod holds its ports, not merely that the process started.
 func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 	tel := telemetry.NewWithOptions(telemetry.Options{
 		Addr:      telemetry.Addr(cfg.Listen),

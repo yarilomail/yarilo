@@ -11,7 +11,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -21,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/config"
@@ -44,9 +44,6 @@ type Options struct {
 	// For immediate TLS (ssl mode), wrap the listener before calling Serve().
 	TLSConfig *tls.Config
 
-	// Router resolves recipient usernames to backend IPs. Non-nil on director
-	// nodes activates proxy mode; nil on backend nodes means local delivery.
-	Router UserRouter
 	// BackendPort is the LMTP port on backend pods. Default: 24.
 	BackendPort int
 
@@ -128,9 +125,8 @@ type Options struct {
 
 // Server is an LMTP server backed by a MailboxBackend and IndexBackend.
 type Server struct {
-	srv    *goSmtp.Server
-	opts   Options
-	router *proxyRouter // non-nil when proxy mode is active
+	srv  *goSmtp.Server
+	opts Options
 }
 
 // New creates an LMTP server from Options.
@@ -141,17 +137,8 @@ func New(opts Options) *Server {
 	// path on the shared volume (#1149).
 	opts.MailboxByDriver = mailbox.MemoizeByDriver(opts.MailboxByDriver)
 
-	var router *proxyRouter
-	if opts.Router != nil {
-		timeout := time.Duration(opts.Config.Proxy.Timeout) * time.Second
-		if timeout == 0 {
-			timeout = 125 * time.Second
-		}
-		router = newProxyRouter(opts.Hostname, opts.Router, opts.BackendPort, timeout)
-	}
-
-	s := &Server{opts: opts, router: router}
-	be := &backend{opts: opts, router: router, srv: s}
+	s := &Server{opts: opts}
+	be := &backend{opts: opts, srv: s}
 
 	srv := goSmtp.NewServer(be)
 	srv.Domain = opts.Hostname
@@ -159,6 +146,9 @@ func New(opts Options) *Server {
 	srv.TLSConfig = opts.TLSConfig
 	srv.ReadTimeout = time.Duration(opts.Config.ReadTimeout) * time.Second
 	srv.WriteTimeout = time.Duration(opts.Config.WriteTimeout) * time.Second
+	// Advertised as SIZE and enforced while reading, so an oversized body is never held.
+	srv.MaxMessageBytes = opts.QuotaMailSize
+	srv.MaxRecipients = opts.Config.MaxRecipients
 
 	s.srv = srv
 	return s
@@ -170,7 +160,6 @@ func New(opts Options) *Server {
 func (s *Server) Serve(ln net.Listener) error {
 	slog.Info("lmtp: listening", "addr", ln.Addr().String(),
 		"preamble", s.opts.AuthAddr != "",
-		"proxy_mode", s.opts.Router != nil,
 	)
 	if s.opts.AuthAddr != "" {
 		ln = &loginproto.PreambleListener{
@@ -195,9 +184,8 @@ func (s *Server) Serve(ln net.Listener) error {
 // ---- backend ----------------------------------------------------------------
 
 type backend struct {
-	opts   Options
-	router *proxyRouter
-	srv    *Server
+	opts Options
+	srv  *Server
 }
 
 func (b *backend) NewSession(c *goSmtp.Conn) (goSmtp.Session, error) {
@@ -213,7 +201,7 @@ func (b *backend) NewSession(c *goSmtp.Conn) (goSmtp.Session, error) {
 			}
 		}
 	}
-	return &session{opts: b.opts, router: b.router, srv: b.srv, peerIP: peerIP, mtaConn: mtaConn, connID: nextConnID()}, nil
+	return &session{opts: b.opts, srv: b.srv, peerIP: peerIP, mtaConn: mtaConn, connID: nextConnID(), lockID: locks.NewID()}, nil
 }
 
 // connIDSeq is a per-process monotonic counter identifying one LMTP
@@ -227,14 +215,12 @@ func nextConnID() uint64 { return connIDSeq.Add(1) }
 // ---- session ----------------------------------------------------------------
 
 type session struct {
-	opts       Options
-	router     *proxyRouter
-	srv        *Server  // back-reference
-	peerIP     string   // upstream MTA IP, captured at NewSession
-	mtaConn    net.Conn // raw TCP conn from the upstream MTA
-	from       string
-	rcpts      []string            // local recipients
-	proxyRcpts map[string][]string // backend addr → []rcpt (proxy mode)
+	opts    Options
+	srv     *Server  // back-reference
+	peerIP  string   // upstream MTA IP, captured at NewSession
+	mtaConn net.Conn // raw TCP conn from the upstream MTA
+	from    string
+	rcpts   []string // local recipients
 
 	// rcptUserInfo caches per-recipient UserInfo fetched at RCPT TO time
 	// so LMTPData can use correct Home and QuotaRules without re-querying.
@@ -242,16 +228,20 @@ type session struct {
 
 	// connID identifies this LMTP connection (see nextConnID).
 	connID uint64
+
+	// lockID names this connection in every lock owner it takes -- per
+	// connection, not per delivery: one id covers every message on the link.
+	lockID string
 }
 
 // folderMessageCount returns folder's current message count from the index
 // (the authoritative count backend). ok is false when the folder is unavailable.
-func folderMessageCount(idx quota.FolderVSizer, folder string) (int64, bool) {
-	f, err := idx.OpenFolder(folder, 0)
+func folderMessageCount(box mailbox.Box, vs quota.FolderVSizer, folder string) (int64, bool) {
+	f, err := box.Folder(folder, 0)
 	if err != nil {
 		return 0, false
 	}
-	_, msgs, err := idx.FolderVSize(f.ID)
+	_, msgs, err := vs.FolderVSize(f.ID)
 	if err != nil {
 		return 0, false
 	}
@@ -266,6 +256,18 @@ func (s *session) quotaExceededMessage() string {
 	return "Mailbox full"
 }
 
+// quotaFullError is permanent unless quota_full_tempfail asks the MTA to retry.
+func (s *session) quotaFullError() *goSmtp.SMTPError {
+	return s.quotaFullErrorText(s.quotaExceededMessage())
+}
+
+func (s *session) quotaFullErrorText(text string) *goSmtp.SMTPError {
+	if s.opts.Config.QuotaFullTempfail {
+		return &goSmtp.SMTPError{Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 2, 2}, Message: text}
+	}
+	return &goSmtp.SMTPError{Code: 552, EnhancedCode: goSmtp.EnhancedCode{5, 2, 2}, Message: text}
+}
+
 func (s *session) Mail(from string, _ *goSmtp.MailOptions) error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "MAIL", "from", from)
 	s.from = from
@@ -274,9 +276,6 @@ func (s *session) Mail(from string, _ *goSmtp.MailOptions) error {
 
 func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "RCPT", "to", to)
-	if s.router != nil {
-		return s.rcptProxy(to)
-	}
 	return s.rcptLocal(to)
 }
 
@@ -306,8 +305,13 @@ func (s *session) rcptLocal(to string) error {
 		}
 		userInfo = ui
 	} else {
-		userInfo = resolver.UserInfo(user, "")
+		ui, err := resolver.UserInfo(user, "")
+		if err != nil {
+			return &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 1, 1}, Message: "No such user here"}
+		}
+		userInfo = ui
 	}
+	s.stampLockID(userInfo)
 	if s.rcptUserInfo == nil {
 		s.rcptUserInfo = make(map[string]*mailbox.UserInfo)
 	}
@@ -343,7 +347,8 @@ func (s *session) rcptLocal(to string) error {
 		if errors.Is(err, ErrRateLimited) {
 			slog.Warn("lmtp: recipient rate limit exceeded", "ip", s.peerIP, "rcpt", to,
 				"burst", rl.PerRecipientBurst, "window_seconds", rl.PerRecipientWindowSeconds)
-			return &goSmtp.SMTPError{Code: 421, EnhancedCode: goSmtp.EnhancedCode{4, 7, 0}, Message: "Rate limit exceeded for recipient"}
+			// Not 421: that code says the server is closing the channel.
+			return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 7, 0}, Message: "Rate limit exceeded for recipient"}
 		}
 		if err != nil {
 			slog.Warn("lmtp: rate-limit counter unavailable, accepting", "ip", s.peerIP, "rcpt", to, "err", err)
@@ -351,23 +356,6 @@ func (s *session) rcptLocal(to string) error {
 	}
 
 	s.rcpts = append(s.rcpts, to)
-	return nil
-}
-
-func (s *session) rcptProxy(to string) error {
-	user, _, err := resolveMailbox(to)
-	if err != nil {
-		return &goSmtp.SMTPError{Code: 501, EnhancedCode: goSmtp.EnhancedCode{5, 1, 3}, Message: "Bad recipient address"}
-	}
-	addr, err := s.router.route(user)
-	if err != nil {
-		slog.Error("lmtp: proxy route failed", "user", user, "err", err)
-		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary routing error"}
-	}
-	if s.proxyRcpts == nil {
-		s.proxyRcpts = make(map[string][]string)
-	}
-	s.proxyRcpts[addr] = append(s.proxyRcpts[addr], to)
 	return nil
 }
 
@@ -385,7 +373,14 @@ func (s *session) prependHeaders(data []byte, rcpt, finalRcpt string) []byte {
 		hdrs = append(hdrs, ("Delivered-To: " + rcpt + "\r\n")...)
 	}
 	if s.opts.Config.AddReceivedHeader {
-		hdrs = append(hdrs, buildReceivedHeader(s.from)...)
+		hdrs = append(hdrs, buildReceivedHeader(s.from, s.opts.Hostname)...)
+	}
+	// Before Sieve, before storage, before the thread sidecar: everything
+	// downstream reads the bytes this returns, so a header added here is the
+	// one they all see. Adding it later would give the stored message an
+	// identity the conversation and the Sieve script never had.
+	if s.opts.Config.AddMessageID && !hasMessageID(data) {
+		hdrs = append(hdrs, buildMessageID(s.opts.Hostname)...)
 	}
 	if len(hdrs) == 0 {
 		return data
@@ -412,22 +407,12 @@ func (s *session) matchNamespace(folder string) *config.NamespaceConfig {
 	return best
 }
 
-// deliveryTarget resolves a delivery folder through the recipient's namespaces.
-// A namespace-prefixed folder routes to that namespace's storage with the prefix stripped;
-// everything else goes to the recipient's own store. Returns the target
-// box/idx, the namespace-relative folder, and a close func for any store this
-// call opened (a no-op for the personal store, which the caller owns).
-//
-// When enforcePost is set, delivery into a shared / public namespace requires
-// the recipient to hold the 'p' (post) right on the target folder; a denial
-// falls back to the recipient's INBOX (implicit keep). The recipient's own
-// personal store is never ACL-checked (IGNORE_ACLS semantics).
 // folderByMailboxID resolves a MAILBOXID (RFC 8474 objectid) to the name of the
 // personal-namespace folder carrying it, backing fileinto :mailboxid and
 // mailboxidexists (RFC 9042). It walks the user's selectable folders and matches
 // the requested id against each folder's stable GUID. Returns ("", false) when
 // no folder matches or the folder tree cannot be read.
-func (s *session) folderByMailboxID(rcptBox mailbox.UserMailbox, rcptIdx mailbox.UserIndex, id string) (string, bool) {
+func (s *session) folderByMailboxID(rcptBox mailbox.UserMailbox, rcptMbox mailbox.Box, id string) (string, bool) {
 	if id == "" {
 		return "", false
 	}
@@ -440,7 +425,7 @@ func (s *session) folderByMailboxID(rcptBox mailbox.UserMailbox, rcptIdx mailbox
 		if !e.Selectable {
 			continue
 		}
-		f, err := rcptIdx.OpenFolder(e.Name, 0)
+		f, err := rcptMbox.Folder(e.Name, 0)
 		if err != nil {
 			continue
 		}
@@ -456,7 +441,7 @@ func (s *session) folderByMailboxID(rcptBox mailbox.UserMailbox, rcptIdx mailbox
 // reads the same personal-namespace dict keys the IMAP server writes. Returns
 // ("", false, nil) when the dict is unconfigured, the entry name is malformed,
 // the folder is unknown, or the annotation is absent.
-func (s *session) mailboxMetadata(ctx context.Context, userInfo *mailbox.UserInfo, idx mailbox.UserIndex, mbox, annotation string) (string, bool, error) {
+func (s *session) mailboxMetadata(ctx context.Context, userInfo *mailbox.UserInfo, box mailbox.Box, mbox, annotation string) (string, bool, error) {
 	if s.opts.MetadataDict == nil {
 		return "", false, nil
 	}
@@ -464,7 +449,7 @@ func (s *session) mailboxMetadata(ctx context.Context, userInfo *mailbox.UserInf
 	if err != nil {
 		return "", false, nil
 	}
-	f, err := idx.OpenFolder(mbox, 0)
+	f, err := box.Folder(mbox, 0)
 	if err != nil {
 		return "", false, nil
 	}
@@ -474,7 +459,7 @@ func (s *session) mailboxMetadata(ctx context.Context, userInfo *mailbox.UserInf
 // serverMetadata reads a server-scoped IMAP METADATA annotation, backing the
 // servermetadata Sieve tests. Server-scope entries live under INBOX's GUID with
 // the vendor prefix, matching the IMAP server's key derivation.
-func (s *session) serverMetadata(ctx context.Context, userInfo *mailbox.UserInfo, idx mailbox.UserIndex, annotation string) (string, bool, error) {
+func (s *session) serverMetadata(ctx context.Context, userInfo *mailbox.UserInfo, box mailbox.Box, annotation string) (string, bool, error) {
 	if s.opts.MetadataDict == nil {
 		return "", false, nil
 	}
@@ -482,7 +467,7 @@ func (s *session) serverMetadata(ctx context.Context, userInfo *mailbox.UserInfo
 	if err != nil {
 		return "", false, nil
 	}
-	f, err := idx.OpenFolder("INBOX", 0)
+	f, err := box.Folder("INBOX", 0)
 	if err != nil {
 		return "", false, nil
 	}
@@ -501,7 +486,9 @@ func (s *session) lookupMetadata(ctx context.Context, userInfo *mailbox.UserInfo
 	return string(vals[0]), true, nil
 }
 
-func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.UserMailbox, rcptIdx mailbox.UserIndex, folder string, enforcePost bool) (mailbox.UserMailbox, mailbox.UserIndex, string, func()) {
+// deliveryTarget routes a folder through the recipient's namespaces: a denied
+// post right falls back to INBOX, and the personal store is never ACL-checked.
+func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.UserMailbox, rcptMbox mailbox.Box, folder string, enforcePost bool) (mailbox.UserMailbox, mailbox.Box, string, func()) {
 	noop := func() {}
 	// One owner of NFC, here at the resolver, so a Sieve fileinto naming a
 	// folder in a decomposed form addresses the same directory the mail tree
@@ -509,13 +496,13 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	folder = mailbox.NormalizeName(folder, userInfo != nil && userInfo.SkipNFCNormalize)
 	ns := s.matchNamespace(folder)
 	if ns == nil {
-		return rcptBox, rcptIdx, folder, noop
+		return rcptBox, rcptMbox, folder, noop
 	}
 	loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
 	if err != nil || !ok {
 		slog.Warn("lmtp: namespace location parse failed, using personal store",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
-		return rcptBox, rcptIdx, folder, noop
+		return rcptBox, rcptMbox, folder, noop
 	}
 	rel := strings.TrimPrefix(folder, ns.Prefix)
 	if rel == "" {
@@ -525,12 +512,12 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	if err != nil {
 		slog.Warn("lmtp: namespace not usable, delivering to INBOX",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
-		return rcptBox, rcptIdx, "INBOX", noop
+		return rcptBox, rcptMbox, "INBOX", noop
 	}
 	if enforcePost && !s.postAllowed(ui, ns, rel) {
 		slog.Warn("lmtp: post right denied, falling back to INBOX",
 			"rcpt", userInfo.Username, "prefix", ns.Prefix, "folder", rel)
-		return rcptBox, rcptIdx, "INBOX", noop
+		return rcptBox, rcptMbox, "INBOX", noop
 	}
 	mb := s.opts.Mailbox
 	if f := s.opts.MailboxByDriver; f != nil && loc.Driver != "" {
@@ -541,10 +528,10 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 		slog.Warn("lmtp: namespace store init failed, using personal store",
 			"prefix", ns.Prefix, "err", err)
 		box.Close() //nolint:errcheck
-		return rcptBox, rcptIdx, folder, noop
+		return rcptBox, rcptMbox, folder, noop
 	}
 	idx := s.opts.Index.OpenUser(ui)
-	return box, idx, rel, func() {
+	return box, mailboxbase.Open(box, idx, mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.boxAuto(userInfo, s.namespaceIndex(ns), ui))), rel, func() {
 		box.Close() //nolint:errcheck
 		idx.Close() //nolint:errcheck
 	}
@@ -561,7 +548,7 @@ func (s *session) postAllowed(ui *mailbox.UserInfo, ns *config.NamespaceConfig, 
 	}
 	// acl_defaults_from_inbox applies to private / shared namespaces only.
 	defaultsFromInbox := s.opts.ACLDefaultsFromInbox && ns.Type != "public"
-	lockOwner := fmt.Sprintf("yarilo-lmtp/%d/%s", os.Getpid(), ui.Username)
+	lockOwner := locks.Owner(ui.Username, s.stampLockID(ui).LockID())
 	store := acl.New(ui.Home, ui.MailPath, ui.Driver, ui.Separator, ui.StorageEscapeChar, ui.Username, lockOwner, acl.Policy{
 		DefaultsFromInbox: defaultsFromInbox,
 		GlobalsOnly:       s.opts.ACLGlobalsOnly,
@@ -589,23 +576,35 @@ func (s *session) postAllowed(ui *mailbox.UserInfo, ns *config.NamespaceConfig, 
 // recipient must not fall through to the global (maildir) store. Only when there
 // is no userdb to consult does it fall back to the bare resolver (no per-user
 // driver, so the global backend is correct).
+// stampLockID gives a recipient's UserInfo this connection's id (#1670).
+func (s *session) stampLockID(ui *mailbox.UserInfo) *mailbox.UserInfo {
+	if ui != nil && ui.SessionID == "" {
+		ui.SessionID = s.lockID
+	}
+	return ui
+}
+
 func (s *session) resolveRcptUserInfo(rcpt, username string) *mailbox.UserInfo {
 	if ui := s.rcptUserInfo[rcpt]; ui != nil {
-		return ui
+		return s.stampLockID(ui)
 	}
 	if s.opts.UserdbLookup != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		ui, err := s.opts.UserdbLookup(ctx, username)
 		cancel()
 		if err == nil && ui != nil {
-			return ui
+			return s.stampLockID(ui)
 		}
 	}
 	resolver := s.opts.Resolver
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	return resolver.UserInfo(username, "")
+	ui, err := resolver.UserInfo(username, "")
+	if err != nil {
+		return nil
+	}
+	return s.stampLockID(ui)
 }
 
 func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
@@ -615,31 +614,6 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		return err
 	}
 
-	// For proxy mode, build message with common headers (no per-rcpt Delivered-To).
-	proxyData := data
-	if s.opts.Config.AddReceivedHeader {
-		proxyData = append([]byte(buildReceivedHeader(s.from)), data...)
-	}
-
-	// Proxy recipients: fan-out to backends in parallel.
-	if len(s.proxyRcpts) > 0 {
-		results := s.router.proxyFanOut(s.proxyRcpts, s.from, proxyData)
-		for rcpt, rerr := range results {
-			if rerr != nil {
-				slog.Error("lmtp: proxy delivery failed", "rcpt", rcpt, "err", rerr)
-				if s.opts.Config.VerboseReplies {
-					rerr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: rerr.Error()}
-				} else {
-					rerr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: "Proxy delivery failed"}
-				}
-			} else {
-				slog.Info("lmtp: proxy delivered", "rcpt", rcpt, "size", len(proxyData))
-			}
-			setProxyStatus(status, rcpt, rerr)
-		}
-	}
-
-	// Local recipients: deliver directly.
 	for _, rcpt := range s.rcpts {
 		// Every exit below reports a status for this recipient, and every one
 		// of them is timed: see setStatus.
@@ -653,10 +627,15 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 
 		username, folder, _ := resolveMailbox(deliverRcpt)
 		userInfo := s.resolveRcptUserInfo(rcpt, username)
+		if userInfo == nil {
+			setStatus(status, rcpt, deliveryStart, &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 1, 1}, Message: "No such user here"})
+			continue
+		}
 
 		mboxBackend := mailbox.SelectPersonalBackend(s.opts.Mailbox, s.opts.MailboxByDriver, userInfo.Driver)
 		rcptBox := mboxBackend.OpenUser(userInfo)
 		rcptIdx := s.opts.Index.OpenUser(userInfo)
+		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.personalAuto(userInfo)))
 		rcptBox.Init() //nolint:errcheck // idempotent; provisioned in rcptLocal
 
 		// Quota enforcement from the index (authoritative): reject when this
@@ -676,16 +655,13 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				continue
 			}
 			// Per-mailbox message-count cap is structural (independent of a
-			// quota_rule): reject when the target folder would reach the limit.
+			// quota_rule): reject when the target folder already holds the limit.
 			if mmc := s.opts.QuotaPolicy.MailboxMessageCount; mmc > 0 {
-				if cur, ok := folderMessageCount(rcptIdx, folder); ok && cur+1 >= mmc {
+				if cur, ok := folderMessageCount(rcptMbox, rcptIdx, folder); ok && cur >= mmc {
 					slog.Warn("lmtp: delivery rejected: too many messages in mailbox", "rcpt", rcpt, "user", username, "folder", folder)
 					rcptBox.Close() //nolint:errcheck
 					rcptIdx.Close() //nolint:errcheck
-					setStatus(status, rcpt, deliveryStart, &goSmtp.SMTPError{
-						Code: 552, EnhancedCode: goSmtp.EnhancedCode{5, 2, 2},
-						Message: "Too many messages in the mailbox",
-					})
+					setStatus(status, rcpt, deliveryStart, s.quotaFullErrorText("Too many messages in the mailbox"))
 					continue
 				}
 			}
@@ -694,16 +670,16 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				effLim = s.opts.QuotaPolicy.Scale(effLim)
 				if !ignore && !effLim.Unlimited() {
 					entries, _ := rcptBox.ListFolders()
-					u := quota.CountUsage(rcptIdx, mailbox.SelectableNames(entries), lim)
+					// A folder no session has opened still sums its records, and
+					// a record that carries no size sums as nothing (#1728).
+					fillSizes(mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly()), mailbox.SelectableNames(entries))
+					u := quota.CountUsage(rcptMbox, mailbox.SelectableNames(entries), lim)
 					// Inbound delivery is grace-eligible (LMTP/LDA overshoot).
 					if quota.IsOverWithGrace(u, effLim, int64(len(msg)), 1, s.opts.QuotaPolicy.StorageGrace) {
 						slog.Warn("lmtp: delivery rejected: mailbox full", "rcpt", rcpt, "user", username)
 						rcptBox.Close() //nolint:errcheck
 						rcptIdx.Close() //nolint:errcheck
-						setStatus(status, rcpt, deliveryStart, &goSmtp.SMTPError{
-							Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 2, 2},
-							Message: s.quotaExceededMessage(),
-						})
+						setStatus(status, rcpt, deliveryStart, s.quotaFullError())
 						continue
 					}
 					// Delivery accepted — fire any quota_warning crossed by this
@@ -714,11 +690,10 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 						if len(s.opts.QuotaPolicy.Warnings) > 0 {
 							s.opts.QuotaWarner.Fire(username, userInfo.Home, s.opts.QuotaPolicy.Warnings, s.opts.QuotaPolicy.Scale(lim), u, after)
 						}
-						if s.opts.QuotaClone != nil {
-							cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
-							s.opts.QuotaClone.Write(cctx, username, after)
-							ccancel()
-						}
+						// Recorded, not written here: a delivery is where usage
+						// changes most, and it must not wait for two dict round
+						// trips (#1875). The mirror writes on its own timer.
+						s.opts.QuotaClone.Mirror(username, after)
 					}
 				}
 			}
@@ -734,25 +709,28 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				EnvTo:    rcpt,
 				MsgRaw:   msg,
 				FolderExists: func(_ context.Context, f string) (bool, error) {
-					box, _, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptIdx, f, false)
+					box, _, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptMbox, f, false)
 					defer closeTarget()
 					return box.FolderExists(rel)
 				},
 				MailboxByID: func(_ context.Context, id string) (string, bool) {
-					return s.folderByMailboxID(rcptBox, rcptIdx, id)
+					return s.folderByMailboxID(rcptBox, rcptMbox, id)
 				},
 				MailboxMetadata: func(ctx context.Context, mbox, annotation string) (string, bool, error) {
-					return s.mailboxMetadata(ctx, userInfo, rcptIdx, mbox, annotation)
+					return s.mailboxMetadata(ctx, userInfo, rcptMbox, mbox, annotation)
 				},
 				ServerMetadata: func(ctx context.Context, annotation string) (string, bool, error) {
-					return s.serverMetadata(ctx, userInfo, rcptIdx, annotation)
+					return s.serverMetadata(ctx, userInfo, rcptMbox, annotation)
 				},
 			}
-			result, ferr := s.opts.SieveEngine.Filter(context.Background(), fopts)
+			// Sieve takes this user's script and duplicate locks; they announce the
+			// delivery, not the process (#1672).
+			sieveCtx := locks.WithID(context.Background(), s.lockID)
+			result, ferr := s.opts.SieveEngine.Filter(sieveCtx, fopts)
 			if ferr != nil {
 				slog.Error("lmtp: sieve filter error, using implicit keep", "rcpt", rcpt, "err", ferr)
 			} else if result == nil {
-				if ierr := s.opts.SieveEngine.InitUser(context.Background(), username, userInfo.Home); ierr != nil {
+				if ierr := s.opts.SieveEngine.InitUser(sieveCtx, username, userInfo.Home); ierr != nil {
 					slog.Warn("lmtp: sieve init user", "user", username, "err", ierr)
 				}
 			} else if result.Reject != nil {
@@ -781,13 +759,27 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 			// Route each delivery through the recipient's namespaces so a
 			// namespace-prefixed target (e.g. Sieve fileinto "Public/News")
 			// lands in that namespace's storage, not the recipient's own store.
-			tBox, tIdx, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptIdx, d.Folder, true)
+			tBox, tMbox, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptMbox, d.Folder, true)
 			if d.Create {
 				if err := tBox.Create(rel); err != nil {
 					slog.Warn("lmtp: create folder", "folder", d.Folder, "err", err)
 				}
+			} else if rel != "INBOX" {
+				// The Box makes a configured mailbox here; any other missing
+				// folder is the two lda_mailbox knobs' to make, or INBOX's.
+				if exists, _ := tMbox.FolderExists(rel); !exists {
+					if s.opts.Config.LDAMailboxAutocreate {
+						s.ldaCreate(userInfo, tBox, tMbox, d.Folder, rel)
+					} else {
+						fallback := s.defaultMailbox(rcptMbox, folder, d.Folder)
+						slog.Info("lmtp: target folder does not exist, delivering to the default mailbox",
+							"rcpt", rcpt, "folder", d.Folder, "default", fallback)
+						closeTarget()
+						tMbox, rel, closeTarget = rcptMbox, fallback, func() {}
+					}
+				}
 			}
-			uid, folder, guid, err := deliverOne(tBox, tIdx, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), s.opts.Locker, username, s.from, d.Flags)
+			uid, folder, guid, err := deliverOne(tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), s.opts.Locker, username, s.from, d.Flags)
 			closeTarget()
 			if err != nil {
 				deliverErr = err
@@ -800,11 +792,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		rcptIdx.Close() //nolint:errcheck
 		if deliverErr != nil {
 			slog.Error("lmtp: delivery failed", "rcpt", rcpt, "err", deliverErr)
-			if s.opts.Config.VerboseReplies {
-				deliverErr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: deliverErr.Error()}
-			} else {
-				deliverErr = &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: "Local delivery failed"}
-			}
+			deliverErr = deliveryError(deliverErr, s.opts.Config.VerboseReplies)
 		}
 		setStatus(status, rcpt, deliveryStart, deliverErr)
 	}
@@ -842,12 +830,12 @@ func (s *session) recordThread(ui *mailbox.UserInfo, username string, guid [16]b
 		_, err := s.opts.Threads.Record(username, path, mailbox.FormatObjectID(guid), raw)
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), threadLockTimeout)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "lmtp-threads"), threadLockTimeout)
 	defer cancel()
 	var err error
 	if s.opts.Locker != nil {
 		err = locks.WithLock(ctx, s.opts.Locker, locks.ThreadsKey(username),
-			fmt.Sprintf("yarilo-lmtp/%d", os.Getpid()), threadLockTTL, threadLockRenew, rec)
+			locks.Owner(username, s.lockID), threadLockTTL, threadLockRenew, rec)
 	} else {
 		// No lock service wired (single-process dev runs), as the other stores
 		// do: the file is still consistent, only uncoordinated across pods.
@@ -909,11 +897,36 @@ func (s *session) Reset() {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "RSET")
 	s.from = ""
 	s.rcpts = nil
-	s.proxyRcpts = nil
 	s.rcptUserInfo = nil
 }
 
 func (s *session) Logout() error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "QUIT")
 	return nil
+}
+
+// fillSizes gives the records that carry no size the one their storage holds,
+// so a delivery judges the limit on the mail and not on a folder of zeros.
+func fillSizes(box mailbox.Box, folders []string) {
+	for _, name := range folders {
+		f, err := box.Folder(name, 0)
+		if err != nil {
+			continue
+		}
+		if _, ferr := box.FillSizeless(f); ferr != nil {
+			slog.Warn("lmtp: sizes not filled", "folder", name, "err", ferr)
+		}
+	}
+}
+
+// deliveryError answers a failed delivery. A full volume holds the message at
+// the sender rather than bouncing it: the class is temporary (#1831).
+func deliveryError(err error, verbose bool) error {
+	if errors.Is(err, mailbox.ErrNoSpace) {
+		return &goSmtp.SMTPError{Code: 452, EnhancedCode: goSmtp.EnhancedCode{4, 3, 1}, Message: "Mail system full"}
+	}
+	if verbose {
+		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: err.Error()}
+	}
+	return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 2, 0}, Message: "Local delivery failed"}
 }

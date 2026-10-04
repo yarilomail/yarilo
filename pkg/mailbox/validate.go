@@ -147,7 +147,7 @@ func ValidateName(name, nsSep, layoutSep string, rules NameRules) error {
 // use "/".
 func LayoutSeparator(driver string) string {
 	switch strings.ToLower(driver) {
-	case "mdbox", "sdbox", "dbox":
+	case "mdbox", "sdbox", "dbox", "virtual":
 		return "/"
 	default:
 		return "."

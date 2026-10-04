@@ -137,7 +137,11 @@ func NewWithOptions(opts Options) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/readyz", s.readyz)
-	mux.HandleFunc("/debug/loglevel", s.logLevel)
+	// Changing the whole process's log level is a diagnostic, behind the same
+	// switch as the profilers; off, the route does not exist.
+	if opts.Pprof.Enabled {
+		mux.HandleFunc("/debug/loglevel", s.logLevel)
+	}
 	if s.fault != nil {
 		mux.HandleFunc("/debug/fault/deadlock", s.faultHandler)
 	}

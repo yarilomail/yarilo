@@ -1,6 +1,7 @@
 package ftsproto
 
 import (
+	"crypto/tls"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 // wire this so yarilo-fts restarts (or starting order) never wedge them.
 type Lazy struct {
 	addr    string
+	tls     *tls.Config
 	timeout time.Duration
 
 	mu   sync.Mutex
@@ -19,11 +21,11 @@ type Lazy struct {
 }
 
 // NewLazy returns a client for addr; no connection is made until first use.
-func NewLazy(addr string, dialTimeout time.Duration) *Lazy {
+func NewLazy(addr string, tlsCfg *tls.Config, dialTimeout time.Duration) *Lazy {
 	if dialTimeout <= 0 {
 		dialTimeout = 10 * time.Second
 	}
-	return &Lazy{addr: addr, timeout: dialTimeout}
+	return &Lazy{addr: addr, tls: tlsCfg, timeout: dialTimeout}
 }
 
 func (l *Lazy) get() (*Remote, error) {
@@ -32,7 +34,7 @@ func (l *Lazy) get() (*Remote, error) {
 	if l.conn != nil {
 		return l.conn, nil
 	}
-	c, err := Dial(l.addr, l.timeout)
+	c, err := Dial(l.addr, l.tls, l.timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +92,8 @@ func (l *Lazy) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return l.do(func(c *Remote) error { return c.Prepend(user, m, maxUID) })
 }
 
-func (l *Lazy) Expunge(user string, m fts.MailboxRef, uid uint32) error {
-	return l.do(func(c *Remote) error { return c.Expunge(user, m, uid) })
+func (l *Lazy) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
+	return l.do(func(c *Remote) error { return c.Expunge(user, m, uid, guid) })
 }
 
 func (l *Lazy) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, error) {
@@ -114,8 +116,42 @@ func (l *Lazy) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	return last, sum, err
 }
 
+func (l *Lazy) Counts(user string) (uint64, uint64, uint64, uint64, error) {
+	var docs, copies, messages, unrecorded uint64
+	err := l.do(func(c *Remote) error {
+		var e error
+		docs, copies, messages, unrecorded, e = c.Counts(user)
+		return e
+	})
+	return docs, copies, messages, unrecorded, err
+}
+
+func (l *Lazy) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	var res fts.SetResult
+	err := l.do(func(c *Remote) error {
+		var e error
+		res, e = c.LookupIn(user, folders, q)
+		return e
+	})
+	return res, err
+}
+
+func (l *Lazy) DropFolder(user string, m fts.MailboxRef) error {
+	return l.do(func(c *Remote) error { return c.DropFolder(user, m) })
+}
+
 func (l *Lazy) Rescan(user string, m fts.MailboxRef) error {
 	return l.do(func(c *Remote) error { return c.Rescan(user, m) })
+}
+
+func (l *Lazy) RescanUser(user string) ([]string, error) {
+	var done []string
+	err := l.do(func(c *Remote) error {
+		var rerr error
+		done, rerr = c.RescanUser(user)
+		return rerr
+	})
+	return done, err
 }
 
 func (l *Lazy) Optimize(user string) error {

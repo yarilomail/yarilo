@@ -7,23 +7,29 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+
+	"github.com/yarilomail/yarilo/internal/loginproto"
 )
 
 // ---- mock auth ---------------------------------------------------------------
 
 type mockAuth struct {
 	users map[string]string // username → password
+	home  string            // userdb home; the session lock lives in it
 }
 
 func (m *mockAuth) Authenticate(user, pass, _, _ string) (*protocol.AuthResponse, error) {
 	if expected, ok := m.users[user]; ok && expected == pass {
-		return &protocol.AuthResponse{Result: protocol.AuthOK, Username: user}, nil
+		return &protocol.AuthResponse{Result: protocol.AuthOK, Username: user, Home: m.home}, nil
 	}
 	return &protocol.AuthResponse{Result: protocol.AuthFail}, nil
 }
@@ -46,12 +52,26 @@ func (m *mockMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 }
 func (m *mockMailbox) List(_ string) ([]*mailbox.MessageMeta, error) { return nil, nil }
 func (m *mockMailbox) Remove(_, _ string) error                      { return nil }
-func (m *mockMailbox) Save(_ string, _ io.Reader, _ uint32, _ int64, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
+func (m *mockMailbox) RemoveHeld(_, _ string) error                  { return nil }
+
+// HoldFolder: a double holds nothing, but it must answer, or the base reads it
+// as storage that cannot be held and refuses the write (#1794).
+func (m *mockMailbox) HoldFolder(_, _ string, fn func() error) error { return fn() }
+func (m *mockMailbox) Save(_ string, _ io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	return "", 0, guid, nil
 }
 func (m *mockMailbox) Move(_, _, filename string, guid [16]byte) (string, [16]byte, error) {
 	return filename, guid, nil
 }
+func (m *mockMailbox) RecordPath(_ string, meta *mailbox.MessageMeta) (string, error) {
+	return strconv.FormatUint(uint64(meta.UID), 10), nil
+}
+
+func (m *mockMailbox) OpenRecord(folder string, meta *mailbox.MessageMeta) (io.ReadCloser, error) {
+	name, _ := m.RecordPath(folder, meta)
+	return m.Fetch(folder, name, meta.AltTier)
+}
+
 func (m *mockMailbox) Fetch(_, filename string, _ bool) (io.ReadCloser, error) {
 	if m.bodies != nil {
 		if b, ok := m.bodies[filename]; ok {
@@ -77,6 +97,58 @@ type mockIndex struct {
 }
 
 func (m *mockIndex) OpenUser(_ *mailbox.UserInfo) mailbox.UserIndex { return m }
+
+// Begin queues against the same maps the per-message methods write, so the
+// double keeps one behaviour rather than two.
+func (m *mockIndex) Begin(folderID uint64) (mailbox.IndexTx, error) {
+	return &mockTx{idx: m, folderID: folderID}, nil
+}
+
+type mockTx struct {
+	idx      *mockIndex
+	folderID uint64
+	expunge  []uint32
+	appends  []*mailbox.MessageMeta
+	flags    []mockFlagOp
+	dirty    []uint32
+}
+
+type mockFlagOp struct {
+	uid uint32
+	upd mailbox.FlagsUpdate
+}
+
+func (t *mockTx) Expunge(uid uint32)            { t.expunge = append(t.expunge, uid) }
+func (t *mockTx) Append(m *mailbox.MessageMeta) { t.appends = append(t.appends, m) }
+func (t *mockTx) UpdateFlags(uid uint32, upd mailbox.FlagsUpdate) {
+	t.flags = append(t.flags, mockFlagOp{uid: uid, upd: upd})
+}
+func (t *mockTx) Expect(uint32, uint64) {}
+func (t *mockTx) MarkDirty(uid uint32, dirty bool) {
+	t.dirty = append(t.dirty, uid)
+}
+func (t *mockTx) Rollback() {}
+
+func (t *mockTx) Commit() (mailbox.TxResult, error) {
+	var out mailbox.TxResult
+	for _, uid := range t.expunge {
+		if err := t.idx.ExpungeMessage(t.folderID, uid); err != nil {
+			return out, err
+		}
+	}
+	for _, m := range t.appends {
+		if err := t.idx.AppendMessage(t.folderID, m); err != nil {
+			return out, err
+		}
+	}
+	for _, f := range t.flags {
+		if err := t.idx.UpdateFlags(t.folderID, f.uid, f.upd.Flags, f.upd.Keywords); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
 func (m *mockIndex) OpenFolder(folder string, uv uint32) (*mailbox.Folder, error) {
 	return &mailbox.Folder{ID: 1, Name: folder, UIDValidity: uv}, nil
 }
@@ -89,9 +161,6 @@ func (m *mockIndex) UpdateFlags(_ uint64, _ uint32, _, _ []string) error      { 
 func (m *mockIndex) AddFlags(_ uint64, _ uint32, _, _ []string) error         { return nil }
 func (m *mockIndex) RemoveFlags(_ uint64, _ uint32, _, _ []string) error      { return nil }
 func (m *mockIndex) UpdateFilename(_ uint64, _ uint32, _ string) error        { return nil }
-func (m *mockIndex) UpdateFlagsMulti(_ uint64, _ map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
-	return nil, nil
-}
 func (m *mockIndex) GetMessages(_ uint64, _ mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
 	return m.msgs, nil
 }
@@ -132,7 +201,7 @@ func (m *mockIndex) SavePOP3UIDLs(_ uint64, uidls map[uint32]string) error {
 	m.savedUIDLs = uidls
 	return nil
 }
-func (m *mockIndex) ResetFolder(_ uint64, _ []*mailbox.MessageMeta) ([]uint32, error) {
+func (m *mockIndex) ResetFolder(_ uint64, _ []*mailbox.MessageMeta) ([]mailbox.ExpungedCopy, error) {
 	return nil, nil
 }
 func (m *mockIndex) OptimizeIndex(_ uint64) error                  { return nil }
@@ -141,9 +210,9 @@ func (m *mockIndex) Close() error                                  { return nil 
 
 // ---- test helpers -----------------------------------------------------------
 
-func newTestOpts(auth *mockAuth, mbox mailbox.MailboxBackend, idx mailbox.IndexBackend) Options {
+func newTestOpts(t *testing.T, auth *mockAuth, mbox mailbox.MailboxBackend, idx mailbox.IndexBackend) Options {
 	return Options{
-		Auth:             auth,
+		AuthRelay:        authtest.RelayTo(t, auth),
 		Mailbox:          mbox,
 		Index:            idx,
 		Resolver:         &mailbox.Resolver{},
@@ -224,35 +293,48 @@ func login(t *testing.T, c net.Conn, r *bufio.Reader, user, pass string) {
 
 // ---- lock tests -------------------------------------------------------------
 
-func TestServer_TryLock(t *testing.T) {
-	srv := New(Options{})
-	if !srv.tryLock("alice") {
-		t.Fatal("first tryLock must succeed")
-	}
-	if srv.tryLock("alice") {
-		t.Fatal("second tryLock on same key must fail")
-	}
-	srv.unlock("alice")
-	if !srv.tryLock("alice") {
-		t.Fatal("tryLock after unlock must succeed")
-	}
-	srv.unlock("alice")
+// The session lock follows the key, and there is only one of it: with the key
+// off two sessions of one user coexist, as the reference leaves them (#1760).
+func TestTheSessionLockFollowsTheKey(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		lock    bool
+		wantErr bool
+	}{
+		{"key off", false, false},
+		{"key on", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			opts := newTestOpts(t, &mockAuth{users: map[string]string{"u@x": "p"}, home: home},
+				&mockMailbox{}, &mockIndex{})
+			opts.LockSession = tc.lock
 
-	// Different keys are independent.
-	if !srv.tryLock("alice") {
-		t.Fatal("alice lock")
+			// Two connections, two servers: the lock they share is the one in
+			// the user's home, which is what the key names.
+			first, fr := newPOP3Session(t, opts)
+			login(t, first, fr, "u@x", "p")
+			second, sr := newPOP3Session(t, opts)
+
+			send(t, second, "USER u@x")
+			readline(t, sr)
+			send(t, second, "PASS p")
+			got := readline(t, sr)
+
+			switch {
+			case tc.wantErr && !strings.HasPrefix(got, "-ERR [IN-USE]"):
+				t.Errorf("the second session got %q, want -ERR [IN-USE]", got)
+			case !tc.wantErr && !strings.HasPrefix(got, "+OK"):
+				t.Errorf("the second session got %q with the key off", got)
+			}
+		})
 	}
-	if !srv.tryLock("bob") {
-		t.Fatal("bob lock must be independent")
-	}
-	srv.unlock("alice")
-	srv.unlock("bob")
 }
 
 // ---- AUTH state tests -------------------------------------------------------
 
 func TestSession_CAPA_AuthState(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -277,7 +359,7 @@ func TestSession_CAPA_AuthState(t *testing.T) {
 }
 
 func TestSession_CAPA_NoSTLS_WithoutTLSConfig(t *testing.T) {
-	opts := newTestOpts(&mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
+	opts := newTestOpts(t, &mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
 	opts.TLSConfig = nil
 	c, r := newPOP3Session(t, opts)
 
@@ -292,7 +374,7 @@ func TestSession_CAPA_NoSTLS_WithoutTLSConfig(t *testing.T) {
 }
 
 func TestSession_UserPass_OK(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -309,7 +391,7 @@ func TestSession_UserPass_OK(t *testing.T) {
 }
 
 func TestSession_Pass_RequiresUser(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -324,7 +406,7 @@ func TestSession_Pass_RequiresUser(t *testing.T) {
 }
 
 func TestSession_Pass_WrongPassword(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "correct"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -343,7 +425,7 @@ func TestSession_Pass_WrongPassword(t *testing.T) {
 // TestSession_AuthPlain_InitialResponse verifies RFC 5034 SASL PLAIN via the
 // POP3 AUTH command with an initial response: AUTH PLAIN <base64(\0u\0p)>.
 func TestSession_AuthPlain_InitialResponse(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -367,7 +449,7 @@ func TestSession_AuthPlain_InitialResponse(t *testing.T) {
 // the client omits the initial response: server returns "+ ", then reads the
 // base64 payload from the next line.
 func TestSession_AuthPlain_Continuation(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -387,7 +469,7 @@ func TestSession_AuthPlain_Continuation(t *testing.T) {
 }
 
 func TestSession_AuthPlain_WrongPassword(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "correct"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -403,7 +485,7 @@ func TestSession_AuthPlain_WrongPassword(t *testing.T) {
 }
 
 func TestSession_AuthPlain_UnsupportedMechanism(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -418,7 +500,7 @@ func TestSession_AuthPlain_UnsupportedMechanism(t *testing.T) {
 }
 
 func TestSession_DisablePlainAuth(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -436,7 +518,7 @@ func TestSession_DisablePlainAuth(t *testing.T) {
 }
 
 func TestSession_Quit_AuthState(t *testing.T) {
-	opts := newTestOpts(&mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
+	opts := newTestOpts(t, &mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
 	c, r := newPOP3Session(t, opts)
 
 	send(t, c, "QUIT")
@@ -447,7 +529,7 @@ func TestSession_Quit_AuthState(t *testing.T) {
 }
 
 func TestSession_UnknownCommand_AuthState(t *testing.T) {
-	opts := newTestOpts(&mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
+	opts := newTestOpts(t, &mockAuth{users: map[string]string{}}, &mockMailbox{}, &mockIndex{})
 	c, r := newPOP3Session(t, opts)
 
 	send(t, c, "BOGUS")
@@ -460,7 +542,7 @@ func TestSession_UnknownCommand_AuthState(t *testing.T) {
 // ---- TRANSACTION state tests -----------------------------------------------
 
 func TestSession_STAT_Empty(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: nil},
@@ -476,12 +558,12 @@ func TestSession_STAT_Empty(t *testing.T) {
 }
 
 func TestSession_STAT_WithMessages(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
-			{UID: 2, Filename: "msg2", Size: 200},
+			{UID: 1, Size: 100},
+			{UID: 2, Size: 200},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -495,12 +577,12 @@ func TestSession_STAT_WithMessages(t *testing.T) {
 }
 
 func TestSession_LIST(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
-			{UID: 2, Filename: "msg2", Size: 200},
+			{UID: 1, Size: 100},
+			{UID: 2, Size: 200},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -519,11 +601,11 @@ func TestSession_LIST(t *testing.T) {
 
 func TestSession_RETR(t *testing.T) {
 	body := []byte("From: a@b.com\r\n\r\nHello\r\n")
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
-		&mockMailbox{bodies: map[string][]byte{"msg1": body}},
+		&mockMailbox{bodies: map[string][]byte{"1": body}},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: uint32(len(body))},
+			{UID: 1, Size: uint32(len(body))},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -547,12 +629,12 @@ func TestSession_RETR(t *testing.T) {
 }
 
 func TestSession_UIDL(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
-			{UID: 2, Filename: "msg2", Size: 200},
+			{UID: 1, Size: 100},
+			{UID: 2, Size: 200},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -570,11 +652,11 @@ func TestSession_UIDL(t *testing.T) {
 }
 
 func TestSession_DELE_QUIT(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
+			{UID: 1, Size: 100},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -594,7 +676,7 @@ func TestSession_DELE_QUIT(t *testing.T) {
 }
 
 func TestSession_NOOP(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -610,11 +692,11 @@ func TestSession_NOOP(t *testing.T) {
 }
 
 func TestSession_RSET(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		&mockIndex{msgs: []*mailbox.MessageMeta{
-			{UID: 1, Filename: "msg1", Size: 100},
+			{UID: 1, Size: 100},
 		}},
 	)
 	c, r := newPOP3Session(t, opts)
@@ -639,10 +721,10 @@ func TestSession_RSET(t *testing.T) {
 
 func TestSession_SaveUIDL_PersistsAcrossSessions(t *testing.T) {
 	idx := &mockIndex{msgs: []*mailbox.MessageMeta{
-		{UID: 1, Filename: "msg1", Size: 50},
-		{UID: 2, Filename: "msg2", Size: 60},
+		{UID: 1, Size: 50},
+		{UID: 2, Size: 60},
 	}}
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"u": "p"}},
 		&mockMailbox{},
 		idx,
@@ -700,7 +782,7 @@ func TestSession_SaveUIDL_PersistsAcrossSessions(t *testing.T) {
 func TestSession_LockSession_RejectsConcurrent(t *testing.T) {
 	home := t.TempDir()
 	opts := Options{
-		Auth:        &mockAuth{users: map[string]string{"u": "p"}},
+		AuthRelay:   authtest.RelayTo(t, &mockAuth{users: map[string]string{"u": "p"}}),
 		Mailbox:     &mockMailbox{},
 		Index:       &mockIndex{},
 		Resolver:    &mailbox.Resolver{Root: home},
@@ -730,4 +812,37 @@ func TestSession_LockSession_RejectsConcurrent(t *testing.T) {
 	login(t, c3, r3, "u", "p")
 	send(t, c3, "QUIT")
 	readline(t, r3)
+}
+
+func (m *mockMailbox) Username() string { return "mock@example.com" }
+
+// A proxied session that cannot take the lock says so in its first line, with no
+// greeting in front of it: the proxy answers the client with that line (#1776).
+func TestARefusedProxiedSessionSpeaksFirst(t *testing.T) {
+	home := t.TempDir()
+	opts := newTestOpts(t, &mockAuth{users: map[string]string{"u@x": "p"}, home: home},
+		&mockMailbox{}, &mockIndex{})
+	opts.LockSession = true
+
+	// The first session holds the lock.
+	first, fr := newPOP3Session(t, opts)
+	login(t, first, fr, "u@x", "p")
+
+	c, s := net.Pipe()
+	t.Cleanup(func() { c.Close() }) //nolint:errcheck
+	deadline := time.Now().Add(5 * time.Second)
+	c.SetDeadline(deadline) //nolint:errcheck
+	s.SetDeadline(deadline) //nolint:errcheck
+	pc := &loginproto.PreambleConn{Conn: s, Username: "u@x", Home: home, SessionID: "sid-2"}
+	srv := New(opts)
+	go srv.newSession(pc).serve()
+
+	line, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read the backend's first line: %v", err)
+	}
+	got := strings.TrimRight(line, "\r\n")
+	if got != "-ERR [IN-USE] mailbox already in use, try again later" {
+		t.Errorf("the backend's first line is %q; the proxy answers the client with it", got)
+	}
 }

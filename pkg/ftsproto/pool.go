@@ -1,6 +1,7 @@
 package ftsproto
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"time"
@@ -35,7 +36,7 @@ type Pool struct {
 
 // NewPool returns a Client holding size connections to addr. A size below one
 // is treated as one, which behaves exactly like a single connection.
-func NewPool(addr string, size int, dialTimeout time.Duration) *Pool {
+func NewPool(addr string, tlsCfg *tls.Config, size int, dialTimeout time.Duration) *Pool {
 	if size < 1 {
 		size = 1
 	}
@@ -44,7 +45,7 @@ func NewPool(addr string, size int, dialTimeout time.Duration) *Pool {
 	}
 	p := &Pool{free: make(chan *Lazy, size), wait: dialTimeout}
 	for i := 0; i < size; i++ {
-		c := NewLazy(addr, dialTimeout)
+		c := NewLazy(addr, tlsCfg, dialTimeout)
 		p.all = append(p.all, c)
 		p.free <- c
 	}
@@ -104,8 +105,8 @@ func (p *Pool) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return p.do(func(c *Lazy) error { return c.Prepend(user, m, maxUID) })
 }
 
-func (p *Pool) Expunge(user string, m fts.MailboxRef, uid uint32) error {
-	return p.do(func(c *Lazy) error { return c.Expunge(user, m, uid) })
+func (p *Pool) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
+	return p.do(func(c *Lazy) error { return c.Expunge(user, m, uid, guid) })
 }
 
 func (p *Pool) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, error) {
@@ -128,8 +129,42 @@ func (p *Pool) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	return last, sum, err
 }
 
+func (p *Pool) Counts(user string) (uint64, uint64, uint64, uint64, error) {
+	var docs, copies, messages, unrecorded uint64
+	err := p.do(func(c *Lazy) error {
+		var e error
+		docs, copies, messages, unrecorded, e = c.Counts(user)
+		return e
+	})
+	return docs, copies, messages, unrecorded, err
+}
+
+func (p *Pool) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	var res fts.SetResult
+	err := p.do(func(c *Lazy) error {
+		var e error
+		res, e = c.LookupIn(user, folders, q)
+		return e
+	})
+	return res, err
+}
+
+func (p *Pool) DropFolder(user string, m fts.MailboxRef) error {
+	return p.do(func(c *Lazy) error { return c.DropFolder(user, m) })
+}
+
 func (p *Pool) Rescan(user string, m fts.MailboxRef) error {
 	return p.do(func(c *Lazy) error { return c.Rescan(user, m) })
+}
+
+func (p *Pool) RescanUser(user string) ([]string, error) {
+	var done []string
+	err := p.do(func(c *Lazy) error {
+		var rerr error
+		done, rerr = c.RescanUser(user)
+		return rerr
+	})
+	return done, err
 }
 
 func (p *Pool) Optimize(user string) error {

@@ -25,6 +25,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/logging"
 	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/pkg/redisopt"
 	"github.com/yarilomail/yarilo/pkg/retry"
 )
 
@@ -71,17 +72,19 @@ func main() {
 		slog.Info("yarilo-auth oauth2 providers wired", "count", len(oauth2pdbs))
 	}
 
-	var tlsCfg *tls.Config
+	// The two ports accept different roles, so each has its own config.
+	var tlsCfg, masterTLSCfg *tls.Config
 	if cfg.InternalTLS.Enabled {
-		tlsCfg, err = mtls.ServerConfig(
-			cfg.InternalTLS.Cert,
-			cfg.InternalTLS.Key,
-			cfg.InternalTLS.CA,
-		)
+		tlsCfg, err = mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerAuthClient)
+		if err == nil {
+			masterTLSCfg, err = mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerAuthMaster)
+		}
 		if err != nil {
 			slog.Error("internal_tls config failed", "err", err)
 			os.Exit(1)
 		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerAuthClient, mtls.ListenerAuthMaster)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -248,7 +251,7 @@ func main() {
 		}
 		master := protocol.NewMasterServer(combinedUserdb, masterOpts...)
 		slog.Info("yarilo-auth master listener", "addr", cfg.AuthService.MasterListen)
-		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, tlsCfg)
+		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, masterTLSCfg)
 		if merr != nil {
 			slog.Error("auth/master: listen failed", "addr", cfg.AuthService.MasterListen, "err", merr)
 			os.Exit(1)
@@ -284,10 +287,8 @@ func main() {
 	slog.Info("yarilo-auth stopped")
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel,
-// returning the server so the caller can report readiness once its
-// listeners are bound. When enabled, the liveness watchdog probes the
-// auth cache.
+// startTelemetry serves /healthz, /readyz and /metrics; when enabled, the
+// liveness watchdog probes the auth cache.
 func startTelemetry(cfg config.TelemetryConfig, cache *protocol.Cache) *telemetry.Server {
 	opts := telemetry.Options{
 		Addr:      telemetry.Addr(cfg.Listen),
@@ -349,7 +350,7 @@ func buildTokenStore(cfg config.AuthTokenConfig, dialRetries int) (protocol.Toke
 			slog.Error("auth.token.backend=redis requires auth.token.redis_addr")
 			os.Exit(1)
 		}
-		opt, err := redis.ParseURL(cfg.RedisAddr)
+		opt, err := redisopt.Parse(cfg.RedisAddr, cfg.RedisPassword)
 		if err != nil {
 			slog.Error("auth.token.redis_addr invalid", "err", err)
 			os.Exit(1)

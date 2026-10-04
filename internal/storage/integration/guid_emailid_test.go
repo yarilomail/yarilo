@@ -10,6 +10,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -47,7 +48,7 @@ func TestGUIDIsRealAndStable(t *testing.T) {
 			}
 
 			body := "Subject: t\r\n\r\nbody\r\n"
-			name1, _, guid1, err := mb.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, zero)
+			name1, guid1, err := saveAndName(mb, "INBOX", body, 1, zero)
 			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
@@ -55,7 +56,7 @@ func TestGUIDIsRealAndStable(t *testing.T) {
 				t.Fatal("Save returned a zero GUID: EMAILID would be all-zero")
 			}
 
-			name2, _, guid2, err := mb.Save("INBOX", strings.NewReader(body), 2, int64(len(body)), nil, zero)
+			name2, guid2, err := saveAndName(mb, "INBOX", body, 2, zero)
 			if err != nil {
 				t.Fatalf("save 2: %v", err)
 			}
@@ -86,6 +87,13 @@ func TestGUIDIsRealAndStable(t *testing.T) {
 			}
 			if movedGUID != guid1 {
 				t.Errorf("MOVE changed EMAILID: %x -> %x", guid1, movedGUID)
+			}
+			// A move leaves the body in the destination's tmp/ since #1736; the
+			// naming step publishes it, as it does for a save.
+			if namer, ok := mailbox.Driver(mb).(mailbox.UIDNamer); ok {
+				if _, aerr := namer.AssignUID("Archive", moved, 1); aerr != nil {
+					t.Fatalf("publish the moved message: %v", aerr)
+				}
 			}
 			archived, err := mb.Scan("Archive")
 			if err != nil {
@@ -118,15 +126,17 @@ func TestGUIDSurvivesFlagChange(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 	body := "Subject: t\r\n\r\nbody\r\n"
-	name, _, guid, err := mb.Save("INBOX", strings.NewReader(body), 1, int64(len(body)), nil, [16]byte{})
+	name, guid, err := saveAndName(mb, "INBOX", body, 1, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	// A flag change renames only the trailer, which is what an IMAP STORE does.
+	// An IMAP STORE renames the trailer and moves the file out of new/, where
+	// a name with flags cannot live (#1959).
+	arrival := filepath.Join(home, "Maildir", "new")
 	cur := filepath.Join(home, "Maildir", "cur")
-	flagged := name + "S"
-	if err := os.Rename(filepath.Join(cur, name), filepath.Join(cur, flagged)); err != nil {
+	flagged := name + ":2,S"
+	if err := os.Rename(filepath.Join(arrival, name), filepath.Join(cur, flagged)); err != nil {
 		t.Fatalf("rename for flag change: %v", err)
 	}
 
@@ -135,7 +145,7 @@ func TestGUIDSurvivesFlagChange(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	for _, m := range msgs {
-		if m.Filename == flagged && m.GUID != guid {
+		if name, _ := mailboxbase.MessagePath(mb, "INBOX", m); name == flagged && m.GUID != guid {
 			t.Fatalf("flag change altered EMAILID: %x -> %x", guid, m.GUID)
 		}
 	}
@@ -161,13 +171,17 @@ func TestGUIDReachesIndex(t *testing.T) {
 		t.Fatalf("allocate: %v", err)
 	}
 	body := "Subject: t\r\n\r\nbody\r\n"
-	name, vsize, guid, err := mb.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	temp, vsize, guid, err := mb.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-		UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize, GUID: guid,
-	}); err != nil {
+	meta := &mailbox.MessageMeta{
+		UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid,
+	}
+	if err := mailboxbase.NameSaved(mb, "INBOX", temp, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := idx.AppendMessage(folder.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 
@@ -184,4 +198,19 @@ func TestGUIDReachesIndex(t *testing.T) {
 	if got[0].GUID == ([16]byte{}) {
 		t.Fatal("index returned a zero GUID: this is the shipped EMAILID bug")
 	}
+}
+
+// saveAndName performs the two steps a save takes: the body, then the name a
+// uid gives it for a driver named that way.
+func saveAndName(mb mailbox.UserMailbox, folder, body string, uid uint32, guid [16]byte) (string, [16]byte, error) {
+	temp, _, g, err := mb.Save(folder, strings.NewReader(body), 0, int64(len(body)), nil, nil, guid)
+	if err != nil {
+		return "", g, err
+	}
+	namer, ok := mailbox.Driver(mb).(mailbox.UIDNamer)
+	if !ok {
+		return temp, g, nil
+	}
+	name, err := namer.AssignUID(folder, temp, uid)
+	return name, g, err
 }

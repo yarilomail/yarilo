@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -17,7 +18,11 @@ type fakeCorruptBox struct{ mailbox.UserMailbox }
 func (fakeCorruptBox) Fetch(string, string, bool) (io.ReadCloser, error) {
 	return nil, fmt.Errorf("file gone: %w", mailbox.ErrCorruptStorage)
 }
-func (fakeCorruptBox) HealCorruptFolder(mailbox.UserIndex, *mailbox.Folder) ([]uint32, error) {
+func (b fakeCorruptBox) RecordPath(string, *mailbox.MessageMeta) (string, error) { return "gone", nil }
+func (b fakeCorruptBox) OpenRecord(f string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
+	return b.Fetch(f, "gone", false)
+}
+func (fakeCorruptBox) HealCorruptFolder(mailbox.Box, mailbox.UserIndex, *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
 	return nil, nil
 }
 
@@ -37,10 +42,10 @@ func (f *fakeMarkIdx) ClearFolderCorrupt(uint64) error { return nil }
 // the folder FSCKD at most once per session, not once per message.
 func TestFetchINBOXGatesMarking(t *testing.T) {
 	idx := &fakeMarkIdx{}
-	s := &session{box: fakeCorruptBox{}, idx: idx}
+	s := &session{box: mailboxbase.Open(fakeCorruptBox{}, idx)}
 
 	for i := 0; i < 5; i++ {
-		_, err := s.fetchINBOX(&mailbox.MessageMeta{Filename: "1"})
+		_, err := s.fetchINBOX(&mailbox.MessageMeta{})
 		if !errors.Is(err, mailbox.ErrCorruptStorage) {
 			t.Fatalf("fetch %d: got %v, want ErrCorruptStorage", i, err)
 		}

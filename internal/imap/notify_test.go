@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -19,10 +21,10 @@ import (
 func startNotifyServer(t *testing.T) string {
 	t.Helper()
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

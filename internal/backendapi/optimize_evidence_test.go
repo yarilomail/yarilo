@@ -10,6 +10,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -171,11 +172,15 @@ func seedMdbox(t *testing.T, root, user string, n int) {
 		if uerr != nil {
 			t.Fatalf("allocate uid: %v", uerr)
 		}
-		filename, _, _, serr := box.Save("INBOX", io.NopCloser(bytes.NewBufferString(body)), uid, int64(len(body)), nil, [16]byte{})
+		filename, _, _, serr := box.Save("INBOX", io.NopCloser(bytes.NewBufferString(body)), uid, int64(len(body)), nil, nil, [16]byte{})
 		if serr != nil {
 			t.Fatalf("save: %v", serr)
 		}
-		if aerr := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid, Filename: filename, Size: uint32(len(body))}); aerr != nil {
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body))}
+		if nerr := mailboxbase.NameSaved(box, "INBOX", filename, meta); nerr != nil {
+			t.Fatalf("name: %v", nerr)
+		}
+		if aerr := idx.AppendMessage(folder.ID, meta); aerr != nil {
 			t.Fatalf("append: %v", aerr)
 		}
 	}

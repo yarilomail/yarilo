@@ -10,6 +10,9 @@
 //	> LOOKUP\t<user>\t<folder>\t<guid>\t<uidvalidity>\t<query-b64json>\n
 //	> STATUS\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
 //	> RESCAN\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
+//	> DROPFOLDER\t<user>\t<folder>\t<guid>\t<uidvalidity>\n
+//	> LOOKUPIN\t<user>\t<request-b64json>\n
+//	> COUNTS\t<user>\n
 //	> OPTIMIZE\t<user>\n
 //	< OK[\t<payload>]\n | NO\t<message>\n | NO\t<code>\t<message>\n
 //
@@ -20,7 +23,9 @@ package ftsproto
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,10 +36,13 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 const (
-	ProtocolVersion = "1"
+	// 2: EXPUNGE carries the message GUID. The index names messages, so a
+	// copy cannot be found from (folder, uid) alone any more (#1986).
+	ProtocolVersion = "2"
 
 	CmdVersion  = "VERSION"
 	CmdIndex    = "INDEX"
@@ -44,6 +52,18 @@ const (
 	CmdStatus   = "STATUS"
 	CmdRescan   = "RESCAN"
 	CmdOptimize = "OPTIMIZE"
+	// Whole-user rescan: one hold for every folder, rather than one call and
+	// one hold per folder (#1986).
+	CmdRescanUser = "RESCANUSER"
+	// Operator counts for one user. A command of its own, so an old server
+	// answers NO rather than a field an old client would misread (#2021).
+	CmdCounts = "COUNTS"
+	// A deleted mailbox: its documents keep no terms of a folder that is gone,
+	// and one index per user means they outlive it otherwise (#2022).
+	CmdDropFolder = "DROPFOLDER"
+	// One search over a set of folders, answered with every copy inside the
+	// set. A command of its own, so the protocol version stays (#1986).
+	CmdLookupIn = "LOOKUPIN"
 
 	replyOK = "OK"
 	replyNO = "NO"
@@ -64,10 +84,14 @@ const (
 type Service interface {
 	Index(user string, mbox fts.MailboxRef, maxUID uint32, maxRecent int) error
 	Prepend(user string, mbox fts.MailboxRef, maxUID uint32) error
-	Expunge(user string, mbox fts.MailboxRef, uid uint32) error
+	Expunge(user string, mbox fts.MailboxRef, uid uint32, guid [16]byte) error
 	Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Result, error)
 	Status(user string, mbox fts.MailboxRef) (lastUID, checksum uint32, err error)
 	Rescan(user string, mbox fts.MailboxRef) error
+	RescanUser(user string) ([]string, error)
+	Counts(user string) (docs, copies, messages, unrecorded uint64, err error)
+	DropFolder(user string, mbox fts.MailboxRef) error
+	LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error)
 	Optimize(user string) error
 }
 
@@ -125,6 +149,45 @@ func DecodeResult(s string) (fts.Result, error) {
 	return r, nil
 }
 
+// lookupInRequest is LOOKUPIN's one field: the folders and the query travel
+// together, base64-encoded, so no folder name or term can break the line.
+type lookupInRequest struct {
+	Folders []fts.MailboxRef `json:"folders"`
+	Query   fts.Query        `json:"query"`
+}
+
+func encodeB64JSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("ftsproto: encode: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(b), nil
+}
+
+func decodeB64JSON(s string, v any) error {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err == nil {
+		err = json.Unmarshal(b, v)
+	}
+	if err != nil {
+		return fmt.Errorf("ftsproto: decode: %w", err)
+	}
+	return nil
+}
+
+func (r *Remote) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
+	req, err := encodeB64JSON(lookupInRequest{Folders: folders, Query: q})
+	if err != nil {
+		return fts.SetResult{}, err
+	}
+	payload, err := r.call(CmdLookupIn, user, req)
+	if err != nil {
+		return fts.SetResult{}, err
+	}
+	var out fts.SetResult
+	return out, decodeB64JSON(payload, &out)
+}
+
 // MboxFields flattens a MailboxRef into its wire fields.
 func MboxFields(m fts.MailboxRef) []string {
 	return []string{m.Name, m.GUID, strconv.FormatUint(uint64(m.UIDValidity), 10)}
@@ -147,9 +210,15 @@ type Remote struct {
 	br   *bufio.Reader
 }
 
-// Dial connects and performs the VERSION handshake.
-func Dial(addr string, timeout time.Duration) (*Remote, error) {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+// Dial connects and performs the VERSION handshake; tlsCfg non-nil is internal mTLS.
+func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Remote, error) {
+	var conn net.Conn
+	var err error
+	if tlsCfg != nil {
+		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, tlsCfg)
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, timeout)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ftsproto: dial: %w", err)
 	}
@@ -174,7 +243,7 @@ func (r *Remote) roundTrip(req string) (string, error) {
 	if _, err := r.conn.Write([]byte(req + "\n")); err != nil {
 		return "", fmt.Errorf("ftsproto: write: %w", err)
 	}
-	line, err := r.br.ReadString('\n')
+	line, err := lineio.ReadLine(r.br, lineio.MaxInternal)
 	if err != nil {
 		return "", fmt.Errorf("ftsproto: read: %w", err)
 	}
@@ -233,9 +302,9 @@ func (r *Remote) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return err
 }
 
-func (r *Remote) Expunge(user string, m fts.MailboxRef, uid uint32) error {
+func (r *Remote) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
 	f := append([]string{CmdExpunge, user}, MboxFields(m)...)
-	f = append(f, strconv.FormatUint(uint64(uid), 10))
+	f = append(f, strconv.FormatUint(uint64(uid), 10), hex.EncodeToString(guid[:]))
 	_, err := r.call(f...)
 	return err
 }
@@ -276,7 +345,56 @@ func (r *Remote) Rescan(user string, m fts.MailboxRef) error {
 	return err
 }
 
+func (r *Remote) RescanUser(user string) ([]string, error) {
+	payload, err := r.call(CmdRescanUser, user)
+	if err != nil {
+		return nil, err
+	}
+	if payload == "" {
+		return nil, nil
+	}
+	return strings.Split(payload, "\t"), nil
+}
+
+func (r *Remote) Counts(user string) (uint64, uint64, uint64, uint64, error) {
+	payload, err := r.call(CmdCounts, user)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	// Three fields is a server from before the store gap had a number; the
+	// fourth is read when it is there (#2031).
+	f := strings.Split(payload, "\t")
+	if len(f) != 3 && len(f) != 4 {
+		return 0, 0, 0, 0, fmt.Errorf("ftsproto: bad COUNTS payload %q", payload)
+	}
+	var out [4]uint64
+	for i, v := range f {
+		n, perr := strconv.ParseUint(v, 10, 64)
+		if perr != nil {
+			return 0, 0, 0, 0, fmt.Errorf("ftsproto: bad COUNTS payload %q", payload)
+		}
+		out[i] = n
+	}
+	return out[0], out[1], out[2], out[3], nil
+}
+
+func (r *Remote) DropFolder(user string, m fts.MailboxRef) error {
+	_, err := r.call(append([]string{CmdDropFolder, user}, MboxFields(m)...)...)
+	return err
+}
+
 func (r *Remote) Optimize(user string) error {
 	_, err := r.call(CmdOptimize, user)
 	return err
+}
+
+// ParseGUID reads a message GUID as the wire spells it: 32 hex characters.
+func ParseGUID(s string) ([16]byte, error) {
+	var out [16]byte
+	raw, err := hex.DecodeString(s)
+	if err != nil || len(raw) != len(out) {
+		return out, fmt.Errorf("ftsproto: bad guid %q", s)
+	}
+	copy(out[:], raw)
+	return out, nil
 }

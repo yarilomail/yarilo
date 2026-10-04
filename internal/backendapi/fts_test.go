@@ -16,34 +16,50 @@ import (
 
 // fakeFTS records calls and scripts Status for the backend-api tests.
 type fakeFTS struct {
-	mu       sync.Mutex
-	status   uint32
-	rescans  []string
-	optimize int
-	expunges []ftsExpungeCall
+	mu        sync.Mutex
+	status    uint32
+	rescans   []string
+	wholeUser int
+	optimize  int
+	expunges  []ftsExpungeCall
+	lookups   []fts.Query
+	result    fts.Result
 }
 
 type ftsExpungeCall struct {
 	Folder string
 	UID    uint32
+	// GUID is what the retraction named: the index retracts by the message,
+	// so an empty one is a caller that lost it (#1986).
+	GUID [16]byte
 }
 
 func (f *fakeFTS) Index(string, fts.MailboxRef, uint32, int) error { return nil }
 func (f *fakeFTS) Prepend(string, fts.MailboxRef, uint32) error    { return nil }
-func (f *fakeFTS) Expunge(_ string, m fts.MailboxRef, uid uint32) error {
+func (f *fakeFTS) Expunge(_ string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.expunges = append(f.expunges, ftsExpungeCall{Folder: m.Name, UID: uid})
+	f.expunges = append(f.expunges, ftsExpungeCall{Folder: m.Name, UID: uid, GUID: guid})
 	return nil
 }
-func (f *fakeFTS) Lookup(string, fts.MailboxRef, fts.Query) (fts.Result, error) {
-	return fts.Result{}, nil
+func (f *fakeFTS) Lookup(_ string, _ fts.MailboxRef, q fts.Query) (fts.Result, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookups = append(f.lookups, q)
+	return f.result, nil
 }
 func (f *fakeFTS) Status(_ string, _ fts.MailboxRef) (uint32, uint32, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.status, 7, nil
 }
+func (f *fakeFTS) RescanUser(_ string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.wholeUser++
+	return []string{"INBOX", "Archive"}, nil
+}
+
 func (f *fakeFTS) Rescan(_ string, m fts.MailboxRef) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -88,7 +104,9 @@ func TestFtsExpungeInvalidatesDroppedUIDs(t *testing.T) {
 	}
 	defer uc.Close()
 
-	s.ftsExpunge(uc, "INBOX", []uint32{5, 9})
+	s.ftsExpunge(uc, "INBOX", []mailbox.ExpungedCopy{
+		{UID: 5, GUID: [16]byte{5}}, {UID: 9, GUID: [16]byte{9}},
+	})
 
 	if len(fake.expunges) != 2 {
 		t.Fatalf("expunge calls = %d, want 2", len(fake.expunges))
@@ -97,6 +115,11 @@ func TestFtsExpungeInvalidatesDroppedUIDs(t *testing.T) {
 		if c.Folder != "INBOX" {
 			t.Errorf("expunge folder = %q, want INBOX", c.Folder)
 		}
+		// The rebuild's retraction names the message, not just the uid: the
+		// index retracts by identity (#1986).
+		if c.GUID == ([16]byte{}) {
+			t.Errorf("uid %d was retracted without naming the message", c.UID)
+		}
 	}
 	if fake.expunges[0].UID != 5 || fake.expunges[1].UID != 9 {
 		t.Errorf("expunged UIDs = %v, want [5 9]", fake.expunges)
@@ -104,10 +127,17 @@ func TestFtsExpungeInvalidatesDroppedUIDs(t *testing.T) {
 
 	// No FTS client → no-op, no panic.
 	s.opts.FTSClient = nil
-	s.ftsExpunge(uc, "INBOX", []uint32{1})
+	s.ftsExpunge(uc, "INBOX", []mailbox.ExpungedCopy{{UID: 1, GUID: [16]byte{1}}})
 }
 
 func ftsTestServer(t *testing.T) (*httptest.Server, *fakeFTS, string) {
+	t.Helper()
+	ts, fake, root, _ := ftsTestServerOf(t)
+	return ts, fake, root
+}
+
+// ftsTestServerOf also hands back the Server, for rows that set its options.
+func ftsTestServerOf(t *testing.T) (*httptest.Server, *fakeFTS, string, *Server) {
 	t.Helper()
 	root := t.TempDir()
 	d, err := dict.Open(dict.Config{Driver: "memory"})
@@ -129,7 +159,7 @@ func ftsTestServer(t *testing.T) (*httptest.Server, *fakeFTS, string) {
 	})
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	return ts, fake, root
+	return ts, fake, root, s
 }
 
 func TestFTSStatusEndpoint(t *testing.T) {
@@ -175,13 +205,18 @@ func TestFTSRescanAllFolders(t *testing.T) {
 		Folders []string `json:"folders"`
 	}
 	decodeJSONBody(t, body, &r)
-	if len(r.Folders) < 2 {
-		t.Fatalf("rescanned folders = %v, want INBOX + Archive", r.Folders)
-	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if len(fake.rescans) != len(r.Folders) {
-		t.Fatalf("service rescans = %v, response = %v", fake.rescans, r.Folders)
+	// One call for the user, and the folders are the service's answer: the
+	// walk lives where the index is held, not here (#1986).
+	if fake.wholeUser != 1 {
+		t.Errorf("whole-user rescans = %d, want 1", fake.wholeUser)
+	}
+	if len(fake.rescans) != 0 {
+		t.Errorf("the handler still rescanned folder by folder: %v", fake.rescans)
+	}
+	if len(r.Folders) != 2 {
+		t.Errorf("rescanned folders = %v, want what the service reported", r.Folders)
 	}
 }
 
@@ -238,4 +273,12 @@ func TestFTSDisabledReturns501(t *testing.T) {
 	if status != http.StatusNotImplemented {
 		t.Fatalf("status=%d, want 501", status)
 	}
+}
+
+func (f *fakeFTS) Counts(string) (uint64, uint64, uint64, uint64, error) { return 0, 0, 0, 0, nil }
+
+func (f *fakeFTS) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (f *fakeFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
 }

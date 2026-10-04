@@ -1,51 +1,80 @@
 package mdbox
 
 import (
+	"errors"
+	"fmt"
+	"sync"
+
 	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// HealCorruptFolder is the reactive self-heal for mdbox (implements
-// mailbox.ReactiveHealer): a folder flagged FSCKD is repaired on the
-// next open. Under the folder's cross-process mailbox lock it expunges
-// only the index records whose message is gone from storage (targeted
-// ExpungeMissing: QRESYNC tombstone, no ResetFolder, no UID reassign,
-// so it cannot race a concurrent delivery), then clears the marker in
-// the SAME lock scope. Returns the expunged records.
-//
-// Per-folder and targeted, NOT the storage-wide rebuild: no refcount
-// recompute, no other folders touched, so the rebuild's quiescence
-// requirement does not apply.
-//
-// Structural mirror of sdbox HealCorruptFolder (same lock +
-// ExpungeMissing + ClearFolderCorrupt order). If a third dbox driver
-// appears, extract a shared helper instead of a third copy.
-//
-// Concurrency vs purge/altmove: both write the new m.<N> before
-// unlinking the old one. If the scan snapshot (os.ReadDir) lists the
-// old file but opens it after the unlink, the scan returns
-// mailbox.ErrScanIncomplete and ExpungeMissing ABORTS, so a message
-// compacted to a new m.<N> is never mistaken for vanished. The heal
-// retries on the next open. (Corollary: a near-continuous purge can
-// keep the heal in the race window; if a folder stays FSCKD, check
-// whether a purge is running.)
-//
-// Caveats shared with the rebuild: a structurally corrupt m.<N>
-// record also makes the scan incomplete, so the heal aborts until the
-// bad file is moved aside; and the vanished message's map refcount is
-// not decremented here (a leak the next rebuild + purge reclaims).
-func (u *userMailbox) HealCorruptFolder(idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
-	var expunged []uint32
+// ErrHealDeferred says the heal was not attempted: it already failed at this
+// storage generation, and nothing has rebuilt since.
+var ErrHealDeferred = errors.New("mdbox/heal: already failed at this rebuild count")
+
+// healBarrier holds, per process and per folder, the generation at which a heal
+// failed on unreadable bytes. Ours, not the reference's (#1682).
+var healBarrier sync.Map // string -> uint32
+
+func healBarrierKey(user string, folderID uint64) string {
+	return fmt.Sprintf("%s\x00%d", user, folderID)
+}
+
+// beforeHealScan runs inside both locks, before the scan. Test seam: what the
+// serialisation row counts.
+var beforeHealScan func()
+
+// HealCorruptFolder expunges the records whose message is gone and clears the
+// FSCKD marker in the same locked scope. An incomplete scan ABORTS it, or a
+// message purge just compacted would read as vanished. The vanished message's
+// map refcount is not decremented here; the leak is reclaimed by the next
+// rebuild and purge. Lock order is folder then map, the one order the tree
+// takes (#1884); delivery nests neither, writing the body outside the hold.
+func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
+	var expunged []mailbox.ExpungedCopy
+	// Folder then map, as every other path takes them: the other order meets
+	// the expunge path head on, and both locks wait 30s (#1884).
 	err := u.withMailboxLock(folder.Name, func() error {
-		var e error
-		expunged, e = idxrebuild.ExpungeMissing(u, idx, folder)
-		if e != nil {
-			return e
-		}
-		if cm, ok := idx.(mailbox.CorruptionMarker); ok {
-			return cm.ClearFolderCorrupt(folder.ID)
-		}
-		return nil
+		return u.withMapLock(func() error {
+			gen, gerr := u.storageGeneration()
+			if gerr != nil {
+				return gerr
+			}
+			key := healBarrierKey(u.username, folder.ID)
+			if v, ok := healBarrier.Load(key); ok {
+				if last, ok := v.(uint32); ok && last == gen {
+					return ErrHealDeferred
+				}
+			}
+			if beforeHealScan != nil {
+				beforeHealScan()
+			}
+			var e error
+			expunged, e = idxrebuild.ExpungeMissing(box, idx, folder)
+			if e != nil {
+				// Only unreadable bytes bar a retry: a scan a purge kept from
+				// finishing says nothing about the folder.
+				if errors.Is(e, errScanCorrupt) {
+					healBarrier.Store(key, gen)
+				}
+				return e
+			}
+			if cm, ok := idx.(mailbox.CorruptionMarker); ok {
+				return cm.ClearFolderCorrupt(folder.ID)
+			}
+			return nil
+		})
 	})
 	return expunged, err
+}
+
+// storageGeneration is the map's rebuild counter, re-read under the map lock
+// this call already holds.
+func (u *userMailbox) storageGeneration() (uint32, error) {
+	m, err := u.openMap()
+	if err != nil {
+		return 0, fmt.Errorf("mdbox/heal: open map: %w", err)
+	}
+	return m.RebuildCountUnderCallersLock()
 }

@@ -74,7 +74,7 @@ func (s *Server) emailQuery(ctx context.Context, h *userHandle, accountID string
 
 	matched := make([]queryHit, 0, 64)
 	for _, f := range scope.folders {
-		metas, err := mailbox.ReadMessages(h.idx, f.id, mailbox.SeqSet{{From: 1, To: 0}})
+		metas, err := h.mbox.Messages(f.id, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
 			return nil, storeFailure("Email/query read of "+f.name, accountID, err)
 		}
@@ -87,8 +87,15 @@ func (s *Server) emailQuery(ctx context.Context, h *userHandle, accountID string
 	}
 	sortEmailHits(matched, req.Sort)
 
+	// One Email per message, whatever number of mailboxes hold a copy: the
+	// mailboxes are a property of it, not separate Emails (RFC 8621 §4).
 	ids := make([]string, 0, len(matched))
+	seen := make(map[string]struct{}, len(matched))
 	for _, hit := range matched {
+		if _, dup := seen[hit.id]; dup {
+			continue
+		}
+		seen[hit.id] = struct{}{}
 		ids = append(ids, hit.id)
 	}
 	total := uint(len(ids))
@@ -178,10 +185,13 @@ func (s *Server) queryScope(h *userHandle, f *jmapcore.EmailFilter) (*queryScope
 	sort.Strings(names)
 
 	for _, name := range names {
-		folder, err := h.idx.OpenFolder(name, 0)
+		folder, err := h.mbox.Folder(name, 0)
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", name, err)
 		}
+		// A query opens every folder in scope: the identity it reads is the
+		// one an id lookup would otherwise open folders to find (#1711).
+		h.folders.remember(folder.GUID, name)
 		sf := scopeFolder{
 			name:        name,
 			id:          folder.ID,

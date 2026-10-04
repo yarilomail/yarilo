@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // Conn is a single TCP connection to yarilo-warden for one login session.
@@ -21,30 +23,44 @@ type Conn struct {
 // Dial connects to the warden server, reads the version handshake, and returns
 // a ready Conn. tlsCfg may be nil for plain TCP.
 func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Conn, error) {
+	return DialContext(context.Background(), addr, tlsCfg, timeout)
+}
+
+// DialContext is Dial that ctx can abandon, the greeting read included.
+func DialContext(ctx context.Context, addr string, tlsCfg *tls.Config, timeout time.Duration) (*Conn, error) {
 	if timeout == 0 {
 		timeout = 5 * time.Second
 	}
+	d := &net.Dialer{Timeout: timeout}
 	var raw net.Conn
 	var err error
 	if tlsCfg != nil {
-		raw, err = tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, tlsCfg)
+		raw, err = (&tls.Dialer{NetDialer: d, Config: tlsCfg}).DialContext(ctx, "tcp", addr)
 	} else {
-		raw, err = net.DialTimeout("tcp", addr, timeout)
+		raw, err = d.DialContext(ctx, "tcp", addr)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("warden/client: dial %s: %w", addr, err)
 	}
 	c := &Conn{conn: raw, rd: bufio.NewReaderSize(raw, 512)}
-	if err := c.readHandshake(); err != nil {
+	// The dial timeout covers the connect; the greeting is a read of its own.
+	_ = raw.SetDeadline(time.Now().Add(timeout))
+	stop := context.AfterFunc(ctx, func() { _ = raw.SetDeadline(time.Now()) })
+	err = c.readHandshake()
+	if !stop() {
+		err = fmt.Errorf("warden/client: dial %s: %w", addr, ctx.Err())
+	}
+	if err != nil {
 		raw.Close()
 		return nil, err
 	}
+	_ = raw.SetDeadline(time.Time{})
 	return c, nil
 }
 
 func (c *Conn) readHandshake() error {
 	// VERSION\tyarilo-warden\t1\t0\n
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read version: %w", err)
 	}
@@ -54,7 +70,7 @@ func (c *Conn) readHandshake() error {
 		return fmt.Errorf("warden/client: unexpected handshake: %q", line)
 	}
 	// DONE\n
-	done, err := c.rd.ReadString('\n')
+	done, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read done: %w", err)
 	}
@@ -70,7 +86,7 @@ func (c *Conn) Connect(id, user, ip, service string) error {
 	if _, err := fmt.Fprintf(c.conn, "CONNECT\t%s\t%s\t%s\t%s\n", id, user, ip, service); err != nil {
 		return fmt.Errorf("warden/client: write CONNECT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read CONNECT response: %w", err)
 	}
@@ -91,7 +107,7 @@ func (c *Conn) Disconnect(id, user, ip, service string) error {
 	if _, err := fmt.Fprintf(c.conn, "DISCONNECT\t%s\t%s\t%s\t%s\n", id, user, ip, service); err != nil {
 		return fmt.Errorf("warden/client: write DISCONNECT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read DISCONNECT response: %w", err)
 	}
@@ -126,7 +142,7 @@ func (c *Conn) Who(f WhoFilter) ([]SessionInfo, error) {
 	}
 	out := make([]SessionInfo, 0, 8)
 	for {
-		line, err := c.rd.ReadString('\n')
+		line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 		if err != nil {
 			return nil, fmt.Errorf("warden/client: read WHO response: %w", err)
 		}
@@ -177,7 +193,7 @@ func (c *Conn) Dump() (*StateDump, error) {
 	}
 	d := &StateDump{}
 	for {
-		line, err := c.rd.ReadString('\n')
+		line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 		if err != nil {
 			return nil, fmt.Errorf("warden/client: read DUMP response: %w", err)
 		}
@@ -214,7 +230,7 @@ func (c *Conn) Heartbeat(id string) (bool, error) {
 	if _, err := fmt.Fprintf(c.conn, "HEARTBEAT\t%s\n", id); err != nil {
 		return false, fmt.Errorf("warden/client: write HEARTBEAT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return false, fmt.Errorf("warden/client: read HEARTBEAT response: %w", err)
 	}
@@ -242,7 +258,7 @@ func (c *Conn) Select(id, folder string) error {
 	if _, err := fmt.Fprintf(c.conn, "SELECT\t%s\t%s\n", id, folder); err != nil {
 		return fmt.Errorf("warden/client: write SELECT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read SELECT response: %w", err)
 	}
@@ -254,6 +270,14 @@ func (c *Conn) Select(id, folder string) error {
 	return nil
 }
 
+// SetDeadline bounds one exchange; without it a silent server holds its caller.
+func (c *Conn) SetDeadline(t time.Time) error {
+	if c == nil || c.conn == nil {
+		return nil
+	}
+	return c.conn.SetDeadline(t)
+}
+
 // Backend records the backend pod IP a session was routed to (#814). The login
 // pod pushes this once, after the director LOOKUP resolves the backend, so
 // `who` can show only the sessions on the backend it runs against. Mirrors
@@ -263,7 +287,7 @@ func (c *Conn) Backend(id, backendIP string) error {
 	if _, err := fmt.Fprintf(c.conn, "BACKEND\t%s\t%s\n", id, backendIP); err != nil {
 		return fmt.Errorf("warden/client: write BACKEND: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read BACKEND response: %w", err)
 	}
@@ -283,7 +307,7 @@ func (c *Conn) Lookup(user, service string) (int, error) {
 	if _, err := fmt.Fprintf(c.conn, "LOOKUP\t%s\t%s\n", user, service); err != nil {
 		return 0, fmt.Errorf("warden/client: write LOOKUP: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return 0, fmt.Errorf("warden/client: read LOOKUP response: %w", err)
 	}
@@ -311,7 +335,7 @@ func (c *Conn) PenaltyLookup(ip string) (int, error) {
 	if _, err := fmt.Fprintf(c.conn, "PENALTY-LOOKUP\t%s\n", ip); err != nil {
 		return 0, fmt.Errorf("warden/client: write PENALTY-LOOKUP: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return 0, fmt.Errorf("warden/client: read PENALTY-LOOKUP response: %w", err)
 	}
@@ -335,7 +359,7 @@ func (c *Conn) PenaltyUpdate(ip string, count int) error {
 	if _, err := fmt.Fprintf(c.conn, "PENALTY-UPDATE\t%s\t%d\n", ip, count); err != nil {
 		return fmt.Errorf("warden/client: write PENALTY-UPDATE: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read PENALTY-UPDATE response: %w", err)
 	}
@@ -359,7 +383,7 @@ func (c *Conn) Emit(channel, payload string) error {
 	if _, err := fmt.Fprintf(c.conn, "EMIT\t%s\t%s\n", channel, payload); err != nil {
 		return fmt.Errorf("warden/client: write EMIT: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return fmt.Errorf("warden/client: read EMIT response: %w", err)
 	}
@@ -382,7 +406,7 @@ func (c *Conn) Subscribe(ctx context.Context, channel string) (<-chan string, er
 	if _, err := fmt.Fprintf(c.conn, "SUBSCRIBE\t%s\n", channel); err != nil {
 		return nil, fmt.Errorf("warden/client: write SUBSCRIBE: %w", err)
 	}
-	line, err := c.rd.ReadString('\n')
+	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return nil, fmt.Errorf("warden/client: read SUBSCRIBE ack: %w", err)
 	}
@@ -400,7 +424,7 @@ func (c *Conn) Subscribe(ctx context.Context, channel string) (<-chan string, er
 	go func() {
 		defer close(out)
 		for {
-			line, err := c.rd.ReadString('\n')
+			line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 			if err != nil {
 				return
 			}

@@ -25,7 +25,7 @@ func TestApplyLogTruncatesGenuineTornTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AllocateUID: %v", err)
 	}
-	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Filename: "1.eml", Size: 10}); err != nil {
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
@@ -106,7 +106,7 @@ func TestConcurrentReadersDoNotTruncateLiveAppends(t *testing.T) {
 				return
 			}
 			if err := writer.AppendMessage(wf.ID, &mailbox.MessageMeta{
-				UID: uid, Filename: "m.eml", Size: 10,
+				UID: uid, Size: 10,
 			}); err != nil {
 				t.Errorf("AppendMessage uid=%d: %v", uid, err)
 				return

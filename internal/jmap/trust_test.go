@@ -115,7 +115,7 @@ func TestTrustMTLSRejectsForeignCertificate(t *testing.T) {
 	theirs := newTestCA(t, "somebody-else")
 	srvCert, srvKey := ours.issue(t, "yarilo-jmap")
 
-	srvTLS, err := mtls.ServerConfig(srvCert, srvKey, ours.caFile())
+	srvTLS, err := mtls.ServerConfig(srvCert, srvKey, ours.caFile(), mtls.ListenerJMAPBackend)
 	if err != nil {
 		t.Fatalf("server tls: %v", err)
 	}

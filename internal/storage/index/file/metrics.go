@@ -35,22 +35,17 @@ var (
 		Buckets: prometheus.ExponentialBuckets(0.00001, 4, 11),
 	}, []string{"part"})
 
-	// The lock is its own question as well as a part of the read: it is the one
-	// place a read leaves the process. The reference takes a local fcntl here.
-	metricLockWait = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "fileindex_lock_wait_seconds",
-		Help:    "Time an index operation waited for the cross-process folder lock, by mode and by which path took it.",
-		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10), // 100us .. ~26s
-	}, []string{"mode", "site"})
-	metricLockRelease = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "fileindex_lock_release_seconds",
-		Help:    "Time releasing the cross-process folder lock, by mode and site. The second round trip an operation makes, and about as expensive as the first.",
+	// Held, not waited for: without it the wait says who queued and nothing
+	// says who made them queue (#1809).
+	metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "fileindex_lock_hold_seconds",
+		Help:    "Time one write cycle held the folder journal on the volume, by mode and site. Pairs with maildir_lock_hold_seconds, which measures the uidlist.",
 		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
 	}, []string{"mode", "site"})
 	metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "fileindex_lock_acquired_total",
-		Help: "Cross-process folder locks acquired, by mode and by which path took it. Each acquisition is followed by a release, so an operation that takes the lock makes two round trips to the lock service.",
-	}, []string{"mode", "site"}) // shared | exclusive × open-probe | reload-fallback | read | write
+		Help: "Journal locks taken on the volume, by mode and by the call that took it. A cycle takes one whatever it appends; a read takes none.",
+	}, []string{"mode", "site"}) // shared | exclusive × read | open-probe | reload-fallback | transaction | expunge | append | write-flags | ...
 	metricReload = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "fileindex_reload_total",
 		Help: "Folder freshness checks by outcome: adopt means a rewritten base was proven to hold what memory already held and its records were not read.",
@@ -59,10 +54,6 @@ var (
 		Name: "fileindex_lineage_stamped_total",
 		Help: "Folder indexes given a lineage on first open because they were written before the extension. Expected to rise once per folder after an upgrade and stay flat afterwards; two pods racing the same first open can each stamp it, so a folder may count twice.",
 	})
-	metricLockReentrant = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "fileindex_lock_reentrant_total",
-		Help: "Index operations that already held the folder lock, by mode and site. No round trip was made.",
-	}, []string{"mode", "site"})
 )
 
 // The sites a folder lock can be taken from. Named rather than free-form so
@@ -77,17 +68,43 @@ var (
 const (
 	lockSiteOpenProbe = "open-probe"      // opening or repairing a folder
 	lockSiteFallback  = "reload-fallback" // an unlocked read with nothing to prove freshness with
-	lockSiteRead      = "read"            // a read that is locked on purpose: its answer decides a write
-	lockSiteWrite     = "write"           // a mutation
-)
 
-// lockMode names the label so a caller cannot pass "true" and mean shared.
-func lockMode(shared bool) string {
-	if shared {
-		return "shared"
-	}
-	return "exclusive"
-}
+	// The callers of that mutation, so a total can be attributed (#1827).
+	lockSiteTransaction  = "transaction"
+	lockSiteFlagsDirty   = "flags-dirty"
+	lockSiteRefresh      = "refresh"
+	lockSitePop3Uidl     = "pop3-uidl"
+	lockSiteRepairTails  = "repair-tails"
+	lockSiteStampSizes   = "stamp-sizes"
+	lockSiteRename       = "rename"
+	lockSiteStampLineage = "stamp-lineage"
+	lockSiteResetLog     = "reset-log"
+	// Only a test reaches the index without a caller of its own.
+	lockSiteTestWrite       = "test-write"
+	lockSiteAdoptUidSpace   = "adopt-uid-space"
+	lockSiteMaildirStamp    = "maildir-stamp"
+	lockSiteVirtualHeader   = "virtual-header"
+	lockSiteGUIDAppend      = "guid-append"
+	lockSiteAllocateUid     = "allocate-uid"
+	lockSiteAppend          = "append"
+	lockSiteCacheExtension  = "cache-extension"
+	lockSiteCacheGeneration = "cache-generation"
+	lockSiteCacheOffsets    = "cache-offsets"
+	lockSiteCachePurge      = "cache-purge"
+	lockSiteExpunge         = "expunge"
+	lockSiteExpungeFloor    = "expunge-floor"
+	lockSiteMarkCorrupt     = "mark-corrupt"
+	lockSiteNextModseq      = "next-modseq"
+	lockSiteOptimize        = "optimize"
+	lockSiteRecomputeVsize  = "recompute-vsize"
+	lockSiteResetFolder     = "reset-folder"
+	lockSiteAlignUIDSpace   = "align-uid-space"
+	lockSiteSaveFolder      = "save-folder"
+	lockSiteSetAltTier      = "set-alt-tier"
+	lockSiteSetGuids        = "set-guids"
+	lockSiteVanishedGuids   = "vanished-guids"
+	lockSiteWriteFlags      = "write-flags"
+)
 
 // observeReadPart records one named part of a read. Guarded by the caller
 // knowing it is inside a read: the same functions are reached from write paths,
@@ -97,6 +114,27 @@ func observeReadPart(part string, d time.Duration) {
 	metricReadPart.WithLabelValues(part).Observe(d.Seconds())
 }
 
+// metricJournalWriteFailed counts the appends the journal refused, by why: a
+// volume filling up is otherwise visible only as commands failing (#1831).
+var metricJournalWriteFailed = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "fileindex_journal_write_failed_total",
+	Help: "Journal appends that failed, by reason: no-space is a full volume or an exhausted disk quota, other is anything else.",
+}, []string{"reason"}) // no-space | other
+
+// metricHeaderCorrected counts header fields re-derived from the records: drift
+// the operator sees here before a client sees a reused uid (#1831).
+var metricHeaderCorrected = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "fileindex_header_corrected_total",
+	Help: "Index header fields that disagreed with the records and were re-derived from them, by field.",
+}, []string{"field"}) // next_uid | messages | seen | deleted
+
+// metricUIDSpaceReset counts folders whose records were dropped for a new
+// UIDVALIDITY: every client of them resyncs (#2083).
+var metricUIDSpaceReset = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_uid_space_reset_total",
+	Help: "Folders reset because their store named another UIDVALIDITY; their messages were added again as new.",
+})
+
 // metricCompactionRefused counts log compactions that could not write the base.
 // Rotation stopping is invisible from the outside — the folder keeps serving
 // mail while its log grows and every open replays more of it — so the count is
@@ -104,4 +142,49 @@ func observeReadPart(part string, d time.Duration) {
 var metricCompactionRefused = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fileindex_log_compaction_refused_total",
 	Help: "Log compactions that failed to rewrite the base index; rotation is not happening for those folders.",
+})
+
+// A pass over a list that has not moved: the stamp is the same, so the index
+// is not written (as the reference does).
+var metricStampUnchanged = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_maildir_stamp_unchanged_total",
+	Help: "Maildir stamp writes that found the same stamp already recorded and left the index alone.",
+})
+
+// A copy the guid store did not take: the folder is written and the store is
+// behind, which a rebuild fixes (#1711).
+var metricGUIDTrackFailed = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_guid_track_failed_total",
+	Help: "Copies the per-user GUID store did not record after the folder write succeeded.",
+})
+
+// A GUID store written in an older record shape: refused, not reinterpreted,
+// until a rebuild replaces it (#1711).
+var metricGUIDStoreStale = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_guid_store_stale_total",
+	Help: "Opens of a per-user GUID store whose records are not the shape this build writes.",
+})
+
+// The GUID lookup map: built once per version of the store, then answered from
+// memory (#1711).
+var (
+	metricBaseReadGaveUp = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fileindex_base_read_gave_up_total",
+		Help: "Base reads that kept meeting a writer, labelled with the file the content came from.",
+	})
+	metricGUIDImageBuilt = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fileindex_guid_image_built_total",
+		Help: "Times the GUID lookup map was built from the store.",
+	})
+	metricGUIDImageHit = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fileindex_guid_image_hit_total",
+		Help: "Lookups answered from the GUID map already built for this version of the store.",
+	})
+)
+
+// A GUID store written from the folder indexes: the file is derived, and this
+// is how it comes back (#1711).
+var metricGUIDRebuilt = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fileindex_guid_store_rebuilt_total",
+	Help: "Times the per-user GUID store was rebuilt from the folder indexes.",
 })

@@ -17,6 +17,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/imapthread"
 	"github.com/yarilomail/yarilo/internal/msgcache"
+	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -101,27 +102,32 @@ func sortNeeds(criteria []imaplib.SortCriterion) orderingNeeds {
 }
 
 func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.SearchCriteria, command string, needs orderingNeeds) ([]imapthread.Message, error) {
-	msgs, err := readMessages(s.folderIdx(), s.folder.ID)
+	msgs, err := readMessages(s.folderMailbox(), s.folder.ID)
 	if err != nil {
 		return nil, err
 	}
-	needsBody := searchCriteriaHasBody(criteria)
+	needsBody := search.NeedsBody(criteria)
 
 	var (
-		unreadable  []uint32
-		detached    []uint32
+		unreadable []uint32
+		detached   []uint32
+		// byReason splits both lists between a message that is gone and one
+		// that is there and unreadable: only the second says the store is
+		// damaged.
+		byReason    = map[string]int{}
 		lastReadErr error
 	)
 	// One handle per command, as FETCH opens one: misses are parsed and
 	// written back, so the second ordering command over a mailbox pays
 	// nothing for what the first one had to read.
-	var envCache *msgcache.Handle
+	var envCache mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
 	if needs.envelope || needs.refs {
-		envCache = msgcache.Open(s.folderIdx(), s.folder.ID, msgcache.Options{
-			Locker:  s.srv.opts.Locker,
-			User:    s.userInfo.Username,
-			Folder:  s.folder.Name,
-			TraceID: s.sid,
+		envCache = s.folderMailbox().EnvelopeCache(s.folder.ID, mailbox.EnvelopeCacheOptions{
+			Locker:    s.srv.opts.Locker,
+			User:      s.userInfo.Username,
+			SessionID: s.userInfo.SessionID,
+			Folder:    s.folder.Name,
+			TraceID:   s.sid,
 		})
 		// This command walks every matched message, so the cache is read in
 		// one pass rather than a record at a time: per-record reads put 30% of
@@ -137,6 +143,7 @@ func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.Sea
 		if readErr != nil {
 			// Excluded, not silently matched: see matchMessage (#1283).
 			unreadable = append(unreadable, m.UID)
+			byReason[unreadableReason(readErr)]++
 			lastReadErr = readErr
 			continue
 		}
@@ -158,6 +165,7 @@ func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.Sea
 			// it loses is everything the ordering is based on -- ancestry for
 			// THREAD, subject and addresses for SORT -- hence the count.
 			detached = append(detached, m.UID)
+			byReason[unreadableReason(headerErr)]++
 			lastReadErr = headerErr
 		}
 		out = append(out, one)
@@ -167,7 +175,9 @@ func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.Sea
 	// message, and at WARN because the answer the client is about to receive
 	// is wrong about those messages and nothing in it says so.
 	if len(unreadable) > 0 || len(detached) > 0 {
-		metricUnreadable.WithLabelValues(command).Add(float64(len(unreadable) + len(detached)))
+		for reason, n := range byReason {
+			metricUnreadable.WithLabelValues(command, reason).Add(float64(n))
+		}
 		example := append(append([]uint32(nil), unreadable...), detached...)[0]
 		slog.Warn("imap: could not read some messages; the answer is wrong about them",
 			"command", command,
@@ -200,7 +210,7 @@ func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.Sea
 // deliberately not treated as "no data" -- an account whose cache is cold
 // would otherwise sort by empty subjects and look like a mailbox of blank
 // mail (#1448 made the same choice about a message that cannot be read).
-func (s *session) orderingMessage(num uint32, m *mailbox.MessageMeta, raw []byte, needs orderingNeeds, envCache *msgcache.Handle) (imapthread.Message, error) {
+func (s *session) orderingMessage(num uint32, m *mailbox.MessageMeta, raw []byte, needs orderingNeeds, envCache mailbox.EnvelopeCache) (imapthread.Message, error) {
 	// The index answers ARRIVAL and SIZE, so a command asking only for those
 	// never touches the message.
 	if !needs.envelope && !needs.refs {
@@ -248,18 +258,18 @@ func (s *session) orderingMessage(num uint32, m *mailbox.MessageMeta, raw []byte
 		// path above reads, so the next THREAD over this account opens
 		// nothing. The cache is on disk, so "once" means once per account,
 		// not once per process.
-		if env, eerr := s.envelopeOf(m, raw); eerr == nil {
-			envCache.StoreEnvelope(m, env)
+		if _, hdr, eerr := s.envelopeOf(m, raw); eerr == nil {
+			envCache.StoreFromHeader(m, hdr, msgcache.EnvelopeTextOf(hdr))
 			envCache.StoreReferences(m, full.References)
 		}
 		return full, nil
 	}
 
-	env, err := s.envelopeOf(m, raw)
+	env, hdr, err := s.envelopeOf(m, raw)
 	if err != nil {
 		return out, err
 	}
-	envCache.StoreEnvelope(m, env)
+	envCache.StoreFromHeader(m, hdr, msgcache.EnvelopeTextOf(hdr))
 	applyHead(&out, msgcache.HeadOf(env))
 	return out, nil
 }
@@ -279,30 +289,32 @@ func threadAncestry(refs []string, inReplyTo []string) []string {
 
 // envelopeOf parses the envelope from bytes already in hand, or by reading the
 // message header.
-func (s *session) envelopeOf(m *mailbox.MessageMeta, raw []byte) (*imaplib.Envelope, error) {
+// envelopeOf returns the envelope and the header it came from: what the cache
+// stores is built from that header, never from the struct (#1714, #2008).
+func (s *session) envelopeOf(m *mailbox.MessageMeta, raw []byte) (*imaplib.Envelope, textproto.Header, error) {
 	if len(raw) > 0 {
 		hdr, err := textproto.ReadHeader(bufio.NewReader(bytes.NewReader(raw)))
 		if err != nil {
-			return nil, fmt.Errorf("imap/order: parse header of uid %d: %w", m.UID, err)
+			return nil, textproto.Header{}, fmt.Errorf("imap/order: parse header of uid %d: %w", m.UID, err)
 		}
-		return imapserver.ExtractEnvelope(hdr), nil
+		return imapserver.ExtractEnvelope(hdr), hdr, nil
 	}
-	if m.Filename == "" {
-		return &imaplib.Envelope{}, nil
+	if !s.readableSelected(m) {
+		return &imaplib.Envelope{}, textproto.Header{}, nil
 	}
 	rc, err := s.fetchSelected(m)
 	if err != nil {
-		return nil, fmt.Errorf("imap/order: open uid %d: %w", m.UID, err)
+		return nil, textproto.Header{}, fmt.Errorf("imap/order: open uid %d: %w", m.UID, err)
 	}
 	defer rc.Close() //nolint:errcheck
 	hdr, err := textproto.ReadHeader(bufio.NewReader(rc))
 	if err != nil {
-		return nil, fmt.Errorf("imap/order: read header of uid %d: %w", m.UID, err)
+		return nil, textproto.Header{}, fmt.Errorf("imap/order: read header of uid %d: %w", m.UID, err)
 	}
-	return imapserver.ExtractEnvelope(hdr), nil
+	return imapserver.ExtractEnvelope(hdr), hdr, nil
 }
 
-// applyEnvelope fills the ordering fields ENVELOPE carries. Address.Mailbox is
+// applyHead fills the ordering fields ENVELOPE carries. Address.Mailbox is
 // the addr-mailbox of RFC 5256 -- the local part, not the display name -- so
 // the sort key comes straight out of the cache with nothing re-parsed.
 func applyHead(out *imapthread.Message, head msgcache.Head) {
@@ -399,7 +411,7 @@ func messageIDList(v string) []string {
 // and nothing else, and a THREAD over a large mailbox would otherwise read
 // every byte of every message in it.
 func (s *session) readHeader(m *mailbox.MessageMeta) ([]byte, error) {
-	if m.Filename == "" {
+	if !s.readableSelected(m) {
 		// Nothing was ever stored for this record; that is not a read failure.
 		return nil, nil
 	}

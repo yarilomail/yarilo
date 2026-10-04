@@ -23,7 +23,10 @@ const (
 // BuildKey scopes the BuildMore stream that follows it: which message (UID),
 // which part type, and — for headers — the lowercased field name.
 type BuildKey struct {
-	UID         uint32
+	UID uint32
+	// GUID is the message's own identity. One index per user holds every
+	// folder's messages, so a uid alone names nothing (#1986).
+	GUID        [16]byte
 	Type        BuildKeyType
 	HdrName     string
 	ContentType string
@@ -108,11 +111,23 @@ type UserIndex interface {
 	SetCheckpoint(mbox MailboxRef, lastUID, uidValidity, settingsChecksum uint32) error
 
 	BeginUpdate(mbox MailboxRef) (Update, error)
-	Expunge(mbox MailboxRef, uid uint32) error
-	// Rescan reconciles the index against the authoritative UID set: deletes
-	// documents whose UID is absent and reports which present UIDs are
-	// missing from the index so the caller can reindex exactly those.
-	Rescan(mbox MailboxRef, present []uint32) (missing []uint32, err error)
+	// Expunge retracts one copy by the message it was: inFolder says another
+	// copy of it is still in this folder, anywhere that some folder holds one.
+	Expunge(mbox MailboxRef, guid [16]byte, inFolder, anywhere bool) error
+	// Rescan reconciles the index against the folder's live copies by the
+	// message, never by a docid; what it does not hold comes back as missing.
+	Rescan(mbox MailboxRef, present []Copy) (missing []uint32, err error)
+	// DocCount is how many documents the user's index holds, read-only. One
+	// document is one message, so after a reconcile it equals the live ones.
+	DocCount() (uint64, error)
+	// DropFolder retracts a deleted mailbox; DropOrphanFolders retracts every
+	// folder term naming a mailbox not in live, and reports how many went.
+	DropFolder(mbox MailboxRef) error
+	DropOrphanFolders(live []string) (int, error)
+	// DocGUIDs is every message the index holds a document for, and
+	// DropDocuments removes the documents of the ones named.
+	DocGUIDs() ([][16]byte, error)
+	DropDocuments(guids [][16]byte) (int, error)
 	// Mailboxes lists the user's mailboxes this handle has open. Whole-user
 	// optimize is expressed as a loop over these under each mailbox's OWN
 	// lock, rather than as a second optimize entry point: a user-keyed lock
@@ -126,8 +141,16 @@ type UserIndex interface {
 	// Refresh makes writes committed by earlier updates visible to Lookup.
 	Refresh() error
 
-	Lookup(mbox MailboxRef, q Query) (Result, error)
+	// Lookup searches the folders named by their GUIDs; an empty list is the
+	// whole account, which a virtual folder over everything asks for (#1986).
+	Lookup(folders []string, q Query) (Result, error)
 	Close() error
+}
+
+// SplitOptimizer is an engine that can merge outside the caller's lock and
+// take it only to put the merged index in place (#1986).
+type SplitOptimizer interface {
+	OptimizeUnderLock(mbox MailboxRef, withLock func(func() error) error) error
 }
 
 // Update is one indexing session for one mailbox. Keys and token/text data
@@ -193,6 +216,23 @@ type Result struct {
 	Definite []uint32
 	Maybe    []uint32
 	Scores   []Score
+	// DefiniteGUIDs and MaybeGUIDs are what an engine holding one index per
+	// user answers with: the uid of a hit is the store's to say (#1986).
+	DefiniteGUIDs [][16]byte
+	MaybeGUIDs    [][16]byte
+}
+
+// FolderHit is one copy a search over a folder set answered with, by folder
+// GUID and uid: a message in two of the folders is two hits.
+type FolderHit struct {
+	Folder string `json:"folder"`
+	UID    uint32 `json:"uid"`
+}
+
+// SetResult is a search over a set of folders.
+type SetResult struct {
+	Definite []FolderHit `json:"definite"`
+	Maybe    []FolderHit `json:"maybe"`
 }
 
 // MergeScoresAnd folds src into dest for an AND composition: UIDs present
@@ -248,4 +288,11 @@ func MergeScoresOr(dest []Score, src []Score) []Score {
 		}
 	}
 	return out
+}
+
+// Copy is one live copy of a message in a folder: the uid the folder gave it
+// and the message it is.
+type Copy struct {
+	UID  uint32
+	GUID [16]byte
 }

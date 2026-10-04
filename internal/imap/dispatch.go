@@ -4,14 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"strings"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -26,9 +27,10 @@ type nsHandle struct {
 	spec NamespaceSpec
 	// location is the resolved storage path; empty for backend-less handles.
 	location string
-	// box / idx are the per-user storage handles; nil when declared-only.
-	box mailbox.UserMailbox
-	idx mailbox.UserIndex
+	// box is the store and mbox the account's mail through Box; nil when
+	// declared-only.
+	box  mailbox.UserMailbox
+	mbox mailbox.Box
 	// subs is the per-namespace subscription store. Personal keeps the
 	// filename "subscriptions" so upgrades preserve existing state;
 	// shared/public use "subscriptions-<ns>" siblings.
@@ -52,7 +54,7 @@ type nsHandle struct {
 }
 
 // implemented reports whether this namespace has working backends.
-func (h *nsHandle) implemented() bool { return h != nil && h.box != nil && h.idx != nil }
+func (h *nsHandle) implemented() bool { return h != nil && h.box != nil && h.mbox != nil }
 
 // fullName returns the wire-protocol mailbox name for a folder in this
 // namespace. Inverse of dispatch().
@@ -179,15 +181,35 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 	out := make(map[string]*nsHandle, len(specs))
 	var primary *nsHandle
 
-	for _, spec := range specs {
+	shapes := specShapes(specs)
+	inboxAt := mailbox.PrimaryPersonalIndex(shapes)
+	for i, spec := range specs {
 		switch spec.Type {
 		case NamespacePersonal:
-			h, err := s.openHandle(spec, "personal", personalUI, owner, mailbox.NamespaceSubsFile(spec.Prefix, string(spec.Separator), string(spec.Type)))
+			ui := personalUI
+			ownStore := mailbox.OwnsStore(shapes, i)
+			if ownStore {
+				// A second private namespace with storage of its own -- a
+				// virtual one -- is the user's, but not their INBOX store.
+				loc, ok, err := mailbox.ParseLocation(spec.Location, personalUI)
+				if err != nil {
+					return nil, nil, fmt.Errorf("imap: personal namespace location: %w", err)
+				}
+				if ok {
+					if ui, err = mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator)); err != nil {
+						return nil, nil, fmt.Errorf("imap: personal namespace: %w", err)
+					}
+				}
+			}
+			h, err := s.openHandle(spec, "personal", ui, owner, mailbox.SubsFileFor(shapes, i, spec.Prefix, string(spec.Separator)))
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: open personal namespace: %w", err)
 			}
+			if ownStore {
+				h.location = ui.MailPath
+			}
 			out[spec.Prefix] = h
-			if primary == nil {
+			if i == inboxAt {
 				primary = h
 			}
 		case NamespaceShared, NamespaceOther: //nolint:exhaustive
@@ -205,7 +227,9 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 				// SELECT under its prefix returns NO.
 				continue
 			}
-			loc, ok, err := mailbox.ParseLocation(spec.Location, nil)
+			// Against this session's own identity: "%h" became empty
+			// otherwise, and a per-user namespace could not be written.
+			loc, ok, err := mailbox.ParseLocation(spec.Location, personalUI)
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: %s namespace location: %w", spec.Type, err)
 			}
@@ -283,6 +307,17 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		return nil, fmt.Errorf("mailbox init: %w", err)
 	}
 	idx := s.srv.opts.Index.OpenUser(ui)
+	// Before anything lists this store: a store another implementation left
+	// has its folders named the way its configuration spelled them, and a
+	// listing served from that shows names this deployment cannot select
+	// (#1609). Non-fatal -- a store with nothing foreign in it does no work
+	// here, and one that could not be renamed is still served, wrongly named,
+	// exactly as before.
+	if a, ok := idx.(mailbox.ForeignNameAdopter); ok {
+		if err := a.AdoptForeignNames(); err != nil {
+			slog.Warn("imap: foreign folder names not adopted", "user", ui.Username, "err", err)
+		}
+	}
 	// Subscriptions live in the control root. One spelling of that rule, so
 	// this cannot drift from where the other services write (#1437).
 	subsRoot := mailbox.ControlRoot(ui)
@@ -304,17 +339,21 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 	if spec.Type == NamespacePersonal {
 		nsOwner = ui.Username
 	}
-	return &nsHandle{
+	h := &nsHandle{
 		name:     name,
 		spec:     spec,
 		box:      box,
-		idx:      idx,
 		subs:     store,
 		acl:      aclStore,
 		userInfo: ui,
 		owner:    nsOwner,
-	}, nil
+	}
+	h.mbox = mailboxbase.Open(box, idx, mailboxbase.WithAuto(s.boxAuto(h)))
+	return h, nil
 }
+
+// mailbox is the handle's account mail.
+func (h *nsHandle) mailbox() mailbox.Box { return h.mbox }
 
 // mailboxBackendFor returns the MailboxBackend for a namespace, selected by the
 // resolved user's driver -- ui is the owner's userdb identity for an
@@ -336,6 +375,16 @@ func (s *session) mailboxBackendFor(spec NamespaceSpec, ui *mailbox.UserInfo) ma
 		return mailbox.SelectPersonalBackend(s.srv.opts.Mailbox, s.srv.opts.MailboxByDriver, ui.Driver)
 	}
 	return s.srv.opts.Mailbox
+}
+
+// specShapes is the set as pkg/mailbox reads it: the loader validates by the
+// same rule, so the session cannot choose a different INBOX namespace (#2038).
+func specShapes(specs []NamespaceSpec) []mailbox.NamespaceShape {
+	out := make([]mailbox.NamespaceShape, len(specs))
+	for i, sp := range specs {
+		out[i] = mailbox.NamespaceShape{Type: string(sp.Type), Location: sp.Location, Inbox: sp.Inbox}
+	}
+	return out
 }
 
 // nsSlug is an in-memory identifier for a namespace (handle name, log field).
@@ -514,7 +563,10 @@ func (s *session) deploymentBase() *mailbox.UserInfo {
 	if r == nil {
 		return nil
 	}
-	full := r.UserInfo("", "")
+	full, err := r.UserInfo("", "")
+	if err != nil {
+		return nil
+	}
 	return &mailbox.UserInfo{
 		StorageEscapeChar: full.StorageEscapeChar,
 		SkipNFCNormalize:  full.SkipNFCNormalize,
@@ -537,6 +589,10 @@ func (s *session) ownerHandle(spec NamespaceSpec, owner string) (*nsHandle, erro
 	if err != nil {
 		return nil, err
 	}
+	// The owner comes from userdb, which knows nothing of sessions, so the
+	// handle would open its storage under a second spelling of one holder --
+	// the driver and index from ownerUI, subs and acl from s.owner (#1652).
+	ownerUI.SessionID = s.sessionID()
 	subsFile := mailbox.NamespaceSubsFile(spec.Prefix, string(spec.Separator), string(spec.Type))
 	h, err := s.openHandle(spec, nsSlug(spec), ownerUI, s.owner(ownerUI.Username), subsFile)
 	if err != nil {
@@ -587,15 +643,22 @@ func closeHandle(h *nsHandle) {
 	if h == nil {
 		return
 	}
-	if h.box != nil {
+	if h.mbox != nil {
+		h.mbox.Close()
+	} else if h.box != nil {
 		h.box.Close() //nolint:errcheck
-	}
-	if h.idx != nil {
-		h.idx.Close() //nolint:errcheck
 	}
 }
 
 // owner builds the yarilo-locks owner string for diagnostics.
 func (s *session) owner(username string) string {
-	return fmt.Sprintf("yarilo-imap/%d/%s", os.Getpid(), username)
+	return locks.Owner(username, s.sessionID())
+}
+
+// sessionID is the session part of a lock owner, empty before login.
+func (s *session) sessionID() string {
+	if s.userInfo == nil {
+		return ""
+	}
+	return s.userInfo.SessionID
 }

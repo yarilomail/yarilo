@@ -210,6 +210,7 @@ func authAliases(cfg *Config) []aliasedKey {
 		intKey("auth.cache.auth_cache_ttl", "auth.cache.ttl_seconds", &c.TTLSeconds, &c.TTLSecondsAlias),
 		intKey("auth.cache.auth_cache_negative_ttl", "auth.cache.negative_ttl_seconds", &c.NegativeTTLSeconds, &c.NegativeTTLSecondsAlias),
 		intKey("auth.auth_failure_delay", "auth.failure_delay", &au.FailureDelaySeconds, &au.FailureDelaySecondsAlias),
+		intKey("auth.auth_max_attempts", "auth.max_attempts", &au.MaxAttempts, &au.MaxAttemptsAlias),
 		strKey("auth.master_users.auth_master_user_separator", "auth.master_users.separator", &m.Separator, &m.SeparatorAlias),
 		strKey("auth.policy.auth_policy_server_url", "auth.policy.url", &p.URL, &p.URLAlias),
 		strKey("auth.policy.auth_policy_server_api_header", "auth.policy.api_header", &p.APIHeader, &p.APIHeaderAlias),
@@ -320,6 +321,7 @@ func protocolAliases(cfg *Config) []aliasedKey {
 		boolAlias("protocol.lmtp.lmtp_verbose_replies", "protocol.lmtp.verbose_replies", &l.VerboseReplies, &l.VerboseRepliesAlias),
 		intAlias("protocol.lmtp.lmtp_user_concurrency_limit", "protocol.lmtp.user_concurrency_limit", &l.UserConcurrencyLimit, &l.UserConcurrencyLimitAlias),
 		listAlias("protocol.lmtp.lmtp_client_workarounds", "protocol.lmtp.client_workarounds", &l.ClientWorkarounds, &l.ClientWorkaroundsAlias),
+		intAlias("protocol.lmtp.proxy.lmtp_proxy_timeout", "protocol.lmtp.proxy.timeout", &l.Proxy.ProxyTimeout, &l.Proxy.TimeoutAlias),
 
 		// rate_limit's own keys carried no section prefix, unlike every other
 		// nested section (threading_enabled, sieve_max_actions). Renamed while
@@ -522,11 +524,43 @@ func warnRetiredKeys(k *koanf.Koanf, keys []retiredKey) {
 	}
 }
 
+// refuseRemovedKeys refuses a config naming a setting whose behaviour is gone:
+// started quietly it would describe a deployment this build cannot serve.
+func refuseRemovedKeys(k *koanf.Koanf, keys []retiredKey) error {
+	for _, r := range keys {
+		if !k.Exists(r.key) {
+			continue
+		}
+		return fmt.Errorf("config: %q was removed and this build has no behaviour for it: %s",
+			r.key, r.note)
+	}
+	return nil
+}
+
+// removedKeys is that list, on the same terms as the retired one: a key lands
+// here only once the chart has stopped rendering it.
+func removedKeys() []retiredKey {
+	return []retiredKey{
+		{
+			key:  "director_service.lmtp_listen",
+			note: "the director no longer serves LMTP; point the MTA at the LMTP login service (#1756)",
+		},
+		{
+			key:  "director_service.lmtp_backend_port",
+			note: "the director no longer dials backends for LMTP (#1756)",
+		},
+		{
+			key:  "auth_service.sasl_listen",
+			note: "Postfix authenticates through yarilo-sasl-login (sasl_login.listen, default :12345), which relays to auth",
+		},
+	}
+}
+
 // retiredKeys is the whole list. It is short by construction: a key only lands
 // here when the setting it named is gone, and it leaves once the beta window
 // that promised the warning has passed.
 func retiredKeys() []retiredKey {
-	return []retiredKey{
+	keys := []retiredKey{
 		{
 			key: "telemetry.telemetry_pprof_heap_enabled",
 			note: "/debug/pprof/heap is served by telemetry_pprof_enabled; " +
@@ -534,4 +568,12 @@ func retiredKeys() []retiredKey {
 				"are one profile with different default sample types (#1488)",
 		},
 	}
+	for _, l := range []string{"imap", "imaps", "submission", "submissions", "pop3", "pop3s",
+		"lmtp", "managesieve", "managesieve_be", "jmap", "jmap_be"} {
+		keys = append(keys, retiredKey{
+			key:  "services." + l + ".connection_limit",
+			note: "nothing ever read it; per-user and per-IP connection limits are warden's (#2112)",
+		})
+	}
+	return keys
 }

@@ -12,7 +12,7 @@ import (
 func serverWithFolders(tb testing.TB, n int) (*Server, *userHandle) {
 	tb.Helper()
 	s, _, _ := storedServerWithMessageAt(tb, setTestMessage, 0)
-	h, err := s.opts.Storage.open(testUser)
+	h, err := s.opts.Storage.open(testUser, "test-session")
 	if err != nil {
 		tb.Fatalf("open user: %v", err)
 	}
@@ -21,18 +21,18 @@ func serverWithFolders(tb testing.TB, n int) (*Server, *userHandle) {
 		if err := h.box.Create(name); err != nil {
 			tb.Fatalf("create %s: %v", name, err)
 		}
-		f, err := h.idx.OpenFolder(name, 0)
+		f, err := h.index().OpenFolder(name, 0)
 		if err != nil {
 			tb.Fatalf("open %s: %v", name, err)
 		}
-		if err := h.idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: 1, Filename: "m.eml", Size: 10,
+		if err := h.index().AppendMessage(f.ID, &mailbox.MessageMeta{
+			UID: 1, Size: 10,
 		}); err != nil {
 			tb.Fatalf("append %s: %v", name, err)
 		}
 	}
 	h.close()
-	fresh, err := s.opts.Storage.open(testUser)
+	fresh, err := s.opts.Storage.open(testUser, "test-session")
 	if err != nil {
 		tb.Fatalf("reopen: %v", err)
 	}
@@ -50,7 +50,7 @@ func BenchmarkEmailState(b *testing.B) {
 				// A fresh handle per iteration, because that is what a request
 				// gets: the handle does not outlive it, so every request starts
 				// from a cold index.
-				h, err := s.opts.Storage.open(testUser)
+				h, err := s.opts.Storage.open(testUser, "test-session")
 				if err != nil {
 					b.Fatalf("open: %v", err)
 				}
@@ -73,7 +73,7 @@ func BenchmarkStateFloor(b *testing.B) {
 			s, _ := serverWithFolders(b, folders)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				h, err := s.opts.Storage.open(testUser)
+				h, err := s.opts.Storage.open(testUser, "test-session")
 				if err != nil {
 					b.Fatalf("open: %v", err)
 				}
@@ -82,7 +82,7 @@ func BenchmarkStateFloor(b *testing.B) {
 					b.Fatalf("list: %v", err)
 				}
 				for _, e := range entries {
-					if _, err := h.idx.FolderStamp(e.Name); err != nil {
+					if _, err := h.index().FolderStamp(e.Name); err != nil {
 						b.Fatalf("stamp: %v", err)
 					}
 				}

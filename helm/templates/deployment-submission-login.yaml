@@ -75,7 +75,7 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- include "yarilo.externalTLSMount" .Values.components.submissionLogin.tls.secretName | nindent 12 }}
-            {{- include "yarilo.internalTLSMount" .Values.components.submissionLogin.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.submissionLogin.internalTLS "role" "submission-login") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -86,7 +86,7 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- include "yarilo.externalTLSVolume" .Values.components.submissionLogin.tls.secretName | nindent 8 }}
-        {{- include "yarilo.internalTLSVolume" .Values.components.submissionLogin.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.submissionLogin.internalTLS "role" "submission-login") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

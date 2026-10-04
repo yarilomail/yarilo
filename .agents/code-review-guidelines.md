@@ -80,6 +80,9 @@ say so plainly rather than padding the review to look thorough.
   wall-clock timing or execution order.
 - If a guarantee cannot be exercised where it runs, test it at the level where it
   can be.
+- A mutation described in a PR body is a claim. A mutation that is proven quotes
+  its red message verbatim. Ask for the output, not the account of it: a trap
+  that watched a third of what it named was approved on a description (#1652).
 
 ### Interfaces and compatibility
 
@@ -119,3 +122,13 @@ say so plainly rather than padding the review to look thorough.
 - A non-obvious decision with no recorded reason is a finding — the next reader
   will otherwise "fix" it.
 - Documentation that the change makes wrong must be updated in the same change.
+- Comment size: 1–2 lines is the norm. A block of 3+ lines in a diff is a
+  finding — the explanation belongs in the documentation repo (or docs-internal
+  for wire formats), with at most a one-line pointer left in code.
+- No history or meta-narrative in comments ("previously…", "changed because…");
+  history lives in issues, referenced as `(#NNNN)`.
+- Removing a comment is a finding only if an invariant vanished with it — check
+  what the comment protected, not that a line disappeared.
+- Comment volume: a package trending toward the 10% ceiling (comment lines vs Go
+  lines, see the comment-count tool and #1620) is worth flagging before the gate
+  does.

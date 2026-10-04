@@ -12,6 +12,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -37,7 +38,7 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 
 	// Two "processes" pointing at the same on-disk maildir + index.
 	lkA := dialLocker()
-	mbA := maildir.New(maildir.WithLocker(lkA)).OpenUser(user)
+	mbA := maildir.New().OpenUser(user)
 	ixA := file.New(file.WithLocker(lkA)).OpenUser(user)
 	t.Cleanup(func() { _ = ixA.Close() })
 	if err := mbA.Init(); err != nil {
@@ -45,7 +46,7 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 	}
 
 	lkB := dialLocker()
-	_ = maildir.New(maildir.WithLocker(lkB)).OpenUser(user) // process B does not write via maildir in this scenario
+	_ = maildir.New().OpenUser(user) // process B does not write via maildir in this scenario
 	ixB := file.New(file.WithLocker(lkB)).OpenUser(user)
 	t.Cleanup(func() { _ = ixB.Close() })
 
@@ -68,11 +69,15 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("allocate A %d: %v", i, err)
 		}
-		filename, _, _, err := mbA.Save("INBOX", strings.NewReader("body"), uid, 0, nil, [16]byte{})
+		filename, _, _, err := mbA.Save("INBOX", strings.NewReader("body"), uid, 0, nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save A %d: %v", i, err)
 		}
-		if err := ixA.AppendMessage(folderA.ID, &mailbox.MessageMeta{UID: uid, Filename: filename}); err != nil {
+		meta := &mailbox.MessageMeta{UID: uid}
+		if err := mailboxbase.NameSaved(mbA, "INBOX", filename, meta); err != nil {
+			t.Fatalf("name A %d: %v", i, err)
+		}
+		if err := ixA.AppendMessage(folderA.ID, meta); err != nil {
 			t.Fatalf("append A %d: %v", i, err)
 		}
 	}
@@ -90,11 +95,11 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate A post: %v", err)
 	}
-	filename, _, _, err := mbA.Save("INBOX", strings.NewReader("after-save"), uid, 0, nil, [16]byte{})
+	_, _, _, err = mbA.Save("INBOX", strings.NewReader("after-save"), uid, 0, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save A post: %v", err)
 	}
-	if err := ixA.AppendMessage(folderA.ID, &mailbox.MessageMeta{UID: uid, Filename: filename}); err != nil {
+	if err := ixA.AppendMessage(folderA.ID, &mailbox.MessageMeta{UID: uid}); err != nil {
 		t.Fatalf("append A post: %v", err)
 	}
 	if uid != 4 {

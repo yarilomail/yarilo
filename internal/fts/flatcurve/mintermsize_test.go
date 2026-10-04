@@ -88,11 +88,11 @@ func TestSubstringSuffixesStopAtTheCharacterThreshold(t *testing.T) {
 		{"ова", true},  // 3 characters — at the threshold
 		{"ва", false},  // 2 characters — below it, 4 bytes
 	} {
-		res, err := ui.Lookup(inbox, bodyQuery(tc.fragment))
+		res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery(tc.fragment))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if found := len(res.Definite) > 0; found != tc.found {
+		if found := len(res.DefiniteGUIDs) > 0; found != tc.found {
 			t.Errorf("fragment %q found=%v, want %v (%d characters, %d bytes)",
 				tc.fragment, found, tc.found, len([]rune(tc.fragment)), len(tc.fragment))
 		}

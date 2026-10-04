@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
@@ -32,7 +34,7 @@ func buildOAuthBearerServer(t *testing.T, auth Authenticator, enabled bool) (str
 			Hostname:   "mx.example.com",
 			MaxMsgSize: 1 << 20,
 		},
-		Auth:          auth,
+		AuthRelay:     authtest.RelayTo(t, authtest.PlainOnly(auth)),
 		OAuth2Enabled: enabled,
 	}
 	srv := New(opts)
@@ -129,5 +131,42 @@ func TestSubmission_AuthOAuthBearer_EnabledAdvertised(t *testing.T) {
 	}
 	if !strings.Contains(params, "OAUTHBEARER") {
 		t.Errorf("OAUTHBEARER not advertised when enabled: %q", params)
+	}
+}
+
+// recordingBearer answers one token and says whether it was ever asked.
+type recordingBearer struct {
+	user, token string
+	asked       *string
+}
+
+func (a recordingBearer) AuthPlain(u, p string) error {
+	*a.asked = u + "/" + p
+	if u == a.user && p == a.token {
+		return nil
+	}
+	return goSmtp.ErrAuthFailed
+}
+
+// A bearer presented on 587 is verified in the auth service, not beside the
+// session: after the cut there is nowhere else it could be checked (#1733).
+func TestABearerOn587IsVerifiedInTheService(t *testing.T) {
+	var asked string
+	addr, stop := buildOAuthBearerServer(t, recordingBearer{"alice@example.com", "tok-587", &asked}, true)
+	defer stop()
+
+	c, err := goSmtp.Dial(addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close() //nolint:errcheck
+	if err := c.Auth(sasl.NewOAuthBearerClient(&sasl.OAuthBearerOptions{
+		Username: "alice@example.com",
+		Token:    "tok-587",
+	})); err != nil {
+		t.Fatalf("bearer refused: %v", err)
+	}
+	if asked != "alice@example.com/tok-587" {
+		t.Errorf("the service was asked %q, want the token this client sent", asked)
 	}
 }

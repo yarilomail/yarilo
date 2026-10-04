@@ -4,6 +4,9 @@ import (
 	"net"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
+
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-sasl"
 
@@ -43,15 +46,29 @@ func (m *masterAuth) AuthenticateMaster(authzid, authid, password, _, _ string) 
 	return &protocol.AuthResponse{Result: protocol.AuthOK, Username: authzid}, nil
 }
 
+// masterRelay serves the stub with master users on, which is where the
+// impersonation decision now lives; a stub with no master surface stays plain.
+func masterRelay(t *testing.T, auth protocol.Authenticator) *authrelay.Client {
+	t.Helper()
+	if m, ok := auth.(*masterAuth); ok {
+		targets := make([]string, 0, len(m.targets))
+		for u := range m.targets {
+			targets = append(targets, u)
+		}
+		return authtest.RelayToMaster(t, auth, m.masterUser, m.masterPass, targets...)
+	}
+	return authtest.RelayTo(t, auth)
+}
+
 func startMasterServer(t *testing.T, auth protocol.Authenticator) *imapclient.Client {
 	t.Helper()
 	dir := t.TempDir()
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 	opts := imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: resolver,
-		Auth:     auth,
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  resolver,
+		AuthRelay: masterRelay(t, auth),
 	}
 	srv := imapserver.New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

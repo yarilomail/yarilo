@@ -8,6 +8,7 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -40,16 +41,17 @@ func TestDeliveryTargetRoutesNamespaces(t *testing.T) {
 		t.Fatalf("rcpt init: %v", err)
 	}
 	rcptIdx := idx.OpenUser(rcptUI)
+	rcptMbox := mailboxbase.Open(rcptBox, rcptIdx)
 
 	// Personal folder → the recipient's own store, name unchanged.
-	box, _, rel, closeP := s.deliveryTarget(rcptUI, rcptBox, rcptIdx, "Archive", false)
+	box, _, rel, closeP := s.deliveryTarget(rcptUI, rcptBox, rcptMbox, "Archive", false)
 	if box != rcptBox || rel != "Archive" {
 		t.Errorf("personal: box==rcpt=%v rel=%q, want own store + Archive", box == rcptBox, rel)
 	}
 	closeP()
 
 	// Public/News → the public storage, prefix stripped to "News".
-	box2, idx2, rel2, closePub := s.deliveryTarget(rcptUI, rcptBox, rcptIdx, "Public/News", false)
+	box2, mbox2, rel2, closePub := s.deliveryTarget(rcptUI, rcptBox, rcptMbox, "Public/News", false)
 	defer closePub()
 	if box2 == rcptBox {
 		t.Fatal("Public/ should route to a separate store, not the recipient's")
@@ -61,7 +63,7 @@ func TestDeliveryTargetRoutesNamespaces(t *testing.T) {
 	if err := box2.Create(rel2); err != nil {
 		t.Fatalf("create News: %v", err)
 	}
-	if _, _, _, err := deliverOne(box2, idx2, rel2, bytes.NewReader([]byte("From: x@y\r\n\r\nhi\r\n")), 18, nil, "alice@x", "x@y", nil); err != nil {
+	if _, _, _, err := deliverOne(mbox2, rel2, bytes.NewReader([]byte("From: x@y\r\n\r\nhi\r\n")), 18, nil, "alice@x", "x@y", nil); err != nil {
 		t.Fatalf("deliverOne: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(publicDir, ".News", "new")); err != nil {
@@ -72,7 +74,7 @@ func TestDeliveryTargetRoutesNamespaces(t *testing.T) {
 	}
 
 	// Bare namespace prefix → its INBOX.
-	_, _, relInbox, closeI := s.deliveryTarget(rcptUI, rcptBox, rcptIdx, "Public/", false)
+	_, _, relInbox, closeI := s.deliveryTarget(rcptUI, rcptBox, rcptMbox, "Public/", false)
 	if relInbox != "INBOX" {
 		t.Errorf("bare prefix rel = %q, want INBOX", relInbox)
 	}
@@ -127,8 +129,9 @@ func TestDeliveryTargetPostRight(t *testing.T) {
 		seedPostACL(t, publicDir, "News", "user=alice@x lrp\n")
 		s := newSession(publicDir, mb, idx)
 		ui, rcptBox, rcptIdx := newRcpt(t, root, mb, idx)
+		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx)
 
-		box, _, rel, done := s.deliveryTarget(ui, rcptBox, rcptIdx, "Public/News", true)
+		box, _, rel, done := s.deliveryTarget(ui, rcptBox, rcptMbox, "Public/News", true)
 		defer done()
 		if box == rcptBox {
 			t.Fatal("with post right, delivery must route to the public store")
@@ -145,8 +148,9 @@ func TestDeliveryTargetPostRight(t *testing.T) {
 		seedPostACL(t, publicDir, "News", "user=alice@x lr\n") // lookup+read, no post
 		s := newSession(publicDir, mb, idx)
 		ui, rcptBox, rcptIdx := newRcpt(t, root, mb, idx)
+		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx)
 
-		box, _, rel, done := s.deliveryTarget(ui, rcptBox, rcptIdx, "Public/News", true)
+		box, _, rel, done := s.deliveryTarget(ui, rcptBox, rcptMbox, "Public/News", true)
 		defer done()
 		if box != rcptBox {
 			t.Fatal("without post right, delivery must fall back to the recipient's store")
@@ -168,8 +172,9 @@ func TestDeliveryTargetPostRight(t *testing.T) {
 		seedPostACL(t, publicDir, "News", "user=alice@x lri\n") // insert, no post
 		s := newSession(publicDir, mb, idx)
 		ui, rcptBox, rcptIdx := newRcpt(t, root, mb, idx)
+		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx)
 
-		box, _, rel, done := s.deliveryTarget(ui, rcptBox, rcptIdx, "Public/News", true)
+		box, _, rel, done := s.deliveryTarget(ui, rcptBox, rcptMbox, "Public/News", true)
 		defer done()
 		if box != rcptBox {
 			t.Fatal("delivery routed to the public store for a peer holding only 'i'; the delivery right is 'p'")
@@ -185,8 +190,9 @@ func TestDeliveryTargetPostRight(t *testing.T) {
 		mb, idx := maildir.New(), fileindex.New()
 		s := newSession(publicDir, mb, idx) // no yarilo-acl seeded → zero rights
 		ui, rcptBox, rcptIdx := newRcpt(t, root, mb, idx)
+		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx)
 
-		box, _, rel, done := s.deliveryTarget(ui, rcptBox, rcptIdx, "Public/News", true)
+		box, _, rel, done := s.deliveryTarget(ui, rcptBox, rcptMbox, "Public/News", true)
 		defer done()
 		if box != rcptBox || rel != "INBOX" {
 			t.Errorf("no ACL: box==rcpt=%v rel=%q, want fallback to INBOX", box == rcptBox, rel)

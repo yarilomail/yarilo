@@ -3,7 +3,11 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
+	"log/slog"
+	"maps"
+	"net"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -11,40 +15,61 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 
+	"github.com/yarilomail/yarilo/pkg/build"
+	"github.com/yarilomail/yarilo/pkg/filelock"
+
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 // Config is the top-level yarilo configuration.
 type Config struct {
-	Mode               string                       `koanf:"mode"` // legacy single-binary; ignored by multi-process binaries
-	General            GeneralConfig                `koanf:"general"`
-	Services           ServicesConfig               `koanf:"services"`
-	Protocol           ProtocolConfig               `koanf:"protocol"`
-	Auth               AuthConfig                   `koanf:"auth"`
-	InternalTLS        InternalTLSConfig            `koanf:"internal_tls"`
-	AuthService        AuthServiceConfig            `koanf:"auth_service"`
-	WardenService      WardenServiceConfig          `koanf:"warden_service"`
-	DirectorService    DirectorServiceConfig        `koanf:"director_service"`
-	BackendRegister    BackendRegisterConfig        `koanf:"backend_register"`
-	IMAPLoginService   IMAPLoginServiceConfig       `koanf:"imap_login_service"`
-	POP3LoginService   POP3LoginServiceConfig       `koanf:"pop3_login_service"`
-	JMAPLoginService   JMAPLoginServiceConfig       `koanf:"jmap_login_service"`
-	JMAPService        JMAPServiceConfig            `koanf:"jmap_service"`
-	SubmissionLoginSvc SubmissionLoginServiceConfig `koanf:"submission_login_service"`
-	LMTPLoginService   LMTPLoginServiceConfig       `koanf:"lmtp_login_service"`
-	LocksService       LocksServiceConfig           `koanf:"locks_service"`
-	FTS                FTSConfig                    `koanf:"fts"`
-	AuthClient         AuthClientConfig             `koanf:"auth_client"`
-	Threading          ThreadingConfig              `koanf:"threading"`
-	LocksClient        LocksClientConfig            `koanf:"locks_client"`
-	Storage            StorageConfig                `koanf:"storage"`
-	Namespaces         []NamespaceConfig            `koanf:"namespaces"`
+	Mode string `koanf:"mode"` // legacy single-binary; ignored by multi-process binaries
+	// Hostname is what this installation calls itself: the domain part of a
+	// synthesised Message-ID, the LHLO banner, the Received header.
+	//
+	// One key rather than one per consumer. There were four consumers and no
+	// source: the backend LMTP filled nothing, so the Message-ID came out at a
+	// literal, and a top-level `hostname` in values-sandbox.yaml was read by
+	// nothing at all (#1506).
+	//
+	// Default: os.Hostname(). A literal would be wrong on every deployment
+	// equally, which reads as a setting nobody has to think about.
+	Hostname string `koanf:"hostname"`
+	// ChartVersion is written by the chart. Compared at load against the
+	// version the binary was built from, and never read for anything else.
+	ChartVersion string `koanf:"chart_version"`
+	// ConfigSchemaVersion is the chart's statement of which config keys its
+	// templates render. Zero means a chart from before this existed.
+	ConfigSchemaVersion int                          `koanf:"config_schema_version"`
+	General             GeneralConfig                `koanf:"general"`
+	Services            ServicesConfig               `koanf:"services"`
+	Protocol            ProtocolConfig               `koanf:"protocol"`
+	Auth                AuthConfig                   `koanf:"auth"`
+	InternalTLS         InternalTLSConfig            `koanf:"internal_tls"`
+	AuthService         AuthServiceConfig            `koanf:"auth_service"`
+	WardenService       WardenServiceConfig          `koanf:"warden_service"`
+	DirectorService     DirectorServiceConfig        `koanf:"director_service"`
+	BackendRegister     BackendRegisterConfig        `koanf:"backend_register"`
+	IMAPLoginService    IMAPLoginServiceConfig       `koanf:"imap_login_service"`
+	POP3LoginService    POP3LoginServiceConfig       `koanf:"pop3_login_service"`
+	JMAPLoginService    JMAPLoginServiceConfig       `koanf:"jmap_login_service"`
+	JMAPService         JMAPServiceConfig            `koanf:"jmap_service"`
+	SubmissionLoginSvc  SubmissionLoginServiceConfig `koanf:"submission_login_service"`
+	LMTPLoginService    LMTPLoginServiceConfig       `koanf:"lmtp_login_service"`
+	LocksService        LocksServiceConfig           `koanf:"locks_service"`
+	FTS                 FTSConfig                    `koanf:"fts"`
+	AuthClient          AuthClientConfig             `koanf:"auth_client"`
+	Threading           ThreadingConfig              `koanf:"threading"`
+	LocksClient         LocksClientConfig            `koanf:"locks_client"`
+	Storage             StorageConfig                `koanf:"storage"`
+	Namespaces          []NamespaceConfig            `koanf:"namespaces"`
 	// ACL is shared across protocols (IMAP RFC 4314, LMTP, POP3),
 	// so it lives at the top level rather than under protocol.imap.
 	ACL                     ACLConfig                     `koanf:"acl"`
 	Quota                   QuotaConfig                   `koanf:"quota"`
 	Dicts                   map[string]DictConfig         `koanf:"dicts"`
+	DictService             DictServiceConfig             `koanf:"dict_service"`
 	BackendAPI              BackendAPIConfig              `koanf:"backend_api"`
 	QuotaStatus             QuotaStatusConfig             `koanf:"quota_status"`
 	SASLLogin               SASLLoginConfig               `koanf:"sasl_login"`
@@ -200,6 +225,19 @@ type SieveConfig struct {
 	ReportUserAgent string `koanf:"sieve_report_user_agent"`
 }
 
+// DictServiceConfig points a session at yarilo-dict. The session names a dict;
+// the engines and their URIs live in the service's own Dicts section (#1733).
+type DictServiceConfig struct {
+	// DictAddr is the host:port of yarilo-dict. Empty means the process opens
+	// its own dicts, which only the dict service and the CLI do.
+	DictAddr string `koanf:"dict_addr"`
+	// DictListen is the address yarilo-dict serves on.
+	DictListen string `koanf:"dict_listen"`
+	// DictMaxConns bounds the connections one process keeps to one named dict.
+	// An iteration holds its connection to the end, so one is a queue (#1902).
+	DictMaxConns int `koanf:"dict_max_conns"`
+}
+
 // DictConfig declares one named dict instance. The Config.Dicts map key is
 // the logical name features reference; Driver selects the pkg/dict driver
 // (file|memory|fail|redis|sql) and Settings carries driver-specific knobs.
@@ -229,12 +267,11 @@ type NamespaceConfig struct {
 	Prefix string `koanf:"prefix"`
 	// Separator is the hierarchy delimiter; may differ per namespace.
 	Separator string `koanf:"separator"`
-	// List is the LIST exposure: yes (node + children), children (only the
-	// children -- the node itself is not a mailbox), no (addressable but not
-	// advertised). Bool spellings are accepted for compatibility. Unset takes
-	// the kind default: children for an owner-templated prefix, yes otherwise.
+	// List is the LIST exposure: yes, children or no; bool spellings are
+	// accepted. Unset: children for an owner-templated prefix, yes otherwise.
 	List string `koanf:"list"`
-	// Hidden hides matching mailboxes from LIST "" "*". Reserved for NS-1b.
+	// Hidden keeps the namespace out of the NAMESPACE response and nothing
+	// else; what LIST shows is List's decision.
 	Hidden bool `koanf:"hidden"`
 	// Subscriptions: whether this namespace keeps its own subscription file.
 	// Unset (nil) takes the default for the namespace kind -- see
@@ -255,9 +292,36 @@ type NamespaceConfig struct {
 	// MailDriver / MailPath are the split form of Location.
 	MailDriver string `koanf:"mail_driver"`
 	MailPath   string `koanf:"mail_path"`
+	// MailIndexPath is where this namespace writes its indexes, the split
+	// spelling of the location's INDEX= option. A shared definition directory
+	// is read-only, so its indexes go under the user instead.
+	MailIndexPath string `koanf:"mail_index_path"`
 	// IgnoreACL bypasses ACL enforcement for this namespace even when
 	// acl.enabled is true — for trusted admin/public roots.
 	IgnoreACL bool `koanf:"acl_ignore"`
+	// Mailboxes are created, or created and subscribed, for the user, keyed by
+	// the name inside the namespace (#2005).
+	Mailboxes map[string]NamespaceMailboxConfig `koanf:"mailboxes"`
+}
+
+// NamespaceMailboxConfig is one configured mailbox: auto is no, create or
+// subscribe; special_use is its RFC 6154 attribute, personal namespace only.
+type NamespaceMailboxConfig struct {
+	Auto       string `koanf:"auto"`
+	SpecialUse string `koanf:"special_use"`
+}
+
+// AutoMailboxes is the namespace's mailboxes block in the form sessions read.
+func (ns NamespaceConfig) AutoMailboxes() map[string]mailbox.AutoMailbox {
+	if len(ns.Mailboxes) == 0 {
+		return nil
+	}
+	out := make(map[string]mailbox.AutoMailbox, len(ns.Mailboxes))
+	for name, mb := range ns.Mailboxes {
+		mode, _ := mailbox.NormalizeAuto(mb.Auto)
+		out[name] = mailbox.AutoMailbox{Auto: mode, SpecialUse: strings.TrimSpace(mb.SpecialUse)}
+	}
+	return out
 }
 
 // foldNamespaceLocations turns the 2.4 split spelling (mail_driver + mail_path
@@ -271,6 +335,9 @@ func foldNamespaceLocations(nss []NamespaceConfig) error {
 		driver := strings.TrimSpace(ns.MailDriver)
 		path := strings.TrimSpace(ns.MailPath)
 		if driver == "" && path == "" {
+			if strings.TrimSpace(ns.MailIndexPath) != "" && strings.TrimSpace(ns.Location) == "" {
+				return fmt.Errorf("config: namespace %q sets mail_index_path and no location; the index belongs to a store this namespace does not name", ns.Prefix)
+			}
 			continue
 		}
 		if strings.TrimSpace(ns.Location) != "" {
@@ -280,6 +347,9 @@ func foldNamespaceLocations(nss []NamespaceConfig) error {
 			return fmt.Errorf("config: namespace %q sets only one of mail_driver/mail_path; the pair is what names a location", ns.Prefix)
 		}
 		ns.Location = driver + ":" + path
+		if idx := strings.TrimSpace(ns.MailIndexPath); idx != "" {
+			ns.Location += ":INDEX=" + idx
+		}
 	}
 	return nil
 }
@@ -337,12 +407,11 @@ type LimitsConfig struct {
 // ServiceConfig is per-listener configuration.
 // A nil pointer in ServicesConfig means the listener is not started.
 type ServiceConfig struct {
-	Enabled         bool       `koanf:"enabled"`
-	Port            int        `koanf:"port"`
-	ConnectionLimit int        `koanf:"connection_limit"` // 0 = unlimited
-	SSLMode         string     `koanf:"ssl_mode"`         // no | ssl | starttls
-	SSL             *SSLConfig `koanf:"ssl"`              // overrides general.ssl
-	HAProxy         bool       `koanf:"haproxy_protocol"`
+	Enabled bool       `koanf:"enabled"`
+	Port    int        `koanf:"port"`
+	SSLMode string     `koanf:"ssl_mode"` // no | ssl | starttls
+	SSL     *SSLConfig `koanf:"ssl"`      // overrides general.ssl
+	HAProxy bool       `koanf:"haproxy_protocol"`
 	// XClient enables native inbound client-IP forwarding on this listener
 	// (IMAP ID x-originating-ip, POP3/Submission XCLIENT); applied only when
 	// the socket peer is inside general.xclient.trusted_nets.
@@ -479,8 +548,33 @@ type LMTPProtocolConfig struct {
 	LoginGreeting string `koanf:"login_greeting"`
 	// AddReceivedHeader prepends a Received: header to delivered messages. Default: true.
 	AddReceivedHeader bool `koanf:"lmtp_add_received_header"`
+	// AddMessageID synthesises a Message-ID for a message that arrives without
+	// one. Default: true.
+	//
+	// A message stored without one is a message nothing can reply to and
+	// nothing can thread: it becomes its own root in the conversation sidecar,
+	// no later reply can name it, and JMAP reports messageId as null. That is
+	// permanent -- the header is part of the stored bytes, so it cannot be
+	// added afterwards without rewriting mail.
+	//
+	// The default is true because the two deployments differ in what they can
+	// lose. Behind an MTA the header is already present and this changes
+	// nothing; fed LMTP directly it is the only place the identity can still be
+	// given. false exists for an operator who wants the bytes untouched.
+	//
+	// An existing Message-ID is never rewritten, not even a malformed one:
+	// whatever a sender wrote is what a reply will quote back in References.
+	AddMessageID bool `koanf:"lmtp_add_message_id"`
 	// SaveToDetailMailbox delivers user+folder@domain to mailbox 'folder' instead of INBOX. Default: false.
 	SaveToDetailMailbox bool `koanf:"lmtp_save_to_detail_mailbox"`
+	// LDAMailboxAutocreate makes a missing folder a delivery names; off, the
+	// message goes to INBOX. A configured auto mailbox is made either way.
+	LDAMailboxAutocreate bool `koanf:"lda_mailbox_autocreate"`
+	// LDAMailboxAutosubscribe subscribes what LDAMailboxAutocreate makes.
+	LDAMailboxAutosubscribe bool `koanf:"lda_mailbox_autosubscribe"`
+	// QuotaFullTempfail answers a full mailbox 452 4.2.2 (retry) instead of
+	// 552 5.2.2 (bounce). Default: false.
+	QuotaFullTempfail bool `koanf:"quota_full_tempfail"`
 	// HdrDeliveryAddress controls the Delivered-To header: none | final | original. Default: "final".
 	HdrDeliveryAddress string `koanf:"lmtp_hdr_delivery_address"`
 	// VerboseReplies includes diagnostic details in error responses. Default: false.
@@ -491,6 +585,9 @@ type LMTPProtocolConfig struct {
 	// no limit MUST set -1 ("unlimited"), so a missing or zeroed config can
 	// never silently turn off the DoS guard.
 	UserConcurrencyLimit int `koanf:"lmtp_user_concurrency_limit"`
+	// MaxRecipients caps RCPTs per transaction, advertised as LIMITS RCPTMAX;
+	// past it 452 4.5.3. 0 = unlimited.
+	MaxRecipients int `koanf:"lmtp_max_recipients"`
 	// ReadTimeout is the per-command read timeout in seconds. Default: 300.
 	ReadTimeout int `koanf:"read_timeout"`
 	// WriteTimeout is the per-command write timeout in seconds. Default: 300.
@@ -517,7 +614,7 @@ type LMTPRateLimitConfig struct {
 	// Enabled gates the entire check. Default: true.
 	Enabled bool `koanf:"rate_limit_enabled"`
 	// PerRecipientBurst is the max deliveries per (sender IP, recipient
-	// mailbox) pair inside one window; excess gets 421 4.7.0. Default: 100.
+	// mailbox) pair inside one window; excess gets 451 4.7.0. Default: 100.
 	PerRecipientBurst int `koanf:"rate_limit_per_recipient_burst"`
 	// PerRecipientWindowSeconds is the sliding window width. Default: 60.
 	PerRecipientWindowSeconds int `koanf:"rate_limit_per_recipient_window_seconds"`
@@ -528,12 +625,13 @@ type LMTPRateLimitConfig struct {
 	PerRecipientWindowSecondsAlias int  `koanf:"per_recipient_window_seconds"`
 }
 
-// LMTPProxyConfig holds LMTP proxy settings used on director nodes.
-// Backends are taken from the director's ring (general settings); this section
-// only controls transport behaviour.
+// LMTPProxyConfig is read by yarilo-lmtp-login, which delivers each recipient
+// to the backend the director's LOOKUP names; the backend ignores it.
 type LMTPProxyConfig struct {
-	// Timeout is the per-backend connection+transaction timeout in seconds. Default: 125.
-	Timeout int `koanf:"timeout"`
+	// ProxyTimeout caps lmtp-login's backend dial and transaction, in seconds. Default: 125.
+	ProxyTimeout int `koanf:"lmtp_proxy_timeout"`
+	// Pre-beta spelling without the section prefix, removed after beta.
+	TimeoutAlias int `koanf:"timeout"`
 }
 
 type IMAPProtocolConfig struct {
@@ -678,8 +776,8 @@ type InternalTLSConfig struct {
 // (protocol.imap.imap_quota), which only exposes GETQUOTA.
 type QuotaConfig struct {
 	Enabled bool `koanf:"enabled"`
-	// Name is the quota-root name surfaced in IMAP GETQUOTA / GETQUOTAROOT.
-	// Empty falls back to "User quota".
+	// Name is the quota-root name surfaced to clients: IMAP GETQUOTA and the
+	// JMAP Quota objects. Empty falls back to "User quota".
 	Name string `koanf:"quota_name"`
 	// ExceededMessage is the text returned when a save is rejected for being
 	// over quota (IMAP OVERQUOTA, LMTP 452, quota-status). Empty uses a default.
@@ -801,6 +899,11 @@ type QuotaStatusConfig struct {
 	// Nouser is the policy action returned when the recipient is unknown in
 	// userdb. Default "REJECT Unknown user"; empty falls back to DUNNO.
 	Nouser string `koanf:"quota_status_nouser"`
+	// Success, Toolarge and Overquota are the actions for a recipient that
+	// fits, a message larger than allowed, and a full mailbox; %{error} is the reason.
+	Success   string `koanf:"quota_status_success"`
+	Toolarge  string `koanf:"quota_status_toolarge"`
+	Overquota string `koanf:"quota_status_overquota"`
 	// DefaultQuotaRules are the site-wide quota limits applied when no
 	// per-user rules are available (userdb lookup not yet wired in this phase).
 	// Format matches yarilo.yaml quota_rule: ["*:storage=5G", "Trash:storage=+1G"].
@@ -860,15 +963,17 @@ type LoginConfig struct {
 	// re-LOGIN. This caps how many such failures one connection tolerates
 	// before it is closed. Independent of auth_max_attempts. 0 = default (3).
 	TransientReloginCap int `koanf:"transient_relogin_cap"`
+	// LoginProxyTimeout bounds, in seconds, reaching a backend and bringing the
+	// session up there; a userdb proxy_timeout overrides it. 0 = default (30).
+	LoginProxyTimeout int `koanf:"login_proxy_timeout"`
 }
 
 // SASLLoginConfig configures yarilo-sasl-login: a fronting MTA (Postfix)
 // connects here and each session is proxied to yarilo-auth, keeping the
 // yarilo-auth socket internal.
 type SASLLoginConfig struct {
-	// Listen is the TCP address Postfix connects to.
-	// Postfix: smtpd_sasl_path = inet:<host>:<port>
-	// Default: ":12325"
+	// Listen is the TCP address Postfix's smtpd_sasl_path names; default ":12345",
+	// the port Postfix SASL setups commonly use.
 	Listen string `koanf:"listen"`
 	// AuthAddr is the yarilo-auth client-protocol address to dial.
 	// Defaults to auth_service.addr when empty.
@@ -903,12 +1008,18 @@ type WardenServiceConfig struct {
 	// from the login rate. The protocol has no request id — one connection
 	// serves one command at a time. 0 = warden.DefaultPoolSize.
 	Conns int `koanf:"conns"`
+	// EventQueueSize caps the SELECT events a backend queues for the warden
+	// writer. The events are accounting, so a full queue drops the oldest
+	// rather than holding a command; zero takes the built-in default.
+	EventQueueSize int `koanf:"warden_service_event_queue_size"`
 	// StateBackend selects the shared-state store: "memory" (default, single
 	// replica) or "redis" (survives restart, required for replicas > 1).
 	StateBackend string `koanf:"state_backend"`
 	// RedisAddr is the Redis URL used when StateBackend="redis".
 	// Format: redis://[password@]host:port/db
 	RedisAddr string `koanf:"redis_addr"`
+	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
+	RedisPassword string `koanf:"redis_password"`
 	// KeyPrefix / ChannelPrefix namespace warden's Redis keys and Pub/Sub
 	// channels. Empty = defaults "yarilo:warden:" / "yarilo:warden:events:".
 	KeyPrefix     string `koanf:"key_prefix"`
@@ -1058,16 +1169,14 @@ type LocksClientConfig struct {
 	Mode      string   `koanf:"mode"`      // remote | embedded | ""
 	Endpoints []string `koanf:"endpoints"` // remote: ["yarilo-locks.svc:9104", ...]
 	Socket    string   `koanf:"socket"`    // embedded: /run/yarilo/locks.sock
-	// StartupWaitSeconds is how long a component keeps retrying the first
-	// connection before giving up. Pod start order is not guaranteed and the
-	// lock service is a separate deployment, so "not up yet" is ordinary;
-	// exiting on it costs a restart and, worse, spends the RESTARTS counter
-	// every rollout is judged by (#1350).
-	//
-	// Bounded rather than infinite: a genuinely wrong endpoint must still fail
-	// loudly instead of retrying for ever behind a healthy-looking pod. Zero
-	// selects the default; negative disables waiting.
+	// StartupWaitSeconds bounds the first wait for the lock service. Zero
+	// selects the default; negative disables waiting (#1350).
 	StartupWaitSeconds int `koanf:"locks_client_startup_wait"`
+	// WaitPoolSize caps the connections kept for waiting acquires. A waiting
+	// call holds its connection for as long as it waits, so this is sized for
+	// concurrent waiters rather than for round trips; zero selects the
+	// built-in default.
+	WaitPoolSize int `koanf:"locks_client_wait_pool_size"`
 }
 
 // DefaultAuthStartupWait is the built-in bound for waiting on auth at startup.
@@ -1077,11 +1186,8 @@ const DefaultAuthStartupWait = 30 * time.Second
 // on the first connection.
 const DefaultLocksStartupWait = 30 * time.Second
 
-// StartupWait resolves the configured window.
 // StartupWait is how long a process waits at startup for auth to answer. Zero
-// selects the default; negative turns the waiting off. Written once here, as
-// the locks knob is, so the two startup waits read the same way and neither
-// grows its own idea of what zero means.
+// selects the default; negative turns the waiting off.
 func (c AuthServiceConfig) StartupWait() time.Duration {
 	switch {
 	case c.StartupWaitSeconds == 0:
@@ -1388,6 +1494,7 @@ type LocksServiceConfig struct {
 	Socket        string         `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
 	Listen        string         `koanf:"listen"`         // remote: ":9104"
 	Redis         string         `koanf:"redis"`          // remote: "redis://host:6379/0"
+	RedisPassword string         `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
 	KeyPrefix     string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
 	ChannelPrefix string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
 	Shutdown      ShutdownConfig `koanf:"shutdown"`
@@ -1410,6 +1517,14 @@ type DirectorAPIConfig struct {
 	Listen      string   `koanf:"listen"`       // default ":9103"
 	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR}
 	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
+	// AuthDisabled is the only way to run the API without a token.
+	AuthDisabled bool `koanf:"auth_disabled"`
+}
+
+// Gate returns the token and networks the director API checks, or why the
+// API must not start.
+func (c DirectorAPIConfig) Gate() (string, []*net.IPNet, error) {
+	return apiGate("director_service.api", c.Token, c.AuthDisabled, c.AllowedNets)
 }
 
 // BackendRegisterConfig configures the co-located pod's director registration
@@ -1569,7 +1684,19 @@ type DirectorServiceConfig struct {
 	// from username_hash_lowercase (%Lu / %u) for byte-identical back-compat. When set,
 	// it — not the bool — governs case-folding. Invalid templates fail loudly at startup.
 	UsernameHash     string `koanf:"username_hash"`
-	AssignmentPolicy string `koanf:"assignment_policy"` // hash | least_sessions (#797); default hash
+	AssignmentPolicy string `koanf:"assignment_policy"` // hash | least_sessions (#797) | domain (#1943); default hash
+	// DomainExpire is how long (seconds) a domain keeps its backend with no
+	// session on it, under assignment_policy: domain. Its own knob rather than
+	// the user TTL: a domain forgotten between two logins is placed again
+	// elsewhere, and a shared mailbox loses the affinity it was given (#1943).
+	DomainExpire int `koanf:"director_domain_expire"`
+	// DomainRebalancePercent is how far the busiest backend of a tag may rise
+	// above the quietest, in percent, before one domain is moved down; 0 never
+	// moves one. DomainRebalanceInterval is how often that is judged and
+	// DomainRebalanceCooldown how long a moved domain is left alone.
+	DomainRebalancePercent  int `koanf:"director_domain_rebalance_percent"`
+	DomainRebalanceInterval int `koanf:"director_domain_rebalance_interval"`
+	DomainRebalanceCooldown int `koanf:"director_domain_rebalance_cooldown"`
 	// UserKickDelay is how long (seconds) an admin-initiated kick is delayed
 	// before the USER-KICKED is pushed (#740), giving a user's in-flight
 	// command on the old backend a grace window to complete after a move.
@@ -1633,18 +1760,6 @@ type DirectorServiceConfig struct {
 	// 15-second script would otherwise be killed for ever, leaving nothing
 	// behind but a WARN on the server (#1352). Zero selects the default.
 	FlushProgramTimeoutSeconds int `koanf:"flush_program_timeout"`
-	// LMTPListen enables the director's embedded LMTP proxy (per-recipient
-	// fan-out via ring routing) on this address, e.g. ":10024". Empty =
-	// disabled. This deliberately does NOT reuse the shared services.lmtp
-	// block: that block belongs to the lmtp/lmtp-login pods, and gating the
-	// director proxy on it forced the Helm chart to rewrite services.lmtp
-	// whenever the director was enabled — silently breaking lmtp-login
-	// (#748 item 1).
-	LMTPListen string `koanf:"lmtp_listen"`
-	// LMTPBackendPort is the LMTP port dialed on ring backends by the
-	// embedded proxy. 0 = the port parsed from LMTPListen (the pre-#748
-	// behavior, where both were services.lmtp.port).
-	LMTPBackendPort int `koanf:"lmtp_backend_port"`
 }
 
 // IMAPLoginServiceConfig configures the yarilo-imap-login proxy.
@@ -1756,6 +1871,9 @@ type ManageSieveProtocolConfig struct {
 	// MaxInvalidCommands is the number of unrecognised pre-auth commands
 	// after which the server sends BYE and closes the connection. Default: 3.
 	MaxInvalidCommands int `koanf:"max_invalid_commands"`
+	// MaxLineLength bounds, in bytes, a command line and every literal but a
+	// script's body, which sieve_max_script_size bounds. 0 = 65536.
+	MaxLineLength int `koanf:"managesieve_max_line_length"`
 }
 
 // LMTPLoginServiceConfig configures the yarilo-lmtp-login proxy.
@@ -1788,6 +1906,8 @@ type BackendAPIConfig struct {
 	Listen      string   `koanf:"listen"`       // ":9105" default
 	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR} via koanf
 	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
+	// AuthDisabled is the only way to run the API without a token.
+	AuthDisabled bool `koanf:"auth_disabled"`
 
 	// AuthMasterAddr is the yarilo-auth master-protocol listener
 	// (typically the same `yarilo-auth.<release>:9102` the
@@ -1821,7 +1941,10 @@ type AuthConfig struct {
 	// make on a single connection before the server sends BYE / -ERR and
 	// closes. Applies to IMAP and POP3; SMTP submission always closes after
 	// the first failure. Default 3.
-	MaxAttempts int `koanf:"max_attempts"`
+	MaxAttempts int `koanf:"auth_max_attempts"`
+	// MaxAttemptsAlias is the pre-prefix spelling, kept so a config written
+	// against it still parses.
+	MaxAttemptsAlias int `koanf:"max_attempts"`
 
 	// FailureDelaySeconds is the timing-leak mitigation: every
 	// failed auth reply (wrong password, unknown user, malformed
@@ -1908,7 +2031,7 @@ const (
 // setup the reference expresses as oauth2_openid_configuration_url, and
 // oauth2_mode / oauth2_audience / oauth2_prefer_introspection /
 // oauth2_http_timeout_ms / oauth2_token_expire_grace_seconds have no reference
-// counterpart at all. oauth2_issuers IS a reference key (2.4.4 db-oauth2.c:39)
+// counterpart at all. oauth2_issuers IS a reference key in 2.4.4
 // and belongs to the first group -- corrected here so the comment and the
 // inventory agree, because a classification that drifts reads as permission to
 // change the key.
@@ -2023,6 +2146,8 @@ type AuthTokenConfig struct {
 	// RedisAddr is a Redis URL used when Backend="redis".
 	// Format: redis://[password@]host:port/db
 	RedisAddr string `koanf:"redis_addr"`
+	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
+	RedisPassword string `koanf:"redis_password"`
 	// KeyPrefix namespaces token keys in Redis (#939). The installation
 	// boundary: two installs sharing one Redis need distinct prefixes or their
 	// token keys collide. Empty keeps the default "yarilo:authtoken:".
@@ -2203,6 +2328,27 @@ type StorageConfig struct {
 	// Canonical spelling; "mailbox" is the pre-beta alias.
 	MailDriver  string `koanf:"mail_driver"`
 	MaildirRoot string `koanf:"maildir_root"`
+	// LockMethod is how a write to a shared file excludes another writer:
+	// flock (default), fcntl or dotlock (#1840).
+	LockMethod string `koanf:"storage_lock_method"`
+	// LockStaleTimeout is how long a dotlock may sit unchanged before a waiter
+	// takes it over, in seconds: unset keeps the reference's 180, -1 never
+	// takes one over. Only dotlock has the question: flock and fcntl die with
+	// the process that held them (#1831).
+	LockStaleTimeout int `koanf:"storage_lock_stale_timeout"`
+	// MailCachePurgeDeletePercentage is the share of a folder cache's records
+	// whose messages are gone that purges it: unset keeps 20, -1 never purges.
+	MailCachePurgeDeletePercentage int `koanf:"mail_cache_purge_delete_percentage"`
+	// MailCachePurgeContinuedPercentage is continued cache records against live
+	// ones that purges the cache; unset keeps 200.
+	MailCachePurgeContinuedPercentage int `koanf:"mail_cache_purge_continued_percentage"`
+	// MailCachePurgeMinSize is the cache file size below which nothing purges
+	// it; unset keeps 32 KiB, "0" purges at any size.
+	MailCachePurgeMinSize    int64  `koanf:"-"` // resolved from MailCachePurgeMinSizeRaw at load
+	MailCachePurgeMinSizeRaw string `koanf:"mail_cache_purge_min_size"`
+	// MailFsync is what reaches the disk before a delivery is acknowledged:
+	// never, optimized (default, the body) or always (#1847).
+	MailFsync string `koanf:"mail_fsync"`
 	// MailHome is the per-user home template (%u/%n/%d/%h). Canonical
 	// spelling; "mail_home_template" is the pre-beta alias.
 	MailHome      string `koanf:"mail_home"`
@@ -2467,7 +2613,8 @@ func Load(path string) (*Config, error) {
 	}
 	defaultTrustedNets := []string{"127.0.0.1/32", "10.0.0.0/8"}
 	cfg := &Config{
-		Mode: "single",
+		Mode:     "single",
+		Hostname: defaultHostname(),
 		General: GeneralConfig{
 			SSL: SSLConfig{SSLMinProtocol: "TLS1.2"},
 			HAProxy: HAProxyConfig{
@@ -2529,10 +2676,12 @@ func Load(path string) (*Config, error) {
 			LMTP: LMTPProtocolConfig{
 				LoginGreeting:        "Yarilo ready.",
 				AddReceivedHeader:    true,
+				AddMessageID:         true,
 				HdrDeliveryAddress:   "final",
 				ReadTimeout:          300,
 				WriteTimeout:         300,
 				UserConcurrencyLimit: 10,
+				Proxy:                LMTPProxyConfig{ProxyTimeout: 125},
 				RateLimit: LMTPRateLimitConfig{
 					Enabled:                   true,
 					PerRecipientBurst:         100,
@@ -2648,7 +2797,8 @@ func Load(path string) (*Config, error) {
 				AllowedNets: nil,
 			},
 		},
-		QuotaStatus: QuotaStatusConfig{Listen: ":12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user"},
+		QuotaStatus: QuotaStatusConfig{Listen: ":12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user",
+			Success: "OK", Overquota: "554 5.2.2 %{error}"},
 		Quota: QuotaConfig{
 			Name:              "User quota",
 			ExceededMessage:   "Quota exceeded (mailbox for user is full)",
@@ -2690,7 +2840,7 @@ func Load(path string) (*Config, error) {
 			DecoderTimeoutSecs: 30,
 		},
 		SASLLogin: SASLLoginConfig{
-			Listen:         ":12325",
+			Listen:         ":12345",
 			HAProxyTimeout: 3,
 		},
 		Telemetry: TelemetryConfig{
@@ -2746,7 +2896,12 @@ func Load(path string) (*Config, error) {
 			return nil, err
 		}
 	}
+	if err := refuseRemovedKeys(k, removedKeys()); err != nil {
+		return nil, err
+	}
 	warnRetiredKeys(k, retiredKeys())
+	warnChartSkew(cfg.ChartVersion)
+	warnConfigSchemaSkew(cfg.ConfigSchemaVersion)
 	if err := refuseInvertedPairs(cfg); err != nil {
 		return nil, err
 	}
@@ -2771,8 +2926,21 @@ func resolveSize(name, raw string) (int64, error) {
 	return n, nil
 }
 
+// validateMailDriver refuses a driver nothing implements: the storage layer
+// falls back to maildir, so a typo would be mail on disk in another format.
+func validateMailDriver(driver string) error {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "", "maildir", "mdbox", "sdbox", "dbox", "virtual":
+		return nil
+	}
+	return fmt.Errorf("config: storage.mail_driver %q is not a driver this build has: maildir, mdbox, sdbox (dbox), virtual", driver)
+}
+
 func (cfg *Config) validate() error {
 	if err := foldNamespaceLocations(cfg.Namespaces); err != nil {
+		return err
+	}
+	if err := validateMailDriver(cfg.Storage.MailDriver); err != nil {
 		return err
 	}
 	if err := validateStorageEscapeChar(cfg.Storage.MailboxListStorageEscapeChar); err != nil {
@@ -2780,6 +2948,16 @@ func (cfg *Config) validate() error {
 	}
 	if err := ValidateNamespaceTypes(cfg.Namespaces); err != nil {
 		return err
+	}
+	if err := validateSharedNamespacesNeedACL(cfg.Namespaces, cfg.ACL.Enabled); err != nil {
+		return err
+	}
+	if err := cfg.foldSpecialUse(); err != nil {
+		return err
+	}
+	if cfg.Protocol.LMTP.LDAMailboxAutosubscribe && !cfg.Protocol.LMTP.LDAMailboxAutocreate {
+		return fmt.Errorf("config: lda_mailbox_autosubscribe subscribes what lda_mailbox_autocreate makes; " +
+			"it does nothing with lda_mailbox_autocreate off")
 	}
 	if err := ValidateFTSIndexRoot(cfg.FTS.IndexRoot); err != nil {
 		return err
@@ -2796,6 +2974,9 @@ func (cfg *Config) validate() error {
 			return fmt.Errorf("config: acl_sharing_map names dict %q, which is not in the dicts section; "+
 				"a misspelt name would silently disable owner discovery", name)
 		}
+	}
+	if err := validateDictPrefixes(cfg.Dicts); err != nil {
+		return err
 	}
 	if cfg.InternalTLS.Enabled {
 		if cfg.InternalTLS.Cert == "" || cfg.InternalTLS.Key == "" || cfg.InternalTLS.CA == "" {
@@ -2832,6 +3013,7 @@ func (cfg *Config) validate() error {
 	resolve("fts.fts_prefetch_max_bytes", cfg.FTS.PrefetchMaxBytesRaw, &cfg.FTS.PrefetchMaxBytes)
 	resolve("storage.mail_index_log_rotate_min_size", cfg.Storage.MailIndexLogRotateMinSizeRaw, &cfg.Storage.MailIndexLogRotateMinSize)
 	resolve("storage.mail_index_log_rotate_max_size", cfg.Storage.MailIndexLogRotateMaxSizeRaw, &cfg.Storage.MailIndexLogRotateMaxSize)
+	resolve("storage.mail_cache_purge_min_size", cfg.Storage.MailCachePurgeMinSizeRaw, &cfg.Storage.MailCachePurgeMinSize)
 	resolve("protocol.jmap.jmap_max_size_upload", cfg.Protocol.JMAP.MaxSizeUploadRaw, &cfg.Protocol.JMAP.MaxSizeUpload)
 	resolve("protocol.jmap.jmap_max_size_request", cfg.Protocol.JMAP.MaxSizeRequestRaw, &cfg.Protocol.JMAP.MaxSizeRequest)
 	resolve("protocol.jmap.jmap_max_body_value_bytes", cfg.Protocol.JMAP.MaxBodyValueBytesRaw, &cfg.Protocol.JMAP.MaxBodyValueBytes)
@@ -2844,6 +3026,24 @@ func (cfg *Config) validate() error {
 		return err
 	}
 	cfg.FTS.DetectionSampleBytes = int(dsb)
+	// A typo in a durability or an exclusion setting must refuse the start, not
+	// be replaced by a default nobody asked for (#1847).
+	if _, err := mailbox.ParseFsyncMode(cfg.Storage.MailFsync); err != nil {
+		return fmt.Errorf("config: storage.mail_fsync: %w", err)
+	}
+	if _, err := filelock.Parse(cfg.Storage.LockMethod); err != nil {
+		return fmt.Errorf("config: storage.storage_lock_method: %w", err)
+	}
+	if cfg.Storage.LockStaleTimeout < -1 {
+		return fmt.Errorf("config: storage.storage_lock_stale_timeout: %d is neither a duration nor -1 (never take a dotlock over)",
+			cfg.Storage.LockStaleTimeout)
+	}
+	if p := cfg.Storage.MailCachePurgeContinuedPercentage; p < 0 {
+		return fmt.Errorf("config: storage.mail_cache_purge_continued_percentage: %d is a negative share", p)
+	}
+	if p := cfg.Storage.MailCachePurgeDeletePercentage; p < -1 || p > 100 {
+		return fmt.Errorf("config: storage.mail_cache_purge_delete_percentage: %d is neither a percentage nor -1 (never purge on its own)", p)
+	}
 	return nil
 }
 
@@ -2913,6 +3113,9 @@ func expandEnv(cfg *Config) {
 	cfg.DirectorService.API.Token = expand(cfg.DirectorService.API.Token)
 	cfg.DirectorService.RingSecret = expand(cfg.DirectorService.RingSecret)
 	cfg.BackendAPI.Token = expand(cfg.BackendAPI.Token)
+	cfg.Auth.Token.RedisPassword = expand(cfg.Auth.Token.RedisPassword)
+	cfg.WardenService.RedisPassword = expand(cfg.WardenService.RedisPassword)
+	cfg.LocksService.RedisPassword = expand(cfg.LocksService.RedisPassword)
 	cfg.Protocol.Submission.Relay.Password = expand(cfg.Protocol.Submission.Relay.Password)
 	for i := range cfg.Auth.Passdb {
 		cfg.Auth.Passdb[i].DSN = expand(cfg.Auth.Passdb[i].DSN)
@@ -3052,8 +3255,147 @@ func ValidateNamespaceTypes(namespaces []NamespaceConfig) error {
 		if err := validateOwnerTemplatedNamespace(i, ns); err != nil {
 			return err
 		}
+		if err := validateNamespaceMailboxes(namespaces, i); err != nil {
+			return err
+		}
 	}
 	return validateNamespaceFileSlugs(namespaces)
+}
+
+// validateSharedNamespacesNeedACL refuses a non-personal namespace with ACL off:
+// every user would read, write and expunge every mailbox under it.
+func validateSharedNamespacesNeedACL(namespaces []NamespaceConfig, aclEnabled bool) error {
+	if aclEnabled {
+		return nil
+	}
+	for i, ns := range namespaces {
+		if t := strings.ToLower(strings.TrimSpace(ns.Type)); t != "personal" {
+			return fmt.Errorf("config: namespace %d (type %s, prefix %q) opens its mailboxes to every user "+
+				"while acl.enabled is false; set acl.enabled: true and grant access by ACL "+
+				"(anyone lrs for a folder everyone may read)", i, t, ns.Prefix)
+		}
+	}
+	return nil
+}
+
+// validateDictPrefixes refuses a %-variable in a dict prefix: a dict opens once
+// per process, nothing expands it, and the key already carries priv/<user>/.
+func validateDictPrefixes(dicts map[string]DictConfig) error {
+	for _, name := range slices.Sorted(maps.Keys(dicts)) {
+		dc := dicts[name]
+		if prefix, _ := dc.Settings["prefix"].(string); dc.Driver != "file" && strings.Contains(prefix, "%") {
+			return fmt.Errorf("config: dict %q prefix %q holds a %%-variable, which is never expanded: "+
+				"the dict opens once per process and every user would share the literal; "+
+				"drop it, the key already carries priv/<user>/", name, prefix)
+		}
+	}
+	return nil
+}
+
+// validateNamespaceMailboxes refuses an unknown auto mode or attribute, auto in
+// a namespace with no store of its own, and special_use outside the personal one.
+func validateNamespaceMailboxes(namespaces []NamespaceConfig, i int) error {
+	ns := namespaces[i]
+	if len(ns.Mailboxes) == 0 {
+		return nil
+	}
+	shapes := NamespaceShapes(namespaces)
+	primary := i == mailbox.PrimaryPersonalIndex(shapes)
+	for _, name := range sortedMailboxNames(ns.Mailboxes) {
+		mb := ns.Mailboxes[name]
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("config: namespace %d (prefix %q) has a mailboxes entry with no name", i, ns.Prefix)
+		}
+		mode, ok := mailbox.NormalizeAuto(mb.Auto)
+		if !ok {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has unknown auto %q; "+
+				"valid values are no, create and subscribe", i, ns.Prefix, name, mb.Auto)
+		}
+		if mode != mailbox.AutoNo && strings.HasPrefix(strings.ToLower(strings.TrimSpace(ns.Location)), "virtual:") {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has auto %s, but a virtual "+
+				"mailbox is made by its configuration file", i, ns.Prefix, name, mode)
+		}
+		if mode != mailbox.AutoNo && !primary && !namespaceHoldsItsOwnStore(shapes, i, ns) {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has auto %s, but the namespace "+
+				"has no store of its own to create it in", i, ns.Prefix, name, mode)
+		}
+		attr := strings.TrimSpace(mb.SpecialUse)
+		if attr == "" {
+			continue
+		}
+		if !mailbox.IsSpecialUseAttr(attr) {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has special_use %q, which is not "+
+				"a special-use attribute", i, ns.Prefix, name, attr)
+		}
+		if !primary {
+			return fmt.Errorf("config: namespace %d (prefix %q) mailbox %q has special_use %s; special_use "+
+				"is kept for the personal namespace only", i, ns.Prefix, name, attr)
+		}
+	}
+	return nil
+}
+
+// namespaceHoldsItsOwnStore is a personal namespace with its own store, or a
+// shared one at a fixed location: somewhere a mailbox can be made for the user.
+func namespaceHoldsItsOwnStore(shapes []mailbox.NamespaceShape, i int, ns NamespaceConfig) bool {
+	if mailbox.OwnsStore(shapes, i) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(ns.Type), "shared") &&
+		strings.TrimSpace(ns.Location) != "" && !mailbox.PrefixIsOwnerTemplated(ns.Prefix)
+}
+
+func sortedMailboxNames(m map[string]NamespaceMailboxConfig) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// PersonalAutoMailboxes is the primary personal namespace's mailboxes block,
+// for a server that sees that namespace only.
+func (cfg *Config) PersonalAutoMailboxes() map[string]mailbox.AutoMailbox {
+	if i := mailbox.PrimaryPersonalIndex(NamespaceShapes(cfg.Namespaces)); i >= 0 {
+		return cfg.Namespaces[i].AutoMailboxes()
+	}
+	return nil
+}
+
+// foldSpecialUse makes imap_special_use_defaults and the personal namespace's
+// special_use one map; one name with two different attributes refuses startup.
+func (cfg *Config) foldSpecialUse() error {
+	i := mailbox.PrimaryPersonalIndex(NamespaceShapes(cfg.Namespaces))
+	if i < 0 || len(cfg.Namespaces[i].Mailboxes) == 0 {
+		return nil
+	}
+	ns := cfg.Namespaces[i]
+	for _, name := range sortedMailboxNames(ns.Mailboxes) {
+		attr := strings.TrimSpace(ns.Mailboxes[name].SpecialUse)
+		if attr == "" {
+			continue
+		}
+		if prev, ok := cfg.Protocol.IMAP.SpecialUseDefaults[name]; ok && prev != attr {
+			return fmt.Errorf("config: mailbox %q has special_use %s in namespaces.mailboxes and %s in "+
+				"imap_special_use_defaults; give it one", name, attr, prev)
+		}
+		if cfg.Protocol.IMAP.SpecialUseDefaults == nil {
+			cfg.Protocol.IMAP.SpecialUseDefaults = map[string]string{}
+		}
+		cfg.Protocol.IMAP.SpecialUseDefaults[name] = attr
+	}
+	return nil
+}
+
+// NamespaceShapes is the set as pkg/mailbox reads it, so the loader and a
+// session decide which namespace owns INBOX by one rule (#2038).
+func NamespaceShapes(namespaces []NamespaceConfig) []mailbox.NamespaceShape {
+	out := make([]mailbox.NamespaceShape, len(namespaces))
+	for i, ns := range namespaces {
+		out[i] = mailbox.NamespaceShape{Type: ns.Type, Location: ns.Location, Inbox: ns.Inbox}
+	}
+	return out
 }
 
 // validateNamespaceFileSlugs fails startup when two namespaces would write their
@@ -3064,8 +3406,9 @@ func ValidateNamespaceTypes(namespaces []NamespaceConfig) error {
 // costs nothing and cannot be mistaken for a storage bug later.
 func validateNamespaceFileSlugs(namespaces []NamespaceConfig) error {
 	seen := make(map[string]int, len(namespaces))
+	shapes := NamespaceShapes(namespaces)
 	for i, ns := range namespaces {
-		slug := mailbox.NamespaceSubsFile(ns.Prefix, ns.Separator, ns.Type)
+		slug := mailbox.SubsFileFor(shapes, i, ns.Prefix, ns.Separator)
 		if j, dup := seen[slug]; dup {
 			return fmt.Errorf("config: namespaces %d (prefix %q) and %d (prefix %q) both use the on-disk name %q "+
 				"for their per-namespace state; give one a distinct prefix", j, namespaces[j].Prefix, i, ns.Prefix, slug)
@@ -3246,4 +3589,153 @@ func ValidateFTSIndexRoot(root string) error {
 		return fmt.Errorf("config: fts_index_root %q has no path after the driver", root)
 	}
 	return nil
+}
+
+// defaultHostname is what this host calls itself when nothing says otherwise.
+//
+// os.Hostname rather than a literal: a literal is wrong on every deployment
+// equally, which is how "yarilo" ended up in the domain part of message
+// identifiers that outlive the deployment (#1506). An empty result is left
+// empty for validate to refuse, rather than papered over here.
+func defaultHostname() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
+// SubmissionHostname is the name submission announces: its own key when set,
+// otherwise the installation's.
+//
+// Resolved here rather than at each call site, because "when set" cannot be
+// read off the struct: a submission hostname of "" is indistinguishable from
+// an absent one once unmarshalled, and four call sites deciding that
+// separately is four chances to decide it differently.
+func (cfg *Config) SubmissionHostname() string {
+	if cfg.Protocol.Submission.Hostname != "" {
+		return cfg.Protocol.Submission.Hostname
+	}
+	return cfg.Hostname
+}
+
+// warnChartSkew says so when the ConfigMap was rendered by a different chart
+// version than the binary was built beside.
+//
+// Versions, not commits: dozens of commits share one chart version on develop,
+// so dev.5 and dev.10 are both silent against the same chart. What this catches
+// is a chart from another RELEASE -- most usefully an older one, whose
+// templates do not render keys this binary reads.
+//
+// `helm upgrade --set image.tag=X` deploys a new image with whatever chart the
+// working copy holds, and nothing reports the pairing. A gate run got a binary
+// that reads a config key the chart in the checkout did not render: the key was
+// simply absent, the binary used its default, and the symptom -- three pod
+// names where one configured hostname was expected -- read as the code taking
+// the wrong knob (#1509).
+//
+// Both values are the CHART's version, not the image tag, so they are equal on
+// develop, where the chart stands still while dev images are numbered, and on
+// master, where the two rise together.
+//
+// A warning rather than a refusal: an operator may have a reason, and a mail
+// server that will not start because two strings differ is a worse failure than
+// the one being guarded.
+// minConfigSchema is the schema this binary needs the ConfigMap to have been
+// rendered at. Raised in the same commit that starts reading a key the chart
+// did not render before, together with the entry in schemaAdditions below and
+// the bump in values.yaml.
+const minConfigSchema = 8
+
+// schemaAdditions names what each schema version started rendering, so a
+// warning can say which settings are being defaulted rather than only that a
+// number is behind. Keyed by the version that introduced them.
+//
+// Version 1 is what a chart that never heard of the schema does not render.
+// Not empty: a ConfigMap from such a chart reports 0, and a warning that named
+// nobody would be the "N is lower than M" the version number alone already
+// gives.
+var schemaAdditions = map[int][]string{
+	1: {"chart_version", "config_schema_version", "hostname", "lmtp_add_message_id"},
+	2: {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
+	3: {"quota_full_tempfail"},
+	4: {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
+	5: {"lmtp_proxy_timeout"},
+	6: {"login_proxy_timeout"},
+	7: {"managesieve_max_line_length"},
+	8: {"lmtp_max_recipients"},
+}
+
+// warnConfigSchemaSkew says which settings this binary reads that the chart
+// that rendered the ConfigMap does not write.
+//
+// warnChartSkew cannot answer this. It compares chart versions, and the chart
+// version does not move on develop -- dozens of template changes share one
+// number, so a ConfigMap rendered from a stale checkout of that same number is
+// silent. That is not a corner case: it is every change between two releases,
+// and it once cost a day, with three pod names where one configured hostname
+// was expected reading as a code defect (#1528).
+func warnConfigSchemaSkew(fromConfig int) {
+	if build.ChartVersion == "dev" {
+		// A local build is not deployed from a chart.
+		return
+	}
+	if fromConfig >= minConfigSchema {
+		return
+	}
+	missing := defaultedByOlderSchema(fromConfig, minConfigSchema, schemaAdditions)
+	slog.Warn("config: the ConfigMap was rendered by a chart older than this binary needs; the settings named below are absent and silently defaulted",
+		"configmap_schema", fromConfig, "binary_needs", minConfigSchema, "defaulted", strings.Join(missing, ","))
+}
+
+// defaultedByOlderSchema names the settings a chart at have does not render
+// that a binary needing want reads. Separate from the warning so the part with
+// the arithmetic in it can be tested at versions this build does not have.
+func defaultedByOlderSchema(have, want int, additions map[int][]string) []string {
+	var missing []string
+	for v := have + 1; v <= want; v++ {
+		missing = append(missing, additions[v]...)
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+func warnChartSkew(fromConfig string) {
+	switch {
+	case build.ChartVersion == "dev":
+		// A local build, which is not deployed from a chart.
+	case fromConfig == "":
+		slog.Warn("config: the ConfigMap carries no chart_version, so it was rendered by a chart older than this binary; "+
+			"settings this version reads may be absent and silently defaulted",
+			"binary_built_from_chart", build.ChartVersion)
+	case fromConfig != build.ChartVersion:
+		slog.Warn("config: the ConfigMap was rendered by one chart version and this binary was built beside another",
+			"configmap_chart", fromConfig, "binary_built_from_chart", build.ChartVersion)
+	}
+}
+
+// Gate returns the token and networks backend-api checks, or why it must not
+// start.
+func (c BackendAPIConfig) Gate() (string, []*net.IPNet, error) {
+	return apiGate("backend_api", c.Token, c.AuthDisabled, c.AllowedNets)
+}
+
+// apiGate refuses an admin API that would answer anyone: no token without an
+// explicit auth_disabled, and no allow-list entry that is not a network.
+func apiGate(section, token string, disabled bool, cidrs []string) (string, []*net.IPNet, error) {
+	switch {
+	case token == "" && !disabled:
+		return "", nil, fmt.Errorf("config: %s.token is empty; set it, or auth_disabled: true to run the API without one", section)
+	case token != "" && disabled:
+		return "", nil, fmt.Errorf("config: %s sets both a token and auth_disabled", section)
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			return "", nil, fmt.Errorf("config: %s.allowed_nets: %w", section, err)
+		}
+		nets = append(nets, n)
+	}
+	return token, nets, nil
 }

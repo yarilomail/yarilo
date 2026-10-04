@@ -6,6 +6,8 @@ import (
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
+
+	"github.com/yarilomail/yarilo/internal/imaptext"
 )
 
 // realisticEnvelope is the shape a mailing-list message has: a handful of
@@ -37,11 +39,11 @@ func realisticEnvelope() *imaplib.Envelope {
 }
 
 func BenchmarkDecodeEnvelope(b *testing.B) {
-	enc := encodeEnvelope(realisticEnvelope())
+	enc := []byte(imaptext.WriteEnvelope(realisticEnvelope()))
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := decodeEnvelope(enc); !ok {
+		if _, ok := imaptext.ParseEnvelope(string(enc)); !ok {
 			b.Fatal("decode failed")
 		}
 	}
@@ -50,12 +52,12 @@ func BenchmarkDecodeEnvelope(b *testing.B) {
 // Ten thousand of them, which is what one THREAD or SORT over the field fixture
 // decodes.
 func BenchmarkDecodeEnvelope10k(b *testing.B) {
-	enc := encodeEnvelope(realisticEnvelope())
+	enc := []byte(imaptext.WriteEnvelope(realisticEnvelope()))
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < 10000; j++ {
-			if _, ok := decodeEnvelope(enc); !ok {
+			if _, ok := imaptext.ParseEnvelope(string(enc)); !ok {
 				b.Fatal("decode failed")
 			}
 		}

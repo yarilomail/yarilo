@@ -96,6 +96,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 		add     map[uint32]mailbox.FlagsUpdate
 		remove  map[uint32]mailbox.FlagsUpdate
 		idOfUID map[uint32]string
+		metaOf  map[uint32]*mailbox.MessageMeta
 	}
 	work := map[uint64]*folderWork{}
 	workFor := func(ref messageRef) *folderWork {
@@ -105,6 +106,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 				folder: ref.folder,
 				set:    map[uint32]mailbox.FlagsUpdate{}, add: map[uint32]mailbox.FlagsUpdate{},
 				remove: map[uint32]mailbox.FlagsUpdate{}, idOfUID: map[uint32]string{},
+				metaOf: map[uint32]*mailbox.MessageMeta{},
 			}
 			work[ref.folderID] = w
 		}
@@ -122,26 +124,31 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 			resp.NotUpdated[id] = serr
 			continue
 		}
-		w := workFor(ref)
-		w.idOfUID[ref.meta.UID] = id
-		if plan.replace != nil {
-			flags, custom := splitKeywords(plan.replace)
-			w.set[ref.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsSet, Flags: flags, Keywords: custom}
-			continue
-		}
-		if len(plan.add) > 0 {
-			flags, custom := splitKeywords(plan.add)
-			w.add[ref.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsAdd, Flags: flags, Keywords: custom}
-		}
-		if len(plan.remove) > 0 {
-			flags, custom := splitKeywords(plan.remove)
-			w.remove[ref.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsRemove, Flags: flags, Keywords: custom}
-		}
-		if len(plan.add) == 0 && len(plan.remove) == 0 {
-			// An update naming nothing is not an error; it changes nothing and
-			// is reported as done, which is what the client asked for.
-			resp.Updated[id] = nil
-			delete(w.idOfUID, ref.meta.UID)
+		// Keywords belong to the Email, so the write reaches every mailbox
+		// holding a copy; Email/get reads their union (RFC 8621 §4.1.1).
+		for _, c := range h.copiesOf(ref) {
+			w := workFor(messageRef{folder: c.folder, folderID: c.folderID, meta: c.meta, mailboxID: c.mailboxID})
+			w.idOfUID[c.meta.UID] = id
+			w.metaOf[c.meta.UID] = c.meta
+			if plan.replace != nil {
+				flags, custom := splitKeywords(plan.replace)
+				w.set[c.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsSet, Flags: flags, Keywords: custom}
+				continue
+			}
+			if len(plan.add) > 0 {
+				flags, custom := splitKeywords(plan.add)
+				w.add[c.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsAdd, Flags: flags, Keywords: custom}
+			}
+			if len(plan.remove) > 0 {
+				flags, custom := splitKeywords(plan.remove)
+				w.remove[c.meta.UID] = mailbox.FlagsUpdate{Mode: mailbox.FlagsRemove, Flags: flags, Keywords: custom}
+			}
+			if len(plan.add) == 0 && len(plan.remove) == 0 {
+				// An update naming nothing is not an error; it changes nothing
+				// and is reported as done, which is what the client asked for.
+				resp.Updated[id] = nil
+				delete(w.idOfUID, c.meta.UID)
+			}
 		}
 	}
 
@@ -152,11 +159,12 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 		// the price of relative writes: another session can observe the added
 		// keyword before the removed one is gone. Nothing is lost either way,
 		// which is the property a replacement could not offer.
+		settled := map[uint32]mailbox.FlagsResult{}
 		for _, batch := range []map[uint32]mailbox.FlagsUpdate{w.set, w.add, w.remove} {
 			if len(batch) == 0 {
 				continue
 			}
-			results, err := h.idx.UpdateFlagsMulti(folderID, batch)
+			results, err := writeFlagBatch(h.mbox, folderID, batch)
 			if err != nil {
 				slog.Warn("jmap: Email/set write failed", "folder", w.folder, "err", err)
 				if errors.Is(err, locks.ErrUnavailable) {
@@ -173,6 +181,9 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 				continue
 			}
 			for uid := range batch {
+				if res, ok := results[uid]; ok {
+					settled[uid] = res
+				}
 				if _, ok := results[uid]; !ok {
 					// The store skips a UID it no longer has: between the
 					// lookup and the write the message was expunged.
@@ -182,6 +193,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 				applied[uid] = true
 			}
 		}
+		h.writeFlagsToStorage(folderID, w.folder, w.metaOf, settled, applied)
 		for uid, id := range w.idOfUID {
 			if serr, bad := failed[id]; bad {
 				resp.NotUpdated[id] = serr
@@ -318,4 +330,48 @@ func splitKeywords(keywords map[string]bool) (flags, custom []string) {
 	sort.Strings(flags)
 	sort.Strings(custom)
 	return flags, custom
+}
+
+// writeFlagsToStorage puts the settled flags where the driver keeps them: on
+// maildir a write that stops at the index is undone by the next sync (#1724).
+func (h *userHandle) writeFlagsToStorage(folderID uint64, folder string,
+	metaOf map[uint32]*mailbox.MessageMeta, settled map[uint32]mailbox.FlagsResult, applied map[uint32]bool) {
+	writes := make([]mailbox.FlagWrite, 0, len(settled))
+	for uid, res := range settled {
+		if !applied[uid] {
+			continue
+		}
+		meta, known := metaOf[uid]
+		if !known {
+			continue
+		}
+		name, err := h.mbox.MessagePath(folder, meta)
+		if err != nil {
+			slog.Warn("jmap: the record names no file for its flags",
+				"folder", folder, "uid", uid, "err", err)
+			continue
+		}
+		writes = append(writes, mailbox.FlagWrite{
+			UID: uid, Filename: name, Flags: res.Flags, Keywords: res.Keywords,
+		})
+	}
+	h.mbox.WriteFlags(&mailbox.Folder{ID: folderID}, folder, writes)
+}
+
+// writeFlagBatch applies one batch of flag changes as a transaction: the index
+// is taken once, and each message keeps its own modseq (#1827).
+func writeFlagBatch(box mailbox.Box, folderID uint64, batch map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
+	tx, err := box.Begin(folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	for uid, upd := range batch {
+		tx.UpdateFlags(uid, upd)
+	}
+	out, cerr := tx.Commit()
+	if cerr != nil {
+		return nil, cerr
+	}
+	return out.Flags, nil
 }

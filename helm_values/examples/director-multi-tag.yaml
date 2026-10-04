@@ -45,9 +45,6 @@ extraEnv:
     valueFrom:
       secretKeyRef: { name: yarilo-mysql, key: dsn }
 
-internal_tls:
-  server_name: yarilo-internal
-
 fts:
   enabled: true
   fts_engine: flatcurve
@@ -55,6 +52,13 @@ fts:
   fts_addr: ""                      # co-located per-tag → localhost
   fts_auth_master_addr: "yarilo-auth:9102"
   fts_autoindex: true
+
+## Per-role internal certificates from cert-manager: one CA Issuer shared by
+## every release, so the control plane and each tag trust each other (#2138).
+internalTLS:
+  certManager:
+    enabled: true
+    issuerRef: { kind: ClusterIssuer, name: yarilo-internal-ca }
 
 components:
 
@@ -70,7 +74,6 @@ components:
       lmtp: { enabled: true, port: 24, containerPort: 10024 }
     backends: []                    # per-tag backends self-register into the shared ring
     internalTLS:
-      enabled: true
       secretName: yarilo-director-internal-tls
       certificate:
         enabled: true
@@ -82,7 +85,6 @@ components:
     replicas: 0                     # backends live in the per-tag releases, not here
 
   auth:
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     passdb:
       - driver: mysql
         dsn: "${YARILO_DB_DSN}"
@@ -102,8 +104,6 @@ components:
         iterate_query: |
           SELECT username FROM mailbox WHERE active = 1 ORDER BY username
     token: { backend: redis, redis_addr: "redis://<redis-host>:6379/0" }
-  warden:
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   # locks is per-TAG (in the backend releases), not in the control plane:
   locks:
     enabled: false
@@ -113,7 +113,6 @@ components:
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10143
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls:
       secretName: yarilo-tls
       certificate:
@@ -127,7 +126,6 @@ components:
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10110
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls: { secretName: yarilo-tls }
     listeners: { pop3s: { enabled: true }, pop3: { enabled: true } }
     service: { type: LoadBalancer }
@@ -136,22 +134,18 @@ components:
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10024
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   manageSieveLogin:
     enabled: true
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 14190
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls: { secretName: yarilo-tls }
     listeners: { managesieve: { enabled: true } }
     service: { type: LoadBalancer }
   saslLogin:
     enabled: true
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
-    service: { type: LoadBalancer }
+    service: { type: ClusterIP }   # LoadBalancer only for an MTA outside the cluster
   quotaStatus:
     enabled: true
     auth_master_addr: "yarilo-auth:9102"
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
-    service: { type: LoadBalancer }
+    service: { type: ClusterIP }   # LoadBalancer only for an MTA outside the cluster

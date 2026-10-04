@@ -19,7 +19,7 @@ func TestBaseAndLogAgreeOnLineage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10}); err != nil {
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestFoldedOffsetSurvivesTheCrashBetweenBaseAndTruncation(t *testing.T) {
 		t.Fatalf("OpenFolder: %v", err)
 	}
 	for uid := uint32(1); uid <= 3; uid++ {
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Filename: "f", Size: 10}); err != nil {
+		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
 			t.Fatalf("AppendMessage %d: %v", uid, err)
 		}
 	}
@@ -138,7 +138,7 @@ func TestAnExistingFolderGainsItsLineageOnOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFolder: %v", err)
 	}
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "1", Size: 10}); err != nil {
+	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	fs := ui.open[f.ID]

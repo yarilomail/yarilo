@@ -36,7 +36,7 @@ docker/          — Dockerfile
 **yarilo's infrastructure architecture is defined by these documents and diagrams in `docs/`. They are the source of truth for every decision about deployment, scaling, HA, and cross-component coordination:**
 
 - **[DEPLOYMENT](https://doc.yarilomail.org/DEPLOYMENT)** — deployment topology, sizing (per pod, per tag), HA strategy, sharding via tags, and the rationale behind each decision
-- **[docs/yarilo_director.svg](docs/yarilo_director.svg)** — director deployment: login proxies, a 3-pod director StatefulSet with peer-sync, backend-lease (self-registration + heartbeat #776, replacing the monitor sidecars), ring routing to backend tags
+- **[docs/yarilo_director.svg](docs/yarilo_director.svg)** — director deployment: login proxies, a 3-replica director Deployment with peer-sync, backend-lease (self-registration + heartbeat #776, replacing the monitor sidecars), ring routing to backend tags
 - **[docs/yarilo_backend.svg](docs/yarilo_backend.svg)** — backend deployment (per tag): ONE co-located StatefulSet whose pod carries every protocol container (imap/pop3/submission/lmtp/managesieve) plus `yarilo-fts` and the `yarilo-backend-reg` sidecar on a shared IP; `yarilo-locks`, `backend-api` and `quota-status` are separate deployments; one shared NFS PV (RWX)
 - **[docs/yarilo_standalone.svg](docs/yarilo_standalone.svg)** — standalone deployment: the full stack (login + sessions + auth + warden + embedded `yarilo-locks` + storage) for self-contained installations without a director
 
@@ -50,7 +50,7 @@ docker/          — Dockerfile
 - `yarilo-auth` and `yarilo-warden` are shared services (two Deployments), one deployment per installation
 - `yarilo-locks` — single abstraction for cross-process write coordination. **All k8s deployments (standalone and backend) use `remote` mode** — its own Deployment behind a ClusterIP Service, mTLS TCP `:9104`, Redis-backed state. `embedded` mode (in-memory + Unix socket) is reserved for unit tests and non-k8s CLI runs; it is never the production default because Unix sockets cannot cross pods, which breaks any `replicaCount > 1`. In-process goroutine concurrency stays on `sync.Mutex` as a two-tier fast-path.
 - One NFS PV (RWX) per tag, shared by every co-located pod within that tag; a `tag` is an NFS shard, NOT a protocol
-- Director is a 3-replica StatefulSet with peer-sync, ONE ring and one userDir — a single pod IP per user serves every protocol, and the login proxy overrides the port
+- Director is a 3-replica Deployment with peer-sync, ONE ring and one userDir — a single pod IP per user serves every protocol, and the login proxy overrides the port. The ring organizes itself (#750): a pod joins through the headless `-director-ring` Service as its seed, so no stable pod identities are needed
 - Sticky routing is per user, not per protocol: a user is pinned to one co-located pod for every protocol, and cross-pod coordination goes through `yarilo-locks`
 - TLS termination and passdb happen at the director; userdb happens at the backend via the shared `yarilo-auth`
 
@@ -118,8 +118,7 @@ Key rules derived from ARCHITECTURE.md:
 
 ## Go code style
 
-- **No comments** unless the WHY is non-obvious (hidden constraint, subtle invariant,
-  Dovecot-compatibility quirk). Never explain WHAT the code does.
+- **Comments**: see "Code comments" below.
 - **No half-finished implementations.** Stub with `return errors.New("not yet implemented")`
   — never leave a function body empty or silently broken.
 - **Error wrapping**: always `fmt.Errorf("package/op: %w", err)` — never bare `err`.
@@ -127,6 +126,33 @@ Key rules derived from ARCHITECTURE.md:
 - **No `init()` functions.** Wire everything explicitly in `backend.New()` or `main()`.
 - **Context propagation**: every long-running operation accepts `context.Context` as first arg.
 - **`t.TempDir()`** for all test filesystem work — never hardcoded `/tmp` paths.
+
+---
+
+## Code comments
+
+A comment exists only when the WHY is non-obvious: a hidden constraint, a subtle
+invariant, a compatibility quirk, or a "do not X" backed by a test row that fails
+when X is done. Everything else — the code and the documentation repos already
+say it.
+
+- **Never explain WHAT the code does.** The code says that.
+- **Size**: 1–2 lines is the norm. A block of 3 or more lines is a red flag —
+  move the explanation to the documentation repo (public behaviour) or to
+  `INTERNALS.md` in docs-internal (wire formats, on-disk layouts) and keep a
+  one-line pointer at most.
+- **Facts, not stories**: no history ("previously…", "used to be…"), no
+  meta-narrative about how the code got here. History belongs in issues —
+  reference it as `(#NNNN)` if it matters.
+- **Exported identifiers** keep a godoc comment; its first sentence is the
+  contract. That is API documentation, not commentary — keep it, keep it short.
+- **Untouchable**: `//go:*` directives, `//nolint`, cgo preambles, license
+  headers, generated files.
+- **English only.**
+- **Ceiling**: lines sitting in blocks of 3+ stay ≤8% of Go lines per package,
+  measured by `hack/commentcensus` and enforced by the CI gate (#1620). Blocks,
+  not total comment lines: one-line godoc is kept, so counting it would fail a
+  small package holding no narrative at all.
 
 ---
 
@@ -146,6 +172,10 @@ Key rules derived from ARCHITECTURE.md:
 - Cover: happy path, edge cases (empty input, not-found, concurrent access where relevant).
 - Use `t.TempDir()` for filesystem tests — never leave temp files behind.
 - Forbidden in unit tests: network connections, real IMAP/SMTP ports, sleep.
+- **A trap that does not go red on the mutation is not proven — it is
+  unexplained.** Until it is named *why* the mutation did nothing, "the path is
+  not reachable in a test" is a guess, not a fact. Twice that guess hid a blind
+  test (#1652). See the "blind trap" entry in docs-internal/benchmark-method.md.
 
 ### Post-deploy smoke tests (`app/smoketest`)
 - **Every new protocol port gets a smoke check** added to `app/smoketest/main.go`.
@@ -190,8 +220,31 @@ Never push directly to `main`. Feature branch → PR → user merges.
   **Always consult it before implementing any binary format or internal socket.**
 - Magic bytes, version numbers, field offsets — must match exactly.
   See §7 (FileIndex), §8 (Maildir), §2 (director protocol), §3 (auth protocol).
-- Maildir filenames: `{secs}.M{usecs}P{pid}_{seq}.{hostname}:2,{flags}` — flags sorted uppercase.
-- yarilo-uidlist version 3: header `3 V<uidvalidity> N<nextuid> G<guid128hex>`.
+
+---
+
+## Issue labels
+
+Every issue carries **exactly one type label** at creation — this is what keeps
+the bug statistics honest (defects are not drowned in backlog):
+
+- `bug` — behaviour diverges from what is documented or intended. A defect
+  found in review is always `bug`.
+- `enhancement` — new feature or parity work someone asked for.
+- `phase` — a large roadmap stage (JMAP-N, AUTH-N, REPL, OBOX): backlog, not a
+  request. Never also `enhancement`.
+- `decision` — needs a decision before code; the issue records the choice.
+- `documentation`, `question` — as usual.
+
+Severity, only on `bug` and only when it applies: `data-loss` (user data lost
+or corrupted), `security` (disclosure, oracle, rights bypass).
+
+Subsystem labels are optional but encouraged: `imap`, `pop3`, `lmtp`,
+`submission`, `sieve`, `jmap`, `fts`, `acl`, `auth`, `director`, `storage`,
+`backend-api`, `config`, `testing`.
+
+Label management (create/edit) requires the `0kaba0hub` account
+(`gh auth switch`); `0kaba0` can label issues it opens via `--label`.
 
 ---
 

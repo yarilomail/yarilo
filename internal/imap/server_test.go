@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -39,17 +42,21 @@ func (s *stubPassdb) Authenticate(username, password, _, _ string) (*protocol.Au
 // connected, un-authenticated imapclient.Client.
 func startTestServer(t *testing.T) *imapclient.Client {
 	t.Helper()
+	return startTestServerIn(t, t.TempDir())
+}
 
-	dir := t.TempDir()
+func startTestServerIn(t *testing.T, dir string) *imapclient.Client {
+	t.Helper()
+
 	mb := maildir.New()
 	idx := file.New()
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 
 	opts := imapserver.Options{
-		Mailbox:  mb,
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   mb,
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		SpecialUseDefaults: map[string]string{
 			"Sent":    `\Sent`,
 			"Drafts":  `\Drafts`,
@@ -84,6 +91,14 @@ func startTestServer(t *testing.T) *imapclient.Client {
 
 // startAuthClient starts a server, logs in as the given user+pass and
 // returns the authenticated client.
+// startTestServerAt is startTestServer with the storage root handed back, for a
+// test that has to look at what reached the disk.
+func startTestServerAt(t *testing.T) (*imapclient.Client, string) {
+	t.Helper()
+	dir := t.TempDir()
+	return startTestServerIn(t, dir), dir
+}
+
 func startAuthClient(t *testing.T, user, pass string) *imapclient.Client {
 	t.Helper()
 	c := startTestServer(t)
@@ -347,10 +362,10 @@ func TestConcurrentSessions(t *testing.T) {
 	idx := file.New()
 
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  mb,
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   mb,
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -925,10 +940,12 @@ func TestFetchBinarySectionDecodesBase64(t *testing.T) {
 	if len(msgs[0].BinarySection) != 1 {
 		t.Fatalf("BinarySection count: got %d, want 1", len(msgs[0].BinarySection))
 	}
-	got := msgs[0].BinarySection[0].Bytes
-	want := "Hello, BINARY!\r\n"
-	if string(got) != want {
-		t.Errorf("BINARY[] body: got %q, want %q", got, want)
+	// BINARY[] is the whole message: its header stays, relabelled binary, so
+	// the client does not decode the body a second time.
+	got := string(msgs[0].BinarySection[0].Bytes)
+	if !strings.HasPrefix(got, "From: a@b\r\n") || !strings.Contains(got, "Content-Transfer-Encoding: binary\r\n") ||
+		!strings.HasSuffix(got, "\r\n\r\nHello, BINARY!\r\n") || strings.Contains(got, "SGVsbG8") {
+		t.Errorf("BINARY[]: got %q, want the header relabelled binary and the decoded body", got)
 	}
 }
 
@@ -957,8 +974,8 @@ func TestFetchBinarySizeMatchesDecoded(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("FETCH count: got %d, want 1", len(msgs))
 	}
-	// "hello world\r\n" — 13 bytes after quoted-printable decode.
-	wantSize := uint32(len("hello world\r\n"))
+	// The whole message, its body decoded and its header relabelled binary.
+	wantSize := uint32(len("From: a@b\r\nContent-Transfer-Encoding: binary\r\n\r\nhello world\r\n"))
 	if len(msgs[0].BinarySectionSize) != 1 {
 		t.Fatalf("BinarySectionSize count: got %d, want 1", len(msgs[0].BinarySectionSize))
 	}
@@ -1065,7 +1082,7 @@ func startMetadataClient(t *testing.T, user, pass string) *imapclient.Client {
 		Mailbox:      mb,
 		Index:        idx,
 		Resolver:     resolver,
-		Auth:         &stubPassdb{user: user, pass: pass},
+		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: user, pass: pass}),
 		MetadataDict: md,
 	}
 	srv := imapserver.New(opts)
@@ -1302,7 +1319,7 @@ func startNamespaceClient(t *testing.T, specs []imapserver.NamespaceSpec) *imapc
 		Mailbox:    mb,
 		Index:      idx,
 		Resolver:   resolver,
-		Auth:       &stubPassdb{user: "user@test.com", pass: "testpass"},
+		AuthRelay:  authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Namespaces: specs,
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1395,13 +1412,13 @@ func TestNamespacePerNamespaceSeparator(t *testing.T) {
 	}
 }
 
-func TestNamespaceListFalseHidesFromResponse(t *testing.T) {
-	// List:false keeps the namespace addressable internally (NS-1b
-	// storage routing will respect this) but it must NOT appear in
-	// the wire-protocol NAMESPACE response.
+// What NAMESPACE advertises is hidden's decision alone: list=no governs LIST
+// and leaves this reply untouched, so the two keys are not interchangeable.
+func TestNamespaceAdvertisesOnWhatHiddenSays(t *testing.T) {
 	c := startNamespaceClient(t, []imapserver.NamespaceSpec{
 		{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
-		{Type: imapserver.NamespaceShared, Prefix: "Hidden/", Separator: '/', List: imapserver.ListNo},
+		{Type: imapserver.NamespaceShared, Prefix: "Quiet/", Separator: '/', List: imapserver.ListNo},
+		{Type: imapserver.NamespaceOther, Prefix: "Unseen/", Separator: '/', List: imapserver.ListYes, Hidden: true},
 	})
 	defer func() { c.Logout().Wait() }() //nolint:errcheck
 
@@ -1409,8 +1426,11 @@ func TestNamespaceListFalseHidesFromResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NAMESPACE: %v", err)
 	}
-	if len(data.Shared) != 0 {
-		t.Errorf("hidden shared ns leaked into NAMESPACE response: %+v", data.Shared)
+	if len(data.Shared) != 1 || data.Shared[0].Prefix != "Quiet/" {
+		t.Errorf("list=no namespace is not advertised, got %+v", data.Shared)
+	}
+	if len(data.Other) != 0 {
+		t.Errorf("hidden namespace leaked into the reply: %+v", data.Other)
 	}
 }
 
@@ -1440,7 +1460,7 @@ func startSharedClient(t *testing.T, user, pass string) (*imapclient.Client, str
 		Mailbox:      mb,
 		Index:        idx,
 		Resolver:     resolver,
-		Auth:         &stubPassdb{user: user, pass: pass},
+		AuthRelay:    authtest.RelayTo(t, &stubPassdb{user: user, pass: pass}),
 		MetadataDict: md,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
@@ -1604,7 +1624,7 @@ func TestSharedMetadataPrivIsPerAccessingUser(t *testing.T) {
 		Mailbox:      mb,
 		Index:        idx,
 		Resolver:     resolver,
-		Auth:         auth,
+		AuthRelay:    authtest.RelayTo(t, auth),
 		MetadataDict: md,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
@@ -1748,10 +1768,10 @@ func TestPerNamespaceMailboxOverrideRoutesToCorrectBackend(t *testing.T) {
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  globalRec,
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   globalRec,
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
 			{Type: imapserver.NamespaceShared, Prefix: "Shared/", Separator: '/', List: imapserver.ListYes, Location: "maildir:" + sharedRoot},
@@ -1804,10 +1824,10 @@ func TestPerNamespaceNoOverrideFallsBackToGlobal(t *testing.T) {
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  globalRec,
-		Index:    idx,
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   globalRec,
+		Index:     idx,
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
 			{Type: imapserver.NamespaceShared, Prefix: "Shared/", Separator: '/', List: imapserver.ListYes, Location: "maildir:" + sharedRoot},
@@ -2021,5 +2041,122 @@ func TestFetchBodyNonPeekSetsSeen(t *testing.T) {
 	}
 	if !hasSeen2 {
 		t.Errorf("\\Seen lost after index re-read; flags: %v", msgs2[0].Flags)
+	}
+}
+
+// A STORE over several messages reaches every filename, through the batch path.
+//
+// The batch exists to take the folder lock once instead of once per message
+// (#1623); what a wrong wiring of it breaks is not the lock count but the
+// pairing -- a result read against the wrong write renames the wrong file, or
+// none. Three messages, three names, each carrying what the client set.
+func TestAMultiMessageStoreReachesEveryFilename(t *testing.T) {
+	c, root := startTestServerAt(t)
+	defer func() { c.Logout().Wait() }() //nolint:errcheck
+	if err := c.Login("user@test.com", "testpass").Wait(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	body := []byte(testMsg)
+	for i := 0; i < 3; i++ {
+		ac := c.Append("INBOX", int64(len(body)), nil)
+		if _, err := ac.Write(body); err != nil {
+			t.Fatal(err)
+		}
+		if err := ac.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	store := &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagSeen, imap.Flag("$Important")},
+	}
+	if err := c.Store(imap.SeqSetNum(1, 2, 3), store, nil).Close(); err != nil {
+		t.Fatalf("STORE: %v", err)
+	}
+
+	cur := filepath.Join(root, "test.com", "user", "Maildir", "cur")
+	entries, err := os.ReadDir(cur)
+	if err != nil {
+		t.Fatalf("read %s: %v", cur, err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("%d files in cur/, want 3", len(entries))
+	}
+	for _, e := range entries {
+		name := e.Name()
+		info := name
+		if i := strings.Index(name, ":2,"); i >= 0 {
+			info = name[i+3:]
+		}
+		if !strings.Contains(info, "S") {
+			t.Errorf("%q carries no \\Seen", name)
+		}
+		if !strings.ContainsAny(info, "abcdefghijklmnopqrstuvwxyz") {
+			t.Errorf("%q carries no keyword letter", name)
+		}
+	}
+}
+
+// A STORE reaches the filename on disk, not only the index.
+//
+// This is the session's half of #1601: the driver knows how to record flags in
+// the name, and something has to hand it the settled set. Without that call the
+// store still describes each message as it was delivered, and an index rebuilt
+// from the directory comes back with the wrong flags and no keywords -- in our
+// own store, with no other implementation involved.
+func TestStoreReachesTheFilenameOnDisk(t *testing.T) {
+	c, root := startTestServerAt(t)
+	defer func() { c.Logout().Wait() }() //nolint:errcheck
+	if err := c.Login("user@test.com", "testpass").Wait(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	body := []byte(testMsg)
+	ac := c.Append("INBOX", int64(len(body)), nil)
+	if _, err := ac.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := ac.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	store := &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagSeen, imap.Flag("$Important")},
+	}
+	if err := c.Store(imap.SeqSetNum(1), store, nil).Close(); err != nil {
+		t.Fatalf("STORE: %v", err)
+	}
+
+	cur := filepath.Join(root, "test.com", "user", "Maildir", "cur")
+	entries, err := os.ReadDir(cur)
+	if err != nil {
+		t.Fatalf("read %s: %v", cur, err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("%d files in cur/, want 1", len(entries))
+	}
+	name := entries[0].Name()
+	info := name
+	if i := strings.Index(name, ":2,"); i >= 0 {
+		info = name[i+3:]
+	}
+	if !strings.Contains(info, "S") {
+		t.Errorf("the filename is %q, and the client set \\Seen", name)
+	}
+	if !strings.ContainsAny(info, "abcdefghijklmnopqrstuvwxyz") {
+		t.Errorf("the filename is %q, and the client set a keyword", name)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "test.com", "user", "Maildir", "dovecot-keywords"))
+	if err != nil {
+		t.Fatalf("keyword file: %v", err)
+	}
+	if !strings.Contains(string(raw), "$Important") {
+		t.Errorf("the keyword file is %q, and the client set $Important", raw)
 	}
 }

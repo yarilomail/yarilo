@@ -16,7 +16,9 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
@@ -25,6 +27,20 @@ import (
 // ByDriver constructs a MailboxBackend for the named driver from sc, applying
 // every configured tunable. Unknown/empty drivers default to maildir so an
 // operator typo does not crash startup.
+// fsyncMode reads the configured durability. Config refuses an unknown name at
+// load, so this cannot be reached with one (#1847).
+func fsyncMode(sc config.StorageConfig) mailbox.FsyncMode {
+	m, _ := mailbox.ParseFsyncMode(sc.MailFsync)
+	return m
+}
+
+// lockMethod reads the configured transport. Config refuses an unknown name at
+// load, so this cannot be reached with one.
+func lockMethod(sc config.StorageConfig) filelock.Method {
+	m, _ := filelock.Parse(sc.LockMethod)
+	return m
+}
+
 func ByDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailbox.MailboxBackend {
 	// Every binary builds its backend here, so wrapping at this point is what
 	// makes folder-name validation unbypassable: IMAP, LMTP (Sieve fileinto
@@ -43,9 +59,15 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 	switch strings.ToLower(driver) {
 	case "sdbox", "dbox":
 		return dboxv2.New(dboxv2.WithLocker(locker), dboxv2.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
+			dboxv2.WithFsync(fsyncMode(sc)),
 			dboxv2.WithListUTF8(sc.MailboxListUTF8))
+	case "virtual":
+		// A virtual mailbox holds no message of its own, so it takes none of
+		// the write knobs: what it needs is its configuration file.
+		return virtual.New()
 	case "mdbox":
 		return mdbox.New(mdbox.WithLocker(locker), mdbox.WithAltStorage(sc.MailAltPath),
+			mdbox.WithFsync(fsyncMode(sc)),
 			mdbox.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			mdbox.WithListUTF8(sc.MailboxListUTF8),
 			mdbox.WithRotateSize(uint32(quota.ParseSize(sc.MdboxRotateSize))),
@@ -54,8 +76,11 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 			mdbox.WithMapFormat(sc.MdboxMapFormat),
 			mapLogRotation(sc))
 	default:
-		return maildir.New(maildir.WithLocker(locker), maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
-			maildir.WithListUTF8(sc.MailboxListUTF8))
+		return maildir.New(maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
+			maildir.WithListUTF8(sc.MailboxListUTF8),
+			maildir.WithProactiveScan(sc.MaildirSyncOnSelect),
+			maildir.WithLockMethod(lockMethod(sc)),
+			maildir.WithFsync(fsyncMode(sc)))
 	}
 }
 

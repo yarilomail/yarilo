@@ -22,7 +22,7 @@ func TestCacheOffsetRoundTrip(t *testing.T) {
 		}
 	}
 
-	if err := ui.SetCacheOffsets(f.ID, map[uint32]uint32{1: 128, 3: 256}); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(map[uint32]uint32{1: 128, 3: 256})); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := ui.GetMessages(f.ID, nil)
@@ -38,7 +38,7 @@ func TestCacheOffsetRoundTrip(t *testing.T) {
 
 	// Overwrite with a newer offset (a record appended to the chain moves
 	// the head); zero must not clobber.
-	if err := ui.SetCacheOffsets(f.ID, map[uint32]uint32{1: 512, 3: 0}); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(map[uint32]uint32{1: 512, 3: 0})); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ = ui.GetMessages(f.ID, nil)
@@ -99,7 +99,7 @@ func TestAppendNeverPersistsACacheOffset(t *testing.T) {
 		}
 	}
 	// Stamping still works: the guard is not "offsets are never stored".
-	if err := ui.SetCacheOffsets(f.ID, map[uint32]uint32{1: 512}); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(map[uint32]uint32{1: 512})); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ = ui.GetMessages(f.ID, nil)
@@ -125,7 +125,7 @@ func TestEnsureCacheExtensionOnAnIndexThatPredatesIt(t *testing.T) {
 	}
 
 	// Rewrite the index the way a version before the extension wrote it.
-	if err := ui.withFolder(f.ID, func(fs *folderState) error {
+	if err := ui.withFolderSite(f.ID, lockSiteTestWrite, func(fs *folderState) error {
 		kept := fs.file.Extensions[:0]
 		for _, ext := range fs.file.Extensions {
 			if ext.Name != extNameCache {
@@ -149,7 +149,7 @@ func TestEnsureCacheExtensionOnAnIndexThatPredatesIt(t *testing.T) {
 		fs.file.Layout = layout
 		fs.file.Header.RecordSize = layout.RecordSize
 		fs.file.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
-		return fs.flush(true)
+		return fs.flush()
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestEnsureCacheExtensionOnAnIndexThatPredatesIt(t *testing.T) {
 		t.Fatal("extension still absent after Ensure")
 	}
 	// And the folder can cache from here.
-	if err := ui.SetCacheOffsets(f.ID, map[uint32]uint32{1: 64}); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(map[uint32]uint32{1: 64})); err != nil {
 		t.Fatal(err)
 	}
 	msgs, err := ui.GetMessages(f.ID, nil)
@@ -175,4 +175,14 @@ func TestEnsureCacheExtensionOnAnIndexThatPredatesIt(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].CacheOffset != 64 {
 		t.Errorf("offset after Ensure = %+v, want 64", msgs)
 	}
+}
+
+// stampsOf keeps the tests reading in offsets: the checksum beside them has
+// its own rows (#1714).
+func stampsOf(offsets map[uint32]uint32) map[uint32]mailbox.CacheStamp {
+	out := make(map[uint32]mailbox.CacheStamp, len(offsets))
+	for uid, off := range offsets {
+		out[uid] = mailbox.CacheStamp{Offset: off}
+	}
+	return out
 }

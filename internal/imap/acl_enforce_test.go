@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -51,7 +53,7 @@ func enforceServer(t *testing.T) (aliceDir string, dial func(user string) *imapc
 		Mailbox:    mb,
 		Index:      idx,
 		Resolver:   resolver,
-		Auth:       passdb,
+		AuthRelay:  authtest.RelayTo(t, passdb),
 		ACLEnabled: true,
 	})
 
@@ -163,9 +165,9 @@ func TestACLEnforce_DisabledLetsEverythingThrough(t *testing.T) {
 		Mailbox:  mb,
 		Index:    idx,
 		Resolver: resolver,
-		Auth: &enforcePassdb{users: map[string]string{
+		AuthRelay: authtest.RelayTo(t, &enforcePassdb{users: map[string]string{
 			"alice": "pw",
-		}},
+		}}),
 		ACLEnabled: false,
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -220,7 +222,7 @@ func enforceServerWithSharedGroups(t *testing.T, groups map[string][]string) (al
 		Mailbox:    mb,
 		Index:      idx,
 		Resolver:   resolver,
-		Auth:       passdb,
+		AuthRelay:  authtest.RelayTo(t, passdb),
 		ACLEnabled: true,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
@@ -707,7 +709,7 @@ func sharedServerDial(t *testing.T, defaultsFromInbox bool) (aliceHome string, d
 		Mailbox:              maildir.New(),
 		Index:                file.New(),
 		Resolver:             resolver,
-		Auth:                 passdb,
+		AuthRelay:            authtest.RelayTo(t, passdb),
 		ACLEnabled:           true,
 		ACLDefaultsFromInbox: defaultsFromInbox,
 		MetadataDict:         md,
@@ -808,7 +810,7 @@ func TestACLEnforce_GlobalGrant(t *testing.T) {
 		Mailbox:    maildir.New(),
 		Index:      file.New(),
 		Resolver:   resolver,
-		Auth:       passdb,
+		AuthRelay:  authtest.RelayTo(t, passdb),
 		ACLEnabled: true,
 		ACLGlobal:  global,
 		Namespaces: []imapserver.NamespaceSpec{
@@ -1003,7 +1005,7 @@ func TestACLEnforce_IgnoreACLBypasses(t *testing.T) {
 		Mailbox:    maildir.New(),
 		Index:      file.New(),
 		Resolver:   resolver,
-		Auth:       passdb,
+		AuthRelay:  authtest.RelayTo(t, passdb),
 		ACLEnabled: true,
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/emersion/go-sasl"
 
+	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -65,6 +67,9 @@ type AuthResponse struct {
 	// DirectorTag is the per-user director backend tag. Empty means
 	// the login component's static director_tag applies.
 	DirectorTag string
+
+	// ProxyTimeout is the per-user proxy_timeout, raw; the login proxy parses it.
+	ProxyTimeout string
 
 	// MailboxFormat is the per-user storage driver (mail_driver /
 	// mailbox_format userdb field). Empty falls back to the driver named by
@@ -296,6 +301,7 @@ func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP 
 	resp.QuotaRules = extractQuotaRules(req.Fields)
 	resp.QuotaOverFlag = extractQuotaOverFlag(req.Fields)
 	resp.DirectorTag = extractDirectorTag(req.Fields)
+	resp.ProxyTimeout = extractProxyTimeout(req.Fields)
 	resp.VolatileDir = extractVolatileDir(req.Fields)
 	resp.MailboxFormat = extractMailboxFormat(req.Fields)
 	resp.IndexDir = extractIndexDir(req.Fields)
@@ -331,6 +337,7 @@ func responseFromCache(reqUser string, entry *CacheEntry) *AuthResponse {
 		resp.QuotaRules = extractQuotaRules(entry.Fields)
 		resp.QuotaOverFlag = extractQuotaOverFlag(entry.Fields)
 		resp.DirectorTag = extractDirectorTag(entry.Fields)
+		resp.ProxyTimeout = extractProxyTimeout(entry.Fields)
 		resp.VolatileDir = extractVolatileDir(entry.Fields)
 		resp.MailboxFormat = extractMailboxFormat(entry.Fields)
 		resp.IndexDir = extractIndexDir(entry.Fields)
@@ -714,6 +721,29 @@ func WithMasterUserSeparator(sep string) ServerOption {
 
 // WithMasterUsers is the top-level opt-in for master-user
 // impersonation on the wire AUTH path. While false (the default)
+// adoptTarget answers with the target's own userdb record: a master session
+// reads the target's mail, and an unknown target is a refusal (#1893).
+func (s *Server) adoptTarget(target string, req *Request) (Result, error) {
+	if s.userdb == nil {
+		return ResultOK, nil
+	}
+	ui, err := s.userdb.Lookup(target)
+	if err != nil {
+		return ResultTempFail, err
+	}
+	if ui == nil {
+		masterName, _ := req.Fields.Get("master_user")
+		slog.Info("auth: fail", "proto", req.Service, "user", masterName,
+			"master_user_target", target, "result", "fail", "reason", "userdb does not know the target")
+		return ResultFail, nil
+	}
+	ui.VisitFields(func(key, value string) {
+		req.Fields.Set("userdb_"+key, value)
+	})
+	req.Fields.Set("user", target)
+	return ResultOK, nil
+}
+
 // handleAuth ignores any SASL PLAIN authzid the client sends
 // AND skips the separator workaround — every request routes
 // through the regular passdb chain, indistinguishable from a
@@ -1001,19 +1031,32 @@ func (s *Server) handleConn(conn net.Conn) {
 		limit = DefaultMaxConcurrentRequests
 	}
 	sem := make(chan struct{}, limit)
+	// One conversation spans several commands, so it cannot live in a handler.
+	live := newExchanges()
 
 	// Server → Client handshake. Written before any handler exists, so the
 	// plain conn is safe here.
 	fmt.Fprintf(conn, "VERSION\t%d\t%d\n", majorVer, minorVer)
 	fmt.Fprintf(conn, "MECH\tPLAIN\tplaintext\n")
 	fmt.Fprintf(conn, "MECH\tLOGIN\tplaintext\n")
+	// The list a session advertises is this one: a mechanism it cannot relay is
+	// one a client would meet only after choosing it (#1733).
+	for _, mech := range s.scramMechanisms() {
+		fmt.Fprintf(conn, "MECH\t%s\tactive\n", mech)
+	}
+	// Announced only with a token validator in the chain: a mechanism the
+	// chain cannot check is one a client would meet only after choosing it.
+	if s.oauth2Passdb() != nil {
+		fmt.Fprintf(conn, "MECH\t%s\tplaintext\n", MechOAuthBearer)
+		fmt.Fprintf(conn, "MECH\t%s\tplaintext\n", MechXOAuth2)
+	}
 	fmt.Fprintf(conn, "SPID\t%d\n", s.pid)
 	fmt.Fprintf(conn, "CUID\t%d\n", cuid)
 	fmt.Fprintf(conn, "COOKIE\t%s\n", s.cookie)
 	fmt.Fprintf(conn, "DONE\n")
 
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 		if err != nil {
 			if err != io.EOF {
 				_ = err
@@ -1042,15 +1085,25 @@ func (s *Server) handleConn(conn net.Conn) {
 				defer func() { <-sem }()
 				start := time.Now()
 				if verb == "AUTH" {
-					observeRequest("AUTH", s.handleAuth(sc, args), start)
+					observeRequest("AUTH", s.handleAuth(sc, live, args), start)
 					return
 				}
 				observeRequest("VERIFY", s.handleVerify(sc, args), start)
 			}()
 		case "CONT":
-			// SASL continuation — not needed for PLAIN
+			args := fields
+			sem <- struct{}{}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				start := time.Now()
+				observeRequest("CONT", s.handleContinue(sc, live, args), start)
+			}()
 		case "CANCEL":
-			// cancel pending auth
+			if len(fields) > 1 {
+				live.drop(fields[1])
+			}
 		}
 	}
 }
@@ -1088,14 +1141,14 @@ func connRemoteIP(conn net.Conn) string {
 // for it ("ok" | "fail" | "tempfail" | "bad_request"). The label is returned
 // rather than observed here so the caller times the whole verb, including the
 // deliberate delays this function applies.
-func (s *Server) handleAuth(conn net.Conn, fields []string) string {
+func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) string {
 	if len(fields) < 3 {
 		return "bad_request"
 	}
 	id := fields[1]
 	mech := fields[2]
 
-	var service, resp, ripAttr, sessionID string
+	var service, resp, ripAttr, sessionID, cbind string
 	for _, f := range fields[3:] {
 		switch {
 		case strings.HasPrefix(f, "service="):
@@ -1106,9 +1159,34 @@ func (s *Server) handleAuth(conn net.Conn, fields []string) string {
 			ripAttr = strings.TrimPrefix(f, "rip=")
 		case strings.HasPrefix(f, "session="):
 			sessionID = strings.TrimPrefix(f, "session=")
+		case strings.HasPrefix(f, "cbind="):
+			cbind = strings.TrimPrefix(f, "cbind=")
 		}
 	}
+	if strings.ContainsRune(service+ripAttr+sessionID, 0) {
+		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-request\n", id)
+		return "bad_request"
+	}
+	if isSCRAM(mech) {
+		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, sessionID)
+	}
+	if isOAuth(mech) {
+		remoteIP := ripAttr
+		if remoteIP == "" {
+			remoteIP = connRemoteIP(conn)
+		}
+		return s.beginOAuth(conn, live, id, mech, service, resp, remoteIP, sessionID)
+	}
 	_ = service
+	// The initial response is base64 on the wire: raw, a TAB or LF in a
+	// password would end the field or the line.
+	decoded, derr := base64.StdEncoding.DecodeString(resp)
+	if derr != nil {
+		slog.Debug("auth: response is not base64", "id", id, "mech", mech)
+		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
+		return "bad_request"
+	}
+	resp = string(decoded)
 
 	// rip= carries the actual mail-client IP forwarded by the login pod.
 	// Use it for penalty tracking instead of the TCP peer (login pod) IP.
@@ -1123,17 +1201,19 @@ func (s *Server) handleAuth(conn net.Conn, fields []string) string {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
 	}
-	// Master-user separator workaround (RFC 4616 §2.1 doesn't
-	// cover this case): clients that can't supply authzid encode
-	// it as `target<sep>master` inside the authid field. Only
-	// honoured when master-users are enabled AND no authzid was
-	// given AND a separator is configured.
-	//
-	// When master-users are disabled at the server level, BOTH
-	// the authzid and the separator workaround are ignored — the
-	// request routes through the regular passdb chain as if the
-	// client had sent a plain `authid\0password` PLAIN response.
-	// Indistinguishable from a build without master support.
+	return s.authenticatePassword(conn, id, service, remoteIP, sessionID, authzid, authid, password, plainReject)
+}
+
+// plainReject is a refusal of a password login: nothing to say but no.
+func plainReject(conn net.Conn, id string) {
+	fmt.Fprintf(conn, "FAIL\t%s\n", id)
+}
+
+// authenticatePassword runs a credential through the chain; reject writes a
+// refusal, which a mechanism may answer with more than FAIL.
+func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sessionID, authzid, authid, password string, reject func(net.Conn, string)) string {
+	// Clients that cannot supply authzid encode it as `target<sep>master` in
+	// the authid field; only with master users on and no authzid given.
 	target := ""
 	master := authid
 	if s.masterUsersEnabled {
@@ -1144,6 +1224,14 @@ func (s *Server) handleAuth(conn net.Conn, fields []string) string {
 				target = t
 			}
 		}
+	} else if authzid != "" && authzid != authid {
+		// Dropping the field would log the client in as someone it did not ask
+		// for -- a refusal it never learns about (RFC 4616 §2, #1892).
+		slog.Info("auth: fail", "id", id, "proto", service, "user", authid,
+			"master_user_target", authzid, "result", "fail",
+			"reason", "master user login attempt without master passdb")
+		reject(conn, id)
+		return "fail"
 	}
 
 	// Auth-penalty pre-check: look up the client IP's current
@@ -1186,7 +1274,7 @@ func (s *Server) handleAuth(conn net.Conn, fields []string) string {
 			if s.failureDelay > 0 {
 				time.Sleep(s.failureDelay)
 			}
-			fmt.Fprintf(conn, "FAIL\t%s\n", id)
+			reject(conn, id)
 			// Pre-chain reject IS the result — report it so the
 			// policy server's telemetry sees its own decision.
 			if s.policy != nil && s.policyMode.ReportAfter {
@@ -1237,7 +1325,7 @@ func (s *Server) handleAuth(conn net.Conn, fields []string) string {
 		if isInternal {
 			fmt.Fprintf(conn, "FAIL\t%s\tcode=temp_fail\n", id)
 		} else {
-			fmt.Fprintf(conn, "FAIL\t%s\n", id)
+			reject(conn, id)
 		}
 		// Audit log on failure — kept server-side only; the wire
 		// reply already stripped any reason text so the attacker
@@ -1280,7 +1368,7 @@ func (s *Server) handleAuth(conn net.Conn, fields []string) string {
 			if s.failureDelay > 0 {
 				time.Sleep(s.failureDelay)
 			}
-			fmt.Fprintf(conn, "FAIL\t%s\n", id)
+			reject(conn, id)
 			// Report this as a failed login for downstream
 			// analytics even though the chain accepted.
 			if s.policyMode.ReportAfter {
@@ -1409,26 +1497,8 @@ func buildAuthOK(id string, res *AuthResponse) string {
 		}
 		return reply
 	}
-	if res.Home != "" {
-		reply += "\thome=" + res.Home
-	}
-	if res.MailLoc != "" {
-		reply += "\tmail=" + res.MailLoc
-	}
-	if res.MailboxFormat != "" {
-		reply += "\tmailbox_format=" + res.MailboxFormat
-	}
-	if len(res.Groups) > 0 {
-		reply += "\tgroups=" + strings.Join(res.Groups, ",")
-	}
-	if len(res.QuotaRules) > 0 {
-		reply += "\tquota_rule=" + strings.Join(res.QuotaRules, ",")
-	}
-	if res.QuotaOverFlag != "" {
-		reply += "\tquota_over_flag=" + res.QuotaOverFlag
-	}
-	if res.DirectorTag != "" {
-		reply += "\tdirector_tag=" + res.DirectorTag
+	for _, tok := range AuthOKTokens(res) {
+		reply += "\t" + tok
 	}
 	return reply
 }
@@ -1520,6 +1590,23 @@ func extractDirectorTag(f *Fields) string {
 	}
 	if v, ok := f.Get("director_tag"); ok && v != "" {
 		return v
+	}
+	return ""
+}
+
+// extractProxyTimeout returns proxy_timeout as it came, the userdb-scoped one
+// first; a value the proxy will not read is logged, not dropped.
+func extractProxyTimeout(f *Fields) string {
+	if f == nil {
+		return ""
+	}
+	for _, k := range []string{"userdb_proxy_timeout", "proxy_timeout"} {
+		if v, ok := f.Get(k); ok && v != "" {
+			if _, err := ParseProxyTimeout(v); err != nil {
+				slog.Warn("auth: invalid proxy_timeout value", "value", v, "err", err)
+			}
+			return v
+		}
 	}
 	return ""
 }
@@ -1707,6 +1794,9 @@ func (s *Server) authenticate(target, master, password, service, remoteIP string
 	)
 	if target != "" && target != master {
 		result, err = RunMasterAuth(Chain(s.passdbs), Chain(s.masterdb), target, req)
+		if err == nil && result == ResultOK {
+			result, err = s.adoptTarget(target, req)
+		}
 	} else {
 		result, err = RunAuth(Chain(s.passdbs), req)
 	}
@@ -1737,22 +1827,8 @@ func (s *Server) authenticate(target, master, password, service, remoteIP string
 	return resp, err
 }
 
-// parsePlain decodes a SASL PLAIN response (RFC 4616) into its
-// three logical fields. The wire format is
-// `authzid\0authid\0passwd` — base64 already decoded by the
-// caller (yarilo-auth's AUTH command transports the response
-// pre-decoded inside the `resp=` field).
-//
-//   - authzid — the user the caller wants to log in AS. When
-//     non-empty and different from authid, this is a master-user
-//     impersonation request — see RunMasterAuth.
-//   - authid  — the user supplying the password (the master in
-//     an impersonation request, the regular user otherwise).
-//   - password — the master's / user's password.
-//
-// LOGIN mech (legacy) does not carry authzid; both the two-field
-// and three-field PLAIN shapes are accepted so a client that
-// elides the empty leading authzid still works.
+// parsePlain splits a decoded SASL PLAIN response, authzid\0authid\0passwd
+// (RFC 4616); a two-field response, as LOGIN gives, has no authzid.
 func parsePlain(mech, resp string) (authzid, authid, password string, ok bool) {
 	if mech == "PLAIN" || mech == "LOGIN" {
 		parts := strings.SplitN(resp, "\x00", 3)

@@ -11,6 +11,8 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -21,7 +23,7 @@ import (
 func seedAccount(t *testing.T, root, user string) *mailbox.UserInfo {
 	t.Helper()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo(user, "")
+	info, _ := resolver.UserInfo(user, "")
 	mb, idx := maildir.New(), fileindex.New()
 
 	box := mb.OpenUser(info)
@@ -49,7 +51,7 @@ func seedAccount(t *testing.T, root, user string) *mailbox.UserInfo {
 			_ = box.Create(m.folder)
 		}
 		uid[m.folder]++
-		name, vsize, guid, err := box.Save(m.folder, strings.NewReader(m.raw), uid[m.folder], int64(len(m.raw)), nil, [16]byte{})
+		name, vsize, guid, err := box.Save(m.folder, strings.NewReader(m.raw), uid[m.folder], int64(len(m.raw)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -57,10 +59,15 @@ func seedAccount(t *testing.T, root, user string) *mailbox.UserInfo {
 		if err != nil {
 			t.Fatalf("open folder: %v", err)
 		}
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: uid[m.folder], Filename: name, Size: uint32(len(m.raw)), VSize: vsize,
+		meta := &mailbox.MessageMeta{
+			UID: uid[m.folder], Size: uint32(len(m.raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Now(),
-		}); err != nil {
+		}
+		if err := mailboxbase.NameSaved(box, m.folder, name, meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = guid
+		if err := ui.AppendMessage(f.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -287,13 +294,16 @@ func TestMessagesWithoutAGuidAreSkippedNotMerged(t *testing.T) {
 	}
 	box := maildir.New().OpenUser(info)
 	raw := "Message-ID: <noguid@x>\r\nSubject: Old\r\n\r\nbody\r\n"
-	name, vsize, _, err := box.Save("INBOX", strings.NewReader(raw), 99, int64(len(raw)), nil, [16]byte{})
+	name, vsize, _, err := box.Save("INBOX", strings.NewReader(raw), 99, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 99, Filename: name, Size: uint32(len(raw)), VSize: vsize,
-	}); err != nil {
+	old := &mailbox.MessageMeta{UID: 99, Size: uint32(len(raw)), VSize: vsize}
+	if err := mailboxbase.NameSaved(box, "INBOX", name, old); err != nil {
+		t.Fatal(err)
+	}
+	old.GUID = [16]byte{}
+	if err := idx.AppendMessage(f.ID, old); err != nil {
 		t.Fatal(err)
 	}
 	idx.Close() //nolint:errcheck
@@ -365,7 +375,9 @@ func (l *recordingLocker) Subscribe(context.Context, string) (<-chan locks.Event
 	return nil, nil
 }
 func (l *recordingLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
-func (l *recordingLocker) HoldsResource(resource string) bool                          { return l.holding[resource] }
+func (l *recordingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
+	return heldMode(l.holding[resource])
+}
 func (l *recordingLocker) IncrementCounter(context.Context, string, int64) (int64, error) {
 	return 0, nil
 }
@@ -386,7 +398,7 @@ func TestTheRebuildHoldsTheAccountLock(t *testing.T) {
 	var st threadStats
 	o := backfillOpts(root, false)
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	resolveUser := func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil }
+	resolveUser := func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") }
 	if err := threadUser(maildir.New(), nil, fileindex.New(), resolveUser,
 		locker, o, info.Username, &st); err != nil {
 		t.Fatalf("backfill: %v", err)
@@ -425,7 +437,7 @@ func TestTheRebuildHoldsTheAccountLock(t *testing.T) {
 func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	base := resolver.UserInfo("u1@d00001.test", "")
+	base, _ := resolver.UserInfo("u1@d00001.test", "")
 
 	// What userdb gives a non-default account: its own driver, and a mail root
 	// one level below the home directory.
@@ -433,13 +445,15 @@ func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 	info.Driver = "mdbox"
 	info.MailPath = filepath.Join(base.Home, "mdbox")
 
-	box := maildir.New().OpenUser(&info)
+	// The store is written with the driver the account declares: a message
+	// named by one driver and read by another is a fixture, not a store.
+	box := mdbox.New().OpenUser(&info)
 	if err := box.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	idx := fileindex.New().OpenUser(&info)
 	raw := "Message-ID: <a@x>\r\nSubject: Plan\r\n\r\nbody\r\n"
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 0, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -447,10 +461,14 @@ func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: uint32(len(raw)), VSize: vsize,
+	meta := &mailbox.MessageMeta{
+		UID: 1, Size: uint32(len(raw)), VSize: vsize,
 		GUID: guid, InternalDate: time.Now(),
-	}); err != nil {
+	}
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := idx.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	idx.Close() //nolint:errcheck
@@ -459,6 +477,9 @@ func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 	var askedFor []string
 	byDriver := func(d string) mailbox.MailboxBackend {
 		askedFor = append(askedFor, d)
+		if d == "mdbox" {
+			return mdbox.New()
+		}
 		return maildir.New()
 	}
 	resolveUser := func(string) (*mailbox.UserInfo, error) { return &info, nil }
@@ -487,4 +508,12 @@ func TestBackfillFollowsTheAccountsOwnDriverAndMailRoot(t *testing.T) {
 	if st.Threads != 1 {
 		t.Errorf("threads = %d, want 1", st.Threads)
 	}
+}
+
+// heldMode answers HoldsResource for a fake tracking holds as a bool set.
+func heldMode(held bool) (locks.HoldMode, bool) {
+	if held {
+		return locks.HoldExclusive, true
+	}
+	return locks.HoldNone, false
 }

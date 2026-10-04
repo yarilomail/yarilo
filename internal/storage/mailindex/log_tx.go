@@ -86,6 +86,10 @@ type TxExtIntro struct {
 	Name        string // empty when ExtID != 0xffffffff
 }
 
+// TxExtIntroNewExt is the ext_id that says "this record creates the extension
+// named below" rather than resizing one the reader already knows.
+const TxExtIntroNewExt uint32 = 0xffffffff
+
 // TxExtIntroFlagNoShrink prevents EXT_INTRO from shrinking existing
 // hdr_size / record_size / record_align; only grow.
 const TxExtIntroFlagNoShrink uint16 = 0x01
@@ -249,7 +253,10 @@ func EncodeTxHeaderUpdatePayload(rec TxHeaderUpdate) []byte {
 //	uint16 name_size     offset 18
 //	char   name[name_size] offset 20
 func EncodeTxExtIntroPayload(rec TxExtIntro) []byte {
-	out := make([]byte, 20+len(rec.Name))
+	// The framed size counts 32-bit words, so a name that leaves the payload
+	// unaligned would round the record's length and lose the framing.
+	pad := (4 - ((20 + len(rec.Name)) % 4)) % 4
+	out := make([]byte, 20+len(rec.Name)+pad)
 	le := binary.LittleEndian
 	le.PutUint32(out[0:], rec.ExtID)
 	le.PutUint32(out[4:], rec.ResetID)
@@ -260,6 +267,44 @@ func EncodeTxExtIntroPayload(rec TxExtIntro) []byte {
 	le.PutUint16(out[18:], uint16(len(rec.Name)))
 	copy(out[20:], rec.Name)
 	return out
+}
+
+// DecodeTxExtIntroPayload is the inverse. ok is false when the payload is too
+// short to hold its own name: a torn write, not half an extension.
+func DecodeTxExtIntroPayload(payload []byte) (TxExtIntro, bool) {
+	le := binary.LittleEndian
+	if len(payload) < 20 {
+		return TxExtIntro{}, false
+	}
+	nameLen := int(le.Uint16(payload[18:]))
+	if 20+nameLen > len(payload) {
+		return TxExtIntro{}, false
+	}
+	return TxExtIntro{
+		ExtID:       le.Uint32(payload[0:]),
+		ResetID:     le.Uint32(payload[4:]),
+		HdrSize:     le.Uint32(payload[8:]),
+		RecordSize:  le.Uint16(payload[12:]),
+		RecordAlign: le.Uint16(payload[14:]),
+		Flags:       le.Uint16(payload[16:]),
+		Name:        string(payload[20 : 20+nameLen]),
+	}, true
+}
+
+// DecodeTxExtHdrUpdatePayload is the inverse of EncodeTxExtHdrUpdatePayload.
+func DecodeTxExtHdrUpdatePayload(payload []byte) (TxExtHdrUpdate, bool) {
+	le := binary.LittleEndian
+	if len(payload) < 4 {
+		return TxExtHdrUpdate{}, false
+	}
+	size := int(le.Uint16(payload[2:]))
+	if 4+size > len(payload) {
+		return TxExtHdrUpdate{}, false
+	}
+	return TxExtHdrUpdate{
+		Offset: le.Uint16(payload[0:]),
+		Data:   append([]byte(nil), payload[4:4+size]...),
+	}, true
 }
 
 // EncodeTxExtResetPayload emits the payload for EXT_RESET.

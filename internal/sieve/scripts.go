@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,9 @@ const (
 
 	// FallbackDefaultName is used when SieveConfig.DefaultName is not set.
 	FallbackDefaultName = "yarilo"
+
+	// OrigScriptName keeps an active script that was a file of its own, not a link.
+	OrigScriptName = "yarilo.orig"
 )
 
 // FsScriptStore manages per-user Sieve script files stored in the user's home
@@ -54,19 +58,22 @@ func (ss *FsScriptStore) namedPath(homeDir, name string) string {
 // withLock serialises this user's script-file operations (named scripts + the
 // active-script pointer are interrelated, so they share one per-home key) —
 // scoped to scripts only, independent of vacation / duplicate.
-func (ss *FsScriptStore) withLock(ctx context.Context, homeDir string, fn func(context.Context) error) error {
-	return withSieveLock(ctx, ss.Locker, "sieve-scripts:"+homeDir, fn)
+func (ss *FsScriptStore) withLock(ctx context.Context, username, homeDir string, fn func(context.Context) error) error {
+	return withSieveLock(ctx, ss.Locker, username, "sieve-scripts:"+homeDir, fn)
 }
 
 // withSieveLock runs fn while holding the yarilo-locks lock named `resource`.
 // When l is nil (tests, single-process) fn runs without locking. Each Sieve
 // file family passes its own resource key so unrelated writes do not block one
 // another.
-func withSieveLock(ctx context.Context, l locks.Locker, resource string, fn func(context.Context) error) error {
+func withSieveLock(ctx context.Context, l locks.Locker, username, resource string, fn func(context.Context) error) error {
 	if l == nil {
 		return fn(ctx)
 	}
-	return locks.WithLock(ctx, l, resource, lockOwner(), sieveLockTTL, sieveLockRenew, fn)
+	// The id rides the context: the store interface has no place for one, and
+	// managesieve and delivery both set it at their entry (#1672).
+	return locks.WithLock(locks.WithSite(ctx, "sieve-write"), l, resource, locks.Owner(username, locks.IDFrom(ctx)),
+		sieveLockTTL, sieveLockRenew, fn)
 }
 
 func (ss *FsScriptStore) ActiveScriptName(_ context.Context, _, homeDir string) (string, error) {
@@ -100,11 +107,11 @@ func (ss *FsScriptStore) LoadActiveScript(ctx context.Context, _, homeDir string
 	return src, name, err
 }
 
-func (ss *FsScriptStore) InitUser(ctx context.Context, _, homeDir string) error {
+func (ss *FsScriptStore) InitUser(ctx context.Context, username, homeDir string) error {
 	if _, err := os.Lstat(ss.activePath(homeDir)); err == nil {
 		return nil
 	}
-	return ss.withLock(ctx, homeDir, func(ctx context.Context) error {
+	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
 		if _, err := os.Lstat(ss.activePath(homeDir)); err == nil {
 			return nil
 		}
@@ -115,11 +122,14 @@ func (ss *FsScriptStore) InitUser(ctx context.Context, _, homeDir string) error 
 	})
 }
 
-func (ss *FsScriptStore) SaveScript(ctx context.Context, _, homeDir, name string, src []byte) error {
+func (ss *FsScriptStore) SaveScript(ctx context.Context, username, homeDir, name string, src []byte) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ss.DefaultName {
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", name)
 	}
-	return ss.withLock(ctx, homeDir, func(ctx context.Context) error {
+	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
 		target := ss.namedPath(homeDir, name)
 		tmp := target + ".tmp"
 		if err := os.MkdirAll(homeDir, 0o700); err != nil {
@@ -132,11 +142,17 @@ func (ss *FsScriptStore) SaveScript(ctx context.Context, _, homeDir, name string
 	})
 }
 
-func (ss *FsScriptStore) SetActive(ctx context.Context, _, homeDir, name string) error {
+func (ss *FsScriptStore) SetActive(ctx context.Context, username, homeDir, name string) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ss.DefaultName {
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", name)
 	}
-	return ss.withLock(ctx, homeDir, func(ctx context.Context) error {
+	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
+		if err := ss.keepActiveFile(username, homeDir); err != nil {
+			return err
+		}
 		link := ss.activePath(homeDir)
 		tmp := link + ".tmp"
 		os.Remove(tmp) //nolint:errcheck
@@ -147,8 +163,11 @@ func (ss *FsScriptStore) SetActive(ctx context.Context, _, homeDir, name string)
 	})
 }
 
-func (ss *FsScriptStore) Deactivate(ctx context.Context, _, homeDir string) error {
-	return ss.withLock(ctx, homeDir, func(ctx context.Context) error {
+func (ss *FsScriptStore) Deactivate(ctx context.Context, username, homeDir string) error {
+	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
+		if err := ss.keepActiveFile(username, homeDir); err != nil {
+			return err
+		}
 		err := os.Remove(ss.activePath(homeDir))
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -157,11 +176,48 @@ func (ss *FsScriptStore) Deactivate(ctx context.Context, _, homeDir string) erro
 	})
 }
 
-func (ss *FsScriptStore) DeleteScript(ctx context.Context, _, homeDir, name string) error {
+// keepActiveFile copies an active script that is a regular file to
+// OrigScriptName before the caller unlinks it; the default body is not kept.
+func (ss *FsScriptStore) keepActiveFile(username, homeDir string) error {
+	path := ss.activePath(homeDir)
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("sieve/scripts: lstat active: %w", err)
+	case fi.Mode()&os.ModeSymlink != 0:
+		return nil
+	case !fi.Mode().IsRegular():
+		return fmt.Errorf("sieve/scripts: active script %s is neither a link nor a file", path)
+	}
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("sieve/scripts: read active: %w", err)
+	}
+	if string(src) == DefaultScriptBody {
+		return nil
+	}
+	target := ss.namedPath(homeDir, OrigScriptName)
+	if err := os.WriteFile(target+".tmp", src, 0o600); err != nil {
+		return fmt.Errorf("sieve/scripts: keep active as %q: %w", OrigScriptName, err)
+	}
+	if err := os.Rename(target+".tmp", target); err != nil {
+		return fmt.Errorf("sieve/scripts: keep active as %q: %w", OrigScriptName, err)
+	}
+	slog.Info("sieve: active script was a file of its own, kept as a script",
+		"user", username, "path", path, "script", OrigScriptName)
+	return nil
+}
+
+func (ss *FsScriptStore) DeleteScript(ctx context.Context, username, homeDir, name string) error {
+	if !ValidScriptName(name) {
+		return ErrInvalidScriptName
+	}
 	if name == ss.DefaultName {
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", name)
 	}
-	return ss.withLock(ctx, homeDir, func(ctx context.Context) error {
+	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
 		err := os.Remove(ss.namedPath(homeDir, name))
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -171,6 +227,9 @@ func (ss *FsScriptStore) DeleteScript(ctx context.Context, _, homeDir, name stri
 }
 
 func (ss *FsScriptStore) GetScript(_ context.Context, _, homeDir, name string) ([]byte, bool, error) {
+	if !ValidScriptName(name) {
+		return nil, false, ErrInvalidScriptName
+	}
 	src, err := os.ReadFile(ss.namedPath(homeDir, name))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -204,11 +263,14 @@ func (ss *FsScriptStore) ListScripts(_ context.Context, _, homeDir string) ([]st
 	return names, nil
 }
 
-func (ss *FsScriptStore) RenameScript(ctx context.Context, _, homeDir, oldName, newName string) error {
+func (ss *FsScriptStore) RenameScript(ctx context.Context, username, homeDir, oldName, newName string) error {
+	if !ValidScriptName(oldName) || !ValidScriptName(newName) {
+		return ErrInvalidScriptName
+	}
 	if oldName == ss.DefaultName || newName == ss.DefaultName {
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", ss.DefaultName)
 	}
-	return ss.withLock(ctx, homeDir, func(ctx context.Context) error {
+	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
 		if err := os.Rename(ss.namedPath(homeDir, oldName), ss.namedPath(homeDir, newName)); err != nil {
 			return fmt.Errorf("sieve/scripts: rename: %w", err)
 		}
@@ -230,10 +292,6 @@ func (ss *FsScriptStore) VacationSent(ctx context.Context, _, homeDir, handle, s
 	return vacationSent(ctx, homeDir, handle, senderAddr)
 }
 
-func (ss *FsScriptStore) MarkVacationSent(ctx context.Context, _, homeDir, handle, senderAddr string, ttlSecs int) error {
-	return markVacationSent(ctx, ss.Locker, homeDir, handle, senderAddr, ttlSecs)
-}
-
-func lockOwner() string {
-	return fmt.Sprintf("sieve:%d", os.Getpid())
+func (ss *FsScriptStore) MarkVacationSent(ctx context.Context, username, homeDir, handle, senderAddr string, ttlSecs int) error {
+	return markVacationSent(ctx, ss.Locker, username, homeDir, handle, senderAddr, ttlSecs)
 }

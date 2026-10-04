@@ -8,12 +8,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"sync"
 	"time"
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/connlimit"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/pkg/authclient"
@@ -30,10 +29,12 @@ type Options struct {
 	// MailboxByDriver (optional) returns a MailboxBackend for a driver name
 	// ("maildir", "sdbox", "mdbox"). Without it dbox users are read through
 	// the global Mailbox backend and see 0 messages.
-	MailboxByDriver    func(driver string) mailbox.MailboxBackend
-	Index              mailbox.IndexBackend
-	Resolver           *mailbox.Resolver
-	Auth               protocol.Authenticator
+	MailboxByDriver func(driver string) mailbox.MailboxBackend
+	Index           mailbox.IndexBackend
+	Resolver        *mailbox.Resolver
+	// AuthRelay carries every credential to yarilo-auth, which runs the
+	// mechanism. Required: a session verifies nothing itself (#1733).
+	AuthRelay          *authrelay.Client
 	ProxyProtocol      bool
 	HAProxyTimeout     time.Duration
 	HAProxyTrustedNets []*net.IPNet
@@ -76,9 +77,7 @@ type Options struct {
 
 // Server is the yarilo POP3 server.
 type Server struct {
-	opts  Options
-	mu    sync.Mutex
-	locks map[string]struct{} // per-user session locks
+	opts Options
 }
 
 // New creates a POP3 server.
@@ -87,7 +86,7 @@ func New(opts Options) *Server {
 	// shares one write semaphore instead of building a fresh one each login
 	// (#1149).
 	opts.MailboxByDriver = mailbox.MemoizeByDriver(opts.MailboxByDriver)
-	return &Server{opts: opts, locks: make(map[string]struct{})}
+	return &Server{opts: opts}
 }
 
 // ListenAndServeTLS starts the POP3S (TLS) listener.
@@ -150,24 +149,6 @@ func (s *Server) wrapListeners(ln net.Listener) net.Listener {
 		}
 	}
 	return ln
-}
-
-// tryLock acquires an exclusive per-user session lock.
-// Returns false if a session for this user is already active.
-func (s *Server) tryLock(key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.locks[key]; ok {
-		return false
-	}
-	s.locks[key] = struct{}{}
-	return true
-}
-
-func (s *Server) unlock(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.locks, key)
 }
 
 func proxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {

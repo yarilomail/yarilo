@@ -13,7 +13,7 @@ func TestReopenAfterDiscard(t *testing.T) {
 	// Simulate what an engine error triggers: drop the open write handle.
 	u := ui.(*userIndex)
 	u.mu.Lock()
-	u.state(inbox).discardCurrent()
+	u.state().discardCurrent()
 	u.mu.Unlock()
 
 	// The next update must reopen the shard, not fail on a dead handle.
@@ -23,11 +23,11 @@ func TestReopenAfterDiscard(t *testing.T) {
 		word string
 		uid  uint32
 	}{{"alpha", 1}, {"bravo", 2}} {
-		res, err := ui.Lookup(inbox, bodyQuery(tc.word))
+		res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery(tc.word))
 		if err != nil {
 			t.Fatalf("lookup %q: %v", tc.word, err)
 		}
-		got := append(res.Definite, res.Maybe...)
+		got := uidsOf(append(res.DefiniteGUIDs, res.MaybeGUIDs...))
 		if len(got) != 1 || got[0] != tc.uid {
 			t.Errorf("lookup %q = %v, want [%d]", tc.word, got, tc.uid)
 		}

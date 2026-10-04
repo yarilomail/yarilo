@@ -18,7 +18,7 @@ func TestEmailGetAnswersEnvelopePropertiesFromCache(t *testing.T) {
 	warm := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
 		"properties":`+envelopeProps+`}`))
 
-	removeMailFiles(t, home)
+	unreadableMailFiles(t, home)
 
 	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
 		"properties":`+envelopeProps+`}`)
@@ -58,7 +58,7 @@ func TestEmailGetParsesForPropertiesTheEnvelopeDoesNotCarry(t *testing.T) {
 			s, id, home := storedServerWithMessageAt(t, richMessage, 0)
 			// Warm the cache through a request the envelope does satisfy.
 			emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+envelopeProps+`}`)
-			removeMailFiles(t, home)
+			unreadableMailFiles(t, home)
 
 			got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+tc.props+`}`)
 			if notFound, _ := got["notFound"].([]any); len(notFound) != 1 {
@@ -84,7 +84,7 @@ func TestEmailGetDecodesAddressNamesFromTheCache(t *testing.T) {
 
 	warm := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
 		"properties":`+envelopeProps+`}`))
-	removeMailFiles(t, home)
+	unreadableMailFiles(t, home)
 	cached := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
 		"properties":`+envelopeProps+`}`))
 

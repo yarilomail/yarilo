@@ -22,6 +22,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/logging"
 	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 func main() {
@@ -65,10 +66,9 @@ func main() {
 		"telemetry", cfg.Telemetry.Listen,
 	)
 
-	hostname := cfg.Protocol.Submission.Hostname
-	if hostname == "" {
-		hostname, _ = os.Hostname()
-	}
+	// The LMTP proxy announces this installation. submission's key overrides
+	// submission alone (#1506).
+	hostname := cfg.Hostname
 
 	var intTLS *tls.Config
 	if cfg.InternalTLS.Enabled {
@@ -96,29 +96,7 @@ func main() {
 		defer authMasterPool.Close() //nolint:errcheck
 	}
 
-	opts := lmtplogin.Options{
-		Hostname:         hostname,
-		BackendAddr:      lmtpCfg.BackendAddr,
-		DirectorAddr:     lmtpCfg.DirectorAddr,
-		DirectorTLS:      intTLS,
-		BackendTLS:       intTLS,
-		DirectorTag:      lmtpCfg.DirectorTag,
-		BackendPort:      lmtpCfg.BackendPort,
-		LocalIP:          os.Getenv("POD_IP"),
-		AuthMasterAddr:   cfg.AuthService.MasterAddr,
-		AuthMasterPool:   authMasterPool,
-		AuthMasterTLS:    intTLS,
-		WardenAddr:       cfg.WardenService.ClientAddr(),
-		WardenTLS:        intTLS,
-		ConcurrencyLimit: cfg.Protocol.LMTP.UserConcurrencyLimit,
-		// Inbound client-IP forwarding (#742): a Postfix relay in front conveys
-		// the original SMTP client's IP via PROXY protocol and/or XCLIENT.
-		HAProxy:        cfg.Services.LMTP.HAProxy,
-		HAProxyTimeout: time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
-		HAProxyNets:    parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
-		XClient:        cfg.Services.LMTP.XClient,
-		XClientNets:    parseCIDRs(cfg.General.XClient.TrustedNets),
-	}
+	opts := options(cfg, hostname, intTLS, authMasterPool)
 
 	addr := fmt.Sprintf(":%d", cfg.Services.LMTP.Port)
 	ln, err := net.Listen("tcp", addr)
@@ -150,6 +128,36 @@ func main() {
 	tel.SetReady(false)
 }
 
+// options maps the loaded config onto the proxy's settings.
+func options(cfg *config.Config, hostname string, intTLS *tls.Config, authMasterPool *authclient.Pool) lmtplogin.Options {
+	return lmtplogin.Options{
+		Hostname:         hostname,
+		BackendAddr:      cfg.LMTPLoginService.BackendAddr,
+		DirectorAddr:     cfg.LMTPLoginService.DirectorAddr,
+		DirectorTLS:      intTLS,
+		BackendTLS:       intTLS,
+		DirectorTag:      cfg.LMTPLoginService.DirectorTag,
+		BackendPort:      cfg.LMTPLoginService.BackendPort,
+		LocalIP:          os.Getenv("POD_IP"),
+		AuthMasterAddr:   cfg.AuthService.MasterAddr,
+		AuthMasterPool:   authMasterPool,
+		AuthMasterTLS:    intTLS,
+		WardenAddr:       cfg.WardenService.ClientAddr(),
+		WardenTLS:        intTLS,
+		ConcurrencyLimit: cfg.Protocol.LMTP.UserConcurrencyLimit,
+		// Inbound client-IP forwarding (#742): a Postfix relay in front conveys
+		// the original SMTP client's IP via PROXY protocol and/or XCLIENT.
+		HAProxy:         cfg.Services.LMTP.HAProxy,
+		HAProxyTimeout:  time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
+		HAProxyNets:     parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
+		XClient:         cfg.Services.LMTP.XClient,
+		XClientNets:     parseCIDRs(cfg.General.XClient.TrustedNets),
+		MaxMessageBytes: quota.ParseSize(cfg.Quota.MailSize),
+		MaxRecipients:   cfg.Protocol.LMTP.MaxRecipients,
+		ProxyTimeout:    time.Duration(cfg.Protocol.LMTP.Proxy.ProxyTimeout) * time.Second,
+	}
+}
+
 func parseCIDRs(ss []string) []*net.IPNet {
 	nets := make([]*net.IPNet, 0, len(ss))
 	for _, s := range ss {
@@ -163,12 +171,8 @@ func parseCIDRs(ss []string) []*net.IPNet {
 	return nets
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel, and
-// returns the server so the caller can report readiness once its listeners are
-// actually bound.
-//
-// Lifecycle is on: without it /readyz answers 200 from the moment the process
-// starts, which says nothing. With it, ready means this pod holds its ports.
+// startTelemetry serves /healthz, /readyz and /metrics. Lifecycle is on, so
+// ready means this pod holds its ports, not merely that the process started.
 func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 	tel := telemetry.NewWithOptions(telemetry.Options{
 		Addr:      telemetry.Addr(cfg.Listen),

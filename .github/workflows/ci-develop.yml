@@ -17,6 +17,7 @@ on:
     paths:
       - "app/**"
       - "helm/**"
+      - "helm_values/**"
       - "internal/**"
       - "pkg/**"
       - "go.mod"
@@ -101,24 +102,28 @@ jobs:
           # builds of one commit get two names, and that is correct -- they are
           # two artefacts.
           DEV_TAG="${NEXT}-dev.${GITHUB_RUN_NUMBER}"
+          # The chart's own version, stamped into the image so a pod can say
+          # whether the ConfigMap beside it came from the same commit (#1509).
+          CHART_VERSION=$(awk '/^version:/{print $2}' helm/Chart.yaml)
+          echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
           echo "dev_tag=${DEV_TAG}" >> "$GITHUB_OUTPUT"
           echo "next=${NEXT}" >> "$GITHUB_OUTPUT"
           echo "building ${DEV_TAG}"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver: docker
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        uses: docker/build-push-action@v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -129,38 +134,25 @@ jobs:
             ${{ env.IMAGE }}:${{ steps.version.outputs.dev_tag }}
           build-args: |
             BUILD_VERSION=${{ steps.version.outputs.dev_tag }}
+            BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
 
-      - name: Prune old dev tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          KEEP: ${{ env.KEEP_DEV_TAGS }}
-          FRESH: ${{ steps.version.outputs.dev_tag }}
-        run: |
-          set -euo pipefail
-          # Versions carrying a -dev. tag, newest first. Anything past KEEP is
-          # deleted; release tags and `latest` are never touched, and a version
-          # that carries both a dev tag and something else is left alone
-          # because deleting it would take the other name with it.
-          mapfile -t STALE < <(
-            gh api --paginate \
-              "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions" \
-              --jq '.[] | select(.metadata.container.tags | length > 0)
-                        | select(all(.metadata.container.tags[]; test("-dev\\.")))
-                        | "\(.id) \(.metadata.container.tags | join(","))"' \
-            | tail -n "+$((KEEP + 1))"
-          )
-          if [ "${#STALE[@]}" -eq 0 ]; then
-            echo "nothing to prune"
-            exit 0
-          fi
-          for entry in "${STALE[@]}"; do
-            id="${entry%% *}"; tags="${entry#* }"
-            if [ "${tags}" = "${FRESH}" ]; then
-              echo "refusing to prune the image just built (${tags})"
-              continue
-            fi
-            echo "pruning ${tags}"
-            gh api -X DELETE \
-              "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/yarilo/versions/${id}" ||
-              echo "::warning::could not delete version ${id} (${tags})"
-          done
+  prune:
+    name: Prune old dev tags
+    ## Its own job, so housekeeping that fails is red on its own and a build
+    ## whose image is already in the registry is not (#1808).
+    needs: [build]
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux]
+    permissions:
+      packages: write
+    steps:
+      - name: Prune
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: yarilo
+          package-type: container
+          min-versions-to-keep: ${{ env.KEEP_DEV_TAGS }}
+          ## Releases and `latest` are never ours to delete: a version is
+          ## removed with every name it carries.
+          ignore-versions: '^(latest|\d+\.\d+\.\d+)$'
+          token: ${{ secrets.GITHUB_TOKEN }}

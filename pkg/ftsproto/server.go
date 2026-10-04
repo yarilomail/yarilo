@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/yarilomail/yarilo/pkg/authclient"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -32,7 +33,7 @@ func handleConn(conn net.Conn, svc Service) {
 	defer conn.Close()
 	br := bufio.NewReader(conn)
 	for {
-		line, err := br.ReadString('\n')
+		line, err := lineio.ReadLine(br, lineio.MaxInternal)
 		if err != nil {
 			return
 		}
@@ -96,7 +97,7 @@ func dispatch(line string, svc Service) string {
 		}
 		return CmdVersion + "\t" + ProtocolVersion + "\tOK"
 
-	case CmdIndex, CmdPrepend, CmdExpunge, CmdLookup, CmdStatus, CmdRescan:
+	case CmdIndex, CmdPrepend, CmdExpunge, CmdLookup, CmdStatus, CmdRescan, CmdDropFolder:
 		if len(f) < 5 {
 			return no("malformed %s", f[0])
 		}
@@ -136,14 +137,26 @@ func dispatch(line string, svc Service) string {
 			slog.Debug("fts: prepended", "user", user, "folder", mbox.Name, "max_uid", maxUID)
 			return replyOK
 		case CmdExpunge:
-			if len(f) != 6 {
+			if len(f) == 6 {
+				// This form names no message, and a retraction that quietly
+				// does nothing is an index answering deleted mail (#1986).
+				metricExpungeRefused.Inc()
+				slog.Warn("fts: refusing an EXPUNGE without the message guid",
+					"user", user, "folder", mbox.Name, "protocol", ProtocolVersion)
+				return no("EXPUNGE without a message guid: protocol %s is required", ProtocolVersion)
+			}
+			if len(f) != 7 {
 				return no("malformed EXPUNGE")
 			}
 			uid, err := parseU32(f[5])
 			if err != nil {
 				return no("malformed EXPUNGE uid")
 			}
-			if err := svc.Expunge(user, mbox, uid); err != nil {
+			guid, gerr := ParseGUID(f[6])
+			if gerr != nil {
+				return no("malformed EXPUNGE guid")
+			}
+			if err := svc.Expunge(user, mbox, uid, guid); err != nil {
 				slog.Debug("fts: expunge failed", "user", user, "folder", mbox.Name, "uid", uid, "err", err)
 				return noFor(err)
 			}
@@ -177,6 +190,12 @@ func dispatch(line string, svc Service) string {
 			}
 			slog.Debug("fts: status", "user", user, "folder", mbox.Name, "last_indexed_uid", last, "checksum", sum)
 			return fmt.Sprintf("%s\t%d\t%d", replyOK, last, sum)
+		case CmdDropFolder:
+			if err := svc.DropFolder(user, mbox); err != nil {
+				return noFor(err)
+			}
+			slog.Debug("fts: folder dropped", "user", user, "folder", mbox.Name)
+			return replyOK
 		default: // CmdRescan
 			if err := svc.Rescan(user, mbox); err != nil {
 				slog.Debug("fts: rescan failed", "user", user, "folder", mbox.Name, "err", err)
@@ -185,6 +204,48 @@ func dispatch(line string, svc Service) string {
 			slog.Debug("fts: rescanned", "user", user, "folder", mbox.Name)
 			return replyOK
 		}
+
+	case CmdRescanUser:
+		if len(f) != 2 {
+			return no("malformed RESCANUSER")
+		}
+		done, err := svc.RescanUser(f[1])
+		if err != nil {
+			slog.Debug("fts: whole-user rescan failed", "user", f[1], "err", err)
+			return noFor(err)
+		}
+		slog.Debug("fts: rescanned", "user", f[1], "folders", len(done))
+		return strings.Join(append([]string{replyOK}, done...), "\t")
+
+	case CmdLookupIn:
+		if len(f) != 3 {
+			return no("malformed LOOKUPIN")
+		}
+		var req lookupInRequest
+		if err := decodeB64JSON(f[2], &req); err != nil {
+			return noFor(err)
+		}
+		res, err := svc.LookupIn(f[1], req.Folders, req.Query)
+		if err != nil {
+			return noFor(err)
+		}
+		payload, err := encodeB64JSON(res)
+		if err != nil {
+			return noFor(err)
+		}
+		return replyOK + "\t" + payload
+
+	case CmdCounts:
+		if len(f) != 2 {
+			return no("malformed COUNTS")
+		}
+		docs, copies, messages, unrecorded, err := svc.Counts(f[1])
+		if err != nil {
+			return noFor(err)
+		}
+		slog.Debug("fts: counts", "user", f[1], "documents", docs, "copies", copies,
+			"messages", messages, "unrecorded_copies", unrecorded)
+		return fmt.Sprintf("%s\t%d\t%d\t%d\t%d", replyOK, docs, copies, messages, unrecorded)
 
 	case CmdOptimize:
 		if len(f) != 2 {

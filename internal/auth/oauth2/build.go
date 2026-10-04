@@ -3,6 +3,7 @@ package oauth2
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
@@ -90,12 +91,22 @@ func buildOne(ctx context.Context, e config.OAuth2Entry) (protocol.Passdb, error
 		return nil, err
 	}
 	return NewPassdb(PassdbConfig{
-		Validator:        validator,
-		UsernameTemplate: e.UsernameValidationFormat,
-		ActiveAttribute:  e.ActiveAttribute,
-		ActiveValue:      e.ActiveValue,
-		ExtraFields:      e.ExtraFields,
+		Validator:              validator,
+		UsernameTemplate:       e.UsernameValidationFormat,
+		ActiveAttribute:        e.ActiveAttribute,
+		ActiveValue:            e.ActiveValue,
+		ExtraFields:            e.ExtraFields,
+		Scope:                  strings.Join(e.Scopes, " "),
+		OpenIDConfigurationURL: discoveryURL(e.IssuerURL),
 	})
+}
+
+// discoveryURL is the issuer's OpenID configuration document, "" without one.
+func discoveryURL(issuer string) string {
+	if issuer == "" {
+		return ""
+	}
+	return strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
 }
 
 func introMode(raw string) IntrospectionMode {

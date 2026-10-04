@@ -2,11 +2,14 @@ package file
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 )
 
@@ -24,19 +27,11 @@ const (
 	extNameVsize        = "vsize"
 	extNameGUID         = "guid"
 	extNameCache        = "cache"
+	extNameCacheCRC     = "cache-crc"
 )
 
-// guid extension layout (4-byte header, 16 bytes per-record):
-//
-//	header:
-//	  uint32 backfill_state  // 0 = pending, 1 = complete
-//	per-record:
-//	  byte message_guid[16]  // RFC 8474 EMAILID; all-zero = not yet known
-//
-// The header state is the O(1) "is this folder backfilled" marker: without it
-// every open of a large folder would rescan all records looking for zeros.
-// RecordAlign is 1, so registering this extension on an existing index leaves
-// every other extension's RecordOffset unchanged.
+// guid extension: wire layout in INTERNALS.md §7. The header state is the O(1)
+// backfilled marker, and RecordAlign 1 leaves every other offset unchanged.
 const (
 	guidRecSize       = 16
 	guidHdrSize       = 4
@@ -73,10 +68,7 @@ func decodeGUIDRec(b []byte) [16]byte {
 	return g
 }
 
-// idate extension layout (0 bytes header, 4 bytes per-record):
-//
-//	per-record:
-//	  uint32 unix_time  // seconds since epoch; 0 = unknown
+// idate extension: wire layout in INTERNALS.md §7.
 const idateRecSize = 4
 
 func encodeIdateRec(t time.Time) []byte {
@@ -98,15 +90,8 @@ func decodeIdateRec(b []byte) time.Time {
 	return time.Unix(int64(unix), 0).UTC()
 }
 
-// hdr-vsize extension layout (16-byte header, 0 per-record). Caches the
-// aggregate virtual size of the folder so quota does not rescan every read.
-// The {HighestUID, MessageCount} pair validates the cache: if it matches the
-// folder's current state the cached Vsize is trusted, otherwise it is
-// recalculated from the per-record vsize extension.
-//
-//	uint64 vsize          // sum of every message's virtual (RFC822) size
-//	uint32 highest_uid    // largest UID folded into vsize
-//	uint32 message_count  // messages folded into vsize
+// hdr-vsize extension: wire layout in INTERNALS.md §7. Caches the aggregate,
+// validated by {HighestUID, MessageCount} and recomputed when they drift.
 const (
 	hdrVsizeSize            = 16
 	hdrVsizeOffVsize        = 0
@@ -141,10 +126,43 @@ func decodeHdrVsize(b []byte) (hdrVsize, error) {
 	}, nil
 }
 
-// vsize extension layout (0-byte header, 4 bytes per-record): the per-message
-// virtual (RFC822) size. Populated at append from MessageMeta.VSize; summed by
-// the hdr-vsize recalc.
+// vsize extension: wire layout in INTERNALS.md §7. Populated at append from
+// MessageMeta.VSize; summed by the hdr-vsize recalc.
 const vsizeRecSize = 4
+
+// declareRecordExtLocked is the only door a record extension enters by: the
+// intro reaches the log before any record of the new width (#1770). Holds fs.mu.
+func (fs *folderState) declareRecordExtLocked(name string, hdrData []byte, recSize, align uint16, resetID uint32) error {
+	if findExt(fs.file.Extensions, name) != nil {
+		return nil
+	}
+	records := [][]byte{encLogRec(mailindex.TxTypeExtIntro, 0, mailindex.EncodeTxExtIntroPayload(mailindex.TxExtIntro{
+		ExtID:       mailindex.TxExtIntroNewExt,
+		ResetID:     resetID,
+		HdrSize:     uint32(len(hdrData)),
+		RecordSize:  recSize,
+		RecordAlign: align,
+		Name:        name,
+	}))}
+	// The intro states the header's size; its bytes follow separately.
+	if len(hdrData) > 0 {
+		records = append(records, encLogRec(mailindex.TxTypeExtHdrUpdate, 0,
+			mailindex.EncodeTxExtHdrUpdatePayload(mailindex.TxExtHdrUpdate{Offset: 0, Data: hdrData})))
+	}
+	if err := fs.appendMutLog(records...); err != nil {
+		return fmt.Errorf("fileindex: declare %q extension: %w", name, err)
+	}
+	if err := fs.file.AddRecordExtension(name, hdrData, recSize, align, resetID); err != nil {
+		return fmt.Errorf("fileindex: add %q extension: %w", name, err)
+	}
+	return nil
+}
+
+// ensureVsizeExtLocked declares the extension in a folder written before it
+// existed: without it a stamped size never reaches disk (#1752). Holds fs.mu.
+func (fs *folderState) ensureVsizeExtLocked() error {
+	return fs.declareRecordExtLocked(extNameVsize, nil, vsizeRecSize, 4, 0)
+}
 
 func encodeVsizeRec(v uint32) []byte {
 	out := make([]byte, vsizeRecSize)
@@ -188,21 +206,11 @@ const (
 	modseqRecSize         = 8
 )
 
-// keywords extension layout:
-//
-//	header (variable):
-//	  uint32 keywords_count
-//	  struct { uint32 unused; uint32 name_offset } [keywords_count]
-//	  byte name_data[]  // null-terminated names, contiguous
-//	per-record (4 bytes):
-//	  uint32 bitmask  // bit N set ⇒ keyword index N present
-//
-// We cap the keyword count at 32 for Phase 2 (matches the
-// pre-rewrite yarilo limit). Growing the bitmask to multi-uint32
-// is straightforward — just bump keywordsRecSize and add more
-// bits — but is deferred until we hit the limit in production.
-// expungeFloorSize is the header: one uint64, the folder's HighestModSeq at
-// the moment its log was folded away.
+// keywords extension: a variable header of {count, {unused, name_offset}[],
+// names} and a 4-byte per-record bitmask, capped at 32 keywords.
+
+// expungeFloorSize is the header: one uint64, the folder's HighestModSeq at the
+// moment its log was folded away.
 //
 // A header-only extension on purpose. A build that predates it decodes the
 // entry generically, keeps it across a rewrite, and reads records unchanged
@@ -379,9 +387,8 @@ func keywordsBitmaskFor(registry keywordsHdr, names []string) (uint32, keywordsH
 	return bits, out, nil
 }
 
-// keywordsFromBitmask is the reverse: decode a per-record
-// bitmask into the keyword names sorted alphabetically (stable
-// output for tests + IDLE pushes).
+// keywordsFromBitmask decodes a per-record bitmask into names, sorted for
+// stable output.
 func keywordsFromBitmask(registry keywordsHdr, bits uint32) []string {
 	if bits == 0 {
 		return nil
@@ -452,15 +459,21 @@ func defaultExtensions(uidValidity uint32, guid [16]byte) []mailindex.Extension 
 			ResetID:     uidValidity,
 		},
 		{
-			// Offset into yarilo.index.cache; ResetID doubles as the cache
-			// file's file_seq, so a purge invalidates every offset with one
-			// bump (#1030).
+			// ResetID doubles as the cache file's file_seq, so one bump
+			// invalidates every offset (#1030).
 			Name:        extNameCache,
 			HdrSize:     0,
 			HdrData:     nil,
 			RecordSize:  cacheRecSize,
 			RecordAlign: 4,
 			ResetID:     uidValidity,
+		},
+		{
+			// The mdbox storage key rides in the record, as the reference's
+			// does; a folder of another driver leaves it zero.
+			Name:        extNameMdbox,
+			RecordSize:  mdboxRecSize,
+			RecordAlign: 4,
 		},
 		{
 			// A fresh folder holds no pre-existing messages, so it is born
@@ -475,9 +488,8 @@ func defaultExtensions(uidValidity uint32, guid [16]byte) []mailindex.Extension 
 	}
 }
 
-// findExt locates the extension with the given name in a slice
-// or returns nil. Sorted-by-RecordOffset slices stay sorted on
-// return; the function is read-only.
+// findExt returns the named extension or nil. Read-only, so a sorted slice
+// stays sorted.
 func findExt(exts []mailindex.Extension, name string) *mailindex.Extension {
 	for i := range exts {
 		if exts[i].Name == name {
@@ -487,18 +499,18 @@ func findExt(exts []mailindex.Extension, name string) *mailindex.Extension {
 	return nil
 }
 
-// cache extension layout (0-byte header, 4 bytes per-record):
-//
-//	per-record:
-//	  uint32 offset  // into yarilo.index.cache; 0 = nothing cached
-//
-// The extension's ResetID must equal the cache file's file_seq: a purge
+// cache extension: wire layout in INTERNALS.md §7. The extension's ResetID must
+// equal the cache file's file_seq: a purge
 // writes a new file, bumps both, and every stored offset dies at once --
 // no walk over records (INTERNALS.md §7, #1030). The offset never travels
 // with a message: it is meaningful only inside its own (indexid, file_seq)
 // pair, so COPY/MOVE deliberately do not carry it and the copy is uncached
 // until first parse.
 const cacheRecSize = 4
+
+// cacheCRCRecSize is the crc32 of the message's cache record, checked before
+// its fields are read (#1714).
+const cacheCRCRecSize = 4
 
 func encodeCacheRec(offset uint32) []byte {
 	out := make([]byte, cacheRecSize)
@@ -521,13 +533,86 @@ func encodeExpungeFloor(modseq uint64) []byte {
 	return out
 }
 
-// decodeExpungeFloor reads the floor. A missing or short header reads as 0,
-// which means "no history has been folded away" -- the honest answer for an
-// index written before this extension existed, because such an index has
-// whatever its log still holds and nothing was silently dropped by us.
+// decodeExpungeFloor reads the floor; a missing header is 0, the honest answer
+// for a pre-extension index that still has whatever its log holds.
 func decodeExpungeFloor(b []byte) uint64 {
 	if len(b) < expungeFloorSize {
 		return 0
 	}
 	return binary.LittleEndian.Uint64(b)
+}
+
+// ourExtensions is every extension name this package writes. An index carrying
+// one outside this set was written by something else.
+var ourExtensions = map[string]bool{
+	extNameDboxHdr:      true,
+	extNameModSeq:       true,
+	extNameKeywords:     true,
+	extNameExpungeFloor: true,
+	extNameInternalDate: true,
+	extNameHdrVsize:     true,
+	extNameVsize:        true,
+	extNameGUID:         true,
+	extNameCache:        true,
+	extNameCacheCRC:     true,
+	extNameMaildir:      true,
+	extNameGUIDMap:      true,
+	extNameLineage:      true,
+	extNameMdbox:        true,
+}
+
+// looksForeign reports whether an index file under a legacy canonical name was
+// written by another implementation. Neither the name nor a successful parse
+// tells the two apart -- the formats are byte-compatible enough that their base
+// parses cleanly with our reader -- so the extension table decides: their mdbox
+// store carries "mdbox", "mdbox-hdr" and "hdr-pop3-uidl", none of which we write.
+// Narrow on purpose: an sdbox store of theirs would not be recognised, matching
+// the conversion path itself being mdbox-only for now (#1524).
+func looksForeign(path string) bool {
+	// Read once: checking existence first leaves a window for another opener's
+	// rename, which "unreadable" would then class as a foreign store (#1593).
+	raw, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Somebody else migrated it. Nothing to claim, nothing foreign.
+		return false
+	case err != nil:
+		// Unreadable: not ours to claim either, and renaming a file we cannot
+		// read into our namespace only moves the question.
+		return true
+	}
+	// Our own legacy format first: it predates the extensions this check reads,
+	// so an extension table is not a thing it has to have.
+	if looksLikeOurLegacyHeader(raw) {
+		return false
+	}
+	// From the bytes already in hand: opening the path again would race the
+	// rename that this whole check exists beside.
+	h, err := dboxindex.ParseHeader(raw)
+	if err != nil {
+		return true
+	}
+	exts, err := dboxindex.ParseExtensions(raw, h)
+	if err != nil {
+		return true
+	}
+	for _, e := range exts {
+		if !ourExtensions[e.Name] {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeOurLegacyHeader checks the four fields the legacy decoder insists on,
+// so anything this accepts, that reads.
+func looksLikeOurLegacyHeader(raw []byte) bool {
+	if len(raw) < 120 {
+		return false
+	}
+	le := binary.LittleEndian
+	return raw[0] == 7 &&
+		raw[1] == legacyMinor &&
+		le.Uint32(raw[8:]) == legacyRecordSize &&
+		le.Uint32(raw[4:]) == uint32(le.Uint16(raw[2:]))
 }

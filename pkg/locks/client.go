@@ -15,6 +15,18 @@ import (
 	"time"
 )
 
+// defaultWaitPoolSize is the number of connections kept for waiting acquires.
+// A waiting call holds its connection for as long as it waits -- up to the
+// caller's limit, tens of seconds -- so this is sized for concurrent waiters,
+// not for round trips: at fifty sessions with a few folders each, a pool much
+// smaller than this only moves the queue from the lock service into the pool.
+const defaultWaitPoolSize = 64
+
+// waitIdleTimeout closes a kept connection nobody has used for this long. A
+// pool that only ever grows holds a file descriptor and a server-side
+// connection for a burst that happened once.
+const waitIdleTimeout = 2 * time.Minute
+
 // defaultPoolSize is the number of concurrent control connections per Client.
 // Each connection handles one round-trip at a time; the pool lets goroutines
 // proceed in parallel instead of serialising through a single mutex.
@@ -24,6 +36,9 @@ const defaultPoolSize = 16
 type connSlot struct {
 	conn   net.Conn
 	reader *reader
+	// idleSince is when this slot was last returned; a slot idle past
+	// waitIdleTimeout is closed rather than reused.
+	idleSince time.Time
 }
 
 // Client is the Locker implementation talking the TAB-delimited wire protocol.
@@ -33,13 +48,23 @@ type connSlot struct {
 // Owner convention (not enforced): callers pass "<process>/<pid>/<sessionID>"
 // so the BUSY response identifies the contending peer in logs.
 type Client struct {
-	dial     Dialer
-	poolSize int
+	dial         Dialer
+	poolSize     int
+	waitPoolSize int
 
 	// idle is the connection pool: a buffered channel of available slots.
 	// Taking a slot gives exclusive access to its conn; returning it makes it
 	// available again. Cap = poolSize; starts with all-nil conns (lazy connect).
 	idle chan *connSlot
+
+	// The waiting pool: a semaphore for how many waits may be in flight, and
+	// a stack of connections kept for them. A stack, not a queue: the slot
+	// just returned is the one still connected, so reuse takes it first and
+	// the pool only ever holds as many connections as there were concurrent
+	// waits.
+	waitSem  chan struct{}
+	waitMu   sync.Mutex
+	waitFree []*connSlot
 
 	// holdsMu guards the holds map. Separate from the pool so HoldsResource is
 	// safe to call mid-roundtrip.
@@ -49,7 +74,7 @@ type Client struct {
 	// concurrent goroutine on the same client sees no hold and goes through
 	// normal Acquire (ErrBusy + retry until release).
 	holdsMu sync.RWMutex
-	holds   map[uint64]map[string]string // goID → resource → lockID
+	holds   map[uint64]map[string]hold // goID → resource → hold
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -61,6 +86,16 @@ type ClientOption func(*Client)
 // WithPoolSize overrides the number of concurrent control connections.
 // The default is 16. Larger values reduce mutex contention under high
 // concurrency at the cost of more open TCP connections.
+// WithWaitPoolSize overrides the number of connections kept for waiting
+// acquires.
+func WithWaitPoolSize(n int) ClientOption {
+	return func(c *Client) {
+		if n > 0 {
+			c.waitPoolSize = n
+		}
+	}
+}
+
 func WithPoolSize(n int) ClientOption {
 	return func(c *Client) {
 		if n > 0 {
@@ -117,10 +152,11 @@ func DialTLS(addr string, tlsCfg *tls.Config) Dialer {
 // version handshake. Call Close to release all connections.
 func NewClient(ctx context.Context, dial Dialer, opts ...ClientOption) (*Client, error) {
 	c := &Client{
-		dial:     dial,
-		poolSize: defaultPoolSize,
-		holds:    make(map[uint64]map[string]string),
-		closed:   make(chan struct{}),
+		dial:         dial,
+		poolSize:     defaultPoolSize,
+		waitPoolSize: defaultWaitPoolSize,
+		holds:        make(map[uint64]map[string]hold),
+		closed:       make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -129,6 +165,11 @@ func NewClient(ctx context.Context, dial Dialer, opts ...ClientOption) (*Client,
 	for i := 0; i < c.poolSize; i++ {
 		c.idle <- &connSlot{} // conn == nil → lazy connect on first use
 	}
+	c.waitSem = make(chan struct{}, c.waitPoolSize)
+	// Swept on a timer, not only when the next waiting call takes a slot: a
+	// pool nobody uses would otherwise hold its connections -- and the
+	// server's -- until the process ended.
+	go c.sweepWaitPool()
 	// Verify the server is reachable by connecting one slot eagerly.
 	slot := <-c.idle
 	if err := c.ensureConnected(ctx, slot); err != nil {
@@ -156,9 +197,93 @@ func (c *Client) handshakeSlot(slot *connSlot) error {
 // ensureConnected opens (or reopens) the connection for a pool slot.
 // Caller holds exclusive access to the slot (taken from the idle channel).
 func (c *Client) ensureConnected(ctx context.Context, slot *connSlot) error {
+	return c.ensureConnectedIn(ctx, slot, "control")
+}
+
+// WaitConnections reports how many kept connections the waiting pool holds.
+// Test-facing: the ceiling is a property, and a number is how it is asserted.
+func (c *Client) WaitConnections() int {
+	c.waitMu.Lock()
+	defer c.waitMu.Unlock()
+	n := 0
+	for _, slot := range c.waitFree {
+		if slot.conn != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// sweepWaitPool closes kept connections nobody has used for waitIdleTimeout.
+func (c *Client) sweepWaitPool() {
+	t := time.NewTicker(waitIdleTimeout / 2)
+	defer t.Stop()
+	for {
+		select {
+		case <-c.closed:
+			return
+		case <-t.C:
+			c.waitMu.Lock()
+			kept := c.waitFree[:0]
+			for _, slot := range c.waitFree {
+				if slot.conn != nil && time.Since(slot.idleSince) > waitIdleTimeout {
+					_ = slot.conn.Close()
+					slot.conn, slot.reader = nil, nil
+				}
+				kept = append(kept, slot)
+			}
+			c.waitFree = kept
+			c.waitMu.Unlock()
+		}
+	}
+}
+
+// takeWaitSlot admits one waiting call and gives it a connection to use: the
+// most recently returned one, which is the one most likely still open.
+func (c *Client) takeWaitSlot(ctx context.Context) (*connSlot, error) {
+	select {
+	case <-c.closed:
+		return nil, ErrClosed
+	case <-ctx.Done():
+		return nil, waitFailure(ctx.Err())
+	case c.waitSem <- struct{}{}:
+	}
+	c.waitMu.Lock()
+	defer c.waitMu.Unlock()
+	if n := len(c.waitFree); n > 0 {
+		slot := c.waitFree[n-1]
+		c.waitFree = c.waitFree[:n-1]
+		if slot.conn != nil && time.Since(slot.idleSince) > waitIdleTimeout {
+			_ = slot.conn.Close()
+			slot.conn, slot.reader = nil, nil
+		}
+		return slot, nil
+	}
+	return &connSlot{}, nil
+}
+
+// putWaitSlot returns a slot. A connection whose exchange did not finish is
+// not returned: the server may still write the answer the caller walked away
+// from into it.
+func (c *Client) putWaitSlot(slot *connSlot, reusable bool) {
+	if !reusable && slot.conn != nil {
+		_ = slot.conn.Close()
+		slot.conn, slot.reader = nil, nil
+	}
+	slot.idleSince = time.Now()
+	c.waitMu.Lock()
+	c.waitFree = append(c.waitFree, slot)
+	c.waitMu.Unlock()
+	<-c.waitSem
+}
+
+// ensureConnectedIn connects a slot of the named pool, counting the dial: a
+// connection kept is a name resolved once, and the counter is what says so.
+func (c *Client) ensureConnectedIn(ctx context.Context, slot *connSlot, pool string) error {
 	if slot.conn != nil {
 		return nil
 	}
+	clientDials.WithLabelValues(pool).Inc()
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return err
@@ -196,7 +321,9 @@ func (c *Client) roundtrip(ctx context.Context, cmd ...string) ([]string, error)
 	default:
 	}
 
-	// Take an idle slot (blocks until one is available or ctx fires).
+	// Take an idle slot, timed apart from the exchange: both sit inside one Lock,
+	// where neither the attempt counter nor the server sees them (#1650).
+	waited := time.Now()
 	var slot *connSlot
 	select {
 	case <-c.closed:
@@ -205,7 +332,12 @@ func (c *Client) roundtrip(ctx context.Context, cmd ...string) ([]string, error)
 		return nil, waitFailure(ctx.Err())
 	case slot = <-c.idle:
 	}
-	defer func() { c.idle <- slot }()
+	clientPart.WithLabelValues("slot").Observe(time.Since(waited).Seconds())
+	exchange := time.Now()
+	defer func() {
+		clientPart.WithLabelValues("roundtrip").Observe(time.Since(exchange).Seconds())
+		c.idle <- slot
+	}()
 
 	if err := c.ensureConnected(ctx, slot); err != nil {
 		return nil, fmt.Errorf("locks/client: connect: %w: %w", ErrUnavailable, err)
@@ -272,12 +404,13 @@ func isTransport(err error) bool {
 
 // Lock implements Locker.
 func (c *Client) Lock(ctx context.Context, resource, owner string, ttl time.Duration) (Lock, error) {
+	owner = CheckOwner(owner)
 	ttlStr, err := formatTTL(ttl)
 	if err != nil {
 		return Lock{}, err
 	}
 	expires := time.Now().Add(ttl)
-	resp, err := c.roundtrip(ctx, cmdLock, resource, owner, ttlStr)
+	resp, err := c.roundtrip(ctx, cmdLock, resource, owner, ttlStr, CheckSite(ctx))
 	if err != nil {
 		return Lock{}, err
 	}
@@ -289,20 +422,17 @@ func (c *Client) Lock(ctx context.Context, resource, owner string, ttl time.Dura
 		if len(resp) != 2 {
 			return Lock{}, fmt.Errorf("locks/client: malformed OK response: %w", ErrProtocol)
 		}
-		gid := goID()
-		c.holdsMu.Lock()
-		if c.holds[gid] == nil {
-			c.holds[gid] = make(map[string]string)
-		}
-		c.holds[gid][resource] = resp[1]
-		c.holdsMu.Unlock()
+		c.recordHold(resource, resp[1], HoldExclusive)
 		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires}, nil
 	case respBusy:
-		current := ""
+		current, site := "", SiteUnknown
 		if len(resp) > 1 {
 			current = resp[1]
 		}
-		return Lock{Resource: resource, Owner: current}, ErrBusy
+		if len(resp) > 2 && resp[2] != "" {
+			site = resp[2]
+		}
+		return Lock{Resource: resource, Owner: current, Site: site}, ErrBusy
 	case respError:
 		return Lock{}, fmt.Errorf("locks/client: server error: %s", strings.Join(resp[1:], " "))
 	}
@@ -311,12 +441,13 @@ func (c *Client) Lock(ctx context.Context, resource, owner string, ttl time.Dura
 
 // LockShared implements Locker.
 func (c *Client) LockShared(ctx context.Context, resource, owner string, ttl time.Duration) (Lock, error) {
+	owner = CheckOwner(owner)
 	ttlStr, err := formatTTL(ttl)
 	if err != nil {
 		return Lock{}, err
 	}
 	expires := time.Now().Add(ttl)
-	resp, err := c.roundtrip(ctx, cmdLockShared, resource, owner, ttlStr)
+	resp, err := c.roundtrip(ctx, cmdLockShared, resource, owner, ttlStr, CheckSite(ctx))
 	if err != nil {
 		return Lock{}, err
 	}
@@ -328,20 +459,17 @@ func (c *Client) LockShared(ctx context.Context, resource, owner string, ttl tim
 		if len(resp) != 2 {
 			return Lock{}, fmt.Errorf("locks/client: malformed OK response: %w", ErrProtocol)
 		}
-		gid := goID()
-		c.holdsMu.Lock()
-		if c.holds[gid] == nil {
-			c.holds[gid] = make(map[string]string)
-		}
-		c.holds[gid][resource] = resp[1]
-		c.holdsMu.Unlock()
+		c.recordHold(resource, resp[1], HoldShared)
 		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires}, nil
 	case respBusy:
-		current := ""
+		current, site := "", SiteUnknown
 		if len(resp) > 1 {
 			current = resp[1]
 		}
-		return Lock{Resource: resource, Owner: current}, ErrBusy
+		if len(resp) > 2 && resp[2] != "" {
+			site = resp[2]
+		}
+		return Lock{Resource: resource, Owner: current, Site: site}, ErrBusy
 	case respError:
 		return Lock{}, fmt.Errorf("locks/client: server error: %s", strings.Join(resp[1:], " "))
 	}
@@ -369,18 +497,34 @@ func (c *Client) Unlock(ctx context.Context, lockID string) error {
 	return fmt.Errorf("locks/client: unexpected response %v: %w", resp, ErrProtocol)
 }
 
-// HoldsResource implements Locker. Returns true only when the calling goroutine
-// itself holds this resource; concurrent goroutines on the same client see
-// false and go through normal Acquire.
-func (c *Client) HoldsResource(resource string) bool {
+// HoldsResource implements Locker. Answers only for the calling goroutine;
+// concurrent goroutines on the same client see no hold and go through Acquire.
+func (c *Client) HoldsResource(resource string) (HoldMode, bool) {
 	gid := goID()
 	c.holdsMu.RLock()
 	defer c.holdsMu.RUnlock()
 	if m, ok := c.holds[gid]; ok {
-		_, has := m[resource]
-		return has
+		if h, has := m[resource]; has {
+			return h.mode, true
+		}
 	}
-	return false
+	return HoldNone, false
+}
+
+// hold is one resource this goroutine holds, and how.
+type hold struct {
+	id   string
+	mode HoldMode
+}
+
+func (c *Client) recordHold(resource, lockID string, mode HoldMode) {
+	gid := goID()
+	c.holdsMu.Lock()
+	defer c.holdsMu.Unlock()
+	if c.holds[gid] == nil {
+		c.holds[gid] = make(map[string]hold)
+	}
+	c.holds[gid][resource] = hold{id: lockID, mode: mode}
 }
 
 // dropHoldByID removes the calling goroutine's resource→ID entry matching
@@ -393,8 +537,8 @@ func (c *Client) dropHoldByID(lockID string) {
 	if !ok {
 		return
 	}
-	for resource, id := range m {
-		if id == lockID {
+	for resource, h := range m {
+		if h.id == lockID {
 			delete(m, resource)
 			if len(m) == 0 {
 				delete(c.holds, gid)
@@ -551,60 +695,118 @@ func (c *Client) Close() error {
 				// goroutine returns it after noticing c.closed.
 			}
 		}
+		// The waiting pool the same way: its connections are kept, so closing
+		// the client has to close them too.
+		c.waitMu.Lock()
+		for _, slot := range c.waitFree {
+			if slot.conn != nil {
+				_ = slot.conn.Close()
+			}
+		}
+		c.waitFree = nil
+		c.waitMu.Unlock()
 	})
 	return nil
 }
 
-// Acquire is Lock with blocking semantics: retries on ErrBusy with exponential
-// backoff (1ms → 100ms cap, small jitter) until ctx is cancelled or the lock is
-// taken. Returns the Lock on success, else the last underlying error.
+// Acquire is Lock with blocking semantics: the wait happens in the backend, in
+// arrival order, and falls back to the polling loop below (#1821).
 func Acquire(ctx context.Context, l Locker, resource, owner string, ttl time.Duration) (Lock, error) {
+	owner = CheckOwner(owner)
+	_ = CheckSite(ctx)
+	if lock, err, queued := acquireQueued(ctx, l, resource, owner, ttl, false, waitFailure); queued {
+		return lock, err
+	}
+	return acquireBlocking(ctx, resource, waitFailure, func() (Lock, error) {
+		return l.Lock(ctx, resource, owner, ttl)
+	})
+}
+
+// acquireQueued runs the queued acquisition when both the Locker and the server
+// support it. queued is false when the caller must fall back to polling.
+func acquireQueued(ctx context.Context, l Locker, resource, owner string, ttl time.Duration, shared bool, wrapWaitErr func(error) error) (Lock, error, bool) {
+	w, ok := l.(waitingLocker)
+	if !ok {
+		return Lock{}, nil, false
+	}
+	limit := defaultWaitLimit
+	if deadline, has := ctx.Deadline(); has {
+		if remaining := time.Until(deadline); remaining < limit {
+			limit = remaining
+		}
+	}
+	if limit <= 0 {
+		return Lock{}, wrapWaitErr(context.DeadlineExceeded), true
+	}
+	class := resourceClass(resource)
+	started := time.Now()
+	lock, err := w.LockWaiting(ctx, resource, owner, ttl, limit, shared)
+	clientAcquireAttempts.WithLabelValues(class).Observe(1)
+	clientAcquireWait.WithLabelValues(class).Observe(time.Since(started).Seconds())
+	if errors.Is(err, ErrBusy) {
+		clientGaveUp.WithLabelValues(class, attemptBucket(1)).Inc()
+		return Lock{}, wrapWaitErr(context.DeadlineExceeded), true
+	}
+	return lock, err, true
+}
+
+// waitingLocker is a Locker whose server answers when the lock is the caller's.
+type waitingLocker interface {
+	LockWaiting(ctx context.Context, resource, owner string, ttl, limit time.Duration, shared bool) (Lock, error)
+}
+
+// defaultWaitLimit caps how long the server may hold one request open. Callers
+// carry their own deadline; this is the ceiling for one that carries none.
+const defaultWaitLimit = 30 * time.Second
+
+// AcquireShared is LockShared with blocking semantics, mirroring Acquire. Use
+// it for read-path callers that must block only against an in-flight exclusive
+// writer, not against other concurrent readers.
+//
+// A cancelled wait comes back unwrapped here and wrapped in Acquire: the two
+// have always differed, and this is not the change that makes them agree.
+func AcquireShared(ctx context.Context, l Locker, resource, owner string, ttl time.Duration) (Lock, error) {
+	owner = CheckOwner(owner)
+	_ = CheckSite(ctx)
+	if lock, err, queued := acquireQueued(ctx, l, resource, owner, ttl, true, func(err error) error { return err }); queued {
+		return lock, err
+	}
+	return acquireBlocking(ctx, resource, func(err error) error { return err }, func() (Lock, error) {
+		return l.LockShared(ctx, resource, owner, ttl)
+	})
+}
+
+// acquireBlocking is the retry loop both blocking acquisitions run, and the one
+// place a contender's whole wait is visible. The counters beside it measure the
+// wait per acquisition rather than per attempt: a contender that lost eight
+// draws in a row is one slow acquisition, and eight rows of a per-attempt
+// histogram say nothing about it (#1640).
+func acquireBlocking(ctx context.Context, resource string, wrapWaitErr func(error) error, try func() (Lock, error)) (Lock, error) {
+	class := resourceClass(resource)
+	started := time.Now()
+	attempts := 0
 	backoff := time.Millisecond
 	const maxBackoff = 100 * time.Millisecond
 	for {
-		lock, err := l.Lock(ctx, resource, owner, ttl)
+		attempts++
+		lock, err := try()
 		if err == nil {
+			clientAcquireAttempts.WithLabelValues(class).Observe(float64(attempts))
+			clientAcquireWait.WithLabelValues(class).Observe(time.Since(started).Seconds())
 			return lock, nil
 		}
 		if !errors.Is(err, ErrBusy) {
 			return Lock{}, err
 		}
+		clientBusyRetries.WithLabelValues(class).Inc()
 		// Jitter by ±25% so concurrent retriers do not synchronise.
 		jitter := time.Duration(int64(backoff) / 4)
 		wait := backoff - jitter + time.Duration(time.Now().UnixNano()%int64(2*jitter+1))
 		select {
 		case <-ctx.Done():
-			return Lock{}, waitFailure(ctx.Err())
-		case <-time.After(wait):
-		}
-		if backoff < maxBackoff {
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-		}
-	}
-}
-
-// AcquireShared is LockShared with blocking semantics, mirroring Acquire. Use
-// it for read-path callers that must block only against an in-flight exclusive
-// writer, not against other concurrent readers.
-func AcquireShared(ctx context.Context, l Locker, resource, owner string, ttl time.Duration) (Lock, error) {
-	backoff := time.Millisecond
-	const maxBackoff = 100 * time.Millisecond
-	for {
-		lock, err := l.LockShared(ctx, resource, owner, ttl)
-		if err == nil {
-			return lock, nil
-		}
-		if !errors.Is(err, ErrBusy) {
-			return Lock{}, err
-		}
-		jitter := time.Duration(int64(backoff) / 4)
-		wait := backoff - jitter + time.Duration(time.Now().UnixNano()%int64(2*jitter+1))
-		select {
-		case <-ctx.Done():
-			return Lock{}, ctx.Err()
+			clientGaveUp.WithLabelValues(class, attemptBucket(attempts)).Inc()
+			clientAcquireWait.WithLabelValues(class).Observe(time.Since(started).Seconds())
+			return Lock{}, wrapWaitErr(ctx.Err())
 		case <-time.After(wait):
 		}
 		if backoff < maxBackoff {
@@ -627,10 +829,30 @@ func AcquireShared(ctx context.Context, l Locker, resource, owner string, ttl ti
 // after the lock is released. Errors from Renew abort fn (via context) and
 // surface as the function's return value.
 func WithLock(ctx context.Context, l Locker, resource, owner string, ttl, renewEvery time.Duration, fn func(context.Context) error) error {
+	return withLock(ctx, l, resource, owner, ttl, renewEvery, 0, fn)
+}
+
+// WithLockWaiting is WithLock for a caller that queues instead of giving up.
+// waitLimit bounds the queueing only; the work that follows runs under ctx.
+func WithLockWaiting(ctx context.Context, l Locker, resource, owner string, ttl, renewEvery, waitLimit time.Duration, fn func(context.Context) error) error {
+	return withLock(ctx, l, resource, owner, ttl, renewEvery, waitLimit, fn)
+}
+
+func withLock(ctx context.Context, l Locker, resource, owner string, ttl, renewEvery, waitLimit time.Duration, fn func(context.Context) error) error {
 	if renewEvery <= 0 || renewEvery >= ttl {
 		return fmt.Errorf("locks/withlock: renewEvery %v must be in (0, ttl=%v)", renewEvery, ttl)
 	}
-	lock, err := l.Lock(ctx, resource, owner, ttl)
+	owner = CheckOwner(owner)
+	_ = CheckSite(ctx)
+	var lock Lock
+	var err error
+	if waitLimit > 0 {
+		waitCtx, waitCancel := context.WithTimeout(ctx, waitLimit)
+		lock, err = Acquire(waitCtx, l, resource, owner, ttl)
+		waitCancel()
+	} else {
+		lock, err = l.Lock(ctx, resource, owner, ttl)
+	}
 	if err != nil {
 		return err
 	}

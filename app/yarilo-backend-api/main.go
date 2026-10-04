@@ -21,13 +21,16 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/backend"
 	"github.com/yarilomail/yarilo/internal/backendapi"
+	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/internal/telemetry"
 	"github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/build"
 	"github.com/yarilomail/yarilo/pkg/config"
@@ -73,11 +76,14 @@ func main() {
 			cfg.InternalTLS.Cert,
 			cfg.InternalTLS.Key,
 			cfg.InternalTLS.CA,
+			mtls.ListenerBackendAPI,
 		)
 		if err != nil {
 			slog.Error("internal_tls server config failed", "err", err)
 			os.Exit(1)
 		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerBackendAPI)
 	}
 
 	dicts := openDicts(cfg.Dicts)
@@ -116,12 +122,7 @@ func main() {
 	}
 
 	mb := mailboxbuild.ByDriver(cfg.Storage.MailDriver, cfg.Storage, locker)
-	idx := file.New(file.WithLocker(locker))
-	nsOverrides, err := buildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker)
-	if err != nil {
-		slog.Error("backend-api: namespace mailbox wiring", "err", err)
-		os.Exit(1)
-	}
+	idx := buildIndex(cfg.Storage, locker)
 
 	var wardenTLS *tls.Config
 	if cfg.InternalTLS.Enabled && cfg.WardenService.ClientAddr() != "" {
@@ -157,16 +158,56 @@ func main() {
 	}
 
 	var ftsClient ftsproto.Client
+	var ftsChain *language.MultiChain
 	if cfg.FTS.Enabled && cfg.FTS.Mode == "remote" && cfg.FTS.Addr != "" {
-		ftsClient = ftsproto.NewPool(cfg.FTS.Addr, cfg.FTS.MaxConns, 10*time.Second)
+		var ftsTLS *tls.Config
+		if cfg.InternalTLS.Enabled {
+			ftsTLS, err = mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
+			if err != nil {
+				slog.Error("backend-api: fts mtls client config failed", "err", err)
+				os.Exit(1)
+			}
+		}
+		ftsClient = ftsproto.NewPool(cfg.FTS.Addr, ftsTLS, cfg.FTS.MaxConns, 10*time.Second)
 		defer ftsClient.Close() //nolint:errcheck
+		if ftsChain, err = ftsquery.NewChain(cfg.FTS); err != nil {
+			slog.Error("backend-api: fts language chain", "err", err)
+			os.Exit(1)
+		}
+	}
+	// The same assembler as the session servers: a virtual namespace here draws
+	// on the same personal mail and search as there (#1805).
+	nsOverrides, err := backend.BuildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker, backend.VirtualDeps{
+		Mailbox: mb, Index: idx, Search: backend.SearchOptions(cfg, ftsClient, ftsChain), MetadataDict: dicts["metadata"],
+	})
+	if err != nil {
+		slog.Error("backend-api: namespace mailbox wiring", "err", err)
+		os.Exit(1)
 	}
 
+	// A request about a user runs on the pod the director keeps them on; the
+	// registration's director and pool say where, and none means standalone.
+	var peerTLS *tls.Config
+	if cfg.InternalTLS.Enabled {
+		peerTLS, err = mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
+		if err != nil {
+			slog.Error("backend-api: peer tls", "err", err)
+			os.Exit(1)
+		}
+	}
+	_, peerPort, _ := net.SplitHostPort(listen)
+	router := backendapi.NewDirectorRouter(cfg.BackendRegister.DirectorAddr, cfg.BackendRegister.Tag, peerTLS)
+
+	apiToken, apiNets, err := cfg.BackendAPI.Gate()
+	if err != nil {
+		slog.Error("backend-api refuses to start", "err", err)
+		os.Exit(1)
+	}
 	srv := backendapi.New(backendapi.Options{
 		Addr:               listen,
 		TLSConfig:          tlsCfg,
-		Token:              cfg.BackendAPI.Token,
-		AllowedNets:        parseCIDRs(cfg.BackendAPI.AllowedNets),
+		Token:              apiToken,
+		AllowedNets:        apiNets,
 		Dicts:              dicts,
 		Mailbox:            mb,
 		Index:              idx,
@@ -182,15 +223,23 @@ func main() {
 		WardenAddr:         cfg.WardenService.ClientAddr(),
 		WardenTLS:          wardenTLS,
 		PodIP:              os.Getenv("POD_IP"),
+		Router:             router,
+		PeerTLS:            peerTLS,
+		PeerPort:           peerPort,
 		AuthClient:         authcl,
 		MailboxByDriver: func(driver string) mailbox.MailboxBackend {
 			return mailboxbuild.ByDriver(driver, cfg.Storage, locker)
 		},
 		FTSClient: ftsClient,
+		FTSChain:  ftsChain,
 	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// The admin API's own counters live in this process: what an admin command
+	// moved is unreadable from another container's registry (#1999).
+	go runTelemetry(cfg.Telemetry)
 
 	if err := srv.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("backend-api: serve failed", "err", err)
@@ -215,44 +264,6 @@ func openDicts(specs map[string]config.DictConfig) map[string]dict.Dict {
 		slog.Info("backend-api: opened dict", "name", name, "driver", dc.Driver)
 	}
 	return out
-}
-
-func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver string, sc config.StorageConfig, locker locks.Locker) (map[string]mailbox.MailboxBackend, error) {
-	if len(namespaces) == 0 {
-		return nil, nil
-	}
-	globalDriver = strings.ToLower(globalDriver)
-	if globalDriver == "" {
-		globalDriver = "maildir"
-	}
-	byDriver := make(map[string]mailbox.MailboxBackend)
-	overrides := map[string]mailbox.MailboxBackend{}
-	for _, ns := range namespaces {
-		if ns.Location == "" {
-			continue
-		}
-		loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
-		if err != nil {
-			return nil, fmt.Errorf("backend-api: namespace %q: %w", ns.Prefix, err)
-		}
-		if !ok {
-			continue
-		}
-		drv := strings.ToLower(loc.Driver)
-		if drv == globalDriver {
-			continue
-		}
-		b, exists := byDriver[drv]
-		if !exists {
-			b = mailboxbuild.ByDriver(drv, sc, locker)
-			byDriver[drv] = b
-		}
-		overrides[ns.Prefix] = b
-	}
-	if len(overrides) == 0 {
-		return nil, nil
-	}
-	return overrides, nil
 }
 
 func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
@@ -287,15 +298,23 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 	}
 }
 
-func parseCIDRs(in []string) []*net.IPNet {
-	out := make([]*net.IPNet, 0, len(in))
-	for _, s := range in {
-		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
-		if err != nil {
-			slog.Warn("backend-api: ignoring bad CIDR", "value", s, "err", err)
-			continue
-		}
-		out = append(out, n)
+// runTelemetry serves /healthz, /readyz and /metrics beside the admin API.
+func runTelemetry(cfg config.TelemetryConfig) {
+	tel := telemetry.NewWithOptions(telemetry.Options{
+		Addr: telemetry.Addr(cfg.Listen),
+		Pprof: telemetry.PprofOptions{
+			Enabled:       cfg.PprofEnabled,
+			BlockRate:     cfg.PprofBlockProfileRate,
+			MutexFraction: cfg.PprofMutexProfileFraction,
+		},
+	})
+	if err := tel.ListenAndServe(context.Background()); err != nil {
+		slog.Error("backend-api: telemetry server failed", "err", err)
 	}
-	return out
+}
+
+// buildIndex takes the index options every other binary takes: the admin API
+// writes the same folders, under the same locks, durability and thresholds.
+func buildIndex(sc config.StorageConfig, locker locks.Locker) *file.Backend {
+	return file.New(backend.IndexOptions(sc, locker)...)
 }

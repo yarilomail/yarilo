@@ -49,7 +49,31 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	ui := resolver.UserInfo(req.User, "")
+	// The userdb before the identity: this answer is what an operator reads
+	// to see which mailbox a name has (#2024).
+	var pui *protocol.UserInfo
+	if s.opts.AuthClient != nil {
+		var err error
+		pui, err = s.opts.AuthClient.Userdb(r.Context(), req.User)
+		switch {
+		case err != nil:
+			slog.Warn("backendapi/user: userdb lookup failed", "user", req.User, "err", err)
+			apiError(w, "userdb lookup: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		case pui == nil:
+			apiJSON(w, map[string]any{"error": "user not found: " + req.User})
+			return
+		}
+	}
+	home := ""
+	if pui != nil {
+		home = pui.Home
+	}
+	ui, err := resolver.UserInfo(req.User, home)
+	if err != nil {
+		apiError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	nsEntries := []userNSEntry{}
 	for _, spec := range s.opts.Namespaces {
@@ -82,17 +106,8 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	effectiveMailPath := ui.MailPath
 	effectiveInboxPath := ui.InboxPath
 
-	if s.opts.AuthClient != nil {
-		pui, err := s.opts.AuthClient.Userdb(r.Context(), req.User)
-		switch {
-		case err != nil:
-			slog.Warn("backendapi/user: userdb lookup failed", "user", req.User, "err", err)
-			apiError(w, "userdb lookup: "+err.Error(), http.StatusServiceUnavailable)
-			return
-		case pui == nil:
-			apiJSON(w, map[string]any{"error": "user not found: " + req.User})
-			return
-		default:
+	if pui != nil {
+		{
 			if pui.MailPath != "" {
 				mp := mailbox.ExpandHome(pui.MailPath, ui.Home)
 				effectiveMailPath = mailbox.ExpandVars(strings.ReplaceAll(mp, "%h", ui.Home), req.User)
@@ -219,7 +234,7 @@ func userInfoToJSON(info *protocol.UserInfo) map[string]any {
 	setInt("port", info.Port)
 	setStr("destuser", info.DestUser)
 	setStr("proxy_mech", info.ProxyMech)
-	setInt("proxy_timeout", info.ProxyTimeout)
+	setStr("proxy_timeout", info.ProxyTimeout)
 	setBool("proxy_redirect_reauth", info.ProxyRedirectReauth)
 	setBool("proxy_nopipelining", info.ProxyNoPipelining)
 	setStr("ssl", info.SSL)
@@ -294,14 +309,15 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		folders := mailbox.SelectableNames(entries)
 		sort.Strings(folders)
 		for _, name := range folders {
-			f, err := bundle.idx.OpenFolder(name, 0)
+			f, err := bundle.mbox.Folder(name, 0)
 			if err != nil || f == nil {
 				continue
 			}
-			msgs, err := mailbox.ReadMessages(bundle.idx, f.ID, nil)
+			msgs, err := bundle.mbox.Messages(f.ID, nil)
 			if err != nil {
 				continue
 			}
+			bundle.mbox.FillResponseSizes(name, msgs)
 			var size uint64
 			for _, m := range msgs {
 				size += uint64(m.Size)

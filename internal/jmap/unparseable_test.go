@@ -76,7 +76,7 @@ func TestUnparseableMessageIsConsistentAcrossMethods(t *testing.T) {
 // this time that it is absent.
 func TestUnreadableFileStaysNotFound(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
-	removeMailFiles(t, home)
+	unreadableMailFiles(t, home)
 
 	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","subject"]}`)
 	notFound, _ := got["notFound"].([]any)

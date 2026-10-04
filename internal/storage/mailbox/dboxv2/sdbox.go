@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/crlf"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -46,10 +47,17 @@ type Backend struct {
 	locker   locks.Locker
 	writeSem chan struct{} // nil = unlimited
 	listUTF8 bool
+	// fsync says what reaches the disk before a delivery is answered (#1847).
+	fsync mailbox.FsyncMode
 }
 
 // Option configures a Backend at construction time.
 type Option func(*Backend)
+
+// WithFsync sets what a delivery makes durable before it is acknowledged.
+func WithFsync(m mailbox.FsyncMode) Option {
+	return func(b *Backend) { b.fsync = m }
+}
 
 // WithLocker wires a yarilo-locks client into the backend: every
 // folder-mutating call (Save, Rename, Delete, Remove, AssignUID, Copy) takes
@@ -79,7 +87,7 @@ func New(opts ...Option) *Backend {
 	if host == "" {
 		host = "localhost"
 	}
-	b := &Backend{hostname: host, pid: os.Getpid(), listUTF8: true}
+	b := &Backend{hostname: host, pid: os.Getpid(), listUTF8: true, fsync: mailbox.FsyncOptimized}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -100,7 +108,7 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 		separator:  mailbox.SepOrDefault(u.Separator),
 		escapeChar: u.StorageEscapeChar,
 		username:   u.Username,
-		owner:      makeOwner(u),
+		owner:      locks.Owner(u.Username, u.LockID()),
 		listUTF8:   b.listUTF8,
 	}
 }
@@ -117,17 +125,6 @@ type userMailbox struct {
 	mu         sync.Mutex
 }
 
-func makeOwner(u *mailbox.UserInfo) string {
-	proc := "yarilo"
-	if len(os.Args) > 0 {
-		proc = filepath.Base(os.Args[0])
-	}
-	if u.SessionID != "" {
-		return fmt.Sprintf("%s/%d/%s/%s", proc, os.Getpid(), u.Username, u.SessionID)
-	}
-	return fmt.Sprintf("%s/%d/%s", proc, os.Getpid(), u.Username)
-}
-
 // HealCorruptFolder is the reactive self-heal: under the mailbox lock it
 // expunges index records whose u.* file has vanished (targeted ExpungeMessage —
 // QRESYNC tombstone + quota decrement, no ResetFolder, no UID assignment, so it
@@ -136,11 +133,11 @@ func makeOwner(u *mailbox.UserInfo) string {
 // Returns the expunged UIDs (the heal count) so the caller can invalidate their
 // FTS documents. Called by the IMAP session when a folder carries the persisted
 // FSCKD marker.
-func (u *userMailbox) HealCorruptFolder(idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
-	var expunged []uint32
+func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
+	var expunged []mailbox.ExpungedCopy
 	err := u.withMailboxLock(folder.Name, func() error {
 		var e error
-		expunged, e = idxrebuild.ExpungeMissing(u, idx, folder)
+		expunged, e = idxrebuild.ExpungeMissing(box, idx, folder)
 		if e != nil {
 			return e
 		}
@@ -156,16 +153,24 @@ func (u *userMailbox) HealCorruptFolder(idx mailbox.UserIndex, folder *mailbox.F
 // lock on locks.MailboxKey(user, folder). The HoldsResource short-circuit
 // handles the POP3 QUIT re-entrancy pattern.
 func (u *userMailbox) withMailboxLock(folder string, fn func() error) error {
+	return u.withMailboxLockSite(folder, "sdbox-folder", fn)
+}
+
+// withMailboxLockSite is the same with the reason recorded: an acquisition
+// from an expunge and one from a rebuild cost the same and mean opposites.
+func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.b.locker == nil {
 		return fn()
 	}
 	key := locks.MailboxKey(u.username, folder)
-	if u.b.locker.HoldsResource(key) {
+	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
 		return fn()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
 	defer cancel()
 	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
 	if err != nil {
@@ -298,9 +303,13 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 		a, b = b, a
 	}
 	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "sdbox-folder"), 35*time.Second)
 	defer cancel()
-	if !u.b.locker.HoldsResource(keyA) {
+	heldA, herr := locks.Reentrant(u.b.locker, keyA, "sdbox-folder", false)
+	if herr != nil {
+		return herr
+	}
+	if heldA == locks.HoldNone {
 		lkA, err := locks.Acquire(ctx, u.b.locker, keyA, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("sdbox/lock %s: %w", a, err)
@@ -311,7 +320,11 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 		return fn()
 	}
 	keyB := locks.MailboxKey(u.username, b)
-	if !u.b.locker.HoldsResource(keyB) {
+	heldB, herr := locks.Reentrant(u.b.locker, keyB, "sdbox-folder", false)
+	if herr != nil {
+		return herr
+	}
+	if heldB == locks.HoldNone {
 		lkB, err := locks.Acquire(ctx, u.b.locker, keyB, u.owner, 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("sdbox/lock %s: %w", b, err)
@@ -334,7 +347,7 @@ const driverName = "sdbox"
 // UserIndex.AppendMessage. flags are ignored — sdbox delegates flag storage to
 // the index. A zero guid is generated here; a non-zero one is stored verbatim so
 // EMAILID survives COPY/MOVE. The effective GUID is returned.
-func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
+func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	whole := time.Now()
 	defer func() { mailboxmetrics.ObserveSave(driverName, time.Since(whole)) }()
 
@@ -349,7 +362,7 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 		defer func() { <-u.b.writeSem }()
 	}
 	if err := os.MkdirAll(u.folderPath(folder), 0o700); err != nil {
-		return "", 0, noGUID, fmt.Errorf("sdbox/save: mkdir: %w", err)
+		return "", 0, noGUID, fmt.Errorf("sdbox/save: mkdir: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 
 	body, err := readBodyCRLF(r)
@@ -363,48 +376,115 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _ []st
 		guid = randomGUID()
 	}
 	now := uint32(time.Now().Unix())
-	finalName := fmt.Sprintf("%s%s", sdboxMailPrefix, guidHex(guid))
 
 	var buf bytes.Buffer
 	buf.Write(encodeFileHeaderLine(now))
 	buf.Write(encodeMessageHeader(messageHeader{Size: uint64(physSize)}))
 	buf.Write(body)
+	// R, V, G: the order the reference writes, so a store of ours differs from
+	// one of theirs in no byte a reader has to skip past.
 	buf.Write(encodeMetadataBlock([]metadataEntry{
-		{Key: metaKeyGUID, Value: guidHex(guid)},
 		{Key: metaKeyReceived, Value: fmt.Sprintf("%x", now)},
 		{Key: metaKeyVirtualSize, Value: fmt.Sprintf("%x", virtSize)},
+		{Key: metaKeyGUID, Value: guidHex(guid)},
 	}))
 
+	// The file keeps its temp name until a uid exists: the name is u.<uid>, and
+	// only the caller's allocating cycle knows the number (#1704).
 	tempName := u.makeTempName()
-	err = u.withMailboxLock(folder, func() error {
+	err = func() error {
 		dir := u.folderPath(folder)
 		tempPath := filepath.Join(dir, tempName)
-		finalPath := filepath.Join(dir, finalName)
 
 		f, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
-			return fmt.Errorf("sdbox/save: create %s: %w", tempPath, err)
+			return fmt.Errorf("sdbox/save: create %s: %w", tempPath, mailboxmetrics.ClassifyWrite(driverName, folder, err))
 		}
 		if _, err := f.Write(buf.Bytes()); err != nil {
 			_ = f.Close()
 			_ = os.Remove(tempPath)
-			return fmt.Errorf("sdbox/save: write: %w", err)
+			return fmt.Errorf("sdbox/save: write: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
+		}
+		// Before the answer, not after: a node that loses power in between
+		// answered for bytes it does not have (#1847).
+		if u.b.fsync.SyncsBody() {
+			if serr := syncFile(f); serr != nil {
+				_ = f.Close()
+				_ = os.Remove(tempPath)
+				return fmt.Errorf("sdbox/save: sync body: %w", mailboxmetrics.ClassifyWrite(driverName, folder, serr))
+			}
 		}
 		if err := f.Close(); err != nil {
 			_ = os.Remove(tempPath)
-			return fmt.Errorf("sdbox/save: close: %w", err)
-		}
-		if err := os.Rename(tempPath, finalPath); err != nil {
-			_ = os.Remove(tempPath)
-			return fmt.Errorf("sdbox/save: rename %s → %s: %w", tempPath, finalPath, err)
+			return fmt.Errorf("sdbox/save: close: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 		}
 		return nil
-	})
+	}()
 	if err != nil {
 		return "", 0, noGUID, err
 	}
-	return finalName, virtSize, guid, nil
+	return tempName, virtSize, guid, nil
 }
+
+// AssignUID gives a saved message the only name the reference knows for it,
+// u.<uid>. One rename, inside the caller's cycle (#1704).
+func (u *userMailbox) AssignUID(folder, tempName string, uid uint32) (string, error) {
+	if uid == 0 {
+		return "", fmt.Errorf("sdbox/assign: uid 0 names no message")
+	}
+	final := fmt.Sprintf("%s%d", sdboxMailPrefix, uid)
+	dir := u.folderPath(folder)
+	if err := os.Rename(filepath.Join(dir, tempName), filepath.Join(dir, final)); err != nil {
+		return "", fmt.Errorf("sdbox/assign: rename %s -> %s: %w", tempName, final, err)
+	}
+	return final, nil
+}
+
+// DiscardSaved unlinks a temp Save left, or the u.<uid> a failed cycle renamed
+// it to; that one only when its GUID is m's, as the uid may be handed out again.
+func (u *userMailbox) DiscardSaved(folder, saved string, m *mailbox.MessageMeta) error {
+	err := os.Remove(filepath.Join(u.folderPath(folder), saved))
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if named, ok := u.namedByCycle(folder, m); ok {
+		return os.Remove(named)
+	}
+	return nil
+}
+
+// RestoreMoved renames the body back under orig, from its moved name or the
+// u.<uid> the destination's cycle gave it.
+func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, m *mailbox.MessageMeta) error {
+	return u.withTwoMailboxLocks(srcFolder, dstFolder, func() error {
+		from := filepath.Join(u.folderPath(dstFolder), moved)
+		if _, err := os.Lstat(from); errors.Is(err, os.ErrNotExist) {
+			if named, ok := u.namedByCycle(dstFolder, m); ok {
+				from = named
+			}
+		}
+		if err := os.Rename(from, filepath.Join(u.folderPath(srcFolder), orig)); err != nil {
+			return fmt.Errorf("sdbox/restore: %w", err)
+		}
+		return nil
+	})
+}
+
+// namedByCycle is u.<m.UID> when it holds m's GUID: the uid may be handed out
+// again before a rollback runs.
+func (u *userMailbox) namedByCycle(folder string, m *mailbox.MessageMeta) (string, bool) {
+	if m == nil || m.UID == 0 {
+		return "", false
+	}
+	named := filepath.Join(u.folderPath(folder), sdboxMailPrefix+strconv.FormatUint(uint64(m.UID), 10))
+	guid, _, _, err := readMetadata(named)
+	return named, err == nil && guid == m.GUID
+}
+
+var (
+	_ mailbox.SaveDiscarder = (*userMailbox)(nil)
+	_ mailbox.MoveRestorer  = (*userMailbox)(nil)
+)
 
 // Move relocates a message between folders by renaming the file; the GUID lives
 // in the metadata block so it survives untouched (RFC 8474: MOVE keeps EMAILID).
@@ -424,11 +504,9 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 		}
 		dstPath := filepath.Join(u.folderPath(dstFolder), newName)
 		if _, err := os.Lstat(dstPath); err == nil {
-			// Name taken in the destination: mint one from the GUID.
-			if guid == noGUID {
-				return fmt.Errorf("sdbox/move: %s exists in %s and no guid to rename by", newName, dstFolder)
-			}
-			newName = fmt.Sprintf("%s%s", sdboxMailPrefix, guidHex(guid))
+			// Taken: park it under a temp name until the destination's uid
+			// exists, since only that gives the file its name (#1704).
+			newName = u.makeTempName()
 			dstPath = filepath.Join(u.folderPath(dstFolder), newName)
 		}
 		if err := os.Rename(srcPath, dstPath); err != nil {
@@ -459,11 +537,18 @@ func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, err
 		return nil, fmt.Errorf("sdbox/fetch: open %s: %w", path, err)
 	}
 	br := bufio.NewReader(f)
-	if _, err := br.ReadBytes('\n'); err != nil {
+	fileHdr, err := br.ReadBytes('\n')
+	if err != nil {
 		_ = f.Close()
 		return nil, corruptRead("read file header", path, err)
 	}
-	hdrBuf := make([]byte, messageHeaderSize)
+	// The header's size comes from M, not from what this binary writes.
+	hdrSize, err := parseFileHeaderSize(fileHdr)
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("sdbox/fetch %s: %w: %w", path, err, mailbox.ErrCorruptStorage)
+	}
+	hdrBuf := make([]byte, hdrSize)
 	if _, err := io.ReadFull(br, hdrBuf); err != nil {
 		_ = f.Close()
 		return nil, corruptRead("read message header", path, err)
@@ -480,7 +565,10 @@ func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, err
 		return nil, corruptRead("read body", path, err)
 	}
 	_ = f.Close()
-	return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+	// Through crlf.New: a record this server wrote is already CRLF and comes
+	// out unchanged, while one written by another implementation can be stored
+	// with bare LF and must not reach the wire that way (#1527).
+	return io.NopCloser(crlf.New(bytes.NewReader(bodyBytes))), nil
 }
 
 // corruptRead classifies a read error: a truncated file (EOF / unexpected EOF)
@@ -495,13 +583,26 @@ func corruptRead(op, path string, err error) error {
 
 // Remove unlinks the message file. Idempotent: a missing file is not an error.
 func (u *userMailbox) Remove(folder, filename string) error {
-	return u.withMailboxLock(folder, func() error {
-		path := filepath.Join(u.folderPath(folder), filename)
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("sdbox/remove: %w", err)
-		}
-		return nil
-	})
+	return u.withMailboxLock(folder, func() error { return u.removeLocked(folder, filename) })
+}
+
+// HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
+func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
+	return u.withMailboxLockSite(folder, site, fn)
+}
+
+// RemoveHeld unlinks inside a hold the caller already has: Remove takes the
+// same one, and it is not reentrant.
+func (u *userMailbox) RemoveHeld(folder, filename string) error {
+	return u.removeLocked(folder, filename)
+}
+
+func (u *userMailbox) removeLocked(folder, filename string) error {
+	path := filepath.Join(u.folderPath(folder), filename)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("sdbox/remove: %w", err)
+	}
+	return nil
 }
 
 // Copy hardlinks srcFilename into dstFolder under the destination's u.<dstUID>
@@ -556,7 +657,6 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 		}
 		meta := &mailbox.MessageMeta{
 			UID:          uint32(uid64),
-			Filename:     e.Name(),
 			Size:         uint32(info.Size()),
 			InternalDate: info.ModTime(),
 		}
@@ -744,10 +844,15 @@ func readMetadata(path string) ([16]byte, uint32, time.Time, error) {
 	}
 	defer f.Close()
 	br := bufio.NewReader(f)
-	if _, err := br.ReadBytes('\n'); err != nil {
+	fileHdr, err := br.ReadBytes('\n')
+	if err != nil {
 		return [16]byte{}, 0, time.Time{}, err
 	}
-	hdrBuf := make([]byte, messageHeaderSize)
+	hdrSize, err := parseFileHeaderSize(fileHdr)
+	if err != nil {
+		return [16]byte{}, 0, time.Time{}, err
+	}
+	hdrBuf := make([]byte, hdrSize)
 	if _, err := io.ReadFull(br, hdrBuf); err != nil {
 		return [16]byte{}, 0, time.Time{}, err
 	}
@@ -808,3 +913,17 @@ func randomGUID() [16]byte {
 	_, _ = rand.Read(g[:])
 	return g
 }
+
+// Username implements mailbox.SelfNaming: a diagnostic line names the account.
+func (u *userMailbox) Username() string { return u.username }
+
+// DriverName is the label this driver's messages are counted under.
+func (u *userMailbox) DriverName() string { return driverName }
+
+// syncFile is the durability call. A test seam: a row counts it, because
+// nothing else in the package observes whether it happened (#1847).
+var syncFile = (*os.File).Sync
+
+// FsyncMode is what a delivery makes durable here, so the wiring of the
+// configured mode has a reader (#1969).
+func (b *Backend) FsyncMode() mailbox.FsyncMode { return b.fsync }

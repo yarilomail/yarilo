@@ -13,6 +13,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -43,7 +44,7 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 	ui := idx.OpenUser(info)
 
 	flags := []string{`\Seen`}
-	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), flags, [16]byte{})
+	name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), 1, int64(len(raw)), flags, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -53,10 +54,14 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 	}
 	// A real delivery stamps InternalDate; without it the date filters would be
 	// tested against the zero time, which is before every plausible bound.
-	if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, Filename: name, Size: uint32(len(raw)), VSize: vsize, Flags: flags, GUID: guid,
+	meta := &mailbox.MessageMeta{
+		UID: 1, Size: uint32(len(raw)), VSize: vsize, Flags: flags, GUID: guid,
 		InternalDate: time.Now(),
-	}); err != nil {
+	}
+	if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := ui.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := ui.Close(); err != nil {
@@ -77,16 +82,18 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 	return s, hex.EncodeToString(guid[:]), home
 }
 
-// removeMailFiles deletes every delivered message but leaves the index, so a
-// read of the message fails while the index still answers.
-func removeMailFiles(t *testing.T, home string) {
+// unreadableMailFiles takes read access off every delivered message, so a read
+// of the body fails while the index still answers.
+func unreadableMailFiles(t *testing.T, home string) {
 	t.Helper()
 	err := filepath.WalkDir(home, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
 		if strings.Contains(path, "/cur/") || strings.Contains(path, "/new/") {
-			return os.Remove(path)
+			// Unreadable, not gone: a reconcile on open would see a deletion
+			// and tombstone the record, which is not what these rows measure.
+			return os.Chmod(path, 0)
 		}
 		return nil
 	})

@@ -10,6 +10,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/mailboxcreate"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -72,7 +73,7 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder required", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextDeferred(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -86,6 +87,9 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 	// One owner of NFC on the admin surface too, so a decomposed name from a
 	// tool addresses the same folder a client created (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, false, req.Folder) {
+		return
+	}
 
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -96,7 +100,7 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder already exists", http.StatusConflict)
 		return
 	}
-	if err := bundle.box.Create(req.Folder); err != nil {
+	if err := mailboxcreate.Folder(bundle.box, bundle.mbox, req.Folder, 0); err != nil {
 		apiError(w, "create: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -148,7 +152,7 @@ func (s *Server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "INBOX cannot be deleted", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextDeferred(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -162,6 +166,9 @@ func (s *Server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 	// One owner of NFC on the admin surface too, so a decomposed name from a
 	// tool addresses the same folder a client created (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, false, req.Folder) {
+		return
+	}
 
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -173,7 +180,7 @@ func (s *Server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := bundle.box.Delete(req.Folder); err != nil {
+	if err := bundle.mbox.Delete(req.Folder); err != nil {
 		apiError(w, "delete: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -204,7 +211,7 @@ func (s *Server) handleFolderRename(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "rename of INBOX is not supported via backend-api", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextDeferred(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -218,6 +225,9 @@ func (s *Server) handleFolderRename(w http.ResponseWriter, r *http.Request) {
 
 	req.OldFolder = mailbox.NormalizeName(req.OldFolder, bundle.info.SkipNFCNormalize)
 	req.NewFolder = mailbox.NormalizeName(req.NewFolder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, false, req.OldFolder, req.NewFolder) {
+		return
+	}
 	srcExists, err := bundle.box.FolderExists(req.OldFolder)
 	if err != nil {
 		apiError(w, "src exists check: "+err.Error(), http.StatusInternalServerError)
@@ -237,15 +247,9 @@ func (s *Server) handleFolderRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := bundle.box.Rename(req.OldFolder, req.NewFolder); err != nil {
+	if err := bundle.mbox.Rename(req.OldFolder, req.NewFolder); err != nil {
 		apiError(w, "rename: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if err := bundle.idx.RenameFolder(req.OldFolder, req.NewFolder); err != nil {
-		// On-disk box rename succeeded; index disagreed. Log rather than
-		// roll back; the operator can run repair.
-		slog.Warn("backendapi/folder: idx rename failed after box rename",
-			"user", req.User, "from", req.OldFolder, "to", req.NewFolder, "err", err)
 	}
 	if err := s.renameFolderACL(bundle, req.OldFolder, req.NewFolder); err != nil {
 		slog.Warn("backendapi/folder: acl rename failed",
@@ -266,7 +270,7 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder required", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextDeferred(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -280,6 +284,9 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 	// One owner of NFC on the admin surface too, so a decomposed name from a
 	// tool addresses the same folder a client created (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
+	if !checkedMaterialise(w, bundle, false, req.Folder) {
+		return
+	}
 
 	exists, err := bundle.box.FolderExists(req.Folder)
 	if err != nil {
@@ -291,7 +298,7 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		apiError(w, "open folder: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -323,9 +330,9 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
 			continue
 		}
-		if err := bundle.box.Remove(req.Folder, m.Filename); err != nil {
+		if err := bundle.mbox.RemoveMessage(req.Folder, m); err != nil {
 			slog.Warn("backendapi/folder: remove blob failed",
-				"user", req.User, "folder", req.Folder, "filename", m.Filename, "err", err)
+				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
 		}
 		expunged = append(expunged, m.UID)
 		s.emitFolderEvent(uc, req.Folder, locks.EventExpunged, m.UID)
@@ -360,7 +367,7 @@ func (s *Server) materialiseFolderACL(bundle *nsBundle, folder string) error {
 		bundle.info.Separator,
 		bundle.info.StorageEscapeChar,
 		bundle.info.Username,
-		"backendapi/folder.create",
+		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
 		s.opts.Locker,
 	)
@@ -377,7 +384,7 @@ func (s *Server) dropFolderACL(bundle *nsBundle, folder string) error {
 		bundle.info.Separator,
 		bundle.info.StorageEscapeChar,
 		bundle.info.Username,
-		"backendapi/folder.delete",
+		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
 		s.opts.Locker,
 	)
@@ -394,7 +401,7 @@ func (s *Server) renameFolderACL(bundle *nsBundle, oldFolder, newFolder string) 
 		bundle.info.Separator,
 		bundle.info.StorageEscapeChar,
 		bundle.info.Username,
-		"backendapi/folder.rename",
+		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
 		s.opts.Locker,
 	)

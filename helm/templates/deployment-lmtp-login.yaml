@@ -67,7 +67,7 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
-            {{- include "yarilo.internalTLSMount" .Values.components.lmtpLogin.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.lmtpLogin.internalTLS "role" "lmtp-login") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -77,7 +77,7 @@ spec:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
           emptyDir: {}
-        {{- include "yarilo.internalTLSVolume" .Values.components.lmtpLogin.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.lmtpLogin.internalTLS "role" "lmtp-login") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

@@ -48,7 +48,7 @@ func (s *Server) handleSubsMigrate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "namespace "+req.Namespace+" keeps its own subscriptions; nothing to migrate", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -61,9 +61,13 @@ func (s *Server) handleSubsMigrate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return
+	}
 	personal, ok := uc.handles["personal"]
 	if !ok || personal == nil {
-		apiError(w, "no personal namespace to hold the subscriptions", http.StatusInternalServerError)
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 		return
 	}
 

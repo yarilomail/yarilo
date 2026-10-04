@@ -1,0 +1,129 @@
+package maildir
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
+
+// rememberGUID keeps an explicit GUID until the message has a uid to be
+// recorded against: a record with no uid names no message (#1703).
+func (u *userMailbox) rememberGUID(folder, filename string, guid [16]byte) {
+	u.cacheMu.Lock()
+	defer u.cacheMu.Unlock()
+	if u.pending == nil {
+		u.pending = make(map[string][16]byte)
+	}
+	u.pending[folder+"\x00"+maildirBase(filename)] = guid
+}
+
+func (u *userMailbox) takeGUID(folder, filename string) ([16]byte, bool) {
+	u.cacheMu.Lock()
+	defer u.cacheMu.Unlock()
+	key := folder + "\x00" + maildirBase(filename)
+	guid, ok := u.pending[key]
+	delete(u.pending, key)
+	return guid, ok
+}
+
+// DiscardSaved unlinks a body Save left in tmp/, where Remove does not look; one
+// AssignUID already moved is removed from where it went.
+func (u *userMailbox) DiscardSaved(folder, saved string, _ *mailbox.MessageMeta) error {
+	u.takeGUID(folder, saved)
+	err := os.Remove(filepath.Join(u.folderPath(folder), "tmp", saved))
+	if errors.Is(err, os.ErrNotExist) {
+		return u.Remove(folder, saved)
+	}
+	return err
+}
+
+// RestoreMoved renames the body back under orig, from tmp/ or from where the
+// destination's naming put it.
+func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, _ *mailbox.MessageMeta) error {
+	u.takeGUID(dstFolder, moved)
+	return u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
+		from, ok := u.locate(dstFolder, moved)
+		if !ok {
+			from = filepath.Join(u.folderPath(dstFolder), "tmp", moved)
+		}
+		sub := "cur"
+		if maildirBase(orig) == orig {
+			sub = "new"
+		}
+		if err := os.Rename(from, filepath.Join(u.folderPath(srcFolder), sub, orig)); err != nil {
+			return fmt.Errorf("maildir/restore: %w", err)
+		}
+		u.folderCacheFor(srcFolder).invalidateDir("own-write")
+		u.folderCacheFor(dstFolder).invalidateDir("own-write")
+		return nil
+	})
+}
+
+// AssignUID records the message in the folder's list, inside the caller's uid
+// cycle. No rename: on maildir the uid lives in the list, not in the name.
+func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, error) {
+	if uid == 0 {
+		return "", fmt.Errorf("maildir/assign: uid 0 names no message")
+	}
+	guid, override := u.takeGUID(folder, filename)
+	if err := u.withMailboxLockSite(folder, lockSiteSave, func() error {
+		// The file enters cur/ here and leaves this hold already named, which is
+		// why the reference takes the list lock before moving out of tmp/ (#1736).
+		if err := u.publishFromTemp(folder, filename); err != nil {
+			return err
+		}
+		return u.appendUIDListLocked(folder, uid, filename, override, guid)
+	}); err != nil {
+		return "", err
+	}
+	return filename, nil
+}
+
+// publishFromTemp moves a saved body out of tmp/ into the directory its name
+// asks for: a name with no ":2," carries no flags, and a file that carries no
+// flags belongs in new/ (#1959). A message already published is one a caller
+// named twice, which is not an error to fail on.
+func (u *userMailbox) publishFromTemp(folder, filename string) error {
+	dir := u.folderPath(folder)
+	src := filepath.Join(dir, "tmp", filename)
+	if _, err := lstatPath(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("maildir/assign: stat temp %q: %w", filename, err)
+	}
+	sub := "cur"
+	if maildirBase(filename) == filename {
+		sub = "new"
+	}
+	if err := os.Rename(src, filepath.Join(dir, sub, filename)); err != nil {
+		return fmt.Errorf("maildir/assign: publish %q: %w", filename, err)
+	}
+	// The entry, not the file: a crash here loses the name, not the bytes.
+	if u.b.fsync.SyncsDir() {
+		if err := syncDir(filepath.Join(dir, sub)); err != nil {
+			return fmt.Errorf("maildir/assign: sync %s: %w", sub, err)
+		}
+	}
+	u.afterPublish(folder, sub, filename)
+	return nil
+}
+
+// afterPublish keeps the window over a name this process wrote. A file landing
+// in new/ is not in the cur/ listing at all, so it changes nothing there.
+func (u *userMailbox) afterPublish(folder, sub, name string) {
+	if sub == "new" {
+		return
+	}
+	cache := u.folderCacheFor(folder)
+	dir := filepath.Join(u.folderPath(folder), "cur")
+	fi, err := statPath(dir)
+	if err != nil {
+		cache.invalidateDirEntries("own-write")
+		return
+	}
+	cache.addEntry(dir, name, fi.ModTime())
+}

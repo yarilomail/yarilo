@@ -19,7 +19,6 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/cluster/ring"
 	"github.com/yarilomail/yarilo/internal/director"
-	"github.com/yarilomail/yarilo/internal/lmtp"
 	"github.com/yarilomail/yarilo/internal/telemetry"
 	"github.com/yarilomail/yarilo/pkg/build"
 	"github.com/yarilomail/yarilo/pkg/config"
@@ -57,11 +56,14 @@ func main() {
 			cfg.InternalTLS.Cert,
 			cfg.InternalTLS.Key,
 			cfg.InternalTLS.CA,
+			mtls.ListenerDirector,
 		)
 		if err != nil {
 			slog.Error("internal_tls server config failed", "err", err)
 			os.Exit(1)
 		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerDirector)
 	}
 
 	// mTLS client config for dialling ring peers. Must be a client config, not
@@ -94,24 +96,6 @@ func main() {
 		}
 	}
 
-	// mTLS client config for dialling backend pods; shared internal cert,
-	// pin internal_tls.server_name
-	var backendTLSCfg *tls.Config
-	if cfg.InternalTLS.Enabled {
-		backendTLSCfg, err = mtls.ClientConfig(
-			cfg.InternalTLS.Cert,
-			cfg.InternalTLS.Key,
-			cfg.InternalTLS.CA,
-			cfg.InternalTLS.ServerName,
-			cfg.InternalTLS.SessionCacheSize,
-			cfg.InternalTLS.SessionCacheTTL,
-		)
-		if err != nil {
-			slog.Error("internal_tls client config failed", "err", err)
-			os.Exit(1)
-		}
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -140,33 +124,37 @@ func main() {
 			"username_hash", raw)
 	}
 	srv := director.NewWithOptions(director.Options{
-		UserExpire:            time.Duration(cfg.DirectorService.UserExpire) * time.Second,
-		PingInterval:          time.Duration(cfg.DirectorService.PingInterval) * time.Second,
-		PingTimeout:           time.Duration(cfg.DirectorService.PingTimeout) * time.Second,
-		WriteTimeout:          time.Duration(cfg.DirectorService.WriteTimeout) * time.Second,
-		UsernameHashLowercase: &usernameHashLowercase,
-		UsernameHashFormat:    cfg.DirectorService.UsernameHash,
-		AssignmentPolicy:      cfg.DirectorService.AssignmentPolicy,
-		UserKickDelay:         time.Duration(cfg.DirectorService.UserKickDelay) * time.Second,
-		MaxParallelKicks:      cfg.DirectorService.MaxParallelKicks,
-		MaxParallelMoves:      cfg.DirectorService.MaxParallelMoves,
-		FlushProgram:          cfg.DirectorService.FlushProgram,
-		FlushProgramTimeout:   time.Duration(cfg.DirectorService.FlushProgramTimeoutSeconds) * time.Second,
-		UserKillTimeout:       time.Duration(cfg.DirectorService.UserKillTimeout) * time.Second,
-		UserKillConfirmGrace:  time.Duration(cfg.DirectorService.UserKillConfirmGrace) * time.Second,
-		PeerTLS:               ringDialTLSCfg,
-		LocalIP:               localIP,
-		LocalPort:             localPort,
-		RingSecret:            []byte(cfg.DirectorService.RingSecret),
-		MinMembers:            cfg.DirectorService.MinMembers,
-		JoinAllowedNets:       parseCIDRs(cfg.DirectorService.JoinAllowedNets),
-		AntiEntropyInterval:   time.Duration(cfg.DirectorService.AntiEntropyInterval) * time.Second,
-		SeedPollInterval:      time.Duration(cfg.DirectorService.SeedPollInterval) * time.Second,
-		SeedPollIdleInterval:  time.Duration(cfg.DirectorService.SeedPollIdleInterval) * time.Second,
-		TombstoneTTL:          time.Duration(cfg.DirectorService.TombstoneTTL) * time.Second,
-		BackendExpire:         time.Duration(cfg.DirectorService.BackendExpire) * time.Second,
-		UnreachableReporters:  cfg.DirectorService.BackendUnreachableReporters,
-		UnreachableWindow:     time.Duration(cfg.DirectorService.BackendUnreachableWindow) * time.Second,
+		UserExpire:              time.Duration(cfg.DirectorService.UserExpire) * time.Second,
+		PingInterval:            time.Duration(cfg.DirectorService.PingInterval) * time.Second,
+		PingTimeout:             time.Duration(cfg.DirectorService.PingTimeout) * time.Second,
+		WriteTimeout:            time.Duration(cfg.DirectorService.WriteTimeout) * time.Second,
+		UsernameHashLowercase:   &usernameHashLowercase,
+		UsernameHashFormat:      cfg.DirectorService.UsernameHash,
+		AssignmentPolicy:        cfg.DirectorService.AssignmentPolicy,
+		DomainExpire:            time.Duration(cfg.DirectorService.DomainExpire) * time.Second,
+		DomainRebalancePercent:  cfg.DirectorService.DomainRebalancePercent,
+		DomainRebalanceInterval: time.Duration(cfg.DirectorService.DomainRebalanceInterval) * time.Second,
+		DomainRebalanceCooldown: time.Duration(cfg.DirectorService.DomainRebalanceCooldown) * time.Second,
+		UserKickDelay:           time.Duration(cfg.DirectorService.UserKickDelay) * time.Second,
+		MaxParallelKicks:        cfg.DirectorService.MaxParallelKicks,
+		MaxParallelMoves:        cfg.DirectorService.MaxParallelMoves,
+		FlushProgram:            cfg.DirectorService.FlushProgram,
+		FlushProgramTimeout:     time.Duration(cfg.DirectorService.FlushProgramTimeoutSeconds) * time.Second,
+		UserKillTimeout:         time.Duration(cfg.DirectorService.UserKillTimeout) * time.Second,
+		UserKillConfirmGrace:    time.Duration(cfg.DirectorService.UserKillConfirmGrace) * time.Second,
+		PeerTLS:                 ringDialTLSCfg,
+		LocalIP:                 localIP,
+		LocalPort:               localPort,
+		RingSecret:              []byte(cfg.DirectorService.RingSecret),
+		MinMembers:              cfg.DirectorService.MinMembers,
+		JoinAllowedNets:         parseCIDRs(cfg.DirectorService.JoinAllowedNets),
+		AntiEntropyInterval:     time.Duration(cfg.DirectorService.AntiEntropyInterval) * time.Second,
+		SeedPollInterval:        time.Duration(cfg.DirectorService.SeedPollInterval) * time.Second,
+		SeedPollIdleInterval:    time.Duration(cfg.DirectorService.SeedPollIdleInterval) * time.Second,
+		TombstoneTTL:            time.Duration(cfg.DirectorService.TombstoneTTL) * time.Second,
+		BackendExpire:           time.Duration(cfg.DirectorService.BackendExpire) * time.Second,
+		UnreachableReporters:    cfg.DirectorService.BackendUnreachableReporters,
+		UnreachableWindow:       time.Duration(cfg.DirectorService.BackendUnreachableWindow) * time.Second,
 	})
 
 	// telemetry starts after the server exists so the liveness watchdog
@@ -186,12 +174,6 @@ func main() {
 	// clear a user's LOOKUP hold once ring-wide sessions confirm gone
 	// or the hard timeout elapses
 	srv.StartKillSweep(ctx)
-
-	// start mail protocol proxy listeners
-	if err := startProxies(ctx, srv, cfg, nil, backendTLSCfg); err != nil {
-		slog.Error("proxy startup failed", "err", err)
-		os.Exit(1)
-	}
 
 	// join the ring via the configured seeds, or run as a singleton
 	// until a seed becomes reachable
@@ -215,14 +197,22 @@ func main() {
 		close(errCh)
 	}()
 
-	// start HTTP admin API
-	apiToken := cfg.DirectorService.API.Token
-	apiNets := parseCIDRs(cfg.DirectorService.API.AllowedNets)
-	go func() {
-		if err := srv.StartAPI(ctx, cfg.DirectorService.API.Listen, apiToken, apiNets); err != nil {
-			slog.Error("director API error", "err", err)
+	exitAPI := func(err error) {
+		slog.Error("director API failed", "err", err)
+		os.Exit(1)
+	}
+	var apiTLS *tls.Config
+	if cfg.InternalTLS.Enabled {
+		if apiTLS, err = mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerDirectorAPI); err != nil {
+			slog.Error("director API: internal_tls config failed", "err", err)
+			os.Exit(1)
 		}
-	}()
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerDirectorAPI)
+	}
+	if err := startAPI(ctx, srv, cfg.DirectorService.API, apiTLS, exitAPI); err != nil {
+		exitAPI(err)
+	}
 
 	// all configured ports are bound; report ready only now so Kubernetes
 	// never routes to a port that is not listening yet
@@ -240,6 +230,8 @@ func main() {
 		// evict us instantly, then give it a moment to flush
 		srv.GracefulLeave()
 		time.Sleep(500 * time.Millisecond)
+		// out of the ring, so nothing it would answer is current any more
+		srv.Drain()
 		cancel()
 		grace := time.Duration(cfg.DirectorService.Shutdown.SessionGracePeriod) * time.Second
 		if grace > 0 {
@@ -271,48 +263,6 @@ func resolveBackends(ctx context.Context, cfg *config.Config, srv *director.Serv
 	}
 }
 
-// startProxies starts the LMTP proxy listener with per-recipient fan-out.
-// IMAP, POP3, and Submission are handled by dedicated login-pod binaries.
-func startProxies(ctx context.Context, srv *director.Server, cfg *config.Config, _, _ *tls.Config) error {
-	// gated on director_service.lmtp_listen, not the shared services.lmtp
-	// block, which belongs to the lmtp/lmtp-login pods
-	addr := cfg.DirectorService.LMTPListen
-	if addr == "" {
-		return nil
-	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("lmtp proxy: listen %s: %w", addr, err)
-	}
-
-	backendPort := cfg.DirectorService.LMTPBackendPort
-	if backendPort == 0 {
-		if _, p, perr := net.SplitHostPort(addr); perr == nil {
-			if n, cerr := strconv.Atoi(p); cerr == nil {
-				backendPort = n
-			}
-		}
-	}
-	lmtpSrv := lmtp.New(lmtp.Options{
-		Hostname:    cfg.Protocol.Submission.Hostname,
-		Config:      cfg.Protocol.LMTP,
-		Router:      srv,
-		BackendPort: backendPort,
-	})
-
-	slog.Info("director: lmtp proxy listening", "addr", addr)
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-	go func() {
-		if err := lmtpSrv.Serve(ln); err != nil {
-			slog.Error("director: lmtp proxy error", "err", err)
-		}
-	}()
-	return nil
-}
-
 // parseCIDRs parses a list of CIDR strings into *net.IPNet values.
 // Invalid entries are logged and skipped.
 func parseCIDRs(ss []string) []*net.IPNet {
@@ -328,7 +278,7 @@ func parseCIDRs(ss []string) []*net.IPNet {
 	return nets
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel.
+// startTelemetry serves /healthz, /readyz and /metrics.
 // Lifecycle is on: ready is reported only once the caller's ports are bound.
 func startTelemetry(cfg config.TelemetryConfig, srv *director.Server) *telemetry.Server {
 	opts := telemetry.Options{
@@ -416,4 +366,26 @@ func certHasSAN(certFile, name string) bool {
 		return false
 	}
 	return true
+}
+
+// startAPI binds the admin API before the director reports ready; a bind or a
+// later serve failure goes to fail rather than leaving a director without it.
+func startAPI(ctx context.Context, srv *director.Server, api config.DirectorAPIConfig, tlsCfg *tls.Config, fail func(error)) error {
+	token, nets, err := api.Gate()
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", api.Listen)
+	if err != nil {
+		return fmt.Errorf("director API: %w", err)
+	}
+	if tlsCfg != nil {
+		ln = tls.NewListener(ln, tlsCfg)
+	}
+	go func() {
+		if err := srv.StartAPI(ctx, ln, token, nets); err != nil {
+			fail(err)
+		}
+	}()
+	return nil
 }

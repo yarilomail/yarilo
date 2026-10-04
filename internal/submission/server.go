@@ -6,18 +6,20 @@ package submission
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 	proxyproto "github.com/pires/go-proxyproto"
 
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/oauth2"
-	"github.com/yarilomail/yarilo/internal/auth/scram"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/pkg/config"
@@ -34,19 +36,6 @@ type Authenticator interface {
 // unaffected.
 type MasterAuthenticator interface {
 	AuthPlainMaster(authzid, authid, password string) error
-}
-
-// SCRAMSha256LookupAuthenticator exposes per-user SCRAM-SHA-256 verifiers. The
-// session type-asserts opts.Auth into it to decide whether to advertise
-// SCRAM-SHA-256 / SCRAM-SHA-256-PLUS in EHLO's AUTH= extension.
-type SCRAMSha256LookupAuthenticator interface {
-	LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error)
-}
-
-// SCRAMSha1LookupAuthenticator is the SHA-1 counterpart of
-// SCRAMSha256LookupAuthenticator, gating SCRAM-SHA-1 / SCRAM-SHA-1-PLUS.
-type SCRAMSha1LookupAuthenticator interface {
-	LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error)
 }
 
 // Options configures the submission server.
@@ -66,8 +55,10 @@ type Options struct {
 	TLSConfig *tls.Config
 	// Protocol-level settings.
 	Config config.SubmissionProtocolConfig
-	Auth   Authenticator
-	Proxy  *proxy.Submission
+	// AuthRelay carries every credential to yarilo-auth, which runs the
+	// mechanism. Required: a session verifies nothing itself (#1733).
+	AuthRelay *authrelay.Client
+	Proxy     *proxy.Submission
 
 	// FailureDelay delays surfacing an auth failure by this duration, equalising
 	// wall-clock across failure causes so timing carries no signal. Zero disables.
@@ -182,10 +173,13 @@ type session struct {
 	srv      *Server
 	conn     *goSmtp.Conn
 	remoteIP net.IP
-	username string // set from preamble for pre-authenticated sessions
-	sid      string // cross-service correlation ID from login-proxy
-	from     string
-	rcpts    []string
+	// liveRelay is a relayed SASL exchange this session started; cancelled on
+	// teardown so an aborted AUTH frees the service's half at once.
+	liveRelay *authrelay.RelayServer
+	username  string // set from preamble for pre-authenticated sessions
+	sid       string // cross-service correlation ID from login-proxy
+	from      string
+	rcpts     []string
 }
 
 func (s *session) Reset() {
@@ -196,6 +190,7 @@ func (s *session) Reset() {
 
 func (s *session) Logout() error {
 	slog.Debug("submission: command", "sid", s.sid, "cmd", "QUIT")
+	s.cancelRelay()
 	return nil
 }
 
@@ -268,40 +263,78 @@ func (s *session) AuthMechanisms() []string {
 		out = append(out, sasl.OAuthBearer)
 		out = append(out, sasl.XOAuth2)
 	}
-	if _, ok := s.srv.opts.Auth.(SCRAMSha256LookupAuthenticator); ok {
-		out = append(out, sasl.ScramSha256)
-		if s.tlsExporter() != nil {
-			out = append(out, sasl.ScramSha256Plus)
+	for _, mech := range s.scramMechanisms() {
+		if strings.HasSuffix(mech, "-PLUS") && s.tlsExporter() == nil {
+			continue
 		}
+		out = append(out, mech)
 	}
-	if _, ok := s.srv.opts.Auth.(SCRAMSha1LookupAuthenticator); ok {
-		out = append(out, sasl.ScramSha1)
-		if s.tlsExporter() != nil {
-			out = append(out, sasl.ScramSha1Plus)
+	return out
+}
+
+// cancelRelay abandons a relayed exchange this session started and did not
+// finish. Idempotent, so the teardown path may always call it.
+func (s *session) cancelRelay() {
+	if s.liveRelay == nil {
+		return
+	}
+	s.liveRelay.Cancel()
+	s.liveRelay = nil
+}
+
+// scramMechanisms names the SCRAM the auth service announced; the session holds
+// no verifier of its own (#1733).
+func (s *session) scramMechanisms() []string {
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return nil
+	}
+	var out []string
+	for _, mech := range relay.Mechanisms() {
+		if strings.HasPrefix(mech, "SCRAM-") {
+			out = append(out, mech)
 		}
 	}
 	return out
 }
 
-// scramLookupShim adapts the submission-side SCRAMSha256LookupAuthenticator to
-// the protocol-side SCRAMSha256Lookup that scram.NewSha256 expects, keeping the
-// protocol package out of the submission package's public interface set.
-type scramLookupShim struct {
-	a SCRAMSha256LookupAuthenticator
+// scramServer runs the mechanism through the service when a relay is set.
+func (s *session) scramServer(mech string) (sasl.Server, error) {
+	var cb []byte
+	if strings.HasSuffix(mech, "-PLUS") {
+		if cb = s.tlsExporter(); cb == nil {
+			return nil, goSmtp.ErrAuthUnknownMechanism
+		}
+	}
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return nil, goSmtp.ErrAuthUnknownMechanism
+	}
+	// Held so an AUTH the client aborts frees the service's half at once,
+	// rather than waiting out its deadline there (#1733).
+	s.cancelRelay()
+	srv := authrelay.NewRelayServer(relay, mech, "smtp", s.remoteIP.String(), s.sid, cb)
+	srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeSCRAMLogin(res.Username) }
+	s.liveRelay = srv
+	return srv, nil
 }
 
-func (s scramLookupShim) LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error) {
-	return s.a.LookupSCRAMSha256(username)
+// authPlain runs a password login in the auth service. authzid is the
+// impersonation target: empty for an ordinary login, the master's target else.
+func (s *session) authPlain(authzid, authid, password string) error {
+	relay := s.srv.opts.AuthRelay
+	if relay == nil {
+		return errNoAuthService
+	}
+	if _, err := relay.AuthenticateAs(authzid, authid, password, "smtp", s.remoteIP.String(), s.sid); err != nil {
+		return goSmtp.ErrAuthFailed
+	}
+	return nil
 }
 
-// scramSha1LookupShim mirrors scramLookupShim for the SHA-1 family.
-type scramSha1LookupShim struct {
-	a SCRAMSha1LookupAuthenticator
-}
-
-func (s scramSha1LookupShim) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error) {
-	return s.a.LookupSCRAMSha1(username)
-}
+// errNoAuthService is what a session answers when no auth service is wired: a
+// startup check refuses that config, so reaching it is a bug, not a state.
+var errNoAuthService = errors.New("submission: no auth service configured")
 
 // completeSCRAMLogin is the OnSuccess hook for the session's SCRAM adapter. The
 // SCRAM server has already verified the credential; go-smtp flips the session's
@@ -341,7 +374,7 @@ func (s *session) Auth(mech string) (sasl.Server, error) {
 		return sasl.NewPlainServer(s.authPlainSASL), nil
 	case sasl.Login:
 		return sasl.NewLoginServer(func(username, password string) error {
-			return s.srv.opts.Auth.AuthPlain(username, password)
+			return s.authPlain("", username, password)
 		}), nil
 	case sasl.OAuthBearer:
 		if !s.srv.opts.OAuth2Enabled {
@@ -353,38 +386,8 @@ func (s *session) Auth(mech string) (sasl.Server, error) {
 			return nil, goSmtp.ErrAuthUnknownMechanism
 		}
 		return oauth2.NewXOAuth2SASLServer(s.authXOAuth2SASL), nil
-	case sasl.ScramSha256:
-		lookup, ok := s.srv.opts.Auth.(SCRAMSha256LookupAuthenticator)
-		if !ok {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		return scram.NewSha256(scramLookupShim{lookup}, s.completeSCRAMLogin), nil
-	case sasl.ScramSha256Plus:
-		lookup, ok := s.srv.opts.Auth.(SCRAMSha256LookupAuthenticator)
-		if !ok {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		cb := s.tlsExporter()
-		if cb == nil {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		return scram.NewSha256Plus(scramLookupShim{lookup}, cb, s.completeSCRAMLogin), nil
-	case sasl.ScramSha1:
-		lookup, ok := s.srv.opts.Auth.(SCRAMSha1LookupAuthenticator)
-		if !ok {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		return scram.NewSha1(scramSha1LookupShim{lookup}, s.completeSCRAMLogin), nil
-	case sasl.ScramSha1Plus:
-		lookup, ok := s.srv.opts.Auth.(SCRAMSha1LookupAuthenticator)
-		if !ok {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		cb := s.tlsExporter()
-		if cb == nil {
-			return nil, goSmtp.ErrAuthUnknownMechanism
-		}
-		return scram.NewSha1Plus(scramSha1LookupShim{lookup}, cb, s.completeSCRAMLogin), nil
+	case sasl.ScramSha256, sasl.ScramSha256Plus, sasl.ScramSha1, sasl.ScramSha1Plus:
+		return s.scramServer(mech)
 	}
 	return nil, goSmtp.ErrAuthUnknownMechanism
 }
@@ -393,7 +396,7 @@ func (s *session) Auth(mech string) (sasl.Server, error) {
 // parsed the GS2 envelope; it maps (Username, Token) onto AuthPlain
 // (token-as-password) so the OAuth passdb sees it.
 func (s *session) authOAuthBearerSASL(opts sasl.OAuthBearerOptions) *sasl.OAuthBearerError {
-	if err := s.srv.opts.Auth.AuthPlain(opts.Username, opts.Token); err != nil {
+	if err := s.authPlain("", opts.Username, opts.Token); err != nil {
 		if d := s.srv.opts.FailureDelay; d > 0 {
 			time.Sleep(d)
 		}
@@ -422,7 +425,7 @@ func (s *session) authOAuthBearerSASL(opts sasl.OAuthBearerOptions) *sasl.OAuthB
 // authXOAuth2SASL mirrors authOAuthBearerSASL for the XOAUTH2 wire format; only
 // the struct type carrying (Username, Token) differs.
 func (s *session) authXOAuth2SASL(opts sasl.XOAuth2Options) *sasl.OAuthBearerError {
-	if err := s.srv.opts.Auth.AuthPlain(opts.Username, opts.Token); err != nil {
+	if err := s.authPlain("", opts.Username, opts.Token); err != nil {
 		if d := s.srv.opts.FailureDelay; d > 0 {
 			time.Sleep(d)
 		}
@@ -457,15 +460,13 @@ func (s *session) authPlainSASL(authzid, authid, password string) error {
 	master := ""
 	var err error
 	if authzid == "" || authzid == authid {
-		err = s.srv.opts.Auth.AuthPlain(authid, password)
-	} else if m, ok := s.srv.opts.Auth.(MasterAuthenticator); ok {
-		err = m.AuthPlainMaster(authzid, authid, password)
+		err = s.authPlain("", authid, password)
+	} else {
+		err = s.authPlain(authzid, authid, password)
 		if err == nil {
 			target = authzid
 			master = authid
 		}
-	} else {
-		err = goSmtp.ErrAuthFailed
 	}
 	if err != nil {
 		// Timing-leak mitigation: same wall-clock for every failure cause.

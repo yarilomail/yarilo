@@ -4,11 +4,9 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// FolderVSizer is the slice of the index a count-based quota read needs:
-// resolve a folder name to a handle and read its aggregate virtual size.
-// Satisfied by mailbox.UserIndex.
+// FolderVSizer is the slice of the index a count needs: a folder's aggregate
+// virtual size. The folder is opened through the box (#1715).
 type FolderVSizer interface {
-	OpenFolder(folder string, uidValidity uint32) (*mailbox.Folder, error)
 	FolderVSize(folderID uint64) (bytes uint64, messages uint32, err error)
 }
 
@@ -18,22 +16,26 @@ type FolderVSizer interface {
 // count toward quota. Unreadable or absent folders are skipped rather than
 // failing the whole read, mirroring how the aggregate self-heals: a transient
 // per-folder error must not deny service on the user-wide total.
-func CountUsage(idx FolderVSizer, folders []string, limits Limits) Usage {
+func CountUsage(box mailbox.Box, folders []string, limits Limits) Usage {
+	// Counting settles nothing: it needs the folder's id and the index behind
+	// it, and a session box would walk the store for every folder it opens.
+	box = mailbox.Counting(box)
 	var u Usage
 	for _, name := range folders {
 		if _, ignore := limits.EffectiveLimits(name); ignore {
 			continue
 		}
-		f, err := idx.OpenFolder(name, 0)
+		MetricFoldersOpened.Inc()
+		f, err := box.Folder(name, 0)
 		if err != nil {
 			continue
 		}
-		bytes, msgs, err := idx.FolderVSize(f.ID)
+		md, err := box.Metadata(f.ID)
 		if err != nil {
 			continue
 		}
-		u.StorageBytes += int64(bytes)
-		u.Messages += int64(msgs)
+		u.StorageBytes += int64(md.VSize)
+		u.Messages += int64(md.Messages)
 	}
 	return u
 }

@@ -12,6 +12,7 @@ package idxrebuild
 import (
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -22,9 +23,9 @@ type Stats struct {
 	UIDsPreserved  int
 	UIDsAssigned   int
 	OrphansDropped int
-	// ExpungedUIDs are the records dropped by the reset (their file vanished),
-	// so the caller can invalidate their FTS documents.
-	ExpungedUIDs []uint32
+	// ExpungedCopies are the records the reset dropped (their file vanished),
+	// each with the message it was: a search index retracts by that (#1986).
+	ExpungedCopies []mailbox.ExpungedCopy
 }
 
 // ExpungeMissing is the reactive-heal counterpart to RebuildFolder: it removes
@@ -38,39 +39,41 @@ type Stats struct {
 // The caller holds the folder's mailbox lock. Orphan files on disk that the
 // index has never seen are NOT imported here — that is corruption repair, not
 // orphan adoption, which belongs to the operator rebuild.
-func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder) ([]uint32, error) {
-	scanned, err := box.Scan(folder.Name)
+func ExpungeMissing(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
+	scanned, err := b.Store().Scan(folder.Name)
 	if err != nil {
 		return nil, fmt.Errorf("idxrebuild/scan: %w", err)
 	}
-	present := make(map[string]struct{}, len(scanned))
+	// Keyed by GUID: the index no longer keeps a name, and the GUID is what
+	// both sides carry for the same message (#1700).
+	present := make(map[[16]byte]struct{}, len(scanned))
 	for i := range scanned {
-		if scanned[i].Filename != "" {
-			present[scanned[i].Filename] = struct{}{}
+		if scanned[i].GUID != ([16]byte{}) {
+			present[scanned[i].GUID] = struct{}{}
 		}
 	}
 	existing, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return nil, fmt.Errorf("idxrebuild/get messages: %w", err)
 	}
-	var expunged []uint32
+	var expunged []mailbox.ExpungedCopy
 	for _, m := range existing {
-		if m.Filename == "" {
-			continue
+		if m.GUID == ([16]byte{}) {
+			continue // a record from before GUIDs: nothing to compare it by
 		}
-		if _, ok := present[m.Filename]; ok {
+		if _, ok := present[m.GUID]; ok {
 			continue
 		}
 		if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
 			return expunged, fmt.Errorf("idxrebuild/expunge %d: %w", m.UID, err)
 		}
-		expunged = append(expunged, m.UID)
+		expunged = append(expunged, mailbox.ExpungedCopy{UID: m.UID, GUID: m.GUID})
 	}
 	return expunged, nil
 }
 
 // RebuildFolder regenerates idx's record set for folder from the physical
-// storage reported by box.Scan. Files the index already knows keep their UID
+// storage reported by b.Store().Scan. Files the index already knows keep their UID
 // (and, for dbox, their prior flags/keywords since the driver returns none);
 // files the index has never seen are assigned a fresh UID from folder.NextUID
 // upward; index records whose file has vanished are dropped. ResetFolder bumps
@@ -78,10 +81,10 @@ func ExpungeMissing(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mail
 //
 // The scan error is returned verbatim so the caller can classify it (e.g. a
 // driver that has not implemented Scan yet).
-func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder) (Stats, error) {
+func RebuildFolder(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (Stats, error) {
 	var stats Stats
 
-	scanned, err := box.Scan(folder.Name)
+	scanned, err := b.Store().Scan(folder.Name)
 	if err != nil {
 		return stats, fmt.Errorf("idxrebuild/scan: %w", err)
 	}
@@ -92,10 +95,10 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 		return stats, fmt.Errorf("idxrebuild/get messages: %w", err)
 	}
 
-	byFilename := make(map[string]*mailbox.MessageMeta, len(existing))
+	byGUID := make(map[[16]byte]*mailbox.MessageMeta, len(existing))
 	for _, m := range existing {
-		if m.Filename != "" {
-			byFilename[m.Filename] = m
+		if m.GUID != ([16]byte{}) {
+			byGUID[m.GUID] = m
 		}
 	}
 
@@ -111,24 +114,24 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 			continue
 		}
 		newMeta := &mailbox.MessageMeta{
-			Filename:     rec.Filename,
+			MapUID:       mapUIDOf(rec.Filename),
 			Size:         rec.Size,
 			VSize:        rec.VSize,
 			InternalDate: rec.InternalDate,
 			GUID:         rec.GUID,
 		}
-		if old, ok := byFilename[rec.Filename]; ok {
+		if old, ok := byGUID[rec.GUID]; ok {
 			newMeta.UID = old.UID
 			// Preserve the record's own modseq so a rebuild does not restamp
 			// every surviving message (a QRESYNC modseq storm); a newly assigned
 			// UID keeps modseq 0 and ResetFolder stamps it fresh.
 			newMeta.ModSeq = old.ModSeq
-			// Driver-provided flags (maildir) win since the filename trailer is
-			// the source of truth there; dbox returns empty so the index keeps
-			// its prior flag set unchanged.
-			if len(rec.Flags) > 0 {
+			// Driver-provided flags and keywords (maildir) win since the
+			// filename trailer is the source of truth there; dbox returns
+			// neither, so the index keeps its prior set unchanged.
+			if len(rec.Flags) > 0 || len(rec.Keywords) > 0 {
 				newMeta.Flags = rec.Flags
-				newMeta.Keywords = nil
+				newMeta.Keywords = rec.Keywords
 			} else {
 				newMeta.Flags = old.Flags
 				newMeta.Keywords = old.Keywords
@@ -146,6 +149,7 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 			newMeta.UID = nextUID
 			nextUID++
 			newMeta.Flags = rec.Flags
+			newMeta.Keywords = rec.Keywords
 			stats.UIDsAssigned++
 		}
 		rebuilt = append(rebuilt, newMeta)
@@ -159,20 +163,30 @@ func RebuildFolder(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 	if err != nil {
 		return stats, fmt.Errorf("idxrebuild/reset folder: %w", err)
 	}
-	stats.ExpungedUIDs = expunged
+	stats.ExpungedCopies = expunged
 	return stats, nil
+}
+
+// mapUIDOf reads an mdbox storage key out of the name a scan reported. Other
+// drivers name a file otherwise and get a zero, which reads as "no key".
+func mapUIDOf(name string) uint32 {
+	id, err := strconv.ParseUint(name, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(id)
 }
 
 // BackfillGUIDs stamps GUIDs onto a folder whose index predates the guid
 // extension; a folder already marked complete costs one O(1) header read.
 // Values come from Scan, never invented here, or a later rebuild from storage
 // would change EMAILID. Scan rather than List: mdbox enumerates via the index.
-func BackfillGUIDs(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailbox.Folder, name string) error {
+func BackfillGUIDs(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder, name string) error {
 	need, err := idx.GUIDBackfillNeeded(folder.ID)
 	if err != nil || !need {
 		return err
 	}
-	recs, err := box.Scan(name)
+	recs, err := b.Store().Scan(name)
 	if err != nil {
 		// No disk-scan, no GUIDs: stay pending rather than mark it done empty.
 		return fmt.Errorf("idxrebuild: scan %s: %w", name, err)
@@ -190,7 +204,13 @@ func BackfillGUIDs(box mailbox.UserMailbox, idx mailbox.UserIndex, folder *mailb
 	}
 	guids := make(map[uint32][16]byte, len(msgs))
 	for _, m := range msgs {
-		if g, ok := byName[m.Filename]; ok {
+		// The name comes from the driver: a record no longer carries one, and
+		// the scan reports files by the name they wear on disk (#1700).
+		name, perr := b.MessagePath(folder.Name, m)
+		if perr != nil {
+			continue
+		}
+		if g, ok := byName[name]; ok {
 			guids[m.UID] = g
 		}
 	}

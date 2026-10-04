@@ -110,7 +110,7 @@ func lookupInt(ctx context.Context, d dict.Dict, set *dict.OpSettings, key strin
 // userCountUsage sums the authoritative index-derived usage across a user's
 // personal-namespace folders (the count backend). Shared by /show and /recalc.
 func (s *Server) userCountUsage(user, namespace string) (quota.Usage, quota.Limits, error) {
-	uc, err := s.openUserContext(user)
+	uc, err := s.openUserContextReadOnly(user)
 	if err != nil {
 		return quota.Usage{}, quota.Limits{}, err
 	}
@@ -118,6 +118,9 @@ func (s *Server) userCountUsage(user, namespace string) (quota.Usage, quota.Limi
 	bundle, err := uc.ns(s, namespace)
 	if err != nil {
 		return quota.Usage{}, quota.Limits{}, err
+	}
+	if bundle == nil {
+		return quota.Usage{}, quota.Limits{}, errNoMailHome
 	}
 	folders, err := bundle.box.ListFolders()
 	if err != nil {
@@ -129,7 +132,7 @@ func (s *Server) userCountUsage(user, namespace string) (quota.Usage, quota.Limi
 			limits = quota.ParseRules(pui.QuotaRules)
 		}
 	}
-	return quota.CountUsage(bundle.idx, mailbox.SelectableNames(folders), limits), limits, nil
+	return quota.CountUsage(bundle.mbox, mailbox.SelectableNames(folders), limits), limits, nil
 }
 
 type quotaShowResponse struct {
@@ -203,7 +206,7 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -214,6 +217,10 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if bundle == nil {
+		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
+		return
+	}
 	folders, err := bundle.box.ListFolders()
 	if err != nil {
 		apiError(w, "recalc: list folders: "+err.Error(), http.StatusInternalServerError)
@@ -222,9 +229,14 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 	// Force a rebuild of each folder's aggregate from records, then sum.
 	names := mailbox.SelectableNames(folders)
 	for _, name := range names {
-		f, oerr := bundle.idx.OpenFolder(name, 0)
+		f, oerr := bundle.mbox.Folder(name, 0)
 		if oerr != nil {
 			continue
+		}
+		// Filled first: a rebuild sums the records, and a record that carries
+		// no size would zero the folder on the operator's own command (#1728).
+		if _, ferr := bundle.mbox.FillSizeless(f); ferr != nil {
+			slog.Warn("quota recalc: sizes not filled", "user", req.User, "folder", name, "err", ferr)
 		}
 		if rerr := bundle.idx.RecomputeVSize(f.ID); rerr != nil {
 			slog.Warn("quota recalc: rebuild failed", "user", req.User, "folder", name, "err", rerr)
@@ -236,7 +248,7 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 			limits = quota.ParseRules(pui.QuotaRules)
 		}
 	}
-	u := quota.CountUsage(bundle.idx, names, limits)
+	u := quota.CountUsage(bundle.mbox, names, limits)
 	apiJSON(w, quotaRecalcResponse{
 		User:         req.User,
 		StorageBytes: u.StorageBytes,

@@ -12,6 +12,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -68,14 +69,18 @@ func benchServerSized(b *testing.B, folders, messagesPerFolder, bodyBytes int) *
 			b.Fatalf("open %s: %v", name, err)
 		}
 		for uid := 1; uid <= messagesPerFolder; uid++ {
-			fname, vsize, guid, serr := box.Save(name, strings.NewReader(body), uint32(uid), int64(len(body)), nil, [16]byte{})
+			fname, vsize, guid, serr := box.Save(name, strings.NewReader(body), uint32(uid), int64(len(body)), nil, nil, [16]byte{})
 			if serr != nil {
 				b.Fatalf("save: %v", serr)
 			}
-			if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-				UID: uint32(uid), Filename: fname, Size: uint32(len(body)), VSize: vsize,
+			meta := &mailbox.MessageMeta{
+				UID: uint32(uid), Size: uint32(len(body)), VSize: vsize,
 				GUID: guid, InternalDate: time.Now(),
-			}); err != nil {
+			}
+			if err := mailboxbase.NameSaved(box, name, fname, meta); err != nil {
+				b.Fatalf("name: %v", err)
+			}
+			if err := ui.AppendMessage(f.ID, meta); err != nil {
 				b.Fatalf("append: %v", err)
 			}
 		}

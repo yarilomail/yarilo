@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // defaultDialTimeout caps the initial TCP/TLS handshake so a stalled master
@@ -150,7 +151,7 @@ func DialContext(ctx context.Context, addr string, tlsCfg *tls.Config) (*Client,
 func (c *Client) consumeHandshake() error {
 	verSeen := false
 	for {
-		line, err := c.rd.ReadString('\n')
+		line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 		if err != nil {
 			// The read failed, so the service was not reached. The version
 			// checks below are the opposite case -- it answered, and answered
@@ -206,6 +207,9 @@ func (c *Client) Userdb(ctx context.Context, username string) (*protocol.UserInf
 		return nil, ErrClosed
 	}
 	id := c.allocID()
+	if strings.ContainsAny(username, "\t\r\n\x00") {
+		return nil, fmt.Errorf("authclient: username %q cannot cross the wire", username)
+	}
 	line, err := c.exchange(ctx, fmt.Sprintf("USER\t%s\t%s\n", id, username))
 	if err != nil {
 		return nil, err
@@ -280,7 +284,7 @@ func (c *Client) iterateUsersLocked(ctx context.Context) ([]string, error) {
 	}
 	var out []string
 	for {
-		line, err := c.rd.ReadString('\n')
+		line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 		if err != nil {
 			return nil, fmt.Errorf("authclient: read LIST: %w: %w", ErrUnavailable, err)
 		}
@@ -403,7 +407,7 @@ func (c *Client) exchangeLocked(ctx context.Context, line string) (string, error
 	if _, err := c.conn.Write([]byte(line)); err != nil {
 		return "", fmt.Errorf("authclient: write: %w: %w", ErrUnavailable, err)
 	}
-	resp, err := c.rd.ReadString('\n')
+	resp, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
 	if err != nil {
 		return "", fmt.Errorf("authclient: read: %w: %w", ErrUnavailable, err)
 	}

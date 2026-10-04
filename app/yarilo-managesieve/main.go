@@ -34,14 +34,9 @@ func main() {
 		"telemetry", cfg.Telemetry.Listen,
 	)
 
-	// ManageSieve backend — disable all unrelated listeners.
-	cfg.Services.IMAP = nil
-	cfg.Services.IMAPS = nil
-	cfg.Services.POP3 = nil
-	cfg.Services.POP3S = nil
-	cfg.Services.LMTP = nil
-	cfg.Services.Submission = nil
-	cfg.Services.Submissions = nil
+	// One listener per session binary; the login proxy holds the client
+	// certificate this process must not read (#1863).
+	config.KeepOnlySessionListener(cfg, config.RoleManageSieve)
 
 	srv, err := backend.New(cfg)
 	if err != nil {

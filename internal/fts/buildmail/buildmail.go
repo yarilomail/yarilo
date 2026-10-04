@@ -104,6 +104,7 @@ func (b *Builder) headerIndexable(name string) bool {
 // chain: each part picks its own (see detectPartChain / selectChainForBytes).
 type buildState struct {
 	uid        uint32
+	guid       [16]byte
 	remaining  int64
 	seenHashes map[uint64]struct{}
 	// stages records where this message's time went, so a pass can be read as
@@ -138,14 +139,24 @@ type Report struct {
 	Cause error
 }
 
+// BuildMessage is Build with the message's own identity, which one index per
+// user needs to tell a document apart from another folder's (#1986).
+func (b *Builder) BuildMessage(uid uint32, guid [16]byte, raw io.Reader, upd fts.Update) (Report, error) {
+	return b.build(uid, guid, raw, upd)
+}
+
 func (b *Builder) Build(uid uint32, raw io.Reader, upd fts.Update) (Report, error) {
+	return b.build(uid, [16]byte{}, raw, upd)
+}
+
+func (b *Builder) build(uid uint32, guid [16]byte, raw io.Reader, upd fts.Update) (Report, error) {
 	var report Report
 	remaining := b.opts.MaxSize
 	if remaining <= 0 {
 		remaining = -1 // unlimited
 	}
 
-	st := &buildState{uid: uid, remaining: remaining}
+	st := &buildState{uid: uid, guid: guid, remaining: remaining}
 	if b.opts.DedupBodyParts {
 		st.seenHashes = make(map[uint64]struct{})
 	}
@@ -361,7 +372,7 @@ func (b *Builder) buildHeaders(st *buildState, e *message.Entity, depth int, upd
 		// it lands only in the A-pool (TEXT matches by header name, e.g.
 		// "list-id"), never in the per-field H<NAME> pool alongside the value,
 		// or HEADER List-Id "list-id" would match its own name.
-		if accept, err := upd.SetBuildKey(fts.BuildKey{UID: st.uid, Type: keyType}); err != nil {
+		if accept, err := upd.SetBuildKey(fts.BuildKey{UID: st.uid, GUID: st.guid, Type: keyType}); err != nil {
 			return err
 		} else if accept {
 			if err := b.writeDataChain(st, name, upd); err != nil {
@@ -371,6 +382,7 @@ func (b *Builder) buildHeaders(st *buildState, e *message.Entity, depth int, upd
 
 		accept, err := upd.SetBuildKey(fts.BuildKey{
 			UID:     st.uid,
+			GUID:    st.guid,
 			Type:    keyType,
 			HdrName: strings.ToLower(name),
 		})
@@ -559,6 +571,7 @@ func (b *Builder) buildBodyText(st *buildState, chain *language.Chain, contentTy
 
 		accept, err := upd.SetBuildKey(fts.BuildKey{
 			UID:         st.uid,
+			GUID:        st.guid,
 			Type:        fts.KeyBodyPart,
 			ContentType: contentType,
 		})
@@ -581,6 +594,7 @@ func (b *Builder) buildBodyText(st *buildState, chain *language.Chain, contentTy
 
 	accept, err := upd.SetBuildKey(fts.BuildKey{
 		UID:         st.uid,
+		GUID:        st.guid,
 		Type:        fts.KeyBodyPart,
 		ContentType: contentType,
 	})

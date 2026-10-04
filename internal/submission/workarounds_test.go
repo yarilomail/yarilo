@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/yarilomail/yarilo/pkg/config"
 )
 
@@ -83,7 +85,7 @@ func TestWorkaround_Integration(t *testing.T) {
 			MaxMsgSize:  1 << 20,
 			Workarounds: []string{"whitespace-before-path"},
 		},
-		Auth: stubAuth{},
+		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
 	}
 	srv := New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

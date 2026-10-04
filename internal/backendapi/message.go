@@ -58,28 +58,27 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer uc.Close()
 
-	bundle, err := uc.ns(s, req.Namespace)
-	if err != nil {
-		apiError(w, err.Error(), http.StatusBadRequest)
+	bundle, ok := readBundle(w, s, uc, req.Namespace)
+	if !ok {
 		return
 	}
 	// The name enters here from a log line or a human, so it is normalised at
 	// this boundary like every other: a decomposed name would address a
 	// different tree than the one that holds the message (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		apiError(w, "open folder: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	metas, err := mailbox.ReadMessages(bundle.idx, folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	metas, err := bundle.mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		apiError(w, "read folder: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -93,7 +92,7 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request) {
 	// Nothing here writes: no \Seen, no modseq, no index update. A diagnostic
 	// that changes what it is diagnosing answers a different question than the
 	// one that was asked.
-	rc, err := bundle.box.Fetch(req.Folder, meta.Filename, meta.AltTier)
+	rc, err := bundle.mbox.OpenMessage(req.Folder, meta)
 	if err != nil {
 		apiError(w, "fetch message: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -111,7 +110,7 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request) {
 	// cannot be parsed: the first reader is spent by then, and what is left in
 	// it starts in the middle of a header.
 	reopen := func() (io.ReadCloser, error) {
-		return bundle.box.Fetch(req.Folder, meta.Filename, meta.AltTier)
+		return bundle.mbox.OpenMessage(req.Folder, meta)
 	}
 	written, werr := writeMessage(w, rc, req.Mode, reopen)
 

@@ -8,9 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -28,7 +31,7 @@ func threadServerIn(t *testing.T, raws []string) (net.Conn, *bufio.Reader, strin
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	info := resolver.UserInfo("user@test.com", "")
+	info, _ := resolver.UserInfo("user@test.com", "")
 
 	box := maildir.New().OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -37,7 +40,7 @@ func threadServerIn(t *testing.T, raws []string) (net.Conn, *bufio.Reader, strin
 	ui := fileindex.New().OpenUser(info)
 	for i, raw := range raws {
 		uid := uint32(i + 1)
-		name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), uid, int64(len(raw)), nil, [16]byte{})
+		name, vsize, guid, err := box.Save("INBOX", strings.NewReader(raw), uid, int64(len(raw)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -45,10 +48,15 @@ func threadServerIn(t *testing.T, raws []string) (net.Conn, *bufio.Reader, strin
 		if err != nil {
 			t.Fatalf("open folder: %v", err)
 		}
-		if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(raw)), VSize: vsize,
+		meta := &mailbox.MessageMeta{
+			UID: uid, Size: uint32(len(raw)), VSize: vsize,
 			GUID: guid, InternalDate: time.Date(2026, 3, 1, 0, 0, i, 0, time.UTC),
-		}); err != nil {
+		}
+		if err := mailboxbase.NameSaved(box, "INBOX", name, meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = guid
+		if err := ui.AppendMessage(f.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -56,10 +64,10 @@ func threadServerIn(t *testing.T, raws []string) (net.Conn, *bufio.Reader, strin
 	box.Close() //nolint:errcheck
 
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    fileindex.New(),
-		Resolver: resolver,
-		Auth:     &stubPassdb{user: "user@test.com", pass: "testpass"},
+		Mailbox:   maildir.New(),
+		Index:     fileindex.New(),
+		Resolver:  resolver,
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -21,7 +22,7 @@ var _ mailbox.ReactiveHealer = (*userMailbox)(nil)
 // reads fine.
 func TestFetchCorruptionClassification(t *testing.T) {
 	_, mb, _ := newTestUser(t)
-	name, _, _, err := mb.Save("INBOX", strings.NewReader("hello body\n"), 7, 11, nil, [16]byte{})
+	name, _, _, err := mb.Save("INBOX", strings.NewReader("hello body\n"), 7, 11, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,13 +63,10 @@ func TestReactiveHealDropsVanishedPreservesRest(t *testing.T) {
 
 	var names []string
 	for uid := uint32(1); uid <= 3; uid++ {
-		n, _, _, err := mb.Save("INBOX", strings.NewReader("msg\n"), uid, 4, nil, [16]byte{})
-		if err != nil {
-			t.Fatal(err)
-		}
+		n, _, g := saveNamedGUID(t, mb, "INBOX", "msg\n", uid, [16]byte{})
 		names = append(names, n)
 		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: n, Size: 4, VSize: 4,
+			UID: uid, Size: 4, VSize: 4, GUID: g,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +78,7 @@ func TestReactiveHealDropsVanishedPreservesRest(t *testing.T) {
 	}
 
 	rb := mb.(*userMailbox)
-	expunged, err := rb.HealCorruptFolder(idx, folder)
+	expunged, err := rb.HealCorruptFolder(mailboxbase.Open(mb, idx), idx, folder)
 	if err != nil {
 		t.Fatalf("heal: %v", err)
 	}

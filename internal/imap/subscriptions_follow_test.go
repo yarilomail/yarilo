@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	imapserver "github.com/yarilomail/yarilo/internal/imap"
@@ -103,10 +105,10 @@ func TestSubscriptions_PeerCanRemoveTheirOwnRow(t *testing.T) {
 func TestSubscriptions_NoStoringNamespaceRefuses(t *testing.T) {
 	root := t.TempDir()
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:     &enforcePassdb{users: map[string]string{"alice": "pw"}},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
+		AuthRelay: authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw"}}),
 		Namespaces: []imapserver.NamespaceSpec{
 			// The personal namespace does not cover the whole name space.
 			{Type: imapserver.NamespacePersonal, Prefix: "Mail/", Separator: '/', List: imapserver.ListYes},

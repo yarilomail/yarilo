@@ -44,14 +44,14 @@ func (s *Server) emailState(h *userHandle) (string, error) {
 		// Two stats instead of a base read and a log replay, when nothing has
 		// moved since the marker was built. A mismatch -- or a stamp that
 		// cannot be taken -- falls through to the open.
-		stamp, stampErr := h.idx.FolderStamp(e.Name)
+		stamp, stampErr := h.mbox.FolderStamp(e.Name)
 		if stampErr == nil {
 			if mark, ok := s.states.get(h.info.Username, e.Name, stamp); ok {
 				desc.Entries = append(desc.Entries, jmapcore.StateEntry{Key: mark.key, Fields: mark.fields})
 				continue
 			}
 		}
-		f, err := h.idx.OpenFolder(e.Name, 0)
+		f, err := h.mbox.Folder(e.Name, 0)
 		if err != nil {
 			return "", fmt.Errorf("jmap: open folder %q: %w", e.Name, err)
 		}
@@ -170,7 +170,7 @@ func (s *Server) folderMarks(h *userHandle) (folderMarks, error) {
 		if !e.Selectable {
 			continue
 		}
-		f, err := h.idx.OpenFolder(e.Name, 0)
+		f, err := h.mbox.Folder(e.Name, 0)
 		if err != nil {
 			return nil, fmt.Errorf("jmap: open folder %q: %w", e.Name, err)
 		}
@@ -190,7 +190,7 @@ type changedIDs struct{ created, updated []string }
 // an update. Without that field both would have to be reported as updates, and
 // a client would refetch every changed message as though it had never seen it.
 func (s *Server) folderMessageIDs(h *userHandle, f folderMark, sinceModSeq uint64, sinceNextUID uint32) (changedIDs, error) {
-	metas, err := mailbox.ReadMessages(h.idx, f.folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	metas, err := h.mbox.Messages(f.folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		return changedIDs{}, fmt.Errorf("jmap: read folder %q: %w", f.name, err)
 	}

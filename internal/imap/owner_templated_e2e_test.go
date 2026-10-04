@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -45,7 +47,7 @@ func ownerTemplatedServer(t *testing.T) (root string, dial func(user string) *im
 		Mailbox:      maildir.New(),
 		Index:        file.New(),
 		Resolver:     &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:         &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}},
+		AuthRelay:    authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw", "bob": "pw"}}),
 		ACLEnabled:   true,
 		UserdbLookup: lookup,
 		Namespaces: []imapserver.NamespaceSpec{

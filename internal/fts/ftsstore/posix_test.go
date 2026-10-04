@@ -92,15 +92,14 @@ func TestDriverSelection(t *testing.T) {
 func TestPrepareAdoptsALegacyLocation(t *testing.T) {
 	root := t.TempDir()
 	layout := fts.Layout{
-		Dir: func(root string, _ fts.UserRef, mbox fts.MailboxRef) string {
-			return filepath.Join(root, mbox.GUID, "idx")
+		Dir: func(root string, user fts.UserRef) string {
+			return filepath.Join(root, user.Username, "idx")
 		},
-		Legacy: func(root string, _ fts.UserRef, mbox fts.MailboxRef) []string {
-			return []string{filepath.Join(root, "old", mbox.Name, "idx")}
+		Legacy: func(root string, _ fts.UserRef) []string {
+			return []string{filepath.Join(root, "old", "INBOX", "idx")}
 		},
 	}
-	user := fts.UserRef{Username: "u@test", IndexRoot: root}
-	mbox := fts.MailboxRef{Name: "INBOX", GUID: "guid-1"}
+	user := fts.UserRef{Username: "u", IndexRoot: root}
 
 	legacy := filepath.Join(root, "old", "INBOX", "idx")
 	if err := os.MkdirAll(legacy, 0o700); err != nil {
@@ -111,11 +110,11 @@ func TestPrepareAdoptsALegacyLocation(t *testing.T) {
 	}
 
 	p := NewPosix(layout, "local")
-	dir, err := p.Prepare(user, mbox)
+	dir, err := p.Prepare(user)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if want := filepath.Join(root, "guid-1", "idx"); dir != want {
+	if want := filepath.Join(root, "u", "idx"); dir != want {
 		t.Errorf("Prepare = %q, want %q", dir, want)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "marker")); err != nil {
@@ -134,11 +133,11 @@ func TestPrepareAdoptsALegacyLocation(t *testing.T) {
 func TestPrepareCreatesNothing(t *testing.T) {
 	root := t.TempDir()
 	p := NewPosix(fts.Layout{
-		Dir: func(root string, _ fts.UserRef, mbox fts.MailboxRef) string {
-			return filepath.Join(root, mbox.GUID, "idx")
+		Dir: func(root string, _ fts.UserRef) string {
+			return filepath.Join(root, "idx")
 		},
 	}, "local")
-	dir, err := p.Prepare(fts.UserRef{IndexRoot: root}, fts.MailboxRef{Name: "INBOX", GUID: "g"})
+	dir, err := p.Prepare(fts.UserRef{IndexRoot: root})
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}

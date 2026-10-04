@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -71,11 +72,15 @@ func deliverMsg(t *testing.T, box *userMailbox, idx mailbox.UserIndex, folder, b
 	if err != nil {
 		t.Fatalf("alloc uid: %v", err)
 	}
-	fn, _, _, err := box.Save(folder, strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+	fn, vsize, guid, err := box.Save(folder, strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Filename: fn, Size: uint32(len(body))}); err != nil {
+	meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize, GUID: guid}
+	if err := mailboxbase.NameSaved(box, folder, fn, meta); err != nil {
+		t.Fatalf("name: %v", err)
+	}
+	if err := idx.AppendMessage(f.ID, meta); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	return uid
@@ -155,13 +160,13 @@ func TestRebuildRestoresTaggedOrphanOptIn(t *testing.T) {
 
 	// Tagged orphan: saved into "Archive" (so its trailer records Archive) but
 	// never appended to any folder index.
-	if _, _, _, err := box.Save("Archive", strings.NewReader("tagged orphan\r\n"), 0, 14, nil, [16]byte{}); err != nil {
+	if _, _, _, err := box.Save("Archive", strings.NewReader("tagged orphan\r\n"), 0, 14, nil, nil, [16]byte{}); err != nil {
 		t.Fatalf("save tagged orphan: %v", err)
 	}
 	// Untagged orphan: no ORIG_MAILBOX at all.
 	untaggedUID, _ := parseFilename(saveUntaggedOrphan(t, box, "untagged orphan\r\n"))
 
-	stats, err := box.RebuildStorage(idx, true)
+	stats, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, true)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -192,14 +197,14 @@ func TestRebuildDefaultDoesNotRestore(t *testing.T) {
 	box, idx := newBoxAndIndex(t, home)
 	deliverMsg(t, box, idx, "INBOX", "referenced\r\n")
 	taggedUID, _ := parseFilename(func() string {
-		fn, _, _, err := box.Save("Archive", strings.NewReader("tagged orphan\r\n"), 0, 14, nil, [16]byte{})
+		fn, _, _, err := box.Save("Archive", strings.NewReader("tagged orphan\r\n"), 0, 14, nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return fn
 	}())
 
-	stats, err := box.RebuildStorage(idx, false)
+	stats, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -232,13 +237,13 @@ func TestRebuildZeroRefsUnreferenced(t *testing.T) {
 	deliverMsg(t, box, idx, "INBOX", "referenced message body\r\n")
 
 	// Unreferenced: written to storage, never appended to any folder index.
-	orphanFn, _, _, err := box.Save("INBOX", strings.NewReader("orphan body\r\n"), 0, 12, nil, [16]byte{})
+	orphanFn, _, _, err := box.Save("INBOX", strings.NewReader("orphan body\r\n"), 0, 12, nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatalf("save orphan: %v", err)
 	}
 	orphanUID, _ := parseFilename(orphanFn)
 
-	stats, err := box.RebuildStorage(idx, false)
+	stats, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -274,14 +279,14 @@ func TestRebuildDropsDanglingFolderRecord(t *testing.T) {
 	// Dangling: index references map_uid 999999 which was never stored.
 	f, _ := idx.OpenFolder("INBOX", 0)
 	uid, _ := idx.AllocateUID(f.ID)
-	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Filename: "999999", Size: 4}); err != nil {
+	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, MapUID: 999999, Size: 4}); err != nil {
 		t.Fatal(err)
 	}
 	if got := folderCount(t, idx, "INBOX"); got != 2 {
 		t.Fatalf("pre-rebuild INBOX = %d, want 2", got)
 	}
 
-	stats, err := box.RebuildStorage(idx, false)
+	stats, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -307,7 +312,7 @@ func TestRebuildExpungesVanishedMapRecord(t *testing.T) {
 		t.Fatalf("remove m.2: %v", err)
 	}
 
-	stats, err := box.RebuildStorage(idx, false)
+	stats, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
 	if err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
@@ -331,11 +336,11 @@ func TestRebuildBumpsGenerationCounter(t *testing.T) {
 	box, idx := newBoxAndIndex(t, home)
 	deliverMsg(t, box, idx, "INBOX", "body\r\n")
 
-	s1, err := box.RebuildStorage(idx, false)
+	s1, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := box.RebuildStorage(idx, false)
+	s2, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +375,7 @@ func TestRebuildAbortsOnUnmountedAlt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// altStoragePath() does not exist → guard must fire.
-	_, err := box.RebuildStorage(idx, false)
+	_, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
 	if err == nil || !strings.Contains(err.Error(), "alt storage") {
 		t.Fatalf("expected alt-unavailable abort, got %v", err)
 	}
@@ -390,7 +395,7 @@ func TestRebuildAbortsOnIncompleteScan(t *testing.T) {
 	_, _ = f.Write([]byte(strings.Repeat("X", 100)))
 	_ = f.Close()
 
-	_, err = box.RebuildStorage(idx, false)
+	_, err = box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
 	if !errors.Is(err, ErrScanIncomplete) {
 		t.Fatalf("expected ErrScanIncomplete abort, got %v", err)
 	}

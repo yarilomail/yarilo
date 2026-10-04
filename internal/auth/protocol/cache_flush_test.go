@@ -159,7 +159,7 @@ func TestServer_Cache_HitAvoidsChain(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t80\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t80\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -193,7 +193,7 @@ func TestServer_Cache_WrongPasswordSkipsCache(t *testing.T) {
 	// Send WRONG password — cache must NOT pass it just because
 	// the (key, OK) entry exists; instead the chain runs (and
 	// rejects, since credPassdb knows only "right").
-	fmt.Fprintf(conn, "AUTH\t81\tPLAIN\tservice=imap\tresp=\x00alice\x00WRONG\n")
+	fmt.Fprintf(conn, "AUTH\t81\tPLAIN\tservice=imap\tresp=AGFsaWNlAFdST05H\n")
 	if !sc.Scan() {
 		t.Fatalf("no reply: %v", sc.Err())
 	}
@@ -221,7 +221,7 @@ func TestServer_Cache_SeedsOnSuccess(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "AUTH\t90\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t90\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() || !strings.HasPrefix(sc.Text(), "OK\t90") {
 		t.Fatalf("first auth: %q (err %v)", sc.Text(), sc.Err())
 	}
@@ -229,7 +229,7 @@ func TestServer_Cache_SeedsOnSuccess(t *testing.T) {
 	// Same conn, second auth — cache should answer without
 	// touching the chain. Verify via cache hit-counter.
 	hitsBefore, _, _, _ := cache.Stats()
-	fmt.Fprintf(conn, "AUTH\t91\tPLAIN\tservice=imap\tresp=\x00alice\x00secret\n")
+	fmt.Fprintf(conn, "AUTH\t91\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")
 	if !sc.Scan() || !strings.HasPrefix(sc.Text(), "OK\t91") {
 		t.Fatalf("second auth: %q", sc.Text())
 	}

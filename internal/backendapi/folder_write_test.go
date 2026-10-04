@@ -5,6 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/userstate/folders"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 func TestFolderCreate_HappyPath(t *testing.T) {
@@ -285,8 +289,7 @@ func containsString(haystack []string, needle string) bool {
 func TestFolderDelete_RejectsINBOX(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "",
-		map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	for _, name := range []string{"INBOX", "inbox"} {
 		status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/delete", "",
@@ -304,5 +307,78 @@ func TestFolderDelete_RejectsINBOX(t *testing.T) {
 	decodeJSONBody(t, body, &listResp)
 	if !containsString(listResp.Folders, "INBOX") {
 		t.Errorf("INBOX gone after refused delete: %v", listResp.Folders)
+	}
+}
+
+// With the index outside the mail, a folder deleted here and created again
+// must come back new: the index and its identity go with the delete.
+func TestFolderDelete_RecreatedFolderIsNew(t *testing.T) {
+	ts, _ := storageTestServer(t, func(o *Options) { o.Resolver.DefaultIndexDir = "%h/index" })
+	const user = "alice@example.com"
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	guid := func() string {
+		var r struct {
+			GUID string `json:"guid"`
+		}
+		_, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/guid", "", map[string]any{"user": user, "folder": "Temp"})
+		decodeJSONBody(t, body, &r)
+		return r.GUID
+	}
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": "Temp"})
+	before := guid()
+	if status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/delete", "",
+		map[string]any{"user": user, "folder": "Temp"}); status != 200 {
+		t.Fatalf("delete status=%d body=%s", status, body)
+	}
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": "Temp"})
+	if after := guid(); before == "" || after == before {
+		t.Errorf("recreated Temp has guid %q, before the delete %q; want a new one", after, before)
+	}
+}
+
+// A folder made here has its index and identity before anything opens it,
+// as one made over IMAP does, with the index outside the mail.
+func TestFolderCreate_WritesTheIndexWithTheFolder(t *testing.T) {
+	ts, root := storageTestServer(t, func(o *Options) { o.Resolver.DefaultIndexDir = "%h/index" })
+	const user = "alice@example.com"
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	if status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "",
+		map[string]any{"user": user, "folder": "Temp"}); status != 200 {
+		t.Fatalf("create status=%d body=%s", status, body)
+	}
+	info, _ := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n", DefaultIndexDir: "%h/index"}).UserInfo(user, "")
+	info.Driver = "maildir"
+	idx := file.New().OpenUser(info)
+	defer idx.Close() //nolint:errcheck
+	dir := idx.(interface{ IndexDirFor(string) string }).IndexDirFor("Temp")
+	if _, err := os.Stat(filepath.Join(dir, file.IndexFileName)); err != nil {
+		t.Errorf("no index after folder/create: %v", err)
+	}
+	if _, known, _ := folders.New(mailbox.ControlRoot(info), user, "", nil).UIDValidity("Temp"); !known {
+		t.Error("no identity record after folder/create")
+	}
+}
+
+// A folder renamed here takes its index to the new name, with the index
+// outside the mail, and leaves nothing under the old one.
+func TestFolderRename_MovesTheIndexWithTheFolder(t *testing.T) {
+	ts, root := storageTestServer(t, func(o *Options) { o.Resolver.DefaultIndexDir = "%h/index" })
+	const user = "alice@example.com"
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": "Work"})
+	if status, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/rename", "",
+		map[string]any{"user": user, "old_folder": "Work", "new_folder": "Play"}); status != 200 {
+		t.Fatalf("rename status=%d body=%s", status, body)
+	}
+	info, _ := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n", DefaultIndexDir: "%h/index"}).UserInfo(user, "")
+	info.Driver = "maildir"
+	idx := file.New().OpenUser(info)
+	defer idx.Close() //nolint:errcheck
+	dirOf := idx.(interface{ IndexDirFor(string) string }).IndexDirFor
+	if _, err := os.Stat(filepath.Join(dirOf("Play"), file.IndexFileName)); err != nil {
+		t.Errorf("no index under the new name: %v", err)
+	}
+	if _, err := os.Stat(dirOf("Work")); !os.IsNotExist(err) {
+		t.Errorf("the index directory stayed under the old name: %v", err)
 	}
 }

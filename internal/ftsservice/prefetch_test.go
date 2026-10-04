@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,17 @@ type fakeBox struct {
 	failOn  string
 	opened  atomic.Int32
 	release chan struct{}
+}
+
+// The name a record answers with here is its uid: the field is gone, and this
+// stub stands in for a driver that names by uid (#1700).
+func (f *fakeBox) RecordPath(_ string, m *mailbox.MessageMeta) (string, error) {
+	return strconv.FormatUint(uint64(m.UID), 10), nil
+}
+
+func (f *fakeBox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
+	name, _ := f.RecordPath(folder, m)
+	return f.Fetch(folder, name, m.AltTier)
 }
 
 func (f *fakeBox) Fetch(_, name string, _ bool) (io.ReadCloser, error) {
@@ -42,7 +54,7 @@ func metas(n int, size uint32) []*mailbox.MessageMeta {
 	out := make([]*mailbox.MessageMeta, 0, n)
 	for i := 1; i <= n; i++ {
 		out = append(out, &mailbox.MessageMeta{
-			UID: uint32(i), Filename: fmt.Sprintf("m%d", i), Size: size,
+			UID: uint32(i), Size: size,
 		})
 	}
 	return out
@@ -51,7 +63,7 @@ func metas(n int, size uint32) []*mailbox.MessageMeta {
 func bodies(n int, size int) map[string]string {
 	out := make(map[string]string, n)
 	for i := 1; i <= n; i++ {
-		out[fmt.Sprintf("m%d", i)] = strings.Repeat("x", size)
+		out[strconv.Itoa(i)] = strings.Repeat("x", size)
 	}
 	return out
 }
@@ -83,7 +95,7 @@ func TestFetcherPreservesUIDOrder(t *testing.T) {
 // association is the one way this change could corrupt indexing progress: the
 // caller skips a uid it can name, and halts on nothing it cannot.
 func TestFetcherAttributesAReadFailureToItsMessage(t *testing.T) {
-	box := &fakeBox{bodies: bodies(5, 64), failOn: "m3"}
+	box := &fakeBox{bodies: bodies(5, 64), failOn: "3"}
 	h := &userHandle{box: box}
 	f := newFetcher(h, "INBOX", prefetchOptions{Depth: 4, MaxBytes: 1 << 20})
 

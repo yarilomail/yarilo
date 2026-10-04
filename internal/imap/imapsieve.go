@@ -3,11 +3,13 @@ package imap
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -23,17 +25,50 @@ func (s *session) imapSieveScriptName(h *nsHandle, rel string, guid [16]byte) st
 	}
 	ctx := context.Background()
 	ops := s.metadataOps()
-	key := s.metadataKey(h, rel, guid, mailbox.AttrShared, imapSieveScriptAttr)
-	if vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, key); err == nil && found && len(vals) > 0 && len(vals[0]) > 0 {
-		return string(vals[0])
+	if name, ok := s.lookupScriptAttr(ctx, ops, s.metadataKey(h, rel, guid, mailbox.AttrShared, imapSieveScriptAttr), rel); ok {
+		return name
 	}
-	if inbox, err := s.primary.idx.OpenFolder("INBOX", uint32(time.Now().Unix())); err == nil {
-		skey := mailbox.ServerAttrKey(mailbox.AttrShared, inbox.GUID, imapSieveScriptAttr)
-		if vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, skey); err == nil && found && len(vals) > 0 && len(vals[0]) > 0 {
-			return string(vals[0])
+	if inbox, ok := s.inboxGUID(); ok {
+		skey := mailbox.ServerAttrKey(mailbox.AttrShared, inbox, imapSieveScriptAttr)
+		if name, ok := s.lookupScriptAttr(ctx, ops, skey, rel); ok {
+			return name
 		}
 	}
 	return ""
+}
+
+// lookupScriptAttr separates the three answers a dict gives: a bound script, no
+// script, and a failure -- which is not "no script" and must not read as one.
+func (s *session) lookupScriptAttr(ctx context.Context, ops *dict.OpSettings, key, rel string) (string, bool) {
+	vals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, key)
+	if err != nil {
+		// The message stays stored: a dict outage must not refuse mail. It is
+		// loud instead, because the script did not run (#1905).
+		metricImapSieveLookupErrors.Inc()
+		slog.Error("imapsieve: annotation lookup failed; the event runs without a script",
+			"user", s.userInfo.Username, "folder", rel, "key", key, "err", err)
+		return "", false
+	}
+	if !found || len(vals) == 0 || len(vals[0]) == 0 {
+		return "", false
+	}
+	return string(vals[0]), true
+}
+
+// inboxGUID is the account's INBOX identity, read once: opening the folder on
+// every stored message is a reconcile per message (#1902).
+func (s *session) inboxGUID() ([16]byte, bool) {
+	if s.inboxGUIDOK {
+		return s.inboxGUIDVal, true
+	}
+	// The identity, not a settled folder: a counting open reads the index and
+	// leaves the store alone (#1875).
+	inbox, err := mailbox.Counting(s.primary.mailbox()).Folder("INBOX", uint32(time.Now().Unix()))
+	if err != nil {
+		return [16]byte{}, false
+	}
+	s.inboxGUIDVal, s.inboxGUIDOK = inbox.GUID, true
+	return s.inboxGUIDVal, true
 }
 
 // runImapSieveEvent runs imapsieve for one just-stored message and applies the
@@ -42,14 +77,28 @@ func (s *session) imapSieveScriptName(h *nsHandle, rel string, guid [16]byte) st
 // (empty for APPEND).
 func (s *session) runImapSieveEvent(cause, mailboxName, rel string, h *nsHandle, folder *mailbox.Folder, uid uint32, filename string, altTier bool, srcMailbox string, changedFlags []string) {
 	eng := s.srv.opts.SieveEngine
-	if eng == nil {
+	if eng == nil || !eng.ImapSieveEnabled() {
 		return
 	}
-	scriptName := s.imapSieveScriptName(h, rel, folder.GUID)
+	s.runImapSieveScript(s.imapSieveScriptName(h, rel, folder.GUID), cause, mailboxName, rel, h, folder, uid, filename, altTier, srcMailbox, changedFlags)
+}
+
+// runImapSieveScript is the event with the bound script already resolved: a
+// command that stores many messages resolves it once, not once per message.
+func (s *session) runImapSieveScript(scriptName, cause, mailboxName, rel string, h *nsHandle, folder *mailbox.Folder, uid uint32, filename string, altTier bool, srcMailbox string, changedFlags []string) {
+	eng := s.srv.opts.SieveEngine
+	if eng == nil || !eng.ImapSieveEnabled() {
+		return
+	}
+	// Nothing to run means nothing to read: the message was just written, and
+	// re-reading it for a script that does not exist is the hot path (#1902).
+	if scriptName == "" && !eng.HasImapGlobals() {
+		return
+	}
 
 	rc, err := h.box.Fetch(rel, filename, altTier)
 	if err != nil {
-		s.flagCorruptOnRead(h.idx, folder.ID, rel, filename, uid, err)
+		s.flagCorruptOnRead(h.mailbox(), folder.ID, rel, filename, uid, err)
 		slog.Warn("imapsieve: fetch stored message", "user", s.userInfo.Username, "folder", rel, "err", err)
 		return
 	}
@@ -108,7 +157,7 @@ func (s *session) applyImapSieveResult(res *sieve.FilterResult, h *nsHandle, rel
 		return
 	}
 	if len(keepFlags) > 0 {
-		if err := h.idx.UpdateFlags(folder.ID, uid, keepFlags, nil); err != nil {
+		if err := h.mailbox().UpdateFlags(folder.ID, uid, mailbox.FlagsUpdate{Flags: keepFlags}); err != nil {
 			slog.Warn("imapsieve: update flags", "folder", rel, "uid", uid, "err", err)
 		}
 	}
@@ -122,6 +171,7 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 	if create {
 		if h, rel, derr := s.dispatch(name); derr == nil {
 			_ = h.box.Create(rel) // idempotent for imapsieve fileinto :create
+			h.mailbox().CreateFolder(rel, uint32(time.Now().Unix()))
 		}
 	}
 	dh, drel, df, err := s.ensureFolderHandle(name)
@@ -129,16 +179,19 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 		slog.Warn("imapsieve: fileinto target", "folder", name, "err", err)
 		return
 	}
-	newFilename, vsize, guid, err := dh.box.Save(drel, bytes.NewReader(raw), 0, int64(len(raw)), flags, [16]byte{})
+	// Sieve setflag/addflag name keywords as freely as system flags, and both
+	// the store and the record keep the two apart (#1605).
+	sysFlags, kws := mailbox.SplitStoredFlags(flags)
+	newFilename, vsize, guid, err := dh.box.Save(drel, bytes.NewReader(raw), 0, int64(len(raw)), sysFlags, kws, [16]byte{})
 	if err != nil {
 		slog.Warn("imapsieve: fileinto save", "folder", name, "err", err)
 		return
 	}
 	nm := &mailbox.MessageMeta{
-		Filename: newFilename, Flags: flags, Size: uint32(len(raw)), VSize: vsize, InternalDate: time.Now(), GUID: guid,
+		Flags: sysFlags, Keywords: kws, Size: uint32(len(raw)), VSize: vsize, InternalDate: time.Now(), GUID: guid,
 	}
-	if err := dh.idx.AllocateAndAppend(df.ID, nm); err != nil {
-		_ = dh.box.Remove(drel, newFilename)
+	if err := dh.mailbox().RecordSaved(df, drel, newFilename, nm); err != nil {
+		_ = dh.mailbox().Discard(drel, newFilename, nm)
 		slog.Warn("imapsieve: fileinto record", "folder", name, "err", err)
 		return
 	}
@@ -153,15 +206,48 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 		"file", newFilename,
 		"size", nm.Size,
 	)
-	s.emitMailboxChange(df, locks.EventDelivered, nm.UID)
+	s.emitMailboxChangeSized(df, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
 }
 
 // imapSieveExpunge removes the message from its current mailbox.
 func (s *session) imapSieveExpunge(h *nsHandle, rel string, folder *mailbox.Folder, uid uint32, filename string) {
+	// Read the identity while the record is still there: the retraction names
+	// the message, and after the expunge nothing can resolve the uid (#1986).
 	_ = h.box.Remove(rel, filename)
-	if err := h.idx.ExpungeMessage(folder.ID, uid); err != nil {
+	guid, err := expungeOne(h.mailbox(), folder.ID, uid)
+	if err != nil {
 		slog.Warn("imapsieve: expunge", "folder", rel, "uid", uid, "err", err)
 		return
 	}
-	s.emitMailboxChange(folder, locks.EventExpunged, uid)
+	// Without a size, so the quota total cannot be moved by a delta here and
+	// this commit pays for a full count. Deliberate, and not to be unified back
+	// into the sized path: what #1548 was about is the frequency of the
+	// account-wide sweep, and this path runs per Sieve rule, not per client
+	// expunge. Getting a size would mean reading the record back after removing
+	// it.
+	s.emitMailboxChangeSized(folder, locks.EventExpunged, uid, 0, guid)
+}
+
+// expungeOne expunges uid as read, and once more when another session moved
+// the record between the read and the write; a record already gone is done.
+func expungeOne(box mailbox.Box, folderID uint64, uid uint32) ([16]byte, error) {
+	var guid [16]byte
+	for attempt := 0; attempt < 2; attempt++ {
+		tx, err := box.Begin(folderID)
+		if err != nil {
+			return guid, err
+		}
+		msgs, err := tx.Messages(mailbox.SeqSet{{From: uid, To: uid}})
+		if err != nil || len(msgs) == 0 {
+			tx.Rollback()
+			return guid, err
+		}
+		guid = msgs[0].GUID
+		tx.Expunge(uid)
+		res, err := tx.Commit()
+		if err != nil || len(res.Skipped) == 0 {
+			return guid, err
+		}
+	}
+	return guid, fmt.Errorf("uid %d kept moving under the expunge", uid)
 }

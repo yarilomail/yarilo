@@ -80,7 +80,9 @@ package director
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -88,10 +90,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/cluster/proto"
 	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/pkg/mtls"
 )
 
 const (
@@ -158,6 +162,20 @@ type Options struct {
 	// %d (domain), optional %L lowercase, plus %%. Empty derives %Lu / %u from
 	// UsernameHashLowercase for byte-identical back-compat. Validated in main.
 	UsernameHashFormat string
+	// DomainRebalancePercent is how far the busiest backend of a tag may rise
+	// above the quietest before one domain moves down; 0 never moves one.
+	DomainRebalancePercent int
+
+	// DomainRebalanceInterval is how often that is judged, and
+	// DomainRebalanceCooldown how long a moved domain is left alone -- the
+	// hysteresis that keeps two backends from trading a domain (#1943).
+	DomainRebalanceInterval time.Duration
+	DomainRebalanceCooldown time.Duration
+
+	// DomainExpire is how long a domain keeps its backend with no session on
+	// it; the reference's director_user_expire for domains (#1943).
+	DomainExpire time.Duration
+
 	// AssignmentPolicy selects the initial (unpinned) placement: "hash"
 	// (default) or "least_sessions". Sticky pins / USER-MOVE are unaffected.
 	AssignmentPolicy string
@@ -264,6 +282,30 @@ func (o *Options) userExpire() time.Duration {
 	return o.UserExpire
 }
 
+// domainExpire is how long a domain's placement outlives its traffic. Its own
+// knob, not the user TTL: a domain forgotten between two logins would be placed
+// again elsewhere, which is affinity lost with nobody asking for it (#1943).
+func (o *Options) domainExpire() time.Duration {
+	if o.DomainExpire <= 0 {
+		return 900 * time.Second
+	}
+	return o.DomainExpire
+}
+
+func (o *Options) domainRebalanceInterval() time.Duration {
+	if o.DomainRebalanceInterval <= 0 {
+		return time.Minute
+	}
+	return o.DomainRebalanceInterval
+}
+
+func (o *Options) domainRebalanceCooldown() time.Duration {
+	if o.DomainRebalanceCooldown <= 0 {
+		return 10 * time.Minute
+	}
+	return o.DomainRebalanceCooldown
+}
+
 func (o *Options) pingInterval() time.Duration {
 	if o.PingInterval <= 0 {
 		return 30 * time.Second
@@ -355,9 +397,16 @@ type Server struct {
 	// userDir stores user→backend mappings with TTL.
 	userDir *UserDir
 
+	// domainDir stores domain→backend placements, for the domain policy: a
+	// shared mailbox is only reachable where its whole domain is (#1943).
+	domainDir   *DomainDir
+	domainMoves domainMoves
+
 	// clients is the registry of all currently connected clients.
 	clientMu sync.RWMutex
 	clients  map[*client]struct{}
+	// draining: this director left the ring and serves no one (#2152).
+	draining atomic.Bool
 
 	// sessRec tracks active proxied sessions reported via SESSION-OPEN/CLOSE.
 	// Director uses this to send USER-KICKED when a backend goes down.
@@ -441,6 +490,7 @@ func NewWithOptions(opts Options) *Server {
 		hf:              hf,
 		hashFmtExplicit: hfExplicit,
 		userDir:         NewUserDir(opts.userExpire(), hf, Member{IP: opts.LocalIP, Port: opts.LocalPort}.String()),
+		domainDir:       NewDomainDir(opts.domainExpire(), Member{IP: opts.LocalIP, Port: opts.LocalPort}.String()),
 		clients:         make(map[*client]struct{}),
 		sessById:        make(map[string]*sessionRec),
 		sessByBE:        make(map[string]map[string]bool),
@@ -499,6 +549,21 @@ func (s *Server) StartMembership(ctx context.Context, seeds []string) {
 // on SIGTERM, BEFORE cancelling the server ctx, then allow a brief flush.
 // See Membership.Leave.
 func (s *Server) GracefulLeave() { s.membership.Leave() }
+
+// Drain closes every client connection and refuses new ones, so logins and
+// backends reconnect to a live director instead of a view that stopped (#2152).
+func (s *Server) Drain() {
+	s.clientMu.Lock()
+	s.draining.Store(true)
+	conns := make([]net.Conn, 0, len(s.clients))
+	for c := range s.clients {
+		conns = append(conns, c.conn)
+	}
+	s.clientMu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+}
 
 // RingBackendCount reads the ring under its lock — the liveness probe (#904).
 // The ring is the routing hot path every LOOKUP takes; if its mutex is wedged
@@ -563,6 +628,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Co
 // Serve serves an already-bound listener.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	go s.purgeLoop(ctx)
+	go s.rebalanceLoop(ctx)
 	return s.listenOn(ctx, ln)
 }
 
@@ -577,6 +643,21 @@ func (s *Server) purgeLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.userDir.Purge()
+		}
+	}
+}
+
+// rebalanceLoop judges the spread between backends on a cadence; the pass
+// itself answers nothing when the policy is not domain or the threshold is off.
+func (s *Server) rebalanceLoop(ctx context.Context) {
+	ticker := time.NewTicker(s.opts.domainRebalanceInterval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.rebalanceDomains()
 		}
 	}
 }
@@ -701,8 +782,13 @@ func (s *Server) handleConn(conn net.Conn) {
 	c := &client{conn: conn, writeTimeout: s.opts.writeTimeout(), pongCh: make(chan struct{}, 4)}
 	s.addClient(c)
 	defer s.removeClient(c)
+	// After addClient: Drain either saw this client or set the flag first.
+	if s.draining.Load() {
+		return
+	}
 
 	rd := bufio.NewReaderSize(conn, 4096)
+	allow := s.commandGate(conn)
 
 	// Send server handshake: VERSION + current ring state + DONE.
 	_ = c.WriteLine(fmt.Sprintf("VERSION\t%s\t%d\t%d", protoName, majorVer, minorVer))
@@ -711,10 +797,15 @@ func (s *Server) handleConn(conn net.Conn) {
 		_ = c.WriteLine(hostLine(b))
 	}
 	_ = c.WriteLine("HOST-HAND-END")
+	nonceBytes := make([]byte, 16)
+	_, _ = rand.Read(nonceBytes)
+	nonce := hex.EncodeToString(nonceBytes)
+	_ = c.WriteLine("RING-NONCE\t" + nonce)
 	_ = c.WriteLine("DONE")
 
 	// Read client handshake — consume until DONE.
 	var dialer Member
+	var pendingMembers, pendingRemoved []Member
 	for {
 		line, err := readBoundedLine(rd)
 		if err != nil {
@@ -727,6 +818,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		fields := strings.Split(line, "\t")
 		switch {
 		case fields[0] == "DIRECTOR-JOIN":
+			if !allow(fields[0]) {
+				return
+			}
 			// Sent instead of ME/DONE, on a fresh connection to a seed
 			// (#750) — handleJoin owns the rest of this connection's
 			// lifetime (challenge/response, DIRECTOR-LIST, close).
@@ -738,12 +832,14 @@ func (s *Server) handleConn(conn net.Conn) {
 				dialer = Member{IP: fields[1], Port: port}
 			}
 		case fields[0] == "MEMBERS" && len(fields) >= 3:
-			// Sent by a ring dialer right before PEER (#754) — merged
-			// BEFORE the PEER case's CONNECT-redirect check below, so that
-			// decision uses the dialer's membership view too, not just
-			// this node's own (possibly stale) one.
-			s.membership.mergeMembers(parseMemberList(fields[1]), parseMemberList(fields[2]))
+			// Held until PEER proves the dialer, then merged before the
+			// redirect check so it uses the dialer's view too (#754).
+			pendingMembers, pendingRemoved = parseMemberList(fields[1]), parseMemberList(fields[2])
 		case fields[0] == "PEER":
+			if len(fields) < 3 || !allow(fields[0]) || !s.membership.acceptPeer(conn, nonce, dialer, fields[2]) {
+				continue
+			}
+			s.membership.mergeMembers(pendingMembers, pendingRemoved)
 			// Sent only by another director replica's ring connection
 			// (#700, repurposed for the ring's right-neighbor dial in
 			// #750) — a login proxy's generic cluster/proto dialer never
@@ -786,6 +882,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		fields := strings.Split(line, "\t")
 		if len(fields) == 0 {
 			continue
+		}
+		if !allow(fields[0]) {
+			return
 		}
 		switch fields[0] {
 		case "LOOKUP":
@@ -847,6 +946,27 @@ func (s *Server) handleConn(conn net.Conn) {
 			slog.Info("director: client quit", "reason", reason)
 			return
 		}
+	}
+}
+
+// commandGate checks each command against the peer's certificate role. A
+// connection without TLS or without a role passes; the handshake logged it.
+func (s *Server) commandGate(conn net.Conn) func(cmd string) bool {
+	tc, ok := conn.(*tls.Conn)
+	if !ok {
+		return func(string) bool { return true }
+	}
+	_ = tc.Handshake()
+	role, ok := mtls.PeerRole(tc.ConnectionState())
+	if !ok {
+		return func(string) bool { return true }
+	}
+	return func(cmd string) bool {
+		if mtls.DirectorCommandAllowed(cmd, role) {
+			return true
+		}
+		slog.Error("director: command refused for the peer's role", "cmd", cmd, "role", string(role), "remote", conn.RemoteAddr().String())
+		return false
 	}
 }
 
@@ -1183,8 +1303,8 @@ func (s *Server) LookupBackend(username string) *ring.Backend {
 	return s.ring.LookupBackend(username)
 }
 
-// RouteUser returns the backend IP for a recipient username, implementing
-// lmtp.UserRouter. One order (#708): sticky userDir pin → ring.
+// RouteUser returns the backend IP for a recipient username. One order (#708):
+// sticky userDir pin → ring.
 func (s *Server) RouteUser(username string) (string, error) {
 	username = s.normalizeUser(username)
 	if e := s.userDir.Get(username); e != nil && !e.Weak {
@@ -1254,6 +1374,15 @@ func (s *Server) handleSessionOpen(c *client, fields []string) {
 	}
 	s.sessByBE[rec.backend][rec.id] = true
 	s.sessRecMu.Unlock()
+	// The placement's credit has done its job: this domain's traffic is in the
+	// session counts now, and counting it twice would push the next domain off
+	// a backend that is not in fact busier (#1943).
+	if s.assignmentPolicy() == policyDomain {
+		if domain := DomainOf(rec.user); domain != "" {
+			s.domainDir.Seen(domain)
+			s.domainDir.Touch(domain)
+		}
+	}
 	// Replicate ring-wide (#804): SESSION-OPEN/CLOSE land on ONE director (the
 	// login pod's watch-holder behind the ClusterIP), but least_sessions (#797)
 	// needs the cluster-wide session view on whichever RANDOM replica answers a

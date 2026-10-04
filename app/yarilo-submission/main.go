@@ -1,7 +1,5 @@
-// yarilo-submission is the SMTP submission proxy for the yarilo mail server.
-// It accepts client connections on port 587 (STARTTLS) and port 465 (implicit TLS),
-// authenticates via the configured passdb chain, and relays mail to the upstream MTA.
-// No mailbox access — purely a proxy between mail clients and the upstream MTA.
+// yarilo-submission is the SMTP submission proxy: it authenticates the client
+// on 587/465 and relays to the upstream MTA, opening no mailbox.
 package main
 
 import (
@@ -16,10 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/emersion/go-sasl"
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	submsvr "github.com/yarilomail/yarilo/internal/submission"
 	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
@@ -56,111 +52,64 @@ func main() {
 		"telemetry", telemetry.Addr(cfg.Telemetry.Listen), // resolved (honours TELEMETRY_LISTEN)
 	)
 
-	// ---- auth chain ----
-	var dbs []protocol.Passdb
-	for _, entry := range cfg.Auth.Passdb {
-		db, err := authsql.New(authsql.Config{
-			Driver:            entry.Driver,
-			DSN:               entry.DSN,
-			PasswordQuery:     entry.PasswordQuery,
-			UserQuery:         entry.UserQuery,
-			IterateQuery:      entry.IterateQuery,
-			DefaultPassScheme: entry.DefaultPassScheme,
-			SkipSchema:        entry.SkipSchema,
-		})
-		if err != nil {
-			slog.Error("passdb init failed", "driver", entry.Driver, "err", err)
-			os.Exit(1)
-		}
-		dbs = append(dbs, db)
-	}
-
-	authCache := protocol.NewCache(
-		cfg.Auth.Cache.CacheSizeBytes(),
-		time.Duration(cfg.Auth.Cache.TTLSeconds)*time.Second,
-		time.Duration(cfg.Auth.Cache.NegativeTTLSeconds)*time.Second,
-	)
-	authOpts := []protocol.AuthenticatorOption{
-		protocol.WithAuthenticatorCache(authCache),
-	}
-	if cfg.Auth.MasterUsers.Enabled {
-		var masterdbs []protocol.Passdb
-		for _, entry := range cfg.Auth.MasterUsers.Masterdb {
-			db, err := authsql.New(authsql.Config{
-				Driver:            entry.Driver,
-				DSN:               entry.DSN,
-				PasswordQuery:     entry.PasswordQuery,
-				UserQuery:         entry.UserQuery,
-				IterateQuery:      entry.IterateQuery,
-				DefaultPassScheme: entry.DefaultPassScheme,
-				SkipSchema:        entry.SkipSchema,
-			})
-			if err != nil {
-				slog.Error("masterdb init failed", "driver", entry.Driver, "err", err)
-				os.Exit(1)
-			}
-			masterdbs = append(masterdbs, db)
-		}
-		authOpts = append(authOpts,
-			protocol.WithAuthenticatorMasterUsers(true),
-			protocol.WithAuthenticatorMasterdb(masterdbs),
-			protocol.WithAuthenticatorMasterUserSeparator(cfg.Auth.MasterUsers.Separator),
-		)
-	}
+	// One listener per session binary; the login proxy holds the client
+	// certificate this process must not read (#1863).
+	config.KeepOnlySessionListener(cfg, config.RoleSubmission)
 
 	// ---- relay proxy ----
 	var relay *submproxy.Submission
 	if cfg.Protocol.Submission.Relay.Host != "" {
-		relay = submproxy.New(cfg.Protocol.Submission.Relay, cfg.Protocol.Submission.Hostname)
+		relay = submproxy.New(cfg.Protocol.Submission.Relay, cfg.SubmissionHostname())
 	}
 
 	// ---- TLS ----
-	var extTLS *tls.Config
-	if cfg.General.SSL.SSLServerCert != "" && cfg.General.SSL.SSLServerKey != "" {
-		extTLS, err = config.BuildTLSConfig(cfg.General.SSL)
-		if err != nil {
-			slog.Error("TLS config failed", "err", err)
-			os.Exit(1)
-		}
-		extTLS.NextProtos = []string{"smtp"}
+	// Only for the listener that terminates it: behind submission-login the
+	// certificate lives in the login pod and this path does not exist (#1863).
+	extTLS, err := config.ListenerTLS(cfg, cfg.Services.Submissions, "smtp")
+	if err != nil {
+		slog.Error("TLS config failed", "err", err)
+		os.Exit(1)
 	}
 
 	haproxyNets := parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks)
 	haproxyTimeout := time.Duration(cfg.General.HAProxy.Timeout) * time.Second
 
 	authAddr := cfg.AuthService.ClientAddr()
-	var authTLS *tls.Config
-	if cfg.InternalTLS.Enabled {
-		t, err := mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
-		if err != nil {
-			slog.Error("auth_service mtls config failed", "err", err)
-			os.Exit(1)
-		}
-		authTLS = t
+	authTLS, err := authClientTLS(cfg)
+	if err != nil {
+		slog.Error("auth_service mtls config failed", "err", err)
+		os.Exit(1)
+	}
+	authRelay, err := dialAuthService(authAddr, authTLS)
+	if err != nil {
+		slog.Error("submission: cannot start", "addr", authAddr, "err", err)
+		os.Exit(1)
 	}
 
 	primary := firstActive(svcs.Submission, svcs.Submissions)
-	srv := submsvr.New(submsvr.Options{
+	srv, err := newServer(cfg, submsvr.Options{
 		HAProxy:          primary.HAProxy,
 		HAProxyTimeout:   haproxyTimeout,
 		HAProxyNets:      haproxyNets,
 		AuthAddr:         authAddr,
+		AuthRelay:        authRelay,
 		AuthTLS:          authTLS,
 		DisablePlainAuth: primary.PlainAuthDisabled(),
 		TLSConfig:        extTLS,
 		Config:           cfg.Protocol.Submission,
-		Auth:             chainAuth{protocol.NewAuthenticator(dbs, authOpts...)},
 		Proxy:            relay,
 		FailureDelay:     time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 		OAuth2Enabled:    len(cfg.Auth.OAuth2) > 0,
 	})
+	if err != nil {
+		slog.Error("submission: internal_tls server config failed", "err", err)
+		os.Exit(1)
+	}
 
 	go runTelemetry(cfg.Telemetry)
 
-	// Publish this protocol container's readiness into the co-located pod's
-	// shared directory (#788); the yarilo-backend-reg sidecar gates the pod's
-	// director heartbeat on it. Ready = listeners bound (a relay proxy has no
-	// wedge-prone data path). No-op when readiness_dir is unset.
+	// The sidecar gates the pod's director heartbeat on this file (#788); a
+	// relay proxy is ready once its listeners are bound.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var ready atomic.Bool
@@ -212,62 +161,37 @@ func main() {
 	slog.Info("yarilo-submission stopped")
 }
 
-// chainAuth adapts protocol.Authenticator to submission.Authenticator.
-// go-smtp's auth surface speaks (username, password) → error rather
-// than the richer AuthResponse / Fields shape; this wrapper discards
-// everything except the "did the chain accept these credentials"
-// decision.
-type chainAuth struct{ c protocol.Authenticator }
-
-func (a chainAuth) AuthPlain(username, password string) error {
-	resp, err := a.c.Authenticate(username, password, "smtp", "")
-	if err != nil {
-		return fmt.Errorf("smtp/auth: %w", err)
+// dialAuthService is the one path a direct client on 587 authenticates through:
+// without an address there is nothing to fall back to, so this refuses (#1733).
+func dialAuthService(addr string, tlsCfg *tls.Config) (*authrelay.Client, error) {
+	if addr == "" {
+		return nil, authrelay.ErrNoAuthService
 	}
-	if resp == nil || resp.Result != protocol.AuthOK {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	return nil
+	return authrelay.Dial(addr, tlsCfg)
 }
 
-// AuthPlainMaster forwards SASL PLAIN responses carrying a
-// non-empty authzid through the master-user flow. When the
-// wrapped chain does not implement protocol.MasterAuthenticator
-// (master-users disabled in config) the call fails opaquely so
-// the wire reply matches a wrong-password rejection.
-func (a chainAuth) AuthPlainMaster(authzid, authid, password string) error {
-	master, ok := a.c.(protocol.MasterAuthenticator)
-	if !ok {
-		return fmt.Errorf("smtp/auth: authentication failed")
+// newServer adds the internal mTLS the login pod dials this backend with; the
+// session binaries get theirs from backend.New, which submission does not use.
+func newServer(cfg *config.Config, opts submsvr.Options) (*submsvr.Server, error) {
+	if cfg.InternalTLS.Enabled {
+		t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerSubmitBackend)
+		if err != nil {
+			return nil, err
+		}
+		opts.PreambleTLS = t
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerSubmitBackend)
 	}
-	resp, err := master.AuthenticateMaster(authzid, authid, password, "smtp", "")
-	if err != nil {
-		return fmt.Errorf("smtp/auth: %w", err)
-	}
-	if resp == nil || resp.Result != protocol.AuthOK {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	return nil
+	return submsvr.New(opts), nil
 }
 
-// LookupSCRAMSha256 forwards the lookup to the underlying chain.
-// Returning (nil, nil) when the chain has no SCRAM support keeps
-// EHLO advertisement gated correctly.
-func (a chainAuth) LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error) {
-	lookup, ok := a.c.(protocol.SCRAMSha256Lookup)
-	if !ok {
+// authClientTLS builds the mTLS config for the auth service, if configured.
+func authClientTLS(cfg *config.Config) (*tls.Config, error) {
+	if !cfg.InternalTLS.Enabled {
 		return nil, nil
 	}
-	return lookup.LookupSCRAMSha256(username)
-}
-
-// LookupSCRAMSha1 is the SHA-1 counterpart of LookupSCRAMSha256.
-func (a chainAuth) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error) {
-	lookup, ok := a.c.(protocol.SCRAMSha1Lookup)
-	if !ok {
-		return nil, nil
-	}
-	return lookup.LookupSCRAMSha1(username)
+	return mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA,
+		cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
 }
 
 func parseCIDRs(ss []string) []*net.IPNet {
@@ -293,11 +217,8 @@ func firstActive(svcs ...*config.ServiceConfig) *config.ServiceConfig {
 }
 
 func runTelemetry(cfg config.TelemetryConfig) {
-	// One shared implementation for /healthz, /readyz, /metrics and
-	// /debug/loglevel. No Checks yet: this component's /readyz was an
-	// unconditional 200 before unification, and turning that into a real
-	// condition is a behaviour change, not a refactor — see the readiness issue
-	// for the per-component conditions.
+	// No Checks yet: /readyz answered an unconditional 200 before this was
+	// shared, and giving it a real condition is a behaviour change.
 	tel := telemetry.NewWithOptions(telemetry.Options{
 		Addr: telemetry.Addr(cfg.Listen),
 		Pprof: telemetry.PprofOptions{

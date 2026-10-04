@@ -10,6 +10,7 @@ import (
 
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -37,13 +38,15 @@ func (r *recordingFTS) seen() []fts.MailboxRef {
 	return append([]fts.MailboxRef(nil), r.refs...)
 }
 
-func (r *recordingFTS) Prepend(string, fts.MailboxRef, uint32) error { return nil }
-func (r *recordingFTS) Expunge(string, fts.MailboxRef, uint32) error { return nil }
+func (r *recordingFTS) Prepend(string, fts.MailboxRef, uint32) error           { return nil }
+func (r *recordingFTS) Expunge(string, fts.MailboxRef, uint32, [16]byte) error { return nil }
 func (r *recordingFTS) Lookup(string, fts.MailboxRef, fts.Query) (fts.Result, error) {
 	return fts.Result{}, nil
 }
 func (r *recordingFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) { return 0, 0, nil }
 func (r *recordingFTS) Rescan(string, fts.MailboxRef) error                   { return nil }
+func (r *recordingFTS) RescanUser(string) ([]string, error)                   { return nil, nil }
+func (r *recordingFTS) Counts(string) (uint64, uint64, uint64, uint64, error) { return 0, 0, 0, 0, nil }
 func (r *recordingFTS) Optimize(string) error                                 { return nil }
 func (r *recordingFTS) Close() error                                          { return nil }
 
@@ -76,7 +79,7 @@ func TestAutoindexCarriesTheFolderGUID(t *testing.T) {
 	t.Cleanup(func() { ui.Close() }) //nolint:errcheck
 
 	raw := "From: x@y\r\nSubject: probe\r\n\r\nbody\r\n"
-	uid, folder, _, err := deliverOne(box, ui, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
+	uid, folder, _, err := deliverOne(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
 	if err != nil {
 		t.Fatalf("deliverOne: %v", err)
 	}
@@ -121,4 +124,10 @@ func TestAutoindexSkipsAFolderWithoutGUID(t *testing.T) {
 		t.Error("asked the index about a folder with no identity")
 	case <-time.After(200 * time.Millisecond):
 	}
+}
+
+func (r *recordingFTS) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (r *recordingFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
 }

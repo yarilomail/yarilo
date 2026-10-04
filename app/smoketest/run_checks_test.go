@@ -214,3 +214,48 @@ func TestRunChecksTreatsAnUnmeasurableRowAsASkip(t *testing.T) {
 		t.Errorf("a real failure: summary = %+v, want %+v", got, want)
 	}
 }
+
+// -only narrows the gate to one protocol, and an area nothing declares is an
+// error: a typo would otherwise read as a passing run of nothing (#1734).
+func TestOnlyKeepsTheAreasNamed(t *testing.T) {
+	checks := []check{
+		{area: "imap", name: "a"},
+		{area: "pop3", name: "b"},
+		{area: "pop3", name: "c"},
+		{area: "jmap", name: "d"},
+	}
+	for _, tc := range []struct {
+		name  string
+		only  string
+		want  []string
+		wants string
+	}{
+		{name: "empty runs everything", only: "", want: []string{"a", "b", "c", "d"}},
+		{name: "one area", only: "pop3", want: []string{"b", "c"}},
+		{name: "two areas, spaces and all", only: " imap , jmap ", want: []string{"a", "d"}},
+		{name: "an area nothing declares", only: "pop4", wants: `no smoke check belongs to area "pop4"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kept, err := keepAreas(checks, tc.only)
+			if tc.wants != "" {
+				if err == nil {
+					t.Fatalf("-only %q was accepted", tc.only)
+				}
+				if !strings.Contains(err.Error(), tc.wants) {
+					t.Errorf("said %q, want it to name %q", err, tc.wants)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("-only %q: %v", tc.only, err)
+			}
+			var got []string
+			for _, c := range kept {
+				got = append(got, c.name)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("kept %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

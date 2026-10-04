@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
@@ -55,10 +57,10 @@ func TestPOP3_SessionsShareTheMemoisedBackend(t *testing.T) {
 	var builds, opens atomic.Int64
 
 	srv := New(Options{
-		Auth:     &mailLocAuth{home: dir},
-		Mailbox:  maildir.New(), // global default; the per-user driver differs
-		Index:    fileindex.New(),
-		Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%n"},
+		AuthRelay: authtest.RelayTo(t, &mailLocAuth{home: dir}),
+		Mailbox:   maildir.New(), // global default; the per-user driver differs
+		Index:     fileindex.New(),
+		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%n"},
 		MailboxByDriver: func(string) mailbox.MailboxBackend {
 			builds.Add(1)
 			return instrumentedBackend{inner: mdbox.New(), opens: &opens}

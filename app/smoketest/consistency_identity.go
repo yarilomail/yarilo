@@ -98,8 +98,8 @@ func imapReadProbe(user, pass, marker string) (*reading, error) {
 	return r, nil
 }
 
-// waitForIMAPProbe waits for the delivery to become visible. The budget is the
-// delivery one, not an index one: SEARCH HEADER does not go through fts.
+// waitForIMAPProbe waits for the delivery to become visible. SEARCH HEADER is
+// answered by fts where it is configured, so the budget is an index one.
 func waitForIMAPProbe(c *imapClient, marker string) (string, error) {
 	deadline := time.Now().Add(*flagTimeout * 3)
 	for {

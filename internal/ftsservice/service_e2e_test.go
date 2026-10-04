@@ -18,6 +18,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/fts/language"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -25,9 +26,17 @@ import (
 
 const testUser = "u@test.com"
 
-var testMbox = fts.MailboxRef{Name: "INBOX", GUID: "g-inbox", UIDValidity: 1}
+// The folder's real identity: a hit resolves through the GUID store, which
+// records the folder the mail index stamped, not a name a row invented.
+var testMbox = fts.MailboxRef{Name: "INBOX", UIDValidity: 1}
 
 func newTestService(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.UserIndex) {
+	svc, box, uidx, _ := newTestServiceIn(t)
+	return svc, box, uidx
+}
+
+// newTestServiceIn is newTestService for a row that has to reach the files.
+func newTestServiceIn(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.UserIndex, string) {
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
@@ -42,7 +51,7 @@ func newTestService(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.UserIn
 		Engine:      flatcurve.New(flatcurve.Options{}),
 		Mailbox:     mb,
 		Index:       idx,
-		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil },
+		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 2,
 	})
@@ -51,14 +60,14 @@ func newTestService(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.UserIn
 	}
 	t.Cleanup(func() { svc.Close() }) //nolint:errcheck
 
-	info := resolver.UserInfo(testUser, "")
+	info, _ := resolver.UserInfo(testUser, "")
 	box := mb.OpenUser(info)
 	uidx := idx.OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { box.Close(); uidx.Close() }) //nolint:errcheck
-	return svc, box, uidx
+	return svc, box, uidx, root
 }
 
 func saveMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserIndex, uid uint32, body string) {
@@ -73,16 +82,30 @@ func saveMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserIndex, 
 func saveRawMessage(t *testing.T, box mailbox.UserMailbox, uidx mailbox.UserIndex, uid uint32, raw string) {
 	t.Helper()
 	f, err := uidx.OpenFolder(testMbox.Name, testMbox.UIDValidity)
+	if err == nil {
+		testMbox.GUID = mailbox.FormatObjectID(f.GUID)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, _, _, err := box.Save(testMbox.Name, strings.NewReader(raw), uid, int64(len(raw)), nil, [16]byte{})
+	name, vsize, guid, err := box.Save(testMbox.Name, strings.NewReader(raw), uid, int64(len(raw)), nil, nil, [16]byte{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := uidx.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: uid, Filename: name, Size: uint32(len(raw)),
-	}); err != nil {
+	meta := &mailbox.MessageMeta{
+		UID: uid, Size: uint32(len(raw)), VSize: vsize, GUID: guid,
+	}
+	if err := mailboxbase.NameSaved(box, testMbox.Name, name, meta); err != nil {
+		t.Fatal(err)
+	}
+	// Through a transaction, so the per-user GUID store records the copy: a
+	// hit names a message, and the store is what turns that into a uid (#1986).
+	tx, err := uidx.Begin(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Append(meta)
+	if _, err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -140,8 +163,9 @@ func TestServiceEndToEnd(t *testing.T) {
 		t.Fatalf("lookup = %v, want [1 3]", res.Definite)
 	}
 
-	// Expunge is synchronous.
-	if err := svc.Expunge(testUser, testMbox, 1); err != nil {
+	// Expunge is synchronous, and names the message: the index retracts by
+	// identity, not by uid (#1986).
+	if err := svc.Expunge(testUser, testMbox, 1, guidOfUID(t, uidx, 1)); err != nil {
 		t.Fatal(err)
 	}
 	res, err = svc.Lookup(testUser, testMbox, lookupWord("wolv"))
@@ -172,7 +196,7 @@ func TestServiceWireRoundTrip(t *testing.T) {
 	go ftsproto.Serve(ln, svc) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	cl, err := ftsproto.Dial(ln.Addr().String(), 5*time.Second)
+	cl, err := ftsproto.Dial(ln.Addr().String(), nil, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +218,7 @@ func TestServiceWireRoundTrip(t *testing.T) {
 	if err != nil || last != 1 || sum == 0 {
 		t.Fatalf("wire status = %d/%d/%v", last, sum, err)
 	}
-	if err := cl.Expunge(testUser, testMbox, 1); err != nil {
+	if err := cl.Expunge(testUser, testMbox, 1, guidOfUID(t, uidx, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := cl.Rescan(testUser, testMbox); err != nil {
@@ -329,7 +353,7 @@ func TestServiceAutoOptimize(t *testing.T) {
 		Engine:      flatcurve.New(flatcurve.Options{RotateCount: 2, OptimizeLimit: 3}),
 		Mailbox:     mb,
 		Index:       idx,
-		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil },
+		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 2,
 	})
@@ -338,7 +362,7 @@ func TestServiceAutoOptimize(t *testing.T) {
 	}
 	t.Cleanup(func() { svc.Close() }) //nolint:errcheck
 
-	info := resolver.UserInfo(testUser, "")
+	info, _ := resolver.UserInfo(testUser, "")
 	box := mb.OpenUser(info)
 	uidx := idx.OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -357,8 +381,9 @@ func TestServiceAutoOptimize(t *testing.T) {
 	}
 	waitIndexed(t, svc, n)
 
-	// Keyed by the folder GUID, not the mail driver's layout (#1183).
-	dir := filepath.Join(svc.indexRoot(info), testMbox.GUID, flatcurve.Label)
+	// One index per user: the folder is a term in a document, not a directory
+	// (#1986).
+	dir := filepath.Join(svc.indexRoot(info), flatcurve.Label)
 
 	// The background optimizer runs asynchronously, on its own worker
 	// goroutine — it may well have already collapsed the shards back to 1
@@ -446,7 +471,7 @@ func TestBuildFailureCostsThePartNotTheRun(t *testing.T) {
 		Engine:      flatcurve.New(flatcurve.Options{}),
 		Mailbox:     mb,
 		Index:       idx,
-		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, ""), nil },
+		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 10,
 		Build:       buildmail.Options{Decoder: &hardFailDecoder{forContentType: "application/pdf"}},
@@ -456,7 +481,7 @@ func TestBuildFailureCostsThePartNotTheRun(t *testing.T) {
 	}
 	t.Cleanup(func() { svc.Close() }) //nolint:errcheck
 
-	info := resolver.UserInfo(testUser, "")
+	info, _ := resolver.UserInfo(testUser, "")
 	box := mb.OpenUser(info)
 	uidx := idx.OpenUser(info)
 	if err := box.Init(); err != nil {
@@ -548,4 +573,19 @@ func TestUnparseableMessageIsIndexedAsOpaqueText(t *testing.T) {
 	if len(res.Definite) != 1 {
 		t.Fatalf("lookup = %v, want the message after the unparseable one", res.Definite)
 	}
+}
+
+// guidOfUID reads a message's identity out of the folder's index, the way a
+// session holds it when it expunges.
+func guidOfUID(t *testing.T, uidx mailbox.UserIndex, uid uint32) [16]byte {
+	t.Helper()
+	f, err := uidx.OpenFolder(testMbox.Name, testMbox.UIDValidity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := uidx.GetMessages(f.ID, mailbox.SeqSet{{From: uid, To: uid}})
+	if err != nil || len(msgs) == 0 {
+		t.Fatalf("uid %d: %v", uid, err)
+	}
+	return msgs[0].GUID
 }

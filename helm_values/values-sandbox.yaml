@@ -72,6 +72,9 @@ namespaces:
     list: "yes"
     subscriptions: true
     inbox: true
+    # One auto mailbox, so every account shows it made and subscribed (#2005).
+    mailboxes:
+      Receipts: { auto: subscribe }
   # A public namespace is declared as type: shared with a public prefix and
   # location; there is no "public" type. It was silently skipped, so nothing
   # under Public/ was ever a shared mailbox (#1086).
@@ -91,8 +94,31 @@ namespaces:
     list: children
     subscriptions: false
     location: "maildir:%h/Maildir"
+  # Definitions mounted read-only, indexes written under each user. Personal,
+  # not shared: what it lists is the user's own mail.
+  - type: personal
+    prefix: "Virtual/"
+    separator: "/"
+    hidden: true
+    list: "no"
+    mail_driver: virtual
+    mail_path: /etc/yarilo/virtual
+    mail_index_path: "%h/index/virtual"
+
+## Definitions the namespace above reads. One key per mailbox.
+virtual_definitions:
+  All: |
+    *
+    -Trash
+    -Trash/*
+    -Junk
+    -Junk/*
+      all
 
 storage:
+  ## Their folder names on disk are modified UTF-7; this says so, for the
+  ## conversion window against a store another implementation wrote.
+  mailbox_list_utf8: true
   mail_volatile_path: "/tmp/yarilo-volatile/%2.256Nu/%u"
   ## On-disk format of the per-user mdbox map index. Declared, not inherited:
   ## the value decides what an older image can still open.
@@ -135,7 +161,11 @@ image:
   ## rather than a staleness risk (#1217).
   pullPolicy: IfNotPresent
 
-logLevel: debug
+## Info everywhere, as production runs: a debug line per uidlist read was ~4% of
+## the imap process's CPU, and the storage it weighs is the one being measured
+## against a control that logs less (#1846).
+logLevel: info
+logLevelOverrides: {}
 
 service:
   type: LoadBalancer
@@ -150,6 +180,13 @@ protocol:
   lmtp:
     add_received_header: true
     hdr_delivery_address: final
+    ## Local, uncommitted: the fill before an arm delivers 200 messages per
+    ## user, which the shipped 100/60s burst refuses by design. Restored to the
+    ## committed value right after the window.
+    rate_limit:
+      enabled: true
+      per_recipient_burst: 1000
+      per_recipient_window_seconds: 60
   managesieve:
     max_script_size: 65536
 
@@ -166,7 +203,8 @@ sieve:
   sieve_max_redirects: 32
   sieve_max_actions: 32
   sieve_spamtest_status_header: "X-Spam-Score"
-  sieve_duplicate_driver: file
+  ## redis: the duplicate test dedups across both backend pods (dict sieve_duplicate).
+  sieve_duplicate_driver: redis
   sieve_vacation_enabled: true
   sieve_submission_host: "relay-fwd.yarilo-relay.svc.cluster.local:25"
   sieve_submission_ssl: "no"
@@ -221,21 +259,23 @@ dicts:
     driver: redis
     settings:
       addr: redis.redis.svc.cluster.local:6379
+      password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:acl-shared:"
+  ## Annotations go to a file in the user's home, the chart default: the
+  ## session opens it itself and asks yarilo-dict nothing (#1733).
   metadata:
-    driver: redis
+    driver: file
     settings:
-      addr: redis.redis.svc.cluster.local:6379
-      db: 0
-      prefix: "yarilo-sb:metadata:"
-      path: null
+      path: "%h/yarilo-metadata.json"
+      lock_method: ""
   ## quota_clone mirror targets — fan-out: usage is written to BOTH at once.
   ## Advisory mirror only; enforcement always reads the index.
   quota_clone_redis:
     driver: redis
     settings:
       addr: redis.redis.svc.cluster.local:6379
+      password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:quota:"
   quota_clone_mysql:
@@ -249,18 +289,13 @@ dicts:
       maps:
         - { key: "priv/quota/storage",  table: quota, username_field: username, value_field: bytes }
         - { key: "priv/quota/messages", table: quota, username_field: username, value_field: messages }
-  sieve_vacation:
-    driver: redis
-    settings:
-      addr: redis.redis.svc.cluster.local:6379
-      db: 0
-      prefix: "yarilo-sb:sieve:vacation:%u:"
   sieve_duplicate:
     driver: redis
     settings:
       addr: redis.redis.svc.cluster.local:6379
+      password: "${YARILO_REDIS_PASSWORD}"
       db: 0
-      prefix: "yarilo-sb:sieve:duplicate:%u:"
+      prefix: "yarilo-sb:sieve:duplicate:"
 
 ## External MySQL — managed by mysql-sandbox.yaml; bundled StatefulSet disabled.
 mysql:
@@ -282,6 +317,10 @@ database:
 redis:
   bundled: false
   externalUrl: "redis://redis.redis.svc.cluster.local:6379/0"
+  ## The password: Secret yarilo-redis-password, made outside git with the
+  ## value of redis-password in the redis namespace.
+  passwordSecret:
+    name: yarilo-redis-password
 
 ## DSN injected from the yarilo-mysql Secret created by mysql-sandbox.yaml.
 extraEnv:
@@ -299,11 +338,23 @@ extraEnv:
         name: yarilo-static-passdb
         key: password
 
+## Internal mTLS certificates are made per component by the chart, signed by
+## the CA cert-manager keeps in yarilo-internal-ca (#2132).
+internalTLS:
+  ca:
+    secretName: yarilo-internal-ca
+
+## The smoketest Job reaches the backend and director admin APIs (#2138).
+networkPolicy:
+  adminFrom:
+    - podSelector:
+        matchLabels:
+          job-name: smoketest
+
 components:
   director:
     enabled: true
     internalTLS:
-      enabled: true
       secretName: yarilo-director-internal-tls
       certificate:
         enabled: true
@@ -336,13 +387,19 @@ components:
     ring_secret: "sandbox-ring-secret-32charslong00"
     min_members: 3
     seed_poll_idle_interval: 5
-    assignment_policy: least_sessions
+    ## Domain affinity by load (#1943): the stand exercises ACL between users
+    ## of one domain, so those users must share a backend -- and the domains
+    ## must not all land on the same one. This policy places a domain on the
+    ## backend with the fewest connections and credits it at placement, which
+    ## is what the burst defect needed: the counts least_sessions reads are
+    ## raised on SESSION-OPEN, after the lookup, so a burst reads zeroes and
+    ## piles onto one pod (#1931).
+    assignment_policy: domain
+    ## Kept for a revert to hash: the domain policy does not consult it, but on
+    ## hash it is what keeps a domain together. The chart default stays %Lu --
+    ## a single-domain deployment on %Ld lands on one backend and stops scaling.
+    username_hash: "%Ld"
     backend_unreachable_reporters: 1
-    listeners:
-      lmtp:
-        enabled: true
-        port: 24
-        containerPort: 10024
     backends: []
 
 
@@ -364,25 +421,20 @@ components:
     ## stopped serving pods/log while staying Ready. Both complete normally at
     ## two.
     replicas: 2
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
   warden:
     # #908 PR4: singleton lifted. Redis-backed state (penalties + sessions + kick
     # bus) is shared across replicas, so the sandbox runs 2 to exercise the
     # cross-replica paths (kick published on one pod, delivered by another).
     replicas: 2
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     service:
       state_backend: redis
       key_prefix: "yarilo-sb:warden:"
       channel_prefix: "yarilo-sb:warden:events:"
+  dict:
+    enabled: true
+    replicas: 1
+
   locks:
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     # Sandbox shares one Redis; every component lives under the yarilo-sb: namespace.
     service:
       key_prefix: "yarilo-sb:locks:"
@@ -413,9 +465,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     tls:
       secretName: yarilo-tls
       certificate:
@@ -444,9 +493,6 @@ components:
   ## authenticated requests answer 502 — the login-layer probes still gate.
   jmapLogin:
     enabled: true
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     tls:
       secretName: yarilo-tls
       certificate:
@@ -482,9 +528,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     tls:
       secretName: yarilo-tls
     listeners:
@@ -502,9 +545,6 @@ components:
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
 
   auth:
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     ## Master users (#1301 window): impersonation via SASL authzid or the
     ## target*master separator. The masterdb is a dedicated table in the same
     ## MySQL as the main passdb; skip_schema + an explicit query, per the
@@ -591,6 +631,19 @@ components:
     listeners:
       imap:
         enabled: true
+    ## Measured, not guessed: in the A/B window of 2026-09-20 every run of both
+    ## arms peaked at 996-1002m against the chart's 1000m ceiling, with the
+    ## imaptest client at 53-85m. At one CPU a throughput window measures the
+    ## limit, which is what every login number from #1902 onward did. Two
+    ## leaves headroom on a four-core node with two backend pods; requests stay
+    ## where they are, since the node's request budget is already tight.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: "2"
+        memory: 512Mi
 
   ## POP3 session pod.
   pop3:
@@ -619,9 +672,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 10024
@@ -641,26 +691,14 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     service:
-      type: LoadBalancer
-      annotations:
-        metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
-        metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      type: ClusterIP
 
   quotaStatus:
     enabled: true
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     auth_master_addr: "yarilo-auth:9102"
     service:
-      type: LoadBalancer
-      annotations:
-        metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
-        metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      type: ClusterIP
 
   ## Full-text search service — sole owner of the FTS indexes (queue + worker
   ## + LOOKUP). Runs the -fts image variant (the only cgo/libxapian binary);
@@ -672,14 +710,26 @@ components:
   manageSieve:
     enabled: true
 
+  ## The submission path was never on the stand: the component could not start
+  ## (#1861, #1863), so its smoke checks skipped (#1855).
+  submission:
+    enabled: true
+  ## The login pod terminates client TLS, so it takes the same certificate the
+  ## other login pods do; the backend beside it holds none.
+  submissionLogin:
+    enabled: true
+    ## The director routes it like every other login pod; 10587 is the backend
+    ## submission port from components.submission.listeners.
+    director_addr: "yarilo-director:9102"
+    backend_port: 10587
+    tls:
+      secretName: yarilo-tls
+
   ## JMAP backend — one more container in the co-located pod, reached only by
   ## jmapLogin. internalTLS is on cluster-wide here, so the peer certificate is
   ## the trust anchor and xclient stays off.
   jmap:
     enabled: true
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
 
   ## ManageSieve login pod — client-facing on :4190 STARTTLS.
   manageSieveLogin:
@@ -697,9 +747,6 @@ components:
         ## values, so omitting the key would keep the default, not drop it.
         cpu: null
         memory: 512Mi
-    internalTLS:
-      enabled: true
-      secretName: yarilo-internal-tls
     backend_addr: ""
     director_addr: "yarilo-director:9102"
     backend_port: 14190

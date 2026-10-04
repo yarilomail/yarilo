@@ -2,11 +2,14 @@ package locks
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // Wire protocol — TAB-delimited, LF-terminated. Same bytes for embedded
@@ -58,6 +61,10 @@ const (
 	cmdEmit       = "EMIT"
 	cmdSubscribe  = "SUBSCRIBE"
 	cmdCounterInc = "COUNTER-INC"
+	// A server answering ERROR unknown_command here is one a rollout left
+	// behind: the client fails rather than polls (#1823).
+	cmdLockWait       = "LOCK-WAIT"
+	cmdLockSharedWait = "LOCK-SHARED-WAIT"
 )
 
 // Responses sent by the server.
@@ -81,12 +88,12 @@ func newReader(r io.Reader) *reader { return &reader{br: bufio.NewReaderSize(r, 
 // readFields reads one LF-terminated line and splits on TAB.
 // Returns ErrProtocol for over-long lines or partial reads.
 func (r *reader) readFields() ([]string, error) {
-	line, err := r.br.ReadString('\n')
+	line, err := lineio.ReadLine(r.br, maxLineLen)
+	if errors.Is(err, lineio.ErrTooLong) {
+		return nil, fmt.Errorf("locks/proto: line over %d bytes: %w", maxLineLen, ErrProtocol)
+	}
 	if err != nil {
 		return nil, err
-	}
-	if len(line) > maxLineLen {
-		return nil, fmt.Errorf("locks/proto: line too long (%d > %d): %w", len(line), maxLineLen, ErrProtocol)
 	}
 	line = strings.TrimRight(line, "\n")
 	if line == "" {

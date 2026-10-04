@@ -5,13 +5,13 @@ package maildir
 
 import (
 	"bufio"
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,30 +22,47 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // Backend is the Maildir MailboxBackend factory. Holds only
-// process-wide state (hostname, pid, counter); per-user state lives in userMailbox.
+// process-wide state (hostname, pid); per-user state lives in userMailbox.
 type Backend struct {
 	hostname string
 	pid      int
-	counter  atomic.Uint64
-	locker   locks.Locker
+	// lockMethod is how a write to a shared file excludes another writer.
+	lockMethod filelock.Method
+	// fsync says what reaches the disk before a delivery is answered (#1847).
+	fsync    mailbox.FsyncMode
 	writeSem chan struct{} // nil = unlimited
 	listUTF8 bool          // true = UTF-8 on disk (default); false = modified-UTF-7
+	// proactiveScan is maildir_sync_on_select: whether opening a folder
+	// reconciles the index against cur/ and new/. Default on.
+	proactiveScan bool
 }
 
 // Option configures a Backend at construction time.
 type Option func(*Backend)
 
-// WithLocker wires a yarilo-locks client into the backend: every shared-file
-// write takes a cross-process X lock on `mbox:<user>:<folder>`. A nil Locker
-// keeps the in-process sync.Mutex only (single-process tests / dev).
-func WithLocker(l locks.Locker) Option {
-	return func(b *Backend) { b.locker = l }
+// WithProactiveScan carries maildir_sync_on_select: turned off, the folder is
+// served from the index alone.
+func WithProactiveScan(on bool) Option {
+	return func(b *Backend) { b.proactiveScan = on }
+}
+
+// WithLockMethod chooses the transport for the locks this driver takes on
+// shared files: flock by default (#1840).
+func WithLockMethod(m filelock.Method) Option {
+	return func(b *Backend) { b.lockMethod = m }
+}
+
+// WithFsync sets what a delivery makes durable before it is acknowledged.
+func WithFsync(m mailbox.FsyncMode) Option {
+	return func(b *Backend) { b.fsync = m }
 }
 
 // WithMaxConcurrentWrites caps the number of concurrent Save() calls.
@@ -71,9 +88,12 @@ func New(opts ...Option) *Backend {
 		hostname = "localhost"
 	}
 	b := &Backend{
-		hostname: hostname,
-		pid:      os.Getpid(),
-		listUTF8: true,
+		hostname:      hostname,
+		pid:           os.Getpid(),
+		lockMethod:    filelock.MethodFlock,
+		fsync:         mailbox.FsyncOptimized,
+		listUTF8:      true,
+		proactiveScan: true,
 	}
 	for _, opt := range opts {
 		opt(b)
@@ -105,19 +125,421 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 		separator:        mailbox.SepOrDefault(u.Separator),
 		escapeChar:       u.StorageEscapeChar,
 		username:         u.Username,
-		owner:            makeOwner(u),
+		owner:            locks.Owner(u.Username, u.LockID()),
 		listUTF8:         b.listUTF8,
 	}
 }
 
-// folderCache holds mtime-validated in-memory state for one maildir folder.
+// folderCache is one folder's mtime-validated view of its uidlist and directory.
+// Its own mutex: the scan reaches it holding no mailbox lock since #1626.
 type folderCache struct {
-	uidMap   map[string]uint32
+	mu     sync.Mutex
+	uidMap map[string]uint32
+	// byUID is the same mapping read the other way, which is how a record asks:
+	// it has the uid and wants the name (#1700).
+	byUID    map[uint32]string
 	guidMap  map[string][16]byte // explicit GUID overrides; empty for name-derived GUIDs
-	uidMtime time.Time
-	uidSize  int64
+	uidStamp listStamp
 	entries  []os.DirEntry
 	dirMtime time.Time
+	// scanned holds what a stat gave for a filename. Only that: a change
+	// renames the file, so these cannot move under a name (#1800).
+	scanned map[string]scanFacts
+	// checked says a walk has just compared this folder with the disk, so a
+	// lookup answers from the maps without stating them again (#1875).
+	checked bool
+}
+
+// scanFacts is what one walk had to read the file for. The rest is derived
+// every walk: a keyword file or a list override changes no filename.
+type scanFacts struct {
+	size  uint32
+	vsize uint32
+	date  time.Time
+}
+
+// scanFactsFor returns what an earlier walk read for this name.
+func (c *folderCache) scanFactsFor(name string) (scanFacts, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	f, ok := c.scanned[name]
+	return f, ok
+}
+
+// keepScanned replaces the read set with what this walk saw, so a name that is
+// gone stops being remembered.
+func (c *folderCache) keepScanned(facts map[string]scanFacts) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.scanned = facts
+}
+
+// snapshotUIDs returns the cached map when the uidlist has not moved. The map
+// escapes the lock, so nothing may write into it afterwards.
+func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.uidMap != nil && stamp.same(c.uidStamp) {
+		return c.uidMap, true
+	}
+	return nil, false
+}
+
+// baseOfLoaded names a uid from the map as it stands, for a caller that has
+// just loaded it and needs no second opinion from the filesystem.
+func (c *folderCache) baseOfLoaded(uid uint32) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	base, ok := c.byUID[uid]
+	return base, ok
+}
+
+// snapshotChecked answers from the map alone, inside the window a walk earned.
+func (c *folderCache) snapshotChecked() (map[string]uint32, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.checked && c.uidMap != nil {
+		return c.uidMap, true
+	}
+	return nil, false
+}
+
+// snapshotForAppend answers when the file is the one the map was read from and
+// has only grown: the tail alone is parsed then (#1875).
+func (c *folderCache) snapshotForAppend(stamp listStamp) (map[string]uint32, map[string][16]byte, int64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.uidMap == nil || c.uidStamp.ino == 0 || c.uidStamp.ino != stamp.ino {
+		return nil, nil, 0, false
+	}
+	if stamp.size <= c.uidStamp.size {
+		return nil, nil, 0, false
+	}
+	uids := make(map[string]uint32, len(c.uidMap)+8)
+	for k, v := range c.uidMap {
+		uids[k] = v
+	}
+	var guids map[string][16]byte
+	if c.guidMap != nil {
+		guids = make(map[string][16]byte, len(c.guidMap))
+		for k, v := range c.guidMap {
+			guids[k] = v
+		}
+	}
+	return uids, guids, c.uidStamp.size, true
+}
+
+// addUID adds one row, but only to a map that is still the list it was loaded
+// from: a stale map gains a row and keeps claiming to be whole (#1739).
+func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID bool, stamp listStamp) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.uidMap == nil {
+		c.uidStamp = listStamp{}
+		return
+	}
+	c.uidMap[base] = uid
+	if c.byUID == nil {
+		c.byUID = map[uint32]string{}
+	}
+	c.byUID[uid] = base
+	if hasGUID {
+		if c.guidMap == nil {
+			c.guidMap = map[string][16]byte{}
+		}
+		c.guidMap[base] = guid
+	}
+	c.uidStamp = stamp
+}
+
+func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, stamp listStamp) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.uidMap, c.guidMap, c.uidStamp = m, guids, stamp
+	c.byUID = make(map[uint32]string, len(m))
+	for base, uid := range m {
+		c.byUID[uid] = base
+	}
+}
+
+// listCanTakeRow says the cache is sure the list does not name this file yet.
+// Unsure is answered no: a second row for one name is a message with two uids.
+func (u *userMailbox) listCanTakeRow(folder, base string) bool {
+	st := u.listStampNow(folder)
+	if st == (listStamp{}) {
+		return false
+	}
+	m, ok := u.folderCacheFor(folder).snapshotUIDs(st)
+	if !ok {
+		return false
+	}
+	_, known := m[base]
+	return !known
+}
+
+// cachedUIDOwner names the base the cached list gives uid; taken is false when
+// the cache cannot say, and the rewrite path checks the file instead.
+func (u *userMailbox) cachedUIDOwner(folder string, uid uint32) (string, bool) {
+	st := u.listStampNow(folder)
+	if st == (listStamp{}) {
+		return "", false
+	}
+	m, ok := u.folderCacheFor(folder).snapshotUIDs(st)
+	if !ok {
+		return "", false
+	}
+	for base, have := range m {
+		if have == uid {
+			return base, true
+		}
+	}
+	return "", false
+}
+
+// AlignUIDSpace brings the index to the list's UID space before a delivery hands
+// out a uid, as the reference syncs the folder before every save.
+func (u *userMailbox) AlignUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) (uint32, error) {
+	current, seed, err := u.alignIndexUIDSpace(idx, folderID, folder)
+	if err != nil || seed == 0 {
+		return current, err
+	}
+	return current, u.seedUIDValidity(folder, lockSiteSave, seed)
+}
+
+// alignIndexUIDSpace gives the index the list's UID space and answers the index's
+// after. A list without one gets the index's: the seed, for the next list write.
+func (u *userMailbox) alignIndexUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) (current, seed uint32, err error) {
+	a, ok := idx.(mailbox.UIDSpaceAligner)
+	if !ok {
+		return 0, 0, nil
+	}
+	uidValidity, nextUID, have := u.UIDSpace(folder)
+	current, reset, err := a.AlignUIDSpace(folderID, uidValidity, nextUID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("maildir: align uid space: %w", err)
+	}
+	if reset {
+		// Another generation: rows remembered from this one name nothing now.
+		u.folderCacheFor(folder).invalidateUIDs("uid-space-reset")
+	}
+	if have {
+		return current, 0, nil
+	}
+	return current, current, nil
+}
+
+// seedUIDValidity writes the index's UIDVALIDITY into a list that has none.
+func (u *userMailbox) seedUIDValidity(folder, site string, v uint32) error {
+	if err := u.withUIDList(folder, site, func(l *uidList) error {
+		if l.uidValidity == 0 {
+			l.uidValidity = v
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("maildir: seed uidvalidity: %w", err)
+	}
+	return nil
+}
+
+// adoptRow adds one written row to the cache under the list's new stamp:
+// re-reading the whole list to learn one name is what made a save O(n) (#1840).
+func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, hasGUID bool) {
+	fi, err := statPath(u.uidListPath(folder))
+	if err != nil {
+		u.folderCacheFor(folder).invalidateUIDs("own-write")
+		return
+	}
+	u.folderCacheFor(folder).addUID(base, uid, guid, hasGUID, stampOf(fi))
+}
+
+// adoptWritten makes the cache the content just written: a map merged into an
+// older one loses another session's rows while the stamp says nothing is (#1739).
+func (u *userMailbox) adoptWritten(folder string, l *uidList) {
+	fi, err := statPath(u.uidListPath(folder))
+	if err != nil {
+		u.folderCacheFor(folder).invalidateUIDs("own-write")
+		return
+	}
+	m := make(map[string]uint32, len(l.records))
+	guids := make(map[string][16]byte)
+	for _, rec := range l.records {
+		m[rec.base] = rec.uid
+		if rec.hasGUID {
+			guids[rec.base] = rec.guid
+		}
+	}
+	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
+}
+
+func (c *folderCache) guidOf(base string) ([16]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.guidMap == nil {
+		return [16]byte{}, false
+	}
+	g, ok := c.guidMap[base]
+	return g, ok
+}
+
+// dirEntries returns the cached directory listing when the directory has not
+// moved, and otherwise records the one the caller read.
+func (c *folderCache) dirEntries(mtime time.Time) ([]os.DirEntry, bool) {
+	entries, ok, _ := c.dirEntriesWhy(mtime)
+	return entries, ok
+}
+
+// dirEntriesWhy is dirEntries with the reason a miss happened, which is the
+// number that says whether a listing survives between two commands (#1875).
+func (c *folderCache) dirEntriesWhy(mtime time.Time) ([]os.DirEntry, bool, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		return nil, false, "no-listing"
+	}
+	if !mtime.Equal(c.dirMtime) {
+		return nil, false, "stale-mtime"
+	}
+	return c.entries, true, ""
+}
+
+// dirSettleWindow is the resolution mtime is kept at.
+const dirSettleWindow = time.Second
+
+// settled reports whether a directory's mtime stands for its contents (#1797).
+func settled(mtime time.Time) bool { return time.Since(mtime) >= dirSettleWindow }
+
+func (c *folderCache) storeDirEntries(entries []os.DirEntry, mtime time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries, c.dirMtime = entries, mtime
+}
+
+// invalidateDirEntries drops the cached listing and the mtime it was keyed by,
+// for a caller that has just learnt it is stale.
+func (c *folderCache) invalidateDirEntries(by string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.checked {
+		metricWindowClosed.WithLabelValues(by).Inc()
+	}
+	c.checked = false
+	c.entries, c.dirMtime = nil, time.Time{}
+}
+
+// markChecked opens the window a walk earns: until something invalidates the
+// folder, a list lookup trusts the map it loaded (as the reference does).
+func (c *folderCache) markChecked() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.checked = true
+}
+
+// invalidateUIDs drops the cached list after a rewrite, so the next read takes
+// the file rather than the map it replaced.
+func (c *folderCache) invalidateUIDs(by string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.checked {
+		metricWindowClosed.WithLabelValues(by).Inc()
+	}
+	c.checked = false
+	c.uidMap, c.guidMap, c.byUID = nil, nil, nil
+}
+
+func (c *folderCache) invalidateDir(by string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.checked {
+		metricWindowClosed.WithLabelValues(by).Inc()
+	}
+	c.checked = false
+	c.entries = nil
+}
+
+// renamedEntry is a cached entry under the name this process just gave it.
+type renamedEntry struct {
+	os.DirEntry
+	name string
+}
+
+func (e renamedEntry) Name() string { return e.name }
+
+// renameEntry puts our own rename into the listing and re-keys it: dropping it
+// costs a full read of cur/ on the next FETCH (#1875).
+func (c *folderCache) renameEntry(from, to string, mtime time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		return
+	}
+	// A fresh slice: dirEntries hands the old one out without this mutex.
+	kept := make([]os.DirEntry, 0, len(c.entries)+1)
+	var seen bool
+	for _, e := range c.entries {
+		switch e.Name() {
+		case from:
+			kept = append(kept, renamedEntry{DirEntry: e, name: to})
+			seen = true
+		case to:
+			// Already there: a rename that lands on a name the listing holds
+			// is the same file, not a second one.
+		default:
+			kept = append(kept, e)
+		}
+	}
+	if !seen {
+		c.entries, c.dirMtime = nil, time.Time{}
+		return
+	}
+	c.entries, c.dirMtime = kept, mtime
+}
+
+// ownEntry is a name this process wrote, standing in the listing without a
+// read. Info stats on demand: a fetch wants the name, only the scan the size.
+type ownEntry struct{ dir, name string }
+
+func (e ownEntry) Name() string               { return e.name }
+func (e ownEntry) IsDir() bool                { return false }
+func (e ownEntry) Type() fs.FileMode          { return 0 }
+func (e ownEntry) Info() (fs.FileInfo, error) { return lstatPath(filepath.Join(e.dir, e.name)) }
+
+// addEntry puts a name this process published into the listing and re-keys it:
+// closing the window over our own write cost a read of cur/ per save (#1875).
+func (c *folderCache) addEntry(dir, name string, mtime time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		return
+	}
+	for _, e := range c.entries {
+		if e.Name() == name {
+			c.dirMtime = mtime
+			return
+		}
+	}
+	// A fresh slice: dirEntries hands the old one out without this mutex.
+	kept := make([]os.DirEntry, len(c.entries), len(c.entries)+1)
+	copy(kept, c.entries)
+	c.entries, c.dirMtime = append(kept, ownEntry{dir: dir, name: name}), mtime
+}
+
+// forgetEntry drops one name from the cached listing and re-keys it to mtime.
+// Dropping the listing instead costs a full read per removal (#1809).
+func (c *folderCache) forgetEntry(name string, mtime time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		return
+	}
+	// A fresh slice: dirEntries hands the old one out, and a reader is walking
+	// it without this mutex.
+	kept := make([]os.DirEntry, 0, len(c.entries))
+	for _, e := range c.entries {
+		if e.Name() != name {
+			kept = append(kept, e)
+		}
+	}
+	c.entries, c.dirMtime = kept, mtime
 }
 
 // userMailbox is a per-session, per-user Maildir storage handle.
@@ -131,48 +553,26 @@ type userMailbox struct {
 	separator        string // IMAP hierarchy separator; converted to "." on disk (maildir++)
 	escapeChar       string // storage-name escape char; "" disables escaping
 	username         string
-	owner            string                  // <process>/<pid>/<user> — passed to yarilo-locks for BUSY diagnostics
-	listUTF8         bool                    // mirrors Backend.listUTF8
-	mu               sync.Mutex              // in-process fast-path; cross-process barrier is b.locker
-	cache            map[string]*folderCache // keyed by folder name; lazy-initialised
+	owner            string     // <process>/<pid>/<user> — passed to yarilo-locks for BUSY diagnostics
+	listUTF8         bool       // mirrors Backend.listUTF8
+	mu               sync.Mutex // orders this pod's sessions; other processes are excluded at the file
+	cacheMu          sync.Mutex // guards cache; the scan reaches it holding no mailbox lock
+	// inSection is non-zero while a reconcile's apply phase holds the folder
+	// lock; the filesystem calls made there are counted (#1626).
+	inSection  atomic.Int32
+	sectionFS  atomic.Int32            // stats made inside the section
+	sectionDir atomic.Int32            // directory reads made inside the section
+	cache      map[string]*folderCache // keyed by folder name; lazy-initialised
+	// pending holds the explicit GUID a save or a move must record, until the
+	// uid exists and the record can be written (#1703).
+	pending map[string][16]byte
 }
 
-// makeOwner builds the yarilo-locks owner string
-// "<process>/<pid>/<user>[/<sid>]"; the session ID disambiguates concurrent
-// sessions for the same user.
-func makeOwner(u *mailbox.UserInfo) string {
-	proc := "yarilo"
-	if len(os.Args) > 0 {
-		proc = filepath.Base(os.Args[0])
-	}
-	if u.SessionID != "" {
-		return fmt.Sprintf("%s/%d/%s/%s", proc, os.Getpid(), u.Username, u.SessionID)
-	}
-	return fmt.Sprintf("%s/%d/%s", proc, os.Getpid(), u.Username)
-}
-
-// withMailboxLock runs fn under the in-process mutex, then the cross-process
-// yarilo-locks X lock (only when b.locker is non-nil).
-func (u *userMailbox) withMailboxLock(folder string, fn func() error) error {
+// withMailboxLockSite serialises this pod's own sessions. A second process is
+// excluded at the uidlist row and the journal group, not per command (#1840).
+func (u *userMailbox) withMailboxLockSite(_, _ string, fn func() error) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.b.locker == nil {
-		return fn()
-	}
-	key := locks.MailboxKey(u.username, folder)
-	// Re-entrancy: an outer scope already holds this resource for a batch
-	// (POP3 QUIT / multi-message EXPUNGE); skip Acquire to avoid a same-owner
-	// BUSY loop.
-	if u.b.locker.HoldsResource(key) {
-		return fn()
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-	defer cancel()
-	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
-	if err != nil {
-		return fmt.Errorf("maildir/lock %s: %w", folder, err)
-	}
-	defer func() { _ = u.b.locker.Unlock(ctx, lk.ID) }()
 	return fn()
 }
 
@@ -193,7 +593,97 @@ func (u *userMailbox) Init() error {
 			}
 		}
 	}
+	return u.adoptFolderNames()
+}
+
+// adoptFolderNames brings the folder directories to this deployment's encoding;
+// otherwise a folder lists as mojibake, selectable under no name (#1586, #1593).
+func (u *userMailbox) adoptFolderNames() error {
+	// Maildir++ keeps every folder as a dotted directory beside INBOX, in the
+	// mail path.
+	root := u.mailPath
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("maildir/adopt names: read %s: %w", root, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), ".") || e.Name() == "." || e.Name() == ".." {
+			continue
+		}
+		want, ok := u.adoptedDirName(e.Name())
+		if !ok || want == e.Name() {
+			continue
+		}
+		target := filepath.Join(root, want)
+		if _, serr := statPath(target); serr == nil {
+			// Two folders must never become one: that is a loss no later step
+			// can undo, and a store in that shape needs a person.
+			return fmt.Errorf("maildir/adopt names: %s would become %s, which exists", e.Name(), want)
+		}
+		if rerr := os.Rename(filepath.Join(root, e.Name()), target); rerr != nil {
+			return fmt.Errorf("maildir/adopt names: rename %s: %w", e.Name(), rerr)
+		}
+		slog.Info("maildir: brought a folder name to this deployment's encoding",
+			"user", u.username, "from", e.Name(), "to", want, "list_utf8", u.listUTF8)
+	}
 	return nil
+}
+
+// adoptedDirName returns the directory name this deployment would write for a
+// maildir++ directory currently named name, and whether it could tell.
+func (u *userMailbox) adoptedDirName(name string) (string, bool) {
+	// Level by level, and safe rather than lucky: modified base64 is A-Z a-z 0-9
+	// '+' ',', so a '.' never falls inside an encoded run.
+	levels := strings.Split(strings.TrimPrefix(name, "."), ".")
+	changed := false
+	for i, level := range levels {
+		if level == "" {
+			continue
+		}
+		if isASCIIName(level) && !strings.Contains(level, "&") {
+			// The encodings agree on ASCII except "&", the modified-UTF-7
+			// escape: a level carrying one differs between them.
+			continue
+		}
+		var want string
+		if u.listUTF8 {
+			decoded, derr := mboxenc.FromModUTF7(level)
+			if derr != nil {
+				// Not their encoding, so nothing to bring across. It may be
+				// exactly what a user typed.
+				return name, false
+			}
+			want = decoded
+		} else {
+			// Already theirs if it survives a decode and re-encode unchanged;
+			// encoding it again would escape its ampersand and produce the
+			// double encoding this exists to remove.
+			if decoded, derr := mboxenc.FromModUTF7(level); derr == nil && mboxenc.ToModUTF7(decoded) == level {
+				continue
+			}
+			want = mboxenc.ToModUTF7(level)
+		}
+		if want != level {
+			levels[i] = want
+			changed = true
+		}
+	}
+	if !changed {
+		return name, true
+	}
+	return "." + strings.Join(levels, "."), true
+}
+
+func isASCIIName(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // Create provisions the cur/new/tmp triplet for a folder under the X lock.
@@ -201,14 +691,16 @@ func (u *userMailbox) Create(folder string) error {
 	if err := u.checkName(folder); err != nil {
 		return err
 	}
-	return u.withMailboxLock(folder, func() error {
+	return u.withMailboxLockSite(folder, lockSiteCreate, func() error {
 		base := u.folderPath(folder)
 		for _, sub := range []string{"cur", "new", "tmp"} {
 			if err := os.MkdirAll(filepath.Join(base, sub), 0o700); err != nil {
 				return fmt.Errorf("maildir/create: %w", err)
 			}
 		}
-		return nil
+		// No UIDVALIDITY of its own: the first alignment seeds the index's, so
+		// the folder has one UID space, not two (#2083).
+		return u.ensureUIDListLocked(folder, 0)
 	})
 }
 
@@ -218,12 +710,11 @@ func (u *userMailbox) Delete(folder string) error {
 	if err := u.checkName(folder); err != nil {
 		return err
 	}
-	return u.withMailboxLock(folder, func() error {
+	return u.withMailboxLockSite(folder, lockSiteDelete, func() error {
 		path := u.folderPath(folder)
-		// Last check before the removal, on the resolved path rather than the
-		// name: whatever was validated above, this must not be the mail root.
-		// On maildir++ INBOX *is* that root, so the difference between
-		// removing a folder and removing an account is one path (#1069).
+		// Last check before the removal, on the resolved path: on maildir++
+		// INBOX is the mail root, so a folder and an account are one path
+		// apart (#1069).
 		if err := mailbox.GuardDestructivePath(u.mailPath, path, u.inboxPath); err != nil {
 			return err
 		}
@@ -240,7 +731,7 @@ func (u *userMailbox) Rename(oldName, newName string) error {
 	if err := u.checkName(newName); err != nil {
 		return err
 	}
-	return u.withTwoMailboxLocks(oldName, newName, func() error {
+	return u.withTwoMailboxLocks(oldName, newName, lockSiteRename, func() error {
 		from, to := u.folderPath(oldName), u.folderPath(newName)
 		// Either end landing on the root is the same fault: renaming the root
 		// away is as destructive as removing it, and renaming onto it buries
@@ -255,54 +746,22 @@ func (u *userMailbox) Rename(oldName, newName string) error {
 	})
 }
 
-// withTwoMailboxLocks takes both per-folder X locks in lexicographic order.
-// Same ordering as the index side so a Rename rippling through both backends
-// cannot deadlock.
-func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() error) error {
-	if u.b.locker == nil {
-		return fn()
-	}
-	a, b := folderA, folderB
-	if a > b {
-		a, b = b, a
-	}
-	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-	defer cancel()
-	if !u.b.locker.HoldsResource(keyA) {
-		lkA, err := locks.Acquire(ctx, u.b.locker, keyA, u.owner, 30*time.Second)
-		if err != nil {
-			return fmt.Errorf("maildir/lock %s: %w", a, err)
-		}
-		defer func() { _ = u.b.locker.Unlock(ctx, lkA.ID) }()
-	}
-	if a == b {
-		return fn()
-	}
-	keyB := locks.MailboxKey(u.username, b)
-	if !u.b.locker.HoldsResource(keyB) {
-		lkB, err := locks.Acquire(ctx, u.b.locker, keyB, u.owner, 30*time.Second)
-		if err != nil {
-			return fmt.Errorf("maildir/lock %s: %w", b, err)
-		}
-		defer func() { _ = u.b.locker.Unlock(ctx, lkB.ID) }()
-	}
+// withTwoMailboxLocks is the one-folder hold: both folders belong to one user,
+// and within a pod one mutex orders every session's writes to them (#1840).
+func (u *userMailbox) withTwoMailboxLocks(_, _, _ string, fn func() error) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	return fn()
 }
 
-// driverName labels this driver in the timings shared with the others. This is
-// the baseline the packed drivers are compared against: a write to tmp and a
-// rename, with no steps of its own worth naming. The one part it does report
-// is the wait for a write slot, which every driver reports -- leaving it out
-// here would let the packed drivers subtract a queue the baseline still
-// carries.
+// driverName labels this driver in the shared timings. It is the baseline the
+// packed drivers are compared against, and it reports the wait for a write slot
+// like they do -- leaving that out would let them subtract a queue it carries.
 const driverName = "maildir"
 
-// Save streams r into tmp/ then atomically renames into cur/. uid comes from
-// UserIndex.AllocateUID; Maildir does not encode it in the filename, so the
-// uid→filename mapping is appended inline to the yarilo-uidlist sidecar for
-// later List() / Fetch() resolution.
-func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flags []string, guid [16]byte) (string, uint32, [16]byte, error) {
+// Save streams r into tmp/ then renames into cur/. A maildir name carries no
+// uid, so the mapping is appended to the uidlist sidecar for later resolution.
+func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	whole := time.Now()
 	defer func() { mailboxmetrics.ObserveSave(driverName, time.Since(whole)) }()
 
@@ -320,31 +779,51 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 		defer func() { <-u.b.writeSem }()
 	}
 	folderPath := u.folderPath(folder)
-	now := time.Now()
-	seq := u.b.counter.Add(1)
-	basename := fmt.Sprintf("%d.M%dP%d_%d.%s",
-		now.Unix(), now.UnixMicro()%1_000_000, u.b.pid, seq, u.b.hostname)
+	secs, usecs := mintNameTime()
+	basename := fmt.Sprintf("%d.M%dP%d.%s", secs, usecs, u.b.pid, u.b.hostname)
 
 	tmpPath := filepath.Join(folderPath, "tmp", basename)
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return "", 0, noGUID, fmt.Errorf("maildir: create tmp: %w", err)
+		return "", 0, noGUID, fmt.Errorf("maildir: create tmp: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 	sc := &sizeCounter{}
 	if _, err := io.Copy(f, io.TeeReader(r, sc)); err != nil {
 		f.Close()
 		os.Remove(tmpPath)
-		return "", 0, noGUID, fmt.Errorf("maildir: write: %w", err)
+		return "", 0, noGUID, fmt.Errorf("maildir: write: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
+	}
+	// Before the name, not after: the answer to the client follows this, and a
+	// node that loses power in between answered for bytes it does not have.
+	if u.b.fsync.SyncsBody() {
+		if serr := syncFile(f); serr != nil {
+			f.Close()          //nolint:errcheck
+			os.Remove(tmpPath) //nolint:errcheck
+			return "", 0, noGUID, fmt.Errorf("maildir: sync body: %w", mailboxmetrics.ClassifyWrite(driverName, folder, serr))
+		}
 	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmpPath)
 		return "", 0, noGUID, err
 	}
 
-	flagStr := encodeFlags(flags)
+	// Keywords go into the name and the folder's keyword file, so the store
+	// describes the message rather than only our index (#1601).
+	letters, kerr := u.keywordLetters(folder, keywords)
+	if kerr != nil {
+		os.Remove(tmpPath) //nolint:errcheck
+		return "", 0, noGUID, kerr
+	}
+	flagStr := encodeFlags(flags) + letters
 	// ,S=<phys>,W=<virt> before :2,<flags> so List() reports both sizes
 	// without reading the body.
-	finalName := fmt.Sprintf("%s,S=%d,W=%d:2,%s", basename, sc.phys, sc.phys+sc.lfNoCR, flagStr)
+	sized := fmt.Sprintf("%s,S=%d,W=%d", basename, sc.phys, sc.phys+sc.lfNoCR)
+	// A message with no flags is delivered under a bare name, which puts it in
+	// new/: a file there cannot carry flags (#1959, as the reference does).
+	finalName := sized
+	if flagStr != "" {
+		finalName = sized + ":2," + flagStr
+	}
 
 	// Fresh base name, so the derived GUID is unique. A caller-supplied GUID
 	// (migration) is pinned with an explicit uidlist override instead.
@@ -354,30 +833,20 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 		effGUID = guid
 	}
 
-	if err := u.withMailboxLock(folder, func() error {
-		dstPath := filepath.Join(folderPath, "cur", finalName)
-		if err := os.Rename(tmpPath, dstPath); err != nil {
-			os.Remove(tmpPath)
-			return fmt.Errorf("maildir: rename to cur: %w", err)
-		}
-		u.folderCacheFor(folder).entries = nil
-		if uid != 0 || override {
-			if err := u.appendUIDListLocked(folder, uid, finalName, override, effGUID); err != nil {
-				_ = os.Remove(dstPath)
-				return fmt.Errorf("maildir: uidlist: %w", err)
-			}
-		}
-		return nil
-	}); err != nil {
-		return "", 0, noGUID, err
+	if override {
+		u.rememberGUID(folder, finalName, effGUID)
+	}
+	// The body stays in tmp/, which no scan reads; AssignUID moves it into cur/
+	// under the hold that gives it its uid and its row (#1736).
+	if err := os.Rename(tmpPath, filepath.Join(folderPath, "tmp", finalName)); err != nil {
+		os.Remove(tmpPath) //nolint:errcheck
+		return "", 0, noGUID, fmt.Errorf("maildir: name the temp: %w", err)
 	}
 	return finalName, sc.phys + sc.lfNoCR, effGUID, nil
 }
 
-// Move renames the message into dstFolder keeping its base name, so the derived
-// GUID and with it EMAILID is unchanged (RFC 8474); only the ":2," trailer and
-// the folder change. A base-name collision falls back to a fresh name plus an
-// explicit uidlist GUID override.
+// Move keeps the base name, so the derived GUID and its EMAILID survive (RFC
+// 8474). A collision falls back to a fresh name with an explicit GUID override.
 func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte) (string, [16]byte, error) {
 	var noGUID [16]byte
 	if srcFolder == dstFolder {
@@ -388,12 +857,18 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 	if outGUID == noGUID {
 		outGUID = guidFromBase(filename)
 	}
-	err := u.withTwoMailboxLocks(srcFolder, dstFolder, func() error {
-		srcPath := filepath.Join(u.folderPath(srcFolder), "cur", filename)
-		dstDir := filepath.Join(u.folderPath(dstFolder), "cur")
+	err := u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
+		srcPath, found := u.locate(srcFolder, filename)
+		if !found {
+			srcPath = filepath.Join(u.folderPath(srcFolder), "cur", filename)
+		}
+		// Into the destination's tmp/, not its cur/: the file is published by
+		// the naming step, under the hold that writes its row (#1736).
+		dstDir := filepath.Join(u.folderPath(dstFolder), "tmp")
+		curDir := filepath.Join(u.folderPath(dstFolder), "cur")
 		dstPath := filepath.Join(dstDir, newName)
 		override := outGUID != guidFromBase(newName)
-		if _, err := os.Lstat(dstPath); err == nil {
+		if _, err := lstatPath(filepath.Join(curDir, newName)); err == nil {
 			// Base name taken: mint a fresh one and pin the GUID explicitly.
 			oldBase := maildirBase(filename)
 			trailer := filename[len(oldBase):] // ":2,<flags>"
@@ -401,22 +876,19 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 			if i := strings.IndexByte(oldBase, ','); i >= 0 {
 				sizeInfo = oldBase[i:]
 			}
-			now := time.Now()
-			seq := u.b.counter.Add(1)
-			newName = fmt.Sprintf("%d.M%dP%d_%d.%s%s%s",
-				now.Unix(), now.UnixMicro()%1_000_000, u.b.pid, seq, u.b.hostname, sizeInfo, trailer)
+			secs, usecs := mintNameTime()
+			newName = fmt.Sprintf("%d.M%dP%d.%s%s%s",
+				secs, usecs, u.b.pid, u.b.hostname, sizeInfo, trailer)
 			dstPath = filepath.Join(dstDir, newName)
 			override = true
 		}
 		if err := os.Rename(srcPath, dstPath); err != nil {
 			return fmt.Errorf("maildir: move rename: %w", err)
 		}
-		u.folderCacheFor(srcFolder).entries = nil
-		u.folderCacheFor(dstFolder).entries = nil
+		u.folderCacheFor(srcFolder).invalidateDir("own-write")
+		u.folderCacheFor(dstFolder).invalidateDir("own-write")
 		if override {
-			if err := u.appendUIDListLocked(dstFolder, 0, newName, true, outGUID); err != nil {
-				return fmt.Errorf("maildir: move uidlist: %w", err)
-			}
+			u.rememberGUID(dstFolder, newName, outGUID)
 		}
 		return nil
 	})
@@ -426,51 +898,80 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 	return newName, outGUID, nil
 }
 
-// appendUIDListLocked appends one entry to the yarilo-uidlist v3 sidecar and
-// updates the in-memory cache. Caller MUST hold the mailbox X lock.
+// appendUIDListLocked records one uid against one name and rewrites the list.
+// Caller MUST hold the mailbox X lock.
 func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename string, guidOverride bool, guid [16]byte) error {
-	if err := u.migrateLegacyUIDList(folder); err != nil {
-		return err
+	// The list maps a uid to a name, and a zero maps nothing (#1703).
+	if uid == 0 {
+		return fmt.Errorf("maildir/uidlist: refusing a record with no uid for %q", filename)
 	}
-	path := u.uidListPath(folder)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	info, _ := f.Stat()
-	if info != nil && info.Size() == 0 {
-		fmt.Fprintf(f, "3 V%d N%d G%s\n", uint32(time.Now().Unix()), uid+1, randomGUID())
-	}
-	// v3 record: "<uid> [G<guid>] :<filename>". The GUID field is written only
-	// when it must differ from the name-derived one; readers that predate it
-	// skip unknown fields.
-	if guidOverride {
-		_, err = fmt.Fprintf(f, "%d G%s :%s\n", uid, hex.EncodeToString(guid[:]), filename)
-	} else {
-		_, err = fmt.Fprintf(f, "%d :%s\n", uid, filename)
-	}
-	if err != nil {
-		return err
-	}
-
-	// Update the cache inline so the next readUIDList skips the file.
-	if fi, statErr := f.Stat(); statErr == nil {
-		c := u.folderCacheFor(folder)
-		if c.uidMap == nil {
-			c.uidMap = make(map[string]uint32)
+	base := maildirBase(filename)
+	rec := uidRecord{uid: uid, base: base, guid: guid, hasGUID: guidOverride}
+	if !nameCarriesSizes(base) {
+		// Measured from the file, never copied from another record: a number
+		// carried over could be the zero that was never measured (#1701).
+		sizePath, found := u.locate(folder, filename)
+		if !found {
+			sizePath = filepath.Join(u.folderPath(folder), "cur", filename)
 		}
-		c.uidMap[filename] = uid
-		if guidOverride {
-			if c.guidMap == nil {
-				c.guidMap = make(map[string][16]byte)
+		psize, vsize, merr := measureSizes(sizePath)
+		if merr == nil {
+			rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
+		}
+	}
+	if owner, taken := u.cachedUIDOwner(folder, uid); taken && owner != base {
+		return fmt.Errorf("maildir/uidlist: uid %d already names %s: %w", uid, owner, mailbox.ErrUIDInUse)
+	}
+	// The ordinary case is a name the list has never seen: one line at the end
+	// of the file, held for that write alone (#1840).
+	if u.listCanTakeRow(folder, base) {
+		appended, aerr := u.appendUIDRow(folder, lockSiteSave, rec)
+		if aerr != nil {
+			return aerr
+		}
+		if appended {
+			u.adoptRow(folder, base, uid, guid, guidOverride)
+			return nil
+		}
+	}
+	var written *uidList
+	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
+	err := u.withUIDList(folder, lockSiteSave, func(l *uidList) error {
+		beforeRows = len(l.records)
+		if listDebug() {
+			beforeMod, beforeSize = u.listStat(folder)
+		}
+		for _, r := range l.records {
+			if r.uid == uid && r.base != base {
+				return fmt.Errorf("maildir/uidlist: uid %d already names %s: %w", uid, r.base, mailbox.ErrUIDInUse)
 			}
-			c.guidMap[filename] = guid
 		}
-		c.uidMtime = fi.ModTime()
-		c.uidSize = fi.Size()
+		replaced := false
+		for i := range l.records {
+			if l.records[i].base == base {
+				l.records[i], replaced = rec, true
+				break
+			}
+		}
+		if !replaced {
+			l.records = append(l.records, rec)
+		}
+		written = l
+		return nil
+	})
+	if err != nil {
+		return err
 	}
+	u.debugListWrite("assign", folder, []uint32{uid}, base, beforeRows, beforeMod, beforeSize)
+	u.adoptWritten(folder, written)
 	return nil
+}
+
+// reportTornUIDList says what a torn list costs: the records past the bad line
+// are gone, and the next reconcile gives those files fresh uids from the header.
+func (u *userMailbox) reportTornUIDList(folder, path string, l *uidList) {
+	slog.Error("maildir: the uidlist ends in a line no rule explains; what follows it is lost",
+		"user", u.username, "folder", folder, "file", path, "records_kept", len(l.records))
 }
 
 // sizeCounter records bytes written and the count of lone LFs (not preceded by
@@ -493,31 +994,94 @@ func (c *sizeCounter) Write(p []byte) (int, error) {
 }
 
 func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, error) {
-	p := filepath.Join(u.folderPath(folder), "cur", filename)
-	f, err := os.Open(p)
+	p, ok := u.locate(folder, filename)
+	if !ok {
+		p = filepath.Join(u.folderPath(folder), "cur", filename) // for the error's sake
+	}
+	f, err := openPath(p)
 	if err != nil {
 		return nil, fmt.Errorf("maildir: fetch %s: %w", filename, err)
 	}
 	return f, nil
 }
 
+// Remove unlinks one message. A name that is not there is not "already gone":
+// the listing is re-read and the file taken under the name it wears (#1797).
 func (u *userMailbox) Remove(folder, filename string) error {
-	p := filepath.Join(u.folderPath(folder), "cur", filename)
-	err := os.Remove(p)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	return u.removeFile(folder, filename, false)
+}
+
+// removeFile unlinks and then updates the cached listing. held says the folder
+// lock is ours: only then may the listing be re-keyed instead of dropped.
+func (u *userMailbox) removeFile(folder, filename string, held bool) error {
+	dir := filepath.Join(u.folderPath(folder), "cur")
+	target := filepath.Join(dir, filename)
+	// Removed from where it is, not from where it usually is: a delivery still
+	// in new/ would otherwise survive its own expunge (#1959).
+	if p, ok := u.locate(folder, filename); ok {
+		target = p
+		dir = filepath.Dir(p)
 	}
-	if err != nil {
+	err := os.Remove(target)
+	curDir := filepath.Join(u.folderPath(folder), "cur")
+	switch {
+	case err == nil:
+		// The listing cache is cur/'s: a file taken out of new/ was never in
+		// it, so re-keying it by new/'s mtime would drop it for nothing.
+		if dir == curDir {
+			u.afterRemoved(folder, dir, filename, held)
+		}
+		return nil
+	case !errors.Is(err, os.ErrNotExist):
 		return err
 	}
-	u.folderCacheFor(folder).entries = nil
+	// The removal's own lookup: named apart from a FETCH's, because a folder
+	// where removals dominate is a different picture (#1875).
+	u.folderCacheFor(folder).invalidateDirEntries("expunge")
+	metricDirRead.WithLabelValues("remove").Inc()
+	current, _, cerr := u.currentName(folder, maildirBase(filename))
+	if cerr != nil || current == filename {
+		u.reportRemoveMiss(folder, filename, current, cerr)
+		return nil
+	}
+	if err := os.Remove(filepath.Join(dir, current)); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		u.reportRemoveMiss(folder, filename, current, nil)
+		return nil
+	}
+	u.afterRemoved(folder, dir, current, held)
 	return nil
+}
+
+// afterRemoved updates the cached listing after this process unlinked a file.
+// Only a holder may keep it (#1809).
+func (u *userMailbox) afterRemoved(folder, dir, filename string, held bool) {
+	if !held {
+		u.folderCacheFor(folder).invalidateDir("expunge")
+		return
+	}
+	fi, err := statPath(dir)
+	if err != nil {
+		u.folderCacheFor(folder).invalidateDirEntries("expunge")
+		return
+	}
+	u.folderCacheFor(folder).forgetEntry(filename, fi.ModTime())
+}
+
+// reportRemoveMiss names what the counter counted: a number with no line names
+// nobody, and this counter is how #1797 is read.
+func (u *userMailbox) reportRemoveMiss(folder, asked, shown string, err error) {
+	metricRemoveMiss.Inc()
+	slog.Warn("maildir: a removal found no file under either name",
+		"user", u.username, "folder", folder, "asked", asked, "listed", shown, "err", err)
 }
 
 func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 	dir := filepath.Join(u.folderPath(folder), "cur")
 
-	dirFi, statErr := os.Stat(dir)
+	dirFi, statErr := statPath(dir)
 	if errors.Is(statErr, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -525,24 +1089,21 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 		return nil, statErr
 	}
 
+	// A pass that decides the truth reads the directory itself: the cached
+	// listing names a message, it does not say what is on disk (as the reference does).
 	c := u.folderCacheFor(folder)
-	var entries []os.DirEntry
-	if c.entries != nil && dirFi.ModTime().Equal(c.dirMtime) {
-		entries = c.entries
-	} else {
-		var err error
-		entries, err = os.ReadDir(dir)
-		if err != nil {
-			return nil, err
-		}
-		c.entries = entries
-		c.dirMtime = dirFi.ModTime()
+	metricDirRead.WithLabelValues("scan").Inc()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
 	}
+	c.storeDirEntries(entries, dirFi.ModTime())
 
 	uidMap, err := u.readUIDList(folder)
 	if err != nil {
 		return nil, err
 	}
+	kwNames := u.keywordNames(folder)
 
 	var msgs []*mailbox.MessageMeta
 	for _, e := range entries {
@@ -550,7 +1111,7 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 			continue
 		}
 		name := e.Name()
-		flags, keywords := decodeFlags(name)
+		flags, keywords := decodeFlagsWith(name, kwNames)
 		phys, virt, hasPhys, _ := parseSizeInfo(name)
 		var sz uint32
 		switch {
@@ -561,10 +1122,9 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 				sz = uint32(info.Size())
 			}
 		}
-		uid := uidMap[name]
+		uid := uidMap[maildirBase(name)]
 		msgs = append(msgs, &mailbox.MessageMeta{
 			UID:      uid,
-			Filename: name,
 			Flags:    flags,
 			Keywords: keywords,
 			Size:     sz,
@@ -579,7 +1139,7 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 }
 
 func (u *userMailbox) FolderExists(folder string) (bool, error) {
-	_, err := os.Stat(u.folderPath(folder))
+	_, err := statPath(u.folderPath(folder))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -614,10 +1174,9 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 			}
 			logical = decoded
 		}
-		// maildir++ stores hierarchy flat with "."; map it back to the
-		// namespace's IMAP separator (every "." is a level). With escaping on,
-		// a "." the client wrote literally is not one of those levels: it is
-		// an escape sequence, decoded per level after the split.
+		// maildir++ is flat with "." per level; map it back to the namespace
+		// separator. Under escaping a literal "." is not a level but an escape,
+		// decoded after the split.
 		if u.escapeChar != "" {
 			parts := strings.Split(logical, ".")
 			for i, p := range parts {
@@ -632,18 +1191,28 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 	return folders, nil
 }
 
-// Scan walks cur/ + new/ and returns one ScanRecord per message. Flags and
-// size come from the filename (size from the "S=" infix, else os.Stat);
-// InternalDate from the file mtime. GUID is left zero — Maildir filenames
-// carry no stable GUID, so the rebuild flow must preserve the index's GUID
-// for matched filenames.
+// Scan walks cur/ + new/ and returns one ScanRecord per message, reading flags
+// and size from the name and the date from the mtime. GUID stays zero -- a
+// maildir name carries none, so a rebuild must keep the index's.
 func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
+	if u.inSection.Load() > 0 {
+		u.sectionDir.Add(1) // a walk under the lock is what #1626 took apart
+	}
 	// Warm the uidlist cache so explicit GUID overrides win over the derived
 	// value; a missing uidlist just leaves every GUID name-derived.
 	_, _ = u.readUIDList(folder)
 	out := make([]mailbox.ScanRecord, 0, 128)
+	kwNames := u.keywordNames(folder)
+	cache := u.folderCacheFor(folder)
+	kept := make(map[string]scanFacts, 128)
 	for _, sub := range []string{"cur", "new"} {
 		dir := filepath.Join(u.folderPath(folder), sub)
+		// The mtime before the read, so the listing is never keyed to a moment
+		// later than its own contents.
+		var mtime time.Time
+		if fi, serr := statPath(dir); serr == nil {
+			mtime = fi.ModTime()
+		}
 		entries, err := os.ReadDir(dir)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -651,57 +1220,113 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 		if err != nil {
 			return nil, fmt.Errorf("maildir/scan: read %s: %w", dir, err)
 		}
+		// A name that moved inside the tick the key cannot resolve is answered
+		// by the re-sync a miss earns, at both consumers (#1987, #1797).
+		if sub == "cur" && !mtime.IsZero() {
+			cache.storeDirEntries(entries, mtime)
+		}
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
 			}
 			name := e.Name()
-			flags, keywords := decodeFlags(name)
-			phys, virt, hasPhys, _ := parseSizeInfo(name)
-			info, statErr := e.Info()
-			var sz uint32
-			var mtime time.Time
-			switch {
-			case hasPhys:
-				sz = phys
-			case statErr == nil:
-				sz = uint32(info.Size())
+			facts, known := cache.scanFactsFor(name)
+			if !known {
+				scanStats.Add(1)
+				phys, virt, hasPhys, _ := parseSizeInfo(name)
+				info, statErr := e.Info()
+				switch {
+				case hasPhys:
+					facts.size = phys
+				case statErr == nil:
+					facts.size = uint32(info.Size())
+				}
+				facts.vsize = virt
+				if virt == 0 {
+					// A name with no W= says nothing about the RFC822 form, and
+					// the index keeps one number: measured here, or the byte
+					// count stands as the message's size for ever (#1962).
+					if _, measured, merr := measureSizes(filepath.Join(dir, name)); merr == nil {
+						facts.vsize = measured
+					}
+				}
+				if statErr == nil {
+					facts.date = info.ModTime()
+				}
 			}
-			if statErr == nil {
-				mtime = info.ModTime()
-			}
-			rec := mailbox.ScanRecord{
+			kept[name] = facts
+			// Derived every walk: the keyword file and the list's overrides
+			// change without renaming anything.
+			flags, keywords := decodeFlagsWith(name, kwNames)
+			out = append(out, mailbox.ScanRecord{
 				Filename:     name,
-				Size:         sz,
-				VSize:        virt,
-				InternalDate: mtime,
+				Size:         facts.size,
+				VSize:        facts.vsize,
+				InternalDate: facts.date,
 				Flags:        append([]string(nil), flags...),
+				Keywords:     append([]string(nil), keywords...),
 				GUID:         u.guidFor(folder, name),
-			}
-			if len(keywords) > 0 {
-				rec.Flags = append(rec.Flags, keywords...)
-			}
-			out = append(out, rec)
+			})
 		}
 	}
+	cache.keepScanned(kept)
 	return out, nil
+}
+
+// scanNamed builds the records for named files in cur/, without reading the
+// directory: an arrivals-only pass already knows which names it moved, and
+// walking cur/ to find them is the cost this pass exists to avoid (#1875).
+func (u *userMailbox) scanNamed(folder string, names []string) []mailbox.ScanRecord {
+	if len(names) == 0 {
+		return nil
+	}
+	_, _ = u.readUIDList(folder)
+	kwNames := u.keywordNames(folder)
+	curDir := filepath.Join(u.folderPath(folder), "cur")
+	out := make([]mailbox.ScanRecord, 0, len(names))
+	for _, name := range names {
+		info, err := statPath(filepath.Join(curDir, name))
+		if err != nil {
+			continue // moved on by another process between the rename and here
+		}
+		phys, virt, hasPhys, _ := parseSizeInfo(name)
+		size := uint32(info.Size())
+		if hasPhys {
+			size = phys
+		}
+		if virt == 0 {
+			// As in Scan: a name with no W= says nothing about the RFC822 form,
+			// and the index keeps one number for both (#1962).
+			if _, measured, merr := measureSizes(filepath.Join(curDir, name)); merr == nil {
+				virt = measured
+			}
+		}
+		flags, keywords := decodeFlagsWith(name, kwNames)
+		out = append(out, mailbox.ScanRecord{
+			Filename:     name,
+			Size:         size,
+			VSize:        virt,
+			InternalDate: info.ModTime(),
+			Flags:        append([]string(nil), flags...),
+			Keywords:     append([]string(nil), keywords...),
+			GUID:         u.guidFor(folder, name),
+		})
+	}
+	return out
 }
 
 func (u *userMailbox) Close() error { return nil }
 
-// ProactiveScan reports that the on-disk state may change out of band (MDA
-// delivery into new/, another MUA renaming for flags), so the index must be
-// reconciled by scanning on SELECT. Index-authoritative drivers (dbox) omit
-// this and self-heal reactively.
-func (u *userMailbox) ProactiveScan() bool { return true }
+// ProactiveScan says the store changes out of band -- an MDA into new/, another
+// MUA renaming for flags -- so opening a folder must scan. The dbox drivers say
+// no, and maildir_sync_on_select says whether this deployment wants it.
+func (u *userMailbox) ProactiveScan() bool { return u.b.proactiveScan }
 
 // guidFor returns the message GUID for a stored file: the explicit uidlist
 // override when one exists, else the name-derived value. Never zero.
 func (u *userMailbox) guidFor(folder, filename string) [16]byte {
-	if c := u.folderCacheFor(folder); c != nil && c.guidMap != nil {
-		if g, ok := c.guidMap[filename]; ok {
-			return g
-		}
+	if g, ok := u.folderCacheFor(folder).guidOf(maildirBase(filename)); ok {
+		return g
 	}
 	return guidFromBase(filename)
 }
@@ -716,10 +1341,8 @@ func maildirBase(name string) string {
 	return name
 }
 
-// guidFromBase derives the per-message GUID from the maildir base name. The
-// base is unique per message and never rewritten: a flag change touches only
-// the ":2," trailer and Move keeps it across folders, so EMAILID survives both
-// and an index rebuild recomputes it.
+// guidFromBase derives the GUID from the base name, which is never rewritten: a
+// flag change touches the trailer and Move keeps it, so EMAILID survives both.
 func guidFromBase(filename string) [16]byte {
 	sum := sha256.Sum256([]byte(maildirBase(filename)))
 	var g [16]byte
@@ -730,17 +1353,18 @@ func guidFromBase(filename string) [16]byte {
 // moveNewToCurLocked moves every file from new/ into cur/, appending the ":2,"
 // info marker for a message with no flags. The MDA delivers into new/; the rest
 // of the driver (Fetch, Remove, List) only looks in cur/. Caller holds the lock.
-func (u *userMailbox) moveNewToCurLocked(folder string) error {
+func (u *userMailbox) moveNewToCurLocked(folder string) ([]string, error) {
 	base := u.folderPath(folder)
 	newDir := filepath.Join(base, "new")
 	curDir := filepath.Join(base, "cur")
 	entries, err := os.ReadDir(newDir)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("maildir/sync: read new: %w", err)
+		return nil, fmt.Errorf("maildir/sync: read new: %w", err)
 	}
+	var moved []string
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -754,36 +1378,115 @@ func (u *userMailbox) moveNewToCurLocked(folder string) error {
 			if errors.Is(err, os.ErrNotExist) {
 				continue // moved by a concurrent sync
 			}
-			return fmt.Errorf("maildir/sync: move new->cur %s: %w", name, err)
+			return nil, fmt.Errorf("maildir/sync: move new->cur %s: %w", name, err)
 		}
+		moved = append(moved, curName)
 	}
-	return nil
+	return moved, nil
 }
 
-// ReconcileIndex brings idx into agreement with the physical maildir under the
-// mailbox lock:
-//
-//   - new/ is migrated into cur/ first, so an MDA delivery becomes readable.
-//   - Messages match by base name, so a second MUA flipping ":2," → ":2,S"
-//     keeps the UID.
-//   - New files get a UID via the index's atomic allocator (no manual seed, so
-//     a concurrent delivery cannot collide).
-//   - A vanished tracked file is expunged incrementally (QRESYNC tombstone); a
-//     tracked file renamed out of band has its stored filename and flags
-//     updated in place.
-//
-// Tracked messages with an unchanged on-disk name are left untouched — the
-// index stays authoritative for flags yarilo set, which never rename the file.
-func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
+// ReconcileIndex brings idx into agreement with the maildir, matching by base
+// name so a flag rename keeps its UID. An unchanged name is left alone: the
+// index is authoritative for flags this server set.
+func (u *userMailbox) ReconcileIndex(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
+	return u.reconcile(idx, folder, false)
+}
+
+// ReconcileArrivals reads new/ alone and judges no absence, as the reference's
+// partial sync does when cur/ has not moved.
+func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, error) {
+	return u.reconcile(idx, folder, true)
+}
+
+func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
-	err := u.withMailboxLock(folder.Name, func() error {
-		if err := u.moveNewToCurLocked(folder.Name); err != nil {
+	// A full walk earns the window; so does a uid list the index was built
+	// from, by one stat (#1875, as the reference does).
+	if !arrivalsOnly {
+		defer u.folderCacheFor(folder.Name).markChecked()
+		defer u.stampUIDList(idx, folder)
+	} else {
+		// At the end, as the full pass does: a window opened before the pass
+		// runs is one the pass itself closes.
+		defer u.windowFromStamp(idx, folder)
+	}
+	// The move precedes the scan because it renames, and is asked about before
+	// the lock: one acquisition taken to find an empty new/ is paid on every
+	// poll (#1630).
+	movedNew := u.hasNewMail(folder.Name)
+	if movePhaseProbe != nil {
+		movePhaseProbe(movedNew)
+	}
+	var arrivals []string
+	if movedNew {
+		if err := u.withMailboxLockSite(folder.Name, lockSiteReconcileMove, func() error {
+			var merr error
+			arrivals, merr = u.moveNewToCurLocked(folder.Name)
+			return merr
+		}); err != nil {
+			return st, err
+		}
+	}
+
+	// The walk, holding nothing. A flag change renames only the part after
+	// ":2,", and everything here is keyed by the base name -- so the scan is
+	// sound about which messages exist and unsound about the flags they carry.
+	//
+	// Unless this pass is an arrivals-only one: then the names that moved are
+	// what it reads, and cur/ is not walked at all (#1875).
+	var scanned []mailbox.ScanRecord
+	var err error
+	if arrivalsOnly {
+		scanned = u.scanNamed(folder.Name, arrivals)
+	} else {
+		scanned, err = u.Scan(folder.Name)
+	}
+	if err != nil {
+		return st, fmt.Errorf("maildir/sync: scan: %w", err)
+	}
+	if afterScan != nil {
+		afterScan()
+	}
+
+	// Nothing to apply, no lock at all: fifty sessions polling one folder took
+	// it to find the first had done the work (#1630). A stale answer errs
+	// toward taking the lock, and the section re-reads before writing.
+	if arrivalsOnly && len(scanned) == 0 {
+		// Nothing arrived, and absence is not this pass's business: the whole
+		// cost was one readdir of an empty new/ (#1952).
+		metricPartialEmpty.Inc()
+		return st, nil
+	}
+	if !arrivalsOnly && u.reconcileIsClean(idx, folder, scanned) {
+		return st, nil
+	}
+
+	err = u.withMailboxLockSite(folder.Name, lockSiteReconcileApply, func() (rerr error) {
+		u.inSection.Add(1)
+		defer u.inSection.Add(-1)
+		if !arrivalsOnly {
+			if err := u.setAsideBrokenList(folder.Name); err != nil {
+				return err
+			}
+		}
+		// The list's UID space before any uid is read or handed out (#2083); the
+		// seed rides on the list write this pass makes, not a hold of its own.
+		_, seed, err := u.alignIndexUIDSpace(idx, folder.ID, folder.Name)
+		if err != nil {
 			return err
 		}
-		scanned, err := u.Scan(folder.Name)
-		if err != nil {
-			return fmt.Errorf("maildir/sync: scan: %w", err)
-		}
+		defer func() {
+			if seed != 0 && rerr == nil {
+				rerr = u.seedUIDValidity(folder.Name, lockSiteReconcileApply, seed)
+			}
+		}()
+		defer func() {
+			if sectionProbe != nil {
+				sectionProbe(int(u.sectionDir.Load()), int(u.sectionFS.Load()))
+			}
+		}()
+		var recorded []listEntry
+		var pending []pendingImport
 		onDisk := make(map[string]*mailbox.ScanRecord, len(scanned))
 		for i := range scanned {
 			if scanned[i].Filename != "" {
@@ -791,20 +1494,70 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			}
 		}
 
+		// The view first, then the decision: "this folder does not hold the
+		// file" must mean the folder, not this process's last read (#1739).
+		if r, ok := idx.(mailbox.FolderRefresher); ok {
+			if rerr := r.RefreshFolder(folder.ID); rerr != nil {
+				return fmt.Errorf("maildir/sync: refresh: %w", rerr)
+			}
+		}
 		existing, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
 			return fmt.Errorf("maildir/sync: get messages: %w", err)
 		}
+		// The list says which base a uid holds; the record itself no longer
+		// carries a name (#1700).
+		uidToBase, err := u.basesByUID(folder.Name)
+		if err != nil {
+			return err
+		}
 		tracked := make(map[string]struct{}, len(existing))
 		var restamp map[uint32][16]byte
+		var relink []listEntry
 		var zeroGUID [16]byte
+		// Once for the pass: an unlisted record is looked up by identity, and
+		// a scan of the whole map per record is quadratic on a big folder.
+		baseByGUID := make(map[[16]byte]string, len(onDisk))
+		for base, rec := range onDisk {
+			if rec.GUID != zeroGUID {
+				baseByGUID[rec.GUID] = base
+			}
+		}
+		// The absence of a name means nothing to a pass that did not read cur/:
+		// every record there would look missing. Known bases are claimed so
+		// they are not imported twice, and nothing else is judged (#1875).
+		if arrivalsOnly {
+			for _, m := range existing {
+				if base, known := uidToBase[m.UID]; known {
+					tracked[base] = struct{}{}
+				}
+			}
+		}
 		for _, m := range existing {
-			if m.Filename == "" {
+			if arrivalsOnly {
+				break
+			}
+			base, known := uidToBase[m.UID]
+			if !known {
+				// The row is what was lost, so write it back: importing the
+				// file instead left the message there twice (#1785).
+				if b, found := unlistedBase(m, baseByGUID, tracked); found {
+					relink = append(relink, listEntry{uid: m.UID, filename: onDisk[b].Filename})
+					tracked[b] = struct{}{}
+					slog.Info("maildir: the list stopped naming this record, and its own message is on disk; the row is written back",
+						"user", u.username, "folder", folder.Name, "uid", m.UID, "base", b)
+					continue
+				}
+				reportUnlisted(u.username, folder.Name, m.UID)
 				continue
 			}
-			base := maildirBase(m.Filename)
 			rec, ok := onDisk[base]
 			if !ok {
+				// Absent from an unlocked scan, so confirmed before the record
+				// is dropped.
+				if u.stillOnDisk(folder.Name, base) {
+					continue
+				}
 				// Vanished out of band → expunge (QRESYNC tombstone).
 				if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
 					return fmt.Errorf("maildir/sync: expunge %d: %w", m.UID, err)
@@ -824,29 +1577,36 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			}
 			tracked[base] = struct{}{}
 			if m.GUID == zeroGUID && rec.GUID != zeroGUID {
-				// Stamped regardless of the backfill marker: a record imported
-				// into an already-complete folder is invisible to the backfill,
-				// so this is the only thing that can still give it an EMAILID.
+				// Regardless of the backfill marker: a record imported into a
+				// complete folder is invisible to it, and would have no EMAILID.
 				if restamp == nil {
 					restamp = make(map[uint32][16]byte, 4)
 				}
 				restamp[m.UID] = rec.GUID
 			}
-			if rec.Filename != m.Filename {
-				// Renamed out of band (a flag change moves the ":2," trailer):
-				// adopt the on-disk flags and repoint the filename.
-				if !sameFlags(rec.Flags, m.Flags) {
-					if err := idx.UpdateFlags(folder.ID, m.UID, rec.Flags, nil); err != nil {
-						return fmt.Errorf("maildir/sync: update flags %d: %w", m.UID, err)
-					}
+			if !sameFlags(rec.Flags, m.Flags) || !sameFlags(rec.Keywords, m.Keywords) {
+				// The name carries the flags and is the truth, except where a
+				// failed rename marked the record's own flags dirty (#1700).
+				if m.FlagsDirty {
+					continue
 				}
-				if err := idx.UpdateFilename(folder.ID, m.UID, rec.Filename); err != nil {
-					return fmt.Errorf("maildir/sync: update filename %d: %w", m.UID, err)
+				if !u.stillOnDisk(folder.Name, rec.Filename) {
+					continue
+				}
+				if err := idx.UpdateFlags(folder.ID, m.UID, rec.Flags, rec.Keywords); err != nil {
+					return fmt.Errorf("maildir/sync: update flags %d: %w", m.UID, err)
 				}
 				st.Updated++
 			}
 		}
 
+		if len(relink) > 0 {
+			if _, err := u.recordUIDsLocked(folder.Name, relink, seed); err != nil {
+				return err
+			}
+			seed = 0
+			st.Relinked += len(relink)
+		}
 		for i := range scanned {
 			rec := &scanned[i]
 			if rec.Filename == "" {
@@ -856,22 +1616,75 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 			if _, ok := tracked[base]; ok {
 				continue
 			}
+			// Still on disk: the scan was unlocked, and a record for a message
+			// since expunged serves a uid whose body cannot be read. A file in
+			// new/ counts now that readers reach it (#1959).
+			if !u.bodyReadable(folder.Name, rec.Filename) {
+				continue
+			}
 			// Claim the base before appending: a scan that reports one message
 			// twice (the same base left in both new/ and cur/) would otherwise
 			// get two records, and expunging either would delete the shared file.
 			tracked[base] = struct{}{}
 			m := &mailbox.MessageMeta{
-				Filename:     rec.Filename,
 				Size:         rec.Size,
 				VSize:        rec.VSize,
 				InternalDate: rec.InternalDate,
 				Flags:        rec.Flags,
+				Keywords:     rec.Keywords,
 				GUID:         rec.GUID,
 			}
-			if err := idx.AllocateAndAppend(folder.ID, m); err != nil {
-				return fmt.Errorf("maildir/sync: append %s: %w", rec.Filename, err)
+			// The list already says which uid this file has, and that answer
+			// wins: a second one takes the row from the record holding it (#1739).
+			if uid, known := u.UIDFor(folder.Name, rec.Filename); known {
+				m.UID = uid
+				if err := idx.AppendMessage(folder.ID, m); err != nil {
+					return fmt.Errorf("maildir/sync: append %s at its recorded uid %d: %w",
+						rec.Filename, uid, err)
+				}
+				st.Imported++
+				continue
 			}
-			st.Imported++
+			uid, err := idx.AllocateUID(folder.ID)
+			if err != nil {
+				return fmt.Errorf("maildir/sync: allocate uid for %s: %w", rec.Filename, err)
+			}
+			m.UID = uid
+			pending = append(pending, pendingImport{meta: m, filename: rec.Filename})
+			recorded = append(recorded, listEntry{uid: uid, filename: rec.Filename})
+		}
+		if len(pending) > 0 {
+			// The row first: a record older than its row is a message the
+			// folder holds and cannot name (#1745).
+			if testBeforeRowWrite != nil {
+				testBeforeRowWrite()
+			}
+			taken, err := u.recordUIDsLocked(folder.Name, recorded, seed)
+			if err != nil {
+				return err
+			}
+			seed = 0
+			if testStopAfterRows {
+				return errStoppedAfterRows
+			}
+			refused := make(map[uint32]struct{}, len(taken))
+			for _, uid := range taken {
+				refused[uid] = struct{}{}
+				metricImportRowRefused.Inc()
+			}
+			if len(taken) > 0 {
+				slog.Warn("maildir: the list already names these files under other uids; they stay with their owners",
+					"user", u.username, "folder", folder.Name, "count", len(taken))
+			}
+			for _, p := range pending {
+				if _, no := refused[p.meta.UID]; no {
+					continue
+				}
+				if err := idx.AppendMessage(folder.ID, p.meta); err != nil {
+					return fmt.Errorf("maildir/sync: append %s: %w", p.filename, err)
+				}
+				st.Imported++
+			}
 		}
 		if len(restamp) > 0 {
 			if err := idx.SetGUIDs(folder.ID, restamp); err != nil {
@@ -884,8 +1697,38 @@ func (u *userMailbox) ReconcileIndex(idx mailbox.UserIndex, folder *mailbox.Fold
 		}
 		return nil
 	})
-	st.Changed = st.Imported > 0 || st.Expunged > 0 || st.Updated > 0
+	st.Changed = st.Imported > 0 || st.Expunged > 0 || st.Updated > 0 || st.Relinked > 0
 	return st, err
+}
+
+// testStopAfterRows ends a reconcile between the rows and the records. Test
+// seam: the crash window the order is chosen for.
+var testStopAfterRows bool
+
+// errStoppedAfterRows is what the seam returns.
+var errStoppedAfterRows = errors.New("maildir/sync: stopped after the rows (test seam)")
+
+// testBeforeRowWrite runs just before the rows are written. Test seam: another
+// writer taking a base between the scan and the write.
+var testBeforeRowWrite func()
+
+// SetTestBeforeRowWrite arms that seam and returns a function disarming it.
+func SetTestBeforeRowWrite(fn func()) func() {
+	testBeforeRowWrite = fn
+	return func() { testBeforeRowWrite = nil }
+}
+
+// SetTestStopAfterRows arms the seam and returns a function disarming it.
+func SetTestStopAfterRows() func() {
+	testStopAfterRows = true
+	return func() { testStopAfterRows = false }
+}
+
+// pendingImport is a message whose uid is allocated and whose row is not yet
+// written; the record follows the row (#1745).
+type pendingImport struct {
+	meta     *mailbox.MessageMeta
+	filename string
 }
 
 // sameFlags reports whether two flag sets are equal ignoring order.
@@ -906,45 +1749,70 @@ func sameFlags(a, b []string) bool {
 	return true
 }
 
-// SyncToken returns an opaque token over the folder's cur/ and new/ mtime and
-// size. Unchanged since the previous SELECT means nothing was delivered,
-// removed or renamed, so the caller may skip the reconcile scan and its lock.
-// An empty token (both dirs missing or unstattable) forces a reconcile.
-//
-// A directory whose mtime is within the current wall-clock second is "dirty":
-// on coarse (1 s) mtime granularity a second same-tick change would not move
-// the mtime, so the token embeds a per-call nonce to force a reconcile until
-// the directory settles. This is the classic maildir same-second dirty-sync
-// rule.
-//
-// Over NFS a stale attribute-cache mtime only delays visibility until the next
-// changed token, never corrupts; keep attribute-cache TTLs short.
+// SyncToken is an opaque token over cur/ and new/ mtime and size; unchanged lets
+// the caller skip the reconcile. A directory touched this wall-clock second
+// carries a nonce: at 1s granularity a same-tick change moves nothing.
 func (u *userMailbox) SyncToken(folder string) string {
 	base := u.folderPath(folder)
-	now := time.Now()
 	var b strings.Builder
-	dirty := false
 	for _, sub := range []string{"cur", "new"} {
-		fi, err := os.Stat(filepath.Join(base, sub))
+		fi, err := statPath(filepath.Join(base, sub))
 		if err != nil {
 			continue
 		}
 		mt := fi.ModTime()
 		fmt.Fprintf(&b, "%s=%d/%d;", sub, mt.UnixNano(), fi.Size())
-		if now.Sub(mt) < time.Second {
-			dirty = true
-		}
-	}
-	if dirty {
-		fmt.Fprintf(&b, "dirty=%d", now.UnixNano())
 	}
 	return b.String()
 }
 
+// PartialScope reports whether new/ alone may be read: cur/ stands where the
+// last walk left it, the question the reference asks.
+func (u *userMailbox) PartialScope(folder, prevToken string) bool {
+	// By mtime alone, as the reference compares it: a directory's size can move
+	// for a removal that leaves the timestamp, which this question does not ask.
+	prev, _, ok := strings.Cut(tokenPart(prevToken, "cur"), "/")
+	if !ok || prev == "" {
+		return false
+	}
+	fi, err := statPath(filepath.Join(u.folderPath(folder), "cur"))
+	if err != nil {
+		return false
+	}
+	return prev == fmt.Sprintf("%d", fi.ModTime().UnixNano())
+}
+
+// tokenPart pulls one directory's half out of a token this driver built.
+func tokenPart(token, sub string) string {
+	for _, part := range strings.Split(token, ";") {
+		if name, value, ok := strings.Cut(part, "="); ok && name == sub {
+			return value
+		}
+	}
+	return ""
+}
+
+// SyncDirty says which of the two directories the mtime cannot yet vouch for.
+// A filesystem that keeps mtime to the second cannot distinguish two changes
+// inside one, so a directory written just now is re-walked -- but bounded by
+// the caller's last check, not on every open (#1875).
+func (u *userMailbox) SyncDirty(folder string) (arrivalHot, storeDirty bool, window time.Duration) {
+	base := u.folderPath(folder)
+	if fi, err := statPath(filepath.Join(base, "new")); err == nil && !settled(fi.ModTime()) {
+		arrivalHot = true
+	}
+	if fi, err := statPath(filepath.Join(base, "cur")); err == nil && !settled(fi.ModTime()) {
+		storeDirty = true
+	}
+	return arrivalHot, storeDirty, dirSettleWindow
+}
+
 // ---- uidlist ---------------------------------------------------------------
 
-// On-disk filenames. The legacy name is renamed to UIDListFileName on first
-// access, so subsequent runs see only the yarilo file.
+// keywordsFileName is their keyword file: letters in a name against the words
+// they stand for. Read, not written (#1601).
+const keywordsFileName = "dovecot-keywords"
+
 const (
 	UIDListFileName       = "yarilo-uidlist"
 	LegacyUIDListFileName = "dovecot-uidlist"
@@ -956,51 +1824,157 @@ func (u *userMailbox) uidListPath(folder string) string {
 
 // migrateLegacyUIDList renames the legacy uidlist file (LegacyUIDListFileName)
 // to yarilo-uidlist when the yarilo file is absent. Idempotent.
+// Every path walk in this package goes through these, so a row can count what
+// an operation costs and a guard can keep new ones from slipping past (#1875).
+var (
+	statPath  = os.Stat
+	lstatPath = os.Lstat
+	openPath  = os.Open
+)
+
 func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 	dst := u.uidListPath(folder)
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := statPath(dst); err == nil {
+		return nil
+	}
+	// Ours was set aside, not missing: theirs is not taken up for it (#1593, #2086).
+	if aside, _ := filepath.Glob(dst + ".broken.*"); len(aside) > 0 {
 		return nil
 	}
 	src := filepath.Join(u.folderPath(folder), LegacyUIDListFileName)
-	if _, err := os.Stat(src); err != nil {
+	if _, err := statPath(src); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return fmt.Errorf("maildir: legacy uidlist stat: %w", err)
 	}
 	if err := os.Rename(src, dst); err != nil {
+		// Called from paths holding no lock, so the loser of a race sees the
+		// source already gone -- that is the migration having happened (#1626).
+		if _, serr := statPath(dst); serr == nil {
+			return nil
+		}
 		return fmt.Errorf("maildir: legacy uidlist rename: %w", err)
 	}
 	return nil
 }
 
-func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
-	if err := u.migrateLegacyUIDList(folder); err != nil {
-		return nil, err
-	}
+// setAsideBrokenList moves a list whose uids do not ascend out of the way, as
+// the reference drops one: the folder rebuilds from its index and its files.
+func (u *userMailbox) setAsideBrokenList(folder string) error {
 	path := u.uidListPath(folder)
-
-	fi, statErr := os.Stat(path)
-	if errors.Is(statErr, os.ErrNotExist) {
-		return make(map[string]uint32), nil
+	unlock, err := u.dotlock(path)
+	if err != nil {
+		return err
 	}
-	if statErr != nil {
-		return nil, statErr
+	defer unlock()
+	l, err := readUIDListFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("maildir/uidlist: read: %w", err)
 	}
-
-	if c := u.folderCacheFor(folder); c.uidMap != nil &&
-		fi.ModTime().Equal(c.uidMtime) && fi.Size() == c.uidSize {
-		return c.uidMap, nil
+	if l.unordered == "" {
+		return nil
 	}
+	aside := fmt.Sprintf("%s.broken.%d", path, time.Now().Unix())
+	if err := os.Rename(path, aside); err != nil {
+		return fmt.Errorf("maildir/uidlist: set aside: %w", err)
+	}
+	u.folderCacheFor(folder).invalidateUIDs("broken")
+	metricListBroken.Inc()
+	slog.Warn("maildir: the list's uids do not ascend; it is set aside and the folder rebuilt from its index",
+		"user", u.username, "folder", folder, "row", l.unordered, "aside", filepath.Base(aside))
+	return nil
+}
 
-	f, err := os.Open(path)
+// openUIDList opens our list, adopting a copied-in store's own list when ours
+// is not there yet: after our first write the other name is not looked at (#1593).
+// A nil file with a nil error means neither exists.
+func (u *userMailbox) openUIDList(folder string) (*os.File, os.FileInfo, error) {
+	path := u.uidListPath(folder)
+	f, err := openPath(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if merr := u.migrateLegacyUIDList(folder); merr != nil {
+			return nil, nil, merr
+		}
+		f, err = openPath(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
+		}
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	// On the open descriptor: no second path walk, and no window where the
+	// file changes between the stat and the read.
+	fi, serr := f.Stat()
+	if serr != nil {
+		_ = f.Close()
+		return nil, nil, serr
+	}
+	return f, fi, nil
+}
+
+// appendedAt reports whether the byte before at ends a line, which is what
+// makes the rest of the file a whole number of rows (#1875).
+func appendedAt(f *os.File, at int64) bool {
+	if at <= 0 {
+		return false
+	}
+	var b [1]byte
+	if _, err := f.ReadAt(b[:], at-1); err != nil {
+		return false
+	}
+	return b[0] == '\n'
+}
+
+func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
+	// The stamp first, by one path walk: a hit must open nothing, and knowing
+	// whether another process changed the file needs the filesystem asked
+	// (#1875).
+	cache := u.folderCacheFor(folder)
+	if m, ok := cache.snapshotChecked(); ok {
+		u.debugListRead(folder, "checked", len(m), listStamp{})
+		return m, nil
+	}
+	metricCacheStat.WithLabelValues("list").Inc()
+	if fi, err := statPath(u.uidListPath(folder)); err == nil {
+		if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
+			u.debugListRead(folder, "cache", len(m), stampOf(fi))
+			return m, nil
+		}
+	}
+	f, fi, err := u.openUIDList(folder)
 	if err != nil {
 		return nil, err
 	}
+	if f == nil {
+		return make(map[string]uint32), nil
+	}
 	defer f.Close()
 
-	m := make(map[string]uint32)
-	var guids map[string][16]byte
+	if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
+		u.debugListRead(folder, "cache", len(m), stampOf(fi))
+		return m, nil
+	}
+	// Only the rows appended since the last read: a large folder re-parsed the
+	// whole file for one new row (#1875).
+	m, guids, from := map[string]uint32(nil), map[string][16]byte(nil), int64(0)
+	if kept, keptGUIDs, at, ok := u.folderCacheFor(folder).snapshotForAppend(stampOf(fi)); ok && appendedAt(f, at) {
+		m, guids, from = kept, keptGUIDs, at
+		listAppendReads.Add(1)
+		metricUIDListRead.WithLabelValues("tail").Inc()
+	}
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return nil, err
+	}
+	if m == nil {
+		m = make(map[string]uint32)
+		listReads.Add(1)
+		metricUIDListRead.WithLabelValues("whole").Inc()
+	}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
@@ -1020,7 +1994,10 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 		if err != nil {
 			continue
 		}
-		m[filename] = uint32(uid64)
+		// The key is the base name: it survives a flag change, and it is what
+		// the other implementation writes. Normalising on read keeps the files
+		// we wrote whole under one rule instead of two (#1593).
+		m[maildirBase(filename)] = uint32(uid64)
 		// Optional "G<hex>" field: an explicit GUID that must win over the
 		// name-derived one. A later record for the same file supersedes.
 		for _, fld := range parts[1:] {
@@ -1036,24 +2013,24 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 			}
 			var g [16]byte
 			copy(g[:], raw)
-			guids[filename] = g
+			guids[maildirBase(filename)] = g
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
 
-	c := u.folderCacheFor(folder)
-	c.uidMap = m
-	c.guidMap = guids
-	c.uidMtime = fi.ModTime()
-	c.uidSize = fi.Size()
+	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
+	u.debugListRead(folder, "disk", len(m), stampOf(fi))
 	return m, nil
 }
 
-// folderCacheFor returns the folderCache for folder, creating it if needed.
-// Caller must hold u.mu or ensure single-goroutine access.
+// folderCacheFor returns this folder's cache entry, creating it if needed.
+// Under the in-process mutex, because the reconcile's scan reaches it holding
+// no mailbox lock (#1626); that mutex is not the cross-process one.
 func (u *userMailbox) folderCacheFor(folder string) *folderCache {
+	u.cacheMu.Lock()
+	defer u.cacheMu.Unlock()
 	if u.cache == nil {
 		u.cache = make(map[string]*folderCache)
 	}
@@ -1067,14 +2044,9 @@ func (u *userMailbox) folderCacheFor(folder string) *folderCache {
 
 // ---- path helpers ----------------------------------------------------------
 
-// folderDiskName maps a logical folder name to the on-disk directory component:
-// storage-name escaping, then modified-UTF-7 when legacy encoding is set.
-//
-// It does not normalise. NFC is applied once at the name-entry boundary
-// (mailbox.NormalizeName), so folder arrives already in its final form and the
-// order of NFC against escaping -- which lived here and in FolderSubpath both,
-// and broke a name with a combining mark straight after an escape -- no longer
-// exists to get wrong (#1113).
+// folderDiskName maps a folder to its on-disk component: escaping, then
+// modified-UTF-7 under legacy encoding. It does not normalise -- NFC happens
+// once at name entry, so its order against escaping cannot be got wrong (#1113).
 func (u *userMailbox) folderDiskName(folder string) string {
 	folder = mailbox.EscapeLogicalName(folder, u.separator, ".", u.escapeChar)
 	if !u.listUTF8 {
@@ -1083,10 +2055,9 @@ func (u *userMailbox) folderDiskName(folder string) string {
 	return folder
 }
 
-// checkName refuses a folder name that would resolve outside its own folder.
-//
-// INBOX is exempt because it names the root deliberately; every other name that
-// resolves there does so by accident, and the accident removes a mailbox.
+// checkName refuses a name resolving outside its own folder. INBOX is exempt
+// because it names the root deliberately; any other name doing so is an accident
+// that removes a mailbox.
 func (u *userMailbox) checkName(folder string) error {
 	if folder == "INBOX" {
 		return nil
@@ -1094,19 +2065,9 @@ func (u *userMailbox) checkName(folder string) error {
 	return mailbox.ValidateFolderName(folder, u.separator)
 }
 
-// folderPath maps a folder name to its directory.
-//
-// A name that would resolve to the mailbox root or above it is mapped to a
-// path that cannot exist instead. Refusing here rather than only in the
-// mutating operations is what makes it safe: the same names read another
-// account's mail on a deployment whose IMAP separator is "." — the rewrite to
-// the on-disk separator neutralises "../" only while the two differ, which is
-// configuration rather than a guarantee (#1063).
-//
-// Every caller then fails with "no such file or directory", which is the right
-// answer for a mailbox that cannot exist. The operations that destroy data
-// check the name explicitly as well, so they refuse with a message naming the
-// cause rather than a missing path.
+// folderPath maps a folder to its directory, sending anything resolving at or
+// above the mailbox root to a path that cannot exist -- here and not only in the
+// mutating calls, since an IMAP separator of "." stops neutralising "../" (#1063).
 func (u *userMailbox) folderPath(folder string) string {
 	if folder != "INBOX" {
 		if err := mailbox.ValidateFolderName(folder, u.separator); err != nil {
@@ -1122,12 +2083,8 @@ func (u *userMailbox) folderPath(folder string) string {
 	return filepath.Join(u.mailPath, mailbox.FolderSubpath("maildir", folder, u.folderDiskName(folder), u.separator))
 }
 
-// controlFolderPath returns the directory for per-folder control files
-// (yarilo-uidlist): under controlDir when CONTROL= is set, else co-located
-// with the folder.
-// invalidFolderMarker is the directory an invalid name resolves to. It is not
-// a legal maildir++ folder name — a folder is ".name" — so it cannot collide
-// with a real one, and it does not exist, so every read and write fails.
+// invalidFolderMarker is where an invalid name resolves: not a legal maildir++
+// name, so it cannot collide, and absent, so every read and write fails.
 const invalidFolderMarker = "invalid-folder-name"
 
 func (u *userMailbox) controlFolderPath(folder string) string {
@@ -1153,6 +2110,321 @@ func (u *userMailbox) controlFolderPath(folder string) string {
 }
 
 // ---- flag helpers ----------------------------------------------------------
+
+// WriteFlags renames a message so its name carries its flags, which is where a
+// maildir keeps them. Within one directory, so the rename is atomic; a new
+// keyword takes the first free letter and never renumbers one in use.
+func (u *userMailbox) WriteFlags(folder, filename string, flags, keywords []string) (string, error) {
+	var newName string
+	err := u.withMailboxLockSite(folder, lockSiteWriteFlags, func() error {
+		letters, lerr := u.keywordLettersLocked(folder, keywords)
+		if lerr != nil {
+			return lerr
+		}
+		var werr error
+		newName, werr = u.writeFlagsLocked(folder, filename, flags, letters)
+		return werr
+	})
+	if err != nil {
+		return filename, err
+	}
+	return newName, nil
+}
+
+// WriteFlagsMulti records a command's flag writes under one acquisition, reading
+// the keyword file once for the batch rather than once per message (#1623). Best
+// effort stays per message: a failure is reported against its uid.
+func (u *userMailbox) WriteFlagsMulti(folder string, writes []mailbox.FlagWrite) []mailbox.FlagWriteResult {
+	out := make([]mailbox.FlagWriteResult, len(writes))
+	for i := range writes {
+		out[i] = mailbox.FlagWriteResult{UID: writes[i].UID, Filename: writes[i].Filename}
+	}
+	// Timed in three: one acquisition covers the batch (#1623), so a slow one
+	// is either the wait, the keyword file, or the renames themselves -- and
+	// the summed number said only that the batch was slow (#1662).
+	whole := time.Now()
+	var lockMS, keywordsMS, renamesMS int64
+	renamed := 0
+	err := u.withMailboxLockSite(folder, lockSiteWriteFlagsBulk, func() error {
+		lockMS = time.Since(whole).Milliseconds()
+		kwStart := time.Now()
+		t := u.loadKeywordTableLocked(folder)
+		added := false
+		for i := range writes {
+			if t.allocate(u, folder, writes[i].Keywords) {
+				added = true
+			}
+		}
+		if added {
+			if werr := u.writeKeywordFileLocked(folder, t.names); werr != nil {
+				return werr
+			}
+		}
+		keywordsMS = time.Since(kwStart).Milliseconds()
+		renStart := time.Now()
+		defer func() { renamesMS = time.Since(renStart).Milliseconds() }()
+		for i := range writes {
+			if beforeFlagRename != nil {
+				beforeFlagRename()
+			}
+			name, werr := u.writeFlagsLocked(folder, writes[i].Filename,
+				writes[i].Flags, t.letters(writes[i].Keywords))
+			if werr != nil {
+				out[i].Err = werr
+				continue
+			}
+			if name != writes[i].Filename {
+				renamed++
+			}
+			out[i].Filename = name
+		}
+		return nil
+	})
+	slog.Debug("maildir: flags timing",
+		"user", u.username, "folder", folder, "writes", len(writes), "renamed", renamed,
+		"lock_ms", lockMS, "keywords_ms", keywordsMS, "renames_ms", renamesMS,
+		"total_ms", time.Since(whole).Milliseconds())
+	if err != nil {
+		// The lock itself: nothing in the batch was written.
+		for i := range out {
+			out[i].Err = err
+		}
+	}
+	return out
+}
+
+// beforeFlagRename runs before each rename. Test seam: the rename clock has to
+// be proven to span the writes, since a fast disk reports zero either way.
+var beforeFlagRename func()
+
+// writeFlagsLocked renames one file, with its keyword letters already resolved.
+// The caller holds the folder lock.
+func (u *userMailbox) writeFlagsLocked(folder, filename string, flags []string, letters string) (string, error) {
+	name, err := u.renameForFlags(folder, filename, flags, letters)
+	if err != nil || name != "" {
+		return nameOr(name, filename), err
+	}
+	// The name came from a listing that has moved on: re-sync it and ask once
+	// more, the way an open does (#1987, as the reference does).
+	metricListingRetry.WithLabelValues("rename").Inc()
+	if rerr := u.relistFor(folder); rerr != nil {
+		return filename, nil
+	}
+	now, _, nerr := u.currentName(folder, maildirBase(filename))
+	if nerr != nil || now == filename {
+		return filename, nil
+	}
+	name, err = u.renameForFlags(folder, now, flags, letters)
+	// Still not there: left to the reconcile pass, because failing here turns
+	// a flag change into an error a client cannot act on.
+	return nameOr(name, filename), err
+}
+
+func nameOr(name, fallback string) string {
+	if name == "" {
+		return fallback
+	}
+	return name
+}
+
+// renameForFlags renames the file if it is where the name says. An empty name
+// back means it is not there, which is the caller's to answer.
+func (u *userMailbox) renameForFlags(folder, filename string, flags []string, letters string) (string, error) {
+	want := renameWithFlags(filename, encodeFlags(flags)+letters)
+	if want == filename {
+		return filename, nil
+	}
+	dir := u.folderPath(folder)
+	for _, sub := range []string{"cur", "new"} {
+		from := filepath.Join(dir, sub, filename)
+		if _, serr := statPath(from); serr != nil {
+			continue
+		}
+		// A name that carries flags cannot stay in new/: the flags land in
+		// cur/ with the file, which is the move the sync would have made
+		// anyway (#1959).
+		if rerr := os.Rename(from, filepath.Join(dir, "cur", want)); rerr != nil {
+			return "", fmt.Errorf("maildir/flags: rename %s: %w", filename, rerr)
+		}
+		u.afterFlagRename(folder, sub, filename, want)
+		return want, nil
+	}
+	return "", nil
+}
+
+// afterFlagRename keeps the listing this process just changed, under the name
+// it now wears.
+func (u *userMailbox) afterFlagRename(folder, sub, from, to string) {
+	cache := u.folderCacheFor(folder)
+	dir := filepath.Join(u.folderPath(folder), "cur")
+	fi, err := statPath(dir)
+	if err != nil {
+		cache.invalidateDirEntries("own-write")
+		return
+	}
+	// A file coming out of new/ was never in the cur/ listing, so it is an
+	// arrival there rather than a rename of a row it holds.
+	if sub == "new" {
+		cache.addEntry(dir, to, fi.ModTime())
+		return
+	}
+	cache.renameEntry(from, to, fi.ModTime())
+}
+
+// renameWithFlags returns the filename with its ":2," info part replaced.
+func renameWithFlags(filename, info string) string {
+	base := filename
+	if i := strings.Index(filename, ":2,"); i >= 0 {
+		base = filename[:i]
+	}
+	return base + ":2," + info
+}
+
+// keywordLetters is keywordLettersLocked under the folder lock, for callers
+// that do not already hold it -- Save writes into its own tmp file and takes
+// the lock for nothing else.
+func (u *userMailbox) keywordLetters(folder string, keywords []string) (string, error) {
+	if len(keywords) == 0 {
+		return "", nil
+	}
+	var letters string
+	err := u.withMailboxLockSite(folder, lockSiteKeywords, func() error {
+		var lerr error
+		letters, lerr = u.keywordLettersLocked(folder, keywords)
+		return lerr
+	})
+	return letters, err
+}
+
+// keywordLettersLocked returns the letters standing for keywords, adding any
+// the folder's keyword file does not name yet. Sorted, so a name is one string
+// regardless of the order the keywords arrived in.
+func (u *userMailbox) keywordLettersLocked(folder string, keywords []string) (string, error) {
+	if len(keywords) == 0 {
+		return "", nil
+	}
+	t := u.loadKeywordTableLocked(folder)
+	if t.allocate(u, folder, keywords) {
+		if err := u.writeKeywordFileLocked(folder, t.names); err != nil {
+			return "", err
+		}
+	}
+	return t.letters(keywords), nil
+}
+
+// sectionProbe reports what the reconcile's critical section did to the
+// filesystem, so "no directory walk under the lock" is counted rather than
+// described (#1626).
+var sectionProbe func(dirReads, stats int)
+
+// cleanProbe reports how many records the clean-check compared, so a test
+// asserting "no lock taken" knows it ran over a real folder (#1630).
+var cleanProbe func(records int)
+
+// movePhaseProbe reports whether the new/ move phase took the lock, so a test
+// asserting "one acquisition, not two" knows the phase was skipped rather than
+// assuming it (#1630).
+var movePhaseProbe func(taken bool)
+
+// afterScan runs between the unlocked scan and the apply, so a test can make
+// the scan stale on purpose -- which is the only way to exercise the rule that
+// a name the scan saw may already have moved on (#1626).
+var afterScan func()
+
+// keywordFileRead is called with the keyword file's path on every read of it.
+// Nil in a running server; a test sets it to count reads, which is how "once
+// per batch" is asserted rather than described (#1623).
+var keywordFileRead func(path string)
+
+// keywordTable is a folder's keyword file held in memory, so a batch reads and
+// rewrites it once rather than per message (#1623).
+type keywordTable struct {
+	names  map[byte]string
+	byName map[string]byte
+}
+
+func (u *userMailbox) loadKeywordTableLocked(folder string) *keywordTable {
+	names := u.keywordNames(folder)
+	if names == nil {
+		// No keyword file yet: this folder is about to have its first keyword.
+		names = make(map[byte]string)
+	}
+	byName := make(map[string]byte, len(names))
+	for letter, name := range names {
+		byName[name] = letter
+	}
+	return &keywordTable{names: names, byName: byName}
+}
+
+// allocate gives every keyword a letter it does not already have, and reports
+// whether the table changed.
+func (t *keywordTable) allocate(u *userMailbox, folder string, keywords []string) bool {
+	added := false
+	for _, kw := range keywords {
+		if _, ok := t.byName[kw]; ok {
+			continue
+		}
+		letter, ok := firstFreeKeywordLetter(t.names)
+		if !ok {
+			// Twenty-six is all a maildir name can carry. The keyword stays in
+			// the index with no letter; dropping it there would lose it.
+			slog.Warn("maildir: no free keyword letter left in this folder",
+				"user", u.username, "folder", folder, "keyword", kw)
+			continue
+		}
+		t.names[letter] = kw
+		t.byName[kw] = letter
+		added = true
+	}
+	return added
+}
+
+func (t *keywordTable) letters(keywords []string) string {
+	letters := make([]byte, 0, len(keywords))
+	for _, kw := range keywords {
+		if letter, ok := t.byName[kw]; ok {
+			letters = append(letters, letter)
+		}
+	}
+	sort.Slice(letters, func(i, j int) bool { return letters[i] < letters[j] })
+	return string(letters)
+}
+
+// firstFreeKeywordLetter returns the lowest letter no keyword holds -- filling a
+// hole rather than taking the next, as the reference does. Either way nothing is
+// renumbered, which would change the meaning of every filename already written.
+func firstFreeKeywordLetter(names map[byte]string) (byte, bool) {
+	for c := byte('a'); c <= 'z'; c++ {
+		if _, taken := names[c]; !taken {
+			return c, true
+		}
+	}
+	return 0, false
+}
+
+// writeKeywordFileLocked rewrites the folder's keyword file from the mapping.
+func (u *userMailbox) writeKeywordFileLocked(folder string, names map[byte]string) error {
+	letters := make([]byte, 0, len(names))
+	for c := range names {
+		letters = append(letters, c)
+	}
+	sort.Slice(letters, func(i, j int) bool { return letters[i] < letters[j] })
+
+	var b strings.Builder
+	for _, c := range letters {
+		fmt.Fprintf(&b, "%d %s\n", c-'a', names[c])
+	}
+	path := filepath.Join(u.folderPath(folder), keywordsFileName)
+	tmp := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return fmt.Errorf("maildir/keywords: write: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("maildir/keywords: commit: %w", err)
+	}
+	return nil
+}
 
 func encodeFlags(flags []string) string {
 	set := make(map[byte]bool)
@@ -1202,7 +2474,42 @@ func parseSizeInfo(name string) (phys, virt uint32, hasPhys, hasVirt bool) {
 	return
 }
 
+// keywordNames reads the folder's keyword file, one "<index> <name>" per line
+// with the letter being 'a'+index. An unnamed letter stays unresolved: inventing
+// one served a client something nothing on disk said (#1600).
+func (u *userMailbox) keywordNames(folder string) map[byte]string {
+	path := filepath.Join(u.folderPath(folder), keywordsFileName)
+	if keywordFileRead != nil {
+		keywordFileRead(path)
+	}
+	f, err := openPath(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close() //nolint:errcheck
+	out := make(map[byte]string)
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		idxStr, name, found := strings.Cut(strings.TrimRight(sc.Text(), "\r"), " ")
+		if !found || name == "" {
+			continue
+		}
+		idx, cerr := strconv.ParseUint(idxStr, 10, 32)
+		if cerr != nil || idx >= 26 {
+			continue
+		}
+		out['a'+byte(idx)] = name
+	}
+	return out
+}
+
 func decodeFlags(filename string) (flags, keywords []string) {
+	return decodeFlagsWith(filename, nil)
+}
+
+// decodeFlagsWith reads a filename's flags, resolving keyword letters through
+// the folder's keyword file when it names them.
+func decodeFlagsWith(filename string, names map[byte]string) (flags, keywords []string) {
 	idx := strings.Index(filename, ":2,")
 	if idx < 0 {
 		return nil, nil
@@ -1222,7 +2529,12 @@ func decodeFlags(filename string) (flags, keywords []string) {
 			flags = append(flags, `\Deleted`)
 		default:
 			if c >= 'a' && c <= 'z' {
-				keywords = append(keywords, fmt.Sprintf("kw_%c", c))
+				// Only what the keyword file names: a letter with no line has
+				// its name recorded nowhere, and inventing one shows a client
+				// what nothing on disk said (#1600).
+				if name, ok := names[byte(c)]; ok {
+					keywords = append(keywords, name)
+				}
 			}
 		}
 	}
@@ -1233,4 +2545,285 @@ func randomGUID() string {
 	b := make([]byte, 16)
 	rand.Read(b) //nolint:errcheck
 	return fmt.Sprintf("%032x", b)
+}
+
+// UIDSpace reports the UIDVALIDITY and next UID from the uidlist header, which
+// both implementations write alike -- so the file is adopted, not converted. The
+// numbers used to be parsed past, costing a taken-over store its UIDs (#1593).
+func (u *userMailbox) UIDSpace(folder string) (uidValidity, nextUID uint32, ok bool) {
+	f, _, err := u.openUIDList(folder)
+	if err != nil || f == nil {
+		return 0, 0, false
+	}
+	defer f.Close() //nolint:errcheck
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() {
+		return 0, 0, false
+	}
+	fields := strings.Fields(sc.Text())
+	if len(fields) == 0 || fields[0] != "3" {
+		return 0, 0, false
+	}
+	for _, fld := range fields[1:] {
+		if len(fld) < 2 {
+			continue
+		}
+		n, cerr := strconv.ParseUint(fld[1:], 10, 32)
+		if cerr != nil {
+			continue
+		}
+		switch fld[0] {
+		case 'V':
+			uidValidity = uint32(n)
+		case 'N':
+			nextUID = uint32(n)
+		}
+	}
+	// The header's next uid can trail the rows appended after it; the reference
+	// reads past it to the last uid, and so does this.
+	if m, cached := u.folderCacheFor(folder).snapshotUIDs(u.listStampNow(folder)); cached {
+		for _, uid := range m {
+			if uid >= nextUID {
+				nextUID = uid + 1
+			}
+		}
+		return uidValidity, nextUID, uidValidity != 0
+	}
+	for sc.Scan() {
+		line := sc.Text()
+		sp := strings.IndexByte(line, ' ')
+		if sp <= 0 {
+			continue
+		}
+		if uid, perr := strconv.ParseUint(line[:sp], 10, 32); perr == nil && uint32(uid) >= nextUID {
+			nextUID = uint32(uid) + 1
+		}
+	}
+	return uidValidity, nextUID, uidValidity != 0
+}
+
+// UIDFor returns the UID a folder's uidlist records for one file.
+func (u *userMailbox) UIDFor(folder, filename string) (uint32, bool) {
+	m, err := u.readUIDList(folder)
+	if err != nil {
+		return 0, false
+	}
+	uid, ok := m[maildirBase(filename)]
+	return uid, ok
+}
+
+// unlistedBase finds the base holding an unlisted record's own identity. Zero
+// identity matches nothing -- it would pair with whatever file came first.
+func unlistedBase(m *mailbox.MessageMeta, baseByGUID map[[16]byte]string, tracked map[string]struct{}) (string, bool) {
+	var zero [16]byte
+	if m.GUID == zero {
+		return "", false
+	}
+	base, ok := baseByGUID[m.GUID]
+	if !ok {
+		return "", false
+	}
+	if _, taken := tracked[base]; taken {
+		return "", false
+	}
+	return base, true
+}
+
+// stillOnDisk reports whether a name the unlocked scan produced is still on
+// disk. One stat, and only for a record the pass changes, so the section's cost
+// follows the changes and not the size of the folder (#1626).
+func (u *userMailbox) stillOnDisk(folder, filename string) bool {
+	if u.inSection.Load() > 0 {
+		u.sectionFS.Add(1)
+	}
+	dir := u.folderPath(folder)
+	for _, sub := range []string{"cur", "new"} {
+		if _, err := lstatPath(filepath.Join(dir, sub, filename)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// hasNewMail reports whether new/ holds anything to move: one unlocked read
+// deciding whether a round trip is worth it. Unreadable answers yes, so the
+// locked phase fails loudly rather than leaving mail invisible (#1630).
+func (u *userMailbox) hasNewMail(folder string) bool {
+	entries, err := os.ReadDir(filepath.Join(u.folderPath(folder), "new"))
+	if err != nil {
+		return !errors.Is(err, os.ErrNotExist)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// bodyReadable reports whether a scanned name resolves to a file at all. Both
+// directories count: a delivery waits in new/ until a sync moves it, and its
+// body is readable from there (#1959).
+func (u *userMailbox) bodyReadable(folder, filename string) bool {
+	if u.inSection.Load() > 0 {
+		u.sectionFS.Add(1)
+	}
+	_, ok := u.locate(folder, filename)
+	return ok
+}
+
+// locate finds a message in cur/ first, then new/ under its bare name; the
+// reference orders by a remembered bit, with the same answers (#1959).
+func (u *userMailbox) locate(folder, filename string) (path string, ok bool) {
+	base := u.folderPath(folder)
+	cur := filepath.Join(base, "cur", filename)
+	if _, err := lstatPath(cur); err == nil {
+		return cur, true
+	}
+	arrival := filepath.Join(base, "new", maildirBase(filename))
+	if _, err := lstatPath(arrival); err == nil {
+		return arrival, true
+	}
+	return "", false
+}
+
+// reconcileIsClean reports whether the scan and the index agree, so the apply
+// phase need not take its lock. False whenever it cannot be sure, including an
+// empty folder still waiting to adopt a UID space.
+func (u *userMailbox) reconcileIsClean(idx mailbox.UserIndex, folder *mailbox.Folder, scanned []mailbox.ScanRecord) bool {
+	reader, ok := idx.(mailbox.UnlockedReader)
+	if !ok {
+		return false
+	}
+	existing, err := reader.GetMessagesUnlocked(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil || len(existing) == 0 {
+		return false
+	}
+	// By base name, which the list holds and a flag change does not move.
+	uidToBase, err := u.basesByUID(folder.Name)
+	if err != nil {
+		return false
+	}
+	var zeroGUID [16]byte
+	byName := make(map[string]*mailbox.MessageMeta, len(existing))
+	for _, m := range existing {
+		base, known := uidToBase[m.UID]
+		if !known {
+			return false
+		}
+		if _, dup := byName[base]; dup {
+			// Two records on one file: the pass collapses them, which is work.
+			return false
+		}
+		byName[base] = m
+	}
+	// Counted, not just matched: a record for a file the scan does not report
+	// is work even when every scanned file is known.
+	if len(byName) != len(scanned) {
+		return false
+	}
+	for i := range scanned {
+		if scanned[i].Filename == "" {
+			return false
+		}
+		m, known := byName[maildirBase(scanned[i].Filename)]
+		if !known {
+			return false
+		}
+		if m.GUID == zeroGUID && scanned[i].GUID != zeroGUID {
+			// The record has no identity and the storage has one for it:
+			// stamping it is the only thing that ever will.
+			return false
+		}
+		if !m.FlagsDirty &&
+			(!sameFlags(scanned[i].Flags, m.Flags) || !sameFlags(scanned[i].Keywords, m.Keywords)) {
+			// The name says something else about the flags, and the name is
+			// the truth: adopting it is work (#1700).
+			return false
+		}
+	}
+	if cleanProbe != nil {
+		cleanProbe(len(existing))
+	}
+	return true
+}
+
+// Username implements mailbox.SelfNaming: a diagnostic line names the account.
+func (u *userMailbox) Username() string { return u.username }
+
+// HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
+func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
+	return u.withMailboxLockSite(folder, site, fn)
+}
+
+// The base falls back to Remove for a driver that does not implement it, which
+// would put the per-message read back without failing anything (#1809).
+var _ mailbox.HeldRemover = (*userMailbox)(nil)
+var _ mailbox.SaveDiscarder = (*userMailbox)(nil)
+var _ mailbox.MoveRestorer = (*userMailbox)(nil)
+
+// RemoveHeld is Remove inside a hold the caller already took: a maildir unlink
+// takes none of its own, and the listing survives because nothing else writes.
+func (u *userMailbox) RemoveHeld(folder, filename string) error {
+	return u.removeFile(folder, filename, true)
+}
+
+// DriverName is the label this driver's messages are counted under.
+func (u *userMailbox) DriverName() string { return driverName }
+
+// FsyncMode is what a delivery makes durable here, so the wiring of the
+// configured mode has a reader (#1969).
+func (b *Backend) FsyncMode() mailbox.FsyncMode { return b.fsync }
+
+// uidListStamp is the uid list as one stat sees it, in the fields the stamp
+// keeps (as the reference does).
+func (u *userMailbox) uidListStamp(folder string) (mailbox.MaildirStamp, bool) {
+	metricCacheStat.WithLabelValues("list").Inc()
+	fi, err := statPath(u.uidListPath(folder))
+	if err != nil {
+		return mailbox.MaildirStamp{}, false
+	}
+	mt := fi.ModTime()
+	return mailbox.MaildirStamp{
+		UIDListMtime:      uint32(mt.Unix()),
+		UIDListMtimeNsecs: uint32(mt.Nanosecond()),
+		UIDListSize:       uint32(fi.Size()),
+	}, true
+}
+
+// stampUIDList records what a full pass read the list at, so the next open can
+// ask one stat rather than a walk.
+func (u *userMailbox) stampUIDList(idx mailbox.UserIndex, folder *mailbox.Folder) {
+	st, ok := idx.(mailbox.MaildirStamped)
+	if !ok {
+		return
+	}
+	now, have := u.uidListStamp(folder.Name)
+	if !have {
+		return
+	}
+	if err := st.SetMaildirStamp(folder.ID, now); err != nil {
+		slog.Warn("maildir: the uid list stamp was not recorded",
+			"user", u.username, "folder", folder.Name, "err", err)
+	}
+}
+
+// windowFromStamp opens the window a walk would have earned, when the list is
+// the one the index was built from.
+func (u *userMailbox) windowFromStamp(idx mailbox.UserIndex, folder *mailbox.Folder) {
+	st, ok := idx.(mailbox.MaildirStamped)
+	if !ok {
+		return
+	}
+	was, have := st.MaildirStamp(folder.ID)
+	if !have || was.UIDListSize == 0 {
+		return
+	}
+	now, fresh := u.uidListStamp(folder.Name)
+	if !fresh || now != was {
+		metricStampMiss.Inc()
+		return
+	}
+	metricStampHit.Inc()
+	u.folderCacheFor(folder.Name).markChecked()
 }

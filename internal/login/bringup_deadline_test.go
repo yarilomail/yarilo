@@ -38,10 +38,6 @@ func startSilentBackend(t *testing.T) string {
 // gets a keep-open NO [UNAVAILABLE] on the same connection — the warden slot
 // released — instead of hanging until the client's own deadline.
 func TestBackendBringupDeadlineDoesNotHang(t *testing.T) {
-	prev := backendBringupTimeout
-	backendBringupTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { backendBringupTimeout = prev })
-
 	wardenAddr, wardenSrv := startWardenWithHandle(t)
 	authAddr := startOKAuth(t)
 	silent := startSilentBackend(t)
@@ -52,6 +48,7 @@ func TestBackendBringupDeadlineDoesNotHang(t *testing.T) {
 			AuthAddr:            authAddr,
 			WardenAddr:          wardenAddr,
 			BackendAddr:         silent,
+			ProxyTimeout:        300 * time.Millisecond,
 			TransientRetries:    -1, // fail the bring-up on the first timeout
 			TransientReloginCap: 2,  // keep open for one re-LOGIN, then close
 		},

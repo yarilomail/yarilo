@@ -1,20 +1,30 @@
 package jmap
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"sync"
+	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 // Storage wires everything a request needs to reach one user's mail. It mirrors
 // the session protocols: userdb resolves the storage identity, then the backends
 // hand out per-user handles.
 type Storage struct {
+	// folderIDs maps a folder's GUID to its name, per user: a handle lives for
+	// one request, and the id lookup needs the identity across them (#1711).
+	folderIDsMu sync.Mutex
+	folderIDs   map[string]*folderIdentities
+
 	Mailbox mailbox.MailboxBackend
 	Index   mailbox.IndexBackend
 	// ResolveUser maps a username to its storage identity (userdb).
@@ -30,6 +40,11 @@ type Storage struct {
 	// SpecialUseDefaults maps folder name to its attribute, from
 	// protocol.imap.imap_special_use_defaults. Per-user overrides win.
 	SpecialUseDefaults map[string]string
+	// Mailboxes are the personal namespace's configured ones; the Box makes
+	// them on any open, as for every other server (#2005).
+	Mailboxes map[string]mailbox.AutoMailbox
+	// MailboxLimit is quota_mailbox_count, zero for none.
+	MailboxLimit int64
 }
 
 // userHandle is one request's view of a user's mail. JMAP has no session, so a
@@ -39,26 +54,29 @@ type userHandle struct {
 	info       *mailbox.UserInfo
 	threads    *threads.Cache
 	box        mailbox.UserMailbox
-	idx        mailbox.UserIndex
+	mbox       mailbox.Box
 	subs       *subs.Store
 	specialUse *specialuse.Store
+
+	// quotaUsage is the last count and when it was taken: four methods answer
+	// from one count, and a request asking several of them counted the whole
+	// account once per method (#1875).
+	quotaUsage quota.Usage
+	quotaAt    time.Time
+
+	// folders is the process-wide map of folder identities: a handle lives for
+	// one request, and the folder list carries no GUIDs (#1711).
+	folders *folderIdentities
 }
 
 func (h *userHandle) close() {
-	if h.box != nil {
-		if err := h.box.Close(); err != nil {
-			slog.Debug("jmap: mailbox close failed", "err", err)
-		}
-	}
-	if h.idx != nil {
-		if err := h.idx.Close(); err != nil {
-			slog.Debug("jmap: index close failed", "err", err)
-		}
+	if h.mbox != nil {
+		h.mbox.Close()
 	}
 }
 
 // open resolves the user and opens their handles.
-func (s *Storage) open(username string) (*userHandle, error) {
+func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	if s == nil || s.ResolveUser == nil || s.Mailbox == nil || s.Index == nil {
 		return nil, fmt.Errorf("jmap: storage is not wired")
 	}
@@ -72,14 +90,28 @@ func (s *Storage) open(username string) (*userHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jmap: userdb %s: %w", username, err)
 	}
+	if sessionID != "" {
+		info.SessionID = sessionID
+	}
+	// The session's own name on every lock this request takes. It used to pass
+	// the bare username as the owner: one segment, no process, no request
+	// (#1670).
+	owner := locks.Owner(username, info.LockID())
 	h := &userHandle{
 		info: info,
 		box:  s.mailboxFor(info).OpenUser(info),
-		idx:  s.Index.OpenUser(info),
 	}
+	// The user's INBOX is made on any open, as IMAP's login makes it: a fresh
+	// account's first Mailbox/get otherwise found no store at all.
+	if err := h.box.Init(); err != nil {
+		h.box.Close() //nolint:errcheck
+		return nil, fmt.Errorf("jmap: init %s: %w", username, err)
+	}
+	h.folders = s.folderIdentitiesFor(username)
 	h.threads = s.Threads
-	h.subs = subs.New(controlRoot(info), subsFile, username, username, s.Locker)
-	h.specialUse = specialuse.New(info.Home, username, username, s.Locker, s.SpecialUseDefaults)
+	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)
+	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info), mailboxbase.WithAuto(s.boxAuto(h)))
+	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)
 	return h, nil
 }
 
@@ -111,6 +143,10 @@ func (s *Storage) mailboxFor(info *mailbox.UserInfo) mailbox.MailboxBackend {
 // and Core/echo — whose whole purpose is to answer when other things do not —
 // must never be the first thing a broken dependency takes out.
 type lazyStore struct {
+	// sessionID is the login hop's id for this request, and what its locks
+	// announce (#1670).
+	sessionID string
+
 	storage *Storage
 	user    string
 	handle  *userHandle
@@ -130,12 +166,32 @@ func (l *lazyStore) get() (*userHandle, error) {
 		l.err = fmt.Errorf("jmap: no mail store configured")
 		return nil, l.err
 	}
-	l.handle, l.err = l.storage.open(l.user)
+	l.handle, l.err = l.storage.open(l.user, l.sessionID)
 	return l.handle, l.err
 }
 
 func (l *lazyStore) close() {
 	if l.handle != nil {
 		l.handle.close()
+	}
+}
+
+// boxAuto is the personal namespace's configured mailboxes with the list event
+// and the subscription file a made one gets, as IMAP gives them.
+func (s *Storage) boxAuto(h *userHandle) mailboxbase.Auto {
+	return mailboxbase.Auto{
+		Mailboxes: s.Mailboxes,
+		Limit:     s.MailboxLimit,
+		Created: func(rel string) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := s.Locker.Emit(ctx, locks.MailboxListKey(h.info.Username), locks.EventMailboxCreate, rel); err != nil {
+				slog.Debug("jmap: emit list event failed", "folder", rel, "err", err)
+			}
+		},
+		Subscribe: func(rel string) error {
+			_, err := h.subs.AddOwn(rel)
+			return err
+		},
 	}
 }

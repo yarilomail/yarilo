@@ -6,6 +6,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/internal/msgcache"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
@@ -18,29 +19,30 @@ import (
 type envelopeCaches struct {
 	s    *Server
 	h    *userHandle
-	open map[uint64]*msgcache.Handle
+	open map[uint64]mailbox.EnvelopeCache
 }
 
 func (s *Server) newEnvelopeCaches(h *userHandle) *envelopeCaches {
-	return &envelopeCaches{s: s, h: h, open: map[uint64]*msgcache.Handle{}}
+	return &envelopeCaches{s: s, h: h, open: map[uint64]mailbox.EnvelopeCache{}}
 }
 
 // folder returns the folder's cache, opening it on first use. A nil *Handle is a
 // working value meaning "no cache", so every caller degrades to parsing rather
 // than to an error -- including the memoised nil of a folder that has none.
-func (c *envelopeCaches) folder(ref messageRef) *msgcache.Handle {
+func (c *envelopeCaches) folder(ref messageRef) mailbox.EnvelopeCache {
 	if c == nil {
 		return nil
 	}
 	if fc, ok := c.open[ref.folderID]; ok {
 		return fc
 	}
-	var fc *msgcache.Handle
-	if c.h.idx != nil && c.s.opts.Storage != nil {
-		fc = msgcache.Open(c.h.idx, ref.folderID, msgcache.Options{
-			Locker: c.s.opts.Storage.Locker,
-			User:   c.h.info.Username,
-			Folder: ref.folder,
+	var fc mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
+	if c.h.mbox != nil && c.s.opts.Storage != nil {
+		fc = c.h.mbox.EnvelopeCache(ref.folderID, mailbox.EnvelopeCacheOptions{
+			Locker:    c.s.opts.Storage.Locker,
+			User:      c.h.info.Username,
+			SessionID: c.h.info.SessionID,
+			Folder:    ref.folder,
 		})
 	}
 	c.open[ref.folderID] = fc
@@ -68,7 +70,9 @@ func (c *envelopeCaches) Close() {
 // Message ids go through messageIDs for the same reason as the parsed path:
 // JMAP carries them bare, without the angle brackets (§4.1.2.4).
 func fillFromEnvelope(email *jmapcore.Email, env *imaplib.Envelope) {
-	if s := env.Subject; s != "" {
+	// The cache holds the header's own text, encoded words and all, because
+	// that is what IMAP answers with; JMAP carries decoded text (#2008).
+	if s := decodeWord(env.Subject); s != "" {
 		email.Subject = &s
 	}
 	if !env.Date.IsZero() {
@@ -93,9 +97,8 @@ func envInReplyTo(ids []string) []string {
 	return out
 }
 
-// envAddresses converts ENVELOPE addresses to the JMAP form. Encoded words are
-// already decoded: ExtractEnvelope built these through mail.Header, so decoding
-// again would corrupt a name that literally contains "=?".
+// envAddresses converts ENVELOPE addresses to the JMAP form, decoding the
+// display name: the cache carries the header's own text (#2008).
 func envAddresses(addrs []imaplib.Address) []jmapcore.EmailAddress {
 	if len(addrs) == 0 {
 		return nil
@@ -104,7 +107,7 @@ func envAddresses(addrs []imaplib.Address) []jmapcore.EmailAddress {
 	for _, a := range addrs {
 		addr := jmapcore.EmailAddress{Email: a.Addr()}
 		if a.Name != "" {
-			name := a.Name
+			name := decodeWord(a.Name)
 			addr.Name = &name
 		}
 		out = append(out, addr)

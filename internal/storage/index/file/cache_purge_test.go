@@ -15,7 +15,7 @@ import (
 // record shows.
 func TestPurgeCacheIsANewGeneration(t *testing.T) {
 	home := t.TempDir()
-	ui := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
+	ui := operatorPurgeOnly(home)
 	f, err := ui.OpenFolder("INBOX", 7, "")
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestPurgeCacheIsANewGeneration(t *testing.T) {
 		offsets[uid] = off
 	}
 	cf.Close()
-	if err := ui.SetCacheOffsets(f.ID, offsets); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(offsets)); err != nil {
 		t.Fatal(err)
 	}
 	// Dead weight for the purge to drop.
@@ -124,7 +124,7 @@ func TestPurgeCacheIsANewGeneration(t *testing.T) {
 // The file shrinks to what survived, and leaves no temp behind.
 func TestPurgeCacheReclaims(t *testing.T) {
 	home := t.TempDir()
-	ui := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
+	ui := operatorPurgeOnly(home)
 	f, err := ui.OpenFolder("INBOX", 7, "")
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestPurgeCacheReclaims(t *testing.T) {
 		offsets[uid] = off
 	}
 	cf.Close()
-	if err := ui.SetCacheOffsets(f.ID, offsets); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(offsets)); err != nil {
 		t.Fatal(err)
 	}
 	for uid := uint32(1); uid <= n-5; uid++ {
@@ -187,7 +187,7 @@ func TestPurgeCacheReclaims(t *testing.T) {
 // offsets next (#1184).
 func TestPurgeCacheAbandonsTheGenerationOfAnUnreadableFile(t *testing.T) {
 	home := t.TempDir()
-	ui := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
+	ui := operatorPurgeOnly(home)
 	f, err := ui.OpenFolder("INBOX", 7, "")
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestPurgeCacheAbandonsTheGenerationOfAnUnreadableFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	cf.Close()
-	if err := ui.SetCacheOffsets(f.ID, map[uint32]uint32{1: 512}); err != nil {
+	if err := ui.SetCacheOffsets(f.ID, stampsOf(map[uint32]uint32{1: 512})); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("torn"), 0o600); err != nil {
@@ -232,4 +232,10 @@ func TestPurgeCacheAbandonsTheGenerationOfAnUnreadableFile(t *testing.T) {
 	if len(msgs) != 1 || msgs[0].CacheOffset != 0 {
 		t.Errorf("stale stamp survived: %+v", msgs)
 	}
+}
+
+// operatorPurgeOnly opens an index whose expunges never purge on their own, so
+// the purge under test is the operator's alone.
+func operatorPurgeOnly(home string) *userIndex {
+	return New(WithCachePurgeDeletePercentage(-1)).OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
 }

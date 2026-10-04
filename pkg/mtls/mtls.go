@@ -12,10 +12,12 @@ import (
 	"time"
 )
 
-// ServerConfig returns a *tls.Config for mTLS servers.
-// The server presents certFile/keyFile and requires clients to present a cert
-// signed by the CA in caFile.
-func ServerConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+// ServerConfig returns a *tls.Config for mTLS servers: it presents certFile/keyFile
+// and requires a client certificate from caFile carrying a role that l accepts.
+func ServerConfig(certFile, keyFile, caFile string, l Listener) (*tls.Config, error) {
+	if _, ok := allowed[l]; !ok {
+		return nil, fmt.Errorf("mtls: unknown listener %q", l)
+	}
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("mtls: load server cert %q: %w", certFile, err)
@@ -29,6 +31,8 @@ func ServerConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 		ClientCAs:    ca,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		MinVersion:   tls.VersionTLS13,
+		// Runs on resumed sessions too, so a cached ticket keeps the check.
+		VerifyConnection: verifyRole(l),
 	}, nil
 }
 

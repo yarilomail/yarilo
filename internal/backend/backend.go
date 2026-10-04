@@ -4,6 +4,7 @@ package backend
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -12,15 +13,13 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/yarilomail/yarilo/pkg/dict/drivers/all" // register all dict drivers
+	"github.com/yarilomail/yarilo/pkg/dict/proxy"
 
-	"github.com/emersion/go-sasl"
-
-	"github.com/yarilomail/yarilo/internal/auth/oauth2"
-	"github.com/yarilomail/yarilo/internal/auth/passdbs"
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/connlimit"
 	"github.com/yarilomail/yarilo/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
 	imapsvr "github.com/yarilomail/yarilo/internal/imap"
 	"github.com/yarilomail/yarilo/internal/lmtp"
 	mssvr "github.com/yarilomail/yarilo/internal/managesieve"
@@ -29,7 +28,10 @@ import (
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/internal/storage/search"
 	submsvr "github.com/yarilomail/yarilo/internal/submission"
 	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/internal/telemetry"
@@ -38,6 +40,8 @@ import (
 	authclient "github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/dict"
+	filedict "github.com/yarilomail/yarilo/pkg/dict/file"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -55,6 +59,7 @@ type Server struct {
 	lmtp        *lmtp.Server    // nil if LMTP not configured
 	managesieve *mssvr.Server   // nil if ManageSieve not configured
 	locker      locks.Locker    // cross-process write coordinator; nil = disabled
+	quotaClone  *quota.Clone    // usage mirror; flushed on Close
 
 	// Per-protocol TLS configs, kept so each Run* binds its listener before
 	// reporting readiness. New cannot bind: the co-located pod runs one
@@ -67,6 +72,9 @@ type Server struct {
 // Close releases backend resources. Session binaries should defer Close after
 // backend.New for clean lock and dict release.
 func (s *Server) Close() error {
+	// The mirror first: it holds values no session is left to flush, and the
+	// locks client may be what its writes travel through.
+	s.quotaClone.Close()
 	if s.locker != nil {
 		return s.locker.Close()
 	}
@@ -83,43 +91,33 @@ func (s *Server) startReadyFile(ctx context.Context, proto string) {
 	go readyfile.Touch(ctx, reg.ReadinessDir, proto, time.Duration(reg.ReadinessTouchInterval)*time.Second, ready)
 }
 
+// internalClientTLS is the client side of internal_tls, for the dict and FTS services.
+func internalClientTLS(cfg *config.Config) (*tls.Config, error) {
+	if !cfg.InternalTLS.Enabled {
+		return nil, nil
+	}
+	t, err := mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA,
+		cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
+	if err != nil {
+		return nil, fmt.Errorf("backend: internal mtls client: %w", err)
+	}
+	return t, nil
+}
+
+// dictConns is the configured ceiling, or the package default.
+func dictConns(cfg *config.Config) int {
+	if n := cfg.DictService.DictMaxConns; n > 0 {
+		return n
+	}
+	return proxy.DefaultMaxConns
+}
+
+// ErrNoDictService names the key a session process needs to reach a configured
+// dict: it links no engine, so there is nothing to open in-process (#1733).
+var ErrNoDictService = errors.New("dict_service.dict_addr is required: sessions reach their dicts through yarilo-dict")
+
 // New creates and wires all components according to cfg.
 func New(cfg *config.Config) (*Server, error) {
-	// ---- auth ----
-	passdbs, err := buildPassdbs(cfg.Auth.Passdb)
-	if err != nil {
-		return nil, fmt.Errorf("backend: auth: %w", err)
-	}
-	// OAuth2 passdbs go ahead of SQL so SQL never sees a bearer token
-	// as a plaintext "password".
-	if len(cfg.Auth.OAuth2) > 0 {
-		oauth2pdbs, err := oauth2.BuildPassdbs(context.Background(), cfg.Auth.OAuth2)
-		if err != nil {
-			return nil, fmt.Errorf("backend: oauth2: %w", err)
-		}
-		passdbs = append(oauth2pdbs, passdbs...)
-	}
-	authCache := protocol.NewCache(
-		cfg.Auth.Cache.CacheSizeBytes(),
-		time.Duration(cfg.Auth.Cache.TTLSeconds)*time.Second,
-		time.Duration(cfg.Auth.Cache.NegativeTTLSeconds)*time.Second,
-	)
-	authOpts := []protocol.AuthenticatorOption{
-		protocol.WithAuthenticatorCache(authCache),
-	}
-	if cfg.Auth.MasterUsers.Enabled {
-		masterdbs, err := buildPassdbs(cfg.Auth.MasterUsers.Masterdb)
-		if err != nil {
-			return nil, fmt.Errorf("backend: masterdb: %w", err)
-		}
-		authOpts = append(authOpts,
-			protocol.WithAuthenticatorMasterUsers(true),
-			protocol.WithAuthenticatorMasterdb(masterdbs),
-			protocol.WithAuthenticatorMasterUserSeparator(cfg.Auth.MasterUsers.Separator),
-		)
-	}
-	authChain := protocol.NewAuthenticator(passdbs, authOpts...)
-
 	// ---- storage ----
 	if cfg.Storage.MaildirRoot == "" {
 		cfg.Storage.MaildirRoot = "/var/mail/vhosts"
@@ -145,20 +143,13 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	mbox := buildMailbox(cfg.Storage, locker)
 
-	// Per-namespace mailbox driver overrides; namespaces on the global
-	// driver are absent from the map.
-	nsMailboxes, err := buildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker)
-	if err != nil {
-		return nil, fmt.Errorf("backend: namespace mailboxes: %w", err)
-	}
-
 	// ---- dicts ----
-	metadataDict, err := buildDict(cfg.Dicts, "metadata")
+	metadataDict, err := buildDict(cfg, "metadata")
 	if err != nil {
 		return nil, fmt.Errorf("backend: dicts.metadata: %w", err)
 	}
 	// Owner-discovery registry (#1168); empty name resolves to nil = disabled.
-	sharedDict, err := buildDict(cfg.Dicts, cfg.ACL.SharedDict)
+	sharedDict, err := buildDict(cfg, cfg.ACL.SharedDict)
 	if err != nil {
 		return nil, fmt.Errorf("backend: dicts.%s (acl_shared_dict): %w", cfg.ACL.SharedDict, err)
 	}
@@ -172,7 +163,7 @@ func New(cfg *config.Config) (*Server, error) {
 	// ---- quota_clone mirror (fan-out to N dicts, shared by IMAP + LMTP) ----
 	var cloneDicts []dict.Dict
 	for _, name := range cfg.Quota.CloneDicts {
-		d, err := buildDict(cfg.Dicts, name)
+		d, err := buildDict(cfg, name)
 		if err != nil {
 			return nil, fmt.Errorf("backend: quota_clone dict %q: %w", name, err)
 		}
@@ -182,17 +173,22 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 		cloneDicts = append(cloneDicts, d)
 	}
-	quotaClone := quota.NewClone(cloneDicts)
+	// The mirror's own timer owns the delay now; zero falls back to the
+	// reference's ten seconds inside NewClone.
+	quotaClone := quota.NewClone(cloneDicts, time.Duration(cfg.Quota.CloneFlushDelay)*time.Second)
 
 	ftsClient, ftsChain, err := BuildFTS(cfg)
 	if err != nil {
 		return nil, err
 	}
-	quotaCloneFlushDelay := time.Duration(cfg.Quota.CloneFlushDelay) * time.Second
-	if quotaCloneFlushDelay <= 0 {
-		quotaCloneFlushDelay = 10 * time.Second
+	// Per-namespace backends; a virtual one draws on the mail, index and
+	// search built above, so it is assembled after them.
+	nsMailboxes, err := BuildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker, VirtualDeps{
+		Mailbox: mbox, Index: idx, Search: SearchOptions(cfg, ftsClient, ftsChain), MetadataDict: metadataDict,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("backend: namespace mailboxes: %w", err)
 	}
-
 	// ---- shared connection limiter (IMAP + POP3) ----
 	connLimiter := connlimit.New(cfg.General.Limits.MaxUserIPConnections)
 
@@ -224,6 +220,16 @@ func New(cfg *config.Config) (*Server, error) {
 		authTLS = t
 	}
 
+	// One relay per process: the mechanism list travels in its handshake, so a
+	// client per session would make that the commonest request (#1733).
+	if authAddr == "" {
+		return nil, fmt.Errorf("backend: %w", authrelay.ErrNoAuthService)
+	}
+	authRelay, err := authrelay.Dial(authAddr, authTLS)
+	if err != nil {
+		return nil, fmt.Errorf("backend: auth relay: %w", err)
+	}
+
 	// One master-protocol pool for the whole process, shared by every
 	// protocol's session handshake. Each handshake resolves the user's storage
 	// identity, and it used to dial for it: 2.6ms of connection for 0.3ms of
@@ -233,28 +239,34 @@ func New(cfg *config.Config) (*Server, error) {
 		masterPool = authclient.NewPool(masterAddr, authTLS,
 			cfg.AuthClient.PoolSizeOrDefault(), cfg.AuthClient.PoolIdleTimeout())
 	}
-	// mTLS server config for the login->backend data path: the PreambleListener
-	// verifies the login's client cert against the internal CA before reading
-	// the YARILO preamble.
-	var internalServerTLS *tls.Config
-	if cfg.InternalTLS.Enabled {
-		t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA)
+	// login->backend data path, one config per port: each accepts only its own login proxy.
+	preambleListeners := []mtls.Listener{mtls.ListenerIMAPBackend, mtls.ListenerPOP3Backend,
+		mtls.ListenerSubmitBackend, mtls.ListenerLMTPBackend, mtls.ListenerSieveBackend}
+	preambleTLS := map[mtls.Listener]*tls.Config{}
+	if !cfg.InternalTLS.Enabled {
+		mtls.WarnRolesUnchecked(preambleListeners...)
+	}
+	for _, l := range preambleListeners {
+		if !cfg.InternalTLS.Enabled {
+			break
+		}
+		t, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, l)
 		if err != nil {
 			return nil, fmt.Errorf("backend: internal_tls server: %w", err)
 		}
-		internalServerTLS = t
+		preambleTLS[l] = t
 	}
 
 	// ---- sieve ----
 	svcs := cfg.Services
 	var sieveEngine *sieve.Engine
-	sieveDict, err := buildDict(cfg.Dicts, cfg.Sieve.ScriptsDictName)
+	sieveDict, err := buildDict(cfg, cfg.Sieve.ScriptsDictName)
 	if err != nil {
 		return nil, fmt.Errorf("backend: sieve dict: %w", err)
 	}
 	// Dict for the Sieve duplicate test (RFC 7352). driver=redis makes the
 	// dedup window cross-pod; absent/memory keeps it per-process.
-	dupDict, err := buildDict(cfg.Dicts, "sieve_duplicate")
+	dupDict, err := buildDict(cfg, "sieve_duplicate")
 	if err != nil {
 		return nil, fmt.Errorf("backend: sieve duplicate dict: %w", err)
 	}
@@ -301,13 +313,13 @@ func New(cfg *config.Config) (*Server, error) {
 			Resolver:           resolver,
 			UserdbLookup:       ownerUserdbLookup(masterAddr, authTLS, resolver),
 			Threads:            threadCache,
-			Auth:               authChain,
+			AuthRelay:          authRelay,
 			ProxyProtocol:      primary.HAProxy,
 			HAProxyTimeout:     haproxyTimeout,
 			HAProxyTrustedNets: haproxyNets,
 			AuthAddr:           authAddr,
 			AuthTLS:            authTLS,
-			PreambleTLS:        internalServerTLS,
+			PreambleTLS:        preambleTLS[mtls.ListenerIMAPBackend],
 			MasterAddr:         masterAddr,
 			MasterPool:         masterPool,
 			MasterTLS:          authTLS,
@@ -316,6 +328,7 @@ func New(cfg *config.Config) (*Server, error) {
 			ConnLimit:          connLimiter,
 			// warden push of the SELECTed mailbox, used by `yarctl who`
 			WardenAddr:           cfg.WardenService.ClientAddr(),
+			WardenEventQueue:     cfg.WardenService.EventQueueSize,
 			WardenTLS:            authTLS,
 			IDSend:               p.IDSend,
 			LoginGreeting:        p.LoginGreeting,
@@ -327,7 +340,6 @@ func New(cfg *config.Config) (*Server, error) {
 			SharedDict:           sharedDict,
 			SieveEngine:          sieveEngine,
 			IMAPQuota:            cfg.Protocol.IMAP.IMAPQuota,
-			MaildirSyncOnSelect:  cfg.Storage.MaildirSyncOnSelect,
 			DboxReactiveRebuild:  cfg.Storage.DboxReactiveRebuild,
 			QuotaEngine:          cfg.Quota.Enabled,
 			QuotaName:            cfg.Quota.Name,
@@ -336,7 +348,6 @@ func New(cfg *config.Config) (*Server, error) {
 			QuotaPolicy:          cfg.Quota.QuotaPolicy(),
 			QuotaWarner:          quotaWarner,
 			QuotaClone:           quotaClone,
-			QuotaCloneFlushDelay: quotaCloneFlushDelay,
 			FTS: imapsvr.FTSOptions{
 				Client:          ftsClient,
 				Chain:           ftsChain,
@@ -382,13 +393,13 @@ func New(cfg *config.Config) (*Server, error) {
 			},
 			Index:              idx,
 			Resolver:           resolver,
-			Auth:               authChain,
+			AuthRelay:          authRelay,
 			ProxyProtocol:      primary.HAProxy,
 			HAProxyTimeout:     haproxyTimeout,
 			HAProxyTrustedNets: haproxyNets,
 			AuthAddr:           authAddr,
 			AuthTLS:            authTLS,
-			PreambleTLS:        internalServerTLS,
+			PreambleTLS:        preambleTLS[mtls.ListenerPOP3Backend],
 			MasterAddr:         masterAddr,
 			MasterPool:         masterPool,
 			MasterTLS:          authTLS,
@@ -414,7 +425,7 @@ func New(cfg *config.Config) (*Server, error) {
 
 		var submissionProxy *submproxy.Submission
 		if cfg.Protocol.Submission.Relay.Host != "" {
-			submissionProxy = submproxy.New(cfg.Protocol.Submission.Relay, cfg.Protocol.Submission.Hostname)
+			submissionProxy = submproxy.New(cfg.Protocol.Submission.Relay, cfg.SubmissionHostname())
 		}
 
 		if primary.SSLMode != "no" && primary.SSLMode != "" {
@@ -431,10 +442,10 @@ func New(cfg *config.Config) (*Server, error) {
 			HAProxyNets:    haproxyNets,
 			AuthAddr:       authAddr,
 			AuthTLS:        authTLS,
-			PreambleTLS:    internalServerTLS,
+			PreambleTLS:    preambleTLS[mtls.ListenerSubmitBackend],
 			TLSConfig:      submissionTLS,
 			Config:         cfg.Protocol.Submission,
-			Auth:           chainAuth{authChain},
+			AuthRelay:      authRelay,
 			Proxy:          submissionProxy,
 			FailureDelay:   time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 		})
@@ -457,7 +468,12 @@ func New(cfg *config.Config) (*Server, error) {
 			return nil, fmt.Errorf("backend: lmtp acl global: %w", err)
 		}
 		lmtpOpts := lmtp.Options{
-			Hostname:             cfg.Protocol.Submission.Hostname,
+			// The installation's name, not submission's. It reached the LHLO
+			// banner, the Received header and the synthesised Message-ID
+			// through protocol.submission.hostname, which is a submission
+			// setting and is empty on a deployment that does not use it
+			// (#1506).
+			Hostname:             cfg.Hostname,
 			Config:               cfg.Protocol.LMTP,
 			Mailbox:              mbox,
 			Index:                idx,
@@ -477,7 +493,7 @@ func New(cfg *config.Config) (*Server, error) {
 			MetadataDict:         metadataDict,
 			AuthAddr:             authAddr,
 			AuthTLS:              authTLS,
-			PreambleTLS:          internalServerTLS,
+			PreambleTLS:          preambleTLS[mtls.ListenerLMTPBackend],
 			SieveEngine:          sieveEngine,
 			Namespaces:           cfg.Namespaces,
 			ACLEnabled:           cfg.ACL.Enabled,
@@ -513,7 +529,7 @@ func New(cfg *config.Config) (*Server, error) {
 			MaxScriptSize:   cfg.Sieve.MaxScriptSize,
 			AuthAddr:        authAddr,
 			AuthTLS:         authTLS,
-			PreambleTLS:     internalServerTLS,
+			PreambleTLS:     preambleTLS[mtls.ListenerSieveBackend],
 			MasterAddr:      masterAddr,
 			MasterPool:      masterPool,
 			MasterTLS:       authTLS,
@@ -564,6 +580,7 @@ func New(cfg *config.Config) (*Server, error) {
 		lmtp:        lmtpServer,
 		managesieve: msServer,
 		locker:      locker,
+		quotaClone:  quotaClone,
 
 		imapTLS:       imapTLS,
 		pop3TLS:       pop3TLS,
@@ -1020,59 +1037,6 @@ func parseCIDRs(cidrs []string) []*net.IPNet {
 	return nets
 }
 
-// chainAuth adapts protocol.Authenticator to the SMTP server's
-// (username, password) -> error surface; only the accept/reject decision
-// is kept.
-type chainAuth struct{ c protocol.Authenticator }
-
-func (a chainAuth) AuthPlain(username, password string) error {
-	resp, err := a.c.Authenticate(username, password, "smtp", "")
-	if err != nil {
-		return fmt.Errorf("smtp/auth: %w", err)
-	}
-	if resp == nil || resp.Result != protocol.AuthOK {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	return nil
-}
-
-// AuthPlainMaster forwards a SASL PLAIN response carrying an authzid to the
-// chain's MasterAuthenticator. If the chain doesn't implement it, the failure
-// is deliberately indistinguishable from a wrong-password rejection.
-func (a chainAuth) AuthPlainMaster(authzid, authid, password string) error {
-	master, ok := a.c.(protocol.MasterAuthenticator)
-	if !ok {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	resp, err := master.AuthenticateMaster(authzid, authid, password, "smtp", "")
-	if err != nil {
-		return fmt.Errorf("smtp/auth: %w", err)
-	}
-	if resp == nil || resp.Result != protocol.AuthOK {
-		return fmt.Errorf("smtp/auth: authentication failed")
-	}
-	return nil
-}
-
-// LookupSCRAMSha256 forwards to the chain's SCRAM verifier lookup. Returns
-// (nil, nil) when the chain has none, so SCRAM mechs are not advertised in EHLO.
-func (a chainAuth) LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error) {
-	lookup, ok := a.c.(protocol.SCRAMSha256Lookup)
-	if !ok {
-		return nil, nil
-	}
-	return lookup.LookupSCRAMSha256(username)
-}
-
-// LookupSCRAMSha1 is the SHA-1 counterpart of LookupSCRAMSha256.
-func (a chainAuth) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error) {
-	lookup, ok := a.c.(protocol.SCRAMSha1Lookup)
-	if !ok {
-		return nil, nil
-	}
-	return lookup.LookupSCRAMSha1(username)
-}
-
 // lazyUserdbLookup builds the LMTP UserdbLookup resolving a recipient's userdb
 // via yarilo-auth. The client is dialled lazily on first lookup and re-dialled
 // on error; an eager dial at New would block readiness when yarilo-auth is
@@ -1138,7 +1102,10 @@ func ResolveUserInfo(resolver *mailbox.Resolver, username string, ui *protocol.U
 	if ui == nil {
 		return nil
 	}
-	mbi := resolver.UserInfo(username, ui.Home)
+	mbi, err := resolver.UserInfo(username, ui.Home)
+	if err != nil {
+		return nil
+	}
 	mbi.Groups = ui.Groups
 	mbi.ACLUser = ui.ACLUser
 	mbi.ACLGroups = ui.ACLGroups
@@ -1172,11 +1139,47 @@ func BuildMailbox(cfg config.StorageConfig, locker locks.Locker) mailbox.Mailbox
 	return buildMailbox(cfg, locker)
 }
 
+// indexLockMethod reads the configured transport. Config refuses an unknown
+// name at load, so this cannot be reached with one.
+// staleTimeoutOf is the one place that reads what the setting means: unset
+// keeps the reference's timeout, and a negative one asks for no override at
+// all -- zero cannot say both (#1831).
+func staleTimeoutOf(cfg config.StorageConfig) time.Duration {
+	switch {
+	case cfg.LockStaleTimeout < 0:
+		return 0
+	case cfg.LockStaleTimeout > 0:
+		return time.Duration(cfg.LockStaleTimeout) * time.Second
+	}
+	return filelock.DefaultStaleTimeout
+}
+
+func indexLockMethod(cfg config.StorageConfig) filelock.Method {
+	filelock.SetStaleTimeout(staleTimeoutOf(cfg))
+	m, _ := filelock.Parse(cfg.LockMethod)
+	return m
+}
+
+// indexFsync reads the configured durability for index writes. Config refuses
+// an unknown name at load, so this cannot be reached with one (#1847).
+func indexFsync(cfg config.StorageConfig) mailbox.FsyncMode {
+	m, _ := mailbox.ParseFsyncMode(cfg.MailFsync)
+	return m
+}
+
 // IndexOptions builds the file-index options from a storage config, so every
 // binary that opens an index rotates its logs by the same triple. Exported for
 // the standalone binaries that construct their own index (yarilo-jmap).
 func IndexOptions(cfg config.StorageConfig, locker locks.Locker) []file.Option {
-	opts := []file.Option{file.WithLocker(locker)}
+	// The same encoding the mailbox backends get. The two trees spell a folder
+	// the same way or neither finds the other's (#1586).
+	opts := []file.Option{file.WithLocker(locker), file.WithListUTF8(cfg.MailboxListUTF8),
+		file.WithLockMethod(indexLockMethod(cfg)), file.WithFsync(indexFsync(cfg)),
+		file.WithCachePurgeDeletePercentage(cfg.MailCachePurgeDeletePercentage),
+		file.WithCachePurgeContinuedPercentage(cfg.MailCachePurgeContinuedPercentage)}
+	if strings.TrimSpace(cfg.MailCachePurgeMinSizeRaw) != "" {
+		opts = append(opts, file.WithCachePurgeMinSize(cfg.MailCachePurgeMinSize))
+	}
 	// Any of the three, not all three. Gating the whole triple on min_size
 	// meant an operator could set the age or the ceiling alone, see the key in
 	// the rendered config, and have it do nothing -- accepted and inert, which
@@ -1233,11 +1236,28 @@ func buildMailboxByDriver(driver string, sc config.StorageConfig, locker locks.L
 	return mailboxbuild.ByDriver(driver, sc, locker)
 }
 
-// buildNamespaceMailboxes builds the per-namespace MailboxBackend override
-// map, keyed by namespace prefix. Only namespaces whose location: driver
-// differs from the global default get an entry; same-driver namespaces share
-// one backend instance.
-func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver string, sc config.StorageConfig, locker locks.Locker) (map[string]mailbox.MailboxBackend, error) {
+// VirtualDeps is what a virtual namespace draws on, built once per binary: the
+// user's personal mail, the search evaluator and the annotations rules test.
+type VirtualDeps struct {
+	Mailbox      mailbox.MailboxBackend
+	Index        mailbox.IndexBackend
+	Search       search.Options
+	MetadataDict dict.Dict
+}
+
+// SearchOptions is the search share of the FTS configuration.
+func SearchOptions(cfg *config.Config, client ftsproto.Client, chain *language.MultiChain) search.Options {
+	return search.Options{
+		Client: client, Chain: chain, AddMissing: cfg.FTS.SearchAddMissing, ReadFallback: cfg.FTS.SearchReadFallback,
+		Timeout:         time.Duration(cfg.FTS.SearchTimeoutSecs) * time.Second,
+		FirstIndexGrace: time.Duration(cfg.FTS.SearchFirstIndexGraceSecs) * time.Second,
+		Strict:          cfg.FTS.SearchStrict, Enabled: cfg.FTS.Search,
+	}
+}
+
+// BuildNamespaceMailboxes is every binary's per-prefix backend map: none for the
+// global driver, and a virtual one given the personal mail it draws from (#1805).
+func BuildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver string, sc config.StorageConfig, locker locks.Locker, vd VirtualDeps) (map[string]mailbox.MailboxBackend, error) {
 	if len(namespaces) == 0 {
 		return nil, nil
 	}
@@ -1249,8 +1269,7 @@ func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver s
 	overrides := map[string]mailbox.MailboxBackend{}
 	for _, ns := range namespaces {
 		if ns.Location == "" {
-			// inherits the global default
-			continue
+			continue // inherits the global default
 		}
 		loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
 		if err != nil {
@@ -1261,12 +1280,18 @@ func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver s
 		}
 		drv := strings.ToLower(loc.Driver)
 		if drv == globalDriver {
-			// same driver as global default — no override needed
 			continue
 		}
 		b, exists := byDriver[drv]
 		if !exists {
-			b = buildMailboxByDriver(drv, sc, locker)
+			if drv == "virtual" {
+				b = virtual.New(virtual.Options{
+					Personal: personalBoxes(vd, sc, locker), Search: vd.Search,
+					MetadataDict: vd.MetadataDict, Locker: locker,
+				})
+			} else {
+				b = buildMailboxByDriver(drv, sc, locker)
+			}
 			byDriver[drv] = b
 			slog.Info("backend: per-namespace mailbox backend built", "driver", drv, "ns", ns.Prefix)
 		}
@@ -1276,6 +1301,20 @@ func buildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver s
 		return nil, nil
 	}
 	return overrides, nil
+}
+
+// personalBoxes opens a user's personal mail as a session does, read only: a
+// virtual pass reads it and settles nothing there.
+func personalBoxes(vd VirtualDeps, sc config.StorageConfig, locker locks.Locker) func(*mailbox.UserInfo) mailbox.Box {
+	if vd.Mailbox == nil || vd.Index == nil {
+		return nil
+	}
+	return func(ui *mailbox.UserInfo) mailbox.Box {
+		mb := mailbox.SelectPersonalBackend(vd.Mailbox, func(d string) mailbox.MailboxBackend {
+			return buildMailboxByDriver(d, sc, locker)
+		}, ui.Driver)
+		return mailboxbase.Open(mb.OpenUser(ui), vd.Index.OpenUser(ui), mailboxbase.ReadOnly())
+	}
 }
 
 // personalSeparator returns the personal namespace's hierarchy separator
@@ -1333,8 +1372,11 @@ func buildNamespaces(cfg []config.NamespaceConfig) []imapsvr.NamespaceSpec {
 			Separator:     sep,
 			List:          nsListMode(ns),
 			Location:      ns.Location,
+			Inbox:         ns.Inbox,
 			IgnoreACL:     ns.IgnoreACL,
+			Hidden:        ns.Hidden,
 			Subscriptions: ns.Subscriptions,
+			Mailboxes:     ns.AutoMailboxes(),
 		})
 	}
 	return out
@@ -1345,20 +1387,25 @@ func buildNamespaces(cfg []config.NamespaceConfig) []imapsvr.NamespaceSpec {
 // IMAP METADATA tolerates a nil dict (the feature degrades to "Metadata
 // storage not configured"); other consumers may require a non-nil
 // result and error out at startup.
-func buildDict(dicts map[string]config.DictConfig, name string) (dict.Dict, error) {
-	cfg, ok := dicts[name]
+func buildDict(cfg *config.Config, name string) (dict.Dict, error) {
+	dc, ok := cfg.Dicts[name]
 	if !ok {
 		return nil, nil
 	}
-	if cfg.Driver == "" {
-		return nil, fmt.Errorf("dict %q has empty driver", name)
+	// The file driver opens here: it links no engine, and a per-user file in
+	// the user's own home is two network hops cheaper than asking a service
+	// to open it for us (#1733).
+	if dc.Driver == filedict.DriverName {
+		return dict.Open(dict.Config{Driver: dc.Driver, Settings: dc.Settings})
 	}
-	d, err := dict.Open(dict.Config{Driver: cfg.Driver, Settings: cfg.Settings})
+	if cfg.DictService.DictAddr == "" {
+		return nil, ErrNoDictService
+	}
+	tlsCfg, err := internalClientTLS(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open dict %q: %w", name, err)
+		return nil, err
 	}
-	slog.Info("backend: dict opened", "name", name, "driver", cfg.Driver)
-	return d, nil
+	return proxy.NewWithLimit(cfg.DictService.DictAddr, name, tlsCfg, dictConns(cfg)), nil
 }
 
 // buildLocksClient constructs a yarilo-locks client per cfg.LocksClient.
@@ -1378,7 +1425,9 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 		if lc.Socket == "" {
 			return nil, fmt.Errorf("locks_client.socket is required for embedded mode")
 		}
-		return locks.NewClientWaiting(ctx, locks.DialUnix(lc.Socket), lc.StartupWait())
+		c, err := locks.NewClientWaiting(ctx, locks.DialUnix(lc.Socket), lc.StartupWait(),
+			locks.WithWaitPoolSize(lc.WaitPoolSize))
+		return c, err
 	case "remote":
 		if len(lc.Endpoints) == 0 {
 			return nil, fmt.Errorf("locks_client.endpoints must list at least one host:port for remote mode")
@@ -1388,11 +1437,15 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 			if err != nil {
 				return nil, fmt.Errorf("locks_client mtls: %w", err)
 			}
-			return locks.NewClientWaiting(ctx, locks.DialTLS(lc.Endpoints[0], tlsCfg), lc.StartupWait())
+			c, cerr := locks.NewClientWaiting(ctx, locks.DialTLS(lc.Endpoints[0], tlsCfg), lc.StartupWait(),
+				locks.WithWaitPoolSize(lc.WaitPoolSize))
+			return c, cerr
 		}
 		// Single-endpoint connect for now; failover across Endpoints is a
 		// follow-up (custom Dialer iterating the list until first success).
-		return locks.NewClientWaiting(ctx, locks.DialTCP(lc.Endpoints[0]), lc.StartupWait())
+		c, cerr := locks.NewClientWaiting(ctx, locks.DialTCP(lc.Endpoints[0]), lc.StartupWait(),
+			locks.WithWaitPoolSize(lc.WaitPoolSize))
+		return c, cerr
 	default:
 		return nil, fmt.Errorf("locks_client: unknown mode %q (want remote | embedded | \"\")", lc.Mode)
 	}
@@ -1420,8 +1473,7 @@ func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error)
 	// same token/address limits) — otherwise query expansion (#726 item 4:
 	// per-language filter overrides) would diverge from what was actually
 	// indexed.
-	chain, err := language.NewMultiChain(languagesOrDefault(fc.Languages), fc.LanguageFilters, fc.LanguageFiltersOverride,
-		fc.LanguageTokenMaxLen, fc.LanguageAddressMaxLen, fc.DetectionMinRunes)
+	chain, err := ftsquery.NewChain(fc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fts language chain: %w", err)
 	}
@@ -1429,21 +1481,9 @@ func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error)
 	// response, so a search that fans out over several folders would queue on
 	// it however many goroutines the caller starts. Connections open on demand,
 	// so a pool of four costs nothing until four calls overlap.
-	return ftsproto.NewPool(fc.Addr, fc.MaxConns, 10*time.Second), chain, nil
-}
-
-// languagesOrDefault mirrors app/yarilo-fts/main.go's languagesOr: MultiChain
-// always needs at least one language, and the session side's configured set
-// must match the yarilo-fts service's set exactly for query expansion to
-// cover what indexing could have picked.
-func languagesOrDefault(xs []string) []string {
-	if len(xs) > 0 {
-		return xs
+	tlsCfg, err := internalClientTLS(cfg)
+	if err != nil {
+		return nil, nil, err
 	}
-	return []string{"en"}
-}
-
-func buildPassdbs(entries []config.PassdbEntry) ([]protocol.Passdb, error) {
-	dbs, _, err := passdbs.Build(entries)
-	return dbs, err
+	return ftsproto.NewPool(fc.Addr, tlsCfg, fc.MaxConns, 10*time.Second), chain, nil
 }

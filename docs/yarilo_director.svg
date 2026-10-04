@@ -56,7 +56,7 @@
   ══════════════════════════════════════════════════ -->
   <rect x="15" y="150" width="1210" height="542" rx="10" fill="none" stroke="#0f172a" stroke-width="2.5"/>
   <rect x="948" y="152" width="275" height="24" rx="2" fill="#0f172a"/>
-  <text x="1218" y="169" text-anchor="end" fill="#f8fafc" font-size="11" font-weight="bold">director · StatefulSet × 3 (peer-sync)</text>
+  <text x="1218" y="169" text-anchor="end" fill="#f8fafc" font-size="11" font-weight="bold">director · Deployment × 3 (peer-sync)</text>
 
   <!-- External entry arrows (MUA/MTA → login proxies) -->
   <line x1="320" y1="130" x2="140" y2="182" stroke="#475569" stroke-width="1.8" marker-end="url(#ax)"/>
@@ -198,21 +198,21 @@
   <!-- Backend (standalone) deployments (tagged shards) -->
   <rect x="40" y="745" width="220" height="80" rx="6" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
   <text x="150" y="767" text-anchor="middle" fill="#0f766e" font-size="11" font-weight="bold">backend deployment</text>
-  <text x="150" y="783" text-anchor="middle" fill="#475569" font-size="10">4× StatefulSets · NFS · locks</text>
+  <text x="150" y="783" text-anchor="middle" fill="#475569" font-size="10">1 StatefulSet · NFS · locks</text>
   <text x="150" y="805" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="bold">tag: A</text>
 
   <rect x="280" y="745" width="220" height="80" rx="6" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
   <text x="390" y="767" text-anchor="middle" fill="#0f766e" font-size="11" font-weight="bold">backend deployment</text>
-  <text x="390" y="783" text-anchor="middle" fill="#475569" font-size="10">4× StatefulSets · NFS · locks</text>
+  <text x="390" y="783" text-anchor="middle" fill="#475569" font-size="10">1 StatefulSet · NFS · locks</text>
   <text x="390" y="805" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="bold">tag: B</text>
 
   <rect x="520" y="745" width="220" height="80" rx="6" fill="#ffffff" stroke="#0f766e" stroke-width="2"/>
   <text x="630" y="767" text-anchor="middle" fill="#0f766e" font-size="11" font-weight="bold">backend deployment</text>
-  <text x="630" y="783" text-anchor="middle" fill="#475569" font-size="10">4× StatefulSets · NFS · locks</text>
+  <text x="630" y="783" text-anchor="middle" fill="#475569" font-size="10">1 StatefulSet · NFS · locks</text>
   <text x="630" y="805" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="bold">tag: C</text>
 
   <rect x="760" y="745" width="220" height="80" rx="6" fill="#ffffff" stroke="#0f766e" stroke-width="2" stroke-dasharray="6,3"/>
   <text x="870" y="767" text-anchor="middle" fill="#0f766e" font-size="11" font-weight="bold">backend deployment</text>
-  <text x="870" y="783" text-anchor="middle" fill="#475569" font-size="10">4× StatefulSets · NFS · locks</text>
+  <text x="870" y="783" text-anchor="middle" fill="#475569" font-size="10">1 StatefulSet · NFS · locks</text>
   <text x="870" y="808" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="bold">… (tag: x)</text>
 </svg>

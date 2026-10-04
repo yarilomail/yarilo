@@ -18,6 +18,8 @@ import (
 	"time"
 
 	proxyproto "github.com/pires/go-proxyproto"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 // Options configures a Server.
@@ -119,7 +121,7 @@ func (s *Server) handle(client net.Conn) {
 	go func() {
 		defer close(authDone)
 		for {
-			line, err := authRd.ReadString('\n')
+			line, err := lineio.ReadLine(authRd, lineio.MaxClient)
 			if err != nil {
 				return
 			}
@@ -132,7 +134,7 @@ func (s *Server) handle(client net.Conn) {
 
 	// client → auth: forward client lines, log AUTH requests.
 	for {
-		line, err := clientRd.ReadString('\n')
+		line, err := lineio.ReadLine(clientRd, lineio.MaxClient)
 		if err != nil {
 			return
 		}

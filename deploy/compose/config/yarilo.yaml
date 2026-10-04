@@ -77,7 +77,6 @@ services:
     enabled: true
     port: 8443
     ssl_mode: ssl
-    connection_limit: 0
     haproxy_protocol: false
     disable_plaintext_auth: true
   ## Backend listener on yarilo-jmap, reached only by the login proxy. This
@@ -175,7 +174,7 @@ sieve:
   sieve_virustest_status_header: ""
   sieve_virustest_max_value: 5
   sieve_report_user_agent: "yarilo"
-  sieve_submission_host: "relay-fwd.yarilo-relay.svc.cluster.local:25"
+  sieve_submission_host: "localhost:25"
   sieve_submission_ssl: "no"
   sieve_submission_timeout: 30
   sieve_submission_auth_secret: "sieve-smtp-auth"
@@ -309,14 +308,14 @@ namespaces:
   - type: "personal"
     prefix: ""
     separator: "/"
-    list: true
+    list: "yes"
     subscriptions: true
     inbox: true
     acl_ignore: false
-  - type: "public"
+  - type: "shared"
     prefix: "Public/"
     separator: "/"
-    list: true
+    list: "yes"
     subscriptions: false
     inbox: false
     acl_ignore: false
@@ -355,13 +354,7 @@ dicts:
     settings:
       addr: "redis:6379"
       db: 0
-      prefix: "yarilo:sieve:duplicate:%u:"
-  sieve_vacation:
-    driver: "redis"
-    settings:
-      addr: "redis:6379"
-      db: 0
-      prefix: "yarilo:sieve:vacation:%u:"
+      prefix: "yarilo:sieve:duplicate:"
 
 internal_tls:
   enabled: false
@@ -420,12 +413,19 @@ locks_client:
 
 
 sasl_login:
-  listen: ":12325"
+  listen: ":12345"
   haproxy_protocol: false
 quota_status:
   listen: ":12340"
   recipient_delimiter: "+"
   quota_status_nouser: "REJECT Unknown user"
+  auth_master_addr: "yarilo-auth:9102"
+
+## yarilo-backend-api, the operator API yarctl backend talks to. The token
+## comes from BACKEND_API_TOKEN in .env, so it never sits in this file.
+backend_api:
+  listen: ":9105"
+  token: "${BACKEND_API_TOKEN}"
   auth_master_addr: "yarilo-auth:9102"
 
 telemetry:

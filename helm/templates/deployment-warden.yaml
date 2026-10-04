@@ -44,6 +44,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-warden"
+            {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-warden" "root" $) | quote }}
             {{- with .Values.extraEnv }}
@@ -70,7 +71,7 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
-            {{- include "yarilo.internalTLSMount" .Values.components.warden.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.warden.internalTLS "role" "warden") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -80,7 +81,7 @@ spec:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
           emptyDir: {}
-        {{- include "yarilo.internalTLSVolume" .Values.components.warden.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.warden.internalTLS "role" "warden") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

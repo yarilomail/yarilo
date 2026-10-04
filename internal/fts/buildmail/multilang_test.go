@@ -125,9 +125,9 @@ func TestBuildMultiLanguageDoesNotBufferWholeMessage(t *testing.T) {
 
 // TestBuildUkrainianIndexedUnstemmed (#718) is the acceptance scenario: in a
 // mixed uk/ru mailbox, a Ukrainian message is detected as uk and indexed
-// WITHOUT stemming (книги stays книги, its exact lowercase form — no
+// WITHOUT stemming ("книги" stays "книги", its exact lowercase form — no
 // Snowball algorithm exists for Ukrainian), never mis-routed to the ru
-// chain, which WOULD have stemmed the same word down to книг.
+// chain, which WOULD have stemmed the same word down to "книг".
 func TestBuildUkrainianIndexedUnstemmed(t *testing.T) {
 	chain := mustMultiChain(t, "uk", "ru")
 	b := New(Options{}, chain)
@@ -147,7 +147,7 @@ func TestBuildUkrainianIndexedUnstemmed(t *testing.T) {
 
 // TestBuildRussianStillStemsInMixedUkRuConfig (#718) is the symmetric
 // check: a Russian message in the same uk/ru config still stems normally
-// (книги -> книг) — adding a stemmer-less language must not degrade an
+// ("книги" -> "книг") — adding a stemmer-less language must not degrade an
 // already-working stemmed one.
 func TestBuildRussianStillStemsInMixedUkRuConfig(t *testing.T) {
 	chain := mustMultiChain(t, "uk", "ru")

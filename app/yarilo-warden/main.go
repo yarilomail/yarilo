@@ -20,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/logging"
 	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/pkg/redisopt"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -51,11 +52,14 @@ func main() {
 			cfg.InternalTLS.Cert,
 			cfg.InternalTLS.Key,
 			cfg.InternalTLS.CA,
+			mtls.ListenerWarden,
 		)
 		if err != nil {
 			slog.Error("internal_tls config failed", "err", err)
 			os.Exit(1)
 		}
+	} else {
+		mtls.WarnRolesUnchecked(mtls.ListenerWarden)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -68,7 +72,7 @@ func main() {
 	var stateChecks []telemetry.Check
 	var closeState func()
 	if cfg.WardenService.StateBackend == "redis" {
-		opt, perr := redis.ParseURL(cfg.WardenService.RedisAddr)
+		opt, perr := redisopt.Parse(cfg.WardenService.RedisAddr, cfg.WardenService.RedisPassword)
 		if perr != nil {
 			slog.Error("warden: invalid redis_addr", "addr", cfg.WardenService.RedisAddr, "err", perr)
 			os.Exit(1)
@@ -148,10 +152,8 @@ func main() {
 	slog.Info("yarilo-warden stopped")
 }
 
-// startTelemetry serves /healthz, /readyz, /metrics and /debug/loglevel, and
-// returns the server so the caller can report readiness once its listener is
-// actually bound. When the liveness watchdog is enabled it probes the warden
-// session-tracking mutex (#904).
+// startTelemetry serves /healthz, /readyz and /metrics; when enabled, the
+// liveness watchdog probes the session-tracking mutex (#904).
 func startTelemetry(cfg config.TelemetryConfig, srv *warden.Server, checks []telemetry.Check) *telemetry.Server {
 	opts := telemetry.Options{
 		Addr:      telemetry.Addr(cfg.Listen),

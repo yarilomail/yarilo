@@ -26,8 +26,7 @@ import "fmt"
 // because a consumer left to its own default resolves somewhere else, so a
 // constructor that accepted an empty root would reintroduce the class it is
 // meant to close -- and it would do so from the one place that is supposed to
-// make it impossible. The reference asserts at the same point
-// (mailbox-list.c:132).
+// make it impossible. The reference asserts at the same point.
 func NamespaceUserInfo(base *UserInfo, loc Location, separator string) (*UserInfo, error) {
 	if loc.Path == "" {
 		return nil, fmt.Errorf("mailbox: namespace location has no root path")
@@ -44,6 +43,14 @@ func NamespaceUserInfo(base *UserInfo, loc Location, separator string) (*UserInf
 	}
 	if base != nil {
 		ui.Username = base.Username
+		// A virtual namespace draws from the personal one, whoever builds it.
+		ui.Personal = base
+		if base.Personal != nil {
+			ui.Personal = base.Personal
+		}
+		// The session travels with the username: both are the lock owner's
+		// identity, and dropping it spells one holder two ways (#1652).
+		ui.SessionID = base.SessionID
 		// Storage-name form is a deployment-wide property, not a per-namespace
 		// one: a namespace that escaped or normalised differently from the rest
 		// would name the same mailbox differently on disk (#1078, #1092).

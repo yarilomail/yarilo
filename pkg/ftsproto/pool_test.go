@@ -38,12 +38,14 @@ func (s *slowService) Lookup(string, fts.MailboxRef, fts.Query) (fts.Result, err
 	return fts.Result{}, nil
 }
 
-func (s *slowService) Index(string, fts.MailboxRef, uint32, int) error       { return nil }
-func (s *slowService) Prepend(string, fts.MailboxRef, uint32) error          { return nil }
-func (s *slowService) Expunge(string, fts.MailboxRef, uint32) error          { return nil }
-func (s *slowService) Status(string, fts.MailboxRef) (uint32, uint32, error) { return 0, 0, nil }
-func (s *slowService) Rescan(string, fts.MailboxRef) error                   { return nil }
-func (s *slowService) Optimize(string) error                                 { return nil }
+func (s *slowService) Index(string, fts.MailboxRef, uint32, int) error        { return nil }
+func (s *slowService) Prepend(string, fts.MailboxRef, uint32) error           { return nil }
+func (s *slowService) Expunge(string, fts.MailboxRef, uint32, [16]byte) error { return nil }
+func (s *slowService) Status(string, fts.MailboxRef) (uint32, uint32, error)  { return 0, 0, nil }
+func (s *slowService) Rescan(string, fts.MailboxRef) error                    { return nil }
+func (s *slowService) RescanUser(string) ([]string, error)                    { return nil, nil }
+func (s *slowService) Counts(string) (uint64, uint64, uint64, uint64, error)  { return 0, 0, 0, 0, nil }
+func (s *slowService) Optimize(string) error                                  { return nil }
 
 func serveSlow(t *testing.T) (addr string, svc *slowService) {
 	t.Helper()
@@ -63,7 +65,7 @@ func serveSlow(t *testing.T) (addr string, svc *slowService) {
 func TestPoolRunsLookupsConcurrently(t *testing.T) {
 	addr, svc := serveSlow(t)
 	const size = 4
-	p := ftsproto.NewPool(addr, size, 2*time.Second)
+	p := ftsproto.NewPool(addr, nil, size, 2*time.Second)
 	t.Cleanup(func() { p.Close() }) //nolint:errcheck
 
 	var wg sync.WaitGroup
@@ -93,7 +95,7 @@ func TestPoolRunsLookupsConcurrently(t *testing.T) {
 // safe to change: nothing about the single-connection path is altered.
 func TestPoolOfOneSerialises(t *testing.T) {
 	addr, svc := serveSlow(t)
-	p := ftsproto.NewPool(addr, 1, 2*time.Second)
+	p := ftsproto.NewPool(addr, nil, 1, 2*time.Second)
 	t.Cleanup(func() { p.Close() }) //nolint:errcheck
 
 	var wg sync.WaitGroup
@@ -118,7 +120,7 @@ func TestPoolOfOneSerialises(t *testing.T) {
 // "busy" and "failed" call for different reactions.
 func TestPoolExhaustionIsItsOwnError(t *testing.T) {
 	addr, svc := serveSlow(t)
-	p := ftsproto.NewPool(addr, 1, 100*time.Millisecond)
+	p := ftsproto.NewPool(addr, nil, 1, 100*time.Millisecond)
 	t.Cleanup(func() { p.Close() }) //nolint:errcheck
 
 	busy := make(chan struct{})
@@ -141,8 +143,14 @@ func TestPoolExhaustionIsItsOwnError(t *testing.T) {
 // Size below one is treated as one rather than deadlocking on an empty pool.
 func TestPoolSizeFloor(t *testing.T) {
 	for _, size := range []int{-1, 0, 1} {
-		if got := ftsproto.NewPool("127.0.0.1:1", size, time.Second).Size(); got != 1 {
+		if got := ftsproto.NewPool("127.0.0.1:1", nil, size, time.Second).Size(); got != 1 {
 			t.Errorf("size %d gave a pool of %d, want 1", size, got)
 		}
 	}
+}
+
+func (s *slowService) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (s *slowService) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
 }

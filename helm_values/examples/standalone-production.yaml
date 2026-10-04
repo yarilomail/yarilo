@@ -13,8 +13,9 @@
 # multi-replica safe without a director).
 #
 # Prereqs: external MySQL (PostfixAdmin schema) + Redis, an internal CA
-# (cert-manager Issuer "yarilo-internal-ca") issuing the shared internal-tls
-# secret with the internal_tls.server_name SAN, and a public TLS issuer.
+# (cert-manager ClusterIssuer "yarilo-internal-ca"), from which the chart
+# requests one certificate per component (internalTLS.certManager), and a
+# public TLS issuer.
 #
 # Install:
 #   helm upgrade --install yarilo ./helm -n yarilo -f standalone-production.yaml \
@@ -47,9 +48,6 @@ extraEnv:
     valueFrom:
       secretKeyRef: { name: yarilo-mysql, key: dsn }
 
-internal_tls:
-  server_name: yarilo-internal      # SAN in the shared internal-tls cert
-
 fts:
   enabled: true
   fts_engine: flatcurve
@@ -60,6 +58,13 @@ fts:
   fts_addr: "yarilo-fts:9106"
   fts_auth_master_addr: "yarilo-auth:9102"
   fts_autoindex: true
+
+## Per-role internal certificates from cert-manager: one CA Issuer shared by
+## every release, so the control plane and each tag trust each other (#2138).
+internalTLS:
+  certManager:
+    enabled: true
+    issuerRef: { kind: ClusterIssuer, name: yarilo-internal-ca }
 
 components:
 
@@ -75,27 +80,21 @@ components:
     enabled: true
     replicas: 2
     listeners: { imap: { enabled: true } }
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   pop3:
     enabled: true
     replicas: 2
     listeners: { pop3: { enabled: true } }
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   lmtp:
     enabled: true
     replicas: 2
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   manageSieve:
     enabled: true
     replicas: 1
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   fts:
     enabled: true
     replicas: 1                     # single writer (see fts note above)
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
 
   auth:
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     passdb:
       - driver: mysql
         dsn: "${YARILO_DB_DSN}"
@@ -112,18 +111,14 @@ components:
         iterate_query: |
           SELECT username FROM mailbox WHERE active = 1 ORDER BY username
     token: { backend: redis, redis_addr: "redis://<redis-host>:6379/0" }
-  warden:
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   locks:                            # REQUIRED for multi-replica standalone
     enabled: true
     replicas: 2
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
 
   # Login proxies → FIXED backend Services (no director):
   imapLogin:
     enabled: true
     backend_addr: "yarilo-imap:10143"
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls:
       secretName: yarilo-tls
       certificate:
@@ -135,27 +130,22 @@ components:
   pop3Login:
     enabled: true
     backend_addr: "yarilo-pop3:10110"
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls: { secretName: yarilo-tls }
     listeners: { pop3s: { enabled: true }, pop3: { enabled: true } }
     service: { type: LoadBalancer }
   lmtpLogin:
     enabled: true
     backend_addr: "yarilo-lmtp:10024"
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
   manageSieveLogin:
     enabled: true
     backend_addr: "yarilo-managesieve:14190"
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
     tls: { secretName: yarilo-tls }
     listeners: { managesieve: { enabled: true } }
     service: { type: LoadBalancer }
   saslLogin:
     enabled: true
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
-    service: { type: LoadBalancer }
+    service: { type: ClusterIP }   # LoadBalancer only for an MTA outside the cluster
   quotaStatus:
     enabled: true
     auth_master_addr: "yarilo-auth:9102"
-    internalTLS: { enabled: true, secretName: yarilo-internal-tls }
-    service: { type: LoadBalancer }
+    service: { type: ClusterIP }   # LoadBalancer only for an MTA outside the cluster

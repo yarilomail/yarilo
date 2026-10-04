@@ -38,7 +38,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Mail store unavailable")
 		return
 	}
-	h, err := s.opts.Storage.open(id.user)
+	h, err := s.opts.Storage.open(id.user, id.sessionID)
 	if err != nil {
 		slog.Warn("jmap: download store open failed", "user", id.user, "err", err)
 		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Mail store unavailable")
@@ -60,7 +60,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 		return
 	}
 
-	rc, err := h.box.Fetch(ref.folder, ref.meta.Filename, ref.meta.AltTier)
+	rc, err := h.mbox.OpenMessage(ref.folder, ref.meta)
 	if err != nil {
 		slog.Warn("jmap: download fetch failed", "user", id.user, "blob", blobID, "err", err)
 		jmapcore.WriteProblem(w, http.StatusNotFound, "No such blob")

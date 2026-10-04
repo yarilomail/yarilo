@@ -20,6 +20,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -107,7 +108,7 @@ func TestTwoProcessAppendNoUIDCollision(t *testing.T) {
 	procPair := make([]proc, procs)
 	for i := 0; i < procs; i++ {
 		lk := dialLocker()
-		mbBackend := maildir.New(maildir.WithLocker(lk))
+		mbBackend := maildir.New()
 		ixBackend := file.New(file.WithLocker(lk))
 		mb := mbBackend.OpenUser(user)
 		if err := mb.Init(); err != nil {
@@ -149,21 +150,21 @@ func TestTwoProcessAppendNoUIDCollision(t *testing.T) {
 						errCh <- &dupErr{uid: uid}
 						return
 					}
-					// 2. Save the message file under the allocated UID
-					//    (maildir writes uidlist inline; sdbox renames to u.<uid>).
+					// 2. Save the body, then record it against the reserved uid.
 					content := strings.NewReader("hello from p" +
 						strconv.Itoa(pid) + ":g" + strconv.Itoa(gid) + ":k" + strconv.Itoa(k))
-					filename, _, _, err := mb.Save("INBOX", content, uid, 0, nil, [16]byte{})
+					filename, _, _, err := mb.Save("INBOX", content, 0, 0, nil, nil, [16]byte{})
 					if err != nil {
 						errCh <- err
 						return
 					}
+					meta := &mailbox.MessageMeta{UID: uid, Flags: []string{}}
+					if err := mailboxbase.NameSaved(mb, "INBOX", filename, meta); err != nil {
+						errCh <- err
+						return
+					}
 					// 3. Record the meta under the same lock.
-					if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-						UID:      uid,
-						Filename: filename,
-						Flags:    []string{},
-					}); err != nil {
+					if err := idx.AppendMessage(folder.ID, meta); err != nil {
 						errCh <- err
 						return
 					}

@@ -153,6 +153,12 @@ var (
 		Name: "fts_index_dropped_total",
 		Help: "FTS index passes given up on after repeated lock contention.",
 	})
+	// metricIndexExpungedMidJob: documents not written because the message
+	// went while the job was reading it (#2026).
+	metricIndexExpungedMidJob = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fts_index_expunged_midjob_total",
+		Help: "Documents dropped before the write because the message was expunged while indexing.",
+	})
 	// metricIndexSkipped: messages the index passed over. Each one is a hole:
 	// its content is not searchable until a rescan fills it. Expected zero,
 	// and a rising count is the signal to run one -- nothing else reports a
@@ -222,4 +228,18 @@ var ftsHandlesEvicted = promauto.NewCounter(prometheus.CounterOpts{
 	Subsystem: "fts",
 	Name:      "handles_evicted_total",
 	Help:      "Per-user index handles closed after being idle, releasing their write lock.",
+})
+
+// A write the search database refused because another pass held it: the
+// service waits rather than answering the client an error (#1986).
+var metricIndexLockRetry = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fts_index_lock_retry_total",
+	Help: "Index writes retried after the search database reported its own lock held.",
+})
+
+// Retractions refused for naming no message. Non-zero means a caller lost the
+// identity on the way here, which the index cannot make up (#1986).
+var metricExpungeNoGUID = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "fts_expunge_no_guid_total",
+	Help: "EXPUNGE requests refused because the message GUID was empty. Non-zero on an index whose records predate GUIDs: those documents go by rescan.",
 })

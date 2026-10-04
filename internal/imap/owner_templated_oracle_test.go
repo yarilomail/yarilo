@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -114,10 +116,10 @@ func TestNamespaceSubscriptionsFileIsAFileNotAPath(t *testing.T) {
 	root := t.TempDir()
 	shared := filepath.Join(root, "shared")
 	srv := imapserver.New(imapserver.Options{
-		Mailbox:  maildir.New(),
-		Index:    file.New(),
-		Resolver: &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
-		Auth:     &enforcePassdb{users: map[string]string{"alice": "pw"}},
+		Mailbox:   maildir.New(),
+		Index:     file.New(),
+		Resolver:  &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"},
+		AuthRelay: authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"alice": "pw"}}),
 		Namespaces: []imapserver.NamespaceSpec{
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
 			{Type: imapserver.NamespaceShared, Prefix: "Team/Sub/", Separator: '/', List: imapserver.ListYes,

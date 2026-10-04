@@ -1,6 +1,9 @@
 package imap
 
 import (
+	"errors"
+	"io/fs"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -54,24 +57,49 @@ var commandBuckets = []float64{
 // change token, so in principle a folder nobody touched costs a stat and
 // nothing else; if skips stay at zero under a workload that re-selects
 // unchanged folders, the gate is not reaching the case it was built for.
-var (
-	metricMaildirSyncSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name:    "imap_maildir_sync_seconds",
-		Help:    "Time one maildir proactive reconcile took, from computing the change token through the index update.",
-		Buckets: prometheus.ExponentialBuckets(0.0001, 4, 11), // 100us .. ~100s
-	})
-	metricMaildirSync = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "imap_maildir_sync_total",
-		Help: "Maildir reconcile decisions: scanned means cur/ and new/ were walked, skipped means the change token said nothing had changed.",
-	}, []string{"result"}) // scanned | skipped
-)
-
-// metricUnreadable counts messages a command could not read while scanning.
-// The event is one event -- the server answered with less than it knows, and
-// nothing in the answer says so (#1283) -- so it is one series with the
-// command as a label. An alert on it is one expression, not a sum of series
-// that someone must remember to extend when a third command starts scanning.
+// metricUnreadable counts messages a command answered short because it could
+// not read them. The event is one event -- the server answered with less than
+// it knows, and nothing in the answer says so (#1283) -- so it is one series
+// with the command as a label. An alert on it is one expression, not a sum of
+// series that someone must remember to extend when a third command starts
+// scanning.
+//
+// FETCH counts here too, and did not until #1532. A message whose record the
+// driver cannot read is answered as `* n FETCH ()` -- present in the mailbox,
+// counted by SELECT, its size served from the index, and every content section
+// empty. That is indistinguishable to a client from an empty message, and it
+// is what both format faults we have ever had looked like: this counter stayed
+// at zero through both of them.
 var metricUnreadable = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "imap_unreadable_messages_total",
-	Help: "Messages a command's scan could not read, and therefore silently left out of its answer.",
-}, []string{"command"})
+	Help: "Messages a command could not read, and therefore silently left out of its answer. reason=unreadable is a message that is there and could not be read; reason=gone is one the index lists and the store does not.",
+}, []string{"command", "reason"})
+
+// Reasons a message could not be read, kept apart because only one of them
+// means something is wrong with the stored mail.
+//
+// reasonGone: the file is not there. One connection expunging while another
+// reads from an index snapshot taken before it produces exactly this, and a
+// clean gate produced 239 of them (#1538). Counted rather than dropped -- the
+// same shape is also index/store divergence, and the rate says which -- but it
+// cannot share a series with the other one, or an alert fires on ordinary
+// traffic and gets switched off.
+//
+// reasonUnreadable: the file is there and could not be served. This is the one
+// that matters, and the one that counted nothing during #1525.
+const (
+	reasonGone       = "gone"
+	reasonUnreadable = "unreadable"
+)
+
+// unreadableReason classifies a driver read error.
+//
+// Drivers wrap a vanished file in their own corruption sentinel on purpose --
+// an index that still references it has diverged from the store -- so this
+// looks underneath for the original fs.ErrNotExist rather than at the sentinel.
+func unreadableReason(err error) string {
+	if errors.Is(err, fs.ErrNotExist) {
+		return reasonGone
+	}
+	return reasonUnreadable
+}

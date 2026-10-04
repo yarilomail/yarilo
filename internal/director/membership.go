@@ -752,6 +752,25 @@ func joinHMAC(secret []byte, nonce string, joiner Member) []byte {
 	return mac.Sum(nil)
 }
 
+// acceptPeer reports whether a PEER line proves the dialer holds the ring
+// secret for this connection's nonce, from a network allowed to join.
+func (m *Membership) acceptPeer(conn net.Conn, nonce string, dialer Member, proofHex string) bool {
+	if len(m.secret) == 0 {
+		slog.Warn("director: PEER refused, ring auth not configured", "remote", conn.RemoteAddr())
+		return false
+	}
+	if len(m.joinAllowedNets) > 0 && !ipInNets(conn.RemoteAddr(), m.joinAllowedNets) {
+		slog.Warn("director: PEER refused, source not in join_allowed_nets", "remote", conn.RemoteAddr())
+		return false
+	}
+	got, err := hex.DecodeString(proofHex)
+	if err != nil || subtle.ConstantTimeCompare(got, peerProof(m.secret, nonce, dialer)) != 1 {
+		slog.Warn("director: PEER refused, invalid proof", "remote", conn.RemoteAddr(), "dialer", dialer)
+		return false
+	}
+	return true
+}
+
 func parseMemberList(csv string) []Member {
 	if csv == "" {
 		return nil
@@ -1263,9 +1282,9 @@ func (m *Membership) reconcile() {
 		m.rightCancel = nil
 	}
 	if m.dialConn != nil {
-		// QUIT before the deliberate close (#768, reference parity —
-		// director-connection.c sends QUIT\t<reason> on every intentional
-		// disconnect): the peer we're abandoning is usually OUR old right
+		// QUIT before the deliberate close (#768, reference parity — a QUIT
+		// with a reason goes out on every intentional disconnect): the peer
+		// we're abandoning is usually OUR old right
 		// neighbor, i.e. we are ITS left — without this line our close
 		// looks identical to a silent death and forces it through the
 		// verification-probe path for what is just a re-target.
@@ -1383,6 +1402,7 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 
 	rd := bufio.NewReaderSize(conn, 4096)
 	inHandshake := false
+	nonce := ""
 	for {
 		line, rErr := readBoundedLine(rd)
 		if rErr != nil {
@@ -1393,6 +1413,8 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 			break
 		}
 		switch {
+		case strings.HasPrefix(line, "RING-NONCE\t"):
+			nonce = strings.TrimPrefix(line, "RING-NONCE\t")
 		case line == "HOST-HAND-START":
 			inHandshake = true
 		case line == "HOST-HAND-END":
@@ -1416,7 +1438,7 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 		// stale view — merging the dialer's tombstones first closes that
 		// gap regardless of which way the connection ends up being used.
 		fmt.Sprintf("MEMBERS\t%s\t%s", formatMemberList(m.Members()), formatMemberList(m.removedList())),
-		"PEER\t1",
+		"PEER\t1\t" + hex.EncodeToString(peerProof(m.secret, nonce, m.self)),
 		"DONE",
 	} {
 		if _, wErr := fmt.Fprintf(conn, "%s\n", s); wErr != nil {
@@ -1653,6 +1675,7 @@ func (m *Membership) Leave() {
 func (m *Membership) handleRingLine(fields []string, arrivalConn net.Conn) {
 	switch fields[0] {
 	case "DIRECTOR-ADD", "DIRECTOR-REMOVE", "RING-CHANGE", "USER-MOVED", "USER-KICKED", "USER-ASSIGN",
+		"DOMAIN-ASSIGN",
 		"SESSION-OPEN", "SESSION-CLOSE", "BACKEND-UNREACHABLE", "USER-KILLING", "USER-KILL-DONE",
 		// The escaped user events (#1365 step 1). Accepted now, written only
 		// once every member accepts them.
@@ -1971,6 +1994,19 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 		if old := m.srv.userDir.MergeByHash(uint32(hash), payload[1], false, seq, payload[3]); old != "" {
 			m.srv.kickStaleSessions(uint32(hash), old)
 		}
+	case "DOMAIN-ASSIGN":
+		// payload: <domain> <backend> <assign_seq> <assign_by> (#1943)
+		if m.srv == nil || len(payload) < 4 {
+			return
+		}
+		seq, err := strconv.ParseUint(payload[2], 10, 64)
+		if err != nil {
+			return
+		}
+		domain := proto.TabUnescape(payload[0])
+		if from := m.srv.domainDir.Merge(domain, payload[1], seq, payload[3]); from != "" {
+			m.srv.kickDomainSessions(domain, from)
+		}
 	case "USER-KICKED":
 		if len(payload) < 1 {
 			return
@@ -2086,8 +2122,7 @@ func (m *Membership) ringPingTimeout() time.Duration  { return m.srv.opts.pingTi
 
 // ringPinger writes a PING line on conn every ring ping interval until the
 // connection dies or ctx ends — the reference PINGs BOTH its neighbor
-// connections (director.c: director_connection_ping(dir->left) +
-// (dir->right)), and both our read loops enforce a read deadline of
+// connections, left and right, and both our read loops enforce a read deadline of
 // interval+timeout, so a silently-hung peer (no RST, no FIN) is detected
 // within one interval+timeout on whichever side notices first, instead of
 // waiting for the OS to eventually surface the dead TCP session.

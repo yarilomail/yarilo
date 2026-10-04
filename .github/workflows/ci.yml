@@ -7,6 +7,7 @@ on:
     paths:
       - "app/**"
       - "helm/**"
+      - "helm_values/**"
       - "internal/**"
       - "pkg/**"
       - "go.mod"
@@ -44,6 +45,23 @@ jobs:
     permissions:
       contents: read
       checks: write
+
+  ## main takes merges from develop only; a required check, since branch
+  ## protection cannot name the source branch.
+  source:
+    name: Source is develop
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Refuse any other head
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$HEAD_REF" != develop ] || [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::main accepts pull requests from develop only, got $HEAD_REPO:$HEAD_REF"
+            exit 1
+          fi
 
   build:
     name: Build & Push
@@ -97,13 +115,17 @@ jobs:
             release|recover) IS_RELEASE=true ;;
             *)               IS_RELEASE=false ;;
           esac
+          # The chart's own version, stamped into the image so a pod can say
+          # whether the ConfigMap beside it came from the same commit (#1509).
+          CHART_VERSION=$(awk '/^version:/{print $2}' helm/Chart.yaml)
+          echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "image_tag=${APP_VERSION}" >> "$GITHUB_OUTPUT"
           echo "state=${STATE}" >> "$GITHUB_OUTPUT"
           echo "is_release=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           # The self-hosted runner's docker daemon persists between runs, same
           # as GOCACHE/GOMODCACHE above, so the classic docker driver already
@@ -113,14 +135,14 @@ jobs:
           driver: docker
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: docker.io
           username: 0kaba0
@@ -128,7 +150,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v6.2.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: |
             ${{ env.IMAGE }}
@@ -139,7 +161,7 @@ jobs:
             type=raw,value=${{ steps.version.outputs.image_tag }},enable=${{ steps.version.outputs.is_release == 'true' }}
 
       - name: Build and push
-        uses: docker/build-push-action@v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -154,10 +176,11 @@ jobs:
           # the daemon in the first place -- a setting outside this file.
           build-args: |
             BUILD_VERSION=${{ steps.version.outputs.image_tag }}
+            BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
 
       - name: Generate release notes
         if: steps.version.outputs.is_release == 'true'
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4
         id: cliff
         with:
           config: cliff.toml
@@ -202,7 +225,7 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.version.outputs.state == 'release' || steps.release_missing.outputs.missing == 'true'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}

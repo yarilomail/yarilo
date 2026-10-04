@@ -14,7 +14,7 @@ Multi-binary architecture — each protocol component is a separate process. Kub
      out one per row while Safari kept them inline, from the same GitHub-rendered
      HTML; as a top-level paragraph they get the full README width and both
      browsers agree. Keep them here, on one line. -->
-[![CI](https://github.com/yarilomail/yarilo/actions/workflows/ci.yml/badge.svg)](https://github.com/yarilomail/yarilo/actions/workflows/ci.yml) [![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/) [![Platform](https://img.shields.io/badge/platform-linux%2Famd64-blue)](https://github.com/yarilomail/yarilo) [![License: AGPL v3](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE) ![Status: beta](https://img.shields.io/badge/status-beta-orange)
+[![CI](https://github.com/yarilomail/yarilo/actions/workflows/ci.yml/badge.svg)](https://github.com/yarilomail/yarilo/actions/workflows/ci.yml) [![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/) [![Platform](https://img.shields.io/badge/platform-linux%2Famd64-blue)](https://github.com/yarilomail/yarilo) [![License: AGPL v3](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE) ![Status: stable](https://img.shields.io/badge/status-stable-brightgreen)
 
 ---
 
@@ -45,7 +45,7 @@ Yarilo is a **multi-binary** server. Each protocol and infrastructure role is a 
 | Sieve | RFC 5228 | fileinto, reject, ereject, envelope, encoded-character, variables, relational, copy, subaddress, environment, body, vacation, vacation-seconds, regex, date, index, editheader, mailbox, mailboxid, duplicate, ihave, special-use, imap4flags, fcc, include, enotify, spamtest, spamtestplus, virustest, foreverypart, mime, extracttext, replace, enclose, mboxmetadata, servermetadata, imapsieve, vnd.yarilo.debug, vnd.yarilo.environment, vnd.yarilo.pipe, vnd.yarilo.filter, vnd.yarilo.report, vnd.yarilo.execute | ✅ |
 | Submission | RFC 6409 | STARTTLS, SASL PLAIN, SIZE, PIPELINING, relay to upstream MTA | ✅ |
 | SASL | — | PLAIN, LOGIN, SCRAM-SHA-256, XOAUTH2, OAUTHBEARER | ✅ |
-| JMAP | RFC 8620/8621 | — | planned |
+| JMAP | RFC 8620/8621 | session, `Mailbox/{get,query,changes}`, `Email/{get,query,set,changes}`, `Thread/{get,changes}`, `SearchSnippet/get`, blob download, back-references | partial |
 
 ---
 
@@ -113,7 +113,6 @@ Search stays sub-millisecond as the mailbox grows; the linear scan it replaces g
 | yarilo-backend-api | HTTP admin API (dict, ACL, folder, quota, rebuild) | ✅ |
 | yarilo-backend-reg | Co-located backend registration sidecar — one BACKEND-UP per pod IP, readiness-gated heartbeat, graceful LEAVE on SIGTERM (#776/#788) | ✅ |
 | yarctl | CLI control tool — `director` and `backend` planes (backward-compat alias: `yarilo-admin`) | ✅ |
-| yarilo-monitor | Optional backend health sidecar for the director ring (probe-based; the primary path is yarilo-backend-reg self-registration) | ✅ |
 | yarilo-migrate | Offline mailbox FORMAT converter (Maildir → sdbox/mdbox); not cross-server dsync/imapc | ✅ |
 | yarilo-director | Consistent-hashing ring, sticky sessions, throttled evacuation, failover | ✅ |
 
@@ -266,7 +265,6 @@ Full documentation lives at **[doc.yarilomail.org](https://doc.yarilomail.org/)*
 | [FTS](https://doc.yarilomail.org/FTS) | Full-text search: engine, multi-language, decoders, config, phases |
 | [SMOKE](https://doc.yarilomail.org/SMOKE) | End-to-end smoke test |
 | [DIRECTOR](https://doc.yarilomail.org/DIRECTOR) | `director_service`: ring, peers, mTLS, session routing, sticky assignments, username-hash, evacuation, flush hook, ring formation history |
-| [MONITOR](https://doc.yarilomail.org/MONITOR) | `yarilo-monitor`: health probes, Prometheus metrics |
 | [DIRECTOR-API](https://doc.yarilomail.org/DIRECTOR-API) | Director HTTP admin API |
 | [BACKEND-API](https://doc.yarilomail.org/BACKEND-API) | Backend HTTP admin API |
 | [YARILO-ADMIN](https://doc.yarilomail.org/YARILO-ADMIN) | `yarctl` CLI reference |

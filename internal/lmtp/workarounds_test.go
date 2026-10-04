@@ -76,7 +76,7 @@ func TestLMTP_WhitespaceBeforePath_Integration(t *testing.T) {
 	mb := maildir.New()
 	idx := fileindex.New()
 
-	box := mb.OpenUser(resolver.UserInfo("alice@example.com", ""))
+	box := mb.OpenUser(mustUserInfo(resolver, "alice@example.com"))
 	if err := box.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}

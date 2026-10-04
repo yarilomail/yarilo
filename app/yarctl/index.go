@@ -17,12 +17,16 @@ func dispatchIndex(args []string) error {
 		return indexRebuild(args[1:])
 	case "rebuild-storage":
 		return indexRebuildStorage(args[1:])
+	case "check":
+		return indexCheck(args[1:])
 	case "cache-purge":
 		return indexCachePurge(args[1:])
+	case "rebuild-guid-store":
+		return indexRebuildGUIDStore(args[1:])
 	case "optimize":
 		return indexOptimize(args[1:])
 	default:
-		return fmt.Errorf("unknown index command %q — available: dump, rebuild, rebuild-storage, optimize, cache-purge", args[0])
+		return fmt.Errorf("unknown index command %q — available: dump, check, rebuild, rebuild-storage, rebuild-guid-store, optimize, cache-purge", args[0])
 	}
 }
 
@@ -32,6 +36,13 @@ func printIndexUsage() {
 Commands:
   dump     <user> <folder> [--namespace NS] [--limit N]
         Dump every fileindex record (UID, flags, modseq, size, GUID).
+
+  check    <user> [--namespace NS] [--fix]
+        Read every folder of the account and report the records whose tail
+        was written at a width the base did not announce -- their size reads
+        back as their own storage key (#1770). Read-only without --fix;
+        with it, each such record's storage key, size and guid are rebuilt
+        from the message in storage. Prints checked / shifted / repaired.
 
   rebuild  <user> <folder> [--namespace NS]
         Scan the on-disk storage and regenerate ONE folder's fileindex,
@@ -50,6 +61,12 @@ Commands:
         --restore-orphans re-files unreferenced messages that carry an
         ORIG_MAILBOX tag back into their home folder (default off, since
         a tag proves only "was once here", not "is lost").
+
+  rebuild-guid-store <user> [--namespace NS]
+        Write the per-user GUID store (yarilo.guid.index) from the folder
+        indexes: one record per copy of a message, which is what a JMAP id
+        resolves through. The store is derived -- run this when it is
+        missing, behind, or written by an older build.
 
   optimize <user> <folder> [--namespace NS]
   optimize <user> --all [--namespace NS]      fold every folder of the account,
@@ -83,6 +100,23 @@ func indexDump(args []string) error {
 	}))
 }
 
+func indexCheck(args []string) error {
+	fs := flag.NewFlagSet("index check", flag.ContinueOnError)
+	ns := fs.String("namespace", "personal", "namespace slug")
+	fix := fs.Bool("fix", false, "rebuild every shifted record's tail from storage (default: report only)")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: yarctl backend index check <user> [--namespace NS] [--fix]")
+	}
+	return printJSON(backendAPIPost("/api/backend/index/check", map[string]any{
+		"user":      fs.Arg(0),
+		"namespace": *ns,
+		"fix":       *fix,
+	}))
+}
+
 func indexRebuild(args []string) error {
 	fs := flag.NewFlagSet("index rebuild", flag.ContinueOnError)
 	ns := fs.String("namespace", "personal", "namespace slug")
@@ -113,6 +147,23 @@ func indexRebuildStorage(args []string) error {
 		"user":            fs.Arg(0),
 		"namespace":       *ns,
 		"restore_orphans": *restore,
+	}))
+}
+
+// indexRebuildGUIDStore writes the per-user GUID store from the folder
+// indexes. It is the store's repair: the file is derived (#1711).
+func indexRebuildGUIDStore(args []string) error {
+	fs := flag.NewFlagSet("index rebuild-guid-store", flag.ContinueOnError)
+	ns := fs.String("namespace", "personal", "namespace slug")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: yarctl backend index rebuild-guid-store <user> [--namespace NS]")
+	}
+	return printJSON(backendAPIPost("/api/backend/index/rebuild-guid-store", map[string]any{
+		"user":      fs.Arg(0),
+		"namespace": *ns,
 	}))
 }
 

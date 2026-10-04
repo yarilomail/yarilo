@@ -29,7 +29,9 @@ func (s *Server) handleACLRegistryList(w http.ResponseWriter, r *http.Request) {
 	}
 	// Groups are a session-side identity (from the userdb at login); the admin
 	// surface answers for the bare user plus anyone, and says so.
-	owners, err := acl.OwnersFor(r.Context(), s.opts.SharedDict, req.User, nil)
+	// Read past the LIST interval: an operator asking this question needs the
+	// registry as it is, not as a session was told it an hour ago.
+	owners, err := acl.OwnersForNow(r.Context(), s.opts.SharedDict, req.User, nil)
 	if err != nil {
 		apiError(w, "registry scan: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -46,7 +48,7 @@ func (s *Server) handleACLRegistryList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleACLRegistryRebuild(w http.ResponseWriter, r *http.Request) {
-	store, req, _, _, err := s.openACLStore(w, r)
+	store, req, _, _, err := s.openACLStore(w, r, false)
 	if err != nil {
 		return
 	}

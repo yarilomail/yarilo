@@ -41,8 +41,9 @@ type Options struct {
 	// BackendAddr is the TCP address of the LMTP backend used in standalone
 	// mode. Ignored when DirectorAddr is set.
 	BackendAddr string
-	// BackendTimeout caps each backend dial and transaction. Default: 300s.
-	BackendTimeout time.Duration
+	// ProxyTimeout caps each backend dial and transaction; a userdb proxy_timeout
+	// overrides it per recipient. Default: 125s.
+	ProxyTimeout time.Duration
 	// BackendTLS optionally wraps the backend fan-out dial with internal mTLS.
 	// nil = plain TCP.
 	BackendTLS *tls.Config
@@ -99,11 +100,20 @@ type Options struct {
 	// XClientNets (general.xclient.trusted_nets).
 	XClient     bool
 	XClientNets []*net.IPNet
+	// MaxMessageBytes is quota_mail_size: advertised as SIZE and enforced
+	// while reading, so an oversized body is refused before it is held.
+	MaxMessageBytes int64
+	// MaxRecipients is lmtp_max_recipients: advertised as LIMITS RCPTMAX and
+	// enforced at RCPT. 0 = unlimited.
+	MaxRecipients int
 }
 
 // ErrTooManyConcurrent is returned when the cluster-wide delivery count for a
 // recipient is already at ConcurrencyLimit.
 var ErrTooManyConcurrent = errors.New("lmtplogin: too many concurrent deliveries for user")
+
+// DefaultProxyTimeout applies when Options.ProxyTimeout is zero.
+const DefaultProxyTimeout = 125 * time.Second
 
 // Server is an LMTP login proxy.
 type Server struct {
@@ -113,8 +123,8 @@ type Server struct {
 
 // New builds a Server from opts.
 func New(opts Options) *Server {
-	if opts.BackendTimeout == 0 {
-		opts.BackendTimeout = 300 * time.Second
+	if opts.ProxyTimeout == 0 {
+		opts.ProxyTimeout = DefaultProxyTimeout
 	}
 	if opts.ConcurrencyLimit == 0 {
 		opts.ConcurrencyLimit = 10
@@ -128,6 +138,8 @@ func New(opts Options) *Server {
 	srv.ReadTimeout = opts.ReadTimeout
 	srv.WriteTimeout = opts.WriteTimeout
 	srv.EnableXCLIENT = opts.XClient
+	srv.MaxMessageBytes = opts.MaxMessageBytes
+	srv.MaxRecipients = opts.MaxRecipients
 
 	s.srv = srv
 	return s
@@ -183,6 +195,7 @@ type rcptEntry struct {
 	wardenID    string // warden session handle (empty if warden skipped)
 	token       string // one-time session token from yarilo-auth
 	backendAddr string // resolved backend address (per-recipient in director mode)
+	timeout     time.Duration
 }
 
 type session struct {
@@ -206,6 +219,11 @@ type session struct {
 	authCl  *authclient.Client
 	authErr error // sticky dial failure
 
+	// dirConn is the session's director connection, dialled on the first RCPT
+	// and kept, so one MTA session costs one handshake (#2149).
+	dirMu   sync.Mutex
+	dirConn *proto.Conn
+
 	// reqID generates the LOOKUP correlation id.
 	reqID atomic.Uint64
 }
@@ -222,7 +240,16 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 	}
 
 	// Resolve backend address before reserving any resources.
-	backendAddr, err := s.resolveBackend(username)
+	start := time.Now()
+	userTag, timeout, err := s.userFields(username)
+	observeRcptPhase(phaseUserdb, start)
+	if err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		timeout = s.opts.ProxyTimeout
+	}
+	backendAddr, err := s.resolveBackend(username, userTag)
 	if err != nil {
 		slog.Error("lmtplogin: backend lookup failed", "user", username, "err", err)
 		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 4, 0}, Message: "Backend routing error"}
@@ -238,7 +265,9 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 	}
 
 	// Issue a session token for this recipient.
+	start = time.Now()
 	tok, err := s.issueToken(username, wardenID)
+	observeRcptPhase(phaseToken, start)
 	if err != nil {
 		if wardenID != "" {
 			s.wardenDisconnect(wardenID, username)
@@ -247,7 +276,7 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary auth error"}
 	}
 
-	s.rcpts = append(s.rcpts, rcptEntry{to: to, username: username, wardenID: wardenID, token: tok, backendAddr: backendAddr})
+	s.rcpts = append(s.rcpts, rcptEntry{to: to, username: username, wardenID: wardenID, token: tok, backendAddr: backendAddr, timeout: timeout})
 	return nil
 }
 
@@ -278,7 +307,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				User:      e.username,
 				Token:     e.token,
 			}
-			rerr := fanOutOne(e.backendAddr, s.opts.Hostname, s.from, e.to, data, pre, s.opts.BackendTimeout, s.opts.BackendTLS)
+			rerr := fanOutOne(e.backendAddr, s.opts.Hostname, s.from, e.to, data, pre, e.timeout, s.opts.BackendTLS)
 			if rerr == nil {
 				slog.Info("lmtplogin: delivered", "rcpt", e.to, "size", len(data))
 			} else {
@@ -336,6 +365,12 @@ func (s *session) Logout() error {
 		s.authCl = nil
 	}
 	s.authMu.Unlock()
+	s.dirMu.Lock()
+	if s.dirConn != nil {
+		s.dirConn.Close()
+		s.dirConn = nil
+	}
+	s.dirMu.Unlock()
 	return nil
 }
 
@@ -351,7 +386,9 @@ func (s *session) wardenConnect(user string) (string, error) {
 		if s.wardenErr != nil {
 			return "", s.wardenErr
 		}
+		start := time.Now()
 		c, err := warden.Dial(s.opts.WardenAddr, s.opts.WardenTLS, 5*time.Second)
+		observeRcptPhase(phaseWardenDial, start)
 		if err != nil {
 			s.wardenErr = fmt.Errorf("lmtplogin/warden: dial: %w", err)
 			return "", s.wardenErr
@@ -360,7 +397,9 @@ func (s *session) wardenConnect(user string) (string, error) {
 	}
 	limit := s.opts.ConcurrencyLimit
 	if limit > 0 {
+		start := time.Now()
 		count, err := s.wardenConn.Lookup(user, "lmtp")
+		observeRcptPhase(phaseWardenLookup, start)
 		if err != nil {
 			return "", fmt.Errorf("lmtplogin/warden: lookup: %w", err)
 		}
@@ -369,7 +408,10 @@ func (s *session) wardenConnect(user string) (string, error) {
 		}
 	}
 	id := newSessionID()
-	if err := s.wardenConn.Connect(id, user, s.peerIP, "lmtp"); err != nil {
+	start := time.Now()
+	err := s.wardenConn.Connect(id, user, s.peerIP, "lmtp")
+	observeRcptPhase(phaseWardenConnect, start)
+	if err != nil {
 		return "", fmt.Errorf("lmtplogin/warden: connect: %w", err)
 	}
 	return id, nil
@@ -439,13 +481,11 @@ func (s *session) issueToken(username, wardenID string) (string, error) {
 // same thing on the session handshake).
 const masterCallTimeout = 5 * time.Second
 
-// resolveDirectorTag looks up the per-recipient director_tag userdb field so a
-// shared login fleet can route different users to different tag-pools. Falls
-// back to "" (caller uses the static opts.DirectorTag) on any lookup failure or
-// missing override — a tag-lookup miss must never block delivery.
-func (s *session) resolveDirectorTag(username string) string {
+// userFields looks up the recipient's director_tag and proxy_timeout. A failed
+// lookup is 451, a proxy_timeout this proxy cannot read 550; not found is none.
+func (s *session) userFields(username string) (string, time.Duration, error) {
 	if s.opts.AuthMasterAddr == "" {
-		return ""
+		return "", 0, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), masterCallTimeout)
 	defer cancel()
@@ -459,29 +499,32 @@ func (s *session) resolveDirectorTag(username string) string {
 		c, derr := s.ensureAuthClient()
 		s.authMu.Unlock()
 		if derr != nil {
-			slog.Debug("lmtplogin: director_tag lookup: auth dial failed", "user", username, "err", derr)
-			return ""
+			err = derr
+		} else {
+			ui, err = c.Userdb(ctx, username)
 		}
-		ui, err = c.Userdb(ctx, username)
 	}
 	if err != nil {
-		slog.Debug("lmtplogin: director_tag lookup failed", "user", username, "err", err)
-		return ""
+		slog.Error("lmtplogin: userdb lookup failed", "user", username, "err", err)
+		return "", 0, &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary user lookup failure"}
 	}
 	if ui == nil {
-		return ""
+		return "", 0, nil
 	}
-	return ui.DirectorTag
+	timeout, err := protocol.ParseProxyTimeout(ui.ProxyTimeout)
+	if err != nil {
+		slog.Error("lmtplogin: auth service returned an invalid proxy_timeout value",
+			"user", username, "value", ui.ProxyTimeout, "err", err)
+		return "", 0, &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 3, 5}, Message: "Internal user lookup failure"}
+	}
+	return ui.DirectorTag, timeout, nil
 }
 
 // ---- director / backend resolution ------------------------------------------
 
-// resolveBackend returns the backend address for username. BackendAddr
-// (standalone) wins when both it and DirectorAddr are set. In director mode
-// (DirectorAddr set, BackendAddr empty) it performs a per-recipient LOOKUP,
-// restricted to the user's director_tag when the userdb sets one, else the
-// static DirectorTag.
-func (s *session) resolveBackend(username string) (string, error) {
+// resolveBackend returns BackendAddr when set, else the director's LOOKUP in
+// userTag's pool (the static DirectorTag when userTag is empty).
+func (s *session) resolveBackend(username, userTag string) (string, error) {
 	if s.opts.BackendAddr != "" {
 		return s.opts.BackendAddr, nil
 	}
@@ -489,32 +532,24 @@ func (s *session) resolveBackend(username string) (string, error) {
 		return "", nil
 	}
 	tag := s.opts.DirectorTag
-	if userTag := s.resolveDirectorTag(username); userTag != "" {
+	if userTag != "" {
 		tag = userTag
 	}
 	return s.directorLookup(username, tag)
 }
 
-// directorLookup dials yarilo-director, sends a LOOKUP for username, and
-// returns the resolved backend address. BackendPort overrides the port in
-// the LOOKUP result when set.
+// directorLookup asks the director over the session's connection, redialling
+// once one that failed after reuse; BackendPort overrides the answer's port.
 func (s *session) directorLookup(username, tag string) (string, error) {
-	var dc *proto.Conn
-	var err error
-	if s.opts.DirectorTLS != nil {
-		dc, err = proto.DialTLS(s.opts.DirectorAddr, s.opts.LocalIP, 0, s.opts.DirectorTLS)
-	} else {
-		dc, err = proto.Dial(s.opts.DirectorAddr, s.opts.LocalIP, 0)
+	s.dirMu.Lock()
+	defer s.dirMu.Unlock()
+	reused := s.dirConn != nil
+	res, err := s.directorLookupOnce(username, tag)
+	if err != nil && reused {
+		res, err = s.directorLookupOnce(username, tag)
 	}
 	if err != nil {
-		return "", fmt.Errorf("lmtplogin/director: dial: %w", err)
-	}
-	defer dc.Close()
-
-	id := fmt.Sprintf("%d", s.reqID.Add(1))
-	res, err := dc.Lookup(id, username, tag, "lmtp")
-	if err != nil {
-		return "", fmt.Errorf("lmtplogin/director: lookup %s: %w", username, err)
+		return "", err
 	}
 
 	addr := res.Addr
@@ -526,6 +561,35 @@ func (s *session) directorLookup(username, tag string) (string, error) {
 		addr = fmt.Sprintf("%s:%d", host, s.opts.BackendPort)
 	}
 	return addr, nil
+}
+
+// directorLookupOnce dials when no connection is held; any error drops it.
+func (s *session) directorLookupOnce(username, tag string) (proto.LookupResult, error) {
+	if s.dirConn == nil {
+		var err error
+		start := time.Now()
+		if s.opts.DirectorTLS != nil {
+			s.dirConn, err = proto.DialTLS(s.opts.DirectorAddr, s.opts.LocalIP, 0, s.opts.DirectorTLS)
+		} else {
+			s.dirConn, err = proto.Dial(s.opts.DirectorAddr, s.opts.LocalIP, 0)
+		}
+		observeRcptPhase(phaseDirectorDial, start)
+		if err != nil {
+			s.dirConn = nil
+			return proto.LookupResult{}, fmt.Errorf("lmtplogin/director: dial: %w", err)
+		}
+	}
+
+	id := fmt.Sprintf("%d", s.reqID.Add(1))
+	start := time.Now()
+	res, err := s.dirConn.Lookup(id, username, tag, "lmtp")
+	observeRcptPhase(phaseDirectorLookup, start)
+	if err != nil {
+		s.dirConn.Close()
+		s.dirConn = nil
+		return proto.LookupResult{}, fmt.Errorf("lmtplogin/director: lookup %s: %w", username, err)
+	}
+	return res, nil
 }
 
 // ---- backend fan-out --------------------------------------------------------
@@ -555,7 +619,9 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, data []byte, pre loginp
 		return err
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout)) //nolint:errcheck
+	// Not SetDeadline: the client resets it on every command.
+	stop := time.AfterFunc(timeout, func() { conn.Close() })
+	defer stop.Stop()
 
 	// Preamble must be written before go-smtp reads the 220 greeting from the
 	// backend — the backend's PreambleListener consumes it first.

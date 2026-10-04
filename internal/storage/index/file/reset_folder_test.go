@@ -16,7 +16,7 @@ func TestResetFolderPreservesModSeq(t *testing.T) {
 
 	for i := uint32(1); i <= 3; i++ {
 		modseq, _ := b.NextModSeq(f.ID)
-		m := &mailbox.MessageMeta{UID: i, Filename: filenameFor(i), ModSeq: modseq}
+		m := &mailbox.MessageMeta{UID: i, ModSeq: modseq, GUID: [16]byte{byte(i)}}
 		if err := b.AppendMessage(f.ID, m); err != nil {
 			t.Fatalf("append uid=%d: %v", i, err)
 		}
@@ -40,8 +40,13 @@ func TestResetFolderPreservesModSeq(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResetFolder: %v", err)
 	}
-	if len(expunged) != 1 || expunged[0] != 2 {
-		t.Fatalf("expunged = %v, want [2]", expunged)
+	// The identity travels with the uid: a search index retracts by the
+	// message, and a dropped record names one (#1986).
+	if len(expunged) != 1 || expunged[0].UID != 2 {
+		t.Fatalf("expunged = %v, want uid 2", expunged)
+	}
+	if expunged[0].GUID == ([16]byte{}) {
+		t.Error("the dropped record names no message, so nothing can retract its document")
 	}
 
 	after, _ := b.GetMessages(f.ID, mailbox.SeqSet{})
@@ -64,15 +69,15 @@ func TestResetFolderStampsMissingModSeq(t *testing.T) {
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
 	modseq, _ := b.NextModSeq(f.ID)
-	kept := &mailbox.MessageMeta{UID: 1, Filename: filenameFor(1), ModSeq: modseq}
+	kept := &mailbox.MessageMeta{UID: 1, ModSeq: modseq}
 	if err := b.AppendMessage(f.ID, kept); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 
 	// uid 2 carries ModSeq 0 → must be stamped fresh.
 	records := []*mailbox.MessageMeta{
-		{UID: 1, Filename: filenameFor(1), ModSeq: modseq},
-		{UID: 2, Filename: filenameFor(2)},
+		{UID: 1, ModSeq: modseq},
+		{UID: 2},
 	}
 	if _, err := b.ResetFolder(f.ID, records); err != nil {
 		t.Fatalf("ResetFolder: %v", err)
@@ -92,8 +97,4 @@ func TestResetFolderStampsMissingModSeq(t *testing.T) {
 	if got[2] <= modseq {
 		t.Errorf("uid 2 stamped modseq = %d, want > header highest %d", got[2], modseq)
 	}
-}
-
-func filenameFor(uid uint32) string {
-	return string(rune('0'+uid)) + ".file"
 }

@@ -34,6 +34,7 @@
 {{- $ftsPort := int $root.Values.components.fts.port }}
 {{- $regTelemetry := 8086 }}
 {{- $backendAPIPort := 9105 }}
+{{- $backendAPITelemetry := 8088 }}
 {{- $protocols := list }}
 {{- range $p := $allProtocols }}
 {{- if (index $root.Values.components $p.vkey | default dict).enabled }}
@@ -64,6 +65,7 @@
 {{- end }}
 {{- if $root.Values.components.backendAPI.enabled }}
 {{- $claims = append $claims (dict "port" $backendAPIPort "by" "yarilo-backend-api") }}
+{{- $claims = append $claims (dict "port" $backendAPITelemetry "by" "yarilo-backend-api telemetry") }}
 {{- end }}
 {{- range $c := $claims }}
 {{- $key := printf "%v" $c.port }}
@@ -111,6 +113,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: {{ $p.component | quote }}
+            {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" $p.component "root" $root) | quote }}
             - name: TELEMETRY_LISTEN
@@ -131,7 +134,7 @@ spec:
               containerPort: {{ $port.port }}
               protocol: TCP
             {{- end }}
-            - name: telemetry
+            - name: {{ printf "tel-%s" (trimPrefix "yarilo-" $p.component) }}
               containerPort: {{ $p.telemetry }}
               protocol: TCP
           {{- $targets := list (printf "tcp://%s-locks.%s.svc:9104" (include "yarilo.fullname" $root) $root.Release.Namespace) (printf "tcp://%s:%s" (include "yarilo.redisInitHost" $root) (include "yarilo.redisInitPort" $root)) }}
@@ -161,7 +164,7 @@ spec:
             {{- toYaml $root.Values.livenessProbe | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls) | nindent 12 }}
+            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls "role" $p.name) | nindent 12 }}
             {{- /* external TLS: a protocol backend that terminates its own TLS
                    (e.g. submission on 587/465) reads general.ssl → mount its
                    secret at /etc/yarilo/tls, matching the legacy deployment. */}}
@@ -182,6 +185,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-fts"
+            {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-fts" "root" $root) | quote }}
             - name: TELEMETRY_LISTEN
@@ -195,7 +199,7 @@ spec:
             - name: fts
               containerPort: {{ $root.Values.components.fts.port }}
               protocol: TCP
-            - name: telemetry
+            - name: tel-fts
               containerPort: {{ $ftsTelemetry }}
               protocol: TCP
           # fts is best-effort — NOT gated (a wedged index degrades SEARCH but
@@ -206,7 +210,7 @@ spec:
               port: {{ $ftsTelemetry }}
             periodSeconds: 10
           volumeMounts:
-            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls) | nindent 12 }}
+            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls "role" "fts") | nindent 12 }}
           resources:
             {{- toYaml $root.Values.components.fts.resources | nindent 12 }}
         # ---- yarilo-backend-api (per-user writer; listens on the pod IP only, #788/#792) ----
@@ -216,8 +220,11 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-backend-api"
+            {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-backend-api" "root" $root) | quote }}
+            - name: TELEMETRY_LISTEN
+              value: {{ printf ":%d" (int $backendAPITelemetry) | quote }}
             # POD_IP is this co-located pod's IP — the backend IP sessions route
             # to — so `who` can scope to THIS backend by default (#814).
             - name: POD_IP
@@ -229,6 +236,12 @@ spec:
             {{- include "yarilo.adminDirectorEnv" $root | nindent 12 }}
             {{- end }}
             {{- include "yarilo.dbEnv" $root | nindent 12 }}
+            # The server's own token: without it the API answered anyone (A11).
+            - name: BACKEND_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "yarilo.backendAPITokenSecret" $root }}
+                  key: token
             {{- with $root.Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -238,8 +251,12 @@ spec:
             - name: backend-api
               containerPort: {{ $backendAPIPort }}
               protocol: TCP
+            - name: tel-backend-api
+              containerPort: {{ $backendAPITelemetry }}
+              protocol: TCP
           volumeMounts:
-            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls) | nindent 12 }}
+            {{- include "yarilo.backendVolumeMounts" (dict "root" $root "itls" $itls "role" "backend-api") | nindent 12 }}
+            {{- include "yarilo.adminTLSMount" (dict "root" $root "role" "admin") | nindent 12 }}
           resources:
             {{- toYaml $root.Values.components.backendAPI.resources | nindent 12 }}
         # ---- yarilo-backend-reg (registration sidecar: one BACKEND-UP for the pod IP) ----
@@ -263,7 +280,7 @@ spec:
           securityContext:
             {{- toYaml $root.Values.containerSecurityContext | nindent 12 }}
           ports:
-            - name: telemetry
+            - name: tel-backend-reg
               containerPort: {{ $regTelemetry }}
               protocol: TCP
           readinessProbe:
@@ -277,7 +294,7 @@ spec:
               readOnly: true
             - name: ready
               mountPath: {{ $readyDir }}
-            {{- include "yarilo.internalTLSMount" $itls | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $root "itls" $itls "role" "backend-reg" "vol" "internal-tls-backend-reg") | nindent 12 }}
             {{- /* extraVolumeMounts are deliberately NOT here: this sidecar
                    reads the config and the readiness directory and nothing
                    else, so mounting an operator secret into it would widen
@@ -288,6 +305,18 @@ spec:
         - name: config
           configMap:
             name: {{ include "yarilo.fullname" . }}
+        {{- if .Values.virtual_definitions }}
+        - name: virtual-definitions
+          configMap:
+            name: {{ include "yarilo.fullname" . }}-virtual
+            # The path lives here, not in the key: a ConfigMap key may not hold
+            # a "/", and the driver reads <mailbox>/yarilo-virtual (#2073).
+            items:
+              {{- range $name, $_ := .Values.virtual_definitions }}
+              - key: {{ $name | quote }}
+                path: {{ printf "%s/yarilo-virtual" $name | quote }}
+              {{- end }}
+        {{- end }}
         - name: tmp
           emptyDir: {}
         # shared readiness signal (#788): protocol containers touch, sidecar reads
@@ -307,7 +336,12 @@ spec:
             secretName: {{ $ptls.secretName }}
         {{- end }}
         {{- end }}
-        {{- include "yarilo.internalTLSVolume" $itls | nindent 8 }}
+        {{- $itlsRoles := list "fts" "backend-api" "backend-reg" }}
+        {{- range $p := $protocols }}{{ $itlsRoles = append $itlsRoles $p.name }}{{ end }}
+        {{- include "yarilo.adminTLSVolume" (dict "root" $root "role" "admin") | nindent 8 }}
+        {{- range $role := $itlsRoles }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $root "itls" $itls "role" $role "vol" (printf "internal-tls-%s" $role)) | nindent 8 }}
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

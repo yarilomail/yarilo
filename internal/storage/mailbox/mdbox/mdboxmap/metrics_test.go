@@ -2,6 +2,7 @@ package mdboxmap
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -56,44 +57,87 @@ func (l *slowLocker) Subscribe(context.Context, string) (<-chan locks.Event, err
 	return make(chan locks.Event), nil
 }
 func (l *slowLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
-func (l *slowLocker) HoldsResource(string) bool                                   { return false }
+func (l *slowLocker) HoldsResource(string) (locks.HoldMode, bool)                 { return locks.HoldNone, false }
 func (l *slowLocker) IncrementCounter(context.Context, string, int64) (int64, error) {
 	return 0, nil
 }
 func (l *slowLocker) Close() error { return nil }
 
-// Waiting for the lock service and working under the lock are different
-// findings, so they must not land in one number: an optimisation aimed at the
-// wrong one is what an undivided measurement buys.
-func TestLockWaitAndHoldAreCountedApart(t *testing.T) {
+// The acquisition round trip is paid when nothing holds the lock.
+//
+// This is the property the old name hid. `mdbox_map_lock_wait_seconds` read as
+// time spent behind another holder, so a ratio of 59-80x against the hold read
+// as contention -- three times, in three separate investigations. There is no
+// other holder anywhere in this test: one map, one goroutine, one append. The
+// histogram is observed all the same, because what it times is the call to the
+// lock service (#1533).
+func TestTheAcquisitionIsPaidWithNoOtherHolder(t *testing.T) {
 	const delay = 60 * time.Millisecond
 	dir := t.TempDir()
-	m, err := Open(dir, "alice@example.com", WithLocker(&slowLocker{delay: delay}), WithOwner("test"))
+	m, err := Open(dir, "alice@example.com", WithLocker(&slowLocker{delay: delay}), WithOwner("test.bin/1/alice@example.com/sess1"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = m.Close() })
 
-	waitBefore, waitCountBefore := histSum(t, metricMapLockWait)
-	holdBefore, holdCountBefore := histSum(t, metricMapLockHold)
+	before, countBefore := histSum(t, metricMapLockAcquire)
+	if _, err := m.AppendRecord(1, 0, 10, [16]byte{1}); err != nil {
+		t.Fatalf("AppendRecord: %v", err)
+	}
+	got, count := histSum(t, metricMapLockAcquire)
+
+	if count != countBefore+1 {
+		t.Fatalf("an uncontended append produced %d acquisitions, want 1 -- if it produced none, the histogram is a contention counter and the name is right after all",
+			count-countBefore)
+	}
+	if d := got - before; d < delay.Seconds() {
+		t.Errorf("recorded %.3fs for a round trip that took %v, with nobody else holding the lock", d, delay)
+	}
+}
+
+// Waiting for the lock service and working under the lock are different
+// findings, so they must not land in one number: an optimisation aimed at the
+// wrong one is what an undivided measurement buys.
+func TestLockWaitAndHoldAreCountedApart(t *testing.T) {
+	// Any non-zero wait will do: what the row is about is which span each
+	// observation went to, and that is an order, not a duration (#1738).
+	const delay = time.Millisecond
+	dir := t.TempDir()
+	m, err := Open(dir, "alice@example.com", WithLocker(&slowLocker{delay: delay}), WithOwner("test.bin/1/alice@example.com/sess1"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+
+	var mu sync.Mutex
+	var seen []string
+	disarm := SetTestSpanRecorder(func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, name)
+	})
+	defer disarm()
+
+	_, waitCountBefore := histSum(t, metricMapLockAcquire)
+	_, holdCountBefore := histSum(t, metricMapLockHold)
 
 	if _, err := m.AppendRecord(1, 0, 10, [16]byte{1}); err != nil {
 		t.Fatalf("AppendRecord: %v", err)
 	}
 
-	wait, waitCount := histSum(t, metricMapLockWait)
-	hold, holdCount := histSum(t, metricMapLockHold)
+	_, waitCount := histSum(t, metricMapLockAcquire)
+	_, holdCount := histSum(t, metricMapLockHold)
 	if waitCount != waitCountBefore+1 || holdCount != holdCountBefore+1 {
 		t.Fatalf("one append produced %d waits and %d holds, want one of each",
 			waitCount-waitCountBefore, holdCount-holdCountBefore)
 	}
-	if got := wait - waitBefore; got < delay.Seconds() {
-		t.Errorf("recorded %.3fs of waiting for a lock that took %v", got, delay)
-	}
-	// The work itself did not sleep, so a hold as long as the wait would mean
-	// the two are measuring the same span.
-	if got := hold - holdBefore; got >= delay.Seconds() {
-		t.Errorf("hold %.3fs includes the %v wait: the spans are not separated", got, delay)
+
+	mu.Lock()
+	order := strings.Join(seen, ",")
+	mu.Unlock()
+	const want = spanWaitStart + "," + spanWaitEnd + "," + spanHoldStart + "," + spanHoldEnd
+	if order != want {
+		t.Errorf("the spans ran as %q, want %q: the hold must begin after the wait ends", order, want)
 	}
 }
 
@@ -102,7 +146,7 @@ func TestLockWaitAndHoldAreCountedApart(t *testing.T) {
 func TestReadBlockedTimeIsRecordedWhileAWriterWaits(t *testing.T) {
 	const delay = 80 * time.Millisecond
 	dir := t.TempDir()
-	m, err := Open(dir, "alice@example.com", WithLocker(&slowLocker{delay: delay}), WithOwner("test"))
+	m, err := Open(dir, "alice@example.com", WithLocker(&slowLocker{delay: delay}), WithOwner("test.bin/1/alice@example.com/sess1"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -205,7 +249,7 @@ func TestFlushIsCounted(t *testing.T) {
 func TestWriteBlockedTimeIsRecorded(t *testing.T) {
 	const delay = 80 * time.Millisecond
 	dir := t.TempDir()
-	m, err := Open(dir, "alice@example.com", WithLocker(&slowLocker{delay: delay}), WithOwner("test"))
+	m, err := Open(dir, "alice@example.com", WithLocker(&slowLocker{delay: delay}), WithOwner("test.bin/1/alice@example.com/sess1"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

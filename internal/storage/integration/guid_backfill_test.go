@@ -10,6 +10,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -36,14 +37,18 @@ func stageLegacyFolder(t *testing.T, n int) (mailbox.UserMailbox, mailbox.UserIn
 			t.Fatalf("allocate: %v", err)
 		}
 		body := fmt.Sprintf("Subject: m%d\r\n\r\nbody\r\n", i)
-		name, vsize, _, err := mb.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, [16]byte{})
+		name, vsize, _, err := mb.Save("INBOX", strings.NewReader(body), uid, int64(len(body)), nil, nil, [16]byte{})
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
-		// No GUID: the record shape this fixture reproduces.
-		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
-			UID: uid, Filename: name, Size: uint32(len(body)), VSize: vsize,
-		}); err != nil {
+		// No GUID: the record shape this fixture reproduces. The name is still
+		// settled the way every caller settles it.
+		meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(body)), VSize: vsize}
+		if err := mailboxbase.NameSaved(mb, "INBOX", name, meta); err != nil {
+			t.Fatalf("name: %v", err)
+		}
+		meta.GUID = [16]byte{}
+		if err := idx.AppendMessage(folder.ID, meta); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -144,7 +149,8 @@ func TestBackfillStampsLegacyRecords(t *testing.T) {
 		t.Fatal("legacy folder reported as already backfilled")
 	}
 
-	if err := idxrebuild.BackfillGUIDs(mb, idx, folder, "INBOX"); err != nil {
+	// Through Box, the entry point a session reaches it by (#1805).
+	if err := mailboxbase.Open(mb, idx).BackfillGUIDs(folder, "INBOX"); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 
@@ -188,7 +194,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 		t.Fatalf("partial pass: %v", err)
 	}
 
-	if err := idxrebuild.BackfillGUIDs(mb, idx, folder, "INBOX"); err != nil {
+	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(mb, idx), idx, folder, "INBOX"); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	first := guidsByUID(t, idx, folder.ID)
@@ -196,7 +202,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 		t.Errorf("resumed pass rewrote an assigned GUID: %x, want %x", first[firstUID], pinned)
 	}
 
-	if err := idxrebuild.BackfillGUIDs(mb, idx, folder, "INBOX"); err != nil {
+	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(mb, idx), idx, folder, "INBOX"); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	second := guidsByUID(t, idx, folder.ID)
@@ -214,7 +220,7 @@ func TestBackfillIsIdempotent(t *testing.T) {
 // reports, or a rebuild from storage would change EMAILID.
 func TestBackfillMatchesStorage(t *testing.T) {
 	mb, idx, folder := stageLegacyFolder(t, 3)
-	if err := idxrebuild.BackfillGUIDs(mb, idx, folder, "INBOX"); err != nil {
+	if err := idxrebuild.BackfillGUIDs(mailboxbase.Open(mb, idx), idx, folder, "INBOX"); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 
@@ -231,13 +237,18 @@ func TestBackfillMatchesStorage(t *testing.T) {
 		t.Fatalf("get messages: %v", err)
 	}
 	for _, m := range msgs {
-		want, ok := fromStorage[m.Filename]
+		name, perr := mailboxbase.MessagePath(mb, "INBOX", m)
+		if perr != nil {
+			t.Errorf("uid %d cannot be named: %v", m.UID, perr)
+			continue
+		}
+		want, ok := fromStorage[name]
 		if !ok {
-			t.Errorf("storage does not report %q", m.Filename)
+			t.Errorf("storage does not report %q", name)
 			continue
 		}
 		if m.GUID != want {
-			t.Errorf("index GUID %x != storage GUID %x for %q", m.GUID, want, m.Filename)
+			t.Errorf("index GUID %x != storage GUID %x for %q", m.GUID, want, name)
 		}
 	}
 }

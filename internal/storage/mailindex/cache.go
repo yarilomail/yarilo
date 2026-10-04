@@ -1,35 +1,6 @@
-// The index cache file (yarilo.index.cache): the immutable half of the
-// index design. yarilo.index holds what changes (flags, keywords, modseq);
-// this file holds what a message can never change (envelope, body structure,
-// derived sizes), so a listing never opens a message file (#1030).
-//
-// Byte-compatible with the reference's mail_cache_header / mail_cache_record
-// (mail-cache-private.h), full eleven-field header included: the field table
-// lives inside the file at field_header_offset, which is what makes a field
-// id meaningful outside the process that assigned it, and compat_sizeof_uoff_t
-// guards against an implementation the file cannot serve.
-//
-// What byte compatibility buys is INSPECTABILITY -- our cache reads with the
-// reference's tooling and vice versa -- and deliberately does NOT buy data
-// reuse: cached values are parsing results, and the producer is part of
-// their identity. A file written by the reference carries producer byte 0
-// and is rejected at open exactly like any other producer mismatch, then
-// rebuilt; the cache is derived, so nothing is lost. Do not "fix" the
-// generation check to accept 0 for migration's sake -- that silently
-// restores trust in a foreign parser.
-//
-// The cache has no vote on its own validity. Four levels, all owned by the
-// index or the producing code:
-//
-//	indexid       — must match the paired index; a mismatch is garbage.
-//	file_seq      — must match the "cache" extension's reset_id; a purge
-//	                bumps both, invalidating every stored offset at once.
-//	record        — the offset lives in the index record; expunge and
-//	                reconcile drop it there.
-//	producer gen  — one byte in the reference's unused header slot, bumped
-//	                when the PARSER changes: what is stored is the result of
-//	                parsing, and a parser fix makes a cached value wrong
-//	                against current code while every other level still holds.
+// The index cache file (yarilo.index.cache), byte-compatible with the reference's;
+// layout, producer byte and validity levels: INTERNALS.md §7.
+
 package mailindex
 
 import (
@@ -37,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -60,6 +32,9 @@ const (
 	// alters output for the same bytes; a mismatch invalidates the file
 	// exactly as an indexid mismatch does.
 	CacheProducerGen = 1
+	// cacheProducerGenForeign is what the reference leaves in the slot: a file
+	// it wrote, whose values are the same bytes ours would be (#1714).
+	cacheProducerGenForeign = 0
 
 	cacheHeaderSize = 32
 )
@@ -87,7 +62,7 @@ const (
 var ErrCacheInvalid = errors.New("mailindex: cache file invalid")
 
 // CacheHeader is the 32-byte file header, field-for-field the reference's
-// mail_cache_header. ProducerGen occupies the reference's unused byte.
+// cache header. ProducerGen occupies the reference's unused byte.
 type CacheHeader struct {
 	MajorVersion      uint8
 	CompatSizeofUoffT uint8
@@ -117,7 +92,9 @@ func (h *CacheHeader) encode() []byte {
 	le.PutUint32(b[16:], h.RecordCount)
 	le.PutUint32(b[20:], h.BackwardsCompatUsedFileSize)
 	le.PutUint32(b[24:], h.DeletedRecordCount)
-	le.PutUint32(b[28:], h.FieldHeaderOffset)
+	// Packed, as the reference writes it: the field table's own next_offset
+	// already is, and the header's must match or neither side reads the other.
+	le.PutUint32(b[28:], packCacheOffset(h.FieldHeaderOffset))
 	return b
 }
 
@@ -137,7 +114,7 @@ func decodeCacheHeader(b []byte) (CacheHeader, error) {
 		RecordCount:                 le.Uint32(b[16:]),
 		BackwardsCompatUsedFileSize: le.Uint32(b[20:]),
 		DeletedRecordCount:          le.Uint32(b[24:]),
-		FieldHeaderOffset:           le.Uint32(b[28:]),
+		FieldHeaderOffset:           unpackCacheOffset(le.Uint32(b[28:])),
 	}, nil
 }
 
@@ -166,7 +143,8 @@ type CacheFile struct {
 	f      *os.File
 	hdr    CacheHeader
 	fields []CacheField
-	// byName maps a field name to its id (= position in fields).
+	// byName: lower-cased name to field id; names are case-insensitive, as in the
+	// reference, so hdr.Date and hdr.DATE are one field.
 	byName map[string]uint32
 	// snap is the file as it stood when Preload was called, or nil. Reads
 	// fully inside it are served from memory; anything past its end -- an
@@ -276,7 +254,7 @@ func OpenCache(path string, indexID, expectFileSeq uint32) (*CacheFile, error) {
 		err = fmt.Errorf("mailindex: cache indexid %d, index %d: %w", hdr.IndexID, indexID, ErrCacheInvalid)
 	case hdr.FileSeq != expectFileSeq:
 		err = fmt.Errorf("mailindex: cache file_seq %d, reset_id %d: %w", hdr.FileSeq, expectFileSeq, ErrCacheInvalid)
-	case hdr.ProducerGen != CacheProducerGen:
+	case hdr.ProducerGen != CacheProducerGen && hdr.ProducerGen != cacheProducerGenForeign:
 		// The one divergence the pair identity cannot see: the parser
 		// changed, so every stored value is wrong against current code.
 		err = fmt.Errorf("mailindex: cache producer gen %d, code %d: %w", hdr.ProducerGen, CacheProducerGen, ErrCacheInvalid)
@@ -328,16 +306,13 @@ func (c *CacheFile) loadFields() error {
 	}
 	c.byName = make(map[string]uint32, len(c.fields))
 	for i, fl := range c.fields {
-		c.byName[fl.Name] = uint32(i)
+		c.byName[strings.ToLower(fl.Name)] = uint32(i)
 	}
 	return nil
 }
 
-// readFieldTable decodes one mail_cache_header_fields block:
-//
-//	next_offset u32 (packed) | size u32 | fields_count u32 |
-//	last_used[count] u32 | size[count] u32 | type[count] u8 |
-//	decision[count] u8 | names: NUL-separated
+// readFieldTable decodes one field table: packed next offset, size and count,
+// then per field last_used, size, type and decision, and NUL-separated names.
 func (c *CacheFile) readFieldTable(off uint32) (next uint32, fields []CacheField, err error) {
 	fixed := make([]byte, 12)
 	if err := c.readAt(fixed, int64(off)); err != nil {
@@ -382,14 +357,14 @@ func (c *CacheFile) AddFields(add []CacheField) (uint32, error) {
 	firstNew := uint32(len(c.fields))
 	merged := c.Fields()
 	for _, fl := range add {
-		if _, dup := c.byName[fl.Name]; dup {
+		if _, dup := c.byName[strings.ToLower(fl.Name)]; dup {
 			continue
 		}
 		if fl.Type == CacheFieldVariableSize || fl.Type == CacheFieldString || fl.Type == CacheFieldHeader {
 			fl.Size = 0xffffffff
 		}
 		merged = append(merged, fl)
-		c.byName[fl.Name] = uint32(len(merged) - 1)
+		c.byName[strings.ToLower(fl.Name)] = uint32(len(merged) - 1)
 	}
 	if uint32(len(merged)) == firstNew {
 		return firstNew, nil // nothing new
@@ -459,9 +434,10 @@ func (c *CacheFile) newestTableOffset() (uint32, error) {
 	}
 }
 
-// FieldID resolves a field name to its id, or ok=false.
+// FieldID resolves a field name to its id, or ok=false. Case-insensitive: a
+// file written elsewhere spells hdr.MESSAGE-ID and hdr.Date in one table.
 func (c *CacheFile) FieldID(name string) (uint32, bool) {
-	id, ok := c.byName[name]
+	id, ok := c.byName[strings.ToLower(name)]
 	return id, ok
 }
 
@@ -515,6 +491,7 @@ func (c *CacheFile) AppendRecord(prevOffset uint32, values []CacheFieldValue) (u
 // ReadRecord returns the merged field values reachable from offset,
 // following the prev_offset chain. The newest record wins per field.
 func (c *CacheFile) ReadRecord(offset uint32) (map[uint32][]byte, error) {
+	metricRecordReads.Inc()
 	out := make(map[uint32][]byte)
 	le := binary.LittleEndian
 	seen := 0
@@ -568,11 +545,45 @@ func (c *CacheFile) ReadRecord(offset uint32) (map[uint32][]byte, error) {
 	return out, nil
 }
 
-// MarkDeleted counts an expunged message's record so purge knows how much
-// dead weight the file carries.
-func (c *CacheFile) MarkDeleted() error {
-	c.hdr.DeletedRecordCount++
+// ExpungeCount moves n expunged messages' records from the live count to the
+// deleted one, as the reference does; the deleted share decides a purge.
+func (c *CacheFile) ExpungeCount(n uint32) error {
+	c.hdr.DeletedRecordCount += n
+	if c.hdr.RecordCount >= n {
+		c.hdr.RecordCount -= n
+	} else {
+		c.hdr.RecordCount = 0
+	}
 	return c.writeHeader()
+}
+
+// DeletePercentage is the share of records whose messages are gone.
+func (h CacheHeader) DeletePercentage(msgCount uint32) uint32 {
+	if h.DeletedRecordCount >= math.MaxUint32/100 {
+		return math.MaxUint32
+	}
+	return h.DeletedRecordCount * 100 / (h.liveRecords(msgCount) + h.DeletedRecordCount)
+}
+
+// ContinuedPercentage is continued records against live ones; past 100 when
+// messages carry more than one each.
+func (h CacheHeader) ContinuedPercentage(msgCount uint32) uint32 {
+	if h.ContinuedRecordCount >= math.MaxUint32/100 {
+		return math.MaxUint32
+	}
+	return h.ContinuedRecordCount * 100 / h.liveRecords(msgCount)
+}
+
+// liveRecords is the record count a share divides by; one above twice the
+// folder's messages is not a real one, and msgCount stands in.
+func (h CacheHeader) liveRecords(msgCount uint32) uint32 {
+	switch {
+	case msgCount == 0:
+		return 1
+	case h.RecordCount == 0 || h.RecordCount > msgCount*2:
+		return msgCount
+	}
+	return h.RecordCount
 }
 
 /* --- low-level ------------------------------------------------------------ */
@@ -605,10 +616,8 @@ func (c *CacheFile) appendAligned(buf []byte) (uint32, error) {
 	return uint32(end), nil
 }
 
-// packCacheOffset / unpackCacheOffset are the reference's
-// mail_index_uint32_to_offset / mail_index_offset_to_uint32: a 4-aligned
-// 30-bit offset spread over four 7-bit groups with the high bit of every
-// byte set, so a partially-written value can never look valid.
+// packCacheOffset is the reference's packing: a 4-aligned 30-bit offset in four
+// 7-bit groups with every byte's high bit set, so a torn write never looks valid.
 func packCacheOffset(off uint32) uint32 {
 	off >>= 2
 	v := 0x00000080 | (off & 0x0000007f) |

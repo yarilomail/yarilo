@@ -9,13 +9,16 @@ import (
 
 // registerIndexRoutes registers index routes: dump (read-only),
 // rebuild (per-folder resync; 501 for mdbox), rebuild-storage
-// (storage-wide, for mdbox), optimize (compact .index.log).
+// (storage-wide, for mdbox), check (find and repair shifted record tails),
+// optimize (compact .index.log).
 func (s *Server) registerIndexRoutes() {
 	s.mux.Handle("POST /api/backend/index/dump", s.middleware(s.handleIndexDump))
 	s.mux.Handle("POST /api/backend/index/rebuild", s.middleware(s.handleIndexRebuild))
 	s.mux.Handle("POST /api/backend/index/rebuild-storage", s.middleware(s.handleStorageRebuild))
+	s.mux.Handle("POST /api/backend/index/check", s.middleware(s.handleIndexCheck))
 	s.mux.Handle("POST /api/backend/index/optimize", s.middleware(s.handleIndexOptimize))
 	s.mux.Handle("POST /api/backend/index/cache-purge", s.middleware(s.handleIndexCachePurge))
+	s.mux.Handle("POST /api/backend/index/rebuild-guid-store", s.middleware(s.handleGUIDRebuild))
 }
 
 type indexDumpRequest struct {
@@ -48,16 +51,15 @@ func (s *Server) handleIndexDump(w http.ResponseWriter, r *http.Request) {
 	if req.Limit < 0 {
 		req.Limit = 0
 	}
-	uc, err := s.openUserContext(req.User)
+	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer uc.Close()
 
-	bundle, err := uc.ns(s, req.Namespace)
-	if err != nil {
-		apiError(w, err.Error(), http.StatusBadRequest)
+	bundle, ok := readBundle(w, s, uc, req.Namespace)
+	if !ok {
 		return
 	}
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)
@@ -70,12 +72,12 @@ func (s *Server) handleIndexDump(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder not found", http.StatusNotFound)
 		return
 	}
-	folder, err := bundle.idx.OpenFolder(req.Folder, 0)
+	folder, err := bundle.mbox.Folder(req.Folder, 0)
 	if err != nil {
 		apiError(w, "open folder: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	all, err := mailbox.ReadMessages(bundle.idx, folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	all, err := bundle.mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil {
 		apiError(w, "get messages: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -94,7 +96,7 @@ func (s *Server) handleIndexDump(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, indexRecordOut{
 			UID:      m.UID,
-			Filename: m.Filename,
+			Filename: storedNameOrEmpty(bundle.mbox, req.Folder, m),
 			Flags:    m.Flags,
 			Keywords: m.Keywords,
 			ModSeq:   m.ModSeq,
@@ -112,4 +114,14 @@ func (s *Server) handleIndexDump(w http.ResponseWriter, r *http.Request) {
 		"records":        out,
 		"truncated":      truncated,
 	})
+}
+
+// storedNameOrEmpty is what the driver calls this message on disk; the record
+// keeps no name, and this field reports the store.
+func storedNameOrEmpty(box mailbox.Box, folder string, m *mailbox.MessageMeta) string {
+	name, err := box.MessagePath(folder, m)
+	if err != nil {
+		return ""
+	}
+	return name
 }

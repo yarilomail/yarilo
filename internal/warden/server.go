@@ -53,6 +53,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
 const (
@@ -232,7 +234,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	fmt.Fprintf(conn, "DONE\n")
 
 	for {
-		line, err := rd.ReadString('\n')
+		line, err := lineio.ReadLine(rd, lineio.MaxInternal)
 		if err != nil {
 			if err != io.EOF {
 				_ = err

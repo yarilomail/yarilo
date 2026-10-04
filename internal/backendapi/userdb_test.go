@@ -232,7 +232,7 @@ func TestUserInfo_NoAuthClientOmitsUserdbBlock(t *testing.T) {
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"
 
-	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "", map[string]any{"user": user})
+	materialiseHome(t, ts, user)
 
 	status, body := doJSON(t, ts, http.MethodPost, "/api/backend/user/info", "",
 		map[string]any{"user": user})

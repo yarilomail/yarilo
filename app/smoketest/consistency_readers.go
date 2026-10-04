@@ -2,12 +2,10 @@ package main
 
 import (
 	"bufio"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Row: one LMTP delivery, visible to every configured reader. The other rows
@@ -91,25 +89,11 @@ func sharedFields(anchor, other *reading) *reading {
 // message are the same fact under both protocols — so that comparison is real
 // and is made here.
 func pop3ReadProbe(user, pass, marker string) (*reading, error) {
-	addr := net.JoinHostPort(pop3Host(), *flagPOP3SPort)
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: *flagTimeout}, "tcp", addr,
-		&tls.Config{ServerName: pop3Host(), InsecureSkipVerify: *flagInsecure}) //nolint:gosec
+	p, err := pop3Login(user, pass)
 	if err != nil {
-		return nil, fmt.Errorf("connect %s: %w", addr, err)
-	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(*flagTimeout)) //nolint:errcheck
-	p := &pop3Client{conn: conn, r: bufio.NewReader(conn)}
-	if _, err := p.line(); err != nil {
-		return nil, fmt.Errorf("greeting: %w", err)
-	}
-	if err := p.ok("USER " + user); err != nil {
 		return nil, err
 	}
-	if err := p.ok("PASS " + pass); err != nil {
-		return nil, err
-	}
-	defer p.ok("QUIT") //nolint:errcheck
+	defer p.close()
 
 	sizes, err := p.list()
 	if err != nil {

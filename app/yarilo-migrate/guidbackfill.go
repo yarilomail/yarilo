@@ -12,6 +12,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
 	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/internal/userdbinfo"
 	"github.com/yarilomail/yarilo/pkg/authclient"
@@ -66,7 +67,7 @@ func runGUIDBackfill(o guidOpts) error {
 	if authcl != nil {
 		defer authcl.Close() //nolint:errcheck
 	}
-	resolver := guidResolver(cfg, o)
+	resolver := layoutResolver(cfg, o.Root, o.Template)
 	driver := o.Driver
 	if driver == "" {
 		driver = cfg.Storage.MailDriver
@@ -120,12 +121,15 @@ func backfillUser(boxBE mailbox.MailboxBackend, idxBE mailbox.IndexBackend, reso
 		return fmt.Errorf("list folders: %w", err)
 	}
 	dryRun := o.DryRun
+	// Read-only: the backfill does its own scan of every folder it touches, so
+	// settling one first walks it twice (#1875).
+	mbox := mailboxbase.Open(box, idx, mailboxbase.ReadOnly())
 	for _, e := range entries {
 		if !e.Selectable {
 			continue
 		}
 		st.Folders++
-		folder, err := idx.OpenFolder(e.Name, 0)
+		folder, err := mbox.Folder(e.Name, 0)
 		if err != nil {
 			return fmt.Errorf("open %s: %w", e.Name, err)
 		}
@@ -141,7 +145,7 @@ func backfillUser(boxBE mailbox.MailboxBackend, idxBE mailbox.IndexBackend, reso
 			slog.Info("would backfill", "user", user, "folder", e.Name)
 			continue
 		}
-		if err := idxrebuild.BackfillGUIDs(box, idx, folder, e.Name); err != nil {
+		if err := idxrebuild.BackfillGUIDs(mbox, idx, folder, e.Name); err != nil {
 			return fmt.Errorf("backfill %s: %w", e.Name, err)
 		}
 		st.Migrated++
@@ -163,10 +167,15 @@ func guidConfig(path string) (*config.Config, error) {
 	return cfg, nil
 }
 
-// guidResolver mirrors the resolver the services build, so the tool reads the
-// same homes, index and control dirs. Flags win over the config, and the
-// built-in defaults are the last resort.
-func guidResolver(cfg *config.Config, o guidOpts) *mailbox.Resolver {
+// layoutResolver mirrors the resolver the services build, so the tool reads and
+// writes the same homes, index and control dirs. Flags win over the config, and
+// the built-in defaults are the last resort.
+//
+// Every mode of this tool goes through here. An import that built its own
+// resolver instead wrote indexes into the default layout while the server, on
+// the same store, read the configured one, and every folder came up empty
+// (#1562).
+func layoutResolver(cfg *config.Config, root, template string) *mailbox.Resolver {
 	r := &mailbox.Resolver{
 		Root:                     cfg.Storage.MaildirRoot,
 		HomeTemplate:             cfg.Storage.MailHome,
@@ -178,11 +187,11 @@ func guidResolver(cfg *config.Config, o guidOpts) *mailbox.Resolver {
 		DefaultSeparator:         guidSeparator(cfg.Namespaces),
 		DefaultStorageEscapeChar: cfg.Storage.MailboxListStorageEscapeChar,
 	}
-	if o.Root != "" {
-		r.Root = o.Root
+	if root != "" {
+		r.Root = root
 	}
-	if o.Template != "" {
-		r.HomeTemplate = o.Template
+	if template != "" {
+		r.HomeTemplate = template
 	}
 	if r.Root == "" {
 		r.Root = "/var/mail/vhosts"
@@ -284,7 +293,10 @@ func guidLocker(cfg *config.Config) (locks.Locker, error) {
 // the per-user overrides come from there, exactly as a session resolves them;
 // offline they come from the templates, which is why the two are exclusive.
 func guidUserInfo(resolver *mailbox.Resolver, authcl *authclient.Client, o guidOpts, user string) (*mailbox.UserInfo, error) {
-	ui := resolver.UserInfo(user, "")
+	ui, err := resolver.UserInfo(user, "")
+	if err != nil {
+		return nil, err
+	}
 	if authcl != nil {
 		pui, err := authcl.Userdb(context.Background(), user)
 		if err != nil {

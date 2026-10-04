@@ -129,11 +129,11 @@ func TestPrefixSettingReachesTheQuery(t *testing.T) {
 			ui, _ := testEngine(t, Options{PrefixSearch: tc.setting})
 			indexDoc(t, ui, 1, nil, []string{"butterfly"})
 
-			res, err := ui.Lookup(inbox, bodyQuery(tc.term))
+			res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery(tc.term))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if found := len(res.Definite) > 0; found != tc.found {
+			if found := len(res.DefiniteGUIDs) > 0; found != tc.found {
 				t.Errorf("%q with prefix_search=%q found=%v, want %v",
 					tc.term, tc.setting, found, tc.found)
 			}
@@ -148,11 +148,11 @@ func TestSubstringSearchForcesExpansion(t *testing.T) {
 	ui, _ := testEngine(t, Options{SubstringSearch: true, PrefixSearch: "no"})
 	indexDoc(t, ui, 1, nil, []string{"butterfly"})
 
-	res, err := ui.Lookup(inbox, bodyQuery("tterf"))
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("tterf"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Definite) == 0 {
+	if len(res.DefiniteGUIDs) == 0 {
 		t.Error("substring search found nothing; disabling expansion made the stored suffixes unreachable")
 	}
 }
@@ -164,11 +164,11 @@ func TestUnparseableSettingExpandsEverything(t *testing.T) {
 	ui, _ := testEngine(t, Options{PrefixSearch: "maybe"})
 	indexDoc(t, ui, 1, nil, []string{"butterfly"})
 
-	res, err := ui.Lookup(inbox, bodyQuery("butterf"))
+	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("butterf"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Definite) == 0 {
+	if len(res.DefiniteGUIDs) == 0 {
 		t.Error("an unparseable setting narrowed matching; it must fall back to expanding")
 	}
 }

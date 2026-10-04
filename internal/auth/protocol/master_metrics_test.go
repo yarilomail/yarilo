@@ -84,9 +84,7 @@ func TestUnknownMasterVerbDoesNotBecomeALabel(t *testing.T) {
 	}
 }
 
-// serveMaster starts a MasterServer and returns its address once it answers,
-// without leaving a probe connection behind: readiness is established by the
-// first real dial, which the caller then keeps.
+// serveMaster serves a MasterServer on a bound listener and returns its address.
 func serveMaster(t *testing.T, userdb Userdb) string {
 	t.Helper()
 	srv := NewMasterServer(userdb)
@@ -94,13 +92,11 @@ func serveMaster(t *testing.T, userdb Userdb) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	addr := ln.Addr().String()
-	ln.Close()
-
+	// Not ListenAndServe on a released port: the caller may dial first.
 	ctx, cancel := context.WithCancel(context.Background())
-	go srv.ListenAndServe(ctx, addr, nil) //nolint:errcheck
+	go srv.Serve(ctx, ln) //nolint:errcheck
 	t.Cleanup(cancel)
-	return addr
+	return ln.Addr().String()
 }
 
 // dialMaster dials, retrying until the listener is up, and hands back the

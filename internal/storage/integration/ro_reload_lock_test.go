@@ -10,15 +10,9 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// TestReadPathSerializesAgainstConcurrentLockHolder is the #647 regression:
-// withFolderRO's reload must be serialized against writers via the same
-// cross-process lock the write path takes. Before the fix the read path took
-// only the in-process fs.mu and could interleave with another process's
-// lock-holding compaction, poisoning the shared in-memory header (NextUID
-// regression). Two clients on one embedded lock server stand in for two pods:
-// client B holds the folder's X lock (an in-progress compaction), and a
-// read-only op on the index wired to client A must block until B releases.
-func TestReadPathSerializesAgainstConcurrentLockHolder(t *testing.T) {
+// The #647 hazard, asserted as the property rather than the lock that used to
+// provide it: a read cannot poison state it never writes (#1809).
+func TestAReadCannotPoisonWhatItNeverWrites(t *testing.T) {
 	sock := holdsTestSocket(t)
 	clientA := newHoldsClient(t, sock)
 	clientB := newHoldsClient(t, sock)
@@ -37,7 +31,7 @@ func TestReadPathSerializesAgainstConcurrentLockHolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	if err := idxA.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid, Filename: "1.eml"}); err != nil {
+	if err := idxA.AppendMessage(folder.ID, &mailbox.MessageMeta{UID: uid}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 
@@ -46,15 +40,16 @@ func TestReadPathSerializesAgainstConcurrentLockHolder(t *testing.T) {
 	key := locks.MailboxKey(username, "INBOX")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	held, err := clientB.Lock(ctx, key, "podB/0/"+username, 30*time.Second)
+	held, err := clientB.Lock(locks.WithSite(ctx, "write"), key, "podB/0/"+username+"/sess2", 30*time.Second)
 	if err != nil {
 		t.Fatalf("client B lock: %v", err)
 	}
-	if !clientB.HoldsResource(key) {
-		t.Fatal("client B does not hold the lock it just acquired")
+	if mode, ok := clientB.HoldsResource(key); !ok || mode != locks.HoldExclusive {
+		t.Fatalf("client B holds %q/%v after an exclusive Lock", mode, ok)
 	}
 
-	// A read-only op on idxA must block acquiring the same key that B holds.
+	// A read runs through while B holds the key: it writes nothing another
+	// session reads, so there is nothing to serialise against (#647, #1809).
 	done := make(chan error, 1)
 	started := make(chan struct{})
 	go func() {
@@ -65,22 +60,20 @@ func TestReadPathSerializesAgainstConcurrentLockHolder(t *testing.T) {
 	<-started
 
 	select {
-	case <-done:
-		t.Fatal("read-only GetMessages returned while another client held the folder lock — reload was NOT serialized (#647)")
-	case <-time.After(400 * time.Millisecond):
-		// Still blocked on the distributed lock — the fix is in effect.
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("read under another client's hold: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a read waited on a lock it does not take")
 	}
 
-	// Release B's lock; A's read must now complete promptly.
+	// And the shared state the holder will write from is untouched by it.
+	if _, herr := idxA.GetMessages(folder.ID, mailbox.SeqSet{}); herr != nil {
+		t.Fatalf("second read: %v", herr)
+	}
+
 	if err := clientB.Unlock(ctx, held.ID); err != nil {
 		t.Fatalf("client B unlock: %v", err)
-	}
-	select {
-	case e := <-done:
-		if e != nil {
-			t.Fatalf("GetMessages after lock release: %v", e)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("read-only GetMessages did not complete after the lock was released")
 	}
 }

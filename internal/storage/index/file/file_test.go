@@ -340,8 +340,7 @@ func TestKeywordsRoundTrip(t *testing.T) {
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
 	modseq, _ := b.NextModSeq(f.ID)
-	err := b.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID:      1,
+	err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1,
 		Flags:    []string{`\Seen`},
 		Keywords: []string{"$Forwarded", "$Junk"},
 		ModSeq:   modseq,
@@ -643,9 +642,9 @@ func TestSize_RoundtripAndReopen(t *testing.T) {
 	b := openIdx(dir, testUser)
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
-	b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Filename: "a", Size: 1234}) //nolint:errcheck
-	b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 2, Filename: "b", Size: 5678}) //nolint:errcheck
-	b.Close()                                                                      //nolint:errcheck
+	b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 1234}) //nolint:errcheck
+	b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 2, Size: 5678}) //nolint:errcheck
+	b.Close()                                                       //nolint:errcheck
 
 	b2 := openIdx(dir, testUser)
 	f2, _ := b2.OpenFolder("INBOX", 1, "")

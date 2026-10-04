@@ -24,22 +24,57 @@ func (s *session) quotaChanged() {
 // per-session cache before the index is re-summed. Enforcement bypasses it.
 const quotaCacheTTL = time.Second
 
-// countUsage returns the user's quota usage summed from the index (the
-// authoritative count backend): the aggregate virtual size + message count of
-// every personal-namespace folder. useCache serves a recent value for GETQUOTA
-// display bursts; enforcement passes false so decisions are always fresh.
-func (s *session) countUsage(useCache bool) (quota.Usage, error) {
-	if s.box == nil || s.idx == nil {
+// usageAfterDelta answers the post-commit usage from the cached total plus the
+// change this session just made, when the cache is fresh enough to build on.
+//
+// The full count opens every folder of the account -- 24 us each, so 1.01 ms
+// across the 42 folders of a real mailbox, and the message count does not
+// enter into it. Run on every committed change, as the warning and clone path
+// did, fifty clients expunging in one folder produce fifty account-wide sweeps
+// and some two thousand folder-lock acquisitions per round (#1548).
+//
+// The session does not need the sweep to know the answer: it knows what it just
+// removed or added. Only somebody else's change has to be discovered, and that
+// is what the cache TTL is for.
+//
+// The timestamp is deliberately not refreshed. Extending it on every delta
+// would keep the cache alive for as long as the load lasts and another
+// session's change would never arrive; leaving it means the total is rebuilt a
+// second after its last real count, so the drift this introduces cannot
+// outlive the TTL.
+func (s *session) usageAfterDelta(dBytes, dMessages int64) (quota.Usage, bool) {
+	if s.quotaCacheAt.IsZero() || time.Since(s.quotaCacheAt) >= quotaCacheTTL {
+		return quota.Usage{}, false
+	}
+	u := s.quotaCacheUsage
+	u.StorageBytes += dBytes
+	u.Messages += dMessages
+	if u.StorageBytes < 0 {
+		u.StorageBytes = 0
+	}
+	if u.Messages < 0 {
+		u.Messages = 0
+	}
+	s.quotaCacheUsage = u
+	return u, true
+}
+
+// countUsageFor sums the account's usage from the index, naming the caller:
+// counting locks every folder, so a total without one answers nothing (#1634).
+func (s *session) countUsageFor(reason string, useCache bool) (quota.Usage, error) {
+	if s.box == nil || s.mbox == nil {
 		return quota.Usage{}, nil
 	}
 	if useCache && !s.quotaCacheAt.IsZero() && time.Since(s.quotaCacheAt) < quotaCacheTTL {
+		quota.MetricUsageCount.WithLabelValues("hit", reason).Inc()
 		return s.quotaCacheUsage, nil
 	}
+	quota.MetricUsageCount.WithLabelValues("miss", reason).Inc()
 	entries, err := s.box.ListFolders()
 	if err != nil {
 		return quota.Usage{}, err
 	}
-	u := quota.CountUsage(s.idx, mailbox.SelectableNames(entries), s.quotaLimits())
+	u := quota.CountUsage(s.mbox, mailbox.SelectableNames(entries), s.quotaLimits())
 	s.quotaCacheUsage = u
 	s.quotaCacheAt = time.Now()
 	// Lazy quota_over_status: reconcile on the first quota operation. evalOverStatus
@@ -129,7 +164,9 @@ func (s *session) captureQuotaSnap() {
 	if len(s.quotaPolicy().Warnings) == 0 {
 		return
 	}
-	if u, err := s.countUsage(false); err == nil {
+	// The "before" side of a crossing, not a decision: cached is enough, and a
+	// fresh walk here was a second pass over every folder (#1634).
+	if u, err := s.countUsageFor("warning-baseline", true); err == nil {
 		s.quotaSnap, s.quotaSnapSet = u, true
 	}
 }
@@ -169,33 +206,24 @@ func (s *session) effectiveLimits(folder string) (quota.Limits, bool) {
 	return s.quotaPolicy().Scale(lim), false
 }
 
-// cloneMirror updates the quota_clone mirror with usage u, debounced: it writes
-// at most once per flush delay and otherwise defers the latest usage to the
-// final flush on session close. Mirrors the reference plugin's 10s flush timer.
+// cloneMirror hands the latest usage to the mirror, which writes it on its own
+// timer. The session never waits for a mirror: it is advisory, and the write
+// is two dict round trips (#1875).
 func (s *session) cloneMirror(u quota.Usage) {
 	if s.srv.opts.QuotaClone == nil || s.userInfo == nil {
 		return
 	}
-	if time.Since(s.cloneLastFlush) >= s.srv.opts.QuotaCloneFlushDelay {
-		s.cloneFlush(u)
-		return
-	}
-	s.cloneDirtyUsg, s.cloneDirty = u, true
+	// Records and returns: the write happens on the mirror's own timer, so a
+	// save never waits for two dict round trips (#1875).
+	s.srv.opts.QuotaClone.Mirror(s.userInfo.Username, u)
 }
 
-// cloneFlush writes u to the clone dicts now and resets the debounce state.
-func (s *session) cloneFlush(u quota.Usage) {
-	s.cloneLastFlush = time.Now()
-	s.cloneDirty = false
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	s.srv.opts.QuotaClone.Write(ctx, s.userInfo.Username, u)
-}
-
-// cloneFlushFinal writes any deferred usage on session close.
+// cloneFlushFinal hands the user back to the mirror; the last session of a
+// user is where anything still pending is written, as the reference does in
+// deinit_pre.
 func (s *session) cloneFlushFinal() {
-	if s.srv.opts.QuotaClone != nil && s.cloneDirty && s.userInfo != nil {
-		s.cloneFlush(s.cloneDirtyUsg)
+	if s.srv.opts.QuotaClone != nil && s.userInfo != nil {
+		s.srv.opts.QuotaClone.Release(s.userInfo.Username)
 	}
 }
 
@@ -204,7 +232,7 @@ func (s *session) GetQuotaRoot(mailbox string) (*imaplib.QuotaRootData, error) {
 	if !s.quotaExtensionEnabled() {
 		return &imaplib.QuotaRootData{Mailbox: mailbox}, nil
 	}
-	u, err := s.countUsage(true)
+	u, err := s.countUsageFor("getquota", true)
 	if err != nil {
 		slog.Warn("imap: quota get failed", "user", s.userInfo.Username, "err", err)
 		return &imaplib.QuotaRootData{Mailbox: mailbox}, nil
@@ -229,7 +257,7 @@ func (s *session) GetQuota(root string) (*imaplib.QuotaData, error) {
 		qd := imaplib.QuotaData{Name: root}
 		return &qd, nil
 	}
-	u, err := s.countUsage(true)
+	u, err := s.countUsageFor("getquota", true)
 	if err != nil {
 		slog.Warn("imap: quota get failed", "user", s.userInfo.Username, "err", err)
 		qd := imaplib.QuotaData{Name: root}
@@ -284,9 +312,9 @@ func (s *session) quotaCheckAppend(_ context.Context, folder string, bytes int64
 		}
 	}
 	// Per-mailbox message-count cap is structural (independent of quota_rule):
-	// reject when the target folder would reach the configured message count.
+	// reject when the target folder already holds the configured message count.
 	if mmc := s.quotaPolicy().MailboxMessageCount; mmc > 0 {
-		if cur, ok := s.folderMessageCount(folder); ok && cur+1 >= mmc {
+		if cur, ok := s.folderMessageCount(folder); ok && cur >= mmc {
 			return &imaplib.Error{
 				Type: imaplib.StatusResponseTypeNo,
 				Code: imaplib.ResponseCode("OVERQUOTA"),
@@ -298,7 +326,8 @@ func (s *session) quotaCheckAppend(_ context.Context, folder string, bytes int64
 	if ignore || effLim.Unlimited() {
 		return nil
 	}
-	u, err := s.countUsage(false)
+	// Enforcement counts for real: this decides whether a save is refused.
+	u, err := s.countUsageFor("enforce", false)
 	if err != nil {
 		return nil // fail-open: don't block on a transient index read error
 	}
@@ -320,16 +349,17 @@ func (s *session) quotaCheckAppend(_ context.Context, folder string, bytes int64
 // index (the authoritative count backend). ok is false when the folder or
 // index is unavailable.
 func (s *session) folderMessageCount(folder string) (int64, bool) {
-	if s.box == nil || s.idx == nil {
+	if s.box == nil || s.mbox == nil {
 		return 0, false
 	}
-	f, err := s.idx.OpenFolder(folder, 0)
+	// The id, then the index's own aggregate: the same pair a count needs.
+	f, err := mailbox.Counting(s.mbox).Folder(folder, 0)
 	if err != nil {
 		return 0, false
 	}
-	_, msgs, err := s.idx.FolderVSize(f.ID)
+	md, err := s.mbox.Metadata(f.ID)
 	if err != nil {
 		return 0, false
 	}
-	return int64(msgs), true
+	return int64(md.Messages), true
 }

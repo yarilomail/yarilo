@@ -3,6 +3,7 @@ package director
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -492,19 +493,24 @@ func dialAsLeftNeighbor(t *testing.T, addr string, left Member) net.Conn {
 		t.Fatalf("raw dial: %v", err)
 	}
 	rd := bufio.NewReader(conn)
+	nonce := ""
 	for { // consume the server handshake
 		line, rErr := rd.ReadString('\n')
 		if rErr != nil {
 			t.Fatalf("raw handshake read: %v", rErr)
 		}
-		if strings.TrimRight(line, "\n") == "DONE" {
+		line = strings.TrimRight(line, "\n")
+		if n, ok := strings.CutPrefix(line, "RING-NONCE\t"); ok {
+			nonce = n
+		}
+		if line == "DONE" {
 			break
 		}
 	}
 	for _, s := range []string{
 		fmt.Sprintf("ME\t%s\t%d", left.IP, left.Port),
 		fmt.Sprintf("MEMBERS\t%s\t", left.String()),
-		"PEER\t1",
+		"PEER\t1\t" + hex.EncodeToString(peerProof([]byte("shared-secret"), nonce, left)),
 		"DONE",
 	} {
 		if _, wErr := fmt.Fprintf(conn, "%s\n", s); wErr != nil {
@@ -514,13 +520,8 @@ func dialAsLeftNeighbor(t *testing.T, addr string, left Member) net.Conn {
 	return conn
 }
 
-// TestMembership_QuitClassifiesCloseAsBenign pins the #768 QUIT semantics
-// (reference parity: director-connection.c sends QUIT\t<reason> before
-// every intentional disconnect). The same connection loss from the
-// current LEFT neighbor must go two different ways: announced with QUIT —
-// benign, no death probes, the member stays; unannounced — suspected
-// death, verification probes fail (the address is unroutable), member
-// evicted.
+// A close the LEFT neighbour announced with QUIT is benign and keeps the member,
+// as the reference sends it first; an unannounced close evicts it (#768).
 func TestMembership_QuitClassifiesCloseAsBenign(t *testing.T) {
 	left := Member{IP: "9.0.0.1", Port: 9102} // sorts below 127.0.0.1 — always the server's left
 

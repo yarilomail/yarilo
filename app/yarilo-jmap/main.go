@@ -167,6 +167,9 @@ func main() {
 		SnippetMaxChars:   cfg.Protocol.JMAP.SnippetMaxChars,
 		MaxBodyValueBytes: uint32(cfg.Protocol.JMAP.MaxBodyValueBytes), //nolint:gosec // config-bounded
 		QueryMaxLimit:     uint(cfg.Protocol.JMAP.QueryMaxLimit),       //nolint:gosec // config-bounded
+		QuotaPolicy:       cfg.Quota.QuotaPolicy(),
+		QuotaName:         cfg.Quota.Name,
+		QuotaEnabled:      cfg.Quota.Enabled,
 	})
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {
@@ -178,9 +181,10 @@ func main() {
 
 func internalTLS(cfg *config.Config) (*tls.Config, error) {
 	if !cfg.InternalTLS.Enabled {
+		mtls.WarnRolesUnchecked(mtls.ListenerJMAPBackend)
 		return nil, nil
 	}
-	return mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA)
+	return mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerJMAPBackend)
 }
 
 // parseCIDRs turns the trusted-net list into matchers, skipping and logging a
@@ -231,6 +235,8 @@ func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error)
 		ResolveUser:        userResolver(cfg.JMAPService.AuthMasterAddr, resolver, authPool),
 		Locker:             locker,
 		SpecialUseDefaults: cfg.Protocol.IMAP.SpecialUseDefaults,
+		Mailboxes:          cfg.PersonalAutoMailboxes(),
+		MailboxLimit:       cfg.Quota.QuotaPolicy().MailboxCount,
 	}, nil
 }
 
@@ -240,7 +246,7 @@ func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error)
 func userResolver(masterAddr string, resolver *mailbox.Resolver, pool *authclient.Pool) func(string) (*mailbox.UserInfo, error) {
 	if masterAddr == "" {
 		return func(u string) (*mailbox.UserInfo, error) {
-			return resolver.UserInfo(u, ""), nil
+			return resolver.UserInfo(u, "")
 		}
 	}
 	return func(u string) (*mailbox.UserInfo, error) {

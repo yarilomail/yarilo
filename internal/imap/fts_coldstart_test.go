@@ -35,7 +35,7 @@ func (f *slowFTS) Prepend(_ string, _ fts.MailboxRef, maxUID uint32) error {
 	return nil
 }
 
-func (f *slowFTS) Expunge(string, fts.MailboxRef, uint32) error { return nil }
+func (f *slowFTS) Expunge(string, fts.MailboxRef, uint32, [16]byte) error { return nil }
 
 // Lookup answers as an engine that has the mailbox indexed would: the one
 // message is a definite hit. A fake that matched nothing would let a refusal
@@ -53,9 +53,11 @@ func (f *slowFTS) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 	return f.maxUID, 1, nil
 }
 
-func (f *slowFTS) Rescan(string, fts.MailboxRef) error { return nil }
-func (f *slowFTS) Optimize(string) error               { return nil }
-func (f *slowFTS) Close() error                        { return nil }
+func (f *slowFTS) Rescan(string, fts.MailboxRef) error                   { return nil }
+func (f *slowFTS) RescanUser(string) ([]string, error)                   { return nil, nil }
+func (f *slowFTS) Counts(string) (uint64, uint64, uint64, uint64, error) { return 0, 0, 0, 0, nil }
+func (f *slowFTS) Optimize(string) error                                 { return nil }
+func (f *slowFTS) Close() error                                          { return nil }
 
 // TestSearchOnColdAccountWaitsForTheFirstIndex is #1379: the first touch of an
 // account nobody has used for a while was refused with "Mailbox is still being
@@ -101,4 +103,10 @@ func TestSearchGivesUpOnAnIndexerThatNeverStarts(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 25*time.Second {
 		t.Errorf("a broken indexer held the client for %v: the early exit is gone", elapsed)
 	}
+}
+
+func (f *slowFTS) DropFolder(string, fts.MailboxRef) error { return nil }
+
+func (f *slowFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
+	return fts.SetResult{}, nil
 }

@@ -1,33 +1,4 @@
 {{- if .Values.components.director.enabled }}
-{{- if .Values.components.director.listeners.lmtp.enabled }}
-## LoadBalancer — LMTP (incoming mail delivery from MX). Named -director-lmtp
-## (#748 item 3): the plain -director name is the stable ClusterIP login pods
-## dial for LOOKUP, and must not depend on the LMTP listener toggle.
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "yarilo.fullname" . }}-director-lmtp
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "yarilo.componentLabels" (dict "root" . "component" "director") | nindent 4 }}
-  {{- with .Values.components.director.service.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-spec:
-  type: {{ .Values.components.director.service.type }}
-  {{- if .Values.components.director.service.loadBalancerIP }}
-  loadBalancerIP: {{ .Values.components.director.service.loadBalancerIP }}
-  {{- end }}
-  ports:
-    - name: lmtp
-      port: {{ .Values.components.director.listeners.lmtp.port }}
-      targetPort: lmtp
-      protocol: TCP
-  selector:
-    {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "director") | nindent 4 }}
-{{- end }}
----
 ## Stable ClusterIP — director LOOKUP endpoint for login pods (#748 item 3).
 ## This is the address components.*.director_addr should use:
 ##   <release>-director:{{ .Values.components.director.directorPort }}

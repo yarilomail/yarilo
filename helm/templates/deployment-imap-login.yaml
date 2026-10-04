@@ -107,7 +107,7 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- include "yarilo.externalTLSMount" .Values.components.imapLogin.tls.secretName | nindent 12 }}
-            {{- include "yarilo.internalTLSMount" .Values.components.imapLogin.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.imapLogin.internalTLS "role" "imap-login") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -118,7 +118,7 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- include "yarilo.externalTLSVolume" .Values.components.imapLogin.tls.secretName | nindent 8 }}
-        {{- include "yarilo.internalTLSVolume" .Values.components.imapLogin.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.imapLogin.internalTLS "role" "imap-login") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

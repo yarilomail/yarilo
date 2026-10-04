@@ -14,6 +14,13 @@ import (
 // than a difference in wording.
 func fakeDeliveryServer(t *testing.T, lmtp bool) (host, port string) {
 	t.Helper()
+	return fakeDeliveryServerReply(t, lmtp, "250 2.0.0 accepted")
+}
+
+// fakeDeliveryServerReply answers the final dot with dotReply, so a refusal at
+// the one step every other step already asserts is reachable in a test (#1870).
+func fakeDeliveryServerReply(t *testing.T, lmtp bool, dotReply string) (host, port string) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -54,7 +61,7 @@ func fakeDeliveryServer(t *testing.T, lmtp bool) (host, port string) {
 								break
 							}
 						}
-						fmt.Fprintf(conn, "250 2.0.0 accepted\r\n") //nolint:errcheck
+						fmt.Fprintf(conn, "%s\r\n", dotReply) //nolint:errcheck
 					case cmd == "QUIT":
 						fmt.Fprintf(conn, "221 bye\r\n") //nolint:errcheck
 						return

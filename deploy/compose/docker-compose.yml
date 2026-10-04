@@ -125,6 +125,24 @@ services:
       YARILO_COMPONENT: yarilo-jmap
       LOG_LEVEL: "${LOG_LEVEL:-info}"
 
+  # Full-text search: config/yarilo.yaml runs fts_mode remote at yarilo-fts:9106.
+  yarilo-fts:
+    <<: *backend
+    environment:
+      YARILO_COMPONENT: yarilo-fts
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+
+  # Operator API for `yarctl backend …`; reached with `docker compose exec`, not published.
+  yarilo-backend-api:
+    <<: *backend
+    environment:
+      YARILO_COMPONENT: yarilo-backend-api
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      BACKEND_API_TOKEN: "${BACKEND_API_TOKEN:?set BACKEND_API_TOKEN in .env}"
+      YARILO_ADMIN_TYPE: backend
+      YARILO_API_URL: "http://localhost:9105"
+      YARILO_API_TOKEN: "${BACKEND_API_TOKEN:?set BACKEND_API_TOKEN in .env}"
+
   yarilo-imap-login:
     <<: *proxy
     environment:
@@ -208,7 +226,7 @@ services:
         condition: service_started
     # reference-style SASL auth socket for a fronting MTA (Postfix smtpd_sasl_type=dovecot).
     ports:
-      - "${SASL_BIND:-127.0.0.1}:${SASL_PORT:-12325}:12325"
+      - "${SASL_BIND:-127.0.0.1}:${SASL_PORT:-12345}:12345"
 
   yarilo-quota-status:
     image: *image

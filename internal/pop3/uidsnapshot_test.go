@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -21,8 +22,8 @@ type batchLocker struct {
 func (batchLocker) Lock(_ context.Context, resource, owner string, _ time.Duration) (locks.Lock, error) {
 	return locks.Lock{ID: fmt.Sprintf("%s/%s", resource, owner), Resource: resource, Owner: owner}, nil
 }
-func (batchLocker) Unlock(_ context.Context, _ string) error { return nil }
-func (batchLocker) HoldsResource(_ string) bool              { return false }
+func (batchLocker) Unlock(_ context.Context, _ string) error      { return nil }
+func (batchLocker) HoldsResource(_ string) (locks.HoldMode, bool) { return locks.HoldNone, false }
 func (batchLocker) Emit(_ context.Context, _ string, _ locks.EventType, _ string) error {
 	return nil
 }
@@ -59,14 +60,13 @@ func assertDeletionUsesSnapshotUIDs(t *testing.T, locker locks.Locker) {
 	box := &mockMailbox{}
 	s := &session{
 		srv:      &Server{opts: Options{Locker: locker}},
-		idx:      idx,
-		box:      box,
+		box:      mailboxbase.Open(box, idx),
 		userInfo: &mailbox.UserInfo{Username: "u@example.org"},
 		folder:   &mailbox.Folder{ID: 1, Name: "INBOX"},
 		msgs: []*mailbox.MessageMeta{
-			{UID: 11, Filename: "a"},
-			{UID: 12, Filename: "b"},
-			{UID: 13, Filename: "c"},
+			{UID: 11},
+			{UID: 12},
+			{UID: 13},
 		},
 	}
 	s.deleted = make([]bool, len(s.msgs))
@@ -86,9 +86,9 @@ func assertDeletionUsesSnapshotUIDs(t *testing.T, locker locks.Locker) {
 	// proves nothing: with a newer message at the front, position 2 names a
 	// different UID than the snapshot does.
 	fresher := []*mailbox.MessageMeta{
-		{UID: 10, Filename: "new"},
-		{UID: 11, Filename: "a"},
-		{UID: 12, Filename: "b"},
+		{UID: 10},
+		{UID: 11},
+		{UID: 12},
 	}
 	if fresher[1].UID == idx.expunged[0] {
 		t.Error("position addressing and UID addressing agree on this fixture, so it distinguishes nothing")

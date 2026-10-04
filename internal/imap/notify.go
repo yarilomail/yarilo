@@ -314,17 +314,10 @@ func (s *session) startNotifyWatch(items []imaplib.NotifyItem) {
 		wake:       make(chan struct{}, 1),
 		stop:       cancel,
 	}
-	w.addSub = func(folder string, mask uint8) {
-		w.mu.Lock()
-		w.watch[folder] |= mask
-		if _, dup := w.subscribed[folder]; dup {
-			w.mu.Unlock()
-			return
-		}
-		w.subscribed[folder] = struct{}{}
-		w.mu.Unlock()
-
-		ch, err := s.srv.opts.Locker.Subscribe(ctx, locks.MailboxKey(s.userInfo.Username, folder))
+	// hear marks folder when key changes: its own key, or a folder a virtual
+	// mailbox draws from.
+	hear := func(folder, key string) {
+		ch, err := s.srv.opts.Locker.Subscribe(ctx, key)
 		if err != nil {
 			slog.Debug("imap: notify subscribe failed", "folder", folder, "err", err)
 			return
@@ -343,9 +336,24 @@ func (s *session) startNotifyWatch(items []imaplib.NotifyItem) {
 			}
 		}()
 	}
+	w.addSub = func(folder string, mask uint8) {
+		w.mu.Lock()
+		w.watch[folder] |= mask
+		if _, dup := w.subscribed[folder]; dup {
+			w.mu.Unlock()
+			return
+		}
+		w.subscribed[folder] = struct{}{}
+		w.mu.Unlock()
+		hear(folder, locks.MailboxKey(s.userInfo.Username, folder))
+	}
 
 	for folder, mask := range static {
 		w.addSub(folder, mask)
+		// Resolved here, on the session: the list watcher runs apart from it.
+		for _, back := range s.virtualBackingNames(folder) {
+			hear(folder, locks.MailboxKey(s.userInfo.Username, back))
+		}
 	}
 
 	// Mailbox-list subscription drives dynamic membership and MailboxName /

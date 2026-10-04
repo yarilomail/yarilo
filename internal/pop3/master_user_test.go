@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 )
 
@@ -40,12 +42,12 @@ func (m *masterMockAuth) AuthenticateMaster(authzid, authid, password, _, _ stri
 // authenticate the session as alice via the MasterAuthenticator
 // path and land in TRANSACTION state.
 func TestSession_AuthPlain_MasterUserImpersonates(t *testing.T) {
-	opts := newTestOpts(nil, &mockMailbox{}, &mockIndex{})
-	opts.Auth = &masterMockAuth{
+	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
+	opts.AuthRelay = authtest.RelayToMaster(t, &masterMockAuth{
 		masterUser:    "admin@test.com",
 		masterPass:    "adminpass",
 		allowedTarget: map[string]bool{"alice@test.com": true},
-	}
+	}, "admin@test.com", "adminpass", "alice@test.com")
 	c, r := newPOP3Session(t, opts)
 
 	payload := base64.StdEncoding.EncodeToString(
@@ -65,12 +67,12 @@ func TestSession_AuthPlain_MasterUserImpersonates(t *testing.T) {
 // TestSession_AuthPlain_MasterWrongPasswordRejected — same authzid
 // but wrong master password.
 func TestSession_AuthPlain_MasterWrongPasswordRejected(t *testing.T) {
-	opts := newTestOpts(nil, &mockMailbox{}, &mockIndex{})
-	opts.Auth = &masterMockAuth{
+	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
+	opts.AuthRelay = authtest.RelayToMaster(t, &masterMockAuth{
 		masterUser:    "admin@test.com",
 		masterPass:    "adminpass",
 		allowedTarget: map[string]bool{"alice@test.com": true},
-	}
+	}, "admin@test.com", "adminpass", "alice@test.com")
 	c, r := newPOP3Session(t, opts)
 
 	payload := base64.StdEncoding.EncodeToString(
@@ -85,12 +87,12 @@ func TestSession_AuthPlain_MasterWrongPasswordRejected(t *testing.T) {
 // TestSession_AuthPlain_UnregisteredTargetRejected — master
 // authenticates but the target is not on the allow-list.
 func TestSession_AuthPlain_UnregisteredTargetRejected(t *testing.T) {
-	opts := newTestOpts(nil, &mockMailbox{}, &mockIndex{})
-	opts.Auth = &masterMockAuth{
+	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
+	opts.AuthRelay = authtest.RelayToMaster(t, &masterMockAuth{
 		masterUser:    "admin@test.com",
 		masterPass:    "adminpass",
 		allowedTarget: map[string]bool{"alice@test.com": true},
-	}
+	}, "admin@test.com", "adminpass", "alice@test.com")
 	c, r := newPOP3Session(t, opts)
 
 	payload := base64.StdEncoding.EncodeToString(
@@ -107,7 +109,7 @@ func TestSession_AuthPlain_UnregisteredTargetRejected(t *testing.T) {
 // surface), a non-empty distinct authzid is rejected outright.
 func TestSession_AuthPlain_BackendWithoutMasterSupport(t *testing.T) {
 	// mockAuth implements only Authenticator.
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"admin": "adminpass"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -126,7 +128,7 @@ func TestSession_AuthPlain_BackendWithoutMasterSupport(t *testing.T) {
 // TestSession_AuthPlain_AuthzidEqualsAuthidIsRegularLogin — RFC 4616
 // allows authzid == authid; behaves as a regular login.
 func TestSession_AuthPlain_AuthzidEqualsAuthidIsRegularLogin(t *testing.T) {
-	opts := newTestOpts(
+	opts := newTestOpts(t,
 		&mockAuth{users: map[string]string{"alice": "secret"}},
 		&mockMailbox{},
 		&mockIndex{},
@@ -146,13 +148,13 @@ func TestSession_AuthPlain_AuthzidEqualsAuthidIsRegularLogin(t *testing.T) {
 // command path has no authzid surface; the session passes "" so
 // the regular Authenticate path always runs.
 func TestSession_UserPassNeverImpersonates(t *testing.T) {
-	opts := newTestOpts(nil, &mockMailbox{}, &mockIndex{})
-	opts.Auth = &masterMockAuth{
+	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
+	opts.AuthRelay = authtest.RelayToMaster(t, &masterMockAuth{
 		users:         map[string]string{"alice@test.com": "alicepass"},
 		masterUser:    "admin@test.com",
 		masterPass:    "adminpass",
 		allowedTarget: map[string]bool{"alice@test.com": true},
-	}
+	}, "admin@test.com", "adminpass", "alice@test.com")
 	c, r := newPOP3Session(t, opts)
 
 	// admin sends USER admin + PASS adminpass. master flow MUST NOT

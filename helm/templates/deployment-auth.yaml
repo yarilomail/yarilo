@@ -34,6 +34,7 @@ spec:
           env:
             - name: YARILO_COMPONENT
               value: "yarilo-auth"
+            {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
             - name: LOG_LEVEL
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-auth" "root" $) | quote }}
             {{- include "yarilo.dbEnv" . | nindent 12 }}
@@ -49,11 +50,6 @@ spec:
             {{- if .Values.components.auth.masterListen }}
             - name: auth-master
               containerPort: 9102
-              protocol: TCP
-            {{- end }}
-            {{- if .Values.components.auth.saslListen }}
-            - name: auth-sasl
-              containerPort: {{ trimPrefix ":" .Values.components.auth.saslListen | int }}
               protocol: TCP
             {{- end }}
             - name: telemetry
@@ -78,7 +74,7 @@ spec:
               mountPath: /var/lib/yarilo
             - name: tmp
               mountPath: /tmp
-            {{- include "yarilo.internalTLSMount" .Values.components.auth.internalTLS | nindent 12 }}
+            {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.auth.internalTLS "role" "auth") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -95,7 +91,7 @@ spec:
           {{- end }}
         - name: tmp
           emptyDir: {}
-        {{- include "yarilo.internalTLSVolume" .Values.components.auth.internalTLS | nindent 8 }}
+        {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.auth.internalTLS "role" "auth") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
