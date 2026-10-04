@@ -198,7 +198,8 @@ func TestFetchBodyStructure_ColdAnswersWhatTheCacheDoes(t *testing.T) {
 	c := dialRaw(t, addr)
 	c.login()
 
-	// A text part with no Content-Type, and one with a parameter but no charset.
+	// A text part with no Content-Type, one with a parameter but no charset, and
+	// one whose names are capitalised.
 	c.seq++
 	body := "From: Alice <alice@example.com>\r\n" +
 		"Subject: charset-probe\r\n" +
@@ -206,6 +207,7 @@ func TestFetchBodyStructure_ColdAnswersWhatTheCacheDoes(t *testing.T) {
 		"Content-Type: multipart/mixed; boundary=\"bnd7\"\r\n\r\n" +
 		"--bnd7\r\n\r\nno content-type\r\n" +
 		"--bnd7\r\nContent-Type: text/plain; format=flowed\r\n\r\nflowed\r\n" +
+		"--bnd7\r\nContent-Type: text/plain; Charset=UTF-8; Format=Flowed\r\n\r\ncased\r\n" +
 		"--bnd7--\r\n"
 	tag := "c001"
 	c.conn.Write([]byte(tag + " APPEND INBOX {" + itoa(len(body)) + "}\r\n"))
@@ -240,6 +242,10 @@ func TestFetchBodyStructure_ColdAnswersWhatTheCacheDoes(t *testing.T) {
 	}
 	if n := strings.Count(cold, `"charset" "us-ascii"`); n != 4 {
 		t.Errorf("want the default charset on both text parts in BODY and BODYSTRUCTURE (4), got %d:\n%s", n, cold)
+	}
+	// Spelling as the message gave it, and no default where it named a charset.
+	if n := strings.Count(cold, `("Charset" "UTF-8" "Format" "Flowed")`); n != 2 {
+		t.Errorf("want the cased part's parameters as spelled in BODY and BODYSTRUCTURE (2), got %d:\n%s", n, cold)
 	}
 	// Message order, the default charset after what the message gave.
 	if n := strings.Count(cold, `("format" "flowed" "charset" "us-ascii")`); n != 2 {

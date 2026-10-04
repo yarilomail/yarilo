@@ -187,7 +187,7 @@ func writeParams(b *strings.Builder, params map[string]string, order []string, d
 		b.WriteString("NIL")
 		return
 	}
-	names := orderedNames(params, order)
+	names, keys := orderedNames(params, order)
 
 	b.WriteByte('(')
 	seenCharset := false
@@ -200,7 +200,7 @@ func writeParams(b *strings.Builder, params map[string]string, order []string, d
 		}
 		appendString(b, name)
 		b.WriteByte(' ')
-		appendString(b, params[name])
+		appendString(b, params[keys[i]])
 	}
 	if defaultCharsetWanted && !seenCharset {
 		if len(names) > 0 {
@@ -361,14 +361,19 @@ func paramsFromArg(a arg) (map[string]string, []string) {
 	return out, order
 }
 
-// orderedNames lists params in the given order, then any it leaves out, sorted.
-func orderedNames(params map[string]string, order []string) []string {
-	names := make([]string, 0, len(params))
+// orderedNames lists params in the given order and spelling (a name is found as
+// spelled or lowercased), then any it leaves out, sorted; keys index params.
+func orderedNames(params map[string]string, order []string) (names, keys []string) {
 	seen := make(map[string]bool, len(params))
 	for _, name := range order {
-		if _, ok := params[name]; ok && !seen[name] {
-			seen[name] = true
+		key := name
+		if _, ok := params[key]; !ok {
+			key = strings.ToLower(name)
+		}
+		if _, ok := params[key]; ok && !seen[key] {
+			seen[key] = true
 			names = append(names, name)
+			keys = append(keys, key)
 		}
 	}
 	var rest []string
@@ -378,5 +383,5 @@ func orderedNames(params map[string]string, order []string) []string {
 		}
 	}
 	sort.Strings(rest)
-	return append(names, rest...)
+	return append(names, rest...), append(keys, rest...)
 }
