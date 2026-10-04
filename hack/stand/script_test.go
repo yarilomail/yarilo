@@ -148,6 +148,7 @@ func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 	}{
 		{name: "blockprofile", allow: `^telemetry(\.pprof)?$`},
 		{name: "fsync-never", allow: `^storage(\.mail_fsync)?$`},
+		{name: "notls", allow: `^internalTLS(\.enabled)?$`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
