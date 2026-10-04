@@ -11,7 +11,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/config"
 )
 
-// renderWith renders the chart over the sandbox values and one more values text.
+// renderWith renders the chart defaults plus one values text. Internal TLS off:
+// minting a CA and a certificate per role is most of a render's cost.
 func renderWith(t *testing.T, extra string) ([]byte, error) {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "extra.yaml")
@@ -19,7 +20,7 @@ func renderWith(t *testing.T, extra string) ([]byte, error) {
 		t.Fatal(err)
 	}
 	return exec.Command("helm", "template", "yarilo", "../../helm",
-		"-f", "../../helm_values/values-sandbox.yaml", "-f", f).CombinedOutput()
+		"--set", "internalTLS.enabled=false", "-f", f).CombinedOutput()
 }
 
 // loadRendered loads the rendered ConfigMap the way a pod does.
@@ -40,6 +41,8 @@ func loadRendered(t *testing.T, out []byte) *config.Config {
 // and a namespace without list, or with an unquoted yes, still loads (#2162, #2164).
 func TestZeroFalseAndUnsetReachTheConfig(t *testing.T) {
 	out, err := renderWith(t, `
+acl:
+  enabled: true
 components:
   auth:
     failure_delay: 0
