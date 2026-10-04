@@ -692,10 +692,7 @@ components:
         cpu: null
         memory: 512Mi
     service:
-      type: LoadBalancer
-      annotations:
-        metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
-        metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      type: ClusterIP
 
   quotaStatus:
     enabled: true
