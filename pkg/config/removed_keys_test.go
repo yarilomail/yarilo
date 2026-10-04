@@ -43,3 +43,16 @@ func TestAConfigWithoutRemovedKeysStarts(t *testing.T) {
 		t.Fatalf("an ordinary config was refused: %v", err)
 	}
 }
+
+// auth's own SASL listener is gone: Postfix goes to yarilo-sasl-login, and a
+// config still naming the old key is told where.
+func TestTheAuthSASLListenerKeyRefuses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "yarilo.yaml")
+	if err := os.WriteFile(path, []byte("auth_service:\n  listen: \":9100\"\n  sasl_listen: \":12345\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "auth_service.sasl_listen") || !strings.Contains(err.Error(), "yarilo-sasl-login") {
+		t.Fatalf("err %v; want a refusal naming the key and pointing at yarilo-sasl-login", err)
+	}
+}

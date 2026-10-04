@@ -413,7 +413,7 @@ locks_client:
 
 
 sasl_login:
-  listen: ":12325"
+  listen: ":12345"
   haproxy_protocol: false
 quota_status:
   listen: ":12340"

@@ -763,10 +763,6 @@ components:
     ## endpoints and CLI tooling. Empty disables; the binary then only
     ## opens the client listener.
     masterListen: ":9102"
-    ## saslListen — plain-TCP listener for Postfix SASL auth
-    ## (smtpd_sasl_type=dovecot, smtpd_sasl_path=inet:[yarilo-auth]:12345).
-    ## Empty disables the listener.
-    saslListen: ""
 
     ## startupProbe waits for Redis and (when applicable) the SQL database to accept
     ## a TCP connection before this pod takes traffic, replacing the wait-redis /
@@ -1292,7 +1288,7 @@ components:
         memory: 256Mi
 
   ## Postfix SASL proxy — delegates smtpd_sasl_type=dovecot authentication to yarilo-auth.
-  ## Postfix config: smtpd_sasl_path = inet:<host>:12325
+  ## Postfix config: smtpd_sasl_path = inet:<host>:12345
   ## Postfix has no direct access to yarilo-auth; yarilo-sasl-login proxies each session.
   saslLogin:
     enabled: false
@@ -1311,8 +1307,8 @@ components:
       periodSeconds: 2
       failureThreshold: 90
     replicas: 1
-    servicePort: 12325
-    containerPort: 12325
+    servicePort: 12345
+    containerPort: 12345
 
     ## mTLS for the dial to yarilo-auth (#816). Required when the shared
     ## internal_tls is enabled — without the mount this pod CrashLoops on the
