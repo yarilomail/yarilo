@@ -701,10 +701,7 @@ components:
     enabled: true
     auth_master_addr: "yarilo-auth:9102"
     service:
-      type: LoadBalancer
-      annotations:
-        metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
-        metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      type: ClusterIP
 
   ## Full-text search service — sole owner of the FTS indexes (queue + worker
   ## + LOOKUP). Runs the -fts image variant (the only cgo/libxapian binary);
