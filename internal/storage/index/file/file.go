@@ -177,36 +177,22 @@ func WithNoCreate() Option {
 // default, so setting one leaves the others alone. No way to disable rotation.
 func WithLogCompaction(minBytes, maxBytes int64, minAge time.Duration) Option {
 	return func(b *Backend) {
-		if minBytes != 0 {
-			b.logCompactMinBytes = minBytes
-		}
-		if maxBytes != 0 {
-			b.logCompactMaxBytes = maxBytes
-		}
-		if minAge != 0 {
-			b.logCompactMinAge = minAge
-		}
+		b.logCompactMinBytes = minBytes
+		b.logCompactMaxBytes = maxBytes
+		b.logCompactMinAge = minAge
 	}
 }
 
 // WithCachePurgeDeletePercentage sets the deleted-record share that purges a
 // cache; zero keeps the default, negative never purges on its own.
 func WithCachePurgeDeletePercentage(p int) Option {
-	return func(b *Backend) {
-		if p != 0 {
-			b.cachePurgeDeletePct = p
-		}
-	}
+	return func(b *Backend) { b.cachePurgeDeletePct = p }
 }
 
 // WithCachePurgeContinuedPercentage sets the continued-record share that purges
 // a cache; zero keeps the default.
 func WithCachePurgeContinuedPercentage(p int) Option {
-	return func(b *Backend) {
-		if p != 0 {
-			b.cachePurgeContinuedPct = p
-		}
-	}
+	return func(b *Backend) { b.cachePurgeContinuedPct = p }
 }
 
 // WithCachePurgeMinSize sets the cache file size below which nothing purges it;
@@ -646,7 +632,7 @@ func shouldRotate(logSize, minBytes, maxBytes int64, sinceLastFold, minAge time.
 	if minBytes == 0 {
 		return false // compaction disabled
 	}
-	if logSize > maxBytes {
+	if maxBytes > 0 && logSize > maxBytes {
 		return true
 	}
 	if logSize < minBytes {

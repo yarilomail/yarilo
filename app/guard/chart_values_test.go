@@ -112,8 +112,11 @@ components:
 		t.Fatalf("helm template: %v\n%s", err, out)
 	}
 	p := loadRendered(t, out).Auth.Passdb[0]
-	if p.MaxOpenConns != 7 || p.MaxIdleConns != 3 || p.ConnMaxLifetime != 120 || p.ConnMaxIdleTime != 30 {
-		t.Errorf("pool settings = %d/%d/%d/%d, want 7/3/120/30", p.MaxOpenConns, p.MaxIdleConns, p.ConnMaxLifetime, p.ConnMaxIdleTime)
+	got := []*int{p.MaxOpenConns, p.MaxIdleConns, p.ConnMaxLifetime, p.ConnMaxIdleTime}
+	for i, want := range []int{7, 3, 120, 30} {
+		if got[i] == nil || *got[i] != want {
+			t.Errorf("pool setting %d = %v, want %d", i, got[i], want)
+		}
 	}
 }
 
@@ -224,5 +227,59 @@ func TestCanonicalNamesAreRefused(t *testing.T) {
 				t.Errorf("%s.%s did not reach the config as %s: %s", c.at, c.chart, c.yarilo, wantLine)
 			}
 		})
+	}
+}
+
+// The chart renders each zero-is-off key with its real default, so a release
+// that sets nothing keeps the defaults, and a 0 in the values turns it off.
+func TestChartZeroIsOff(t *testing.T) {
+	out, err := renderWith(t, "")
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	def := loadRendered(t, out)
+	out, err = renderWith(t, `
+login: {transientRetries: 0, transientReloginCap: 0}
+internalTLS: {sessionCacheSize: 0}
+components:
+  auth: {client: {pool_size: 0, pool_idle_timeout: 0}, startup_wait: 0}
+  backend: {threading: {cache_idle: 0}}
+  locks: {client: {startup_wait: 0}}
+  director: {write_timeout: 0, user_kick_delay: 0, max_parallel_kicks: 0, anti_entropy_interval: 0, tombstone_ttl: 0}
+storage: {storage_lock_stale_timeout: 0, mail_cache_purge_delete_percentage: 0, mail_cache_purge_continued_percentage: 0}
+`)
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	off := loadRendered(t, out)
+	rows := []struct {
+		name     string
+		def, off int
+		wantDef  int
+	}{
+		{"threading_cache_idle", def.Threading.ThreadingCacheIdle, off.Threading.ThreadingCacheIdle, 300},
+		{"auth_client_pool_size", def.AuthClient.PoolSize, off.AuthClient.PoolSize, 4},
+		{"auth_client_pool_idle_timeout", def.AuthClient.PoolIdleTimeoutSecs, off.AuthClient.PoolIdleTimeoutSecs, 300},
+		{"transient_retries", def.Login.TransientRetries, off.Login.TransientRetries, 3},
+		{"transient_relogin_cap", def.Login.TransientReloginCap, off.Login.TransientReloginCap, 3},
+		{"session_cache_size", def.InternalTLS.SessionCacheSize, off.InternalTLS.SessionCacheSize, 64},
+		{"auth_startup_wait", def.AuthService.StartupWaitSeconds, off.AuthService.StartupWaitSeconds, 30},
+		{"locks_client_startup_wait", def.LocksClient.StartupWaitSeconds, off.LocksClient.StartupWaitSeconds, 30},
+		{"storage_lock_stale_timeout", def.Storage.LockStaleTimeout, off.Storage.LockStaleTimeout, 180},
+		{"mail_cache_purge_delete_percentage", def.Storage.MailCachePurgeDeletePercentage, off.Storage.MailCachePurgeDeletePercentage, 20},
+		{"mail_cache_purge_continued_percentage", def.Storage.MailCachePurgeContinuedPercentage, off.Storage.MailCachePurgeContinuedPercentage, 200},
+		{"write_timeout", def.DirectorService.WriteTimeout, off.DirectorService.WriteTimeout, 10},
+		{"user_kick_delay", def.DirectorService.UserKickDelay, off.DirectorService.UserKickDelay, 2},
+		{"max_parallel_kicks", def.DirectorService.MaxParallelKicks, off.DirectorService.MaxParallelKicks, 100},
+		{"anti_entropy_interval", def.DirectorService.AntiEntropyInterval, off.DirectorService.AntiEntropyInterval, 3},
+		{"tombstone_ttl", def.DirectorService.TombstoneTTL, off.DirectorService.TombstoneTTL, 600},
+	}
+	for _, r := range rows {
+		if r.def != r.wantDef {
+			t.Errorf("%s with chart defaults = %d, want %d", r.name, r.def, r.wantDef)
+		}
+		if r.off != 0 {
+			t.Errorf("%s with 0 in the values = %d, want 0", r.name, r.off)
+		}
 	}
 }

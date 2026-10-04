@@ -11,8 +11,8 @@ import (
 // An engine built with the nfs type still compacts correctly -- skipping the
 // fsync changes durability on crash, never the result.
 func TestOptimizeUnderNFSStorageTypeStillMerges(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1, OptimizeLimit: 0,
-		Store: ftsstore.NewPosix(Layout(), ftsstore.StorageTypeNFS)})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1, OptimizeLimit: 0,
+		Store: ftsstore.NewPosix(Layout(), ftsstore.StorageTypeNFS)}))
 	for uid := uint32(1); uid <= 6; uid++ {
 		indexDoc(t, ui, uid, nil, []string{"needle"})
 	}

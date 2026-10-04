@@ -32,23 +32,23 @@ func TestAnEndlessLineEndsThePreAuthLoop(t *testing.T) {
 		run          func(c net.Conn, rd *bufio.Reader) error
 	}{
 		{"IMAP", "", func(c net.Conn, rd *bufio.Reader) error {
-			_, _, _, err := extractIMAPPreamble(c, rd, nil, Options{}, relayContext{})
+			_, _, _, err := extractIMAPPreamble(c, rd, nil, testOpts(Options{}), relayContext{})
 			return err
 		}},
 		{"POP3", "", func(c net.Conn, rd *bufio.Reader) error {
-			_, _, _, err := extractPOP3Preamble(c, rd, nil, Options{}, relayContext{})
+			_, _, _, err := extractPOP3Preamble(c, rd, nil, testOpts(Options{}), relayContext{})
 			return err
 		}},
 		{"SMTP", "", func(c net.Conn, rd *bufio.Reader) error {
-			_, _, _, err := extractSubmissionPreamble(c, rd, nil, Options{}, relayContext{})
+			_, _, _, err := extractSubmissionPreamble(c, rd, nil, testOpts(Options{}), relayContext{})
 			return err
 		}},
 		{"ManageSieve atom", "", func(c net.Conn, rd *bufio.Reader) error {
-			_, _, _, err := extractManageSievePreamble(c, rd, nil, Options{})
+			_, _, _, err := extractManageSievePreamble(c, rd, nil, testOpts(Options{}))
 			return err
 		}},
 		{"ManageSieve quoted", `AUTHENTICATE "`, func(c net.Conn, rd *bufio.Reader) error {
-			_, _, _, err := extractManageSievePreamble(c, rd, nil, Options{})
+			_, _, _, err := extractManageSievePreamble(c, rd, nil, testOpts(Options{}))
 			return err
 		}},
 	} {

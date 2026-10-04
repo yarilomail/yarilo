@@ -37,7 +37,7 @@ type TokeninfoConfig struct {
 	RequiredScopes []string
 	ExpireGrace    time.Duration
 
-	// HTTPTimeout caps the round-trip. Default 5s.
+	// HTTPTimeout caps the round-trip.
 	HTTPTimeout time.Duration
 
 	// HTTPClient overrides the transport. nil → http.Client with
@@ -62,12 +62,6 @@ func NewTokeninfoValidator(cfg TokeninfoConfig) (*TokeninfoValidator, error) {
 	}
 	if cfg.UsernameAttribute == "" {
 		cfg.UsernameAttribute = "email"
-	}
-	if cfg.ExpireGrace == 0 {
-		cfg.ExpireGrace = 60 * time.Second
-	}
-	if cfg.HTTPTimeout == 0 {
-		cfg.HTTPTimeout = 5 * time.Second
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {

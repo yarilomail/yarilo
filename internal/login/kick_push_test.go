@@ -61,7 +61,7 @@ func TestWatch_MoveKickReachesTheSession(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			addr := fakeDirectorPush(t, tc.push)
-			s := New(Options{DirectorAddr: addr, LocalIP: "127.0.0.1"})
+			s := New(testOpts(Options{DirectorAddr: addr, LocalIP: "127.0.0.1"}))
 
 			backend, peer := net.Pipe()
 			t.Cleanup(func() { backend.Close(); peer.Close() })

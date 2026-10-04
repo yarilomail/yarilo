@@ -70,7 +70,7 @@ func folderOf(t *testing.T) (*mailbox.Folder, []*mailbox.MessageMeta, *bodies) {
 
 func chain(t *testing.T) *language.MultiChain {
 	t.Helper()
-	c, err := language.NewMultiChain([]string{"english"}, nil, nil, 0, 0, 0)
+	c, err := language.NewMultiChain([]string{"english"}, nil, nil, language.DefaultTokenMaxLen, language.DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

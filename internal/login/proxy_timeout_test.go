@@ -39,7 +39,7 @@ func TestTheProxyTimeoutIsTheUsersElseTheConfiguredOne(t *testing.T) {
 		{name: "past 2^32 ms", opts: 5 * time.Second, res: user("4294967296ms"), bad: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{opts: Options{ProxyTimeout: tc.opts}}
+			s := &Server{opts: testOpts(Options{ProxyTimeout: tc.opts})}
 			got, err := s.proxyTimeout(tc.res)
 			if tc.bad {
 				if err == nil {
@@ -107,14 +107,16 @@ func loginOnce(t *testing.T, authAddr, backend string, timeout time.Duration) (s
 	t.Helper()
 	wardenAddr, _ := startWardenWithHandle(t)
 	s := &Server{
-		opts: Options{
+		opts: testOpts(Options{
 			Protocol:            ProtocolIMAP,
 			AuthAddr:            authAddr,
 			WardenAddr:          wardenAddr,
+			WardenConns:         4,
 			BackendAddr:         backend,
 			ProxyTimeout:        timeout,
+			TransientRetries:    3,
 			TransientReloginCap: 2,
-		},
+		}),
 		sessions: make(map[string][]*liveSession),
 	}
 	t.Cleanup(func() {

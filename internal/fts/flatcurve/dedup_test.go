@@ -15,7 +15,7 @@ import (
 // Insurance, not the mechanism: a copy joins as it is written, so a document
 // per copy survives only in an index written before that (#1986).
 func TestCompactionFoldsTheCopiesOfOneMessage(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1}))
 	archive := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
 	guid := testGUID(7)
 	indexCopy(t, ui, inbox, 7, guid, nil, []string{"needle"})
@@ -82,7 +82,7 @@ func TestCompactionFoldsTheCopiesOfOneMessage(t *testing.T) {
 // A mailbox whose uids are past what a docid can hold still indexes and
 // searches: the store answers with the uid, the docid is the database's own.
 func TestAMailboxPastTheDocIDCeilingIndexesAndSearches(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	const huge = uint32(1) << 31 // past half of what a docid can count
 	for _, uid := range []uint32{huge, huge + 1} {
 		indexCopy(t, ui, inbox, uid, testGUID(uid), nil, []string{"needle"})

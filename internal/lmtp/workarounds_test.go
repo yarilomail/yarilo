@@ -82,7 +82,7 @@ func TestLMTP_WhitespaceBeforePath_Integration(t *testing.T) {
 	}
 	box.Close() //nolint:errcheck
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Hostname: "lmtp.test",
 		Config: config.LMTPProtocolConfig{
 			ReadTimeout:        5,
@@ -93,7 +93,7 @@ func TestLMTP_WhitespaceBeforePath_Integration(t *testing.T) {
 		Mailbox:  mb,
 		Index:    idx,
 		Resolver: resolver,
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

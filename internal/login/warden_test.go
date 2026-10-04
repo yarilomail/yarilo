@@ -192,13 +192,14 @@ func buildWardenLoginServer(t *testing.T, wardenAddr string, maxConns int) (logi
 	dirAddr := stubDirector(t, backendAddr)
 	authAddr := startStubAuth(t)
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Protocol:       ProtocolIMAP,
 		DirectorAddr:   dirAddr,
 		WardenAddr:     wardenAddr,
+		WardenConns:    4,
 		WardenFailOpen: false,
 		AuthAddr:       authAddr,
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -279,13 +280,13 @@ func TestLogin_Warden_FailOpen_WhenUnreachable(t *testing.T) {
 	dirAddr := stubDirector(t, backendAddr)
 	authAddr := startStubAuth(t)
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Protocol:       ProtocolIMAP,
 		DirectorAddr:   dirAddr,
 		WardenAddr:     "127.0.0.1:1", // unreachable
 		WardenFailOpen: true,
 		AuthAddr:       authAddr,
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -319,13 +320,13 @@ func TestLogin_Warden_FailClosed_WhenUnreachable(t *testing.T) {
 	dirAddr := stubDirector(t, backendAddr)
 	authAddr := startStubAuth(t)
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Protocol:       ProtocolIMAP,
 		DirectorAddr:   dirAddr,
 		WardenAddr:     "127.0.0.1:1", // unreachable
 		WardenFailOpen: false,
 		AuthAddr:       authAddr,
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

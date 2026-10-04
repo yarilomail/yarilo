@@ -198,12 +198,7 @@ func authAddr(cfg *config.Config) string {
 	return cfg.AuthService.Listen
 }
 
-func wardenConns(cfg *config.Config) int {
-	if n := cfg.WardenService.Conns; n > 0 {
-		return n
-	}
-	return 4
-}
+func wardenConns(cfg *config.Config) int { return cfg.WardenService.Conns }
 
 // authAdapter narrows the auth client to the username the proxy needs.
 type authAdapter struct{ cl *authclient.Client }

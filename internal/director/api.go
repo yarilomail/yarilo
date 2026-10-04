@@ -130,11 +130,7 @@ type backendDTO struct {
 }
 
 func toBackendDTO(b backendDTOSource) backendDTO {
-	v := b.Vhosts
-	if v == 0 {
-		v = 100
-	}
-	return backendDTO{b.IP, b.Port, b.Tag, b.Up, v, b.Sessions}
+	return backendDTO(b)
 }
 
 type backendDTOSource struct {

@@ -161,9 +161,6 @@ func (s *Server) Serve(ctx context.Context) error {
 	// The PROXY header precedes TLS, so this wrapper is innermost.
 	if s.opts.ProxyProtocol {
 		timeout := s.opts.HAProxyTimeout
-		if timeout == 0 {
-			timeout = 3 * time.Second
-		}
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			ReadHeaderTimeout: timeout,

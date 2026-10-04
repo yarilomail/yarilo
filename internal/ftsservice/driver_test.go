@@ -15,7 +15,7 @@ type stubBackend struct {
 func TestMailboxForPicksPerUserDriver(t *testing.T) {
 	global := &stubBackend{name: "global"}
 	mdboxBackend := &stubBackend{name: "mdbox"}
-	s := &Service{opts: Options{
+	s := &Service{opts: testOpts(Options{
 		Mailbox: global,
 		MailboxByDriver: func(driver string) mailbox.MailboxBackend {
 			if driver == "mdbox" {
@@ -23,7 +23,7 @@ func TestMailboxForPicksPerUserDriver(t *testing.T) {
 			}
 			return nil
 		},
-	}}
+	})}
 
 	tests := []struct {
 		name   string
@@ -46,7 +46,7 @@ func TestMailboxForPicksPerUserDriver(t *testing.T) {
 
 func TestMailboxForNilFactory(t *testing.T) {
 	global := &stubBackend{name: "global"}
-	s := &Service{opts: Options{Mailbox: global}}
+	s := &Service{opts: testOpts(Options{Mailbox: global})}
 	if got := s.mailboxFor(&mailbox.UserInfo{Driver: "mdbox"}).(*stubBackend).name; got != "global" {
 		t.Fatalf("nil factory must fall back to global, got %q", got)
 	}

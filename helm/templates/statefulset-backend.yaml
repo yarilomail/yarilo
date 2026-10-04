@@ -8,7 +8,7 @@
 */ -}}
 {{- $root := . }}
 {{- $reg := .Values.backend_register }}
-{{- $stale := $reg.readiness_stale_after | default 15 }}
+{{- $stale := $reg.readiness_stale_after }}
 {{- $readyDir := $reg.readiness_dir | default "/run/yarilo-ready" }}
 {{- $itls := .Values.components.backend.internalTLS | default dict }}
 {{- /* Protocol containers. vkey = the components.* values key (managesieve is

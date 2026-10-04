@@ -9,7 +9,7 @@ import (
 
 func mustMultiChain(t *testing.T, languages ...string) *language.MultiChain {
 	t.Helper()
-	c, err := language.NewMultiChain(languages, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	c, err := language.NewMultiChain(languages, []string{"lowercase", "stopwords", "snowball"}, nil, language.DefaultTokenMaxLen, language.DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestBuildLanguageFiltersOverride(t *testing.T) {
 		[]string{"en", "de"},
 		[]string{"lowercase", "stopwords", "snowball"},
 		map[string][]string{"de": {"lowercase", "stopwords"}},
-		0, 0, 0,
+		language.DefaultTokenMaxLen, language.DefaultAddressMaxLen, 10,
 	)
 	if err != nil {
 		t.Fatal(err)

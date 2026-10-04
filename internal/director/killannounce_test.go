@@ -57,7 +57,7 @@ func TestOnlyTheOriginatorAnnouncesTheEndOfAKill(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewWithOptions(Options{UserKillConfirmGrace: time.Millisecond, UserKillTimeout: time.Second})
+			s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: time.Millisecond, UserKillTimeout: time.Second}))
 			hash := HashUsername(user, s.hf)
 			tc.arm(s, hash)
 			time.Sleep(20 * time.Millisecond)
@@ -84,12 +84,12 @@ func TestTheHookRunsEvenWhenAPeerConfirmsFirst(t *testing.T) {
 	script := writeHookScript(t, out)
 	const user = "u1@d.test"
 
-	s := NewWithOptions(Options{
+	s := NewWithOptions(testOptions(Options{
 		FlushProgram:         script,
 		FlushProgramTimeout:  2 * time.Minute,
 		UserKillConfirmGrace: time.Millisecond,
 		UserKillTimeout:      30 * time.Second,
-	})
+	}))
 	s.userDir.Set(user, "10.0.0.1:993", false)
 	s.moveUser(user, "10.0.0.2:993", nil)
 
@@ -142,7 +142,7 @@ func TestAPeerClearsItsOwnHold(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewWithOptions(Options{UserKillConfirmGrace: time.Millisecond, UserKillTimeout: time.Second})
+			s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: time.Millisecond, UserKillTimeout: time.Second}))
 			hash := HashUsername(user, s.hf)
 			wait := tc.arm(s, hash)
 			if !s.isKilling(hash) {

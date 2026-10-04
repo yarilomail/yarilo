@@ -249,7 +249,7 @@ func (m *Membership) Start(ctx context.Context, seeds []string) {
 	// Anti-entropy runs regardless of seeds: a founder node has no seeds
 	// but still accepts joins and holds ring connections that need the
 	// periodic snapshot (#759).
-	if m.antiEntropyInterval >= 0 {
+	if m.antiEntropyInterval > 0 {
 		go m.antiEntropyLoop(ctx)
 	}
 	if len(seeds) == 0 {
@@ -272,9 +272,6 @@ func (m *Membership) Start(ctx context.Context, seeds []string) {
 // when at least one connection exists.
 func (m *Membership) antiEntropyLoop(ctx context.Context) {
 	interval := m.antiEntropyInterval
-	if interval == 0 {
-		interval = 3 * time.Second
-	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -357,15 +354,9 @@ var errLeaving = errors.New("director/join: this member is leaving the ring")
 // request (no DIRECTOR-ADD, no reconcile).
 func (m *Membership) joinLoop(ctx context.Context, seeds []string) {
 	pollInterval := m.seedPollInterval
-	if pollInterval == 0 {
-		pollInterval = 2 * time.Second
-	}
-	oneShot := pollInterval < 0
+	oneShot := pollInterval <= 0
 
 	idleInterval := m.seedPollIdleInterval
-	if idleInterval <= 0 {
-		idleInterval = 2 * time.Second
-	}
 	if idleInterval < pollInterval {
 		idleInterval = pollInterval
 	}
@@ -830,10 +821,7 @@ func (m *Membership) tombstonedLocked(mem Member) bool {
 	if !dead {
 		return false
 	}
-	ttl := m.tombstoneTTL
-	if ttl == 0 {
-		ttl = 10 * time.Minute
-	}
+	ttl := m.tombstoneTTL // 0 keeps a tombstone for good
 	if ttl > 0 && time.Since(stamp) > ttl {
 		delete(m.removed, mem)
 		return false

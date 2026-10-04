@@ -173,15 +173,9 @@ func (s *Submission) tlsConfig() *tls.Config {
 }
 
 func (s *Submission) connectTimeout() time.Duration {
-	if s.cfg.ConnectTimeout > 0 {
-		return time.Duration(s.cfg.ConnectTimeout) * time.Second
-	}
-	return 30 * time.Second
+	return time.Duration(s.cfg.ConnectTimeout) * time.Second
 }
 
 func (s *Submission) commandTimeout() time.Duration {
-	if s.cfg.CommandTimeout > 0 {
-		return time.Duration(s.cfg.CommandTimeout) * time.Second
-	}
-	return 5 * time.Minute
+	return time.Duration(s.cfg.CommandTimeout) * time.Second
 }

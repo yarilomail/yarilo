@@ -38,9 +38,9 @@ internalTLS:
   ## dials to the same peer resume via a cached session ticket instead of a full
   ## handshake — cuts the delivery→verify handshake CPU that times out heavy
   ## smoke tests on a single-core node.
-  ## sessionCacheSize: cache entries per client config. 0 = built-in default
-  ##   (64); a negative value disables resumption (every dial is a full handshake).
-  sessionCacheSize: 0
+  ## sessionCacheSize: cache entries per client config; 0 disables resumption
+  ##   (every dial is a full handshake).
+  sessionCacheSize: 64
   ## sessionCacheTtl: seconds a cached session may still be resumed, on top of
   ##   LRU eviction. 0 = LRU-only (no age limit). Set a TTL so a cert rotation
   ##   stops resuming stale sessions within the window.
@@ -76,9 +76,9 @@ login:
   ## + drain), or the proxy exhausts retries before the kill confirms and the
   ## login errors. Defaults 20 × 150ms = 3s budget (covers the default 1s grace +
   ## drain). Raise both together if you raise user_kill_confirm_grace.
-  ## 0 = built-in default.
-  lookupHoldMax: 0
-  lookupHoldBackoffMs: 0
+  ## lookupHoldMax 0 does not retry a held LOOKUP; lookupHoldBackoffMs 0 retries at once.
+  lookupHoldMax: 20
+  lookupHoldBackoffMs: 150
   ## Seconds a login proxy may spend reaching a backend and bringing the session
   ## up there; past it the client is told the service is unavailable. A userdb
   ## proxy_timeout overrides it per user.
@@ -88,26 +88,26 @@ login:
   ## counting a session nobody has. Announcing opens and closes alone leaves a
   ## lost event wrong forever; this is how long a wrong count may last. The
   ## list is also sent whenever a director connection is established.
-  ## 0 = built-in default (30); negative = only on connect.
-  sessionSyncIntervalSeconds: 0
+  ## 0 sends it only on connect.
+  sessionSyncIntervalSeconds: 30
   ## Graceful drain (#857): seconds the login proxy keeps serving in-flight
   ## sessions after SIGTERM before closing them. Must fit within
-  ## gracefulShutdown.terminationGracePeriodSeconds. 0 = default (30).
-  sessionGracePeriodSeconds: 0
+  ## gracefulShutdown.terminationGracePeriodSeconds. 0 closes them at once.
+  sessionGracePeriodSeconds: 30
   ## transientRetries (#896): extra attempts a transient failure gets before the
   ## client is told the service is unavailable — yarilo-auth reporting temp-fail,
   ## the first dial to auth, and bringing up the backend session. Answering on the
   ## first error turns a dependency blip (a rolling restart, a reconnect) into a
   ## visible login failure the client can only recover from by opening a new
   ## connection and repeating the TLS handshake.
-  ## 0 = built-in default (3). A negative value opts out and restores
-  ## fail-on-first-error.
+  ## 0 fails on the first error.
   ##
   ## Watch yarilo_login_transient_retries_total against
   ## yarilo_login_transient_exhausted_total: retries rising with exhausted flat
   ## means the budget is absorbing blips; both rising means the outage outlasts it
   ## and the fix is upstream, not a larger budget.
-  transientRetries: 0
+  ## 0 fails on the first transient error.
+  transientRetries: 3
 
   ## transientReloginCap (#896) is the DIFFERENT, second-layer knob. Once the
   ## per-hop transientRetries above are exhausted, the proxy answers a tagged
@@ -118,11 +118,11 @@ login:
   ## answered with a tagged NO, before it is finally closed — so a wedged backend
   ## cannot accumulate sockets that never progress. Counted from the first
   ## attempt, so cap=N permits N tagged NOs, i.e. N-1 actual re-LOGINs between
-  ## them. Independent of auth_max_attempts (bad passwords). 0 = default (3); a
-  ## negative value opts out and closes on the first transient, as before #896.
+  ## them. Independent of auth_max_attempts (bad passwords). 0 closes on the
+  ## first transient, as before #896.
   ##   transientRetries    = internal per-hop retries BEFORE the client sees a NO
   ##   transientReloginCap = transient NOs tolerated per connection AFTER them
-  transientReloginCap: 0
+  transientReloginCap: 3
 
 ## -------------------------------------------------------------------
 ## Graceful rollout (#857)
@@ -164,7 +164,7 @@ backend_register:
   ## ClusterIP -director Service (the LOOKUP endpoint); any replica answers and
   ## the registration gossips ring-wide. Set explicitly for non-k8s runs.
   director_addr: ""
-  ## Heartbeat interval in seconds. 0 = default (10).
+  ## Heartbeat interval in seconds. Must be positive.
   register_interval: 10
   ## Routing pool tag = NFS shard; must match a director tag. NOT a protocol
   ## dimension (#788). Empty = default pool.
@@ -179,11 +179,11 @@ backend_register:
   ## readiness_dir is a shared emptyDir mounted into every container in the pod.
   readiness_dir: /run/yarilo-ready
   ## How often (seconds) a protocol container re-touches its file WHILE ready.
-  ## 0 = default (5).
+  ## Must be positive.
   readiness_touch_interval: 5
   ## How old (seconds) a readiness file may be before the sidecar treats that
-  ## protocol as down and withholds the pod's heartbeat. 0 = default (15 ≈ 3×
-  ## touch). Widen on slow nodes to avoid false silence flapping the whole pod.
+  ## protocol as down and withholds the pod's heartbeat (≈ 3× touch). Must be
+  ## positive. Widen on slow nodes to avoid false silence flapping the whole pod.
   readiness_stale_after: 15
   ## Protocols the sidecar requires fresh before heartbeating. Empty = no gate
   ## (heartbeat unconditionally). The co-located pod sets its full container set.
@@ -200,10 +200,10 @@ storage:
   storage_lock_method: flock
   ## Seconds a dotlock may sit unchanged -- neither it nor the file it protects
   ## touched -- before a waiter takes it over. Only dotlock needs it: flock and
-  ## fcntl die with the process. Unset keeps 180; -1 never takes one over.
+  ## fcntl die with the process. 0 never takes one over.
   storage_lock_stale_timeout: 180
   ## Share of a folder cache's records whose messages are expunged that purges
-  ## the cache, in percent. -1 never purges on its own.
+  ## the cache, in percent. 0 never purges on its own.
   mail_cache_purge_delete_percentage: 20
   ## Continued cache records against live ones, in percent, that purges the
   ## cache: a message carries more than one record past 100.
@@ -227,7 +227,7 @@ storage:
   ## mail_path: ""                            # mail storage root (empty = same as home); supports ~/ and %u/%d/%n/%h
   ## mail_inbox_path: ""                      # INBOX override path (empty = mail_path); supports ~/ and %u/%d/%n/%h
   ## (the cold tier is mail_alt_path below — one key for maildir and mdbox alike)
-  ## mdbox_rotate_size: 10M               # max size per m.<N> before rolling (e.g. 10M, 1G, or a raw byte count; 0 = default 10 MiB)
+  mdbox_rotate_size: "10M"              # max size per m.<N> before rolling (e.g. 10M, 1G, or a raw byte count); must be a size
   ## mdbox_rotate_interval: 0             # roll the append file once older than this (e.g. 30s, 5m, 1h, or raw seconds; 0 = disabled)
   ## mdbox_preallocate_space: false       # fallocate() new m.<N> files up front (Linux only)
   ## mail_index_path: "/var/yarilo-index/%d/%n"     # redirect per-folder index files to a faster disk
@@ -236,17 +236,15 @@ storage:
   ## mail_alt_path: "/mnt/cold/%d/%n"              # cold-tier storage root, maildir and mdbox alike
   ## Log rotation, one policy for both transaction logs — the mdbox map and the per-folder file index.
   ## Every open replays the tail since the last fold, so the floor bounds what an open costs.
-  ## Each of the three works on its own: set one and the other two keep their
-  ## built-in values. They are commented out here because those built-ins are
-  ## what runs when nothing is set.
-  ## mail_index_log_rotate_min_size: "32k"  # 32 KiB — never fold below this (human-readable; quote it)
-  ## mail_index_log_rotate_min_age: 60      # 60s    — between min and max, fold only once the log is this old.
+  ## min_size 0 turns rotation off; max_size 0 drops the ceiling; min_age 0 folds at once.
+  mail_index_log_rotate_min_size: "32k"  # 32 KiB — never fold below this (human-readable; quote it)
+  mail_index_log_rotate_min_age: 60      # 60s    — between min and max, fold only once the log is this old.
   ##                                         #          Measured (#1460): at 300s an actively delivering account
   ##                                         #          carried a log to ~110 KB and paid p99 249ms against 128ms.
   ##                                         #          Raise it for a very large mailbox with sparse delivery,
   ##                                         #          where folds are the rarer cost.
-  ## mail_index_log_rotate_max_size: "1M"   # 1 MiB  — fold above this whatever the age (human-readable; quote it)
-  ## max_concurrent_writes: 0           # 0 = unlimited; tune to storage type: ~32 HDD, ~256 SSD
+  mail_index_log_rotate_max_size: "1M"   # 1 MiB  — fold above this whatever the age (human-readable; quote it)
+  max_concurrent_writes: 0           # 0 = unlimited; tune to storage type: ~32 HDD, ~256 SSD
   ## mailbox_list_utf8: true            # true = UTF-8 on disk (default); false = modified-UTF-7 for legacy migrations
   ##                                    # UPGRADE NOTE: before 2.3.55 this key was documented but never rendered,
   ##                                    # and the default was not applied either, so names went to disk as
@@ -382,9 +380,8 @@ components:
       ## delivery. Folding is O(account) -- 0.4ms at a thousand messages, 37ms
       ## at a hundred thousand -- so it is cached rather than repeated per
       ## message; bounded by idleness so an account nobody delivers to gives
-      ## its memory back. 0 = built-in default (300); negative = never cache,
-      ## which pays the fold on every delivery.
-      cache_idle: 0
+      ## its memory back. 0 never caches, which pays the fold on every delivery.
+      cache_idle: 300
 
     ## coLocated: true renders the merged StatefulSet and suppresses the legacy
     ## per-protocol backend Deployments. This is the model behind a director.
@@ -418,6 +415,11 @@ components:
   director:
     enabled: false
     replicas: 1
+    ## Seconds served to in-flight sessions after SIGTERM; 0 closes them at once.
+    ## kill_timeout is rendered for the reference layout and not read.
+    shutdown:
+      session_grace_period: 30
+      kill_timeout: 5
 
     ## Internal director protocol (ring management, LOOKUP between directors).
     directorPort: 9102
@@ -506,7 +508,7 @@ components:
     ## (#740), letting a user's in-flight command on the old backend finish
     ## after a move. Admin path only — a backend-down/expiry kick fires
     ## immediately (nothing to grace on a dead backend) and the split-writer
-    ## conflict-kick is never delayed. 0 = 2; negative = disabled (immediate).
+    ## conflict-kick is never delayed. 0 kicks immediately.
     user_kick_delay: 2
     ## Confirmed ring-wide kick (#847). While a
     ## user is being kicked/moved, LOOKUP is HELD so a concurrent login cannot
@@ -528,7 +530,7 @@ components:
     ## rest are kicked in later batches with a short pause between them,
     ## spreading the re-login stampede across surviving backends instead of
     ## firing every kick at once.
-    ## 0 = 100; negative = no batching (kick all at once).
+    ## 0 kicks all at once, no batching.
     max_parallel_kicks: 100
     ## Cap on concurrent user moves during a GRACEFUL backend evacuation (#849) —
     ## the throttled `yarctl director backends flush IP` (no --force). The director
@@ -536,7 +538,7 @@ components:
     ## confirm gone before the next is pulled in, so a planned backend drain
     ## (rolling upgrade, maintenance) spreads the re-login across surviving pods
     ## instead of stampeding them.
-    ## 0 = 5; negative = unlimited (all at once, ~equivalent to --force).
+    ## 0 = unlimited (all at once, ~equivalent to --force).
     max_parallel_moves: 5
     ## Optional external per-user cleanup hook (#848). Path to an executable run
     ## once per user AFTER a
@@ -621,7 +623,7 @@ components:
     ## heartbeating pod); static mail_servers / admin-added backends never
     ## heartbeat and are never expired. The last backend of a tag is never
     ## expired (kept over a guaranteed total blackhole, logged loudly).
-    ## 0 = default (30); negative = disabled.
+    ## 0 never expires one.
     backend_expire: 30
 
     ## Active fast-fail re-route (#782): when login proxies fail to dial an
@@ -635,17 +637,16 @@ components:
     ## Single-login-replica deployments (e.g. sandbox, where two distinct
     ## reporters for one protocol's failure may never physically exist) should
     ## set backend_unreachable_reporters=1 — the TTL lease stays the backstop
-    ## regardless. 0 = default (2).
+    ## regardless. 0 never evicts early.
     backend_unreachable_reporters: 2
     ## Sliding window (seconds) over which the distinct reports must arrive.
-    ## 0 = default (5).
+    ## 0 never evicts early.
     backend_unreachable_window: 5
 
     ## How often (seconds) each ring member re-broadcasts its
     ## member+tombstone snapshot over every live ring connection (#759) —
     ## a bounded safety net that heals membership splits without waiting
-    ## for a possibly-lost ADD/REMOVE broadcast. 0 = default (3);
-    ## negative = disabled.
+    ## for a possibly-lost ADD/REMOVE broadcast. 0 turns it off.
     anti_entropy_interval: 3
 
     ## How often (seconds) each member re-polls a seed after its initial
@@ -660,8 +661,8 @@ components:
     ## A hostname seed (the headless -director-ring Service) is resolved
     ## explicitly and every resulting pod address except self is polled
     ## each cycle — deterministic convergence in one cycle, no
-    ## load-balancer routing luck. 0 = default (2); negative = one-shot
-    ## join (join once, never poll again).
+    ## load-balancer routing luck. 0 = one-shot join (join once, never poll
+    ## again).
     seed_poll_interval: 2
 
     ## Eased poll cadence (seconds) once the view has reached min_members.
@@ -672,7 +673,7 @@ components:
     ## otherwise keep it for a full idle interval (#765, live-measured 40s+
     ## at a 30s idle). Raise this only to trade steady-state polling for
     ## slower dead-member eviction on fresh joiners. Clamped up to
-    ## seed_poll_interval. 0 = default (2).
+    ## seed_poll_interval. Must be positive.
     seed_poll_idle_interval: 2
 
     ## How long (seconds) a dead member's tombstone is kept and gossiped
@@ -680,7 +681,7 @@ components:
     ## expire: neighbor liveness monitoring (#768 — both immediate
     ## neighbors watch every member, reference model) re-evicts a
     ## resurrected-but-unreachable member within seconds regardless of
-    ## tombstone state. 0 = default (600); negative = never expire.
+    ## tombstone state. 0 never expires one.
     tombstone_ttl: 600
 
     ## HTTP admin API (yarctl CLI target).
@@ -719,17 +720,18 @@ components:
   auth:
     enabled: true
     replicas: 1
+    ## Seconds served to in-flight sessions after SIGTERM; 0 closes them at once.
+    ## kill_timeout is rendered for the reference layout and not read.
+    shutdown:
+      session_grace_period: 30
+      kill_timeout: 5
     ## Seconds a process waits at STARTUP for yarilo-auth to answer before it
     ## gives up and exits. A pod starting while auth is rolling has nobody to
     ## tell, so exiting immediately turns a few seconds of dependency downtime
     ## into a restart loop.
     ## Startup only: on a request a fast refusal beats a hang, so the
-    ## per-request dials never wait. 0 = built-in default (30); negative = do
-    ## not wait at all.
+    ## per-request dials never wait. 0 does not wait at all.
     startup_wait: 30
-    ## Connections kept for waiting acquires (LOCK-WAIT). Sized for concurrent
-    ## waiters: each holds its connection for the length of its wait.
-    wait_pool_size: 64
 
     ## client — how OTHER components talk to auth's MASTER listener (userdb
     ## lookups from the jmap and fts resolvers), as opposed to the login pods
@@ -738,19 +740,18 @@ components:
       ## Master-protocol connections a process keeps open for userdb lookups.
       ## The dial costs about seven times the lookup it carries, and arrives at
       ## auth as a connection per lookup with a full handshake on its side too.
-      ## 0 = built-in default (4); NEGATIVE = a connection per lookup, i.e. the
+      ## 0 = a connection per lookup, i.e. the
       ## behaviour before pooling — the rollback, by config rather than by a
       ## release.
       ## Raising it costs at shutdown: closing waits up to a second per slot
       ## still serving a lookup, so a large pool of stuck lookups delays exit by
       ## roughly its size in seconds.
-      pool_size: 0
+      pool_size: 4
       ## Seconds before an unused pooled connection is closed, so a process
-      ## that resolved nobody for an hour is not holding one. 0 = built-in
-      ## default (300, matching fts handle_idle_timeout); negative = never
-      ## evict. A connection idle for a quarter of this is probed before it is
+      ## that resolved nobody for an hour is not holding one (matching fts
+      ## handle_idle_timeout); 0 never evicts. A connection idle for a quarter of this is probed before it is
       ## handed out, rather than discovering a dead peer by failing a lookup.
-      pool_idle_timeout: 0
+      pool_idle_timeout: 300
 
     ## listen — client protocol (login pods speak here).
     listen: ":9100"
@@ -809,11 +810,12 @@ components:
         ## max_idle_conns defaults to max_open_conns: retaining fewer idle
         ## connections than the pool opens means the difference is re-dialled on
         ## every burst, which is what drove the sandbox MySQL to its ceiling.
-        ## Negative disables a limit. Seconds for the two timeouts.
-        ## max_open_conns: 0
-        ## max_idle_conns: 0
-        ## conn_max_lifetime: 0   # 0 = 300
-        ## conn_max_idle_time: 0  # 0 = 60
+        ## Left out, each keeps the driver's default; 0 lifts that limit.
+        ## Seconds for the two timeouts.
+        ## max_open_conns: 25
+        ## max_idle_conns: 25
+        ## conn_max_lifetime: 300
+        ## conn_max_idle_time: 60
 
       ## passwd-file driver — a flat, colon-separated user file (classic
       ## /etc/passwd layout) that serves both passdb and userdb roles, so a
@@ -1026,6 +1028,11 @@ components:
   warden:
     enabled: true
     replicas: 1
+    ## Seconds served to in-flight sessions after SIGTERM; 0 closes them at once.
+    ## kill_timeout is rendered for the reference layout and not read.
+    shutdown:
+      session_grace_period: 30
+      kill_timeout: 5
 
     ## service — config-mirror subtree: snake_case keys, 1:1 with warden_service.*
     ## of yarilo.yaml. k8s-shape keys (replicas / internalTLS / resources) stay at
@@ -1033,12 +1040,12 @@ components:
     service:
       listen: ":9101"
       ## conns — long-lived connections each login pod keeps to yarilo-warden
-      ## (#878). 0 = built-in default (4). Sessions do not own a connection: every
+      ## (#878). Must be positive. Sessions do not own a connection: every
       ## command carries the session id and the server keeps no per-connection
       ## state, so the connection count no longer tracks the login rate. The warden
       ## protocol has no request id, so one connection serves one command at a
       ## time — each is a sub-ms round trip, so a handful covers any login rate.
-      conns: 0
+      conns: 4
 
       ## event_queue_size — SELECT events a backend queues for the warden
       ## writer. The events are accounting: the warden records the folder so
@@ -1154,6 +1161,11 @@ components:
   locks:
     enabled: true
     replicas: 2
+    ## Seconds served to in-flight sessions after SIGTERM; 0 closes them at once.
+    ## kill_timeout is rendered for the reference layout and not read.
+    shutdown:
+      session_grace_period: 30
+      kill_timeout: 5
 
     ## service — config-mirror subtree: keys here are snake_case and map 1:1 to
     ## the locks_service.* section of yarilo.yaml, unlike the k8s-shape keys
@@ -1178,8 +1190,11 @@ components:
       ## own deployment, so "not up yet" is ordinary and exiting on it costs a
       ## restart -- which also spends the RESTARTS counter a rollout is judged
       ## by (#1350). Bounded on purpose: a wrong endpoint must still fail
-      ## loudly. Negative disables waiting.
+      ## loudly. 0 disables waiting.
       startup_wait: 30
+      ## Connections kept for waiting acquires (LOCK-WAIT). Sized for concurrent
+      ## waiters: each holds its connection for the length of its wait. Must be positive.
+      wait_pool_size: 64
 
     ## startupProbe waits for Redis (remote mode) to accept a TCP connection before
     ## this pod takes traffic, replacing the wait-redis init container (#903). Safe
@@ -2645,7 +2660,7 @@ fts:
   ## another backend leaves the old one holding that lock until this expires --
   ## and until then the new owner cannot index them at all.
   ## Lower means a moved user is picked up sooner; higher avoids reopening the
-  ## index across gaps in a busy account's traffic. 0 = built-in default (300).
+  ## index across gaps in a busy account's traffic. 0 never closes one.
   fts_handle_idle_timeout: 300
   fts_search_timeout_secs: 30
   fts_search_strict: false
@@ -2674,11 +2689,10 @@ fts:
   # fts_language_filters_override:
   #   uk: [lowercase, stopwords]
   #   de: [lowercase, snowball]
-  ## Generic/address tokenizer byte caps (#726 item 1). 0 = package
-  ## defaults (30 / 250) — the most common operator tunings for index
-  ## size vs. long-token searchability.
-  fts_language_tokenizer_generic_token_maxlen: 0
-  fts_language_tokenizer_address_token_maxlen: 0
+  ## Generic/address tokenizer byte caps (#726 item 1), the most common
+  ## operator tunings for index size vs. long-token searchability. Must be positive.
+  fts_language_tokenizer_generic_token_maxlen: 30
+  fts_language_tokenizer_address_token_maxlen: 250
   ## Tokenizer algorithm (#726 item 2): "simple" is the only one
   ## implemented today. "tr29" is a valid reference option but errors
   ## clearly at startup until it lands (blocked on the Bleve stream) —
@@ -2691,9 +2705,10 @@ fts:
   ## part's own text is sampled to pick its stemmer, and how much text is
   ## required before trusting the result. 0 = package defaults. Only
   ## matters when 2+ languages are configured above.
-  ## human-readable (bytes or K/M/G/T). "0" = buildmail default. Quote it.
-  fts_detection_sample_bytes: "0"
-  fts_detection_min_runes: 0
+  ## human-readable (bytes or K/M/G/T); must be a size. Quote it.
+  fts_detection_sample_bytes: "1k"
+  ## Shortest sample (runes) language detection is run on; 0 runs it on any sample.
+  fts_detection_min_runes: 10
   fts_flatcurve_commit_limit: 500
   ## Shortest term worth indexing, in CHARACTERS. It counted bytes until
   ## #1055, which applied a different rule to every script: a one-character
@@ -2807,9 +2822,9 @@ fts:
   fts_decoder_timeout_secs: 30
   ## tika driver retry against transient failures (network errors, 5xx)
   ## before degrading — indexing the message without the attachment's text
-  ## instead of failing it outright (#697). 0 = default 2 (one retry). Not
-  ## used by the script driver, which has no retry.
-  fts_decoder_max_attempts: 0
+  ## instead of failing it outright (#697). 2 is one retry; must be positive.
+  ## Not used by the script driver, which has no retry.
+  fts_decoder_max_attempts: 2
   ## Skip re-tokenizing a body part whose normalized text was already
   ## indexed for the SAME message (multipart/alternative text+html twins,
   ## a repeated quoted block). Opt-in — some operators may not want this.
@@ -2865,7 +2880,7 @@ quota:
   #  - quota_warning_name: "storage90"
   #    quota_warning_resource: storage      # storage | message
   #    quota_warning_threshold: over        # over | under
-  #    quota_warning_percentage: 90         # % of the user's limit
+  #    quota_warning_percentage: 90         # % of the user's limit; required
   #    quota_warning_execute: "warn-user"   # program in quota_warning_bin_dir
 
   ## quota_clone — mirror the authoritative usage into external dicts (advisory,

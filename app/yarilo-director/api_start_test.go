@@ -21,10 +21,10 @@ func TestTheDirectorAPIIsBoundBeforeReady(t *testing.T) {
 	t.Cleanup(cancel)
 	noFail := func(err error) { t.Errorf("serve failed: %v", err) }
 
-	if err := startAPI(ctx, director.New(), config.DirectorAPIConfig{Listen: taken.Addr().String(), Token: "t"}, nil, noFail); err == nil {
+	if err := startAPI(ctx, director.NewWithOptions(director.Options{}), config.DirectorAPIConfig{Listen: taken.Addr().String(), Token: "t"}, nil, noFail); err == nil {
 		t.Error("a taken port started the API")
 	}
-	if err := startAPI(ctx, director.New(), config.DirectorAPIConfig{Listen: "127.0.0.1:0"}, nil, noFail); err == nil {
+	if err := startAPI(ctx, director.NewWithOptions(director.Options{}), config.DirectorAPIConfig{Listen: "127.0.0.1:0"}, nil, noFail); err == nil {
 		t.Error("an empty token started the API")
 	}
 
@@ -34,7 +34,7 @@ func TestTheDirectorAPIIsBoundBeforeReady(t *testing.T) {
 	}
 	addr := free.Addr().String()
 	free.Close()
-	if err := startAPI(ctx, director.New(), config.DirectorAPIConfig{Listen: addr, Token: "t"}, nil, noFail); err != nil {
+	if err := startAPI(ctx, director.NewWithOptions(director.Options{}), config.DirectorAPIConfig{Listen: addr, Token: "t"}, nil, noFail); err != nil {
 		t.Fatalf("a free port: %v", err)
 	}
 	c, err := net.Dial("tcp", addr)

@@ -10,7 +10,7 @@ import (
 // another director is counted locally (so least_sessions sees the cluster view)
 // and removed on the matching SESSION-CLOSE.
 func TestApplyRemoteSession_FeedsCounts(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 
 	s.applyRemoteSessionOpen([]string{"sid1", "u@d.test", "10.0.0.5", "imap"}, "10.0.0.99@run1")
 	total, byProto := s.sessionCounts()
@@ -34,7 +34,7 @@ func TestApplyRemoteSession_FeedsCounts(t *testing.T) {
 // TestApplyRemoteSessionOpen_DoesNotClobberLocal: a stray remote SESSION-OPEN
 // for an id we own locally must not overwrite our (kickable) local record.
 func TestApplyRemoteSessionOpen_DoesNotClobberLocal(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	local := &client{} // non-nil owning conn marker
 	s.sessRecMu.Lock()
 	s.sessById["sid1"] = &sessionRec{id: "sid1", backend: "10.0.0.1", proto: "imap", cl: local}
@@ -54,7 +54,7 @@ func TestApplyRemoteSessionOpen_DoesNotClobberLocal(t *testing.T) {
 // TestKickSessionsForBackend_SkipsRemote guards #804: kick must not deref a
 // remote record's nil conn, and must still remove remote records from the view.
 func TestKickSessionsForBackend_SkipsRemote(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.5", Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 	// One remote session (cl == nil) on the backend.
 	s.applyRemoteSessionOpen([]string{"sid1", "u@d.test", "10.0.0.5", "imap"}, "10.0.0.99@run1")

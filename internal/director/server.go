@@ -192,8 +192,7 @@ type Options struct {
 	// FlushProgram is an optional per-user cleanup hook run after a confirmed
 	// move; empty = disabled.
 	FlushProgram string
-	// FlushProgramTimeout bounds one flush hook run. Zero selects
-	// defaultFlushProgramTimeout.
+	// FlushProgramTimeout bounds one flush hook run (#848); config refuses 0.
 	FlushProgramTimeout time.Duration
 	// UserKillTimeout is the hard fallthrough for the confirmed kick;
 	// UserKillConfirmGrace is the stable-zero window before confirming.
@@ -202,50 +201,19 @@ type Options struct {
 	UserKillConfirmGrace time.Duration
 }
 
-func (o *Options) userKillTimeout() time.Duration {
-	if o.UserKillTimeout <= 0 {
-		return 15 * time.Second
-	}
-	return o.UserKillTimeout
-}
+func (o *Options) userKillTimeout() time.Duration { return o.UserKillTimeout }
 
-func (o *Options) userKillConfirmGrace() time.Duration {
-	if o.UserKillConfirmGrace <= 0 {
-		return 1 * time.Second
-	}
-	return o.UserKillConfirmGrace
-}
+func (o *Options) userKillConfirmGrace() time.Duration { return max(o.UserKillConfirmGrace, 0) }
 
-func (o *Options) userKickDelay() time.Duration {
-	if o.UserKickDelay == 0 {
-		return 2 * time.Second
-	}
-	if o.UserKickDelay < 0 {
-		return 0
-	}
-	return o.UserKickDelay
-}
+func (o *Options) userKickDelay() time.Duration { return max(o.UserKickDelay, 0) }
 
-func (o *Options) maxParallelKicks() int {
-	if o.MaxParallelKicks == 0 {
-		return 100
-	}
-	if o.MaxParallelKicks < 0 {
-		return 0
-	}
-	return o.MaxParallelKicks
-}
+// maxParallelKicks is the kick batch; 0 kicks all at once.
+func (o *Options) maxParallelKicks() int { return max(o.MaxParallelKicks, 0) }
 
 // maxParallelMoves returns the graceful-evacuation concurrency window.
 // 0 = default 5; negative = unlimited (returned as 0).
 func (o *Options) maxParallelMoves() int {
-	if o.MaxParallelMoves == 0 {
-		return 5
-	}
-	if o.MaxParallelMoves < 0 {
-		return 0
-	}
-	return o.MaxParallelMoves
+	return max(o.MaxParallelMoves, 0)
 }
 
 func (o *Options) usernameHashLowercase() bool {
@@ -275,43 +243,18 @@ func (o *Options) effectiveHashFormat() (hf ring.HashFormat, explicit bool) {
 	return parsed, false
 }
 
-func (o *Options) userExpire() time.Duration {
-	if o.UserExpire <= 0 {
-		return 900 * time.Second
-	}
-	return o.UserExpire
-}
+func (o *Options) userExpire() time.Duration { return o.UserExpire }
 
 // domainExpire is how long a domain's placement outlives its traffic. Its own
 // knob, not the user TTL: a domain forgotten between two logins would be placed
 // again elsewhere, which is affinity lost with nobody asking for it (#1943).
-func (o *Options) domainExpire() time.Duration {
-	if o.DomainExpire <= 0 {
-		return 900 * time.Second
-	}
-	return o.DomainExpire
-}
+func (o *Options) domainExpire() time.Duration { return o.DomainExpire }
 
-func (o *Options) domainRebalanceInterval() time.Duration {
-	if o.DomainRebalanceInterval <= 0 {
-		return time.Minute
-	}
-	return o.DomainRebalanceInterval
-}
+func (o *Options) domainRebalanceInterval() time.Duration { return o.DomainRebalanceInterval }
 
-func (o *Options) domainRebalanceCooldown() time.Duration {
-	if o.DomainRebalanceCooldown <= 0 {
-		return 10 * time.Minute
-	}
-	return o.DomainRebalanceCooldown
-}
+func (o *Options) domainRebalanceCooldown() time.Duration { return max(o.DomainRebalanceCooldown, 0) }
 
-func (o *Options) pingInterval() time.Duration {
-	if o.PingInterval <= 0 {
-		return 30 * time.Second
-	}
-	return o.PingInterval
-}
+func (o *Options) pingInterval() time.Duration { return o.PingInterval }
 
 func (o *Options) pingTimeout() time.Duration {
 	if o.PingTimeout <= 0 {
@@ -320,15 +263,9 @@ func (o *Options) pingTimeout() time.Duration {
 	return o.PingTimeout
 }
 
-// writeTimeout is the per-write deadline. 0 = 10s; negative = disabled.
+// writeTimeout is the per-write deadline; 0 is none.
 func (o *Options) writeTimeout() time.Duration {
-	if o.WriteTimeout == 0 {
-		return 10 * time.Second
-	}
-	if o.WriteTimeout < 0 {
-		return 0
-	}
-	return o.WriteTimeout
+	return max(o.WriteTimeout, 0)
 }
 
 // client wraps an active connection with a per-connection write lock. The lock
@@ -474,11 +411,6 @@ type Server struct {
 type backendLease struct {
 	seq uint64
 	at  time.Time
-}
-
-// New creates a director server with an empty ring and default options.
-func New() *Server {
-	return NewWithOptions(Options{})
 }
 
 // NewWithOptions creates a director server with custom options.
@@ -1093,9 +1025,11 @@ func (s *Server) handleBackendUp(c *client, fields []string) {
 	if len(fields) >= 4 {
 		tag = fields[3]
 	}
-	vhosts := 0
+	vhosts := ring.DefaultVhosts
 	if len(fields) >= 5 {
-		vhosts, _ = strconv.Atoi(fields[4])
+		if v, err := strconv.Atoi(fields[4]); err == nil {
+			vhosts = v
+		}
 	}
 	// Optional 6th field: the backend's monotonic heartbeat seq (#776). Its
 	// presence marks this a lease-managed backend (a self-registering pod);
@@ -1579,12 +1513,7 @@ func (s *Server) forgetBackendLease(ip string) {
 	s.backendSeenMu.Unlock()
 }
 
-func (o *Options) backendExpire() time.Duration {
-	if o.BackendExpire == 0 {
-		return 30 * time.Second
-	}
-	return o.BackendExpire
-}
+func (o *Options) backendExpire() time.Duration { return o.BackendExpire }
 
 // StartBackendExpiry runs the #776 lease-expiry loop until ctx ends: every
 // backendExpire/3 it removes any lease-managed backend whose heartbeat has
@@ -1635,7 +1564,7 @@ func (s *Server) refreshPinnedSessions() {
 }
 
 func (s *Server) StartBackendExpiry(ctx context.Context) {
-	if s.opts.BackendExpire < 0 {
+	if s.opts.BackendExpire <= 0 {
 		return
 	}
 	exp := s.opts.backendExpire()

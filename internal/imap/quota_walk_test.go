@@ -30,7 +30,7 @@ func startEnforcingServer(t *testing.T, dir string) *imapclient.Client {
 		Resolver:    &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
 		AuthRelay:   authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000"}),
 		QuotaEngine: true,
-		QuotaPolicy: quota.Policy{
+		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100,
 			Warnings: []quota.Warning{
 				{Name: "under90", Resource: "storage", Threshold: "under", Percentage: 90},
 			},

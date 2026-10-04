@@ -85,7 +85,7 @@ func TestDirectorJoinNeedsTheDirectorRole(t *testing.T) {
 
 func startTLSDirector(t *testing.T, cfg *tls.Config) string {
 	t.Helper()
-	srv := NewWithOptions(Options{PingInterval: 24 * time.Hour})
+	srv := NewWithOptions(testOptions(Options{PingInterval: 24 * time.Hour}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

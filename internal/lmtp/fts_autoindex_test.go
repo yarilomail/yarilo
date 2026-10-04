@@ -60,12 +60,12 @@ func TestAutoindexCarriesTheFolderGUID(t *testing.T) {
 	idx := fileindex.New()
 	rec := &recordingFTS{done: make(chan struct{}, 4)}
 
-	s := &session{opts: Options{
+	s := &session{opts: testOpts(Options{
 		Mailbox:      mb,
 		Index:        idx,
 		FTSClient:    rec,
 		FTSAutoindex: true,
-	}}
+	})}
 
 	info := &mailbox.UserInfo{
 		Username: "alice@x", Home: filepath.Join(root, "alice"),
@@ -115,7 +115,7 @@ func TestAutoindexCarriesTheFolderGUID(t *testing.T) {
 // once rather than firing a request the service will refuse.
 func TestAutoindexSkipsAFolderWithoutGUID(t *testing.T) {
 	rec := &recordingFTS{done: make(chan struct{}, 1)}
-	s := &session{opts: Options{FTSClient: rec, FTSAutoindex: true}}
+	s := &session{opts: testOpts(Options{FTSClient: rec, FTSAutoindex: true})}
 
 	s.ftsAutoindex("alice@x", mailbox.Folder{Name: "INBOX"}, 1)
 

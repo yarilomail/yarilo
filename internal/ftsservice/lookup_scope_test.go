@@ -119,7 +119,7 @@ func (s *scopeIndex) Lookup(folders []string, _ fts.Query) (fts.Result, error) {
 func TestTheServiceScopesTheLookupToTheFolder(t *testing.T) {
 	idx := &scopeIndex{}
 	h := &userHandle{ui: idx}
-	s := &Service{opts: Options{}}
+	s := &Service{opts: testOpts(Options{})}
 	mbox := fts.MailboxRef{Name: "INBOX", GUID: "0f0e0d0c0b0a09080706050403020100"}
 
 	if _, err := s.lookupThrough(h, mbox, fts.Query{}); err != nil {

@@ -10,13 +10,14 @@ import (
 
 func rebalanceServer(t *testing.T, pct int) *Server {
 	t.Helper()
-	s := NewWithOptions(Options{
+	s := NewWithOptions(testOptions(Options{
 		AssignmentPolicy:       policyDomain,
-		AntiEntropyInterval:    -1,
+		UserExpire:             15 * time.Minute,
+		DomainExpire:           15 * time.Minute,
 		DomainRebalancePercent: pct,
 		LocalIP:                "10.9.9.9",
 		LocalPort:              9090,
-	})
+	}))
 	for _, ip := range []string{"10.0.0.1", "10.0.0.2"} {
 		s.ring.AddBackend(&ring.Backend{IP: ip, Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 	}

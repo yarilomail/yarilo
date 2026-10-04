@@ -89,10 +89,8 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
-// Decision is the parsed policy-server result. Continue=true means
-// proceed (status==0). Reject=true means refused (status<0).
-// TarpitSecs>0 (with Continue=true) means sleep that many seconds, then
-// proceed.
+// Decision is the policy-server result: Continue (status 0), Reject (status <0),
+// and TarpitSecs to sleep before continuing.
 type Decision struct {
 	Continue   bool
 	Reject     bool
@@ -148,12 +146,6 @@ func New(cfg Config) (*Client, error) {
 		// ok
 	default:
 		return nil, fmt.Errorf("policy: unsupported hash mech %q (sha256, sha512)", cfg.HashMech)
-	}
-	if cfg.Timeout == 0 {
-		cfg.Timeout = 5 * time.Second
-	}
-	if cfg.HashTruncateBits == 0 {
-		cfg.HashTruncateBits = 12
 	}
 	if cfg.HashMech == "" {
 		cfg.HashMech = "sha256"

@@ -57,6 +57,7 @@ func TestAClosedConnectionEndsTheSession(t *testing.T) {
 		homeDir:  t.TempDir(),
 		store:    newTestStore(),
 		maxSize:  65536,
+		maxLine:  65536,
 	}
 	// A context that outlives the test: the shutdown check at the top of the
 	// loop is the one exit that did work, and it would pass this test for the

@@ -111,7 +111,7 @@ func TestTheGreetingOffersTheServiceMechanisms(t *testing.T) {
 	t.Cleanup(func() { client.Close(); server.Close() }) //nolint:errcheck
 
 	go func() {
-		_, _, _, _ = extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{}, relayContext{dial: dial, sessionID: "s1"})
+		_, _, _, _ = extractIMAPPreamble(server, bufio.NewReader(server), nil, testOpts(Options{}), relayContext{dial: dial, sessionID: "s1"})
 	}()
 
 	greeting, err := bufio.NewReader(client).ReadString('\n')
@@ -241,7 +241,7 @@ func TestTheCommandLoopCompletesAScramLogin(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		pre, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{}, relayContext{dial: dial, sessionID: "s1"})
+		pre, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, testOpts(Options{}), relayContext{dial: dial, sessionID: "s1"})
 		done <- result{pre, err}
 	}()
 
@@ -332,7 +332,7 @@ func TestFailedScramExchangesHitTheAttemptLimit(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, Options{AuthMaxAttempts: 2}, relayContext{dial: dial, sessionID: "s1"})
+		_, _, _, err := extractIMAPPreamble(server, bufio.NewReader(server), nil, testOpts(Options{AuthMaxAttempts: 2}), relayContext{dial: dial, sessionID: "s1"})
 		done <- err
 	}()
 
@@ -366,7 +366,7 @@ func TestFailedScramExchangesHitTheAttemptLimit(t *testing.T) {
 }
 
 // One ceiling for both paths: a password failure and a refused SASL exchange
-// count against the same configured number, with the same fallback.
+// count against the same configured number, taken as given.
 func TestTheAttemptCeilingIsOneNumber(t *testing.T) {
 	rows := []struct {
 		name string
@@ -374,8 +374,7 @@ func TestTheAttemptCeilingIsOneNumber(t *testing.T) {
 		want int
 	}{
 		{"configured", Options{AuthMaxAttempts: 7}, 7},
-		{"unset falls back", Options{}, 3},
-		{"negative falls back", Options{AuthMaxAttempts: -1}, 3},
+		{"one", Options{AuthMaxAttempts: 1}, 1},
 	}
 	for _, row := range rows {
 		if got := authAttemptLimit(row.opts); got != row.want {
@@ -458,12 +457,12 @@ func TestALoginWithoutATokenIsRefusedBeforeTheBackend(t *testing.T) {
 		}
 	}()
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Protocol:    ProtocolIMAP,
 		AuthAddr:    ln.Addr().String(),
 		BackendAddr: backend.Addr().String(),
 		LocalIP:     "127.0.0.1",
-	})
+	}))
 	client, server := net.Pipe()
 	t.Cleanup(func() { client.Close(); server.Close() }) //nolint:errcheck
 	go srv.handleConn(server)

@@ -95,9 +95,6 @@ func main() {
 		slog.Info("received signal, shutting down", "signal", sig.String())
 		srv.Close()
 		grace := time.Duration(lcfg.Shutdown.SessionGracePeriod) * time.Second
-		if grace <= 0 {
-			grace = 5 * time.Second
-		}
 		// Wait for Serve to return or grace to expire.
 		select {
 		case <-serveErr:

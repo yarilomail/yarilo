@@ -33,9 +33,6 @@ var ErrDegraded = errors.New("fts/decoder: degraded (retries exhausted)")
 // "none" or empty; a nil Decoder means no attachment decoding.
 func New(cfg config.FTSConfig) (Decoder, error) {
 	timeout := time.Duration(cfg.DecoderTimeoutSecs) * time.Second
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
 	switch cfg.DecoderDriver {
 	case "", "none":
 		return nil, nil

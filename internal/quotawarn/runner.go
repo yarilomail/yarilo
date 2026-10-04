@@ -1,7 +1,5 @@
-// Package quotawarn runs the external action configured for a quota_warning.
-// It mirrors the quota_warning execute mechanism and yarilo's own sieve_execute
-// runner: a program is located in a fixed bin dir and run best-effort with the
-// warning context passed via the environment.
+// Package quotawarn runs a quota_warning's program from a fixed bin dir,
+// best-effort, with the warning context in the environment.
 package quotawarn
 
 import (
@@ -31,9 +29,6 @@ func New(binDir string, timeoutSecs int) *Runner {
 		return nil
 	}
 	t := time.Duration(timeoutSecs) * time.Second
-	if t <= 0 {
-		t = 10 * time.Second
-	}
 	return &Runner{binDir: binDir, timeout: t}
 }
 

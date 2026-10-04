@@ -144,8 +144,7 @@ func TestNewPoolSizeDefaults(t *testing.T) {
 		want int
 	}{
 		{"explicit", 3, 3},
-		{"zero", 0, DefaultPoolSize},
-		{"negative", -2, DefaultPoolSize},
+		{"one", 1, 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

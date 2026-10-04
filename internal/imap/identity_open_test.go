@@ -41,7 +41,7 @@ func startIdentityServer(t *testing.T) (root, addr string) {
 		// The engine and a per-mailbox message cap, so a save reaches the
 		// per-folder count: without them that caller is never called.
 		QuotaEngine: true,
-		QuotaPolicy: quota.Policy{MailboxMessageCount: 1000},
+		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxMessageCount: 1000},
 	})
 	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
 	if lerr != nil {

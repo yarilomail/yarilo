@@ -378,3 +378,31 @@ func TestParseMapsValidation(t *testing.T) {
 		t.Errorf("nil maps: m=%v err=%v, want nil,nil", m, err)
 	}
 }
+
+func TestPoolSettings(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		ok    bool
+	}{
+		{"absent", nil, true},
+		{"zero lifts the limit", 0, true},
+		{"explicit", 7, true},
+		{"negative is refused", -1, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := map[string]any{"driver": "sqlite", "dsn": filepath.Join(t.TempDir(), "d.db")}
+			if tc.value != nil {
+				settings["max_open_conns"] = tc.value
+			}
+			d, err := New(dict.Config{Settings: settings})
+			if (err == nil) != tc.ok {
+				t.Fatalf("New with max_open_conns=%v: err = %v, want ok=%v", tc.value, err, tc.ok)
+			}
+			if d != nil {
+				d.Close() //nolint:errcheck
+			}
+		})
+	}
+}

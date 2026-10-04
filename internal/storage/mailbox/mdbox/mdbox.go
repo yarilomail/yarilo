@@ -136,17 +136,9 @@ func WithRotateSize(n uint32) Option { return func(b *Backend) { b.rotateSize = 
 func WithLogRotation(minSize, maxSize int64, minAge time.Duration) Option {
 	return func(b *Backend) {
 		b.logRotateSet = true
-		// Zero means "leave this arm alone", so one knob can be set without
-		// the operator having to restate the other two (#1481).
-		if minSize != 0 {
-			b.logRotateMinSize = minSize
-		}
-		if maxSize != 0 {
-			b.logRotateMaxSize = maxSize
-		}
-		if minAge != 0 {
-			b.logRotateMinAge = minAge
-		}
+		b.logRotateMinSize = minSize
+		b.logRotateMaxSize = maxSize
+		b.logRotateMinAge = minAge
 	}
 }
 

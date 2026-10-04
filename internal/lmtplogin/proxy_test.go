@@ -59,7 +59,7 @@ func TestResolveDirectorTag(t *testing.T) {
 		"bob@example.com":   {Username: "bob@example.com"}, // no override
 	})
 
-	s := &session{opts: Options{AuthMasterAddr: authAddr}}
+	s := &session{opts: testOpts(Options{AuthMasterAddr: authAddr})}
 
 	if got := userTag(s, "alice@example.com"); got != "b" {
 		t.Errorf("alice: resolveDirectorTag = %q, want %q", got, "b")
@@ -72,7 +72,7 @@ func TestResolveDirectorTag(t *testing.T) {
 	}
 
 	// AuthMasterAddr unset — must not attempt a dial, just return "".
-	s2 := &session{opts: Options{}}
+	s2 := &session{opts: testOpts(Options{})}
 	if got := userTag(s2, "alice@example.com"); got != "" {
 		t.Errorf("no AuthMasterAddr: resolveDirectorTag = %q, want %q", got, "")
 	}
@@ -430,13 +430,13 @@ func TestServer_HappyPath(t *testing.T) {
 	authAddr := startTestAuth(t)
 	stub, backendAddr := newStubBackend(t)
 
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:         "test.local",
 		BackendAddr:      backendAddr,
 		AuthMasterAddr:   authAddr,
 		WardenAddr:       wardenAddr,
 		ConcurrencyLimit: 5,
-	})
+	}))
 
 	mta := dialMTA(t, proxyAddr)
 	mta.lmtpHandshake(t)
@@ -474,11 +474,11 @@ func TestServer_PlusDetailStripped(t *testing.T) {
 	authAddr := startTestAuth(t)
 	stub, backendAddr := newStubBackend(t)
 
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:       "test.local",
 		BackendAddr:    backendAddr,
 		AuthMasterAddr: authAddr,
-	})
+	}))
 
 	mta := dialMTA(t, proxyAddr)
 	mta.lmtpHandshake(t)
@@ -504,13 +504,13 @@ func TestServer_MultiRecipient(t *testing.T) {
 	authAddr := startTestAuth(t)
 	stub, backendAddr := newStubBackend(t)
 
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:         "test.local",
 		BackendAddr:      backendAddr,
 		AuthMasterAddr:   authAddr,
 		WardenAddr:       wardenAddr,
 		ConcurrencyLimit: 5,
-	})
+	}))
 
 	mta := dialMTA(t, proxyAddr)
 	mta.lmtpHandshake(t)
@@ -576,13 +576,13 @@ func TestServer_WardenConcurrencyLimit(t *testing.T) {
 		}
 	}
 
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:         "test.local",
 		BackendAddr:      backendAddr,
 		AuthMasterAddr:   authAddr,
 		WardenAddr:       wardenAddr,
 		ConcurrencyLimit: 2,
-	})
+	}))
 
 	mta := dialMTA(t, proxyAddr)
 	mta.lmtpHandshake(t)
@@ -601,12 +601,12 @@ func TestServer_WardenUnavailable(t *testing.T) {
 	authAddr := startTestAuth(t)
 	stub, backendAddr := newStubBackend(t)
 
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:       "test.local",
 		BackendAddr:    backendAddr,
 		AuthMasterAddr: authAddr,
 		WardenAddr:     "127.0.0.1:1", // unreachable
-	})
+	}))
 
 	mta := dialMTA(t, proxyAddr)
 	mta.lmtpHandshake(t)
@@ -639,11 +639,11 @@ func TestServer_WardenUnavailable(t *testing.T) {
 func TestServer_AuthFail(t *testing.T) {
 	_, backendAddr := newStubBackend(t)
 
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:       "test.local",
 		BackendAddr:    backendAddr,
 		AuthMasterAddr: "127.0.0.1:1", // unreachable
-	})
+	}))
 
 	mta := dialMTA(t, proxyAddr)
 	mta.lmtpHandshake(t)
@@ -662,13 +662,13 @@ func TestServer_Reset(t *testing.T) {
 	authAddr := startTestAuth(t)
 	_, backendAddr := newStubBackend(t)
 
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:         "test.local",
 		BackendAddr:      backendAddr,
 		AuthMasterAddr:   authAddr,
 		WardenAddr:       wardenAddr,
 		ConcurrencyLimit: 5,
-	})
+	}))
 
 	mta := dialMTA(t, proxyAddr)
 	mta.lmtpHandshake(t)
@@ -745,10 +745,10 @@ func startStubDirector(t *testing.T, capturedLine *string) string {
 // attempt one). This unifies lmtplogin with internal/login's existing
 // precedence, which lmtplogin previously inverted.
 func TestResolveBackend_BackendAddrWinsPrecedence(t *testing.T) {
-	s := &session{opts: Options{
+	s := &session{opts: testOpts(Options{
 		BackendAddr:  "10.0.0.9:24",
 		DirectorAddr: "127.0.0.1:1", // nothing listens here; a dial would fail
-	}}
+	})}
 	addr, err := s.resolveBackend("user@example.com", "")
 	if err != nil {
 		t.Fatalf("resolveBackend: unexpected error (should not have dialled director): %v", err)
@@ -765,7 +765,7 @@ func TestDirectorLookup_NonEmptyCorrelationID(t *testing.T) {
 	var captured string
 	directorAddr := startStubDirector(t, &captured)
 
-	s := &session{opts: Options{DirectorAddr: directorAddr}}
+	s := &session{opts: testOpts(Options{DirectorAddr: directorAddr})}
 	_, _ = s.directorLookup("user@example.com", "")
 
 	if captured == "" {

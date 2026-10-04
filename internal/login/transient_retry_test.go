@@ -15,14 +15,13 @@ func TestTransientRetriesDefault(t *testing.T) {
 		configured int
 		want       int
 	}{
-		{"zero selects the default", 0, defaultTransientRetries},
+		{"zero opts out", 0, 0},
 		{"explicit budget", 5, 5},
 		{"one", 1, 1},
-		{"negative opts out", -1, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{opts: Options{TransientRetries: tc.configured}}
+			s := &Server{opts: testOpts(Options{TransientRetries: tc.configured})}
 			if got := s.transientRetries(); got != tc.want {
 				t.Fatalf("transientRetries() = %d, want %d", got, tc.want)
 			}
@@ -34,7 +33,7 @@ func TestTransientRetriesDefault(t *testing.T) {
 // retry budget observable: retries alone only say a dependency is flapping,
 // exhausted says a client actually saw the failure.
 func TestTransientCountersAreSeparate(t *testing.T) {
-	s := &Server{opts: Options{Protocol: ProtocolIMAP}}
+	s := &Server{opts: testOpts(Options{Protocol: ProtocolIMAP})}
 
 	stages := []string{stageAuthDial, stageAuth, stageBackendSession}
 	for _, stage := range stages {

@@ -16,7 +16,7 @@ import (
 func benchIndex(b *testing.B, prefix string) (fts.UserIndex, []string) {
 	b.Helper()
 	user := fts.UserRef{Username: "u@test", IndexRoot: b.TempDir()}
-	ui, err := New(Options{PrefixSearch: prefix, CommitLimit: 5000}).OpenUser(context.Background(), user)
+	ui, err := New(testOpts(Options{PrefixSearch: prefix, CommitLimit: 5000})).OpenUser(context.Background(), user)
 	if err != nil {
 		b.Fatal(err)
 	}

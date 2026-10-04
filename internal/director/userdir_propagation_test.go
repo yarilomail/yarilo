@@ -20,7 +20,7 @@ func TestUserDir_LookupPropagatesToRing(t *testing.T) {
 	time.Sleep(200 * time.Millisecond) // let the ring connection settle
 
 	// Backend on A so its LOOKUP resolves; B needs nothing to receive the pin.
-	srvA.ring.AddBackend(&ring.Backend{IP: "10.7.7.7", Port: 993, Tag: "imap", Up: true})
+	srvA.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.7.7.7", Port: 993, Tag: "imap", Up: true})
 
 	// Drive a real LOOKUP against A as a login client.
 	conn, sc := dialTest(t, addrA)

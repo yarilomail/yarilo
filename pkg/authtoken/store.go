@@ -21,8 +21,6 @@ import (
 	"time"
 )
 
-const defaultTTL = 60 * time.Second
-
 type entry struct {
 	username  string
 	sessionID string
@@ -30,12 +28,8 @@ type entry struct {
 	expiresAt time.Time
 }
 
-// Store issues and validates one-time session tokens. Each token is a
-// 32-byte random value encoded as a 64-char hex string. It is valid for
-// the configured TTL and consumed on the first successful Validate call.
-//
-// The background sweeper purges tokens that expire before they are
-// consumed (e.g. backend died mid-handshake).
+// Store issues one-time session tokens (32 random bytes, hex), valid for the
+// TTL and consumed by the first successful Validate; a sweeper purges the rest.
 type Store struct {
 	mu      sync.Mutex
 	entries map[string]*entry
@@ -43,11 +37,8 @@ type Store struct {
 	done    chan struct{}
 }
 
-// New returns a ready-to-use Store. ttl ≤ 0 defaults to 60 s.
+// New returns a ready-to-use Store.
 func New(ttl time.Duration) *Store {
-	if ttl <= 0 {
-		ttl = defaultTTL
-	}
 	s := &Store{
 		entries: make(map[string]*entry),
 		ttl:     ttl,

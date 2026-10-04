@@ -9,23 +9,13 @@ import (
 	"time"
 )
 
-// flushHookTimeout bounds one flush-hook run (#848). The reference uses a 10s connect
-// timeout for its flush socket; we bound the whole external program the same way so a
-// wedged hook can never accumulate goroutines/processes without limit.
-const defaultFlushProgramTimeout = 10 * time.Second
-
 // flushWaitDelay is how long Wait may still sit on the output pipes after the
 // hook's process group has been killed. It is a backstop, not a second bound:
 // it only matters for a descendant the group kill could not reach.
 const flushWaitDelay = 2 * time.Second
 
 // flushProgramTimeout is the operator's bound, or the default when unset.
-func (s *Server) flushProgramTimeout() time.Duration {
-	if s.opts.FlushProgramTimeout > 0 {
-		return s.opts.FlushProgramTimeout
-	}
-	return defaultFlushProgramTimeout
-}
+func (s *Server) flushProgramTimeout() time.Duration { return s.opts.FlushProgramTimeout }
 
 // runFlushHook invokes the configured per-user flush program asynchronously once a
 // relocation has been confirmed ring-wide (#848). It is strictly best-effort: the

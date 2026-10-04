@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/filelock"
 )
 
 // Zero cannot mean both "not set" and "never take a dotlock over": a config
@@ -16,9 +15,8 @@ func TestStaleTimeoutOf(t *testing.T) {
 		secs int
 		want time.Duration
 	}{
-		{name: "unset keeps the reference's", secs: 0, want: filelock.DefaultStaleTimeout},
+		{name: "0 never takes one over", secs: 0, want: 0},
 		{name: "a duration is taken as seconds", secs: 45, want: 45 * time.Second},
-		{name: "-1 never takes one over", secs: -1, want: 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

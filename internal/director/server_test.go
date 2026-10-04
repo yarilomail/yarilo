@@ -67,7 +67,7 @@ func startServer(t *testing.T) (*Server, string) {
 
 func startServerOpts(t *testing.T, opts Options) (*Server, string) {
 	t.Helper()
-	srv := NewWithOptions(opts)
+	srv := NewWithOptions(testOptions(opts))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -98,7 +98,7 @@ func TestHandshake_EmptyRing(t *testing.T) {
 func TestHandshake_ExistingBackends(t *testing.T) {
 	srv, addr := startServer(t)
 	// Pre-populate ring before client connects.
-	srv.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 993, Tag: "imap", Up: true})
+	srv.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 993, Tag: "imap", Up: true})
 
 	conn, sc := dialTest(t, addr)
 	hosts := readHandshake(t, sc)
@@ -130,7 +130,7 @@ func TestLookup_NoBackends(t *testing.T) {
 func TestLookup_UnescapesUsername(t *testing.T) {
 	srv, addr := startServer(t)
 	for i := 1; i <= 5; i++ {
-		srv.ring.AddBackend(&ring.Backend{IP: fmt.Sprintf("10.0.0.%d", i), Port: 10993, Tag: "imap", Up: true})
+		srv.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: fmt.Sprintf("10.0.0.%d", i), Port: 10993, Tag: "imap", Up: true})
 	}
 
 	const rawUser = "al\tice@d.test" // real TAB inside the username
@@ -614,7 +614,7 @@ func TestMultipleClients_SharedRing(t *testing.T) {
 }
 
 func TestGracefulShutdown(t *testing.T) {
-	srv := New()
+	srv := NewWithOptions(testOptions(Options{}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

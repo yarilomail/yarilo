@@ -50,19 +50,19 @@ type protoCase struct {
 var protoCases = []protoCase{
 	{name: "IMAP", caps: "c CAPABILITY", capsEnd: "c OK",
 		run: func(c net.Conn, rd *bufio.Reader, rc relayContext) (*preamble, error) {
-			p, _, _, err := extractIMAPPreamble(c, rd, nil, Options{}, rc)
+			p, _, _, err := extractIMAPPreamble(c, rd, nil, testOpts(Options{}), rc)
 			return p, err
 		},
 		auth: func(m, b string) string { return "a1 AUTHENTICATE " + m + " " + b }, cont: "+ ", refused: "a1 NO"},
 	{name: "POP3", caps: "CAPA", capsEnd: ".",
 		run: func(c net.Conn, rd *bufio.Reader, rc relayContext) (*preamble, error) {
-			p, _, _, err := extractPOP3Preamble(c, rd, nil, Options{}, rc)
+			p, _, _, err := extractPOP3Preamble(c, rd, nil, testOpts(Options{}), rc)
 			return p, err
 		},
 		auth: func(m, b string) string { return "AUTH " + m + " " + b }, cont: "+ ", refused: "-ERR"},
 	{name: "SMTP", caps: "EHLO client", capsEnd: "250 ",
 		run: func(c net.Conn, rd *bufio.Reader, rc relayContext) (*preamble, error) {
-			p, _, _, err := extractSubmissionPreamble(c, rd, nil, Options{}, rc)
+			p, _, _, err := extractSubmissionPreamble(c, rd, nil, testOpts(Options{}), rc)
 			return p, err
 		},
 		auth: func(m, b string) string { return "AUTH " + m + " " + b }, cont: "334 ", refused: "535"},
@@ -210,7 +210,7 @@ func TestOAuthWaitsForTLSWithCleartextOff(t *testing.T) {
 	srvTLS, _ := cleartextTLS(t)
 	srv, cli := pipePair(t)
 	go func() {
-		_, _, _, _ = extractIMAPPreamble(remoteConn{srv}, bufio.NewReader(srv), srvTLS, Options{DisablePlainAuth: true}, oauthRelay(t, validator))
+		_, _, _, _ = extractIMAPPreamble(remoteConn{srv}, bufio.NewReader(srv), srvTLS, testOpts(Options{DisablePlainAuth: true}), oauthRelay(t, validator))
 	}()
 	cli.SetDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
 	rd := bufio.NewReader(cli)

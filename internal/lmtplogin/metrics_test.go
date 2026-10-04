@@ -26,17 +26,17 @@ func TestRcptRecordsEachPhase(t *testing.T) {
 
 	var captured string
 	directorAddr := startStubDirector(t, &captured)
-	s := &session{opts: Options{DirectorAddr: directorAddr}}
+	s := &session{opts: testOpts(Options{DirectorAddr: directorAddr})}
 	_, _ = s.directorLookup("user@example.com", "")
 
 	stub, backendAddr := newStubBackend(t)
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:         "test.local",
 		BackendAddr:      backendAddr,
 		AuthMasterAddr:   startTestAuth(t),
 		WardenAddr:       startTestWarden(t),
 		ConcurrencyLimit: 5,
-	})
+	}))
 	mta := dialMTA(t, proxyAddr)
 	mta.lmtpHandshake(t)
 	mta.mailFrom(t, "sender@example.com")

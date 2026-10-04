@@ -133,7 +133,7 @@ func TestKickSession_NoMatchIsNoop(t *testing.T) {
 func TestKickSubscriberDispatchesEvent(t *testing.T) {
 	addr := startEmbeddedWarden(t)
 	s := &Server{
-		opts:     Options{Protocol: ProtocolIMAP, WardenAddr: addr},
+		opts:     testOpts(Options{Protocol: ProtocolIMAP, WardenAddr: addr}),
 		sessions: make(map[string][]*liveSession),
 	}
 	cliEnd, srvEnd := net.Pipe()
@@ -175,7 +175,7 @@ func TestKickSubscriberReconnectsAfterDrop(t *testing.T) {
 	proxy := newCuttableProxy(t, wardenAddr)
 
 	s := &Server{
-		opts:     Options{Protocol: ProtocolIMAP, WardenAddr: proxy.addr()},
+		opts:     testOpts(Options{Protocol: ProtocolIMAP, WardenAddr: proxy.addr()}),
 		sessions: make(map[string][]*liveSession),
 	}
 	cli1, srv1 := net.Pipe()

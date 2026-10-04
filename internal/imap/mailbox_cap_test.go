@@ -21,7 +21,7 @@ func TestAppendFillsAFolderToItsCapThenRefuses(t *testing.T) {
 		Resolver:    &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
 		AuthRelay:   authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		QuotaEngine: true,
-		QuotaPolicy: quota.Policy{MailboxMessageCount: 2},
+		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxMessageCount: 2},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -686,7 +686,7 @@ func TestRetractionsNameTheMessage(t *testing.T) {
 // SEARCH asks exactly what ftsquery.Build makes of the criteria, as the lookup
 // does, so an empty lookup and an empty SEARCH are one question (#2056).
 func TestSearchAsksWhatTheLookupAsks(t *testing.T) {
-	chain, err := ftsquery.NewChain(config.FTSConfig{LanguageFilters: []string{"lowercase", "stopwords", "snowball"}})
+	chain, err := ftsquery.NewChain(config.FTSConfig{LanguageTokenMaxLen: 30, LanguageAddressMaxLen: 250, LanguageFilters: []string{"lowercase", "stopwords", "snowball"}})
 	if err != nil {
 		t.Fatal(err)
 	}

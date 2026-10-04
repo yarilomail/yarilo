@@ -73,6 +73,7 @@ func TestSearchOnColdAccountWaitsForTheFirstIndex(t *testing.T) {
 	c := startFTSTestServerWith(t, fake, false, t.TempDir(), func(o *imapserver.FTSOptions) {
 		o.ReadFallback = false // the sandbox's setting: no silent slow scan
 		o.Timeout = 10 * time.Second
+		o.FirstIndexGrace = 10 * time.Second
 	})
 	appendBody(t, c, "coldstartbody")
 

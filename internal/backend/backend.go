@@ -104,13 +104,7 @@ func internalClientTLS(cfg *config.Config) (*tls.Config, error) {
 	return t, nil
 }
 
-// dictConns is the configured ceiling, or the package default.
-func dictConns(cfg *config.Config) int {
-	if n := cfg.DictService.DictMaxConns; n > 0 {
-		return n
-	}
-	return proxy.DefaultMaxConns
-}
+func dictConns(cfg *config.Config) int { return cfg.DictService.DictMaxConns }
 
 // ErrNoDictService names the key a session process needs to reach a configured
 // dict: it links no engine, so there is nothing to open in-process (#1733).
@@ -237,7 +231,7 @@ func New(cfg *config.Config) (*Server, error) {
 	var masterPool *authclient.Pool
 	if masterAddr != "" {
 		masterPool = authclient.NewPool(masterAddr, authTLS,
-			cfg.AuthClient.PoolSizeOrDefault(), cfg.AuthClient.PoolIdleTimeout())
+			cfg.AuthClient.PoolSize, cfg.AuthClient.PoolIdleTimeout())
 	}
 	// login->backend data path, one config per port: each accepts only its own login proxy.
 	preambleListeners := []mtls.Listener{mtls.ListenerIMAPBackend, mtls.ListenerPOP3Backend,
@@ -1139,21 +1133,13 @@ func BuildMailbox(cfg config.StorageConfig, locker locks.Locker) mailbox.Mailbox
 	return buildMailbox(cfg, locker)
 }
 
-// indexLockMethod reads the configured transport. Config refuses an unknown
-// name at load, so this cannot be reached with one.
-// staleTimeoutOf is the one place that reads what the setting means: unset
-// keeps the reference's timeout, and a negative one asks for no override at
-// all -- zero cannot say both (#1831).
+// staleTimeoutOf: 0 never takes a dotlock over (#1831).
 func staleTimeoutOf(cfg config.StorageConfig) time.Duration {
-	switch {
-	case cfg.LockStaleTimeout < 0:
-		return 0
-	case cfg.LockStaleTimeout > 0:
-		return time.Duration(cfg.LockStaleTimeout) * time.Second
-	}
-	return filelock.DefaultStaleTimeout
+	return time.Duration(max(cfg.LockStaleTimeout, 0)) * time.Second
 }
 
+// indexLockMethod reads the configured transport. Config refuses an unknown
+// name at load, so this cannot be reached with one.
 func indexLockMethod(cfg config.StorageConfig) filelock.Method {
 	filelock.SetStaleTimeout(staleTimeoutOf(cfg))
 	m, _ := filelock.Parse(cfg.LockMethod)
@@ -1180,18 +1166,11 @@ func IndexOptions(cfg config.StorageConfig, locker locks.Locker) []file.Option {
 	if strings.TrimSpace(cfg.MailCachePurgeMinSizeRaw) != "" {
 		opts = append(opts, file.WithCachePurgeMinSize(cfg.MailCachePurgeMinSize))
 	}
-	// Any of the three, not all three. Gating the whole triple on min_size
-	// meant an operator could set the age or the ceiling alone, see the key in
-	// the rendered config, and have it do nothing -- accepted and inert, which
-	// is the hardest kind of setting to debug because everything looks right
-	// (#1481).
-	if cfg.MailIndexLogRotateMinSize != 0 || cfg.MailIndexLogRotateMaxSize != 0 || cfg.MailIndexLogRotateMinAge != 0 {
-		opts = append(opts, file.WithLogCompaction(
-			cfg.MailIndexLogRotateMinSize,
-			cfg.MailIndexLogRotateMaxSize,
-			time.Duration(cfg.MailIndexLogRotateMinAge)*time.Second,
-		))
-	}
+	opts = append(opts, file.WithLogCompaction(
+		cfg.MailIndexLogRotateMinSize,
+		cfg.MailIndexLogRotateMaxSize,
+		time.Duration(cfg.MailIndexLogRotateMinAge)*time.Second,
+	))
 	return opts
 }
 

@@ -34,7 +34,7 @@ func proxiedPair(t *testing.T, id, user string) (*liveSession, net.Conn, <-chan 
 // hook never runs. Measured in the field as 55s and 81s: both were the test
 // client leaving, not the server acting.
 func TestKickUser_FreesTheSessionWhileTheClientIsSilent(t *testing.T) {
-	s := &Server{opts: Options{Protocol: ProtocolIMAP}, sessions: make(map[string][]*liveSession)}
+	s := &Server{opts: testOpts(Options{Protocol: ProtocolIMAP}), sessions: make(map[string][]*liveSession)}
 	sess, client, done := proxiedPair(t, "s1", "u@example.com")
 	s.sessions["u@example.com"] = []*liveSession{sess}
 	_ = client // held open on purpose, never read from, never closed
@@ -51,7 +51,7 @@ func TestKickUser_FreesTheSessionWhileTheClientIsSilent(t *testing.T) {
 // TestKickSession_FreesTheSessionWhileTheClientIsSilent: the warden path kicks
 // one session by id and had the same half-close defect.
 func TestKickSession_FreesTheSessionWhileTheClientIsSilent(t *testing.T) {
-	s := &Server{opts: Options{Protocol: ProtocolIMAP}, sessions: make(map[string][]*liveSession)}
+	s := &Server{opts: testOpts(Options{Protocol: ProtocolIMAP}), sessions: make(map[string][]*liveSession)}
 	sess, client, done := proxiedPair(t, "s2", "u@example.com")
 	s.sessions["u@example.com"] = []*liveSession{sess}
 	_ = client
