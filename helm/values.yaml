@@ -1164,7 +1164,7 @@ components:
     ## Seconds served to in-flight sessions after SIGTERM; 0 closes them at once.
     ## kill_timeout is rendered for the reference layout and not read.
     shutdown:
-      session_grace_period: 30
+      session_grace_period: 5
       kill_timeout: 5
 
     ## service — config-mirror subtree: keys here are snake_case and map 1:1 to

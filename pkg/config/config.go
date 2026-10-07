@@ -2613,7 +2613,7 @@ func Defaults() *Config {
 	c.InternalTLS.SessionCacheSize = 64
 	c.AuthService.Shutdown.SessionGracePeriod = 30
 	c.WardenService.Shutdown.SessionGracePeriod = 30
-	c.LocksService.Shutdown.SessionGracePeriod = 30
+	c.LocksService.Shutdown.SessionGracePeriod = 5
 	c.DirectorService.Shutdown.SessionGracePeriod = 30
 	c.DirectorService.WriteTimeout = 10
 	c.DirectorService.AntiEntropyInterval = 3
