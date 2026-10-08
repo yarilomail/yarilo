@@ -21,14 +21,13 @@ func TestTransientReloginCap(t *testing.T) {
 		configured int
 		want       int
 	}{
-		{"zero selects the default", 0, defaultTransientReloginCap},
+		{"zero opts out", 0, 0},
 		{"explicit budget", 5, 5},
 		{"one", 1, 1},
-		{"negative opts out", -1, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{opts: Options{TransientReloginCap: tc.configured}}
+			s := &Server{opts: testOpts(Options{TransientReloginCap: tc.configured})}
 			if got := s.transientReloginCap(); got != tc.want {
 				t.Fatalf("transientReloginCap() = %d, want %d", got, tc.want)
 			}
@@ -43,12 +42,12 @@ func TestTransientReloginCap(t *testing.T) {
 // survives the first NO, answers a second, and is closed only at the cap.
 func TestTransientReloginKeepsConnectionOpen(t *testing.T) {
 	s := &Server{
-		opts: Options{
+		opts: testOpts(Options{
 			Protocol:            ProtocolIMAP,
 			AuthAddr:            reservedDeadAddr(t), // unreachable → transient auth_dial
 			TransientRetries:    -1,                  // fail the dial on the first error
 			TransientReloginCap: 2,
-		},
+		}),
 		sessions: make(map[string][]*liveSession),
 	}
 	srv, cli := pipePair(t)
@@ -106,14 +105,15 @@ func TestTransientReloginReleasesWardenSlot(t *testing.T) {
 	deadBackend := reservedDeadAddr(t)
 
 	s := &Server{
-		opts: Options{
+		opts: testOpts(Options{
 			Protocol:            ProtocolIMAP,
 			AuthAddr:            authAddr,
 			WardenAddr:          wardenAddr,
+			WardenConns:         4,
 			BackendAddr:         deadBackend,
 			TransientRetries:    -1, // fail the backend bring-up on the first error
 			TransientReloginCap: 1,  // close after the first transient
-		},
+		}),
 		sessions: make(map[string][]*liveSession),
 	}
 	// Close the shared warden pool before the embedded warden server is torn down,

@@ -7,12 +7,8 @@ import (
 	"time"
 )
 
-// LivenessCheck is a component's cheap, local self-check, run on a timer by the
-// watchdog to prove the request path is not wedged.
-//
-// It MUST NOT touch a shared dependency: a database or Redis hiccup would then
-// trip every pod's watchdog at once and restart the whole tier. Probe a local
-// lock, stat the mail store, or resolve through the in-process cache instead.
+// LivenessCheck is a cheap local self-check; it must not touch a shared
+// dependency, or one Redis hiccup restarts the whole tier.
 type LivenessCheck func(context.Context) error
 
 // WatchdogOptions configures the timer-driven liveness watchdog. It is opt-in:
@@ -53,16 +49,6 @@ func newWatchdog(opts WatchdogOptions) *watchdog {
 		interval:  opts.Interval,
 		timeout:   opts.Timeout,
 		threshold: opts.FailureThreshold,
-	}
-	if w.interval <= 0 {
-		w.interval = 10 * time.Second
-	}
-	// Timeout must stay strictly below interval, or a hung check overruns the next tick.
-	if w.timeout <= 0 || w.timeout >= w.interval {
-		w.timeout = w.interval / 2
-	}
-	if w.threshold <= 0 {
-		w.threshold = 3
 	}
 	return w
 }

@@ -11,7 +11,8 @@ import (
 	"sync"
 )
 
-const defaultVhosts = 100
+// DefaultVhosts is the weight of a backend whose record carries none.
+const DefaultVhosts = 100
 
 // Backend represents a backend node in the ring.
 type Backend struct {
@@ -19,7 +20,7 @@ type Backend struct {
 	Port     int
 	Tag      string
 	Up       bool
-	Vhosts   int   // virtual nodes; 0 = defaultVhosts (100)
+	Vhosts   int   // virtual nodes; 0 takes no traffic
 	LastUp   int64 // Unix timestamp of last transition to Up
 	LastDown int64 // Unix timestamp of last transition to Down (0 if never)
 	Hostname string
@@ -235,11 +236,7 @@ func (r *Ring) rebuild() {
 		if !b.Up {
 			continue
 		}
-		n := b.Vhosts
-		if n <= 0 {
-			n = defaultVhosts
-		}
-		for i := 0; i < n; i++ {
+		for i := 0; i < b.Vhosts; i++ {
 			key := fmt.Sprintf("%s-%d", ip, i)
 			h := vhostHash(key)
 			vh := vhost{hash: h, ip: ip}

@@ -139,7 +139,7 @@ func TestForgetDropsAnAccount(t *testing.T) {
 // node, or to take the cache out of a freshness question. Both are the exact
 // opposite of what the old behaviour delivered.
 func TestNeverCacheKeepsNothing(t *testing.T) {
-	c := NewCache(-1)
+	c := NewCache(0)
 	path := filepath.Join(t.TempDir(), FileName)
 
 	for i := 0; i < 3; i++ {
@@ -152,24 +152,5 @@ func TestNeverCacheKeepsNothing(t *testing.T) {
 	}
 	if got := c.Len(); got != 0 {
 		t.Errorf("held accounts = %d with caching off, want 0", got)
-	}
-}
-
-// Zero still means the built-in period, which is the other half of the
-// contract and the one every deployment uses.
-func TestZeroIdleSelectsTheDefault(t *testing.T) {
-	c := NewCache(0)
-	path := filepath.Join(t.TempDir(), FileName)
-	if _, err := c.Get("u@example.com", path); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.Get("u@example.com", path); err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Folds(); got != 1 {
-		t.Errorf("folds = %d with the default idle, want 1", got)
-	}
-	if got := c.Len(); got != 1 {
-		t.Errorf("held accounts = %d, want 1", got)
 	}
 }

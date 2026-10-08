@@ -9,7 +9,7 @@ import (
 
 func TestBackendResync_MergeRules(t *testing.T) {
 	t.Run("missed-up heals (lease record, absent locally)", func(t *testing.T) {
-		s := NewWithOptions(Options{})
+		s := NewWithOptions(testOptions(Options{}))
 		if !s.applyBackendRecord(backendRecord{ip: "10.0.0.1", port: 993, tag: "imap", vhosts: 100, up: true, seq: 5}) {
 			t.Fatal("a lease record for an absent backend must be admitted")
 		}
@@ -19,7 +19,7 @@ func TestBackendResync_MergeRules(t *testing.T) {
 	})
 
 	t.Run("stale seq is rejected (no downgrade)", func(t *testing.T) {
-		s := NewWithOptions(Options{})
+		s := NewWithOptions(testOptions(Options{}))
 		s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 993, Tag: "imap", Up: true, Vhosts: 100})
 		s.recordBackendSeen("10.0.0.1", 5)
 		if s.applyBackendRecord(backendRecord{ip: "10.0.0.1", port: 993, tag: "imap", vhosts: 100, up: true, seq: 3}) {
@@ -28,7 +28,7 @@ func TestBackendResync_MergeRules(t *testing.T) {
 	})
 
 	t.Run("static record applies only if absent", func(t *testing.T) {
-		s := NewWithOptions(Options{})
+		s := NewWithOptions(testOptions(Options{}))
 		if !s.applyBackendRecord(backendRecord{ip: "10.0.0.9", port: 993, tag: "imap", vhosts: 100, up: true, seq: 0}) {
 			t.Fatal("a static record for an absent backend must be admitted")
 		}
@@ -38,7 +38,7 @@ func TestBackendResync_MergeRules(t *testing.T) {
 	})
 
 	t.Run("tombstone blocks resurrection until a newer seq", func(t *testing.T) {
-		s := NewWithOptions(Options{})
+		s := NewWithOptions(testOptions(Options{}))
 		s.recordBackendSeen("10.0.0.1", 5)
 		s.recordBackendTomb("10.0.0.1") // removed at seq 5
 		s.forgetBackendLease("10.0.0.1")
@@ -78,7 +78,7 @@ func (c *captureConn) Write(b []byte) (int, error) {
 }
 
 func TestBackendResync_HashDebounce(t *testing.T) {
-	s := NewWithOptions(Options{})
+	s := NewWithOptions(testOptions(Options{}))
 	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 993, Tag: "imap", Up: true, Vhosts: 100})
 	conn := &captureConn{}
 

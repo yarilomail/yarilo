@@ -82,7 +82,7 @@ func TestReroute_SameBackendDoesNotLoop(t *testing.T) {
 	var reports int32
 	dir := rerouteStubDirector(t, func() string { return dead }, &reports)
 
-	s := &Server{opts: Options{Protocol: ProtocolIMAP, DirectorAddr: dir, LocalIP: "127.0.0.1"}}
+	s := &Server{opts: testOpts(Options{Protocol: ProtocolIMAP, DirectorAddr: dir, LocalIP: "127.0.0.1"})}
 	conn, _, err := s.dialBackendWithReroute("u@example.com", "imap", dead, time.Now().Add(5*time.Second), slog.Default())
 	if err == nil {
 		if conn != nil {
@@ -119,7 +119,7 @@ func TestReroute_ToLiveBackendSucceeds(t *testing.T) {
 	var reports int32
 	dir := rerouteStubDirector(t, func() string { return liveAddr }, &reports)
 
-	s := &Server{opts: Options{Protocol: ProtocolIMAP, DirectorAddr: dir, LocalIP: "127.0.0.1"}}
+	s := &Server{opts: testOpts(Options{Protocol: ProtocolIMAP, DirectorAddr: dir, LocalIP: "127.0.0.1"})}
 	conn, addr, err := s.dialBackendWithReroute("u@example.com", "imap", dead, time.Now().Add(5*time.Second), slog.Default())
 	if err != nil {
 		t.Fatalf("re-route to a live backend must succeed, got %v", err)

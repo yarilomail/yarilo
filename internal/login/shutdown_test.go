@@ -11,7 +11,7 @@ import (
 // closes the listener (so Serve returns nil, a clean stop) and refuses new
 // connections afterwards.
 func TestServer_ShutdownStopsAccepting(t *testing.T) {
-	s := New(Options{Protocol: ProtocolIMAP})
+	s := New(testOpts(Options{Protocol: ProtocolIMAP}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -408,36 +408,15 @@ func (s *Server) closeAuthClient() {
 	}
 }
 
-// defaultTransientRetries is the extra-attempt budget for a transient failure.
-const defaultTransientRetries = 3
-
 // transientRetryBackoff is the pause between attempts. Short: the failures it
 // covers (pod rolling, connection re-established) resolve in under a second.
 const transientRetryBackoff = 150 * time.Millisecond
 
-func (s *Server) transientRetries() int {
-	if s.opts.TransientRetries > 0 {
-		return s.opts.TransientRetries
-	}
-	if s.opts.TransientRetries < 0 {
-		return 0 // explicit opt-out
-	}
-	return defaultTransientRetries
-}
+func (s *Server) transientRetries() int { return max(s.opts.TransientRetries, 0) }
 
-// defaultTransientReloginCap is the client-side re-LOGIN budget per connection.
-// Distinct from transientRetries, the per-hop internal budget.
-const defaultTransientReloginCap = 3
-
-func (s *Server) transientReloginCap() int {
-	if s.opts.TransientReloginCap > 0 {
-		return s.opts.TransientReloginCap
-	}
-	if s.opts.TransientReloginCap < 0 {
-		return 0 // explicit opt-out: close on the first transient
-	}
-	return defaultTransientReloginCap
-}
+// transientReloginCap is the client-side re-LOGIN budget per connection,
+// distinct from transientRetries, the per-hop internal budget.
+func (s *Server) transientReloginCap() int { return max(s.opts.TransientReloginCap, 0) }
 
 // newSessionID returns a Postfix-style long queue ID. The per-Server seed
 // makes it unique across pods; 'z' stays the unambiguous separator.
@@ -469,9 +448,6 @@ func New(opts Options) *Server {
 func (s *Server) Serve(ln net.Listener) error {
 	if s.opts.HAProxy {
 		timeout := s.opts.HAProxyTimeout
-		if timeout == 0 {
-			timeout = 3 * time.Second
-		}
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			Policy:            haProxyPolicy(s.opts.HAProxyNets),
@@ -1028,26 +1004,9 @@ func (s *Server) directorLookupDial(id, username, tag string) (string, error) {
 	return s.applyBackendPort(result.Addr), nil
 }
 
-// The confirmed-kick retry budget: holds × backoff must exceed the director's
-// worst-case confirm time, or a concurrent login errors before it (#847, #858).
-const (
-	defaultMaxLookupHolds    = 20
-	defaultLookupHoldBackoff = 150 * time.Millisecond
-)
+func (s *Server) maxLookupHolds() int { return max(s.opts.LookupHoldMax, 0) }
 
-func (s *Server) maxLookupHolds() int {
-	if s.opts.LookupHoldMax > 0 {
-		return s.opts.LookupHoldMax
-	}
-	return defaultMaxLookupHolds
-}
-
-func (s *Server) lookupHoldBackoff() time.Duration {
-	if s.opts.LookupHoldBackoff > 0 {
-		return s.opts.LookupHoldBackoff
-	}
-	return defaultLookupHoldBackoff
-}
+func (s *Server) lookupHoldBackoff() time.Duration { return max(s.opts.LookupHoldBackoff, 0) }
 
 // directorLookupWithHold retries a LOOKUP held by a confirmed kick, bounded;
 // anything else returns at once (#847).
@@ -1367,20 +1326,11 @@ func kickedUser(line string) (string, bool) {
 	return fields[1], true
 }
 
-// defaultSessionSyncInterval bounds how long a director may count a session
-// nobody runs -- the thing being fixed, not the freshness of the count.
-const defaultSessionSyncInterval = 30 * time.Second
-
 // sessionSyncIDsPerLine keeps a line inside the director's 4 KiB read buffer:
 // a longer one would not truncate, it would break the connection.
 const sessionSyncIDsPerLine = 100
 
-func (s *Server) sessionSyncInterval() time.Duration {
-	if s.opts.SessionSyncInterval == 0 {
-		return defaultSessionSyncInterval
-	}
-	return s.opts.SessionSyncInterval
-}
+func (s *Server) sessionSyncInterval() time.Duration { return s.opts.SessionSyncInterval }
 
 // syncSessions sends the whole list: opens and closes alone leave a lost event
 // wrong forever. Snapshot and write hold announceMu, or a new one is erased.

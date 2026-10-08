@@ -66,13 +66,13 @@ func n5Cluster(t *testing.T, n int) (srvs []*Server, addrsOf []string, kill func
 
 	starts := make([]func(), 0, n)
 	for i := 0; i < n; i++ {
-		srv := NewWithOptions(Options{
+		srv := NewWithOptions(testOptions(Options{
 			PingInterval:        24 * time.Hour,
 			RingSecret:          []byte("shared-secret"),
 			MinMembers:          n,
 			AntiEntropyInterval: 500 * time.Millisecond,
 			SeedPollInterval:    300 * time.Millisecond,
-		})
+		}))
 		srv.membership.probeTimeout = 500 * time.Millisecond
 		ln, lErr := net.Listen("tcp", "127.0.0.1:0")
 		if lErr != nil {

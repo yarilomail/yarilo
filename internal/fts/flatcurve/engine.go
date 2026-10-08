@@ -70,20 +70,6 @@ type Options struct {
 }
 
 func (o Options) withDefaults() Options {
-	if o.CommitLimit <= 0 {
-		o.CommitLimit = 500
-	}
-	if o.MinTermSize <= 0 {
-		o.MinTermSize = 2
-	}
-	// OptimizeLimit has no default here: 0 means "auto-optimize disabled". The
-	// positive default (10) lives in pkg/config.DefaultConfig() only, so a
-	// config layer explicitly setting 0 is respected, not overridden.
-	if o.RotateCount == 0 {
-		o.RotateCount = 5000
-	}
-	// RotateTime has no default here: 0 means "time-based rotation disabled".
-	// The positive default (5000ms) lives in pkg/config.DefaultConfig() only.
 	if o.Store == nil {
 		o.Store = ftsstore.NewPosix(Layout(), "")
 	}
@@ -753,7 +739,7 @@ func (up *update) flushDocLocked() error {
 			return err
 		}
 	}
-	if st.curDocs >= opts.RotateCount {
+	if opts.RotateCount > 0 && st.curDocs >= opts.RotateCount {
 		if err := st.rotate(); err != nil {
 			st.discardCurrent()
 			return err

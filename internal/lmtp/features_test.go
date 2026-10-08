@@ -34,7 +34,7 @@ func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServ
 	}
 	box.Close() //nolint:errcheck
 
-	srv := New(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: idx, Resolver: resolver})
+	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: idx, Resolver: resolver}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestLMTP_QuotaEnforcement(t *testing.T) {
 
 	// Quota comes from the index (count backend). A tiny 10-byte limit means the
 	// incoming test message alone exceeds it → 552, a bounce by default.
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Hostname:    "lmtp.test",
 		Config:      config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
 		Mailbox:     mb,
@@ -210,7 +210,7 @@ func TestLMTP_QuotaEnforcement(t *testing.T) {
 			HomeTemplate:      "%d/%n",
 			DefaultQuotaRules: []string{"*:storage=10"},
 		},
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

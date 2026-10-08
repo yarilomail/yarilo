@@ -32,7 +32,7 @@ func applyHandshakeHost(srv *Server, line string) {
 		tag = fields[3]
 	}
 	var lastDown, lastUp int64
-	var vhosts int
+	vhosts := ring.DefaultVhosts
 	for _, f := range fields[4:] {
 		if len(f) < 2 {
 			continue
@@ -47,7 +47,7 @@ func applyHandshakeHost(srv *Server, line string) {
 		case 'U':
 			lastUp = v
 		case 'V':
-			vhosts = int(v) // ring weight (#706); absent on pre-#706 peers → 0 = default
+			vhosts = int(v) // ring weight (#706); absent on pre-#706 peers
 		}
 	}
 	// lastDown==0: backend never went down → Up.
@@ -95,7 +95,10 @@ func applyRingChangeFields(srv *Server, payload []string) {
 		// "routed on 1 of 3 directors" gap.
 		if len(payload) >= 6 {
 			port, pErr := strconv.Atoi(payload[4])
-			vhosts, _ := strconv.Atoi(payload[5])
+			vhosts, vErr := strconv.Atoi(payload[5])
+			if vErr != nil {
+				vhosts = ring.DefaultVhosts
+			}
 			if pErr == nil {
 				srv.ring.AddBackend(&ring.Backend{
 					IP: ip, Port: port, Tag: tag, Up: true, Vhosts: vhosts, LastUp: ts,

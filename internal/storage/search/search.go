@@ -187,18 +187,12 @@ func (o Options) CatchUp(user string, mbox fts.MailboxRef, msgs []*mailbox.Messa
 // passes; a cold index is given its grace before a stall counts (#1379).
 func (o Options) wait(user string, mbox fts.MailboxRef, last, maxUID uint32) (bool, error) {
 	timeout := o.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
 	deadline := time.Now().Add(timeout)
 	// ~2s of a flat checkpoint is a broken engine, not a slow one.
 	const maxStallPolls = 8
 	best, stalls, reason := last, 0, "timed out"
 	cold := last == 0
 	coldGrace := o.FirstIndexGrace
-	if coldGrace <= 0 {
-		coldGrace = 10 * time.Second
-	}
 	if coldGrace > timeout {
 		coldGrace = timeout
 	}

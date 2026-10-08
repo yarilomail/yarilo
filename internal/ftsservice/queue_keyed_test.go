@@ -19,14 +19,14 @@ func TestWorkerBusyTimeAccumulates(t *testing.T) {
 	s := &Service{
 		queue: newQueue(),
 		lag:   newLagTracker(),
-		opts: Options{
+		opts: testOpts(Options{
 			ResolveUser: func(string) (*mailbox.UserInfo, error) {
 				// Failing fast: the counter records the time a worker was
 				// occupied, not the time it was productive. A worker stuck on
 				// failing passes has no spare capacity either.
 				return nil, errors.New("userdb down")
 			},
-		},
+		}),
 	}
 
 	before := testutil.ToFloat64(metricWorkerBusySeconds)
@@ -185,11 +185,11 @@ func TestRunPassReleasesTheMailboxOnPanic(t *testing.T) {
 	s := &Service{
 		queue: newQueue(),
 		lag:   newLagTracker(),
-		opts: Options{
+		opts: testOpts(Options{
 			ResolveUser: func(string) (*mailbox.UserInfo, error) {
 				panic("userdb exploded mid-pass")
 			},
-		},
+		}),
 	}
 	s.queue.push(inbox("u1"), false)
 	j, ok := s.queue.pop(context.Background())
@@ -217,11 +217,11 @@ func TestRunPassReleasesTheMailboxOnError(t *testing.T) {
 	s := &Service{
 		queue: newQueue(),
 		lag:   newLagTracker(),
-		opts: Options{
+		opts: testOpts(Options{
 			ResolveUser: func(string) (*mailbox.UserInfo, error) {
 				return nil, errors.New("userdb down")
 			},
-		},
+		}),
 	}
 	s.queue.push(inbox("u1"), false)
 	j, _ := s.queue.pop(context.Background())

@@ -127,9 +127,6 @@ func (s *Server) Serve(ln net.Listener) error {
 func (s *Server) wrapListeners(ln net.Listener) net.Listener {
 	if s.opts.ProxyProtocol {
 		timeout := s.opts.HAProxyTimeout
-		if timeout == 0 {
-			timeout = 3 * time.Second
-		}
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			ReadHeaderTimeout: timeout,

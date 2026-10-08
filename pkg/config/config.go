@@ -762,8 +762,7 @@ type InternalTLSConfig struct {
 	// to <release>-internal.
 	ServerName string `koanf:"server_name"`
 	// SessionCacheSize is the TLS 1.3 client session-resumption cache size
-	// (entries) for internal dials. 0 = built-in default; negative disables
-	// resumption.
+	// (entries) for internal dials. Unset 64; 0 disables resumption.
 	SessionCacheSize int `koanf:"session_cache_size"`
 	// SessionCacheTTL bounds how long (seconds) a cached session may be
 	// resumed, on top of LRU eviction; 0 = LRU-only. A TTL stops a cert
@@ -928,41 +927,25 @@ type QuotaStatusConfig struct {
 // LoginConfig holds settings shared by every login proxy (imap/pop3/lmtp/
 // submission/managesieve/sasl), independent of protocol.
 type LoginConfig struct {
-	// LookupHoldMax bounds how many times a login proxy re-LOOKUPs while the
-	// director holds the user under a confirmed kick. LookupHoldMax ×
-	// LookupHoldBackoff must exceed the director's worst-case confirm time
-	// (user_kill_confirm_grace + drain) or the concurrent login errors before
-	// the kill confirms. 0 = default (20).
+	// LookupHoldMax: re-LOOKUPs while a kick is confirmed; × backoff must outlast the
+	// confirm grace (#858). 0 does not retry.
 	LookupHoldMax int `koanf:"lookup_hold_max"`
 	// LookupHoldBackoffMs is the delay (milliseconds) between LOOKUP hold
-	// retries. 0 = default (150).
+	// retries; 0 retries at once.
 	LookupHoldBackoffMs int `koanf:"lookup_hold_backoff_ms"`
-	// SessionSyncInterval is how often (seconds) a login proxy sends the
-	// director the full list of sessions it is running, so a director that
-	// missed a SESSION-CLOSE stops counting a session nobody has.
-	//
-	// Announcing state as increments alone means one lost event is wrong
-	// forever: nothing ever says "this is all of it". The reconciliation is
-	// what makes the count self-correcting, and the interval is how long a
-	// wrong count may last (#1393). 0 = default (30); negative = only on
-	// (re)connect.
+	// SessionSyncInterval: seconds between full session lists to the director, which
+	// bounds a wrong count (#1393). 0 sends it only on (re)connect.
 	SessionSyncInterval int `koanf:"session_sync_interval"`
-	// SessionGracePeriod is how long (seconds) a login proxy keeps serving
-	// in-flight sessions after SIGTERM. Must fit within the pod
-	// terminationGracePeriodSeconds. 0 = default (30).
+	// SessionGracePeriod: seconds in-flight sessions are served after SIGTERM, within
+	// terminationGracePeriodSeconds. 0 closes them at once.
 	SessionGracePeriod int `koanf:"session_grace_period"`
-	// TransientRetries is how many extra attempts a transient failure gets
-	// (auth temp-fail, auth dial, backend session setup) before the client
-	// is told the service is unavailable. 0 = default (3); negative =
-	// fail on first error.
+	// TransientRetries: extra attempts on a transient failure. Unset 3; 0 fails on the first.
 	TransientRetries int `koanf:"transient_retries"`
-	// TransientReloginCap: after transient_retries are exhausted the proxy
-	// answers a tagged NO [UNAVAILABLE] but keeps the connection open for
-	// re-LOGIN. This caps how many such failures one connection tolerates
-	// before it is closed. Independent of auth_max_attempts. 0 = default (3).
+	// TransientReloginCap: tagged NO [UNAVAILABLE] answers one connection takes before
+	// it is closed. Unset 3; 0 closes on the first.
 	TransientReloginCap int `koanf:"transient_relogin_cap"`
 	// LoginProxyTimeout bounds, in seconds, reaching a backend and bringing the
-	// session up there; a userdb proxy_timeout overrides it. 0 = default (30).
+	// session up there; a userdb proxy_timeout overrides it. Must be positive.
 	LoginProxyTimeout int `koanf:"login_proxy_timeout"`
 }
 
@@ -1001,14 +984,10 @@ type WardenServiceConfig struct {
 	// FailOpen controls login-pod behaviour when yarilo-warden is unreachable.
 	// true = allow the session; false (default) = reject the session.
 	FailOpen bool `koanf:"fail_open"`
-	// Conns is how many long-lived pooled connections a login pod keeps to
-	// yarilo-warden; commands carry the session id, so the count is decoupled
-	// from the login rate. The protocol has no request id — one connection
-	// serves one command at a time. 0 = warden.DefaultPoolSize.
+	// Conns: pooled connections a login pod keeps to yarilo-warden (#878). Must be positive.
 	Conns int `koanf:"conns"`
-	// EventQueueSize caps the SELECT events a backend queues for the warden
-	// writer. The events are accounting, so a full queue drops the oldest
-	// rather than holding a command; zero takes the built-in default.
+	// EventQueueSize: SELECT events queued for the warden; a full queue drops the
+	// oldest. Must be positive.
 	EventQueueSize int `koanf:"warden_service_event_queue_size"`
 	// StateBackend selects the shared-state store: "memory" (default, single
 	// replica) or "redis" (survives restart, required for replicas > 1).
@@ -1047,15 +1026,8 @@ type AuthServiceConfig struct {
 	// yarilo-auth master protocol for userdb lookups (USER command).
 	// Defaults to empty (userdb checks disabled) when not set.
 	MasterAddr string `koanf:"master_addr"`
-	// StartupWaitSeconds bounds how long a process waits at STARTUP for auth
-	// to become reachable before giving up. A process starting while auth
-	// rolls has nobody to tell, so exiting turns a few seconds of dependency
-	// downtime into a restart loop (#1369).
-	//
-	// It bounds startup only. On a request the opposite is right -- a client
-	// is waiting for an answer, and a fast refusal beats a hang -- so the
-	// per-request dials do not use it. 0 = default (30); negative = do not
-	// wait.
+	// StartupWaitSeconds bounds the wait for auth at startup only (#1369).
+	// Unset 30; 0 does not wait.
 	StartupWaitSeconds int            `koanf:"auth_startup_wait"`
 	Shutdown           ShutdownConfig `koanf:"shutdown"`
 }
@@ -1084,25 +1056,14 @@ type ThreadingConfig struct {
 	// An account with this off behaves as it did before threading existed:
 	// every message its own conversation.
 	Enabled bool `koanf:"threading_enabled"`
-	// ThreadingCacheIdle is how long a process keeps an account's folded
-	// sidecar after its last delivery. Folding costs O(account) -- 37ms at a
-	// hundred thousand messages -- so it is cached; bounded by idleness rather
-	// than by process lifetime, because a cache of every account ever
-	// delivered to holds their maps until restart (#1396). 0 = default (300s),
-	// negative = never cache.
+	// ThreadingCacheIdle: seconds an account's fold is kept after its last use (#1396).
+	// Unset 300; 0 never caches.
 	ThreadingCacheIdle int `koanf:"threading_cache_idle"`
 }
 
 // CacheIdle reports the fold cache's idle period.
 func (c ThreadingConfig) CacheIdle() time.Duration {
-	switch {
-	case c.ThreadingCacheIdle == 0:
-		return 300 * time.Second
-	case c.ThreadingCacheIdle < 0:
-		return -1
-	default:
-		return time.Duration(c.ThreadingCacheIdle) * time.Second
-	}
+	return time.Duration(c.ThreadingCacheIdle) * time.Second
 }
 
 // AuthClientConfig tunes how components talk to the yarilo-auth MASTER
@@ -1111,101 +1072,38 @@ func (c ThreadingConfig) CacheIdle() time.Duration {
 // call it, and the master ADDRESS is already spelled four times across
 // sections (#994) without this making it worse.
 type AuthClientConfig struct {
-	// PoolSize is how many master-protocol connections a process keeps open
-	// for userdb lookups.
-	//
-	// Zero selects the default; negative disables pooling and restores the
-	// connection-per-lookup behaviour -- so a rollback is a config change, not
-	// a release. The dial costs about seven times the lookup it carries
-	// (#1402), which is what the pool exists to stop paying per request.
-	//
-	// Raising it has a cost at shutdown: Pool.Close waits up to a second for
-	// each slot still serving a lookup, so the worst case is roughly this many
-	// seconds. Harmless at a handful; worth weighing before a large pool.
+	// PoolSize: pooled master-protocol connections (#1402); Close waits up to 1 s per busy slot.
+	// Unset 4; 0 dials per lookup.
 	PoolSize int `koanf:"auth_client_pool_size"`
-	// PoolIdleTimeoutSecs closes a pooled connection that has gone unused,
-	// so a process that resolved nobody for an hour is not holding a
-	// connection to auth. Zero selects the default; negative disables
-	// eviction. The default matches fts_handle_idle_timeout and the
-	// reference's own cache timeout -- the same idea about an idle handle
-	// holding a resource somebody else would rather have.
+	// PoolIdleTimeoutSecs closes a pooled connection unused this long. Unset 300; 0 never.
 	PoolIdleTimeoutSecs int `koanf:"auth_client_pool_idle_timeout"`
 }
 
-// DefaultAuthPoolSize and DefaultAuthPoolIdleTimeout are the built-in pooling
-// defaults. The size is small on purpose: lookups are serialised per
-// connection and take under a millisecond, so a handful covers a busy backend
-// without holding connections auth has to keep accepting.
-const (
-	DefaultAuthPoolSize        = 4
-	DefaultAuthPoolIdleTimeout = 300 * time.Second
-)
-
-// PoolSizeOrDefault reports the pool size to use, with negative meaning "no
-// pool".
-func (c AuthClientConfig) PoolSizeOrDefault() int {
-	if c.PoolSize == 0 {
-		return DefaultAuthPoolSize
-	}
-	return c.PoolSize
-}
-
-// PoolIdleTimeout reports the eviction period, with negative meaning "never
-// evict".
+// PoolIdleTimeout reports the eviction period; 0 never evicts.
 func (c AuthClientConfig) PoolIdleTimeout() time.Duration {
-	switch {
-	case c.PoolIdleTimeoutSecs == 0:
-		return DefaultAuthPoolIdleTimeout
-	case c.PoolIdleTimeoutSecs < 0:
-		return 0
-	default:
-		return time.Duration(c.PoolIdleTimeoutSecs) * time.Second
-	}
+	return time.Duration(c.PoolIdleTimeoutSecs) * time.Second
 }
 
 type LocksClientConfig struct {
 	Mode      string   `koanf:"mode"`      // remote | embedded | ""
 	Endpoints []string `koanf:"endpoints"` // remote: ["yarilo-locks.svc:9104", ...]
 	Socket    string   `koanf:"socket"`    // embedded: /run/yarilo/locks.sock
-	// StartupWaitSeconds bounds the first wait for the lock service. Zero
-	// selects the default; negative disables waiting (#1350).
+	// StartupWaitSeconds bounds the first wait for the lock service; 0 does
+	// not wait (#1350).
 	StartupWaitSeconds int `koanf:"locks_client_startup_wait"`
-	// WaitPoolSize caps the connections kept for waiting acquires. A waiting
-	// call holds its connection for as long as it waits, so this is sized for
-	// concurrent waiters rather than for round trips; zero selects the
-	// built-in default.
+	// WaitPoolSize: connections for waiting acquires, sized for concurrent waiters.
+	// Must be positive.
 	WaitPoolSize int `koanf:"locks_client_wait_pool_size"`
 }
 
-// DefaultAuthStartupWait is the built-in bound for waiting on auth at startup.
-const DefaultAuthStartupWait = 30 * time.Second
-
-// DefaultLocksStartupWait is the window a component waits for the lock service
-// on the first connection.
-const DefaultLocksStartupWait = 30 * time.Second
-
-// StartupWait is how long a process waits at startup for auth to answer. Zero
-// selects the default; negative turns the waiting off.
+// StartupWait is how long a process waits at startup for auth to answer; 0
+// does not wait.
 func (c AuthServiceConfig) StartupWait() time.Duration {
-	switch {
-	case c.StartupWaitSeconds == 0:
-		return DefaultAuthStartupWait
-	case c.StartupWaitSeconds < 0:
-		return 0
-	default:
-		return time.Duration(c.StartupWaitSeconds) * time.Second
-	}
+	return time.Duration(c.StartupWaitSeconds) * time.Second
 }
 
 func (c LocksClientConfig) StartupWait() time.Duration {
-	switch {
-	case c.StartupWaitSeconds == 0:
-		return DefaultLocksStartupWait
-	case c.StartupWaitSeconds < 0:
-		return 0
-	default:
-		return time.Duration(c.StartupWaitSeconds) * time.Second
-	}
+	return time.Duration(c.StartupWaitSeconds) * time.Second
 }
 
 // FTSConfig configures full-text search: the engine selection, the
@@ -1276,11 +1174,8 @@ type FTSConfig struct {
 	HeaderExcludes         []string `koanf:"fts_header_excludes"`
 	CommitLimit            int      `koanf:"fts_commit_limit"`
 
-	// HandleIdleTimeoutSecs bounds how long an unused per-user index handle is
-	// kept open. The handle owns a writable index, which holds the on-disk
-	// write lock: cached for the life of the process, a user who moves to
-	// another backend leaves this one holding that lock and the new owner can
-	// never index them (#1396). 0 = default (300).
+	// HandleIdleTimeoutSecs: an unused index handle (and its write lock) is closed
+	// after this long (#1396). 0 never closes one.
 	HandleIdleTimeoutSecs int `koanf:"fts_handle_idle_timeout"`
 
 	SearchAddMissing string `koanf:"fts_search_add_missing"`
@@ -1318,10 +1213,7 @@ type FTSConfig struct {
 	// replacement, not a merge. Every key must also appear in Languages —
 	// validated at chain construction (catches typos like "ukr").
 	LanguageFiltersOverride map[string][]string `koanf:"fts_language_filters_override"`
-	// LanguageTokenMaxLen / LanguageAddressMaxLen (#726 item 1) are the
-	// generic/address tokenizer byte caps, 0 = language package defaults
-	// (30 / 250) — the most common operator tunings for index size vs.
-	// long-token searchability.
+	// Generic/address tokenizer byte caps (#726). Must be positive.
 	LanguageTokenMaxLen   int `koanf:"language_tokenizer_generic_token_maxlen"`
 	LanguageAddressMaxLen int `koanf:"language_tokenizer_address_token_maxlen"`
 	// LanguageTokenizerAlgorithm (#726 item 2): "simple" (default, the only
@@ -1471,9 +1363,7 @@ type FTSConfig struct {
 	// configured. See #696.
 	DetectionSampleBytes    int    `koanf:"-"` // resolved from DetectionSampleBytesRaw at load
 	DetectionSampleBytesRaw string `koanf:"fts_detection_sample_bytes"`
-	// DetectionMinRunes overrides the minimum sample length (in runes) below
-	// which detection is considered unreliable and falls back to the first
-	// configured language (0 = language package's own default). See #696.
+	// DetectionMinRunes: shortest sample (runes) detection trusts (#696); 0 any.
 	DetectionMinRunes int `koanf:"fts_detection_min_runes"`
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	LanguageTokenMaxLenAlias             int    `koanf:"fts_language_tokenizer_generic_token_maxlen"`
@@ -1533,12 +1423,12 @@ type BackendRegisterConfig struct {
 	// DirectorAddr is the director ClusterIP Service "host:port" to
 	// register against — any replica; the registration gossips ring-wide.
 	DirectorAddr string `koanf:"director_addr"`
-	// RegisterInterval paces the sidecar heartbeat (seconds); 0 = 10.
+	// RegisterInterval paces the sidecar heartbeat (seconds). Must be positive.
 	RegisterInterval int `koanf:"register_interval"`
 	// Tag places this backend in a routing pool = NFS shard (matches director
 	// tags); it is NOT a protocol dimension (#788).
 	Tag string `koanf:"tag"`
-	// Vhosts is the ring weight (0 = director default 100).
+	// Vhosts is the ring weight. Must be positive.
 	Vhosts int `koanf:"vhosts"`
 
 	// ReadinessDir is the shared (emptyDir) directory where each protocol
@@ -1546,12 +1436,10 @@ type BackendRegisterConfig struct {
 	// Empty disables the readiness signal (single-process / standalone runs).
 	ReadinessDir string `koanf:"readiness_dir"`
 	// ReadinessTouchInterval is how often (seconds) a protocol container
-	// re-touches its readiness file WHILE ready; 0 = 5.
+	// re-touches its readiness file WHILE ready. Must be positive.
 	ReadinessTouchInterval int `koanf:"readiness_touch_interval"`
-	// ReadinessStaleAfter is how old (seconds) a readiness file may be before
-	// the sidecar treats that protocol as not-ready and withholds the pod's
-	// heartbeat; 0 = 15 (≈ 3× the touch interval). Widen on slow nodes to avoid
-	// false silence flapping the whole pod.
+	// ReadinessStaleAfter: seconds a readiness file may age before the sidecar
+	// withholds the heartbeat. Must be positive.
 	ReadinessStaleAfter int `koanf:"readiness_stale_after"`
 	// ReadinessProtocols is the set of protocol readiness files the sidecar
 	// requires fresh before heartbeating (e.g. imap, pop3, submission, lmtp,
@@ -1565,10 +1453,10 @@ type BackendRegisterConfig struct {
 type DirectorServiceConfig struct {
 	Listen       string             `koanf:"listen"`
 	Shutdown     ShutdownConfig     `koanf:"shutdown"`
-	UserExpire   int                `koanf:"user_expire"`   // seconds before user→backend mapping expires; 0 = 900
-	PingInterval int                `koanf:"ping_interval"` // seconds between PING probes; 0 = 30
-	PingTimeout  int                `koanf:"ping_timeout"`  // seconds to wait for PONG before closing; 0 = 10
-	WriteTimeout int                `koanf:"write_timeout"` // seconds to bound a single client push/reply write (#704); 0 = 10, negative = disabled
+	UserExpire   int                `koanf:"user_expire"`   // seconds before user→backend mapping expires; must be positive
+	PingInterval int                `koanf:"ping_interval"` // seconds between PING probes; must be positive
+	PingTimeout  int                `koanf:"ping_timeout"`  // seconds to wait for PONG before closing; must be positive
+	WriteTimeout int                `koanf:"write_timeout"` // seconds to bound a single client push/reply write (#704); 0 = no bound
 	MailServers  []MailServerConfig `koanf:"mail_servers"`  // static backend list, loaded at startup
 	// Peers is the seed list for joining the self-organizing ring (#750) —
 	// "host:port" addresses tried in order until one accepts a DIRECTOR-JOIN.
@@ -1607,60 +1495,25 @@ type DirectorServiceConfig struct {
 	// member count. Default 3 (matches the reference's recommended minimum
 	// for the degradation ladder to have real redundancy at rest).
 	MinMembers int `koanf:"min_members"`
-	// AntiEntropyInterval is how often (seconds) each ring member
-	// re-broadcasts its member+tombstone snapshot over every live ring
-	// connection (#759) — a bounded safety net that heals membership
-	// splits without waiting for a possibly-lost ADD/REMOVE broadcast.
-	// 0 = default (3); negative = disabled.
+	// AntiEntropyInterval: seconds between membership snapshot re-broadcasts (#759).
+	// Unset 3; 0 turns it off.
 	AntiEntropyInterval int `koanf:"anti_entropy_interval"`
-	// SeedPollInterval is how often (seconds) each member re-polls a seed
-	// after its initial join (#759) — the seed is the one guaranteed
-	// crossing point between partitioned member views, so this bounds any
-	// formation split's lifetime regardless of ring dial topology. Runs
-	// at full cadence while the view holds fewer than min_members,
-	// easing to seed_poll_idle_interval once the expected cluster size is
-	// reached (and snapping back on any loss); gating on the configured
-	// target size — never on own-view stability, which a partitioned
-	// node also exhibits. A hostname seed is resolved explicitly and
-	// every resulting address except self is polled each cycle.
-	// 0 = default (2); negative = legacy one-shot join.
+	// SeedPollInterval: seconds between seed re-polls after a join (#759), easing to
+	// seed_poll_idle_interval at min_members. 0 joins once, without polling.
 	SeedPollInterval int `koanf:"seed_poll_interval"`
-	// BackendExpire is how long (seconds) a lease-managed backend may go
-	// without a heartbeat before it is removed ring-wide (#776). A backend
-	// becomes lease-managed when a seq'd BACKEND-UP arrives for it (a
-	// self-registering pod); static mail_servers and admin-added backends
-	// never heartbeat and are never expired. 0 = default (30); negative =
-	// disabled.
+	// BackendExpire: seconds a lease-managed backend may miss heartbeats before it
+	// leaves the ring (#776). 0 never expires one.
 	BackendExpire int `koanf:"backend_expire"`
-	// BackendUnreachableReporters is how many DISTINCT login proxies must
-	// report a backend unreachable (dial failed) within
-	// BackendUnreachableWindow before the director evicts it from the ring
-	// ahead of the lease TTL (#782 — active fast-fail). Reports replicate
-	// ring-wide, so the count aggregates across all directors. >1 guards
-	// against a single partitioned proxy wrongly evicting a healthy backend;
-	// the last backend of a tag is never evicted. 0 = default (2). Single
-	// login-replica deployments (e.g. sandbox) should set this to 1, since two
-	// distinct reporters for one protocol's failure may never exist — TTL
-	// expiry (backend_expire) remains the backstop either way.
+	// BackendUnreachableReporters: distinct login proxies whose reports evict a
+	// backend early (#782); one login replica needs 1. 0 never evicts early.
 	BackendUnreachableReporters int `koanf:"backend_unreachable_reporters"`
 	// BackendUnreachableWindow is the sliding window (seconds) over which those
-	// distinct reports must arrive to corroborate. 0 = default (5).
+	// distinct reports must arrive to corroborate. 0 never evicts early.
 	BackendUnreachableWindow int `koanf:"backend_unreachable_window"`
-	// SeedPollIdleInterval is the eased poll cadence (seconds) once the
-	// view has reached min_members. Defaults to the same 2s as
-	// SeedPollInterval — no effective backoff — because a node cannot
-	// tell "converged" from "stable but holding a dead member": a
-	// freshly-respawned replacement pod that learned a since-dead member
-	// during the death-detection window would otherwise keep it for a
-	// full idle interval (#765). Raise it only to trade steady-state
-	// polling for slower dead-member eviction on fresh joiners; clamped
-	// up to seed_poll_interval. 0 = default (2).
+	// SeedPollIdleInterval: seed re-poll seconds at min_members (#765), clamped up to
+	// seed_poll_interval. Must be positive.
 	SeedPollIdleInterval int `koanf:"seed_poll_idle_interval"`
-	// TombstoneTTL bounds (seconds) how long a dead member's tombstone is
-	// kept and gossiped (#765) — churn across many rollouts must not grow
-	// the set forever. Safe to expire: neighbor liveness monitoring (#768)
-	// re-evicts a resurrected-but-unreachable member within seconds
-	// regardless. 0 = default (600); negative = never expire.
+	// TombstoneTTL: seconds a dead member's tombstone is kept (#765). Unset 600; 0 keeps it.
 	TombstoneTTL int `koanf:"tombstone_ttl"`
 	// UsernameHashLowercase lowercases usernames before hashing/keying them
 	// for ring routing, sticky assignments and admin overrides (#738).
@@ -1695,51 +1548,20 @@ type DirectorServiceConfig struct {
 	DomainRebalancePercent  int `koanf:"director_domain_rebalance_percent"`
 	DomainRebalanceInterval int `koanf:"director_domain_rebalance_interval"`
 	DomainRebalanceCooldown int `koanf:"director_domain_rebalance_cooldown"`
-	// UserKickDelay is how long (seconds) an admin-initiated kick is delayed
-	// before the USER-KICKED is pushed (#740), giving a user's in-flight
-	// command on the old backend a grace window to complete after a move.
-	// Applies ONLY to admin-initiated kicks (director API); a backend-down /
-	// expiry kick fires immediately (there is nothing left to grace on a dead
-	// backend) and the split-writer conflict-kick is likewise never delayed.
-	// Matches the reference's director_user_kick_delay. 0 = default (2);
-	// negative = disabled (immediate). There is deliberately no
-	// max_parallel_moves equivalent: yarilo rehashes lazily (kick → re-login →
-	// LOOKUP), so the move rate is already bounded by max_parallel_kicks —
-	// a parsed-but-unread key would be a config gap, so it is omitted.
+	// UserKickDelay: seconds an admin-initiated kick waits before USER-KICKED (#740).
+	// Unset 2; 0 kicks immediately.
 	UserKickDelay int `koanf:"user_kick_delay"`
-	// UserKillTimeout is the hard fallthrough (seconds) for the confirmed
-	// ring-wide kick (#847): while a user is being killed, LOOKUP is held so a
-	// concurrent login cannot land on a fresh backend before the old sessions
-	// are gone (the split-writer window). If the kill is not confirmed complete
-	// within this window (a stuck session-holder), the killing flag is cleared
-	// anyway — falling through to normal assignment with a WARN, so a user is
-	// never permanently locked out. Replicated as a DURATION (each director
-	// computes its own local deadline on receipt — never a wall-clock deadline,
-	// which pod-clock skew would make unstable). 0 = default (15).
+	// UserKillTimeout: seconds a held LOOKUP waits for a kill to confirm before it
+	// falls through with a WARN (#847). Must be positive.
 	UserKillTimeout int `koanf:"user_kill_timeout"`
-	// UserKillConfirmGrace is how long (seconds) the user's ring-wide session
-	// count must stay at zero before the kill is confirmed complete (#847). This
-	// stable-zero window absorbs the race where a session routed just before the
-	// kill does its SESSION-OPEN mid-window, momentarily dipping the count to
-	// zero before that open lands — clearing on the first zero would let a new
-	// login slip in. 0 = default (1).
+	// UserKillConfirmGrace: seconds the session count must stay at zero before a
+	// kill is confirmed (#847). 0 confirms on the first zero.
 	UserKillConfirmGrace int `koanf:"user_kill_confirm_grace"`
-	// MaxParallelKicks caps how many sessions are kicked per batch when a
-	// backend goes down (#740). The remaining sessions are kicked in
-	// subsequent batches with a short pause between them, spreading the
-	// re-login stampede across the surviving backends instead of firing every
-	// kick at once. Matches the reference's director_max_parallel_kicks.
-	// 0 = default (100); negative or 0-after-default disables batching (kick
-	// all at once).
+	// MaxParallelKicks: sessions kicked per batch when a backend goes down (#740).
+	// Unset 100; 0 kicks all at once.
 	MaxParallelKicks int `koanf:"max_parallel_kicks"`
-	// MaxParallelMoves caps how many users are migrated concurrently during a
-	// GRACEFUL backend evacuation (#849) — the throttled `flush` (no --force).
-	// The director keeps at most this many user moves in flight at once; each
-	// move completes (its old sessions confirm gone) before the next user is
-	// pulled in, so a planned backend drain spreads the re-login across the
-	// surviving pods instead of stampeding them all at once. Matches the
-	// reference's director_max_parallel_moves. 0 = default (5); negative =
-	// unlimited (all users moved at once, ~equivalent to --force but via moves).
+	// MaxParallelMoves: user moves in flight during a graceful flush (#849). 0 is
+	// unlimited.
 	MaxParallelMoves int `koanf:"max_parallel_moves"`
 	// FlushProgram is an optional external executable run once per user AFTER a
 	// deliberate relocation (an admin USER-MOVE or a graceful evacuation) has been
@@ -1752,11 +1574,7 @@ type DirectorServiceConfig struct {
 	// self-initiated semantics); mass/reactive paths (backend-down, --force flush) do
 	// NOT trigger it. Empty = disabled (default). The reference's director_flush_socket.
 	FlushProgram string `koanf:"flush_program"`
-	// FlushProgramTimeoutSeconds bounds one flush_program run. The hook is
-	// best-effort, so a run that exceeds it is killed and only logged -- which
-	// is exactly why the bound has to be an operator's to set: a legitimate
-	// 15-second script would otherwise be killed for ever, leaving nothing
-	// behind but a WARN on the server (#1352). Zero selects the default.
+	// FlushProgramTimeoutSeconds bounds one flush_program run (#1352). Must be positive.
 	FlushProgramTimeoutSeconds int `koanf:"flush_program_timeout"`
 }
 
@@ -2297,14 +2115,11 @@ type PassdbEntry struct {
 	DefaultPassScheme string `koanf:"passdb_default_password_scheme"` // assumed scheme when stored password has no {SCHEME} prefix (default PLAIN)
 	SkipSchema        bool   `koanf:"skip_schema"`                    // do not run CREATE TABLE IF NOT EXISTS on startup
 
-	// Connection-pool limits for the SQL drivers (#886). Zero values select
-	// bounded, reusing defaults — Go's own defaults retain only two idle
-	// connections, so a login burst re-dials the rest and drove the sandbox
-	// MySQL to its max_connections ceiling. Negative disables a limit.
-	MaxOpenConns    int `koanf:"max_open_conns"`     // 0 = 25
-	MaxIdleConns    int `koanf:"max_idle_conns"`     // 0 = same as max_open_conns
-	ConnMaxLifetime int `koanf:"conn_max_lifetime"`  // seconds; 0 = 300
-	ConnMaxIdleTime int `koanf:"conn_max_idle_time"` // seconds; 0 = 60
+	// SQL pool limits (#886): nil keeps the bounded default, 0 lifts the limit.
+	MaxOpenConns    *int `koanf:"max_open_conns"`     // unset per driver; 0 unlimited
+	MaxIdleConns    *int `koanf:"max_idle_conns"`     // unset = max_open_conns; 0 keeps none
+	ConnMaxLifetime *int `koanf:"conn_max_lifetime"`  // seconds; unset 300; 0 never
+	ConnMaxIdleTime *int `koanf:"conn_max_idle_time"` // seconds; unset 60; 0 never
 
 	// static driver: one shared credential + templated fields for every user.
 	StaticPassword string            `koanf:"static_password"` // shared password ({SCHEME} or default scheme)
@@ -2329,16 +2144,14 @@ type StorageConfig struct {
 	// LockMethod is how a write to a shared file excludes another writer:
 	// flock (default), fcntl or dotlock (#1840).
 	LockMethod string `koanf:"storage_lock_method"`
-	// LockStaleTimeout is how long a dotlock may sit unchanged before a waiter
-	// takes it over, in seconds: unset keeps the reference's 180, -1 never
-	// takes one over. Only dotlock has the question: flock and fcntl die with
-	// the process that held them (#1831).
+	// LockStaleTimeout: seconds before a waiter takes an unchanged dotlock over (#1831).
+	// Unset 180; 0 never.
 	LockStaleTimeout int `koanf:"storage_lock_stale_timeout"`
 	// MailCachePurgeDeletePercentage is the share of a folder cache's records
-	// whose messages are gone that purges it: unset keeps 20, -1 never purges.
+	// whose messages are gone that purges it: unset keeps 20, 0 never purges.
 	MailCachePurgeDeletePercentage int `koanf:"mail_cache_purge_delete_percentage"`
 	// MailCachePurgeContinuedPercentage is continued cache records against live
-	// ones that purges the cache; unset keeps 200.
+	// ones that purges the cache; unset keeps 200, 0 never purges.
 	MailCachePurgeContinuedPercentage int `koanf:"mail_cache_purge_continued_percentage"`
 	// MailCachePurgeMinSize is the cache file size below which nothing purges
 	// it; unset keeps 32 KiB, "0" purges at any size.
@@ -2597,45 +2410,29 @@ type LogConfig struct {
 	Level string `koanf:"level"`
 }
 
-// Load reads the YAML config file at path and applies defaults.
-func Load(path string) (*Config, error) {
-	k := koanf.New(".")
-	if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
-		return nil, err
-	}
+// Defaults is the config before the file is read: a key the file leaves out
+// keeps the value here. helm/values.yaml carries the same numbers (app/guard).
+func Defaults() *Config {
 	defaultTrustedNets := []string{"127.0.0.1/32", "10.0.0.0/8"}
-	cfg := &Config{
+	c := &Config{
 		Mode:     "single",
 		Hostname: defaultHostname(),
 		General: GeneralConfig{
 			SSL: SSLConfig{SSLMinProtocol: "TLS1.2"},
 			HAProxy: HAProxyConfig{
-				Timeout:                3,
 				HAProxyTrustedNetworks: defaultTrustedNets,
 			},
-			XClient:            XClientConfig{TrustedNets: defaultTrustedNets},
-			Limits:             LimitsConfig{MaxUserIPConnections: 10},
-			StartupDialRetries: 3,
+			XClient: XClientConfig{TrustedNets: defaultTrustedNets},
 		},
 		Protocol: ProtocolConfig{
 			JMAP: JMAPProtocolConfig{
-				MaxConcurrentRequests: 10,
-				MaxObjectsInGet:       500,
-				MaxObjectsInSet:       500,
-				MaxCallsInRequest:     16,
-				MaxSizeUploadRaw:      "40M",
-				MaxSizeRequestRaw:     "10M",
-				MaxBodyValueBytesRaw:  "256K",
-				QueryMaxLimit:         256,
-				MaxQueryFolders:       64,
-				SnippetMaxChars:       256,
-				PushTimeout:           90,
+				MaxSizeUploadRaw:     "40M",
+				MaxSizeRequestRaw:    "10M",
+				MaxBodyValueBytesRaw: "256K",
 			},
 			IMAP: IMAPProtocolConfig{
-				IdleNotifyInterval: 120,
-				MaxLineLength:      65536,
-				IDSend:             "name *",
-				IMAPQuota:          true,
+				IDSend:    "name *",
+				IMAPQuota: true,
 				// Conventional special-use mappings.
 				// Operators override via yarilo.yaml; per-user CREATE USE
 				// overrides via the on-disk special_use file.
@@ -2654,30 +2451,20 @@ func Load(path string) (*Config, error) {
 			},
 			Submission: SubmissionProtocolConfig{
 				MaxMsgSizeRaw:      "40M",
-				MaxLineLength:      4096,
 				RecipientDelimiter: "+",
 				AddReceivedHeader:  true,
 				Relay: RelayConfig{
-					Port:           25,
-					SSL:            "no",
-					SSLVerify:      true,
-					ConnectTimeout: 30,
-					CommandTimeout: 300,
+					SSL:       "no",
+					SSLVerify: true,
 				},
 			},
 			LMTP: LMTPProtocolConfig{
-				LoginGreeting:        "Yarilo ready.",
-				AddReceivedHeader:    true,
-				AddMessageID:         true,
-				HdrDeliveryAddress:   "final",
-				ReadTimeout:          300,
-				WriteTimeout:         300,
-				UserConcurrencyLimit: 10,
-				Proxy:                LMTPProxyConfig{ProxyTimeout: 125},
+				LoginGreeting:      "Yarilo ready.",
+				AddReceivedHeader:  true,
+				AddMessageID:       true,
+				HdrDeliveryAddress: "final",
 				RateLimit: LMTPRateLimitConfig{
-					Enabled:                   true,
-					PerRecipientBurst:         100,
-					PerRecipientWindowSeconds: 60,
+					Enabled: true,
 				},
 			},
 		},
@@ -2703,19 +2490,12 @@ func Load(path string) (*Config, error) {
 			CA:      "/etc/yarilo/tls/ca.crt",
 		},
 		WardenService: WardenServiceConfig{
-			Listen: ":9101",
-			Shutdown: ShutdownConfig{
-				SessionGracePeriod: 30,
-				KillTimeout:        5,
-			},
+			Listen:   ":9101",
+			Shutdown: ShutdownConfig{},
 		},
 		AuthService: AuthServiceConfig{
-			Listen:             ":9100",
-			StartupWaitSeconds: 30,
-			Shutdown: ShutdownConfig{
-				SessionGracePeriod: 30,
-				KillTimeout:        5,
-			},
+			Listen:   ":9100",
+			Shutdown: ShutdownConfig{},
 		},
 		Auth: AuthConfig{
 			// MasterUsers is opt-in (Enabled defaults to false).
@@ -2724,57 +2504,28 @@ func Load(path string) (*Config, error) {
 			MasterUsers: MasterUsersConfig{
 				Separator: "*",
 			},
-			MaxAttempts: 3,
 			// 2s for client-visible failures, 2000ms for internal.
-			FailureDelaySeconds:    2,
-			InternalFailureDelayMs: 2000,
 			// Cache off by default — operators opt in by setting
 			// auth.cache.cache_size>0. TTLs are 30m to keep
 			// password-change / user-delete staleness windows
 			// tight in environments without explicit cache
 			// flushes from user-management tooling.
-			Cache: AuthCacheConfig{
-				TTLSeconds:         1800,
-				NegativeTTLSeconds: 1800,
-			},
+			Cache: AuthCacheConfig{},
 			Token: AuthTokenConfig{
-				TTLSeconds: 60,
-				Backend:    "memory",
+				Backend: "memory",
 			},
 			Policy: AuthPolicyConfig{
-				HashMech:         "sha256",
-				HashTruncateBits: 12,
-				TimeoutMs:        5000,
-				CheckBefore:      true,
-				CheckAfter:       true,
-				ReportAfter:      true,
+				HashMech:    "sha256",
+				CheckBefore: true,
+				CheckAfter:  true,
+				ReportAfter: true,
 			},
 		},
 		DirectorService: DirectorServiceConfig{
-			Listen: ":9102",
-			Shutdown: ShutdownConfig{
-				SessionGracePeriod: 30,
-				KillTimeout:        5,
-			},
-			UserExpire:                  900,
-			PingInterval:                30,
-			PingTimeout:                 10,
-			WriteTimeout:                10,
-			UsernameHashLowercase:       true,
-			AssignmentPolicy:            "hash",
-			UserKickDelay:               2,
-			UserKillTimeout:             15,
-			UserKillConfirmGrace:        1,
-			MaxParallelKicks:            100,
-			MaxParallelMoves:            5,
-			MinMembers:                  3,
-			AntiEntropyInterval:         3,
-			SeedPollInterval:            2,
-			SeedPollIdleInterval:        2,
-			BackendExpire:               30,
-			BackendUnreachableReporters: 2,
-			BackendUnreachableWindow:    5,
-			TombstoneTTL:                600,
+			Listen:                ":9102",
+			Shutdown:              ShutdownConfig{},
+			UsernameHashLowercase: true,
+			AssignmentPolicy:      "hash",
 			API: DirectorAPIConfig{
 				Listen: ":9103",
 				// No default IP restriction — service/pod CIDRs differ per
@@ -2792,12 +2543,9 @@ func Load(path string) (*Config, error) {
 		QuotaStatus: QuotaStatusConfig{Listen: ":12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user",
 			Success: "OK", Overquota: "554 5.2.2 %{error}"},
 		Quota: QuotaConfig{
-			Name:              "User quota",
-			ExceededMessage:   "Quota exceeded (mailbox for user is full)",
-			StoragePercentage: 100,
-			MessagePercentage: 100,
-			Grace:             "10M",
-			CloneFlushDelay:   10,
+			Name:            "User quota",
+			ExceededMessage: "Quota exceeded (mailbox for user is full)",
+			Grace:           "10M",
 		},
 		FTS: FTSConfig{
 			// FTS data is derived and write-heavy; mail is neither. Keeping
@@ -2806,77 +2554,186 @@ func Load(path string) (*Config, error) {
 			IndexRoot:                  "posix:prefix=%h/fts/",
 			Mode:                       "remote",
 			Listen:                     ":9106",
-			MaxConns:                   4,
-			IndexWorkers:               1,
-			PrefetchDepth:              1,
 			PrefetchMaxBytesRaw:        "32M",
-			CommitLimit:                500,
 			SearchAddMissing:           "body-search-only",
 			SearchReadFallback:         true,
-			SearchTimeoutSecs:          30,
-			HandleIdleTimeoutSecs:      300,
-			SearchFirstIndexGraceSecs:  10,
 			Search:                     true,
 			Languages:                  []string{"en"},
 			LanguageFilters:            []string{"lowercase", "stopwords", "snowball"},
 			LanguageTokenizerAlgorithm: "simple",
 
-			FlatcurveCommitLimit:     500,
-			FlatcurveMinTermSize:     2,
-			FlatcurvePrefixSearch:    "yes",
-			FlatcurveOptimizeLimit:   10,
-			FlatcurveRotateCount:     5000,
-			FlatcurveRotateTimeMsecs: 5000,
+			FlatcurvePrefixSearch: "yes",
 
-			DecoderDriver:      "none",
-			DecoderTimeoutSecs: 30,
+			DecoderDriver: "none",
 		},
 		SASLLogin: SASLLoginConfig{
-			Listen:         ":12345",
-			HAProxyTimeout: 3,
+			Listen: ":12345",
 		},
 		Telemetry: TelemetryConfig{
-			Listen:                    ":8080",
-			PprofEnabled:              false,
-			PprofBlockProfileRate:     0,
-			PprofMutexProfileFraction: 0,
+			Listen:       ":8080",
+			PprofEnabled: false,
 			LivenessWatchdog: LivenessWatchdogConfig{
-				Enabled:          false,
-				IntervalSeconds:  10,
-				TimeoutSeconds:   5,
-				FailureThreshold: 3,
+				Enabled: false,
 			},
 		},
 		Log: LogConfig{Level: "info"},
-		ACL: ACLConfig{CacheTTL: 30},
 		Sieve: SieveConfig{
-			DefaultName:        "yarilo",
-			MaxScriptSize:      65536,
-			MaxRedirects:       32,
-			MaxActions:         32,
-			DuplicateMaxPeriod: 604800, // 7 days
-			DuplicateDriver:    "file",
-			DuplicateFile:      ".yarilo.sieve-duplicate",
-			VacationEnabled:    true,
-			SpamMaxValue:       10,
-			VirusMaxValue:      5,
-			ReportUserAgent:    "yarilo",
-			SubmissionSSL:      "no",
-			SubmissionTimeout:  30,
-			PipeBinDir:         "/usr/lib/yarilo/sieve-pipe",
-			PipeSocketDir:      "sieve-pipe",
-			PipeExecTimeout:    10,
-			PipeInputEOL:       "crlf",
-			FilterBinDir:       "/usr/lib/yarilo/sieve-filter",
-			FilterSocketDir:    "sieve-filter",
-			FilterExecTimeout:  10,
-			FilterInputEOL:     "crlf",
-			ExecuteBinDir:      "/usr/lib/yarilo/sieve-execute",
-			ExecuteSocketDir:   "sieve-execute",
-			ExecuteExecTimeout: 10,
-			ExecuteInputEOL:    "crlf",
+			DefaultName:      "yarilo",
+			DuplicateDriver:  "file",
+			DuplicateFile:    ".yarilo.sieve-duplicate",
+			VacationEnabled:  true,
+			ReportUserAgent:  "yarilo",
+			SubmissionSSL:    "no",
+			PipeBinDir:       "/usr/lib/yarilo/sieve-pipe",
+			PipeSocketDir:    "sieve-pipe",
+			PipeInputEOL:     "crlf",
+			FilterBinDir:     "/usr/lib/yarilo/sieve-filter",
+			FilterSocketDir:  "sieve-filter",
+			FilterInputEOL:   "crlf",
+			ExecuteBinDir:    "/usr/lib/yarilo/sieve-execute",
+			ExecuteSocketDir: "sieve-execute",
+			ExecuteInputEOL:  "crlf",
 		},
 	}
+	c.Threading.ThreadingCacheIdle = 300
+	c.Storage.LockStaleTimeout = 180
+	c.Storage.MailCachePurgeDeletePercentage = 20
+	c.Storage.MailCachePurgeContinuedPercentage = 200
+	c.Storage.MailIndexLogRotateMinAge = 60
+	c.AuthService.StartupWaitSeconds = 30
+	c.LocksClient.StartupWaitSeconds = 30
+	c.AuthClient.PoolSize = 4
+	c.AuthClient.PoolIdleTimeoutSecs = 300
+	c.Login.TransientRetries = 3
+	c.Login.TransientReloginCap = 3
+	c.Login.LookupHoldMax = 20
+	c.Login.LookupHoldBackoffMs = 150
+	c.Login.SessionSyncInterval = 30
+	c.Login.SessionGracePeriod = 30
+	c.InternalTLS.SessionCacheSize = 64
+	c.AuthService.Shutdown.SessionGracePeriod = 30
+	c.WardenService.Shutdown.SessionGracePeriod = 30
+	c.LocksService.Shutdown.SessionGracePeriod = 5
+	c.DirectorService.Shutdown.SessionGracePeriod = 30
+	c.DirectorService.WriteTimeout = 10
+	c.DirectorService.AntiEntropyInterval = 3
+	c.DirectorService.TombstoneTTL = 600
+	c.DirectorService.UserKickDelay = 2
+	c.DirectorService.MaxParallelKicks = 100
+	c.DirectorService.MaxParallelMoves = 5
+	c.DirectorService.BackendExpire = 30
+	c.DirectorService.BackendUnreachableReporters = 2
+	c.DirectorService.BackendUnreachableWindow = 5
+	c.DirectorService.MinMembers = 3
+	c.DirectorService.SeedPollInterval = 2
+	c.DirectorService.UserKillConfirmGrace = 1
+	c.DirectorService.DomainRebalanceCooldown = 600
+	c.General.Limits.MaxUserIPConnections = 10
+	c.Protocol.IMAP.IdleNotifyInterval = 120
+	c.Protocol.IMAP.MaxLineLength = 65536
+	c.Protocol.JMAP.MaxCallsInRequest = 16
+	c.Protocol.JMAP.MaxObjectsInGet = 500
+	c.Protocol.JMAP.MaxObjectsInSet = 500
+	c.Protocol.JMAP.QueryMaxLimit = 256
+	c.Protocol.JMAP.MaxQueryFolders = 64
+	c.Protocol.JMAP.SnippetMaxChars = 256
+	c.Protocol.ManageSieve.MaxInvalidCommands = 3
+	c.Sieve.MaxScriptSize = 65536
+	c.Sieve.MaxRedirects = 32
+	c.Sieve.MaxActions = 32
+	c.Sieve.DuplicateMaxPeriod = 604800
+	c.ACL.CacheTTL = 30
+	c.Auth.FailureDelaySeconds = 2
+	c.Auth.InternalFailureDelayMs = 2000
+	c.Auth.Cache.TTLSeconds = 1800
+	c.Auth.Cache.NegativeTTLSeconds = 1800
+	c.Quota.CloneFlushDelay = 10
+	c.QuotaStatus.AliasMaxHops = 5
+	c.FTS.FlatcurveMinTermSize = 2
+	c.FTS.FlatcurveOptimizeLimit = 10
+	c.FTS.FlatcurveRotateCount = 5000
+	c.FTS.FlatcurveRotateTimeMsecs = 5000
+	c.FTS.HandleIdleTimeoutSecs = 300
+	c.FTS.SearchFirstIndexGraceSecs = 10
+	c.FTS.DetectionMinRunes = 10
+	c.BackendRegister.Vhosts = 100
+	c.General.HAProxy.Timeout = 3
+	c.General.StartupDialRetries = 3
+	c.SASLLogin.HAProxyTimeout = 3
+	c.ManageSieveLoginService.HAProxyTimeout = 3
+	c.Protocol.JMAP.MaxConcurrentRequests = 10
+	c.Protocol.LMTP.ReadTimeout = 300
+	c.Protocol.LMTP.WriteTimeout = 300
+	c.Protocol.LMTP.Proxy.ProxyTimeout = 125
+	c.Protocol.LMTP.RateLimit.PerRecipientBurst = 100
+	c.Protocol.LMTP.RateLimit.PerRecipientWindowSeconds = 60
+	c.Protocol.Submission.MaxLineLength = 4096
+	c.Protocol.Submission.Relay.Port = 25
+	c.Protocol.Submission.Relay.ConnectTimeout = 30
+	c.Protocol.Submission.Relay.CommandTimeout = 300
+	c.Protocol.ManageSieve.MaxLineLength = 65536
+	c.Sieve.SubmissionTimeout = 30
+	c.Sieve.PipeExecTimeout = 10
+	c.Sieve.FilterExecTimeout = 10
+	c.Sieve.ExecuteExecTimeout = 10
+	c.Auth.MaxAttempts = 3
+	c.Auth.Policy.TimeoutMs = 5000
+	c.Auth.Token.TTLSeconds = 60
+	c.Login.LoginProxyTimeout = 30
+	c.DirectorService.PingInterval = 30
+	c.DirectorService.PingTimeout = 10
+	c.DirectorService.SeedPollIdleInterval = 2
+	c.DirectorService.UserExpire = 900
+	c.DirectorService.UserKillTimeout = 15
+	c.DirectorService.DomainExpire = 900
+	c.DirectorService.DomainRebalanceInterval = 60
+	c.DirectorService.FlushProgramTimeoutSeconds = 10
+	c.DictService.DictMaxConns = 8
+	c.LocksClient.WaitPoolSize = 64
+	c.WardenService.Conns = 4
+	c.WardenService.EventQueueSize = 4096
+	c.Quota.StoragePercentage = 100
+	c.Quota.MessagePercentage = 100
+	c.Quota.WarningExecTimeout = 10
+	c.FTS.MaxConns = 4
+	c.FTS.PrefetchDepth = 1
+	c.FTS.IndexWorkers = 1
+	c.FTS.CommitLimit = 500
+	c.FTS.SearchTimeoutSecs = 30
+	c.FTS.DecoderTimeoutSecs = 30
+	c.FTS.DecoderMaxAttempts = 2
+	c.FTS.FlatcurveCommitLimit = 500
+	c.FTS.LanguageTokenMaxLen = 30
+	c.FTS.LanguageAddressMaxLen = 250
+	c.BackendRegister.RegisterInterval = 10
+	c.BackendRegister.ReadinessTouchInterval = 5
+	c.BackendRegister.ReadinessStaleAfter = 15
+	c.Telemetry.LivenessWatchdog.IntervalSeconds = 10
+	c.Telemetry.LivenessWatchdog.TimeoutSeconds = 5
+	c.Telemetry.LivenessWatchdog.FailureThreshold = 3
+	c.Protocol.LMTP.UserConcurrencyLimit = 10
+	c.Protocol.JMAP.PushTimeout = 90
+	for _, sh := range []*ShutdownConfig{&c.AuthService.Shutdown, &c.WardenService.Shutdown,
+		&c.DirectorService.Shutdown, &c.LocksService.Shutdown} {
+		sh.KillTimeout = 5
+	}
+	c.Auth.Policy.HashTruncateBits = 12
+	c.Sieve.SpamMaxValue = 10
+	c.Sieve.VirusMaxValue = 5
+	c.Storage.MdboxRotateSize = "10M"
+	c.Storage.MailIndexLogRotateMinSizeRaw = "32k"
+	c.Storage.MailIndexLogRotateMaxSizeRaw = "1M"
+	c.FTS.DetectionSampleBytesRaw = "1k"
+	return c
+}
+
+// Load reads the YAML config file at path and applies defaults.
+func Load(path string) (*Config, error) {
+	k := koanf.New(".")
+	if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
+		return nil, err
+	}
+	cfg := Defaults()
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, err
 	}
@@ -2888,6 +2745,7 @@ func Load(path string) (*Config, error) {
 			return nil, err
 		}
 	}
+	listEntryDefaults(k, cfg)
 	if err := refuseRemovedKeys(k, removedKeys()); err != nil {
 		return nil, err
 	}
@@ -2929,6 +2787,9 @@ func validateMailDriver(driver string) error {
 }
 
 func (cfg *Config) validate() error {
+	if err := checkNumbers(cfg); err != nil {
+		return err
+	}
 	if err := foldNamespaceLocations(cfg.Namespaces); err != nil {
 		return err
 	}
@@ -3026,15 +2887,8 @@ func (cfg *Config) validate() error {
 	if _, err := filelock.Parse(cfg.Storage.LockMethod); err != nil {
 		return fmt.Errorf("config: storage.storage_lock_method: %w", err)
 	}
-	if cfg.Storage.LockStaleTimeout < -1 {
-		return fmt.Errorf("config: storage.storage_lock_stale_timeout: %d is neither a duration nor -1 (never take a dotlock over)",
-			cfg.Storage.LockStaleTimeout)
-	}
-	if p := cfg.Storage.MailCachePurgeContinuedPercentage; p < 0 {
-		return fmt.Errorf("config: storage.mail_cache_purge_continued_percentage: %d is a negative share", p)
-	}
-	if p := cfg.Storage.MailCachePurgeDeletePercentage; p < -1 || p > 100 {
-		return fmt.Errorf("config: storage.mail_cache_purge_delete_percentage: %d is neither a percentage nor -1 (never purge on its own)", p)
+	if p := cfg.Storage.MailCachePurgeDeletePercentage; p > 100 {
+		return fmt.Errorf("config: storage.mail_cache_purge_delete_percentage: %d is more than every message", p)
 	}
 	return nil
 }

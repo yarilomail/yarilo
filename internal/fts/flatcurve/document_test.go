@@ -40,7 +40,7 @@ type xapianShard struct {
 // Row 1: a message filed in two folders is one document with both folders and
 // both copies on it -- the body is parsed once, not once per copy (#1986).
 func TestAMessageInTwoFoldersIsOneDocument(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	guid := testGUID(7)
 	indexCopy(t, ui, inbox, 7, guid, nil, []string{"needle"})
 	indexCopy(t, ui, archive, 9, guid, nil, []string{"needle"})
@@ -66,7 +66,7 @@ func TestAMessageInTwoFoldersIsOneDocument(t *testing.T) {
 // Row 2: an expunge takes the copy's terms off the document, and the document
 // goes with the last copy.
 func TestAnExpungeRemovesTheCopyThenTheDocument(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	guid := testGUID(7)
 	indexCopy(t, ui, inbox, 7, guid, nil, []string{"needle"})
 	indexCopy(t, ui, archive, 9, guid, nil, []string{"needle"})
@@ -125,7 +125,7 @@ func TestTwoFoldersMayShareAUID(t *testing.T) {
 		{"the folder indexed second", archive, inbox, testGUID(200)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ui, _ := testEngine(t, Options{})
+			ui, _ := testEngine(t, testOpts(Options{}))
 			indexCopy(t, ui, inbox, 5, testGUID(100), nil, []string{"needle"})
 			indexCopy(t, ui, archive, 5, testGUID(200), nil, []string{"needle"})
 			if got := hitsIn(t, ui, inbox); len(got) != 1 {
@@ -152,7 +152,7 @@ func TestTwoFoldersMayShareAUID(t *testing.T) {
 // Row 5: a search names the folders it searches; one folder answers only its
 // own messages, and the whole account answers both.
 func TestASearchAnswersOnlyTheFoldersAsked(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	indexCopy(t, ui, inbox, 1, testGUID(1), nil, []string{"needle"})
 	indexCopy(t, ui, archive, 2, testGUID(2), nil, []string{"needle"})
 

@@ -27,7 +27,7 @@ func TestEveryStopwordIsDroppedByTheDefaultChain(t *testing.T) {
 
 	for _, lang := range langs {
 		t.Run(lang, func(t *testing.T) {
-			chain, err := NewChain(Settings{Language: lang, Filters: defaultFilters()})
+			chain, err := NewChain(Settings{Language: lang, Filters: defaultFilters(), TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
 			if err != nil {
 				t.Fatalf("chain for %s: %v", lang, err)
 			}

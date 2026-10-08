@@ -93,7 +93,7 @@ func RunReopen(cfg ReopenConfig) (ReopenReport, error) {
 		cfg.ColdBoxes = 20
 	}
 
-	eng := flatcurve.New(flatcurve.Options{CommitLimit: cfg.DocsPerBatch})
+	eng := flatcurve.New(flatcurve.Options{CommitLimit: cfg.DocsPerBatch, MinTermSize: 2, RotateCount: 5000})
 	user := fts.UserRef{
 		Username:  reopenUser,
 		IndexRoot: filepath.Join(cfg.Root, "reopen-bench"),

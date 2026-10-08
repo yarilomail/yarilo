@@ -77,7 +77,7 @@ func TestMaxTermLengthStaysInBytes(t *testing.T) {
 // to count the same way. Under byte counting a Cyrillic word emitted suffixes
 // down to a single character.
 func TestSubstringSuffixesStopAtTheCharacterThreshold(t *testing.T) {
-	ui, _ := testEngine(t, Options{SubstringSearch: true, MinTermSize: 3, PrefixSearch: "yes"})
+	ui, _ := testEngine(t, testOpts(Options{SubstringSearch: true, MinTermSize: 3, PrefixSearch: "yes"}))
 	indexDoc(t, ui, 1, nil, []string{"мова"})
 
 	for _, tc := range []struct {

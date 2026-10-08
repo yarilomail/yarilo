@@ -11,7 +11,7 @@ import (
 // zero active sessions arms the confirm at kill-start, so it confirms after the grace
 // instead of only ever falling through to the hard timeout.
 func TestStartKilling_ArmsConfirmForIdleUser(t *testing.T) {
-	s := NewWithOptions(Options{UserKillConfirmGrace: 10 * time.Millisecond, UserKillTimeout: 30 * time.Second})
+	s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: 10 * time.Millisecond, UserKillTimeout: 30 * time.Second}))
 	hash := HashUsername("idle@d.test", s.hf)
 
 	s.startKilling(hash)
@@ -34,7 +34,7 @@ func TestStartKilling_ArmsConfirmForIdleUser(t *testing.T) {
 // must NOT arm at kill-start — it still waits for the session to drain (transition to
 // zero) before confirming, exactly as before.
 func TestStartKilling_NotArmedWithActiveSession(t *testing.T) {
-	s := NewWithOptions(Options{UserKillConfirmGrace: 10 * time.Millisecond, UserKillTimeout: 30 * time.Second})
+	s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: 10 * time.Millisecond, UserKillTimeout: 30 * time.Second}))
 	user := "busy@d.test"
 	openSession(t, s, "s1", user, "10.0.0.1") // one active session
 	hash := HashUsername(user, s.hf)
@@ -57,7 +57,7 @@ func TestFlushHook_RunsForIdleUserMove(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hook.log")
 	script := writeHookScript(t, out)
 	grace := 10 * time.Millisecond
-	s := NewWithOptions(Options{
+	s := NewWithOptions(testOptions(Options{
 		FlushProgram:         script,
 		UserKillConfirmGrace: grace,
 		UserKillTimeout:      30 * time.Second, // long: a timeout-driven exit would NOT run the hook
@@ -67,7 +67,7 @@ func TestFlushHook_RunsForIdleUserMove(t *testing.T) {
 		// the best-effort path logged it, exactly as designed -- so the test
 		// was stricter than the contract it checks (#1352).
 		FlushProgramTimeout: 2 * time.Minute,
-	})
+	}))
 
 	user := "idle@d.test"
 	s.userDir.Set(user, "10.0.0.1:993", false)

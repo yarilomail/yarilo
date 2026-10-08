@@ -60,6 +60,7 @@ func runSession(t *testing.T, store *sieve.FsScriptStore, homeDir string) *testC
 		homeDir:  homeDir,
 		store:    store,
 		maxSize:  65536,
+		maxLine:  65536,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)

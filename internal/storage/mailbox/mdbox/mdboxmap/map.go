@@ -153,7 +153,7 @@ func (m *Map) logRotateMinSizeOrDefault() int64 {
 }
 
 func (m *Map) logRotateMaxSizeOrDefault() int64 {
-	if m.logRotateMaxSize == 0 {
+	if !m.logRotateSet {
 		return defaultLogRotateMaxSize
 	}
 	return m.logRotateMaxSize

@@ -119,9 +119,6 @@ func (srv *Server) handleConn(ctx context.Context, conn net.Conn) {
 	slog.Info("managesieve: session started", "user", username, "session", sid)
 
 	maxSize := srv.opts.MaxScriptSize
-	if maxSize <= 0 {
-		maxSize = 64 * 1024
-	}
 
 	maxLine := int64(srv.opts.Config.MaxLineLength)
 	defaultName := srv.opts.DefaultName

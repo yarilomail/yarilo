@@ -23,14 +23,14 @@ func TestDeliveryTargetRoutesNamespaces(t *testing.T) {
 	mb := maildir.New()
 	idx := fileindex.New()
 
-	s := &session{opts: Options{
+	s := &session{opts: testOpts(Options{
 		Mailbox: mb,
 		Index:   idx,
 		Namespaces: []config.NamespaceConfig{
 			{Type: "personal", Prefix: "", Separator: "/"},
 			{Type: "public", Prefix: "Public/", Separator: "/", Location: "maildir:" + publicDir},
 		},
-	}}
+	})}
 
 	rcptUI := &mailbox.UserInfo{
 		Username: "alice@x", Home: filepath.Join(root, "alice"),
@@ -99,7 +99,7 @@ func TestDeliveryTargetPostRight(t *testing.T) {
 	}
 
 	newSession := func(publicDir string, mb *maildir.Backend, idx *fileindex.Backend) *session {
-		return &session{opts: Options{
+		return &session{opts: testOpts(Options{
 			Mailbox:    mb,
 			Index:      idx,
 			ACLEnabled: true,
@@ -107,7 +107,7 @@ func TestDeliveryTargetPostRight(t *testing.T) {
 				{Type: "personal", Prefix: "", Separator: "/"},
 				{Type: "public", Prefix: "Public/", Separator: "/", Location: "maildir:" + publicDir},
 			},
-		}}
+		})}
 	}
 
 	newRcpt := func(t *testing.T, root string, mb *maildir.Backend, idx *fileindex.Backend) (*mailbox.UserInfo, mailbox.UserMailbox, mailbox.UserIndex) {

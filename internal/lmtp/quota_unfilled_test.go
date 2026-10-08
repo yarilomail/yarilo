@@ -52,14 +52,14 @@ func TestADeliveryIntoAnUnopenedFolderJudgesTheMail(t *testing.T) {
 	box.Close() //nolint:errcheck
 	idx.Close() //nolint:errcheck
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Hostname:    "lmtp.test",
 		Config:      config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
 		Mailbox:     mb,
 		Index:       fileindex.New(),
 		QuotaEngine: true,
 		Resolver:    resolver,
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

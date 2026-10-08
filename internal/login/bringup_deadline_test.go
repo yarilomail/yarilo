@@ -43,15 +43,16 @@ func TestBackendBringupDeadlineDoesNotHang(t *testing.T) {
 	silent := startSilentBackend(t)
 
 	s := &Server{
-		opts: Options{
+		opts: testOpts(Options{
 			Protocol:            ProtocolIMAP,
 			AuthAddr:            authAddr,
 			WardenAddr:          wardenAddr,
+			WardenConns:         4,
 			BackendAddr:         silent,
 			ProxyTimeout:        300 * time.Millisecond,
 			TransientRetries:    -1, // fail the bring-up on the first timeout
 			TransientReloginCap: 2,  // keep open for one re-LOGIN, then close
-		},
+		}),
 		sessions: make(map[string][]*liveSession),
 	}
 	t.Cleanup(func() {

@@ -22,7 +22,7 @@ func TestAManageSieveLiteralIsBoundedBeforeAuth(t *testing.T) {
 			srv, cli := pipePair(t)
 			errCh := make(chan error, 1)
 			go func() {
-				_, _, _, err := extractManageSievePreamble(srv, bufio.NewReader(srv), nil, Options{})
+				_, _, _, err := extractManageSievePreamble(srv, bufio.NewReader(srv), nil, testOpts(Options{}))
 				errCh <- err
 			}()
 			cli.SetReadDeadline(time.Now().Add(3 * time.Second)) //nolint:errcheck

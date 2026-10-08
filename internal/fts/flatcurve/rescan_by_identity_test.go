@@ -19,7 +19,7 @@ func copiesOf(uids ...uint32) []fts.Copy {
 // A rescan reconciles by the message, not by a number the database owns: with
 // docids and uids apart, comparing them drops live messages (#2019).
 func TestRescanKeepsLiveMessagesWhenDocIDsDiffer(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	// The folder's uids start above the docids the database hands out, which
 	// is the ordinary state of a mailbox that has seen deletions.
 	indexDoc(t, ui, 11, nil, []string{"bravo"})
@@ -49,7 +49,7 @@ func TestRescanKeepsLiveMessagesWhenDocIDsDiffer(t *testing.T) {
 // A rescan of one folder leaves another folder's documents alone: they share
 // one index now, and a walk by number does not know the difference (#2019).
 func TestRescanOfOneFolderLeavesTheOtherSearchable(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	other := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
 	indexDocIn(t, ui, other, 2, nil, []string{"bravo"})
@@ -69,7 +69,7 @@ func TestRescanOfOneFolderLeavesTheOtherSearchable(t *testing.T) {
 // An empty live set is a folder that holds nothing, not an account that does:
 // the reset of one folder must not empty the index of the others.
 func TestRescanWithAnEmptyFolderKeepsTheRest(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	other := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
 	indexDocIn(t, ui, other, 2, nil, []string{"bravo"})
@@ -89,7 +89,7 @@ func TestRescanWithAnEmptyFolderKeepsTheRest(t *testing.T) {
 // One message in two folders is one document: a rescan of one folder takes
 // that folder's terms off it, and the document survives for the other (#2019).
 func TestRescanOfOneFolderKeepsACopyInAnother(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	other := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
 	guid := testGUID(1)
 	indexCopy(t, ui, inbox, 1, guid, nil, []string{"alpha"})

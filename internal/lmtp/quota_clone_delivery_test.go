@@ -70,7 +70,7 @@ func TestADeliveryDoesNotWriteTheMirror(t *testing.T) {
 	counted := &countingDict{Dict: inner}
 	clone := quota.NewClone([]dict.Dict{counted}, 300*time.Millisecond)
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Hostname:    "lmtp.test",
 		Config:      config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
 		Mailbox:     mb,
@@ -78,7 +78,7 @@ func TestADeliveryDoesNotWriteTheMirror(t *testing.T) {
 		QuotaEngine: true,
 		QuotaClone:  clone,
 		Resolver:    resolver,
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -48,7 +48,7 @@ func TestGenericTokenizer(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tokenizeGeneric(t, 0, tc.in); !reflect.DeepEqual(got, tc.want) {
+			if got := tokenizeGeneric(t, DefaultTokenMaxLen, tc.in); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("tokens = %q, want %q", got, tc.want)
 			}
 		})
@@ -57,19 +57,19 @@ func TestGenericTokenizer(t *testing.T) {
 
 func TestGenericTruncation(t *testing.T) {
 	long := strings.Repeat("a", 40)
-	got := tokenizeGeneric(t, 0, long)
+	got := tokenizeGeneric(t, DefaultTokenMaxLen, long)
 	if len(got) != 1 || len(got[0]) != DefaultTokenMaxLen {
 		t.Fatalf("got %q (len %d), want single %d-byte token", got, len(got[0]), DefaultTokenMaxLen)
 	}
 	// Truncation must not split a multibyte rune.
 	longUni := strings.Repeat("ї", 20) // 2 bytes each → 40 bytes untruncated
-	got = tokenizeGeneric(t, 0, longUni)
+	got = tokenizeGeneric(t, DefaultTokenMaxLen, longUni)
 	if len(got) != 1 || !strings.HasSuffix(got[0], "ї") || len(got[0]) != 30 {
 		t.Fatalf("unicode truncation got %q (len %d)", got, len(got[0]))
 	}
 	// A truncated token keeps a trailing apostrophe (reference behaviour).
 	trunc := strings.Repeat("b", 29) + "'x"
-	got = tokenizeGeneric(t, 0, trunc)
+	got = tokenizeGeneric(t, DefaultTokenMaxLen, trunc)
 	if len(got) != 1 || got[0] != strings.Repeat("b", 29)+"'" {
 		t.Fatalf("truncated apostrophe got %q", got)
 	}
@@ -77,13 +77,13 @@ func TestGenericTruncation(t *testing.T) {
 
 func TestGenericChunkBoundaries(t *testing.T) {
 	// Token and multibyte rune split across Feed calls must reassemble.
-	got := tokenizeGeneric(t, 0, "hel", "lo wo", "rld")
+	got := tokenizeGeneric(t, DefaultTokenMaxLen, "hel", "lo wo", "rld")
 	if !reflect.DeepEqual(got, []string{"hello", "world"}) {
 		t.Fatalf("split token got %q", got)
 	}
 	word := "світ"
 	b := []byte(word)
-	got = tokenizeGeneric(t, 0, string(b[:3]), string(b[3:]))
+	got = tokenizeGeneric(t, DefaultTokenMaxLen, string(b[:3]), string(b[3:]))
 	if !reflect.DeepEqual(got, []string{word}) {
 		t.Fatalf("split rune got %q", got)
 	}
@@ -102,7 +102,7 @@ func TestGenericBase64Skip(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tokenizeGeneric(t, 0, tc.in); !reflect.DeepEqual(got, tc.want) {
+			if got := tokenizeGeneric(t, DefaultTokenMaxLen, tc.in); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("tokens = %q, want %q", got, tc.want)
 			}
 		})
@@ -111,7 +111,7 @@ func TestGenericBase64Skip(t *testing.T) {
 
 func tokenizeAddress(t *testing.T, search bool, in string) []string {
 	t.Helper()
-	a := NewAddress(NewGeneric(0), 0, search)
+	a := NewAddress(NewGeneric(DefaultTokenMaxLen), DefaultAddressMaxLen, search)
 	var out []string
 	emit := func(tok string) error {
 		out = append(out, tok)
@@ -242,10 +242,10 @@ func TestChainUnknownConfig(t *testing.T) {
 	// #718: "snowball" on a language with no Snowball algorithm at all
 	// (Ukrainian's whole reason for existing here) is a no-op passthrough,
 	// not an error — chain construction must succeed.
-	if _, err := NewChain(Settings{Language: "xx", Filters: []string{"snowball"}}); err != nil {
+	if _, err := NewChain(Settings{Language: "xx", Filters: []string{"snowball"}, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen}); err != nil {
 		t.Fatalf("unexpected error building a stemmer-less chain: %v", err)
 	}
-	if _, err := NewChain(Settings{Language: "en", Filters: []string{"bogus"}}); err == nil {
+	if _, err := NewChain(Settings{Language: "en", Filters: []string{"bogus"}, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen}); err == nil {
 		t.Fatal("expected error for unknown filter")
 	}
 }
@@ -255,7 +255,7 @@ func TestChainUnknownConfig(t *testing.T) {
 // survives unstemmed (just lowercased), while a configured uk stopword is
 // still dropped exactly like any other language's stopword filter.
 func TestStemmerlessLanguagePassthrough(t *testing.T) {
-	c, err := NewChain(Settings{Language: "uk", Filters: []string{"lowercase", "stopwords", "snowball"}})
+	c, err := NewChain(Settings{Language: "uk", Filters: []string{"lowercase", "stopwords", "snowball"}, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,11 +275,11 @@ func TestStemmerlessLanguagePassthrough(t *testing.T) {
 // settings-drift rebuild path.
 func TestSettingsChecksumDistinguishesStemmerlessLanguages(t *testing.T) {
 	filters := []string{"lowercase", "stopwords", "snowball"}
-	uk, err := NewChain(Settings{Language: "uk", Filters: filters})
+	uk, err := NewChain(Settings{Language: "uk", Filters: filters, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ru, err := NewChain(Settings{Language: "ru", Filters: filters})
+	ru, err := NewChain(Settings{Language: "ru", Filters: filters, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestSettingsChecksum(t *testing.T) {
 	if c1.SettingsChecksum() != c2.SettingsChecksum() {
 		t.Fatal("same settings must give same checksum")
 	}
-	c3, _ := NewChain(Settings{Language: "en", Filters: []string{"lowercase"}})
+	c3, _ := NewChain(Settings{Language: "en", Filters: []string{"lowercase"}, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
 	if c1.SettingsChecksum() == c3.SettingsChecksum() {
 		t.Fatal("different filters must change the checksum")
 	}

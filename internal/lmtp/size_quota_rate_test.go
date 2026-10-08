@@ -79,8 +79,8 @@ func sizeServer(t *testing.T, cfg config.LMTPProtocolConfig, mailSize int64, rul
 	}
 	box.Close() //nolint:errcheck
 	cfg.ReadTimeout, cfg.WriteTimeout = 5, 5
-	srv := New(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: fileindex.New(),
-		Resolver: resolver, QuotaEngine: true, QuotaMailSize: mailSize})
+	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: fileindex.New(),
+		Resolver: resolver, QuotaEngine: true, QuotaMailSize: mailSize}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -163,8 +163,8 @@ func TestARateLimitedRecipientGets451AndTheSessionGoesOn(t *testing.T) {
 	box.Close() //nolint:errcheck
 	cfg := config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5}
 	cfg.RateLimit.Enabled, cfg.RateLimit.PerRecipientBurst, cfg.RateLimit.PerRecipientWindowSeconds = true, 1, 60
-	srv := New(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: fileindex.New(),
-		Resolver: resolver, Locker: newFakeLocker()})
+	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: fileindex.New(),
+		Resolver: resolver, Locker: newFakeLocker()}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -197,9 +197,9 @@ func TestGraceDoesNotDeliverIntoAMailboxAlreadyOver(t *testing.T) {
 		t.Fatal(err)
 	}
 	box.Close() //nolint:errcheck
-	srv := New(Options{Hostname: "lmtp.test", Config: config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
+	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
 		Mailbox: mb, Index: fileindex.New(), Resolver: resolver, QuotaEngine: true,
-		QuotaPolicy: quota.Policy{StorageGrace: 10 << 20}})
+		QuotaPolicy: quota.Policy{StorageGrace: 10 << 20}}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -242,10 +242,10 @@ func TestTheMailboxMessageCapIsReachedThenRefused(t *testing.T) {
 				t.Fatal(err)
 			}
 			box.Close() //nolint:errcheck
-			srv := New(Options{Hostname: "lmtp.test",
+			srv := New(testOpts(Options{Hostname: "lmtp.test",
 				Config:  config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5, QuotaFullTempfail: tc.tempfail},
 				Mailbox: mb, Index: fileindex.New(), Resolver: resolver, QuotaEngine: true,
-				QuotaPolicy: quota.Policy{MailboxMessageCount: 2}})
+				QuotaPolicy: quota.Policy{MailboxMessageCount: 2}}))
 			ln, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)

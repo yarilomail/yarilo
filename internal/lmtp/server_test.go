@@ -27,7 +27,7 @@ func buildTestServer(t *testing.T) string {
 	}
 	box.Close() //nolint:errcheck
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Hostname: "lmtp.test",
 		Config: config.LMTPProtocolConfig{
 			AddReceivedHeader:  true,
@@ -38,7 +38,7 @@ func buildTestServer(t *testing.T) string {
 		Mailbox:  mb,
 		Index:    idx,
 		Resolver: resolver,
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

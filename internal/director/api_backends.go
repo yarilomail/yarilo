@@ -25,7 +25,7 @@ func (s *Server) apiBackendAdd(w http.ResponseWriter, r *http.Request) {
 		IP     string `json:"ip"`
 		Port   int    `json:"port"`
 		Tag    string `json:"tag"`
-		Vhosts int    `json:"vhosts"`
+		Vhosts *int   `json:"vhosts"` // left out: ring.DefaultVhosts; 0 takes no traffic
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		apiError(w, "invalid body", http.StatusBadRequest)
@@ -35,8 +35,12 @@ func (s *Server) apiBackendAdd(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "ip and port required", http.StatusBadRequest)
 		return
 	}
+	vhosts := ring.DefaultVhosts
+	if req.Vhosts != nil {
+		vhosts = *req.Vhosts
+	}
 	s.ring.AddBackend(&ring.Backend{
-		IP: req.IP, Port: req.Port, Tag: req.Tag, Up: true, Vhosts: req.Vhosts,
+		IP: req.IP, Port: req.Port, Tag: req.Tag, Up: true, Vhosts: vhosts,
 		LastUp: time.Now().Unix(),
 	})
 	s.broadcast(fmt.Sprintf("RING-CHANGE\t%s\tup\t%s", req.IP, req.Tag), nil)

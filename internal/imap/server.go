@@ -401,9 +401,6 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) wrapProxy(ln net.Listener) net.Listener {
 	if s.opts.ProxyProtocol {
 		timeout := s.opts.HAProxyTimeout
-		if timeout == 0 {
-			timeout = 3 * time.Second
-		}
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			ReadHeaderTimeout: timeout,

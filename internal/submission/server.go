@@ -91,9 +91,7 @@ func New(opts Options) *Server {
 	if r := opts.Config.MaxRecipients; r > 0 {
 		srv.MaxRecipients = r
 	}
-	if l := opts.Config.MaxLineLength; l > 0 {
-		srv.MaxLineLength = l
-	}
+	srv.MaxLineLength = opts.Config.MaxLineLength
 	srv.AllowInsecureAuth = !opts.DisablePlainAuth
 	srv.ReadTimeout = 5 * time.Minute
 	srv.WriteTimeout = 5 * time.Minute

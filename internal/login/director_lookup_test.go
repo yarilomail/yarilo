@@ -144,7 +144,7 @@ func TestApplyBackendPort(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{opts: Options{BackendPort: tc.port}}
+			s := &Server{opts: testOpts(Options{BackendPort: tc.port})}
 			if got := s.applyBackendPort(tc.addr); got != tc.want {
 				t.Fatalf("applyBackendPort(%q) = %q, want %q", tc.addr, got, tc.want)
 			}

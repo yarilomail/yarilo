@@ -58,12 +58,10 @@ type IntrospectionConfig struct {
 	Audience       string
 	RequiredScopes []string
 
-	// ExpireGrace allows tokens whose `exp` lies within this many
-	// seconds of now to still pass. Default 60s. Introspection
-	// endpoints typically return absolute `exp` claims.
+	// ExpireGrace is the clock-skew tolerance on `exp`; 0 allows none.
 	ExpireGrace time.Duration
 
-	// HTTPTimeout caps the introspection round-trip. Default 5s.
+	// HTTPTimeout caps the introspection round-trip.
 	HTTPTimeout time.Duration
 
 	// HTTPClient is the underlying transport. nil → an
@@ -104,12 +102,6 @@ func NewIntrospectionValidator(cfg IntrospectionConfig) (*IntrospectionValidator
 	}
 	if cfg.UsernameAttribute == "" {
 		cfg.UsernameAttribute = "email"
-	}
-	if cfg.ExpireGrace == 0 {
-		cfg.ExpireGrace = 60 * time.Second
-	}
-	if cfg.HTTPTimeout == 0 {
-		cfg.HTTPTimeout = 5 * time.Second
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {

@@ -55,9 +55,6 @@ type Client struct {
 }
 
 func New(opts Options) *Client {
-	if opts.Interval <= 0 {
-		opts.Interval = 10 * time.Second
-	}
 	if opts.Healthy == nil {
 		opts.Healthy = func() bool { return true }
 	}

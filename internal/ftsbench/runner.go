@@ -113,12 +113,13 @@ func Run(cfg Config) (Report, error) {
 		return Report{}, fmt.Errorf("ftsbench: language chain: %w", err)
 	}
 	svc, err := ftsservice.New(ftsservice.Options{
-		Engine:      flatcurve.New(flatcurve.Options{}),
+		Engine:      flatcurve.New(flatcurve.Options{CommitLimit: 500, MinTermSize: 2, RotateCount: 5000}),
 		Mailbox:     mb,
 		Index:       idx,
 		ResolveUser: func(string) (*mailbox.UserInfo, error) { return info, nil },
 		Chain:       chain,
 		CommitLimit: 500,
+		Workers:     1,
 	})
 	if err != nil {
 		return Report{}, fmt.Errorf("ftsbench: service: %w", err)

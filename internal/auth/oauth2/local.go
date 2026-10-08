@@ -39,16 +39,14 @@ type LocalJWTConfig struct {
 	// the mail user identity. Default "email".
 	UsernameAttribute string
 
-	// ExpireGrace allows tokens whose `exp` lies within this many
-	// seconds of now to still pass. Clock-skew tolerance. Default
-	// 60 seconds.
+	// ExpireGrace is the clock-skew tolerance on `exp`; 0 allows none.
 	ExpireGrace time.Duration
 
 	// RefreshInterval is how often the JWKS cache silently
 	// refreshes in the background. Default 1 hour.
 	RefreshInterval time.Duration
 
-	// HTTPTimeout caps the JWKS fetch round-trip. Default 5s.
+	// HTTPTimeout caps the JWKS fetch round-trip.
 	HTTPTimeout time.Duration
 }
 
@@ -60,10 +58,8 @@ type LocalJWTValidator struct {
 	kf  keyfunc.Keyfunc
 }
 
-// NewLocalJWTValidator constructs the validator and prefetches the
-// JWKS so the first login does not pay the round-trip latency. A
-// JWKS-fetch failure at construction time returns an error so the
-// operator notices misconfiguration immediately.
+// NewLocalJWTValidator prefetches the JWKS, so the first login does not pay for
+// it and a misconfiguration fails at construction.
 func NewLocalJWTValidator(ctx context.Context, cfg LocalJWTConfig) (*LocalJWTValidator, error) {
 	if cfg.JWKSURL == "" {
 		return nil, fmt.Errorf("oauth2: LocalJWT requires JWKSURL")
@@ -71,14 +67,8 @@ func NewLocalJWTValidator(ctx context.Context, cfg LocalJWTConfig) (*LocalJWTVal
 	if cfg.UsernameAttribute == "" {
 		cfg.UsernameAttribute = "email"
 	}
-	if cfg.ExpireGrace == 0 {
-		cfg.ExpireGrace = 60 * time.Second
-	}
 	if cfg.RefreshInterval == 0 {
 		cfg.RefreshInterval = time.Hour
-	}
-	if cfg.HTTPTimeout == 0 {
-		cfg.HTTPTimeout = 5 * time.Second
 	}
 	kf, err := keyfunc.NewDefaultCtx(ctx, []string{cfg.JWKSURL})
 	if err != nil {

@@ -7,7 +7,7 @@ import "testing"
 // Without a per-copy term the folder is named once however many copies of the
 // message it holds: the retraction of one must not take the folder with it.
 func TestTwoCopiesInOneFolderKeepTheFolderSearchable(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	guid := testGUID(1)
 	indexCopy(t, ui, inbox, 11, guid, nil, []string{"alpha"})
 	indexCopy(t, ui, inbox, 12, guid, nil, []string{"alpha"})
@@ -28,7 +28,7 @@ func TestTwoCopiesInOneFolderKeepTheFolderSearchable(t *testing.T) {
 // The last copy in a folder takes the folder term, and only that: the message
 // stays searchable wherever else it lives.
 func TestTheLastCopyInAFolderLeavesTheOther(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	guid := testGUID(1)
 	indexCopy(t, ui, inbox, 11, guid, nil, []string{"needle"})
 	indexCopy(t, ui, archive, 21, guid, nil, []string{"needle"})

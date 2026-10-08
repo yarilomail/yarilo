@@ -30,15 +30,15 @@ func serviceOn(t *testing.T, root string, idle time.Duration) (*Service, *mailbo
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New(Options{
-		Engine:            flatcurve.New(flatcurve.Options{}),
+	svc, err := New(testOpts(Options{
+		Engine:            flatcurve.New(flatcurve.Options{CommitLimit: 500, MinTermSize: 2, RotateCount: 5000}),
 		Mailbox:           maildir.New(),
 		Index:             file.New(),
 		ResolveUser:       func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:             chain,
 		CommitLimit:       2,
 		HandleIdleTimeout: idle,
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

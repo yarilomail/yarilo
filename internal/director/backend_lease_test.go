@@ -14,7 +14,7 @@ func hasBackend(s *Server, ip string) bool {
 // TestBackendLease_SeqFreshness: only a strictly newer per-origin seq
 // refreshes the lease; a stale/duplicate seq does not (#776).
 func TestBackendLease_SeqFreshness(t *testing.T) {
-	s := NewWithOptions(Options{})
+	s := NewWithOptions(testOptions(Options{}))
 	if !s.recordBackendSeen("10.0.0.1", 5) {
 		t.Fatal("first heartbeat must be fresh")
 	}
@@ -33,11 +33,11 @@ func TestBackendLease_SeqFreshness(t *testing.T) {
 // heartbeating is removed once its last-seen exceeds BackendExpire; a second
 // (static) backend keeps the tag alive so the guard does not block removal.
 func TestBackendLease_ExpiresStaleHeartbeat(t *testing.T) {
-	s := NewWithOptions(Options{BackendExpire: 50 * time.Millisecond})
+	s := NewWithOptions(testOptions(Options{BackendExpire: 50 * time.Millisecond}))
 	// A static (non-lease) sibling so the expiring one is not the last of the tag.
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.2", Port: 10143, Tag: "imap", Up: true})
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.2", Port: 10143, Tag: "imap", Up: true})
 	// The heartbeating one.
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
 	s.recordBackendSeen("10.0.0.1", 1)
 
 	time.Sleep(80 * time.Millisecond)
@@ -54,9 +54,9 @@ func TestBackendLease_ExpiresStaleHeartbeat(t *testing.T) {
 // TestBackendLease_RefreshedHeartbeatSurvives: a backend that keeps
 // heartbeating is not expired.
 func TestBackendLease_RefreshedHeartbeatSurvives(t *testing.T) {
-	s := NewWithOptions(Options{BackendExpire: 100 * time.Millisecond})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.2", Port: 10143, Tag: "imap", Up: true})
+	s := NewWithOptions(testOptions(Options{BackendExpire: 100 * time.Millisecond}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.2", Port: 10143, Tag: "imap", Up: true})
 	s.recordBackendSeen("10.0.0.1", 1)
 	s.recordBackendSeen("10.0.0.2", 1)
 
@@ -78,8 +78,8 @@ func TestBackendLease_RefreshedHeartbeatSurvives(t *testing.T) {
 // even when its lease is stale — a suspect-but-only backend beats a total
 // blackhole.
 func TestBackendLease_NeverExpiresLastOfTag(t *testing.T) {
-	s := NewWithOptions(Options{BackendExpire: 50 * time.Millisecond})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
+	s := NewWithOptions(testOptions(Options{BackendExpire: 50 * time.Millisecond}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
 	s.recordBackendSeen("10.0.0.1", 1)
 
 	time.Sleep(80 * time.Millisecond)
@@ -93,8 +93,8 @@ func TestBackendLease_NeverExpiresLastOfTag(t *testing.T) {
 // TestBackendLease_StaticNeverManaged: a backend that never heartbeats is
 // not in the lease map and is never expired even with no siblings.
 func TestBackendLease_StaticNeverManaged(t *testing.T) {
-	s := NewWithOptions(Options{BackendExpire: 20 * time.Millisecond})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.9", Port: 10143, Tag: "imap", Up: true})
+	s := NewWithOptions(testOptions(Options{BackendExpire: 20 * time.Millisecond}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.9", Port: 10143, Tag: "imap", Up: true})
 	time.Sleep(50 * time.Millisecond)
 	s.expireStaleBackends(20 * time.Millisecond)
 	if !hasBackend(s, "10.0.0.9") {
@@ -107,8 +107,8 @@ func TestBackendLease_StaticNeverManaged(t *testing.T) {
 // this director's lease — the property that makes a load-balanced heartbeat
 // correct (#776).
 func TestBackendLease_GossipedHeartbeatRefreshes(t *testing.T) {
-	s := NewWithOptions(Options{})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
+	s := NewWithOptions(testOptions(Options{}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
 
 	// A gossiped RING-CHANGE up carrying the backend's seq (4th field).
 	applyRingChangeFields(s, []string{"10.0.0.1", "up", "imap", "7"})
@@ -127,7 +127,7 @@ func TestBackendLease_GossipedHeartbeatRefreshes(t *testing.T) {
 // ClusterIP) adds it to its ring for routing — closing the "routed on 1 of N
 // directors" gap (#776 PR-2). Without the port, SetUp alone could not.
 func TestBackendLease_GossipedUpAddsUnknownBackend(t *testing.T) {
-	s := NewWithOptions(Options{})
+	s := NewWithOptions(testOptions(Options{}))
 	// Backend is unknown to this director (no handshake, no prior gossip).
 	if hasBackend(s, "10.0.0.42") {
 		t.Fatal("precondition: backend must be unknown")

@@ -87,20 +87,26 @@ func New(cfg dict.Config) (dict.Dict, error) {
 		return nil, err
 	}
 
-	db, err := stdsql.Open(driverName(driver), dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", driver, err)
-	}
-	// The quota_clone mirror writes on every mail save, so Go's two-idle-connection
-	// default throttles the hottest SQL path. Overrides come from the dict's own
-	// settings map, alongside the DSN.
-	sqlpool.Apply(db, sqlpool.Config{
+	pool := sqlpool.Config{
 		Driver:                 driver,
 		MaxOpenConns:           intSetting(cfg.Settings, "max_open_conns"),
 		MaxIdleConns:           intSetting(cfg.Settings, "max_idle_conns"),
 		ConnMaxLifetimeSeconds: intSetting(cfg.Settings, "conn_max_lifetime"),
 		ConnMaxIdleTimeSeconds: intSetting(cfg.Settings, "conn_max_idle_time"),
-	})
+	}
+	for _, k := range []string{"max_open_conns", "max_idle_conns", "conn_max_lifetime", "conn_max_idle_time"} {
+		if n := intSetting(cfg.Settings, k); n != nil && *n < 0 {
+			return nil, fmt.Errorf("setting %q is %d, negative; 0 lifts the limit, leaving it out keeps the default", k, *n)
+		}
+	}
+
+	db, err := stdsql.Open(driverName(driver), dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", driver, err)
+	}
+	// The quota_clone mirror writes on every mail save, so Go's two-idle-connection
+	// default throttles the hottest SQL path.
+	sqlpool.Apply(db, pool)
 	if err := db.Ping(); err != nil {
 		db.Close() //nolint:errcheck
 		return nil, fmt.Errorf("ping: %w", err)
@@ -685,18 +691,18 @@ func (t *tx) commitMapped(ctx context.Context) (dict.CommitResult, error) {
 	return dict.CommitOK, nil
 }
 
-// intSetting reads an integer from a dict settings map, accepting the int,
-// int64 or float64 that YAML decoding may produce. Anything else yields 0,
-// which sqlpool reads as "use the default".
-func intSetting(settings map[string]any, key string) int {
+// intSetting reads an int, int64 or float64 setting; nil when absent.
+func intSetting(settings map[string]any, key string) *int {
+	var n int
 	switch v := settings[key].(type) {
 	case int:
-		return v
+		n = v
 	case int64:
-		return int(v)
+		n = int(v)
 	case float64:
-		return int(v)
+		n = int(v)
 	default:
-		return 0
+		return nil
 	}
+	return &n
 }

@@ -16,19 +16,9 @@ import (
 // the backend early (rehash + RING-CHANGE down). The TTL path (#776) stays as
 // the backstop for the single-reporter / no-report cases.
 
-func (o *Options) unreachableReporters() int {
-	if o.UnreachableReporters <= 0 {
-		return 2
-	}
-	return o.UnreachableReporters
-}
+func (o *Options) unreachableReporters() int { return o.UnreachableReporters }
 
-func (o *Options) unreachableWindow() time.Duration {
-	if o.UnreachableWindow <= 0 {
-		return 5 * time.Second
-	}
-	return o.UnreachableWindow
-}
+func (o *Options) unreachableWindow() time.Duration { return o.UnreachableWindow }
 
 // recordUnreachable registers one reporter's unreachable report for backendIP
 // and returns true when the number of DISTINCT reporters still inside the
@@ -37,6 +27,9 @@ func (o *Options) unreachableWindow() time.Duration {
 func (s *Server) recordUnreachable(backendIP, reporterID string, now time.Time) bool {
 	window := s.opts.unreachableWindow()
 	threshold := s.opts.unreachableReporters()
+	if window <= 0 || threshold <= 0 {
+		return false
+	}
 
 	s.unreachMu.Lock()
 	defer s.unreachMu.Unlock()

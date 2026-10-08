@@ -84,15 +84,8 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 	}
 }
 
-// mapLogRotation forwards the rotation triple to the mdbox map. An unset triple
-// (a config that never went through Load, or one that leaves the keys out)
-// leaves the map package's own defaults in place rather than passing zeros,
-// which would read as "rotation disabled" — the same guard the file index puts
-// in front of WithLogCompaction.
+// mapLogRotation forwards the rotation triple to the mdbox map.
 func mapLogRotation(sc config.StorageConfig) mdbox.Option {
-	if sc.MailIndexLogRotateMinSize == 0 && sc.MailIndexLogRotateMaxSize == 0 && sc.MailIndexLogRotateMinAge == 0 {
-		return func(*mdbox.Backend) {}
-	}
 	return mdbox.WithLogRotation(sc.MailIndexLogRotateMinSize, sc.MailIndexLogRotateMaxSize,
 		time.Duration(sc.MailIndexLogRotateMinAge)*time.Second)
 }

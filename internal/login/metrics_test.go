@@ -47,7 +47,7 @@ func TestObservePhaseRecordsUnderProtocolLabel(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := &Server{opts: Options{Protocol: tc.protocol}}
+			srv := &Server{opts: testOpts(Options{Protocol: tc.protocol})}
 			before := testutil.CollectAndCount(phaseSeconds)
 			srv.observePhase(tc.phase, time.Now())
 			if got := testutil.CollectAndCount(phaseSeconds); got < before {
@@ -79,7 +79,7 @@ func TestIncResultRecordsEveryOutcome(t *testing.T) {
 		{"preamble error", "preamble_error"},
 		{"tls error", "tls_error"},
 	}
-	srv := &Server{opts: Options{Protocol: ProtocolIMAP}}
+	srv := &Server{opts: testOpts(Options{Protocol: ProtocolIMAP})}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			srv.incResult(tc.result)

@@ -3,13 +3,14 @@ package director
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/internal/cluster/ring"
 )
 
 func leastSessionsServer(t *testing.T) *Server {
 	t.Helper()
-	return NewWithOptions(Options{AssignmentPolicy: "least_sessions", AntiEntropyInterval: -1})
+	return NewWithOptions(testOptions(Options{AssignmentPolicy: "least_sessions", UserExpire: 15 * time.Minute}))
 }
 
 // addSess injects an active session into the registry (as SESSION-OPEN would).
@@ -102,7 +103,7 @@ func TestPickBackend_VhostsNormalization(t *testing.T) {
 }
 
 func TestPickBackend_HashPolicyUnchanged(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1}) // default = hash
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1})) // default = hash
 	for i := 1; i <= 3; i++ {
 		s.ring.AddBackend(&ring.Backend{IP: fmt.Sprintf("10.0.0.%d", i), Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 	}

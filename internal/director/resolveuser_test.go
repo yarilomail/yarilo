@@ -10,9 +10,9 @@ import (
 // SAME pod a login LOOKUP would — override → sticky userDir pin → ring hash — so
 // a per-user backend-api op hits the user's pinned pod (single-writer).
 func TestResolveUserBackend_Sticky(t *testing.T) {
-	s := NewWithOptions(Options{})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "a", Up: true})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.2", Port: 10143, Tag: "a", Up: true})
+	s := NewWithOptions(testOptions(Options{}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "a", Up: true})
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.2", Port: 10143, Tag: "a", Up: true})
 
 	// Fresh user: hash fallback, not sticky.
 	ip, _, _, sticky := s.resolveUserBackend("fresh@d.test")
@@ -44,8 +44,8 @@ func TestResolveUserBackend_Sticky(t *testing.T) {
 // TestResolveUserBackend_StalePinFallsBack: a pin to a down/removed backend must
 // fall back to the ring, not return the dead pod.
 func TestResolveUserBackend_StalePinFallsBack(t *testing.T) {
-	s := NewWithOptions(Options{})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "a", Up: true})
+	s := NewWithOptions(testOptions(Options{}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "a", Up: true})
 	s.userDir.Set("u@d.test", "10.9.9.9:10143", false) // not in the ring
 
 	ip, _, _, sticky := s.resolveUserBackend("u@d.test")
@@ -55,7 +55,7 @@ func TestResolveUserBackend_StalePinFallsBack(t *testing.T) {
 }
 
 func TestResolveUserBackend_EmptyRing(t *testing.T) {
-	s := NewWithOptions(Options{})
+	s := NewWithOptions(testOptions(Options{}))
 	if ip, _, _, _ := s.resolveUserBackend("u@d.test"); ip != "" {
 		t.Fatalf("empty ring: want \"\", got %q", ip)
 	}

@@ -87,7 +87,7 @@ func TestDeliveriesShareTheMasterConnection(t *testing.T) {
 	pool := authclient.NewPool(m.ln.Addr().String(), nil, 2, time.Minute)
 	defer pool.Close() //nolint:errcheck
 
-	opts := Options{AuthMasterAddr: m.ln.Addr().String(), AuthMasterPool: pool}
+	opts := testOpts(Options{AuthMasterAddr: m.ln.Addr().String(), AuthMasterPool: pool})
 	for i := 0; i < 4; i++ {
 		s := &session{opts: opts, peerIP: "10.0.0.1"}
 		if _, err := s.issueToken("u@example.com", "warden-1"); err != nil {
@@ -104,7 +104,7 @@ func TestDeliveriesShareTheMasterConnection(t *testing.T) {
 	// And without a pool the old shape stays available: a session dials for
 	// itself, which is what a standalone or test wiring gets.
 	before := m.count()
-	plain := &session{opts: Options{AuthMasterAddr: m.ln.Addr().String()}, peerIP: "10.0.0.1"}
+	plain := &session{opts: testOpts(Options{AuthMasterAddr: m.ln.Addr().String()}), peerIP: "10.0.0.1"}
 	if _, err := plain.issueToken("u@example.com", "warden-1"); err != nil {
 		t.Fatalf("unpooled token: %v", err)
 	}

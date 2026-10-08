@@ -80,7 +80,7 @@ func (d *countingDirector) await(t *testing.T, want string) {
 // confirms at once on a user whose session was never touched.
 func TestLiveSessionsAreReannouncedOnReconnect(t *testing.T) {
 	d := newCountingDirector(t)
-	s := New(Options{DirectorAddr: d.ln.Addr().String(), LocalIP: "127.0.0.1", Protocol: ProtocolIMAP})
+	s := New(testOpts(Options{DirectorAddr: d.ln.Addr().String(), LocalIP: "127.0.0.1", Protocol: ProtocolIMAP}))
 
 	backend, peer := net.Pipe()
 	t.Cleanup(func() { backend.Close(); peer.Close() })
@@ -106,7 +106,7 @@ func TestLiveSessionsAreReannouncedOnReconnect(t *testing.T) {
 // dead, and the close would be written into it and lost.
 func TestSessionCloseUsesTheCurrentWatch(t *testing.T) {
 	d := newCountingDirector(t)
-	s := New(Options{DirectorAddr: d.ln.Addr().String(), LocalIP: "127.0.0.1", Protocol: ProtocolIMAP})
+	s := New(testOpts(Options{DirectorAddr: d.ln.Addr().String(), LocalIP: "127.0.0.1", Protocol: ProtocolIMAP}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -141,7 +141,7 @@ func TestSessionCloseUsesTheCurrentWatch(t *testing.T) {
 // SESSION-OPEN must be followed by a list that contains it.
 func TestSyncNeverOmitsASessionItAnnouncedBefore(t *testing.T) {
 	d := newCountingDirector(t)
-	s := New(Options{DirectorAddr: d.ln.Addr().String(), LocalIP: "127.0.0.1", Protocol: ProtocolIMAP})
+	s := New(testOpts(Options{DirectorAddr: d.ln.Addr().String(), LocalIP: "127.0.0.1", Protocol: ProtocolIMAP}))
 	s.sessions = map[string][]*liveSession{}
 
 	ctx, cancel := context.WithCancel(context.Background())
