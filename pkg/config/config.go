@@ -2125,6 +2125,12 @@ type PassdbEntry struct {
 	StaticPassword string            `koanf:"static_password"` // shared password ({SCHEME} or default scheme)
 	Nopassword     bool              `koanf:"nopassword"`      // accept any password (proxy front); requires empty static_password
 	Fields         map[string]string `koanf:"fields"`          // templated fields (%u/%n/%d); userdb_-prefixed → userdb, bare → passdb
+	// UsernameFilter limits the entry to matching names: masks split on spaces
+	// and commas, * and ?, a leading ! excludes. Empty takes every name.
+	UsernameFilter string `koanf:"username_filter"`
+	// StaticAllowAllUsers lets a static userdb answer any name; false first
+	// asks the passdbs whether the user exists, as the reference does.
+	StaticAllowAllUsers bool `koanf:"userdb_static_allow_all_users"`
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	// passwd_file_path carries no passdb_ prefix in the reference (verified in
 	// 2.4.4 source, package 3), so it is spelled exactly as the reference has

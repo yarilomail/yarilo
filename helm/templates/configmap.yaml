@@ -415,6 +415,12 @@ data:
           {{- if .nopassword }}
           nopassword: true
           {{- end }}
+          {{- with .username_filter }}
+          username_filter: {{ . | quote }}
+          {{- end }}
+          {{- if hasKey . "userdb_static_allow_all_users" }}
+          userdb_static_allow_all_users: {{ .userdb_static_allow_all_users }}
+          {{- end }}
           {{- with .fields }}
           fields:
             {{- range $k, $v := . }}
@@ -456,6 +462,9 @@ data:
             {{- end }}
             {{- if .skip_schema }}
             skip_schema: true
+            {{- end }}
+            {{- with .username_filter }}
+            username_filter: {{ . | quote }}
             {{- end }}
           {{- end }}
       token:
