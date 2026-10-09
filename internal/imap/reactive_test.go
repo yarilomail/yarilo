@@ -94,3 +94,20 @@ func TestDboxHealStaleMarkClearing(t *testing.T) {
 		})
 	}
 }
+
+// With dbox_reactive_rebuild off, a flagged folder reaches no heal: the
+// operator turned it off while the files are being restored.
+func TestDboxHealHonoursTheSwitch(t *testing.T) {
+	for _, c := range []struct {
+		enabled bool
+		want    int
+	}{{false, 0}, {true, 1}} {
+		box := &healBox{err: mdbox.ErrHealDeferred}
+		s := &session{srv: &Server{opts: Options{DboxReactiveRebuild: c.enabled}}}
+		h := &nsHandle{box: box, mbox: mailboxbase.Open(box, nil)}
+		s.dboxHealIfCorrupt(h, "INBOX", &mailbox.Folder{ID: 7, Name: "INBOX", Fsckd: true})
+		if box.calls != c.want {
+			t.Errorf("switch %v: the driver was called %d times, want %d", c.enabled, box.calls, c.want)
+		}
+	}
+}
