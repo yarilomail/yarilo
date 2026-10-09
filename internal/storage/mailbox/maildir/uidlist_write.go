@@ -441,6 +441,34 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry, seed 
 	return taken, nil
 }
 
+// dropRowsLocked removes the rows of messages the reconcile expunged; the
+// header's next uid stays, so a returning file takes a fresh uid (#2176).
+func (u *userMailbox) dropRowsLocked(folder string, bases map[string]struct{}) error {
+	var written *uidList
+	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
+	err := u.withUIDList(folder, lockSiteReconcileApply, func(l *uidList) error {
+		beforeRows = len(l.records)
+		if listDebug() {
+			beforeMod, beforeSize = u.listStat(folder)
+		}
+		kept := l.records[:0]
+		for _, rec := range l.records {
+			if _, gone := bases[rec.base]; !gone {
+				kept = append(kept, rec)
+			}
+		}
+		l.records = kept
+		written = l
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("maildir/sync: drop rows: %w", err)
+	}
+	u.debugListWrite("reconcile-expunge", folder, nil, "", beforeRows, beforeMod, beforeSize)
+	u.adoptWritten(folder, written)
+	return nil
+}
+
 // ensureUIDListLocked gives a folder with none a header-only list. A list
 // recreated for a folder with mail gets no UIDVALIDITY: the sync seeds the index's.
 func (u *userMailbox) ensureUIDListLocked(folder string, uidValidity uint32) error {
