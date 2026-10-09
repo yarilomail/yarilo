@@ -2,10 +2,10 @@ name: CI — develop
 
 ## The develop line: every green build feeds the sandbox.
 ##
-## Two differences from the master pipeline, both deliberate. Nothing here
-## reaches Docker Hub -- stable users pull only what master published. And no
+## Two differences from the main pipeline, both deliberate. Nothing here
+## reaches Docker Hub -- stable users pull only what main published. And no
 ## git tag and no GitHub release are created: a release number belongs to a
-## master merge, not to a build counter.
+## main merge, not to a build counter.
 ##
 ## Merged into the current line before `develop` exists. It activates when the
 ## branch appears, which is the point: the pipeline that feeds the sandbox
@@ -27,7 +27,7 @@ on:
       ## filter narrower than the gate's own list is a difference nobody
       ## declared.
       - ".github/workflows/**"
-  ## The same gate a PR into master gets. Without this a PR into develop ran
+  ## The same gate a PR into main gets. Without this a PR into develop ran
   ## nothing and was green because nothing had run. No paths, for the reason
   ## given in ci.yml: gate.yml holds the one list.
   pull_request:
@@ -36,15 +36,15 @@ on:
   workflow_dispatch:
 
 ## PR pushes supersede each other; a push to develop never does, because its
-## build feeds the sandbox and must finish. Same rule as the master line.
+## build feeds the sandbox and must finish. Same rule as the main line.
 concurrency:
   group: ci-develop-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/yarilo
-  ## Until master exists, dev images are candidates for the first stable
-  ## release. After it, the next release is master's version with the patch
+  ## Until main exists, dev images are candidates for the first stable
+  ## release. After it, the next release is main's version with the patch
   ## raised -- read from the branch rather than committed anywhere, because a
   ## number in a file on develop is a number someone has to remember to change.
   FIRST_RELEASE: "2.4.1"
@@ -85,17 +85,17 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          # The next release is master's version with the patch raised. Before
-          # master exists there is nothing to raise, so the first release
+          # The next release is main's version with the patch raised. Before
+          # main exists there is nothing to raise, so the first release
           # number stands in -- and the fallback is announced rather than
           # silent, because a wrong number here names images QA will pin.
-          if git fetch --quiet --depth=1 origin master 2>/dev/null &&
+          if git fetch --quiet --depth=1 origin main 2>/dev/null &&
              MASTER_VERSION=$(git show FETCH_HEAD:helm/Chart.yaml 2>/dev/null | awk '/^appVersion:/{gsub(/"/, ""); print $2}') &&
              [ -n "${MASTER_VERSION}" ]; then
             NEXT=$(echo "${MASTER_VERSION}" | awk -F. '{printf "%s.%s.%d", $1, $2, $3 + 1}')
           else
             NEXT="${FIRST_RELEASE}"
-            echo "::notice::no master branch yet; dev images are candidates for ${NEXT}"
+            echo "::notice::no main branch yet; dev images are candidates for ${NEXT}"
           fi
           # github.run_number is monotonic per workflow and never reused, which
           # is what an immutable name needs. It is not a commit count: two
