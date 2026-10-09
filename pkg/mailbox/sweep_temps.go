@@ -3,6 +3,7 @@ package mailbox
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -22,9 +23,9 @@ func SweepDue(dir string) bool {
 	return err != nil || time.Since(fi.ModTime()) >= SweepInterval
 }
 
-// SweepStaleTemps removes bodies a save never published; a young one is left,
-// its caller is about to name it (#1736). The caller holds and checked SweepDue.
-func SweepStaleTemps(dir string) (removed []string, err error) {
+// SweepStaleTemps removes old unpublished saves named prefix*, never a message (#2172);
+// a young one is about to be named (#1736). The caller holds and checked SweepDue.
+func SweepStaleTemps(dir, prefix string) (removed []string, err error) {
 	stamp := filepath.Join(dir, SweepStampName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -32,7 +33,7 @@ func SweepStaleTemps(dir string) (removed []string, err error) {
 	}
 	now := time.Now()
 	for _, e := range entries {
-		if e.Name() == SweepStampName {
+		if e.Name() == SweepStampName || !strings.HasPrefix(e.Name(), prefix) {
 			continue
 		}
 		info, ierr := e.Info()
