@@ -65,6 +65,10 @@ type Options struct {
 	// info about whether the user exists. Zero disables.
 	FailureDelay time.Duration
 
+	// DboxReactiveRebuild gates the login-time heal of an FSCKD INBOX, as it
+	// gates the heal on SELECT in IMAP.
+	DboxReactiveRebuild bool
+
 	// OAuth2Enabled enables the OAUTHBEARER/XOAUTH2 SASL mechanisms.
 	// Set when at least one OAuth provider is configured.
 	OAuth2Enabled bool

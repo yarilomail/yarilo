@@ -409,6 +409,8 @@ func New(cfg *config.Config) (*Server, error) {
 			ConnLimit:          connLimiter,
 			Locker:             locker,
 			FailureDelay:       time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
+
+			DboxReactiveRebuild: cfg.Storage.DboxReactiveRebuild,
 		})
 	}
 
