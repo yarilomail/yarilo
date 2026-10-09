@@ -16,7 +16,7 @@ func (u *userMailbox) SweepTemps(folder string) {
 	var removed []string
 	err := u.withMailboxLockSite(folder, "sweep-temps", func() error {
 		var serr error
-		removed, serr = mailbox.SweepStaleTemps(dir)
+		removed, serr = mailbox.SweepStaleTemps(dir, temporaryPrefix)
 		return serr
 	})
 	if err != nil {
