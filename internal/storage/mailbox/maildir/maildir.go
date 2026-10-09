@@ -566,6 +566,8 @@ type userMailbox struct {
 	// pending holds the explicit GUID a save or a move must record, until the
 	// uid exists and the record can be written (#1703).
 	pending map[string][16]byte
+	// received holds a save's INTERNALDATE until AssignUID publishes it (#2175).
+	received map[string]time.Time
 }
 
 // withMailboxLockSite serialises this pod's own sessions. A second process is
@@ -845,20 +847,14 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	return finalName, sc.phys + sc.lfNoCR, effGUID, nil
 }
 
-// SaveReceived is Save: the name carries no date, and the file gets its
-// INTERNALDATE once it leaves tmp/, in StampReceived (#2175).
-func (u *userMailbox) SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, _ time.Time) (string, uint32, [16]byte, error) {
-	return u.Save(folder, r, uid, size, flags, keywords, guid)
-}
-
-// StampReceived sets the published file's mtime, which Scan reads as the
-// INTERNALDATE.
-func (u *userMailbox) StampReceived(folder, name string, when time.Time) error {
-	path, ok := u.locate(folder, name)
-	if !ok {
-		return fmt.Errorf("maildir/stamp: %q is not in cur/ or new/", name)
+// SaveReceived is Save with the INTERNALDATE kept until AssignUID, which dates
+// the file in tmp/ just before publishing it (#2175).
+func (u *userMailbox) SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, received time.Time) (string, uint32, [16]byte, error) {
+	name, vsize, out, err := u.Save(folder, r, uid, size, flags, keywords, guid)
+	if err == nil && !received.IsZero() {
+		u.rememberReceived(folder, name, received)
 	}
-	return os.Chtimes(path, when, when)
+	return name, vsize, out, err
 }
 
 // Move keeps the base name, so the derived GUID and its EMAILID survive (RFC
