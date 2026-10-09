@@ -23,10 +23,8 @@ func SweepDue(dir string) bool {
 	return err != nil || time.Since(fi.ModTime()) >= SweepInterval
 }
 
-// SweepStaleTemps removes bodies a save never published; a young one is left,
-// its caller is about to name it (#1736). Only names with prefix are touched:
-// a directory that also holds messages passes its temp prefix (#2172). The
-// caller holds and checked SweepDue.
+// SweepStaleTemps removes old unpublished saves named prefix*, never a message (#2172);
+// a young one is about to be named (#1736). The caller holds and checked SweepDue.
 func SweepStaleTemps(dir, prefix string) (removed []string, err error) {
 	stamp := filepath.Join(dir, SweepStampName)
 	entries, err := os.ReadDir(dir)
