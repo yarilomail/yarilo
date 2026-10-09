@@ -347,7 +347,13 @@ const driverName = "sdbox"
 // UserIndex.AppendMessage. flags are ignored — sdbox delegates flag storage to
 // the index. A zero guid is generated here; a non-zero one is stored verbatim so
 // EMAILID survives COPY/MOVE. The effective GUID is returned.
-func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
+func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
+	return u.SaveReceived(folder, r, uid, size, flags, keywords, guid, time.Time{})
+}
+
+// SaveReceived writes the INTERNALDATE into R, the field a rebuild reads; zero
+// is the save time (#2175).
+func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte, received time.Time) (string, uint32, [16]byte, error) {
 	whole := time.Now()
 	defer func() { mailboxmetrics.ObserveSave(driverName, time.Since(whole)) }()
 
@@ -376,6 +382,10 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 		guid = randomGUID()
 	}
 	now := uint32(time.Now().Unix())
+	recv := now
+	if !received.IsZero() {
+		recv = uint32(received.Unix())
+	}
 
 	var buf bytes.Buffer
 	buf.Write(encodeFileHeaderLine(now))
@@ -384,7 +394,7 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 	// R, V, G: the order the reference writes, so a store of ours differs from
 	// one of theirs in no byte a reader has to skip past.
 	buf.Write(encodeMetadataBlock([]metadataEntry{
-		{Key: metaKeyReceived, Value: fmt.Sprintf("%x", now)},
+		{Key: metaKeyReceived, Value: fmt.Sprintf("%x", recv)},
 		{Key: metaKeyVirtualSize, Value: fmt.Sprintf("%x", virtSize)},
 		{Key: metaKeyGUID, Value: guidHex(guid)},
 	}))
@@ -424,6 +434,12 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 		return "", 0, noGUID, err
 	}
 	return tempName, virtSize, guid, nil
+}
+
+// StampReceived sets the named file's mtime too, for readers that take the date
+// from the file; this driver's own rebuild reads R.
+func (u *userMailbox) StampReceived(folder, name string, when time.Time) error {
+	return os.Chtimes(filepath.Join(u.folderPath(folder), name), when, when)
 }
 
 // AssignUID gives a saved message the only name the reference knows for it,
@@ -660,9 +676,12 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 			Size:         uint32(info.Size()),
 			InternalDate: info.ModTime(),
 		}
-		// GUID comes from the metadata block; the index records what we report.
-		if guid, _, _, err := readMetadata(filepath.Join(u.folderPath(folder), e.Name())); err == nil {
+		// GUID and R come from the metadata block; mtime is only the fallback.
+		if guid, _, when, err := readMetadata(filepath.Join(u.folderPath(folder), e.Name())); err == nil {
 			meta.GUID = guid
+			if !when.IsZero() {
+				meta.InternalDate = when
+			}
 		}
 		out = append(out, meta)
 	}

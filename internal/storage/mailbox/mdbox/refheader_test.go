@@ -71,7 +71,7 @@ func TestRecordsAreReadAtTheSizeTheFileAnnounces(t *testing.T) {
 			// And the trailer parses after a header of that size: a body read
 			// two bytes wide leaves the file positioned inside the body, and
 			// the GUID comes back empty or wrong.
-			gotBody, gotGUID, _, err := readRecordBodyAndTrailer(f, 0)
+			gotBody, gotGUID, _, _, err := readRecordBodyAndTrailer(f, 0)
 			if err != nil {
 				t.Fatalf("read with trailer: %v", err)
 			}

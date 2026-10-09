@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -131,6 +132,11 @@ func (b *Box) WriteFlags(f *mailbox.Folder, folder string, writes []mailbox.Flag
 // Save writes a body under the driver's own name; nothing records it yet.
 func (b *Box) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	return b.store.Save(folder, r, uid, size, flags, keywords, guid)
+}
+
+// SaveReceived is Save with the INTERNALDATE kept in storage.
+func (b *Box) SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, received time.Time) (string, uint32, [16]byte, error) {
+	return b.store.SaveReceived(folder, r, uid, size, flags, keywords, guid, received)
 }
 
 // Discard removes a saved body whose record did not land; m is the record the

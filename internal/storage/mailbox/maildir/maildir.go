@@ -845,6 +845,22 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	return finalName, sc.phys + sc.lfNoCR, effGUID, nil
 }
 
+// SaveReceived is Save: the name carries no date, and the file gets its
+// INTERNALDATE once it leaves tmp/, in StampReceived (#2175).
+func (u *userMailbox) SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, _ time.Time) (string, uint32, [16]byte, error) {
+	return u.Save(folder, r, uid, size, flags, keywords, guid)
+}
+
+// StampReceived sets the published file's mtime, which Scan reads as the
+// INTERNALDATE.
+func (u *userMailbox) StampReceived(folder, name string, when time.Time) error {
+	path, ok := u.locate(folder, name)
+	if !ok {
+		return fmt.Errorf("maildir/stamp: %q is not in cur/ or new/", name)
+	}
+	return os.Chtimes(path, when, when)
+}
+
 // Move keeps the base name, so the derived GUID and its EMAILID survive (RFC
 // 8474). A collision falls back to a fresh name with an explicit GUID override.
 func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte) (string, [16]byte, error) {
