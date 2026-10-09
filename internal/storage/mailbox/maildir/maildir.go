@@ -1512,6 +1512,11 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 			return err
 		}
 		tracked := make(map[string]struct{}, len(existing))
+		// Read once, and only when a record's base is missing from the scan:
+		// the old name a flag change left behind proves nothing (#2176).
+		var basesNow map[string]struct{}
+		basesRead, basesOK := false, false
+		var vanishedBases map[string]struct{}
 		var restamp map[uint32][16]byte
 		var relink []listEntry
 		var zeroGUID [16]byte
@@ -1555,13 +1560,23 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 			if !ok {
 				// Absent from an unlocked scan, so confirmed before the record
 				// is dropped.
-				if u.stillOnDisk(folder.Name, base) {
+				if !basesRead {
+					basesNow, basesOK = u.basesOnDisk(folder.Name)
+					basesRead = true
+				}
+				if _, here := basesNow[base]; here || !basesOK {
 					continue
 				}
 				// Vanished out of band → expunge (QRESYNC tombstone).
 				if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
 					return fmt.Errorf("maildir/sync: expunge %d: %w", m.UID, err)
 				}
+				// The row goes with the record: left behind, it hands the
+				// tombstoned uid back to the file if it ever returns (#2176).
+				if vanishedBases == nil {
+					vanishedBases = make(map[string]struct{}, 4)
+				}
+				vanishedBases[base] = struct{}{}
 				st.Expunged++
 				continue
 			}
@@ -1600,6 +1615,11 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 			}
 		}
 
+		if len(vanishedBases) > 0 {
+			if err := u.dropRowsLocked(folder.Name, vanishedBases); err != nil {
+				return err
+			}
+		}
 		if len(relink) > 0 {
 			if _, err := u.recordUIDsLocked(folder.Name, relink, seed); err != nil {
 				return err
@@ -1634,8 +1654,8 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 				Keywords:     rec.Keywords,
 				GUID:         rec.GUID,
 			}
-			// The list already says which uid this file has, and that answer
-			// wins: a second one takes the row from the record holding it (#1739).
+			// The list's uid for this file wins (#1739). The index cannot refuse a
+			// returned uid, allocated before the append, so expunges drop the row (#2176).
 			if uid, known := u.UIDFor(folder.Name, rec.Filename); known {
 				m.UID = uid
 				if err := idx.AppendMessage(folder.ID, m); err != nil {
@@ -2643,6 +2663,26 @@ func (u *userMailbox) stillOnDisk(folder, filename string) bool {
 		}
 	}
 	return false
+}
+
+// basesOnDisk is every base in cur/ and new/, read under the reconcile's hold;
+// false when a directory could not be read, and then nothing is dropped.
+func (u *userMailbox) basesOnDisk(folder string) (map[string]struct{}, bool) {
+	if u.inSection.Load() > 0 {
+		u.sectionDir.Add(1)
+	}
+	out := make(map[string]struct{})
+	dir := u.folderPath(folder)
+	for _, sub := range []string{"cur", "new"} {
+		entries, err := os.ReadDir(filepath.Join(dir, sub))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, false
+		}
+		for _, e := range entries {
+			out[maildirBase(e.Name())] = struct{}{}
+		}
+	}
+	return out, true
 }
 
 // hasNewMail reports whether new/ holds anything to move: one unlocked read
