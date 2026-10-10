@@ -17,8 +17,17 @@ var metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 var metricLockHold = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Name:    "maildir_lock_hold_seconds",
 	Help:    "Time one call held the uidlist, by the call that took it. Pairs with fileindex_lock_hold_seconds, which measures the journal.",
-	Buckets: prometheus.ExponentialBuckets(0.0001, 4, 10),
+	Buckets: lockHoldBuckets(),
 }, []string{"site"})
+
+// lockHoldBuckets keeps the fine low end and steps by 25 ms from 25 to 500 ms,
+// where a save section's tail lies since it holds the list over the index
+// append (#2184): the old 102/410 ms bounds could not place its p99.
+func lockHoldBuckets() []float64 {
+	b := []float64{0.0001, 0.0004, 0.0016, 0.0064}
+	b = append(b, prometheus.LinearBuckets(0.025, 0.025, 20)...)
+	return append(b, 1.6384, 6.5536, 26.2144)
+}
 
 // metricPartialEmpty counts arrivals passes that found nothing to move: one
 // readdir of an empty directory, which is what they cost (#1952).
