@@ -318,11 +318,12 @@ func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
 		l.guid = randomGUID()
 	}
 
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	// Unique per writer: a shared name is one file two writers fill (#2179).
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
 	if err != nil {
 		return fmt.Errorf("maildir/uidlist: create tmp: %w", err)
 	}
+	tmp := f.Name()
 	bw := bufio.NewWriter(f)
 	fmt.Fprintf(bw, "3 V%d N%d G%s\n", l.uidValidity, l.nextUID, l.guid) //nolint:errcheck
 	for _, rec := range l.records {
@@ -363,10 +364,11 @@ var (
 	beforeUIDListRename func(tmp string)
 )
 
-// dotlock takes the lock file beside the list with O_EXCL and returns its
-// release. A stale one older than staleDotlock is removed, not waited on.
+// dotlock takes the lock beside the list and returns its release. Never the
+// list itself: a rewrite renames over it, and the next writer would lock the
+// new inode while the old holder still writes (#2179).
 func (u *userMailbox) dotlock(path string) (func(), error) {
-	h, err := filelock.Take(path, u.b.lockMethod, uidListLockWait)
+	h, err := filelock.Take(path+".lock", u.b.lockMethod, uidListLockWait)
 	if err != nil {
 		return nil, fmt.Errorf("maildir/uidlist: %w", err)
 	}
