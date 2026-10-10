@@ -148,6 +148,9 @@ type folderCache struct {
 	// checked says a walk has just compared this folder with the disk, so a
 	// lookup answers from the maps without stating them again (#1875).
 	checked bool
+	// uidLent says uidMap has been handed to a reader, who may range over it
+	// unlocked: a change copies it first.
+	uidLent bool
 }
 
 // scanFacts is what one walk had to read the file for. The rest is derived
@@ -180,6 +183,7 @@ func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.uidMap != nil && stamp.same(c.uidStamp) {
+		c.uidLent = true
 		return c.uidMap, true
 	}
 	return nil, false
@@ -199,6 +203,7 @@ func (c *folderCache) snapshotChecked() (map[string]uint32, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.checked && c.uidMap != nil {
+		c.uidLent = true
 		return c.uidMap, true
 	}
 	return nil, false
@@ -238,6 +243,15 @@ func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID boo
 		c.uidStamp = listStamp{}
 		return
 	}
+	if c.uidLent {
+		// A reader may be ranging over the map it was handed: the row goes
+		// into a copy, never under its feet (#2184).
+		m := make(map[string]uint32, len(c.uidMap)+1)
+		for k, v := range c.uidMap {
+			m[k] = v
+		}
+		c.uidMap, c.uidLent = m, false
+	}
 	c.uidMap[base] = uid
 	if c.byUID == nil {
 		c.byUID = map[uint32]string{}
@@ -255,7 +269,8 @@ func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID boo
 func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, stamp listStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.uidMap, c.guidMap, c.uidStamp = m, guids, stamp
+	// The caller hands m on to its own caller.
+	c.uidMap, c.guidMap, c.uidStamp, c.uidLent = m, guids, stamp, true
 	c.byUID = make(map[uint32]string, len(m))
 	for base, uid := range m {
 		c.byUID[uid] = base
