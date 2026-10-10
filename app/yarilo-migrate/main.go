@@ -339,7 +339,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		// Source GUID is preserved so EMAILID survives migration; zero means the
 		// source had none and the driver mints one.
 		flags, keywords := mailbox.SplitStoredFlags(msg.Flags)
-		filename, vsize, guid, err := box.Save(msg.Folder, msg.bodyReader(), 0, int64(len(msg.Body)), flags, keywords, msg.GUID)
+		filename, vsize, guid, err := box.SaveReceived(msg.Folder, msg.bodyReader(), 0, int64(len(msg.Body)), flags, keywords, msg.GUID, msg.InternalDate)
 		if err != nil {
 			return fmt.Errorf("save %s/%s: %w", user, msg.Folder, err)
 		}

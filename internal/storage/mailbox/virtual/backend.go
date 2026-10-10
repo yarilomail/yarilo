@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -74,6 +75,10 @@ func (u *userMailbox) Delete(string) error { return ErrUnsupported }
 func (u *userMailbox) Rename(string, string) error { return ErrUnsupported }
 
 func (u *userMailbox) Save(string, io.Reader, uint32, int64, []string, []string, [16]byte) (string, uint32, [16]byte, error) {
+	return "", 0, [16]byte{}, ErrNotStored
+}
+
+func (u *userMailbox) SaveReceived(string, io.Reader, uint32, int64, []string, []string, [16]byte, time.Time) (string, uint32, [16]byte, error) {
 	return "", 0, [16]byte{}, ErrNotStored
 }
 

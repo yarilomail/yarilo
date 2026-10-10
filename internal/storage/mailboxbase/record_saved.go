@@ -1,6 +1,10 @@
 package mailboxbase
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import (
+	"log/slog"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+)
 
 // RecordSaved allocates the uid and records the message; a driver named by uid
 // settles the name in that cycle. saved is what Save returned (#1700).
@@ -24,6 +28,7 @@ func RecordSaved(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint64
 			return "", err
 		}
 		stampStorageKey(box, folder, named, m)
+		stampReceived(box, folder, named, m)
 		return named, nil
 	})
 }
@@ -41,7 +46,22 @@ func NameSaved(box mailbox.UserMailbox, folder, saved string, m *mailbox.Message
 		return err
 	}
 	stampStorageKey(box, folder, named, m)
+	stampReceived(box, folder, named, m)
 	return nil
+}
+
+// stampReceived dates the named file only now: an old date on a temp would
+// have the temp sweep take it for a crash's leftover. A failure keeps the
+// write time, the date the file had before (#2175).
+func stampReceived(box mailbox.UserMailbox, folder, name string, m *mailbox.MessageMeta) {
+	st, ok := mailbox.Driver(box).(mailbox.ReceivedStamper)
+	if !ok || name == "" || m.InternalDate.IsZero() {
+		return
+	}
+	if err := st.StampReceived(folder, name, m.InternalDate); err != nil {
+		slog.Warn("mailbox/save: the file keeps its write time, not the INTERNALDATE",
+			"user", box.Username(), "folder", folder, "file", name, "err", err)
+	}
 }
 
 // stampStorageKey carries a driver's own key into the record: mdbox's map_uid,

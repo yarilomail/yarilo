@@ -491,7 +491,13 @@ const driverName = "mdbox"
 // Save appends the record to the current m.<N> and registers it in the map,
 // returning the map_uid as the filename. Peers serialise on the map lock alone;
 // the folder lock is not taken, and the per-folder uid is ignored.
-func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
+func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
+	return u.SaveReceived(folder, r, uid, size, flags, keywords, guid, time.Time{})
+}
+
+// SaveReceived writes the INTERNALDATE into the trailer's R, which the storage
+// rebuild reads; zero is the save time (#2175).
+func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte, received time.Time) (string, uint32, [16]byte, error) {
 	var noGUID [16]byte
 	whole := time.Now()
 	defer func() { mailboxmetrics.ObserveSave(driverName, time.Since(whole)) }()
@@ -589,7 +595,7 @@ func (u *userMailbox) Save(folder string, r io.Reader, _ uint32, _ int64, _, _ [
 			return "", 0, noGUID, fmt.Errorf("mdbox/save: m.%d: %w", fileID, err)
 		}
 	}
-	msgRecord := buildDboxMessageRecord(body, guid, folder, hdrSize)
+	msgRecord := buildDboxMessageRecord(body, guid, folder, hdrSize, received)
 	// The dbox file-header line is a file-level header: emit it only for the first
 	// record in a new physical file (offset 0). Appended records start directly at
 	// their message header, matching the dbox v2 layout.
@@ -942,6 +948,31 @@ func (u *userMailbox) Copy(_, srcFilename, _ string, _ uint32) (string, error) {
 	return srcFilename, nil
 }
 
+// receivedOf is the R a stored record carries, for a re-save that must keep it;
+// zero when it cannot be read, and the re-save stamps the time of the move.
+func (u *userMailbox) receivedOf(mapUID uint32) time.Time {
+	m, err := u.openMap()
+	if err != nil {
+		return time.Time{}
+	}
+	entry, ok, err := m.Lookup(mapUID)
+	if err != nil || !ok {
+		return time.Time{}
+	}
+	for _, p := range []string{u.mfilePath(entry.FileID), u.mfileAltPath(entry.FileID)} {
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		_, _, _, received, rerr := readRecordBodyAndTrailer(f, entry.Offset)
+		_ = f.Close()
+		if rerr == nil {
+			return received
+		}
+	}
+	return time.Time{}
+}
+
 // Move re-saves with the same GUID (RFC 8474: EMAILID must survive) and
 // unreferences the source, both folder locks taken in sorted order.
 func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte) (string, [16]byte, error) {
@@ -977,7 +1008,7 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 		if rerr != nil {
 			return fmt.Errorf("mdbox/move: read: %w", rerr)
 		}
-		name, _, saved, serr := u.Save(dstFolder, bytes.NewReader(body), 0, int64(len(body)), nil, nil, outGUID)
+		name, _, saved, serr := u.SaveReceived(dstFolder, bytes.NewReader(body), 0, int64(len(body)), nil, nil, outGUID, u.receivedOf(mapUID))
 		if serr != nil {
 			return fmt.Errorf("mdbox/move: save: %w", serr)
 		}
@@ -1056,12 +1087,15 @@ func buildDboxFileHeader() []byte {
 }
 
 // buildDboxMessageRecord packs body into one dbox v2 record without the file
-// header line. Compaction must pass the source trailer's guid and origMailbox,
-// or identity and the orphan's way home do not survive the move. origMailbox is
-// framed as a line, safe because a folder name never contains a newline.
-func buildDboxMessageRecord(body []byte, guid [16]byte, origMailbox string, hdrSize int) []byte {
+// header line. Compaction must pass the source trailer's guid, origMailbox and
+// received date, or they do not survive the move; a zero received is now.
+// origMailbox is framed as a line, safe as a folder name holds no newline.
+func buildDboxMessageRecord(body []byte, guid [16]byte, origMailbox string, hdrSize int, received time.Time) []byte {
 	size := uint64(len(body))
 	now := uint32(time.Now().Unix())
+	if !received.IsZero() {
+		now = uint32(received.Unix())
+	}
 
 	var buf bytes.Buffer
 	buf.Write(buildMessageHeader(size, hdrSize))
@@ -1084,13 +1118,13 @@ func buildDboxMessageRecord(body []byte, guid [16]byte, origMailbox string, hdrS
 // of a single-message file, and of the legacy per-record layout the reader
 // still accepts.
 func buildDboxRecord(body []byte, guid [16]byte, origMailbox string) []byte {
-	return append(buildDboxFileHeader(), buildDboxMessageRecord(body, guid, origMailbox, messageHeaderSize)...)
+	return append(buildDboxFileHeader(), buildDboxMessageRecord(body, guid, origMailbox, messageHeaderSize, time.Time{})...)
 }
 
 // dboxRecordLen is what the record will occupy, for the rotation arithmetic
 // that runs before the target file is known.
 func dboxRecordLen(body []byte, guid [16]byte, origMailbox string, hdrSize int) int {
-	return len(buildDboxMessageRecord(body, guid, origMailbox, hdrSize))
+	return len(buildDboxMessageRecord(body, guid, origMailbox, hdrSize, time.Time{}))
 }
 
 // fileHeaderSizeOf reads M from an open file's first line.
@@ -1189,17 +1223,17 @@ func readRecordBody(f *os.File, offset uint32) ([]byte, error) {
 // readRecordBodyAndTrailer reads body and trailer in one pass, for compaction:
 // the destination record must carry the source's GUID and orig-mailbox, or
 // identity and the orphan's way home break across a move.
-func readRecordBodyAndTrailer(f *os.File, offset uint32) (body []byte, guid [16]byte, origMailbox string, err error) {
+func readRecordBodyAndTrailer(f *os.File, offset uint32) (body []byte, guid [16]byte, origMailbox string, received time.Time, err error) {
 	bodyOff, size, err := readRecordHeader(f, offset)
 	if err != nil {
-		return nil, guid, "", err
+		return nil, guid, "", received, err
 	}
 	if _, err = f.Seek(bodyOff, io.SeekStart); err != nil {
-		return nil, guid, "", fmt.Errorf("seek to body: %w", err)
+		return nil, guid, "", received, fmt.Errorf("seek to body: %w", err)
 	}
 	body = make([]byte, size)
 	if _, err = io.ReadFull(f, body); err != nil {
-		return nil, guid, "", fmt.Errorf("read body: %w", err)
+		return nil, guid, "", received, fmt.Errorf("read body: %w", err)
 	}
 	// The file position is now at the trailer; parse it. A parse error on a
 	// compaction read means the destination copy loses its GUID and orig-mailbox
@@ -1209,7 +1243,7 @@ func readRecordBodyAndTrailer(f *os.File, offset uint32) (body []byte, guid [16]
 		slog.Warn("mdbox: trailer parse failed during compaction; GUID/orig-mailbox lost for this copy",
 			"file", f.Name(), "offset", offset, "err", terr)
 	}
-	return body, parsed.guid, parsed.origMailbox, nil
+	return body, parsed.guid, parsed.origMailbox, parsed.internalDate, nil
 }
 
 // readBodyCRLF reads r fully and ensures every line ends with CRLF (dbox v2

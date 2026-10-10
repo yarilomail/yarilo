@@ -78,6 +78,12 @@ type UIDSpaceAligningStore interface {
 	AlignUIDSpace(idx UserIndex, folderID uint64, folder string) (uint32, error)
 }
 
+// ReceivedStamper puts a named message's INTERNALDATE on its file, where a
+// file-per-message store's rebuild reads it back (#2175).
+type ReceivedStamper interface {
+	StampReceived(folder, name string, when time.Time) error
+}
+
 // ErrUIDInUse says the folder already holds a record for this uid.
 var ErrUIDInUse = errors.New("the folder already holds this uid")
 
@@ -553,6 +559,9 @@ type UserMailbox interface {
 	// flags holds only system flags and keywords only keywords, the way a
 	// record keeps them (#1605). A driver keeping flags in the name keeps both.
 	Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (name string, vsize uint32, outGUID [16]byte, err error)
+	// SaveReceived is Save keeping the INTERNALDATE in storage, where a rebuild
+	// reads it back; zero means now (#2175).
+	SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, received time.Time) (name string, vsize uint32, outGUID [16]byte, err error)
 	// Move relocates one message between folders keeping its identity: the
 	// returned GUID equals guid (RFC 8474: MOVE must not change EMAILID).
 	// Source and destination lock in name order, so a concurrent A->B / B->A

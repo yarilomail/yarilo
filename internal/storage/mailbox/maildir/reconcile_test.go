@@ -326,6 +326,8 @@ func TestOnlyAnOldTempIsSwept(t *testing.T) {
 			if err := os.Chtimes(file, when, when); err != nil {
 				t.Fatal(err)
 			}
+			// The ctime ages on the sweep's clock only.
+			defer mailbox.SetSweepClock(func() time.Time { return time.Now().Add(tc.age) })()
 			// Each row is about the age rule, not the interval gate, which
 			// has its own row below.
 			os.Remove(filepath.Join(tmp, mailbox.SweepStampName)) //nolint:errcheck

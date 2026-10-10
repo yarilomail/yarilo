@@ -566,6 +566,8 @@ type userMailbox struct {
 	// pending holds the explicit GUID a save or a move must record, until the
 	// uid exists and the record can be written (#1703).
 	pending map[string][16]byte
+	// received holds a save's INTERNALDATE until AssignUID publishes it (#2175).
+	received map[string]time.Time
 }
 
 // withMailboxLockSite serialises this pod's own sessions. A second process is
@@ -843,6 +845,16 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 		return "", 0, noGUID, fmt.Errorf("maildir: name the temp: %w", err)
 	}
 	return finalName, sc.phys + sc.lfNoCR, effGUID, nil
+}
+
+// SaveReceived is Save with the INTERNALDATE kept until AssignUID, which dates
+// the file in tmp/ just before publishing it (#2175).
+func (u *userMailbox) SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, received time.Time) (string, uint32, [16]byte, error) {
+	name, vsize, out, err := u.Save(folder, r, uid, size, flags, keywords, guid)
+	if err == nil && !received.IsZero() {
+		u.rememberReceived(folder, name, received)
+	}
+	return name, vsize, out, err
 }
 
 // Move keeps the base name, so the derived GUID and its EMAILID survive (RFC

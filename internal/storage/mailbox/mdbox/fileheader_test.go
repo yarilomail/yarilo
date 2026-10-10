@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fileHeaderPrefix is the stable start of the dbox v2 file-header line
@@ -89,7 +90,7 @@ func TestAppendRecordToFileHeaderOnce(t *testing.T) {
 	}
 	offsets := make([]uint32, 3)
 	for i := range offsets {
-		off, err := appendRecordToFile(dst, []byte("body\r\n"), randomGUID(), "INBOX")
+		off, err := appendRecordToFile(dst, []byte("body\r\n"), randomGUID(), "INBOX", time.Time{})
 		if err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
@@ -141,7 +142,7 @@ func TestReaderAcceptsLegacyAndNewLayout(t *testing.T) {
 	var modern bytes.Buffer
 	modern.Write(buildDboxFileHeader())
 	for _, b := range bodies {
-		modern.Write(buildDboxMessageRecord(b, randomGUID(), "INBOX", messageHeaderSize))
+		modern.Write(buildDboxMessageRecord(b, randomGUID(), "INBOX", messageHeaderSize, time.Time{}))
 	}
 
 	for _, tc := range []struct {
