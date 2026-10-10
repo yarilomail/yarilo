@@ -979,7 +979,7 @@ func (s *Server) handleLookup(c *client, fields []string) {
 	// branch to check first.
 	// Sticky routing: honour an existing userDir entry if the backend is still Up
 	// and matches the requested tag. Refreshes TTL so active users stay pinned.
-	if e := s.userDir.Get(user); e != nil && !e.Weak {
+	if e := s.userDir.Get(user); e != nil && !e.Weak && s.stickyFollowsDomain(user, e.Host) {
 		host, portStr, splitErr := net.SplitHostPort(e.Host)
 		if splitErr == nil {
 			if existing := s.ring.GetBackend(host); existing != nil && existing.Up {
