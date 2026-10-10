@@ -151,6 +151,11 @@ type folderCache struct {
 	// uidLent says uidMap has been handed to a reader, who may range over it
 	// unlocked: a change copies it first.
 	uidLent bool
+	// listFD stays open on the list uidMap was read from: while it is, no
+	// other file can take its inode, so the same inode is the same file (#2183).
+	listFD *os.File
+	fdIno  uint64
+	fdDev  uint64
 }
 
 // scanFacts is what one walk had to read the file for. The rest is derived
@@ -209,16 +214,23 @@ func (c *folderCache) snapshotChecked() (map[string]uint32, listStamp, bool) {
 	return nil, listStamp{}, false
 }
 
-// snapshotForAppend answers when the file is the one the map was read from and
-// has only grown: the tail alone is parsed then (#1875).
-func (c *folderCache) snapshotForAppend(stamp listStamp) (map[string]uint32, map[string][16]byte, int64, bool) {
+// readTail parses the rows appended since the map was read, through the
+// descriptor it was read with: a path opened again may name another file by
+// then (#1875, #2183).
+func (c *folderCache) readTail(stamp listStamp) (map[string]uint32, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.uidMap == nil || c.uidStamp.ino == 0 || c.uidStamp.ino != stamp.ino {
-		return nil, nil, 0, false
+	if c.uidMap == nil || !c.holdsLocked(stamp) || stamp.size <= c.uidStamp.size {
+		return nil, false, nil
 	}
-	if stamp.size <= c.uidStamp.size {
-		return nil, nil, 0, false
+	// The descriptor's own size, not the path's: they differ when the path no
+	// longer names this file.
+	if fi, err := c.listFD.Stat(); err != nil || fi.Size() != stamp.size {
+		return nil, false, nil
+	}
+	at := c.uidStamp.size
+	if !appendedAt(c.listFD, at) {
+		return nil, false, nil
 	}
 	uids := make(map[string]uint32, len(c.uidMap)+8)
 	for k, v := range c.uidMap {
@@ -231,7 +243,33 @@ func (c *folderCache) snapshotForAppend(stamp listStamp) (map[string]uint32, map
 			guids[k] = v
 		}
 	}
-	return uids, guids, c.uidStamp.size, true
+	uids, guids, err := parseUIDRows(io.NewSectionReader(c.listFD, at, stamp.size-at), uids, guids)
+	if err != nil {
+		return nil, false, err
+	}
+	c.setUIDsLocked(uids, guids, stamp)
+	return uids, true, nil
+}
+
+// holdsLocked says the stamp names the file the held descriptor is open on.
+func (c *folderCache) holdsLocked(stamp listStamp) bool {
+	return c.listFD != nil && stamp.ino != 0 && stamp.ino == c.fdIno && stamp.dev == c.fdDev
+}
+
+// holdFDLocked makes f the descriptor the map stands for; the one held before
+// is closed.
+func (c *folderCache) holdFDLocked(f *os.File, stamp listStamp) {
+	if c.listFD != nil && c.listFD != f {
+		_ = c.listFD.Close()
+	}
+	c.listFD, c.fdIno, c.fdDev = f, stamp.ino, stamp.dev
+}
+
+func (c *folderCache) dropFDLocked() {
+	if c.listFD != nil {
+		_ = c.listFD.Close()
+	}
+	c.listFD, c.fdIno, c.fdDev = nil, 0, 0
 }
 
 // addUID adds one row, but only to a map that is still the list it was loaded
@@ -266,9 +304,15 @@ func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID boo
 	c.uidStamp = stamp
 }
 
-func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, stamp listStamp) {
+// storeUIDs keeps m as the list f is open on; the cache owns f from here.
+func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, stamp listStamp, f *os.File) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.holdFDLocked(f, stamp)
+	c.setUIDsLocked(m, guids, stamp)
+}
+
+func (c *folderCache) setUIDsLocked(m map[string]uint32, guids map[string][16]byte, stamp listStamp) {
 	// The caller hands m on to its own caller.
 	c.uidMap, c.guidMap, c.uidStamp, c.uidLent = m, guids, stamp, true
 	c.byUID = make(map[uint32]string, len(m))
@@ -380,8 +424,14 @@ func (u *userMailbox) adoptRow(folder, base string, uid uint32, guid [16]byte, h
 // adoptWritten makes the cache the content just written: a map merged into an
 // older one loses another session's rows while the stamp says nothing is (#1739).
 func (u *userMailbox) adoptWritten(folder string, l *uidList) {
-	fi, err := statPath(u.uidListPath(folder))
+	f, err := openPath(u.uidListPath(folder))
 	if err != nil {
+		u.folderCacheFor(folder).invalidateUIDs("own-write")
+		return
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
 		u.folderCacheFor(folder).invalidateUIDs("own-write")
 		return
 	}
@@ -393,7 +443,7 @@ func (u *userMailbox) adoptWritten(folder string, l *uidList) {
 			guids[rec.base] = rec.guid
 		}
 	}
-	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
+	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi), f)
 }
 
 func (c *folderCache) guidOf(base string) ([16]byte, bool) {
@@ -480,6 +530,7 @@ func (c *folderCache) invalidateUIDs(by string) {
 	}
 	c.checked = false
 	c.uidMap, c.guidMap, c.byUID = nil, nil, nil
+	c.dropFDLocked()
 }
 
 func (c *folderCache) invalidateDir(by string) {
@@ -1363,7 +1414,18 @@ func (u *userMailbox) scanNamed(folder string, names []string) []mailbox.ScanRec
 	return out
 }
 
-func (u *userMailbox) Close() error { return nil }
+// Close lets go of the list descriptors the folder caches hold.
+func (u *userMailbox) Close() error {
+	u.cacheMu.Lock()
+	defer u.cacheMu.Unlock()
+	for _, c := range u.cache {
+		c.mu.Lock()
+		c.uidMap, c.guidMap, c.byUID, c.checked = nil, nil, nil, false
+		c.dropFDLocked()
+		c.mu.Unlock()
+	}
+	return nil
+}
 
 // ProactiveScan says the store changes out of band -- an MDA into new/, another
 // MUA renaming for flags -- so opening a folder must scan. The dbox drivers say
@@ -2038,9 +2100,20 @@ func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRea
 	}
 	metricCacheStat.WithLabelValues("list").Inc()
 	if fi, err := statPath(u.uidListPath(folder)); err == nil {
-		if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
-			u.debugListRead(folder, "cache", len(m), stampOf(fi))
-			return m, listRead{"cache", stampOf(fi)}, nil
+		st := stampOf(fi)
+		if m, ok := cache.snapshotUIDs(st); ok {
+			u.debugListRead(folder, "cache", len(m), st)
+			return m, listRead{"cache", st}, nil
+		}
+		m, ok, terr := cache.readTail(st)
+		if terr != nil {
+			return nil, listRead{}, terr
+		}
+		if ok {
+			listAppendReads.Add(1)
+			metricUIDListRead.WithLabelValues("tail").Inc()
+			u.debugListRead(folder, "tail", len(m), st)
+			return m, listRead{"tail", st}, nil
 		}
 	}
 	f, fi, err := u.openUIDList(folder)
@@ -2050,29 +2123,27 @@ func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRea
 	if f == nil {
 		return make(map[string]uint32), listRead{"none", listStamp{}}, nil
 	}
-	defer f.Close()
-
-	if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
-		u.debugListRead(folder, "cache", len(m), stampOf(fi))
-		return m, listRead{"cache", stampOf(fi)}, nil
+	st := stampOf(fi)
+	if m, ok := cache.snapshotUIDs(st); ok {
+		_ = f.Close()
+		u.debugListRead(folder, "cache", len(m), st)
+		return m, listRead{"cache", st}, nil
 	}
-	// Only the rows appended since the last read: a large folder re-parsed the
-	// whole file for one new row (#1875).
-	m, guids, from := map[string]uint32(nil), map[string][16]byte(nil), int64(0)
-	if kept, keptGUIDs, at, ok := u.folderCacheFor(folder).snapshotForAppend(stampOf(fi)); ok && appendedAt(f, at) {
-		m, guids, from = kept, keptGUIDs, at
-		listAppendReads.Add(1)
-		metricUIDListRead.WithLabelValues("tail").Inc()
-	}
-	if _, err := f.Seek(from, io.SeekStart); err != nil {
+	m, guids, err := parseUIDRows(f, make(map[string]uint32), nil)
+	if err != nil {
+		_ = f.Close()
 		return nil, listRead{}, err
 	}
-	if m == nil {
-		m = make(map[string]uint32)
-		listReads.Add(1)
-		metricUIDListRead.WithLabelValues("whole").Inc()
-	}
-	sc := bufio.NewScanner(f)
+	listReads.Add(1)
+	metricUIDListRead.WithLabelValues("whole").Inc()
+	cache.storeUIDs(m, guids, st, f)
+	u.debugListRead(folder, "disk", len(m), st)
+	return m, listRead{"file", st}, nil
+}
+
+// parseUIDRows adds the rows r holds to m and guids.
+func parseUIDRows(r io.Reader, m map[string]uint32, guids map[string][16]byte) (map[string]uint32, map[string][16]byte, error) {
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := sc.Text()
 		if strings.HasPrefix(line, "3 V") {
@@ -2114,16 +2185,9 @@ func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRea
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, listRead{}, err
+		return nil, nil, err
 	}
-
-	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
-	u.debugListRead(folder, "disk", len(m), stampOf(fi))
-	read := listRead{"file", stampOf(fi)}
-	if from > 0 {
-		read.from = "tail"
-	}
-	return m, read, nil
+	return m, guids, nil
 }
 
 // folderCacheFor returns this folder's cache entry, creating it if needed.

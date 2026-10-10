@@ -10,6 +10,7 @@ import (
 // renames, so the inode moves even when size and mtime collide (#1739).
 type listStamp struct {
 	ino   uint64
+	dev   uint64
 	size  int64
 	mtime time.Time
 	ctime int64 // nanoseconds; carried for diagnostics, not yet compared
@@ -21,6 +22,7 @@ func stampOf(fi os.FileInfo) listStamp {
 	s := listStamp{size: fi.Size(), mtime: fi.ModTime()}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
 		s.ino = st.Ino
+		s.dev = uint64(st.Dev) //nolint:gosec // a device number, never negative
 		s.ctime = statCtimeNanos(st)
 	}
 	return s
@@ -36,5 +38,5 @@ func (s listStamp) ctimeNanos() int64 { return s.ctime }
 
 // same reports whether two stamps name the same file in the same state.
 func (s listStamp) same(other listStamp) bool {
-	return s.ino == other.ino && s.size == other.size && s.mtime.Equal(other.mtime)
+	return s.ino == other.ino && s.dev == other.dev && s.size == other.size && s.mtime.Equal(other.mtime)
 }
