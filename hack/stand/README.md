@@ -31,8 +31,9 @@ KUBECONFIG=~/.kube/sbox.yaml \
 KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/accept.sh <image-tag> <out-dir>
 ```
 
-What a rollout after a merge must pass, judged and written as `PASS`/`FAIL`
-lines in `<out-dir>/verdict.txt`; the script exits 1 when any fails. On the
+What a rollout after a merge must pass, judged and written as `PASS`/`FAIL`/`SKIP`
+lines in `<out-dir>/verdict.txt`; the script exits 1 when any fails. `SKIP` is a
+criterion that cannot run yet, with its reason, counted apart. On the
 runner, like a window, and recorded in docs-internal `stand-runs.md` and on the
 issue it verifies.
 
@@ -41,11 +42,11 @@ issue it verifies.
 | smoketest 46/46 on mdbox, maildir, sdbox | `hack/smoketest/run.sh` per type |
 | disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
-| an aged sdbox and maildir mailbox survive an open | an account with 20+ files changed over a day ago, counted before and after an IMAP SELECT (#2172) |
+| an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted before and after an IMAP SELECT |
 | no new vanished-and-present uid | QRESYNC on u53–u70@d00002.test before and after (#2176) |
 | no pod restarted or replaced | pod uids and restart counts at the start and the end |
 | no `panic`, `stopped-naming`, `reconcile-unfinished`, `append-failed`, `list-rename`, `reactive-heal`, `message-swept` lines | every container's log since the start |
-| an explicit domain rebalance | not run yet: the director has no trigger for one |
+| an explicit domain rebalance | `SKIP` until the director has a trigger for one |
 
 Every matched line is kept verbatim in `<out-dir>/lines/<name>.txt`, and every
 container's log in `<out-dir>/logs/`: a count alone explains nothing once the

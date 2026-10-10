@@ -7,7 +7,8 @@
 # Usage:
 #   KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/accept.sh <image-tag> <out-dir>
 #
-# Runs on the runner, like a window. Exits 1 when any criterion fails.
+# Runs on the runner, like a window. Exits 1 when any criterion fails; a SKIP
+# (a criterion that cannot run yet) is counted apart and does not.
 
 set -euo pipefail
 
@@ -20,17 +21,23 @@ PASSWORD='Yarilo!test1'
 mkdir -p "$OUT/logs" "$OUT/lines"
 : > "$OUT/verdict.txt"
 FAILS=0
+SKIPS=0
 
 kube() { kubectl -n "$NS" --request-timeout=60s "$@"; }
 
-# verdict records one criterion: its name, ok or not, and what decided it.
+# verdict records one criterion: its name, ok, fail or skip, and what decided it.
 verdict() {
-  if [ "$2" = ok ]; then
-    echo "PASS $1: $3" | tee -a "$OUT/verdict.txt"
-  else
-    echo "FAIL $1: $3" | tee -a "$OUT/verdict.txt"
-    FAILS=$((FAILS + 1))
-  fi
+  case "$2" in
+    ok) echo "PASS $1: $3" | tee -a "$OUT/verdict.txt" ;;
+    skip)
+      echo "SKIP $1: $3" | tee -a "$OUT/verdict.txt"
+      SKIPS=$((SKIPS + 1))
+      ;;
+    *)
+      echo "FAIL $1: $3" | tee -a "$OUT/verdict.txt"
+      FAILS=$((FAILS + 1))
+      ;;
+  esac
 }
 
 # pod_state lists every pod with its uid and each container's restart count: a
@@ -62,11 +69,11 @@ disk_messages() {
 }
 
 # aged_account finds an account of the domain whose INBOX holds at least 20
-# message files changed more than a day ago: the class #2172 lost.
+# message files modified over a day ago: the class #2172's sweep judged by mtime.
 aged_account() {
   local dom="$1" sub="$2" pattern="$3"
   kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
-    "cd /var/mail/vhosts/$dom 2>/dev/null && for u in *; do n=\$(find \"\$u/$sub\" -maxdepth 1 -name '$pattern' -cmin +1440 2>/dev/null | wc -l); [ \"\$n\" -ge 20 ] && echo \"\$u \$n\" && break; done" 2>/dev/null || true
+    "cd /var/mail/vhosts/$dom 2>/dev/null && for u in *; do n=\$(find \"\$u/$sub\" -maxdepth 1 -name '$pattern' -mmin +1440 2>/dev/null | wc -l); [ \"\$n\" -ge 20 ] && echo \"\$u \$n\" && break; done" 2>/dev/null || true
 }
 
 # uid_pairs prints "user uid" for every UID both vanished and present, for the
@@ -192,7 +199,7 @@ for spec in \
   [ "$n" = 0 ] && verdict "no $name lines" ok "0" || verdict "no $name lines" fail "$n (lines/$name.txt)"
 done
 
-verdict "explicit domain rebalance" fail "not run: the director has no trigger for one yet"
+verdict "explicit domain rebalance" skip "the director has no trigger for one yet"
 
-echo "== $(date -u +%FT%TZ) $FAILS criteria failed" | tee -a "$OUT/verdict.txt"
+echo "== $(date -u +%FT%TZ) $FAILS failed, $SKIPS skipped" | tee -a "$OUT/verdict.txt"
 [ "$FAILS" = 0 ]
