@@ -148,18 +148,18 @@ type backendDTOSource struct {
 // sticky reports whether an existing pin answered. Read-only under hash;
 // under least_sessions a fresh user is pinned here.
 func (s *Server) resolveUserBackend(user string) (ip string, port int, tag string, sticky bool) {
-	if e := s.userDir.Get(user); e != nil && !e.Weak {
+	if e := s.userDir.Get(user); e != nil && !e.Weak && s.stickyFollowsDomain(user, e.Host) {
 		if h, _, err := net.SplitHostPort(e.Host); err == nil {
 			if b := s.ring.GetBackend(h); b != nil && b.Up {
 				return b.IP, b.Port, b.Tag, true
 			}
 		}
 	}
-	// Fresh user: under least_sessions pin here too — the director owns
-	// placement, and a hash read would name a pod the login never assigns.
-	// Under hash the lookup is deterministic and side-effect-free.
-	if s.assignmentPolicy() == policyLeastSessions {
-		if b := s.assignAndPin(user, "", ""); b != nil {
+	// Fresh user: under least_sessions and domain pin here too — the director
+	// owns placement, and a hash read would name a pod the login never assigns
+	// (#2193). Under hash the lookup is deterministic and side-effect-free.
+	if p := s.assignmentPolicy(); p == policyLeastSessions || p == policyDomain {
+		if b := s.assignAndPin(user, s.placementTag(user), ""); b != nil {
 			return b.IP, b.Port, b.Tag, false
 		}
 		return "", 0, "", false

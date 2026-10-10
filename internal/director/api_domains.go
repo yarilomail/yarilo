@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -43,7 +44,7 @@ func (s *Server) apiDomainMove(w http.ResponseWriter, r *http.Request) {
 		apiError(w, fmt.Sprintf("backend %s is in tag %q, the domain in %q", ip, to.Tag, from.Tag), http.StatusBadRequest)
 		return
 	}
-	toHost := fmt.Sprintf("%s:%d", to.IP, to.Port)
+	toHost := net.JoinHostPort(to.IP, strconv.Itoa(to.Port))
 	if cur.Host == toHost {
 		apiJSON(w, map[string]string{"status": "ok", "from": cur.Host, "to": toHost, "moved": "false"})
 		return

@@ -50,6 +50,50 @@ func (s *Server) placeDomain(domain, tag string) *ring.Backend {
 	return s.leastLoadedInTag(tag)
 }
 
+// stickyFollowsDomain: under domain policy a user's entry holds only while it
+// names the domain's placement. A move rewrites the placement, not the entries
+// (keyed by hash, the domain is not in them), so LOOKUP reassigns (#2193).
+func (s *Server) stickyFollowsDomain(user, host string) bool {
+	if s.assignmentPolicy() != policyDomain {
+		return true
+	}
+	domain := DomainOf(user)
+	if domain == "" {
+		return true
+	}
+	e := s.domainDir.Get(domain)
+	return e == nil || sameHost(e.Host, host)
+}
+
+// placementTag is the tag of the backend the user's domain sits on, "" when it
+// is not placed: the admin path has no login tag, and an untagged pick would
+// not find a tagged placement and would drop it.
+func (s *Server) placementTag(user string) string {
+	if s.assignmentPolicy() != policyDomain {
+		return ""
+	}
+	if e := s.domainDir.Get(DomainOf(user)); e != nil {
+		if b := s.ring.GetBackend(hostIP(e.Host)); b != nil {
+			return b.Tag
+		}
+	}
+	return ""
+}
+
+// sameHost compares two "ip:port" by their parts, not their spelling.
+func sameHost(a, b string) bool {
+	ah, ap, aerr := net.SplitHostPort(a)
+	bh, bp, berr := net.SplitHostPort(b)
+	if aerr != nil || berr != nil {
+		return a == b
+	}
+	ai, bi := net.ParseIP(ah), net.ParseIP(bh)
+	if ai == nil || bi == nil {
+		return a == b
+	}
+	return ap == bp && ai.Equal(bi)
+}
+
 // backendAt finds an Up backend of the tag by "ip:port".
 func (s *Server) backendAt(host, tag string) *ring.Backend {
 	ip, portStr, err := net.SplitHostPort(host)
@@ -178,8 +222,8 @@ func (s *Server) recordDomain(user, addr string) {
 
 // assignAndPin resolves an UNPINNED user via the policy, records the pin, and
 // propagates USER-ASSIGN — the SINGLE owner of initial placement (#797). Every
-// fresh-assignment caller (login LOOKUP, LMTP RouteUser, admin apiMap under
-// least_sessions) funnels through here so none can independently pick a
+// fresh-assignment caller (login LOOKUP, admin apiMap under least_sessions
+// or domain) funnels through here so none can independently pick a
 // different pod and split a user's per-user writer (#788). Returns nil when no
 // backend is available.
 func (s *Server) assignAndPin(user, tag, reqProto string) *ring.Backend {
