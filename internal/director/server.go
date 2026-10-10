@@ -1436,15 +1436,7 @@ func (s *Server) kickSessionsForBackend(ip string) {
 		s.noteSessionClosed(rec.user)
 	}
 
-	// Only local sessions carry a conn to kick; remote replicas (#804) are the
-	// owning director's job — every director runs this on the gossiped
-	// backend-down, so each kicks its own local sessions.
-	local := recs[:0]
-	for _, rec := range recs {
-		if rec.cl != nil {
-			local = append(local, rec)
-		}
-	}
+	local := localSessions(recs)
 	if len(local) == 0 {
 		return
 	}
@@ -1641,10 +1633,23 @@ func (s *Server) kickStaleSessions(hash uint32, oldHost string) {
 	}
 	s.sessRecMu.Unlock()
 
-	for _, rec := range victims {
+	for _, rec := range localSessions(victims) {
 		_ = rec.cl.WriteLine(fmt.Sprintf("USER-KICKED\t%s", rec.user))
 		slog.Info("director: kicked stale session after ring reassignment", "session", rec.id, "user", rec.user, "old_backend", ip)
 	}
+}
+
+// localSessions keeps the sessions a login pod of this director holds: only
+// they carry a conn to kick. A replica (#804) has none and is kicked by the
+// director that owns it, which every director's copy of the same event reaches.
+func localSessions(recs []*sessionRec) []*sessionRec {
+	local := make([]*sessionRec, 0, len(recs))
+	for _, rec := range recs {
+		if rec.cl != nil {
+			local = append(local, rec)
+		}
+	}
+	return local
 }
 
 // removeClientSessions removes all session records owned by a disconnected
