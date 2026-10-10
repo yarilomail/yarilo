@@ -259,6 +259,8 @@ func dispatchDirector(args []string) error {
 		return dispatchBackends(args[1:])
 	case "users":
 		return dispatchUsers(args[1:])
+	case "domains":
+		return dispatchDomains(args[1:])
 	case "ring":
 		return dispatchRing(args[1:])
 	default:
@@ -333,6 +335,14 @@ func dispatchBackends(args []string) error {
 	default:
 		return fmt.Errorf("unknown backends command %q", args[0])
 	}
+}
+
+func dispatchDomains(args []string) error {
+	if len(args) < 3 || args[0] != "move" {
+		return fmt.Errorf("usage: director domains move <domain> <backend-ip>")
+	}
+	data, err := apiPost("/api/director/domains/"+url.PathEscape(args[1])+"/move", map[string]any{"backend": args[2]})
+	return printOutput(data, err, humanStatus)
 }
 
 func dispatchUsers(args []string) error {
@@ -415,6 +425,7 @@ Commands:
 
   users move USER --backend IP:PORT   Force-move user to backend
   users kick USER                     Kick user (disconnect all sessions)
+  domains move DOMAIN BACKEND-IP      Move a domain to a backend of its tag (assignment_policy: domain)
 
   ring status                         Ring topology of the queried replica: neighbors, link state, seq
   ring add ADDR                       Add peer (addr = ip:port)
