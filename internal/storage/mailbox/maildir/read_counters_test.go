@@ -202,7 +202,7 @@ func TestOurOwnSaveKeepsTheWindow(t *testing.T) {
 	if now := testutil.ToFloat64(metricWindowClosed.WithLabelValues("own-write")); now != own {
 		t.Errorf("our own save closed the window %v times, want 0", now-own)
 	}
-	if _, open := c.snapshotChecked(); !open {
+	if _, _, open := c.snapshotChecked(); !open {
 		t.Error("the window a walk earned is shut after our own save")
 	}
 
