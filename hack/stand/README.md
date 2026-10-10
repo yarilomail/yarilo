@@ -44,7 +44,7 @@ issue it verifies.
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
 | an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted right before and after an IMAP SELECT |
 | no new vanished-and-present uid | QRESYNC on u53–u70@d00002.test before and after (#2176) |
-| no pod restarted or replaced | pod uids and restart counts at the start and the end, Job pods (smoketest, imaptest) left out |
+| no pod restarted or replaced | pod uids and restart counts at the start, once every Deployment has rolled out and no pod is terminating, and at the end; Job pods (smoketest, imaptest) left out |
 | no `panic`, `stopped-naming`, `reconcile-unfinished`, `append-failed`, `list-rename`, `reactive-heal`, `message-swept` lines | every container's log since the start |
 | an explicit domain rebalance, and back | `yarctl director domains move d00001.test <other backend>`, then a login of u1@d00001.test through the login service must be pinned to the new backend at every director; the same move back restores the stand |
 | no director panic | every director's log since the start, previous containers included (#2187) |
