@@ -65,6 +65,7 @@ func (s *Server) StartAPI(ctx context.Context, ln net.Listener, token string, al
 
 	mux.Handle("POST /api/director/users/{user}/move", h(s.apiUserMove))
 	mux.Handle("POST /api/director/users/{user}/kick", h(s.apiUserKick))
+	mux.Handle("POST /api/director/domains/{domain}/move", h(s.apiDomainMove))
 
 	mux.Handle("GET /api/director/ring/topology", h(s.apiRingTopology))
 	mux.Handle("GET /api/director/ring", h(s.apiPeerList))
