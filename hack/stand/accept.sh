@@ -91,6 +91,38 @@ uid_pairs() {
   done
 }
 
+# director_pin is the backend IP one director pins a user to (a peek: it
+# places nobody).
+director_pin() {
+  kube exec "$1" -- yarctl -O json director map --user "$2" 2>/dev/null |
+    sed -n 's/.*"backend": *"\([^"]*\)".*/\1/p' || true
+}
+
+# move_domain places a domain on a backend through the operator's command and
+# prints "<from> <to> <moved>" from its reply.
+move_domain() {
+  local out
+  out=$(kube exec "$DIRECTOR" -- yarctl -O json director domains move "$1" "$2" 2>&1) || { echo "error: $out" | tr '\n' ' '; return; }
+  echo "$(echo "$out" | sed -n 's/.*"from": *"\([^:"]*\).*/\1/p') $(echo "$out" | sed -n 's/.*"to": *"\([^:"]*\).*/\1/p') $(echo "$out" | sed -n 's/.*"moved": *"\([a-z]*\)".*/\1/p')"
+}
+
+# login_lands logs a user in through the login service and asserts every
+# director pinned that login to the expected backend: a pin left elsewhere
+# would split the domain between two backends.
+login_lands() {
+  local name="$1" user="$2" want="$3" d pin bad=""
+  sleep 3
+  imap_session "a LOGIN $user $PASSWORD\r\nb SELECT INBOX\r\nc LOGOUT\r\n" > "$OUT/rebalance-${name// /-}.imap"
+  grep -q '^b OK' "$OUT/rebalance-${name// /-}.imap" || { verdict "$name" fail "$user SELECT not OK after the move"; return; }
+  for d in $DIRECTORS; do
+    pin=$(director_pin "$d" "$user")
+    echo "$name: $d pins $user to ${pin:-none}" >> "$OUT/rebalance.txt"
+    [ "$pin" = "$want" ] || bad="$bad $d=${pin:-none}"
+  done
+  [ -z "$bad" ] && verdict "$name" ok "$user on $want at every director" ||
+    verdict "$name" fail "want $want, $user pinned at$bad"
+}
+
 # count_lines keeps every line matching the pattern from the run's logs in
 # lines/<name>.txt and prints how many there were.
 count_lines() {
@@ -173,6 +205,31 @@ uid_pairs | sort > "$OUT/uid-pairs-after.txt"
 new_pairs=$(comm -13 "$OUT/uid-pairs-before.txt" "$OUT/uid-pairs-after.txt" | tee "$OUT/lines/uid-pairs-new.txt" | wc -l | tr -d ' ')
 [ "$new_pairs" = 0 ] && verdict "no new vanished-and-present uid" ok "0" || verdict "no new vanished-and-present uid" fail "$new_pairs (lines/uid-pairs-new.txt)"
 
+echo "== explicit domain rebalance"
+DIRECTORS=$(kube get pods -l app.kubernetes.io/component=director -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}' || true)
+DIRECTOR=${DIRECTORS%% *}
+UP=$(kube exec "$DIRECTOR" -- yarctl director backends list 2>/dev/null | awk '$0 ~ /[[:space:]]up[[:space:]]/ {print $1}' | sort || true)
+: > "$OUT/rebalance.txt"
+if [ -z "$DIRECTOR" ] || [ "$(echo "$UP" | grep -c .)" -lt 2 ]; then
+  verdict "explicit domain rebalance" fail "need a director and two up backends: directors='$DIRECTORS' up='$(echo $UP)'"
+else
+  # The move names its source in the reply; a no-op means the domain already
+  # sits on the backend asked for, so the other one is the move.
+  first=$(echo "$UP" | sed -n 1p); second=$(echo "$UP" | sed -n 2p)
+  reply=$(move_domain d00001.test "$second")
+  case "$reply" in *" false") reply=$(move_domain d00001.test "$first") ;; esac
+  echo "move: $reply" >> "$OUT/rebalance.txt"
+  set -- $reply
+  if [ "${3:-}" != true ]; then
+    verdict "explicit domain rebalance" fail "d00001.test did not move: $reply"
+  else
+    login_lands "explicit domain rebalance" u1@d00001.test "$2"
+    back=$(move_domain d00001.test "$1")
+    echo "back: $back" >> "$OUT/rebalance.txt"
+    login_lands "domain moved back" u1@d00001.test "$1"
+  fi
+fi
+
 echo "== logs of every pod since $START"
 pod_state > "$OUT/pods-end.txt"
 for pod in $(kube get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
@@ -199,7 +256,14 @@ for spec in \
   [ "$n" = 0 ] && verdict "no $name lines" ok "0" || verdict "no $name lines" fail "$n (lines/$name.txt)"
 done
 
-verdict "explicit domain rebalance" skip "the director has no trigger for one yet"
+
+# The directors on their own: #2187 was a director panic on a domain move.
+n=0
+for d in $DIRECTORS; do
+  n=$((n + $(cat "$OUT"/logs/"$d".*.log 2>/dev/null | grep -acE "panic: |fatal error: " || true)))
+done
+[ "$n" = 0 ] && verdict "no director panic" ok "0 in $(echo $DIRECTORS | wc -w | tr -d ' ') directors" ||
+  verdict "no director panic" fail "$n (lines/panic.txt)"
 
 echo "== $(date -u +%FT%TZ) $FAILS failed, $SKIPS skipped" | tee -a "$OUT/verdict.txt"
 [ "$FAILS" = 0 ]

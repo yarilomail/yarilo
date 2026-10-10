@@ -46,7 +46,8 @@ issue it verifies.
 | no new vanished-and-present uid | QRESYNC on u53–u70@d00002.test before and after (#2176) |
 | no pod restarted or replaced | pod uids and restart counts at the start and the end |
 | no `panic`, `stopped-naming`, `reconcile-unfinished`, `append-failed`, `list-rename`, `reactive-heal`, `message-swept` lines | every container's log since the start |
-| an explicit domain rebalance | `SKIP` until the director has a trigger for one |
+| an explicit domain rebalance, and back | `yarctl director domains move d00001.test <other backend>`, then a login of u1@d00001.test through the login service must be pinned to the new backend at every director; the same move back restores the stand |
+| no director panic | every director's log since the start, previous containers included (#2187) |
 
 Every matched line is kept verbatim in `<out-dir>/lines/<name>.txt`, and every
 container's log in `<out-dir>/logs/`: a count alone explains nothing once the
