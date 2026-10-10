@@ -187,21 +187,25 @@ func measureSizes(path string) (psize, vsize uint32, err error) {
 	return c.phys, c.phys + c.lfNoCR, nil
 }
 
-// appendUIDRow writes one line at the end of the list under its own hold, and
-// reports false when the list cannot take a row blind (#1840).
-func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, error) {
-	path := u.uidListPath(folder)
-	unlock, err := u.dotlock(path)
+// holdList takes the list's lock for site and returns its release, which
+// records how long the site held it.
+func (u *userMailbox) holdList(folder, site string) (func(), error) {
+	unlock, err := u.dotlock(u.uidListPath(folder))
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	heldFrom := time.Now()
-	defer func() {
+	metricLockAcquired.WithLabelValues(site).Inc()
+	return func() {
 		unlock()
 		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
-	}()
-	metricLockAcquired.WithLabelValues(site).Inc()
+	}, nil
+}
 
+// appendUIDRowHeld writes one line at the end of the list, and reports false
+// when the list cannot take a row blind (#1840). Caller holds the list.
+func (u *userMailbox) appendUIDRowHeld(folder string, rec uidRecord) (bool, error) {
+	path := u.uidListPath(folder)
 	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {
 		return false, nil // no list yet: the caller writes one whole
@@ -268,20 +272,10 @@ func headerNextUID(f *os.File) (at int64, width int, next uint32, found bool) {
 	return int64(start), end - start, uint32(v), true
 }
 
-// withUIDList holds the list for one row: read, change, write. The lock spans
-// all three, or two processes each append to the copy they read (#1840).
-func (u *userMailbox) withUIDList(folder, site string, fn func(l *uidList) error) error {
+// withUIDListHeld reads, changes and rewrites the list. The caller holds it
+// (holdList), for a whole reconcile or save section (#1840, #2184).
+func (u *userMailbox) withUIDListHeld(folder string, fn func(l *uidList) error) error {
 	path := u.uidListPath(folder)
-	unlock, err := u.dotlock(path)
-	if err != nil {
-		return err
-	}
-	heldFrom := time.Now()
-	defer func() {
-		unlock()
-		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
-	}()
-	metricLockAcquired.WithLabelValues(site).Inc()
 	if err := u.ensureUIDListLocked(folder, 0); err != nil {
 		return err
 	}
@@ -402,14 +396,14 @@ type listEntry struct {
 	filename string
 }
 
-// recordUIDsLocked writes a batch of rows in one rewrite and returns the uids
+// recordUIDsHeld writes a batch of rows in one rewrite and returns the uids
 // it refused: a base already listed under another uid keeps its owner (#1745).
-func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry, seed uint32) ([]uint32, error) {
+func (u *userMailbox) recordUIDsHeld(folder string, entries []listEntry, seed uint32) ([]uint32, error) {
 	var taken []uint32
 	var uids []uint32
 	var written *uidList
 	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
-	err := u.withUIDList(folder, lockSiteReconcileApply, func(l *uidList) error {
+	err := u.withUIDListHeld(folder, func(l *uidList) error {
 		if seed != 0 && l.uidValidity == 0 {
 			l.uidValidity = seed
 		}
@@ -456,12 +450,12 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry, seed 
 	return taken, nil
 }
 
-// dropRowsLocked removes the rows of messages the reconcile expunged; the
+// dropRowsHeld removes the rows of messages the reconcile expunged; the
 // header's next uid stays, so a returning file takes a fresh uid (#2176).
-func (u *userMailbox) dropRowsLocked(folder string, bases map[string]struct{}) error {
+func (u *userMailbox) dropRowsHeld(folder string, bases map[string]struct{}) error {
 	var written *uidList
 	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
-	err := u.withUIDList(folder, lockSiteReconcileApply, func(l *uidList) error {
+	err := u.withUIDListHeld(folder, func(l *uidList) error {
 		beforeRows = len(l.records)
 		if listDebug() {
 			beforeMod, beforeSize = u.listStat(folder)

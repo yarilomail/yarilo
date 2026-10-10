@@ -82,13 +82,16 @@ func (b *Box) Folder(name string, uidValidity uint32) (*mailbox.Folder, error) {
 // RecordDelivered records a saved body: the name reaches storage first, so a
 // failed name leaves no record behind (#1745).
 func (b *Box) RecordDelivered(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) error {
-	if err := NameSaved(b.store, folder, saved, m); err != nil {
-		return fmt.Errorf("mailbox/deliver: name %q: %w", saved, err)
-	}
-	if err := b.index.AppendMessage(f.ID, m); err != nil {
-		return fmt.Errorf("mailbox/deliver: append uid %d: %w", m.UID, err)
-	}
-	return nil
+	// One save section: the row is not seen without the record (#2184).
+	return inSaveSection(b.store, folder, func() error {
+		if err := nameSavedHeld(b.store, folder, saved, m); err != nil {
+			return fmt.Errorf("mailbox/deliver: name %q: %w", saved, err)
+		}
+		if err := b.index.AppendMessage(f.ID, m); err != nil {
+			return fmt.Errorf("mailbox/deliver: append uid %d: %w", m.UID, err)
+		}
+		return nil
+	})
 }
 
 // FillSizeless gives the records that carry no size the one their storage holds,

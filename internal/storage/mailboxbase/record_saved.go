@@ -22,32 +22,65 @@ func RecordSaved(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint64
 	if !isNamer || !isAppender {
 		return idx.AllocateAndAppend(folderID, m)
 	}
-	return appender.AllocateAndAppendNamed(folderID, m, func(uid uint32) (string, error) {
-		named, err := namer.AssignUID(folder, saved, uid)
-		if err != nil {
-			return "", err
-		}
-		stampStorageKey(box, folder, named, m)
-		stampReceived(box, folder, named, m)
-		return named, nil
+	return inSaveSection(box, folder, func() error {
+		return appender.AllocateAndAppendNamed(folderID, m, func(uid uint32) (string, error) {
+			named, err := assignHeld(box, namer, folder, saved, uid)
+			if err != nil {
+				return "", err
+			}
+			stampStorageKey(box, folder, named, m)
+			stampReceived(box, folder, named, m)
+			return named, nil
+		})
 	})
+}
+
+// inSaveSection runs fn under the store's save section when it has one.
+func inSaveSection(box mailbox.UserMailbox, folder string, fn func() error) error {
+	if sec, ok := mailbox.Driver(box).(mailbox.SaveSectioner); ok {
+		return sec.SaveSection(folder, fn)
+	}
+	return fn()
 }
 
 // NameSaved gives a saved message its name when the caller already holds the
 // uid, as a delivery that reserved one does. No cycle of its own.
 func NameSaved(box mailbox.UserMailbox, folder, saved string, m *mailbox.MessageMeta) error {
+	return inSaveSection(box, folder, func() error { return nameSavedHeld(box, folder, saved, m) })
+}
+
+// NameAndAppend names a saved message whose uid the caller holds and appends
+// its record in one save section: the row is never seen without the record.
+func NameAndAppend(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint64, folder, saved string, m *mailbox.MessageMeta) error {
+	return inSaveSection(box, folder, func() error {
+		if err := nameSavedHeld(box, folder, saved, m); err != nil {
+			return err
+		}
+		return idx.AppendMessage(folderID, m)
+	})
+}
+
+func nameSavedHeld(box mailbox.UserMailbox, folder, saved string, m *mailbox.MessageMeta) error {
 	stampStorageKey(box, folder, saved, m)
 	namer, ok := mailbox.Driver(box).(mailbox.UIDNamer)
 	if !ok {
 		return nil
 	}
-	named, err := namer.AssignUID(folder, saved, m.UID)
+	named, err := assignHeld(box, namer, folder, saved, m.UID)
 	if err != nil {
 		return err
 	}
 	stampStorageKey(box, folder, named, m)
 	stampReceived(box, folder, named, m)
 	return nil
+}
+
+// assignHeld names inside the section inSaveSection opened, when there is one.
+func assignHeld(box mailbox.UserMailbox, namer mailbox.UIDNamer, folder, saved string, uid uint32) (string, error) {
+	if sec, ok := mailbox.Driver(box).(mailbox.SaveSectioner); ok {
+		return sec.AssignUIDHeld(folder, saved, uid)
+	}
+	return namer.AssignUID(folder, saved, uid)
 }
 
 // stampReceived dates the named file only now: an old date on a temp would

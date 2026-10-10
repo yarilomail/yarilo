@@ -86,20 +86,33 @@ func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, _ *
 // AssignUID records the message in the folder's list, inside the caller's uid
 // cycle. No rename: on maildir the uid lives in the list, not in the name.
 func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, error) {
+	var named string
+	err := u.SaveSection(folder, func() error {
+		var aerr error
+		named, aerr = u.AssignUIDHeld(folder, filename, uid)
+		return aerr
+	})
+	return named, err
+}
+
+// AssignUIDHeld is AssignUID inside a save section the caller holds.
+func (u *userMailbox) AssignUIDHeld(folder, filename string, uid uint32) (string, error) {
 	if uid == 0 {
 		return "", fmt.Errorf("maildir/assign: uid 0 names no message")
 	}
 	guid, override := u.takeGUID(folder, filename)
 	received := u.takeReceived(folder, filename)
-	if err := u.withMailboxLockSite(folder, lockSiteSave, func() error {
-		// The file enters cur/ here and leaves this hold already named, which is
-		// why the reference takes the list lock before moving out of tmp/ (#1736).
-		if err := u.publishFromTemp(folder, filename, received); err != nil {
-			return err
-		}
-		return u.appendUIDListLocked(folder, uid, filename, override, guid)
-	}); err != nil {
+	// The caller's save section holds the list and the mailbox: the file enters
+	// cur/ and is named there, and its record lands before the list is let go,
+	// so no other process sees the row without the record (#1736, #2184).
+	if err := u.publishFromTemp(folder, filename, received); err != nil {
 		return "", err
+	}
+	if err := u.appendUIDListLocked(folder, uid, filename, override, guid); err != nil {
+		return "", err
+	}
+	if testAfterAssign != nil {
+		testAfterAssign()
 	}
 	return filename, nil
 }
@@ -164,3 +177,18 @@ func (u *userMailbox) afterPublish(folder, sub, name string) {
 // testAfterPublish runs right after a body lands in cur/ or new/. Test seam:
 // a scan in that window is what would cache the file's date.
 var testAfterPublish func()
+
+// testAfterAssign runs when the file and its row are visible and the caller
+// has not yet committed the record. Test seam (#2183).
+var testAfterAssign func()
+
+// SaveSection runs a save's naming and record under the list lock, then the
+// mailbox, the order every path takes them (#2184). AssignUID needs it held.
+func (u *userMailbox) SaveSection(folder string, fn func() error) error {
+	release, err := u.holdList(folder, lockSiteSave)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return u.withMailboxLockSite(folder, lockSiteSave, fn)
+}

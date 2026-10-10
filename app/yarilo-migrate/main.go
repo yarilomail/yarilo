@@ -354,11 +354,8 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		}
 		// The uid is already ours, so the name is settled here rather than in an
 		// allocating cycle (#1704, #1700).
-		if err := mbox.NameSaved(msg.Folder, filename, meta); err != nil {
-			return fmt.Errorf("name %s/%s: %w", user, msg.Folder, err)
-		}
-		if err := idx.AppendMessage(f.ID, meta); err != nil {
-			return fmt.Errorf("append %s/%s: %w", user, msg.Folder, err)
+		if err := mailboxbase.NameAndAppend(idx, box, f.ID, msg.Folder, filename, meta); err != nil {
+			return fmt.Errorf("name and append %s/%s: %w", user, msg.Folder, err)
 		}
 		migrated++
 		return nil
