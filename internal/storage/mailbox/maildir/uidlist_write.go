@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/filelock"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // uidRecord is one list entry. Sizes are carried only when the name does not
@@ -354,7 +355,19 @@ func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
 		os.Remove(tmp) //nolint:errcheck
 		return fmt.Errorf("maildir/uidlist: rename: %w", err)
 	}
+	removeStaleListTemps(path)
 	return nil
+}
+
+// removeStaleListTemps clears what a writer that died mid-write left: a unique
+// name is never reused, so nothing else would. Young ones may be a writer's.
+func removeStaleListTemps(path string) {
+	left, _ := filepath.Glob(path + ".tmp*")
+	for _, name := range left {
+		if fi, err := statPath(name); err == nil && time.Since(fi.ModTime()) >= mailbox.StaleTemp {
+			os.Remove(name) //nolint:errcheck
+		}
+	}
 }
 
 // syncFile is the durability call, and beforeUIDListRename runs after it. Test

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -73,5 +74,62 @@ func TestTwoProcessesWritingTheListLoseNoRow(t *testing.T) {
 	}
 	if missing != 0 {
 		t.Errorf("the list lost %d of %d rows written by two processes", missing, 2*rowsPerWriter)
+	}
+}
+
+// A writer that dies mid-write leaves its unique temp, which nobody reuses; the
+// next write clears old ones, and leaves a young one that may be a writer's,
+// including an old pod's fixed name during a rollout (#2179).
+func TestTheNextListWriteClearsOldTemps(t *testing.T) {
+	home := t.TempDir()
+	box := New().OpenUser(&mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"})
+	defer box.Close() //nolint:errcheck
+	if err := box.Create("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	list := filepath.Join(home, "Maildir", UIDListFileName)
+	old := time.Now().Add(-mailbox.StaleTemp - time.Hour)
+	for _, c := range []struct {
+		name string
+		old  bool
+	}{
+		{UIDListFileName + ".tmp.1234567", true},
+		{UIDListFileName + ".tmp", true},
+		{UIDListFileName + ".tmp.7654321", false},
+	} {
+		p := filepath.Join(home, "Maildir", c.name)
+		if err := os.WriteFile(p, []byte("3 V1 N1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if c.old {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	u := box.(*userMailbox)
+	if _, err := u.recordUIDsLocked("INBOX", []listEntry{{uid: 1, filename: "1700000000.M1P1.host,S=4,W=4:2,"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		name string
+		gone bool
+	}{
+		{UIDListFileName + ".tmp.1234567", true},
+		{UIDListFileName + ".tmp", true},
+		{UIDListFileName + ".tmp.7654321", false},
+	} {
+		_, err := os.Stat(filepath.Join(home, "Maildir", c.name))
+		if c.gone && !os.IsNotExist(err) {
+			t.Errorf("the old temp %s survived the next write: %v", c.name, err)
+		}
+		if !c.gone && err != nil {
+			t.Errorf("the young temp %s was taken: %v", c.name, err)
+		}
+	}
+	if _, err := os.Stat(list); err != nil {
+		t.Fatal(err)
 	}
 }
