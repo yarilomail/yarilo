@@ -25,6 +25,32 @@ KUBECONFIG=~/.kube/sbox.yaml \
 | `YARILO_ARM_OVERLAY` | — | a second values file from `helm_values/values-sandbox-<name>.yaml` |
 | `YARILO_ARM_BLOCKPROFILE` | 0 | the profiling overlay; this makes the arm a latency arm, not a throughput one |
 
+## The acceptance run
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/accept.sh <image-tag> <out-dir>
+```
+
+What a rollout after a merge must pass, judged and written as `PASS`/`FAIL`
+lines in `<out-dir>/verdict.txt`; the script exits 1 when any fails. On the
+runner, like a window, and recorded in docs-internal `stand-runs.md` and on the
+issue it verifies.
+
+| Criterion | How |
+|:---|:---|
+| smoketest 46/46 on mdbox, maildir, sdbox | `hack/smoketest/run.sh` per type |
+| disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
+| imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
+| an aged sdbox and maildir mailbox survive an open | an account with 20+ files changed over a day ago, counted before and after an IMAP SELECT (#2172) |
+| no new vanished-and-present uid | QRESYNC on u53–u70@d00002.test before and after (#2176) |
+| no pod restarted or replaced | pod uids and restart counts at the start and the end |
+| no `panic`, `stopped-naming`, `reconcile-unfinished`, `append-failed`, `list-rename`, `reactive-heal`, `message-swept` lines | every container's log since the start |
+| an explicit domain rebalance | not run yet: the director has no trigger for one |
+
+Every matched line is kept verbatim in `<out-dir>/lines/<name>.txt`, and every
+container's log in `<out-dir>/logs/`: a count alone explains nothing once the
+pods are replaced (#2183).
+
 ## The quick arm
 
 A question about one storage type does not need the other two: a maildir
