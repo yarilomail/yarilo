@@ -65,6 +65,21 @@ func (s *Server) stickyFollowsDomain(user, host string) bool {
 	return e == nil || sameHost(e.Host, host)
 }
 
+// placementTag is the tag of the backend the user's domain sits on, "" when it
+// is not placed: the admin path has no login tag, and an untagged pick would
+// not find a tagged placement and would drop it.
+func (s *Server) placementTag(user string) string {
+	if s.assignmentPolicy() != policyDomain {
+		return ""
+	}
+	if e := s.domainDir.Get(DomainOf(user)); e != nil {
+		if b := s.ring.GetBackend(hostIP(e.Host)); b != nil {
+			return b.Tag
+		}
+	}
+	return ""
+}
+
 // sameHost compares two "ip:port" by their parts, not their spelling.
 func sameHost(a, b string) bool {
 	ah, ap, aerr := net.SplitHostPort(a)
@@ -207,8 +222,8 @@ func (s *Server) recordDomain(user, addr string) {
 
 // assignAndPin resolves an UNPINNED user via the policy, records the pin, and
 // propagates USER-ASSIGN — the SINGLE owner of initial placement (#797). Every
-// fresh-assignment caller (login LOOKUP, LMTP RouteUser, admin apiMap under
-// least_sessions) funnels through here so none can independently pick a
+// fresh-assignment caller (login LOOKUP, admin apiMap under least_sessions
+// or domain) funnels through here so none can independently pick a
 // different pod and split a user's per-user writer (#788). Returns nil when no
 // backend is available.
 func (s *Server) assignAndPin(user, tag, reqProto string) *ring.Backend {

@@ -443,7 +443,7 @@ func NewWithOptions(opts Options) *Server {
 // normalizeUser applies the #738 username hash-normalization at the single
 // ingress point for every wire/HTTP handler that turns a raw username into a
 // hash or map key (handleLookup, handleUserMove, handleUserWeak,
-// handleUserKick, RouteUser, apiUserMove, apiUserKick).
+// handleUserKick, apiMap, apiUserMove, apiUserKick).
 // Everything downstream of these call sites — s.userDir,
 // s.ring — already operates on normalized usernames, so no other call site
 // needs its own normalize call.
@@ -1235,35 +1235,6 @@ func (s *Server) AddBackend(ip string, port int, tag string, vhosts int) {
 // LookupBackend returns the backend for the given username or nil if ring is empty.
 func (s *Server) LookupBackend(username string) *ring.Backend {
 	return s.ring.LookupBackend(username)
-}
-
-// RouteUser returns the backend IP for a recipient username. One order (#708):
-// sticky userDir pin → ring.
-func (s *Server) RouteUser(username string) (string, error) {
-	username = s.normalizeUser(username)
-	if e := s.userDir.Get(username); e != nil && !e.Weak {
-		host, _, err := net.SplitHostPort(e.Host)
-		if err == nil {
-			if b := s.ring.GetBackend(host); b != nil && b.Up {
-				return host, nil
-			}
-		}
-	}
-	// Fresh (unpinned) delivery. Under least_sessions the placement must be the
-	// director's single owned decision (assignAndPin), or LMTP could pick a
-	// different pod than a concurrent IMAP login and split the user's writer
-	// (#797/#788). Under hash the deterministic lookup stays read-only.
-	if s.assignmentPolicy() == policyLeastSessions {
-		if b := s.assignAndPin(username, "", "lmtp"); b != nil {
-			return b.IP, nil
-		}
-		return "", fmt.Errorf("no backends available")
-	}
-	b := s.ring.LookupBackend(username)
-	if b == nil {
-		return "", fmt.Errorf("no backends available")
-	}
-	return b.IP, nil
 }
 
 // RecordUser writes a user→backend mapping into the user directory.

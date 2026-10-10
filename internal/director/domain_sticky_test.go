@@ -97,3 +97,38 @@ func TestSameHostComparesParts(t *testing.T) {
 		}
 	}
 }
+
+// The admin resolver names the pod a per-user operation goes to: after a move
+// it must follow the domain too, or the operation writes where logins no
+// longer go (#2193).
+func TestTheAdminResolverFollowsAMovedDomain(t *testing.T) {
+	s := domainServer(t, "10.0.0.1", "10.0.0.2")
+	user := "u1@one.test"
+	lookup(s, user)
+	s.moveDomain("one.test", "10.0.0.1:10143", "10.0.0.2:10143")
+	if ip, _, _, _ := s.resolveUserBackend(user); ip != "10.0.0.2" {
+		t.Errorf("resolver after the move = %s, want the domain's 10.0.0.2", ip)
+	}
+	if e := s.userDir.Get(user); e == nil || e.Host != "10.0.0.2:10143" {
+		t.Errorf("entry after the resolver = %+v, want 10.0.0.2:10143", e)
+	}
+}
+
+// A user never seen goes where the domain sits, not where the hash points; the
+// placement is on tagged backends and must survive the admin path's lookup.
+func TestTheAdminResolverPlacesAFreshUserWithItsDomain(t *testing.T) {
+	s := domainServer(t, "10.0.0.1", "10.0.0.2")
+	user := "u2@one.test"
+	hashed := s.ring.LookupBackendByTag(user, "a").IP
+	placed := "10.0.0.1"
+	if hashed == placed {
+		placed = "10.0.0.2"
+	}
+	s.domainDir.Set("one.test", placed+":10143")
+	if ip, _, _, _ := s.resolveUserBackend(user); ip != placed {
+		t.Errorf("resolver for a fresh user = %q, want the domain's %s (hash says %s)", ip, placed, hashed)
+	}
+	if e := s.domainDir.Get("one.test"); e == nil || e.Host != placed+":10143" {
+		t.Errorf("placement after the resolver = %+v, want %s:10143 kept", e, placed)
+	}
+}
