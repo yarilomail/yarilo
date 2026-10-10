@@ -199,14 +199,14 @@ func (c *folderCache) baseOfLoaded(uid uint32) (string, bool) {
 }
 
 // snapshotChecked answers from the map alone, inside the window a walk earned.
-func (c *folderCache) snapshotChecked() (map[string]uint32, bool) {
+func (c *folderCache) snapshotChecked() (map[string]uint32, listStamp, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.checked && c.uidMap != nil {
 		c.uidLent = true
-		return c.uidMap, true
+		return c.uidMap, c.uidStamp, true
 	}
-	return nil, false
+	return nil, listStamp{}, false
 }
 
 // snapshotForAppend answers when the file is the one the map was read from and
@@ -1566,7 +1566,7 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		}
 		// The list says which base a uid holds; the record itself no longer
 		// carries a name (#1700).
-		uidToBase, err := u.basesByUID(folder.Name)
+		uidToBase, listFrom, err := u.basesByUIDFrom(folder.Name)
 		if err != nil {
 			return err
 		}
@@ -1609,7 +1609,9 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 					relink = append(relink, listEntry{uid: m.UID, filename: onDisk[b].Filename})
 					tracked[b] = struct{}{}
 					slog.Info("maildir: the list stopped naming this record, and its own message is on disk; the row is written back",
-						"user", u.username, "folder", folder.Name, "uid", m.UID, "base", b)
+						"user", u.username, "folder", folder.Name, "uid", m.UID, "base", b, "modseq", m.ModSeq,
+						"list_from", listFrom.from, "list_ino", listFrom.stamp.inode(), "list_size", listFrom.stamp.size,
+						"list_mtime", listFrom.stamp.mtime.UnixNano())
 					continue
 				}
 				reportUnlisted(u.username, folder.Name, m.UID)
@@ -2013,33 +2015,46 @@ func appendedAt(f *os.File, at int64) bool {
 }
 
 func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
+	m, _, err := u.readUIDListFrom(folder)
+	return m, err
+}
+
+// listRead is where a read took the map from (window, cache, tail, file) and
+// the stamp of the file it stands for: a rebind line without them says what
+// was done, not why the row was missing (#2183).
+type listRead struct {
+	from  string
+	stamp listStamp
+}
+
+func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRead, error) {
 	// The stamp first, by one path walk: a hit must open nothing, and knowing
 	// whether another process changed the file needs the filesystem asked
 	// (#1875).
 	cache := u.folderCacheFor(folder)
-	if m, ok := cache.snapshotChecked(); ok {
-		u.debugListRead(folder, "checked", len(m), listStamp{})
-		return m, nil
+	if m, st, ok := cache.snapshotChecked(); ok {
+		u.debugListRead(folder, "checked", len(m), st)
+		return m, listRead{"window", st}, nil
 	}
 	metricCacheStat.WithLabelValues("list").Inc()
 	if fi, err := statPath(u.uidListPath(folder)); err == nil {
 		if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
 			u.debugListRead(folder, "cache", len(m), stampOf(fi))
-			return m, nil
+			return m, listRead{"cache", stampOf(fi)}, nil
 		}
 	}
 	f, fi, err := u.openUIDList(folder)
 	if err != nil {
-		return nil, err
+		return nil, listRead{}, err
 	}
 	if f == nil {
-		return make(map[string]uint32), nil
+		return make(map[string]uint32), listRead{"none", listStamp{}}, nil
 	}
 	defer f.Close()
 
 	if m, ok := u.folderCacheFor(folder).snapshotUIDs(stampOf(fi)); ok {
 		u.debugListRead(folder, "cache", len(m), stampOf(fi))
-		return m, nil
+		return m, listRead{"cache", stampOf(fi)}, nil
 	}
 	// Only the rows appended since the last read: a large folder re-parsed the
 	// whole file for one new row (#1875).
@@ -2050,7 +2065,7 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 		metricUIDListRead.WithLabelValues("tail").Inc()
 	}
 	if _, err := f.Seek(from, io.SeekStart); err != nil {
-		return nil, err
+		return nil, listRead{}, err
 	}
 	if m == nil {
 		m = make(map[string]uint32)
@@ -2099,12 +2114,16 @@ func (u *userMailbox) readUIDList(folder string) (map[string]uint32, error) {
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		return nil, listRead{}, err
 	}
 
 	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi))
 	u.debugListRead(folder, "disk", len(m), stampOf(fi))
-	return m, nil
+	read := listRead{"file", stampOf(fi)}
+	if from > 0 {
+		read.from = "tail"
+	}
+	return m, read, nil
 }
 
 // folderCacheFor returns this folder's cache entry, creating it if needed.
