@@ -46,7 +46,23 @@ verdict() {
 # pod_state lists every pod with its uid and each container's restart count: a
 # replaced pod shows as a new uid, a restarted container as a higher count.
 pod_state() {
-  kube get pods -l '!job-name' -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.uid}{range .status.containerStatuses[*]} {.name}={.restartCount}{end}{"\n"}{end}' | sort
+  kube get pods -l '!job-name' -o jsonpath='{range .items[*]}{.metadata.deletionTimestamp}|{.metadata.name} {.metadata.uid}{range .status.containerStatuses[*]} {.name}={.restartCount}{end}{"\n"}{end}' |
+    awk -F'|' '$1 == "" { print $2 }' | sort
+}
+
+# settle waits for every workload to finish rolling out and for the previous
+# pods to be gone: a pod still terminating at the start is not a replacement.
+settle() {
+  local d n waited=0
+  for d in $(kube get deploy -o name); do
+    kube rollout status "$d" --timeout=280s
+  done
+  while :; do
+    n=$(kube get pods -o jsonpath='{range .items[*]}{.metadata.deletionTimestamp}{"\n"}{end}' | grep -c . || true)
+    [ "$n" = 0 ] && return 0
+    [ "$waited" -ge 180 ] && { echo "accept: $n pods still terminating after ${waited}s" >&2; return 0; }
+    sleep 5; waited=$((waited + 5))
+  done
 }
 
 # imap_session runs one IMAP conversation from a backend pod against the login
@@ -211,6 +227,7 @@ echo "== deploy $(date -u +%FT%TZ)"
 helm upgrade yarilo "$REPO/helm" -n "$NS" -f "$REPO/helm_values/values-sandbox.yaml" \
   --set image.tag="$TAG" --wait --timeout 10m > "$OUT/deploy.txt" 2>&1
 kube rollout status sts/yarilo-backend --timeout=280s >> "$OUT/deploy.txt" 2>&1
+settle >> "$OUT/deploy.txt" 2>&1
 START=$(date -u +%FT%TZ)
 pod_state > "$OUT/pods-start.txt"
 echo "-- pods settled; the run's window starts $START"
@@ -359,4 +376,7 @@ done
   verdict "no director panic" fail "$n (lines/panic.txt)"
 
 echo "== $(date -u +%FT%TZ) $FAILS failed, $SKIPS skipped" | tee -a "$OUT/verdict.txt"
-[ "$FAILS" = 0 ]
+# Explicit: a bare test as the last command would fire the ERR trap on a
+# failed run and print a line that names no fault.
+[ "$FAILS" = 0 ] || exit 1
+exit 0
