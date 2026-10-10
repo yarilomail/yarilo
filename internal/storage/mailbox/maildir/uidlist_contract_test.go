@@ -232,8 +232,10 @@ func TestTheListIsReplacedWholeAndLeavesNothingBehind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The lock file stays, as the index's does: it is never renamed (#2179).
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), maildir.UIDListFileName) && e.Name() != maildir.UIDListFileName {
+		if strings.HasPrefix(e.Name(), maildir.UIDListFileName) && e.Name() != maildir.UIDListFileName &&
+			e.Name() != maildir.UIDListFileName+".lock" {
 			t.Errorf("the write left %q beside the list", e.Name())
 		}
 	}
@@ -286,9 +288,10 @@ func TestAHeldUIDListStopsTheWrite(t *testing.T) {
 	if err := box.Create("INBOX"); err != nil {
 		t.Fatal(err)
 	}
-	// The lock is on the list itself now, not on a name beside it (#1840).
+	// The lock is on a file beside the list: a rewrite renames over the list
+	// itself, and a lock on it would hold an inode nobody opens again (#2179).
 	defer maildir.SetUIDListLockWait(200 * time.Millisecond)()
-	held, lerr := filelock.Take(filepath.Join(home, "Maildir", maildir.UIDListFileName), filelock.MethodFlock, time.Second)
+	held, lerr := filelock.Take(filepath.Join(home, "Maildir", maildir.UIDListFileName+".lock"), filelock.MethodFlock, time.Second)
 	if lerr != nil {
 		t.Fatal(lerr)
 	}
