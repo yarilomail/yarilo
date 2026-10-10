@@ -156,6 +156,8 @@ type folderCache struct {
 	listFD *os.File
 	fdIno  uint64
 	fdDev  uint64
+	// usedSeq orders the folders by last read, for heldListsPerUser.
+	usedSeq uint64
 }
 
 // scanFacts is what one walk had to read the file for. The rest is derived
@@ -263,6 +265,45 @@ func (c *folderCache) holdFDLocked(f *os.File, stamp listStamp) {
 		_ = c.listFD.Close()
 	}
 	c.listFD, c.fdIno, c.fdDev = f, stamp.ino, stamp.dev
+}
+
+// heldListsPerUser bounds the list descriptors one user keeps open. The
+// reference holds one per open mailbox; our maps outlive the open (#1875), and
+// a LIST-STATUS over hundreds of folders must not hold hundreds (#2183).
+const heldListsPerUser = 32
+
+// touch marks the folder's map as just read.
+func (u *userMailbox) touch(c *folderCache) {
+	n := u.listUseSeq.Add(1)
+	c.mu.Lock()
+	c.usedSeq = n
+	c.mu.Unlock()
+}
+
+// boundHeldLists drops the least recently read maps, descriptor and all, past
+// heldListsPerUser: a map without its descriptor would trust the inode again.
+func (u *userMailbox) boundHeldLists() {
+	u.cacheMu.Lock()
+	defer u.cacheMu.Unlock()
+	type held struct {
+		c   *folderCache
+		seq uint64
+	}
+	var open []held
+	for _, c := range u.cache {
+		c.mu.Lock()
+		if c.listFD != nil {
+			open = append(open, held{c, c.usedSeq})
+		}
+		c.mu.Unlock()
+	}
+	if len(open) <= heldListsPerUser {
+		return
+	}
+	sort.Slice(open, func(i, j int) bool { return open[i].seq < open[j].seq })
+	for _, h := range open[:len(open)-heldListsPerUser] {
+		h.c.invalidateUIDs("evicted")
+	}
 }
 
 func (c *folderCache) dropFDLocked() {
@@ -443,7 +484,10 @@ func (u *userMailbox) adoptWritten(folder string, l *uidList) {
 			guids[rec.base] = rec.guid
 		}
 	}
-	u.folderCacheFor(folder).storeUIDs(m, guids, stampOf(fi), f)
+	c := u.folderCacheFor(folder)
+	c.storeUIDs(m, guids, stampOf(fi), f)
+	u.touch(c)
+	u.boundHeldLists()
 }
 
 func (c *folderCache) guidOf(base string) ([16]byte, bool) {
@@ -644,6 +688,7 @@ type userMailbox struct {
 	listUTF8         bool       // mirrors Backend.listUTF8
 	mu               sync.Mutex // orders this pod's sessions; other processes are excluded at the file
 	cacheMu          sync.Mutex // guards cache; the scan reaches it holding no mailbox lock
+	listUseSeq       atomic.Uint64
 	// inSection is non-zero while a reconcile's apply phase holds the folder
 	// lock; the filesystem calls made there are counted (#1626).
 	inSection  atomic.Int32
@@ -2096,6 +2141,7 @@ func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRea
 	cache := u.folderCacheFor(folder)
 	if m, st, ok := cache.snapshotChecked(); ok {
 		u.debugListRead(folder, "checked", len(m), st)
+		u.touch(cache)
 		return m, listRead{"window", st}, nil
 	}
 	metricCacheStat.WithLabelValues("list").Inc()
@@ -2103,6 +2149,7 @@ func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRea
 		st := stampOf(fi)
 		if m, ok := cache.snapshotUIDs(st); ok {
 			u.debugListRead(folder, "cache", len(m), st)
+			u.touch(cache)
 			return m, listRead{"cache", st}, nil
 		}
 		m, ok, terr := cache.readTail(st)
@@ -2113,6 +2160,7 @@ func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRea
 			listAppendReads.Add(1)
 			metricUIDListRead.WithLabelValues("tail").Inc()
 			u.debugListRead(folder, "tail", len(m), st)
+			u.touch(cache)
 			return m, listRead{"tail", st}, nil
 		}
 	}
@@ -2127,6 +2175,7 @@ func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRea
 	if m, ok := cache.snapshotUIDs(st); ok {
 		_ = f.Close()
 		u.debugListRead(folder, "cache", len(m), st)
+		u.touch(cache)
 		return m, listRead{"cache", st}, nil
 	}
 	m, guids, err := parseUIDRows(f, make(map[string]uint32), nil)
@@ -2137,6 +2186,8 @@ func (u *userMailbox) readUIDListFrom(folder string) (map[string]uint32, listRea
 	listReads.Add(1)
 	metricUIDListRead.WithLabelValues("whole").Inc()
 	cache.storeUIDs(m, guids, st, f)
+	u.touch(cache)
+	u.boundHeldLists()
 	u.debugListRead(folder, "disk", len(m), st)
 	return m, listRead{"file", st}, nil
 }

@@ -1,6 +1,7 @@
 package maildir
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -184,5 +185,54 @@ func TestCloseReleasesTheHeldListDescriptors(t *testing.T) {
 	box.folderCacheFor("INBOX").invalidateUIDs("test")
 	if _, err := fd.Stat(); err == nil {
 		t.Error("the descriptor is still open after the map was dropped")
+	}
+}
+
+// One user holds at most heldListsPerUser list descriptors: the least recently
+// read folder lets go of map and descriptor, and is read whole next time.
+func TestHeldListsAreBoundedPerUser(t *testing.T) {
+	setup, _, _ := recSetup(t)
+	folders := make([]string, heldListsPerUser+1)
+	for i := range folders {
+		folders[i] = fmt.Sprintf("F%02d", i)
+		if err := setup.Create(folders[i]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := setup.AssignUID(folders[i], "1700000001.M1P1.h,S=3", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	box := New().OpenUser(&mailbox.UserInfo{Username: setup.username, Home: setup.home}).(*userMailbox)
+	t.Cleanup(func() { box.Close() })
+	read := func(f string) listRead {
+		t.Helper()
+		_, r, err := box.readUIDListFrom(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	for _, f := range folders[:heldListsPerUser] {
+		read(f)
+	}
+	// Read again before the one past the bound: the oldest is now F01.
+	if r := read(folders[0]); r.from != "cache" {
+		t.Fatalf("F00 again: from %q, want cache", r.from)
+	}
+	read(folders[heldListsPerUser])
+	held := 0
+	for _, f := range folders {
+		if box.folderCacheFor(f).listFD != nil {
+			held++
+		}
+	}
+	if held != heldListsPerUser {
+		t.Errorf("%d folders read hold %d descriptors, want %d", len(folders), held, heldListsPerUser)
+	}
+	if box.folderCacheFor(folders[0]).listFD == nil {
+		t.Error("F00, read just before, was evicted")
+	}
+	if r := read(folders[1]); r.from != "file" {
+		t.Errorf("the evicted F01's next read: from %q, want file", r.from)
 	}
 }

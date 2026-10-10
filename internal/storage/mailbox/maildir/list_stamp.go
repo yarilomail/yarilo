@@ -22,7 +22,7 @@ func stampOf(fi os.FileInfo) listStamp {
 	s := listStamp{size: fi.Size(), mtime: fi.ModTime()}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
 		s.ino = st.Ino
-		s.dev = uint64(st.Dev) //nolint:gosec // a device number, never negative
+		s.dev = statDev(st)
 		s.ctime = statCtimeNanos(st)
 	}
 	return s
