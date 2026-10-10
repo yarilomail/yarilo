@@ -426,6 +426,17 @@ func (c *folderCache) invalidateDirEntries(by string) {
 	c.entries, c.dirMtime = nil, time.Time{}
 }
 
+// closeWindow ends the window and keeps the maps: the next read stats the list
+// and parses only what was appended since.
+func (c *folderCache) closeWindow(by string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.checked {
+		metricWindowClosed.WithLabelValues(by).Inc()
+	}
+	c.checked = false
+}
+
 // markChecked opens the window a walk earns: until something invalidates the
 // folder, a list lookup trusts the map it loaded (as the reference does).
 func (c *folderCache) markChecked() {
@@ -1412,6 +1423,9 @@ func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, 
 
 func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
 	var st mailbox.SyncStats
+	// The pass reads the list against its file: a window left open since the
+	// last pass hides the rows other processes wrote meanwhile (#2181).
+	u.folderCacheFor(folder.Name).closeWindow("reconcile")
 	// A full walk earns the window; so does a uid list the index was built
 	// from, by one stat (#1875, as the reference does).
 	if !arrivalsOnly {
