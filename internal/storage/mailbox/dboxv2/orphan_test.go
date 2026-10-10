@@ -40,12 +40,15 @@ func save(t *testing.T, mb mailbox.UserMailbox, body string) (string, [16]byte) 
 	return temp, guid
 }
 
+// age makes the file d old to the sweep: mtime by Chtimes, and ctime, which
+// Chtimes moves to now, by running the sweep's clock d ahead.
 func age(t *testing.T, path string, d time.Duration) {
 	t.Helper()
 	when := time.Now().Add(-d)
 	if err := os.Chtimes(path, when, when); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(mailbox.SetSweepClock(func() time.Time { return time.Now().Add(d) }))
 }
 
 func sweep(mb mailbox.UserMailbox, folder string) {

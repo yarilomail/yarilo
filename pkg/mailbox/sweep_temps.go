@@ -24,20 +24,25 @@ func SweepDue(dir string) bool {
 }
 
 // SweepStaleTemps removes old unpublished saves named prefix*, never a message (#2172);
-// a young one is about to be named (#1736). The caller holds and checked SweepDue.
+// young by mtime or ctime, one is about to be named (#1736, #2175). Caller checked SweepDue.
 func SweepStaleTemps(dir, prefix string) (removed []string, err error) {
 	stamp := filepath.Join(dir, SweepStampName)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
+	now := sweepNow()
 	for _, e := range entries {
 		if e.Name() == SweepStampName || !strings.HasPrefix(e.Name(), prefix) {
 			continue
 		}
 		info, ierr := e.Info()
 		if ierr != nil || now.Sub(info.ModTime()) < StaleTemp {
+			continue
+		}
+		// A save dates its temp to the INTERNALDATE just before publishing it,
+		// which leaves the ctime fresh (#2175).
+		if ct, ok := changeTime(info); ok && now.Sub(ct) < StaleTemp {
 			continue
 		}
 		if rerr := os.Remove(filepath.Join(dir, e.Name())); rerr != nil && !os.IsNotExist(rerr) {
@@ -55,4 +60,14 @@ func SweepStaleTemps(dir, prefix string) (removed []string, err error) {
 		}
 	}
 	return removed, err
+}
+
+// sweepNow is the sweep's clock. Test seam: a test cannot age a ctime.
+var sweepNow = time.Now
+
+// SetSweepClock makes the sweep read now() and returns the restore. Tests only.
+func SetSweepClock(now func() time.Time) func() {
+	prev := sweepNow
+	sweepNow = now
+	return func() { sweepNow = prev }
 }

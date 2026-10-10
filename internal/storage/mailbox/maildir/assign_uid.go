@@ -121,8 +121,8 @@ func (u *userMailbox) publishFromTemp(folder, filename string, received time.Tim
 	if maildirBase(filename) == filename {
 		sub = "new"
 	}
-	// Dated before it is visible, so no scan caches the write time; the temp
-	// sweep needs this hold, so the old date cannot get the temp swept (#2175).
+	// Dated before it is visible, so no scan caches the write time; the fresh
+	// ctime this leaves keeps the temp from a sweep in any process (#2175).
 	if !received.IsZero() {
 		if err := os.Chtimes(src, received, received); err != nil {
 			slog.Warn("maildir: the file keeps its write time, not the INTERNALDATE",
