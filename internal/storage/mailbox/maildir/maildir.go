@@ -148,6 +148,9 @@ type folderCache struct {
 	// checked says a walk has just compared this folder with the disk, so a
 	// lookup answers from the maps without stating them again (#1875).
 	checked bool
+	// uidLent says uidMap has been handed to a reader, who may range over it
+	// unlocked: a change copies it first.
+	uidLent bool
 }
 
 // scanFacts is what one walk had to read the file for. The rest is derived
@@ -180,6 +183,7 @@ func (c *folderCache) snapshotUIDs(stamp listStamp) (map[string]uint32, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.uidMap != nil && stamp.same(c.uidStamp) {
+		c.uidLent = true
 		return c.uidMap, true
 	}
 	return nil, false
@@ -199,6 +203,7 @@ func (c *folderCache) snapshotChecked() (map[string]uint32, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.checked && c.uidMap != nil {
+		c.uidLent = true
 		return c.uidMap, true
 	}
 	return nil, false
@@ -238,6 +243,15 @@ func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID boo
 		c.uidStamp = listStamp{}
 		return
 	}
+	if c.uidLent {
+		// A reader may be ranging over the map it was handed: the row goes
+		// into a copy, never under its feet (#2184).
+		m := make(map[string]uint32, len(c.uidMap)+1)
+		for k, v := range c.uidMap {
+			m[k] = v
+		}
+		c.uidMap, c.uidLent = m, false
+	}
 	c.uidMap[base] = uid
 	if c.byUID == nil {
 		c.byUID = map[uint32]string{}
@@ -255,7 +269,8 @@ func (c *folderCache) addUID(base string, uid uint32, guid [16]byte, hasGUID boo
 func (c *folderCache) storeUIDs(m map[string]uint32, guids map[string][16]byte, stamp listStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.uidMap, c.guidMap, c.uidStamp = m, guids, stamp
+	// The caller hands m on to its own caller.
+	c.uidMap, c.guidMap, c.uidStamp, c.uidLent = m, guids, stamp, true
 	c.byUID = make(map[uint32]string, len(m))
 	for base, uid := range m {
 		c.byUID[uid] = base
@@ -330,7 +345,17 @@ func (u *userMailbox) alignIndexUIDSpace(idx mailbox.UserIndex, folderID uint64,
 
 // seedUIDValidity writes the index's UIDVALIDITY into a list that has none.
 func (u *userMailbox) seedUIDValidity(folder, site string, v uint32) error {
-	if err := u.withUIDList(folder, site, func(l *uidList) error {
+	release, err := u.holdList(folder, site)
+	if err != nil {
+		return fmt.Errorf("maildir: seed uidvalidity: %w", err)
+	}
+	defer release()
+	return u.seedUIDValidityHeld(folder, v)
+}
+
+// seedUIDValidityHeld is seedUIDValidity for a caller holding the list.
+func (u *userMailbox) seedUIDValidityHeld(folder string, v uint32) error {
+	if err := u.withUIDListHeld(folder, func(l *uidList) error {
 		if l.uidValidity == 0 {
 			l.uidValidity = v
 		}
@@ -922,7 +947,7 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 }
 
 // appendUIDListLocked records one uid against one name and rewrites the list.
-// Caller MUST hold the mailbox X lock.
+// Caller holds the save section: the list, then the mailbox (#2184).
 func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename string, guidOverride bool, guid [16]byte) error {
 	// The list maps a uid to a name, and a zero maps nothing (#1703).
 	if uid == 0 {
@@ -948,7 +973,7 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 	// The ordinary case is a name the list has never seen: one line at the end
 	// of the file, held for that write alone (#1840).
 	if u.listCanTakeRow(folder, base) {
-		appended, aerr := u.appendUIDRow(folder, lockSiteSave, rec)
+		appended, aerr := u.appendUIDRowHeld(folder, rec)
 		if aerr != nil {
 			return aerr
 		}
@@ -959,7 +984,7 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 	}
 	var written *uidList
 	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
-	err := u.withUIDList(folder, lockSiteSave, func(l *uidList) error {
+	err := u.withUIDListHeld(folder, func(l *uidList) error {
 		beforeRows = len(l.records)
 		if listDebug() {
 			beforeMod, beforeSize = u.listStat(folder)
@@ -1487,6 +1512,14 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		return st, nil
 	}
 
+	// The list for the whole apply, taken before the mailbox: another process's
+	// reconcile or save cannot write it in between, and every path takes the
+	// two in this order (#2184).
+	releaseList, err := u.holdList(folder.Name, lockSiteReconcileApply)
+	if err != nil {
+		return st, err
+	}
+	defer releaseList()
 	err = u.withMailboxLockSite(folder.Name, lockSiteReconcileApply, func() (rerr error) {
 		u.inSection.Add(1)
 		defer u.inSection.Add(-1)
@@ -1503,7 +1536,7 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		}
 		defer func() {
 			if seed != 0 && rerr == nil {
-				rerr = u.seedUIDValidity(folder.Name, lockSiteReconcileApply, seed)
+				rerr = u.seedUIDValidityHeld(folder.Name, seed)
 			}
 		}()
 		defer func() {
@@ -1642,12 +1675,12 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		}
 
 		if len(vanishedBases) > 0 {
-			if err := u.dropRowsLocked(folder.Name, vanishedBases); err != nil {
+			if err := u.dropRowsHeld(folder.Name, vanishedBases); err != nil {
 				return err
 			}
 		}
 		if len(relink) > 0 {
-			if _, err := u.recordUIDsLocked(folder.Name, relink, seed); err != nil {
+			if _, err := u.recordUIDsHeld(folder.Name, relink, seed); err != nil {
 				return err
 			}
 			seed = 0
@@ -1705,9 +1738,12 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 			if testBeforeRowWrite != nil {
 				testBeforeRowWrite()
 			}
-			taken, err := u.recordUIDsLocked(folder.Name, recorded, seed)
+			taken, err := u.recordUIDsHeld(folder.Name, recorded, seed)
 			if err != nil {
 				return err
+			}
+			if testAfterImportRows != nil {
+				testAfterImportRows()
 			}
 			seed = 0
 			if testStopAfterRows {
@@ -1746,6 +1782,10 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 	st.Changed = st.Imported > 0 || st.Expunged > 0 || st.Updated > 0 || st.Relinked > 0
 	return st, err
 }
+
+// testAfterImportRows runs when an import's rows are written and its records
+// are not. Test seam (#2183, #2184).
+var testAfterImportRows func()
 
 // testStopAfterRows ends a reconcile between the rows and the records. Test
 // seam: the crash window the order is chosen for.
@@ -1909,11 +1949,7 @@ func (u *userMailbox) migrateLegacyUIDList(folder string) error {
 // the reference drops one: the folder rebuilds from its index and its files.
 func (u *userMailbox) setAsideBrokenList(folder string) error {
 	path := u.uidListPath(folder)
-	unlock, err := u.dotlock(path)
-	if err != nil {
-		return err
-	}
-	defer unlock()
+	// The reconcile holds the list (#2184).
 	l, err := readUIDListFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -2691,8 +2727,8 @@ func (u *userMailbox) stillOnDisk(folder, filename string) bool {
 	return false
 }
 
-// basesOnDisk is every base in cur/ and new/, read under the reconcile's hold;
-// false when a directory could not be read, and then nothing is dropped.
+// basesOnDisk is every base in cur/ and new/, read under the list lock (#2184):
+// no other reconcile or save moves files meanwhile; false drops nothing.
 func (u *userMailbox) basesOnDisk(folder string) (map[string]struct{}, bool) {
 	if u.inSection.Load() > 0 {
 		u.sectionDir.Add(1)

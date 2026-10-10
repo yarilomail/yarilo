@@ -78,6 +78,15 @@ type UIDSpaceAligningStore interface {
 	AlignUIDSpace(idx UserIndex, folderID uint64, folder string) (uint32, error)
 }
 
+// SaveSectioner runs a save's naming and record under the store's own locks,
+// taken before the index journal so a row is never visible without its record
+// in another process (#2184).
+type SaveSectioner interface {
+	SaveSection(folder string, fn func() error) error
+	// AssignUIDHeld is UIDNamer.AssignUID for a caller inside the section.
+	AssignUIDHeld(folder, saved string, uid uint32) (string, error)
+}
+
 // ReceivedStamper puts a named message's INTERNALDATE on its file, where a
 // file-per-message store's rebuild reads it back (#2175).
 type ReceivedStamper interface {

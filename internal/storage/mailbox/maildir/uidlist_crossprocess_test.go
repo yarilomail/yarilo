@@ -16,6 +16,18 @@ const uidListChildHome = "YARILO_UIDLIST_CHILD_HOME"
 
 const rowsPerWriter = 300
 
+// writeRowsAsReconcile writes rows the way a reconcile does: the list held
+// for the write.
+func writeRowsAsReconcile(u *userMailbox, folder string, entries []listEntry) error {
+	release, err := u.holdList(folder, lockSiteReconcileApply)
+	if err != nil {
+		return err
+	}
+	defer release()
+	_, err = u.recordUIDsHeld(folder, entries, 0)
+	return err
+}
+
 func writeListRows(t *testing.T, home string, first uint32) {
 	t.Helper()
 	box := New().OpenUser(&mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"})
@@ -23,7 +35,7 @@ func writeListRows(t *testing.T, home string, first uint32) {
 	u := box.(*userMailbox)
 	for uid := first; uid < first+rowsPerWriter; uid++ {
 		name := fmt.Sprintf("1700000000.M%dP1.host,S=4,W=4:2,", uid)
-		if _, err := u.recordUIDsLocked("INBOX", []listEntry{{uid: uid, filename: name}}, 0); err != nil {
+		if err := writeRowsAsReconcile(u, "INBOX", []listEntry{{uid: uid, filename: name}}); err != nil {
 			t.Fatalf("row %d: %v", uid, err)
 		}
 	}
@@ -109,7 +121,7 @@ func TestTheNextListWriteClearsOldTemps(t *testing.T) {
 	}
 
 	u := box.(*userMailbox)
-	if _, err := u.recordUIDsLocked("INBOX", []listEntry{{uid: 1, filename: "1700000000.M1P1.host,S=4,W=4:2,"}}, 0); err != nil {
+	if err := writeRowsAsReconcile(u, "INBOX", []listEntry{{uid: 1, filename: "1700000000.M1P1.host,S=4,W=4:2,"}}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -27,15 +27,19 @@ func openWindowUser(t *testing.T, home string) (*userMailbox, mailbox.UserIndex)
 
 func deliverOne(t *testing.T, box *userMailbox, idx mailbox.UserIndex, folder *mailbox.Folder) {
 	t.Helper()
+	if err := deliverOneErr(box, idx, folder); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func deliverOneErr(box *userMailbox, idx mailbox.UserIndex, folder *mailbox.Folder) error {
 	const body = "From: a@b\r\n\r\nx\r\n"
 	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), []string{`\Seen`}, nil, [16]byte{})
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid, Flags: []string{`\Seen`}}
-	if err := mailboxbase.RecordSaved(idx, box, folder.ID, "INBOX", saved, m); err != nil {
-		t.Fatal(err)
-	}
+	return mailboxbase.RecordSaved(idx, box, folder.ID, "INBOX", saved, m)
 }
 
 func listInode(t *testing.T, box *userMailbox) uint64 {
