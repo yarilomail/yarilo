@@ -1237,11 +1237,6 @@ func (s *Server) LookupBackend(username string) *ring.Backend {
 	return s.ring.LookupBackend(username)
 }
 
-// RecordUser writes a user→backend mapping into the user directory.
-func (s *Server) RecordUser(username, backendAddr string) {
-	s.userDir.Set(username, backendAddr, false)
-}
-
 // backendTag looks up the tag for a backend IP, returning "" if not found.
 func (s *Server) backendTag(ip string) string {
 	for _, b := range s.ring.Backends() {
