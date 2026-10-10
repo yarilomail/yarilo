@@ -10,7 +10,10 @@
 # Runs on the runner, like a window. Exits 1 when any criterion fails; a SKIP
 # (a criterion that cannot run yet) is counted apart and does not.
 
-set -euo pipefail
+set -Eeuo pipefail
+# A command that prints nothing must not end the run without a word: two runs
+# died that way inside uid_pairs.
+trap 'rc=$?; echo "accept: line $LINENO: $BASH_COMMAND exited $rc" >&2' ERR
 
 TAG="${1:?image tag}"
 OUT="${2:?output directory}"
@@ -43,7 +46,7 @@ verdict() {
 # pod_state lists every pod with its uid and each container's restart count: a
 # replaced pod shows as a new uid, a restarted container as a higher count.
 pod_state() {
-  kube get pods -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.uid}{range .status.containerStatuses[*]} {.name}={.restartCount}{end}{"\n"}{end}' | sort
+  kube get pods -l '!job-name' -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.uid}{range .status.containerStatuses[*]} {.name}={.restartCount}{end}{"\n"}{end}' | sort
 }
 
 # imap_session runs one IMAP conversation from a backend pod against the login
@@ -86,7 +89,7 @@ uid_pairs() {
     [ -n "$uv" ] || { echo "$user no-uidvalidity"; continue; }
     out=$(imap_session "a LOGIN $user $PASSWORD\r\nb ENABLE QRESYNC\r\nc SELECT INBOX (QRESYNC ($uv 1))\r\nd UID SEARCH ALL\r\ne LOGOUT\r\n")
     van=$(echo "$out" | sed -n 's/^\* VANISHED (EARLIER) //p' | tr ',' '\n' | awk -F: 'NF==1{print $1} NF==2{for(i=$1;i<=$2;i++)print i}' | sort)
-    pres=$(echo "$out" | sed -n 's/^\* SEARCH //p' | tr ' ' '\n' | grep -v '^$' | sort)
+    pres=$(echo "$out" | sed -n 's/^\* SEARCH //p' | tr ' ' '\n' | { grep -v '^$' || true; } | sort)
     comm -12 <(echo "$van") <(echo "$pres") | grep -v '^$' | sed "s/^/$user /" || true
   done
 }
@@ -123,6 +126,78 @@ login_lands() {
     verdict "$name" fail "want $want, $user pinned at$bad"
 }
 
+# lock_hold prints maildir_lock_hold_seconds from every backend's IMAP and FTS
+# containers: both reconcile the same folders and take the same list lock.
+lock_hold() {
+  local pod
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    kube exec "$pod" -c yarilo-imap -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics' 2>/dev/null | { grep -E '^maildir_lock_hold_seconds_bucket\{' || true; }
+    kube exec "$pod" -c yarilo-fts -- sh -c 'wget -qO- http://127.0.0.1:8085/metrics' 2>/dev/null | { grep -E '^maildir_lock_hold_seconds_bucket\{' || true; }
+  done
+}
+
+# hold_quantiles reads the run's bucket delta and prints, per site, the count
+# and the bucket bounds p50 and p99 fall under.
+hold_quantiles() {
+  awk '
+    FILENAME == ARGV[1] { if ($1 ~ /_bucket\{/) start[$1] += $2; next }
+    $1 ~ /_bucket\{/ {
+      site = $1; sub(/.*site="/, "", site); sub(/".*/, "", site)
+      le = $1; sub(/.*le="/, "", le); sub(/".*/, "", le)
+      n[site, le] += $2 - start[$1]; start[$1] = 0; les[le] = 1; sites[site] = 1
+    }
+    END {
+      m = 0
+      for (l in les) if (l != "+Inf") b[++m] = l + 0
+      for (i = 1; i <= m; i++) for (j = i + 1; j <= m; j++) if (b[j] < b[i]) { x = b[i]; b[i] = b[j]; b[j] = x }
+      for (s in sites) {
+        total = n[s, "+Inf"]; p50 = "-"; p99 = "-"
+        for (i = 1; i <= m; i++) {
+          c = 0
+          for (l in les) if (l != "+Inf" && l + 0 == b[i]) c = n[s, l]
+          if (p50 == "-" && total > 0 && c >= 0.5 * total) p50 = b[i]
+          if (p99 == "-" && total > 0 && c >= 0.99 * total) p99 = b[i]
+        }
+        if (total > 0 && p50 == "-") p50 = "+Inf"
+        if (total > 0 && p99 == "-") p99 = "+Inf"
+        print s, total, p50, p99
+      }
+    }' "$1" "$2" | sort
+}
+
+# watch_stopped_naming copies a user's list, lock file, index and the named
+# record's stat into evidence/ at the first stopped-naming line for that
+# folder: the line alone does not say why the row went missing (#2183).
+watch_stopped_naming() {
+  set +e
+  trap - ERR
+  local seen="$OUT/evidence/.seen" pod c line user folder base dom home md ix
+  mkdir -p "$OUT/evidence"; : > "$seen"
+  while :; do
+    for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name 2>/dev/null | cut -d/ -f2); do
+      for c in yarilo-imap yarilo-fts; do
+        kube logs "$pod" -c "$c" --since-time="$START" 2>/dev/null | grep -a 'the list stopped naming this record' |
+          while IFS= read -r line; do
+            user=$(echo "$line" | sed -n 's/.*"user":"\([^"]*\)".*/\1/p')
+            folder=$(echo "$line" | sed -n 's/.*"folder":"\([^"]*\)".*/\1/p')
+            base=$(echo "$line" | sed -n 's/.*"base":"\([^"]*\)".*/\1/p')
+            grep -qxF "$user $folder" "$seen" && continue
+            echo "$user $folder" >> "$seen"
+            dom=${user#*@}; home="/var/mail/vhosts/$dom/$user"
+            md="Maildir"; ix="index"
+            [ "$folder" = INBOX ] || { md="Maildir/.$folder"; ix="index/.$folder"; }
+            d="$OUT/evidence/$user.${folder//\//_}"; mkdir -p "$d"
+            echo "$line" > "$d/line.json"
+            kube exec "$pod" -c yarilo-imap -- sh -c "cd $home && tar -cf - $md/yarilo-uidlist $md/yarilo-uidlist.lock $ix/yarilo.index $ix/yarilo.index.log $ix/yarilo.index.cache 2>/dev/null" > "$d/files.tar"
+            kube exec "$pod" -c yarilo-imap -- sh -c "cd $home && stat $md/yarilo-uidlist $md/yarilo-uidlist.lock $md/cur/${base%%,*}* $md/new/${base%%,*}* 2>&1; ls -la --full-time $md/tmp 2>&1" > "$d/stat.txt"
+            echo "-- evidence for $user $folder from $pod/$c in $d"
+          done
+      done
+    done
+    sleep 5
+  done
+}
+
 # count_lines keeps every line matching the pattern from the run's logs in
 # lines/<name>.txt and prints how many there were.
 count_lines() {
@@ -139,14 +214,15 @@ kube rollout status sts/yarilo-backend --timeout=280s >> "$OUT/deploy.txt" 2>&1
 START=$(date -u +%FT%TZ)
 pod_state > "$OUT/pods-start.txt"
 echo "-- pods settled; the run's window starts $START"
+lock_hold > "$OUT/lock-hold-start.txt"
+watch_stopped_naming &
+WATCHER=$!
+trap 'kill "$WATCHER" 2>/dev/null || true' EXIT
 
 echo "== aged mailboxes before"
 SDBOX_AGED=$(aged_account d00003.test sdbox/mailboxes/INBOX/dbox-Mails 'u.*')
 MAILDIR_AGED=$(aged_account d00002.test Maildir/cur '*')
 echo "sdbox: ${SDBOX_AGED:-none}; maildir: ${MAILDIR_AGED:-none}" | tee "$OUT/aged-before.txt"
-SDBOX_AGED_DISK=""; MAILDIR_AGED_DISK=""
-[ -n "$SDBOX_AGED" ] && SDBOX_AGED_DISK=$(disk_messages "${SDBOX_AGED%% *}" sdbox)
-[ -n "$MAILDIR_AGED" ] && MAILDIR_AGED_DISK=$(disk_messages "${MAILDIR_AGED%% *}" maildir)
 
 uid_pairs | sort > "$OUT/uid-pairs-before.txt"
 
@@ -156,7 +232,7 @@ for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
   cp "$REPO/hack/smoketest/run.sh" "$dir/"
   sed "s/u1@d00001\.test/$user/g" "$REPO/hack/smoketest/job.yaml" > "$dir/job.yaml"
   NAMESPACE="$NS" bash "$dir/run.sh" "$TAG" > "$OUT/smoke-$user.log" 2>&1 || true
-  summary=$(grep -o '"checks":[0-9]*,"passed":[0-9]*,"failed":[0-9]*' "$OUT/smoke-$user.log" | tail -1)
+  summary=$(grep -o '"checks":[0-9]*,"passed":[0-9]*,"failed":[0-9]*' "$OUT/smoke-$user.log" | tail -1 || true)
   case "$summary" in
     '"checks":46,"passed":46,"failed":0') verdict "smoketest $user" ok "$summary" ;;
     *) verdict "smoketest $user" fail "${summary:-no summary}; $(grep '"smoke: FAIL"' "$OUT/smoke-$user.log" | head -3 | cut -c1-200 | tr '\n' ' ')" ;;
@@ -187,13 +263,15 @@ done
 kube delete job imaptest --ignore-not-found > /dev/null
 
 echo "== aged mailboxes after an open"
-for spec in "${SDBOX_AGED:-}:sdbox:$SDBOX_AGED_DISK" "${MAILDIR_AGED:-}:maildir:$MAILDIR_AGED_DISK"; do
-  acct=${spec%%:*}; rest=${spec#*:}; type=${rest%%:*}; before=${rest#*:}
+for spec in "${SDBOX_AGED:-}:sdbox" "${MAILDIR_AGED:-}:maildir"; do
+  acct=${spec%%:*}; type=${spec#*:}
   if [ -z "$acct" ]; then
     verdict "aged $type mailbox survives an open" fail "no $type account with 20+ files older than a day on the stand"
     continue
   fi
   user=${acct%% *}
+  # Counted right before the open: the smoketest appends to these accounts.
+  before=$(disk_messages "$user" "$type")
   imap_session "a LOGIN $user $PASSWORD\r\nb SELECT INBOX\r\nc LOGOUT\r\n" > /dev/null
   sleep 3
   after=$(disk_messages "$user" "$type")
@@ -228,6 +306,21 @@ else
     echo "back: $back" >> "$OUT/rebalance.txt"
     login_lands "domain moved back" u1@d00001.test "$1"
   fi
+fi
+
+kill "$WATCHER" 2>/dev/null || true
+
+echo "== list lock hold over the run"
+lock_hold > "$OUT/lock-hold-end.txt"
+hold_quantiles "$OUT/lock-hold-start.txt" "$OUT/lock-hold-end.txt" | tee "$OUT/lock-hold.txt"
+# The list wait gives up at 10 s: every site's p99 must sit well under it.
+over=$(awk '$4 == "+Inf" || ($4 != "-" && $4 + 0 >= 10) { print $1 "=" $4 "s" }' "$OUT/lock-hold.txt" | tr '\n' ' ')
+if [ ! -s "$OUT/lock-hold.txt" ]; then
+  verdict "list hold p99 under the 10 s wait" fail "no lock hold histogram read"
+elif [ -n "$over" ]; then
+  verdict "list hold p99 under the 10 s wait" fail "$over"
+else
+  verdict "list hold p99 under the 10 s wait" ok "$(awk '{ printf "%s n=%s p50<=%ss p99<=%ss; ", $1, $2, $3, $4 }' "$OUT/lock-hold.txt")"
 fi
 
 echo "== logs of every pod since $START"
