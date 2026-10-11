@@ -10,13 +10,13 @@ func TestPolicyScale(t *testing.T) {
 		wantByte int64
 		wantMsg  int64
 	}{
-		{"zero policy is no-op", Policy{}, Limits{StorageBytes: 1000, Messages: 50}, 1000, 50},
-		{"percentage 90 storage", Policy{StoragePercentage: 90}, Limits{StorageBytes: 1000}, 900, 0},
-		{"percentage 90 messages", Policy{MessagePercentage: 90}, Limits{Messages: 100}, 0, 90},
-		{"extra headroom", Policy{StorageExtra: 500}, Limits{StorageBytes: 1000}, 1500, 0},
-		{"percentage then extra", Policy{StoragePercentage: 50, StorageExtra: 100}, Limits{StorageBytes: 1000}, 600, 0},
-		{"unlimited stays unlimited", Policy{StoragePercentage: 50, StorageExtra: 100}, Limits{}, 0, 0},
-		{"message extra not applied", Policy{StorageExtra: 500}, Limits{Messages: 100}, 0, 100},
+		{"100 percent is a no-op", Policy{StoragePercentage: 100, MessagePercentage: 100}, Limits{StorageBytes: 1000, Messages: 50}, 1000, 50},
+		{"percentage 90 storage", Policy{StoragePercentage: 90, MessagePercentage: 100}, Limits{StorageBytes: 1000}, 900, 0},
+		{"percentage 90 messages", Policy{StoragePercentage: 100, MessagePercentage: 90}, Limits{Messages: 100}, 0, 90},
+		{"extra headroom", Policy{StoragePercentage: 100, MessagePercentage: 100, StorageExtra: 500}, Limits{StorageBytes: 1000}, 1500, 0},
+		{"percentage then extra", Policy{StoragePercentage: 50, MessagePercentage: 100, StorageExtra: 100}, Limits{StorageBytes: 1000}, 600, 0},
+		{"unlimited stays unlimited", Policy{StoragePercentage: 50, MessagePercentage: 100, StorageExtra: 100}, Limits{}, 0, 0},
+		{"message extra not applied", Policy{StoragePercentage: 100, MessagePercentage: 100, StorageExtra: 500}, Limits{Messages: 100}, 0, 100},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

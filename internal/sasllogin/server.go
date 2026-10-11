@@ -52,9 +52,6 @@ func New(opts Options) *Server {
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	if s.opts.HAProxy {
 		timeout := s.opts.HAProxyTimeout
-		if timeout == 0 {
-			timeout = 3 * time.Second
-		}
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			Policy:            haProxyPolicy(s.opts.HAProxyNets),

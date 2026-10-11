@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// defaultTikaMaxAttempts is one initial attempt plus one retry.
-const defaultTikaMaxAttempts = 2
-
 // tikaRetryBase is the exponential-backoff base delay between retries.
 const tikaRetryBase = 200 * time.Millisecond
 
@@ -25,9 +22,6 @@ type tikaDecoder struct {
 }
 
 func newTikaDecoder(baseURL string, timeout time.Duration, maxSize int64, maxAttempts int) *tikaDecoder {
-	if maxAttempts <= 0 {
-		maxAttempts = defaultTikaMaxAttempts
-	}
 	return &tikaDecoder{
 		baseURL:     strings.TrimRight(baseURL, "/"),
 		client:      &http.Client{Timeout: timeout},
@@ -77,9 +71,8 @@ func (d *tikaDecoder) Decode(ctx context.Context, contentType, filename string, 
 	return nil, false, fmt.Errorf("fts/decoder/tika: giving up after %d attempts: %w: %w", d.maxAttempts, ErrDegraded, lastErr)
 }
 
-// attempt runs a single PUT. retry=true means back off and try again (network
-// error or 5xx); retry=false means the result (success, unsupported, or a hard
-// error) is final.
+// attempt runs a single PUT; retry=true (network error or 5xx) means back off
+// and try again, otherwise the result is final.
 func (d *tikaDecoder) attempt(ctx context.Context, contentType, filename string, data []byte) (text []byte, ok bool, retry bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, d.baseURL+"/tika", bytes.NewReader(data))
 	if err != nil {

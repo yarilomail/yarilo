@@ -48,7 +48,7 @@ func TestDrainedDirectorBackendReconnects(t *testing.T) {
 	}
 	addr := ln.Addr().String()
 	serve := func(ln net.Listener) (*Server, context.CancelFunc) {
-		srv := NewWithOptions(Options{PingInterval: 24 * time.Hour})
+		srv := NewWithOptions(testOptions(Options{PingInterval: 24 * time.Hour}))
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() { _ = srv.listenOn(ctx, ln) }()
 		return srv, cancel

@@ -2,18 +2,9 @@ package language
 
 import "github.com/abadojack/whatlanggo"
 
-// defaultMinDetectSample: below this many runes the trigram model isn't
-// reliable; don't even call it.
-const defaultMinDetectSample = 10
-
-// detectLanguage restricts detection to candidates. minRunes overrides
-// defaultMinDetectSample when > 0. ok=false when the sample is too short
-// or the result unreliable; callers fall back to the first configured
-// language.
+// detectLanguage restricts detection to candidates; ok=false on a sample under
+// minRunes or an unreliable result, and callers fall back to the first language.
 func detectLanguage(sample string, candidates []string, minRunes int) (lang string, ok bool) {
-	if minRunes <= 0 {
-		minRunes = defaultMinDetectSample
-	}
 	if len([]rune(sample)) < minRunes {
 		return "", false
 	}

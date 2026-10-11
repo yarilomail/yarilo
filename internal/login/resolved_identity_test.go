@@ -77,11 +77,11 @@ func TestBackendPreambleCarriesTheResolvedIdentity(t *testing.T) {
 	backend := startPreambleCapturingBackend(t, claimed)
 
 	s := &Server{
-		opts: Options{
+		opts: testOpts(Options{
 			Protocol:    ProtocolIMAP,
 			AuthAddr:    startOKAuth(t), // answers user=alice, whatever was sent
 			BackendAddr: backend,
-		},
+		}),
 		sessions: make(map[string][]*liveSession),
 	}
 
@@ -147,12 +147,12 @@ func TestRerouteLookupUsesTheResolvedIdentity(t *testing.T) {
 	dir := lookupNameCapturingDirector(t, dead, looked, &reports)
 
 	s := &Server{
-		opts: Options{
+		opts: testOpts(Options{
 			Protocol:     ProtocolIMAP,
 			AuthAddr:     startOKAuth(t), // resolves every login to alice
 			DirectorAddr: dir,
 			LocalIP:      "127.0.0.1",
-		},
+		}),
 		sessions: make(map[string][]*liveSession),
 	}
 

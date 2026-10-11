@@ -113,12 +113,8 @@ type Generic struct {
 	partial    []byte // split UTF-8 sequence across Feed boundaries
 }
 
-// NewGeneric returns a tokenizer with the given byte-length cap
-// (0 = DefaultTokenMaxLen).
+// NewGeneric returns a tokenizer with the given byte-length cap.
 func NewGeneric(maxLen int) *Generic {
-	if maxLen <= 0 {
-		maxLen = DefaultTokenMaxLen
-	}
 	return &Generic{maxLen: maxLen}
 }
 

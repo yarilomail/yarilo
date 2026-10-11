@@ -245,7 +245,12 @@ backend_counters() {
         # read is retried rather than answered from the pods that did reply.
         [ -n "$page" ] || { total=""; break; }
         total+=$(printf '%s\n' "$page" |
-          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{|index_cache_record_crc_mismatch_total|mailbox_message_opened_total\{|fileindex_journal_write_failed_total\{|mailbox_write_failed_total\{|maildir_uidlist_read_total\{|maildir_dir_read_total\{|maildir_listing_miss_total\{|maildir_listing_retry_total\{|maildir_uidlist_stamp_hit_total|fileindex_maildir_stamp_unchanged_total|maildir_uidlist_stamp_miss_total|maildir_cache_stat_total\{|maildir_window_closed_total\{)" || true)
+          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{|index_cache_record_crc_mismatch_total|mailbox_message_opened_total\{|fileindex_journal_write_failed_total\{|mailbox_write_failed_total\{|maildir_uidlist_read_total\{|maildir_dir_read_total\{|maildir_listing_miss_total\{|maildir_listing_retry_total\{|maildir_uidlist_stamp_hit_total|fileindex_maildir_stamp_unchanged_total|maildir_uidlist_stamp_miss_total|maildir_cache_stat_total\{|maildir_window_closed_total\{|maildir_lock_hold_seconds_(bucket|count|sum)\{)" || true)
+        total+=$'\n'
+        # The FTS service reconciles the same folders and takes the same list
+        # lock: its holds are half of what the section costs (#2184).
+        page=$(kube exec "$pod" -c yarilo-fts -- sh -c 'wget -qO- http://127.0.0.1:8085/metrics 2>/dev/null' 2>/dev/null) || true
+        total+=$(printf '%s\n' "$page" | grep -E "^maildir_lock_hold_seconds_(bucket|count|sum)\{" || true)
         total+=$'\n'
       done
       [ -n "${total//[$'\n']/}" ] && break
@@ -767,6 +772,36 @@ for type in $TYPES; do
       END { printf "cache: crc_mismatch=%d bodies_opened=%d journal_write_failed=%d store_write_failed=%d",
               crc, opened, journal, writes
             if (logins + 0 > 0) printf " opens_per_login=%.3f", opened / logins }
+    ' "$OUT/backend-$ARM-$name-delta.txt")"
+  # How long the list was held, by the site that held it: the reconcile's
+  # apply section and a save's section, as bucket bounds from the run's delta
+  # (#2184). The 10 s list wait must stay above the p99.
+  echo "$ARM $name $(awk '
+      $1 !~ /^maildir_lock_hold_seconds_bucket\{/ { next }
+      {
+        site = $1; sub(/.*site="/, "", site); sub(/".*/, "", site)
+        le = $1; sub(/.*le="/, "", le); sub(/".*/, "", le)
+        n[site, le] += $2; les[le] = 1; sites[site] = 1
+      }
+      END {
+        m = 0
+        for (l in les) if (l != "+Inf") bounds[++m] = l + 0
+        for (i = 1; i <= m; i++) for (j = i + 1; j <= m; j++) if (bounds[j] < bounds[i]) { x = bounds[i]; bounds[i] = bounds[j]; bounds[j] = x }
+        printf "lock hold:"
+        split("reconcile-apply save", want, " ")
+        for (w = 1; w <= 2; w++) {
+          s = want[w]; total = n[s, "+Inf"]
+          p50 = "-"; p99 = "-"
+          for (i = 1; i <= m; i++) {
+            c = 0
+            for (l in les) if (l != "+Inf" && l + 0 == bounds[i]) c = n[s, l]
+            if (p50 == "-" && total > 0 && c >= 0.5 * total) p50 = bounds[i] "s"
+            if (p99 == "-" && total > 0 && c >= 0.99 * total) p99 = bounds[i] "s"
+          }
+          if (total > 0 && p99 == "-") p99 = "+Inf"
+          printf " %s n=%d p50<=%s p99<=%s", s, total, p50, p99
+        }
+      }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
  done
 done

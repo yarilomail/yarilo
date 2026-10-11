@@ -56,11 +56,6 @@ type wardenEvent struct {
 	folder    string
 }
 
-// defaultWardenQueue is how many events wait for the writer before the oldest
-// is dropped. Sized for a burst of SELECTs, not for an outage: an unreachable
-// warden is meant to cost stale rows in `who`, never a stalled session.
-const defaultWardenQueue = 4096
-
 // wardenExchangeTimeout bounds one event's round trip.
 const wardenExchangeTimeout = 5 * time.Second
 
@@ -83,9 +78,6 @@ var wardenDropped = promauto.NewCounterVec(prometheus.CounterOpts{
 func newImapWardenClient(addr string, tlsCfg *tls.Config, queue int) *imapWardenClient {
 	if addr == "" {
 		return nil
-	}
-	if queue <= 0 {
-		queue = defaultWardenQueue
 	}
 	c := &imapWardenClient{
 		addr:   addr,

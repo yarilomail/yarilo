@@ -47,9 +47,6 @@ type RedisStore struct {
 
 // NewRedis returns a RedisStore. The caller owns the client lifecycle; Close is a no-op.
 func NewRedis(client *redis.Client, ttl time.Duration, opts ...RedisOption) *RedisStore {
-	if ttl <= 0 {
-		ttl = defaultTTL
-	}
 	s := &RedisStore{client: client, ttl: ttl, keyPrefix: defaultKeyPrefix}
 	for _, opt := range opts {
 		opt(s)

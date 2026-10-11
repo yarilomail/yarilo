@@ -129,17 +129,23 @@ func (s *Server) moveOneDomain(tag string, hi, lo backendLoad) {
 			"tag", tag, "from", hi.host, "to", lo.host, "spread", spread)
 		return
 	}
-	seq, by := s.domainDir.Set(pick, lo.host)
-	s.domainMoves.note(pick)
-	s.membership.originate("DOMAIN-ASSIGN", fmt.Sprintf("%s\t%s\t%d\t%s",
-		proto.TabEscape(pick), lo.host, seq, by))
 	slog.Info("director: rebalancing a domain",
 		"domain", pick, "tag", tag, "from", hi.host, "to", lo.host,
 		"from_load", hi.load, "to_load", lo.load, "sessions", pickSessions,
 		"spread_now", spread, "spread_after", best)
+	s.moveDomain(pick, hi.host, lo.host)
+}
+
+// moveDomain places a domain on toHost ring-wide and ends its sessions on
+// fromHost: the rebalancer and the operator's move are one path.
+func (s *Server) moveDomain(domain, fromHost, toHost string) {
+	seq, by := s.domainDir.Set(domain, toHost)
+	s.domainMoves.note(domain)
+	s.membership.originate("DOMAIN-ASSIGN", fmt.Sprintf("%s\t%s\t%d\t%s",
+		proto.TabEscape(domain), toHost, seq, by))
 	// After the ring knows, as the reference kills only after sending its
 	// USER-MOVE: a kick that finishes instantly must not race the update.
-	s.kickDomainSessions(pick, hi.host)
+	s.kickDomainSessions(domain, fromHost)
 }
 
 // domainSessionCount is how many sessions of a domain sit on one backend.

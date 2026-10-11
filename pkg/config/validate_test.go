@@ -57,7 +57,7 @@ func TestCacheSizeResolution(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {
-			cfg := &Config{}
+			cfg := Defaults()
 			cfg.Auth.Cache.CacheSize = tc.in
 			err := cfg.validate()
 			if tc.wantErr {
@@ -79,7 +79,7 @@ func TestCacheSizeResolution(t *testing.T) {
 // TestSizeFieldsResolve proves every human-readable size field is parsed to
 // bytes at load, and a malformed value anywhere fails startup loudly.
 func TestSizeFieldsResolve(t *testing.T) {
-	cfg := &Config{}
+	cfg := Defaults()
 	cfg.Protocol.Submission.MaxMsgSizeRaw = "40M"
 	cfg.FTS.MessageMaxSizeRaw = "1G"
 	cfg.FTS.DecoderMaxSizeRaw = "10M"

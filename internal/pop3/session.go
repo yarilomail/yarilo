@@ -666,7 +666,7 @@ func (s *session) loadMailbox() error {
 	}
 	// heal a corrupt-flagged dbox folder at login so a POP3-only mailbox
 	// does not stay broken waiting for an IMAP SELECT
-	if folder.Fsckd {
+	if folder.Fsckd && s.srv.opts.DboxReactiveRebuild {
 		{
 			// no FTS client here: expunged UIDs leave FTS ghost documents
 			// until the next rescan. Heal runs at most once per session

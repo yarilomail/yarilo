@@ -935,9 +935,4 @@ func clientIPOf(conn net.Conn) string {
 
 // authAttemptLimit is the per-connection ceiling on failed authentications,
 // the same one the password path counts against.
-func authAttemptLimit(opts Options) int {
-	if opts.AuthMaxAttempts > 0 {
-		return opts.AuthMaxAttempts
-	}
-	return 3
-}
+func authAttemptLimit(opts Options) int { return opts.AuthMaxAttempts }

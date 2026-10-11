@@ -110,7 +110,7 @@ func TestCleartextLoginIsRefusedUntilTLS(t *testing.T) {
 			srv, cli := pipePair(t)
 			done := make(chan *preamble, 1)
 			go func() {
-				p, _ := tc.run(remoteConn{srv}, bufio.NewReader(srv), srvTLS, Options{DisablePlainAuth: true})
+				p, _ := tc.run(remoteConn{srv}, bufio.NewReader(srv), srvTLS, testOpts(Options{DisablePlainAuth: true}))
 				done <- p
 			}()
 			cli.SetDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
@@ -168,7 +168,7 @@ func TestCleartextLoginOnASecuredLine(t *testing.T) {
 			srv, cli := tc.wrap(s0, c0)
 			done := make(chan *preamble, 1)
 			go func() {
-				p, _, _, _ := extractIMAPPreamble(srv, bufio.NewReader(srv), nil, Options{DisablePlainAuth: true}, relayContext{})
+				p, _, _, _ := extractIMAPPreamble(srv, bufio.NewReader(srv), nil, testOpts(Options{DisablePlainAuth: true}), relayContext{})
 				done <- p
 			}()
 			cli.SetDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck

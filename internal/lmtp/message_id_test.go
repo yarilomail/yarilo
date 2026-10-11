@@ -93,13 +93,13 @@ func TestAMessageWithoutAMessageIDGetsOne(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &session{opts: Options{
+			s := &session{opts: testOpts(Options{
 				Hostname: "mx.example.test",
 				Config: config.LMTPProtocolConfig{
 					AddMessageID:       tt.enabled,
 					HdrDeliveryAddress: "none",
 				},
-			}}
+			})}
 			got := string(s.prependHeaders([]byte(tt.in), "b@y", "b@y"))
 
 			if tt.unchanged {
@@ -141,10 +141,10 @@ func countMessageIDFields(msg string) int {
 // Two deliveries must not share an identifier, or the thing being handed out is
 // a constant rather than an identity.
 func TestSynthesisedMessageIDsAreUnique(t *testing.T) {
-	s := &session{opts: Options{
+	s := &session{opts: testOpts(Options{
 		Hostname: "mx.example.test",
 		Config:   config.LMTPProtocolConfig{AddMessageID: true, HdrDeliveryAddress: "none"},
-	}}
+	})}
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
 		out := s.prependHeaders([]byte("From: a@x\r\n\r\nbody\r\n"), "b@y", "b@y")
@@ -241,10 +241,10 @@ if header :contains "message-id" "@" { fileinto "seen"; }`)
 		t.Fatal(err)
 	}
 
-	s := &session{opts: Options{
+	s := &session{opts: testOpts(Options{
 		Hostname: "mx.example.test",
 		Config:   config.LMTPProtocolConfig{AddMessageID: true, HdrDeliveryAddress: "none"},
-	}}
+	})}
 	// No Message-ID of its own: without the synthesis the rule cannot match.
 	msg := s.prependHeaders([]byte("From: a@x\r\nTo: u1@example.com\r\nSubject: hi\r\n\r\nbody\r\n"), "u1@example.com", "u1@example.com")
 
@@ -274,12 +274,12 @@ func TestOneHostnameNamesEveryHeaderDeliveryWrites(t *testing.T) {
 	const host = "mx.example.test"
 	s := &session{
 		from: "sender@elsewhere.invalid",
-		opts: Options{
+		opts: testOpts(Options{
 			Hostname: host,
 			Config: config.LMTPProtocolConfig{
 				AddMessageID: true, AddReceivedHeader: true, HdrDeliveryAddress: "none",
 			},
-		},
+		}),
 	}
 	out := string(s.prependHeaders([]byte("From: a@x\r\nTo: b@y\r\n\r\nbody\r\n"), "b@y", "b@y"))
 

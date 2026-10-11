@@ -14,7 +14,7 @@ func hashOf(s *Server, user string) uint32 {
 // TestUserKill_LookupHeld: while a user is killing, LOOKUP returns the retryable
 // FAIL reason=killing instead of assigning a backend.
 func TestUserKill_LookupHeld(t *testing.T) {
-	s := NewWithOptions(Options{})
+	s := NewWithOptions(testOptions(Options{}))
 	user := "u@example.com"
 	s.startKilling(hashOf(s, user))
 
@@ -30,7 +30,7 @@ func TestUserKill_LookupHeld(t *testing.T) {
 // TestUserKill_ReplicatedTTLLocalDeadline: applyKilling takes a DURATION and
 // computes the deadline against the local clock (never a wire wall-clock).
 func TestUserKill_ReplicatedTTLLocalDeadline(t *testing.T) {
-	s := NewWithOptions(Options{})
+	s := NewWithOptions(testOptions(Options{}))
 	hash := hashOf(s, "u@example.com")
 	before := time.Now()
 	s.applyKilling(hash, 10*time.Second)
@@ -50,7 +50,7 @@ func TestUserKill_ReplicatedTTLLocalDeadline(t *testing.T) {
 // confirm grace, the sweep clears the hold.
 func TestUserKill_ConfirmClearsAfterGrace(t *testing.T) {
 	grace := 50 * time.Millisecond
-	s := NewWithOptions(Options{UserKillConfirmGrace: grace, UserKillTimeout: 10 * time.Second})
+	s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: grace, UserKillTimeout: 10 * time.Second}))
 	user := "u@example.com"
 	hash := hashOf(s, user)
 	s.startKilling(hash)
@@ -74,7 +74,7 @@ func TestUserKill_ConfirmClearsAfterGrace(t *testing.T) {
 // zero observation, so the hold is not released prematurely.
 func TestUserKill_InflightOpenResetsConfirm(t *testing.T) {
 	grace := 50 * time.Millisecond
-	s := NewWithOptions(Options{UserKillConfirmGrace: grace, UserKillTimeout: 10 * time.Second})
+	s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: grace, UserKillTimeout: 10 * time.Second}))
 	user := "u@example.com"
 	hash := hashOf(s, user)
 	s.startKilling(hash)
@@ -92,7 +92,7 @@ func TestUserKill_InflightOpenResetsConfirm(t *testing.T) {
 // TestUserKill_TimeoutFallthrough: an unconfirmed kill clears at the hard
 // timeout so a stuck holder never locks a user out permanently.
 func TestUserKill_TimeoutFallthrough(t *testing.T) {
-	s := NewWithOptions(Options{UserKillTimeout: 40 * time.Millisecond, UserKillConfirmGrace: time.Second})
+	s := NewWithOptions(testOptions(Options{UserKillTimeout: 40 * time.Millisecond, UserKillConfirmGrace: time.Second}))
 	hash := hashOf(s, "u@example.com")
 	s.startKilling(hash)
 
@@ -116,7 +116,7 @@ func TestUserKill_TimeoutFallthrough(t *testing.T) {
 // kick) must engage the confirmed-kick killing state like the wire handleUserKick
 // does — otherwise it leaves the split-writer window fully open.
 func TestApiUserKick_StartsKilling(t *testing.T) {
-	s := NewWithOptions(Options{})
+	s := NewWithOptions(testOptions(Options{}))
 	const user = "u@example.com"
 	req := httptest.NewRequest("POST", "/users/"+user+"/kick", nil)
 	req.SetPathValue("user", user)

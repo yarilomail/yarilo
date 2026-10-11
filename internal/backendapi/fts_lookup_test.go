@@ -15,7 +15,7 @@ import (
 func lookupServer(t *testing.T) (*httptest.Server, *fakeFTS, ftsquery.Expander) {
 	t.Helper()
 	ts, fake, root, s := ftsTestServerOf(t)
-	chain, err := ftsquery.NewChain(config.FTSConfig{LanguageFilters: []string{"lowercase", "stopwords", "snowball"}})
+	chain, err := ftsquery.NewChain(config.FTSConfig{LanguageTokenMaxLen: 30, LanguageAddressMaxLen: 250, LanguageFilters: []string{"lowercase", "stopwords", "snowball"}})
 	if err != nil {
 		t.Fatal(err)
 	}

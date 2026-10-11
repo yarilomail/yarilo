@@ -118,7 +118,7 @@ Search stays sub-millisecond as the mailbox grows; the linear scan it replaces g
 
 All intra-cluster protocols are TAB-delimited text with LF termination and a version handshake.
 
-Session routing (`backend_addr` / `director_addr` precedence), sticky assignments, username-hash templates (`username_hash`), backend evacuation, the per-user flush hook, tag sharding models, and the self-organizing ring formation (with its design history) are all documented in **[DIRECTOR](https://doc.yarilomail.org/DIRECTOR)**.
+Session routing (`backend_addr` / `director_addr` precedence), sticky assignments, username-hash templates (`username_hash`), domain placement and the operator's domain move (`yarctl director domains move`), backend evacuation, the per-user flush hook, tag sharding models, and the self-organizing ring formation (with its design history) are all documented in **[DIRECTOR](https://doc.yarilomail.org/DIRECTOR)**.
 
 ---
 

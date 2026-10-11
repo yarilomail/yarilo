@@ -109,7 +109,7 @@ func bodyQuery(words ...string) fts.Query {
 }
 
 func TestIndexAndLookup(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	indexDoc(t, ui, 1, []string{"quarterly", "report"}, []string{"budget", "review"})
 	indexDoc(t, ui, 2, []string{"lunch"}, []string{"budget", "pizza"})
 
@@ -177,7 +177,7 @@ func TestIndexAndLookup(t *testing.T) {
 }
 
 func TestUppercaseFirstCharHack(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	// The indexer lowercases a leading ASCII capital so it is not mistaken
 	// for a Xapian prefix; the query side must apply the same rule.
 	indexDoc(t, ui, 1, nil, []string{"Zebra"})
@@ -191,7 +191,7 @@ func TestUppercaseFirstCharHack(t *testing.T) {
 }
 
 func TestExpunge(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
 	indexDoc(t, ui, 2, nil, []string{"alpha"})
 	if err := ui.Expunge(inbox, testGUID(1), false, false); err != nil {
@@ -211,7 +211,7 @@ func TestExpunge(t *testing.T) {
 }
 
 func TestCheckpoint(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	last, uidv, sum, err := ui.Checkpoint(inbox)
 	if err != nil || last != 0 || uidv != 0 || sum != 0 {
 		t.Fatalf("empty checkpoint = %d/%d/%d/%v", last, uidv, sum, err)
@@ -228,7 +228,7 @@ func TestCheckpoint(t *testing.T) {
 // TestCheckpointLegacyV1 verifies a v1 checkpoint file ("1 <uid> <sum>") still
 // reads back, with uidvalidity 0 so a UIDVALIDITY mismatch resets it (#638).
 func TestCheckpointLegacyV1(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	dir := (ui.(*userIndex)).state().dir
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestCheckpointLegacyV1(t *testing.T) {
 // A missing checkpoint is "never indexed": the highest docid says nothing
 // about a uid now, so there is nothing to read it off (#1986).
 func TestAMissingCheckpointReadsAsNeverIndexed(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	indexDoc(t, ui, 17, nil, []string{"legacy"})
 	dir := ui.(*userIndex).state().dir
 	if err := os.Remove(checkpointPath(dir, inbox)); err != nil && !os.IsNotExist(err) {
@@ -258,7 +258,7 @@ func TestAMissingCheckpointReadsAsNeverIndexed(t *testing.T) {
 }
 
 func TestRescanTargeted(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	for uid := uint32(1); uid <= 5; uid++ {
 		indexDoc(t, ui, uid, nil, []string{"word"})
 	}
@@ -287,7 +287,7 @@ func TestRescanTargeted(t *testing.T) {
 // RotateCount is set far out of reach so only the time-based trigger could
 // possibly cause the rotation seen here.
 func TestRotateTimeTriggersRotationOnSlowCommit(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1000, CommitLimit: 1, RotateTime: time.Nanosecond})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1000, CommitLimit: 1, RotateTime: time.Nanosecond}))
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
 	dir := ui.(*userIndex).state().dir
 	sealed, current := countShards(t, dir)
@@ -301,7 +301,7 @@ func TestRotateTimeTriggersRotationOnSlowCommit(t *testing.T) {
 // silently coercing it back to the positive default (5000ms) the way
 // OptimizeLimit used to before #715.
 func TestRotateTimeZeroDisablesTimeBasedRotation(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1000, CommitLimit: 1, RotateTime: 0})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1000, CommitLimit: 1, RotateTime: 0}))
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
 	dir := ui.(*userIndex).state().dir
 	sealed, current := countShards(t, dir)
@@ -311,7 +311,7 @@ func TestRotateTimeZeroDisablesTimeBasedRotation(t *testing.T) {
 }
 
 func TestRotationAndOptimize(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 2})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 2}))
 	for uid := uint32(1); uid <= 5; uid++ {
 		indexDoc(t, ui, uid, nil, []string{"steady"})
 	}
@@ -368,7 +368,7 @@ func countShards(t *testing.T, dir string) (sealed, current int) {
 // OptimizeNotifier callback: it stays silent below OptimizeLimit and fires
 // (with the correct mailbox) as soon as the sealed-shard count reaches it.
 func TestOptimizeCallbackFiresAtLimit(t *testing.T) {
-	eng := New(Options{RotateCount: 2, OptimizeLimit: 3})
+	eng := New(testOpts(Options{RotateCount: 2, OptimizeLimit: 3}))
 	var mu sync.Mutex
 	var calls []fts.MailboxRef
 	eng.SetOptimizeCallback(func(_ fts.UserRef, m fts.MailboxRef) {
@@ -414,7 +414,7 @@ func TestOptimizeCallbackFiresAtLimit(t *testing.T) {
 // truly disables auto-optimize, rather than withDefaults() silently
 // coercing it back to the positive default (10) the way it used to.
 func TestOptimizeCallbackDisabledWhenLimitZero(t *testing.T) {
-	eng := New(Options{RotateCount: 2, OptimizeLimit: 0})
+	eng := New(testOpts(Options{RotateCount: 2, OptimizeLimit: 0}))
 	var calls atomic.Int32
 	eng.SetOptimizeCallback(func(fts.UserRef, fts.MailboxRef) { calls.Add(1) })
 	user := fts.UserRef{Username: "u@test", IndexRoot: t.TempDir()}
@@ -442,7 +442,7 @@ func TestOptimizeCallbackDisabledWhenLimitZero(t *testing.T) {
 // One index per user: a compaction is the user's, and both folders' documents
 // are in the shards it merges (#1986).
 func TestOptimizeMergesTheUsersShards(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 2})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 2}))
 	archive := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
 	for uid := uint32(1); uid <= 2; uid++ {
 		indexDocIn(t, ui, inbox, uid, nil, []string{"shared"})
@@ -515,7 +515,7 @@ func TestShardPathsIgnoresOptimizeTmpDir(t *testing.T) {
 // sweep the service has no way to do upfront (no list of every mailbox).
 func TestCleanStaleOptimizeTmpDir(t *testing.T) {
 	user := fts.UserRef{Username: "u@test", IndexRoot: t.TempDir()}
-	ui, err := New(Options{}).OpenUser(context.Background(), user)
+	ui, err := New(testOpts(Options{})).OpenUser(context.Background(), user)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +538,7 @@ func TestCleanStaleOptimizeTmpDir(t *testing.T) {
 }
 
 func TestSubstringSearch(t *testing.T) {
-	ui, _ := testEngine(t, Options{SubstringSearch: true})
+	ui, _ := testEngine(t, testOpts(Options{SubstringSearch: true}))
 	indexDoc(t, ui, 1, nil, []string{"butterfly"})
 	// Substring mode stores suffixes, so an inner fragment prefix-matches.
 	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("tterf"))
@@ -549,7 +549,7 @@ func TestSubstringSearch(t *testing.T) {
 		t.Fatalf("substring lookup = %v, want [1]", uidsOf(res.DefiniteGUIDs))
 	}
 	// Without substring mode the same fragment must not match.
-	ui2, _ := testEngine(t, Options{})
+	ui2, _ := testEngine(t, testOpts(Options{}))
 	indexDoc(t, ui2, 1, nil, []string{"butterfly"})
 	res, err = ui2.Lookup([]string{inbox.GUID}, bodyQuery("tterf"))
 	if err != nil {
@@ -561,7 +561,7 @@ func TestSubstringSearch(t *testing.T) {
 }
 
 func TestMinTermSize(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	indexDoc(t, ui, 1, nil, []string{"a", "ok", "xyz"})
 	// 1-byte token is below min_term_size (2) and never indexed.
 	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("ok"))
@@ -578,7 +578,7 @@ func TestMinTermSize(t *testing.T) {
 }
 
 func TestVersionMetadataWritten(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	indexDoc(t, ui, 1, nil, []string{"word"})
 	if err := ui.Close(); err != nil {
 		t.Fatal(err)
@@ -609,7 +609,7 @@ func TestTheIndexIsTheUsersWhateverTheDriver(t *testing.T) {
 	want := filepath.Join(root, Label)
 	for _, driver := range []string{"mdbox", "sdbox", "maildir", ""} {
 		user := fts.UserRef{Username: "u@test", IndexRoot: root, Driver: driver}
-		ui, err := New(Options{}).OpenUser(context.Background(), user)
+		ui, err := New(testOpts(Options{})).OpenUser(context.Background(), user)
 		if err != nil {
 			t.Fatalf("driver %q: OpenUser: %v", driver, err)
 		}
@@ -626,7 +626,7 @@ func TestTheIndexIsTheUsersWhateverTheDriver(t *testing.T) {
 // rotation (RotateCount 3) so 10 messages span several shards, then assert
 // SEARCH returns the actual injected UIDs.
 func TestMultiShardLookupReturnsRealUIDs(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 3})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 3}))
 	var want []uint32
 	for uid := uint32(1); uid <= 10; uid++ {
 		if uid%2 == 0 {
@@ -655,7 +655,7 @@ func TestMultiShardLookupReturnsRealUIDs(t *testing.T) {
 // value that tokenizes to nothing must not satisfy a HEADER existence
 // probe.
 func TestHeaderExistenceRequiresRealToken(t *testing.T) {
-	ui, _ := testEngine(t, Options{MinTermSize: 2})
+	ui, _ := testEngine(t, testOpts(Options{MinTermSize: 2}))
 	up, err := ui.BeginUpdate(inbox)
 	if err != nil {
 		t.Fatal(err)
@@ -702,7 +702,7 @@ func TestHeaderExistenceRequiresRealToken(t *testing.T) {
 // satisfy a HEADER <name> VALUE search for that same literal name — the
 // name and the value are indexed under separate build keys.
 func TestHeaderNameIndexedSeparately(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	up, err := ui.BeginUpdate(inbox)
 	if err != nil {
 		t.Fatal(err)

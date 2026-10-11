@@ -46,7 +46,7 @@ func metricsSession(t *testing.T, threading bool) (*session, *mailbox.Resolver) 
 	t.Helper()
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
-	opts := Options{Mailbox: maildir.New(), Index: fileindex.New(), Resolver: resolver}
+	opts := testOpts(Options{Mailbox: maildir.New(), Index: fileindex.New(), Resolver: resolver})
 	if threading {
 		opts.Threads = threads.NewRecorder(threads.NewCache(time.Minute))
 	}

@@ -11,8 +11,8 @@ func TestLenCountsBackends(t *testing.T) {
 	if got := r.Len(); got != 0 {
 		t.Fatalf("empty ring Len = %d, want 0", got)
 	}
-	r.AddBackend(&Backend{IP: "10.0.0.1", Port: 143, Up: true})
-	r.AddBackend(&Backend{IP: "10.0.0.2", Port: 143, Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Port: 143, Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.2", Port: 143, Up: true})
 	if got := r.Len(); got != 2 {
 		t.Fatalf("Len = %d, want 2", got)
 	}

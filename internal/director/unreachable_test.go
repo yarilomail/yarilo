@@ -13,9 +13,9 @@ import (
 // corroboration threshold and window.
 func twoBackendRing(t *testing.T, reporters int, window time.Duration) *Server {
 	t.Helper()
-	s := NewWithOptions(Options{UnreachableReporters: reporters, UnreachableWindow: window})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.2", Port: 10143, Tag: "imap", Up: true})
+	s := NewWithOptions(testOptions(Options{UnreachableReporters: reporters, UnreachableWindow: window}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.2", Port: 10143, Tag: "imap", Up: true})
 	return s
 }
 
@@ -60,8 +60,8 @@ func TestUnreachable_StaleReportsPrunedByWindow(t *testing.T) {
 }
 
 func TestUnreachable_NeverEvictsLastOfTag(t *testing.T) {
-	s := NewWithOptions(Options{UnreachableReporters: 1, UnreachableWindow: 5 * time.Second})
-	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
+	s := NewWithOptions(testOptions(Options{UnreachableReporters: 1, UnreachableWindow: 5 * time.Second}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "imap", Up: true})
 
 	s.recordUnreachable("10.0.0.1", "proxy-a", time.Now())
 	s.evictUnreachable("10.0.0.1", nil)

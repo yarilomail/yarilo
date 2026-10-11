@@ -301,9 +301,6 @@ func (s *Server) resolveAlias(ctx context.Context, addr string) string {
 		return addr
 	}
 	maxHops := s.opts.AliasMaxHops
-	if maxHops <= 0 {
-		maxHops = 5
-	}
 	seen := make(map[string]struct{}, maxHops+1)
 	current := addr
 	for i := 0; i < maxHops; i++ {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"strings"
 	"unicode"
@@ -106,19 +107,17 @@ func (s *session) serve(ctx context.Context) {
 	}
 }
 
-// defaultMaxLine is managesieve_max_line_length when unset.
-const defaultMaxLine = 65536
-
 func (s *session) argLimit() literalLimit {
-	limit := s.maxLine
-	if limit <= 0 {
-		limit = defaultMaxLine
-	}
-	return literalLimit{max: limit, msg: "Literal size too large."}
+	return literalLimit{max: s.maxLine, msg: "Literal size too large."}
 }
 
+// scriptLimit: sieve_max_script_size 0 lifts the limit.
 func (s *session) scriptLimit() literalLimit {
-	return literalLimit{max: int64(s.maxSize), code: "QUOTA/MAXSCRIPTSIZE", msg: "Script too large."}
+	limit := int64(s.maxSize)
+	if limit == 0 {
+		limit = math.MaxInt64
+	}
+	return literalLimit{max: limit, code: "QUOTA/MAXSCRIPTSIZE", msg: "Script too large."}
 }
 
 // argError answers a bad argument. A literal over its limit that the client

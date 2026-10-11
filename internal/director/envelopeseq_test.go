@@ -124,7 +124,7 @@ func TestOrderGuardDoesNotCompareAcrossOrigins(t *testing.T) {
 // see how the dispatcher builds its key. This one fails if the origin is left
 // out of it -- the blocker as it would reach the field.
 func TestEnvelopeGuardKeysIncludeTheOrigin(t *testing.T) {
-	s := NewWithOptions(Options{UserKillConfirmGrace: time.Millisecond, UserKillTimeout: time.Minute})
+	s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: time.Millisecond, UserKillTimeout: time.Minute}))
 	const user = "u9@d.test"
 	hash := HashUsername(user, s.hf)
 
@@ -153,7 +153,7 @@ func TestEnvelopeGuardKeysIncludeTheOrigin(t *testing.T) {
 // recorded -- which is the whole failure the sandbox showed, where the move
 // landed, the kill never did, and the originator timed out (#1359).
 func TestALateKillingEnvelopeStillArmsTheHold(t *testing.T) {
-	s := NewWithOptions(Options{UserKillConfirmGrace: time.Millisecond, UserKillTimeout: time.Minute})
+	s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: time.Millisecond, UserKillTimeout: time.Minute}))
 	const user = "u1@d.test"
 	hash := HashUsername(user, s.hf)
 	origin := []string{"10.9.9.9", "9102"}

@@ -20,8 +20,8 @@ func altTestBackend(t *testing.T) (*Backend, *userMailbox, string) {
 	home := filepath.Join(base, "home")
 	alt := filepath.Join(base, "alt")
 
-	b := New(WithAltStorage(alt))
-	u := b.OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home}).(*userMailbox)
+	b := New()
+	u := b.OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home, AltDir: alt}).(*userMailbox)
 	if err := u.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestAltMove_Reverse(t *testing.T) {
 // TestAltMove_DisabledReturnsError confirms that AltMove errors when
 // alt storage is not configured.
 func TestAltMove_DisabledReturnsError(t *testing.T) {
-	b := New() // no WithAltStorage
+	b := New() // no AltDir
 	home := t.TempDir()
 	u := b.OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home}).(*userMailbox)
 	if err := u.Init(); err != nil {
@@ -184,15 +184,14 @@ func TestAltMove_DisabledReturnsError(t *testing.T) {
 	}
 }
 
-// TestAltMove_PerUserAltDir verifies that UserInfo.AltDir (per-user
-// path from userdb/auth) is honoured even when the Backend has no
-// WithAltStorage template set. This is the storage.alt_dir config path.
+// TestAltMove_PerUserAltDir: UserInfo.AltDir, the resolver's expansion of
+// mail_alt_path or a userdb ALT=, is the alt root.
 func TestAltMove_PerUserAltDir(t *testing.T) {
 	base := t.TempDir()
 	home := filepath.Join(base, "home")
 	altDir := filepath.Join(base, "cold") // simulates UserInfo.AltDir already expanded
 
-	b := New() // no WithAltStorage — template empty
+	b := New()
 	u := b.OpenUser(&mailbox.UserInfo{
 		Username: "alice@example.com",
 		Home:     home,
@@ -257,23 +256,18 @@ func TestAltMove_MovedFilenamesAndDirectFetch(t *testing.T) {
 	}
 }
 
-// TestExpandAltPath verifies template expansion for the common cases.
-func TestExpandAltPath(t *testing.T) {
-	cases := []struct {
-		tmpl     string
-		username string
-		want     string
-	}{
-		{"/cold/%d/%n", "alice@example.com", "/cold/example.com/alice"},
-		{"/cold/%u", "alice@example.com", "/cold/alice@example.com"},
-		{"/cold/%Lu", "Alice@Example.Com", "/cold/alice@example.com"},
-		{"/cold/%Ld/%Ln", "Alice@Example.Com", "/cold/example.com/alice"},
-		{"", "alice@example.com", ""},
+// mail_alt_path reaches mdbox through the resolver, already expanded: the
+// driver keeps no template of its own to expand differently.
+func TestAltRootIsTheResolversExpansion(t *testing.T) {
+	base := t.TempDir()
+	r := mailbox.Resolver{Root: base, HomeTemplate: "%d/%n",
+		DefaultAltDir: filepath.Join(base, "cold", "%{user | domain}", "%{user | username}")}
+	ui, err := r.UserInfo("alice@example.com", "")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		got := expandAltPath(tc.tmpl, tc.username)
-		if got != tc.want {
-			t.Errorf("expandAltPath(%q, %q) = %q, want %q", tc.tmpl, tc.username, got, tc.want)
-		}
+	u := New().OpenUser(ui).(*userMailbox)
+	if want := filepath.Join(base, "cold", "example.com", "alice"); u.altBasePath != want {
+		t.Errorf("alt root = %q, want %q", u.altBasePath, want)
 	}
 }

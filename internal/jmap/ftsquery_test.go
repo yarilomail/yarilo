@@ -158,7 +158,7 @@ func searchServer(t *testing.T, stub *stubFTS, maxConns, maxFolders int, folders
 		t.Fatalf("index close: %v", err)
 	}
 
-	chain, err := language.NewMultiChain([]string{"english"}, nil, nil, 0, 0, 0)
+	chain, err := language.NewMultiChain([]string{"english"}, nil, nil, language.DefaultTokenMaxLen, language.DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatalf("chain: %v", err)
 	}
@@ -619,7 +619,7 @@ func rawMessageServer(t *testing.T, stub *stubFTS, raw string) *Server {
 		t.Fatalf("index close: %v", err)
 	}
 
-	chain, err := language.NewMultiChain([]string{"english"}, nil, nil, 0, 0, 0)
+	chain, err := language.NewMultiChain([]string{"english"}, nil, nil, language.DefaultTokenMaxLen, language.DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatalf("chain: %v", err)
 	}
@@ -721,7 +721,7 @@ func (s *stubFTS) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, 
 // Email/query asks the index with what ftsquery.Build makes of the same
 // conditions, as IMAP SEARCH does; an empty header value asks for presence.
 func TestEmailQueryAsksWhatSearchAsks(t *testing.T) {
-	chain, err := language.NewMultiChain([]string{"english"}, nil, nil, 0, 0, 0)
+	chain, err := language.NewMultiChain([]string{"english"}, nil, nil, language.DefaultTokenMaxLen, language.DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

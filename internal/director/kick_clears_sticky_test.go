@@ -7,7 +7,7 @@ import (
 )
 
 func TestDeleteByBackend(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	s.userDir.Set("a@d.test", "10.0.0.1:10143", false)
 	s.userDir.Set("b@d.test", "10.0.0.2:10143", false)
 	s.userDir.Set("c@d.test", "10.0.0.1:10143", false)
@@ -27,7 +27,7 @@ func TestDeleteByBackend(t *testing.T) {
 // USER-KICKED envelope drops the user's sticky pin, so it won't route the
 // kicked user back to the old backend.
 func TestUserKickedApply_ClearsPin(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	s.userDir.Set("u@d.test", "10.0.0.1:10143", false)
 
 	s.membership.applyEnvelope("USER-KICKED", []string{s.normalizeUser("u@d.test")}, "10.0.0.99:9102", 1)
@@ -41,7 +41,7 @@ func TestUserKickedApply_ClearsPin(t *testing.T) {
 // pins but keeps the backend in the ring (drain); a down removes it outright.
 func TestFlushVsDown(t *testing.T) {
 	// flush: pin cleared, backend stays (Up=false).
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 	s.userDir.Set("u@d.test", "10.0.0.1:10143", false)
 
@@ -56,7 +56,7 @@ func TestFlushVsDown(t *testing.T) {
 	}
 
 	// down: backend removed entirely.
-	s2 := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s2 := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	s2.ring.AddBackend(&ring.Backend{IP: "10.0.0.2", Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 	s2.userDir.Set("v@d.test", "10.0.0.2:10143", false)
 

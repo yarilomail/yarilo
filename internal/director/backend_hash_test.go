@@ -24,12 +24,12 @@ func TestBackendSetHash_OrderIndependentAndFieldScoped(t *testing.T) {
 			same: true,
 		},
 		{
-			name: "vhosts 0 == default 100",
+			name: "vhosts 0 (no traffic) is not 100",
 			in: []ring.Backend{
 				{IP: "10.0.0.1", Port: 993, Tag: "imap", Up: true, Vhosts: 0},
 				{IP: "10.0.0.2", Port: 993, Tag: "imap", Up: true, Vhosts: 100},
 			},
-			same: true,
+			same: false,
 		},
 		{
 			name: "transient LastUp/LastDown/Hostname excluded",

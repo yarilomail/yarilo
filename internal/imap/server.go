@@ -401,9 +401,6 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) wrapProxy(ln net.Listener) net.Listener {
 	if s.opts.ProxyProtocol {
 		timeout := s.opts.HAProxyTimeout
-		if timeout == 0 {
-			timeout = 3 * time.Second
-		}
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			ReadHeaderTimeout: timeout,
@@ -2326,7 +2323,11 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 	// (#1129). This is the invariant #1137's "stored -> OK" rests on, made
 	// explicit: OK only for a fully delivered literal.
 	counted := &countingReader{r: r}
-	filename, vsize, guid, err := h.box.Save(rel, counted, 0, size, flagList, kwList, [16]byte{})
+	internalDate := time.Now()
+	if opts != nil && !opts.Time.IsZero() {
+		internalDate = opts.Time
+	}
+	filename, vsize, guid, err := h.box.SaveReceived(rel, counted, 0, size, flagList, kwList, [16]byte{}, internalDate)
 	if err != nil {
 		return nil, err
 	}
@@ -2355,10 +2356,6 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 		}
 	}
 	tIndex := time.Now()
-	internalDate := time.Now()
-	if opts != nil && !opts.Time.IsZero() {
-		internalDate = opts.Time
-	}
 	m := &mailbox.MessageMeta{
 		Flags: flagList, Keywords: kwList, Size: uint32(size), VSize: vsize,
 		InternalDate: internalDate, GUID: guid,
@@ -3896,7 +3893,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		tSave := time.Now()
 		// RFC 8474 §5.1: "The server MUST return the same EMAILID as the
 		// source message for the matching destination message" -- for COPY too.
-		newFilename, vsize, guid, saveErr := destH.box.Save(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID)
+		newFilename, vsize, guid, saveErr := destH.box.SaveReceived(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID, m.InternalDate)
 		if saveErr != nil {
 			return nil, fmt.Errorf("imap/copy save: %w", saveErr)
 		}
@@ -4308,7 +4305,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 				return fmt.Errorf("imap/move read: %w", readErr)
 			}
 			var saveErr error
-			newFilename, vsize, guid, saveErr = destH.box.Save(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID)
+			newFilename, vsize, guid, saveErr = destH.box.SaveReceived(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID, m.InternalDate)
 			if saveErr != nil {
 				return fmt.Errorf("imap/move save: %w", saveErr)
 			}

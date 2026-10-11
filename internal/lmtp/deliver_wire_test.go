@@ -31,7 +31,7 @@ func TestADeliveryOverTheWireIsReadableFromItsRecord(t *testing.T) {
 		t.Run(tc.driver, func(t *testing.T) {
 			dir := t.TempDir()
 			driver := tc.driver
-			srv := New(Options{
+			srv := New(testOpts(Options{
 				Hostname: "lmtp.test",
 				Config: config.LMTPProtocolConfig{
 					AddReceivedHeader: false, ReadTimeout: 5, WriteTimeout: 5,
@@ -44,7 +44,7 @@ func TestADeliveryOverTheWireIsReadableFromItsRecord(t *testing.T) {
 						Username: user, Home: filepath.Join(dir, user), Driver: driver,
 					}, nil
 				},
-			})
+			}))
 			ln, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)

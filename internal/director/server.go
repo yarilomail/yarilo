@@ -192,8 +192,7 @@ type Options struct {
 	// FlushProgram is an optional per-user cleanup hook run after a confirmed
 	// move; empty = disabled.
 	FlushProgram string
-	// FlushProgramTimeout bounds one flush hook run. Zero selects
-	// defaultFlushProgramTimeout.
+	// FlushProgramTimeout bounds one flush hook run (#848); config refuses 0.
 	FlushProgramTimeout time.Duration
 	// UserKillTimeout is the hard fallthrough for the confirmed kick;
 	// UserKillConfirmGrace is the stable-zero window before confirming.
@@ -202,50 +201,19 @@ type Options struct {
 	UserKillConfirmGrace time.Duration
 }
 
-func (o *Options) userKillTimeout() time.Duration {
-	if o.UserKillTimeout <= 0 {
-		return 15 * time.Second
-	}
-	return o.UserKillTimeout
-}
+func (o *Options) userKillTimeout() time.Duration { return o.UserKillTimeout }
 
-func (o *Options) userKillConfirmGrace() time.Duration {
-	if o.UserKillConfirmGrace <= 0 {
-		return 1 * time.Second
-	}
-	return o.UserKillConfirmGrace
-}
+func (o *Options) userKillConfirmGrace() time.Duration { return max(o.UserKillConfirmGrace, 0) }
 
-func (o *Options) userKickDelay() time.Duration {
-	if o.UserKickDelay == 0 {
-		return 2 * time.Second
-	}
-	if o.UserKickDelay < 0 {
-		return 0
-	}
-	return o.UserKickDelay
-}
+func (o *Options) userKickDelay() time.Duration { return max(o.UserKickDelay, 0) }
 
-func (o *Options) maxParallelKicks() int {
-	if o.MaxParallelKicks == 0 {
-		return 100
-	}
-	if o.MaxParallelKicks < 0 {
-		return 0
-	}
-	return o.MaxParallelKicks
-}
+// maxParallelKicks is the kick batch; 0 kicks all at once.
+func (o *Options) maxParallelKicks() int { return max(o.MaxParallelKicks, 0) }
 
 // maxParallelMoves returns the graceful-evacuation concurrency window.
 // 0 = default 5; negative = unlimited (returned as 0).
 func (o *Options) maxParallelMoves() int {
-	if o.MaxParallelMoves == 0 {
-		return 5
-	}
-	if o.MaxParallelMoves < 0 {
-		return 0
-	}
-	return o.MaxParallelMoves
+	return max(o.MaxParallelMoves, 0)
 }
 
 func (o *Options) usernameHashLowercase() bool {
@@ -275,43 +243,18 @@ func (o *Options) effectiveHashFormat() (hf ring.HashFormat, explicit bool) {
 	return parsed, false
 }
 
-func (o *Options) userExpire() time.Duration {
-	if o.UserExpire <= 0 {
-		return 900 * time.Second
-	}
-	return o.UserExpire
-}
+func (o *Options) userExpire() time.Duration { return o.UserExpire }
 
 // domainExpire is how long a domain's placement outlives its traffic. Its own
 // knob, not the user TTL: a domain forgotten between two logins would be placed
 // again elsewhere, which is affinity lost with nobody asking for it (#1943).
-func (o *Options) domainExpire() time.Duration {
-	if o.DomainExpire <= 0 {
-		return 900 * time.Second
-	}
-	return o.DomainExpire
-}
+func (o *Options) domainExpire() time.Duration { return o.DomainExpire }
 
-func (o *Options) domainRebalanceInterval() time.Duration {
-	if o.DomainRebalanceInterval <= 0 {
-		return time.Minute
-	}
-	return o.DomainRebalanceInterval
-}
+func (o *Options) domainRebalanceInterval() time.Duration { return o.DomainRebalanceInterval }
 
-func (o *Options) domainRebalanceCooldown() time.Duration {
-	if o.DomainRebalanceCooldown <= 0 {
-		return 10 * time.Minute
-	}
-	return o.DomainRebalanceCooldown
-}
+func (o *Options) domainRebalanceCooldown() time.Duration { return max(o.DomainRebalanceCooldown, 0) }
 
-func (o *Options) pingInterval() time.Duration {
-	if o.PingInterval <= 0 {
-		return 30 * time.Second
-	}
-	return o.PingInterval
-}
+func (o *Options) pingInterval() time.Duration { return o.PingInterval }
 
 func (o *Options) pingTimeout() time.Duration {
 	if o.PingTimeout <= 0 {
@@ -320,15 +263,9 @@ func (o *Options) pingTimeout() time.Duration {
 	return o.PingTimeout
 }
 
-// writeTimeout is the per-write deadline. 0 = 10s; negative = disabled.
+// writeTimeout is the per-write deadline; 0 is none.
 func (o *Options) writeTimeout() time.Duration {
-	if o.WriteTimeout == 0 {
-		return 10 * time.Second
-	}
-	if o.WriteTimeout < 0 {
-		return 0
-	}
-	return o.WriteTimeout
+	return max(o.WriteTimeout, 0)
 }
 
 // client wraps an active connection with a per-connection write lock. The lock
@@ -476,11 +413,6 @@ type backendLease struct {
 	at  time.Time
 }
 
-// New creates a director server with an empty ring and default options.
-func New() *Server {
-	return NewWithOptions(Options{})
-}
-
 // NewWithOptions creates a director server with custom options.
 func NewWithOptions(opts Options) *Server {
 	hf, hfExplicit := opts.effectiveHashFormat()
@@ -511,7 +443,7 @@ func NewWithOptions(opts Options) *Server {
 // normalizeUser applies the #738 username hash-normalization at the single
 // ingress point for every wire/HTTP handler that turns a raw username into a
 // hash or map key (handleLookup, handleUserMove, handleUserWeak,
-// handleUserKick, RouteUser, apiUserMove, apiUserKick).
+// handleUserKick, apiMap, apiUserMove, apiUserKick).
 // Everything downstream of these call sites — s.userDir,
 // s.ring — already operates on normalized usernames, so no other call site
 // needs its own normalize call.
@@ -1047,7 +979,7 @@ func (s *Server) handleLookup(c *client, fields []string) {
 	// branch to check first.
 	// Sticky routing: honour an existing userDir entry if the backend is still Up
 	// and matches the requested tag. Refreshes TTL so active users stay pinned.
-	if e := s.userDir.Get(user); e != nil && !e.Weak {
+	if e := s.userDir.Get(user); e != nil && !e.Weak && s.stickyFollowsDomain(user, e.Host) {
 		host, portStr, splitErr := net.SplitHostPort(e.Host)
 		if splitErr == nil {
 			if existing := s.ring.GetBackend(host); existing != nil && existing.Up {
@@ -1093,9 +1025,11 @@ func (s *Server) handleBackendUp(c *client, fields []string) {
 	if len(fields) >= 4 {
 		tag = fields[3]
 	}
-	vhosts := 0
+	vhosts := ring.DefaultVhosts
 	if len(fields) >= 5 {
-		vhosts, _ = strconv.Atoi(fields[4])
+		if v, err := strconv.Atoi(fields[4]); err == nil {
+			vhosts = v
+		}
 	}
 	// Optional 6th field: the backend's monotonic heartbeat seq (#776). Its
 	// presence marks this a lease-managed backend (a self-registering pod);
@@ -1303,40 +1237,6 @@ func (s *Server) LookupBackend(username string) *ring.Backend {
 	return s.ring.LookupBackend(username)
 }
 
-// RouteUser returns the backend IP for a recipient username. One order (#708):
-// sticky userDir pin → ring.
-func (s *Server) RouteUser(username string) (string, error) {
-	username = s.normalizeUser(username)
-	if e := s.userDir.Get(username); e != nil && !e.Weak {
-		host, _, err := net.SplitHostPort(e.Host)
-		if err == nil {
-			if b := s.ring.GetBackend(host); b != nil && b.Up {
-				return host, nil
-			}
-		}
-	}
-	// Fresh (unpinned) delivery. Under least_sessions the placement must be the
-	// director's single owned decision (assignAndPin), or LMTP could pick a
-	// different pod than a concurrent IMAP login and split the user's writer
-	// (#797/#788). Under hash the deterministic lookup stays read-only.
-	if s.assignmentPolicy() == policyLeastSessions {
-		if b := s.assignAndPin(username, "", "lmtp"); b != nil {
-			return b.IP, nil
-		}
-		return "", fmt.Errorf("no backends available")
-	}
-	b := s.ring.LookupBackend(username)
-	if b == nil {
-		return "", fmt.Errorf("no backends available")
-	}
-	return b.IP, nil
-}
-
-// RecordUser writes a user→backend mapping into the user directory.
-func (s *Server) RecordUser(username, backendAddr string) {
-	s.userDir.Set(username, backendAddr, false)
-}
-
 // backendTag looks up the tag for a backend IP, returning "" if not found.
 func (s *Server) backendTag(ip string) string {
 	for _, b := range s.ring.Backends() {
@@ -1502,15 +1402,7 @@ func (s *Server) kickSessionsForBackend(ip string) {
 		s.noteSessionClosed(rec.user)
 	}
 
-	// Only local sessions carry a conn to kick; remote replicas (#804) are the
-	// owning director's job — every director runs this on the gossiped
-	// backend-down, so each kicks its own local sessions.
-	local := recs[:0]
-	for _, rec := range recs {
-		if rec.cl != nil {
-			local = append(local, rec)
-		}
-	}
+	local := localSessions(recs)
 	if len(local) == 0 {
 		return
 	}
@@ -1579,12 +1471,7 @@ func (s *Server) forgetBackendLease(ip string) {
 	s.backendSeenMu.Unlock()
 }
 
-func (o *Options) backendExpire() time.Duration {
-	if o.BackendExpire == 0 {
-		return 30 * time.Second
-	}
-	return o.BackendExpire
-}
+func (o *Options) backendExpire() time.Duration { return o.BackendExpire }
 
 // StartBackendExpiry runs the #776 lease-expiry loop until ctx ends: every
 // backendExpire/3 it removes any lease-managed backend whose heartbeat has
@@ -1635,7 +1522,7 @@ func (s *Server) refreshPinnedSessions() {
 }
 
 func (s *Server) StartBackendExpiry(ctx context.Context) {
-	if s.opts.BackendExpire < 0 {
+	if s.opts.BackendExpire <= 0 {
 		return
 	}
 	exp := s.opts.backendExpire()
@@ -1712,10 +1599,23 @@ func (s *Server) kickStaleSessions(hash uint32, oldHost string) {
 	}
 	s.sessRecMu.Unlock()
 
-	for _, rec := range victims {
+	for _, rec := range localSessions(victims) {
 		_ = rec.cl.WriteLine(fmt.Sprintf("USER-KICKED\t%s", rec.user))
 		slog.Info("director: kicked stale session after ring reassignment", "session", rec.id, "user", rec.user, "old_backend", ip)
 	}
+}
+
+// localSessions keeps the sessions a login pod of this director holds: only
+// they carry a conn to kick. A replica (#804) has none and is kicked by the
+// director that owns it, which every director's copy of the same event reaches.
+func localSessions(recs []*sessionRec) []*sessionRec {
+	local := make([]*sessionRec, 0, len(recs))
+	for _, rec := range recs {
+		if rec.cl != nil {
+			local = append(local, rec)
+		}
+	}
+	return local
 }
 
 // removeClientSessions removes all session records owned by a disconnected

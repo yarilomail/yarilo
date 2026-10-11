@@ -65,6 +65,7 @@ func (s *Server) StartAPI(ctx context.Context, ln net.Listener, token string, al
 
 	mux.Handle("POST /api/director/users/{user}/move", h(s.apiUserMove))
 	mux.Handle("POST /api/director/users/{user}/kick", h(s.apiUserKick))
+	mux.Handle("POST /api/director/domains/{domain}/move", h(s.apiDomainMove))
 
 	mux.Handle("GET /api/director/ring/topology", h(s.apiRingTopology))
 	mux.Handle("GET /api/director/ring", h(s.apiPeerList))
@@ -130,11 +131,7 @@ type backendDTO struct {
 }
 
 func toBackendDTO(b backendDTOSource) backendDTO {
-	v := b.Vhosts
-	if v == 0 {
-		v = 100
-	}
-	return backendDTO{b.IP, b.Port, b.Tag, b.Up, v, b.Sessions}
+	return backendDTO(b)
 }
 
 type backendDTOSource struct {
@@ -151,18 +148,18 @@ type backendDTOSource struct {
 // sticky reports whether an existing pin answered. Read-only under hash;
 // under least_sessions a fresh user is pinned here.
 func (s *Server) resolveUserBackend(user string) (ip string, port int, tag string, sticky bool) {
-	if e := s.userDir.Get(user); e != nil && !e.Weak {
+	if e := s.userDir.Get(user); e != nil && !e.Weak && s.stickyFollowsDomain(user, e.Host) {
 		if h, _, err := net.SplitHostPort(e.Host); err == nil {
 			if b := s.ring.GetBackend(h); b != nil && b.Up {
 				return b.IP, b.Port, b.Tag, true
 			}
 		}
 	}
-	// Fresh user: under least_sessions pin here too — the director owns
-	// placement, and a hash read would name a pod the login never assigns.
-	// Under hash the lookup is deterministic and side-effect-free.
-	if s.assignmentPolicy() == policyLeastSessions {
-		if b := s.assignAndPin(user, "", ""); b != nil {
+	// Fresh user: under least_sessions and domain pin here too — the director
+	// owns placement, and a hash read would name a pod the login never assigns
+	// (#2193). Under hash the lookup is deterministic and side-effect-free.
+	if p := s.assignmentPolicy(); p == policyLeastSessions || p == policyDomain {
+		if b := s.assignAndPin(user, s.placementTag(user), ""); b != nil {
 			return b.IP, b.Port, b.Tag, false
 		}
 		return "", 0, "", false

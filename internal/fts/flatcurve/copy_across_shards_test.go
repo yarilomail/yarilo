@@ -14,7 +14,7 @@ import (
 // A copy belongs to its message's document wherever that sits: adding reached
 // the current shard only, while the retraction already walked them all (#1986).
 func TestACopyJoinsTheMessageInASealedShard(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1}))
 	other := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
 
 	indexDoc(t, ui, 1, []string{"plan"}, []string{"alpha"})
@@ -57,7 +57,7 @@ func TestACopyJoinsTheMessageInASealedShard(t *testing.T) {
 // A delivery finds its message in no sealed shard, so it must not open one for
 // writing; only a copy that lands on an older document pays for that.
 func TestADeliveryOpensNoSealedShardForWriting(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1}))
 	other := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
 
 	indexDoc(t, ui, 1, nil, []string{"alpha"})

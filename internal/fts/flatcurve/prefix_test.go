@@ -126,7 +126,7 @@ func TestPrefixSettingReachesTheQuery(t *testing.T) {
 		{"exact term still matches with expansion off", "no", "butterfly", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ui, _ := testEngine(t, Options{PrefixSearch: tc.setting})
+			ui, _ := testEngine(t, testOpts(Options{PrefixSearch: tc.setting}))
 			indexDoc(t, ui, 1, nil, []string{"butterfly"})
 
 			res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery(tc.term))
@@ -145,7 +145,7 @@ func TestPrefixSettingReachesTheQuery(t *testing.T) {
 // the combination cannot work. It is corrected loudly at startup rather than
 // serving an index nothing can query.
 func TestSubstringSearchForcesExpansion(t *testing.T) {
-	ui, _ := testEngine(t, Options{SubstringSearch: true, PrefixSearch: "no"})
+	ui, _ := testEngine(t, testOpts(Options{SubstringSearch: true, PrefixSearch: "no"}))
 	indexDoc(t, ui, 1, nil, []string{"butterfly"})
 
 	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("tterf"))
@@ -161,7 +161,7 @@ func TestSubstringSearchForcesExpansion(t *testing.T) {
 // be reported as missing mail, which is the failure a search engine must not
 // choose when in doubt.
 func TestUnparseableSettingExpandsEverything(t *testing.T) {
-	ui, _ := testEngine(t, Options{PrefixSearch: "maybe"})
+	ui, _ := testEngine(t, testOpts(Options{PrefixSearch: "maybe"}))
 	indexDoc(t, ui, 1, nil, []string{"butterfly"})
 
 	res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery("butterf"))

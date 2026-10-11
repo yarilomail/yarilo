@@ -49,6 +49,16 @@ func TestShouldRotateDisabledByZeroFloor(t *testing.T) {
 	}
 }
 
+// A zero ceiling drops the size cap: a big young log waits for its age.
+func TestShouldRotateWithoutACeiling(t *testing.T) {
+	if shouldRotate(1<<30, 32<<10, 0, time.Second, 5*time.Minute) {
+		t.Error("a zero ceiling folded a young log on size")
+	}
+	if !shouldRotate(1<<30, 32<<10, 0, 10*time.Minute, 5*time.Minute) {
+		t.Error("a zero ceiling stopped an old log above the floor from folding")
+	}
+}
+
 // The row a per-descriptor stamp fails: a session that just opened the folder
 // over a base someone folded a moment ago must not fold again on its first
 // write past the floor. Age comes from the base's mtime, which a fresh

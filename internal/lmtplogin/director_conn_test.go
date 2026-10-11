@@ -64,7 +64,7 @@ func TestDirectorConnectionPerSession(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			addr, accepted := startCountingDirector(t, c.drop)
-			s := &session{opts: Options{DirectorAddr: addr}}
+			s := &session{opts: testOpts(Options{DirectorAddr: addr})}
 			defer s.Logout() //nolint:errcheck
 			for _, u := range []string{"a@example.com", "b@example.com"} {
 				if got, err := s.directorLookup(u, ""); err != nil || got != "10.0.0.9:24" {

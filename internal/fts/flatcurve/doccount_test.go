@@ -11,7 +11,7 @@ import (
 // A copy is not a second document: the count an operator reads has to tell
 // "582 messages" apart from "582 copies of fewer messages" (#2021).
 func TestDocCountCountsMessagesNotCopies(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	other := fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}
 	guid := testGUID(1)
 	indexCopy(t, ui, inbox, 1, guid, nil, []string{"alpha"})
@@ -29,7 +29,7 @@ func TestDocCountCountsMessagesNotCopies(t *testing.T) {
 // A count is a read: with an update's documents written but not committed,
 // it refuses rather than commit half of somebody else's batch (#2021).
 func TestDocCountRefusesWhileABatchIsInFlight(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	up, err := ui.BeginUpdate(inbox)
 	if err != nil {
 		t.Fatal(err)

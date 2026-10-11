@@ -88,7 +88,7 @@ func main() {
 	// One pool per process, shared by every resolution: the dial costs about
 	// seven times the lookup it carries (#1402).
 	authPool := authclient.NewPool(fc.AuthMasterAddr, authTLS,
-		cfg.AuthClient.PoolSizeOrDefault(), cfg.AuthClient.PoolIdleTimeout())
+		cfg.AuthClient.PoolSize, cfg.AuthClient.PoolIdleTimeout())
 	defer authPool.Close() //nolint:errcheck
 
 	chain, err := language.NewMultiChain(languagesOr(fc.Languages, "en"), fc.LanguageFilters, fc.LanguageFiltersOverride,

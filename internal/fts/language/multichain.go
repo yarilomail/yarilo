@@ -42,18 +42,8 @@ type MultiChain struct {
 	overridden map[string]bool
 }
 
-// NewMultiChain builds one Chain per language, sharing the same token/address
-// limits. languages must be non-empty; the first entry is the fallback used
-// when detection is skipped (single language) or unreliable. minDetectRunes
-// overrides the default reliability threshold for the sample handed to
-// TryDetect/SelectForIndex (0 = package default, fts_detection_min_runes).
-//
-// filters is the default filter chain for every language; filtersOverride
-// replaces it for specific languages — e.g. uk (no Snowball stemmer) shouldn't
-// carry "snowball" when other languages do. An absent language uses filters
-// unchanged; a present language's list is a full replacement, not a merge.
-// Every filtersOverride key must name a configured language — an unknown key
-// (a typo like "ukr") is a configuration error, not silently ignored.
+// NewMultiChain builds one Chain per language; the first is the fallback. A
+// filtersOverride entry replaces filters for its language and must name one.
 func NewMultiChain(languages []string, filters []string, filtersOverride map[string][]string, tokenMaxLen, addressMaxLen, minDetectRunes int) (*MultiChain, error) {
 	if len(languages) == 0 {
 		languages = []string{"en"}

@@ -62,17 +62,16 @@ func TestApplyIdleMatchesOpen(t *testing.T) {
 
 func TestApplyExplicitValues(t *testing.T) {
 	db := openTestDB(t)
-	Apply(db, Config{Driver: "sqlite", MaxOpenConns: 7, MaxIdleConns: 3})
+	Apply(db, Config{Driver: "sqlite", MaxOpenConns: new(7), MaxIdleConns: new(3)})
 
 	if got := db.Stats().MaxOpenConnections; got != 7 {
 		t.Fatalf("MaxOpenConnections = %d, want 7 (explicit value must beat the driver default)", got)
 	}
 }
 
-// database/sql reads 0 as "no limit", so a negative knob must be translated.
-func TestApplyNegativeMeansUnlimited(t *testing.T) {
+func TestApplyZeroMeansUnlimited(t *testing.T) {
 	db := openTestDB(t)
-	Apply(db, Config{Driver: "mysql", MaxOpenConns: -1})
+	Apply(db, Config{Driver: "mysql", MaxOpenConns: new(0)})
 
 	if got := db.Stats().MaxOpenConnections; got != 0 {
 		t.Fatalf("MaxOpenConnections = %d, want 0 (unlimited)", got)
@@ -86,18 +85,18 @@ func TestApplyNilDBIsSafe(t *testing.T) {
 func TestDurationKnob(t *testing.T) {
 	tests := []struct {
 		name    string
-		seconds int
+		seconds *int
 		def     time.Duration
 		want    time.Duration
 	}{
-		{"zero takes the default", 0, 5 * time.Minute, 5 * time.Minute},
-		{"explicit seconds", 30, 5 * time.Minute, 30 * time.Second},
-		{"negative disables", -1, 5 * time.Minute, 0},
+		{"unset takes the default", nil, 5 * time.Minute, 5 * time.Minute},
+		{"explicit seconds", new(30), 5 * time.Minute, 30 * time.Second},
+		{"zero disables", new(0), 5 * time.Minute, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := duration(tc.seconds, tc.def); got != tc.want {
-				t.Fatalf("duration(%d) = %v, want %v", tc.seconds, got, tc.want)
+			if got := seconds(tc.seconds, tc.def); got != tc.want {
+				t.Fatalf("seconds(%v) = %v, want %v", tc.seconds, got, tc.want)
 			}
 		})
 	}

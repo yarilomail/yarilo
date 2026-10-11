@@ -29,7 +29,7 @@ func TestTheDirectorAPIIsMTLSForAdmin(t *testing.T) {
 	free.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	if err := startAPI(ctx, director.New(), config.DirectorAPIConfig{Listen: addr, Token: "t"}, srvCfg, func(err error) { t.Errorf("serve: %v", err) }); err != nil {
+	if err := startAPI(ctx, director.NewWithOptions(director.Options{}), config.DirectorAPIConfig{Listen: addr, Token: "t"}, srvCfg, func(err error) { t.Errorf("serve: %v", err) }); err != nil {
 		t.Fatal(err)
 	}
 

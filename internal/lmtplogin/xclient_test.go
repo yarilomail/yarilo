@@ -37,7 +37,7 @@ func TestSessionXClient_TrustGate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &session{
-				opts:     Options{XClientNets: trusted},
+				opts:     testOpts(Options{XClientNets: trusted}),
 				socketIP: tc.socketIP,
 				peerIP:   tc.socketIP,
 			}

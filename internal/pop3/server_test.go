@@ -60,6 +60,9 @@ func (m *mockMailbox) HoldFolder(_, _ string, fn func() error) error { return fn
 func (m *mockMailbox) Save(_ string, _ io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	return "", 0, guid, nil
 }
+func (m *mockMailbox) SaveReceived(_ string, _ io.Reader, _ uint32, _ int64, _, _ []string, guid [16]byte, _ time.Time) (string, uint32, [16]byte, error) {
+	return "", 0, guid, nil
+}
 func (m *mockMailbox) Move(_, _, filename string, guid [16]byte) (string, [16]byte, error) {
 	return filename, guid, nil
 }

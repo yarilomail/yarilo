@@ -123,12 +123,6 @@ type Server struct {
 
 // New builds a Server from opts.
 func New(opts Options) *Server {
-	if opts.ProxyTimeout == 0 {
-		opts.ProxyTimeout = DefaultProxyTimeout
-	}
-	if opts.ConcurrencyLimit == 0 {
-		opts.ConcurrencyLimit = 10
-	}
 	s := &Server{opts: opts}
 	be := &backend{opts: opts}
 
@@ -149,9 +143,6 @@ func New(opts Options) *Server {
 func (s *Server) Serve(ln net.Listener) error {
 	if s.opts.HAProxy {
 		timeout := s.opts.HAProxyTimeout
-		if timeout == 0 {
-			timeout = 3 * time.Second
-		}
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			Policy:            haProxyPolicy(s.opts.HAProxyNets),

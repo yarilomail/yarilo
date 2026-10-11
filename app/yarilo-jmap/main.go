@@ -220,7 +220,7 @@ func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error)
 	// the store per request, so without it every request that touches mail
 	// pays a dial that costs seven times the lookup (#1402).
 	authPool := authclient.NewPool(cfg.JMAPService.AuthMasterAddr, intTLS,
-		cfg.AuthClient.PoolSizeOrDefault(), cfg.AuthClient.PoolIdleTimeout())
+		cfg.AuthClient.PoolSize, cfg.AuthClient.PoolIdleTimeout())
 	// The index takes the locker too. OpenFolder is not purely a read: a folder
 	// with no index yet is created, migrated and log-compacted on open, and
 	// file.withDistLock runs those unguarded when no locker is wired. That

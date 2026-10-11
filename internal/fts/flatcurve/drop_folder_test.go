@@ -7,7 +7,7 @@ import "testing"
 // Deleting a mailbox takes its documents with it, but only its own: a message
 // that also lives elsewhere stays searchable there (#2022).
 func TestDropFolderKeepsAMessageHeldElsewhere(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	shared := testGUID(1)
 	indexCopy(t, ui, inbox, 1, shared, nil, []string{"alpha"})
 	indexCopy(t, ui, archive, 7, shared, nil, []string{"alpha"})
@@ -37,7 +37,7 @@ func TestDropFolderKeepsAMessageHeldElsewhere(t *testing.T) {
 // A folder term naming a mailbox the account no longer has is an orphan no
 // per-folder pass can reach; the sweep is what clears it (#2022).
 func TestDropOrphanFoldersClearsADeletedFoldersDocuments(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
 	indexDocIn(t, ui, archive, 7, nil, []string{"bravo"})
 

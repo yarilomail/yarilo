@@ -89,11 +89,7 @@ type ClientOption func(*Client)
 // WithWaitPoolSize overrides the number of connections kept for waiting
 // acquires.
 func WithWaitPoolSize(n int) ClientOption {
-	return func(c *Client) {
-		if n > 0 {
-			c.waitPoolSize = n
-		}
-	}
+	return func(c *Client) { c.waitPoolSize = n }
 }
 
 func WithPoolSize(n int) ClientOption {

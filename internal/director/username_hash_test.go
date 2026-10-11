@@ -35,7 +35,7 @@ func TestUsernameHash_KickMatchByHash(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := NewWithOptions(Options{UsernameHashFormat: c.format})
+			s := NewWithOptions(testOptions(Options{UsernameHashFormat: c.format}))
 			conn := openSession(t, s, "sess-1", c.loginUser, "10.0.0.1")
 
 			s.kickStaleSessions(HashUsername(c.kickUser, s.hf), "10.0.0.1:993")
@@ -59,9 +59,9 @@ func TestUsernameHash_KickMatchByHash(t *testing.T) {
 // back-compat path is byte-identical to the old bool: no explicit format + default
 // lowercase must hash exactly like an explicit "%Lu".
 func TestUsernameHash_BackCompatMatchesLowercaseBool(t *testing.T) {
-	back := NewWithOptions(Options{})                                     // derives %Lu from the default bool
-	expl := NewWithOptions(Options{UsernameHashFormat: "%Lu"})            // explicit
-	off := NewWithOptions(Options{UsernameHashLowercase: boolPtr(false)}) // derives %u
+	back := NewWithOptions(testOptions(Options{}))                                     // derives %Lu from the default bool
+	expl := NewWithOptions(testOptions(Options{UsernameHashFormat: "%Lu"}))            // explicit
+	off := NewWithOptions(testOptions(Options{UsernameHashLowercase: boolPtr(false)})) // derives %u
 
 	for _, u := range []string{"Alice@D.test", "bob@x.test", "MixedCase@Host"} {
 		if HashUsername(u, back.hf) != HashUsername(u, expl.hf) {
@@ -84,7 +84,7 @@ func TestUsernameHash_BackCompatMatchesLowercaseBool(t *testing.T) {
 // under an explicit format, so a case-sensitive %u actually stays case-sensitive at
 // ingress (the whole point of the format taking over case-folding).
 func TestUsernameHash_ExplicitDisablesIngressLowercase(t *testing.T) {
-	s := NewWithOptions(Options{UsernameHashFormat: "%u"})
+	s := NewWithOptions(testOptions(Options{UsernameHashFormat: "%u"}))
 	if got := s.normalizeUser("Alice@D"); got != "Alice@D" {
 		t.Errorf("explicit format must leave ingress case untouched, got %q", got)
 	}

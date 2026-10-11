@@ -10,7 +10,7 @@ import (
 // (returns immediately) when no director is configured, rather than spinning a
 // dial-fail/backoff loop.
 func TestWatch_NoDirectorReturns(t *testing.T) {
-	s := New(Options{}) // DirectorAddr == ""
+	s := New(testOpts(Options{})) // DirectorAddr == ""
 	done := make(chan struct{})
 	go func() { s.Watch(context.Background()); close(done) }()
 	select {

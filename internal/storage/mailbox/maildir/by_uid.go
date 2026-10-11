@@ -150,15 +150,21 @@ func (u *userMailbox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.Read
 // basesByUID is the list read the way a record asks it, for a pass that walks
 // every record of a folder.
 func (u *userMailbox) basesByUID(folder string) (map[uint32]string, error) {
-	uids, err := u.readUIDList(folder)
+	out, _, err := u.basesByUIDFrom(folder)
+	return out, err
+}
+
+// basesByUIDFrom also says where the list map came from (#2183).
+func (u *userMailbox) basesByUIDFrom(folder string) (map[uint32]string, listRead, error) {
+	uids, read, err := u.readUIDListFrom(folder)
 	if err != nil {
-		return nil, fmt.Errorf("maildir/by-uid: read list %q: %w", folder, err)
+		return nil, listRead{}, fmt.Errorf("maildir/by-uid: read list %q: %w", folder, err)
 	}
 	out := make(map[uint32]string, len(uids))
 	for base, uid := range uids {
 		out[uid] = base
 	}
-	return out, nil
+	return out, read, nil
 }
 
 // unlistedSaid keeps one line per record per process, the way the sidecar's

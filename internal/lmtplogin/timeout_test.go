@@ -53,12 +53,12 @@ func deliverWithin(t *testing.T, proxyAddr, rcpt string, limit time.Duration) {
 // A backend that never answers: the delivery must fail at ProxyTimeout, not
 // at the default.
 func TestProxyTimeoutReachesTheBackendCall(t *testing.T) {
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname:       "test.local",
 		BackendAddr:    silentBackend(t),
 		AuthMasterAddr: startTestAuth(t),
 		ProxyTimeout:   300 * time.Millisecond,
-	})
+	}))
 	deliverWithin(t, proxyAddr, "alice@example.com", 5*time.Second)
 }
 
@@ -71,13 +71,13 @@ func TestAUsersProxyTimeoutOverridesTheGlobalOne(t *testing.T) {
 		"bob@example.com":   {Username: "bob@example.com"},
 	})
 	backend := silentBackend(t)
-	slow := startLMTPLogin(t, Options{Hostname: "test.local", BackendAddr: backend,
-		AuthMasterAddr: authAddr, ProxyTimeout: time.Minute})
+	slow := startLMTPLogin(t, testOpts(Options{Hostname: "test.local", BackendAddr: backend,
+		AuthMasterAddr: authAddr, ProxyTimeout: time.Minute}))
 	deliverWithin(t, slow, "alice@example.com", 5*time.Second)
 	deliverWithin(t, slow, "carol@example.com", 5*time.Second)
 
-	fast := startLMTPLogin(t, Options{Hostname: "test.local", BackendAddr: backend,
-		AuthMasterAddr: authAddr, ProxyTimeout: 300 * time.Millisecond})
+	fast := startLMTPLogin(t, testOpts(Options{Hostname: "test.local", BackendAddr: backend,
+		AuthMasterAddr: authAddr, ProxyTimeout: 300 * time.Millisecond}))
 	deliverWithin(t, fast, "bob@example.com", 900*time.Millisecond)
 }
 
@@ -89,8 +89,8 @@ func TestWithoutAProxyTimeoutTheGlobalOneApplies(t *testing.T) {
 		"zero@example.com": {Username: "zero@example.com", ProxyTimeout: "0"},
 	})
 	_, backendAddr := newStubBackend(t)
-	proxyAddr := startLMTPLogin(t, Options{Hostname: "test.local", BackendAddr: backendAddr,
-		AuthMasterAddr: authAddr})
+	proxyAddr := startLMTPLogin(t, testOpts(Options{Hostname: "test.local", BackendAddr: backendAddr,
+		AuthMasterAddr: authAddr}))
 	for _, rcpt := range []string{"none@example.com", "zero@example.com"} {
 		mta := dialMTA(t, proxyAddr)
 		mta.lmtpHandshake(t)
@@ -126,8 +126,8 @@ func TestTheUserLookupDecidesTheRecipientReply(t *testing.T) {
 		"abc@example.com":  {Username: "abc@example.com", ProxyTimeout: "abc"},
 		"huge@example.com": {Username: "huge@example.com", ProxyTimeout: "4294967296ms"},
 	}})
-	proxyAddr := startLMTPLogin(t, Options{Hostname: "test.local", BackendAddr: silentBackend(t),
-		AuthMasterAddr: authAddr})
+	proxyAddr := startLMTPLogin(t, testOpts(Options{Hostname: "test.local", BackendAddr: silentBackend(t),
+		AuthMasterAddr: authAddr}))
 	for _, tc := range []struct{ rcpt, want string }{
 		{"neg@example.com", "550 5.3.5 Internal user lookup failure"},
 		{"abc@example.com", "550 5.3.5 Internal user lookup failure"},

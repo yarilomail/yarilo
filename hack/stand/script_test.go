@@ -98,6 +98,7 @@ func TestEveryCollectedCounterHasAReader(t *testing.T) {
 		"mailbox_write_failed_total",
 		"maildir_partial_pass_empty_total",
 		"quota_folders_opened_total",
+		"maildir_lock_hold_seconds",
 	} {
 		if strings.Count(src, metric) < 2 {
 			t.Errorf("%s is collected but never summed into a line an operator reads", metric)

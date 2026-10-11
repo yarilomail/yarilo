@@ -232,6 +232,13 @@ func TestOnlyAnOldTempIsSweptAway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The old temp's ctime ages only on the sweep's clock; the young one keeps
+	// an mtime that is now on that clock.
+	ahead := mailbox.StaleTemp + time.Hour
+	defer mailbox.SetSweepClock(func() time.Time { return time.Now().Add(ahead) })()
+	if err := os.Chtimes(filepath.Join(dir, young), time.Now().Add(ahead), time.Now().Add(ahead)); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := mailboxbase.Open(mb, idx).Folder("INBOX", folder.UIDValidity); err != nil {
 		t.Fatal(err)

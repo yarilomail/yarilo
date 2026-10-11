@@ -115,6 +115,7 @@ func startStorageServerOpts(t *testing.T, quotaRules []string, aliasD dict.Dict,
 		Index:        idx,
 		AliasDict:    aliasD,
 		AliasMaxHops: hops,
+		Policy:       quota.Policy{StoragePercentage: 100, MessagePercentage: 100},
 	}
 	if mutate != nil {
 		mutate(&opts)
@@ -204,7 +205,8 @@ func TestPolicyCheck_IgnoreFolder(t *testing.T) {
 
 func TestPolicyCheck_NoStorage(t *testing.T) {
 	// No Mailbox/Index/UserdbLookup wired → fail-open.
-	addr := startServer(t, quotastatus.Options{Limits: quota.ParseRules([]string{"*:storage=1K"})})
+	addr := startServer(t, quotastatus.Options{Limits: quota.ParseRules([]string{"*:storage=1K"}),
+		Policy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100}})
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "9999",
 	})
@@ -230,12 +232,25 @@ func setAlias(t *testing.T, d dict.Dict, src, dst string) {
 func TestAliasResolution_DirectAlias(t *testing.T) {
 	aliasD := newMemDict(t)
 	setAlias(t, aliasD, "info@example.com", "alice@example.com")
-	addr := startStorageServer(t, []string{"*:storage=1K"}, aliasD, 0, map[string]uint32{"alice@example.com": 2048})
+	addr := startStorageServer(t, []string{"*:storage=1K"}, aliasD, 5, map[string]uint32{"alice@example.com": 2048})
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "info@example.com", "size": "100",
 	})
 	if !strings.HasPrefix(action, "554 5.2.2") {
 		t.Errorf("alias resolved to over-quota alice: want 554 5.2.2, got %q", action)
+	}
+}
+
+// alias_max_hops 0 follows no alias: the recipient is checked as written.
+func TestAliasResolution_ZeroHopsFollowsNothing(t *testing.T) {
+	aliasD := newMemDict(t)
+	setAlias(t, aliasD, "info@example.com", "alice@example.com")
+	addr := startStorageServer(t, []string{"*:storage=1K"}, aliasD, 0, map[string]uint32{"alice@example.com": 2048})
+	action := policyCheck(t, addr, map[string]string{
+		"request": "smtpd_access_policy", "recipient": "info@example.com", "size": "100",
+	})
+	if strings.HasPrefix(action, "554 5.2.2") {
+		t.Errorf("0 hops followed the alias to over-quota alice: %q", action)
 	}
 }
 
@@ -255,7 +270,7 @@ func TestAliasResolution_ChainedAlias(t *testing.T) {
 func TestAliasResolution_DetailStrippedForLookup(t *testing.T) {
 	aliasD := newMemDict(t)
 	setAlias(t, aliasD, "info@example.com", "alice@example.com")
-	addr := startStorageServer(t, []string{"*:storage=1K"}, aliasD, 0, map[string]uint32{"alice@example.com": 2048})
+	addr := startStorageServer(t, []string{"*:storage=1K"}, aliasD, 5, map[string]uint32{"alice@example.com": 2048})
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "info+newsletter@example.com", "size": "100",
 	})
@@ -266,7 +281,7 @@ func TestAliasResolution_DetailStrippedForLookup(t *testing.T) {
 
 func TestAliasResolution_NoAlias_FallsBackToDirect(t *testing.T) {
 	aliasD := newMemDict(t)
-	addr := startStorageServer(t, []string{"*:storage=10M"}, aliasD, 0, map[string]uint32{"bob@example.com": 0})
+	addr := startStorageServer(t, []string{"*:storage=10M"}, aliasD, 5, map[string]uint32{"bob@example.com": 0})
 	action := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "bob@example.com", "size": "100",
 	})
@@ -309,6 +324,7 @@ func TestPolicyCheck_Nouser(t *testing.T) {
 		UserdbLookup: lookup,
 		Mailbox:      mb,
 		Index:        idx,
+		Policy:       quota.Policy{StoragePercentage: 100, MessagePercentage: 100},
 	}
 	req := map[string]string{"request": "smtpd_access_policy", "recipient": "ghost@example.com", "size": "100"}
 
@@ -376,6 +392,7 @@ func TestPolicyCheck_UserdbErrorDefers(t *testing.T) {
 		Enabled: true, Limits: quota.ParseRules([]string{"*:storage=1K"}),
 		UserdbLookup: func(context.Context, string) (*mailbox.UserInfo, error) { return nil, errors.New("down") },
 		Mailbox:      maildir.New(), Index: file.New(),
+		Policy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100},
 	})
 	if a := policyCheck(t, addr, map[string]string{
 		"request": "smtpd_access_policy", "recipient": "alice@example.com", "size": "100",

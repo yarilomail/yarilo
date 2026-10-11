@@ -187,13 +187,13 @@ func newJoinCluster(t *testing.T) *joinCluster {
 // addNode spins up one more director against the seed and returns it.
 func (c *joinCluster) addNode() *Server {
 	c.t.Helper()
-	srv := NewWithOptions(Options{
+	srv := NewWithOptions(testOptions(Options{
 		PingInterval:        24 * time.Hour,
 		RingSecret:          []byte("shared-secret"),
 		MinMembers:          3,
 		AntiEntropyInterval: 500 * time.Millisecond,
 		SeedPollInterval:    300 * time.Millisecond,
-	})
+	}))
 	srv.membership.probeTimeout = 500 * time.Millisecond
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

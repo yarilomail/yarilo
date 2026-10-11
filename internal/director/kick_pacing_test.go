@@ -17,9 +17,8 @@ func TestUserKickDelay(t *testing.T) {
 		in   time.Duration
 		want time.Duration
 	}{
-		{"default", 0, 2 * time.Second},
+		{"zero disables", 0, 0},
 		{"explicit", 5 * time.Second, 5 * time.Second},
-		{"negative disables", -1, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -37,9 +36,8 @@ func TestMaxParallelKicks(t *testing.T) {
 		in   int
 		want int
 	}{
-		{"default", 0, 100},
+		{"zero disables batching", 0, 0},
 		{"explicit", 50, 50},
-		{"negative disables batching", -1, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -70,7 +68,7 @@ func (c *recordConn) SetWriteDeadline(t time.Time) error { return nil }
 // and a co-located remote replica (cl == nil) is skipped without a nil deref.
 func TestKickSessionsForBackend_BatchesAllLocal(t *testing.T) {
 	const nLocal = 4
-	s := NewWithOptions(Options{AntiEntropyInterval: -1, MaxParallelKicks: 2})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1, MaxParallelKicks: 2}))
 	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.5", Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 
 	conn := &recordConn{lines: make(chan string, nLocal)}

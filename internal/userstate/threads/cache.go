@@ -39,20 +39,11 @@ type entry struct {
 }
 
 // DefaultIdle is how long an unused account's threading state is kept.
-// Matches the FTS handle timeout and the reference's own cache period: the
-// same idea about idle state holding a resource.
 const DefaultIdle = 300 * time.Second
 
-// NewCache builds the fold cache. Zero selects DefaultIdle; a NEGATIVE idle
-// disables caching entirely -- every Get folds, nothing is retained.
-//
-// That mode is not decoration: it is how a hot node gives its memory back, and
-// how a freshness question is answered by removing the cache from the picture
-// rather than reasoning about it.
+// NewCache builds the fold cache. Zero idle disables caching: every Get folds,
+// nothing is retained.
 func NewCache(idle time.Duration) *Cache {
-	if idle == 0 {
-		idle = DefaultIdle
-	}
 	return &Cache{entries: map[string]*entry{}, idle: idle}
 }
 
@@ -100,7 +91,7 @@ func (c *Cache) Get(user, path string) (*State, error) {
 		return nil, err
 	}
 	c.folds++
-	if c.idle < 0 {
+	if c.idle <= 0 {
 		// Caching disabled: fold and hand it over, keeping nothing. Retaining
 		// the entry here while eviction is off would be the opposite of what
 		// the setting says -- every account held until restart, which is the

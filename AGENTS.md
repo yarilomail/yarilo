@@ -116,6 +116,26 @@ Key rules derived from ARCHITECTURE.md:
 
 ---
 
+## Config defaults
+
+**One source of defaults: `config.Defaults()`**, filled before the file is
+read; `helm/values.yaml` carries the same numbers and `app/guard` checks they
+are equal (#2167).
+
+- A key the file leaves out keeps its default; a hand-written `yarilo.yaml`
+  from an earlier release must keep starting. An explicit value is kept.
+- The chart renders every key raw: no `| default N`, no `hasKey … else N`, no
+  `dig … N`. An explicit `0`, `false` or `""` must reach the config.
+- No consumer turns a value into another (`if x <= 0 { x = 30 }`).
+- An explicit `0` turns the setting off (`offKeys` in
+  `pkg/config/zero_off.go`); where off makes no sense it is refused at load
+  (`requiredKeys`). A negative value is refused. A meaning a release
+  documented does not change in a patch.
+- A list entry's numeric field has no slot in `Defaults()`: presence in the
+  file decides (`listEntryDefaults`).
+
+---
+
 ## Go code style
 
 - **Comments**: see "Code comments" below.

@@ -44,6 +44,7 @@ func TestRotationTripleAliases(t *testing.T) {
 			name:     "both agreeing",
 			body:     "storage:\n  mail_index_log_rotate_min_size: \"64k\"\n  index_log_compact_min_bytes: \"64k\"\n",
 			wantSize: "64k",
+			wantAge:  60, // left out: the default
 		},
 		{
 			name:    "both disagreeing is refused",

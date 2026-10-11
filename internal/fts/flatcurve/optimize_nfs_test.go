@@ -21,7 +21,7 @@ import (
 // walk past: every lookup, before and after and during compaction, must
 // return the document, and no .nfs* or leftover tmp may remain.
 func TestOptimizeRacesLookupAndLeavesNoOpenShards(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1, OptimizeLimit: 0})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1, OptimizeLimit: 0}))
 	for uid := uint32(1); uid <= 12; uid++ {
 		indexDoc(t, ui, uid, []string{"subj"}, []string{"needle", "hay"})
 	}
@@ -94,7 +94,7 @@ func TestOptimizeRacesLookupAndLeavesNoOpenShards(t *testing.T) {
 // the entry point moved to a per-mailbox loop under each mailbox's own lock
 // (#1176). Asserted by shard count, since that is what compaction changes.
 func TestMailboxesDrivesWholeUserOptimize(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1, OptimizeLimit: 0})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1, OptimizeLimit: 0}))
 	other := fts.MailboxRef{GUID: "g2", Name: "Sent", UIDValidity: 1}
 	for uid := uint32(1); uid <= 6; uid++ {
 		indexDoc(t, ui, uid, nil, []string{"alpha"})

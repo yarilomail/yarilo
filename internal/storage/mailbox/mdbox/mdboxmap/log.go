@@ -160,7 +160,7 @@ func (m *Map) shouldRotateLocked() bool {
 	if minSize == 0 {
 		return false // rotation disabled
 	}
-	if m.logSize > m.logRotateMaxSizeOrDefault() {
+	if max := m.logRotateMaxSizeOrDefault(); max > 0 && m.logSize > max {
 		return true
 	}
 	if m.logSize < minSize {

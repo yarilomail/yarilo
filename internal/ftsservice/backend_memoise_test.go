@@ -36,7 +36,7 @@ func TestFTS_UserHandlesShareTheMemoisedBackend(t *testing.T) {
 	}
 	var builds, opens atomic.Int64
 
-	svc, err := New(Options{
+	svc, err := New(testOpts(Options{
 		Engine:  stubEngine{},
 		Mailbox: maildir.New(), // global default; the per-user driver differs
 		Index:   fileindex.New(),
@@ -52,7 +52,7 @@ func TestFTS_UserHandlesShareTheMemoisedBackend(t *testing.T) {
 			builds.Add(1)
 			return instrumentedBackend{inner: mdbox.New(), opens: &opens}
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

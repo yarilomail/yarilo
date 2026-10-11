@@ -153,17 +153,11 @@ func (s *Sender) dial(ctx context.Context) (*goSmtp.Client, error) {
 }
 
 func (s *Sender) connectTimeout() time.Duration {
-	if s.cfg.SubmissionTimeout > 0 {
-		return time.Duration(s.cfg.SubmissionTimeout) * time.Second
-	}
-	return 30 * time.Second
+	return time.Duration(s.cfg.SubmissionTimeout) * time.Second
 }
 
 func (s *Sender) commandTimeout() time.Duration {
-	if s.cfg.SubmissionTimeout > 0 {
-		return time.Duration(s.cfg.SubmissionTimeout) * time.Second
-	}
-	return 30 * time.Second
+	return time.Duration(s.cfg.SubmissionTimeout) * time.Second
 }
 
 // buildVacationReply constructs a minimal RFC 5230 auto-reply message.

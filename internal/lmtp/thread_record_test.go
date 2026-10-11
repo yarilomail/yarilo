@@ -44,10 +44,10 @@ func threadingSession(t *testing.T) (*session, mailbox.UserMailbox, mailbox.User
 	ui := idx.OpenUser(info)
 	t.Cleanup(func() { ui.Close() }) //nolint:errcheck
 
-	s := &session{opts: Options{
+	s := &session{opts: testOpts(Options{
 		Mailbox: mb, Index: idx,
 		Threads: threads.NewRecorder(threads.NewCache(time.Minute)),
-	}}
+	})}
 	return s, box, ui, info
 }
 
@@ -140,12 +140,12 @@ func TestTheDeliveryLoopRecordsTheConversation(t *testing.T) {
 	mb, idx := maildir.New(), fileindex.New()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 
-	s := &session{opts: Options{
+	s := &session{opts: testOpts(Options{
 		Mailbox:  mb,
 		Index:    idx,
 		Resolver: resolver,
 		Threads:  threads.NewRecorder(threads.NewCache(time.Minute)),
-	}}
+	})}
 	s.from = "sender@x"
 	s.rcpts = []string{"alice@example.com"}
 

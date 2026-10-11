@@ -13,7 +13,7 @@ import (
 // The merge runs outside the caller's lock and the switch inside it: the one
 // shuts deliveries out, the other races another writer's rename (#1986).
 func TestTheMergeIsOutsideTheLockAndTheSwitchInside(t *testing.T) {
-	ui, _ := testEngine(t, Options{RotateCount: 1})
+	ui, _ := testEngine(t, testOpts(Options{RotateCount: 1}))
 	for uid := uint32(1); uid <= 3; uid++ {
 		indexDoc(t, ui, uid, nil, []string{"needle"})
 	}

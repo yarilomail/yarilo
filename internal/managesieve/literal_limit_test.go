@@ -1,6 +1,7 @@
 package managesieve
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -54,5 +55,18 @@ func TestALiteralAtItsLimitIsRead(t *testing.T) {
 	c.send("NOOP\r\n")
 	if lines, ok := c.readUntilResult(); !ok {
 		t.Fatalf("NOOP = %q, want OK", lines)
+	}
+}
+
+// sieve_max_script_size 0 lifts the limit; it does not refuse every script.
+func TestAZeroScriptSizeLiftsTheLimit(t *testing.T) {
+	tests := []struct {
+		size int
+		want int64
+	}{{0, math.MaxInt64}, {10, 10}}
+	for _, tc := range tests {
+		if got := (&session{maxSize: tc.size}).scriptLimit().max; got != tc.want {
+			t.Errorf("maxSize %d: limit %d, want %d", tc.size, got, tc.want)
+		}
 	}
 }

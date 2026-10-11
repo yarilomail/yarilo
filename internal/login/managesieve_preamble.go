@@ -58,9 +58,6 @@ func extractManageSievePreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Con
 
 func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options) (*preamble, net.Conn, *bufio.Reader, error) {
 	maxInvalid := opts.SieveMaxInvalidCmds
-	if maxInvalid <= 0 {
-		maxInvalid = 3
-	}
 	invalidCmds := 0
 	for {
 		cmd, err := msReadAtom(rd)
@@ -113,7 +110,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 		default:
 			msSkipLine(rd)
 			invalidCmds++
-			if invalidCmds >= maxInvalid {
+			if maxInvalid > 0 && invalidCmds >= maxInvalid {
 				fmt.Fprintf(conn, "BYE \"Too many invalid MANAGESIEVE commands.\"\r\n") //nolint:errcheck
 				return nil, conn, rd, fmt.Errorf("managesieve: too many invalid commands")
 			}

@@ -217,42 +217,27 @@ func (e *Engine) runScript(ctx context.Context, script *gosieve.Script, opts Fil
 		rd.Env = &yariloEnv{username: opts.Username, configItems: e.cfg.Environments}
 	}
 	rd.PipeExecutor = &pipeExecutor{
-		binDir:    e.cfg.PipeBinDir,
-		socketDir: e.cfg.PipeSocketDir,
-		timeout: func() time.Duration {
-			if e.cfg.PipeExecTimeout > 0 {
-				return time.Duration(e.cfg.PipeExecTimeout) * time.Second
-			}
-			return 10 * time.Second
-		}(),
+		binDir:       e.cfg.PipeBinDir,
+		socketDir:    e.cfg.PipeSocketDir,
+		timeout:      time.Duration(e.cfg.PipeExecTimeout) * time.Second,
 		crlf:         e.cfg.PipeInputEOL != "lf",
 		username:     opts.Username,
 		envelopeFrom: opts.EnvFrom,
 		envelopeTo:   opts.EnvTo,
 	}
 	rd.FilterExecutor = &filterExecutor{
-		binDir:    e.cfg.FilterBinDir,
-		socketDir: e.cfg.FilterSocketDir,
-		timeout: func() time.Duration {
-			if e.cfg.FilterExecTimeout > 0 {
-				return time.Duration(e.cfg.FilterExecTimeout) * time.Second
-			}
-			return 10 * time.Second
-		}(),
+		binDir:       e.cfg.FilterBinDir,
+		socketDir:    e.cfg.FilterSocketDir,
+		timeout:      time.Duration(e.cfg.FilterExecTimeout) * time.Second,
 		crlf:         e.cfg.FilterInputEOL != "lf",
 		username:     opts.Username,
 		envelopeFrom: opts.EnvFrom,
 		envelopeTo:   opts.EnvTo,
 	}
 	rd.ExecuteExecutor = &executeExecutor{
-		binDir:    e.cfg.ExecuteBinDir,
-		socketDir: e.cfg.ExecuteSocketDir,
-		timeout: func() time.Duration {
-			if e.cfg.ExecuteExecTimeout > 0 {
-				return time.Duration(e.cfg.ExecuteExecTimeout) * time.Second
-			}
-			return 10 * time.Second
-		}(),
+		binDir:       e.cfg.ExecuteBinDir,
+		socketDir:    e.cfg.ExecuteSocketDir,
+		timeout:      time.Duration(e.cfg.ExecuteExecTimeout) * time.Second,
 		crlf:         e.cfg.ExecuteInputEOL != "lf",
 		username:     opts.Username,
 		envelopeFrom: opts.EnvFrom,
@@ -370,9 +355,6 @@ func normalizeScore(hdr textproto.MIMEHeader, header string, max float64, percen
 	val, err := parseLeadingFloat(raw)
 	if err != nil {
 		return "0", false
-	}
-	if max <= 0 {
-		max = float64(maxGrade)
 	}
 	ratio := val / max
 	if ratio < 0 {

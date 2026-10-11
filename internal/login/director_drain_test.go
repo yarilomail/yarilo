@@ -15,7 +15,8 @@ import (
 // and its lookups are answered from that view, not the departed one (#2152).
 func TestLookupAfterDirectorDrain(t *testing.T) {
 	serve := func(ln net.Listener, backend string) (*director.Server, context.CancelFunc) {
-		srv := director.NewWithOptions(director.Options{PingInterval: 24 * time.Hour})
+		srv := director.NewWithOptions(director.Options{PingInterval: 24 * time.Hour, PingTimeout: 10 * time.Second,
+			UserExpire: 15 * time.Minute, DomainExpire: 15 * time.Minute, DomainRebalanceInterval: time.Minute, UserKillTimeout: 15 * time.Second})
 		srv.AddBackend(backend, 993, "", 100)
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() { _ = srv.Serve(ctx, ln) }()
@@ -28,7 +29,7 @@ func TestLookupAfterDirectorDrain(t *testing.T) {
 	addr := lnA.Addr().String()
 	srvA, stopA := serve(lnA, "10.0.0.1")
 
-	s := New(Options{DirectorAddr: addr, LocalIP: "127.0.0.1"})
+	s := New(testOpts(Options{DirectorAddr: addr, LocalIP: "127.0.0.1"}))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go s.Watch(ctx)

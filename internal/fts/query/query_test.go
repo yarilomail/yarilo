@@ -13,7 +13,7 @@ var chartFilters = []string{"lowercase", "stopwords", "snowball"}
 
 func englishChain(t *testing.T) Expander {
 	t.Helper()
-	c, err := NewChain(config.FTSConfig{LanguageFilters: chartFilters})
+	c, err := NewChain(config.FTSConfig{LanguageTokenMaxLen: 30, LanguageAddressMaxLen: 250, LanguageFilters: chartFilters})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +78,11 @@ func TestBuild(t *testing.T) {
 // With no languages configured the chain is English, as the fts service's; a
 // German default would stem "laufen" and English does not.
 func TestNewChainDefaultsToEnglish(t *testing.T) {
-	def, err := NewChain(config.FTSConfig{LanguageFilters: chartFilters})
+	def, err := NewChain(config.FTSConfig{LanguageTokenMaxLen: 30, LanguageAddressMaxLen: 250, LanguageFilters: chartFilters})
 	if err != nil {
 		t.Fatal(err)
 	}
-	en, err := NewChain(config.FTSConfig{Languages: []string{"en"}, LanguageFilters: chartFilters})
+	en, err := NewChain(config.FTSConfig{LanguageTokenMaxLen: 30, LanguageAddressMaxLen: 250, Languages: []string{"en"}, LanguageFilters: chartFilters})
 	if err != nil {
 		t.Fatal(err)
 	}

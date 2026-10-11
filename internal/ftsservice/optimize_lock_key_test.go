@@ -56,7 +56,7 @@ func TestOptimizeHoldsTheUsersIndexLock(t *testing.T) {
 	var held string
 	idx.current = &held
 
-	svc, err := New(Options{
+	svc, err := New(testOpts(Options{
 		Engine:  &fixedIndexEngine{idx: idx},
 		Mailbox: maildir.New(),
 		Index:   file.New(),
@@ -70,7 +70,7 @@ func TestOptimizeHoldsTheUsersIndexLock(t *testing.T) {
 			defer func() { held = "" }()
 			return fn()
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

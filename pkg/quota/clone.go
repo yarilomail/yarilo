@@ -37,9 +37,6 @@ func NewClone(targets []dict.Dict, delay time.Duration) *Clone {
 	if len(targets) == 0 {
 		return nil
 	}
-	if delay <= 0 {
-		delay = 10 * time.Second // the reference's QUOTA_CLONE_FLUSH_DELAY_MSECS
-	}
 	return &Clone{targets: targets, delay: delay, state: map[string]*pending{}}
 }
 

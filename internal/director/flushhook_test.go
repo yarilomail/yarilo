@@ -79,14 +79,14 @@ func TestFlushHook_RunsOnConfirmedMove(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hook.log")
 	script := writeHookScript(t, out)
 	grace := 10 * time.Millisecond
-	s := NewWithOptions(Options{
+	s := NewWithOptions(testOptions(Options{
 		FlushProgram: script,
 		// See the note in idlekill_test.go: these assert that the hook runs,
 		// not how fast a shell script starts on a loaded machine (#1352).
 		FlushProgramTimeout:  2 * time.Minute,
 		UserKillConfirmGrace: grace,
 		UserKillTimeout:      10 * time.Second,
-	})
+	}))
 
 	user := "u@d.test"
 	s.userDir.Set(user, "10.0.0.1:993", false) // old pin
@@ -104,7 +104,7 @@ func TestFlushHook_RunsOnConfirmedMove(t *testing.T) {
 func TestFlushHook_DisabledByDefault(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hook.log")
 	grace := 10 * time.Millisecond
-	s := NewWithOptions(Options{UserKillConfirmGrace: grace, UserKillTimeout: 10 * time.Second})
+	s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: grace, UserKillTimeout: 10 * time.Second}))
 
 	user := "u@d.test"
 	s.userDir.Set(user, "10.0.0.1:993", false)
@@ -120,14 +120,14 @@ func TestFlushHook_SkippedWithoutOldHost(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hook.log")
 	script := writeHookScript(t, out)
 	grace := 10 * time.Millisecond
-	s := NewWithOptions(Options{
+	s := NewWithOptions(testOptions(Options{
 		FlushProgram: script,
 		// See the note in idlekill_test.go: these assert that the hook runs,
 		// not how fast a shell script starts on a loaded machine (#1352).
 		FlushProgramTimeout:  2 * time.Minute,
 		UserKillConfirmGrace: grace,
 		UserKillTimeout:      10 * time.Second,
-	})
+	}))
 
 	user := "fresh@d.test"
 	s.moveUser(user, "10.0.0.2:993", nil) // no prior pin → no kill, no attach
@@ -137,20 +137,16 @@ func TestFlushHook_SkippedWithoutOldHost(t *testing.T) {
 	expectNoFile(t, out)
 }
 
-// The bound is the operator's, and the default is what applies when they say
-// nothing. Without the first row a zero value would mean "no timeout at all"
-// after some future refactor, and a hung hook would leak a process per move;
-// without the second the knob could be ignored and every test above would
-// still pass, because they only need it to be generous (#1352).
+// The bound is the operator's, taken as given; config refuses 0, so a hung
+// hook cannot run unbounded (#1352).
 func TestFlushProgramTimeoutResolution(t *testing.T) {
 	tests := []struct {
 		name string
 		set  time.Duration
 		want time.Duration
 	}{
-		{"unset falls back to the default", 0, defaultFlushProgramTimeout},
-		{"negative falls back too", -time.Second, defaultFlushProgramTimeout},
 		{"an operator's value is used", 45 * time.Second, 45 * time.Second},
+		{"a short one too", 3 * time.Second, 3 * time.Second},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

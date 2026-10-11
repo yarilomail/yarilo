@@ -14,7 +14,7 @@ func TestLookup_EmptyRing(t *testing.T) {
 
 func TestLookup_SingleBackend(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
-	r.AddBackend(&Backend{IP: "10.0.0.1", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Up: true})
 	got := r.Lookup("alice@example.com")
 	if got != "10.0.0.1" {
 		t.Fatalf("single backend: want 10.0.0.1, got %q", got)
@@ -23,8 +23,8 @@ func TestLookup_SingleBackend(t *testing.T) {
 
 func TestLookup_DownBackendExcluded(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
-	r.AddBackend(&Backend{IP: "10.0.0.1", Up: false})
-	r.AddBackend(&Backend{IP: "10.0.0.2", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Up: false})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.2", Up: true})
 	got := r.Lookup("alice@example.com")
 	if got != "10.0.0.2" {
 		t.Fatalf("down backend must be excluded: got %q", got)
@@ -34,7 +34,7 @@ func TestLookup_DownBackendExcluded(t *testing.T) {
 func TestLookup_Consistency(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
 	for i := 1; i <= 3; i++ {
-		r.AddBackend(&Backend{IP: fmt.Sprintf("10.0.0.%d", i), Up: true})
+		r.AddBackend(&Backend{Vhosts: 100, IP: fmt.Sprintf("10.0.0.%d", i), Up: true})
 	}
 	// same username must always map to the same backend
 	first := r.Lookup("bob@example.com")
@@ -49,7 +49,7 @@ func TestLookup_Distribution(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
 	backends := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}
 	for _, ip := range backends {
-		r.AddBackend(&Backend{IP: ip, Up: true})
+		r.AddBackend(&Backend{Vhosts: 100, IP: ip, Up: true})
 	}
 	counts := make(map[string]int)
 	for i := 0; i < 3000; i++ {
@@ -66,9 +66,9 @@ func TestLookup_Distribution(t *testing.T) {
 
 func TestLookupBackendByTag_IsolatesPool(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
-	r.AddBackend(&Backend{IP: "10.0.0.1", Tag: "ssd", Up: true})
-	r.AddBackend(&Backend{IP: "10.0.0.2", Tag: "ssd", Up: true})
-	r.AddBackend(&Backend{IP: "10.0.0.3", Tag: "hdd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Tag: "ssd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.2", Tag: "ssd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.3", Tag: "hdd", Up: true})
 
 	for i := 0; i < 300; i++ {
 		b := r.LookupBackendByTag(fmt.Sprintf("user%d@example.com", i), "hdd")
@@ -83,8 +83,8 @@ func TestLookupBackendByTag_IsolatesPool(t *testing.T) {
 
 func TestLookupBackendByTag_EmptyTag_UntaggedOnly(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
-	r.AddBackend(&Backend{IP: "10.0.0.1", Tag: "ssd", Up: true})
-	r.AddBackend(&Backend{IP: "10.0.0.2", Tag: "", Up: true}) // untagged
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Tag: "ssd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.2", Tag: "", Up: true}) // untagged
 
 	b := r.LookupBackendByTag("alice@example.com", "")
 	if b == nil {
@@ -97,8 +97,8 @@ func TestLookupBackendByTag_EmptyTag_UntaggedOnly(t *testing.T) {
 
 func TestLookupBackendByTag_EmptyTag_NilWhenNoUntagged(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
-	r.AddBackend(&Backend{IP: "10.0.0.1", Tag: "ssd", Up: true})
-	r.AddBackend(&Backend{IP: "10.0.0.2", Tag: "hdd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Tag: "ssd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.2", Tag: "hdd", Up: true})
 
 	b := r.LookupBackendByTag("alice@example.com", "")
 	if b != nil {
@@ -108,7 +108,7 @@ func TestLookupBackendByTag_EmptyTag_NilWhenNoUntagged(t *testing.T) {
 
 func TestLookupBackendByTag_UnknownTag_Nil(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
-	r.AddBackend(&Backend{IP: "10.0.0.1", Tag: "ssd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Tag: "ssd", Up: true})
 
 	b := r.LookupBackendByTag("alice@example.com", "nonexistent")
 	if b != nil {
@@ -119,9 +119,9 @@ func TestLookupBackendByTag_UnknownTag_Nil(t *testing.T) {
 func TestLookupBackendByTag_ConsistentWithinTag(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
 	for i := 1; i <= 3; i++ {
-		r.AddBackend(&Backend{IP: fmt.Sprintf("10.0.0.%d", i), Tag: "ssd", Up: true})
+		r.AddBackend(&Backend{Vhosts: 100, IP: fmt.Sprintf("10.0.0.%d", i), Tag: "ssd", Up: true})
 	}
-	r.AddBackend(&Backend{IP: "10.1.0.1", Tag: "hdd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.1.0.1", Tag: "hdd", Up: true})
 
 	first := r.LookupBackendByTag("bob@example.com", "ssd")
 	if first == nil {
@@ -148,24 +148,24 @@ func TestAddBackend_PreservesTransitionMetadata(t *testing.T) {
 	}{
 		{
 			name:         "heartbeat preserves LastDown and Hostname",
-			existing:     Backend{IP: "10.0.0.1", Port: 143, Up: false, LastUp: 100, LastDown: 200, Hostname: "be-1"},
-			incoming:     Backend{IP: "10.0.0.1", Port: 143, Up: true, LastUp: 300},
+			existing:     Backend{Vhosts: 100, IP: "10.0.0.1", Port: 143, Up: false, LastUp: 100, LastDown: 200, Hostname: "be-1"},
+			incoming:     Backend{Vhosts: 100, IP: "10.0.0.1", Port: 143, Up: true, LastUp: 300},
 			wantLastUp:   300,
 			wantLastDown: 200,
 			wantHostname: "be-1",
 		},
 		{
 			name:         "handshake carrying non-zero fields overwrites",
-			existing:     Backend{IP: "10.0.0.2", LastUp: 100, LastDown: 200, Hostname: "old"},
-			incoming:     Backend{IP: "10.0.0.2", LastUp: 400, LastDown: 350, Hostname: "new"},
+			existing:     Backend{Vhosts: 100, IP: "10.0.0.2", LastUp: 100, LastDown: 200, Hostname: "old"},
+			incoming:     Backend{Vhosts: 100, IP: "10.0.0.2", LastUp: 400, LastDown: 350, Hostname: "new"},
 			wantLastUp:   400,
 			wantLastDown: 350,
 			wantHostname: "new",
 		},
 		{
 			name:         "zero LastUp on incoming is preserved from existing",
-			existing:     Backend{IP: "10.0.0.3", LastUp: 500, LastDown: 0, Hostname: "h"},
-			incoming:     Backend{IP: "10.0.0.3", Up: true},
+			existing:     Backend{Vhosts: 100, IP: "10.0.0.3", LastUp: 500, LastDown: 0, Hostname: "h"},
+			incoming:     Backend{Vhosts: 100, IP: "10.0.0.3", Up: true},
 			wantLastUp:   500,
 			wantLastDown: 0,
 			wantHostname: "h",
@@ -197,9 +197,9 @@ func TestAddBackend_PreservesTransitionMetadata(t *testing.T) {
 
 func TestTags(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
-	r.AddBackend(&Backend{IP: "10.0.0.1", Tag: "ssd", Up: true})
-	r.AddBackend(&Backend{IP: "10.0.0.2", Tag: "hdd", Up: true})
-	r.AddBackend(&Backend{IP: "10.0.0.3", Tag: "ssd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Tag: "ssd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.2", Tag: "hdd", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.3", Tag: "ssd", Up: true})
 
 	tags := r.Tags()
 	if len(tags) != 2 {
@@ -209,8 +209,8 @@ func TestTags(t *testing.T) {
 
 func TestRemoveBackend(t *testing.T) {
 	r := New(MustParseHashFormat("%u"))
-	r.AddBackend(&Backend{IP: "10.0.0.1", Up: true})
-	r.AddBackend(&Backend{IP: "10.0.0.2", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.1", Up: true})
+	r.AddBackend(&Backend{Vhosts: 100, IP: "10.0.0.2", Up: true})
 	r.RemoveBackend("10.0.0.1")
 
 	for i := 0; i < 200; i++ {
@@ -229,7 +229,7 @@ func TestLookup_CaseInsensitiveHash(t *testing.T) {
 	t.Run("lowercase=true routes all spellings identically", func(t *testing.T) {
 		r := New(DefaultHashFormat())
 		for i := 1; i <= 5; i++ {
-			r.AddBackend(&Backend{IP: fmt.Sprintf("10.0.0.%d", i), Up: true})
+			r.AddBackend(&Backend{Vhosts: 100, IP: fmt.Sprintf("10.0.0.%d", i), Up: true})
 		}
 		want := r.Lookup(spellings[0])
 		for _, u := range spellings[1:] {
@@ -242,7 +242,7 @@ func TestLookup_CaseInsensitiveHash(t *testing.T) {
 	t.Run("lowercase=false can route spellings differently", func(t *testing.T) {
 		r := New(MustParseHashFormat("%u"))
 		for i := 1; i <= 5; i++ {
-			r.AddBackend(&Backend{IP: fmt.Sprintf("10.0.0.%d", i), Up: true})
+			r.AddBackend(&Backend{Vhosts: 100, IP: fmt.Sprintf("10.0.0.%d", i), Up: true})
 		}
 		diverged := false
 		want := r.Lookup(spellings[0])
@@ -255,4 +255,16 @@ func TestLookup_CaseInsensitiveHash(t *testing.T) {
 			t.Skip("chosen spellings happened to collide on this backend set — not a failure, just an uninformative run")
 		}
 	})
+}
+
+// vhosts 0 is a backend that takes no traffic, not one with the default weight.
+func TestZeroVhostsTakesNoTraffic(t *testing.T) {
+	r := New(MustParseHashFormat("%u"))
+	r.AddBackend(&Backend{IP: "10.0.0.1", Port: 143, Up: true, Vhosts: 0})
+	r.AddBackend(&Backend{IP: "10.0.0.2", Port: 143, Up: true, Vhosts: 100})
+	for i := 0; i < 200; i++ {
+		if b := r.LookupBackend(fmt.Sprintf("u%d@example.com", i)); b == nil || b.IP != "10.0.0.2" {
+			t.Fatalf("user %d routed to %v, want only the weighted backend", i, b)
+		}
+	}
 }

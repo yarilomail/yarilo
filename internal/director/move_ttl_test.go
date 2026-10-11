@@ -7,7 +7,7 @@ import (
 )
 
 func TestDeleteIfBackend(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	s.userDir.Set("u@d.test", "10.0.0.1:10143", false)
 
 	// Wrong backend → no delete.
@@ -30,7 +30,7 @@ func TestDeleteIfBackend(t *testing.T) {
 // its trailing kick (old backend) must NOT delete that fresh pin, while a plain
 // admin kick still clears unconditionally (#823 preserved).
 func TestMoveUser_CompareAndDeleteKick(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 	s.ring.AddBackend(&ring.Backend{IP: "10.0.0.2", Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 

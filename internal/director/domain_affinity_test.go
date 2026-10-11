@@ -10,12 +10,13 @@ import (
 
 func domainServer(t *testing.T, backends ...string) *Server {
 	t.Helper()
-	s := NewWithOptions(Options{
-		AssignmentPolicy:    policyDomain,
-		AntiEntropyInterval: -1,
-		LocalIP:             "10.9.9.9",
-		LocalPort:           9090,
-	})
+	s := NewWithOptions(testOptions(Options{
+		AssignmentPolicy: policyDomain,
+		UserExpire:       15 * time.Minute,
+		DomainExpire:     15 * time.Minute,
+		LocalIP:          "10.9.9.9",
+		LocalPort:        9090,
+	}))
 	for _, ip := range backends {
 		s.ring.AddBackend(&ring.Backend{IP: ip, Port: 10143, Tag: "a", Up: true, Vhosts: 100})
 	}

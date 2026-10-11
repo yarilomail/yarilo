@@ -55,12 +55,13 @@ func TestThePASSReplyIsTheBackendsOwnAnswer(t *testing.T) {
 			wardenAddr, _ := startWardenWithHandle(t)
 			authAddr := startOKAuth(t)
 			s := &Server{
-				opts: Options{
+				opts: testOpts(Options{
 					Protocol:    ProtocolPOP3,
 					AuthAddr:    authAddr,
 					WardenAddr:  wardenAddr,
+					WardenConns: 4,
 					BackendAddr: startPOP3Backend(t, c.first),
-				},
+				}),
 				sessions: make(map[string][]*liveSession),
 			}
 			t.Cleanup(func() {
@@ -98,12 +99,13 @@ func TestThePASSReplyIsTheBackendsOwnAnswer(t *testing.T) {
 func TestADeclinedSessionIsCountedOnce(t *testing.T) {
 	wardenAddr, _ := startWardenWithHandle(t)
 	s := &Server{
-		opts: Options{
+		opts: testOpts(Options{
 			Protocol:    ProtocolPOP3,
 			AuthAddr:    startOKAuth(t),
 			WardenAddr:  wardenAddr,
+			WardenConns: 4,
 			BackendAddr: startPOP3Backend(t, "-ERR [IN-USE] mailbox already in use, try again later\r\n"),
-		},
+		}),
 		sessions: make(map[string][]*liveSession),
 	}
 	t.Cleanup(func() {

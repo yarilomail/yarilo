@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/filelock"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // uidRecord is one list entry. Sizes are carried only when the name does not
@@ -186,21 +187,25 @@ func measureSizes(path string) (psize, vsize uint32, err error) {
 	return c.phys, c.phys + c.lfNoCR, nil
 }
 
-// appendUIDRow writes one line at the end of the list under its own hold, and
-// reports false when the list cannot take a row blind (#1840).
-func (u *userMailbox) appendUIDRow(folder, site string, rec uidRecord) (bool, error) {
-	path := u.uidListPath(folder)
-	unlock, err := u.dotlock(path)
+// holdList takes the list's lock for site and returns its release, which
+// records how long the site held it.
+func (u *userMailbox) holdList(folder, site string) (func(), error) {
+	unlock, err := u.dotlock(u.uidListPath(folder))
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	heldFrom := time.Now()
-	defer func() {
+	metricLockAcquired.WithLabelValues(site).Inc()
+	return func() {
 		unlock()
 		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
-	}()
-	metricLockAcquired.WithLabelValues(site).Inc()
+	}, nil
+}
 
+// appendUIDRowHeld writes one line at the end of the list, and reports false
+// when the list cannot take a row blind (#1840). Caller holds the list.
+func (u *userMailbox) appendUIDRowHeld(folder string, rec uidRecord) (bool, error) {
+	path := u.uidListPath(folder)
 	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {
 		return false, nil // no list yet: the caller writes one whole
@@ -267,20 +272,10 @@ func headerNextUID(f *os.File) (at int64, width int, next uint32, found bool) {
 	return int64(start), end - start, uint32(v), true
 }
 
-// withUIDList holds the list for one row: read, change, write. The lock spans
-// all three, or two processes each append to the copy they read (#1840).
-func (u *userMailbox) withUIDList(folder, site string, fn func(l *uidList) error) error {
+// withUIDListHeld reads, changes and rewrites the list. The caller holds it
+// (holdList), for a whole reconcile or save section (#1840, #2184).
+func (u *userMailbox) withUIDListHeld(folder string, fn func(l *uidList) error) error {
 	path := u.uidListPath(folder)
-	unlock, err := u.dotlock(path)
-	if err != nil {
-		return err
-	}
-	heldFrom := time.Now()
-	defer func() {
-		unlock()
-		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
-	}()
-	metricLockAcquired.WithLabelValues(site).Inc()
 	if err := u.ensureUIDListLocked(folder, 0); err != nil {
 		return err
 	}
@@ -318,11 +313,12 @@ func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
 		l.guid = randomGUID()
 	}
 
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	// Unique per writer: a shared name is one file two writers fill (#2179).
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
 	if err != nil {
 		return fmt.Errorf("maildir/uidlist: create tmp: %w", err)
 	}
+	tmp := f.Name()
 	bw := bufio.NewWriter(f)
 	fmt.Fprintf(bw, "3 V%d N%d G%s\n", l.uidValidity, l.nextUID, l.guid) //nolint:errcheck
 	for _, rec := range l.records {
@@ -353,7 +349,19 @@ func (u *userMailbox) writeUIDListLocked(folder string, l *uidList) error {
 		os.Remove(tmp) //nolint:errcheck
 		return fmt.Errorf("maildir/uidlist: rename: %w", err)
 	}
+	removeStaleListTemps(path)
 	return nil
+}
+
+// removeStaleListTemps clears what a writer that died mid-write left: a unique
+// name is never reused, so nothing else would. Young ones may be a writer's.
+func removeStaleListTemps(path string) {
+	left, _ := filepath.Glob(path + ".tmp*")
+	for _, name := range left {
+		if fi, err := statPath(name); err == nil && time.Since(fi.ModTime()) >= mailbox.StaleTemp {
+			os.Remove(name) //nolint:errcheck
+		}
+	}
 }
 
 // syncFile is the durability call, and beforeUIDListRename runs after it. Test
@@ -363,10 +371,11 @@ var (
 	beforeUIDListRename func(tmp string)
 )
 
-// dotlock takes the lock file beside the list with O_EXCL and returns its
-// release. A stale one older than staleDotlock is removed, not waited on.
+// dotlock takes the lock beside the list and returns its release. Never the
+// list itself: a rewrite renames over it, and the next writer would lock the
+// new inode while the old holder still writes (#2179).
 func (u *userMailbox) dotlock(path string) (func(), error) {
-	h, err := filelock.Take(path, u.b.lockMethod, uidListLockWait)
+	h, err := filelock.Take(path+".lock", u.b.lockMethod, uidListLockWait)
 	if err != nil {
 		return nil, fmt.Errorf("maildir/uidlist: %w", err)
 	}
@@ -387,14 +396,14 @@ type listEntry struct {
 	filename string
 }
 
-// recordUIDsLocked writes a batch of rows in one rewrite and returns the uids
+// recordUIDsHeld writes a batch of rows in one rewrite and returns the uids
 // it refused: a base already listed under another uid keeps its owner (#1745).
-func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry, seed uint32) ([]uint32, error) {
+func (u *userMailbox) recordUIDsHeld(folder string, entries []listEntry, seed uint32) ([]uint32, error) {
 	var taken []uint32
 	var uids []uint32
 	var written *uidList
 	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
-	err := u.withUIDList(folder, lockSiteReconcileApply, func(l *uidList) error {
+	err := u.withUIDListHeld(folder, func(l *uidList) error {
 		if seed != 0 && l.uidValidity == 0 {
 			l.uidValidity = seed
 		}
@@ -439,6 +448,34 @@ func (u *userMailbox) recordUIDsLocked(folder string, entries []listEntry, seed 
 	u.debugListWrite("reconcile-import", folder, uids, "", beforeRows, beforeMod, beforeSize)
 	u.adoptWritten(folder, written)
 	return taken, nil
+}
+
+// dropRowsHeld removes the rows of messages the reconcile expunged; the
+// header's next uid stays, so a returning file takes a fresh uid (#2176).
+func (u *userMailbox) dropRowsHeld(folder string, bases map[string]struct{}) error {
+	var written *uidList
+	beforeRows, beforeMod, beforeSize := 0, int64(0), int64(0)
+	err := u.withUIDListHeld(folder, func(l *uidList) error {
+		beforeRows = len(l.records)
+		if listDebug() {
+			beforeMod, beforeSize = u.listStat(folder)
+		}
+		kept := l.records[:0]
+		for _, rec := range l.records {
+			if _, gone := bases[rec.base]; !gone {
+				kept = append(kept, rec)
+			}
+		}
+		l.records = kept
+		written = l
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("maildir/sync: drop rows: %w", err)
+	}
+	u.debugListWrite("reconcile-expunge", folder, nil, "", beforeRows, beforeMod, beforeSize)
+	u.adoptWritten(folder, written)
+	return nil
 }
 
 // ensureUIDListLocked gives a folder with none a header-only list. A list

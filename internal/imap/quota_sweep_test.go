@@ -63,7 +63,7 @@ func TestAnExpungeDoesNotOpenEveryFolderOfTheAccount(t *testing.T) {
 		Index:     countingBackend{IndexBackend: file.New(), opens: &opens},
 		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
 		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"}),
-		QuotaPolicy: quota.Policy{
+		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100,
 			Warnings: []quota.Warning{{Name: "over90", Resource: "storage", Percentage: 90}},
 		},
 		QuotaWarner: quotawarn.New("", 5),

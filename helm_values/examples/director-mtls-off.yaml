@@ -31,7 +31,7 @@ image:
 logLevel: info
 
 storage:
-  volatile_dir: "/tmp/yarilo-volatile/%2.256Nu/%u"
+  mail_volatile_path: "/tmp/yarilo-volatile/%2.256Nu/%u"
   persistence:
     enabled: true
     accessMode: ReadWriteMany

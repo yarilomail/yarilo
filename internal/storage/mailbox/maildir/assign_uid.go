@@ -3,8 +3,10 @@ package maildir
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -29,10 +31,29 @@ func (u *userMailbox) takeGUID(folder, filename string) ([16]byte, bool) {
 	return guid, ok
 }
 
+func (u *userMailbox) rememberReceived(folder, filename string, when time.Time) {
+	u.cacheMu.Lock()
+	defer u.cacheMu.Unlock()
+	if u.received == nil {
+		u.received = make(map[string]time.Time)
+	}
+	u.received[folder+"\x00"+maildirBase(filename)] = when
+}
+
+func (u *userMailbox) takeReceived(folder, filename string) time.Time {
+	u.cacheMu.Lock()
+	defer u.cacheMu.Unlock()
+	key := folder + "\x00" + maildirBase(filename)
+	when := u.received[key]
+	delete(u.received, key)
+	return when
+}
+
 // DiscardSaved unlinks a body Save left in tmp/, where Remove does not look; one
 // AssignUID already moved is removed from where it went.
 func (u *userMailbox) DiscardSaved(folder, saved string, _ *mailbox.MessageMeta) error {
 	u.takeGUID(folder, saved)
+	u.takeReceived(folder, saved)
 	err := os.Remove(filepath.Join(u.folderPath(folder), "tmp", saved))
 	if errors.Is(err, os.ErrNotExist) {
 		return u.Remove(folder, saved)
@@ -65,19 +86,33 @@ func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, _ *
 // AssignUID records the message in the folder's list, inside the caller's uid
 // cycle. No rename: on maildir the uid lives in the list, not in the name.
 func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, error) {
+	var named string
+	err := u.SaveSection(folder, func() error {
+		var aerr error
+		named, aerr = u.AssignUIDHeld(folder, filename, uid)
+		return aerr
+	})
+	return named, err
+}
+
+// AssignUIDHeld is AssignUID inside a save section the caller holds.
+func (u *userMailbox) AssignUIDHeld(folder, filename string, uid uint32) (string, error) {
 	if uid == 0 {
 		return "", fmt.Errorf("maildir/assign: uid 0 names no message")
 	}
 	guid, override := u.takeGUID(folder, filename)
-	if err := u.withMailboxLockSite(folder, lockSiteSave, func() error {
-		// The file enters cur/ here and leaves this hold already named, which is
-		// why the reference takes the list lock before moving out of tmp/ (#1736).
-		if err := u.publishFromTemp(folder, filename); err != nil {
-			return err
-		}
-		return u.appendUIDListLocked(folder, uid, filename, override, guid)
-	}); err != nil {
+	received := u.takeReceived(folder, filename)
+	// The caller's save section holds the list and the mailbox: the file enters
+	// cur/ and is named there, and its record lands before the list is let go,
+	// so no other process sees the row without the record (#1736, #2184).
+	if err := u.publishFromTemp(folder, filename, received); err != nil {
 		return "", err
+	}
+	if err := u.appendUIDListLocked(folder, uid, filename, override, guid); err != nil {
+		return "", err
+	}
+	if testAfterAssign != nil {
+		testAfterAssign()
 	}
 	return filename, nil
 }
@@ -86,7 +121,7 @@ func (u *userMailbox) AssignUID(folder, filename string, uid uint32) (string, er
 // asks for: a name with no ":2," carries no flags, and a file that carries no
 // flags belongs in new/ (#1959). A message already published is one a caller
 // named twice, which is not an error to fail on.
-func (u *userMailbox) publishFromTemp(folder, filename string) error {
+func (u *userMailbox) publishFromTemp(folder, filename string, received time.Time) error {
 	dir := u.folderPath(folder)
 	src := filepath.Join(dir, "tmp", filename)
 	if _, err := lstatPath(src); err != nil {
@@ -99,8 +134,19 @@ func (u *userMailbox) publishFromTemp(folder, filename string) error {
 	if maildirBase(filename) == filename {
 		sub = "new"
 	}
+	// Dated before it is visible, so no scan caches the write time; the fresh
+	// ctime this leaves keeps the temp from a sweep in any process (#2175).
+	if !received.IsZero() {
+		if err := os.Chtimes(src, received, received); err != nil {
+			slog.Warn("maildir: the file keeps its write time, not the INTERNALDATE",
+				"user", u.username, "folder", folder, "file", filename, "err", err)
+		}
+	}
 	if err := os.Rename(src, filepath.Join(dir, sub, filename)); err != nil {
 		return fmt.Errorf("maildir/assign: publish %q: %w", filename, err)
+	}
+	if testAfterPublish != nil {
+		testAfterPublish()
 	}
 	// The entry, not the file: a crash here loses the name, not the bytes.
 	if u.b.fsync.SyncsDir() {
@@ -126,4 +172,23 @@ func (u *userMailbox) afterPublish(folder, sub, name string) {
 		return
 	}
 	cache.addEntry(dir, name, fi.ModTime())
+}
+
+// testAfterPublish runs right after a body lands in cur/ or new/. Test seam:
+// a scan in that window is what would cache the file's date.
+var testAfterPublish func()
+
+// testAfterAssign runs when the file and its row are visible and the caller
+// has not yet committed the record. Test seam (#2183).
+var testAfterAssign func()
+
+// SaveSection runs a save's naming and record under the list lock, then the
+// mailbox, the order every path takes them (#2184). AssignUID needs it held.
+func (u *userMailbox) SaveSection(folder string, fn func() error) error {
+	release, err := u.holdList(folder, lockSiteSave)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return u.withMailboxLockSite(folder, lockSiteSave, fn)
 }

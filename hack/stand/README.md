@@ -25,6 +25,39 @@ KUBECONFIG=~/.kube/sbox.yaml \
 | `YARILO_ARM_OVERLAY` | — | a second values file from `helm_values/values-sandbox-<name>.yaml` |
 | `YARILO_ARM_BLOCKPROFILE` | 0 | the profiling overlay; this makes the arm a latency arm, not a throughput one |
 
+## The acceptance run
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/accept.sh <image-tag> <out-dir>
+```
+
+What a rollout after a merge must pass, judged and written as `PASS`/`FAIL`/`SKIP`
+lines in `<out-dir>/verdict.txt`; the script exits 1 when any fails. `SKIP` is a
+criterion that cannot run yet, with its reason, counted apart. On the
+runner, like a window, and recorded in docs-internal `stand-runs.md` and on the
+issue it verifies.
+
+| Criterion | How |
+|:---|:---|
+| smoketest 46/46 on mdbox, maildir, sdbox | `hack/smoketest/run.sh` per type |
+| disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
+| imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
+| an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted right before and after an IMAP SELECT |
+| no new vanished-and-present uid | QRESYNC on u53–u70@d00002.test before and after (#2176) |
+| no pod restarted or replaced | pod uids and restart counts at the start, once every Deployment has rolled out and no pod is terminating, and at the end; Job pods (smoketest, imaptest) left out |
+| no `panic`, `stopped-naming`, `reconcile-unfinished`, `append-failed`, `list-rename`, `reactive-heal`, `message-swept` lines | every container's log since the start |
+| an explicit domain rebalance, and back | `yarctl director domains move d00001.test <other backend>`, then a login of u1@d00001.test through the login service must be pinned to the new backend at every director; the same move back restores the stand |
+| no director panic | every director's log since the start, previous containers included (#2187) |
+| list hold p99 under the 10 s wait | `maildir_lock_hold_seconds` from every backend's IMAP and FTS containers at the start and the end, p50/p99 per site from the delta in `<out-dir>/lock-hold.txt` |
+
+At the first `stopped-naming` line for a folder, the user's UID list, its lock file, the folder's index files and a stat of the named record go to `<out-dir>/evidence/<user>.<folder>/` while the run goes on (#2183).
+
+A command that fails ends the run with `accept: line N: <command> exited <rc>` on stderr, never silently.
+
+Every matched line is kept verbatim in `<out-dir>/lines/<name>.txt`, and every
+container's log in `<out-dir>/logs/`: a count alone explains nothing once the
+pods are replaced (#2183).
+
 ## The quick arm
 
 A question about one storage type does not need the other two: a maildir

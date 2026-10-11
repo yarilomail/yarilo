@@ -92,9 +92,6 @@ type ftsEvaluator struct {
 // startRequest opens the shared waiting budget for one query.
 func (e *ftsEvaluator) startRequest() {
 	timeout := e.fts.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
 	e.deadline = time.Now().Add(timeout)
 }
 

@@ -593,6 +593,9 @@ components:
       ## login refuses the session from anywhere else. The smoke job runs
       ## in-cluster, which is the only place this account is meant to work.
       - driver: static
+        ## Only the smoke account: unfiltered, every name would exist for a
+        ## userdb lookup and LMTP and quota-status would take any address.
+        username_filter: "static@d00001.test"
         static_password: "${YARILO_STATIC_PASSWORD}"
         default_pass_scheme: PLAIN
         fields:

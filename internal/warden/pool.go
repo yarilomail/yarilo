@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-// DefaultPoolSize is the number of long-lived connections a Pool keeps. The
-// wire protocol carries no request id, so a connection holds one request for a
-// single round trip (#885); a handful suffices since each op is a sub-ms RPC.
-const DefaultPoolSize = 4
-
 // Pool is a fixed set of long-lived connections to yarilo-warden, each guarded
 // by its own mutex.
 //
@@ -41,12 +36,8 @@ type pooledConn struct {
 }
 
 // NewPool creates a Pool of size connections against addr, dialled lazily on
-// first use so it can be built before yarilo-warden is reachable. size <= 0
-// selects DefaultPoolSize.
+// first use so it can be built before yarilo-warden is reachable.
 func NewPool(addr string, tlsCfg *tls.Config, size int, timeout time.Duration) *Pool {
-	if size <= 0 {
-		size = DefaultPoolSize
-	}
 	p := &Pool{addr: addr, tlsCfg: tlsCfg, timeout: timeout, conns: make([]*pooledConn, size)}
 	for i := range p.conns {
 		p.conns[i] = &pooledConn{}

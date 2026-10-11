@@ -8,7 +8,7 @@ const (
 )
 
 func TestMultiChainSelectForIndex_SingleLanguageSkipsDetector(t *testing.T) {
-	m, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	m, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestMultiChainSelectForIndex_SingleLanguageSkipsDetector(t *testing.T) {
 }
 
 func TestMultiChainSelectForIndex_MultiLanguageDetects(t *testing.T) {
-	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestMultiChainSelectForIndex_MultiLanguageDetects(t *testing.T) {
 }
 
 func TestMultiChainSelectForIndex_FallsBackOnShortText(t *testing.T) {
-	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +48,11 @@ func TestMultiChainSelectForIndex_FallsBackOnShortText(t *testing.T) {
 }
 
 func TestMultiChainExpandSearch_SingleLanguageMatchesChain(t *testing.T) {
-	m, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	m, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := NewChain(Settings{Language: "en", Filters: []string{"lowercase", "stopwords", "snowball"}})
+	c, err := NewChain(Settings{Language: "en", Filters: []string{"lowercase", "stopwords", "snowball"}, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,14 +64,14 @@ func TestMultiChainExpandSearch_SingleLanguageMatchesChain(t *testing.T) {
 }
 
 func TestMultiChainExpandSearch_ORsVariantsAcrossLanguages(t *testing.T) {
-	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// "running" is a real (non-stopword) word in English; stem it under both
 	// configured languages' filter chains directly to know what to expect.
-	enChain, _ := NewChain(Settings{Language: "en", Filters: []string{"lowercase", "stopwords", "snowball"}})
-	deChain, _ := NewChain(Settings{Language: "de", Filters: []string{"lowercase", "stopwords", "snowball"}})
+	enChain, _ := NewChain(Settings{Language: "en", Filters: []string{"lowercase", "stopwords", "snowball"}, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
+	deChain, _ := NewChain(Settings{Language: "de", Filters: []string{"lowercase", "stopwords", "snowball"}, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
 	enStem, enOK := enChain.filter("running")
 	deStem, deOK := deChain.filter("running")
 	if !enOK {
@@ -91,7 +91,7 @@ func TestMultiChainExpandSearch_ORsVariantsAcrossLanguages(t *testing.T) {
 }
 
 func TestMultiChainExpandSearch_DropsStopwordInEveryLanguage(t *testing.T) {
-	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestMultiChainExpandSearch_DropsStopwordInEveryLanguage(t *testing.T) {
 }
 
 func TestMultiChainExpandSearch_KeptWhenStopwordInOnlySomeLanguages(t *testing.T) {
-	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	m, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,15 +128,15 @@ func containsVariant(variants []string, want string) bool {
 }
 
 func TestMultiChainSettingsChecksum(t *testing.T) {
-	a, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	a, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	b, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	c, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,14 +149,14 @@ func TestMultiChainSettingsChecksum(t *testing.T) {
 }
 
 func TestMultiChainNeedsDetection(t *testing.T) {
-	single, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	single, err := NewMultiChain([]string{"en"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if single.NeedsDetection() {
 		t.Error("a single configured language must not need detection — callers should skip sampling entirely")
 	}
-	multi, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, 0, 0, 0)
+	multi, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestMultiChainFiltersOverride(t *testing.T) {
 		[]string{"en", "uk"},
 		[]string{"lowercase", "stopwords", "snowball"},
 		map[string][]string{"uk": {"lowercase", "stopwords"}},
-		0, 0, 0,
+		DefaultTokenMaxLen, DefaultAddressMaxLen, 10,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func TestMultiChainFiltersOverrideUnknownLanguageErrors(t *testing.T) {
 		[]string{"en", "uk"},
 		[]string{"lowercase", "stopwords", "snowball"},
 		map[string][]string{"ukr": {"lowercase", "stopwords"}}, // typo: not a configured language
-		0, 0, 0,
+		DefaultTokenMaxLen, DefaultAddressMaxLen, 10,
 	)
 	if err == nil {
 		t.Fatal("expected an error for an override key outside the configured languages")
@@ -212,11 +212,11 @@ func TestMultiChainFiltersOverrideChecksum(t *testing.T) {
 	languages := []string{"en", "uk"}
 	filters := []string{"lowercase", "stopwords", "snowball"}
 
-	noOverride, err := NewMultiChain(languages, filters, nil, 0, 0, 0)
+	noOverride, err := NewMultiChain(languages, filters, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	withOverride, err := NewMultiChain(languages, filters, map[string][]string{"uk": {"lowercase", "stopwords"}}, 0, 0, 0)
+	withOverride, err := NewMultiChain(languages, filters, map[string][]string{"uk": {"lowercase", "stopwords"}}, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestMultiChainFiltersOverrideChecksum(t *testing.T) {
 	}
 
 	// Same config twice must be stable.
-	again, err := NewMultiChain(languages, filters, map[string][]string{"uk": {"lowercase", "stopwords"}}, 0, 0, 0)
+	again, err := NewMultiChain(languages, filters, map[string][]string{"uk": {"lowercase", "stopwords"}}, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestMultiChainFiltersOverrideChecksum(t *testing.T) {
 	// as configuration and still changes the checksum vs. no override at
 	// all — acceptable, documented in values.yaml (the override key's mere
 	// presence is part of the configuration, not just its resolved value).
-	redundant, err := NewMultiChain(languages, filters, map[string][]string{"uk": filters}, 0, 0, 0)
+	redundant, err := NewMultiChain(languages, filters, map[string][]string{"uk": filters}, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

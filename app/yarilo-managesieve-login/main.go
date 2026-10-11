@@ -168,9 +168,6 @@ func main() {
 	// here while in-flight work finishes.
 	tel.SetReady(false)
 	sgrace := cfg.Login.SessionGracePeriod
-	if sgrace <= 0 {
-		sgrace = 30
-	}
 	sctx, scancel := context.WithTimeout(context.Background(), time.Duration(sgrace)*time.Second)
 	for _, srv := range loginServers {
 		_ = srv.Shutdown(sctx)

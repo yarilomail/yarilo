@@ -72,6 +72,8 @@ type Config struct {
 	IterateQuery      string // optional; for admin tooling (list users)
 	DefaultPassScheme string // assumed scheme when stored password has no {SCHEME} prefix (default PLAIN)
 	SkipSchema        bool   // do not auto-create yarilo_users
+	// UsernameFilter skips this entry for names it does not accept.
+	UsernameFilter protocol.UsernameFilter
 	// Pool bounds the connection pool. The zero value still yields a
 	// bounded, reusing pool.
 	Pool sqlpool.Config
@@ -85,6 +87,7 @@ type Passdb struct {
 	userQuery     string
 	iterateQuery  string
 	defaultScheme string
+	filter        protocol.UsernameFilter
 }
 
 // New opens an SQL passdb.
@@ -145,6 +148,7 @@ func New(c Config) (*Passdb, error) {
 		userQuery:     c.UserQuery,
 		iterateQuery:  c.IterateQuery,
 		defaultScheme: c.DefaultPassScheme,
+		filter:        c.UsernameFilter,
 	}, nil
 }
 
@@ -163,6 +167,9 @@ func New(c Config) (*Passdb, error) {
 // "home", "mail", "enabled" are optional (absent enabled = active). The
 // optional UserQuery runs after the password check to enrich home/mail.
 func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
+	if !p.filter.Accepts(req.Username) {
+		return protocol.ResultNext, nil
+	}
 	query, args := substituteVars(p.driver, p.passwordQuery, req.Username)
 
 	row, err := scanRowByName(p.db, query, args...)
@@ -256,6 +263,9 @@ func (p *Passdb) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error
 }
 
 func (p *Passdb) lookupSCRAM(username string, parse func(string) (*sasl.ScramCredentials, bool)) (*sasl.ScramCredentials, error) {
+	if !p.filter.Accepts(username) {
+		return nil, nil
+	}
 	query, args := substituteVars(p.driver, p.passwordQuery, username)
 	row, err := scanRowByName(p.db, query, args...)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -276,6 +286,19 @@ func (p *Passdb) lookupSCRAM(username string, parse func(string) (*sasl.ScramCre
 		return nil, nil
 	}
 	return creds, nil
+}
+
+// LookupCredentials reports whether password_query finds the user.
+func (p *Passdb) LookupCredentials(username string) (bool, error) {
+	if !p.filter.Accepts(username) {
+		return false, nil
+	}
+	query, args := substituteVars(p.driver, p.passwordQuery, username)
+	_, err := scanRowByName(p.db, query, args...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (p *Passdb) lookupUser(username string) (home, mailLoc string, err error) {

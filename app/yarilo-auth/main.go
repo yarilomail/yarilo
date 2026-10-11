@@ -161,7 +161,7 @@ func main() {
 		// without an auth restart. It also dials lazily, so auth starts even
 		// if warden is momentarily down; penalty stays fail-open until it
 		// reconnects, so there is no startup CrashLoop.
-		penaltyPool := warden.NewPool(cfg.WardenService.ClientAddr(), penaltyTLS, 0, 5*time.Second)
+		penaltyPool := warden.NewPool(cfg.WardenService.ClientAddr(), penaltyTLS, cfg.WardenService.Conns, 5*time.Second)
 		defer penaltyPool.Close()
 		srvOpts = append(srvOpts,
 			protocol.WithPenalty(penaltyPool, warden.PenaltyToSecs),

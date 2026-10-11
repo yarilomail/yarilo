@@ -12,11 +12,11 @@ import (
 // plus the user→session-id map so a test can close sessions to confirm kills.
 func evacHarness(t *testing.T, n, maxParallel int) (*Server, string, map[string]string) {
 	t.Helper()
-	s := NewWithOptions(Options{
+	s := NewWithOptions(testOptions(Options{
 		MaxParallelMoves:     maxParallel,
 		UserKillConfirmGrace: 10 * time.Millisecond,
 		UserKillTimeout:      10 * time.Second,
-	})
+	}))
 	ip := "10.0.0.1"
 	s.ring.AddBackend(&ring.Backend{IP: ip, Port: 993, Tag: "imap", Up: true, Vhosts: 100})
 

@@ -118,9 +118,6 @@ func lowestWarnLimit(warnings []quota.Warning, resource string, limits quota.Lim
 			continue
 		}
 		pct := w.Percentage
-		if pct <= 0 {
-			pct = 100
-		}
 		at := limit * int64(pct) / 100
 		if at <= 0 || at >= limit {
 			continue

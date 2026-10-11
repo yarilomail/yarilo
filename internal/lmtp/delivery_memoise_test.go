@@ -38,7 +38,7 @@ func TestLMTP_DeliveryUsesTheMemoisedBackend(t *testing.T) {
 	dir := t.TempDir()
 	var builds, opens atomic.Int64
 
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Hostname: "lmtp.test",
 		Config: config.LMTPProtocolConfig{
 			AddReceivedHeader: true,
@@ -59,7 +59,7 @@ func TestLMTP_DeliveryUsesTheMemoisedBackend(t *testing.T) {
 				MailPath: filepath.Join(home, "mdbox"), Driver: "mdbox",
 			}, nil
 		},
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -45,9 +45,9 @@ var (
 
 	flagGUID      = flag.Bool("guid-backfill", false, "stamp per-message GUIDs across an existing store instead of converting")
 	flagLocksConf = flag.String("config", "", "yarilo.yaml supplying the storage layout, driver and the yarilo-locks client")
-	flagDriver    = flag.String("driver", "", "override storage.mailbox: maildir | sdbox | mdbox (--guid-backfill)")
+	flagDriver    = flag.String("driver", "", "override storage.mail_driver: maildir | sdbox | mdbox (--guid-backfill)")
 	flagRoot      = flag.String("root", "", "override storage.maildir_root (--guid-backfill)")
-	flagHomeTmpl  = flag.String("home-template", "", "override storage.mail_home_template, e.g. %d/%u")
+	flagHomeTmpl  = flag.String("home-template", "", "override storage.mail_home, e.g. %d/%u")
 	flagUser      = flag.String("user", "", "restrict to one user@domain (--guid-backfill); default is every user under the root")
 	flagThreads   = flag.Bool("thread-backfill", false, "build the threading sidecar for existing accounts instead of converting")
 	flagForce     = flag.Bool("force", false, "rebuild a sidecar that already exists (--thread-backfill)")
@@ -118,7 +118,7 @@ func main() {
 	}
 	if *flagFrom == "" || *flagTo == "" || *flagDst == "" {
 		fmt.Fprintln(os.Stderr,
-			"usage: yarilo-migrate --src <maildir|dbox-v1|mdbox-v1> --dst <sdbox|mdbox> --from <src> --to <dst>")
+			"usage: yarilo-migrate --src <maildir|dbox-v1|mdbox-v1|dbox-ref> --dst <sdbox|mdbox> --from <src> --to <dst>")
 		os.Exit(1)
 	}
 
@@ -339,7 +339,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		// Source GUID is preserved so EMAILID survives migration; zero means the
 		// source had none and the driver mints one.
 		flags, keywords := mailbox.SplitStoredFlags(msg.Flags)
-		filename, vsize, guid, err := box.Save(msg.Folder, msg.bodyReader(), 0, int64(len(msg.Body)), flags, keywords, msg.GUID)
+		filename, vsize, guid, err := box.SaveReceived(msg.Folder, msg.bodyReader(), 0, int64(len(msg.Body)), flags, keywords, msg.GUID, msg.InternalDate)
 		if err != nil {
 			return fmt.Errorf("save %s/%s: %w", user, msg.Folder, err)
 		}
@@ -354,11 +354,8 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		}
 		// The uid is already ours, so the name is settled here rather than in an
 		// allocating cycle (#1704, #1700).
-		if err := mbox.NameSaved(msg.Folder, filename, meta); err != nil {
-			return fmt.Errorf("name %s/%s: %w", user, msg.Folder, err)
-		}
-		if err := idx.AppendMessage(f.ID, meta); err != nil {
-			return fmt.Errorf("append %s/%s: %w", user, msg.Folder, err)
+		if err := mailboxbase.NameAndAppend(idx, box, f.ID, msg.Folder, filename, meta); err != nil {
+			return fmt.Errorf("name and append %s/%s: %w", user, msg.Folder, err)
 		}
 		migrated++
 		return nil

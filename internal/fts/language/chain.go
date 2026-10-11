@@ -15,7 +15,7 @@ type Settings struct {
 	// word, which most of them do not: 55% of the Spanish list and 40% of the
 	// Russian never matched anything at all.
 	Filters []string
-	// TokenMaxLen / AddressMaxLen are byte caps (0 = reference defaults).
+	// TokenMaxLen / AddressMaxLen are byte caps.
 	TokenMaxLen   int
 	AddressMaxLen int
 }
@@ -24,8 +24,10 @@ type Settings struct {
 // deliberately stronger than the reference's empty default filter chain.
 func DefaultSettings() Settings {
 	return Settings{
-		Language: "en",
-		Filters:  []string{"lowercase", "stopwords", "snowball"},
+		Language:      "en",
+		Filters:       []string{"lowercase", "stopwords", "snowball"},
+		TokenMaxLen:   DefaultTokenMaxLen,
+		AddressMaxLen: DefaultAddressMaxLen,
 	}
 }
 
@@ -57,7 +59,8 @@ func NewChain(set Settings) (*Chain, error) {
 // query variant (e.g. "running" -> "run*") that can false-positive match
 // an unrelated indexed word ("runway") sharing the same stem prefix.
 func NewDataChain() (*Chain, error) {
-	return NewChain(Settings{Language: "data", Filters: []string{"lowercase"}})
+	return NewChain(Settings{Language: "data", Filters: []string{"lowercase"},
+		TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen})
 }
 
 // filter runs the token through the chain; ok=false means dropped (stopword).

@@ -22,13 +22,13 @@ func TestARecipientCannotNameAPath(t *testing.T) {
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Hostname: "lmtp.test",
 		Config:   config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
 		Mailbox:  maildir.New(),
 		Index:    file.New(),
 		Resolver: &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

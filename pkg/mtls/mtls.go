@@ -69,17 +69,11 @@ func ClientConfig(certFile, keyFile, caFile, serverName string, cacheSize, cache
 	}, nil
 }
 
-// defaultSessionCacheSize is used when internal_tls.session_cache_size is unset.
-const defaultSessionCacheSize = 64
-
-// newSessionCache builds the client session cache. size < 0 disables
-// resumption; size == 0 uses the default; ttlSecs > 0 also expires sessions by age.
+// newSessionCache builds the client session cache. size 0 disables
+// resumption; ttlSecs > 0 also expires sessions by age.
 func newSessionCache(size, ttlSecs int) tls.ClientSessionCache {
-	if size < 0 {
+	if size <= 0 {
 		return nil // resumption disabled
-	}
-	if size == 0 {
-		size = defaultSessionCacheSize
 	}
 	lru := tls.NewLRUClientSessionCache(size)
 	if ttlSecs <= 0 {

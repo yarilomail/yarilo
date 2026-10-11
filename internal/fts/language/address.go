@@ -51,9 +51,6 @@ const (
 
 // NewAddress wraps parent. search selects the query-time behaviour.
 func NewAddress(parent *Generic, maxLen int, search bool) *Address {
-	if maxLen <= 0 {
-		maxLen = DefaultAddressMaxLen
-	}
 	return &Address{parent: parent, maxLen: maxLen, search: search}
 }
 

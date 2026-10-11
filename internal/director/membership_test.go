@@ -33,13 +33,13 @@ func startRingNode(t *testing.T, secret string, seeds []string, minMembers int) 
 
 func startRingNodeAE(t *testing.T, secret string, seeds []string, minMembers int, antiEntropy time.Duration) (*Server, string) {
 	t.Helper()
-	srv := NewWithOptions(Options{
+	srv := NewWithOptions(testOptions(Options{
 		PingInterval:        24 * time.Hour, // disable client-facing PING during tests
 		RingSecret:          []byte(secret),
 		MinMembers:          minMembers,
 		AntiEntropyInterval: antiEntropy,
 		SeedPollInterval:    -1, // one-shot join — periodic seed re-poll would mask direct-path regressions, same as anti-entropy
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -73,13 +73,13 @@ func startRingNodeAE(t *testing.T, secret string, seeds []string, minMembers int
 // which severs everything immediately (#754).
 func startKillableRingNode(t *testing.T, secret string, seeds []string, minMembers int) (srv *Server, addr string, kill func()) {
 	t.Helper()
-	srv = NewWithOptions(Options{
+	srv = NewWithOptions(testOptions(Options{
 		PingInterval:        24 * time.Hour,
 		RingSecret:          []byte(secret),
 		MinMembers:          minMembers,
 		AntiEntropyInterval: -1, // see startRingNode — direct-path tests stay strict
 		SeedPollInterval:    -1,
-	})
+	}))
 	srv.membership.probeTimeout = 500 * time.Millisecond // fail death-verification probes of killed nodes fast
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -158,7 +158,7 @@ func TestMembership_N1_NoPeerMachinery(t *testing.T) {
 
 	// A singleton must still serve LOOKUP normally — the degradation ladder
 	// promise: N=1 is today's ordinary single-replica mode, unchanged.
-	srv.ring.AddBackend(&ring.Backend{IP: "10.0.0.1", Port: 993, Tag: "imap", Up: true})
+	srv.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 993, Tag: "imap", Up: true})
 	if b := srv.ring.LookupBackend("user@example.com"); b == nil || b.IP != "10.0.0.1" {
 		t.Errorf("N=1: LOOKUP must still work, got %+v", b)
 	}
@@ -266,14 +266,14 @@ func TestMembership_AntiEntropy_HealsMissedMemberBroadcast(t *testing.T) {
 // production default (2s), matching what ships.
 func startPollingRingNode(t *testing.T, secret string, seeds []string, minMembers int, poll, idle time.Duration) (*Server, string) {
 	t.Helper()
-	srv := NewWithOptions(Options{
+	srv := NewWithOptions(testOptions(Options{
 		PingInterval:         24 * time.Hour,
 		RingSecret:           []byte(secret),
 		MinMembers:           minMembers,
 		AntiEntropyInterval:  -1, // isolate the seed-poll path — no anti-entropy backstop
 		SeedPollInterval:     poll,
 		SeedPollIdleInterval: idle,
-	})
+	}))
 	srv.membership.probeTimeout = 500 * time.Millisecond // keep probes of dead test addresses fast
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -922,13 +922,13 @@ func TestMembership_Formation_ViaLoadBalancedSeed(t *testing.T) {
 	srvs := make([]*Server, 0, n)
 	starts := make([]func(), 0, n)
 	for i := 0; i < n; i++ {
-		srv := NewWithOptions(Options{
+		srv := NewWithOptions(testOptions(Options{
 			PingInterval:        24 * time.Hour,
 			RingSecret:          []byte("shared-secret"),
 			MinMembers:          n,
 			AntiEntropyInterval: 500 * time.Millisecond,
 			SeedPollInterval:    300 * time.Millisecond,
-		})
+		}))
 		ln, lErr := net.Listen("tcp", "127.0.0.1:0")
 		if lErr != nil {
 			t.Fatalf("listen: %v", lErr)
@@ -1011,13 +1011,13 @@ func TestMembership_Formation_ViaHeadlessDNSSeed(t *testing.T) {
 	srvs := make([]*Server, 0, n)
 	starts := make([]func(), 0, n)
 	for i := 0; i < n; i++ {
-		srv := NewWithOptions(Options{
+		srv := NewWithOptions(testOptions(Options{
 			PingInterval:        24 * time.Hour,
 			RingSecret:          []byte("shared-secret"),
 			MinMembers:          n,
 			AntiEntropyInterval: -1, // seed fan-out alone must converge this
 			SeedPollInterval:    300 * time.Millisecond,
-		})
+		}))
 		srv.membership.resolveHost = resolve
 		ln, lErr := net.Listen("tcp", "127.0.0.1:0")
 		if lErr != nil {

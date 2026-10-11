@@ -69,7 +69,7 @@ func (l *recordingLocker) seen() []string {
 func TestADeliveryNamesItself(t *testing.T) {
 	dir := t.TempDir()
 	rec := &recordingLocker{}
-	srv := New(Options{
+	srv := New(testOpts(Options{
 		Hostname: "lmtp.test",
 		Config: config.LMTPProtocolConfig{
 			AddReceivedHeader: true,
@@ -84,7 +84,7 @@ func TestADeliveryNamesItself(t *testing.T) {
 			home := filepath.Join(dir, user)
 			return &mailbox.UserInfo{Username: user, Home: home, Driver: "maildir"}, nil
 		},
-	})
+	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

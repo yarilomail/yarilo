@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -81,13 +82,16 @@ func (b *Box) Folder(name string, uidValidity uint32) (*mailbox.Folder, error) {
 // RecordDelivered records a saved body: the name reaches storage first, so a
 // failed name leaves no record behind (#1745).
 func (b *Box) RecordDelivered(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) error {
-	if err := NameSaved(b.store, folder, saved, m); err != nil {
-		return fmt.Errorf("mailbox/deliver: name %q: %w", saved, err)
-	}
-	if err := b.index.AppendMessage(f.ID, m); err != nil {
-		return fmt.Errorf("mailbox/deliver: append uid %d: %w", m.UID, err)
-	}
-	return nil
+	// One save section: the row is not seen without the record (#2184).
+	return inSaveSection(b.store, folder, func() error {
+		if err := nameSavedHeld(b.store, folder, saved, m); err != nil {
+			return fmt.Errorf("mailbox/deliver: name %q: %w", saved, err)
+		}
+		if err := b.index.AppendMessage(f.ID, m); err != nil {
+			return fmt.Errorf("mailbox/deliver: append uid %d: %w", m.UID, err)
+		}
+		return nil
+	})
 }
 
 // FillSizeless gives the records that carry no size the one their storage holds,
@@ -131,6 +135,11 @@ func (b *Box) WriteFlags(f *mailbox.Folder, folder string, writes []mailbox.Flag
 // Save writes a body under the driver's own name; nothing records it yet.
 func (b *Box) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	return b.store.Save(folder, r, uid, size, flags, keywords, guid)
+}
+
+// SaveReceived is Save with the INTERNALDATE kept in storage.
+func (b *Box) SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, received time.Time) (string, uint32, [16]byte, error) {
+	return b.store.SaveReceived(folder, r, uid, size, flags, keywords, guid, received)
 }
 
 // Discard removes a saved body whose record did not land; m is the record the

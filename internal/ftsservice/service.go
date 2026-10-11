@@ -148,12 +148,6 @@ func New(opts Options) (*Service, error) {
 	// one write semaphore) per user -- the second-heaviest write path after LMTP
 	// (#1149).
 	opts.MailboxByDriver = mailbox.MemoizeByDriver(opts.MailboxByDriver)
-	if opts.CommitLimit <= 0 {
-		opts.CommitLimit = 500
-	}
-	if opts.Workers <= 0 {
-		opts.Workers = 1
-	}
 	if err := checkIndexRoot(opts.IndexRoot); err != nil {
 		return nil, err
 	}

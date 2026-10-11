@@ -1,6 +1,9 @@
 package mailbox
 
-import "io"
+import (
+	"io"
+	"time"
+)
 
 // Validating wraps a backend so every folder name is checked before a driver
 // turns it into a path.
@@ -79,6 +82,13 @@ func (v *validatingUser) Save(folder string, r io.Reader, uid uint32, size int64
 		return "", 0, [16]byte{}, err
 	}
 	return v.inner.Save(folder, r, uid, size, flags, keywords, guid)
+}
+
+func (v *validatingUser) SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, received time.Time) (string, uint32, [16]byte, error) {
+	if err := v.check(folder); err != nil {
+		return "", 0, [16]byte{}, err
+	}
+	return v.inner.SaveReceived(folder, r, uid, size, flags, keywords, guid, received)
 }
 
 func (v *validatingUser) Move(srcFolder, dstFolder, filename string, guid [16]byte) (string, [16]byte, error) {

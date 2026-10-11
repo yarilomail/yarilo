@@ -49,7 +49,7 @@ func startQuotaWarnServerWithHandler(t *testing.T, dir string, mb mailbox.Mailbo
 		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000"}),
 	}
 	if withWarn {
-		opts.QuotaPolicy = quota.Policy{
+		opts.QuotaPolicy = quota.Policy{StoragePercentage: 100, MessagePercentage: 100,
 			Warnings: []quota.Warning{
 				{Name: "under90", Resource: "storage", Threshold: "under", Percentage: 90},
 			},

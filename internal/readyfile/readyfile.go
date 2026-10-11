@@ -28,9 +28,6 @@ func Touch(ctx context.Context, dir, proto string, interval time.Duration, ready
 	if dir == "" {
 		return
 	}
-	if interval <= 0 {
-		interval = 5 * time.Second
-	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		slog.Error("readyfile: cannot create dir, readiness signal disabled", "dir", dir, "err", err)
 		return
@@ -67,14 +64,9 @@ func touch(path string) {
 	}
 }
 
-// AllFresh reports whether every expected protocol's readiness file exists in
-// dir and was touched within staleAfter. A missing or stale file means "not
-// ready" — the sidecar then withholds its heartbeat. The returned string names
-// the first failing protocol (for logging); it is "" when all are fresh.
+// AllFresh reports whether every protocol's readiness file was touched within
+// staleAfter, and names the first one that was not ("" when all are fresh).
 func AllFresh(dir string, protos []string, staleAfter time.Duration) (bool, string) {
-	if staleAfter <= 0 {
-		staleAfter = 15 * time.Second
-	}
 	for _, p := range protos {
 		fi, err := os.Stat(filepath.Join(dir, p))
 		if err != nil {

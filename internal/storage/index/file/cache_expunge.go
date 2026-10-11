@@ -122,8 +122,8 @@ func (u *userIndex) purgeCacheIfDue(fs *folderState, folderID uint64, path strin
 	}); err != nil {
 		return err
 	}
-	deleted := u.b.cachePurgeDeletePct >= 0 && int64(hdr.DeletePercentage(msgs)) >= int64(u.b.cachePurgeDeletePct)
-	continued := int64(hdr.ContinuedPercentage(msgs)) >= int64(u.b.cachePurgeContinuedPct)
+	deleted := u.b.cachePurgeDeletePct > 0 && int64(hdr.DeletePercentage(msgs)) >= int64(u.b.cachePurgeDeletePct)
+	continued := u.b.cachePurgeContinuedPct > 0 && int64(hdr.ContinuedPercentage(msgs)) >= int64(u.b.cachePurgeContinuedPct)
 	if !deleted && !continued || st.Size() < u.b.cachePurgeMinSize {
 		return nil
 	}

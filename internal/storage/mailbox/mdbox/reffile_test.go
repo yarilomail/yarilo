@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
 )
@@ -47,7 +48,7 @@ func TestAReferenceStorageFileIsRead(t *testing.T) {
 		{"third record, saved to another folder", 4690, 67, "archived", "Archive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body, guid, folder, err := readRecordBodyAndTrailer(f, tc.offset)
+			body, guid, folder, _, err := readRecordBodyAndTrailer(f, tc.offset)
 			if err != nil {
 				t.Fatalf("read: %v", err)
 			}
@@ -110,7 +111,7 @@ func TestOurRecordIsTheReferenceRecord(t *testing.T) {
 	body := ref[off+30 : off+30+size]
 	guid := guidOfRecord(t, ref[off+30+size:])
 
-	ours := buildDboxMessageRecord(body, guid, "Archive", messageHeaderSize)
+	ours := buildDboxMessageRecord(body, guid, "Archive", messageHeaderSize, time.Time{})
 
 	t.Run("file-header line, apart from the create stamp", func(t *testing.T) {
 		refLine := ref[:bytes.IndexByte(ref, '\n')+1]

@@ -45,14 +45,14 @@ func TestADeliveryToAMissingFolder(t *testing.T) {
 				root := t.TempDir()
 				resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
 				backend := drv.new()
-				s := &session{opts: Options{
+				s := &session{opts: testOpts(Options{
 					Mailbox: backend, Index: fileindex.New(), Resolver: resolver,
 					Config: config.LMTPProtocolConfig{SaveToDetailMailbox: true,
 						LDAMailboxAutocreate: tc.create, LDAMailboxAutosubscribe: tc.sub},
 					Namespaces: []config.NamespaceConfig{
 						{Type: "personal", Prefix: "", Separator: "/", Inbox: true, Mailboxes: tc.auto},
 					},
-				}}
+				})}
 				s.from = "sender@x"
 				s.rcpts = []string{"alice+Lists@example.com"}
 				if err := s.LMTPData(strings.NewReader("Subject: missing\r\n\r\nbody\r\n"), &statusSink{}); err != nil {

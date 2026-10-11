@@ -27,9 +27,6 @@ func FetchDiscovery(ctx context.Context, issuerURL string, hc *http.Client, time
 		return nil, fmt.Errorf("oauth2/discovery: empty issuer URL")
 	}
 	if hc == nil {
-		if timeout == 0 {
-			timeout = 5 * time.Second
-		}
 		hc = &http.Client{Timeout: timeout}
 	}
 	u := strings.TrimRight(issuerURL, "/") + "/.well-known/openid-configuration"
@@ -97,9 +94,6 @@ type DiscoveryConfig struct {
 func NewDiscoveryValidator(ctx context.Context, cfg DiscoveryConfig) (Validator, error) {
 	if cfg.IssuerURL == "" {
 		return nil, fmt.Errorf("oauth2/discovery: empty IssuerURL")
-	}
-	if cfg.HTTPTimeout == 0 {
-		cfg.HTTPTimeout = 5 * time.Second
 	}
 	doc, err := FetchDiscovery(ctx, cfg.IssuerURL, nil, cfg.HTTPTimeout)
 	if err != nil {

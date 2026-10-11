@@ -365,8 +365,8 @@ func TestRebuildAbortsOnUnmountedAlt(t *testing.T) {
 	base := t.TempDir()
 	home := filepath.Join(base, "home")
 	altHome := filepath.Join(base, "alt")
-	box := New(WithAltStorage(filepath.Join(altHome, "%u"))).OpenUser(
-		&mailbox.UserInfo{Username: "u@x.io", Home: home}).(*userMailbox)
+	box := New().OpenUser(
+		&mailbox.UserInfo{Username: "u@x.io", Home: home, AltDir: filepath.Join(altHome, "u@x.io")}).(*userMailbox)
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
 	}

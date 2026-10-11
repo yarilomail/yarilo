@@ -64,9 +64,6 @@ func MatchWarnings(warnings []Warning, limits Limits, before, after Usage) []War
 			continue // unlimited resource has no threshold to cross
 		}
 		p := w.Percentage
-		if p <= 0 {
-			p = 100
-		}
 		warnLimit := lim * int64(p) / 100
 		var crossed bool
 		if strings.EqualFold(w.Threshold, "under") {
@@ -93,15 +90,6 @@ func (w Warning) ResourceUsageLimit(u Usage, limits Limits) (usage, limit int64)
 // Unlimited reports whether the limits impose no storage and no message cap.
 func (l Limits) Unlimited() bool { return l.StorageBytes == 0 && l.Messages == 0 }
 
-// pct returns a percentage value, defaulting a non-positive one to 100 so a
-// zero-valued Policy is a no-op rather than scaling every limit to zero.
-func pct(p int) int {
-	if p <= 0 {
-		return 100
-	}
-	return p
-}
-
 // Scale applies StoragePercentage/MessagePercentage and StorageExtra to a
 // resolved limit set. Unlimited resources (0) stay unlimited. Callers pass the
 // already-per-folder-resolved Limits (from Limits.EffectiveLimits).
@@ -109,7 +97,7 @@ func (p Policy) Scale(l Limits) Limits {
 	out := l
 	if l.StorageBytes > 0 {
 		b := l.StorageBytes
-		if sp := pct(p.StoragePercentage); sp != 100 {
+		if sp := p.StoragePercentage; sp != 100 {
 			b = int64(float64(b) / 100.0 * float64(sp))
 		}
 		b += p.StorageExtra
@@ -119,7 +107,7 @@ func (p Policy) Scale(l Limits) Limits {
 		out.StorageBytes = b
 	}
 	if l.Messages > 0 {
-		if mp := pct(p.MessagePercentage); mp != 100 {
+		if mp := p.MessagePercentage; mp != 100 {
 			out.Messages = int64(float64(l.Messages) / 100.0 * float64(mp))
 		}
 	}

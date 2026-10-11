@@ -15,8 +15,9 @@ import (
 // under altHome.
 func openTestUserMailboxAlt(t *testing.T, home, altHome string) *userMailbox {
 	t.Helper()
-	b := New(WithAltStorage(filepath.Join(altHome, "%u")))
-	u := b.OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home}).(*userMailbox)
+	b := New()
+	u := b.OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home,
+		AltDir: filepath.Join(altHome, "alice@example.com")}).(*userMailbox)
 	if err := u.Init(); err != nil {
 		t.Fatal(err)
 	}

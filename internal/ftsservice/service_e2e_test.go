@@ -47,14 +47,14 @@ func newTestServiceIn(t *testing.T) (*Service, mailbox.UserMailbox, mailbox.User
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New(Options{
-		Engine:      flatcurve.New(flatcurve.Options{}),
+	svc, err := New(testOpts(Options{
+		Engine:      flatcurve.New(flatcurve.Options{CommitLimit: 500, MinTermSize: 2, RotateCount: 5000}),
 		Mailbox:     mb,
 		Index:       idx,
 		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 2,
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,14 +349,14 @@ func TestServiceAutoOptimize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New(Options{
-		Engine:      flatcurve.New(flatcurve.Options{RotateCount: 2, OptimizeLimit: 3}),
+	svc, err := New(testOpts(Options{
+		Engine:      flatcurve.New(flatcurve.Options{CommitLimit: 500, MinTermSize: 2, RotateCount: 2, OptimizeLimit: 3}),
 		Mailbox:     mb,
 		Index:       idx,
 		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 2,
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,15 +467,15 @@ func TestBuildFailureCostsThePartNotTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := New(Options{
-		Engine:      flatcurve.New(flatcurve.Options{}),
+	svc, err := New(testOpts(Options{
+		Engine:      flatcurve.New(flatcurve.Options{CommitLimit: 500, MinTermSize: 2, RotateCount: 5000}),
 		Mailbox:     mb,
 		Index:       idx,
 		ResolveUser: func(u string) (*mailbox.UserInfo, error) { return resolver.UserInfo(u, "") },
 		Chain:       chain,
 		CommitLimit: 10,
 		Build:       buildmail.Options{Decoder: &hardFailDecoder{forContentType: "application/pdf"}},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,6 +30,7 @@ type Userdb struct {
 	driver       string
 	userQuery    string
 	iterateQuery string
+	filter       protocol.UsernameFilter
 }
 
 // NewUserdb opens an SQL userdb. The Config is shared with Passdb's
@@ -67,6 +68,7 @@ func NewUserdb(c Config) (*Userdb, error) {
 		driver:       c.Driver,
 		userQuery:    uq,
 		iterateQuery: c.IterateQuery,
+		filter:       c.UsernameFilter,
 	}, nil
 }
 
@@ -83,6 +85,9 @@ const defaultUserdbQuery = `SELECT username, home, mail FROM yarilo_users WHERE 
 // backend; returns (nil, err) on driver / scan / parse errors so
 // the chain short-circuits with the operator-visible failure.
 func (u *Userdb) Lookup(username string) (*protocol.UserInfo, error) {
+	if !u.filter.Accepts(username) {
+		return nil, nil
+	}
 	query, args := substituteVars(u.driver, u.userQuery, username)
 
 	rows, err := u.db.QueryContext(context.Background(), query, args...)

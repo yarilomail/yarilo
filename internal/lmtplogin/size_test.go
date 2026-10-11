@@ -35,10 +35,10 @@ func TestTheProxyOffersAndEnforcesTheMailSize(t *testing.T) {
 	const limit = 200
 	authAddr := startTestAuth(t)
 	_, backendAddr := newStubBackend(t)
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname: "test.local", BackendAddr: backendAddr, AuthMasterAddr: authAddr,
 		WardenAddr: startTestWarden(t), ConcurrencyLimit: 5, MaxMessageBytes: limit,
-	})
+	}))
 
 	t.Run("LHLO offers SIZE", func(t *testing.T) {
 		mta := dialMTA(t, proxyAddr)
@@ -74,9 +74,9 @@ func TestTheProxyOffersAndEnforcesTheMailSize(t *testing.T) {
 
 func TestTheProxyHoldsTheRecipientLimit(t *testing.T) {
 	_, backendAddr := newStubBackend(t)
-	proxyAddr := startLMTPLogin(t, Options{
+	proxyAddr := startLMTPLogin(t, testOpts(Options{
 		Hostname: "test.local", BackendAddr: backendAddr, AuthMasterAddr: startTestAuth(t), MaxRecipients: 2,
-	})
+	}))
 	mta := dialMTA(t, proxyAddr)
 	mta.readCode(t, 220)
 	fmt.Fprintf(mta.conn, "LHLO smoketest\r\n")

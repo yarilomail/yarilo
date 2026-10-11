@@ -85,7 +85,7 @@ func TestClientConfig_SessionResumption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ServerConfig: %v", err)
 	}
-	cliCfg, err := ClientConfig(certFile, keyFile, certFile, "yarilo-internal", 0, 0)
+	cliCfg, err := ClientConfig(certFile, keyFile, certFile, "yarilo-internal", 64, 0)
 	if err != nil {
 		t.Fatalf("ClientConfig: %v", err)
 	}
@@ -198,11 +198,8 @@ func BenchmarkMTLSHandshake(b *testing.B) {
 // Size/TTL policy: negative disables resumption, zero uses the default,
 // a positive TTL wraps the LRU.
 func TestNewSessionCache(t *testing.T) {
-	if newSessionCache(-1, 0) != nil {
-		t.Fatal("negative size must disable resumption (nil cache)")
-	}
-	if newSessionCache(0, 0) == nil {
-		t.Fatal("zero size must fall back to the default cache")
+	if newSessionCache(0, 0) != nil {
+		t.Fatal("zero size must disable resumption (nil cache)")
 	}
 	if _, ok := newSessionCache(8, 60).(*ttlSessionCache); !ok {
 		t.Fatal("ttl>0 must wrap the LRU in a ttlSessionCache")

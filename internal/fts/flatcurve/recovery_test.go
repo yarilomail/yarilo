@@ -7,7 +7,7 @@ import "testing"
 // After discardCurrent (as done on engine errors) the next update must
 // reopen the shard and keep indexing; earlier docs must survive.
 func TestReopenAfterDiscard(t *testing.T) {
-	ui, _ := testEngine(t, Options{})
+	ui, _ := testEngine(t, testOpts(Options{}))
 	indexDoc(t, ui, 1, nil, []string{"alpha"})
 
 	// Simulate what an engine error triggers: drop the open write handle.

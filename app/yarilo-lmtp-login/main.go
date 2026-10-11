@@ -92,7 +92,7 @@ func main() {
 	var authMasterPool *authclient.Pool
 	if cfg.AuthService.MasterAddr != "" {
 		authMasterPool = authclient.NewPool(cfg.AuthService.MasterAddr, intTLS,
-			cfg.AuthClient.PoolSizeOrDefault(), cfg.AuthClient.PoolIdleTimeout())
+			cfg.AuthClient.PoolSize, cfg.AuthClient.PoolIdleTimeout())
 		defer authMasterPool.Close() //nolint:errcheck
 	}
 

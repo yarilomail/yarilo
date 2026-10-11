@@ -8,7 +8,7 @@ import (
 // TestTouch_ExtendsTTLPreservesStamp: Touch bumps ExpiresAt without changing the
 // assignment stamp or host (#708 PR-B) — a refresh, not a re-assignment.
 func TestTouch_ExtendsTTLPreservesStamp(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	h := s.userDir.Set("u@d.test", "10.0.0.1:10143", false)
 	seq, by, _ := s.userDir.LastAssign(h)
 
@@ -39,7 +39,7 @@ func TestTouch_ExtendsTTLPreservesStamp(t *testing.T) {
 // TestRefreshPinnedSessions_OnlyLiveUsers guards #708 PR-B: the pin of a user
 // with a live session is kept fresh; a user without one lapses (expires).
 func TestRefreshPinnedSessions_OnlyLiveUsers(t *testing.T) {
-	s := NewWithOptions(Options{AntiEntropyInterval: -1})
+	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	hLive := s.userDir.Set("live@d.test", "10.0.0.1:10143", false)
 	hIdle := s.userDir.Set("idle@d.test", "10.0.0.2:10143", false)
 

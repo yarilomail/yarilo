@@ -128,16 +128,14 @@ func TestWatchdogCountsAHungCheckAsFailure(t *testing.T) {
 
 // TestNewWatchdogDefaults: a partially-configured opt-in still yields a safe
 // watchdog with a timeout strictly below the interval.
-func TestNewWatchdogDefaults(t *testing.T) {
-	w := newWatchdog(WatchdogOptions{Check: func(context.Context) error { return nil }})
+func TestNewWatchdogTakesTheConfiguredValues(t *testing.T) {
+	w := newWatchdog(WatchdogOptions{Check: func(context.Context) error { return nil },
+		Interval: 7 * time.Second, Timeout: 3 * time.Second, FailureThreshold: 4})
 	if w == nil {
 		t.Fatal("a Check must produce a watchdog")
 	}
-	if w.timeout >= w.interval {
-		t.Fatalf("timeout %v must be < interval %v", w.timeout, w.interval)
-	}
-	if w.threshold <= 0 {
-		t.Fatalf("threshold defaulted to %d", w.threshold)
+	if w.interval != 7*time.Second || w.timeout != 3*time.Second || w.threshold != 4 {
+		t.Fatalf("watchdog = %v/%v/%d, want 7s/3s/4", w.interval, w.timeout, w.threshold)
 	}
 }
 
