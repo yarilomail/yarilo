@@ -15,6 +15,14 @@ keywords:
   - submission
   - lmtp
   - mail
+  - pop3
+  - jmap
+  - sieve
+  - managesieve
+  - mail-server
+  - email
+  - kubernetes
+  - full-text-search
 icon: https://raw.githubusercontent.com/yarilomail/yarilo/main/docs/icon.svg
 home: https://yarilomail.org
 sources:
