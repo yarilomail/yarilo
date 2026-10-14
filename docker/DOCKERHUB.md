@@ -14,7 +14,9 @@ docs/icon.png (SVG is not accepted). Category: Networking (+ Security).
 
 **Production-grade IMAP / POP3 / LMTP / ManageSieve / Submission mail server written in Go, with built-in full-text search.** Multi-binary architecture — each protocol component is a separate process — Kubernetes-native via a Helm chart.
 
-**Source & docs:** https://github.com/yarilomail/yarilo
+**Website:** https://yarilomail.org · **Docs:** https://doc.yarilomail.org
+
+**Source:** https://github.com/yarilomail/yarilo
 **License:** AGPL-3.0 · **Platform:** `linux/amd64`
 
 </td>
