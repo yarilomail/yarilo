@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -433,4 +435,20 @@ func emailStateOf(t *testing.T, s *Server) string {
 		t.Fatalf("decode Email/get: %v -- %s", err, w.Body)
 	}
 	return got.State
+}
+
+// A keyword change wakes IDLE sessions on every pod, as an IMAP STORE does.
+func TestEmailSetPublishesTheChange(t *testing.T) {
+	s, id := storedServerWithMessage(t, "Subject: x\r\n\r\nbody\r\n", 0)
+	resp := emailSetCall(t, s, `{"accountId":"`+testUser+`","update":{"`+id+`":{"keywords/$flagged":true}}}`)
+	if _, ok := resp.Updated[id]; !ok {
+		t.Fatalf("not updated: %+v", resp)
+	}
+	l := s.opts.Storage.Locker.(*testLocker)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	want := locks.MailboxKey(testUser, "INBOX") + " " + string(locks.EventChanged)
+	if !slices.Contains(l.events, want) {
+		t.Errorf("events %v, want %q", l.events, want)
+	}
 }

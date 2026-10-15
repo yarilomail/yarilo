@@ -164,7 +164,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 			if len(batch) == 0 {
 				continue
 			}
-			results, err := writeFlagBatch(h.mbox, folderID, batch)
+			results, err := h.ops.UpdateFlags(h.mbox, &mailbox.Folder{ID: folderID, Name: w.folder}, batch)
 			if err != nil {
 				slog.Warn("jmap: Email/set write failed", "folder", w.folder, "err", err)
 				if errors.Is(err, locks.ErrUnavailable) {
@@ -356,22 +356,4 @@ func (h *userHandle) writeFlagsToStorage(folderID uint64, folder string,
 		})
 	}
 	h.mbox.WriteFlags(&mailbox.Folder{ID: folderID}, folder, writes)
-}
-
-// writeFlagBatch applies one batch of flag changes as a transaction: the index
-// is taken once, and each message keeps its own modseq (#1827).
-func writeFlagBatch(box mailbox.Box, folderID uint64, batch map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
-	tx, err := box.Begin(folderID)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	for uid, upd := range batch {
-		tx.UpdateFlags(uid, upd)
-	}
-	out, cerr := tx.Commit()
-	if cerr != nil {
-		return nil, cerr
-	}
-	return out.Flags, nil
 }

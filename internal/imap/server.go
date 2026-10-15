@@ -3563,16 +3563,8 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	// Pass 2: single lock/reload/flush for all flag updates.
 	var results map[uint32]mailbox.FlagsResult
 	if len(batchUpdates) > 0 {
-		tx, terr := s.folderMailbox().Begin(s.folder.ID)
-		if terr != nil {
-			return dependencyError(terr)
-		}
-		defer tx.Rollback()
-		for uid, upd := range batchUpdates {
-			tx.UpdateFlags(uid, upd)
-		}
-		out, err := tx.Commit()
-		results = out.Flags
+		var err error
+		results, err = s.ops.UpdateFlags(s.folderMailbox(), s.folder, batchUpdates)
 		if err != nil {
 			// Classified before it leaves: an unwrapped error becomes
 			// NO [SERVERBUG] in the library, which tells the client this
@@ -3587,7 +3579,6 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 				pending[i].newFlags, pending[i].newKW = r.Flags, r.Keywords
 			}
 		}
-		s.emitMailboxChange(s.folder, locks.EventChanged, 0)
 	}
 	// Registered before the storage write below, so LIFO runs it after: the
 	// window has to contain the rename pass, which is where the measured part
