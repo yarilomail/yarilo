@@ -174,6 +174,39 @@ var boundaryRows = []struct {
 				t.Errorf("answered %s %v, want notCreated c1 invalidProperties blobId", name, out)
 			}
 		}},
+	{"Mailbox/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["FOREIGNBOX"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"Mailbox/set", kindEmptyAccount, `{"destroy":["FOREIGNBOX"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	// Resolved globally, the other INBOX would answer forbidden, not notFound.
+	{"Mailbox/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["FOREIGNBOX"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			notDestroyed, _ := out["notDestroyed"].(map[string]any)
+			setErr, _ := notDestroyed[foreignBoxID].(map[string]any)
+			if name != "Mailbox/set" || setErr["type"] != "notFound" {
+				t.Errorf("answered %s %v, want notDestroyed notFound", name, out)
+			}
+		}},
+}
+
+// foreignBoxID is set per row run to the other account's INBOX id.
+var foreignBoxID string
+
+// inboxIDOf is user's INBOX mailbox id.
+func inboxIDOf(t *testing.T, s *Server, user string) string {
+	t.Helper()
+	_, out := callAs(t, s, user, "Mailbox/get", `{"accountId":"`+user+`"}`)
+	for _, mb := range out["list"].([]any) {
+		if m := mb.(map[string]any); m["name"] == "INBOX" {
+			return m["id"].(string)
+		}
+	}
+	t.Fatalf("no INBOX for %s", user)
+	return ""
 }
 
 // inboxID is the caller's INBOX mailbox id.
@@ -194,7 +227,8 @@ func TestMutatingMethodsKeepTheAccountBoundary(t *testing.T) {
 	for _, row := range boundaryRows {
 		t.Run(row.method+"/"+row.kind, func(t *testing.T) {
 			s, foreign := twoAccountServer(t)
-			args := strings.NewReplacer("FOREIGN", foreign, "INBOXID", inboxID(t, s)).Replace(row.args)
+			foreignBoxID = inboxIDOf(t, s, foreignUser)
+			args := strings.NewReplacer("FOREIGNBOX", foreignBoxID, "FOREIGN", foreign, "INBOXID", inboxID(t, s)).Replace(row.args)
 			name, out := callAs(t, s, testUser, row.method, args)
 			row.check(t, s, foreign, name, out)
 		})

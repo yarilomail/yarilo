@@ -19,6 +19,11 @@ func (s *Server) mailboxRegistry(lazy *lazyStore, accountID string) jmapcore.Reg
 				return s.mailboxGet(ctx, h, accountID, args)
 			})
 		}},
+		"Mailbox/set": {Capability: jmapcore.CapMail, Fn: func(ctx context.Context, args json.RawMessage) (any, *jmapcore.MethodError) {
+			return s.withStore(lazy, accountID, func(h *userHandle) (any, *jmapcore.MethodError) {
+				return s.mailboxSet(ctx, h, accountID, args)
+			})
+		}},
 		"Mailbox/query": {Capability: jmapcore.CapMail, Fn: func(ctx context.Context, args json.RawMessage) (any, *jmapcore.MethodError) {
 			return s.withStore(lazy, accountID, func(h *userHandle) (any, *jmapcore.MethodError) {
 				return s.mailboxQuery(ctx, h, accountID, args)
