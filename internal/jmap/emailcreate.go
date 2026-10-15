@@ -100,9 +100,13 @@ func (s *Server) emailCreate(ctx context.Context, h *userHandle, raw json.RawMes
 	if serr != nil {
 		return nil, serr
 	}
-	root, serr := s.bodyTree(ctx, h, &e)
+	var miss []string
+	root, serr := s.bodyTree(ctx, h, &e, &miss)
 	if serr != nil {
 		return nil, serr
+	}
+	if len(miss) > 0 {
+		return nil, &jmapcore.SetError{Type: "blobNotFound", NotFound: miss}
 	}
 	msg, err := writeEmail(&e, root)
 	if err != nil {
@@ -124,13 +128,13 @@ func (s *Server) emailCreate(ctx context.Context, h *userHandle, raw json.RawMes
 
 // bodyTree turns bodyStructure, or textBody/htmlBody/attachments, into the
 // tree of parts, as the reference arranges them (§37).
-func (s *Server) bodyTree(ctx context.Context, h *userHandle, e *createEmail) (*mimeNode, *jmapcore.SetError) {
+func (s *Server) bodyTree(ctx context.Context, h *userHandle, e *createEmail, miss *[]string) (*mimeNode, *jmapcore.SetError) {
 	simple := e.TextBody != nil || e.HTMLBody != nil || e.Attachments != nil
 	if e.BodyStructure != nil {
 		if simple {
 			return nil, invalidProp("bodyStructure", "bodyStructure excludes textBody, htmlBody and attachments")
 		}
-		return s.partNode(ctx, h, e, e.BodyStructure, "bodyStructure")
+		return s.partNode(ctx, h, e, e.BodyStructure, "bodyStructure", miss)
 	}
 	if len(e.TextBody) > 1 || len(e.HTMLBody) > 1 {
 		return nil, invalidProp("textBody", "at most one textBody and one htmlBody part")
@@ -141,7 +145,7 @@ func (s *Server) bodyTree(ctx context.Context, h *userHandle, e *createEmail) (*
 			return nil, invalidProp("textBody", "textBody is text/plain")
 		}
 		e.TextBody[0].Type = "text/plain"
-		n, serr := s.partNode(ctx, h, e, &e.TextBody[0], "textBody")
+		n, serr := s.partNode(ctx, h, e, &e.TextBody[0], "textBody", miss)
 		if serr != nil {
 			return nil, serr
 		}
@@ -152,7 +156,7 @@ func (s *Server) bodyTree(ctx context.Context, h *userHandle, e *createEmail) (*
 			return nil, invalidProp("htmlBody", "htmlBody is text/html")
 		}
 		e.HTMLBody[0].Type = "text/html"
-		n, serr := s.partNode(ctx, h, e, &e.HTMLBody[0], "htmlBody")
+		n, serr := s.partNode(ctx, h, e, &e.HTMLBody[0], "htmlBody", miss)
 		if serr != nil {
 			return nil, serr
 		}
@@ -161,7 +165,7 @@ func (s *Server) bodyTree(ctx context.Context, h *userHandle, e *createEmail) (*
 	var emails, files, inlined []*mimeNode
 	for i := range e.Attachments {
 		a := &e.Attachments[i]
-		n, serr := s.partNode(ctx, h, e, a, "attachments")
+		n, serr := s.partNode(ctx, h, e, a, "attachments", miss)
 		if serr != nil {
 			return nil, serr
 		}
@@ -227,7 +231,7 @@ func leafHeader(ctype string, params map[string]string) message.Header {
 
 // partNode builds one part: a multipart from its subParts, or a leaf whose
 // body is a bodyValue (by partId) or a blob of the caller's own account.
-func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p *createPart, prop string) (*mimeNode, *jmapcore.SetError) {
+func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p *createPart, prop string, miss *[]string) (*mimeNode, *jmapcore.SetError) {
 	ctype := strings.ToLower(p.Type)
 	if ctype == "" {
 		ctype = "text/plain"
@@ -238,7 +242,7 @@ func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p 
 		}
 		n := multipart(strings.TrimPrefix(ctype, "multipart/"))
 		for i := range p.SubParts {
-			kid, serr := s.partNode(ctx, h, e, &p.SubParts[i], prop)
+			kid, serr := s.partNode(ctx, h, e, &p.SubParts[i], prop, miss)
 			if serr != nil {
 				return nil, serr
 			}
@@ -265,7 +269,8 @@ func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p 
 	} else {
 		raw, err := s.readBlob(ctx, h, *p.BlobID)
 		if err != nil {
-			return nil, &jmapcore.SetError{Type: "blobNotFound", Properties: []string{prop}, Description: *p.BlobID}
+			// Every missing blob is named at once, not only the first.
+			*miss = append(*miss, *p.BlobID)
 		}
 		body = raw
 		if p.Charset != nil {

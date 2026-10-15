@@ -159,3 +159,15 @@ func TestEmailSetCreateRefusals(t *testing.T) {
 		})
 	}
 }
+
+// Every missing blob is listed in one blobNotFound (RFC 8621 §4.6).
+func TestEmailSetCreateNamesEveryMissingBlob(t *testing.T) {
+	s, _ := uploadServer(t)
+	a, b := "U"+strings.Repeat("a", 64)+"-1", "U"+strings.Repeat("b", 64)+"-2"
+	out := createCall(t, s, fmt.Sprintf(`{"mailboxIds":{%q:true},"attachments":[{"blobId":%q,"type":"text/plain"},{"blobId":%q,"type":"text/plain"}]}`, inboxID(t, s), a, b))
+	notCreated, _ := out["notCreated"].(map[string]any)
+	e, _ := notCreated["c1"].(map[string]any)
+	if e["type"] != "blobNotFound" || fmt.Sprint(e["notFound"]) != fmt.Sprint([]any{a, b}) {
+		t.Errorf("answered %v, want blobNotFound naming both", e)
+	}
+}

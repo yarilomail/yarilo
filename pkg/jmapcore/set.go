@@ -61,6 +61,8 @@ type SetError struct {
 	Type        string   `json:"type"`
 	Description string   `json:"description,omitempty"`
 	Properties  []string `json:"properties,omitempty"`
+	// NotFound lists every missing blob of a blobNotFound (RFC 8621 §4.6).
+	NotFound []string `json:"notFound,omitempty"`
 }
 
 // SetError types from RFC 8620 §5.3, plus one of ours.
