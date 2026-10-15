@@ -45,13 +45,18 @@ func (h *userHandle) copiesByGUID(guids [][16]byte) (map[[16]byte][]emailCopy, b
 	if err != nil || len(records) == 0 {
 		return nil, false
 	}
+	return h.copiesFromRecords(records)
+}
+
+// copiesFromRecords confirms each copy the store names by reading its folder.
+func (h *userHandle) copiesFromRecords(records []mailbox.GUIDRecord) (map[[16]byte][]emailCopy, bool) {
 	// Grouped by folder, and read by uid: a copy is one record, not a folder
 	// listing, and this sits on the client's synchronisation path.
 	byFolder := make(map[[16]byte][]uint32, 4)
 	for _, r := range records {
 		byFolder[r.FolderGUID] = append(byFolder[r.FolderGUID], r.UID)
 	}
-	out := make(map[[16]byte][]emailCopy, len(guids))
+	out := make(map[[16]byte][]emailCopy, len(records))
 	for folderGUID, uids := range byFolder {
 		name, f, ferr := h.folderByGUID(folderGUID)
 		if ferr != nil || f == nil {
@@ -86,6 +91,7 @@ func (h *userHandle) copiesByWalkAll(want map[[16]byte]bool) map[[16]byte][]emai
 		if ferr != nil {
 			continue
 		}
+		metricIDLookupFolders.Inc()
 		metas, merr := h.mbox.Messages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if merr != nil {
 			continue

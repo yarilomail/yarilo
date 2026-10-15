@@ -103,6 +103,8 @@ type Box interface {
 	// GUIDCopies is every copy of these messages the account records;
 	// ErrNoGUIDStore when it keeps no such record.
 	GUIDCopies(guids [][16]byte) ([]GUIDRecord, error)
+	// GUIDStoreComplete: an empty GUIDCopies answer means no copy exists.
+	GUIDStoreComplete() bool
 	// Keywords are the folder's keyword names.
 	Keywords(folderID uint64) ([]string, error)
 	// CreateFolder writes a new folder's index with the folder, best effort.

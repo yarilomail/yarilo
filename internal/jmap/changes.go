@@ -454,9 +454,13 @@ func (h *userHandle) settleCopies(folders folderMarks, old jmapcore.Description,
 			guids = append(guids, g)
 		}
 	}
-	copies, ok := h.copiesByGUID(guids)
-	// A created copy the store does not name means the store is behind. A
-	// destroyed id it names nothing of is gone: a surviving older copy is in it.
+	// Only a store marked whole may answer "no copy"; otherwise the walk does.
+	var copies map[[16]byte][]emailCopy
+	ok := false
+	if records, err := h.mbox.GUIDCopies(guids); err == nil && (len(records) > 0 || h.mbox.GUIDStoreComplete()) {
+		copies, ok = h.copiesFromRecords(records)
+	}
+	// A created copy the store does not name means it is behind after all.
 	for _, id := range created {
 		if g, err := parseObjectID(id); ok && err == nil && len(copies[g]) == 0 {
 			ok = false

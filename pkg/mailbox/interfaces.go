@@ -121,6 +121,9 @@ type GUIDResolver interface {
 	// GUIDCopies returns every copy recorded for these GUIDs. An empty answer
 	// means the store says nothing, not that the message does not exist.
 	GUIDCopies(guids [][16]byte) ([]GUIDRecord, error)
+	// GUIDStoreComplete is true once a rebuild from the folders made the store
+	// whole and no command has missed it since; then no copy means none exists.
+	GUIDStoreComplete() (bool, error)
 }
 
 // MaildirStamp is what a folder's directories and uid list looked like when the

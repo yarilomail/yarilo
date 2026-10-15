@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // A move, a copy or a removed copy is an update of the one Email; only the last
@@ -76,6 +80,66 @@ func TestEmailChangesJudgesTheEmailNotTheCopy(t *testing.T) {
 			}
 			if !slices.Equal(in, want) {
 				t.Errorf("id in %v, want %v: %v", in, want, got)
+			}
+		})
+	}
+}
+
+// rebuildGUIDStore writes the store from the folders, as the admin API does.
+func rebuildGUIDStore(t *testing.T, s *Server) {
+	t.Helper()
+	h, err := s.opts.Storage.open(testUser, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	marks, err := s.folderMarks(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var copies []mailbox.GUIDRecord
+	for _, f := range marks {
+		metas, err := h.mbox.Messages(f.folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range metas {
+			copies = append(copies, mailbox.GUIDRecord{GUID: m.GUID, FolderGUID: f.folder.GUID, UID: m.UID})
+		}
+	}
+	if err := h.index().(mailbox.GUIDStoreRebuilder).ReplaceGUIDStore(copies); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The last copy going is the common change: a store marked whole answers it
+// without opening a folder; one that may lack older mail is walked.
+func TestEmailChangesWalksOnlyAStoreNotMarkedWhole(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rebuilt bool
+	}{{"store rebuilt", true}, {"store never rebuilt", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := storedServer(t)
+			id := inboxEmails(t, s)[0]
+			if tc.rebuilt {
+				rebuildGUIDStore(t, s)
+			}
+			since := emailStateOf(t, s)
+			emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"destroy":[%q]}`, testUser, id))
+			before := testutil.ToFloat64(metricIDLookupFolders)
+			got, errType := changesCall(t, s, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+			walked := testutil.ToFloat64(metricIDLookupFolders) - before
+			if errType != "" {
+				t.Fatalf("Email/changes answered %s", errType)
+			}
+			if d := changedIDsOf(t, got, "destroyed"); !slices.Equal(d, []string{id}) {
+				t.Errorf("destroyed %v, want [%s]", d, id)
+			}
+			if tc.rebuilt && walked != 0 {
+				t.Errorf("a store marked whole still opened %v folders", walked)
+			}
+			if !tc.rebuilt && walked == 0 {
+				t.Error("a store that may lack older mail was trusted to say the Email is gone")
 			}
 		})
 	}
