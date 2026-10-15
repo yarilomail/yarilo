@@ -192,6 +192,16 @@ func (b *Box) RemoveMessage(folder string, m *mailbox.MessageMeta) error {
 	return RemoveMessage(b.store, folder, m)
 }
 
+// Remove unlinks a body by name, for a record already gone.
+func (b *Box) Remove(folder, name string) error {
+	return b.store.Remove(folder, name)
+}
+
+// Move relocates a body to another folder of this store, keeping guid.
+func (b *Box) Move(srcFolder, dstFolder, name string, guid [16]byte) (string, [16]byte, error) {
+	return b.store.Move(srcFolder, dstFolder, name, guid)
+}
+
 // Messages reads records with the driver's fill-ins applied.
 func (b *Box) Messages(folderID uint64, set mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
 	return ReadMessages(b.index, folderID, set)

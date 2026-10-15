@@ -632,49 +632,6 @@ func (s *session) folderMailbox() mailbox.Box {
 	return s.mbox
 }
 
-// expungeSource commits MOVE's source expunges and answers what stays. A record
-// another session changed stays, unless its body already moved: then it goes.
-func (s *session) expungeSource(box mailbox.Box, tx mailbox.BoxTx, uids []uint32, moved map[uint32]bool) map[uint32]bool {
-	for _, uid := range uids {
-		tx.Expunge(uid)
-	}
-	kept := make(map[uint32]bool)
-	res, err := tx.Commit()
-	if err != nil {
-		slog.Warn("imap: MOVE did not expunge the source", "user", s.username(), "folder", s.folder.Name, "err", err)
-		for _, uid := range uids {
-			kept[uid] = true
-		}
-		return kept
-	}
-	var gone []uint32
-	for _, uid := range res.Skipped {
-		if moved[uid] {
-			gone = append(gone, uid)
-			continue
-		}
-		kept[uid] = true
-		slog.Warn("imap: MOVE left a message another session changed", "user", s.username(), "folder", s.folder.Name, "uid", uid)
-	}
-	if len(gone) == 0 {
-		return kept
-	}
-	again, err := box.Begin(s.folder.ID)
-	if err == nil {
-		for _, uid := range gone {
-			again.Expunge(uid)
-		}
-		_, err = again.Commit()
-	}
-	if err != nil {
-		slog.Warn("imap: MOVE left records whose bodies moved", "user", s.username(), "folder", s.folder.Name, "err", err)
-		for _, uid := range gone {
-			kept[uid] = true
-		}
-	}
-	return kept
-}
-
 var _ imapserver.SessionIMAP4rev2 = (*session)(nil)
 
 // emitMailboxChange is fire-and-forget: events are advisory wake-ups for
@@ -4105,7 +4062,6 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	}); err != nil {
 		return err
 	}
-	srcBox := s.folderBox()
 	srcMailbox := s.folderMailbox()
 	destH, destRel, destFolder, err := s.ensureFolderHandle(dest)
 	if err != nil {
@@ -4137,90 +4093,30 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		byUID[m.UID] = m
 	}
 
-	type matched struct {
-		seqNum uint32
-		srcUID uint32
-		// srcGUID is the source message's own identity, carried from its
-		// record: the retraction names the message, not the copy (#1986).
-		srcGUID  [16]byte
-		vsize    uint32
-		filename string
-		destUID  uint32
-		destFile string
-		moved    bool // body relocated in place; source file is already gone
-	}
-	var hits []matched
-	var srcUIDs, dstUIDs imaplib.UIDSet
-	var saveTotalMs, indexTotalMs int64
-
+	var selected []*mailbox.MessageMeta
+	seqOf := make(map[uint32]uint32)
 	for _, m := range msgs {
 		seqNum, ok := moveUIDToClientSeq[m.UID]
-		if !ok {
+		if !ok || !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
 			continue
 		}
-		if !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
-			continue
-		}
-		// MOVE keeps one identity across folders (RFC 8474), so the source GUID is
-		// carried into the destination instead of a fresh one being generated.
-		var newFilename, srcName string
-		var guid [16]byte
-		vsize := m.VSize
-		size := m.Size
-		tSave := time.Now()
-		if srcBox == destH.box {
-			var moveErr, pathErr error
-			srcName, pathErr = srcMailbox.MessagePath(s.folder.Name, m)
-			if pathErr != nil {
-				return fmt.Errorf("imap/move path: %w", pathErr)
-			}
-			newFilename, guid, moveErr = srcBox.Move(s.folder.Name, destRel, srcName, m.GUID)
-			if moveErr != nil {
-				return fmt.Errorf("imap/move relocate: %w", moveErr)
-			}
-		} else {
-			// Cross-namespace: no shared storage to relocate within, so copy the
-			// body over and hand the source GUID to Save, which stores it verbatim.
-			rc, fetchErr := s.fetchSelected(m)
-			if fetchErr != nil {
-				return fmt.Errorf("imap/move fetch: %w", fetchErr)
-			}
-			data, readErr := io.ReadAll(rc)
-			rc.Close()
-			if readErr != nil {
-				return fmt.Errorf("imap/move read: %w", readErr)
-			}
-			var saveErr error
-			newFilename, vsize, guid, saveErr = destH.box.SaveReceived(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID, m.InternalDate)
-			if saveErr != nil {
-				return fmt.Errorf("imap/move save: %w", saveErr)
-			}
-			size = uint32(len(data))
-		}
-		saveTotalMs += time.Since(tSave).Milliseconds()
-		nm := &mailbox.MessageMeta{
-			Flags:        m.Flags,
-			Keywords:     m.Keywords,
-			Size:         size,
-			VSize:        vsize,
-			InternalDate: m.InternalDate,
-			GUID:         guid,
-		}
-		tIndex := time.Now()
-		if err := destH.mailbox().RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
-			if srcBox == destH.box {
-				_ = srcMailbox.Restore(s.folder.Name, srcName, destRel, newFilename, nm)
-			} else {
-				_ = destH.mailbox().Discard(destRel, newFilename, nm)
-			}
-			return fmt.Errorf("imap/move record: %w", err)
-		}
-		indexTotalMs += time.Since(tIndex).Milliseconds()
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
-		srcUIDs.AddNum(imaplib.UID(m.UID))
-		dstUIDs.AddNum(imaplib.UID(nm.UID))
-		hits = append(hits, matched{seqNum: seqNum, srcUID: m.UID, srcGUID: m.GUID, vsize: m.VSize,
-			destUID: nm.UID, destFile: newFilename, moved: srcBox == destH.box})
+		selected = append(selected, m)
+		seqOf[m.UID] = seqNum
+	}
+	req := mailops.MoveRequest{
+		Src: srcMailbox, Dst: destH.mailbox(),
+		SrcFolder: s.folder, DstFolder: destFolder,
+		SrcName: s.folder.Name, DstName: destRel,
+		Msgs: selected, Read: s.fetchSelected,
+	}
+	hits, err := s.ops.MoveIn(req)
+	if err != nil {
+		return fmt.Errorf("imap/move: %w", err)
+	}
+	var srcUIDs, dstUIDs imaplib.UIDSet
+	for _, h := range hits {
+		srcUIDs.AddNum(imaplib.UID(h.Src.UID))
+		dstUIDs.AddNum(imaplib.UID(h.Dst.UID))
 	}
 
 	// COPYUID needs at least one pair; the encoder rejects an empty set and
@@ -4238,55 +4134,38 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 
 	// Out of a virtual mailbox the source is the copy, expunged in its own
 	// folder (as the reference does); a record leaves only if its copy did.
-	var left map[uint32]bool
+	gone := map[uint32]bool{}
 	if srcVirtual {
 		var vms []*mailbox.MessageMeta
 		for _, h := range hits {
-			vms = append(vms, byUID[h.srcUID])
+			vms = append(vms, byUID[h.Src.UID])
 		}
-		gone, gerr := s.expungeCopies(vms)
+		left, gerr := s.expungeCopies(vms)
 		if gerr != nil {
 			return dependencyError(gerr)
 		}
-		left = make(map[uint32]bool, len(gone))
-		for _, g := range gone {
-			left[g.UID] = true
+		for _, g := range left {
+			gone[g.UID] = true
 		}
-	}
-
-	// Index first, then storage, as the expunge loop does (#1690).
-	kept := map[uint32]bool{}
-	if !srcVirtual {
-		uids := make([]uint32, 0, len(hits))
-		moved := make(map[uint32]bool, len(hits))
+	} else {
+		kept := s.ops.ExpungeMoved(req, srcTx, hits)
 		for _, h := range hits {
-			uids = append(uids, h.srcUID)
-			moved[h.srcUID] = h.moved
+			gone[h.Src.UID] = !kept[h.Src.UID]
 		}
-		kept = s.expungeSource(srcMailbox, srcTx, uids, moved)
 	}
 	expunged := 0
 	// Expunge source in descending seq order (RFC 6851 §3.3).
 	for i := len(hits) - 1; i >= 0; i-- {
 		h := hits[i]
-		if srcVirtual {
-			if !left[h.srcUID] {
-				continue
-			}
-		} else {
-			if kept[h.srcUID] {
-				continue
-			}
-			if !h.moved {
-				srcBox.Remove(s.folder.Name, h.filename) //nolint:errcheck
-			}
-			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, h.srcUID, h.vsize, h.srcGUID)
+		if !gone[h.Src.UID] {
+			continue
 		}
 		expunged++
-		if err := w.WriteExpunge(h.seqNum); err != nil {
+		seqNum := seqOf[h.Src.UID]
+		if err := w.WriteExpunge(seqNum); err != nil {
 			return err
 		}
-		kIdx := int(h.seqNum) - 1
+		kIdx := int(seqNum) - 1
 		if kIdx >= 0 && kIdx < len(s.knownMsgs) {
 			s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
 		}
@@ -4297,13 +4176,12 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	if s.srv.opts.SieveEngine != nil {
 		src := s.folder.Name
 		for _, h := range hits {
-			s.runImapSieveEvent("COPY", dest, destRel, destH, destFolder, h.destUID, h.destFile, false, src, nil)
+			s.runImapSieveEvent("COPY", dest, destRel, destH, destFolder, h.Dst.UID, h.DstFile, false, src, nil)
 		}
 	}
 	slog.Debug("imap: move timing",
 		"user", s.userInfo.Username, "src", s.folder.Name, "dst", dest,
-		"count", len(hits), "save_ms", saveTotalMs, "index_ms", indexTotalMs,
-		"total_ms", time.Since(tMove).Milliseconds())
+		"count", len(hits), "total_ms", time.Since(tMove).Milliseconds())
 	return nil
 }
 

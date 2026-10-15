@@ -74,6 +74,11 @@ type Box interface {
 	RemoveHeld(folder, name string) error
 	// RemoveMessage unlinks a body, leaving the record to the caller.
 	RemoveMessage(folder string, m *MessageMeta) error
+	// Remove unlinks a body by name, for a record already gone.
+	Remove(folder, name string) error
+	// Move relocates a body to another folder of this store, keeping guid;
+	// Restore undoes it.
+	Move(srcFolder, dstFolder, name string, guid [16]byte) (newName string, outGUID [16]byte, err error)
 
 	// Store is the body half, for the storage side alone: a protocol server
 	// reaching for it is refused by the guard (#1805).
