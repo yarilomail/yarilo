@@ -1,12 +1,10 @@
 package lmtp
 
 import (
-	"context"
 	"log/slog"
-	"time"
 
-	"github.com/yarilomail/yarilo/internal/mailboxcreate"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -29,14 +27,7 @@ func (s *session) boxAuto(personal *mailbox.UserInfo, i int, nsUI *mailbox.UserI
 		Mailboxes: ns.AutoMailboxes(),
 		Limit:     s.opts.QuotaPolicy.MailboxCount,
 		Created: func(rel string) {
-			if s.opts.Locker == nil {
-				return
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			if err := s.opts.Locker.Emit(ctx, locks.MailboxListKey(personal.Username), locks.EventMailboxCreate, ns.Prefix+rel); err != nil {
-				slog.Debug("lmtp: emit list event failed", "folder", ns.Prefix+rel, "err", err)
-			}
+			mailops.New(s.mailopsConfig(), nil, personal).EmitList(locks.EventMailboxCreate, ns.Prefix+rel)
 		},
 		Subscribe: func(rel string) error {
 			owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
@@ -82,8 +73,8 @@ func (s *session) subscriberFor(personal *mailbox.UserInfo, folder string) func(
 
 // ldaCreate makes a missing folder a delivery names, subscribing it when
 // lda_mailbox_autosubscribe asks; a failure leaves the save to report it.
-func (s *session) ldaCreate(personal *mailbox.UserInfo, box mailbox.UserMailbox, mbox mailbox.Box, folder, rel string) {
-	if err := mailboxcreate.Folder(box, mbox, rel, s.opts.QuotaPolicy.MailboxCount); err != nil {
+func (s *session) ldaCreate(personal *mailbox.UserInfo, mbox mailbox.Box, folder, rel string) {
+	if err := mailops.NewDelivery(s.mailopsConfig(), mbox, personal).CreateFolder(mbox, rel, folder); err != nil {
 		slog.Warn("lmtp: lda_mailbox_autocreate failed", "folder", folder, "err", err)
 		return
 	}

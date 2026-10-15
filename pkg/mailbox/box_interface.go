@@ -74,6 +74,8 @@ type Box interface {
 	RemoveHeld(folder, name string) error
 	// RemoveMessage unlinks a body, leaving the record to the caller.
 	RemoveMessage(folder string, m *MessageMeta) error
+	// Create makes a folder in the store; CreateFolder writes its index.
+	Create(name string) error
 	// Remove unlinks a body by name, for a record already gone.
 	Remove(folder, name string) error
 	// Move relocates a body to another folder of this store, keeping guid;

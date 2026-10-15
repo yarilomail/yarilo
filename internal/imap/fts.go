@@ -2,16 +2,13 @@ package imap
 
 import (
 	"errors"
-	"log/slog"
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // FTSOptions wires full-text search into IMAP sessions. Nil Client disables
@@ -65,27 +62,6 @@ func searchError(err error) *imaplib.Error {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Mailbox is still being indexed, try again later"}
 	}
 	return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Full-text search unavailable"}
-}
-
-// ftsDropFolder retracts a deleted mailbox, best-effort off the command path:
-// a rescan's orphan sweep is what makes a lost one harmless (#2022).
-func (s *session) ftsDropFolder(f *mailbox.Folder) {
-	o := s.srv.opts.FTS
-	if o.Client == nil || s.userInfo == nil || f == nil || f.Name == "" {
-		return
-	}
-	if f.GUID == ([16]byte{}) {
-		mailops.WarnFolderWithoutGUID("imap", s.userInfo.Username, f.Name)
-		return
-	}
-	mbox := search.RefOf(f)
-	user := s.userInfo.Username
-	go func() {
-		if err := o.Client.DropFolder(user, mbox); err != nil {
-			slog.Warn("imap: fts drop folder failed",
-				"user", user, "folder", mbox.Name, "err", err)
-		}
-	}()
 }
 
 // relevancyScores normalizes raw per-UID engine weights to the RFC 4731/6203

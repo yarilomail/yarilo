@@ -171,8 +171,7 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 	// folder has to exist by the time the handle is taken.
 	if create {
 		if h, rel, derr := s.dispatch(name); derr == nil {
-			_ = h.box.Create(rel) // idempotent for imapsieve fileinto :create
-			h.mailbox().CreateFolder(rel, uint32(time.Now().Unix()))
+			_ = s.ops.CreateFolder(h.mailbox(), rel, name) // an existing folder is refused, and kept
 		}
 	}
 	dh, drel, df, err := s.ensureFolderHandle(name)

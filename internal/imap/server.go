@@ -703,19 +703,10 @@ func (s *session) emitMailboxChangeSized(f *mailbox.Folder, eventType locks.Even
 	s.ops.Committed(f, eventType, uid, vsize, guid)
 }
 
-// emitMailboxList publishes a mailbox-list event (create / delete / rename /
-// subscribe) on the user's MailboxListKey. Fire-and-forget, same rationale
-// as emitMailboxChange.
+// emitMailboxList publishes a change to the folder list; it can run before
+// the session has its layer, while a login makes configured mailboxes.
 func (s *session) emitMailboxList(eventType locks.EventType, payload string) {
-	if s.srv.opts.Locker == nil || s.userInfo == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := s.srv.opts.Locker.Emit(ctx, locks.MailboxListKey(s.userInfo.Username), eventType, payload); err != nil {
-		slog.Debug("imap: emit list event failed",
-			"type", string(eventType), "payload", payload, "err", err)
-	}
+	mailops.New(s.mailopsConfig(), nil, s.userInfo).EmitList(eventType, payload)
 }
 
 func (s *session) Close() error {
@@ -1258,16 +1249,8 @@ func (s *session) Create(name string, opts *imaplib.CreateOptions) error {
 			Text: "a virtual mailbox is created by its configuration file",
 		}
 	}
-	// quota_mailbox_count caps the number of mailboxes a user may have.
-	if err := mailboxcreate.Folder(h.box, h.mailbox(), rel, s.srv.opts.QuotaPolicy.MailboxCount); err != nil {
-		if errors.Is(err, mailboxcreate.ErrLimit) {
-			return &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo,
-				Code: imaplib.ResponseCode("LIMIT"),
-				Text: "Maximum number of mailboxes reached",
-			}
-		}
-		return nameError(err)
+	if err := s.ops.CreateFolder(h.mailbox(), rel, name); err != nil {
+		return createError(err)
 	}
 	if err := s.afterCreate(h, rel, name); err != nil {
 		return err
@@ -1281,8 +1264,20 @@ func (s *session) Create(name string, opts *imaplib.CreateOptions) error {
 				"folder", name, "attr", string(opts.SpecialUse[0]), "err", err)
 		}
 	}
-	s.emitMailboxList(locks.EventMailboxCreate, name)
 	return nil
+}
+
+// createError answers a refused creation: quota_mailbox_count with LIMIT, a
+// name the store refuses as a client error.
+func createError(err error) error {
+	if errors.Is(err, mailboxcreate.ErrLimit) {
+		return &imaplib.Error{
+			Type: imaplib.StatusResponseTypeNo,
+			Code: imaplib.ResponseCode("LIMIT"),
+			Text: "Maximum number of mailboxes reached",
+		}
+	}
+	return nameError(err)
 }
 
 // nameError converts a folder-name refusal from the storage layer into a
@@ -1343,23 +1338,14 @@ func (s *session) Delete(name string) error {
 	if err := s.requireRight(h, rel, mailbox.RightDeleteMailbox); err != nil {
 		return err
 	}
-	// The identity, read while the folder still has one: after the delete
-	// nothing can name its documents (#2022).
-	deleted, ferr := mailbox.Counting(h.mailbox()).Folder(rel, 0)
-	if ferr != nil {
-		slog.Warn("imap: folder identity before DELETE", "folder", name, "err", ferr)
-	}
 	// Closed before it goes, as the reference does: the poll after the command
 	// would reopen it and mint a new index with a new UIDVALIDITY (#2084).
 	selected := s.folder != nil && s.folderNS == h && s.folder.Name == rel
 	if selected {
 		s.Unselect() //nolint:errcheck // it only clears session state
 	}
-	if err := h.mailbox().Delete(rel); err != nil {
+	if err := s.ops.DeleteFolder(h.mailbox(), rel, name); err != nil {
 		return nameError(err)
-	}
-	if ferr == nil {
-		s.ftsDropFolder(deleted)
 	}
 	// drop explicit ACL state (file + namespace-wide index). Non-fatal:
 	// the mailbox is already gone.
@@ -1368,7 +1354,6 @@ func (s *session) Delete(name string) error {
 			slog.Warn("imap: acl remove after DELETE failed", "folder", name, "err", err)
 		}
 	}
-	s.emitMailboxList(locks.EventMailboxDelete, name)
 	// The command is answered first, then the session ends, as the reference
 	// ends one whose selected mailbox is gone (#2084).
 	if selected && s.imapConn != nil {
@@ -1422,7 +1407,7 @@ func (s *session) Rename(oldName, newName string, _ *imaplib.RenameOptions) erro
 	if err := s.requireRightOnParent(hNew, relNew, mailbox.RightCreate); err != nil {
 		return err
 	}
-	if err := hOld.mailbox().Rename(relOld, relNew); err != nil {
+	if err := s.ops.RenameFolder(hOld.mailbox(), relOld, relNew, oldName, newName); err != nil {
 		return nameError(err)
 	}
 	// Move the per-mailbox yarilo-acl file and rewrite namespace-wide index
@@ -1433,22 +1418,17 @@ func (s *session) Rename(oldName, newName string, _ *imaplib.RenameOptions) erro
 			slog.Warn("imap: acl rename failed", "from", oldName, "to", newName, "err", err)
 		}
 	}
-	s.emitMailboxList(locks.EventMailboxRename, oldName+renameSep+newName)
 	return nil
 }
 
 // renameInbox implements RFC 3501 §6.3.5 INBOX rename semantics:
 // messages are moved to the new mailbox; INBOX itself is cleared but not deleted.
 func (s *session) renameInbox(dest string) error {
-	if err := s.box.Create(dest); err != nil {
-		// The destination is a name the client chose, so a refusal of it is a
-		// client error. Wrapping it plainly made the library report an
-		// internal server error, while the source argument one branch up
-		// answered correctly -- two answers to the same kind of mistake
-		// (#1075).
-		return nameError(fmt.Errorf("imap/rename-inbox create: %w", err))
+	// The destination is a name the client chose: its refusal is a client
+	// error, as for the source (#1075).
+	if err := s.ops.CreateFolder(s.mbox, dest, dest); err != nil {
+		return createError(fmt.Errorf("imap/rename-inbox create: %w", err))
 	}
-	s.mbox.CreateFolder(dest, uint32(time.Now().Unix()))
 	srcFolder, err := s.mbox.Folder("INBOX", 0)
 	if err != nil {
 		return err
@@ -1511,7 +1491,7 @@ func (s *session) Subscribe(name string) error {
 	if err := store.Add(key); err != nil {
 		return fmt.Errorf("imap: subscribe %q: %w", name, err)
 	}
-	s.emitMailboxList(locks.EventMailboxSubscribe, name)
+	s.ops.Subscribed(name, true)
 	return nil
 }
 
@@ -1530,7 +1510,7 @@ func (s *session) Unsubscribe(name string) error {
 	if err := store.Remove(key); err != nil {
 		return fmt.Errorf("imap: unsubscribe %q: %w", name, err)
 	}
-	s.emitMailboxList(locks.EventMailboxUnsubscribe, name)
+	s.ops.Subscribed(name, false)
 	return nil
 }
 
