@@ -11,6 +11,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/storage/search"
+	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -27,6 +28,10 @@ type Config struct {
 	FTSAutoindex bool
 	FTSMaxRecent int
 	Quota        QuotaConfig
+	// Threads records each saved message's conversation; nil leaves threading off.
+	Threads *threads.Recorder
+	// ThreadTimer, when set, observes each thread record, lock included.
+	ThreadTimer func(time.Duration)
 }
 
 // QuotaConfig is the site-wide quota wiring.

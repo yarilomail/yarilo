@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
@@ -219,5 +220,27 @@ func TestDownloadServesAnUpload(t *testing.T) {
 				t.Errorf("body %q", w.Body.String())
 			}
 		})
+	}
+}
+
+// An imported reply joins its conversation: every save goes through the layer,
+// which records the thread as LMTP delivery does (#2217).
+func TestImportedReplyJoinsItsThread(t *testing.T) {
+	s, _ := uploadServer(t)
+	s.opts.Storage.Threads = threads.NewCache(time.Minute)
+	root := "Message-ID: <root@x>\r\nSubject: Plan\r\n\r\nbody\r\n"
+	reply := "Message-ID: <reply@x>\r\nIn-Reply-To: <root@x>\r\nSubject: Re: Plan\r\n\r\nbody\r\n"
+	var threadsOf []any
+	for _, raw := range []string{root, reply} {
+		blob := uploadedID(t, upload(t, s, testUser, strings.NewReader(raw)))
+		created, _ := importCall(t, s, blob, `{}`)["created"].(map[string]any)
+		c1, _ := created["c1"].(map[string]any)
+		threadsOf = append(threadsOf, c1["threadId"])
+		if c1["threadId"] == nil {
+			t.Fatalf("import %v", created)
+		}
+	}
+	if threadsOf[0] != threadsOf[1] {
+		t.Errorf("root in %v, reply in %v", threadsOf[0], threadsOf[1])
 	}
 }

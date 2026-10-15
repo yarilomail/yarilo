@@ -265,3 +265,47 @@ func TestFetchWithoutThreadIDReadsNoSidecar(t *testing.T) {
 		t.Errorf("a FETCH that never mentions THREADID read the sidecar %d times, want 0", folds)
 	}
 }
+
+// APPEND threads what it saves, as a delivery does (#2217): the reply lands in
+// the root's conversation without any sidecar seeded beforehand.
+func TestAppendRecordsTheConversation(t *testing.T) {
+	root := t.TempDir()
+	srv := imapserver.New(imapserver.Options{
+		Mailbox:   maildir.New(),
+		Index:     fileindex.New(),
+		Resolver:  &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
+		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+		Threads:   threads.NewCache(time.Minute),
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln) //nolint:errcheck
+	t.Cleanup(func() { ln.Close() })
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	rd := bufio.NewReader(conn)
+	readUntilTag(t, rd, "")
+	command(t, conn, rd, "a1", "LOGIN user@test.com testpass")
+	for i, raw := range []string{
+		"Message-ID: <root@x>\r\nSubject: Plan\r\n\r\nbody\r\n",
+		"Message-ID: <reply@x>\r\nIn-Reply-To: <root@x>\r\nSubject: Re: Plan\r\n\r\nbody\r\n",
+	} {
+		tag := fmt.Sprintf("p%d", i)
+		fmt.Fprintf(conn, "%s APPEND INBOX {%d}\r\n", tag, len(raw))
+		if line, _ := rd.ReadString('\n'); !strings.HasPrefix(line, "+") {
+			t.Fatalf("APPEND continuation: %q", line)
+		}
+		fmt.Fprintf(conn, "%s\r\n", raw)
+		readUntilTag(t, rd, tag)
+	}
+	command(t, conn, rd, "a2", "SELECT INBOX")
+	got := fetchIDs(t, conn, rd)
+	if got[2][1] == "" || got[2][1] != got[1][0] {
+		t.Errorf("THREADID of the reply = %q, want the root %q", got[2][1], got[1][0])
+	}
+}
