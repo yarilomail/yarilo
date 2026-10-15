@@ -150,9 +150,11 @@ func TestAHitIsResolvedThroughTheStore(t *testing.T) {
 
 	// Rewrite the store so the copy is recorded under another uid: the answer
 	// follows the store, which is what makes it the store's to say.
-	rebuilder, ok := uidx.(mailbox.GUIDStoreRebuilder)
+	rebuilder, ok := uidx.(interface {
+		ReplaceGUIDStore([]mailbox.GUIDRecord) error
+	})
 	if !ok {
-		t.Fatal("this index rebuilds no GUID store")
+		t.Fatal("this index writes no GUID store")
 	}
 	resolver := uidx.(mailbox.GUIDResolver)
 	copies, err := resolver.GUIDCopies(nil)

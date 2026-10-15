@@ -454,15 +454,25 @@ func (h *userHandle) settleCopies(folders folderMarks, old jmapcore.Description,
 			guids = append(guids, g)
 		}
 	}
-	// Only a store marked whole may answer "no copy"; otherwise the walk does.
+	// "No copy" counts only from a store marked whole; a created id it does not
+	// name means it is behind even so. Any such id sends the call to the walk.
 	var copies map[[16]byte][]emailCopy
 	ok := false
-	if records, err := h.mbox.GUIDCopies(guids); err == nil && (len(records) > 0 || h.mbox.GUIDStoreComplete()) {
+	records, err := h.mbox.GUIDCopies(guids)
+	folderIDs := make([]uint64, 0, len(folders))
+	for _, f := range folders {
+		folderIDs = append(folderIDs, f.folder.ID)
+	}
+	complete := err == nil && h.mbox.GUIDStoreComplete(folderIDs)
+	if err == nil {
 		copies, ok = h.copiesFromRecords(records)
 	}
-	// A created copy the store does not name means it is behind after all.
+	isCreated := make(map[string]bool, len(created))
 	for _, id := range created {
-		if g, err := parseObjectID(id); ok && err == nil && len(copies[g]) == 0 {
+		isCreated[id] = true
+	}
+	for _, id := range ids {
+		if g, perr := parseObjectID(id); ok && perr == nil && len(copies[g]) == 0 && (isCreated[id] || !complete) {
 			ok = false
 		}
 	}

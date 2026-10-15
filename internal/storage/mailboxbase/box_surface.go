@@ -211,12 +211,12 @@ func (b *Box) ExpungeFloor(folderID uint64) (uint64, error) { return b.index.Exp
 func (b *Box) FolderStamp(name string) (mailbox.FolderStamp, error) { return b.index.FolderStamp(name) }
 
 // GUIDStoreComplete is false when the store cannot say, so a caller walks.
-func (b *Box) GUIDStoreComplete() bool {
+func (b *Box) GUIDStoreComplete(folderIDs []uint64) bool {
 	r, ok := b.index.(mailbox.GUIDResolver)
 	if !ok {
 		return false
 	}
-	complete, err := r.GUIDStoreComplete()
+	complete, err := r.GUIDStoreComplete(folderIDs)
 	return err == nil && complete
 }
 

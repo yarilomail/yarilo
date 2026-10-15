@@ -288,9 +288,18 @@ func TestTheHandleCarriesTheGUIDCapabilities(t *testing.T) {
 	if _, ok := h.(mailbox.GUIDResolver); !ok {
 		t.Error("the handle resolves no GUID, so every id lookup walks the folders")
 	}
-	if err := rebuilder.ReplaceGUIDStore([]mailbox.GUIDRecord{{
-		GUID: [16]byte{1}, FolderGUID: [16]byte{2}, UID: 3,
-	}}); err != nil {
+	f, err := h.OpenFolder("INBOX", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, err := h.AllocateUID(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, GUID: [16]byte{1}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rebuilder.RebuildGUIDStore([]uint64{f.ID}); err != nil {
 		t.Fatalf("the handle refused the rebuild: %v", err)
 	}
 	resolved, err := h.(mailbox.GUIDResolver).GUIDCopies([][16]byte{{1}})

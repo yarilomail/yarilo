@@ -24,6 +24,10 @@ const (
 	// that made the store whole; absent or zero, it may lack older mail.
 	extNameGUIDComplete = "guidcomplete"
 	guidCompleteHdrSize = 8
+	// extNameGUIDMissed is a folder index header: the unix time the store first
+	// missed a command of this folder, set under the folder's own hold.
+	extNameGUIDMissed = "guidmissed"
+	guidMissedHdrSize = 8
 )
 
 // guidMapRec is the record extension, laid out from the second reference's
@@ -268,14 +272,16 @@ func (u *userIndex) trackReplacedFolder(fs *folderState, recs []mailbox.GUIDReco
 	u.applyGUIDTracking(fs, guidBatch{goneFolder: &folder, add: recs})
 }
 
-// trackDeletedFolder retracts every copy of a folder that is gone, or an
-// account-wide search answers with a copy in a mailbox that does not exist.
+// trackDeletedFolder retracts a gone folder's copies. A miss leaves extra
+// copies, which a lookup refuses on reading; no folder is left to mark.
 func (u *userIndex) trackDeletedFolder(folder string, folderGUID [16]byte) {
 	if folderGUID == ([16]byte{}) {
 		return
 	}
 	if err := u.applyGUIDBatch(guidBatch{goneFolder: &folderGUID}); err != nil {
-		u.guidTrackFailed(folder, err)
+		metricGUIDTrackFailed.Inc()
+		slog.Warn("fileindex: the guid store did not take this command; it is derived and rebuildable",
+			"user", u.username, "folder", folder, "err", err)
 	}
 }
 
@@ -288,48 +294,54 @@ func (u *userIndex) trackExpungedGUID(fs *folderState, uid uint32) {
 // counted and logged rather than failing mail that is already written.
 func (u *userIndex) applyGUIDTracking(fs *folderState, b guidBatch) {
 	if err := u.applyGUIDBatch(b); err != nil {
-		u.guidTrackFailed(fs.folder, err)
+		u.guidTrackFailed(fs, err)
 	}
 }
 
-// guidTrackFailed counts a command the store missed; the store is no longer
-// whole, so its completeness mark goes until the next rebuild.
-func (u *userIndex) guidTrackFailed(folder string, err error) {
+// guidTrackFailed marks the folder its caller holds, so a store it could not
+// take still leaves the mark (INTERNALS §35).
+func (u *userIndex) guidTrackFailed(fs *folderState, err error) {
 	metricGUIDTrackFailed.Inc()
 	slog.Warn("fileindex: the guid store did not take this command; it is derived and rebuildable",
-		"user", u.username, "folder", folder, "err", err)
-	if cerr := u.clearGUIDComplete(); cerr != nil {
-		slog.Error("fileindex: the guid store missed a command and still claims to be whole",
-			"user", u.username, "folder", folder, "err", cerr)
+		"user", u.username, "folder", fs.folder, "err", err)
+	if merr := fs.markGUIDMissedLocked(); merr != nil {
+		slog.Error("fileindex: the guid store missed a command and the folder could not say so",
+			"user", u.username, "folder", fs.folder, "err", merr)
 	}
 }
 
-// clearGUIDComplete zeroes the completeness mark of an existing store.
-func (u *userIndex) clearGUIDComplete() error {
-	if _, err := os.Stat(u.GUIDStorePath()); err != nil {
+func (fs *folderState) markGUIDMissedLocked() error {
+	if ext := findExt(fs.file.Extensions, extNameGUIDMissed); ext != nil && hdrStamp(ext.HdrData) != 0 {
 		return nil
 	}
-	id, err := u.openGUIDStore()
-	if err != nil {
-		return err
+	return fs.setGUIDMissedLocked(uint64(time.Now().Unix()))
+}
+
+// setGUIDMissedLocked writes the folder's mark by a base rewrite: the mark is
+// a header, and the log carries no header of an extension declared earlier.
+func (fs *folderState) setGUIDMissedLocked(at uint64) error {
+	data := make([]byte, guidMissedHdrSize)
+	binary.LittleEndian.PutUint64(data, at)
+	if ext := findExt(fs.file.Extensions, extNameGUIDMissed); ext != nil {
+		ext.HdrData, ext.HdrSize = data, guidMissedHdrSize
+	} else if at == 0 {
+		return nil
+	} else if err := fs.file.AddHeaderExtension(extNameGUIDMissed, data, 8, fs.file.Header.UIDValidity); err != nil {
+		return fmt.Errorf("fileindex/guid: add the missed mark: %w", err)
 	}
-	return u.withFolderSite(id, lockSiteGUIDAppend, func(fs *folderState) error {
-		ext := findExt(fs.file.Extensions, extNameGUIDComplete)
-		if ext == nil {
-			return nil
-		}
-		ext.HdrData = make([]byte, guidCompleteHdrSize)
-		return fs.flush()
-	})
+	return fs.flush()
 }
 
-func guidCompleteMark(ext *mailindex.Extension) bool {
-	return len(ext.HdrData) == guidCompleteHdrSize && binary.LittleEndian.Uint64(ext.HdrData) != 0
+func hdrStamp(b []byte) uint64 {
+	if len(b) != 8 {
+		return 0
+	}
+	return binary.LittleEndian.Uint64(b)
 }
 
-// GUIDStoreComplete reads the mark from the base: a loaded store keeps the
-// extension headers it was opened with, so another process's clear is not in it.
-func (u *userIndex) GUIDStoreComplete() (bool, error) {
+// GUIDStoreComplete: a rebuild marked the store and none of these folders
+// missed a command since; both marks read from the bases (INTERNALS §35).
+func (u *userIndex) GUIDStoreComplete(folderIDs []uint64) (bool, error) {
 	exts, err := peekExtHeaders(u.GUIDStorePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -340,9 +352,82 @@ func (u *userIndex) GUIDStoreComplete() (bool, error) {
 	if m := findExt(exts, extNameGUIDMap); m == nil || m.RecordSize != guidMapRecSize {
 		return false, nil // no store this build can read
 	}
-	ext := findExt(exts, extNameGUIDComplete)
-	return ext != nil && guidCompleteMark(ext), nil
+	if c := findExt(exts, extNameGUIDComplete); c == nil || hdrStamp(c.HdrData) == 0 {
+		return false, nil
+	}
+	for _, id := range folderIDs {
+		fs, err := u.state(id)
+		if err != nil {
+			return false, err
+		}
+		fexts, err := peekExtHeaders(fs.indexPath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue // no base yet: nothing written, nothing missed
+		}
+		if err != nil {
+			return false, fmt.Errorf("fileindex/guid: read %q's missed mark: %w", fs.folder, err)
+		}
+		if m := findExt(fexts, extNameGUIDMissed); m != nil && hdrStamp(m.HdrData) != 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
+
+// RebuildGUIDStore holds the store's journal from the first folder read to the
+// write, then marks it whole; a delivery waits or marks its folder (§35).
+func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
+	id, err := u.openGUIDStore()
+	if err != nil && !errors.Is(err, errGUIDStoreStale) {
+		return 0, err
+	}
+	var release func()
+	if err == nil {
+		store, serr := u.state(id)
+		if serr != nil {
+			return 0, serr
+		}
+		// The journal only, not the state's mutex: a writer of this process
+		// holds a folder and waits here with its budget, not without one.
+		if release, err = store.holdJournalFor(lockSiteGUIDRebuild, guidRebuildLockWait); err != nil {
+			return 0, err
+		}
+		defer release()
+	}
+	var copies []mailbox.GUIDRecord
+	for _, fid := range folderIDs {
+		err := u.withFolderSite(fid, lockSiteGUIDRebuild, func(fs *folderState) error {
+			for _, rec := range fs.file.Records {
+				g := decodeGUIDRec(rec.Ext[extNameGUID])
+				if g == ([16]byte{}) {
+					continue // a record with no GUID names no id
+				}
+				r := mailbox.GUIDRecord{GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: rec.UID}
+				if data, ok := rec.Ext[extNameInternalDate]; ok {
+					r.InternalDate = decodeIdateRec(data).Unix()
+				}
+				copies = append(copies, r)
+			}
+			return fs.setGUIDMissedLocked(0)
+		})
+		var gone *mailbox.FolderGoneError
+		if errors.As(err, &gone) {
+			continue // deleted meanwhile: its copies are not wanted
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+	guidRebuildBetween()
+	if err := u.replaceGUIDStore(copies, true); err != nil {
+		return 0, err
+	}
+	return len(copies), nil
+}
+
+// guidRebuildBetween runs after the folders are read and before the write; a
+// test delivers there.
+var guidRebuildBetween = func() {}
 
 // guidCopy names one copy: the folder and the uid inside it.
 type guidCopy struct {
@@ -500,6 +585,10 @@ func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 // ReplaceGUIDStore writes the store from scratch: the file is derived, so this
 // is how one that is behind, refused or missing comes back (#1711).
 func (u *userIndex) ReplaceGUIDStore(copies []mailbox.GUIDRecord) error {
+	return u.replaceGUIDStore(copies, false)
+}
+
+func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) error {
 	dir := u.indexRootDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("fileindex/guid-rebuild: mkdir: %w", err)
@@ -507,7 +596,9 @@ func (u *userIndex) ReplaceGUIDStore(copies []mailbox.GUIDRecord) error {
 	// The set a fresh store is created with, plus ours: a file carrying only
 	// the guidmap extension refuses the next append, which loses the copy.
 	complete := make([]byte, guidCompleteHdrSize)
-	binary.LittleEndian.PutUint64(complete, uint64(time.Now().Unix()))
+	if whole {
+		binary.LittleEndian.PutUint64(complete, uint64(time.Now().Unix()))
+	}
 	exts := append(defaultExtensions(1, [16]byte{}), mailindex.Extension{
 		Name: extNameGUIDMap, RecordSize: guidMapRecSize, RecordAlign: 8, ResetID: 1,
 	}, mailindex.Extension{

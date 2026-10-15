@@ -112,7 +112,9 @@ type GUIDRecord struct {
 // GUIDStoreRebuilder writes the per-user GUID store from what the folders say.
 // The store is derived, so this is what repairs it (#1711).
 type GUIDStoreRebuilder interface {
-	ReplaceGUIDStore(copies []GUIDRecord) error
+	// RebuildGUIDStore writes the store from these folders, holding it from the
+	// first read to the write, and marks it whole; it returns the copies written.
+	RebuildGUIDStore(folderIDs []uint64) (int, error)
 }
 
 // GUIDResolver answers where a message id lives, from the per-user GUID store
@@ -121,9 +123,9 @@ type GUIDResolver interface {
 	// GUIDCopies returns every copy recorded for these GUIDs. An empty answer
 	// means the store says nothing, not that the message does not exist.
 	GUIDCopies(guids [][16]byte) ([]GUIDRecord, error)
-	// GUIDStoreComplete is true once a rebuild from the folders made the store
-	// whole and no command has missed it since; then no copy means none exists.
-	GUIDStoreComplete() (bool, error)
+	// GUIDStoreComplete is true once a rebuild made the store whole and none of
+	// these folders has missed a command since; then no copy means none exists.
+	GUIDStoreComplete(folderIDs []uint64) (bool, error)
 }
 
 // MaildirStamp is what a folder's directories and uid list looked like when the

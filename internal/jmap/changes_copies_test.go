@@ -2,11 +2,16 @@ package jmap
 
 import (
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -85,7 +90,7 @@ func TestEmailChangesJudgesTheEmailNotTheCopy(t *testing.T) {
 	}
 }
 
-// rebuildGUIDStore writes the store from the folders, as the admin API does.
+// rebuildGUIDStore rebuilds the store from every folder, as the admin API does.
 func rebuildGUIDStore(t *testing.T, s *Server) {
 	t.Helper()
 	h, err := s.opts.Storage.open(testUser, "")
@@ -96,17 +101,11 @@ func rebuildGUIDStore(t *testing.T, s *Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var copies []mailbox.GUIDRecord
+	ids := make([]uint64, 0, len(marks))
 	for _, f := range marks {
-		metas, err := h.mbox.Messages(f.folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range metas {
-			copies = append(copies, mailbox.GUIDRecord{GUID: m.GUID, FolderGUID: f.folder.GUID, UID: m.UID})
-		}
+		ids = append(ids, f.folder.ID)
 	}
-	if err := h.index().(mailbox.GUIDStoreRebuilder).ReplaceGUIDStore(copies); err != nil {
+	if _, err := h.index().(mailbox.GUIDStoreRebuilder).RebuildGUIDStore(ids); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -142,5 +141,45 @@ func TestEmailChangesWalksOnlyAStoreNotMarkedWhole(t *testing.T) {
 				t.Error("a store that may lack older mail was trusted to say the Email is gone")
 			}
 		})
+	}
+}
+
+// One id the store names must not make the store answer for the others: on a
+// store that is not whole, an older copy it never recorded is still alive.
+func TestEmailChangesTrustsNoBatchOnAStoreNotWhole(t *testing.T) {
+	s := storedServer(t)
+	ids, mb := inboxEmails(t, s), mailboxIDs(t, s)
+	if len(ids) < 2 {
+		t.Fatalf("the fixture holds %d emails, the row needs two", len(ids))
+	}
+	older, newer := ids[0], ids[1]
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true}}}`, testUser, older, mb["Work"]))
+	// Mail from before the store: neither copy of the older Email is in it.
+	info, err := s.opts.Storage.ResolveUser(testUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = filepath.WalkDir(info.Home, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && strings.HasPrefix(d.Name(), file.GUIDIndexFileName) {
+			return os.Remove(p)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	since := emailStateOf(t, s)
+	// The store comes back with the newer Email's copy only.
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true},%q:{"mailboxIds/%s":null}}}`,
+		testUser, newer, mb["Archive"], older, mb["Work"]))
+	got, errType := changesCall(t, s, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+	if errType != "" {
+		t.Fatalf("Email/changes answered %s", errType)
+	}
+	if d := changedIDsOf(t, got, "destroyed"); slices.Contains(d, older) {
+		t.Errorf("the older Email, alive in INBOX, is reported destroyed: %v", got)
+	}
+	if u := changedIDsOf(t, got, "updated"); !slices.Contains(u, older) || !slices.Contains(u, newer) {
+		t.Errorf("updated %v, want both %s and %s", u, older, newer)
 	}
 }

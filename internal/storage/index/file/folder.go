@@ -1505,10 +1505,11 @@ func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
 		if eerr != nil || len(recs) == 0 {
 			return eerr
 		}
-		u.trackExpungedGUID(fs, uid)
 		if err := fs.appendMutLog(recs...); err != nil {
 			return err
 		}
+		// After the folder's write: a miss marks the folder by a base rewrite.
+		u.trackExpungedGUID(fs, uid)
 		gone = fs.cacheGone
 		return nil
 	}); err != nil {
@@ -2296,6 +2297,10 @@ var stumpLockWait = 500 * time.Millisecond
 // mutLogLockWait bounds a writer's wait for the journal: the hold is one
 // write(2), so a longer wait is a wedged mount, not a queue (#1840).
 var mutLogLockWait = 10 * time.Second
+
+// guidRebuildLockWait bounds the rebuild's wait for the store: it queues behind
+// one writer, while writers queue behind it only up to mutLogLockWait.
+var guidRebuildLockWait = time.Minute
 
 // appendMutLog writes pre-encoded tx records wrapped in a BOUNDARY, atomic on
 // recovery. Caller holds fs.mu; closeFDs() runs before the log is replaced.

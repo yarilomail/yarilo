@@ -362,7 +362,13 @@ func (h *userHandle) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) 
 	return h.ui.GUIDCopies(guids)
 }
 
-func (h *userHandle) GUIDStoreComplete() (bool, error) { return h.ui.GUIDStoreComplete() }
+func (h *userHandle) GUIDStoreComplete(folderIDs []uint64) (bool, error) {
+	return h.ui.GUIDStoreComplete(folderIDs)
+}
+
+func (h *userHandle) RebuildGUIDStore(folderIDs []uint64) (int, error) {
+	return h.ui.RebuildGUIDStore(folderIDs)
+}
 
 func (h *userHandle) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error {
 	return h.stamped(folderID).AppendMessage(folderID, m)
