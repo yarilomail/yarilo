@@ -20,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/jmap"
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/telemetry"
 	"github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/build"
@@ -28,6 +29,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/logging"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 func main() {
@@ -131,6 +133,19 @@ func main() {
 	}
 	if ftsClient != nil {
 		defer ftsClient.Close() //nolint:errcheck
+	}
+	warner, clone, err := backend.QuotaServices(cfg)
+	if err != nil {
+		slog.Error("quota services", "err", err)
+		os.Exit(1)
+	}
+	// Indexing follows fts_autoindex whether or not search is on, as for IMAP.
+	store.Ops = mailops.Config{
+		FTS: ftsClient, FTSAutoindex: cfg.FTS.Autoindex, FTSMaxRecent: cfg.FTS.AutoindexMaxRecentMsgs,
+		Quota: mailops.QuotaConfig{
+			Engine: cfg.Quota.Enabled, Policy: cfg.Quota.QuotaPolicy(),
+			MailSize: quota.ParseSize(cfg.Quota.MailSize), Warner: warner, Clone: clone,
+		},
 	}
 	var ftsOpts *jmap.FTS
 	if ftsClient != nil && cfg.FTS.Search {

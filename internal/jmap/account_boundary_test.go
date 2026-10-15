@@ -107,6 +107,24 @@ func TestEveryMethodRefusesAForeignAccount(t *testing.T) {
 	}
 }
 
+// Every method that names an account refuses a call that names none (#2210).
+func TestEveryMethodRequiresAnAccount(t *testing.T) {
+	s, _ := twoAccountServer(t)
+	for _, method := range methodNames(s) {
+		if method == "Core/echo" {
+			continue
+		}
+		t.Run(method, func(t *testing.T) {
+			// The description, not the type: a missing sinceState or ids is
+			// invalidArguments too, and would pass for the wrong reason.
+			name, out := callAs(t, s, testUser, method, `{}`)
+			if name != "error" || out["type"] != "invalidArguments" || out["description"] != "accountId is required" {
+				t.Errorf("answered %s %v, want invalidArguments naming accountId", name, out)
+			}
+		})
+	}
+}
+
 const (
 	kindForeignAccount = "foreign account"
 	kindEmptyAccount   = "empty account"

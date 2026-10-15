@@ -151,25 +151,10 @@ func New(cfg *config.Config) (*Server, error) {
 	// reads the index
 	idx := file.New(IndexOptions(cfg.Storage, locker)...)
 
-	// ---- quota_warning action runner (shared by IMAP + LMTP) ----
-	quotaWarner := quotawarn.New(cfg.Quota.WarningBinDir, cfg.Quota.WarningExecTimeout)
-
-	// ---- quota_clone mirror (fan-out to N dicts, shared by IMAP + LMTP) ----
-	var cloneDicts []dict.Dict
-	for _, name := range cfg.Quota.CloneDicts {
-		d, err := buildDict(cfg, name)
-		if err != nil {
-			return nil, fmt.Errorf("backend: quota_clone dict %q: %w", name, err)
-		}
-		if d == nil {
-			slog.Warn("quota_clone_dicts references an undefined dict", "name", name)
-			continue
-		}
-		cloneDicts = append(cloneDicts, d)
+	quotaWarner, quotaClone, err := QuotaServices(cfg)
+	if err != nil {
+		return nil, err
 	}
-	// The mirror's own timer owns the delay now; zero falls back to the
-	// reference's ten seconds inside NewClone.
-	quotaClone := quota.NewClone(cloneDicts, time.Duration(cfg.Quota.CloneFlushDelay)*time.Second)
 
 	ftsClient, ftsChain, err := BuildFTS(cfg)
 	if err != nil {
@@ -1467,4 +1452,24 @@ func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error)
 		return nil, nil, err
 	}
 	return ftsproto.NewPool(fc.Addr, tlsCfg, fc.MaxConns, 10*time.Second), chain, nil
+}
+
+// QuotaServices builds the quota_warning runner and the quota_clone mirror
+// every server that changes mail shares.
+func QuotaServices(cfg *config.Config) (*quotawarn.Runner, *quota.Clone, error) {
+	warner := quotawarn.New(cfg.Quota.WarningBinDir, cfg.Quota.WarningExecTimeout)
+	var cloneDicts []dict.Dict
+	for _, name := range cfg.Quota.CloneDicts {
+		d, err := buildDict(cfg, name)
+		if err != nil {
+			return nil, nil, fmt.Errorf("backend: quota_clone dict %q: %w", name, err)
+		}
+		if d == nil {
+			slog.Warn("quota_clone_dicts references an undefined dict", "name", name)
+			continue
+		}
+		cloneDicts = append(cloneDicts, d)
+	}
+	// Zero falls back to the reference's ten seconds inside NewClone.
+	return warner, quota.NewClone(cloneDicts, time.Duration(cfg.Quota.CloneFlushDelay)*time.Second), nil
 }
