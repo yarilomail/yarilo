@@ -27,9 +27,9 @@ var jmapToIMAPFlag = map[string]string{
 	"$deleted":  `\Deleted`,
 }
 
-// emailSet implements Email/set (RFC 8621 §4.6): keywords, mailboxIds and
-// destroy; create answers notImplemented by name.
-func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+// emailSet implements Email/set (RFC 8621 §4.6): create, keywords,
+// mailboxIds and destroy.
+func (s *Server) emailSet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req jmapcore.SetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
@@ -56,11 +56,13 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 
 	resp := jmapcore.NewSetResponse(accountID, state)
 
-	for id := range req.Create {
-		resp.NotCreated[id] = &jmapcore.SetError{
-			Type:        jmapcore.SetErrNotImplemented,
-			Description: "Email/set create is not implemented; append over IMAP or deliver over LMTP",
+	for _, cid := range sortedKeys(req.Create) {
+		created, serr := s.emailCreate(ctx, h, req.Create[cid])
+		if serr != nil {
+			resp.NotCreated[cid] = serr
+			continue
 		}
+		resp.Created[cid] = created
 	}
 	if len(req.Update) == 0 {
 		return s.finishSet(h, accountID, req.Destroy, resp)
@@ -213,7 +215,7 @@ func (s *Server) finishSet(h *userHandle, accountID string, destroy []string, re
 	if err := s.emailDestroy(h, destroy, resp); err != nil {
 		return nil, storeFailure("Email/set destroy lookup failed", accountID, err)
 	}
-	if len(resp.Updated) > 0 || len(resp.Destroyed) > 0 {
+	if len(resp.Created) > 0 || len(resp.Updated) > 0 || len(resp.Destroyed) > 0 {
 		if after, err := s.emailState(h); err == nil {
 			resp.NewState = after
 		} else {
