@@ -47,14 +47,14 @@ func TestAVanishedScanReadsTheJournalOnce(t *testing.T) {
 		t.Errorf("the scan read the journal %d times, want a handful", got)
 	}
 
-	// The GUID half walks the same records and pays the same once.
+	// The record scan, which also yields the GUID, pays the same once.
 	counted.reset()
-	guids, gerr := scanExpungedGUIDsSince(fs.indexPath, 0)
-	if gerr != nil {
+	records := 0
+	if gerr := scanExpungeRecords(fs.indexPath, 0, func(uint32, [16]byte) { records++ }); gerr != nil {
 		t.Fatal(gerr)
 	}
-	if len(guids) != 10 {
-		t.Fatalf("the GUID scan found %d expunges, want 10", len(guids))
+	if records != 10 {
+		t.Fatalf("the record scan found %d expunges, want 10", records)
 	}
 	if got := counted.n(); got > 4 {
 		t.Errorf("the GUID scan read the journal %d times, want a handful", got)

@@ -2126,16 +2126,6 @@ func scanExpungesSince(indexPath string, sinceModSeq uint64) ([]uint32, error) {
 	return out, err
 }
 
-// scanExpungedGUIDsSince is scanExpungesSince reading the other half of the
-// record: the GUID a QRESYNC client names its message by.
-func scanExpungedGUIDsSince(indexPath string, sinceModSeq uint64) ([][16]byte, error) {
-	var out [][16]byte
-	err := scanExpungeRecords(indexPath, sinceModSeq, func(_ uint32, guid [16]byte) {
-		out = append(out, guid)
-	})
-	return out, err
-}
-
 // scanExpungeRecords walks the journal in one read, handing every expunge above
 // sinceModSeq to fn: it runs on every VANISHED and QRESYNC reconnect (#1849).
 func scanExpungeRecords(indexPath string, sinceModSeq uint64, fn func(uint32, [16]byte)) error {
