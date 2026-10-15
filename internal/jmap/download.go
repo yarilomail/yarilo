@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/emersion/go-message"
+
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
 
