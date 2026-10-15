@@ -68,9 +68,8 @@ func jmapCallLib[T any](c *gojmap.Client, m gojmap.Method) (T, error) {
 	return got, nil
 }
 
-// checkJMAPRoundTrip is #712's acceptance through a client library: upload and
-// import, mark read, move, destroy, each seen by Email/changes on a second
-// client.
+// checkJMAPRoundTrip drives a client library through upload, import, read, move
+// and destroy; a second client sees each step in Email/changes (#712).
 func checkJMAPRoundTrip() error {
 	writer, account, err := jmapLibClient()
 	if err != nil {
