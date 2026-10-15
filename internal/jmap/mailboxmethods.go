@@ -219,6 +219,15 @@ func checkAccount(got, want string) *jmapcore.MethodError {
 	return &jmapcore.MethodError{Type: jmapcore.ErrAccountNotFound}
 }
 
+// requireAccount is checkAccount for a write: an omitted accountId is refused,
+// not taken as the caller's (RFC 8620 §5.3).
+func requireAccount(got, want string) *jmapcore.MethodError {
+	if got == "" {
+		return &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: "accountId is required"}
+	}
+	return checkAccount(got, want)
+}
+
 func matchesMailbox(mb jmapcore.Mailbox, f *jmapcore.MailboxFilter) bool {
 	if f == nil {
 		return true
