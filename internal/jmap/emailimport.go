@@ -112,6 +112,12 @@ func (s *Server) importOne(ctx context.Context, h *userHandle, e importEmail) (m
 	if e.ReceivedAt != nil {
 		received = *e.ReceivedAt
 	}
+	return h.storeEmail(raw, targets, flags, custom, received)
+}
+
+// storeEmail saves raw into every target as one Email: the first save names
+// it, the rest keep its GUID (RFC 8474). It answers the created Email.
+func (h *userHandle) storeEmail(raw []byte, targets []importTarget, flags, custom []string, received time.Time) (map[string]any, *jmapcore.SetError) {
 	var guid [16]byte
 	var size int64
 	for _, t := range targets {
@@ -126,7 +132,6 @@ func (s *Server) importOne(ctx context.Context, h *userHandle, e importEmail) (m
 		case err != nil:
 			return nil, &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: err.Error()}
 		}
-		// Every copy is one Email: the first save names it (RFC 8474).
 		guid, size = saved.Meta.GUID, int64(saved.Meta.Size)
 	}
 	id := mailbox.FormatObjectID(guid)

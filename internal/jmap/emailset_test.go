@@ -153,23 +153,15 @@ func TestEmailSetKeywordsReachTheStore(t *testing.T) {
 	}
 }
 
-// What is not built has to be visible in the response. A client that asks for a
-// move and is told "updated" believes the message moved; the message staying
-// put is asserted here as well, so the row fails on a silent accept rather than
-// only on a wrong error string.
-func TestEmailSetRefusesWhatIsNotImplemented(t *testing.T) {
+// A refused update is visible in the response and leaves the store as it was,
+// so a row fails on a silent accept rather than only on a wrong error string.
+func TestEmailSetRefusesWithoutTouchingTheStore(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     func(id string) string
 		bucket   func(jmapcore.SetResponse, string) *jmapcore.SetError
 		wantType string
 	}{
-		{
-			name:     "create",
-			args:     func(string) string { return fmt.Sprintf(`{"accountId":%q,"create":{"k1":{}}}`, testUser) },
-			bucket:   func(r jmapcore.SetResponse, string2 string) *jmapcore.SetError { return r.NotCreated["k1"] },
-			wantType: jmapcore.SetErrNotImplemented,
-		},
 		{
 			name: "a move to a mailbox that is not there",
 			args: func(id string) string {
@@ -195,7 +187,7 @@ func TestEmailSetRefusesWhatIsNotImplemented(t *testing.T) {
 
 			serr := tc.bucket(resp, id)
 			if serr == nil {
-				t.Fatalf("the call reported no failure for an operation that is not built: %+v", resp)
+				t.Fatalf("the call reported no failure: %+v", resp)
 			}
 			if serr.Type != tc.wantType {
 				t.Errorf("SetError type = %q, want %q (%s)", serr.Type, tc.wantType, serr.Description)
