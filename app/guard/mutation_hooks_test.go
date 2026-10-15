@@ -15,9 +15,9 @@ const quotaPkg = "github.com/yarilomail/yarilo/pkg/quota"
 // hookCeilings is each protocol package's count of direct quota, FTS and event
 // calls; it only goes down, to zero once the mutation layer owns them (#2207).
 var hookCeilings = map[string]int{
-	"internal/imap":        2,
-	"internal/lmtp":        1,
-	"internal/jmap":        1,
+	"internal/imap":        0,
+	"internal/lmtp":        0,
+	"internal/jmap":        0,
 	"internal/pop3":        0,
 	"internal/submission":  0,
 	"internal/managesieve": 0,

@@ -1,4 +1,4 @@
-package imap
+package mailops
 
 import (
 	"sync"
@@ -47,12 +47,9 @@ func (d *dropRecorder) Close() error          { return nil }
 // without identity from one with it.
 func TestDropFolderSkipsAFolderWithoutGUID(t *testing.T) {
 	rec := &dropRecorder{}
-	s := &session{
-		srv:      &Server{opts: Options{FTS: FTSOptions{Client: rec}}},
-		userInfo: &mailbox.UserInfo{Username: "u1@example.com"},
-	}
-	s.ftsDropFolder(&mailbox.Folder{Name: "NoGUID"})
-	s.ftsDropFolder(&mailbox.Folder{Name: "Kept", GUID: [16]byte{1}})
+	o := New(Config{Protocol: "test", FTS: rec}, nil, &mailbox.UserInfo{Username: "u1@example.com"})
+	o.ftsDropFolder(&mailbox.Folder{Name: "NoGUID"})
+	o.ftsDropFolder(&mailbox.Folder{Name: "Kept", GUID: [16]byte{1}})
 
 	deadline := time.Now().Add(3 * time.Second)
 	for len(rec.seen()) == 0 && time.Now().Before(deadline) {

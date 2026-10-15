@@ -1,9 +1,7 @@
 package jmap
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -114,7 +112,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	h.threads = s.Threads
 	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)
 	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info), mailboxbase.WithAuto(s.boxAuto(h)))
-	h.ops = mailops.New(mailops.Config{Protocol: "jmap", Locker: s.Locker}, h.mbox, info)
+	h.ops = mailops.New(s.mailopsConfig(), h.mbox, info)
 	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)
 	return h, nil
 }
@@ -187,15 +185,16 @@ func (s *Storage) boxAuto(h *userHandle) mailboxbase.Auto {
 		Mailboxes: s.Mailboxes,
 		Limit:     s.MailboxLimit,
 		Created: func(rel string) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			if err := s.Locker.Emit(ctx, locks.MailboxListKey(h.info.Username), locks.EventMailboxCreate, rel); err != nil {
-				slog.Debug("jmap: emit list event failed", "folder", rel, "err", err)
-			}
+			mailops.New(s.mailopsConfig(), nil, h.info).EmitList(locks.EventMailboxCreate, rel)
 		},
 		Subscribe: func(rel string) error {
 			_, err := h.subs.AddOwn(rel)
 			return err
 		},
 	}
+}
+
+// mailopsConfig is the layer's wiring for this backend.
+func (s *Storage) mailopsConfig() mailops.Config {
+	return mailops.Config{Protocol: "jmap", Locker: s.Locker}
 }

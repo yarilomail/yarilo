@@ -135,3 +135,31 @@ func TestCopyRefusesASetHoldingAMessageOverTheMailSize(t *testing.T) {
 		t.Errorf("a refused COPY changed the folder:\n%s", out)
 	}
 }
+
+// RENAME INBOX makes its destination, and that creation counts toward
+// quota_mailbox_count like any other.
+func TestRenameInboxHoldsTheMailboxCount(t *testing.T) {
+	srv := imapserver.New(imapserver.Options{
+		Mailbox:     maildir.New(),
+		Index:       file.New(),
+		Resolver:    &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
+		AuthRelay:   authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+		QuotaEngine: true,
+		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxCount: 2},
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln) //nolint:errcheck
+	t.Cleanup(func() { ln.Close() })
+
+	c := dialRaw(t, ln.Addr().String())
+	c.login()
+	if out := c.cmd(`CREATE Second`); !strings.Contains(out, "OK") {
+		t.Fatalf("the second folder was refused:\n%s", out)
+	}
+	if out := c.cmd(`RENAME INBOX Third`); !strings.Contains(out, "NO") || !strings.Contains(out, "LIMIT") {
+		t.Errorf("RENAME INBOX past the folder cap answered %q, want NO [LIMIT]", out)
+	}
+}

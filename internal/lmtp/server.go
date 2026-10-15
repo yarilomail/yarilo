@@ -727,9 +727,9 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 			// Route each delivery through the recipient's namespaces so a
 			// namespace-prefixed target (e.g. Sieve fileinto "Public/News")
 			// lands in that namespace's storage, not the recipient's own store.
-			tBox, tMbox, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptMbox, d.Folder, true)
+			_, tMbox, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptMbox, d.Folder, true)
 			if d.Create {
-				if err := tBox.Create(rel); err != nil {
+				if err := ops.CreateFolder(tMbox, rel, d.Folder); err != nil {
 					slog.Warn("lmtp: create folder", "folder", d.Folder, "err", err)
 				}
 			} else if rel != "INBOX" {
@@ -737,7 +737,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				// folder is the two lda_mailbox knobs' to make, or INBOX's.
 				if exists, _ := tMbox.FolderExists(rel); !exists {
 					if s.opts.Config.LDAMailboxAutocreate {
-						s.ldaCreate(userInfo, tBox, tMbox, d.Folder, rel)
+						s.ldaCreate(userInfo, tMbox, d.Folder, rel)
 					} else {
 						fallback := s.defaultMailbox(rcptMbox, folder, d.Folder)
 						slog.Info("lmtp: target folder does not exist, delivering to the default mailbox",
