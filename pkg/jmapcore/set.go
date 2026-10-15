@@ -73,6 +73,11 @@ const (
 	SetErrWillDestroy  = "willDestroy"
 	SetErrInvalidProps = "invalidProperties"
 	SetErrSingleton    = "singleton"
+	// SetErrAlreadyExists, SetErrMailboxHasChild and SetErrMailboxHasEmail are
+	// RFC 8621 §2.5's for Mailbox/set.
+	SetErrAlreadyExists   = "alreadyExists"
+	SetErrMailboxHasChild = "mailboxHasChild"
+	SetErrMailboxHasEmail = "mailboxHasEmail"
 	// SetErrNotImplemented is ours. §5.3 lets a method define further types,
 	// and the alternative was worse: reporting an unbuilt operation as
 	// "forbidden" tells a client it lacks permission and invites it to retry

@@ -1344,15 +1344,8 @@ func (s *session) Delete(name string) error {
 	if selected {
 		s.Unselect() //nolint:errcheck // it only clears session state
 	}
-	if err := s.ops.DeleteFolder(h.mailbox(), rel, name); err != nil {
+	if err := s.ops.DeleteFolder(h.mailbox(), h.folderACL(), rel, name); err != nil {
 		return nameError(err)
-	}
-	// drop explicit ACL state (file + namespace-wide index). Non-fatal:
-	// the mailbox is already gone.
-	if h.acl != nil {
-		if err := h.acl.Remove(rel); err != nil {
-			slog.Warn("imap: acl remove after DELETE failed", "folder", name, "err", err)
-		}
 	}
 	// The command is answered first, then the session ends, as the reference
 	// ends one whose selected mailbox is gone (#2084).
@@ -1407,16 +1400,8 @@ func (s *session) Rename(oldName, newName string, _ *imaplib.RenameOptions) erro
 	if err := s.requireRightOnParent(hNew, relNew, mailbox.RightCreate); err != nil {
 		return err
 	}
-	if err := s.ops.RenameFolder(hOld.mailbox(), relOld, relNew, oldName, newName); err != nil {
+	if err := s.ops.RenameFolder(hOld.mailbox(), hOld.folderACL(), relOld, relNew, oldName, newName); err != nil {
 		return nameError(err)
-	}
-	// Move the per-mailbox yarilo-acl file and rewrite namespace-wide index
-	// entries. Non-fatal: the mailbox has moved; a stale index must not fail
-	// the IMAP response.
-	if hOld.acl != nil {
-		if err := hOld.acl.Rename(relOld, relNew); err != nil {
-			slog.Warn("imap: acl rename failed", "from", oldName, "to", newName, "err", err)
-		}
 	}
 	return nil
 }

@@ -27,15 +27,8 @@ var jmapToIMAPFlag = map[string]string{
 	"$deleted":  `\Deleted`,
 }
 
-// emailSet implements Email/set (RFC 8621 §4.6), keywords only.
-//
-// Scope is deliberate and visible to the client rather than silent: creating,
-// destroying and moving between mailboxes answer with a SetError naming what is
-// not built, so a client learns it from the response instead of from a message
-// that never appears. Keywords come first because they are the operation a mail
-// client cannot work without -- marking a message read -- and because the store
-// beneath them already journals keyword changes (#1281), so the write is
-// visible to every other session without a base rewrite.
+// emailSet implements Email/set (RFC 8621 §4.6): keywords, mailboxIds and
+// destroy; create answers notImplemented by name.
 func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req jmapcore.SetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
@@ -43,6 +36,9 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 	}
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
+	}
+	if max := s.opts.Limits.MaxObjectsInSet; max > 0 && len(req.Create)+len(req.Update)+len(req.Destroy) > max {
+		return nil, &jmapcore.MethodError{Type: jmapcore.ErrRequestTooLarge}
 	}
 	// The state Email/get reports, so a client can compare what it holds
 	// against what the account is, and a write against a stale view is refused
@@ -66,14 +62,8 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 			Description: "Email/set create is not implemented; append over IMAP or deliver over LMTP",
 		}
 	}
-	for _, id := range req.Destroy {
-		resp.NotDestroyed[id] = &jmapcore.SetError{
-			Type:        jmapcore.SetErrNotImplemented,
-			Description: "Email/set destroy is not implemented; expunge over IMAP",
-		}
-	}
 	if len(req.Update) == 0 {
-		return resp, nil
+		return s.finishSet(h, accountID, req.Destroy, resp)
 	}
 
 	want := make(map[string]bool, len(req.Update))
@@ -123,6 +113,12 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 		if serr != nil {
 			resp.NotUpdated[id] = serr
 			continue
+		}
+		if plan.mailboxes != nil {
+			if serr := s.applyMailboxes(h, ref, plan.mailboxes); serr != nil {
+				resp.NotUpdated[id] = serr
+				continue
+			}
 		}
 		// Keywords belong to the Email, so the write reaches every mailbox
 		// holding a copy; Email/get reads their union (RFC 8621 §4.1.1).
@@ -208,10 +204,16 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 			resp.Updated[id] = nil
 		}
 	}
-	// newState is read after the writes rather than assumed to have moved: a
-	// call whose every object failed changed nothing, and reporting a new state
-	// for it would tell the client to discard a cache that is still correct.
-	if len(resp.Updated) > 0 {
+	return s.finishSet(h, accountID, req.Destroy, resp)
+}
+
+// finishSet destroys after the updates (RFC 8620 §5.3 order) and reads the new
+// state from the store: a call whose every object failed changed nothing.
+func (s *Server) finishSet(h *userHandle, accountID string, destroy []string, resp *jmapcore.SetResponse) (any, *jmapcore.MethodError) {
+	if err := s.emailDestroy(h, destroy, resp); err != nil {
+		return nil, storeFailure("Email/set destroy lookup failed", accountID, err)
+	}
+	if len(resp.Updated) > 0 || len(resp.Destroyed) > 0 {
 		if after, err := s.emailState(h); err == nil {
 			resp.NewState = after
 		} else {
@@ -236,13 +238,12 @@ type keywordPlan struct {
 	replace map[string]bool
 	// add and remove are the patch form, and are relative.
 	add, remove map[string]bool
+	// mailboxes is non-nil when the update moves the Email.
+	mailboxes *mailboxPlan
 }
 
-// patchedKeywords reads one update object into a plan.
-//
-// Any property other than keywords is refused rather than ignored. Silently
-// accepting "mailboxIds" would answer a move with success and leave the message
-// where it was -- the client would believe it had moved.
+// patchedKeywords reads one update object into a plan. Any other property is
+// refused rather than ignored, which would answer it with a false success.
 func patchedKeywords(patch json.RawMessage) (keywordPlan, *jmapcore.SetError) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(patch, &fields); err != nil {
@@ -290,6 +291,13 @@ func patchedKeywords(patch json.RawMessage) (keywordPlan, *jmapcore.SetError) {
 			} else {
 				plan.remove[kw] = true
 			}
+		case name == "mailboxIds" || strings.HasPrefix(name, "mailboxIds/"):
+			if plan.mailboxes == nil {
+				plan.mailboxes = &mailboxPlan{add: map[string]bool{}, remove: map[string]bool{}}
+			}
+			if serr := readMailboxPatch(plan.mailboxes, name, raw); serr != nil {
+				return keywordPlan{}, serr
+			}
 		default:
 			unsupported = append(unsupported, name)
 		}
@@ -299,7 +307,7 @@ func patchedKeywords(patch json.RawMessage) (keywordPlan, *jmapcore.SetError) {
 		return keywordPlan{}, &jmapcore.SetError{
 			Type:        jmapcore.SetErrNotImplemented,
 			Properties:  unsupported,
-			Description: "only keywords can be updated; mailboxIds (move) and the rest are not implemented",
+			Description: "only keywords and mailboxIds can be updated",
 		}
 	}
 	// RFC 8620 §5.3 forbids giving a property directly and by patch in one

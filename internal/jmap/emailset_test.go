@@ -171,20 +171,12 @@ func TestEmailSetRefusesWhatIsNotImplemented(t *testing.T) {
 			wantType: jmapcore.SetErrNotImplemented,
 		},
 		{
-			name: "destroy",
-			args: func(id string) string {
-				return fmt.Sprintf(`{"accountId":%q,"destroy":[%q]}`, testUser, id)
-			},
-			bucket:   func(r jmapcore.SetResponse, id string) *jmapcore.SetError { return r.NotDestroyed[id] },
-			wantType: jmapcore.SetErrNotImplemented,
-		},
-		{
-			name: "a move, which would look like success if ignored",
+			name: "a move to a mailbox that is not there",
 			args: func(id string) string {
 				return fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds":{"other":true}}}}`, testUser, id)
 			},
 			bucket:   func(r jmapcore.SetResponse, id string) *jmapcore.SetError { return r.NotUpdated[id] },
-			wantType: jmapcore.SetErrNotImplemented,
+			wantType: jmapcore.SetErrInvalidProps,
 		},
 		{
 			name: "an unknown id",
