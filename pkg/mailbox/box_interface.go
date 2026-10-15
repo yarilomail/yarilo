@@ -1,6 +1,9 @@
 package mailbox
 
-import "io"
+import (
+	"io"
+	"time"
+)
 
 // Box is one account's mail, both halves at once: a consumer asks it for a
 // message and never assembles the pair. Implemented with storage (#1715).
@@ -34,6 +37,8 @@ type Box interface {
 	// Save writes a body and answers the driver's name, size and GUID; the
 	// record is the caller's, and Discard undoes a save whose record failed.
 	Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (name string, vsize uint32, outGUID [16]byte, err error)
+	// SaveReceived is Save keeping received as the INTERNALDATE in storage.
+	SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, received time.Time) (name string, vsize uint32, outGUID [16]byte, err error)
 	Discard(folder, saved string, m *MessageMeta) error
 	// Restore undoes a Move whose record did not land: the body returns to
 	// srcFolder under orig, and the source record stays valid.

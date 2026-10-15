@@ -2243,71 +2243,20 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 	}
 
 	size := r.Size()
-
-	// Enforce quota before allocating UID so the slot isn't wasted.
-	if err := s.quotaCheckAppend(name, size); err != nil {
-		return nil, err
-	}
-
-	tSave := time.Now()
-	// Count the octets the literal actually delivers. box.Save copies to EOF and
-	// does not check the count against size, so an under-delivered literal (a
-	// mid-body EOF) would be stored truncated and, being errorless, answered OK
-	// (#1129). This is the invariant #1137's "stored -> OK" rests on, made
-	// explicit: OK only for a fully delivered literal.
-	counted := &countingReader{r: r}
 	internalDate := time.Now()
 	if opts != nil && !opts.Time.IsZero() {
 		internalDate = opts.Time
 	}
-	filename, vsize, guid, err := h.box.SaveReceived(rel, counted, 0, size, flagList, kwList, [16]byte{}, internalDate)
+	saved, err := s.ops.Save(h.mailbox(), rel, f, mailops.SaveRequest{
+		Body: r, Size: size, Flags: flagList, Keywords: kwList,
+		Received: internalDate, QuotaFolder: name,
+	})
 	if err != nil {
-		return nil, err
+		return nil, s.appendError(err)
 	}
-	if counted.n != size {
-		// A short literal is not the malformed-tail case (#1137, a complete
-		// literal with garbage after it) -- it is an incomplete message. Remove
-		// it rather than keep mangled mail, and refuse.
-		if rmErr := h.mailbox().Discard(rel, filename, nil); rmErr != nil {
-			// The truncated file survived: it is exactly the orphan
-			// ReconcileIndex would import with a fresh UID -- the #1129 outcome,
-			// inside the branch that exists to prevent it. BAD would claim nothing
-			// ran while something is on disk, so answer NO [SERVERBUG] instead and
-			// log the orphan for cleanup.
-			slog.Error("imap: APPEND under-delivered literal; cleanup failed, truncated file orphaned",
-				"user", s.userInfo.Username, "folder", rel, "file", filename, "err", rmErr)
-			return nil, &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo,
-				Code: imaplib.ResponseCodeServerBug,
-				Text: "APPEND literal under-delivered and cleanup failed; message may be partially stored",
-			}
-		}
-		return nil, &imaplib.Error{
-			Type: imaplib.StatusResponseTypeBad,
-			Code: imaplib.ResponseCodeClientBug,
-			Text: fmt.Sprintf("APPEND literal under-delivered: %d of %d octets", counted.n, size),
-		}
-	}
-	tIndex := time.Now()
-	m := &mailbox.MessageMeta{
-		Flags: flagList, Keywords: kwList, Size: uint32(size), VSize: vsize,
-		InternalDate: internalDate, GUID: guid,
-	}
-	if err := h.mailbox().RecordSaved(f, rel, filename, m); err != nil {
-		_ = h.mailbox().Discard(rel, filename, m)
-		return nil, fmt.Errorf("imap/append record: %w", err)
-	}
-	// The driver settled the name inside that cycle; ask it, do not carry one.
-	if named, nerr := h.mailbox().MessagePath(rel, m); nerr == nil {
-		filename = named
-	}
-	tDone := time.Now()
-	slog.Debug("imap: append timing",
-		"user", s.userInfo.Username, "folder", rel, "size", size,
-		"save_ms", tIndex.Sub(tSave).Milliseconds(),
-		"index_ms", tDone.Sub(tIndex).Milliseconds(),
-		"total_ms", tDone.Sub(tAppend).Milliseconds(),
-	)
+	m, filename := saved.Meta, saved.Filename
+	slog.Debug("imap: append timing", "user", s.userInfo.Username, "folder", rel, "size", size,
+		"total_ms", time.Since(tAppend).Milliseconds())
 	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		if rc, ferr := h.box.Fetch(rel, filename, false); ferr == nil {
 			raw, _ := io.ReadAll(rc)
@@ -2323,13 +2272,36 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 			)
 		}
 	}
-	s.emitMailboxChangeSized(f, locks.EventDelivered, m.UID, usageDelta(m), m.GUID)
-
 	// imapsieve (RFC 6785): run scripts bound to this mailbox on the APPEND
 	// event; may refile, discard, or reflag the message just stored.
 	s.runImapSieveEvent("APPEND", name, rel, h, f, m.UID, filename, m.AltTier, "", nil)
 
 	return &imaplib.AppendData{UIDValidity: f.UIDValidity, UID: imaplib.UID(m.UID)}, nil
+}
+
+// appendError answers a refused or failed save. A short literal is the
+// client's fault unless its partial body could not be removed (#1129).
+func (s *session) appendError(err error) error {
+	var refused *mailops.RefusedError
+	if errors.As(err, &refused) {
+		return s.quotaRefusal(refused)
+	}
+	var short *mailops.ShortBodyError
+	if !errors.As(err, &short) {
+		return err
+	}
+	if short.Orphaned {
+		return &imaplib.Error{
+			Type: imaplib.StatusResponseTypeNo,
+			Code: imaplib.ResponseCodeServerBug,
+			Text: "APPEND literal under-delivered and cleanup failed; message may be partially stored",
+		}
+	}
+	return &imaplib.Error{
+		Type: imaplib.StatusResponseTypeBad,
+		Code: imaplib.ResponseCodeClientBug,
+		Text: fmt.Sprintf("APPEND literal under-delivered: %d of %d octets", short.Got, short.Want),
+	}
 }
 
 // Notify configures NOTIFY (RFC 5465) for this session. options == nil is

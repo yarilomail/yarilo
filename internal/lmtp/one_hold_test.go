@@ -72,13 +72,13 @@ func TestADeliveryTakesTheFolderOnce(t *testing.T) {
 	const raw = "From: a@b\r\nSubject: one hold\r\n\r\nbody\r\n"
 	// The first delivery also opens the per-user GUID store, which is a
 	// once-per-handle cost; the invariant is about the steady state.
-	if _, _, _, err := deliverOne(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), info.Username, "x@y", nil); err != nil {
+	if _, _, _, err := deliverTest(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), info.Username, "x@y", nil); err != nil {
 		t.Fatalf("warm-up deliver: %v", err)
 	}
 	before := journalHolds(t)
 	guidBefore := holdsBySite(t, "guid-append")
 	scansBefore := reconcileCount("scanned")
-	uid, _, _, err := deliverOne(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), info.Username, "x@y", nil)
+	uid, _, _, err := deliverTest(box, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), info.Username, "x@y", nil)
 	if err != nil {
 		t.Fatalf("deliver: %v", err)
 	}

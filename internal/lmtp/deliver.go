@@ -7,69 +7,31 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"sync/atomic"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// deliverCallSeq tags each deliverOne call with a process-local, monotonically
-// increasing id so concurrent deliveries racing on the same folder can be told
-// apart in the shared debug log stream (see the "lmtp: uid allocated" /
-// "lmtp: uid committed" breadcrumbs below).
-var deliverCallSeq atomic.Uint64
-
-// deliverOne saves one message and records it. The folder travels back because
-// the full-text hook needs its GUID; a name alone is refused silently (#1206).
-func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
-	tDeliver := time.Now()
-	var noGUID [16]byte
+// deliverOne saves one message through the mutation layer.
+func deliverOne(ops *mailops.Ops, box mailbox.Box, folder string, r io.ReadSeeker, size int64, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return 0, mailbox.Folder{}, noGUID, fmt.Errorf("lmtp: seek: %w", err)
+		return 0, mailbox.Folder{}, [16]byte{}, fmt.Errorf("lmtp: seek: %w", err)
 	}
-	data, _ := io.ReadAll(r)
-
-	f, err := box.Folder(folder, 0)
-	if err != nil {
-		return 0, mailbox.Folder{}, noGUID, fmt.Errorf("lmtp: open index: %w", err)
-	}
-	// One hold: uid, modseq, name and record settle inside RecordSaved, and the
-	// body is written before it, outside the hold (#1706).
-	callID := deliverCallSeq.Add(1)
-	tSave := time.Now()
-	// Sieve names keywords as freely as system flags, and both the store and
-	// the record keep the two apart (#1605).
+	// Sieve names keywords as freely as system flags; the record keeps the two
+	// apart (#1605).
 	sysFlags, kws := mailbox.SplitStoredFlags(flags)
-	filename, vsize, guid, err := box.Save(folder, bytes.NewReader(data), 0, size, sysFlags, kws, [16]byte{})
+	saved, err := ops.Save(box, folder, nil, mailops.SaveRequest{Body: r, Size: size, Flags: sysFlags, Keywords: kws})
 	if err != nil {
-		return 0, *f, noGUID, fmt.Errorf("lmtp: save: %w", err)
+		var f mailbox.Folder
+		if saved.Folder != nil {
+			f = *saved.Folder
+		}
+		return 0, f, [16]byte{}, fmt.Errorf("lmtp: %w", err)
 	}
-	meta := &mailbox.MessageMeta{
-		Size:         uint32(size),
-		VSize:        vsize,
-		InternalDate: time.Now(),
-		Flags:        sysFlags,
-		Keywords:     kws,
-		GUID:         guid,
-	}
-	tIndex := time.Now()
-	slog.Debug("lmtp: body saved, recording it", "user", username, "folder", folder,
-		"call_id", callID, "save_ms", tIndex.Sub(tSave).Milliseconds())
-	if err := box.RecordSaved(f, folder, filename, meta); err != nil {
-		slog.Warn("lmtp: delivery not recorded, rolling back save",
-			"user", username, "folder", folder, "call_id", callID, "err", err)
-		_ = box.Discard(folder, filename, meta)
-		return 0, *f, noGUID, fmt.Errorf("lmtp: record: %w", err)
-	}
-	uid := meta.UID
-	slog.Debug("lmtp: uid committed", "user", username, "folder", folder, "uid", uid, "call_id", callID)
-	slog.Debug("lmtp: deliver timing",
-		"folder", folder, "size", size,
-		"save_ms", tIndex.Sub(tSave).Milliseconds(),
-		"index_ms", time.Since(tIndex).Milliseconds(),
-		"total_ms", time.Since(tDeliver).Milliseconds())
-	slog.Info("lmtp: delivered", "from", from, "to", username, "folder", folder, "uid", uid, "file", filename, "size", size)
-	return uid, *f, guid, nil
+	slog.Info("lmtp: delivered", "from", from, "to", username, "folder", folder,
+		"uid", saved.Meta.UID, "file", saved.Filename, "size", size)
+	return saved.Meta.UID, *saved.Folder, saved.Meta.GUID, nil
 }
 
 // stripDetail removes the +detail part from an address: user+tag@domain → user@domain.

@@ -747,14 +747,13 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 					}
 				}
 			}
-			uid, folder, guid, err := deliverOne(tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), username, s.from, d.Flags)
+			_, _, guid, err := deliverOne(ops, tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), username, s.from, d.Flags)
 			closeTarget()
 			if err != nil {
 				deliverErr = err
 				break
 			}
 			s.recordThread(userInfo, username, guid, deliverMsg)
-			ops.Committed(&folder, locks.EventDelivered, uid, 0, guid)
 		}
 		rcptBox.Close() //nolint:errcheck
 		rcptIdx.Close() //nolint:errcheck

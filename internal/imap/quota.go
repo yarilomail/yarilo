@@ -1,7 +1,6 @@
 package imap
 
 import (
-	"errors"
 	"log/slog"
 
 	imaplib "github.com/emersion/go-imap/v2"
@@ -142,14 +141,9 @@ func buildQuotaData(u quota.Usage, lim quota.Limits, name string) imaplib.QuotaD
 	return qd
 }
 
-// quotaCheckAppend answers a save the quota refuses with NO [OVERQUOTA]; the
-// size refusal keeps its own text so a client can tell "too large" from "full".
-func (s *session) quotaCheckAppend(folder string, bytes int64) error {
-	err := s.ops.Quota.CheckSave(folder, bytes)
-	var refused *mailops.RefusedError
-	if !errors.As(err, &refused) {
-		return nil
-	}
+// quotaRefusal answers a save the quota refused with NO [OVERQUOTA]; the size
+// refusal keeps its own text so a client can tell "too large" from "full".
+func (s *session) quotaRefusal(refused *mailops.RefusedError) error {
 	text := refused.Error()
 	if refused.Reason == mailops.RefusedOverQuota {
 		text = s.quotaExceededMessage()
