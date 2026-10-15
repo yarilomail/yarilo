@@ -1955,23 +1955,18 @@ func (u *userIndex) OptimizeIndex(folderID uint64) error {
 // VanishedGUIDs is Vanished by message identity. complete is false when a
 // record cannot be named: an expunge predating the field holds the MAILBOX's
 // GUID, dropped rather than handed out as an id naming no message.
-func (u *userIndex) VanishedGUIDs(folderID uint64, sinceModSeq uint64) (guids [][16]byte, complete bool, err error) {
+func (u *userIndex) VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []mailbox.ExpungedCopy, complete bool, err error) {
 	complete = true
 	err = u.withFolderSite(folderID, lockSiteVanishedGuids, func(fs *folderState) error {
-		found, scanErr := scanExpungedGUIDsSince(fs.indexPath, sinceModSeq)
-		if scanErr != nil {
-			return scanErr
-		}
-		for _, g := range found {
+		return scanExpungeRecords(fs.indexPath, sinceModSeq, func(uid uint32, g [16]byte) {
 			if g == fs.hdr.MailboxGUID || g == ([16]byte{}) {
 				complete = false
-				continue
+				return
 			}
-			guids = append(guids, g)
-		}
-		return nil
+			copies = append(copies, mailbox.ExpungedCopy{UID: uid, GUID: g})
+		})
 	})
-	return guids, complete, err
+	return copies, complete, err
 }
 
 // FolderStamp stats the folder's two files without opening it, so a cached

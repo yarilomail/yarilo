@@ -301,8 +301,8 @@ type CorruptionMarker interface {
 	ClearFolderCorrupt(folderID uint64) error
 }
 
-// ExpungedCopy names a record a repair dropped: the uid it held and the
-// message it was, so a search index can retract the right document (#1986).
+// ExpungedCopy names an expunged record: the uid it held and the message it
+// was, for a search retract (#1986) or a JMAP change list.
 type ExpungedCopy struct {
 	UID  uint32
 	GUID [16]byte
@@ -650,7 +650,7 @@ type UserIndex interface {
 	// message is gone, so its GUID can be read from nowhere else afterwards.
 	// complete is false when a record in range cannot be named, and the caller
 	// must degrade rather than report a shorter list as the whole truth.
-	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (guids [][16]byte, complete bool, err error)
+	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
 	// FolderStamp describes the folder's files without opening it: the sizes
 	// and modification times of the base index and its log. It is a proof of
 	// unchangedness for a cached read, never a substitute for reading -- the

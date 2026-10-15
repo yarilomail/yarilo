@@ -455,7 +455,7 @@ func (h *userHandle) NextModSeq(folderID uint64) (uint64, error) {
 func (h *userHandle) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
 	return h.stamped(folderID).Vanished(folderID, sinceModSeq)
 }
-func (h *userHandle) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([][16]byte, bool, error) {
+func (h *userHandle) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([]mailbox.ExpungedCopy, bool, error) {
 	return h.stamped(folderID).VanishedGUIDs(folderID, sinceModSeq)
 }
 func (h *userHandle) FolderStamp(folder string) (mailbox.FolderStamp, error) {

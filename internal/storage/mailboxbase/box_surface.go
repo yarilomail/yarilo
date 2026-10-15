@@ -202,7 +202,7 @@ func (b *Box) Backing(folderID uint64) (map[uint32]mailbox.BackingRef, error) {
 
 var _ mailbox.VirtualCopies = (*Box)(nil)
 
-func (b *Box) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([][16]byte, bool, error) {
+func (b *Box) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([]mailbox.ExpungedCopy, bool, error) {
 	return b.index.VanishedGUIDs(folderID, sinceModSeq)
 }
 

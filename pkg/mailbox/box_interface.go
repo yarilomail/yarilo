@@ -95,7 +95,7 @@ type Box interface {
 	Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error)
 	// VanishedGUIDs are the messages expunged past sinceModSeq, by identity;
 	// complete is false when some cannot be named.
-	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (guids [][16]byte, complete bool, err error)
+	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
 	// ExpungeFloor is the oldest modseq the folder's expunge history reaches.
 	ExpungeFloor(folderID uint64) (uint64, error)
 	// FolderStamp is the cheap proof that a folder has not moved since a read.
