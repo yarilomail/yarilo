@@ -1211,11 +1211,8 @@ func (s *session) expungeDeleted() int {
 			marked = append(marked, m)
 		}
 	}
-	removed, failed, _ := s.box.ExpungeMarked(s.folder, "INBOX", marked)
 	ops := mailops.New(mailops.Config{Protocol: "pop3", Locker: s.srv.opts.Locker}, s.box, s.userInfo)
-	for _, m := range removed {
-		ops.Committed(s.folder, locks.EventExpunged, m.UID, m.VSize, m.GUID)
-	}
+	_, failed, _ := ops.ExpungeMarked(s.box, s.folder, "INBOX", marked)
 	return failed
 }
 

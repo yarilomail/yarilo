@@ -67,6 +67,7 @@ func TestHookCallsCountsEachShape(t *testing.T) {
 		{"fts search catch-up", `c.Prepend(u, m, 1)`, 0},
 		{"fts read", `c.Lookup(u, m, q)`, 0},
 		{"transaction expunge", `tx.Expunge(uid)`, 0},
+		{"layer expunge", `s.ops.ExpungeMarked(b, f, n, m)`, 0},
 		{"event", `l.Emit(ctx, k, t, p)`, 1},
 	}
 	for _, tc := range cases {

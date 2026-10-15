@@ -2716,11 +2716,6 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	if err != nil {
 		return err
 	}
-	// Capture the pre-expunge usage as the quota_warning "before" baseline right
-	// here — the per-message expunge events below supply "after", so an "under"
-	// crossing fires on a delete-only session regardless of SELECT-time seeding.
-	s.ops.Quota.CaptureSnap()
-
 	// Highest sequence number first, so removing one does not shift those still
 	// to come; the base owns the order and the shared-body rule (#1794).
 	seqOf := make(map[uint32]uint32, len(msgs))
@@ -2740,6 +2735,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	var removed []*mailbox.MessageMeta
 	var herr error
 	if virtualSel {
+		s.ops.Quota.CaptureSnap()
 		removed, herr = s.expungeCopies(doomed)
 		if herr != nil {
 			return dependencyError(herr)
@@ -2747,17 +2743,11 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		// EXPUNGE also drops what stopped matching its rule; the poll after
 		// the command reports those (as the reference does).
 		defer s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity) //nolint:errcheck // an open pass; the poll after reports a failure
-	} else if removed, _, herr = s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed); herr != nil {
+	} else if removed, _, herr = s.ops.ExpungeMarked(s.folderMailbox(), s.folder, s.folder.Name, doomed); herr != nil {
 		return herr
 	}
-	// Outside the hold, in the order the hold removed them: the quota count
-	// re-opens the folder, and that asks for the hold again (#1853).
 	var expunge_count int
 	for _, m := range removed {
-		if !virtualSel {
-			// A virtual record holds no bytes: its copy was reported above.
-			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
-		}
 		s.statsExpunged++
 		expunge_count++
 		seq := seqOf[m.UID]
