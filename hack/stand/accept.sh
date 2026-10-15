@@ -21,6 +21,8 @@ NS="${YARILO_NS:-yarilo-sb}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PASSWORD='Yarilo!test1'
+# What one smoketest run counts; it moves with every check added to the binary.
+SMOKE_CHECKS=47
 mkdir -p "$OUT/logs" "$OUT/lines"
 : > "$OUT/verdict.txt"
 FAILS=0
@@ -251,7 +253,7 @@ for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
   NAMESPACE="$NS" bash "$dir/run.sh" "$TAG" > "$OUT/smoke-$user.log" 2>&1 || true
   summary=$(grep -o '"checks":[0-9]*,"passed":[0-9]*,"failed":[0-9]*' "$OUT/smoke-$user.log" | tail -1 || true)
   case "$summary" in
-    '"checks":46,"passed":46,"failed":0') verdict "smoketest $user" ok "$summary" ;;
+    "\"checks\":$SMOKE_CHECKS,\"passed\":$SMOKE_CHECKS,\"failed\":0") verdict "smoketest $user" ok "$summary" ;;
     *) verdict "smoketest $user" fail "${summary:-no summary}; $(grep '"smoke: FAIL"' "$OUT/smoke-$user.log" | head -3 | cut -c1-200 | tr '\n' ' ')" ;;
   esac
 done
