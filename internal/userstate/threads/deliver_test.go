@@ -2,6 +2,7 @@ package threads
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -205,5 +206,24 @@ func TestSubjectlessMessagesStayApart(t *testing.T) {
 	b, _ := rec.Record("u@example.com", path, "guid-2", []byte("Message-ID: <b@x>\r\n\r\nbody\r\n"))
 	if a == b {
 		t.Errorf("two subject-less messages were threaded together as %q", a)
+	}
+}
+
+// A copy keeps its GUID: recording it again adds nothing to the log and keeps
+// the conversation the first record chose.
+func TestRecordingAKnownGUIDAgainAddsNothing(t *testing.T) {
+	rec, path := recorder(t)
+	first, err := rec.Record("u@example.com", path, "guid-1", rawMessage("first@x", "", "", "Hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(path)
+	again, err := rec.Record("u@example.com", path, "guid-1", rawMessage("other@x", "", "", "Elsewhere"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.Stat(path)
+	if again != first || after.Size() != before.Size() {
+		t.Errorf("thread %q then %q, log %d then %d bytes", first, again, before.Size(), after.Size())
 	}
 }

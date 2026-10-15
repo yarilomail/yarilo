@@ -7,6 +7,7 @@ import (
 	imapserver "github.com/emersion/go-imap/v2/imapserver"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
@@ -43,7 +44,12 @@ func (s *session) quotaPolicy() quota.Policy {
 // mailopsConfig is this server's wiring of the mutation layer.
 func (s *session) mailopsConfig() mailops.Config {
 	o := s.srv.opts
+	var rec *threads.Recorder
+	if o.Threads != nil {
+		rec = threads.NewRecorder(o.Threads)
+	}
 	return mailops.Config{
+		Threads:      rec,
 		Protocol:     "imap",
 		Locker:       o.Locker,
 		FTS:          o.FTS.Client,

@@ -205,5 +205,8 @@ func (s *Storage) boxAuto(h *userHandle) mailboxbase.Auto {
 func (s *Storage) mailopsConfig() mailops.Config {
 	cfg := s.Ops
 	cfg.Protocol, cfg.Locker = "jmap", s.Locker
+	if s.Threads != nil {
+		cfg.Threads = threads.NewRecorder(s.Threads)
+	}
 	return cfg
 }

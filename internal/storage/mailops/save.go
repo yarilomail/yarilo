@@ -1,6 +1,7 @@
 package mailops
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -75,6 +76,11 @@ func (o *Ops) Save(box mailbox.Box, folder string, f *mailbox.Folder, req SaveRe
 	// The store copies to EOF without checking the count, so a short body
 	// would be kept truncated and answered as stored (#1129).
 	counted := &countingReader{r: req.Body}
+	// The conversation is read from the headers, so the body is kept.
+	var raw bytes.Buffer
+	if o.cfg.Threads != nil {
+		counted.r = io.TeeReader(req.Body, &raw)
+	}
 	received := req.Received
 	var name string
 	var vsize uint32
@@ -114,6 +120,7 @@ func (o *Ops) Save(box mailbox.Box, folder string, f *mailbox.Folder, req SaveRe
 	slog.Debug(o.cfg.Protocol+": save timing", "folder", folder, "uid", m.UID, "size", req.Size,
 		"save_ms", tIndex.Sub(tSave).Milliseconds(), "index_ms", time.Since(tIndex).Milliseconds())
 	o.Committed(f, locks.EventDelivered, m.UID, UsageDelta(m), m.GUID)
+	o.recordThread(m.GUID, raw.Bytes())
 	return Saved{Meta: m, Folder: f, Filename: name}, nil
 }
 

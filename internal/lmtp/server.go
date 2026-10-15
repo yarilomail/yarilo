@@ -249,6 +249,8 @@ func (s *session) mailopsConfig() mailops.Config {
 			Warner:   o.QuotaWarner,
 			Clone:    o.QuotaClone,
 		},
+		Threads:     o.Threads,
+		ThreadTimer: func(d time.Duration) { metricThreadRecordSeconds.Observe(d.Seconds()) },
 	}
 }
 
@@ -747,13 +749,12 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 					}
 				}
 			}
-			_, _, guid, err := deliverOne(ops, tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), username, s.from, d.Flags)
+			_, _, _, err := deliverOne(ops, tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), username, s.from, d.Flags)
 			closeTarget()
 			if err != nil {
 				deliverErr = err
 				break
 			}
-			s.recordThread(userInfo, username, guid, deliverMsg)
 		}
 		rcptBox.Close() //nolint:errcheck
 		rcptIdx.Close() //nolint:errcheck
@@ -765,64 +766,6 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 	}
 	return nil
 }
-
-// recordThread places the delivered message in a conversation.
-//
-// The lock spans the WHOLE sequence -- load, decide, append, note -- and not
-// just the write, because the placement is computed FROM the state that was
-// loaded. Two deliveries that each read the state before either wrote would
-// both see "nothing to join" and mint two thread ids for one conversation:
-// a split, and one no later delivery repairs.
-//
-// Synchronous, unlike the FTS hook, and for the opposite reason. Indexing late
-// means a message is unsearchable for a moment; threading late means it is in
-// the wrong conversation until something rebuilds the sidecar. But a FAILURE
-// is not fatal: mail is authoritative and this file is derived, so a delivery
-// is never refused over it -- it is logged, and the migration step is the
-// repair.
-func (s *session) recordThread(ui *mailbox.UserInfo, username string, guid [16]byte, raw []byte) {
-	if s.opts.Threads == nil || guid == ([16]byte{}) {
-		return
-	}
-	path := threads.PathFor(ui)
-	if path == "" {
-		return
-	}
-	// Timed from here: the lock wait is part of what threading costs a
-	// delivery, and on a busy account it is most of it.
-	defer func(start time.Time) {
-		metricThreadRecordSeconds.Observe(time.Since(start).Seconds())
-	}(time.Now())
-	rec := func(context.Context) error {
-		_, err := s.opts.Threads.Record(username, path, mailbox.FormatObjectID(guid), raw)
-		return err
-	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "lmtp-threads"), threadLockTimeout)
-	defer cancel()
-	var err error
-	if s.opts.Locker != nil {
-		err = locks.WithLock(ctx, s.opts.Locker, locks.ThreadsKey(username),
-			locks.Owner(username, s.lockID), threadLockTTL, threadLockRenew, rec)
-	} else {
-		// No lock service wired (single-process dev runs), as the other stores
-		// do: the file is still consistent, only uncoordinated across pods.
-		err = rec(ctx)
-	}
-	if err != nil {
-		slog.Warn("lmtp: message delivered but not threaded",
-			"user", username, "err", err,
-			"hint", "the conversation is rebuilt by the migration step; mail is unaffected")
-	}
-}
-
-// The account's thread lock: bounded like the other delivery-path locks. A
-// delivery would rather be slow than blocked, and a lock nobody releases must
-// not hold a recipient for ever.
-const (
-	threadLockTimeout = 10 * time.Second
-	threadLockTTL     = 15 * time.Second
-	threadLockRenew   = 5 * time.Second
-)
 
 func sieveRejectCode(r *sieve.RejectErr) (int, goSmtp.EnhancedCode) {
 	return 550, goSmtp.EnhancedCode{5, 7, 1}
