@@ -221,7 +221,7 @@ func (s *Server) mailboxUpdate(h *userHandle, id string, raw json.RawMessage, se
 			if serr := h.checkNewName(full, leaf, sep); serr != nil {
 				return serr
 			}
-			if err := h.ops.RenameFolder(h.mbox, t.name, full, t.name, full); err != nil {
+			if err := h.ops.RenameFolder(h.mbox, h.acl, t.name, full, t.name, full); err != nil {
 				return invalidProp("name", err.Error())
 			}
 			h.folders.remember(t.folder.GUID, full)
@@ -259,7 +259,7 @@ func (s *Server) mailboxDestroy(h *userHandle, id, sep string, removeEmails bool
 			return &jmapcore.SetError{Type: jmapcore.SetErrMailboxHasEmail}
 		}
 	}
-	if err := h.ops.DeleteFolder(h.mbox, t.name, t.name); err != nil {
+	if err := h.ops.DeleteFolder(h.mbox, h.acl, t.name, t.name); err != nil {
 		return &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: err.Error()}
 	}
 	h.folders.forget(t.folder.GUID)

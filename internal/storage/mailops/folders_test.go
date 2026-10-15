@@ -3,6 +3,7 @@ package mailops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
@@ -30,7 +32,7 @@ func (r *emitRecorder) Emit(_ context.Context, resource string, t locks.EventTyp
 	return nil
 }
 
-func folderOps(t *testing.T, mailboxCount int64) (*Ops, mailbox.Box, *emitRecorder) {
+func folderOps(t *testing.T, mailboxCount int64) (*Ops, mailbox.Box, *emitRecorder, *mailbox.UserInfo) {
 	t.Helper()
 	info := &mailbox.UserInfo{Username: "u@example.com", Home: t.TempDir(), Driver: "maildir"}
 	store := maildir.New().OpenUser(info)
@@ -42,19 +44,19 @@ func folderOps(t *testing.T, mailboxCount int64) (*Ops, mailbox.Box, *emitRecord
 	rec := &emitRecorder{}
 	box := mailboxbase.Open(store, idx)
 	cfg := Config{Protocol: "test", Locker: rec, Quota: QuotaConfig{Policy: quota.Policy{MailboxCount: mailboxCount}}}
-	return New(cfg, box, info), box, rec
+	return New(cfg, box, info), box, rec, info
 }
 
 func TestFolderOperationsAnnounceWhatTheyDid(t *testing.T) {
-	o, box, rec := folderOps(t, 0)
+	o, box, rec, _ := folderOps(t, 0)
 	list := locks.MailboxListKey("u@example.com")
 	if err := o.CreateFolder(box, "A", "A"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := o.RenameFolder(box, "A", "B", "A", "B"); err != nil {
+	if err := o.RenameFolder(box, nil, "A", "B", "A", "B"); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	if err := o.DeleteFolder(box, "B", "B"); err != nil {
+	if err := o.DeleteFolder(box, nil, "B", "B"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	o.Subscribed("B", false)
@@ -71,7 +73,7 @@ func TestFolderOperationsAnnounceWhatTheyDid(t *testing.T) {
 
 // Every creation is held to quota_mailbox_count, and a refused one is silent.
 func TestCreateFolderHoldsTheMailboxCount(t *testing.T) {
-	o, box, rec := folderOps(t, 2)
+	o, box, rec, _ := folderOps(t, 2)
 	if err := o.CreateFolder(box, "A", "A"); err != nil {
 		t.Fatalf("the second folder was refused: %v", err)
 	}
@@ -80,5 +82,42 @@ func TestCreateFolderHoldsTheMailboxCount(t *testing.T) {
 	}
 	if len(rec.events) != 1 {
 		t.Errorf("events %q, want only A's", rec.events)
+	}
+}
+
+// A folder's ACL follows it in the namespace's ACL index: renamed with the
+// folder, dropped with it. The file itself lives in the folder and moves anyway.
+func TestFolderACLFollowsTheFolder(t *testing.T) {
+	o, box, _, info := folderOps(t, 0)
+	store := acl.New(info.Home, info.MailPath, info.Driver, "/", "", info.Username, "test", acl.Policy{}, nil)
+	if err := o.CreateFolder(box, "A", "A"); err != nil {
+		t.Fatal(err)
+	}
+	bob := mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}
+	if err := store.Set("A", mailbox.ACL{{Identifier: bob, Rights: "lr"}}); err != nil {
+		t.Fatal(err)
+	}
+	indexed := func() []string {
+		entries, err := store.ListSnapshot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Mailbox)
+		}
+		return names
+	}
+	if err := o.RenameFolder(box, store, "A", "B", "A", "B"); err != nil {
+		t.Fatal(err)
+	}
+	if got := indexed(); fmt.Sprint(got) != "[B]" {
+		t.Errorf("after rename the index names %v, want [B]", got)
+	}
+	if err := o.DeleteFolder(box, store, "B", "B"); err != nil {
+		t.Fatal(err)
+	}
+	if got := indexed(); len(got) != 0 {
+		t.Errorf("after delete the index names %v", got)
 	}
 }

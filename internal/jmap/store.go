@@ -7,6 +7,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
@@ -62,6 +63,8 @@ type userHandle struct {
 
 	// ops runs this request's mutations and what follows them (#2207).
 	ops *mailops.Ops
+	// acl is the personal namespace's ACL store, the one IMAP writes.
+	acl *acl.Store
 	// quotaUsage is the last count and when it was taken: four methods answer
 	// from one count, and a request asking several of them counted the whole
 	// account once per method (#1875).
@@ -117,6 +120,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info), mailboxbase.WithAuto(s.boxAuto(h)))
 	h.ops = mailops.New(s.mailopsConfig(), h.mbox, info)
 	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)
+	h.acl = acl.New(info.Home, info.MailPath, info.Driver, info.Separator, info.StorageEscapeChar, username, owner, acl.Policy{}, s.Locker)
 	return h, nil
 }
 
