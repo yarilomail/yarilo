@@ -393,6 +393,18 @@ func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 			return 0, err
 		}
 		defer release()
+		// Folder marks are cleared as they are read: a rebuild stopping halfway
+		// must not leave the old store marked whole.
+		if err := u.withFolderSite(id, lockSiteGUIDRebuild, func(fs *folderState) error {
+			ext := findExt(fs.file.Extensions, extNameGUIDComplete)
+			if ext == nil {
+				return nil
+			}
+			ext.HdrData = make([]byte, guidCompleteHdrSize)
+			return fs.flush()
+		}); err != nil {
+			return 0, err
+		}
 	}
 	var copies []mailbox.GUIDRecord
 	for _, fid := range folderIDs {

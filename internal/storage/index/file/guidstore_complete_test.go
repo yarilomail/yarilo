@@ -163,3 +163,33 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// A rebuild that cannot take a folder stops; the folders it read have lost
+// their marks, so the store it leaves must not still be called whole.
+func TestARebuildStoppedHalfwayLeavesTheStoreIncomplete(t *testing.T) {
+	ui, home, inbox := completeUser(t)
+	work, err := ui.OpenFolder("Work", 8, "")
+	must(t, err)
+	rebuilt(t, ui, inbox, work.ID)
+	shortWait(t)
+	release := holdStore(t, home)
+	deliver(t, ui, inbox, 2) // missed: INBOX is marked
+	release()
+
+	other, _ := instance(t, home)
+	wf, err := other.OpenFolder("Work", 8, "")
+	must(t, err)
+	fs, err := other.state(wf.ID)
+	must(t, err)
+	unhold, err := fs.holdJournalFor("test", time.Second)
+	must(t, err)
+	defer unhold()
+	if _, err := ui.RebuildGUIDStore([]uint64{inbox, work.ID}); err == nil {
+		t.Fatal("the rebuild took a folder another process holds")
+	}
+	got, err := ui.GUIDStoreComplete([]uint64{inbox, work.ID})
+	must(t, err)
+	if got {
+		t.Error("INBOX's mark is cleared and its copy is not in the store, yet the store is called whole")
+	}
+}
