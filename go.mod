@@ -3,6 +3,7 @@ module github.com/yarilomail/yarilo
 go 1.26.9
 
 require (
+	git.sr.ht/~rockorager/go-jmap v0.5.3
 	github.com/0kaba0hub/go-xapian v0.2.1
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
 	github.com/MicahParks/keyfunc/v3 v3.8.2
@@ -57,6 +58,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/yuin/gopher-lua v1.1.2 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
+	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
@@ -73,3 +75,5 @@ replace github.com/emersion/go-imap/v2 => github.com/0kaba0hub/go-imap/v2 v2.0.0
 replace github.com/emersion/go-sasl => github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936
 
 replace github.com/emersion/go-smtp => github.com/0kaba0hub/go-smtp v0.0.0-20261011102647-92f8904ca8d4
+
+replace git.sr.ht/~rockorager/go-jmap => github.com/0kaba0hub/go-jmap v0.0.0-20261015133535-1fa4e19335db

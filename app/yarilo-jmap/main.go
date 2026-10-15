@@ -172,6 +172,7 @@ func main() {
 	}
 
 	srv := jmap.New(jmap.Options{
+		UploadTTL:         time.Duration(cfg.Protocol.JMAP.UploadTTL) * time.Second,
 		Addr:              addr,
 		TLSConfig:         tlsCfg,
 		Trust:             trust,
