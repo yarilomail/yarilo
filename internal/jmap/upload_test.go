@@ -174,3 +174,50 @@ func TestImportRefusesWhatItCannotRead(t *testing.T) {
 		})
 	}
 }
+
+func uploadAs(t *testing.T, s *Server, user string, body string) string {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/jmap/upload/"+user+"/", strings.NewReader(body))
+	r.RemoteAddr = trustedPeer
+	r.Header.Set(hdrUser, user)
+	r.Header.Set(hdrSessionID, "deadbeefdeadbeef")
+	r.Header.Set(hdrProxyTTL, "4")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	return uploadedID(t, w)
+}
+
+// The URL the session advertises serves what the upload stored, to its owner.
+func TestDownloadServesAnUpload(t *testing.T) {
+	s, _ := twoAccountServer(t)
+	s.opts.Limits.MaxSizeUpload = 256
+	s.opts.UploadTTL = time.Hour
+	mine := uploadAs(t, s, testUser, importable)
+	theirs := uploadAs(t, s, foreignUser, importable+"theirs")
+	expired := uploadAs(t, s, testUser, importable+"old")
+	info, _ := s.opts.Storage.ResolveUser(testUser)
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(filepath.Join(info.Home, "jmap-blobs", "tmp", expired), old, old); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, blob string
+		code       int
+	}{
+		{"own upload", mine, http.StatusOK},
+		{"another account's upload", theirs, http.StatusNotFound},
+		{"expired", expired, http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testUser+"/"+tc.blob+"/x"))
+			if w.Code != tc.code {
+				t.Fatalf("status %d, want %d", w.Code, tc.code)
+			}
+			if tc.code == http.StatusOK && w.Body.String() != importable {
+				t.Errorf("body %q", w.Body.String())
+			}
+		})
+	}
+}

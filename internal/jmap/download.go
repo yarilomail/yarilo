@@ -50,6 +50,10 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 
 	// Ownership first: the lookup walks this user's own folders, so a blob that
 	// is not theirs is simply not found and no file is opened at all.
+	if up, ok := parseUploadID(blobID, s.uploadMax()); ok {
+		s.serveUpload(w, r, h, id, up, name)
+		return
+	}
 	msgID, partID, isPart := parsePartBlobID(blobID)
 	if !isPart {
 		msgID = blobID
@@ -137,4 +141,25 @@ func quoteFilename(name string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// serveUpload streams an uploaded blob from the caller's own store.
+func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request, h *userHandle, id identity, up uploadID, name string) {
+	st, err := h.uploads(s.opts.Storage.Locker, s.opts.UploadTTL)
+	if err != nil {
+		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Mail store unavailable")
+		return
+	}
+	f, err := st.open(r.Context(), up)
+	if err != nil {
+		jmapcore.WriteProblem(w, http.StatusNotFound, "No such blob")
+		return
+	}
+	defer f.Close() //nolint:errcheck
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename="+quoteFilename(name))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if _, err := io.Copy(w, f); err != nil {
+		slog.Debug("jmap: download aborted", "user", id.user, "blob", up.String(), "err", err)
+	}
 }
