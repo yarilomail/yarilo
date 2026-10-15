@@ -89,9 +89,8 @@ func (o *Ops) moveCopy(req MoveRequest, m *mailbox.MessageMeta) (Moved, error) {
 	return Moved{Src: m, Dst: saved.Meta, DstFile: saved.Filename}, nil
 }
 
-// ExpungeMoved takes the moved messages out of the source through tx, the
-// transaction they were read in (#1805), and answers the uids it kept: a
-// record another session changed meanwhile stays.
+// ExpungeMoved expunges the sources through tx, the transaction they were read
+// in (#1805), and answers the uids another session changed meanwhile.
 func (o *Ops) ExpungeMoved(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map[uint32]bool {
 	kept := o.expungeSource(req, tx, moved)
 	for _, mv := range moved {

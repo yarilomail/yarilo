@@ -270,9 +270,8 @@ func (q *Quota) committed(sized bool, dBytes, dMessages int64) {
 	}
 }
 
-// afterDelta builds on the cached total when it is fresh, so a session that
-// knows what it changed does not sweep every folder (#1548). The timestamp is
-// not refreshed: another session's change must still arrive within the TTL.
+// afterDelta builds on a fresh cached total instead of a sweep (#1548); the
+// timestamp stays, so another session's change still arrives within the TTL.
 func (q *Quota) afterDelta(dBytes, dMessages int64) (quota.Usage, bool) {
 	if q.cacheAt.IsZero() || time.Since(q.cacheAt) >= cacheTTL {
 		return quota.Usage{}, false

@@ -5,9 +5,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// UpdateFlags applies one change per uid to f as a single transaction (#1827)
-// and publishes it. Settling the result in storage stays with the caller,
-// which may have to run a script first (#1601).
+// UpdateFlags applies one change per uid to f in one transaction (#1827) and
+// publishes it; the caller settles storage, after any script (#1601).
 func (o *Ops) UpdateFlags(box mailbox.Box, f *mailbox.Folder, batch map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
 	tx, err := box.Begin(f.ID)
 	if err != nil {

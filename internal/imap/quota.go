@@ -10,19 +10,13 @@ import (
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
-// *session implements SessionQuota unconditionally so go-imap's capability.go
-// cast succeeds; quotaExtensionEnabled() gates whether QUOTA is advertised and
-// GETQUOTA answers, quotaEngineEnabled() gates save-time enforcement.
+// *session implements SessionQuota unconditionally so the library's cast
+// succeeds; quotaExtensionEnabled() gates QUOTA, the mutation layer enforcement.
 var _ imapserver.SessionQuota = (*session)(nil)
 
 // quotaExtensionEnabled gates the IMAP QUOTA extension (GETQUOTA / capability).
 func (s *session) quotaExtensionEnabled() bool {
 	return s.srv.opts.IMAPQuota
-}
-
-// quotaEngineEnabled gates save-time enforcement (APPEND / COPY / MOVE).
-func (s *session) quotaEngineEnabled() bool {
-	return s.srv.opts.QuotaEngine
 }
 
 // quotaName is the quota-root name surfaced to clients (default "User quota").

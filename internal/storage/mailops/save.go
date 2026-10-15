@@ -53,9 +53,8 @@ func UsageDelta(m *mailbox.MessageMeta) uint32 {
 	return m.Size
 }
 
-// Save stores one message into folder of box, records it and runs what follows
-// a commit. box may be another namespace's; the quota and the events stay this
-// session's. A delivery's quota was checked before its filter ran.
+// Save stores and records one message in folder of box, which may be another
+// namespace's, then runs the hooks; a delivery's quota ran before its filter.
 func (o *Ops) Save(box mailbox.Box, folder string, f *mailbox.Folder, req SaveRequest) (Saved, error) {
 	if !o.Quota.delivery && !req.QuotaChecked {
 		qf := req.QuotaFolder

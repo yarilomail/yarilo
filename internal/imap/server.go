@@ -2149,19 +2149,6 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	return d, nil
 }
 
-// countingReader tallies the octets read through it, so APPEND can compare what
-// the literal delivered against the declared size.
-type countingReader struct {
-	r io.Reader
-	n int64
-}
-
-func (c *countingReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
-}
-
 func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.AppendOptions) (*imaplib.AppendData, error) {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Append")
 	tAppend := time.Now()
