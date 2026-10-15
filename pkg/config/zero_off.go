@@ -100,6 +100,7 @@ func requiredKeys(cfg *Config) []intKey {
 		{"sasl_login.haproxy_timeout", &cfg.SASLLogin.HAProxyTimeout},
 		{"managesieve_login_service.haproxy_timeout", &cfg.ManageSieveLoginService.HAProxyTimeout},
 		{"protocol.jmap.jmap_max_concurrent_requests", &cfg.Protocol.JMAP.MaxConcurrentRequests},
+		{"protocol.jmap.jmap_upload_ttl", &cfg.Protocol.JMAP.UploadTTL},
 		{"protocol.lmtp.read_timeout", &cfg.Protocol.LMTP.ReadTimeout},
 		{"protocol.lmtp.write_timeout", &cfg.Protocol.LMTP.WriteTimeout},
 		{"protocol.lmtp.proxy.lmtp_proxy_timeout", &cfg.Protocol.LMTP.Proxy.ProxyTimeout},

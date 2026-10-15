@@ -163,6 +163,26 @@ func (q *Quota) CheckBatch(folder string, bytes, count, largest int64) error {
 	return nil
 }
 
+// CheckUpload refuses bytes of uploads the storage limit has no room for; an
+// upload is not a message yet, so the message limit does not apply.
+func (q *Quota) CheckUpload(bytes int64) error {
+	if !q.cfg.Engine || q.user == nil {
+		return nil
+	}
+	lim := q.cfg.Policy.Scale(q.Limits())
+	if lim.Unlimited() {
+		return nil
+	}
+	u, err := q.Usage("enforce", false)
+	if err != nil {
+		return nil
+	}
+	if quota.IsOver(u, lim, bytes, 0) {
+		return &RefusedError{Reason: RefusedOverQuota}
+	}
+	return nil
+}
+
 // checkDelivery is the delivery limit: storage grace applies, and the
 // warnings and the mirror take the accepted size here.
 func (q *Quota) checkDelivery(folder string, bytes int64) error {

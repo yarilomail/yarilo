@@ -300,6 +300,10 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 
 	parts := collectParts(entity, "")
 	for _, p := range parts {
+		if p.part.PartID != nil {
+			id := partBlobID(m, *p.part.PartID)
+			p.part.BlobID = &id
+		}
 		switch {
 		case p.disposition == "attachment" || (p.filename != "" && !strings.HasPrefix(p.mediaType, "text/")):
 			email.Attachments = append(email.Attachments, p.part)

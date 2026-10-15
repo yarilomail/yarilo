@@ -92,7 +92,7 @@ disk_messages() {
 aged_account() {
   local dom="$1" sub="$2" pattern="$3"
   kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
-    "cd /var/mail/vhosts/$dom 2>/dev/null && for u in *; do n=\$(find \"\$u/$sub\" -maxdepth 1 -name '$pattern' -mmin +1440 2>/dev/null | wc -l); [ \"\$n\" -ge 20 ] && echo \"\$u \$n\" && break; done" 2>/dev/null || true
+    "cd /var/mail/vhosts/$dom 2>/dev/null && for u in *; do n=\$(find \"\$u/$sub\" -maxdepth 1 -type f -name '$pattern' -mmin +1440 2>/dev/null | wc -l); [ \"\$n\" -ge 20 ] && echo \"\$u \$n\" && break; done" 2>/dev/null || true
 }
 
 # uid_pairs prints "user uid" for every UID both vanished and present, for the

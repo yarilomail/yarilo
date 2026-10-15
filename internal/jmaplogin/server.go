@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,6 +65,8 @@ type Options struct {
 	// oversized body is refused before it is proxied and before any backend
 	// reads it. 0 leaves the body uncapped.
 	MaxSizeRequest int64
+	// MaxSizeUpload caps an upload body instead, as maxSizeUpload does.
+	MaxSizeUpload int64
 }
 
 // ConnAccountant is warden's per-user@IP connection accounting, narrowed to
@@ -240,12 +243,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 // bare 413: a client that cannot parse the answer cannot back off correctly.
 // The backend keeps its own cap, but a body refused here never reaches it.
 func (s *Server) capBody(w http.ResponseWriter, r *http.Request) bool {
-	limit := s.opts.MaxSizeRequest
+	limit, name := s.opts.MaxSizeRequest, "maxSizeRequest"
+	if strings.HasPrefix(r.URL.Path, jmapcore.UploadPath) {
+		limit, name = s.opts.MaxSizeUpload, "maxSizeUpload"
+	}
 	if limit <= 0 || r.Body == nil {
 		return true
 	}
 	if r.ContentLength > limit {
-		writeLimitProblem(w, "maxSizeRequest")
+		writeLimitProblem(w, name)
 		return false
 	}
 	// A body with no declared length, or one that lies, is capped as it is read

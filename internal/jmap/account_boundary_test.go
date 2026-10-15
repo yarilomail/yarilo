@@ -107,6 +107,24 @@ func TestEveryMethodRefusesAForeignAccount(t *testing.T) {
 	}
 }
 
+// Every method that names an account refuses a call that names none (#2210).
+func TestEveryMethodRequiresAnAccount(t *testing.T) {
+	s, _ := twoAccountServer(t)
+	for _, method := range methodNames(s) {
+		if method == "Core/echo" {
+			continue
+		}
+		t.Run(method, func(t *testing.T) {
+			// The description, not the type: a missing sinceState or ids is
+			// invalidArguments too, and would pass for the wrong reason.
+			name, out := callAs(t, s, testUser, method, `{}`)
+			if name != "error" || out["type"] != "invalidArguments" || out["description"] != "accountId is required" {
+				t.Errorf("answered %s %v, want invalidArguments naming accountId", name, out)
+			}
+		})
+	}
+}
+
 const (
 	kindForeignAccount = "foreign account"
 	kindEmptyAccount   = "empty account"
@@ -140,13 +158,44 @@ var boundaryRows = []struct {
 				t.Errorf("the foreign message changed: %v", got)
 			}
 		}},
+	{"Email/import", kindForeignAccount, `{"accountId":"` + foreignUser + `","emails":{"c1":{"blobId":"FOREIGN","mailboxIds":{"INBOXID":true}}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"Email/import", kindEmptyAccount, `{"emails":{"c1":{"blobId":"FOREIGN","mailboxIds":{"INBOXID":true}}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	{"Email/import", kindForeignObject, `{"accountId":"` + testUser + `","emails":{"c1":{"blobId":"FOREIGN","mailboxIds":{"INBOXID":true}}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			notCreated, _ := out["notCreated"].(map[string]any)
+			setErr, _ := notCreated["c1"].(map[string]any)
+			if name != "Email/import" || setErr["type"] != "invalidProperties" || !strings.Contains(fmt.Sprint(setErr["properties"]), "blobId") {
+				t.Errorf("answered %s %v, want notCreated c1 invalidProperties blobId", name, out)
+			}
+		}},
+}
+
+// inboxID is the caller's INBOX mailbox id.
+func inboxID(t *testing.T, s *Server) string {
+	t.Helper()
+	_, out := callAs(t, s, testUser, "Mailbox/get", `{"accountId":"`+testUser+`"}`)
+	for _, mb := range out["list"].([]any) {
+		m := mb.(map[string]any)
+		if m["name"] == "INBOX" || m["role"] == "inbox" {
+			return m["id"].(string)
+		}
+	}
+	t.Fatal("no INBOX")
+	return ""
 }
 
 func TestMutatingMethodsKeepTheAccountBoundary(t *testing.T) {
 	for _, row := range boundaryRows {
 		t.Run(row.method+"/"+row.kind, func(t *testing.T) {
 			s, foreign := twoAccountServer(t)
-			name, out := callAs(t, s, testUser, row.method, strings.ReplaceAll(row.args, "FOREIGN", foreign))
+			args := strings.NewReplacer("FOREIGN", foreign, "INBOXID", inboxID(t, s)).Replace(row.args)
+			name, out := callAs(t, s, testUser, row.method, args)
 			row.check(t, s, foreign, name, out)
 		})
 	}

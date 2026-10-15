@@ -124,6 +124,7 @@ func main() {
 		LocalIP:            os.Getenv("POD_IP"),
 		CORSAllowOrigins:   cfg.Protocol.JMAP.CORSAllowOrigins,
 		MaxSizeRequest:     cfg.Protocol.JMAP.MaxSizeRequest,
+		MaxSizeUpload:      cfg.Protocol.JMAP.MaxSizeUpload,
 	})
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {

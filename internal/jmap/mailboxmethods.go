@@ -64,6 +64,11 @@ func (s *Server) mailboxRegistry(lazy *lazyStore, accountID string) jmapcore.Reg
 				return s.emailQueryChanges(ctx, h, accountID, args)
 			})
 		}},
+		"Email/import": {Capability: jmapcore.CapMail, Fn: func(ctx context.Context, args json.RawMessage) (any, *jmapcore.MethodError) {
+			return s.withStore(lazy, accountID, func(h *userHandle) (any, *jmapcore.MethodError) {
+				return s.emailImport(ctx, h, accountID, args)
+			})
+		}},
 		"Email/set": {Capability: jmapcore.CapMail, Fn: func(ctx context.Context, args json.RawMessage) (any, *jmapcore.MethodError) {
 			return s.withStore(lazy, accountID, func(h *userHandle) (any, *jmapcore.MethodError) {
 				return s.emailSet(ctx, h, accountID, args)
@@ -210,22 +215,16 @@ func (s *Server) mailboxQuery(_ context.Context, h *userHandle, accountID string
 	return resp, nil
 }
 
-// checkAccount refuses a request aimed at another account. One user has one
-// account here, so anything else is a client error, not an empty result.
+// checkAccount refuses a request aimed at another account, or at none: the
+// argument is required (RFC 8620 §5), and one user has one account here.
 func checkAccount(got, want string) *jmapcore.MethodError {
-	if got == "" || got == want {
+	switch got {
+	case want:
 		return nil
-	}
-	return &jmapcore.MethodError{Type: jmapcore.ErrAccountNotFound}
-}
-
-// requireAccount is checkAccount for a write: an omitted accountId is refused,
-// not taken as the caller's (RFC 8620 §5.3).
-func requireAccount(got, want string) *jmapcore.MethodError {
-	if got == "" {
+	case "":
 		return &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: "accountId is required"}
 	}
-	return checkAccount(got, want)
+	return &jmapcore.MethodError{Type: jmapcore.ErrAccountNotFound}
 }
 
 func matchesMailbox(mb jmapcore.Mailbox, f *jmapcore.MailboxFilter) bool {

@@ -41,7 +41,7 @@ func (s *Server) emailSet(_ context.Context, h *userHandle, accountID string, ar
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
-	if merr := requireAccount(req.AccountID, accountID); merr != nil {
+	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
 	// The state Email/get reports, so a client can compare what it holds

@@ -538,6 +538,8 @@ type JMAPProtocolConfig struct {
 	// shrink with every ampersand in the message. The subject is not cut.
 	// Default 256, the same as the Email preview.
 	SnippetMaxChars int `koanf:"jmap_snippet_max_chars"`
+	// UploadTTL is how long an uploaded blob lives, in seconds. Default 3600.
+	UploadTTL int `koanf:"jmap_upload_ttl"`
 	// PushTimeout is the idle timeout for a push connection, in seconds.
 	// Default 90. Unused until the push phase.
 	PushTimeout int `koanf:"jmap_push_timeout"`
@@ -2643,6 +2645,7 @@ func Defaults() *Config {
 	c.Protocol.JMAP.QueryMaxLimit = 256
 	c.Protocol.JMAP.MaxQueryFolders = 64
 	c.Protocol.JMAP.SnippetMaxChars = 256
+	c.Protocol.JMAP.UploadTTL = 3600
 	c.Protocol.ManageSieve.MaxInvalidCommands = 3
 	c.Sieve.MaxScriptSize = 65536
 	c.Sieve.MaxRedirects = 32

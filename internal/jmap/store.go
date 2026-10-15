@@ -44,6 +44,9 @@ type Storage struct {
 	Mailboxes map[string]mailbox.AutoMailbox
 	// MailboxLimit is quota_mailbox_count, zero for none.
 	MailboxLimit int64
+	// Ops is the mutation layer's wiring: FTS and the quota services. Its
+	// Locker and Protocol are this Storage's.
+	Ops mailops.Config
 }
 
 // userHandle is one request's view of a user's mail. JMAP has no session, so a
@@ -196,5 +199,7 @@ func (s *Storage) boxAuto(h *userHandle) mailboxbase.Auto {
 
 // mailopsConfig is the layer's wiring for this backend.
 func (s *Storage) mailopsConfig() mailops.Config {
-	return mailops.Config{Protocol: "jmap", Locker: s.Locker}
+	cfg := s.Ops
+	cfg.Protocol, cfg.Locker = "jmap", s.Locker
+	return cfg
 }
