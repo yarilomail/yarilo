@@ -124,16 +124,17 @@ func (q *Quota) evalOverStatus(u quota.Usage) {
 // CheckSave refuses a save of bytes into folder that the quota does not allow;
 // it runs before a UID is allocated. A failed usage read lets the save through.
 func (q *Quota) CheckSave(folder string, bytes int64) error {
-	return q.CheckBatch(folder, bytes, 1)
+	return q.CheckBatch(folder, bytes, 1, bytes)
 }
 
-// CheckBatch is CheckSave for count messages of bytes in all, counted once.
-func (q *Quota) CheckBatch(folder string, bytes, count int64) error {
+// CheckBatch is CheckSave for count messages of bytes in all, counted once;
+// largest is the biggest of them, which max_mail_size is checked against.
+func (q *Quota) CheckBatch(folder string, bytes, count, largest int64) error {
 	if !q.cfg.Engine || q.user == nil || count == 0 {
 		return nil
 	}
-	if ms := q.cfg.MailSize; ms > 0 && count == 1 && bytes > ms {
-		return &RefusedError{Reason: RefusedMailSize, Size: bytes, Max: ms}
+	if ms := q.cfg.MailSize; ms > 0 && largest > ms {
+		return &RefusedError{Reason: RefusedMailSize, Size: largest, Max: ms}
 	}
 	if mmc := q.cfg.Policy.MailboxMessageCount; mmc > 0 {
 		if cur, ok := q.folderMessageCount(folder); ok && cur+count > mmc {

@@ -88,3 +88,50 @@ func TestCopyIsRefusedAsABatchAtTheCap(t *testing.T) {
 		t.Errorf("a refused COPY changed the folder:\n%s", out)
 	}
 }
+
+// max_mail_size holds for every message of a COPY: one message over it refuses
+// the set, and nothing lands.
+func TestCopyRefusesASetHoldingAMessageOverTheMailSize(t *testing.T) {
+	root := t.TempDir()
+	serve := func(mailSize int64) string {
+		srv := imapserver.New(imapserver.Options{
+			Mailbox:       maildir.New(),
+			Index:         file.New(),
+			Resolver:      &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
+			AuthRelay:     authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+			QuotaEngine:   true,
+			QuotaMailSize: mailSize,
+			QuotaPolicy:   quota.Policy{StoragePercentage: 100, MessagePercentage: 100},
+		})
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		go srv.Serve(ln) //nolint:errcheck
+		t.Cleanup(func() { ln.Close() })
+		return ln.Addr().String()
+	}
+
+	seed := dialRaw(t, serve(0))
+	seed.login()
+	seed.cmd(`CREATE Archive`)
+	seed.appendMsg("INBOX")
+	big := "From: a@b\r\nSubject: big\r\n\r\n" + strings.Repeat("x", 400) + "\r\n"
+	seed.seq++
+	seed.conn.Write([]byte("big APPEND INBOX {" + itoa(len(big)) + "}\r\n")) //nolint:errcheck
+	if line := seed.readLine(); strings.HasPrefix(line, "+") {
+		seed.conn.Write([]byte(big + "\r\n")) //nolint:errcheck
+	}
+	for line := seed.readLine(); !strings.HasPrefix(line, "big "); line = seed.readLine() {
+	}
+
+	c := dialRaw(t, serve(200))
+	c.login()
+	c.cmd(`SELECT INBOX`)
+	if out := c.cmd(`COPY 1:2 Archive`); !strings.Contains(out, "NO") || !strings.Contains(out, "OVERQUOTA") {
+		t.Errorf("COPY of a message over max_mail_size answered %q, want NO [OVERQUOTA]", out)
+	}
+	if out := c.cmd(`STATUS Archive (MESSAGES)`); !strings.Contains(out, "MESSAGES 0") {
+		t.Errorf("a refused COPY changed the folder:\n%s", out)
+	}
+}

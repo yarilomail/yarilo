@@ -27,6 +27,21 @@ var hookCeilings = map[string]int{
 // the search catch-up, and arity keeps a transaction's Expunge(uid) out.
 var ftsWrites = map[string]int{"Index": 4, "Expunge": 4, "DropFolder": 2}
 
+// storageCeilings count direct Box saves, moves and expunges per protocol
+// package; the mutation layer makes them (#2207).
+var storageCeilings = map[string]int{
+	"internal/imap":        0,
+	"internal/lmtp":        0,
+	"internal/jmap":        0,
+	"internal/pop3":        0,
+	"internal/submission":  0,
+	"internal/managesieve": 0,
+}
+
+// storageWrites are the Box writes by arity; the layer's own calls of the same
+// names take other arities.
+var storageWrites = map[string]int{"Save": 7, "SaveReceived": 8, "RecordSaved": 4, "Move": 4, "ExpungeMarked": 3}
+
 var quotaEnforcement = map[string]bool{"IsOver": true, "IsOverAny": true, "IsOverWithGrace": true}
 
 func TestProtocolsLeaveHooksToTheMutationLayer(t *testing.T) {
@@ -115,6 +130,71 @@ func hookCalls(f *ast.File) int {
 		}
 		if name == "Emit" && len(call.Args) == 4 {
 			n++
+		}
+		return true
+	})
+	return n
+}
+
+func TestProtocolsSaveThroughTheMutationLayer(t *testing.T) {
+	fset := token.NewFileSet()
+	got := map[string]int{}
+	for _, path := range goFiles(t, "../..") {
+		name := rel(path)
+		pkg := filepath.Dir(name)
+		if _, watched := storageCeilings[pkg]; !watched || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got[pkg] += callsByArity(f, storageWrites)
+	}
+	for _, pkg := range sortedKeys(storageCeilings) {
+		switch n, ceiling := got[pkg], storageCeilings[pkg]; {
+		case n > ceiling:
+			t.Errorf("%s saves, moves or expunges past the mutation layer %d times, ceiling %d (#2207)", pkg, n, ceiling)
+		case n < ceiling:
+			t.Errorf("%s is down to %d direct storage writes: lower its ceiling from %d", pkg, n, ceiling)
+		}
+	}
+}
+
+func TestCallsByArityCountsEachShape(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"box writes", `b.Save(f, r, 0, n, fl, kw, g); b.SaveReceived(f, r, 0, n, fl, kw, g, d); b.RecordSaved(fo, f, s, m); b.Move(f, d, s, g); b.ExpungeMarked(fo, f, ms)`, 5},
+		{"layer save", `s.ops.Save(b, f, fo, req)`, 0},
+		{"layer expunge", `s.ops.ExpungeMarked(b, fo, f, ms)`, 0},
+		{"protocol move", `t.s.Move(w, set, dest)`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := parser.ParseFile(token.NewFileSet(), "p.go", "package p\nfunc f() {\n"+tc.body+"\n}\n", parser.SkipObjectResolution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := callsByArity(f, storageWrites); n != tc.want {
+				t.Errorf("counted %d, want %d", n, tc.want)
+			}
+		})
+	}
+}
+
+// callsByArity counts selector calls whose name and argument count match.
+func callsByArity(f *ast.File, shapes map[string]int) int {
+	n := 0
+	ast.Inspect(f, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				if arity, ok := shapes[sel.Sel.Name]; ok && len(call.Args) == arity {
+					n++
+				}
+			}
 		}
 		return true
 	})

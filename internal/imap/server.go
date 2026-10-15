@@ -694,20 +694,6 @@ func renamedCount(writes []mailbox.FlagWrite, results []mailbox.FlagWriteResult)
 	return renamed
 }
 
-// usageDelta is the size to move the running total by for one message.
-//
-// VSize is the CRLF-counted size and is what quota is charged in, but records
-// written before Save returned it carry zero. Falling back to the physical size
-// is what the fetch path does for the same reason; both are the message, and a
-// total that ignored those messages would drift further than one that counts
-// them at their stored length.
-func usageDelta(m *mailbox.MessageMeta) uint32 {
-	if m.VSize > 0 {
-		return m.VSize
-	}
-	return m.Size
-}
-
 // emitMailboxChangeSized is emitMailboxChange for a caller that knows how large
 // the message was, so the usage moves by it instead of a recount (#1548).
 func (s *session) emitMailboxChangeSized(f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32, guid [16]byte) {
@@ -1467,17 +1453,12 @@ func (s *session) renameInbox(dest string) error {
 	if err != nil {
 		return err
 	}
-	// The source's records go in one commit; a record whose body has moved
-	// leaves whatever another session did to it in between.
+	// The source's records go in one commit, the one they were read in (#1805).
 	tx, err := s.mbox.Begin(srcFolder.ID)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if _, cerr := tx.Commit(); cerr != nil {
-			slog.Warn("imap: rename INBOX left records behind", "user", s.username(), "err", cerr)
-		}
-	}()
+	defer tx.Rollback()
 	msgs, err := tx.Messages(mailbox.SeqSet{})
 	if err != nil {
 		return err
@@ -1488,31 +1469,15 @@ func (s *session) renameInbox(dest string) error {
 	if err != nil {
 		return err
 	}
-	for _, m := range msgs {
-		// Relocation, not a new message: the GUID carries over (RFC 8474).
-		srcName, pathErr := s.mbox.MessagePath("INBOX", m)
-		if pathErr != nil {
-			return fmt.Errorf("imap/rename-inbox path: %w", pathErr)
-		}
-		newFilename, guid, moveErr := s.box.Move("INBOX", dest, srcName, m.GUID)
-		if moveErr != nil {
-			return fmt.Errorf("imap/rename-inbox move: %w", moveErr)
-		}
-		nm := &mailbox.MessageMeta{
-			Flags:        m.Flags,
-			Keywords:     m.Keywords,
-			Size:         m.Size,
-			VSize:        m.VSize,
-			InternalDate: m.InternalDate,
-			GUID:         guid,
-		}
-		if err := s.mbox.RecordSaved(destFolder, dest, newFilename, nm); err != nil {
-			_ = s.mbox.Restore("INBOX", srcName, dest, newFilename, nm)
-			return fmt.Errorf("imap/rename-inbox record: %w", err)
-		}
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
-		tx.Expunge(m.UID)
-		s.emitMailboxChangeSized(srcFolder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
+	req := mailops.MoveRequest{
+		Src: s.mbox, Dst: s.mbox, SrcFolder: srcFolder, DstFolder: destFolder,
+		SrcName: "INBOX", DstName: dest, Msgs: msgs,
+	}
+	moved, err := s.ops.MoveIn(req)
+	// What landed leaves INBOX even when a later message failed.
+	s.ops.ExpungeMoved(req, tx, moved)
+	if err != nil {
+		return fmt.Errorf("imap/rename-inbox: %w", err)
 	}
 	return nil
 }
@@ -3702,18 +3667,20 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	}
 	var copied []copiedMsg
 	var selected []*mailbox.MessageMeta
-	var batchBytes int64
+	var batchBytes, largest int64
 	for _, m := range msgs {
 		seqNum, ok := copyUIDToClientSeq[m.UID]
 		if !ok || !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
 			continue
 		}
 		selected = append(selected, m)
-		batchBytes += int64(mailops.UsageDelta(m))
+		size := int64(mailops.UsageDelta(m))
+		batchBytes += size
+		largest = max(largest, size)
 	}
 	// One count for the batch, as the reference takes its limits once per copy.
 	var refused *mailops.RefusedError
-	if errors.As(s.ops.Quota.CheckBatch(dest, batchBytes, int64(len(selected))), &refused) {
+	if errors.As(s.ops.Quota.CheckBatch(dest, batchBytes, int64(len(selected)), largest), &refused) {
 		return nil, s.quotaRefusal(refused)
 	}
 	for _, m := range selected {
