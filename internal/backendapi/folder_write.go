@@ -100,7 +100,7 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder already exists", http.StatusConflict)
 		return
 	}
-	if err := mailboxcreate.Folder(bundle.box, bundle.mbox, req.Folder, 0); err != nil {
+	if err := mailboxcreate.Folder(bundle.mbox, req.Folder, 0); err != nil {
 		apiError(w, "create: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

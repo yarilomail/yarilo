@@ -17,7 +17,7 @@ const RenameSeparator = "\x00"
 // CreateFolder makes rel in box within quota_mailbox_count, as every creation
 // is in the reference, and announces it as name, the caller's full name.
 func (o *Ops) CreateFolder(box mailbox.Box, rel, name string) error {
-	if err := mailboxcreate.Folder(box.Store(), box, rel, o.cfg.Quota.Policy.MailboxCount); err != nil {
+	if err := mailboxcreate.Folder(box, rel, o.cfg.Quota.Policy.MailboxCount); err != nil {
 		return err
 	}
 	o.EmitList(locks.EventMailboxCreate, name)
