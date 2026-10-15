@@ -343,6 +343,7 @@ func register() []check {
 	want("jmap", jmap, "jmap Mailbox/get (roles, ids, parent tree)", "needs -jmap", checkJMAPMailboxes)
 	want("jmap", jmap, "jmap Mailbox/query + back-referenced get", "needs -jmap", checkJMAPMailboxQuery)
 	want("jmap", jmap, "jmap Email/query -> Email/get -> download", "needs -jmap", checkJMAPEmailDiscovery)
+	want("jmap", jmap, "jmap round trip through a client library (upload, import, read, move, destroy)", "needs -jmap", checkJMAPRoundTrip)
 	want("jmap", jmap, "jmap download refuses another account's blob", "needs -jmap", checkJMAPDownloadIsolation)
 	want("jmap", jmap && *flagJMAPUser != "" && *flagFTSUser != "",
 		"jmap Email/query over full-text search",

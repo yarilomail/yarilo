@@ -39,7 +39,7 @@ issue it verifies.
 
 | Criterion | How |
 |:---|:---|
-| smoketest 46/46 on mdbox, maildir, sdbox | `hack/smoketest/run.sh` per type |
+| smoketest all checks (`SMOKE_CHECKS`) on mdbox, maildir, sdbox | `hack/smoketest/run.sh` per type |
 | disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
 | an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted right before and after an IMAP SELECT |
