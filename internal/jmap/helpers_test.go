@@ -117,3 +117,20 @@ func postAPIRaw(t *testing.T, s *Server, body string) *httptest.ResponseRecorder
 	s.Handler().ServeHTTP(w, apiRequest(body))
 	return w
 }
+
+// writeFlagBatch is another session's flag write, outside the layer.
+func writeFlagBatch(box mailbox.Box, folderID uint64, batch map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
+	tx, err := box.Begin(folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	for uid, upd := range batch {
+		tx.UpdateFlags(uid, upd)
+	}
+	out, cerr := tx.Commit()
+	if cerr != nil {
+		return nil, cerr
+	}
+	return out.Flags, nil
+}

@@ -3,7 +3,6 @@ package pop3
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"encoding/base64"
@@ -27,6 +26,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -1211,16 +1211,8 @@ func (s *session) expungeDeleted() int {
 			marked = append(marked, m)
 		}
 	}
-	removed, failed, _ := s.box.ExpungeMarked(s.folder, "INBOX", marked)
-	if s.srv.opts.Locker != nil && s.userInfo != nil {
-		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for _, m := range removed {
-			// Best-effort: an IDLE session on a sibling pod wakes on this.
-			_ = s.srv.opts.Locker.Emit(ctx, key, locks.EventExpunged, strconv.FormatUint(uint64(m.UID), 10))
-		}
-	}
+	ops := mailops.New(mailops.Config{Protocol: "pop3", Locker: s.srv.opts.Locker}, s.box, s.userInfo)
+	_, failed, _ := ops.ExpungeMarked(s.box, s.folder, "INBOX", marked)
 	return failed
 }
 

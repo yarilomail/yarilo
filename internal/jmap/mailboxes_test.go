@@ -353,6 +353,8 @@ type testLocker struct {
 	taken int
 	// owners is every name the caller announced itself under.
 	owners map[string]struct{}
+	// events is every published event, as resource and type.
+	events []string
 }
 
 func (l *testLocker) acquisitions() int {
@@ -395,7 +397,12 @@ func (l *testLocker) Subscribe(context.Context, string) (<-chan locks.Event, err
 	return make(chan locks.Event), nil
 }
 
-func (l *testLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
+func (l *testLocker) Emit(_ context.Context, resource string, t locks.EventType, _ string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, resource+" "+string(t))
+	return nil
+}
 func (l *testLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

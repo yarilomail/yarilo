@@ -1,4 +1,4 @@
-package imap
+package mailops
 
 import (
 	"testing"
@@ -42,7 +42,7 @@ func TestMoveKeepsAChangedCopyAndDropsAChangedMove(t *testing.T) {
 			if err := mine.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 10}); err != nil {
 				t.Fatal(err)
 			}
-			s := &session{userInfo: info(), folder: f}
+			o := New(Config{Protocol: "test"}, box, info())
 			tx, err := box.Begin(f.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -56,7 +56,8 @@ func TestMoveKeepsAChangedCopyAndDropsAChangedMove(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			kept := s.expungeSource(box, tx, []uint32{1}, map[uint32]bool{1: tc.moved})
+			req := MoveRequest{Src: box, SrcFolder: f, SrcName: "INBOX"}
+			kept := o.expungeSource(req, tx, []Moved{{Src: &mailbox.MessageMeta{UID: 1}, relocated: tc.moved}})
 			if kept[1] != tc.wantKept {
 				t.Errorf("kept %v, want %v", kept[1], tc.wantKept)
 			}

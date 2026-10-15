@@ -323,14 +323,13 @@ func (s *session) expungeCopies(doomed []*mailbox.MessageMeta) ([]*mailbox.Messa
 			}
 			reals = append(reals, recs...)
 		}
-		removed, _, herr := h.mailbox().ExpungeMarked(b.folder, b.name, reals)
+		removed, _, herr := s.ops.ExpungeMarked(h.mailbox(), b.folder, b.name, reals)
 		if herr != nil {
 			return nil, herr
 		}
 		out := make(map[uint32]bool, len(removed))
 		for _, r := range removed {
 			out[r.UID] = true
-			s.emitMailboxChangeSized(b.folder, locks.EventExpunged, r.UID, usageDelta(r), r.GUID)
 		}
 		for _, vm := range vms {
 			if out[vm.VirtualRealUID] {

@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,11 +20,11 @@ import (
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/fts"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -234,18 +233,39 @@ type session struct {
 	lockID string
 }
 
-// folderMessageCount returns folder's current message count from the index
-// (the authoritative count backend). ok is false when the folder is unavailable.
-func folderMessageCount(box mailbox.Box, vs quota.FolderVSizer, folder string) (int64, bool) {
-	f, err := box.Folder(folder, 0)
-	if err != nil {
-		return 0, false
+// mailopsConfig is this server's wiring of the mutation layer.
+func (s *session) mailopsConfig() mailops.Config {
+	o := s.opts
+	return mailops.Config{
+		Protocol:     "lmtp",
+		Locker:       o.Locker,
+		FTS:          o.FTSClient,
+		FTSAutoindex: o.FTSAutoindex,
+		FTSMaxRecent: o.FTSMaxRecent,
+		Quota: mailops.QuotaConfig{
+			Engine:   o.QuotaEngine,
+			Policy:   o.QuotaPolicy,
+			MailSize: o.QuotaMailSize,
+			Warner:   o.QuotaWarner,
+			Clone:    o.QuotaClone,
+		},
 	}
-	_, msgs, err := vs.FolderVSize(f.ID)
-	if err != nil {
-		return 0, false
+}
+
+// quotaCheck answers a delivery the quota refuses; the size refusal is
+// permanent and keeps its own text.
+func (s *session) quotaCheck(ops *mailops.Ops, folder string, size int64) *goSmtp.SMTPError {
+	var refused *mailops.RefusedError
+	if !errors.As(ops.Quota.CheckSave(folder, size), &refused) {
+		return nil
 	}
-	return int64(msgs), true
+	switch refused.Reason {
+	case mailops.RefusedMailSize:
+		return &goSmtp.SMTPError{Code: 552, EnhancedCode: goSmtp.EnhancedCode{5, 2, 3}, Message: refused.Error()}
+	case mailops.RefusedMessageCount:
+		return s.quotaFullErrorText(refused.Error())
+	}
+	return s.quotaFullError()
 }
 
 // quotaExceededMessage is the 452 text for an over-quota delivery.
@@ -638,65 +658,13 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.personalAuto(userInfo)))
 		rcptBox.Init() //nolint:errcheck // idempotent; provisioned in rcptLocal
 
-		// Quota enforcement from the index (authoritative): reject when this
-		// message would push the recipient over their limit. Sums the per-folder
-		// hdr-vsize aggregate — no dict, no drift.
-		if s.opts.QuotaEngine {
-			// Per-message size cap applies even without a per-user quota_rule and
-			// carries a distinct text so a client can tell "too large" from "full".
-			if ms := s.opts.QuotaMailSize; ms > 0 && int64(len(msg)) > ms {
-				slog.Warn("lmtp: delivery rejected: message exceeds max mail size", "rcpt", rcpt, "user", username, "size", len(msg), "max", ms)
-				rcptBox.Close() //nolint:errcheck
-				rcptIdx.Close() //nolint:errcheck
-				setStatus(status, rcpt, deliveryStart, &goSmtp.SMTPError{
-					Code: 552, EnhancedCode: goSmtp.EnhancedCode{5, 2, 3},
-					Message: fmt.Sprintf("Requested allocation size %d exceeds max mail size %d", len(msg), ms),
-				})
-				continue
-			}
-			// Per-mailbox message-count cap is structural (independent of a
-			// quota_rule): reject when the target folder already holds the limit.
-			if mmc := s.opts.QuotaPolicy.MailboxMessageCount; mmc > 0 {
-				if cur, ok := folderMessageCount(rcptMbox, rcptIdx, folder); ok && cur >= mmc {
-					slog.Warn("lmtp: delivery rejected: too many messages in mailbox", "rcpt", rcpt, "user", username, "folder", folder)
-					rcptBox.Close() //nolint:errcheck
-					rcptIdx.Close() //nolint:errcheck
-					setStatus(status, rcpt, deliveryStart, s.quotaFullErrorText("Too many messages in the mailbox"))
-					continue
-				}
-			}
-			if lim := quota.ParseRules(userInfo.QuotaRules); len(userInfo.QuotaRules) > 0 {
-				effLim, ignore := lim.EffectiveLimits(folder)
-				effLim = s.opts.QuotaPolicy.Scale(effLim)
-				if !ignore && !effLim.Unlimited() {
-					entries, _ := rcptBox.ListFolders()
-					// A folder no session has opened still sums its records, and
-					// a record that carries no size sums as nothing (#1728).
-					fillSizes(mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly()), mailbox.SelectableNames(entries))
-					u := quota.CountUsage(rcptMbox, mailbox.SelectableNames(entries), lim)
-					// Inbound delivery is grace-eligible (LMTP/LDA overshoot).
-					if quota.IsOverWithGrace(u, effLim, int64(len(msg)), 1, s.opts.QuotaPolicy.StorageGrace) {
-						slog.Warn("lmtp: delivery rejected: mailbox full", "rcpt", rcpt, "user", username)
-						rcptBox.Close() //nolint:errcheck
-						rcptIdx.Close() //nolint:errcheck
-						setStatus(status, rcpt, deliveryStart, s.quotaFullError())
-						continue
-					}
-					// Delivery accepted — fire any quota_warning crossed by this
-					// increment (inbound delivery is an "over" transition).
-					// Warnings track the user-wide limit, not the per-folder one.
-					if len(s.opts.QuotaPolicy.Warnings) > 0 || s.opts.QuotaClone != nil {
-						after := quota.Usage{StorageBytes: u.StorageBytes + int64(len(msg)), Messages: u.Messages + 1}
-						if len(s.opts.QuotaPolicy.Warnings) > 0 {
-							s.opts.QuotaWarner.Fire(username, userInfo.Home, s.opts.QuotaPolicy.Warnings, s.opts.QuotaPolicy.Scale(lim), u, after)
-						}
-						// Recorded, not written here: a delivery is where usage
-						// changes most, and it must not wait for two dict round
-						// trips (#1875). The mirror writes on its own timer.
-						s.opts.QuotaClone.Mirror(username, after)
-					}
-				}
-			}
+		ops := mailops.NewDelivery(s.mailopsConfig(), rcptMbox, userInfo)
+		if err := s.quotaCheck(ops, folder, int64(len(msg))); err != nil {
+			slog.Warn("lmtp: delivery rejected by quota", "rcpt", rcpt, "user", username, "folder", folder, "err", err.Message)
+			rcptBox.Close() //nolint:errcheck
+			rcptIdx.Close() //nolint:errcheck
+			setStatus(status, rcpt, deliveryStart, err)
+			continue
 		}
 
 		deliveries := []sieve.Delivery{{Folder: folder}}
@@ -779,14 +747,13 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 					}
 				}
 			}
-			uid, folder, guid, err := deliverOne(tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), s.opts.Locker, username, s.from, d.Flags)
+			_, _, guid, err := deliverOne(ops, tMbox, rel, bytes.NewReader(deliverMsg), int64(len(deliverMsg)), username, s.from, d.Flags)
 			closeTarget()
 			if err != nil {
 				deliverErr = err
 				break
 			}
 			s.recordThread(userInfo, username, guid, deliverMsg)
-			s.ftsAutoindex(username, folder, uid)
 		}
 		rcptBox.Close() //nolint:errcheck
 		rcptIdx.Close() //nolint:errcheck
@@ -857,38 +824,6 @@ const (
 	threadLockRenew   = 5 * time.Second
 )
 
-// ftsAutoindex is the delivery-time FTS hook: fire-and-forget.
-func (s *session) ftsAutoindex(username string, folder mailbox.Folder, uid uint32) {
-	if s.opts.FTSClient == nil || !s.opts.FTSAutoindex || uid == 0 {
-		return
-	}
-	// The GUID is the folder's identity for the index and what its path is
-	// keyed by (#1183). Without one there is nothing to index into, so the
-	// delivery says so once rather than letting the service refuse every
-	// message for a reason nobody reads.
-	if folder.GUID == ([16]byte{}) {
-		slog.Warn("lmtp: folder has no GUID, delivered mail will not be searchable",
-			"user", username, "folder", folder.Name, "uid", uid)
-		return
-	}
-	guid := hex.EncodeToString(folder.GUID[:])
-	client, maxRecent := s.opts.FTSClient, s.opts.FTSMaxRecent
-	ref := fts.MailboxRef{Name: folder.Name, GUID: guid, UIDValidity: folder.UIDValidity}
-	go func() {
-		if err := client.Index(username, ref, uid, maxRecent); err != nil {
-			// Delivered mail that never reaches the index is not visible to
-			// search and nothing else reports it: a Debug line here is how a
-			// silent gap survives a green gate (#1206).
-			slog.Warn("lmtp: fts autoindex failed, message will not be searchable",
-				"user", username, "folder", ref.Name, "uid", uid, "err", err)
-			return
-		}
-		// Breadcrumb (#625): the delivery→index handoff fired, so an indexing gap
-		// (delivered but never queued to FTS) is visible from the lmtp log.
-		slog.Debug("lmtp: fts autoindex queued", "user", username, "folder", ref.Name, "uid", uid, "max_recent", maxRecent)
-	}()
-}
-
 func sieveRejectCode(r *sieve.RejectErr) (int, goSmtp.EnhancedCode) {
 	return 550, goSmtp.EnhancedCode{5, 7, 1}
 }
@@ -903,20 +838,6 @@ func (s *session) Reset() {
 func (s *session) Logout() error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "QUIT")
 	return nil
-}
-
-// fillSizes gives the records that carry no size the one their storage holds,
-// so a delivery judges the limit on the mail and not on a folder of zeros.
-func fillSizes(box mailbox.Box, folders []string) {
-	for _, name := range folders {
-		f, err := box.Folder(name, 0)
-		if err != nil {
-			continue
-		}
-		if _, ferr := box.FillSizeless(f); ferr != nil {
-			slog.Warn("lmtp: sizes not filled", "folder", name, "err", ferr)
-		}
-	}
 }
 
 // deliveryError answers a failed delivery. A full volume holds the message at

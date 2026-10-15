@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
@@ -58,6 +59,8 @@ type userHandle struct {
 	subs       *subs.Store
 	specialUse *specialuse.Store
 
+	// ops runs this request's mutations and what follows them (#2207).
+	ops *mailops.Ops
 	// quotaUsage is the last count and when it was taken: four methods answer
 	// from one count, and a request asking several of them counted the whole
 	// account once per method (#1875).
@@ -111,6 +114,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	h.threads = s.Threads
 	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)
 	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info), mailboxbase.WithAuto(s.boxAuto(h)))
+	h.ops = mailops.New(mailops.Config{Protocol: "jmap", Locker: s.Locker}, h.mbox, info)
 	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)
 	return h, nil
 }

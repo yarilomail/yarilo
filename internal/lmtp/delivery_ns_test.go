@@ -63,7 +63,8 @@ func TestDeliveryTargetRoutesNamespaces(t *testing.T) {
 	if err := box2.Create(rel2); err != nil {
 		t.Fatalf("create News: %v", err)
 	}
-	if _, _, _, err := deliverOne(mbox2, rel2, bytes.NewReader([]byte("From: x@y\r\n\r\nhi\r\n")), 18, nil, "alice@x", "x@y", nil); err != nil {
+	raw := "From: x@y\r\n\r\nhi\r\n"
+	if _, _, _, err := deliverTest(mbox2, rel2, bytes.NewReader([]byte(raw)), int64(len(raw)), "alice@x", "x@y", nil); err != nil {
 		t.Fatalf("deliverOne: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(publicDir, ".News", "new")); err != nil {

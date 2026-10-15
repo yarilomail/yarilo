@@ -73,8 +73,8 @@ func TestARefusedRecordLeavesNoBody(t *testing.T) {
 				if afterName {
 					idx = namedThenRefused{refusingIndex{ui}, &named}
 				}
-				_, _, _, err := deliverOne(mailboxbase.Open(store, idx), "INBOX",
-					bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
+				_, _, _, err := deliverTest(mailboxbase.Open(store, idx), "INBOX",
+					bytes.NewReader([]byte(raw)), int64(len(raw)), info.Username, "x@y", nil)
 				if !errors.Is(err, errRefused) {
 					t.Fatalf("deliver = %v, want the refusal", err)
 				}

@@ -33,6 +33,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
@@ -571,10 +572,9 @@ type session struct {
 	// as "* STATUS" responses drained by Poll and Idle.
 	notifyWatch *notifyWatcher
 
-	// quotaCache is a short-lived cache of the index-derived user quota usage,
-	// so a burst of GETQUOTA / APPEND checks does not re-enumerate every folder.
-	quotaCacheUsage quota.Usage
-	quotaCacheAt    time.Time
+	// ops runs this user's mutations and the quota, index and events after
+	// them (#2207); set at login.
+	ops *mailops.Ops
 
 	// What the tail of a STORE cost, filled by writeFlagsBatch and read by the
 	// timing line Store defers. Split because the two halves have different
@@ -582,15 +582,6 @@ type session struct {
 	storeRenameMS int64
 	storeNameMS   int64
 	storeRenamed  int
-	// quotaSnap is the usage captured before the last quota-changing operation,
-	// used as the "before" side of quota_warning crossing detection.
-	quotaSnap    quota.Usage
-	quotaSnapSet bool
-	// quota_clone debounce state: mirror at most once per flush delay, deferring
-	// the latest usage to a final flush on session close.
-	// quota_over_status state: run the external over-flag sync once per session.
-	overStatusChecked bool
-	overStatusLoginAt time.Time
 
 	// namespaces holds the per-namespace storage handles keyed by prefix;
 	// the personal namespace has key "". Declared-only namespaces are
@@ -639,49 +630,6 @@ func (s *session) folderMailbox() mailbox.Box {
 		return s.folderNS.mbox
 	}
 	return s.mbox
-}
-
-// expungeSource commits MOVE's source expunges and answers what stays. A record
-// another session changed stays, unless its body already moved: then it goes.
-func (s *session) expungeSource(box mailbox.Box, tx mailbox.BoxTx, uids []uint32, moved map[uint32]bool) map[uint32]bool {
-	for _, uid := range uids {
-		tx.Expunge(uid)
-	}
-	kept := make(map[uint32]bool)
-	res, err := tx.Commit()
-	if err != nil {
-		slog.Warn("imap: MOVE did not expunge the source", "user", s.username(), "folder", s.folder.Name, "err", err)
-		for _, uid := range uids {
-			kept[uid] = true
-		}
-		return kept
-	}
-	var gone []uint32
-	for _, uid := range res.Skipped {
-		if moved[uid] {
-			gone = append(gone, uid)
-			continue
-		}
-		kept[uid] = true
-		slog.Warn("imap: MOVE left a message another session changed", "user", s.username(), "folder", s.folder.Name, "uid", uid)
-	}
-	if len(gone) == 0 {
-		return kept
-	}
-	again, err := box.Begin(s.folder.ID)
-	if err == nil {
-		for _, uid := range gone {
-			again.Expunge(uid)
-		}
-		_, err = again.Commit()
-	}
-	if err != nil {
-		slog.Warn("imap: MOVE left records whose bodies moved", "user", s.username(), "folder", s.folder.Name, "err", err)
-		for _, uid := range gone {
-			kept[uid] = true
-		}
-	}
-	return kept
 }
 
 var _ imapserver.SessionIMAP4rev2 = (*session)(nil)
@@ -746,81 +694,13 @@ func renamedCount(writes []mailbox.FlagWrite, results []mailbox.FlagWriteResult)
 	return renamed
 }
 
-// usageDelta is the size to move the running total by for one message.
-//
-// VSize is the CRLF-counted size and is what quota is charged in, but records
-// written before Save returned it carry zero. Falling back to the physical size
-// is what the fetch path does for the same reason; both are the message, and a
-// total that ignored those messages would drift further than one that counts
-// them at their stored length.
-func usageDelta(m *mailbox.MessageMeta) uint32 {
-	if m.VSize > 0 {
-		return m.VSize
-	}
-	return m.Size
-}
-
 // emitMailboxChangeSized is emitMailboxChange for a caller that knows how large
-// the message was, which lets the post-commit usage be the cached total plus
-// this change instead of a fresh sweep of every folder (#1548). vsize 0 means
-// "not known here", and those callers pay for the sweep as before.
+// the message was, so the usage moves by it instead of a recount (#1548).
 func (s *session) emitMailboxChangeSized(f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32, guid [16]byte) {
-	folder := f.Name
-	// delivered/expunged changes storage usage; runs before the Locker
-	// guard since it is independent of the event bus.
-	if eventType == locks.EventDelivered || eventType == locks.EventExpunged {
-		s.ftsNotify(f, eventType == locks.EventExpunged, uid, guid)
-
-		// The delta is applied before the cache is invalidated, and the
-		// invalidation is skipped when it lands. quotaChanged exists because
-		// the total moved; when the session can say by how much, there is
-		// nothing stale to throw away -- and throwing it away first is what
-		// forced the account-wide sweep on every change (#1548).
-		after, have := quota.Usage{}, false
-		if vsize > 0 {
-			d, n := int64(vsize), int64(1)
-			if eventType == locks.EventExpunged {
-				d, n = -d, -n
-			}
-			after, have = s.usageAfterDelta(d, n)
-		}
-		if !have {
-			s.quotaChanged()
-		}
-
-		// one post-commit read feeds both quota_warning crossing detection
-		// and the quota_clone mirror.
-		wantWarn := len(s.srv.opts.QuotaPolicy.Warnings) > 0 && s.quotaSnapSet
-		wantClone := s.srv.opts.QuotaClone != nil
-		if wantWarn || wantClone {
-			if !have {
-				// The delta above failed only because the size was unknown,
-				// and the pre-save count left a fresh value (#1634).
-				var err error
-				if after, err = s.countUsageFor("post-write", true); err == nil {
-					have = true
-				}
-			}
-			if have {
-				if wantWarn {
-					s.fireQuotaWarnings(after)
-				}
-				if wantClone {
-					s.cloneMirror(after)
-				}
-			}
-		}
-	}
-	if s.srv.opts.Locker == nil || s.userInfo == nil {
+	if s.ops == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	payload := strconv.FormatUint(uint64(uid), 10)
-	if err := s.srv.opts.Locker.Emit(ctx, locks.MailboxKey(s.userInfo.Username, folder), eventType, payload); err != nil {
-		slog.Debug("imap: emit event failed",
-			"folder", folder, "type", string(eventType), "err", err)
-	}
+	s.ops.Committed(f, eventType, uid, vsize, guid)
 }
 
 // emitMailboxList publishes a mailbox-list event (create / delete / rename /
@@ -1201,14 +1081,8 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	s.mbox = primary.mailbox()
 	s.subs = primary.subs
 
-	// quota_over_status: reconcile the external over-flag against actual
-	// usage at login (unless lazy).
-	s.overStatusLoginAt = time.Now()
-	if os := s.srv.opts.QuotaPolicy.OverStatus; os.Mask != "" && !os.LazyCheck {
-		if u, uerr := s.countUsageFor("login-over-status", false); uerr == nil {
-			s.evalOverStatus(u)
-		}
-	}
+	s.ops = mailops.New(s.mailopsConfig(), s.mbox, userInfo)
+	s.ops.Quota.LoginOverStatus()
 
 	owner := locks.Owner(userInfo.Username, userInfo.LockID())
 	s.specialUse = specialuse.New(
@@ -1288,7 +1162,9 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	s.backingOf = nil // another selection, another set of backing folders
 	// seed a usage baseline so a quota_warning "under" crossing fires even
 	// when the session only deletes mail.
-	s.seedQuotaWarnSnap()
+	if s.ops != nil {
+		s.ops.Quota.SeedSnap()
+	}
 	tWarden := time.Now()
 	s.pushWardenSelect(name)
 	slog.Debug("imap: select timing warden_ms", "folder", rel, "warden_ms", time.Since(tWarden).Milliseconds())
@@ -1577,17 +1453,12 @@ func (s *session) renameInbox(dest string) error {
 	if err != nil {
 		return err
 	}
-	// The source's records go in one commit; a record whose body has moved
-	// leaves whatever another session did to it in between.
+	// The source's records go in one commit, the one they were read in (#1805).
 	tx, err := s.mbox.Begin(srcFolder.ID)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if _, cerr := tx.Commit(); cerr != nil {
-			slog.Warn("imap: rename INBOX left records behind", "user", s.username(), "err", cerr)
-		}
-	}()
+	defer tx.Rollback()
 	msgs, err := tx.Messages(mailbox.SeqSet{})
 	if err != nil {
 		return err
@@ -1598,31 +1469,15 @@ func (s *session) renameInbox(dest string) error {
 	if err != nil {
 		return err
 	}
-	for _, m := range msgs {
-		// Relocation, not a new message: the GUID carries over (RFC 8474).
-		srcName, pathErr := s.mbox.MessagePath("INBOX", m)
-		if pathErr != nil {
-			return fmt.Errorf("imap/rename-inbox path: %w", pathErr)
-		}
-		newFilename, guid, moveErr := s.box.Move("INBOX", dest, srcName, m.GUID)
-		if moveErr != nil {
-			return fmt.Errorf("imap/rename-inbox move: %w", moveErr)
-		}
-		nm := &mailbox.MessageMeta{
-			Flags:        m.Flags,
-			Keywords:     m.Keywords,
-			Size:         m.Size,
-			VSize:        m.VSize,
-			InternalDate: m.InternalDate,
-			GUID:         guid,
-		}
-		if err := s.mbox.RecordSaved(destFolder, dest, newFilename, nm); err != nil {
-			_ = s.mbox.Restore("INBOX", srcName, dest, newFilename, nm)
-			return fmt.Errorf("imap/rename-inbox record: %w", err)
-		}
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
-		tx.Expunge(m.UID)
-		s.emitMailboxChangeSized(srcFolder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
+	req := mailops.MoveRequest{
+		Src: s.mbox, Dst: s.mbox, SrcFolder: srcFolder, DstFolder: destFolder,
+		SrcName: "INBOX", DstName: dest, Msgs: msgs,
+	}
+	moved, err := s.ops.MoveIn(req)
+	// What landed leaves INBOX even when a later message failed.
+	s.ops.ExpungeMoved(req, tx, moved)
+	if err != nil {
+		return fmt.Errorf("imap/rename-inbox: %w", err)
 	}
 	return nil
 }
@@ -2259,19 +2114,6 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	return d, nil
 }
 
-// countingReader tallies the octets read through it, so APPEND can compare what
-// the literal delivered against the declared size.
-type countingReader struct {
-	r io.Reader
-	n int64
-}
-
-func (c *countingReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
-}
-
 func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.AppendOptions) (*imaplib.AppendData, error) {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Append")
 	tAppend := time.Now()
@@ -2310,71 +2152,20 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 	}
 
 	size := r.Size()
-
-	// Enforce quota before allocating UID so the slot isn't wasted.
-	if err := s.quotaCheckAppend(context.Background(), name, size); err != nil {
-		return nil, err
-	}
-
-	tSave := time.Now()
-	// Count the octets the literal actually delivers. box.Save copies to EOF and
-	// does not check the count against size, so an under-delivered literal (a
-	// mid-body EOF) would be stored truncated and, being errorless, answered OK
-	// (#1129). This is the invariant #1137's "stored -> OK" rests on, made
-	// explicit: OK only for a fully delivered literal.
-	counted := &countingReader{r: r}
 	internalDate := time.Now()
 	if opts != nil && !opts.Time.IsZero() {
 		internalDate = opts.Time
 	}
-	filename, vsize, guid, err := h.box.SaveReceived(rel, counted, 0, size, flagList, kwList, [16]byte{}, internalDate)
+	saved, err := s.ops.Save(h.mailbox(), rel, f, mailops.SaveRequest{
+		Body: r, Size: size, Flags: flagList, Keywords: kwList,
+		Received: internalDate, QuotaFolder: name,
+	})
 	if err != nil {
-		return nil, err
+		return nil, s.appendError(err)
 	}
-	if counted.n != size {
-		// A short literal is not the malformed-tail case (#1137, a complete
-		// literal with garbage after it) -- it is an incomplete message. Remove
-		// it rather than keep mangled mail, and refuse.
-		if rmErr := h.mailbox().Discard(rel, filename, nil); rmErr != nil {
-			// The truncated file survived: it is exactly the orphan
-			// ReconcileIndex would import with a fresh UID -- the #1129 outcome,
-			// inside the branch that exists to prevent it. BAD would claim nothing
-			// ran while something is on disk, so answer NO [SERVERBUG] instead and
-			// log the orphan for cleanup.
-			slog.Error("imap: APPEND under-delivered literal; cleanup failed, truncated file orphaned",
-				"user", s.userInfo.Username, "folder", rel, "file", filename, "err", rmErr)
-			return nil, &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo,
-				Code: imaplib.ResponseCodeServerBug,
-				Text: "APPEND literal under-delivered and cleanup failed; message may be partially stored",
-			}
-		}
-		return nil, &imaplib.Error{
-			Type: imaplib.StatusResponseTypeBad,
-			Code: imaplib.ResponseCodeClientBug,
-			Text: fmt.Sprintf("APPEND literal under-delivered: %d of %d octets", counted.n, size),
-		}
-	}
-	tIndex := time.Now()
-	m := &mailbox.MessageMeta{
-		Flags: flagList, Keywords: kwList, Size: uint32(size), VSize: vsize,
-		InternalDate: internalDate, GUID: guid,
-	}
-	if err := h.mailbox().RecordSaved(f, rel, filename, m); err != nil {
-		_ = h.mailbox().Discard(rel, filename, m)
-		return nil, fmt.Errorf("imap/append record: %w", err)
-	}
-	// The driver settled the name inside that cycle; ask it, do not carry one.
-	if named, nerr := h.mailbox().MessagePath(rel, m); nerr == nil {
-		filename = named
-	}
-	tDone := time.Now()
-	slog.Debug("imap: append timing",
-		"user", s.userInfo.Username, "folder", rel, "size", size,
-		"save_ms", tIndex.Sub(tSave).Milliseconds(),
-		"index_ms", tDone.Sub(tIndex).Milliseconds(),
-		"total_ms", tDone.Sub(tAppend).Milliseconds(),
-	)
+	m, filename := saved.Meta, saved.Filename
+	slog.Debug("imap: append timing", "user", s.userInfo.Username, "folder", rel, "size", size,
+		"total_ms", time.Since(tAppend).Milliseconds())
 	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		if rc, ferr := h.box.Fetch(rel, filename, false); ferr == nil {
 			raw, _ := io.ReadAll(rc)
@@ -2390,13 +2181,36 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 			)
 		}
 	}
-	s.emitMailboxChangeSized(f, locks.EventDelivered, m.UID, usageDelta(m), m.GUID)
-
 	// imapsieve (RFC 6785): run scripts bound to this mailbox on the APPEND
 	// event; may refile, discard, or reflag the message just stored.
 	s.runImapSieveEvent("APPEND", name, rel, h, f, m.UID, filename, m.AltTier, "", nil)
 
 	return &imaplib.AppendData{UIDValidity: f.UIDValidity, UID: imaplib.UID(m.UID)}, nil
+}
+
+// appendError answers a refused or failed save. A short literal is the
+// client's fault unless its partial body could not be removed (#1129).
+func (s *session) appendError(err error) error {
+	var refused *mailops.RefusedError
+	if errors.As(err, &refused) {
+		return s.quotaRefusal(refused)
+	}
+	var short *mailops.ShortBodyError
+	if !errors.As(err, &short) {
+		return err
+	}
+	if short.Orphaned {
+		return &imaplib.Error{
+			Type: imaplib.StatusResponseTypeNo,
+			Code: imaplib.ResponseCodeServerBug,
+			Text: "APPEND literal under-delivered and cleanup failed; message may be partially stored",
+		}
+	}
+	return &imaplib.Error{
+		Type: imaplib.StatusResponseTypeBad,
+		Code: imaplib.ResponseCodeClientBug,
+		Text: fmt.Sprintf("APPEND literal under-delivered: %d of %d octets", short.Got, short.Want),
+	}
 }
 
 // Notify configures NOTIFY (RFC 5465) for this session. options == nil is
@@ -2811,11 +2625,6 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	if err != nil {
 		return err
 	}
-	// Capture the pre-expunge usage as the quota_warning "before" baseline right
-	// here — the per-message expunge events below supply "after", so an "under"
-	// crossing fires on a delete-only session regardless of SELECT-time seeding.
-	s.captureQuotaSnap()
-
 	// Highest sequence number first, so removing one does not shift those still
 	// to come; the base owns the order and the shared-body rule (#1794).
 	seqOf := make(map[uint32]uint32, len(msgs))
@@ -2835,6 +2644,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	var removed []*mailbox.MessageMeta
 	var herr error
 	if virtualSel {
+		s.ops.Quota.CaptureSnap()
 		removed, herr = s.expungeCopies(doomed)
 		if herr != nil {
 			return dependencyError(herr)
@@ -2842,17 +2652,11 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 		// EXPUNGE also drops what stopped matching its rule; the poll after
 		// the command reports those (as the reference does).
 		defer s.folderMailbox().Folder(s.folder.Name, s.folder.UIDValidity) //nolint:errcheck // an open pass; the poll after reports a failure
-	} else if removed, _, herr = s.folderMailbox().ExpungeMarked(s.folder, s.folder.Name, doomed); herr != nil {
+	} else if removed, _, herr = s.ops.ExpungeMarked(s.folderMailbox(), s.folder, s.folder.Name, doomed); herr != nil {
 		return herr
 	}
-	// Outside the hold, in the order the hold removed them: the quota count
-	// re-opens the folder, and that asks for the hold again (#1853).
 	var expunge_count int
 	for _, m := range removed {
-		if !virtualSel {
-			// A virtual record holds no bytes: its copy was reported above.
-			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, m.UID, usageDelta(m), m.GUID)
-		}
 		s.statsExpunged++
 		expunge_count++
 		seq := seqOf[m.UID]
@@ -3711,16 +3515,8 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	// Pass 2: single lock/reload/flush for all flag updates.
 	var results map[uint32]mailbox.FlagsResult
 	if len(batchUpdates) > 0 {
-		tx, terr := s.folderMailbox().Begin(s.folder.ID)
-		if terr != nil {
-			return dependencyError(terr)
-		}
-		defer tx.Rollback()
-		for uid, upd := range batchUpdates {
-			tx.UpdateFlags(uid, upd)
-		}
-		out, err := tx.Commit()
-		results = out.Flags
+		var err error
+		results, err = s.ops.UpdateFlags(s.folderMailbox(), s.folder, batchUpdates)
 		if err != nil {
 			// Classified before it leaves: an unwrapped error becomes
 			// NO [SERVERBUG] in the library, which tells the client this
@@ -3735,7 +3531,6 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 				pending[i].newFlags, pending[i].newKW = r.Flags, r.Keywords
 			}
 		}
-		s.emitMailboxChange(s.folder, locks.EventChanged, 0)
 	}
 	// Registered before the storage write below, so LIFO runs it after: the
 	// window has to contain the rename pass, which is where the measured part
@@ -3865,21 +3660,30 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	}
 	numSet = resolveStar(numSet, msgs, copyUIDToClientSeq)
 	var srcUIDs, dstUIDs imaplib.UIDSet
-	var saveTotalMs, indexTotalMs int64
 	var count int
 	type copiedMsg struct {
 		uid      uint32
 		filename string
 	}
 	var copied []copiedMsg
+	var selected []*mailbox.MessageMeta
+	var batchBytes, largest int64
 	for _, m := range msgs {
 		seqNum, ok := copyUIDToClientSeq[m.UID]
-		if !ok {
+		if !ok || !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
 			continue
 		}
-		if !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
-			continue
-		}
+		selected = append(selected, m)
+		size := int64(mailops.UsageDelta(m))
+		batchBytes += size
+		largest = max(largest, size)
+	}
+	// One count for the batch, as the reference takes its limits once per copy.
+	var refused *mailops.RefusedError
+	if errors.As(s.ops.Quota.CheckBatch(dest, batchBytes, int64(len(selected)), largest), &refused) {
+		return nil, s.quotaRefusal(refused)
+	}
+	for _, m := range selected {
 		// The selected-message read: a virtual record reads its copy (as the reference does).
 		rc, fetchErr := s.fetchSelected(m)
 		if fetchErr != nil {
@@ -3890,33 +3694,18 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		if readErr != nil {
 			return nil, fmt.Errorf("imap/copy read: %w", readErr)
 		}
-		tSave := time.Now()
-		// RFC 8474 §5.1: "The server MUST return the same EMAILID as the
-		// source message for the matching destination message" -- for COPY too.
-		newFilename, vsize, guid, saveErr := destH.box.SaveReceived(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID, m.InternalDate)
+		// RFC 8474 §5.1: the copy keeps the source's EMAILID.
+		saved, saveErr := s.ops.Save(destH.mailbox(), destRel, destFolder, mailops.SaveRequest{
+			Body: bytes.NewReader(data), Size: int64(len(data)), Flags: m.Flags, Keywords: m.Keywords,
+			Received: m.InternalDate, GUID: m.GUID, QuotaChecked: true,
+		})
 		if saveErr != nil {
-			return nil, fmt.Errorf("imap/copy save: %w", saveErr)
+			return nil, fmt.Errorf("imap/copy: %w", saveErr)
 		}
-		saveTotalMs += time.Since(tSave).Milliseconds()
-		nm := &mailbox.MessageMeta{
-			Flags:        m.Flags,
-			Keywords:     m.Keywords,
-			Size:         uint32(len(data)),
-			VSize:        vsize,
-			InternalDate: m.InternalDate,
-			GUID:         guid,
-		}
-		tIndex := time.Now()
-		if err := destH.mailbox().RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
-			_ = destH.mailbox().Discard(destRel, newFilename, nm)
-			return nil, fmt.Errorf("imap/copy record: %w", err)
-		}
-		indexTotalMs += time.Since(tIndex).Milliseconds()
 		count++
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
 		srcUIDs.AddNum(imaplib.UID(m.UID))
-		dstUIDs.AddNum(imaplib.UID(nm.UID))
-		copied = append(copied, copiedMsg{uid: nm.UID, filename: newFilename})
+		dstUIDs.AddNum(imaplib.UID(saved.Meta.UID))
+		copied = append(copied, copiedMsg{uid: saved.Meta.UID, filename: saved.Filename})
 	}
 	// imapsieve (RFC 6785): COPY cause fires on the destination mailbox for each
 	// copied message, after the copy is recorded (so COPYUID reflects the initial
@@ -3928,8 +3717,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	}
 	slog.Debug("imap: copy timing",
 		"user", s.userInfo.Username, "src", s.folder.Name, "dst", dest,
-		"count", count, "save_ms", saveTotalMs, "index_ms", indexTotalMs,
-		"total_ms", time.Since(tCopy).Milliseconds())
+		"count", count, "total_ms", time.Since(tCopy).Milliseconds())
 	// COPYUID needs at least one pair; the encoder rejects an empty set and
 	// would truncate the reply mid-line. A zero-match COPY is a plain OK.
 	if count == 0 {
@@ -4219,7 +4007,6 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	}); err != nil {
 		return err
 	}
-	srcBox := s.folderBox()
 	srcMailbox := s.folderMailbox()
 	destH, destRel, destFolder, err := s.ensureFolderHandle(dest)
 	if err != nil {
@@ -4251,90 +4038,30 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		byUID[m.UID] = m
 	}
 
-	type matched struct {
-		seqNum uint32
-		srcUID uint32
-		// srcGUID is the source message's own identity, carried from its
-		// record: the retraction names the message, not the copy (#1986).
-		srcGUID  [16]byte
-		vsize    uint32
-		filename string
-		destUID  uint32
-		destFile string
-		moved    bool // body relocated in place; source file is already gone
-	}
-	var hits []matched
-	var srcUIDs, dstUIDs imaplib.UIDSet
-	var saveTotalMs, indexTotalMs int64
-
+	var selected []*mailbox.MessageMeta
+	seqOf := make(map[uint32]uint32)
 	for _, m := range msgs {
 		seqNum, ok := moveUIDToClientSeq[m.UID]
-		if !ok {
+		if !ok || !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
 			continue
 		}
-		if !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
-			continue
-		}
-		// MOVE keeps one identity across folders (RFC 8474), so the source GUID is
-		// carried into the destination instead of a fresh one being generated.
-		var newFilename, srcName string
-		var guid [16]byte
-		vsize := m.VSize
-		size := m.Size
-		tSave := time.Now()
-		if srcBox == destH.box {
-			var moveErr, pathErr error
-			srcName, pathErr = srcMailbox.MessagePath(s.folder.Name, m)
-			if pathErr != nil {
-				return fmt.Errorf("imap/move path: %w", pathErr)
-			}
-			newFilename, guid, moveErr = srcBox.Move(s.folder.Name, destRel, srcName, m.GUID)
-			if moveErr != nil {
-				return fmt.Errorf("imap/move relocate: %w", moveErr)
-			}
-		} else {
-			// Cross-namespace: no shared storage to relocate within, so copy the
-			// body over and hand the source GUID to Save, which stores it verbatim.
-			rc, fetchErr := s.fetchSelected(m)
-			if fetchErr != nil {
-				return fmt.Errorf("imap/move fetch: %w", fetchErr)
-			}
-			data, readErr := io.ReadAll(rc)
-			rc.Close()
-			if readErr != nil {
-				return fmt.Errorf("imap/move read: %w", readErr)
-			}
-			var saveErr error
-			newFilename, vsize, guid, saveErr = destH.box.SaveReceived(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID, m.InternalDate)
-			if saveErr != nil {
-				return fmt.Errorf("imap/move save: %w", saveErr)
-			}
-			size = uint32(len(data))
-		}
-		saveTotalMs += time.Since(tSave).Milliseconds()
-		nm := &mailbox.MessageMeta{
-			Flags:        m.Flags,
-			Keywords:     m.Keywords,
-			Size:         size,
-			VSize:        vsize,
-			InternalDate: m.InternalDate,
-			GUID:         guid,
-		}
-		tIndex := time.Now()
-		if err := destH.mailbox().RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
-			if srcBox == destH.box {
-				_ = srcMailbox.Restore(s.folder.Name, srcName, destRel, newFilename, nm)
-			} else {
-				_ = destH.mailbox().Discard(destRel, newFilename, nm)
-			}
-			return fmt.Errorf("imap/move record: %w", err)
-		}
-		indexTotalMs += time.Since(tIndex).Milliseconds()
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
-		srcUIDs.AddNum(imaplib.UID(m.UID))
-		dstUIDs.AddNum(imaplib.UID(nm.UID))
-		hits = append(hits, matched{seqNum: seqNum, srcUID: m.UID, srcGUID: m.GUID, vsize: m.VSize,
-			destUID: nm.UID, destFile: newFilename, moved: srcBox == destH.box})
+		selected = append(selected, m)
+		seqOf[m.UID] = seqNum
+	}
+	req := mailops.MoveRequest{
+		Src: srcMailbox, Dst: destH.mailbox(),
+		SrcFolder: s.folder, DstFolder: destFolder,
+		SrcName: s.folder.Name, DstName: destRel,
+		Msgs: selected, Read: s.fetchSelected,
+	}
+	hits, err := s.ops.MoveIn(req)
+	if err != nil {
+		return fmt.Errorf("imap/move: %w", err)
+	}
+	var srcUIDs, dstUIDs imaplib.UIDSet
+	for _, h := range hits {
+		srcUIDs.AddNum(imaplib.UID(h.Src.UID))
+		dstUIDs.AddNum(imaplib.UID(h.Dst.UID))
 	}
 
 	// COPYUID needs at least one pair; the encoder rejects an empty set and
@@ -4352,55 +4079,38 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 
 	// Out of a virtual mailbox the source is the copy, expunged in its own
 	// folder (as the reference does); a record leaves only if its copy did.
-	var left map[uint32]bool
+	gone := map[uint32]bool{}
 	if srcVirtual {
 		var vms []*mailbox.MessageMeta
 		for _, h := range hits {
-			vms = append(vms, byUID[h.srcUID])
+			vms = append(vms, byUID[h.Src.UID])
 		}
-		gone, gerr := s.expungeCopies(vms)
+		left, gerr := s.expungeCopies(vms)
 		if gerr != nil {
 			return dependencyError(gerr)
 		}
-		left = make(map[uint32]bool, len(gone))
-		for _, g := range gone {
-			left[g.UID] = true
+		for _, g := range left {
+			gone[g.UID] = true
 		}
-	}
-
-	// Index first, then storage, as the expunge loop does (#1690).
-	kept := map[uint32]bool{}
-	if !srcVirtual {
-		uids := make([]uint32, 0, len(hits))
-		moved := make(map[uint32]bool, len(hits))
+	} else {
+		kept := s.ops.ExpungeMoved(req, srcTx, hits)
 		for _, h := range hits {
-			uids = append(uids, h.srcUID)
-			moved[h.srcUID] = h.moved
+			gone[h.Src.UID] = !kept[h.Src.UID]
 		}
-		kept = s.expungeSource(srcMailbox, srcTx, uids, moved)
 	}
 	expunged := 0
 	// Expunge source in descending seq order (RFC 6851 §3.3).
 	for i := len(hits) - 1; i >= 0; i-- {
 		h := hits[i]
-		if srcVirtual {
-			if !left[h.srcUID] {
-				continue
-			}
-		} else {
-			if kept[h.srcUID] {
-				continue
-			}
-			if !h.moved {
-				srcBox.Remove(s.folder.Name, h.filename) //nolint:errcheck
-			}
-			s.emitMailboxChangeSized(s.folder, locks.EventExpunged, h.srcUID, h.vsize, h.srcGUID)
+		if !gone[h.Src.UID] {
+			continue
 		}
 		expunged++
-		if err := w.WriteExpunge(h.seqNum); err != nil {
+		seqNum := seqOf[h.Src.UID]
+		if err := w.WriteExpunge(seqNum); err != nil {
 			return err
 		}
-		kIdx := int(h.seqNum) - 1
+		kIdx := int(seqNum) - 1
 		if kIdx >= 0 && kIdx < len(s.knownMsgs) {
 			s.knownMsgs = append(s.knownMsgs[:kIdx], s.knownMsgs[kIdx+1:]...)
 		}
@@ -4411,13 +4121,12 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	if s.srv.opts.SieveEngine != nil {
 		src := s.folder.Name
 		for _, h := range hits {
-			s.runImapSieveEvent("COPY", dest, destRel, destH, destFolder, h.destUID, h.destFile, false, src, nil)
+			s.runImapSieveEvent("COPY", dest, destRel, destH, destFolder, h.Dst.UID, h.DstFile, false, src, nil)
 		}
 	}
 	slog.Debug("imap: move timing",
 		"user", s.userInfo.Username, "src", s.folder.Name, "dst", dest,
-		"count", len(hits), "save_ms", saveTotalMs, "index_ms", indexTotalMs,
-		"total_ms", time.Since(tMove).Milliseconds())
+		"count", len(hits), "total_ms", time.Since(tMove).Milliseconds())
 	return nil
 }
 
