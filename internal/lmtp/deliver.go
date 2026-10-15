@@ -2,17 +2,14 @@ package lmtp
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -24,7 +21,7 @@ var deliverCallSeq atomic.Uint64
 
 // deliverOne saves one message and records it. The folder travels back because
 // the full-text hook needs its GUID; a name alone is refused silently (#1206).
-func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, locker locks.Locker, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
+func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, username, from string, flags []string) (uint32, mailbox.Folder, [16]byte, error) {
 	tDeliver := time.Now()
 	var noGUID [16]byte
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
@@ -71,26 +68,8 @@ func deliverOne(box mailbox.Box, folder string, r io.ReadSeeker, size int64, loc
 		"save_ms", tIndex.Sub(tSave).Milliseconds(),
 		"index_ms", time.Since(tIndex).Milliseconds(),
 		"total_ms", time.Since(tDeliver).Milliseconds())
-	emitMailboxEvent(locker, username, folder, locks.EventDelivered, uid)
 	slog.Info("lmtp: delivered", "from", from, "to", username, "folder", folder, "uid", uid, "file", filename, "size", size)
 	return uid, *f, guid, nil
-}
-
-// emitMailboxEvent is a best-effort fire-and-forget publish. Errors are
-// logged at debug level and never surfaced — events are advisory, the
-// authoritative state lives in the index file. A 1-second timeout avoids
-// blocking a delivery if the locks server is sluggish.
-func emitMailboxEvent(locker locks.Locker, username, folder string, eventType locks.EventType, uid uint32) {
-	if locker == nil || username == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	payload := strconv.FormatUint(uint64(uid), 10)
-	if err := locker.Emit(ctx, locks.MailboxKey(username, folder), eventType, payload); err != nil {
-		slog.Debug("lmtp: emit event failed",
-			"folder", folder, "type", string(eventType), "err", err)
-	}
 }
 
 // stripDetail removes the +detail part from an address: user+tag@domain → user@domain.

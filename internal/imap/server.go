@@ -33,6 +33,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/msgcache"
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
@@ -571,10 +572,9 @@ type session struct {
 	// as "* STATUS" responses drained by Poll and Idle.
 	notifyWatch *notifyWatcher
 
-	// quotaCache is a short-lived cache of the index-derived user quota usage,
-	// so a burst of GETQUOTA / APPEND checks does not re-enumerate every folder.
-	quotaCacheUsage quota.Usage
-	quotaCacheAt    time.Time
+	// ops runs this user's mutations and the quota, index and events after
+	// them (#2207); set at login.
+	ops *mailops.Ops
 
 	// What the tail of a STORE cost, filled by writeFlagsBatch and read by the
 	// timing line Store defers. Split because the two halves have different
@@ -582,15 +582,6 @@ type session struct {
 	storeRenameMS int64
 	storeNameMS   int64
 	storeRenamed  int
-	// quotaSnap is the usage captured before the last quota-changing operation,
-	// used as the "before" side of quota_warning crossing detection.
-	quotaSnap    quota.Usage
-	quotaSnapSet bool
-	// quota_clone debounce state: mirror at most once per flush delay, deferring
-	// the latest usage to a final flush on session close.
-	// quota_over_status state: run the external over-flag sync once per session.
-	overStatusChecked bool
-	overStatusLoginAt time.Time
 
 	// namespaces holds the per-namespace storage handles keyed by prefix;
 	// the personal namespace has key "". Declared-only namespaces are
@@ -761,66 +752,12 @@ func usageDelta(m *mailbox.MessageMeta) uint32 {
 }
 
 // emitMailboxChangeSized is emitMailboxChange for a caller that knows how large
-// the message was, which lets the post-commit usage be the cached total plus
-// this change instead of a fresh sweep of every folder (#1548). vsize 0 means
-// "not known here", and those callers pay for the sweep as before.
+// the message was, so the usage moves by it instead of a recount (#1548).
 func (s *session) emitMailboxChangeSized(f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32, guid [16]byte) {
-	folder := f.Name
-	// delivered/expunged changes storage usage; runs before the Locker
-	// guard since it is independent of the event bus.
-	if eventType == locks.EventDelivered || eventType == locks.EventExpunged {
-		s.ftsNotify(f, eventType == locks.EventExpunged, uid, guid)
-
-		// The delta is applied before the cache is invalidated, and the
-		// invalidation is skipped when it lands. quotaChanged exists because
-		// the total moved; when the session can say by how much, there is
-		// nothing stale to throw away -- and throwing it away first is what
-		// forced the account-wide sweep on every change (#1548).
-		after, have := quota.Usage{}, false
-		if vsize > 0 {
-			d, n := int64(vsize), int64(1)
-			if eventType == locks.EventExpunged {
-				d, n = -d, -n
-			}
-			after, have = s.usageAfterDelta(d, n)
-		}
-		if !have {
-			s.quotaChanged()
-		}
-
-		// one post-commit read feeds both quota_warning crossing detection
-		// and the quota_clone mirror.
-		wantWarn := len(s.srv.opts.QuotaPolicy.Warnings) > 0 && s.quotaSnapSet
-		wantClone := s.srv.opts.QuotaClone != nil
-		if wantWarn || wantClone {
-			if !have {
-				// The delta above failed only because the size was unknown,
-				// and the pre-save count left a fresh value (#1634).
-				var err error
-				if after, err = s.countUsageFor("post-write", true); err == nil {
-					have = true
-				}
-			}
-			if have {
-				if wantWarn {
-					s.fireQuotaWarnings(after)
-				}
-				if wantClone {
-					s.cloneMirror(after)
-				}
-			}
-		}
-	}
-	if s.srv.opts.Locker == nil || s.userInfo == nil {
+	if s.ops == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	payload := strconv.FormatUint(uint64(uid), 10)
-	if err := s.srv.opts.Locker.Emit(ctx, locks.MailboxKey(s.userInfo.Username, folder), eventType, payload); err != nil {
-		slog.Debug("imap: emit event failed",
-			"folder", folder, "type", string(eventType), "err", err)
-	}
+	s.ops.Committed(f, eventType, uid, vsize, guid)
 }
 
 // emitMailboxList publishes a mailbox-list event (create / delete / rename /
@@ -1201,14 +1138,8 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	s.mbox = primary.mailbox()
 	s.subs = primary.subs
 
-	// quota_over_status: reconcile the external over-flag against actual
-	// usage at login (unless lazy).
-	s.overStatusLoginAt = time.Now()
-	if os := s.srv.opts.QuotaPolicy.OverStatus; os.Mask != "" && !os.LazyCheck {
-		if u, uerr := s.countUsageFor("login-over-status", false); uerr == nil {
-			s.evalOverStatus(u)
-		}
-	}
+	s.ops = mailops.New(s.mailopsConfig(), s.mbox, userInfo)
+	s.ops.Quota.LoginOverStatus()
 
 	owner := locks.Owner(userInfo.Username, userInfo.LockID())
 	s.specialUse = specialuse.New(
@@ -1288,7 +1219,9 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	s.backingOf = nil // another selection, another set of backing folders
 	// seed a usage baseline so a quota_warning "under" crossing fires even
 	// when the session only deletes mail.
-	s.seedQuotaWarnSnap()
+	if s.ops != nil {
+		s.ops.Quota.SeedSnap()
+	}
 	tWarden := time.Now()
 	s.pushWardenSelect(name)
 	slog.Debug("imap: select timing warden_ms", "folder", rel, "warden_ms", time.Since(tWarden).Milliseconds())
@@ -2312,7 +2245,7 @@ func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.App
 	size := r.Size()
 
 	// Enforce quota before allocating UID so the slot isn't wasted.
-	if err := s.quotaCheckAppend(context.Background(), name, size); err != nil {
+	if err := s.quotaCheckAppend(name, size); err != nil {
 		return nil, err
 	}
 
@@ -2814,7 +2747,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	// Capture the pre-expunge usage as the quota_warning "before" baseline right
 	// here — the per-message expunge events below supply "after", so an "under"
 	// crossing fires on a delete-only session regardless of SELECT-time seeding.
-	s.captureQuotaSnap()
+	s.ops.Quota.CaptureSnap()
 
 	// Highest sequence number first, so removing one does not shift those still
 	// to come; the base owns the order and the shared-body rule (#1794).
