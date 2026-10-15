@@ -20,6 +20,10 @@ type SaveRequest struct {
 	Received time.Time
 	// QuotaFolder is the name the quota rules see; empty is the folder saved to.
 	QuotaFolder string
+	// GUID keeps a copy's identity (RFC 8474 §5.1); zero mints a new one.
+	GUID [16]byte
+	// QuotaChecked is a save whose batch the caller checked with CheckBatch.
+	QuotaChecked bool
 }
 
 // Saved is what a save settled.
@@ -53,7 +57,7 @@ func UsageDelta(m *mailbox.MessageMeta) uint32 {
 // a commit. box may be another namespace's; the quota and the events stay this
 // session's. A delivery's quota was checked before its filter ran.
 func (o *Ops) Save(box mailbox.Box, folder string, f *mailbox.Folder, req SaveRequest) (Saved, error) {
-	if !o.Quota.delivery {
+	if !o.Quota.delivery && !req.QuotaChecked {
 		qf := req.QuotaFolder
 		if qf == "" {
 			qf = folder
@@ -79,9 +83,9 @@ func (o *Ops) Save(box mailbox.Box, folder string, f *mailbox.Folder, req SaveRe
 	var err error
 	if received.IsZero() {
 		received = time.Now()
-		name, vsize, guid, err = box.Save(folder, counted, 0, req.Size, req.Flags, req.Keywords, [16]byte{})
+		name, vsize, guid, err = box.Save(folder, counted, 0, req.Size, req.Flags, req.Keywords, req.GUID)
 	} else {
-		name, vsize, guid, err = box.SaveReceived(folder, counted, 0, req.Size, req.Flags, req.Keywords, [16]byte{}, received)
+		name, vsize, guid, err = box.SaveReceived(folder, counted, 0, req.Size, req.Flags, req.Keywords, req.GUID, received)
 	}
 	if err != nil {
 		return Saved{Folder: f}, fmt.Errorf("mailops/save: %w", err)

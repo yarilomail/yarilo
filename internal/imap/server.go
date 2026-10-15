@@ -3760,21 +3760,28 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	}
 	numSet = resolveStar(numSet, msgs, copyUIDToClientSeq)
 	var srcUIDs, dstUIDs imaplib.UIDSet
-	var saveTotalMs, indexTotalMs int64
 	var count int
 	type copiedMsg struct {
 		uid      uint32
 		filename string
 	}
 	var copied []copiedMsg
+	var selected []*mailbox.MessageMeta
+	var batchBytes int64
 	for _, m := range msgs {
 		seqNum, ok := copyUIDToClientSeq[m.UID]
-		if !ok {
+		if !ok || !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
 			continue
 		}
-		if !numSetContains(numSet, seqNum, imaplib.UID(m.UID)) {
-			continue
-		}
+		selected = append(selected, m)
+		batchBytes += int64(mailops.UsageDelta(m))
+	}
+	// One count for the batch, as the reference takes its limits once per copy.
+	var refused *mailops.RefusedError
+	if errors.As(s.ops.Quota.CheckBatch(dest, batchBytes, int64(len(selected))), &refused) {
+		return nil, s.quotaRefusal(refused)
+	}
+	for _, m := range selected {
 		// The selected-message read: a virtual record reads its copy (as the reference does).
 		rc, fetchErr := s.fetchSelected(m)
 		if fetchErr != nil {
@@ -3785,33 +3792,18 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		if readErr != nil {
 			return nil, fmt.Errorf("imap/copy read: %w", readErr)
 		}
-		tSave := time.Now()
-		// RFC 8474 §5.1: "The server MUST return the same EMAILID as the
-		// source message for the matching destination message" -- for COPY too.
-		newFilename, vsize, guid, saveErr := destH.box.SaveReceived(destRel, bytes.NewReader(data), 0, int64(len(data)), m.Flags, m.Keywords, m.GUID, m.InternalDate)
+		// RFC 8474 §5.1: the copy keeps the source's EMAILID.
+		saved, saveErr := s.ops.Save(destH.mailbox(), destRel, destFolder, mailops.SaveRequest{
+			Body: bytes.NewReader(data), Size: int64(len(data)), Flags: m.Flags, Keywords: m.Keywords,
+			Received: m.InternalDate, GUID: m.GUID, QuotaChecked: true,
+		})
 		if saveErr != nil {
-			return nil, fmt.Errorf("imap/copy save: %w", saveErr)
+			return nil, fmt.Errorf("imap/copy: %w", saveErr)
 		}
-		saveTotalMs += time.Since(tSave).Milliseconds()
-		nm := &mailbox.MessageMeta{
-			Flags:        m.Flags,
-			Keywords:     m.Keywords,
-			Size:         uint32(len(data)),
-			VSize:        vsize,
-			InternalDate: m.InternalDate,
-			GUID:         guid,
-		}
-		tIndex := time.Now()
-		if err := destH.mailbox().RecordSaved(destFolder, destRel, newFilename, nm); err != nil {
-			_ = destH.mailbox().Discard(destRel, newFilename, nm)
-			return nil, fmt.Errorf("imap/copy record: %w", err)
-		}
-		indexTotalMs += time.Since(tIndex).Milliseconds()
 		count++
-		s.emitMailboxChangeSized(destFolder, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
 		srcUIDs.AddNum(imaplib.UID(m.UID))
-		dstUIDs.AddNum(imaplib.UID(nm.UID))
-		copied = append(copied, copiedMsg{uid: nm.UID, filename: newFilename})
+		dstUIDs.AddNum(imaplib.UID(saved.Meta.UID))
+		copied = append(copied, copiedMsg{uid: saved.Meta.UID, filename: saved.Filename})
 	}
 	// imapsieve (RFC 6785): COPY cause fires on the destination mailbox for each
 	// copied message, after the copy is recorded (so COPYUID reflects the initial
@@ -3823,8 +3815,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	}
 	slog.Debug("imap: copy timing",
 		"user", s.userInfo.Username, "src", s.folder.Name, "dst", dest,
-		"count", count, "save_ms", saveTotalMs, "index_ms", indexTotalMs,
-		"total_ms", time.Since(tCopy).Milliseconds())
+		"count", count, "total_ms", time.Since(tCopy).Milliseconds())
 	// COPYUID needs at least one pair; the encoder rejects an empty set and
 	// would truncate the reply mid-line. A zero-match COPY is a plain OK.
 	if count == 0 {

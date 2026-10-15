@@ -55,3 +55,36 @@ func TestAppendFillsAFolderToItsCapThenRefuses(t *testing.T) {
 		t.Errorf("APPEND past the cap answered %q, want NO [OVERQUOTA]", last)
 	}
 }
+
+// COPY is checked once for the whole set: two messages into a folder with room
+// for one are refused, and none of them lands.
+func TestCopyIsRefusedAsABatchAtTheCap(t *testing.T) {
+	srv := imapserver.New(imapserver.Options{
+		Mailbox:     maildir.New(),
+		Index:       file.New(),
+		Resolver:    &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
+		AuthRelay:   authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+		QuotaEngine: true,
+		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxMessageCount: 2},
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln) //nolint:errcheck
+	t.Cleanup(func() { ln.Close() })
+
+	c := dialRaw(t, ln.Addr().String())
+	c.login()
+	c.cmd(`CREATE Archive`)
+	c.appendMsg("INBOX")
+	c.appendMsg("INBOX")
+	c.appendMsg("Archive")
+	c.cmd(`SELECT INBOX`)
+	if out := c.cmd(`COPY 1:2 Archive`); !strings.Contains(out, "NO") || !strings.Contains(out, "OVERQUOTA") {
+		t.Errorf("COPY past the cap answered %q, want NO [OVERQUOTA]", out)
+	}
+	if out := c.cmd(`STATUS Archive (MESSAGES)`); !strings.Contains(out, "MESSAGES 1") {
+		t.Errorf("a refused COPY changed the folder:\n%s", out)
+	}
+}
