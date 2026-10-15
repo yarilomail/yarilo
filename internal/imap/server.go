@@ -1151,6 +1151,8 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	s.folder = f
 	s.folderNS = h
 	s.backingOf = nil // another selection, another set of backing folders
+	// A selection starts $ empty (RFC 5182 §2.1).
+	s.savedSearchUIDs = nil
 	// seed a usage baseline so a quota_warning "under" crossing fires even
 	// when the session only deletes mail.
 	if s.ops != nil {
@@ -2580,6 +2582,11 @@ func (s *session) refreshIdleCount(w *imapserver.UpdateWriter, always bool) erro
 func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) error {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Expunge")
 	tExpunge := time.Now()
+	if uids != nil {
+		if saved, ok := s.resolveSearchRes(*uids).(imaplib.UIDSet); ok {
+			uids = &saved
+		}
+	}
 	if s.folder == nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
@@ -2667,18 +2674,18 @@ func (s *session) matchMessage(seqNum uint32, m *mailbox.MessageMeta, criteria *
 
 func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriteria, opts *imaplib.SearchOptions) (*imaplib.SearchData, error) {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Search")
+	// $ in the criteria is the previous result; SAVE then starts empty, so a
+	// refused SEARCH leaves $ empty (RFC 5182 §2.1).
+	criteria = s.substituteSearchRes(criteria)
+	if opts != nil && opts.ReturnSave {
+		s.savedSearchUIDs = nil
+	}
 	if s.folder == nil {
 		return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
 	if err := s.requireRightOnSelected(mailbox.RightRead); err != nil {
 		return nil, err
 	}
-
-	// SearchRes ($) substitution: when the client passes "$" as a UID set,
-	// go-imap/v2 surfaces it as an imaplib.SearchRes()-tagged entry in
-	// criteria.UID. We swap it for the saved set from the previous RETURN
-	// SAVE so the matcher sees a concrete UID list.
-	criteria = s.substituteSearchRes(criteria)
 
 	msgs, err := readMessages(s.folderMailbox(), s.folder.ID)
 	if err != nil {
@@ -2898,6 +2905,15 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	return data, nil
 }
 
+// resolveSearchRes turns a $ message set into the saved UIDs, which address
+// messages by UID even in a sequence-number command (RFC 5182 §2.1).
+func (s *session) resolveSearchRes(numSet imaplib.NumSet) imaplib.NumSet {
+	if !imaplib.IsSearchRes(numSet) {
+		return numSet
+	}
+	return append(imaplib.UIDSet(nil), s.savedSearchUIDs...)
+}
+
 // substituteSearchRes walks criteria.UID looking for the SearchRes ($)
 // marker and replaces it with the in-memory saved set from a previous
 // RETURN SAVE. Returns the original criteria unchanged if no marker is
@@ -2947,6 +2963,7 @@ func setsSeen(opts *imaplib.FetchOptions) bool {
 
 func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *imaplib.FetchOptions) error {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Fetch")
+	numSet = s.resolveSearchRes(numSet)
 	if s.folder == nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
@@ -3365,6 +3382,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeFlags *imaplib.StoreFlags, opts *imaplib.StoreOptions) error {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Store")
 	tStore := time.Now()
+	numSet = s.resolveSearchRes(numSet)
 	if s.folder == nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
@@ -3596,6 +3614,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, error) {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Copy")
 	tCopy := time.Now()
+	numSet = s.resolveSearchRes(numSet)
 	if target, redirected, err := s.virtualSaveTarget(dest); err != nil {
 		return nil, err
 	} else if redirected {
@@ -3955,6 +3974,7 @@ func (s *session) metadataOps() *dict.OpSettings {
 func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest string) error {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Move")
 	tMove := time.Now()
+	numSet = s.resolveSearchRes(numSet)
 	if s.folder == nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
