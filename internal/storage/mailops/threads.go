@@ -1,6 +1,7 @@
 package mailops
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"time"
@@ -48,4 +49,32 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	if err != nil {
 		slog.Warn(o.cfg.Protocol+": message saved but not threaded", "user", user, "err", err)
 	}
+}
+
+// maxThreadHeader bounds what a save keeps for threading: the conversation is
+// read from the header block, and a body is never held for it.
+const maxThreadHeader = 256 << 10
+
+// headerCapture keeps the bytes written to it up to the end of the header
+// block, the first empty line, or maxThreadHeader.
+type headerCapture struct {
+	buf  []byte
+	done bool
+}
+
+func (h *headerCapture) Write(p []byte) (int, error) {
+	if h.done {
+		return len(p), nil
+	}
+	start := max(len(h.buf)-3, 0)
+	h.buf = append(h.buf, p...)
+	if i := bytes.Index(h.buf[start:], []byte("\r\n\r\n")); i >= 0 {
+		h.buf, h.done = h.buf[:start+i+4], true
+	} else if i := bytes.Index(h.buf[start:], []byte("\n\n")); i >= 0 {
+		h.buf, h.done = h.buf[:start+i+2], true
+	}
+	if len(h.buf) > maxThreadHeader {
+		h.buf, h.done = h.buf[:maxThreadHeader], true
+	}
+	return len(p), nil
 }
