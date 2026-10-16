@@ -6,19 +6,11 @@ metadata:
   name: keycloak
 ---
 apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: yarilo-internal-ca
-  namespace: keycloak
-spec:
-  ca:
-    secretName: yarilo-internal-ca
----
-apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
+  # Issued where the CA is; only this leaf is copied to keycloak (README).
   name: keycloak-tls
-  namespace: keycloak
+  namespace: yarilo-sb
 spec:
   secretName: keycloak-tls
   privateKey:

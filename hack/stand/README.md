@@ -142,15 +142,16 @@ not the pod the other arm is.
 `helm_values/keycloak-sandbox.yaml` runs Keycloak for the OAuth2 rows of #2231,
 in its own namespace `keycloak`. It keeps no state: realm `yarilo` is imported
 from the file on every start, so a realm change is applied by re-applying and
-restarting. Its certificate comes from the stand's internal CA, whose key pair
-is copied into `keycloak` for a namespaced Issuer there:
+restarting. Its certificate is a leaf issued in `yarilo-sb` by the stand's
+internal CA; only the leaf Secret is copied to `keycloak`, never the CA key:
 
 ```sh
 kubectl apply -f hack/internal-ca-sandbox.yaml   # once, in yarilo-sb
 kubectl apply -f helm_values/keycloak-sandbox.yaml
-kubectl -n yarilo-sb get secret yarilo-internal-ca -o go-template='{"apiVersion":"v1","kind":"Secret","type":"kubernetes.io/tls","metadata":{"name":"yarilo-internal-ca","namespace":"keycloak"},"data":{"tls.crt":"{{index .data "tls.crt"}}","tls.key":"{{index .data "tls.key"}}"}}' | kubectl apply -f -
-kubectl -n keycloak rollout restart deploy/keycloak   # after a realm change
+kubectl -n yarilo-sb wait certificate/keycloak-tls --for=condition=Ready --timeout=120s
+kubectl -n yarilo-sb get secret keycloak-tls -o go-template='{"apiVersion":"v1","kind":"Secret","type":"kubernetes.io/tls","metadata":{"name":"keycloak-tls","namespace":"keycloak"},"data":{"tls.crt":"{{index .data "tls.crt"}}","tls.key":"{{index .data "tls.key"}}","ca.crt":"{{index .data "ca.crt"}}"}}' | kubectl apply -f -
+kubectl -n keycloak rollout restart deploy/keycloak   # after a realm change or a renewed leaf
 ```
 
 Issuer: `https://keycloak.keycloak.svc:8443/realms/yarilo`, HTTPS only. A
-renewed internal CA is copied again the same way.
+renewed leaf is copied again the same way.
