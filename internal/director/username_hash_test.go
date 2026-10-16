@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/cluster/proto"
 	"github.com/yarilomail/yarilo/internal/cluster/ring"
 )
 
@@ -38,7 +39,7 @@ func TestUsernameHash_KickMatchByHash(t *testing.T) {
 			s := NewWithOptions(testOptions(Options{UsernameHashFormat: c.format}))
 			conn := openSession(t, s, "sess-1", c.loginUser, "10.0.0.1")
 
-			s.kickStaleSessions(HashUsername(c.kickUser, s.hf), "10.0.0.1:993")
+			s.kickStaleSessions(HashUsername(c.kickUser, s.hf), "10.0.0.1:993", proto.KickMove)
 
 			got := string(conn.written)
 			kicked := strings.Contains(got, "USER-KICKED\t"+c.loginUser)

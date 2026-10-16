@@ -48,14 +48,15 @@ func TestUserEventsGoOutEscaped(t *testing.T) {
 	}{
 		{
 			name:     "plain kick",
-			send:     func(s *Server) { s.originateUserKick(tabbedUser, "", nil) },
+			send:     func(s *Server) { s.originateUserKick(tabbedUser, "", proto.KickAdmin, nil) },
 			wantKind: "USER-KICKED-ESC",
+			wantTail: []string{"reason=admin"},
 		},
 		{
 			name:     "conditional kick keeps the old backend as its own field",
-			send:     func(s *Server) { s.originateUserKick(tabbedUser, "10.0.0.20", nil) },
+			send:     func(s *Server) { s.originateUserKick(tabbedUser, "10.0.0.20", proto.KickMove, nil) },
 			wantKind: "USER-KICKED-ESC",
-			wantTail: []string{"10.0.0.20"},
+			wantTail: []string{"10.0.0.20", "reason=move"},
 		},
 		{
 			name:     "move keeps host and port as their own fields",
@@ -104,7 +105,7 @@ func TestOriginCarriesTheIncarnation(t *testing.T) {
 	srv, _ := startServerOpts(t, Options{LocalIP: "10.0.0.7", LocalPort: 9102, PingInterval: time.Hour})
 	rd := ringTap(t, srv.membership)
 
-	go srv.originateUserKick("u@example.com", "", nil)
+	go srv.originateUserKick("u@example.com", "", proto.KickAdmin, nil)
 
 	fields := readTapped(t, rd)
 	addr, incarnation := splitOrigin(fields[1])
