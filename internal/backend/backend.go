@@ -500,7 +500,8 @@ func New(cfg *config.Config) (*Server, error) {
 				lmtpResolver = &mailbox.Resolver{}
 			}
 			// dial the auth-master lazily over internal mTLS; see lazyUserdbLookup
-			lmtpOpts.UserdbLookup = lazyUserdbLookup(addr,
+			// A delivery names itself: a userdb rule on lmtp refuses it (#2227).
+			lmtpOpts.UserdbLookup = lazyUserdbLookup(addr, "lmtp",
 				func() (*authclient.Client, error) { return authclient.Dial(addr, authTLS) },
 				lmtpResolver)
 		}
@@ -1030,7 +1031,7 @@ func parseCIDRs(cidrs []string) []*net.IPNet {
 // via yarilo-auth. The client is dialled lazily on first lookup and re-dialled
 // on error; an eager dial at New would block readiness when yarilo-auth is
 // slow or when a plain dial hits an mTLS listener (#821).
-func lazyUserdbLookup(addr string, dial func() (*authclient.Client, error), resolver *mailbox.Resolver) func(context.Context, string) (*mailbox.UserInfo, error) {
+func lazyUserdbLookup(addr, service string, dial func() (*authclient.Client, error), resolver *mailbox.Resolver) func(context.Context, string) (*mailbox.UserInfo, error) {
 	var acMu sync.Mutex
 	var ac *authclient.Client
 	return func(ctx context.Context, username string) (*mailbox.UserInfo, error) {
@@ -1046,7 +1047,7 @@ func lazyUserdbLookup(addr string, dial func() (*authclient.Client, error), reso
 		cur := ac
 		acMu.Unlock()
 
-		ui, err := cur.Userdb(ctx, username)
+		ui, err := cur.UserdbFor(ctx, username, service)
 		if err != nil {
 			acMu.Lock()
 			if ac == cur {
@@ -1063,7 +1064,7 @@ func lazyUserdbLookup(addr string, dial func() (*authclient.Client, error), reso
 			}
 			cur = ac
 			acMu.Unlock()
-			ui, err = cur.Userdb(ctx, username)
+			ui, err = cur.UserdbFor(ctx, username, service)
 			if err != nil {
 				return nil, err
 			}
@@ -1082,7 +1083,8 @@ func ownerUserdbLookup(masterAddr string, authTLS *tls.Config, resolver *mailbox
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	return lazyUserdbLookup(masterAddr,
+	// An owner lookup is neither a login nor a delivery: no protocol.
+	return lazyUserdbLookup(masterAddr, "",
 		func() (*authclient.Client, error) { return authclient.Dial(masterAddr, authTLS) },
 		resolver)
 }

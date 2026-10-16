@@ -85,13 +85,13 @@ type Router interface {
 // PasswordAuthenticator verifies a username and password, returning the
 // resolved username. Satisfied by the yarilo-auth client.
 type PasswordAuthenticator interface {
-	Authenticate(username, password, service, remoteIP, sessionID string) (string, error)
+	Authenticate(username, password, service, remoteIP, localIP, sessionID string) (string, error)
 }
 
 // TokenAuthenticator verifies a Bearer token in the auth service, returning the
 // user it names. Satisfied by AuthService.
 type TokenAuthenticator interface {
-	AuthenticateToken(token, service, remoteIP, sessionID string) (string, error)
+	AuthenticateToken(token, service, remoteIP, localIP, sessionID string) (string, error)
 	// OffersTokens reports whether Bearer can succeed now, so it is offered
 	// only then.
 	OffersTokens() bool

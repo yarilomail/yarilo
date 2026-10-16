@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -35,7 +36,7 @@ func (s *Server) authenticate(r *http.Request, clientIP, sessionID string) (stri
 		if s.opts.Tokens == nil || (s.opts.DisablePlainAuth && r.TLS == nil) {
 			return "", errBadToken
 		}
-		username, err := s.opts.Tokens.AuthenticateToken(cred, service, clientIP, sessionID)
+		username, err := s.opts.Tokens.AuthenticateToken(cred, service, clientIP, localIPOf(r), sessionID)
 		if err != nil {
 			slog.Info("jmap-login: bearer rejected", "ip", clientIP, "err", err)
 			if errors.Is(err, errTemporary) {
@@ -67,7 +68,7 @@ func (s *Server) authenticateBasic(r *http.Request, cred, clientIP, sessionID st
 	if !found || username == "" {
 		return "", errUnauthorized
 	}
-	resolved, err := s.opts.Auth.Authenticate(username, password, service, clientIP, sessionID)
+	resolved, err := s.opts.Auth.Authenticate(username, password, service, clientIP, localIPOf(r), sessionID)
 	if err != nil {
 		slog.Info("jmap-login: basic rejected", "user", username, "ip", clientIP, "err", err)
 		if errors.Is(err, errTemporary) {
@@ -89,4 +90,12 @@ func parseAuthorization(h string) (scheme, cred string, ok bool) {
 	}
 	cred = strings.TrimSpace(cred)
 	return scheme, cred, cred != ""
+}
+
+// localIPOf is the address the request arrived at, for a query's %l (#2227).
+func localIPOf(r *http.Request) string {
+	if a, ok := r.Context().Value(http.LocalAddrContextKey).(*net.TCPAddr); ok {
+		return a.IP.String()
+	}
+	return ""
 }

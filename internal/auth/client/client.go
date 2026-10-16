@@ -238,9 +238,9 @@ func (c *Client) Close() error {
 }
 
 // Authenticate sends an AUTH command for the given credentials and returns the
-// result. remoteIP and sessionID may be empty strings (omitted from request).
-func (c *Client) Authenticate(username, password, service, remoteIP, sessionID string) (*AuthResult, error) {
-	return c.AuthenticateAs("", username, password, service, remoteIP, sessionID)
+// result. remoteIP, localIP and sessionID may be empty (omitted from request).
+func (c *Client) Authenticate(username, password, service, remoteIP, localIP, sessionID string) (*AuthResult, error) {
+	return c.AuthenticateAs("", username, password, service, remoteIP, localIP, sessionID)
 }
 
 // AuthenticateAs is Authenticate with an impersonation target: authzid is the
@@ -252,8 +252,8 @@ func (c *Client) Authenticate(username, password, service, remoteIP, sessionID s
 // -- discarded every master login before it left the pod, so the service saw a
 // plain login of the master and refused it (#1305). Whether impersonation is
 // granted stays the service's decision; the client only carries the request.
-func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, sessionID string) (*AuthResult, error) {
-	if wireUnsafe(authzid, authcid, service, remoteIP, sessionID) {
+func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, localIP, sessionID string) (*AuthResult, error) {
+	if wireUnsafe(authzid, authcid, service, remoteIP, localIP, sessionID) {
 		return nil, ErrAuthFailed
 	}
 	id := c.nextID()
@@ -274,6 +274,10 @@ func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, s
 	if remoteIP != "" {
 		sb.WriteString("\trip=")
 		sb.WriteString(remoteIP)
+	}
+	if localIP != "" {
+		sb.WriteString("\tlip=")
+		sb.WriteString(localIP)
 	}
 	if sessionID != "" {
 		sb.WriteString("\tsession=")

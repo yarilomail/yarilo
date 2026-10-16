@@ -3,6 +3,8 @@ package sql
 import (
 	"reflect"
 	"testing"
+
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 func TestSubstituteVars(t *testing.T) {
@@ -97,7 +99,7 @@ func TestSubstituteVars(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotQ, gotA := substituteVars(tc.driver, tc.query, tc.username)
+			gotQ, gotA := substituteVars(tc.driver, tc.query, tc.username, sqlvars.Vars{})
 			if gotQ != tc.wantQuery {
 				t.Errorf("query:\n got:  %q\n want: %q", gotQ, tc.wantQuery)
 			}

@@ -40,7 +40,7 @@ func TestAPassdbNologinReachesTheClient(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { c.Close() }) //nolint:errcheck
-			res, err := c.Authenticate("alice", "secret", "imap", "192.0.2.1", "s1")
+			res, err := c.Authenticate("alice", "secret", "imap", "192.0.2.1", "", "s1")
 			if err != nil {
 				t.Fatal(err)
 			}

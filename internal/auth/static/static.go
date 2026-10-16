@@ -14,6 +14,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/auth/scheme"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 // userdbFieldPrefix marks a template field as userdb-only (same convention as
@@ -51,7 +52,9 @@ type DB struct {
 	filter        protocol.UsernameFilter
 	allowAll      bool
 	// userExists asks the passdb chain; set by SetUserExists once it is built.
-	userExists func(username string) (bool, error)
+	userExists func(username string, v sqlvars.Vars) (bool, error)
+	// existsUsesRequest is set when that check reads the request (#2227).
+	existsUsesRequest bool
 }
 
 // New validates and builds a static backend.
@@ -72,8 +75,16 @@ func New(c Config) (*DB, error) {
 	}, nil
 }
 
-// SetUserExists gives the userdb the passdb chain to check a name against.
-func (db *DB) SetUserExists(f func(username string) (bool, error)) { db.userExists = f }
+// SetUserExists gives the userdb the passdb chain to check a name against;
+// usesRequest says whether that check reads the request's values.
+func (db *DB) SetUserExists(f func(username string, v sqlvars.Vars) (bool, error), usesRequest bool) {
+	db.userExists, db.existsUsesRequest = f, usesRequest
+}
+
+// UsesRequest is true when the passdb check behind a lookup reads the request.
+func (db *DB) UsesRequest() bool {
+	return !db.allowAll && db.userExists != nil && db.existsUsesRequest
+}
 
 // Authenticate implements protocol.Passdb. Static matches every username its
 // filter accepts, so a mismatch is a definitive ResultFail.
@@ -97,11 +108,16 @@ func (db *DB) Authenticate(req *protocol.Request) (protocol.Result, error) {
 // Lookup implements protocol.Userdb. Static resolves every username, rendering
 // the userdb_-prefixed template fields for the given user.
 func (db *DB) Lookup(username string) (*protocol.UserInfo, error) {
+	return db.LookupFor(username, sqlvars.Vars{})
+}
+
+// LookupFor is Lookup with the request's values for the passdb check.
+func (db *DB) LookupFor(username string, v sqlvars.Vars) (*protocol.UserInfo, error) {
 	if !db.filter.Accepts(username) {
 		return nil, nil
 	}
 	if !db.allowAll && db.userExists != nil {
-		found, err := db.userExists(username)
+		found, err := db.userExists(username, v)
 		if err != nil || !found {
 			return nil, err
 		}

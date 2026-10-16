@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/pkg/lineio"
 )
 
@@ -114,7 +115,7 @@ func runRelayedSASL(
 			return nil, fmt.Errorf("login: %s needs a channel binding this connection has none of", mech)
 		}
 	}
-	srv := authclient.NewRelayServer(cl, mech, service, clientIP, rc.sessionID, cb)
+	srv := authclient.NewRelayServer(cl, mech, service, clientIP, loginproto.LocalIP(conn), rc.sessionID, cb)
 	// An exchange the client abandons frees the service's half at once, rather
 	// than waiting out its deadline there (#1733).
 	defer srv.Cancel()

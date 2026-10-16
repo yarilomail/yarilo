@@ -32,7 +32,7 @@ func (a *countingAuth) Authenticate(username, password, _, _ string) (*protocol.
 func TestAPasswordCannotSplitTheRequest(t *testing.T) {
 	auth := &countingAuth{pass: "pa\nAUTH\t99\tPLAIN\tresp=x\tss"}
 	c := authtest.RelayTo(t, auth)
-	res, err := c.Authenticate("alice", auth.pass, "imap", "", "")
+	res, err := c.Authenticate("alice", auth.pass, "imap", "", "", "")
 	if err != nil || res == nil {
 		t.Fatalf("Authenticate = %v, %v; want OK", res, err)
 	}
@@ -46,7 +46,7 @@ func TestAnUnsafeNameNeverReachesTheWire(t *testing.T) {
 	auth := &countingAuth{pass: "secret"}
 	c := authtest.RelayTo(t, auth)
 	for _, name := range []string{"ali\tce", "ali\nce", "ali\x00ce"} {
-		if _, err := c.Authenticate(name, "secret", "imap", "", ""); !errors.Is(err, authrelay.ErrAuthFailed) {
+		if _, err := c.Authenticate(name, "secret", "imap", "", "", ""); !errors.Is(err, authrelay.ErrAuthFailed) {
 			t.Errorf("%q: err = %v, want ErrAuthFailed", name, err)
 		}
 	}
@@ -88,7 +88,7 @@ func TestAReplyForAnotherIDIsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() }) //nolint:errcheck
-	if res, err := c.Authenticate("alice", "secret", "imap", "", ""); !errors.Is(err, authrelay.ErrAuthFailed) {
+	if res, err := c.Authenticate("alice", "secret", "imap", "", "", ""); !errors.Is(err, authrelay.ErrAuthFailed) {
 		t.Fatalf("Authenticate = %+v, %v; want the FAIL addressed to this request", res, err)
 	}
 }

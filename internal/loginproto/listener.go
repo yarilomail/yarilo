@@ -440,3 +440,18 @@ func (l *PreambleListener) handshake(c net.Conn) (*PreambleConn, error) {
 		br:            br,
 	}, nil
 }
+
+// LocalIP is the address the client connected to, for a query's %l (#2227);
+// empty for a connection a login proxy handed over, whose socket is the proxy's.
+func LocalIP(c net.Conn) string {
+	if c == nil {
+		return ""
+	}
+	if _, ok := c.(*PreambleConn); ok {
+		return ""
+	}
+	if tcp, ok := c.LocalAddr().(*net.TCPAddr); ok {
+		return tcp.IP.String()
+	}
+	return ""
+}

@@ -62,9 +62,9 @@ func TestARelayedLoginCarriesTheUserdbAnswer(t *testing.T) {
 // OK answer, and both feed the same session.
 func relayedLogin(c *Client, verb string) (*AuthResult, error) {
 	if verb == "AUTH" {
-		return c.Authenticate("u1@d00001.test", "secret", "imap", "10.0.0.1", "s1")
+		return c.Authenticate("u1@d00001.test", "secret", "imap", "10.0.0.1", "", "s1")
 	}
-	ex, step, err := c.BeginSASL("SCRAM-SHA-256", "imap", "10.0.0.1", "s1", nil, []byte("n,,n=u1,r=nonce"))
+	ex, step, err := c.BeginSASL("SCRAM-SHA-256", "imap", "10.0.0.1", "", "s1", nil, []byte("n,,n=u1,r=nonce"))
 	if err != nil {
 		return nil, err
 	}

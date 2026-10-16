@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
+
 	"github.com/emersion/go-sasl"
 )
 
@@ -35,6 +37,7 @@ type saslExchange struct {
 	username string
 	service  string
 	rip      string
+	lip      string
 	session  string
 	// oauthDB is set on an OAuth login; oauthRefused once its refusal was
 	// sent and only the client's acknowledgement is awaited.
@@ -127,16 +130,18 @@ func (s *Server) chainHasSCRAM(sha256 bool) bool {
 
 // startSCRAM begins a SCRAM conversation. cbData is the channel binding the
 // session holds: it terminates TLS, so the bytes can only come from there.
-func (s *Server) startSCRAM(mech string, cbData []byte) (*saslExchange, error) {
+func (s *Server) startSCRAM(mech string, cbData []byte, v sqlvars.Vars) (*saslExchange, error) {
 	chain := &chainAuthenticator{chain: s.passdbs}
 	x := &saslExchange{mech: mech}
+	// The verifier is looked up with the request's values: a protocol rule in
+	// the password query holds for SCRAM as it does for a password (#2227).
 	sha256Lookup := func(user string) (*sasl.ScramCredentials, error) {
 		x.username = user
-		return chain.LookupSCRAMSha256(user)
+		return chain.lookupSCRAMFor(user, v, true)
 	}
 	sha1Lookup := func(user string) (*sasl.ScramCredentials, error) {
 		x.username = user
-		return chain.LookupSCRAMSha1(user)
+		return chain.lookupSCRAMFor(user, v, false)
 	}
 	switch mech {
 	case MechScramSha256:
@@ -188,18 +193,18 @@ func isSCRAM(mech string) bool { return strings.HasPrefix(mech, "SCRAM-") }
 
 // beginSCRAM starts a conversation the session relays. The reply is a CONT
 // challenge, or the same OK/FAIL a PLAIN login ends with.
-func (s *Server) beginSCRAM(conn net.Conn, live *exchanges, id, mech, service, resp, cbind, rip, sessionID string) string {
+func (s *Server) beginSCRAM(conn net.Conn, live *exchanges, id, mech, service, resp, cbind, rip, lip, sessionID string) string {
 	cbData, err := decodeResp(cbind)
 	if err != nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
 	}
-	x, err := s.startSCRAM(mech, cbData)
+	x, err := s.startSCRAM(mech, cbData, sqlvars.Vars{Service: service, RemoteIP: rip, LocalIP: lip})
 	if err != nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=%s\n", id, err)
 		return "bad_request"
 	}
-	x.service, x.rip, x.session = service, rip, sessionID
+	x.service, x.rip, x.lip, x.session = service, rip, lip, sessionID
 	first, err := decodeResp(resp)
 	if err != nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
@@ -256,6 +261,10 @@ func (s *Server) advanceSCRAM(conn net.Conn, live *exchanges, id string, x *sasl
 	}
 	live.drop(id)
 	user := x.user()
+	vars := sqlvars.Vars{Service: x.service, RemoteIP: x.rip, LocalIP: x.lip}
+	if out := s.refuseByUserdb(conn, id, x.session, user, vars, plainReject); out != "" {
+		return out
+	}
 	// The same reply the password path sends, token included: a session
 	// without one cannot open a backend, whatever proved the identity.
 	reply := buildAuthOK(id, &AuthResponse{Result: AuthOK, Username: user})

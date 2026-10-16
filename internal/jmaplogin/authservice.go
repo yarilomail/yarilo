@@ -18,8 +18,8 @@ type AuthService struct{ cl *authclient.Client }
 func NewAuthService(cl *authclient.Client) AuthService { return AuthService{cl: cl} }
 
 // Authenticate satisfies PasswordAuthenticator.
-func (a AuthService) Authenticate(username, password, svc, remoteIP, sessionID string) (string, error) {
-	res, err := a.cl.Authenticate(username, password, svc, remoteIP, sessionID)
+func (a AuthService) Authenticate(username, password, svc, remoteIP, localIP, sessionID string) (string, error) {
+	res, err := a.cl.Authenticate(username, password, svc, remoteIP, localIP, sessionID)
 	if err != nil {
 		return "", classify(err)
 	}
@@ -28,12 +28,12 @@ func (a AuthService) Authenticate(username, password, svc, remoteIP, sessionID s
 
 // AuthenticateToken satisfies TokenAuthenticator. The token names the user, so
 // the exchange carries no authzid and the service answers with the name.
-func (a AuthService) AuthenticateToken(token, svc, remoteIP, sessionID string) (string, error) {
+func (a AuthService) AuthenticateToken(token, svc, remoteIP, localIP, sessionID string) (string, error) {
 	if strings.ContainsAny(token, "\x01\r\n") {
 		return "", errUnauthorized
 	}
 	initial := []byte("n,,\x01auth=Bearer " + token + "\x01\x01")
-	x, step, err := a.cl.BeginSASL(protocol.MechOAuthBearer, svc, remoteIP, sessionID, nil, initial)
+	x, step, err := a.cl.BeginSASL(protocol.MechOAuthBearer, svc, remoteIP, localIP, sessionID, nil, initial)
 	if err != nil {
 		return "", classify(err)
 	}
