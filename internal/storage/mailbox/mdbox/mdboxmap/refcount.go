@@ -157,11 +157,15 @@ func (m *Map) RecordsInFile(fileID uint32) ([]MapEntry, error) {
 	if err := m.reloadLocked(); err != nil {
 		return nil, fmt.Errorf("mdboxmap/records-in-file: %w", err)
 	}
+	return m.recordsInFileLocked(fileID), nil
+}
+
+func (m *Map) recordsInFileLocked(fileID uint32) []MapEntry {
 	var out []MapEntry
 	m.st.each(func(e MapEntry) {
 		if e.FileID == fileID {
 			out = append(out, e)
 		}
 	})
-	return out, nil
+	return out
 }

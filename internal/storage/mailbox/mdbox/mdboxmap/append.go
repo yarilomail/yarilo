@@ -186,6 +186,20 @@ func (p *Placement) RecordFileCreated(fileID uint32, ts int64) error {
 	return p.m.recordFileCreatedLocked(fileID, ts)
 }
 
+// RecordsInFile is RecordsInFile under this hold.
+func (p *Placement) RecordsInFile(fileID uint32) []MapEntry { return p.m.recordsInFileLocked(fileID) }
+
+// AppendMove is AppendMove under this hold, refused once the lease is lost.
+func (p *Placement) AppendMove(moved []MovedRecord, expunged []uint32) error {
+	if err := p.Held(); err != nil {
+		return err
+	}
+	if len(moved) == 0 && len(expunged) == 0 {
+		return nil
+	}
+	return p.m.appendMoveLocked(moved, expunged)
+}
+
 // AppendRecord is AppendRecord under this hold.
 func (p *Placement) AppendRecord(fileID, offset, size uint32, guid [16]byte) (uint32, error) {
 	if err := p.Held(); err != nil {
