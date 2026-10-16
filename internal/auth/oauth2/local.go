@@ -10,6 +10,7 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/time/rate"
 )
 
 // LocalJWTConfig configures a LocalJWTValidator. The JWKS endpoint
@@ -55,6 +56,10 @@ type LocalJWTConfig struct {
 
 	// HTTPClient fetches the JWKS; nil uses the default client.
 	HTTPClient *http.Client
+
+	// UnknownKIDInterval spaces the JWKS refreshes an unknown kid triggers;
+	// 0 never refreshes for one.
+	UnknownKIDInterval time.Duration
 }
 
 // LocalJWTValidator verifies JWT bearer tokens locally against a
@@ -86,8 +91,13 @@ func NewLocalJWTValidator(ctx context.Context, cfg LocalJWTConfig) (*LocalJWTVal
 	if cfg.JWKSURL == "" {
 		return v, nil
 	}
+	unknownKID := rate.NewLimiter(0, 0)
+	if cfg.UnknownKIDInterval > 0 {
+		unknownKID = rate.NewLimiter(rate.Every(cfg.UnknownKIDInterval), 1)
+	}
 	v.kf, err = keyfunc.NewDefaultOverrideCtx(ctx, []string{cfg.JWKSURL}, keyfunc.Override{
 		Client: cfg.HTTPClient, HTTPTimeout: cfg.HTTPTimeout, RefreshInterval: cfg.RefreshInterval,
+		RefreshUnknownKID: unknownKID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("oauth2: JWKS fetch %s: %w", cfg.JWKSURL, errors.Join(ErrUpstream, err))
@@ -110,6 +120,8 @@ func (v *LocalJWTValidator) Validate(_ context.Context, token string) (*Claims, 
 			return nil, fmt.Errorf("%w: %v", ErrTokenExpired, err)
 		case errors.Is(err, jwt.ErrTokenNotValidYet):
 			return nil, fmt.Errorf("%w: %v", ErrTokenInactive, err)
+		case errors.Is(err, ErrIssuerMismatch):
+			return nil, fmt.Errorf("%w: %v", ErrIssuerMismatch, err)
 		default:
 			return nil, fmt.Errorf("%w: %v", ErrTokenInvalid, err)
 		}

@@ -76,6 +76,9 @@ func TestOAuth2EntryRefusals(t *testing.T) {
 		{"force in mode local without grant", entry(`oauth2_mode: local
       oauth2_jwks_url: https://idp/certs
       oauth2_force_introspection: true`), `does nothing in mode "local" without oauth2_grant_url`},
+		{"negative unknown-kid interval", entry(`oauth2_mode: local
+      oauth2_jwks_url: https://idp/certs
+      oauth2_jwks_unknown_kid_interval_seconds: -1`), "oauth2_jwks_unknown_kid_interval_seconds: -1 is negative"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,5 +123,18 @@ func TestOAuth2NewKeysLoad(t *testing.T) {
 	want := []string{"https://idp/token", "/etc/ca.crt", "PS256", "app", "k1", "/keys/ps.pem"}
 	if strings.Join(got, "|") != strings.Join(want, "|") || !e.ForceIntrospection {
 		t.Errorf("loaded %v force=%v, want %v force=true", got, e.ForceIntrospection, want)
+	}
+}
+
+// Left out the interval is 300 s; an explicit 0 is kept, it turns the refresh off.
+func TestOAuth2UnknownKIDIntervalDefault(t *testing.T) {
+	for body, want := range map[string]int{"": 300, "      oauth2_jwks_unknown_kid_interval_seconds: 0\n": 0, "      oauth2_jwks_unknown_kid_interval_seconds: 60\n": 60} {
+		cfg, err := loadYAML(t, "auth:\n  oauth2:\n    - oauth2_mode: local\n      oauth2_jwks_url: https://idp/certs\n"+body)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got := cfg.Auth.OAuth2[0].JWKSUnknownKIDIntervalSeconds; got != want {
+			t.Errorf("body %q: interval %d, want %d", body, got, want)
+		}
 	}
 }

@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 9
+config_schema_version: 10
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -960,6 +960,7 @@ components:
       #   tls_ca: /etc/yarilo-ca/ca.crt  # PEM CAs trusted instead of the system roots (mount via extraVolumes)
       # - mode: local
       #   jwks_url: ""                 # optional when local_keys are given
+      #   jwks_unknown_kid_interval_seconds: 300  # JWKS refresh an unknown kid may trigger, at most this often; 0 = never
       #   local_keys:                  # matched by azp claim, alg and kid header; "default" when absent
       #     - alg: RS256               # HS256/384/512 (base64 shared secret), RS*, PS*, ES*, EdDSA (PEM public key)
       #       kid: my-key
