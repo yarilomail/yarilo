@@ -298,6 +298,17 @@ for spec in "${SDBOX_AGED:-}:sdbox" "${MAILDIR_AGED:-}:maildir"; do
     verdict "aged $type mailbox survives an open" fail "$user before=$before after=$after"
 done
 
+# A passdb nologin blocks the login with exactly a wrong password's answer and
+# keeps the account; the seed sets it on this account only (#2229).
+NOLOGIN_USER="${NOLOGIN_USER:-nologin@d00001.test}"
+right=$(imap_session "a LOGIN $NOLOGIN_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+wrong=$(imap_session "a LOGIN $NOLOGIN_USER wrong-$PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+case "$right" in
+  "a NO "*) [ "$right" = "$wrong" ] && verdict "passdb nologin refused as a wrong password" ok "$NOLOGIN_USER: $right" ||
+    verdict "passdb nologin refused as a wrong password" fail "right password '$right', wrong one '$wrong'" ;;
+  *) verdict "passdb nologin refused as a wrong password" fail "$NOLOGIN_USER with its password answered '${right:-nothing}'" ;;
+esac
+
 uid_pairs | sort > "$OUT/uid-pairs-after.txt"
 new_pairs=$(comm -13 "$OUT/uid-pairs-before.txt" "$OUT/uid-pairs-after.txt" | tee "$OUT/lines/uid-pairs-new.txt" | wc -l | tr -d ' ')
 [ "$new_pairs" = 0 ] && verdict "no new vanished-and-present uid" ok "0" || verdict "no new vanished-and-present uid" fail "$new_pairs (lines/uid-pairs-new.txt)"

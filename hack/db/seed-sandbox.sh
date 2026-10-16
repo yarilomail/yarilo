@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Seeds the sandbox matrix, one domain per storage type: u1-50 mdbox, u51-100
-# maildir, u101-150 sdbox, plus the over-quota account. It owns those rows, and
-# no other one (#1806, #1943).
+# maildir, u101-150 sdbox, plus the over-quota, SCRAM and nologin accounts. It
+# owns those rows, and no other one (#1806, #1943).
 #
 # Usage:
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml bash hack/db/seed-sandbox.sh
@@ -13,6 +13,7 @@ DB_POD="${DB_POD:-mysql-0}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 OVER_USER="${OVER_USER:-over@d00001.test}"
 SCRAM_USER="${SCRAM_USER:-scram@d00001.test}"
+NOLOGIN_USER="${NOLOGIN_USER:-nologin@d00001.test}"
 
 mysql_do() {
   kubectl --kubeconfig="$KCFG" exec -i -n "$DB_NS" "$DB_POD" -- \
@@ -178,6 +179,27 @@ ON DUPLICATE KEY UPDATE
 SQL
 ) || { echo "$OVER_OUT" >&2; echo "seed: the over-quota row failed" >&2; exit 1; }
 echo "$OVER_OUT" | grep -v Warning || true
+
+echo "Seeding $NOLOGIN_USER (nologin) ..."
+# The passdb query reads mailbox.nologin; a database made before it lacks the
+# column, and MySQL has no ADD COLUMN IF NOT EXISTS.
+NOLOGIN_OUT=$(mysql_do <<SQL 2>&1
+SET @have := (SELECT COUNT(*) FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mailbox' AND COLUMN_NAME = 'nologin');
+SET @ddl := IF(@have = 0, 'ALTER TABLE mailbox ADD COLUMN nologin TINYINT(1) NOT NULL DEFAULT 0 AFTER allow_nets', 'DO 0');
+PREPARE ddl FROM @ddl;
+EXECUTE ddl;
+DEALLOCATE PREPARE ddl;
+INSERT INTO mailbox (username, password, mbtype, home, maildir, quota_bytes, local_part, domain, active, mpath, nologin)
+VALUES ('$NOLOGIN_USER', '$PLAIN_HASH', 'maildir', '/var/mail/vhosts/', 'Maildir', 1073741824,
+        'nologin', 'd00001.test', 1, 'd00001.test/$NOLOGIN_USER', 1)
+ON DUPLICATE KEY UPDATE
+  password = VALUES(password), mbtype = VALUES(mbtype), home = VALUES(home),
+  maildir = VALUES(maildir), quota_bytes = VALUES(quota_bytes), local_part = VALUES(local_part),
+  domain = VALUES(domain), active = VALUES(active), mpath = VALUES(mpath), nologin = VALUES(nologin);
+SQL
+) || { echo "$NOLOGIN_OUT" >&2; echo "seed: the nologin row failed" >&2; exit 1; }
+echo "$NOLOGIN_OUT" | grep -v Warning || true
 
 BACKEND_POD=$(kube get pods -l app.kubernetes.io/component=backend -o name 2>/dev/null | head -1 | cut -d/ -f2)
 if [ -z "$BACKEND_POD" ]; then

@@ -43,6 +43,7 @@ issue it verifies.
 | disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
 | an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted right before and after an IMAP SELECT |
+| a passdb nologin refused as a wrong password | `nologin@d00001.test` (`mailbox.nologin = 1`, set by `hack/db/seed-sandbox.sh`) logs in over IMAP with its password and with a wrong one; both answer the same `NO` (#2229) |
 | no new vanished-and-present uid | QRESYNC on u53–u70@d00002.test before and after (#2176) |
 | no pod restarted or replaced | pod uids and restart counts at the start, once every Deployment has rolled out and no pod is terminating, and at the end; Job pods (smoketest, imaptest) left out |
 | no `panic`, `stopped-naming`, `reconcile-unfinished`, `append-failed`, `list-rename`, `reactive-heal`, `message-swept` lines | every container's log since the start |
