@@ -309,6 +309,26 @@ case "$right" in
   *) verdict "passdb nologin refused as a wrong password" fail "$NOLOGIN_USER with its password answered '${right:-nothing}'" ;;
 esac
 
+# A per-protocol rule (#2227): the password query turns IMAP off for one probe,
+# which answers as a wrong password while its POP3 logs in; the user query
+# turns delivery off for the other, refused at RCPT while u1 is taken.
+RULE_IMAP_USER="${RULE_IMAP_USER:-ruleimap@d00001.test}"
+RULE_LMTP_USER="${RULE_LMTP_USER:-rulelmtp@d00001.test}"
+right=$(imap_session "a LOGIN $RULE_IMAP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+wrong=$(imap_session "a LOGIN $RULE_IMAP_USER wrong-$PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+pop=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'USER $RULE_IMAP_USER\r\nPASS $PASSWORD\r\nQUIT\r\n' | nc -w 15 yarilo-pop3-login 110" | tr -d '\r' | sed -n 3p)
+case "$right|$pop" in
+  "a NO "*"|+OK"*) [ "$right" = "$wrong" ] && verdict "protocol rule: IMAP refused as a wrong password, POP3 in" ok "$RULE_IMAP_USER: imap '$right', pop3 '$pop'" ||
+    verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "right password '$right', wrong one '$wrong'" ;;
+  *) verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "$RULE_IMAP_USER: imap '${right:-nothing}', pop3 '${pop:-nothing}'" ;;
+esac
+rcpt=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$RULE_LMTP_USER>\r\nRCPT TO:<u1@d00001.test>\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" | tr -d '\r' | grep -E '^[245][0-9][0-9] ' | tail -3)
+refused=$(echo "$rcpt" | sed -n 2p); taken=$(echo "$rcpt" | sed -n 3p)
+case "$refused|$taken" in
+  5*"|250"*) verdict "protocol rule: delivery refused at RCPT" ok "$RULE_LMTP_USER '$refused', u1 '$taken'" ;;
+  *) verdict "protocol rule: delivery refused at RCPT" fail "$RULE_LMTP_USER '${refused:-nothing}', u1 '${taken:-nothing}'" ;;
+esac
+
 uid_pairs | sort > "$OUT/uid-pairs-after.txt"
 new_pairs=$(comm -13 "$OUT/uid-pairs-before.txt" "$OUT/uid-pairs-after.txt" | tee "$OUT/lines/uid-pairs-new.txt" | wc -l | tr -d ' ')
 [ "$new_pairs" = 0 ] && verdict "no new vanished-and-present uid" ok "0" || verdict "no new vanished-and-present uid" fail "$new_pairs (lines/uid-pairs-new.txt)"

@@ -44,6 +44,8 @@ issue it verifies.
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
 | an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted right before and after an IMAP SELECT |
 | a passdb nologin refused as a wrong password | `nologin@d00001.test` (`mailbox.nologin = 1`, set by `hack/db/seed-sandbox.sh`) logs in over IMAP with its password and with a wrong one; both answer the same `NO` (#2229) |
+| a per-protocol rule: IMAP refused as a wrong password, POP3 in | `ruleimap@d00001.test` (`mailbox.imap_enabled = 0`; the stand's password query reads it through `CASE %s`) answers IMAP with its password exactly as with a wrong one, and logs in over POP3 (#2227) |
+| a per-protocol rule: delivery refused at RCPT | `rulelmtp@d00001.test` (`mailbox.lmtp_enabled = 0`; the stand's user query reads it through `CASE %s`) is refused at LMTP `RCPT` with a 5xx while `u1@d00001.test` in the same transaction gets 250; no `DATA`, nothing is stored (#2227) |
 | no new vanished-and-present uid | QRESYNC on u53–u70@d00002.test before and after (#2176) |
 | no pod restarted or replaced | pod uids and restart counts at the start, once every Deployment has rolled out and no pod is terminating, and at the end; Job pods (smoketest, imaptest) left out |
 | no `panic`, `stopped-naming`, `reconcile-unfinished`, `append-failed`, `list-rename`, `reactive-heal`, `message-swept` lines | every container's log since the start |

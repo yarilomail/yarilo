@@ -14,6 +14,8 @@ KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 OVER_USER="${OVER_USER:-over@d00001.test}"
 SCRAM_USER="${SCRAM_USER:-scram@d00001.test}"
 NOLOGIN_USER="${NOLOGIN_USER:-nologin@d00001.test}"
+RULE_IMAP_USER="${RULE_IMAP_USER:-ruleimap@d00001.test}"
+RULE_LMTP_USER="${RULE_LMTP_USER:-rulelmtp@d00001.test}"
 
 mysql_do() {
   kubectl --kubeconfig="$KCFG" exec -i -n "$DB_NS" "$DB_POD" -- \
@@ -200,6 +202,36 @@ ON DUPLICATE KEY UPDATE
 SQL
 ) || { echo "$NOLOGIN_OUT" >&2; echo "seed: the nologin row failed" >&2; exit 1; }
 echo "$NOLOGIN_OUT" | grep -v Warning || true
+
+echo "Seeding $RULE_IMAP_USER (IMAP off) and $RULE_LMTP_USER (delivery off) ..."
+# The stand's queries read mailbox.imap_enabled and lmtp_enabled (#2227); a
+# database made before them lacks the columns.
+RULE_OUT=$(mysql_do <<SQL 2>&1
+SET @have := (SELECT COUNT(*) FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mailbox' AND COLUMN_NAME = 'imap_enabled');
+SET @ddl := IF(@have = 0, 'ALTER TABLE mailbox ADD COLUMN imap_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER nologin', 'DO 0');
+PREPARE ddl FROM @ddl;
+EXECUTE ddl;
+DEALLOCATE PREPARE ddl;
+SET @have := (SELECT COUNT(*) FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mailbox' AND COLUMN_NAME = 'lmtp_enabled');
+SET @ddl := IF(@have = 0, 'ALTER TABLE mailbox ADD COLUMN lmtp_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER imap_enabled', 'DO 0');
+PREPARE ddl FROM @ddl;
+EXECUTE ddl;
+DEALLOCATE PREPARE ddl;
+INSERT INTO mailbox (username, password, mbtype, home, maildir, quota_bytes, local_part, domain, active, mpath, imap_enabled, lmtp_enabled)
+VALUES ('$RULE_IMAP_USER', '$PLAIN_HASH', 'mdbox', '/var/mail/vhosts/', 'mdbox', 1073741824,
+        'ruleimap', 'd00001.test', 1, 'd00001.test/$RULE_IMAP_USER', 0, 1),
+       ('$RULE_LMTP_USER', '$PLAIN_HASH', 'mdbox', '/var/mail/vhosts/', 'mdbox', 1073741824,
+        'rulelmtp', 'd00001.test', 1, 'd00001.test/$RULE_LMTP_USER', 1, 0)
+ON DUPLICATE KEY UPDATE
+  password = VALUES(password), mbtype = VALUES(mbtype), home = VALUES(home),
+  maildir = VALUES(maildir), quota_bytes = VALUES(quota_bytes), local_part = VALUES(local_part),
+  domain = VALUES(domain), active = VALUES(active), mpath = VALUES(mpath),
+  imap_enabled = VALUES(imap_enabled), lmtp_enabled = VALUES(lmtp_enabled);
+SQL
+) || { echo "$RULE_OUT" >&2; echo "seed: the protocol-rule rows failed" >&2; exit 1; }
+echo "$RULE_OUT" | grep -v Warning || true
 
 BACKEND_POD=$(kube get pods -l app.kubernetes.io/component=backend -o name 2>/dev/null | head -1 | cut -d/ -f2)
 if [ -z "$BACKEND_POD" ]; then

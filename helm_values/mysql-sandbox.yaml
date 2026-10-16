@@ -85,6 +85,8 @@ data:
         active            TINYINT(1)          NOT NULL DEFAULT 1,
         allow_nets        TEXT                    NULL,
         nologin           TINYINT(1)          NOT NULL DEFAULT 0,
+        imap_enabled      TINYINT(1)          NOT NULL DEFAULT 1,
+        lmtp_enabled      TINYINT(1)          NOT NULL DEFAULT 1,
         created           DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP,
         modified          DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         password_modified DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP,

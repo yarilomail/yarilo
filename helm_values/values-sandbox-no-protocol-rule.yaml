@@ -1,0 +1,54 @@
+## Control overlay for one A/B arm: the stand's passdb list without the
+## per-protocol rule, to price the userdb lookup it adds to every login (#2227).
+## Laid over values-sandbox.yaml by hack/stand/ab-arm.sh, never deployed alone;
+## it repeats the whole list because helm replaces lists. Keep it in step with
+## values-sandbox.yaml: the only difference is the two CASE lines.
+components:
+  auth:
+    passdb:
+      - driver: mysql
+        dsn: "${YARILO_DB_DSN}"
+        default_pass_scheme: BCRYPT
+        ## PostfixAdmin mailbox table — skip_schema prevents yarilo-auth from
+        ## creating its own yarilo_users table.
+        ## Columns matched by name — only "password" is required.
+        ## "enabled" maps to PostfixAdmin's "active"; absent columns default active.
+        skip_schema: true
+        ## nologin blocks the login and keeps the account (#2229); the seed sets it
+        ## on its probe account only. The column must exist before this query.
+        password_query: |
+          SELECT password, active AS enabled, allow_nets, nologin
+          FROM mailbox
+          WHERE username = %u
+        user_query: |
+          SELECT CONCAT(home, mpath) AS home,
+                 CONCAT(mbtype, ':~/', maildir,
+                        ':INDEX=~/index',
+                        ':VOLATILEDIR=/tmp/yarilo-volatile/%2.256Nu/%u') AS mail,
+                 CONCAT('*:bytes=', quota_bytes, ':messages=', quota_messages) AS quota_rule
+          FROM mailbox
+          WHERE username = %u
+        iterate_query: |
+          SELECT username
+          FROM mailbox
+          WHERE active = 1
+          ORDER BY username
+      ## Static passdb, last in the chain, so the smoke row for this driver has
+      ## something to check (#1311). It matches EVERY username by design, which
+      ## on an internet-facing deployment would hand every account a second
+      ## valid password -- so it hands out allow_nets with the credential, and
+      ## login refuses the session from anywhere else. The smoke job runs
+      ## in-cluster, which is the only place this account is meant to work.
+      - driver: static
+        ## Only the smoke account: unfiltered, every name would exist for a
+        ## userdb lookup and LMTP and quota-status would take any address.
+        username_filter: "static@d00001.test"
+        static_password: "${YARILO_STATIC_PASSWORD}"
+        default_pass_scheme: PLAIN
+        fields:
+          ## microk8s pod CIDR: the smoke job dials the service pod-to-pod,
+          ## so the source is always a pod IP. Nodes/LB (10.50.80.x) are not
+          ## in it deliberately -- nothing that reaches this account runs there.
+          allow_nets: "10.1.0.0/16"
+          userdb_home: "/var/mail/vhosts/d00001.test/static"
+          userdb_mail: "maildir:~/Maildir:INDEX=~/index"
