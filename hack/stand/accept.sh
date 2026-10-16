@@ -309,6 +309,30 @@ case "$right" in
   *) verdict "passdb nologin refused as a wrong password" fail "$NOLOGIN_USER with its password answered '${right:-nothing}'" ;;
 esac
 
+# The per-protocol rule (#2227): IMAP off in the password query, delivery off in
+# the user query, one probe each; README, acceptance.
+RULE_IMAP_USER="${RULE_IMAP_USER:-ruleimap@d00001.test}"
+RULE_LMTP_USER="${RULE_LMTP_USER:-rulelmtp@d00001.test}"
+right=$(imap_session "a LOGIN $RULE_IMAP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+wrong=$(imap_session "a LOGIN $RULE_IMAP_USER wrong-$PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+pop=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'USER $RULE_IMAP_USER\r\nPASS $PASSWORD\r\nQUIT\r\n' | nc -w 15 yarilo-pop3-login 110" | tr -d '\r' | sed -n 3p)
+case "$right|$pop" in
+  "a NO "*"|+OK"*) [ "$right" = "$wrong" ] && verdict "protocol rule: IMAP refused as a wrong password, POP3 in" ok "$RULE_IMAP_USER: imap '$right', pop3 '$pop'" ||
+    verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "right password '$right', wrong one '$wrong'" ;;
+  *) verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "$RULE_IMAP_USER: imap '${right:-nothing}', pop3 '${pop:-nothing}'" ;;
+esac
+# Refused after DATA as an unknown recipient, word for word: the login proxy
+# takes any RCPT. Both are refused, so nothing is stored.
+replies=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$RULE_LMTP_USER>\r\nRCPT TO:<nosuch-accept@d00001.test>\r\nDATA\r\nSubject: rule probe\r\n\r\nx\r\n.\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" | tr -d '\r' | grep -E '^5[0-9][0-9] ' || true)
+ruled=$(echo "$replies" | sed -n 1p); unknown=$(echo "$replies" | sed -n 2p)
+login=$(imap_session "a LOGIN $RULE_LMTP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+case "$ruled|$login" in
+  "550 "*"|a OK"*) [ "${ruled/$RULE_LMTP_USER/X}" = "${unknown/nosuch-accept@d00001.test/X}" ] &&
+    verdict "protocol rule: delivery refused as an unknown recipient" ok "$ruled; unknown '$unknown'; imap '$login'" ||
+    verdict "protocol rule: delivery refused as an unknown recipient" fail "rule '$ruled', unknown '$unknown'" ;;
+  *) verdict "protocol rule: delivery refused as an unknown recipient" fail "$RULE_LMTP_USER: delivery '${ruled:-nothing}', imap '${login:-nothing}'" ;;
+esac
+
 uid_pairs | sort > "$OUT/uid-pairs-after.txt"
 new_pairs=$(comm -13 "$OUT/uid-pairs-before.txt" "$OUT/uid-pairs-after.txt" | tee "$OUT/lines/uid-pairs-new.txt" | wc -l | tr -d ' ')
 [ "$new_pairs" = 0 ] && verdict "no new vanished-and-present uid" ok "0" || verdict "no new vanished-and-present uid" fail "$new_pairs (lines/uid-pairs-new.txt)"
