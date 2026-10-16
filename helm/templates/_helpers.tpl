@@ -625,6 +625,52 @@ Secret, the literal otherwise. Both set fails: the literal would land in the Con
 {{- end }}
 
 {{/*
+An OAuth2 local key is a file: the operator's path, or the chart's mount of secret_ref (#2231).
+*/}}
+{{- define "yarilo.oauth2KeyFile" -}}
+{{- $ref := .key.secret_ref | default dict -}}
+{{- if and .key.file $ref.name -}}
+{{- fail (printf "components.auth.oauth2[%d].local_keys[%d]: file and secret_ref both set; give one" .i .j) -}}
+{{- else if $ref.name -}}
+{{- printf "/etc/yarilo-oauth2/%d-%d/key" .i .j -}}
+{{- else if .key.file -}}
+{{- .key.file -}}
+{{- else -}}
+{{- fail (printf "components.auth.oauth2[%d].local_keys[%d]: needs file or secret_ref" .i .j) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Volumes and mounts for the OAuth2 local keys given as secret_ref, yarilo-auth only.
+*/}}
+{{- define "yarilo.oauth2KeyVolumes" -}}
+{{- range $i, $e := .Values.components.auth.oauth2 | default list }}
+{{- range $j, $k := $e.local_keys | default list }}
+{{- with ($k.secret_ref | default dict).name }}
+- name: oauth2-key-{{ $i }}-{{ $j }}
+  secret:
+    secretName: {{ . }}
+    items:
+      - key: {{ $k.secret_ref.key | default "key" }}
+        path: key
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "yarilo.oauth2KeyMounts" -}}
+{{- range $i, $e := .Values.components.auth.oauth2 | default list }}
+{{- range $j, $k := $e.local_keys | default list }}
+{{- if ($k.secret_ref | default dict).name }}
+- name: oauth2-key-{{ $i }}-{{ $j }}
+  mountPath: /etc/yarilo-oauth2/{{ $i }}-{{ $j }}
+  readOnly: true
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 The env entries behind yarilo.authSecretValue, for yarilo-auth only (#2163).
 */}}
 {{- define "yarilo.authSecretEnv" -}}

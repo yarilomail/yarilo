@@ -78,6 +78,9 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.auth.internalTLS "role" "auth") | nindent 12 }}
+            {{- with include "yarilo.oauth2KeyMounts" . | trim }}
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -95,6 +98,9 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.auth.internalTLS "role" "auth") | nindent 8 }}
+        {{- with include "yarilo.oauth2KeyVolumes" . | trim }}
+        {{- . | nindent 8 }}
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

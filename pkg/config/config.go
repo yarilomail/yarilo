@@ -1918,6 +1918,23 @@ type OAuth2Entry struct {
 	// HTTPTimeoutMs caps the validation round-trip (introspection
 	// / tokeninfo / discovery / JWKS-refresh). Default 5000.
 	HTTPTimeoutMs int `koanf:"oauth2_http_timeout_ms"`
+
+	// GrantURL is the token endpoint a plaintext login's password is
+	// exchanged at (password grant); needs ClientID and https.
+	GrantURL string `koanf:"oauth2_grant_url"`
+
+	// LocalKeys are operator-provisioned verification keys for mode local,
+	// tried before the JWKS; with them the JWKS is optional.
+	LocalKeys []OAuth2LocalKey `koanf:"oauth2_local_keys"`
+
+	// ForceIntrospection makes IntrospectionURL decide even when the
+	// tokeninfo or grant reply already names the user.
+	ForceIntrospection bool `koanf:"oauth2_force_introspection"`
+
+	// TLSCA is a PEM file of the CAs this entry's HTTPS calls trust, in
+	// place of the system roots. Empty = system roots.
+	TLSCA string `koanf:"oauth2_tls_ca"`
+
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	ModeAlias                     string   `koanf:"mode"`
 	AudienceAlias                 string   `koanf:"audience"`
@@ -1938,6 +1955,16 @@ type OAuth2Entry struct {
 	ClientIDAlias                 string   `koanf:"client_id"`
 	ClientSecretAlias             string   `koanf:"client_secret"`
 	IssuersAlias                  []string `koanf:"issuers"`
+}
+
+// OAuth2LocalKey is one key a token is matched to by its azp claim, alg and
+// kid header; a missing azp or kid matches "default".
+type OAuth2LocalKey struct {
+	Azp string `koanf:"oauth2_local_key_azp"`
+	Alg string `koanf:"oauth2_local_key_alg"`
+	Kid string `koanf:"oauth2_local_key_kid"`
+	// File holds a PEM public key, or for HS* the base64 shared secret.
+	File string `koanf:"oauth2_local_key_file"`
 }
 
 // AuthPenaltyConfig configures cross-pod IP-bound auth backoff.
@@ -2829,6 +2856,9 @@ func (cfg *Config) validate() error {
 	if err := validateSQLQueryVars(cfg.Auth); err != nil {
 		return err
 	}
+	if err := validateOAuth2(cfg.Auth.OAuth2); err != nil {
+		return err
+	}
 	if err := foldNamespaceLocations(cfg.Namespaces); err != nil {
 		return err
 	}
@@ -3537,7 +3567,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 8
+const minConfigSchema = 9
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3556,6 +3586,7 @@ var schemaAdditions = map[int][]string{
 	6: {"login_proxy_timeout"},
 	7: {"managesieve_max_line_length"},
 	8: {"lmtp_max_recipients"},
+	9: {"oauth2_grant_url", "oauth2_local_keys", "oauth2_force_introspection", "oauth2_tls_ca"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
