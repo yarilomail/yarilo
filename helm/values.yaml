@@ -316,12 +316,13 @@ storage:
   ##                                      # base64 alphabet [A-Za-z0-9+,], and not "." "/" or "&". Startup fails
   ##                                      # on anything else rather than accepting a value that would make folder
   ##                                      # names unreadable on disk. "^" and "%" are good choices.
-  ## mailbox_list_reserved_segments: ["cur", "new", "tmp", "dbox-Mails"]
+  ## mailbox_list_reserved_segments: ["cur", "new", "tmp", "dbox-Mails", "fts-flatcurve"]
   ##                                      # names a single hierarchy segment may not equal, because the storage
   ##                                      # layout owns the directory. Only the names the layout in use actually
   ##                                      # owns are enforced: maildir++ gives every folder a leading "." so a
   ##                                      # folder called "new" is ".new" and collides with nothing, while the
-  ##                                      # dbox layouts own only their "dbox-Mails" marker. A name listed here
+  ##                                      # dbox layouts own their "dbox-Mails" marker and the "fts-flatcurve"
+  ##                                      # index directory a converted store keeps. A name listed here
   ##                                      # that the layout does not own is not a collision and is ignored.
   ##                                      # Retroactive where it does apply: a user who already owns such a
   ##                                      # folder loses access to it. [] disables the check.

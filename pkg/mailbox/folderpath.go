@@ -97,3 +97,7 @@ const (
 	mailboxesSubdir = "mailboxes"
 	dboxMailsSubdir = "dbox-Mails"
 )
+
+// FTSIndexDir is the full-text index directory a converted dbox store keeps
+// inside a mailbox directory, beside its children. Never a folder (#2254).
+const FTSIndexDir = "fts-flatcurve"

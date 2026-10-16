@@ -40,6 +40,13 @@ func ReadMap(b []byte, offset int, base []Extension) ([]MapEntry, error) {
 // the log alone reads as an empty map and the folders naming the lost uids
 // cannot be converted (#1583).
 func ReadMapOnto(seed []MapEntry, b []byte, offset int, base []Extension) ([]MapEntry, error) {
+	out, _, err := ReadMapOntoExt(seed, b, offset, base)
+	return out, err
+}
+
+// ReadMapOntoExt also returns the extensions known at the end: the next log of a
+// rotated chain introduces them by id alone (#2253).
+func ReadMapOntoExt(seed []MapEntry, b []byte, offset int, base []Extension) ([]MapEntry, []Extension, error) {
 	be, le := binary.BigEndian, binary.LittleEndian
 
 	entries := map[uint32]*MapEntry{}
@@ -69,7 +76,7 @@ func ReadMapOnto(seed []MapEntry, b []byte, offset int, base []Extension) ([]Map
 			break
 		}
 		if size < 8 || pos+int(size) > len(b) {
-			return nil, fmt.Errorf("dboxindex/map: record at %d claims %d bytes, past a %d-byte file", pos, size, len(b))
+			return nil, nil, fmt.Errorf("dboxindex/map: record at %d claims %d bytes, past a %d-byte file", pos, size, len(b))
 		}
 		recType := le.Uint32(b[pos+4:]) & typeMask
 		data := b[pos+8 : pos+int(size)]
@@ -77,12 +84,12 @@ func ReadMapOnto(seed []MapEntry, b []byte, offset int, base []Extension) ([]Map
 		switch recType {
 		case typeExtIntro:
 			if len(data) < extIntroFixed {
-				return nil, fmt.Errorf("dboxindex/map: ext-intro at %d is %d bytes", pos, len(data))
+				return nil, nil, fmt.Errorf("dboxindex/map: ext-intro at %d is %d bytes", pos, len(data))
 			}
 			width := int(le.Uint16(data[12:]))
 			nameSize := int(le.Uint16(data[18:]))
 			if extIntroFixed+nameSize > len(data) {
-				return nil, fmt.Errorf("dboxindex/map: ext-intro at %d names %d bytes it does not have", pos, nameSize)
+				return nil, nil, fmt.Errorf("dboxindex/map: ext-intro at %d names %d bytes it does not have", pos, nameSize)
 			}
 			name := string(data[extIntroFixed : extIntroFixed+nameSize])
 			extID := le.Uint32(data)
@@ -118,7 +125,7 @@ func ReadMapOnto(seed []MapEntry, b []byte, offset int, base []Extension) ([]Map
 				// An id neither this log nor the base introduced. Refused, not
 				// skipped: a silently short map is a mailbox whose messages
 				// point at nothing.
-				return nil, fmt.Errorf("dboxindex/map: ext-intro at %d refers to extension %d, which neither this log nor the index header introduced", pos, extID)
+				return nil, nil, fmt.Errorf("dboxindex/map: ext-intro at %d refers to extension %d, which neither this log nor the index header introduced", pos, extID)
 			}
 
 		case typeAppend:
@@ -148,7 +155,7 @@ func ReadMapOnto(seed []MapEntry, b []byte, offset int, base []Extension) ([]Map
 				switch currentExt {
 				case "map":
 					if len(val) < mapRecordSize {
-						return nil, fmt.Errorf("dboxindex/map: map record for uid %d is %d bytes, want %d", uid, len(val), mapRecordSize)
+						return nil, nil, fmt.Errorf("dboxindex/map: map record for uid %d is %d bytes, want %d", uid, len(val), mapRecordSize)
 					}
 					e.FileID = le.Uint32(val)
 					e.Offset = le.Uint32(val[4:])
@@ -202,7 +209,11 @@ func ReadMapOnto(seed []MapEntry, b []byte, offset int, base []Extension) ([]Map
 	for _, uid := range order {
 		out = append(out, *entries[uid])
 	}
-	return out, nil
+	exts := make([]Extension, 0, len(registry))
+	for _, k := range registry {
+		exts = append(exts, Extension{Name: k.name, RecordSize: uint16(k.width)})
+	}
+	return out, exts, nil
 }
 
 // ParseMapRecords reads the map entries a map index's base holds: position in a

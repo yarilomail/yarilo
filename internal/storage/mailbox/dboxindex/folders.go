@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // Folder is one mailbox found on disk: Name as a client sees it, Path relative
@@ -30,6 +31,9 @@ func WalkFolders(dir fs.FS) ([]Folder, error) {
 		}
 		if !d.IsDir() || p == "." {
 			return nil
+		}
+		if path.Base(p) == mailbox.FTSIndexDir {
+			return fs.SkipDir
 		}
 		if path.Base(p) == dboxMailsDir {
 			// The message directory of the folder above; the test below would

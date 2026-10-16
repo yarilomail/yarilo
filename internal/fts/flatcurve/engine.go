@@ -21,11 +21,12 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
 	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // On-disk format constants (see https://doc.yarilomail.org/FTS for the format specification).
 const (
-	Label         = "fts-flatcurve"
+	Label         = mailbox.FTSIndexDir
 	dbPrefix      = "index."
 	currentPrefix = "current."
 	versionKey    = "yarilo.fts-flatcurve"

@@ -58,7 +58,7 @@ type NameRules struct {
 func DefaultNameRules() NameRules {
 	return NameRules{
 		ValidateFSNames:  true,
-		ReservedSegments: []string{"cur", "new", "tmp", dboxMailsSubdir},
+		ReservedSegments: []string{"cur", "new", "tmp", dboxMailsSubdir, FTSIndexDir},
 		// Off by default: see RefuseLayoutSeparator. A deployment turns it on
 		// after checking that no mailbox carries a name with the layout
 		// separator in it.
@@ -170,7 +170,7 @@ func reservedFor(rules NameRules, layoutSep string) []string {
 // maildir++ owns none: every folder is stored with a leading "." (".new"), so
 // it can never be confused with the "new" the layout keeps inside a mailbox.
 // cur, new and tmp are maildir's directories and do not occur in the dbox
-// layouts at all; the only name a nested layout owns is its marker.
+// layouts at all; a nested layout owns its marker and the FTS index directory.
 //
 // Deriving the set from the layout rather than applying one list everywhere is
 // the difference between a check and a superstition: a name refused where it
@@ -180,7 +180,7 @@ func layoutOwnedNames(layoutSep string) []string {
 	if layoutSep == "." {
 		return nil // maildir++: the leading dot keeps folders apart
 	}
-	return []string{dboxMailsSubdir}
+	return []string{dboxMailsSubdir, FTSIndexDir}
 }
 
 // intersectOwned keeps the configured names the layout actually owns. A name an
