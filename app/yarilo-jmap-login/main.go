@@ -109,23 +109,7 @@ func main() {
 		}
 	}()
 
-	srv := jmaplogin.New(jmaplogin.Options{
-		Addr:               addr,
-		ExtTLS:             extTLS,
-		Auth:               authAdapter{auth},
-		DisablePlainAuth:   svc.PlainAuthDisabled(),
-		Router:             router(cfg),
-		BackendTLS:         intTLS,
-		Warden:             wardenPool,
-		WardenFailOpen:     cfg.WardenService.FailOpen,
-		ProxyProtocol:      svc.HAProxy,
-		HAProxyTrustedNets: parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
-		HAProxyTimeout:     time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
-		LocalIP:            os.Getenv("POD_IP"),
-		CORSAllowOrigins:   cfg.Protocol.JMAP.CORSAllowOrigins,
-		MaxSizeRequest:     cfg.Protocol.JMAP.MaxSizeRequest,
-		MaxSizeUpload:      cfg.Protocol.JMAP.MaxSizeUpload,
-	})
+	srv := jmaplogin.New(serverOptions(cfg, svc, addr, extTLS, intTLS, auth, wardenPool))
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {
 		slog.Error("jmap-login server failed", "err", err)
@@ -201,18 +185,29 @@ func authAddr(cfg *config.Config) string {
 
 func wardenConns(cfg *config.Config) int { return cfg.WardenService.Conns }
 
-// authAdapter narrows the auth client to the username the proxy needs.
-type authAdapter struct{ cl *authclient.Client }
-
-func (a authAdapter) Authenticate(username, password, service, remoteIP, sessionID string) (string, error) {
-	res, err := a.cl.Authenticate(username, password, service, remoteIP, sessionID)
-	if err != nil {
-		return "", err
+// serverOptions is the proxy's wiring: both credential types go to the auth
+// service, Basic as a password login and Bearer as OAUTHBEARER (#2228).
+func serverOptions(cfg *config.Config, svc *config.ServiceConfig, addr string, extTLS, intTLS *tls.Config,
+	auth *authclient.Client, wardenPool *warden.Pool) jmaplogin.Options {
+	authSvc := jmaplogin.NewAuthService(auth)
+	return jmaplogin.Options{
+		Addr:               addr,
+		ExtTLS:             extTLS,
+		Auth:               authSvc,
+		Tokens:             authSvc,
+		DisablePlainAuth:   svc.PlainAuthDisabled(),
+		Router:             router(cfg),
+		BackendTLS:         intTLS,
+		Warden:             wardenPool,
+		WardenFailOpen:     cfg.WardenService.FailOpen,
+		ProxyProtocol:      svc.HAProxy,
+		HAProxyTrustedNets: parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
+		HAProxyTimeout:     time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
+		LocalIP:            os.Getenv("POD_IP"),
+		CORSAllowOrigins:   cfg.Protocol.JMAP.CORSAllowOrigins,
+		MaxSizeRequest:     cfg.Protocol.JMAP.MaxSizeRequest,
+		MaxSizeUpload:      cfg.Protocol.JMAP.MaxSizeUpload,
 	}
-	if res.Nologin {
-		return "", fmt.Errorf("jmap-login: login disabled for %s", username)
-	}
-	return res.Username, nil
 }
 
 // parseCIDRs turns the trusted-net list into matchers, skipping and logging a

@@ -1352,6 +1352,12 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sess
 		return "fail"
 	}
 
+	// A token login may name no user before the chain; the policy hears the
+	// one the chain resolved.
+	if policyReq.Username == "" {
+		policyReq.Username = res.Username
+	}
+
 	// Policy-server post-chain check (check_after_auth). The
 	// policy server now has the success outcome; it may downgrade
 	// to fail (e.g. account-takeover detection). Master flows
