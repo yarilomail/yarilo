@@ -39,70 +39,87 @@ func (u *userMailbox) Purge() (PurgeStats, error) {
 
 	for _, fileID := range candidates {
 		stats.FilesScanned++
-		entries, err := m.RecordsInFile(fileID)
-		if err != nil {
-			return stats, fmt.Errorf("mdbox/purge: records in m.%d: %w", fileID, err)
-		}
-		// Partition: live vs dead.
-		var live []mdboxmap.MapEntry
-		var dead []uint32
-		for _, e := range entries {
-			if e.RefCount == 0 {
-				dead = append(dead, e.UID)
-			} else {
-				live = append(live, e)
-			}
-		}
-
-		if len(live) == 0 {
-			// Whole file is dead — drop map records and unlink.
-			if err := m.AppendMove(nil, dead); err != nil {
-				return stats, fmt.Errorf("mdbox/purge: expunge file=%d: %w", fileID, err)
-			}
-			oldPath := u.mfilePath(fileID)
-			fileBytes, _ := u.fileSize(oldPath)
-			if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
-				return stats, fmt.Errorf("mdbox/purge: unlink m.%d: %w", fileID, err)
-			}
-			stats.FilesUnlinked++
-			stats.RecordsExpunged += len(dead)
-			stats.BytesReclaimed += fileBytes
-			continue
-		}
-
-		// Compact: copy live records into a fresh m.<newID>.
-		newID, err := m.AllocFileID()
-		if err != nil {
-			return stats, fmt.Errorf("mdbox/purge: alloc file id: %w", err)
-		}
-		moved, err := u.compactRecords(fileID, newID, live)
-		if err != nil {
+		// The file is read, rewritten and unlinked under one hold: a save
+		// landing between the read and the unlink would be lost (#2234).
+		if err := m.Place(func(p *mdboxmap.Placement) error {
+			return u.purgeFile(p, fileID, &stats)
+		}); err != nil {
 			return stats, err
-		}
-		// Anchor create-time so mdbox_rotate_interval applies to the
-		// compacted file too (best-effort; must not fail the purge).
-		if rerr := m.RecordFileCreated(newID, time.Now().Unix()); rerr != nil {
-			slog.Warn("mdbox: record compacted file create-time failed", "user", u.username, "file_id", newID, "err", rerr)
-		}
-		if err := m.AppendMove(moved, dead); err != nil {
-			return stats, fmt.Errorf("mdbox/purge: append-move file=%d→%d: %w", fileID, newID, err)
-		}
-		oldPath := u.mfilePath(fileID)
-		oldBytes, _ := u.fileSize(oldPath)
-		newBytes, _ := u.fileSize(u.mfilePath(newID))
-		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
-			return stats, fmt.Errorf("mdbox/purge: unlink m.%d: %w", fileID, err)
-		}
-		stats.FilesRewritten++
-		stats.RecordsKept += len(live)
-		stats.RecordsExpunged += len(dead)
-		// Reclaimed = oldSize - newSize, both taken after AppendMove.
-		if delta := oldBytes - newBytes; delta > 0 {
-			stats.BytesReclaimed += delta
 		}
 	}
 	return stats, nil
 }
+
+func (u *userMailbox) purgeFile(p *mdboxmap.Placement, fileID uint32, stats *PurgeStats) error {
+	var live []mdboxmap.MapEntry
+	var dead []uint32
+	recs := p.RecordsInFile(fileID)
+	if afterRecordsRead != nil {
+		afterRecordsRead()
+	}
+	for _, e := range recs {
+		if e.RefCount == 0 {
+			dead = append(dead, e.UID)
+		} else {
+			live = append(live, e)
+		}
+	}
+	if len(dead) == 0 {
+		return nil
+	}
+
+	if len(live) == 0 {
+		// Whole file is dead — drop map records and unlink.
+		if err := p.AppendMove(nil, dead); err != nil {
+			return fmt.Errorf("mdbox/purge: expunge file=%d: %w", fileID, err)
+		}
+		oldPath := u.mfilePath(fileID)
+		fileBytes, _ := u.fileSize(oldPath)
+		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("mdbox/purge: unlink m.%d: %w", fileID, err)
+		}
+		stats.FilesUnlinked++
+		stats.RecordsExpunged += len(dead)
+		stats.BytesReclaimed += fileBytes
+		return nil
+	}
+
+	// Compact: copy live records into a fresh m.<newID>.
+	newID, err := p.AllocFileID()
+	if err != nil {
+		return fmt.Errorf("mdbox/purge: alloc file id: %w", err)
+	}
+	moved, err := u.compactRecords(fileID, newID, live)
+	if err != nil {
+		return err
+	}
+	// Anchor create-time so mdbox_rotate_interval applies to the
+	// compacted file too (best-effort; must not fail the purge).
+	if rerr := p.RecordFileCreated(newID, time.Now().Unix()); rerr != nil {
+		slog.Warn("mdbox: record compacted file create-time failed", "user", u.username, "file_id", newID, "err", rerr)
+	}
+	if err := p.AppendMove(moved, dead); err != nil {
+		return fmt.Errorf("mdbox/purge: append-move file=%d→%d: %w", fileID, newID, err)
+	}
+	oldPath := u.mfilePath(fileID)
+	oldBytes, _ := u.fileSize(oldPath)
+	newBytes, _ := u.fileSize(u.mfilePath(newID))
+	if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("mdbox/purge: unlink m.%d: %w", fileID, err)
+	}
+	stats.FilesRewritten++
+	stats.RecordsKept += len(live)
+	stats.RecordsExpunged += len(dead)
+	// Reclaimed = oldSize - newSize, both taken after AppendMove.
+	if delta := oldBytes - newBytes; delta > 0 {
+		stats.BytesReclaimed += delta
+	}
+	return nil
+}
+
+// afterRecordsRead marks where a rewrite has read its source file's records,
+// for the rows that race a save against the rewrite.
+var afterRecordsRead func()
 
 // compactRecords copies each live record from src to dst, keeping the source
 // GUID -- a fresh one would break identity across purge cycles.

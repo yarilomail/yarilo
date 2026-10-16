@@ -16,26 +16,36 @@ import (
 // allMessages selects every message in a folder for GetMessages.
 var allMessages = mailbox.SeqSet{{From: 1, To: 0}}
 
+// Lease of a rebuild or heal hold, renewed for as long as the work runs (#2234).
+var rebuildLockTTL, rebuildLockRenew = 90 * time.Second, 30 * time.Second
+
 // withMapLock holds the map X lock across fn, serialising a rebuild against
-// deliveries. Re-entrant: map methods under fn see HoldsResource and skip.
-func (u *userMailbox) withMapLock(fn func() error) error {
+// deliveries; fn's context is cancelled once the lease cannot be renewed.
+func (u *userMailbox) withMapLock(fn func(context.Context) error) error {
 	if u.b.locker == nil {
-		return fn()
+		return fn(context.Background())
 	}
 	key := locks.MdboxMapKey(u.username)
 	if held, err := locks.Reentrant(u.b.locker, key, "mdbox-rebuild", false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
-		return fn()
+		return fn(context.Background())
 	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "mdbox-rebuild"), 95*time.Second)
-	defer cancel()
-	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 90*time.Second)
+	err := locks.WithLockWaiting(locks.WithSite(context.Background(), "mdbox-rebuild"), u.b.locker, key, u.owner,
+		rebuildLockTTL, rebuildLockRenew, 95*time.Second, fn)
 	if err != nil {
-		return fmt.Errorf("mdbox/rebuild: acquire map lock: %w", err)
+		return fmt.Errorf("mdbox/rebuild: map lock: %w", err)
 	}
-	defer func() { _ = u.b.locker.Unlock(ctx, lk.ID) }()
-	return fn()
+	return nil
+}
+
+// stillHeld refuses a write once the lease is gone: a save may already be in
+// the file this hold was rewriting.
+func stillHeld(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mdbox: map lock lost: %w", err)
+	}
+	return nil
 }
 
 // RebuildStorage reconciles the map against the m.<N> files and recomputes every
@@ -59,10 +69,10 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 		return stats, err
 	}
 
-	err = u.withMapLock(func() error {
+	err = u.withMapLock(func(ctx context.Context) error {
 		// A frame at the size the file does not announce reads as corruption to
 		// the reference, and the rebuild is where it is rewritten (#1687).
-		fixed, nerr := u.normaliseStorageFrames()
+		fixed, nerr := u.normaliseStorageFrames(ctx)
 		if nerr != nil {
 			return nerr
 		}
@@ -153,6 +163,12 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 			stats.OrphansRestored = restored
 		}
 
+		if beforeRebuildCommit != nil {
+			beforeRebuildCommit()
+		}
+		if err := stillHeld(ctx); err != nil {
+			return err
+		}
 		// Drop map records whose message vanished from storage.
 		dropped, derr := m.ExpungeVanished(presentUIDs)
 		if derr != nil {
@@ -162,6 +178,9 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 
 		// Recompute refcounts from the actual references (including just-restored
 		// orphans): unreferenced records go to zero-ref so purge reclaims them.
+		if err := stillHeld(ctx); err != nil {
+			return err
+		}
 		zeroed, rerr := m.SetRefcountsFromReferences(refCount)
 		if rerr != nil {
 			return fmt.Errorf("mdbox/rebuild: recompute refcounts: %w", rerr)
@@ -183,6 +202,10 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 	stats.RebuildCount = m.RebuildCount()
 	return stats, nil
 }
+
+// beforeRebuildCommit marks where a rebuild starts writing the map, for the row
+// that lapses its lease there.
+var beforeRebuildCommit func()
 
 // restoreTaggedOrphans re-files every unreferenced message carrying an
 // orig-mailbox tag, through the same path a delivery takes so the folder's

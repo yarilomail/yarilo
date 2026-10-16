@@ -29,7 +29,7 @@ func TestAReferenceBodyIsServedAsCRLF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc, err := openRecordBody(f, off)
+	rc, err := openRecordBody(f, off, [16]byte{})
 	if err != nil {
 		t.Fatalf("open body: %v", err)
 	}

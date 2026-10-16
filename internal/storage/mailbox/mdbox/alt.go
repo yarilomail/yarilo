@@ -87,102 +87,109 @@ func (u *userMailbox) AltMove(q AltMoveQuery) (AltMoveStats, error) {
 	sort.Slice(fileIDs, func(i, j int) bool { return fileIDs[i] < fileIDs[j] })
 
 	for _, srcFileID := range fileIDs {
-		eligibleUIDs := byFile[srcFileID]
-
-		// Load all records in this source file from the map.
-		allInFile, err := m.RecordsInFile(srcFileID)
-		if err != nil {
-			return stats, fmt.Errorf("mdbox/altmove: records in m.%d: %w", srcFileID, err)
-		}
-
-		// Partition: records we move vs records that stay.
-		eligibleSet := make(map[uint32]bool, len(eligibleUIDs))
-		for _, uid := range eligibleUIDs {
-			eligibleSet[uid] = true
-		}
-
-		var toMove []mdboxmap.MapEntry
-		var toStay []mdboxmap.MapEntry
-		for _, e := range allInFile {
-			if eligibleSet[e.UID] {
-				toMove = append(toMove, e)
-			} else {
-				toStay = append(toStay, e)
-			}
-		}
-		if len(toMove) == 0 {
-			continue
-		}
-
-		srcPath := mfileInTier(srcTier, srcFileID)
-
-		if len(toStay) == 0 {
-			// Whole file moves to dst — compact all records into one
-			// new dst file and remove the source.
-			newFileID, err := m.AllocFileID()
-			if err != nil {
-				return stats, fmt.Errorf("mdbox/altmove: alloc file id: %w", err)
-			}
-			moved, err := u.compactRecordsToTier(srcPath, mfileInTier(dstTier, newFileID), newFileID, toMove)
-			if err != nil {
-				return stats, err
-			}
-			if err := m.AppendMove(moved, nil); err != nil {
-				return stats, fmt.Errorf("mdbox/altmove: append-move m.%d→m.%d: %w", srcFileID, newFileID, err)
-			}
-			sz, _ := u.fileSize(srcPath)
-			if err := os.Remove(srcPath); err != nil && !os.IsNotExist(err) {
-				return stats, fmt.Errorf("mdbox/altmove: unlink m.%d: %w", srcFileID, err)
-			}
-			stats.Moved += len(moved)
-			stats.FilesCreated++
-			stats.FilesUnlinked++
-			stats.BytesMoved += sz
-			for _, e := range moved {
-				stats.MovedFilenames = append(stats.MovedFilenames, fmt.Sprintf("%d", e.UID))
-			}
-			continue
-		}
-
-		// Partial: movers into a new dst file, stayers into a new src file, the
-		// map updated atomically, the old src removed.
-		newDstFileID, err := m.AllocFileID()
-		if err != nil {
-			return stats, fmt.Errorf("mdbox/altmove: alloc dst file id: %w", err)
-		}
-		newSrcFileID, err := m.AllocFileID()
-		if err != nil {
-			return stats, fmt.Errorf("mdbox/altmove: alloc src file id: %w", err)
-		}
-
-		// Write movers to dst tier.
-		movedRecords, err := u.compactRecordsToTier(srcPath, mfileInTier(dstTier, newDstFileID), newDstFileID, toMove)
-		if err != nil {
+		// Read, rewrite and unlink under one hold, as purge does (#2234).
+		if err := m.Place(func(p *mdboxmap.Placement) error {
+			return u.altMoveFile(p, srcFileID, byFile[srcFileID], srcTier, dstTier, &stats)
+		}); err != nil {
 			return stats, err
 		}
-		// Rewrite stayers into a fresh src file.
-		stayRecords, err := u.compactRecordsToTier(srcPath, mfileInTier(srcTier, newSrcFileID), newSrcFileID, toStay)
-		if err != nil {
-			return stats, err
-		}
+	}
+	return stats, nil
+}
 
-		allMoved := append(movedRecords, stayRecords...)
-		if err := m.AppendMove(allMoved, nil); err != nil {
-			return stats, fmt.Errorf("mdbox/altmove: append-move partial m.%d: %w", srcFileID, err)
+func (u *userMailbox) altMoveFile(p *mdboxmap.Placement, srcFileID uint32, eligibleUIDs []uint32, srcTier, dstTier string, stats *AltMoveStats) error {
+	allInFile := p.RecordsInFile(srcFileID)
+	if afterRecordsRead != nil {
+		afterRecordsRead()
+	}
+
+	// Partition: records we move vs records that stay.
+	eligibleSet := make(map[uint32]bool, len(eligibleUIDs))
+	for _, uid := range eligibleUIDs {
+		eligibleSet[uid] = true
+	}
+
+	var toMove []mdboxmap.MapEntry
+	var toStay []mdboxmap.MapEntry
+	for _, e := range allInFile {
+		if eligibleSet[e.UID] {
+			toMove = append(toMove, e)
+		} else {
+			toStay = append(toStay, e)
+		}
+	}
+	if len(toMove) == 0 {
+		return nil
+	}
+
+	srcPath := mfileInTier(srcTier, srcFileID)
+
+	if len(toStay) == 0 {
+		// Whole file moves to dst — compact all records into one
+		// new dst file and remove the source.
+		newFileID, err := p.AllocFileID()
+		if err != nil {
+			return fmt.Errorf("mdbox/altmove: alloc file id: %w", err)
+		}
+		moved, err := u.compactRecordsToTier(srcPath, mfileInTier(dstTier, newFileID), newFileID, toMove)
+		if err != nil {
+			return err
+		}
+		if err := p.AppendMove(moved, nil); err != nil {
+			return fmt.Errorf("mdbox/altmove: append-move m.%d→m.%d: %w", srcFileID, newFileID, err)
 		}
 		sz, _ := u.fileSize(srcPath)
 		if err := os.Remove(srcPath); err != nil && !os.IsNotExist(err) {
-			return stats, fmt.Errorf("mdbox/altmove: unlink m.%d: %w", srcFileID, err)
+			return fmt.Errorf("mdbox/altmove: unlink m.%d: %w", srcFileID, err)
 		}
-		stats.Moved += len(movedRecords)
-		for _, e := range movedRecords {
-			stats.MovedFilenames = append(stats.MovedFilenames, fmt.Sprintf("%d", e.UID))
-		}
-		stats.FilesCreated += 2
+		stats.Moved += len(moved)
+		stats.FilesCreated++
 		stats.FilesUnlinked++
 		stats.BytesMoved += sz
+		for _, e := range moved {
+			stats.MovedFilenames = append(stats.MovedFilenames, fmt.Sprintf("%d", e.UID))
+		}
+		return nil
 	}
-	return stats, nil
+
+	// Partial: movers into a new dst file, stayers into a new src file, the
+	// map updated atomically, the old src removed.
+	newDstFileID, err := p.AllocFileID()
+	if err != nil {
+		return fmt.Errorf("mdbox/altmove: alloc dst file id: %w", err)
+	}
+	newSrcFileID, err := p.AllocFileID()
+	if err != nil {
+		return fmt.Errorf("mdbox/altmove: alloc src file id: %w", err)
+	}
+
+	// Write movers to dst tier.
+	movedRecords, err := u.compactRecordsToTier(srcPath, mfileInTier(dstTier, newDstFileID), newDstFileID, toMove)
+	if err != nil {
+		return err
+	}
+	// Rewrite stayers into a fresh src file.
+	stayRecords, err := u.compactRecordsToTier(srcPath, mfileInTier(srcTier, newSrcFileID), newSrcFileID, toStay)
+	if err != nil {
+		return err
+	}
+
+	allMoved := append(movedRecords, stayRecords...)
+	if err := p.AppendMove(allMoved, nil); err != nil {
+		return fmt.Errorf("mdbox/altmove: append-move partial m.%d: %w", srcFileID, err)
+	}
+	sz, _ := u.fileSize(srcPath)
+	if err := os.Remove(srcPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("mdbox/altmove: unlink m.%d: %w", srcFileID, err)
+	}
+	stats.Moved += len(movedRecords)
+	for _, e := range movedRecords {
+		stats.MovedFilenames = append(stats.MovedFilenames, fmt.Sprintf("%d", e.UID))
+	}
+	stats.FilesCreated += 2
+	stats.FilesUnlinked++
+	stats.BytesMoved += sz
+	return nil
 }
 
 // scanAltCandidates returns the live map_uids in srcTier whose trailer date
