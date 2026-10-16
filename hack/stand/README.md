@@ -25,6 +25,18 @@ KUBECONFIG=~/.kube/sbox.yaml \
 | `YARILO_ARM_OVERLAY` | — | a second values file from `helm_values/values-sandbox-<name>.yaml` |
 | `YARILO_ARM_BLOCKPROFILE` | 0 | the profiling overlay; this makes the arm a latency arm, not a throughput one |
 
+### Overlays
+
+`YARILO_ARM_OVERLAY=<name>` lays `helm_values/values-sandbox-<name>.yaml` over the
+stand's values for one arm; `ab-arm.sh` refuses an overlay carrying keys outside
+the ones allowed for it. An overlay is never deployed on its own.
+
+- `no-protocol-rule` (#2227): the stand's `components.auth.passdb` list without
+  the per-protocol rule, the two `CASE %s` lines, to price the userdb lookup the
+  rule adds to every login. It repeats the whole list because helm replaces
+  lists, so keep it in step with `values-sandbox.yaml`: the only difference is
+  those two lines.
+
 ## The acceptance run
 
 ```

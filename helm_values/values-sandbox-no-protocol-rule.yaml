@@ -1,8 +1,5 @@
-## Control overlay for one A/B arm: the stand's passdb list without the
-## per-protocol rule, to price the userdb lookup it adds to every login (#2227).
-## Laid over values-sandbox.yaml by hack/stand/ab-arm.sh, never deployed alone;
-## it repeats the whole list because helm replaces lists. Keep it in step with
-## values-sandbox.yaml: the only difference is the two CASE lines.
+## A/B control: the stand's passdb list without the per-protocol rule (#2227);
+## see hack/stand/README.md, overlays.
 components:
   auth:
     passdb:
