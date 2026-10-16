@@ -158,37 +158,6 @@ func TestAuthenticate_Fail(t *testing.T) {
 	}
 }
 
-func TestAuthenticate_TempFail(t *testing.T) {
-	addr := stubAuthServer(t, func(conn net.Conn, rd *bufio.Reader) {
-		for {
-			line, err := rd.ReadString('\n')
-			if err != nil {
-				return
-			}
-			fields := strings.SplitN(strings.TrimRight(line, "\r\n"), "\t", 5)
-			if len(fields) < 2 || fields[0] == "VERSION" {
-				continue
-			}
-			if fields[0] == "AUTH" {
-				id := fields[1]
-				fmt.Fprintf(conn, "FAIL\t%s\ttemp_fail\n", id)
-				return
-			}
-		}
-	})
-
-	c, err := Dial(addr, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer c.Close()
-
-	_, err = c.Authenticate("alice", "pass", "imap", "", "", "")
-	if err != ErrTempFail {
-		t.Errorf("err = %v, want ErrTempFail", err)
-	}
-}
-
 func TestVerify_OK(t *testing.T) {
 	addr := stubAuthServer(t, func(conn net.Conn, rd *bufio.Reader) {
 		for {

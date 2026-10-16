@@ -655,7 +655,7 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 		return res, nil
 	case "FAIL":
 		for _, f := range fields[2:] {
-			if f == "temp_fail" {
+			if f == "code=temp_fail" {
 				return nil, ErrTempFail
 			}
 		}

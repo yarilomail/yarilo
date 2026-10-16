@@ -223,3 +223,41 @@ func TestOAuthWaitsForTLSWithCleartextOff(t *testing.T) {
 		t.Fatalf("AUTHENTICATE XOAUTH2 = %q, want NO [PRIVACYREQUIRED]", lines)
 	}
 }
+
+// downValidator is a token validator whose IdP cannot be reached.
+type downValidator struct{}
+
+func (downValidator) Authenticate(*protocol.Request) (protocol.Result, error) {
+	return protocol.ResultTempFail, fmt.Errorf("idp unreachable")
+}
+
+func (downValidator) OAuth2Failure() (string, string) { return "", "" }
+
+// A refusal and an outage end in different codes, so a client tells a wrong
+// token from a service it should retry later (#2250).
+func TestEveryProxyNamesTheClassOfARelayedFailure(t *testing.T) {
+	want := map[string]struct{ refused, unavailable string }{
+		"IMAP": {"a1 NO [AUTHENTICATIONFAILED] ", "a1 NO [UNAVAILABLE] "},
+		"POP3": {"-ERR [AUTH] ", "-ERR [SYS/TEMP] "},
+		"SMTP": {"535 5.7.8 ", "454 4.7.0 "},
+	}
+	for _, pc := range protoCases {
+		t.Run(pc.name+" refused", func(t *testing.T) {
+			cli, rd, _ := startProto(t, pc, oauthRelay(t, validator))
+			fmt.Fprintf(cli, "%s\r\n", pc.auth("OAUTHBEARER", oauthMsg("OAUTHBEARER", "bad-token")))
+			readUntil(t, rd, pc.cont)
+			fmt.Fprintf(cli, "%s\r\n", base64.StdEncoding.EncodeToString([]byte{1}))
+			if got := readUntil(t, rd, pc.refused); !strings.HasPrefix(got[len(got)-1], want[pc.name].refused) {
+				t.Errorf("refusal %q, want it to start %q", got[len(got)-1], want[pc.name].refused)
+			}
+		})
+		t.Run(pc.name+" IdP down", func(t *testing.T) {
+			cli, rd, _ := startProto(t, pc, oauthRelay(t, downValidator{}))
+			fmt.Fprintf(cli, "%s\r\n", pc.auth("OAUTHBEARER", oauthMsg("OAUTHBEARER", "good-token")))
+			line, err := rd.ReadString('\n')
+			if err != nil || !strings.HasPrefix(line, want[pc.name].unavailable) {
+				t.Errorf("answer %q (%v), want it to start %q", strings.TrimSpace(line), err, want[pc.name].unavailable)
+			}
+		})
+	}
+}
