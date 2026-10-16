@@ -41,7 +41,7 @@ func TestApplyRingChangeVhosts_UnknownBackend(t *testing.T) {
 // The HOST line carries vhosts; an old-form line without it takes the default.
 func TestHostLineVhostsRoundTrip(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
-	line := hostLine(ring.Backend{IP: "10.0.0.2", Port: 10143, Tag: "a", Vhosts: 55, LastUp: 9})
+	line := hostLine(ring.Backend{IP: "10.0.0.2", Port: 10143, Tag: "a", Vhosts: 55, LastUp: 9}, 0)
 	applyHandshakeHost(s, line)
 	if b := s.ring.GetBackend("10.0.0.2"); b == nil || b.Vhosts != 55 {
 		t.Fatalf("vhosts not recovered from HOST line, got %+v", b)

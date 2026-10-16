@@ -161,6 +161,22 @@ func (d *DomainDir) Delete(domain string) {
 	}
 }
 
+// DeleteByBackend forgets every domain placed on one backend IP, with the
+// credit that backend held, and returns how many.
+func (d *DomainDir) DeleteByBackend(ip string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := 0
+	for name, e := range d.byName {
+		if hostIP(e.Host) == ip {
+			d.dropLocked(name, e)
+			n++
+		}
+	}
+	delete(d.pending, ip)
+	return n
+}
+
 // Seen releases the credit a placement took: the domain's traffic is now in
 // the session counts, so counting it twice would send the next domain away
 // from a backend that is not in fact busier.

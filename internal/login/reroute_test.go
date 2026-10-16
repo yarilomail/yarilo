@@ -2,6 +2,7 @@ package login
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -9,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	authclient "github.com/yarilomail/yarilo/internal/auth/client"
 )
 
 // rerouteStubDirector is a director stub whose LOOKUP reply is supplied by
@@ -130,5 +133,81 @@ func TestReroute_ToLiveBackendSucceeds(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&reports); got != 1 {
 		t.Errorf("expected exactly one unreachable report before the successful re-route, got %d", got)
+	}
+}
+
+// blackholing stands in a pod address that drops packets: the dial to it waits
+// out whatever deadline it is given, as a removed pod's address does.
+func blackholing(t *testing.T, dead string) {
+	t.Helper()
+	real := dialBackendFn
+	t.Cleanup(func() { dialBackendFn = real })
+	dialBackendFn = func(addr string, tlsCfg *tls.Config, deadline time.Time) (net.Conn, error) {
+		if addr == dead {
+			time.Sleep(time.Until(deadline))
+			return nil, fmt.Errorf("dial %s: i/o timeout", addr)
+		}
+		return real(addr, tlsCfg, deadline)
+	}
+}
+
+// A dead pod address that drops packets must not use up the one deadline: the
+// re-route to the live backend gets its share and connects (#2255, #2124).
+func TestReroute_ABlackholedAddressLeavesTheRerouteItsShare(t *testing.T) {
+	dead := "10.255.255.1:10143"
+	blackholing(t, dead)
+	live, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { live.Close() })
+	go func() {
+		for {
+			if _, err := live.Accept(); err != nil {
+				return
+			}
+		}
+	}()
+	var reports int32
+	dir := rerouteStubDirector(t, func() string { return live.Addr().String() }, &reports)
+	s := &Server{opts: testOpts(Options{Protocol: ProtocolIMAP, DirectorAddr: dir, LocalIP: "127.0.0.1"})}
+
+	budget := 2 * time.Second
+	start := time.Now()
+	conn, addr, err := s.dialBackendWithReroute("u@example.com", "imap", dead, start.Add(budget), slog.Default())
+	if err != nil {
+		t.Fatalf("the re-route to a live backend failed after %v: %v", time.Since(start).Round(time.Millisecond), err)
+	}
+	defer conn.Close()
+	if addr != live.Addr().String() {
+		t.Errorf("connected to %s, want the live %s", addr, live.Addr())
+	}
+	if took := time.Since(start); took > budget {
+		t.Errorf("took %v, past the one deadline of %v", took, budget)
+	}
+}
+
+// A failed re-route answers with the address it tried last, so the retry and
+// the log name the backend the director now gives, not the dead one (#2255).
+func TestReroute_AFailedRerouteNamesTheNewAddress(t *testing.T) {
+	dead, rerouted := "10.255.255.1:10143", "10.255.255.2:10143"
+	blackholing(t, dead)
+	real := dialBackendFn
+	dialBackendFn = func(addr string, tlsCfg *tls.Config, deadline time.Time) (net.Conn, error) {
+		if addr == rerouted {
+			return nil, fmt.Errorf("dial %s: connection refused", addr)
+		}
+		return real(addr, tlsCfg, deadline)
+	}
+	var reports int32
+	dir := rerouteStubDirector(t, func() string { return rerouted }, &reports)
+	s := &Server{opts: testOpts(Options{Protocol: ProtocolIMAP, DirectorAddr: dir, LocalIP: "127.0.0.1"})}
+
+	_, addr, err := s.openBackendSession(&preamble{}, &authclient.AuthResult{}, "u@example.com", "imap", dead, "", "", time.Now().Add(time.Second), slog.Default())
+	if err == nil {
+		t.Fatal("both backends refuse, and the session opened")
+	}
+	if addr != rerouted {
+		t.Errorf("the failed session names %s, want the re-routed %s", addr, rerouted)
 	}
 }

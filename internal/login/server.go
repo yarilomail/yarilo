@@ -830,7 +830,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		deadline := backendDialStart.Add(proxyTimeout)
 		for attempt := 0; ; attempt++ {
 			var berr error
-			bs, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, deadline, log)
+			// A re-route answers for the next attempt and the log too (#2255).
+			bs, backendAddr, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, deadline, log)
 			if berr == nil {
 				break
 			}
@@ -1076,11 +1077,11 @@ func resolvedIdentity(res *authclient.AuthResult, claimed string) string {
 	return claimed
 }
 
-func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, deadline time.Time, log *slog.Logger) (*backendSession, error) {
+func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, deadline time.Time, log *slog.Logger) (*backendSession, string, error) {
 	// A re-route re-LOOKUPs, so it takes the resolved identity (#782, #1306).
 	conn, addr, err := s.dialBackendWithReroute(authUser, tag, addr, deadline, log)
 	if err != nil {
-		return nil, fmt.Errorf("dial backend %s: %w", addr, err)
+		return nil, addr, fmt.Errorf("dial backend %s: %w", addr, err)
 	}
 	ok := false
 	defer func() {
@@ -1104,7 +1105,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 		Helo:  pre.ehloLine,
 	}
 	if _, werr := io.WriteString(conn, pre2.Format()); werr != nil {
-		return nil, fmt.Errorf("send preamble: %w", werr)
+		return nil, addr, fmt.Errorf("send preamble: %w", werr)
 	}
 
 	// The greeting carries IMAP's post-auth capabilities; a backend that closes
@@ -1114,7 +1115,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 	s.observePhase(phaseBackendPreamble, greetingStart)
 	if gerr != nil {
 		s.incResult("backend_rejected")
-		return nil, fmt.Errorf("backend rejected session: %w", gerr)
+		return nil, addr, fmt.Errorf("backend rejected session: %w", gerr)
 	}
 
 	// SMTP submission: send EHLO so the backend has a HELO domain before the
@@ -1125,12 +1126,12 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 			ehlo = "EHLO yarilo-submission-login\r\n"
 		}
 		if _, werr := io.WriteString(conn, ehlo); werr != nil {
-			return nil, fmt.Errorf("smtp ehlo send: %w", werr)
+			return nil, addr, fmt.Errorf("smtp ehlo send: %w", werr)
 		}
 		for {
 			line, rerr := lineio.ReadLine(rd, lineio.MaxClient)
 			if rerr != nil {
-				return nil, fmt.Errorf("smtp ehlo response: %w", rerr)
+				return nil, addr, fmt.Errorf("smtp ehlo response: %w", rerr)
 			}
 			if len(line) >= 4 && line[3] != '-' {
 				break
@@ -1142,13 +1143,13 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 	// bounded by it (handleConn clears deadlines again before proxying anyway).
 	conn.SetDeadline(time.Time{}) //nolint:errcheck
 	ok = true
-	return &backendSession{conn: conn, rd: rd, addr: addr, caps: caps, refusal: refusal}, nil
+	return &backendSession{conn: conn, rd: rd, addr: addr, caps: caps, refusal: refusal}, addr, nil
 }
 
 // dialBackendWithReroute reports a dead backend and re-LOOKUPs once. The same
 // address back means the ring has not dropped it yet, so it stops (#782).
 func (s *Server) dialBackendWithReroute(username, tag, addr string, deadline time.Time, log *slog.Logger) (net.Conn, string, error) {
-	conn, err := dialBackend(addr, s.opts.BackendTLS, deadline)
+	conn, err := dialBackendFn(addr, s.opts.BackendTLS, shareOf(deadline, maxBackendReroutes+1))
 	if err == nil {
 		return conn, addr, nil
 	}
@@ -1167,13 +1168,27 @@ func (s *Server) dialBackendWithReroute(username, tag, addr string, deadline tim
 			return nil, addr, fmt.Errorf("re-lookup returned the same unreachable backend %s", addr)
 		}
 		addr = newAddr
-		conn, err = dialBackend(addr, s.opts.BackendTLS, deadline)
+		conn, err = dialBackendFn(addr, s.opts.BackendTLS, shareOf(deadline, maxBackendReroutes-attempt))
 		if err == nil {
 			return conn, addr, nil
 		}
 	}
 	return nil, addr, fmt.Errorf("backend unreachable after re-route: %w", err)
 }
+
+// shareOf is the deadline for one of the attempts left under the one deadline
+// (#2124): a pod address that drops packets cannot use up the re-route's (#2255).
+func shareOf(deadline time.Time, attemptsLeft int) time.Time {
+	share := time.Now().Add(time.Until(deadline) / time.Duration(attemptsLeft))
+	if share.After(deadline) {
+		return deadline
+	}
+	return share
+}
+
+// dialBackendFn is the dial the re-route makes; a test stands in a pod address
+// that drops packets.
+var dialBackendFn = dialBackend
 
 // reportUnreachable tells the director a dial failed. Best-effort: the report
 // accelerates eviction, the TTL lease is the backstop (#782).

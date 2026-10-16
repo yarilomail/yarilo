@@ -726,7 +726,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	_ = c.WriteLine(fmt.Sprintf("VERSION\t%s\t%d\t%d", protoName, majorVer, minorVer))
 	_ = c.WriteLine("HOST-HAND-START")
 	for _, b := range s.ring.Backends() {
-		_ = c.WriteLine(hostLine(b))
+		_ = c.WriteLine(hostLine(b, s.backendLeaseSeq(b.IP)))
 	}
 	_ = c.WriteLine("HOST-HAND-END")
 	nonceBytes := make([]byte, 16)
@@ -934,13 +934,14 @@ func (s *Server) pingLoop(c *client, stop <-chan struct{}) {
 	}
 }
 
-// hostLine formats a Backend as a HOST wire line for the handshake.
-func hostLine(b ring.Backend) string {
+// hostLine formats a Backend as a HOST wire line for the handshake; S carries
+// its lease seq, 0 for a static backend (#2255).
+func hostLine(b ring.Backend, seq uint64) string {
 	// V{vhosts} is a trailing field (#706): a joining director learns each
 	// backend's ring weight from the handshake, not only its up/down state.
 	// applyHandshakeHost tolerates its absence, so a pre-#706 peer still parses.
-	return fmt.Sprintf("HOST\t%s\t%d\t%s\tD%d\tU%d\t%s\tV%d",
-		b.IP, b.Port, b.Tag, b.LastDown, b.LastUp, b.Hostname, b.Vhosts)
+	return fmt.Sprintf("HOST\t%s\t%d\t%s\tD%d\tU%d\t%s\tV%d\tS%d",
+		b.IP, b.Port, b.Tag, b.LastDown, b.LastUp, b.Hostname, b.Vhosts, seq)
 }
 
 // handleLookup processes: LOOKUP\t{id}\t{user}\t{tag}
@@ -1043,6 +1044,12 @@ func (s *Server) handleBackendUp(c *client, fields []string) {
 			seq, hasSeq = v, true
 		}
 	}
+	if hasSeq && s.backendTombActive(ip, seq) {
+		// A heartbeat sent before the removal and delivered after it (#2255).
+		slog.Info("director: stale heartbeat of a removed backend ignored", "ip", ip, "seq", seq)
+		_ = c.WriteLine("OK")
+		return
+	}
 	if hasSeq && !s.recordBackendSeen(ip, seq) {
 		// Duplicate/stale heartbeat: refresh nothing, don't re-gossip.
 		_ = c.WriteLine("OK")
@@ -1073,21 +1080,36 @@ func (s *Server) handleBackendUp(c *client, fields []string) {
 	_ = c.WriteLine("OK")
 }
 
-// handleBackendDown processes: BACKEND-DOWN\t{ip} and HOST-REMOVE\t{ip}
+// handleBackendDown processes: BACKEND-DOWN\t{ip}[\t{seq}] and HOST-REMOVE\t{ip}
 func (s *Server) handleBackendDown(c *client, fields []string) {
 	if len(fields) < 2 {
 		_ = c.WriteLine("OK")
 		return
 	}
 	ip := fields[1]
+	var seq uint64
+	if len(fields) >= 3 {
+		seq, _ = strconv.ParseUint(fields[2], 10, 64)
+	}
 	tag := s.backendTag(ip)
-	s.recordBackendTomb(ip) // #846: block resync resurrection until a newer seq
-	s.ring.RemoveBackend(ip)
-	s.kickSessionsForBackend(ip)
-	slog.Info("director: backend down", "ip", ip)
-	s.originateRingEvent("RING-CHANGE", fmt.Sprintf("%s\tdown\t%s", ip, tag), c)
+	tomb := s.removeBackend(ip, seq)
+	slog.Info("director: backend down", "ip", ip, "seq", tomb)
+	s.originateRingEvent("RING-CHANGE", fmt.Sprintf("%s\tdown\t%s\t%d", ip, tag, tomb), c)
 	s.updateMetrics()
 	_ = c.WriteLine("OK")
+}
+
+// removeBackend drops a backend with the users, domains and own sessions on it,
+// as the reference's host removal; returns the seq the removal gossips (#2255).
+func (s *Server) removeBackend(ip string, seq uint64) uint64 {
+	tomb := s.recordBackendTomb(ip, seq) // #846: before forgetBackendLease, which clears the seq
+	s.forgetBackendLease(ip)
+	s.ring.RemoveBackend(ip)
+	users := s.userDir.DeleteByBackend(ip)
+	domains := s.domainDir.DeleteByBackend(ip)
+	s.kickSessionsForBackend(ip)
+	slog.Info("director: backend removed", "ip", ip, "pins_cleared", users, "domains_cleared", domains)
+	return tomb
 }
 
 // handleBackendFlush processes: BACKEND-FLUSH\t{ip}
@@ -1566,11 +1588,8 @@ func (s *Server) expireStaleBackends(expire time.Duration) {
 				"ip", ip, "tag", b.Tag)
 			continue
 		}
-		s.recordBackendTomb(ip) // #846: before forgetBackendLease, which clears the seq
-		s.forgetBackendLease(ip)
-		s.ring.RemoveBackend(ip)
-		s.kickSessionsForBackend(ip)
-		s.originateRingEvent("RING-CHANGE", fmt.Sprintf("%s\tdown\t%s", ip, b.Tag), nil)
+		tomb := s.removeBackend(ip, 0)
+		s.originateRingEvent("RING-CHANGE", fmt.Sprintf("%s\tdown\t%s\t%d", ip, b.Tag, tomb), nil)
 		s.updateMetrics()
 		slog.Warn("director: backend expired, no heartbeat", "ip", ip, "tag", b.Tag, "expire", expire)
 	}

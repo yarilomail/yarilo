@@ -908,6 +908,9 @@ func (m *Membership) applyUserLine(fields []string) {
 	if err != nil {
 		return
 	}
+	if m.srv.backendRemoved(hostIP(fields[2])) {
+		return // a placement on a backend that left (#2255)
+	}
 	if old := m.srv.userDir.MergeByHash(uint32(hash), fields[2], fields[5] == "1", seq, fields[4]); old != "" {
 		m.srv.kickStaleSessions(uint32(hash), old)
 	}
@@ -1979,6 +1982,9 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 		if err != nil {
 			return
 		}
+		if m.srv.backendRemoved(hostIP(payload[1])) {
+			return // a placement on a backend that left (#2255)
+		}
 		if old := m.srv.userDir.MergeByHash(uint32(hash), payload[1], false, seq, payload[3]); old != "" {
 			m.srv.kickStaleSessions(uint32(hash), old)
 		}
@@ -1992,6 +1998,9 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 			return
 		}
 		domain := proto.TabUnescape(payload[0])
+		if m.srv.backendRemoved(hostIP(payload[1])) {
+			return // a placement on a backend that left (#2255)
+		}
 		if from := m.srv.domainDir.Merge(domain, payload[1], seq, payload[3]); from != "" {
 			m.srv.kickDomainSessions(domain, from)
 		}
