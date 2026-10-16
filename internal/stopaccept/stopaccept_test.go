@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// A stopping backend refuses a new session at once, so the login proxy reroutes
-// it, and keeps the sessions it has so they drain. The stand's stopping backend
-// took a session and answered nothing for 15 s (#2260).
+// A stopping backend refuses a new session at once, so the login reroutes it;
+// a session already open is not cut by the listener closing (#2260).
 func TestAStoppingBackendRefusesNewSessions(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

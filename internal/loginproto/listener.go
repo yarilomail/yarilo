@@ -452,7 +452,7 @@ func (l *PreambleListener) handshake(c net.Conn) (*PreambleConn, error) {
 		br:            br,
 		consume: func() {
 			if err := authCl.Consume(pre.Token); err != nil {
-				slog.Warn("loginproto: session token not retired; its TTL ends it", "user", username, "session", sessionID, "err", err)
+				slog.Warn("loginproto: session token not retired", "user", username, "session", sessionID, "err", err)
 			}
 		},
 	}, nil

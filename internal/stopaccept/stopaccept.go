@@ -1,5 +1,5 @@
 // Package stopaccept serves a backend listener until shutdown and then closes
-// it, so a stopping backend refuses new sessions while its open ones drain.
+// it, so a stopping backend refuses new sessions; open ones end with the process.
 package stopaccept
 
 import (

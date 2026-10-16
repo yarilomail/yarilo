@@ -344,15 +344,29 @@ func (c *Client) Verify(token, username, sessionID string) (string, string, stri
 	return parseVerifyResponse(line)
 }
 
+// ErrTokenGone says a token to retire was no longer there: retired by another
+// session, or expired (#2259).
+var ErrTokenGone = errors.New("auth/client: token already retired or expired")
+
 // Consume retires a token whose session is established, so it opens no other
-// (#2259). A token already gone is not an error: its TTL ends it anyway.
+// (#2259).
 func (c *Client) Consume(token string) error {
 	if wireUnsafe(token) {
 		return ErrAuthFailed
 	}
 	id := c.nextID()
-	_, err := c.exchange(id, fmt.Sprintf("CONSUME\t%s\t%s", id, token))
-	return err
+	line, err := c.exchange(id, fmt.Sprintf("CONSUME\t%s\t%s", id, token))
+	if err != nil {
+		return err
+	}
+	switch verb, _, _ := strings.Cut(line, "\t"); verb {
+	case "OK":
+		return nil
+	case "FAIL":
+		return ErrTokenGone
+	default:
+		return fmt.Errorf("auth/client: unknown consume verb %q", verb)
+	}
 }
 
 func (c *Client) nextID() string {

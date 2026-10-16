@@ -1489,23 +1489,8 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	return "ok"
 }
 
-// handleVerify processes a VERIFY command from a backend pod.
-//
-// Wire format:
-//
-//	VERIFY\t<id>\t<token>\tuser=<username>\tsession=<sessionID>\n
-//	→ OK\t<id>\tuser=<username>\tsession=<sessionID>\tservice=<service>\n
-//	→ FAIL\t<id>\n
-//
-// The token stays valid until CONSUME retires it or its TTL ends (#2259).
-// user= and session= are verified against the stored token — a mismatch is
-// treated as a FAIL.
-// The metric result label is returned for the caller to observe, mirroring
-// handleAuth.
-// handleConsume processes CONSUME\t<id>\t<token>: the backend whose session the
-// token opened retires it, so no second session opens with it (#2259).
-//
-//	→ OK\t<id>\n or FAIL\t<id>\n
+// handleConsume retires the token of a session that opened, CONSUME\t<id>\t<token>
+// → OK or FAIL\t<id>; FAIL: it was gone, maybe into another session (#2259).
 func (s *Server) handleConsume(conn net.Conn, fields []string) {
 	if len(fields) < 3 {
 		if len(fields) >= 2 {
@@ -1520,6 +1505,18 @@ func (s *Server) handleConsume(conn net.Conn, fields []string) {
 	fmt.Fprintf(conn, "OK\t%s\n", fields[1])
 }
 
+// handleVerify processes a VERIFY command from a backend pod.
+//
+// Wire format:
+//
+//	VERIFY\t<id>\t<token>\tuser=<username>\tsession=<sessionID>\n
+//	→ OK\t<id>\tuser=<username>\tsession=<sessionID>\tservice=<service>\n
+//	→ FAIL\t<id>\n
+//
+// The token stays valid until CONSUME retires it or its TTL ends (#2259); a
+// user= or session= that does not match the stored token is a FAIL.
+// The metric result label is returned for the caller to observe, mirroring
+// handleAuth.
 func (s *Server) handleVerify(conn net.Conn, fields []string) string {
 	if len(fields) < 3 {
 		if len(fields) >= 2 {

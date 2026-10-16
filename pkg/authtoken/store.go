@@ -28,9 +28,8 @@ type entry struct {
 	expiresAt time.Time
 }
 
-// Store issues one-time session tokens (32 random bytes, hex), valid for the TTL
-// until the backend that opened the session consumes it (#2259); a sweeper
-// purges the rest.
+// Store issues session tokens (32 random bytes, hex), valid for the TTL until the
+// backend whose session opened consumes it (#2259); a sweeper purges the rest.
 type Store struct {
 	mu      sync.Mutex
 	entries map[string]*entry
@@ -73,9 +72,8 @@ func (s *Store) Issue(username, sessionID, service string) (string, error) {
 	return tok, nil
 }
 
-// Validate returns the username, sessionID, and service bound to tok, leaving it
-// in place: a backend that dies before its session opens leaves it to the retry.
-// Returns ("", "", "", false) when the token is unknown, consumed, or expired.
+// Validate returns what tok is bound to and leaves it for a retry after a backend
+// that died before its greeting; ok is false when unknown, consumed or expired.
 func (s *Store) Validate(tok string) (username, sessionID, service string, ok bool) {
 	s.mu.Lock()
 	e, exists := s.entries[tok]

@@ -2,18 +2,18 @@ package loginproto
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
 
+	authclient "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/pkg/authtoken"
 )
 
-// A backend that checked the token and died before its greeting leaves the
-// token to the retry; the backend whose session opens retires it, so it opens
-// no second one. The stand's login lost its retry to a token the dying backend
-// took (#2259).
+// A backend that died before its greeting leaves the token to the retry, and
+// the session that opens retires it, as the stand's retry needed (#2259).
 func TestATokenOpensOneSessionAndSurvivesABackendThatDied(t *testing.T) {
 	store := authtoken.New(time.Minute)
 	t.Cleanup(store.Close)
@@ -84,5 +84,16 @@ func TestATokenOpensOneSessionAndSurvivesABackendThatDied(t *testing.T) {
 			t.Fatal("the session opened and the token still opens another")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	// A second retirement is the trace of a token that opened another session:
+	// it reaches the backend as an error, which the backend logs.
+	cl, err := authclient.Dial(authLn.Addr().String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	if err := cl.Consume(tok); !errors.Is(err, authclient.ErrTokenGone) {
+		t.Errorf("retiring a retired token answered %v, want ErrTokenGone", err)
 	}
 }
