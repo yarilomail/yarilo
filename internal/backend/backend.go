@@ -396,6 +396,14 @@ func New(cfg *config.Config) (*Server, error) {
 			FailureDelay:       time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 
 			DboxReactiveRebuild: cfg.Storage.DboxReactiveRebuild,
+
+			FTSClient:    ftsClient,
+			FTSAutoindex: cfg.FTS.Autoindex,
+			FTSMaxRecent: cfg.FTS.AutoindexMaxRecentMsgs,
+			QuotaEngine:  cfg.Quota.Enabled,
+			QuotaPolicy:  cfg.Quota.QuotaPolicy(),
+			QuotaWarner:  quotaWarner,
+			QuotaClone:   quotaClone,
 		})
 	}
 

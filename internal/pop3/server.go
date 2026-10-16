@@ -15,9 +15,12 @@ import (
 	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 	"github.com/yarilomail/yarilo/internal/connlimit"
 	"github.com/yarilomail/yarilo/internal/loginproto"
+	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/pkg/authclient"
+	"github.com/yarilomail/yarilo/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
 // Options configures the POP3 server.
@@ -77,6 +80,16 @@ type Options struct {
 	// QUIT-time expunge batch under one X lock on mbox:<user>:INBOX;
 	// nil falls back to per-message locking (correct but not batch-atomic).
 	Locker locks.Locker
+
+	// The mutation layer's hooks, as IMAP and LMTP run them: a deletion
+	// retracts its FTS document and moves the quota warnings (#2213).
+	FTSClient    ftsproto.Client
+	FTSAutoindex bool
+	FTSMaxRecent int
+	QuotaEngine  bool
+	QuotaPolicy  quota.Policy
+	QuotaWarner  *quotawarn.Runner
+	QuotaClone   *quota.Clone
 }
 
 // Server is the yarilo POP3 server.

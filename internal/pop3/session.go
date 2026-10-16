@@ -69,6 +69,7 @@ type session struct {
 	// set after successful login
 	sessionLockFile string // path to dotlock file; "" when not held
 	limitIP         string // IP used for ConnLimit.Acquire; released in releaseLock
+	cloneHeld       bool   // QuotaClone.Acquire taken at login; released in releaseLock
 	pendingUser     string // temporary storage of USER arg before PASS arrives
 	userInfo        *mailbox.UserInfo
 	box             mailbox.Box
@@ -641,6 +642,10 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 		"messages", len(s.msgs),
 		"result", "ok",
 	)
+	// The quota mirror flushes a user's pending value when their last session
+	// closes, and QUIT's deletion is the last thing this one does.
+	s.srv.opts.QuotaClone.Acquire(userInfo.Username)
+	s.cloneHeld = true
 	return true
 }
 
@@ -1211,9 +1216,27 @@ func (s *session) expungeDeleted() int {
 			marked = append(marked, m)
 		}
 	}
-	ops := mailops.New(mailops.Config{Protocol: "pop3", Locker: s.srv.opts.Locker}, s.box, s.userInfo)
+	ops := mailops.New(s.mailopsConfig(), s.box, s.userInfo)
 	_, failed, _ := ops.ExpungeMarked(s.box, s.folder, "INBOX", marked)
 	return failed
+}
+
+// mailopsConfig is this server's wiring of the mutation layer.
+func (s *session) mailopsConfig() mailops.Config {
+	o := s.srv.opts
+	return mailops.Config{
+		Protocol:     "pop3",
+		Locker:       o.Locker,
+		FTS:          o.FTSClient,
+		FTSAutoindex: o.FTSAutoindex,
+		FTSMaxRecent: o.FTSMaxRecent,
+		Quota: mailops.QuotaConfig{
+			Engine: o.QuotaEngine,
+			Policy: o.QuotaPolicy,
+			Warner: o.QuotaWarner,
+			Clone:  o.QuotaClone,
+		},
+	}
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -1261,6 +1284,10 @@ func (s *session) releaseLock() {
 	}
 	if s.userInfo != nil {
 		s.releaseConnLimit(s.userInfo.Username)
+		if s.cloneHeld {
+			s.srv.opts.QuotaClone.Release(s.userInfo.Username)
+			s.cloneHeld = false
+		}
 	}
 	if s.box != nil {
 		s.box.Close()
