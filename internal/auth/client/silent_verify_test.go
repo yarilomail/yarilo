@@ -10,9 +10,8 @@ import (
 	"time"
 )
 
-// silentThenAnswering is an auth service whose first connection completes the
-// handshake and then never answers, as a replaced pod's did on the stand, and
-// whose later connections answer VERIFY at once.
+// silentThenAnswering: the first connection shakes hands and then never answers,
+// as a replaced auth pod's; later ones answer VERIFY and CONSUME at once.
 func silentThenAnswering(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
