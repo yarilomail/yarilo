@@ -183,7 +183,7 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 		}
 
 		if beforeRebuildCommit != nil {
-			beforeRebuildCommit()
+			beforeRebuildCommit(ctx)
 		}
 		if err := stillHeld(ctx); err != nil {
 			return err
@@ -234,7 +234,7 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 
 // beforeRebuildCommit marks where a rebuild starts writing the map, for the row
 // that lapses its lease there.
-var beforeRebuildCommit func()
+var beforeRebuildCommit func(context.Context)
 
 // restoreTaggedOrphans re-files every unreferenced message carrying an
 // orig-mailbox tag, through the same path a delivery takes so the folder's

@@ -119,7 +119,7 @@ func (s *Server) Serve(ln net.Listener, tlsCfg *tls.Config) error {
 	// decrypted SMTP stream; under TLS it mangled the ClientHello (#826).
 	// proxyproto stays below (PROXY header is pre-TLS).
 	if s.opts.AuthAddr != "" {
-		ln = &loginproto.PreambleListener{Listener: ln, AuthAddr: s.opts.AuthAddr, AuthTLS: s.opts.AuthTLS, ExpectedService: "submission", FormerService: "smtp", TLSConfig: s.opts.PreambleTLS}
+		ln = &loginproto.PreambleListener{Listener: ln, AuthAddr: s.opts.AuthAddr, AuthTLS: s.opts.AuthTLS, ExpectedService: "submission", TLSConfig: s.opts.PreambleTLS}
 	}
 	if s.workarounds != 0 {
 		ln = &workaroundListener{Listener: ln, workarounds: s.workarounds}

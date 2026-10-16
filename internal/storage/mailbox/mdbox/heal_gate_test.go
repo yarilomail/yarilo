@@ -126,7 +126,7 @@ func TestTwoFoldersOfOneUserDoNotHealAtOnce(t *testing.T) {
 	idx := &failingIndex{err: errors.New("scan incomplete")}
 
 	var inScan, peak atomic.Int32
-	beforeHealScan = func() {
+	beforeHealScan = func(context.Context) {
 		n := inScan.Add(1)
 		for {
 			p := peak.Load()
