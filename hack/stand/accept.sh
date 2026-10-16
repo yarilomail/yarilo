@@ -21,14 +21,33 @@ NS="${YARILO_NS:-yarilo-sb}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PASSWORD='Yarilo!test1'
-# What one smoketest run counts; it moves with every check added to the binary.
+# What one smoketest run passes; it moves with every check added to the binary.
 SMOKE_CHECKS=47
+# The only rows a run skips: they need the OAuth2 overlay, which acceptance runs without (#2231).
+SMOKE_OAUTH2_SKIPS='oauth2 imap AUTHENTICATE OAUTHBEARER (SASL-IR) + SELECT INBOX
+oauth2 pop3 AUTH OAUTHBEARER + STAT
+oauth2 submission AUTH OAUTHBEARER + MAIL FROM'
 mkdir -p "$OUT/logs" "$OUT/lines"
 : > "$OUT/verdict.txt"
 FAILS=0
 SKIPS=0
 
 kube() { kubectl -n "$NS" --request-timeout=60s "$@"; }
+
+# smoke_judge reads one smoketest log: every row passed but the oauth2 rows,
+# which are skipped by name; any other skip fails, however the counts add up.
+smoke_judge() {
+  local summary skips want n
+  summary=$(grep -o '"checks":[0-9]*,"passed":[0-9]*,"failed":[0-9]*,"skipped":[0-9]*' "$1" | tail -1 || true)
+  skips=$(grep '"smoke: SKIP"' "$1" | grep -o '"check":"[^"]*"' | sed 's/^"check":"//; s/"$//' | sort || true)
+  want=$(printf '%s\n' "$SMOKE_OAUTH2_SKIPS" | sort)
+  n=$(printf '%s\n' "$SMOKE_OAUTH2_SKIPS" | grep -c .)
+  if [ "$summary" = "\"checks\":$((SMOKE_CHECKS + n)),\"passed\":$SMOKE_CHECKS,\"failed\":0,\"skipped\":$n" ] && [ "$skips" = "$want" ]; then
+    echo "ok $SMOKE_CHECKS passed, 0 failed, $n skipped (oauth2)"
+  else
+    echo "fail ${summary:-no summary}; skipped: $(printf '%s' "$skips" | tr '\n' ';')"
+  fi
+}
 
 # verdict records one criterion: its name, ok, fail or skip, and what decided it.
 verdict() {
@@ -251,10 +270,10 @@ for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
   cp "$REPO/hack/smoketest/run.sh" "$dir/"
   sed "s/u1@d00001\.test/$user/g" "$REPO/hack/smoketest/job.yaml" > "$dir/job.yaml"
   NAMESPACE="$NS" bash "$dir/run.sh" "$TAG" > "$OUT/smoke-$user.log" 2>&1 || true
-  summary=$(grep -o '"checks":[0-9]*,"passed":[0-9]*,"failed":[0-9]*' "$OUT/smoke-$user.log" | tail -1 || true)
-  case "$summary" in
-    "\"checks\":$SMOKE_CHECKS,\"passed\":$SMOKE_CHECKS,\"failed\":0") verdict "smoketest $user" ok "$summary" ;;
-    *) verdict "smoketest $user" fail "${summary:-no summary}; $(grep '"smoke: FAIL"' "$OUT/smoke-$user.log" | head -3 | cut -c1-200 | tr '\n' ' ')" ;;
+  judged=$(smoke_judge "$OUT/smoke-$user.log")
+  case "$judged" in
+    ok*) verdict "smoketest $user" ok "${judged#ok }" ;;
+    *) verdict "smoketest $user" fail "${judged#fail }; $(grep '"smoke: FAIL"' "$OUT/smoke-$user.log" | head -3 | cut -c1-200 | tr '\n' ' ')" ;;
   esac
 done
 
