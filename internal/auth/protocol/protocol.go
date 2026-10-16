@@ -1871,13 +1871,18 @@ func (s *Server) authenticate(target, master, password, service, remoteIP, local
 		result Result
 		err    error
 	)
+	chain := Chain(s.passdbs)
+	if bearer {
+		// A token is decided by the token validators alone; refused, it is no password (#2247).
+		chain = tokenValidators(s.passdbs)
+	}
 	if target != "" && target != master {
-		result, err = RunMasterAuth(Chain(s.passdbs), Chain(s.masterdb), target, req)
+		result, err = RunMasterAuth(chain, Chain(s.masterdb), target, req)
 		if err == nil && result == ResultOK {
 			result, err = s.adoptTarget(target, req)
 		}
 	} else {
-		result, err = RunAuth(Chain(s.passdbs), req)
+		result, err = RunAuth(chain, req)
 	}
 
 	if err == nil && (result == ResultOK || result == ResultFail) {

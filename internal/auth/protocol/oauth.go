@@ -34,6 +34,17 @@ func (s *Server) oauth2Passdb() OAuth2Passdb {
 	return nil
 }
 
+// tokenValidators is the part of the chain a bearer token may reach.
+func tokenValidators(passdbs []Passdb) Chain {
+	var out Chain
+	for _, db := range passdbs {
+		if _, ok := db.(OAuth2Passdb); ok {
+			out = append(out, db)
+		}
+	}
+	return out
+}
+
 var errOAuthRequest = errors.New("oauth: malformed client response")
 
 // parseOAuthBearer reads gs2-header ^A *(key=value ^A) ^A (RFC 7628 §3.1).

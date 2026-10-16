@@ -1935,6 +1935,10 @@ type OAuth2Entry struct {
 	// place of the system roots. Empty = system roots.
 	TLSCA string `koanf:"oauth2_tls_ca"`
 
+	// JWKSUnknownKIDIntervalSeconds spaces the JWKS refreshes an unknown kid
+	// may trigger. Default 300; 0 = never refresh for one (#2249).
+	JWKSUnknownKIDIntervalSeconds int `koanf:"oauth2_jwks_unknown_kid_interval_seconds"`
+
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	ModeAlias                     string   `koanf:"mode"`
 	AudienceAlias                 string   `koanf:"audience"`
@@ -3567,7 +3571,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 9
+const minConfigSchema = 10
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3578,15 +3582,16 @@ const minConfigSchema = 9
 // nobody would be the "N is lower than M" the version number alone already
 // gives.
 var schemaAdditions = map[int][]string{
-	1: {"chart_version", "config_schema_version", "hostname", "lmtp_add_message_id"},
-	2: {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
-	3: {"quota_full_tempfail"},
-	4: {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
-	5: {"lmtp_proxy_timeout"},
-	6: {"login_proxy_timeout"},
-	7: {"managesieve_max_line_length"},
-	8: {"lmtp_max_recipients"},
-	9: {"oauth2_grant_url", "oauth2_local_keys", "oauth2_force_introspection", "oauth2_tls_ca"},
+	1:  {"chart_version", "config_schema_version", "hostname", "lmtp_add_message_id"},
+	2:  {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
+	3:  {"quota_full_tempfail"},
+	4:  {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
+	5:  {"lmtp_proxy_timeout"},
+	6:  {"login_proxy_timeout"},
+	7:  {"managesieve_max_line_length"},
+	8:  {"lmtp_max_recipients"},
+	9:  {"oauth2_grant_url", "oauth2_local_keys", "oauth2_force_introspection", "oauth2_tls_ca"},
+	10: {"oauth2_jwks_unknown_kid_interval_seconds"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

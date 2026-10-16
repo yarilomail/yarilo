@@ -88,6 +88,8 @@ type DiscoveryConfig struct {
 	HTTPTimeout       time.Duration
 	// HTTPClient carries every call this entry makes; nil uses the default.
 	HTTPClient *http.Client
+	// UnknownKIDInterval is passed to the JWKS validator it may build.
+	UnknownKIDInterval time.Duration
 }
 
 // NewDiscoveryValidator fetches the OIDC document and builds a
@@ -117,14 +119,15 @@ func NewDiscoveryValidator(ctx context.Context, cfg DiscoveryConfig) (Validator,
 	// Try the first preference; fall back to the second.
 	if first == doc.JWKSURI && first != "" {
 		return NewLocalJWTValidator(ctx, LocalJWTConfig{
-			JWKSURL:           first,
-			Issuers:           allowedIssuersForLocalJWT,
-			Audience:          cfg.Audience,
-			RequiredScopes:    cfg.RequiredScopes,
-			UsernameAttribute: cfg.UsernameAttribute,
-			ExpireGrace:       cfg.ExpireGrace,
-			HTTPTimeout:       cfg.HTTPTimeout,
-			HTTPClient:        cfg.HTTPClient,
+			JWKSURL:            first,
+			UnknownKIDInterval: cfg.UnknownKIDInterval,
+			Issuers:            allowedIssuersForLocalJWT,
+			Audience:           cfg.Audience,
+			RequiredScopes:     cfg.RequiredScopes,
+			UsernameAttribute:  cfg.UsernameAttribute,
+			ExpireGrace:        cfg.ExpireGrace,
+			HTTPTimeout:        cfg.HTTPTimeout,
+			HTTPClient:         cfg.HTTPClient,
 		})
 	}
 	if first == doc.IntrospectionEndpoint && first != "" {
@@ -145,14 +148,15 @@ func NewDiscoveryValidator(ctx context.Context, cfg DiscoveryConfig) (Validator,
 	// First preference unavailable; try the second.
 	if second == doc.JWKSURI && second != "" {
 		return NewLocalJWTValidator(ctx, LocalJWTConfig{
-			JWKSURL:           second,
-			Issuers:           allowedIssuersForLocalJWT,
-			Audience:          cfg.Audience,
-			RequiredScopes:    cfg.RequiredScopes,
-			UsernameAttribute: cfg.UsernameAttribute,
-			ExpireGrace:       cfg.ExpireGrace,
-			HTTPTimeout:       cfg.HTTPTimeout,
-			HTTPClient:        cfg.HTTPClient,
+			JWKSURL:            second,
+			UnknownKIDInterval: cfg.UnknownKIDInterval,
+			Issuers:            allowedIssuersForLocalJWT,
+			Audience:           cfg.Audience,
+			RequiredScopes:     cfg.RequiredScopes,
+			UsernameAttribute:  cfg.UsernameAttribute,
+			ExpireGrace:        cfg.ExpireGrace,
+			HTTPTimeout:        cfg.HTTPTimeout,
+			HTTPClient:         cfg.HTTPClient,
 		})
 	}
 	if second == doc.IntrospectionEndpoint && second != "" {

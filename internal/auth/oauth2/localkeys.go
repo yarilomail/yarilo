@@ -96,6 +96,10 @@ func (v *LocalJWTValidator) localKey(t *jwt.Token) (any, error) {
 	if strings.HasPrefix(alg, "HS") || v.kf == nil {
 		return nil, fmt.Errorf("no key for azp %q, alg %s, kid %q", azp, alg, kid)
 	}
+	// A token of an issuer we refuse anyway must not spend a JWKS refresh (#2249).
+	if iss, _ := t.Claims.(jwt.MapClaims)["iss"].(string); len(v.cfg.Issuers) > 0 && !containsString(v.cfg.Issuers, iss) {
+		return nil, fmt.Errorf("%w: iss=%q allowed=%v", ErrIssuerMismatch, iss, v.cfg.Issuers)
+	}
 	return v.kf.Keyfunc(t)
 }
 

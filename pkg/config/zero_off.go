@@ -184,6 +184,9 @@ func checkNumbers(cfg *Config) error {
 		if e.HTTPTimeoutMs <= 0 {
 			return fmt.Errorf("config: auth.oauth2[%d].oauth2_http_timeout_ms: %d; it must be positive", i, e.HTTPTimeoutMs)
 		}
+		if e.JWKSUnknownKIDIntervalSeconds < 0 {
+			return fmt.Errorf("config: auth.oauth2[%d].oauth2_jwks_unknown_kid_interval_seconds: %d is negative; 0 turns it off", i, e.JWKSUnknownKIDIntervalSeconds)
+		}
 		if e.TokenExpireGraceSeconds < 0 {
 			return fmt.Errorf("config: auth.oauth2[%d].oauth2_token_expire_grace_seconds: %d is negative; 0 turns it off", i, e.TokenExpireGraceSeconds)
 		}
@@ -234,6 +237,9 @@ func listEntryDefaults(k *koanf.Koanf, cfg *Config) {
 		}
 		if !has("auth.oauth2", i, "oauth2_token_expire_grace_seconds", "token_expire_grace_seconds") {
 			e.TokenExpireGraceSeconds = 60
+		}
+		if !has("auth.oauth2", i, "oauth2_jwks_unknown_kid_interval_seconds") {
+			e.JWKSUnknownKIDIntervalSeconds = 300
 		}
 	}
 	for i := range cfg.Quota.Warnings {

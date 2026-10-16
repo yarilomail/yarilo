@@ -61,15 +61,16 @@ func buildOne(ctx context.Context, e config.OAuth2Entry) (protocol.Passdb, error
 			keys[i] = LocalKey{Azp: k.Azp, Alg: k.Alg, Kid: k.Kid, File: k.File}
 		}
 		validator, err = NewLocalJWTValidator(ctx, LocalJWTConfig{
-			JWKSURL:           e.JWKSURL,
-			Keys:              keys,
-			HTTPClient:        hc,
-			Issuers:           e.Issuers,
-			Audience:          e.Audience,
-			RequiredScopes:    e.Scopes,
-			UsernameAttribute: e.UsernameAttribute,
-			ExpireGrace:       grace,
-			HTTPTimeout:       timeout,
+			JWKSURL:            e.JWKSURL,
+			Keys:               keys,
+			HTTPClient:         hc,
+			UnknownKIDInterval: time.Duration(e.JWKSUnknownKIDIntervalSeconds) * time.Second,
+			Issuers:            e.Issuers,
+			Audience:           e.Audience,
+			RequiredScopes:     e.Scopes,
+			UsernameAttribute:  e.UsernameAttribute,
+			ExpireGrace:        grace,
+			HTTPTimeout:        timeout,
 		})
 	case config.OAuth2ModeIntrospection:
 		validator, err = introspection(e.IntrospectionURL)
@@ -98,6 +99,7 @@ func buildOne(ctx context.Context, e config.OAuth2Entry) (protocol.Passdb, error
 			ExpireGrace:         grace,
 			HTTPTimeout:         timeout,
 			HTTPClient:          hc,
+			UnknownKIDInterval:  time.Duration(e.JWKSUnknownKIDIntervalSeconds) * time.Second,
 		})
 	default:
 		return nil, fmt.Errorf("oauth2: unknown mode %q (valid: local | introspection | tokeninfo | discovery)", e.Mode)
