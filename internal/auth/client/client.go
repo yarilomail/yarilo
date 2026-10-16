@@ -631,6 +631,9 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 			switch {
 			case f == "nologin":
 				res.Nologin = true
+			case strings.HasPrefix(f, "nologin="):
+				// The service sends a passdb's field as key=value (#2229).
+				res.Nologin = protocol.IsTruthy(f[len("nologin="):])
 			case strings.HasPrefix(f, "user="):
 				res.Username = f[len("user="):]
 			case strings.HasPrefix(f, "allow_nets="):

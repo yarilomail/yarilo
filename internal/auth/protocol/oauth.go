@@ -44,11 +44,13 @@ func parseOAuthBearer(msg []byte) (user, token string, err error) {
 	}
 	parts := strings.SplitN(string(header), ",", 3)
 	if len(parts) != 3 || parts[2] != "" || strings.HasPrefix(parts[0], "p=") ||
-		(parts[0] != "n" && parts[0] != "y") || !strings.HasPrefix(parts[1], "a=") {
+		(parts[0] != "n" && parts[0] != "y") || (parts[1] != "" && !strings.HasPrefix(parts[1], "a=")) {
 		return "", "", errOAuthRequest
 	}
+	// The authzid is optional (RFC 7628 §3.1): without one the token names the
+	// user, and the OAuth2 passdb answers with that name.
 	user = strings.NewReplacer("=2C", ",", "=3D", "=").Replace(strings.TrimPrefix(parts[1], "a="))
-	if user == "" || !bytes.HasSuffix(rest, []byte{1}) {
+	if (parts[1] != "" && user == "") || !bytes.HasSuffix(rest, []byte{1}) {
 		return "", "", errOAuthRequest
 	}
 	return bearer(user, strings.Split(string(rest[:len(rest)-1]), "\x01"))

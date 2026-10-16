@@ -20,23 +20,22 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
 
 // service is the name this proxy reports to yarilo-auth and yarilo-warden.
 const service = "jmap"
 
-// Options wires the proxy. A nil Auth or TokenValidator disables that
-// credential type rather than failing startup, so a deployment can offer one.
+// Options wires the proxy. A nil Auth or Tokens disables that credential type
+// rather than failing startup, so a deployment can offer one.
 type Options struct {
 	Addr string
 	// ExtTLS is the client-facing certificate. Nil serves plain HTTP, which is
 	// only sensible behind a TLS-terminating ingress.
 	ExtTLS *tls.Config
 
-	Auth           PasswordAuthenticator
-	TokenValidator oauth2.Validator
+	Auth   PasswordAuthenticator
+	Tokens TokenAuthenticator
 	// DisablePlainAuth refuses Basic over a connection that is not TLS-protected.
 	DisablePlainAuth bool
 
@@ -87,6 +86,15 @@ type Router interface {
 // resolved username. Satisfied by the yarilo-auth client.
 type PasswordAuthenticator interface {
 	Authenticate(username, password, service, remoteIP, sessionID string) (string, error)
+}
+
+// TokenAuthenticator verifies a Bearer token in the auth service, returning the
+// user it names. Satisfied by AuthService.
+type TokenAuthenticator interface {
+	AuthenticateToken(token, service, remoteIP, sessionID string) (string, error)
+	// OffersTokens reports whether Bearer can succeed now, so it is offered
+	// only then.
+	OffersTokens() bool
 }
 
 // connState is the per-TCP-connection warden accounting. HTTP has no session
@@ -213,9 +221,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 	username, err := s.authenticate(r, clientIP, sessionOf(st))
 	if err != nil {
+		if errors.Is(err, errTemporary) {
+			jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Authentication temporarily unavailable")
+			return
+		}
 		// The reason is logged, never sent: telling a caller whether the user
 		// exists turns this endpoint into an account oracle.
-		w.Header().Set("WWW-Authenticate", `Basic realm="jmap", Bearer`)
+		s.challenge(w, errors.Is(err, errBadToken))
 		jmapcore.WriteProblem(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
@@ -236,6 +248,21 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.proxy.serve(w, r, backend, username, sessionOf(st), clientIP)
+}
+
+// challenge names the schemes that can succeed (RFC 7235 §4.1); a refused
+// token is invalid_token (RFC 6750 §3).
+func (s *Server) challenge(w http.ResponseWriter, badToken bool) {
+	if s.opts.Auth != nil {
+		w.Header().Add("WWW-Authenticate", `Basic realm="jmap"`)
+	}
+	if s.opts.Tokens != nil && s.opts.Tokens.OffersTokens() {
+		bearer := `Bearer realm="jmap"`
+		if badToken {
+			bearer += `, error="invalid_token"`
+		}
+		w.Header().Add("WWW-Authenticate", bearer)
+	}
 }
 
 // capBody enforces maxSizeRequest at the edge and reports whether the request
