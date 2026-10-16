@@ -31,48 +31,59 @@ func TestASaveDuringARewriteSurvivesTheUnlink(t *testing.T) {
 			return err
 		}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			base := t.TempDir()
-			info := &mailbox.UserInfo{Username: "alice@example.com", Home: filepath.Join(base, "home"), AltDir: filepath.Join(base, "alt")}
-			open := func() *userMailbox {
-				u := New().OpenUser(info).(*userMailbox)
-				if err := u.Init(); err != nil {
-					t.Fatal(err)
-				}
-				return u
-			}
-			u, peer := open(), open()
-			tc.prepare(t, u)
+		for _, lk := range []struct {
+			name string
+			opts func() []Option
+		}{
+			{"lock service", func() []Option { return []Option{WithLocker(&mutexLocker{})} }},
+			{"no lock service", func() []Option { return nil }},
+		} {
+			t.Run(tc.name+"/"+lk.name, func(t *testing.T) { rewriteRace(t, lk.opts(), tc.prepare, tc.rewrite) })
+		}
+	}
+}
 
-			const body = "Subject: racer\r\n\r\nracer\r\n"
-			var name string
-			done := make(chan error, 1)
-			afterRecordsRead = func() {
-				afterRecordsRead = nil
-				go func() {
-					var err error
-					name, _, _, err = peer.Save("INBOX", strings.NewReader(body), 0, 0, nil, nil, [16]byte{})
-					done <- err
-				}()
-				// Under the hold the save waits for the rewrite; without it, it
-				// lands in the file the rewrite read and is about to unlink.
-				select {
-				case err := <-done:
-					done <- err
-				case <-time.After(300 * time.Millisecond):
-				}
-			}
-			t.Cleanup(func() { afterRecordsRead = nil })
+func rewriteRace(t *testing.T, opts []Option, prepare func(*testing.T, *userMailbox), rewrite func(*userMailbox) error) {
+	base := t.TempDir()
+	info := &mailbox.UserInfo{Username: "alice@example.com", Home: filepath.Join(base, "home"), AltDir: filepath.Join(base, "alt")}
+	b := New(opts...)
+	open := func() *userMailbox {
+		u := b.OpenUser(info).(*userMailbox)
+		if err := u.Init(); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	u, peer := open(), open()
+	prepare(t, u)
 
-			if err := tc.rewrite(u); err != nil {
-				t.Fatalf("rewrite: %v", err)
-			}
-			if err := <-done; err != nil {
-				t.Fatalf("peer save: %v", err)
-			}
-			if got := testFetchBody(t, peer, name); got != body {
-				t.Fatalf("racing save reads %q", got)
-			}
-		})
+	const body = "Subject: racer\r\n\r\nracer\r\n"
+	var name string
+	done := make(chan error, 1)
+	afterRecordsRead = func() {
+		afterRecordsRead = nil
+		go func() {
+			var err error
+			name, _, _, err = peer.Save("INBOX", strings.NewReader(body), 0, 0, nil, nil, [16]byte{})
+			done <- err
+		}()
+		// Under the hold the save waits for the rewrite; without it, it
+		// lands in the file the rewrite read and is about to unlink.
+		select {
+		case err := <-done:
+			done <- err
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { afterRecordsRead = nil })
+
+	if err := rewrite(u); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("peer save: %v", err)
+	}
+	if got := testFetchBody(t, peer, name); got != body {
+		t.Fatalf("racing save reads %q", got)
 	}
 }
