@@ -80,7 +80,7 @@ func TestAuthenticate_OK(t *testing.T) {
 	}
 	defer c.Close()
 
-	res, err := c.Authenticate("alice", "pass", "imap", "1.2.3.4", "sess1")
+	res, err := c.Authenticate("alice", "pass", "imap", "1.2.3.4", "", "sess1")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestAuthenticate_DirectorTag(t *testing.T) {
 	}
 	defer c.Close()
 
-	res, err := c.Authenticate("alice", "pass", "imap", "1.2.3.4", "sess1")
+	res, err := c.Authenticate("alice", "pass", "imap", "1.2.3.4", "", "sess1")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestAuthenticate_Fail(t *testing.T) {
 	}
 	defer c.Close()
 
-	_, err = c.Authenticate("alice", "wrong", "imap", "", "")
+	_, err = c.Authenticate("alice", "wrong", "imap", "", "", "")
 	if err != ErrAuthFailed {
 		t.Errorf("err = %v, want ErrAuthFailed", err)
 	}
@@ -183,7 +183,7 @@ func TestAuthenticate_TempFail(t *testing.T) {
 	}
 	defer c.Close()
 
-	_, err = c.Authenticate("alice", "pass", "imap", "", "")
+	_, err = c.Authenticate("alice", "pass", "imap", "", "", "")
 	if err != ErrTempFail {
 		t.Errorf("err = %v, want ErrTempFail", err)
 	}
@@ -285,7 +285,7 @@ func TestAuthenticate_Nologin(t *testing.T) {
 	}
 	defer c.Close()
 
-	res, err := c.Authenticate("disabled", "pass", "imap", "", "")
+	res, err := c.Authenticate("disabled", "pass", "imap", "", "", "")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}

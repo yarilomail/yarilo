@@ -17,6 +17,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/auth/scheme"
 	"github.com/yarilomail/yarilo/pkg/sqlpool"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (registered as "pgx")
@@ -170,7 +171,7 @@ func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
 	if !p.filter.Accepts(req.Username) {
 		return protocol.ResultNext, nil
 	}
-	query, args := substituteVars(p.driver, p.passwordQuery, req.Username)
+	query, args := substituteVars(p.driver, p.passwordQuery, req.Username, req.Vars())
 
 	row, err := scanRowByName(p.db, query, args...)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -207,7 +208,7 @@ func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
 	home := row["home"]
 	mailLoc := row["mail"]
 	if p.userQuery != "" {
-		if h, m, err := p.lookupUser(req.Username); err == nil {
+		if h, m, err := p.lookupUser(req.Username, req.Vars()); err == nil {
 			if h != "" {
 				home = h
 			}
@@ -241,7 +242,7 @@ func (p *Passdb) LookupUser(username string) (home, mailLoc string, err error) {
 	if p.userQuery == "" {
 		return "", "", errors.New("auth/sql: user_query not configured")
 	}
-	return p.lookupUser(username)
+	return p.lookupUser(username, sqlvars.Vars{})
 }
 
 // LookupSCRAMSha256 satisfies protocol.SCRAMSha256Lookup. Runs
@@ -253,20 +254,30 @@ func (p *Passdb) LookupUser(username string) (home, mailLoc string, err error) {
 // SCRAM-SHA-256 verifier. The SCRAM server fabricates a fake verifier on
 // nil so the exchange fails uniformly and users cannot be enumerated.
 func (p *Passdb) LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error) {
-	return p.lookupSCRAM(username, scheme.ParseSCRAMSha256Credentials)
+	return p.lookupSCRAM(username, sqlvars.Vars{}, scheme.ParseSCRAMSha256Credentials)
+}
+
+// LookupSCRAMSha256For is LookupSCRAMSha256 with the request's values bound.
+func (p *Passdb) LookupSCRAMSha256For(username string, v sqlvars.Vars) (*sasl.ScramCredentials, error) {
+	return p.lookupSCRAM(username, v, scheme.ParseSCRAMSha256Credentials)
 }
 
 // LookupSCRAMSha1 satisfies protocol.SCRAMSha1Lookup. SHA-1 counterpart
 // of LookupSCRAMSha256; only the verifier-blob scheme prefix differs.
 func (p *Passdb) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error) {
-	return p.lookupSCRAM(username, scheme.ParseSCRAMSha1Credentials)
+	return p.lookupSCRAM(username, sqlvars.Vars{}, scheme.ParseSCRAMSha1Credentials)
 }
 
-func (p *Passdb) lookupSCRAM(username string, parse func(string) (*sasl.ScramCredentials, bool)) (*sasl.ScramCredentials, error) {
+// LookupSCRAMSha1For is LookupSCRAMSha1 with the request's values bound.
+func (p *Passdb) LookupSCRAMSha1For(username string, v sqlvars.Vars) (*sasl.ScramCredentials, error) {
+	return p.lookupSCRAM(username, v, scheme.ParseSCRAMSha1Credentials)
+}
+
+func (p *Passdb) lookupSCRAM(username string, v sqlvars.Vars, parse func(string) (*sasl.ScramCredentials, bool)) (*sasl.ScramCredentials, error) {
 	if !p.filter.Accepts(username) {
 		return nil, nil
 	}
-	query, args := substituteVars(p.driver, p.passwordQuery, username)
+	query, args := substituteVars(p.driver, p.passwordQuery, username, v)
 	row, err := scanRowByName(p.db, query, args...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -290,10 +301,15 @@ func (p *Passdb) lookupSCRAM(username string, parse func(string) (*sasl.ScramCre
 
 // LookupCredentials reports whether password_query finds the user.
 func (p *Passdb) LookupCredentials(username string) (bool, error) {
+	return p.LookupCredentialsFor(username, sqlvars.Vars{})
+}
+
+// LookupCredentialsFor is LookupCredentials with the request's values bound.
+func (p *Passdb) LookupCredentialsFor(username string, v sqlvars.Vars) (bool, error) {
 	if !p.filter.Accepts(username) {
 		return false, nil
 	}
-	query, args := substituteVars(p.driver, p.passwordQuery, username)
+	query, args := substituteVars(p.driver, p.passwordQuery, username, v)
 	_, err := scanRowByName(p.db, query, args...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -301,14 +317,22 @@ func (p *Passdb) LookupCredentials(username string) (bool, error) {
 	return err == nil, err
 }
 
-func (p *Passdb) lookupUser(username string) (home, mailLoc string, err error) {
-	query, args := substituteVars(p.driver, p.userQuery, username)
+func (p *Passdb) lookupUser(username string, v sqlvars.Vars) (home, mailLoc string, err error) {
+	query, args := substituteVars(p.driver, p.userQuery, username, v)
 	row, err := scanRowByName(p.db, query, args...)
 	if err != nil {
 		return "", "", err
 	}
 	return row["home"], row["mail"], nil
 }
+
+// UsesRequest reports whether the password query reads anything besides the
+// name; a static userdb checking names against it then does too.
+func (p *Passdb) UsesRequest() bool { return sqlvars.UsesRequest(p.passwordQuery) }
+
+// UsesAddresses reports whether the password query reads the client's
+// addresses, so an answer cached for one address cannot stand for another.
+func (p *Passdb) UsesAddresses() bool { return sqlvars.UsesAddresses(p.passwordQuery) }
 
 // ipInAllowNets reports whether remoteIP is covered by any entry in nets.
 // Entries may be CIDR (10.0.0.0/8) or a bare IP treated as /32 or /128.

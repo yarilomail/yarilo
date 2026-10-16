@@ -19,7 +19,7 @@ func TestLazyUserdbLookup_LazyAndSurfacesDialError(t *testing.T) {
 		return nil, boom
 	}
 
-	lookup := lazyUserdbLookup("yarilo-auth:9102", dial, &mailbox.Resolver{})
+	lookup := lazyUserdbLookup("yarilo-auth:9102", "lmtp", dial, &mailbox.Resolver{})
 	if dials != 0 {
 		t.Fatalf("building the lookup must not dial (regression), dialed %d", dials)
 	}

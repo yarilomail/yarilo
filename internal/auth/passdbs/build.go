@@ -14,6 +14,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/static"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/sqlpool"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 // Build turns passdb config entries into a passdb chain and a parallel userdb
@@ -84,8 +85,16 @@ func Build(entries []config.PassdbEntry) (passdbs []protocol.Passdb, userdbs []p
 	}
 	// A static userdb checks a name against the whole passdb chain, its own
 	// entry included, as the reference's lookup_credentials walks every passdb.
+	usesRequest := false
+	for _, db := range passdbs {
+		if r, ok := db.(interface{ UsesRequest() bool }); ok && r.UsesRequest() {
+			usesRequest = true
+		}
+	}
 	for _, s := range statics {
-		s.SetUserExists(func(username string) (bool, error) { return protocol.UserExists(passdbs, username) })
+		s.SetUserExists(func(username string, v sqlvars.Vars) (bool, error) {
+			return protocol.UserExistsFor(passdbs, username, v)
+		}, usesRequest)
 	}
 	return passdbs, userdbs, nil
 }

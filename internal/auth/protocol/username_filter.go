@@ -1,6 +1,10 @@
 package protocol
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
+)
 
 // UsernameFilter is a passdb entry's username_filter as the reference reads it:
 // masks on spaces and commas, * and ?, case-sensitive, ! excludes; empty takes all.
@@ -65,12 +69,21 @@ type CredentialsLookup interface {
 // UserExists asks each passdb that can look a user up without a password;
 // the first that knows the user decides, an error stops the walk.
 func UserExists(passdbs []Passdb, username string) (bool, error) {
+	return UserExistsFor(passdbs, username, sqlvars.Vars{})
+}
+
+// UserExistsFor is UserExists with the request's values for each passdb.
+func UserExistsFor(passdbs []Passdb, username string, v sqlvars.Vars) (bool, error) {
 	for _, db := range passdbs {
-		cl, ok := db.(CredentialsLookup)
-		if !ok {
+		var found bool
+		var err error
+		if f, ok := db.(CredentialsLookupFor); ok {
+			found, err = f.LookupCredentialsFor(username, v)
+		} else if cl, ok := db.(CredentialsLookup); ok {
+			found, err = cl.LookupCredentials(username)
+		} else {
 			continue
 		}
-		found, err := cl.LookupCredentials(username)
 		if err != nil || found {
 			return found, err
 		}

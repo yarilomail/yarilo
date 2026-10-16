@@ -885,7 +885,7 @@ func (s *session) scramServer(mech string) (sasl.Server, error) {
 	// Held so an AUTHENTICATE the client aborts frees the service's half at
 	// once, rather than waiting out its deadline there (#1733).
 	s.cancelRelay()
-	srv := authrelay.NewRelayServer(relay, mech, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID(), cb)
+	srv := authrelay.NewRelayServer(relay, mech, "imap", remoteIP(s.imapConn.NetConn()), loginproto.LocalIP(s.imapConn.NetConn()), s.sessionID(), cb)
 	srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeLogin(res.Response()) }
 	s.liveRelay = srv
 	return srv, nil
@@ -985,7 +985,7 @@ func (s *session) authenticate(authzid, authid, password string) (*protocol.Auth
 	if relay == nil {
 		return nil, errNoAuthService
 	}
-	res, err := relay.AuthenticateAs(authzid, authid, password, "imap", remoteIP(s.imapConn.NetConn()), s.sessionID())
+	res, err := relay.AuthenticateAs(authzid, authid, password, "imap", remoteIP(s.imapConn.NetConn()), loginproto.LocalIP(s.imapConn.NetConn()), s.sessionID())
 	if err != nil {
 		return nil, err
 	}

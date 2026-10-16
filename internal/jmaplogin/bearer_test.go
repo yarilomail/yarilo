@@ -160,10 +160,10 @@ func TestAnAuthOutageIsServiceUnavailable(t *testing.T) {
 
 type outage struct{}
 
-func (outage) Authenticate(string, string, string, string, string) (string, error) {
+func (outage) Authenticate(string, string, string, string, string, string) (string, error) {
 	return "", classify(authclient.ErrTempFail)
 }
-func (outage) AuthenticateToken(string, string, string, string) (string, error) {
+func (outage) AuthenticateToken(string, string, string, string, string) (string, error) {
 	return "", classify(authclient.ErrTempFail)
 }
 func (outage) OffersTokens() bool { return true }

@@ -64,7 +64,7 @@ func (f *fakeWarden) countOp(op string) int {
 
 type fakeAuth struct{ users map[string]string }
 
-func (f fakeAuth) Authenticate(username, password, _, _, _ string) (string, error) {
+func (f fakeAuth) Authenticate(username, password, _, _, _, _ string) (string, error) {
 	if pw, ok := f.users[username]; ok && pw == password {
 		return username, nil
 	}

@@ -49,7 +49,7 @@ func TestTheBinaryWiresBearerToTheAuthService(t *testing.T) {
 	if !opts.Tokens.OffersTokens() {
 		t.Error("the auth service runs OAUTHBEARER and the proxy would not offer Bearer")
 	}
-	if user, err := opts.Tokens.AuthenticateToken("good-token", "jmap", "192.0.2.1", "s1"); err != nil || user != "alice" {
+	if user, err := opts.Tokens.AuthenticateToken("good-token", "jmap", "192.0.2.1", "", "s1"); err != nil || user != "alice" {
 		t.Errorf("a valid token through the binary's wiring answered %q, %v; want alice", user, err)
 	}
 }

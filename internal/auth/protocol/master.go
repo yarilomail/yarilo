@@ -17,6 +17,7 @@ import (
 
 	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 // Master-protocol constants, versioned separately from the client protocol.
@@ -222,7 +223,7 @@ func (s *MasterServer) handleConn(conn net.Conn) {
 }
 
 // handleUser runs the userdb lookup for `USER <id> <username>
-// [<key>=<value>...]`. Responds:
+// [service=<name>]`. Responds:
 //
 //	USER <id> <username>\t<fields>  on hit
 //	NOTFOUND <id>                   on (nil, nil)
@@ -238,7 +239,15 @@ func (s *MasterServer) handleUser(conn net.Conn, fields []string) {
 		fmt.Fprintf(conn, "NOTFOUND\t%s\n", id)
 		return
 	}
-	ui, err := s.userdb.Lookup(username)
+	// The protocol asking, when it is a login or a delivery: a userdb rule
+	// on %s refuses there (#2227). Lookups that are neither send none.
+	var v sqlvars.Vars
+	for _, f := range fields[3:] {
+		if svc, ok := strings.CutPrefix(f, "service="); ok {
+			v.Service = svc
+		}
+	}
+	ui, err := LookupUserdb(s.userdb, username, v)
 	if err != nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=%s\n", id, escapeReason(err.Error()))
 		return

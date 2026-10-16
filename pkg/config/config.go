@@ -17,9 +17,9 @@ import (
 
 	"github.com/yarilomail/yarilo/pkg/build"
 	"github.com/yarilomail/yarilo/pkg/filelock"
-
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 // Config is the top-level yarilo configuration.
@@ -2785,6 +2785,33 @@ func resolveSize(name, raw string) (int64, error) {
 	return n, nil
 }
 
+// validateSQLQueryVars refuses a query naming a variable its request never
+// carries, or one that does not exist: either would bind as empty (#2227).
+func validateSQLQueryVars(a AuthConfig) error {
+	check := func(section string, entries []PassdbEntry) error {
+		for i, e := range entries {
+			switch strings.ToLower(e.Driver) {
+			case "sqlite", "mysql", "postgres":
+			default:
+				continue
+			}
+			for _, q := range []struct {
+				kind  sqlvars.Kind
+				query string
+			}{{sqlvars.Password, e.PasswordQuery}, {sqlvars.User, e.UserQuery}, {sqlvars.Iterate, e.IterateQuery}} {
+				if err := sqlvars.Check(q.kind, q.query); err != nil {
+					return fmt.Errorf("config: %s.%d: %w", section, i, err)
+				}
+			}
+		}
+		return nil
+	}
+	if err := check("auth.passdb", a.Passdb); err != nil {
+		return err
+	}
+	return check("auth.master_users.masterdb", a.MasterUsers.Masterdb)
+}
+
 // validateMailDriver refuses a driver nothing implements: the storage layer
 // falls back to maildir, so a typo would be mail on disk in another format.
 func validateMailDriver(driver string) error {
@@ -2797,6 +2824,9 @@ func validateMailDriver(driver string) error {
 
 func (cfg *Config) validate() error {
 	if err := checkNumbers(cfg); err != nil {
+		return err
+	}
+	if err := validateSQLQueryVars(cfg.Auth); err != nil {
 		return err
 	}
 	if err := foldNamespaceLocations(cfg.Namespaces); err != nil {

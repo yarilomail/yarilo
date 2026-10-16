@@ -539,6 +539,8 @@ func (s *Server) handleConn(conn net.Conn) {
 	conn.SetDeadline(time.Now().Add(60 * time.Second)) //nolint:errcheck
 
 	remoteAddr := conn.RemoteAddr().String()
+	// Behind a trusted PROXY header this is the destination it names.
+	localIP := loginproto.LocalIP(conn)
 	clientIP, remotePort, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		clientIP = remoteAddr
@@ -659,7 +661,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			// repeat: internal failures do not touch the auth-penalty counter.
 			for tfAttempt := 0; pre.authResult == nil; tfAttempt++ {
 				authStart := time.Now()
-				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, sessID)
+				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, localIP, sessID)
 				// One observation per attempt: each is its own round-trip.
 				s.observePhase(phaseAuth, authStart)
 				if !errors.Is(aerr, authclient.ErrTempFail) {

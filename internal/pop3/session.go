@@ -273,7 +273,7 @@ func (s *session) relayBuilder(mech, plusMech string) scramBuilder {
 		return scramBuilder{}
 	}
 	build := func(m string, cb []byte, f onSuccessFn) sasl.Server {
-		srv := authrelay.NewRelayServer(relay, m, "pop3", s.remoteIP.String(), s.sid, cb)
+		srv := authrelay.NewRelayServer(relay, m, "pop3", s.remoteIP.String(), loginproto.LocalIP(s.conn), s.sid, cb)
 		srv.OnSuccess = func(res *authrelay.AuthResult) error { return f(res.Response()) }
 		return srv
 	}
@@ -656,7 +656,7 @@ func (s *session) authenticate(authzid, username, password string) (*protocol.Au
 	if relay == nil {
 		return nil, errNoAuthService
 	}
-	res, err := relay.AuthenticateAs(authzid, username, password, "pop3", s.remoteIP.String(), s.sid)
+	res, err := relay.AuthenticateAs(authzid, username, password, "pop3", s.remoteIP.String(), loginproto.LocalIP(s.conn), s.sid)
 	if err != nil {
 		return &protocol.AuthResponse{Result: protocol.AuthFail}, nil
 	}
