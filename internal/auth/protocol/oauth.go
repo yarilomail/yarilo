@@ -159,7 +159,7 @@ func (s *Server) runOAuth(conn net.Conn, live *exchanges, id string, x *saslExch
 		return "fail"
 	}
 	x.username = user
-	return s.authenticatePassword(conn, id, x.service, x.rip, x.lip, x.session, "", user, token, refuse("invalid_token"))
+	return s.authenticatePassword(conn, id, x.service, x.rip, x.lip, x.session, "", user, token, true, refuse("invalid_token"))
 }
 
 // continueOAuth carries a response into an OAuth login: its first message, or

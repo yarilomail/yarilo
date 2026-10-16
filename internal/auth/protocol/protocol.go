@@ -122,6 +122,8 @@ type Request struct {
 	RemoteIP string
 	// LocalIP is the address the client connected to; may be empty.
 	LocalIP string
+	// Bearer: Password is a token from OAUTHBEARER/XOAUTH2, not a password.
+	Bearer bool
 
 	// Fields accumulates passdb output. Drivers may assume non-nil;
 	// Chain.Authenticate allocates it.
@@ -1253,7 +1255,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
 	}
-	return s.authenticatePassword(conn, id, service, remoteIP, lipAttr, sessionID, authzid, authid, password, plainReject)
+	return s.authenticatePassword(conn, id, service, remoteIP, lipAttr, sessionID, authzid, authid, password, false, plainReject)
 }
 
 // plainReject is a refusal of a password login: nothing to say but no.
@@ -1263,7 +1265,7 @@ func plainReject(conn net.Conn, id string) {
 
 // authenticatePassword runs a credential through the chain; reject writes a
 // refusal, which a mechanism may answer with more than FAIL.
-func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, localIP, sessionID, authzid, authid, password string, reject func(net.Conn, string)) string {
+func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, localIP, sessionID, authzid, authid, password string, bearer bool, reject func(net.Conn, string)) string {
 	// Clients that cannot supply authzid encode it as `target<sep>master` in
 	// the authid field; only with master users on and no authzid given.
 	target := ""
@@ -1339,7 +1341,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 		}
 	}
 
-	res, err := s.authenticate(target, master, password, service, remoteIP, localIP)
+	res, err := s.authenticate(target, master, password, service, remoteIP, localIP, bearer)
 
 	// Penalty update: success resets to 0; client-visible failure
 	// increments by 1 (capped server-side). Internal failures
@@ -1826,7 +1828,7 @@ func extractAltDir(f *Fields) string {
 // and ≠ master (impersonation request) the call routes through
 // RunMasterAuth: masterdb / passdb master_user flag → switch
 // identity → userdb for target.
-func (s *Server) authenticate(target, master, password, service, remoteIP, localIP string) (*AuthResponse, error) {
+func (s *Server) authenticate(target, master, password, service, remoteIP, localIP string, bearer bool) (*AuthResponse, error) {
 	// Cache key shape mirrors chainAuthenticator so the in-process
 	// and wire paths stay interchangeable for the same input.
 	// Regular flow: `<service>\t<user>`. Master flow: prefixed
@@ -1862,6 +1864,7 @@ func (s *Server) authenticate(target, master, password, service, remoteIP, local
 		Service:  service,
 		RemoteIP: remoteIP,
 		LocalIP:  localIP,
+		Bearer:   bearer,
 		Fields:   NewFields(),
 	}
 	var (

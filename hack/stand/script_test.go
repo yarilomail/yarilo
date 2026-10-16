@@ -144,12 +144,15 @@ func TestTheCPUProfileIsTakenOnEveryArm(t *testing.T) {
 // two levels, because a sibling one level down is what quietly moves in.
 func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 	cases := []struct {
-		name  string
-		allow string
+		name     string
+		allow    string
+		notAnArm bool
 	}{
 		{name: "blockprofile", allow: `^telemetry(\.pprof)?$`},
 		{name: "fsync-never", allow: `^storage(\.mail_fsync)?$`},
 		{name: "notls", allow: `^internalTLS(\.enabled)?$`},
+		// The OAuth2 matrix overlay: every login would reach the IdP, so never an arm (#2231).
+		{name: "oauth2", allow: `^components(\.auth)?$`, notAnArm: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,8 +184,8 @@ func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 				}
 			}
 			// And the arm must know the name, or the overlay is unreachable.
-			if !strings.Contains(armSource(t), tc.name+")") {
-				t.Errorf("ab-arm.sh does not name the %s overlay", tc.name)
+			if named := strings.Contains(armSource(t), tc.name+")"); named == tc.notAnArm {
+				t.Errorf("ab-arm.sh naming the %s overlay is %v, want %v", tc.name, named, !tc.notAnArm)
 			}
 		})
 	}

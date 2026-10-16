@@ -170,3 +170,18 @@ kubectl -n keycloak rollout restart deploy/keycloak   # after a realm change or 
 
 Issuer: `https://keycloak.keycloak.svc:8443/realms/yarilo`, HTTPS only. A
 renewed leaf is copied again the same way.
+
+The OAuth2 entries live in the overlay `helm_values/values-sandbox-oauth2.yaml`,
+laid on top of `values-sandbox.yaml` only for an OAuth2 matrix window. The
+chain stops at the first temporary failure and the entries run before SQL, so
+with the overlay every PLAIN login of the stand goes to Keycloak and Keycloak
+down stops every login: acceptance runs and A/B arms run without it, and
+`ab-arm.sh` does not know it. A window sets it and takes it off with the same
+`helm upgrade`, each recorded as a row in `stand-runs.md`:
+
+```sh
+helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
+  -f helm_values/values-sandbox-oauth2.yaml --set image.tag=<tag>   # window starts
+helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
+  --set image.tag=<tag>                                             # window ends
+```
