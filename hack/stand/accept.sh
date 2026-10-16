@@ -311,7 +311,7 @@ esac
 
 # A per-protocol rule (#2227): the password query turns IMAP off for one probe,
 # which answers as a wrong password while its POP3 logs in; the user query
-# turns delivery off for the other, refused at RCPT while u1 is taken.
+# turns delivery off for the other.
 RULE_IMAP_USER="${RULE_IMAP_USER:-ruleimap@d00001.test}"
 RULE_LMTP_USER="${RULE_LMTP_USER:-rulelmtp@d00001.test}"
 right=$(imap_session "a LOGIN $RULE_IMAP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
@@ -322,11 +322,17 @@ case "$right|$pop" in
     verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "right password '$right', wrong one '$wrong'" ;;
   *) verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "$RULE_IMAP_USER: imap '${right:-nothing}', pop3 '${pop:-nothing}'" ;;
 esac
-rcpt=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$RULE_LMTP_USER>\r\nRCPT TO:<u1@d00001.test>\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" | tr -d '\r' | grep -E '^[245][0-9][0-9] ' | tail -3)
-refused=$(echo "$rcpt" | sed -n 2p); taken=$(echo "$rcpt" | sed -n 3p)
-case "$refused|$taken" in
-  5*"|250"*) verdict "protocol rule: delivery refused at RCPT" ok "$RULE_LMTP_USER '$refused', u1 '$taken'" ;;
-  *) verdict "protocol rule: delivery refused at RCPT" fail "$RULE_LMTP_USER '${refused:-nothing}', u1 '${taken:-nothing}'" ;;
+# The login proxy takes any RCPT; the backend answers each recipient after DATA,
+# and the rule's refusal must be an unknown recipient's, word for word. Both are
+# refused, so nothing is stored; the probe's IMAP login shows it exists.
+replies=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$RULE_LMTP_USER>\r\nRCPT TO:<nosuch-accept@d00001.test>\r\nDATA\r\nSubject: rule probe\r\n\r\nx\r\n.\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" | tr -d '\r' | grep -E '^5[0-9][0-9] ' || true)
+ruled=$(echo "$replies" | sed -n 1p); unknown=$(echo "$replies" | sed -n 2p)
+login=$(imap_session "a LOGIN $RULE_LMTP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+case "$ruled|$login" in
+  "550 "*"|a OK"*) [ "${ruled/$RULE_LMTP_USER/X}" = "${unknown/nosuch-accept@d00001.test/X}" ] &&
+    verdict "protocol rule: delivery refused as an unknown recipient" ok "$ruled; unknown '$unknown'; imap '$login'" ||
+    verdict "protocol rule: delivery refused as an unknown recipient" fail "rule '$ruled', unknown '$unknown'" ;;
+  *) verdict "protocol rule: delivery refused as an unknown recipient" fail "$RULE_LMTP_USER: delivery '${ruled:-nothing}', imap '${login:-nothing}'" ;;
 esac
 
 uid_pairs | sort > "$OUT/uid-pairs-after.txt"
