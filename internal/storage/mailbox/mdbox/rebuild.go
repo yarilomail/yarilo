@@ -86,6 +86,17 @@ func scanTrailer(r io.Reader, limit uint32) (uint32, parsedTrailer, error) {
 // Storage knows no folders: the caller pairs the output with per-folder index
 // records to learn which folder owns each map_uid.
 func (u *userMailbox) scanStorage() ([]mailbox.ScanRecord, error) {
+	recs, err := u.scanLocated()
+	out := make([]mailbox.ScanRecord, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, r.scan)
+	}
+	return out, err
+}
+
+// scanLocated is scanStorage with each record's place on disk and the map entry
+// it was paired with.
+func (u *userMailbox) scanLocated() ([]scanRecord, error) {
 	// Collect fileID -> on-disk path across both tiers. Primary wins when a file
 	// exists in both (a half-finished altmove); an alt-only file is cold-tier
 	// mail that a primary-only scan would drop.
@@ -137,7 +148,7 @@ func (u *userMailbox) scanStorage() ([]mailbox.ScanRecord, error) {
 
 	m, _ := u.openMap() // may be nil if the map is unrecoverable; tolerated
 
-	out := make([]mailbox.ScanRecord, 0, len(fileIDs)*4)
+	out := make([]scanRecord, 0, len(fileIDs)*4)
 	var firstErr error // first per-file fault; scan is incomplete once this is set
 	for _, fileID := range fileIDs {
 		recs, serr := u.scanMFileAt(paths[fileID])
@@ -155,13 +166,14 @@ func (u *userMailbox) scanStorage() ([]mailbox.ScanRecord, error) {
 					"user", u.username, "file", fileID, "err", serr)
 			}
 		}
-		if m != nil {
-			if mapRecs, err := m.RecordsInFile(fileID); err == nil {
-				resolveMapFilenames(recs, mapRecs)
-			}
+		for i := range recs {
+			recs[i].fileID = fileID
 		}
-		for _, r := range recs {
-			out = append(out, r.scan)
+		out = append(out, recs...)
+	}
+	if m != nil {
+		if entries, err := m.RecordsReloaded(); err == nil {
+			pairWithMap(out, entries)
 		}
 	}
 	if firstErr != nil {
@@ -173,33 +185,45 @@ func (u *userMailbox) scanStorage() ([]mailbox.ScanRecord, error) {
 	return out, nil
 }
 
-// resolveMapFilenames pairs scan records with map entries: by GUID first, which
-// survives an offset shift from partial corruption, then by offset for entries
-// written before GUID indexing. A record matching neither is an orphan.
-func resolveMapFilenames(recs []scanRecord, mapEntries []mdboxmap.MapEntry) {
-	type guidKey = [16]byte
-	guidToUID := make(map[guidKey]uint32, len(mapEntries))
-	offsetToUID := make(map[uint32]uint32, len(mapEntries))
-	for _, e := range mapEntries {
-		if e.GUID != (guidKey{}) {
-			guidToUID[e.GUID] = e.UID
+// pairWithMap names each record by its map entry: first an entry at the
+// record's own place, then one carrying its GUID wherever it points (#2236).
+func pairWithMap(recs []scanRecord, entries []mdboxmap.MapEntry) {
+	type place struct{ file, off uint32 }
+	var zero [16]byte
+	used := make(map[uint32]bool, len(entries))
+	at := make(map[place][]mdboxmap.MapEntry, len(entries))
+	byGUID := make(map[[16]byte][]mdboxmap.MapEntry, len(entries))
+	for _, e := range entries {
+		at[place{e.FileID, e.Offset}] = append(at[place{e.FileID, e.Offset}], e)
+		if e.GUID != zero {
+			byGUID[e.GUID] = append(byGUID[e.GUID], e)
 		}
-		offsetToUID[e.Offset] = e.UID
 	}
+	name := func(r *scanRecord, e mdboxmap.MapEntry) {
+		r.scan.Filename = strconv.FormatUint(uint64(e.UID), 10)
+		r.entry = e
+		used[e.UID] = true
+	}
+	// A record with another GUID at an entry's place is not that entry.
 	for i := range recs {
-		if recs[i].scan.Filename != "" {
-			continue
-		}
-		// Strategy 1: GUID match.
-		if recs[i].scan.GUID != (guidKey{}) {
-			if uid, ok := guidToUID[recs[i].scan.GUID]; ok {
-				recs[i].scan.Filename = strconv.FormatUint(uint64(uid), 10)
-				continue
+		r := &recs[i]
+		for _, e := range at[place{r.fileID, r.physicalOffset}] {
+			if !used[e.UID] && (e.GUID == zero || r.scan.GUID == zero || e.GUID == r.scan.GUID) {
+				name(r, e)
+				break
 			}
 		}
-		// Strategy 2: offset match.
-		if uid, ok := offsetToUID[recs[i].physicalOffset]; ok {
-			recs[i].scan.Filename = strconv.FormatUint(uint64(uid), 10)
+	}
+	for i := range recs {
+		r := &recs[i]
+		if r.scan.Filename != "" || r.scan.GUID == zero {
+			continue
+		}
+		for _, e := range byGUID[r.scan.GUID] {
+			if !used[e.UID] {
+				name(r, e)
+				break
+			}
 		}
 	}
 }
@@ -208,7 +232,10 @@ func resolveMapFilenames(recs []scanRecord, mapEntries []mdboxmap.MapEntry) {
 // pair it back to a map_uid after the fact.
 type scanRecord struct {
 	scan           mailbox.ScanRecord
+	fileID         uint32
 	physicalOffset uint32
+	length         uint32            // whole record, as a map entry's Size counts it
+	entry          mdboxmap.MapEntry // the entry it was paired with; zero UID if none
 }
 
 // physRecord carries the minimal per-record info the alt-move scanner needs:
@@ -405,6 +432,7 @@ func (u *userMailbox) scanMFileAt(path string) ([]scanRecord, error) {
 		if parsed.vsize > 0 {
 			rec.scan.VSize = parsed.vsize
 		}
+		rec.length = bodyEnd + trailerEnd - pos
 		out = append(out, rec)
 		pos = bodyEnd + trailerEnd
 	}

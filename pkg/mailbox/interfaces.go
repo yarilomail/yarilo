@@ -351,6 +351,8 @@ type StorageRebuildStats struct {
 	OrphansRestored     int    // unreferenced messages re-filed into their ORIG_MAILBOX (only when restoreOrphans is set)
 	RebuildCount        uint32 // new generation counter after the rebuild
 	FilesNormalised     int    // storage files rewritten to the header size they announce
+	Repointed           int    // map records moved to where their GUID's bytes are
+	Remapped            int    // folder records moved to the map_uid that owns their GUID
 	// ExpungedCopies maps folder name → records dropped from that folder's index by
 	// the rebuild, so the operator caller can invalidate their FTS documents
 	// (otherwise ghost entries until the next rescan).
