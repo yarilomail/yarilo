@@ -92,3 +92,20 @@ func TestAContainerIsNotAFolder(t *testing.T) {
 		t.Errorf("found %v, want only [Parent/Child]: Parent holds a folder but is not one", names)
 	}
 }
+
+// The FTS index a converted store keeps inside a folder is no folder, even
+// holding the mail directories an earlier release made there (#2254).
+func TestTheFTSIndexIsNotAFolder(t *testing.T) {
+	got, err := dboxindex.WalkFolders(fstest.MapFS{
+		"INBOX/dbox-Mails/dovecot.index.log":                                   {},
+		"INBOX/fts-flatcurve/dbox-Mails/yarilo.index.lock":                     {},
+		"INBOX/fts-flatcurve/current.1788123078618997/dbox-Mails/yarilo.index": {},
+		"INBOX/fts-flatcurve/index.4028/postlist.glass":                        {},
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "INBOX" {
+		t.Errorf("found %v, want only INBOX", got)
+	}
+}

@@ -67,7 +67,7 @@ func WalkDboxTree(
 			return err
 		}
 		for _, e := range entries {
-			if !e.IsDir() || isMarkerDir(e.Name()) {
+			if !e.IsDir() || isMarkerDir(e.Name()) || e.Name() == FTSIndexDir {
 				continue
 			}
 			logical, ok := decode(e.Name())

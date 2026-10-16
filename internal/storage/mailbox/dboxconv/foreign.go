@@ -13,6 +13,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // Their file names, in one place: the removal step must name exactly the set
@@ -84,6 +85,10 @@ func AnyForeignFolderLeft(mailboxesDir string) (bool, error) {
 		// index root their index sits in the mailbox directory itself (#1583).
 		if !d.IsDir() {
 			return nil
+		}
+		// Their FTS index carries index files of its own and is no folder (#2254).
+		if d.Name() == mailbox.FTSIndexDir {
+			return fs.SkipDir
 		}
 		if HasForeignFolder(p) {
 			found = true
@@ -165,13 +170,12 @@ func HasForeignSubscriptions(mailRoot string) bool {
 	return err == nil
 }
 
-// ReadForeignMap reads their map: base then log, or the log alone -- their base
+// ReadForeignMap reads their map: base then log, or the logs alone -- their base
 // is written only past a rewrite threshold, so a young store has none.
 func ReadForeignMap(storageDir string) ([]dboxindex.MapEntry, error) {
 	var (
 		seed     []dboxindex.MapEntry
 		exts     []dboxindex.Extension
-		offset   int
 		baseSeq  uint32
 		baseTail uint32
 	)
@@ -190,47 +194,75 @@ func ReadForeignMap(storageDir string) ([]dboxindex.MapEntry, error) {
 		if herr != nil {
 			return nil, fmt.Errorf("dboxconv: map records: %w", herr)
 		}
-		offset = int(h.LogFileTailOffset)
 		baseSeq, baseTail = h.LogFileSeq, h.LogFileTailOffset
 	}
 
-	raw, err := os.ReadFile(filepath.Join(storageDir, foreignMapLog))
+	chain, err := logChain(storageDir, foreignMapLog, foreignMapLogPrev, baseSeq, baseTail)
 	if err != nil {
 		return nil, fmt.Errorf("dboxconv: map log: %w", err)
 	}
-	lh, err := dboxindex.ParseLogHeader(raw)
-	if err != nil {
-		return nil, fmt.Errorf("dboxconv: map log header: %w", err)
-	}
-	// The tail offset addresses the log named by its sequence, not whichever is
-	// on disk now: after a rotation it lands anywhere. Used only when they agree.
-	if baseSeq != 0 && baseSeq != lh.FileSeq {
-		offset = int(lh.HeaderSize)
-	}
-	// No base: the log from its start, which is the whole state then.
-	if offset < int(lh.HeaderSize) {
-		offset = int(lh.HeaderSize)
-	}
-
-	// What the rotation moved out lives in the rotated log, from the base's
-	// tail on. Read first, so the current log lands on top.
-	if baseSeq != 0 && baseSeq != lh.FileSeq {
-		if prev, perr := os.ReadFile(filepath.Join(storageDir, foreignMapLogPrev)); perr == nil {
-			ph, pherr := dboxindex.ParseLogHeader(prev)
-			if pherr != nil {
-				return nil, fmt.Errorf("dboxconv: rotated map log header: %w", pherr)
-			}
-			at := int(ph.HeaderSize)
-			if ph.FileSeq == baseSeq && int(baseTail) > at {
-				at = int(baseTail)
-			}
-			seed, err = dboxindex.ReadMapOnto(seed, prev, at, exts)
-			if err != nil {
-				return nil, fmt.Errorf("dboxconv: rotated map log: %w", err)
-			}
+	for _, seg := range chain {
+		seed, exts, err = dboxindex.ReadMapOntoExt(seed, seg.b, seg.at, exts)
+		if err != nil {
+			return nil, fmt.Errorf("dboxconv: map log %s: %w", seg.name, err)
 		}
 	}
-	return dboxindex.ReadMapOnto(seed, raw, offset, exts)
+	return seed, nil
+}
+
+// ErrHistoryLost says a store has no base and its oldest log does not start the
+// history, so the logs alone are short by what an older one held (#2253).
+var ErrHistoryLost = errors.New("no base, and no log from the start of the history is left")
+
+// logSegment is one log of a chain and the offset its replay starts at.
+type logSegment struct {
+	name string
+	b    []byte
+	at   int
+}
+
+// logChain returns the logs to replay after a base at (baseSeq, baseTail), oldest
+// first; 0 is no base. The tail belongs to the log its sequence names (#2253).
+func logChain(dir, cur, prev string, baseSeq, baseTail uint32) ([]logSegment, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, cur))
+	if err != nil {
+		return nil, err
+	}
+	lh, err := dboxindex.ParseLogHeader(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s header: %w", cur, err)
+	}
+	head := logSegment{name: cur, b: raw, at: int(lh.HeaderSize)}
+	if baseSeq == lh.FileSeq {
+		head.at = max(head.at, int(baseTail))
+		return []logSegment{head}, nil
+	}
+	if baseSeq == 0 && lh.PrevFileSeq == 0 {
+		return []logSegment{head}, nil
+	}
+
+	pb, err := os.ReadFile(filepath.Join(dir, prev))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	var ph dboxindex.LogHeader
+	if err == nil {
+		if ph, err = dboxindex.ParseLogHeader(pb); err != nil {
+			return nil, fmt.Errorf("%s header: %w", prev, err)
+		}
+	}
+	older := logSegment{name: prev, b: pb, at: int(ph.HeaderSize)}
+	if baseSeq != 0 {
+		if pb != nil && ph.FileSeq == baseSeq {
+			older.at = max(older.at, int(baseTail))
+			return []logSegment{older, head}, nil
+		}
+		return []logSegment{head}, nil
+	}
+	if pb == nil || ph.FileSeq != lh.PrevFileSeq || ph.PrevFileSeq != 0 {
+		return nil, fmt.Errorf("%s continues log %d: %w", cur, lh.PrevFileSeq, ErrHistoryLost)
+	}
+	return []logSegment{older, head}, nil
 }
 
 // Folder is one of their folders as read from disk: what it holds, how to
@@ -245,17 +277,12 @@ type Folder struct {
 // log_file_tail_offset, or the log alone. Neither is an error, not an empty
 // result that would read as a folder holding nothing.
 func ReadForeignFolder(dir string) (Folder, error) {
-	logPath := filepath.Join(dir, foreignLog)
 	raw, err := os.ReadFile(filepath.Join(dir, foreignIndex))
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return Folder{}, fmt.Errorf("dboxconv: read index %s: %w", dir, err)
 		}
-		tail, terr := os.ReadFile(logPath)
-		if terr != nil {
-			return Folder{}, fmt.Errorf("dboxconv: %s has no index and no log: %w", dir, terr)
-		}
-		return folderFromLog(dir, tail)
+		return folderFromLog(dir)
 	}
 
 	h, err := dboxindex.ParseHeader(raw)
@@ -282,10 +309,14 @@ func ReadForeignFolder(dir string) (Folder, error) {
 		}
 	}
 	state := dboxindex.HeaderState{UIDValidity: h.UIDValidity, NextUID: h.NextUID}
-	if tail, terr := os.ReadFile(logPath); terr == nil {
-		changes, cerr := dboxindex.ReadChanges(tail, int(h.LogFileTailOffset), exts)
+	chain, err := logChain(dir, foreignLog, foreignLogPrev, h.LogFileSeq, h.LogFileTailOffset)
+	if err != nil && !os.IsNotExist(err) {
+		return Folder{}, fmt.Errorf("dboxconv: log %s: %w", dir, err)
+	}
+	for _, seg := range chain {
+		changes, cerr := dboxindex.ReadChanges(seg.b, seg.at, exts)
 		if cerr != nil {
-			return Folder{}, fmt.Errorf("dboxconv: log %s: %w", dir, cerr)
+			return Folder{}, fmt.Errorf("dboxconv: log %s/%s: %w", dir, seg.name, cerr)
 		}
 		state = dboxindex.ApplyHeader(state, changes)
 		recs = dboxindex.Apply(recs, changes, names)
@@ -293,23 +324,33 @@ func ReadForeignFolder(dir string) (Folder, error) {
 	return Folder{Records: recs, Exts: exts, Header: state}, nil
 }
 
-// folderFromLog builds a folder from its log alone, for one with no base yet.
-// Extensions come from the log's intro records: nothing else names the map uid
+// folderFromLog builds a folder from its logs alone, for one with no base yet.
+// Extensions come from the logs' intro records: nothing else names the map uid
 // an mdbox message is found through.
-func folderFromLog(dir string, tail []byte) (Folder, error) {
-	h, err := dboxindex.ParseLogHeader(tail)
+func folderFromLog(dir string) (Folder, error) {
+	chain, err := logChain(dir, foreignLog, foreignLogPrev, 0, 0)
+	if os.IsNotExist(err) {
+		return Folder{}, fmt.Errorf("dboxconv: %s has no index and no log: %w", dir, err)
+	}
 	if err != nil {
 		return Folder{}, fmt.Errorf("dboxconv: log %s: %w", dir, err)
 	}
-	changes, exts, err := dboxindex.ReadChangesAndExtensions(tail, int(h.HeaderSize), nil)
-	if err != nil {
-		return Folder{}, fmt.Errorf("dboxconv: log %s: %w", dir, err)
+	var (
+		all  []dboxindex.Change
+		exts []dboxindex.Extension
+	)
+	for _, seg := range chain {
+		changes, known, cerr := dboxindex.ReadChangesAndExtensions(seg.b, seg.at, exts)
+		if cerr != nil {
+			return Folder{}, fmt.Errorf("dboxconv: log %s/%s: %w", dir, seg.name, cerr)
+		}
+		all, exts = append(all, changes...), known
 	}
 	// No keyword table without a base: a keyword named in the log arrives, one
 	// carried as a bitmask alone has nothing to resolve against.
 	return Folder{
-		Records: dboxindex.Apply(nil, changes, nil),
+		Records: dboxindex.Apply(nil, all, nil),
 		Exts:    exts,
-		Header:  dboxindex.ApplyHeader(dboxindex.HeaderState{}, changes),
+		Header:  dboxindex.ApplyHeader(dboxindex.HeaderState{}, all),
 	}, nil
 }

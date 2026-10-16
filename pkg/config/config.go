@@ -2381,9 +2381,9 @@ type StorageConfig struct {
 	MailboxListStorageEscapeChar string `koanf:"mailbox_list_storage_escape_char"`
 
 	// MailboxListReservedSegments are names a single hierarchy segment may not
-	// equal, because the storage layout owns the directory: cur, new, tmp and
-	// dbox-Mails. A folder called "cur" corrupts the mailbox from inside
-	// without ever leaving it, which is a different hazard from traversal.
+	// equal, because the storage layout owns the directory: cur, new, tmp,
+	// dbox-Mails and fts-flatcurve. A folder called "cur" corrupts the mailbox
+	// from inside without ever leaving it, a different hazard from traversal.
 	//
 	// The check is retroactive -- a user who already owns such a folder loses
 	// access to a folder that exists -- so it is configurable. Empty disables
@@ -2520,7 +2520,7 @@ func Defaults() *Config {
 			// The layout's own directories. A sandbox count over 996 maildir
 			// and 2338 dbox folders found no user folder colliding with one,
 			// so the default costs nothing there.
-			MailboxListReservedSegments: []string{"cur", "new", "tmp", "dbox-Mails"},
+			MailboxListReservedSegments: []string{"cur", "new", "tmp", "dbox-Mails", "fts-flatcurve"},
 		},
 		InternalTLS: InternalTLSConfig{
 			Enabled: true,
