@@ -139,15 +139,18 @@ not the pod the other arm is.
 
 ## The OAuth2 provider
 
-`helm_values/keycloak-sandbox.yaml` runs Keycloak for the OAuth2 rows of #2231.
-It keeps no state: realm `yarilo` is imported from the file on every start, so a
-realm change is applied by re-applying and restarting:
+`helm_values/keycloak-sandbox.yaml` runs Keycloak for the OAuth2 rows of #2231,
+in its own namespace `keycloak`. It keeps no state: realm `yarilo` is imported
+from the file on every start, so a realm change is applied by re-applying and
+restarting. Its certificate comes from the stand's internal CA, whose key pair
+is copied into `keycloak` for a namespaced Issuer there:
 
 ```sh
-kubectl apply -f hack/internal-ca-sandbox.yaml   # once: the Issuer its certificate comes from
+kubectl apply -f hack/internal-ca-sandbox.yaml   # once, in yarilo-sb
 kubectl apply -f helm_values/keycloak-sandbox.yaml
-kubectl -n yarilo-sb rollout restart deploy/yarilo-keycloak
+kubectl -n yarilo-sb get secret yarilo-internal-ca -o go-template='{"apiVersion":"v1","kind":"Secret","type":"kubernetes.io/tls","metadata":{"name":"yarilo-internal-ca","namespace":"keycloak"},"data":{"tls.crt":"{{index .data "tls.crt"}}","tls.key":"{{index .data "tls.key"}}"}}' | kubectl apply -f -
+kubectl -n keycloak rollout restart deploy/keycloak   # after a realm change
 ```
 
-Issuer: `https://yarilo-keycloak.yarilo-sb.svc:8443/realms/yarilo`, HTTPS only,
-signed by `yarilo-internal-ca`.
+Issuer: `https://keycloak.keycloak.svc:8443/realms/yarilo`, HTTPS only. A
+renewed internal CA is copied again the same way.

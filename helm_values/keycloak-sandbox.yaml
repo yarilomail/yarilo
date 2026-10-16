@@ -1,27 +1,41 @@
 # Keycloak for the OAuth2 rows of #2231; how to apply it: hack/stand/README.md.
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: yarilo-internal-ca
+  namespace: keycloak
+spec:
+  ca:
+    secretName: yarilo-internal-ca
+---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: yarilo-keycloak-tls
-  namespace: yarilo-sb
+  name: keycloak-tls
+  namespace: keycloak
 spec:
-  secretName: yarilo-keycloak-tls
+  secretName: keycloak-tls
   privateKey:
     rotationPolicy: Always
   issuerRef:
     kind: Issuer
     name: yarilo-internal-ca
   dnsNames:
-    - yarilo-keycloak
-    - yarilo-keycloak.yarilo-sb.svc
-    - yarilo-keycloak.yarilo-sb.svc.cluster.local
+    - keycloak
+    - keycloak.keycloak.svc
+    - keycloak.keycloak.svc.cluster.local
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: yarilo-keycloak
-  namespace: yarilo-sb
+  name: keycloak
+  namespace: keycloak
 type: Opaque
 stringData:
   admin_password: "sandbox-secret"
@@ -33,8 +47,8 @@ stringData:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: yarilo-keycloak-realm
-  namespace: yarilo-sb
+  name: keycloak-realm
+  namespace: keycloak
 data:
   yarilo-realm.json: |
     {
@@ -127,17 +141,17 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: yarilo-keycloak
-  namespace: yarilo-sb
-  labels: {app: yarilo-keycloak}
+  name: keycloak
+  namespace: keycloak
+  labels: {app: keycloak}
 spec:
   replicas: 1
   strategy: {type: Recreate}
   selector:
-    matchLabels: {app: yarilo-keycloak}
+    matchLabels: {app: keycloak}
   template:
     metadata:
-      labels: {app: yarilo-keycloak}
+      labels: {app: keycloak}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -148,18 +162,18 @@ spec:
           image: quay.io/keycloak/keycloak:26.8.1
           args: ["start-dev", "--import-realm"]
           env:
-            - {name: KC_HOSTNAME, value: "https://yarilo-keycloak.yarilo-sb.svc:8443"}
+            - {name: KC_HOSTNAME, value: "https://keycloak.keycloak.svc:8443"}
             - {name: KC_HTTP_ENABLED, value: "false"}
             - {name: KC_HTTPS_CERTIFICATE_FILE, value: /opt/keycloak/tls/tls.crt}
             - {name: KC_HTTPS_CERTIFICATE_KEY_FILE, value: /opt/keycloak/tls/tls.key}
             - {name: KC_HEALTH_ENABLED, value: "true"}
             - {name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin}
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD
-              valueFrom: {secretKeyRef: {name: yarilo-keycloak, key: admin_password}}
+              valueFrom: {secretKeyRef: {name: keycloak, key: admin_password}}
             - name: KC_SB_CLIENT_SECRET
-              valueFrom: {secretKeyRef: {name: yarilo-keycloak, key: client_secret}}
+              valueFrom: {secretKeyRef: {name: keycloak, key: client_secret}}
             - name: KC_SB_HS256_KEY
-              valueFrom: {secretKeyRef: {name: yarilo-keycloak, key: hs256_key}}
+              valueFrom: {secretKeyRef: {name: keycloak, key: hs256_key}}
           ports:
             - {name: https, containerPort: 8443}
             - {name: management, containerPort: 9000}
@@ -178,16 +192,16 @@ spec:
             - {name: realm, mountPath: /opt/keycloak/data/import, readOnly: true}
       volumes:
         - name: tls
-          secret: {secretName: yarilo-keycloak-tls}
+          secret: {secretName: keycloak-tls}
         - name: realm
-          configMap: {name: yarilo-keycloak-realm}
+          configMap: {name: keycloak-realm}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: yarilo-keycloak
-  namespace: yarilo-sb
+  name: keycloak
+  namespace: keycloak
 spec:
-  selector: {app: yarilo-keycloak}
+  selector: {app: keycloak}
   ports:
     - {name: https, port: 8443, targetPort: https}
