@@ -14,14 +14,15 @@ import (
 )
 
 // The documented rule: a column per protocol, read through CASE on %s, which
-// binds the reference's names (submission, sieve).
+// binds the reference's names (submission ours, smtp Postfix's, sieve).
 const ruleWhere = ` WHERE username = %u
-	AND CASE %s WHEN 'imap' THEN imap_enabled WHEN 'submission' THEN submission_enabled ELSE 1 END = 1
+	AND CASE %s WHEN 'imap' THEN imap_enabled WHEN 'submission' THEN submission_enabled
+		WHEN 'smtp' THEN smtp_enabled ELSE 1 END = 1
 	AND (allow_rip = '' OR allow_rip = %{remote_ip})
 	AND (allow_lip = '' OR allow_lip = %l)`
 
-// ruleDB holds alice (password pw) with IMAP and submission off, bob limited to
-// one client and one local address.
+// ruleDB holds alice (password pw) with IMAP and submission off, bob with
+// Postfix off and limited to one client and one local address.
 func ruleDB(t *testing.T) string {
 	t.Helper()
 	dsn := filepath.Join(t.TempDir(), "rule.db")
@@ -36,9 +37,9 @@ func ruleDB(t *testing.T) string {
 	}
 	for _, q := range []string{
 		`CREATE TABLE users (username TEXT PRIMARY KEY, password TEXT, scram TEXT, home TEXT,
-			imap_enabled INTEGER, submission_enabled INTEGER, allow_rip TEXT, allow_lip TEXT)`,
-		`INSERT INTO users VALUES ('alice', '{PLAIN}pw', '{SCRAM-SHA-256}` + sasl.EncodeScramCredentials(creds) + `', '/m/alice', 0, 0, '', '')`,
-		`INSERT INTO users VALUES ('bob', '{PLAIN}pw', '', '/m/bob', 1, 1, '10.0.0.1', '10.0.0.2')`,
+			imap_enabled INTEGER, submission_enabled INTEGER, smtp_enabled INTEGER, allow_rip TEXT, allow_lip TEXT)`,
+		`INSERT INTO users VALUES ('alice', '{PLAIN}pw', '{SCRAM-SHA-256}` + sasl.EncodeScramCredentials(creds) + `', '/m/alice', 0, 0, 1, '', '')`,
+		`INSERT INTO users VALUES ('bob', '{PLAIN}pw', '', '/m/bob', 1, 1, 0, '10.0.0.1', '10.0.0.2')`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
@@ -71,7 +72,10 @@ func TestTheRequestValuesReachEveryPassdbLookup(t *testing.T) {
 	}{
 		{"imap off", "alice", sqlvars.Vars{Service: "imap"}, false},
 		{"pop3 falls to ELSE", "alice", sqlvars.Vars{Service: "pop3"}, true},
-		{"smtp binds submission", "alice", sqlvars.Vars{Service: "smtp"}, false},
+		{"our submission off", "alice", sqlvars.Vars{Service: "submission"}, false},
+		{"Postfix is not ours", "alice", sqlvars.Vars{Service: "smtp"}, true},
+		{"Postfix off", "bob", sqlvars.Vars{Service: "smtp", RemoteIP: "10.0.0.1", LocalIP: "10.0.0.2"}, false},
+		{"ours on while Postfix is off", "bob", sqlvars.Vars{Service: "submission", RemoteIP: "10.0.0.1", LocalIP: "10.0.0.2"}, true},
 		{"allowed client and local address", "bob", sqlvars.Vars{Service: "imap", RemoteIP: "10.0.0.1", LocalIP: "10.0.0.2"}, true},
 		{"other client", "bob", sqlvars.Vars{Service: "imap", RemoteIP: "10.9.9.9", LocalIP: "10.0.0.2"}, false},
 		{"other local address", "bob", sqlvars.Vars{Service: "imap", RemoteIP: "10.0.0.1", LocalIP: "10.8.8.8"}, false},

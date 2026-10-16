@@ -76,10 +76,7 @@ func allowed(k Kind, v variable) bool {
 // ProtocolName is the value %s binds: the reference's names, so a migrated
 // query compares against what it always did (D3, #2227).
 func ProtocolName(service string) string {
-	switch service {
-	case "smtp":
-		return "submission"
-	case "managesieve":
+	if service == "managesieve" {
 		return "sieve"
 	}
 	return service

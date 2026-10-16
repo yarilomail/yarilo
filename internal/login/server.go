@@ -1763,7 +1763,8 @@ func wardenService(p Protocol) string {
 	case ProtocolPOP3, ProtocolPOP3S:
 		return "pop3"
 	case ProtocolSubmission, ProtocolSubmissions:
-		return "smtp"
+		// smtp is Postfix's over the SASL login, as in the reference (#2239).
+		return "submission"
 	case ProtocolManageSieve:
 		return "managesieve"
 	default:

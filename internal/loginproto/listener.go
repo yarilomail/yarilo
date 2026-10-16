@@ -124,6 +124,9 @@ type PreambleListener struct {
 	misdirectedLast time.Time
 	// ExpectedService, when non-empty, must match the service in the VERIFY response.
 	ExpectedService string
+	// FormerService is the name the service had before, accepted too: proxies
+	// and backends roll separately, and either side may still use it (#2239).
+	FormerService string
 	// TLSConfig, when set, terminates internal mTLS on each accepted connection
 	// BEFORE the YARILO preamble is read. The login pods wrap the backend
 	// session dial in mTLS, so the backend must terminate it here; otherwise the
@@ -382,7 +385,7 @@ func (l *PreambleListener) handshake(c net.Conn) (*PreambleConn, error) {
 	if username == "" {
 		return nil, fmt.Errorf("token verify: empty username")
 	}
-	if l.ExpectedService != "" && service != l.ExpectedService {
+	if !l.serviceAccepted(service) {
 		return nil, fmt.Errorf("token verify: service mismatch: got %q want %q", service, l.ExpectedService)
 	}
 
@@ -454,4 +457,11 @@ func LocalIP(c net.Conn) string {
 		return tcp.IP.String()
 	}
 	return ""
+}
+
+// serviceAccepted says whether a token verified for service may open this
+// listener's sessions: its own name, or the one it had before.
+func (l *PreambleListener) serviceAccepted(service string) bool {
+	return l.ExpectedService == "" || service == l.ExpectedService ||
+		(l.FormerService != "" && service == l.FormerService)
 }
