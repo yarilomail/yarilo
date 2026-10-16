@@ -37,6 +37,17 @@ stringData:
   hs256_key: "eWFyaWxvLXNhbmRib3gtaHMyNTYta2V5LWZvci1sb2NhbC12YWxpZGF0aW9uLXJvd3Mtbm90LWEtc2VjcmV0IQ"
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  # The same two values for yarilo-auth, read by values-sandbox-oauth2.yaml.
+  name: yarilo-oauth2-sandbox
+  namespace: yarilo-sb
+type: Opaque
+stringData:
+  client_secret: "sandbox-keycloak-client"
+  hs256_key: "eWFyaWxvLXNhbmRib3gtaHMyNTYta2V5LWZvci1sb2NhbC12YWxpZGF0aW9uLXJvd3Mtbm90LWEtc2VjcmV0IQ"
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: keycloak-realm

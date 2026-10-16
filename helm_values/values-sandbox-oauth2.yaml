@@ -1,0 +1,22 @@
+# OAuth2 matrix windows only (#2231); acceptance and A/B run without it: hack/stand/README.md.
+components:
+  auth:
+    oauth2:
+      - mode: local
+        jwks_url: https://keycloak.keycloak.svc:8443/realms/yarilo/protocol/openid-connect/certs
+        issuers: [https://keycloak.keycloak.svc:8443/realms/yarilo]
+        audience: yarilo-auth
+        username_attribute: email
+        tls_ca: /etc/yarilo/internal-tls/ca.crt
+        local_keys:
+          - {alg: HS256, azp: yarilo-test-hs256, kid: sb-hs256, secret_ref: {name: yarilo-oauth2-sandbox, key: hs256_key}}
+      - mode: introspection
+        introspection_url: https://keycloak.keycloak.svc:8443/realms/yarilo/protocol/openid-connect/token/introspect
+        introspection_mode: post
+        grant_url: https://keycloak.keycloak.svc:8443/realms/yarilo/protocol/openid-connect/token
+        client_id: yarilo-auth
+        client_secret_ref: {name: yarilo-oauth2-sandbox, key: client_secret}
+        issuers: [https://keycloak.keycloak.svc:8443/realms/yarilo]
+        audience: yarilo-auth
+        username_attribute: email
+        tls_ca: /etc/yarilo/internal-tls/ca.crt
