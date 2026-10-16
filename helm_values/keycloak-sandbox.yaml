@@ -1,0 +1,196 @@
+# Keycloak for the OAuth2 rows of #2231: stateless, realm "yarilo" re-imported on every start.
+#   kubectl apply -f hack/internal-ca-sandbox.yaml   # once: the Issuer below
+#   kubectl apply -f helm_values/keycloak-sandbox.yaml
+#   kubectl -n yarilo-sb rollout restart deploy/yarilo-keycloak   # after a realm change
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: yarilo-keycloak-tls
+  namespace: yarilo-sb
+spec:
+  secretName: yarilo-keycloak-tls
+  privateKey:
+    rotationPolicy: Always
+  issuerRef:
+    kind: Issuer
+    name: yarilo-internal-ca
+  dnsNames:
+    - yarilo-keycloak
+    - yarilo-keycloak.yarilo-sb.svc
+    - yarilo-keycloak.yarilo-sb.svc.cluster.local
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: yarilo-keycloak
+  namespace: yarilo-sb
+type: Opaque
+stringData:
+  admin_password: "sandbox-secret"
+  # yarilo-auth: introspection and password-grant credentials (oauth2 client_secret_ref).
+  client_secret: "sandbox-keycloak-client"
+  # base64url of the 64-byte HS256 key behind client yarilo-test-hs256 (static-key rows).
+  hs256_key: "eWFyaWxvLXNhbmRib3gtaHMyNTYta2V5LWZvci1sb2NhbC12YWxpZGF0aW9uLXJvd3Mtbm90LWEtc2VjcmV0IQ"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yarilo-keycloak-realm
+  namespace: yarilo-sb
+data:
+  yarilo-realm.json: |
+    {
+      "realm": "yarilo",
+      "enabled": true,
+      "sslRequired": "external",
+      "accessTokenLifespan": 60,
+      "defaultSignatureAlgorithm": "RS256",
+      "components": {
+        "org.keycloak.keys.KeyProvider": [
+          {"name": "rsa-rs256", "providerId": "rsa-generated",
+           "config": {"priority": ["100"], "algorithm": ["RS256"], "keySize": ["2048"]}},
+          {"name": "rsa-ps256", "providerId": "rsa-generated",
+           "config": {"priority": ["100"], "algorithm": ["PS256"], "keySize": ["2048"]}},
+          {"name": "ecdsa-es256", "providerId": "ecdsa-generated",
+           "config": {"priority": ["100"], "ecdsaEllipticCurveKey": ["P-256"]}},
+          {"name": "eddsa-ed25519", "providerId": "eddsa-generated",
+           "config": {"priority": ["100"], "eddsaEllipticCurveKey": ["Ed25519"]}},
+          {"name": "hmac-hs256", "providerId": "hmac-generated",
+           "config": {"priority": ["100"], "algorithm": ["HS256"], "secretSize": ["64"],
+                      "kid": ["sb-hs256"], "secret": ["${KC_SB_HS256_KEY}"]}},
+          {"name": "hmac-hs512", "providerId": "hmac-generated",
+           "config": {"priority": ["100"], "algorithm": ["HS512"]}},
+          {"name": "aes", "providerId": "aes-generated", "config": {"priority": ["100"]}}
+        ]
+      },
+      "clients": [
+        {"clientId": "yarilo-auth", "publicClient": false, "secret": "${KC_SB_CLIENT_SECRET}",
+         "standardFlowEnabled": false, "directAccessGrantsEnabled": true,
+         "protocolMappers": [{"name": "aud-yarilo-auth", "protocol": "openid-connect",
+           "protocolMapper": "oidc-audience-mapper",
+           "config": {"included.client.audience": "yarilo-auth", "access.token.claim": "true",
+                      "introspection.token.claim": "true"}}]},
+        {"clientId": "yarilo-test", "publicClient": true,
+         "standardFlowEnabled": false, "directAccessGrantsEnabled": true,
+         "protocolMappers": [{"name": "aud-yarilo-auth", "protocol": "openid-connect",
+           "protocolMapper": "oidc-audience-mapper",
+           "config": {"included.client.audience": "yarilo-auth", "access.token.claim": "true",
+                      "introspection.token.claim": "true"}}]},
+        {"clientId": "yarilo-test-ps256", "publicClient": true,
+         "standardFlowEnabled": false, "directAccessGrantsEnabled": true,
+         "attributes": {"access.token.signed.response.alg": "PS256"},
+         "protocolMappers": [{"name": "aud-yarilo-auth", "protocol": "openid-connect",
+           "protocolMapper": "oidc-audience-mapper",
+           "config": {"included.client.audience": "yarilo-auth", "access.token.claim": "true",
+                      "introspection.token.claim": "true"}}]},
+        {"clientId": "yarilo-test-es256", "publicClient": true,
+         "standardFlowEnabled": false, "directAccessGrantsEnabled": true,
+         "attributes": {"access.token.signed.response.alg": "ES256"},
+         "protocolMappers": [{"name": "aud-yarilo-auth", "protocol": "openid-connect",
+           "protocolMapper": "oidc-audience-mapper",
+           "config": {"included.client.audience": "yarilo-auth", "access.token.claim": "true",
+                      "introspection.token.claim": "true"}}]},
+        {"clientId": "yarilo-test-eddsa", "publicClient": true,
+         "standardFlowEnabled": false, "directAccessGrantsEnabled": true,
+         "attributes": {"access.token.signed.response.alg": "EdDSA"},
+         "protocolMappers": [{"name": "aud-yarilo-auth", "protocol": "openid-connect",
+           "protocolMapper": "oidc-audience-mapper",
+           "config": {"included.client.audience": "yarilo-auth", "access.token.claim": "true",
+                      "introspection.token.claim": "true"}}]},
+        {"clientId": "yarilo-test-hs256", "publicClient": true,
+         "standardFlowEnabled": false, "directAccessGrantsEnabled": true,
+         "attributes": {"access.token.signed.response.alg": "HS256"},
+         "protocolMappers": [{"name": "aud-yarilo-auth", "protocol": "openid-connect",
+           "protocolMapper": "oidc-audience-mapper",
+           "config": {"included.client.audience": "yarilo-auth", "access.token.claim": "true",
+                      "introspection.token.claim": "true"}}]},
+        {"clientId": "yarilo-test-noaud", "publicClient": true,
+         "standardFlowEnabled": false, "directAccessGrantsEnabled": true}
+      ],
+      "users": [
+        {"username": "u1@d00001.test", "email": "u1@d00001.test", "emailVerified": true,
+         "firstName": "u1", "lastName": "mdbox", "enabled": true,
+         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]},
+        {"username": "u2@d00001.test", "email": "u2@d00001.test", "emailVerified": true,
+         "firstName": "u2", "lastName": "mdbox", "enabled": true,
+         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]},
+        {"username": "u51@d00002.test", "email": "u51@d00002.test", "emailVerified": true,
+         "firstName": "u51", "lastName": "maildir", "enabled": true,
+         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]},
+        {"username": "u101@d00003.test", "email": "u101@d00003.test", "emailVerified": true,
+         "firstName": "u101", "lastName": "sdbox", "enabled": true,
+         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]},
+        {"username": "u3@d00001.test", "email": "u3@d00001.test", "emailVerified": false,
+         "firstName": "u3", "lastName": "inactive", "enabled": true,
+         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]}
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yarilo-keycloak
+  namespace: yarilo-sb
+  labels: {app: yarilo-keycloak}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: yarilo-keycloak}
+  template:
+    metadata:
+      labels: {app: yarilo-keycloak}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 0
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.8.1
+          args: ["start-dev", "--import-realm"]
+          env:
+            - {name: KC_HOSTNAME, value: "https://yarilo-keycloak.yarilo-sb.svc:8443"}
+            - {name: KC_HTTP_ENABLED, value: "false"}
+            - {name: KC_HTTPS_CERTIFICATE_FILE, value: /opt/keycloak/tls/tls.crt}
+            - {name: KC_HTTPS_CERTIFICATE_KEY_FILE, value: /opt/keycloak/tls/tls.key}
+            - {name: KC_HEALTH_ENABLED, value: "true"}
+            - {name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: yarilo-keycloak, key: admin_password}}
+            - name: KC_SB_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: yarilo-keycloak, key: client_secret}}
+            - name: KC_SB_HS256_KEY
+              valueFrom: {secretKeyRef: {name: yarilo-keycloak, key: hs256_key}}
+          ports:
+            - {name: https, containerPort: 8443}
+            - {name: management, containerPort: 9000}
+          readinessProbe:
+            httpGet: {path: /health/ready, port: management, scheme: HTTPS}
+            periodSeconds: 5
+          startupProbe:
+            httpGet: {path: /health/started, port: management, scheme: HTTPS}
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests: {cpu: 200m, memory: 768Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: tls, mountPath: /opt/keycloak/tls, readOnly: true}
+            - {name: realm, mountPath: /opt/keycloak/data/import, readOnly: true}
+      volumes:
+        - name: tls
+          secret: {secretName: yarilo-keycloak-tls}
+        - name: realm
+          configMap: {name: yarilo-keycloak-realm}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: yarilo-keycloak
+  namespace: yarilo-sb
+spec:
+  selector: {app: yarilo-keycloak}
+  ports:
+    - {name: https, port: 8443, targetPort: https}
