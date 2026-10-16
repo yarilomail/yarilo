@@ -579,6 +579,10 @@ func (m *Map) RebuildCountUnderCallersLock() (uint32, error) {
 func (m *Map) CreateTime(fileID uint32) (int64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createTimeLocked(fileID)
+}
+
+func (m *Map) createTimeLocked(fileID uint32) (int64, bool) {
 	if fileID == 0 || fileID != m.createFileID {
 		return 0, false
 	}
@@ -593,13 +597,17 @@ func (m *Map) RecordFileCreated(fileID uint32, ts int64) error {
 		if err := m.reloadLocked(); err != nil {
 			return err
 		}
-		if m.createFileID == fileID {
-			return nil
-		}
-		m.createFileID = fileID
-		m.createTime = uint64(ts)
-		return m.flushLocked()
+		return m.recordFileCreatedLocked(fileID, ts)
 	})
+}
+
+func (m *Map) recordFileCreatedLocked(fileID uint32, ts int64) error {
+	if m.createFileID == fileID {
+		return nil
+	}
+	m.createFileID = fileID
+	m.createTime = uint64(ts)
+	return m.flushLocked()
 }
 
 // BumpRebuildCount increments and persists the storage-wide-rebuild generation

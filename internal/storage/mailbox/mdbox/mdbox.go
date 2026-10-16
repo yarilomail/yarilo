@@ -489,8 +489,9 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 const driverName = "mdbox"
 
 // Save appends the record to the current m.<N> and registers it in the map,
-// returning the map_uid as the filename. Peers serialise on the map lock alone;
-// the folder lock is not taken, and the per-folder uid is ignored.
+// returning the map_uid as the filename. The map lock is held from the file
+// choice through the map append (#2234); the folder lock is not taken, and the
+// per-folder uid is ignored.
 func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	return u.SaveReceived(folder, r, uid, size, flags, keywords, guid, time.Time{})
 }
@@ -536,19 +537,36 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 	// decides; the two sizes differ by two bytes, so the larger serves the
 	// arithmetic.
 	recLen := uint32(dboxRecordLen(body, guid, folder, messageHeaderSizeLegacy))
+	mailboxmetrics.ObserveSavePart(driverName, "prepare", time.Since(tPrepare))
 
-	fileID := m.HighestFileID()
+	var mapUID uint32
+	tLock := time.Now()
+	err = m.Place(func(p *mdboxmap.Placement) error {
+		mailboxmetrics.ObserveSavePart(driverName, "lock", time.Since(tLock))
+		var perr error
+		mapUID, perr = u.place(p, folder, body, guid, received, recLen)
+		return perr
+	})
+	if err != nil {
+		return "", 0, noGUID, err
+	}
+	return strconv.FormatUint(uint64(mapUID), 10), uint32(len(body)), guid, nil
+}
+
+// place writes the record at the end of the chosen m.<N> and registers it, all
+// under the caller's map lock hold.
+func (u *userMailbox) place(p *mdboxmap.Placement, folder string, body []byte, guid [16]byte, received time.Time, recLen uint32) (uint32, error) {
+	fileID := p.HighestFileID()
 	if fileID == 0 {
 		fileID = 1
 	}
 	curSize, _ := u.fileSize(u.mfilePath(fileID))
-	mailboxmetrics.ObserveSavePart(driverName, "prepare", time.Since(tPrepare))
 	// Roll to a fresh file_id past the size cap or the rotate interval, the age
 	// taken from a persisted stamp rather than btime.
 	nowT := u.b.clock()
 	rotate := uint32(curSize)+recLen > u.b.rotateSizeOrDefault()
 	if !rotate && u.b.rotateInterval > 0 {
-		if ct, ok := m.CreateTime(fileID); ok && nowT.Sub(time.Unix(ct, 0)) > u.b.rotateInterval {
+		if ct, ok := p.CreateTime(fileID); ok && nowT.Sub(time.Unix(ct, 0)) > u.b.rotateInterval {
 			rotate = true
 		}
 	}
@@ -556,28 +574,25 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 		// Rotation is periodic, not per-message, so it is reported apart: an
 		// average that hides it reads as every save being slower than it is.
 		tRotate := time.Now()
-		fileID, err = m.AllocFileID()
+		var err error
+		fileID, err = p.AllocFileID()
 		mailboxmetrics.ObserveSavePart(driverName, "rotate", time.Since(tRotate))
 		if err != nil {
-			return "", 0, noGUID, fmt.Errorf("mdbox/save: alloc file id: %w", err)
+			return 0, fmt.Errorf("mdbox/save: alloc file id: %w", err)
 		}
-		curSize = 0
 	}
 
 	tOpen := time.Now()
 	// O_RDWR, not O_WRONLY: an append has to read the file's header line to
 	// learn the header size it must write at (#1525).
-	f, err := os.OpenFile(u.mfilePath(fileID), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(u.mfilePath(fileID), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: open m.%d: %w", fileID, err)
+		return 0, fmt.Errorf("mdbox/save: open m.%d: %w", fileID, err)
 	}
-	// Re-stat under the file handle to fix the write offset. O_APPEND guarantees
-	// the bytes land at the post-stat size even if another process appended
-	// between our earlier stat() and this OpenFile().
 	st, err := f.Stat()
 	if err != nil {
 		f.Close()
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: stat handle: %w", err)
+		return 0, fmt.Errorf("mdbox/save: stat handle: %w", err)
 	}
 	offset := uint32(st.Size())
 	// A file this save created is a directory entry a crash can lose, and the
@@ -592,7 +607,7 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 		hdrSize, err = fileHeaderSizeOf(f)
 		if err != nil {
 			f.Close() //nolint:errcheck
-			return "", 0, noGUID, fmt.Errorf("mdbox/save: m.%d: %w", fileID, err)
+			return 0, fmt.Errorf("mdbox/save: m.%d: %w", fileID, err)
 		}
 	}
 	msgRecord := buildDboxMessageRecord(body, guid, folder, hdrSize, received)
@@ -604,7 +619,7 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 		record = append(buildDboxFileHeader(), msgRecord...)
 		// Anchor the age clock for this file and, if configured, reserve its space
 		// up front. Both are best-effort; a failure must not fail the Save.
-		if rerr := m.RecordFileCreated(fileID, nowT.Unix()); rerr != nil {
+		if rerr := p.RecordFileCreated(fileID, nowT.Unix()); rerr != nil {
 			slog.Warn("mdbox: record file create-time failed", "user", u.username, "file_id", fileID, "err", rerr)
 		}
 		if u.b.preallocate {
@@ -615,24 +630,26 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 	}
 	recLen = uint32(len(record))
 	tWrite := time.Now()
-	_, werr := f.Write(record)
+	// At the offset the map will record, not O_APPEND's end: the two agree only
+	// because the map lock owns the end (#2234).
+	_, werr := f.WriteAt(record, int64(offset))
 	mailboxmetrics.ObserveSavePart(driverName, "write", time.Since(tWrite))
 	if werr != nil {
 		f.Close()
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: write record: %w", mailboxmetrics.ClassifyWrite(driverName, folder, werr))
+		return 0, fmt.Errorf("mdbox/save: write record: %w", mailboxmetrics.ClassifyWrite(driverName, folder, werr))
 	}
 	// Before the map names it, and so before the delivery is answered: the map
 	// entry would otherwise point at bytes a crash never wrote (#1847).
 	if u.b.fsync.SyncsBody() {
 		if serr := syncFile(f); serr != nil {
 			f.Close() //nolint:errcheck
-			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync m.%d: %w", fileID, mailboxmetrics.ClassifyWrite(driverName, folder, serr))
+			return 0, fmt.Errorf("mdbox/save: sync m.%d: %w", fileID, mailboxmetrics.ClassifyWrite(driverName, folder, serr))
 		}
 	}
 	if createdFile && u.b.fsync.SyncsDir() {
 		if serr := syncDir(u.storagePath()); serr != nil {
 			f.Close() //nolint:errcheck
-			return "", 0, noGUID, fmt.Errorf("mdbox/save: sync storage dir: %w", serr)
+			return 0, fmt.Errorf("mdbox/save: sync storage dir: %w", serr)
 		}
 	}
 	// Close is its own part: on a networked filesystem this is where the
@@ -642,20 +659,19 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 	cerr := f.Close()
 	mailboxmetrics.ObserveSavePart(driverName, "close", time.Since(tClose))
 	if cerr != nil {
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: close m.%d: %w", fileID, cerr)
+		return 0, fmt.Errorf("mdbox/save: close m.%d: %w", fileID, cerr)
 	}
 
 	tMap := time.Now()
 	if afterMapAppend != nil {
 		afterMapAppend()
 	}
-	mapUID, err := m.AppendRecord(fileID, offset, recLen, guid)
+	mapUID, err := p.AppendRecord(fileID, offset, recLen, guid)
 	mailboxmetrics.ObserveSavePart(driverName, "map", time.Since(tMap))
 	if err != nil {
-		return "", 0, noGUID, fmt.Errorf("mdbox/save: map append: %w", err)
+		return 0, fmt.Errorf("mdbox/save: map append: %w", err)
 	}
-	_ = curSize
-	return strconv.FormatUint(uint64(mapUID), 10), uint32(len(body)), guid, nil
+	return mapUID, nil
 }
 
 // Fetch returns a reader positioned at the body of map_uid filename. altTier
@@ -723,7 +739,7 @@ func (u *userMailbox) openEntry(entry mdboxmap.MapEntry, altTier bool) (io.ReadC
 		mdboxmap.ObserveReadPart("open", time.Since(openStart))
 		if ferr == nil {
 			recordStart := time.Now()
-			rc, berr := openRecordBody(f, entry.Offset)
+			rc, berr := openRecordBody(f, entry.Offset, entry.GUID)
 			mdboxmap.ObserveReadPart("record", time.Since(recordStart))
 			if berr == nil {
 				return rc, nil
@@ -747,7 +763,7 @@ func (u *userMailbox) openEntry(entry mdboxmap.MapEntry, altTier bool) (io.ReadC
 	}
 	mdboxmap.ObserveReadPart("open", time.Since(openStart))
 	recordStart := time.Now()
-	rc, err := openRecordBody(f, entry.Offset)
+	rc, err := openRecordBody(f, entry.Offset, entry.GUID)
 	mdboxmap.ObserveReadPart("record", time.Since(recordStart))
 	if err != nil {
 		_ = f.Close()
@@ -759,7 +775,7 @@ func (u *userMailbox) openEntry(entry mdboxmap.MapEntry, altTier bool) (io.ReadC
 // openRecordBody returns a reader over exactly the body, read only as far as the
 // consumer goes (#1517). Truncation is checked here against the file size, so it
 // is reported from Fetch rather than as an EOF nobody classifies.
-func openRecordBody(f *os.File, offset uint32) (io.ReadCloser, error) {
+func openRecordBody(f *os.File, offset uint32, guid [16]byte) (io.ReadCloser, error) {
 	bodyOff, size, err := readRecordHeader(f, offset)
 	if err != nil {
 		return nil, err
@@ -770,6 +786,15 @@ func openRecordBody(f *os.File, offset uint32) (io.ReadCloser, error) {
 	}
 	if bodyOff+int64(size) > st.Size() {
 		return nil, fmt.Errorf("read body: %w", io.ErrUnexpectedEOF)
+	}
+	// A map entry pointing at another message's bytes would serve that message
+	// as this one (#2234); a zero on either side has nothing to compare.
+	if guid != ([16]byte{}) {
+		end := bodyOff + int64(size)
+		if _, tr, terr := scanTrailer(io.NewSectionReader(f, end, st.Size()-end), 4096); terr == nil &&
+			tr.guid != ([16]byte{}) && tr.guid != guid {
+			return nil, fmt.Errorf("%w: trailer GUID %x, map GUID %x", errCorruptRecord, tr.guid, guid)
+		}
 	}
 	return &sectionCloser{
 		Reader: crlf.New(io.NewSectionReader(f, bodyOff, int64(size))),
