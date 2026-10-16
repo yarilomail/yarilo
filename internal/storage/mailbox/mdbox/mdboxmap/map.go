@@ -454,7 +454,7 @@ func (m *Map) withMapLock(fn func() error) error {
 		// No lock service: there is no cross-process hold to report, and
 		// reporting one would put an operator's eye on a lock that does not
 		// exist in their deployment.
-		return fn()
+		return m.withLocalLock(fn)
 	}
 	key := locks.MdboxMapKey(m.username)
 	// Already ours: no round trip, so nothing waited.
@@ -475,6 +475,51 @@ func (m *Map) withMapLock(fn func() error) error {
 	}
 	defer func() { _ = m.locker.Unlock(ctx, lk.ID) }()
 	return heldSpan(fn)
+}
+
+// localMapLocks serialises every Map of one storage dir in this process when
+// there is no lock service; other processes are not covered (#2234).
+var localMapLocks sync.Map
+
+func (m *Map) withLocalLock(fn func() error) error {
+	v, _ := localMapLocks.LoadOrStore(filepath.Dir(m.path), &sync.Mutex{})
+	mu, _ := v.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	return fn()
+}
+
+// Lease of a placement hold, renewed while the body is written (#2234).
+var mapLockTTL, mapLockRenew = 30 * time.Second, 10 * time.Second
+
+// withMapLockRenewing is withMapLock for a hold that spans storage I/O: the
+// lease is renewed, and fn's context is cancelled once a renewal fails.
+func (m *Map) withMapLockRenewing(fn func(context.Context) error) error {
+	blocked := time.Now()
+	m.mu.Lock()
+	metricMapWriteBlocked.Observe(time.Since(blocked).Seconds())
+	defer m.mu.Unlock()
+	if m.locker == nil {
+		return m.withLocalLock(func() error { return fn(context.Background()) })
+	}
+	key := locks.MdboxMapKey(m.username)
+	if held, err := locks.Reentrant(m.locker, key, "mdbox-map", false); err != nil {
+		return err
+	} else if held != locks.HoldNone {
+		return heldSpan(func() error { return fn(context.Background()) })
+	}
+	noteSpan(spanWaitStart)
+	start := time.Now()
+	err := locks.WithLockWaiting(locks.WithSite(context.Background(), "mdbox-map"), m.locker, key, m.owner,
+		mapLockTTL, mapLockRenew, 35*time.Second, func(ctx context.Context) error {
+			metricMapLockAcquire.Observe(time.Since(start).Seconds())
+			noteSpan(spanWaitEnd)
+			return heldSpan(func() error { return fn(ctx) })
+		})
+	if err != nil {
+		return fmt.Errorf("mdboxmap/lock: %w", err)
+	}
+	return nil
 }
 
 // heldSpan runs the work under the lock and records that span alone.

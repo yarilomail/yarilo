@@ -488,10 +488,8 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 // question a save timing answers is comparative.
 const driverName = "mdbox"
 
-// Save appends the record to the current m.<N> and registers it in the map,
-// returning the map_uid as the filename. The map lock is held from the file
-// choice through the map append (#2234); the folder lock is not taken, and the
-// per-folder uid is ignored.
+// Save appends the record to m.<N> under one map lock hold (#2234) and returns
+// the map_uid as the filename; the folder lock and the per-folder uid are unused.
 func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
 	return u.SaveReceived(folder, r, uid, size, flags, keywords, guid, time.Time{})
 }
@@ -629,6 +627,10 @@ func (u *userMailbox) place(p *mdboxmap.Placement, folder string, body []byte, g
 		}
 	}
 	recLen = uint32(len(record))
+	if err := p.Held(); err != nil {
+		f.Close() //nolint:errcheck
+		return 0, fmt.Errorf("mdbox/save: m.%d: %w", fileID, err)
+	}
 	tWrite := time.Now()
 	// At the offset the map will record, not O_APPEND's end: the two agree only
 	// because the map lock owns the end (#2234).

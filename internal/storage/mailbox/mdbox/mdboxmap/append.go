@@ -1,6 +1,9 @@
 package mdboxmap
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // AppendBatch is one in-flight save: Next(size) returns where to write a body and
 // Finish allocates the map_uids. Finish MUST be called exactly once.
@@ -144,19 +147,29 @@ func (m *Map) allocFileIDLocked() (uint32, error) {
 	return next, m.flushLocked()
 }
 
-// Placement is the map as a save sees it while holding the map lock from the
-// choice of file through the map append: an m.<N> end belongs to the holder,
-// so no peer derives the same offset (#2234).
-type Placement struct{ m *Map }
+// Placement is the map under one hold from the choice of file through the map
+// append, so no peer derives the same m.<N> offset (#2234).
+type Placement struct {
+	m   *Map
+	ctx context.Context
+}
 
-// Place runs fn under the map lock on a freshly reloaded map.
+// Place runs fn under a renewed map lock on a freshly reloaded map.
 func (m *Map) Place(fn func(*Placement) error) error {
-	return m.withMapLock(func() error {
+	return m.withMapLockRenewing(func(ctx context.Context) error {
 		if err := m.reloadLocked(); err != nil {
 			return err
 		}
-		return fn(&Placement{m: m})
+		return fn(&Placement{m: m, ctx: ctx})
 	})
+}
+
+// Held fails once the lease is lost: a write past it can land on a peer's bytes.
+func (p *Placement) Held() error {
+	if err := p.ctx.Err(); err != nil {
+		return fmt.Errorf("mdboxmap/place: map lock lost: %w", err)
+	}
+	return nil
 }
 
 // HighestFileID is the newest file_id as of this hold.
@@ -175,6 +188,9 @@ func (p *Placement) RecordFileCreated(fileID uint32, ts int64) error {
 
 // AppendRecord is AppendRecord under this hold.
 func (p *Placement) AppendRecord(fileID, offset, size uint32, guid [16]byte) (uint32, error) {
+	if err := p.Held(); err != nil {
+		return 0, err
+	}
 	uids, err := p.m.appendRecordsLocked([]RecordLayout{{FileID: fileID, Offset: offset, Size: size, GUID: guid}})
 	if err != nil {
 		return 0, err

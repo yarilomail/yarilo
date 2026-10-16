@@ -13,15 +13,26 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// Two backends on one home stand for two processes: separate maps and
-// semaphores, one lock service. Every saved record must read back as itself;
-// an offset taken outside the map lock hands one record another's bytes (#2234).
+// Two backends on one home stand for two processes; every record must read back
+// as itself, not as a peer that took the same offset (#2234).
 func TestConcurrentSavesFromTwoProcessesKeepTheirOwnBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []Option
+	}{
+		{"lock service", []Option{WithLocker(&mutexLocker{})}},
+		// Without the service, sessions of one process still serialise.
+		{"no lock service", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) { concurrentSaves(t, tc.opts) })
+	}
+}
+
+func concurrentSaves(t *testing.T, opts []Option) {
 	home := t.TempDir()
-	locker := &mutexLocker{}
 	var users []*userMailbox
 	for i := range 2 {
-		u := New(WithLocker(locker)).OpenUser(&mailbox.UserInfo{
+		u := New(opts...).OpenUser(&mailbox.UserInfo{
 			Username: "alice@example.com", Home: home, SessionID: fmt.Sprintf("s%d", i),
 		}).(*userMailbox)
 		if err := u.Init(); err != nil {
