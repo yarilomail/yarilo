@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -72,7 +74,13 @@ type guidStore struct {
 	id      uint64
 	image   map[[16]byte][]mailbox.GUIDRecord
 	version guidImageVersion
+	// rebuilding: a rebuild of this process holds the store, and a writer here
+	// would pass that hold as its own; it fails and marks its folder instead.
+	rebuilding atomic.Bool
 }
+
+// errGUIDRebuilding is a store write refused while this process rebuilds it.
+var errGUIDRebuilding = errors.New("fileindex/guid: the store is being rebuilt")
 
 // guidImageVersion says which image a map was built from: the file's identity,
 // how far its uids have gone, and how many records it holds.
@@ -381,16 +389,18 @@ func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 	if err != nil && !errors.Is(err, errGUIDStoreStale) {
 		return 0, err
 	}
-	var release func()
+	// Set before the lock is taken and cleared before it goes: a writer of this
+	// process that reaches the store meanwhile fails and marks its folder.
+	u.guid.rebuilding.Store(true)
+	defer u.guid.rebuilding.Store(false)
 	if err == nil {
 		store, serr := u.state(id)
 		if serr != nil {
 			return 0, serr
 		}
-		// The journal only, not the state's mutex: a writer of this process
-		// holds a folder and waits here with its budget, not without one.
-		if release, err = store.holdJournalFor(lockSiteGUIDRebuild, guidRebuildLockWait); err != nil {
-			return 0, err
+		release, herr := u.holdGUIDStoreForRebuild(store)
+		if herr != nil {
+			return 0, herr
 		}
 		defer release()
 		// Folder marks are cleared as they are read: a rebuild stopping halfway
@@ -437,6 +447,28 @@ func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 	return len(copies), nil
 }
 
+// holdGUIDStoreForRebuild locks on a descriptor of its own, so a writer of this
+// process inside the store finishes first; its own write then skips the wait.
+func (u *userIndex) holdGUIDStoreForRebuild(store *folderState) (func(), error) {
+	h, err := filelock.Take(store.indexPath+".lock", store.lockMethod, guidRebuildLockWait)
+	if err != nil {
+		return nil, fmt.Errorf("fileindex/guid-rebuild: lock the store: %w", err)
+	}
+	store.mu.Lock()
+	store.journalHeld = true
+	store.mu.Unlock()
+	return func() {
+		store.mu.Lock()
+		store.journalHeld = false
+		store.mu.Unlock()
+		// The flag goes first: a writer that takes the lock next writes the new store.
+		u.guid.rebuilding.Store(false)
+		if rerr := h.Release(); rerr != nil {
+			slog.Warn("fileindex: releasing the guid store after a rebuild", "user", u.username, "err", rerr)
+		}
+	}, nil
+}
+
 // guidRebuildBetween runs after the folders are read and before the write; a
 // test delivers there.
 var guidRebuildBetween = func() {}
@@ -474,6 +506,9 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 		return err
 	}
 	return u.withFolderSite(id, lockSiteGUIDAppend, func(fs *folderState) error {
+		if u.guid.rebuilding.Load() {
+			return errGUIDRebuilding
+		}
 		if b.goneFolder != nil {
 			for i := len(fs.file.Records) - 1; i >= 0; i-- {
 				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
@@ -594,12 +629,8 @@ func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 	return m, nil
 }
 
-// ReplaceGUIDStore writes the store from scratch: the file is derived, so this
+// replaceGUIDStore writes the store from scratch: the file is derived, so this
 // is how one that is behind, refused or missing comes back (#1711).
-func (u *userIndex) ReplaceGUIDStore(copies []mailbox.GUIDRecord) error {
-	return u.replaceGUIDStore(copies, false)
-}
-
 func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) error {
 	dir := u.indexRootDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {

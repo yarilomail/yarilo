@@ -130,23 +130,34 @@ func TestTheGUIDStoreCompletenessMark(t *testing.T) {
 	}
 }
 
-// A delivery between the rebuild's read and its write waits on the store the
-// rebuild holds; giving up, it marks its folder, so the store is not whole.
+// A delivery between the rebuild's read and its write marks its folder, from
+// another process and from the rebuild's own, which shares its store state.
 func TestADeliveryDuringTheRebuildLeavesItIncomplete(t *testing.T) {
-	ui, home, inbox := completeUser(t)
-	shortWait(t)
-	other, otherInbox := instance(t, home)
-	guidRebuildBetween = func() { deliver(t, other, otherInbox, 2) }
-	t.Cleanup(func() { guidRebuildBetween = func() {} })
-	if _, err := ui.RebuildGUIDStore([]uint64{inbox}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := ui.GUIDStoreComplete([]uint64{inbox})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got {
-		t.Error("the store is called whole, but the copy delivered during the rebuild is in neither")
+	for _, sameProcess := range []bool{false, true} {
+		name := "another process"
+		if sameProcess {
+			name = "the rebuild's process"
+		}
+		t.Run(name, func(t *testing.T) {
+			ui, home, inbox := completeUser(t)
+			shortWait(t)
+			writer, writerInbox := ui, inbox
+			if !sameProcess {
+				writer, writerInbox = instance(t, home)
+			}
+			guidRebuildBetween = func() { deliver(t, writer, writerInbox, 2) }
+			t.Cleanup(func() { guidRebuildBetween = func() {} })
+			if _, err := ui.RebuildGUIDStore([]uint64{inbox}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := ui.GUIDStoreComplete([]uint64{inbox})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got {
+				t.Error("the store is called whole, but the copy delivered during the rebuild is in neither")
+			}
+		})
 	}
 }
 

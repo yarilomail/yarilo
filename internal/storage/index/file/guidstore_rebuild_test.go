@@ -23,7 +23,7 @@ func TestARebuiltStoreEqualsWhatTheTransactionsWrote(t *testing.T) {
 
 	rebuiltHome := t.TempDir()
 	rebuilt := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: rebuiltHome}).(*userHandle).ui
-	if err := rebuilt.ReplaceGUIDStore(wrote); err != nil {
+	if err := rebuilt.replaceGUIDStore(wrote, false); err != nil {
 		t.Fatal(err)
 	}
 	rebuiltBytes, err := os.ReadFile(rebuilt.GUIDStorePath())
@@ -63,7 +63,7 @@ func TestARebuildReplacesAStoreInTheOlderShape(t *testing.T) {
 	want := []mailbox.GUIDRecord{{
 		GUID: [16]byte{1, 2}, FolderGUID: [16]byte{3, 4}, UID: 9, InternalDate: 1700000000,
 	}}
-	if err := ui.ReplaceGUIDStore(want); err != nil {
+	if err := ui.replaceGUIDStore(want, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ui.GUIDRecords()
@@ -96,7 +96,7 @@ func TestARebuildDoesNotTouchTheFolders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ui.ReplaceGUIDStore(copies); err != nil {
+	if err := ui.replaceGUIDStore(copies, false); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.Stat(folderIndex)
@@ -206,7 +206,7 @@ func TestARebuildIsVisibleToAHandleThatAlreadyRead(t *testing.T) {
 	replacement := []mailbox.GUIDRecord{{
 		GUID: [16]byte{200}, FolderGUID: [16]byte{7}, UID: 3, InternalDate: 1700000009,
 	}}
-	if err := ui.ReplaceGUIDStore(replacement); err != nil {
+	if err := ui.replaceGUIDStore(replacement, false); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := ui.GUIDCopies([][16]byte{wrote[0].GUID}); err != nil || len(got) != 0 {
@@ -225,9 +225,9 @@ func TestARebuildIsVisibleToAHandleThatAlreadyRead(t *testing.T) {
 // still pointing at the replaced one would write into a file nobody reads.
 func TestACopyAfterARebuildLandsInTheNewStore(t *testing.T) {
 	ui, _, folderID := guidTxFolder(t)
-	if err := ui.ReplaceGUIDStore([]mailbox.GUIDRecord{{
+	if err := ui.replaceGUIDStore([]mailbox.GUIDRecord{{
 		GUID: [16]byte{50}, FolderGUID: [16]byte{7}, UID: 1, InternalDate: 1700000000,
-	}}); err != nil {
+	}}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -259,7 +259,7 @@ func TestARebuildLeavesNoLogBehind(t *testing.T) {
 	if _, err := os.Stat(logPath); err != nil {
 		t.Fatalf("the transactions left no log to begin with: %v", err)
 	}
-	if err := ui.ReplaceGUIDStore(wrote); err != nil {
+	if err := ui.replaceGUIDStore(wrote, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
