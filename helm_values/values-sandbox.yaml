@@ -569,8 +569,11 @@ components:
         ## Columns matched by name — only "password" is required.
         ## "enabled" maps to PostfixAdmin's "active"; absent columns default active.
         skip_schema: true
+        ## nologin for one probe account only (#2229): it must get exactly the
+        ## answer a wrong password gets; NULL for everyone else forwards nothing.
         password_query: |
-          SELECT password, active AS enabled, allow_nets
+          SELECT password, active AS enabled, allow_nets,
+                 CASE WHEN username = 'x40@d00001.test' THEN 'yes' END AS nologin
           FROM mailbox
           WHERE username = %u
         user_query: |
