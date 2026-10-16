@@ -40,7 +40,7 @@ func TestBackendResync_MergeRules(t *testing.T) {
 	t.Run("tombstone blocks resurrection until a newer seq", func(t *testing.T) {
 		s := NewWithOptions(testOptions(Options{}))
 		s.recordBackendSeen("10.0.0.1", 5)
-		s.recordBackendTomb("10.0.0.1") // removed at seq 5
+		s.recordBackendTomb("10.0.0.1", 0) // removed at seq 5
 		s.forgetBackendLease("10.0.0.1")
 		s.ring.RemoveBackend("10.0.0.1")
 

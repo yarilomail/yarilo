@@ -187,9 +187,10 @@ func (c *Client) heartbeat() {
 }
 
 // Leave sends BACKEND-DOWN so the director removes this backend
-// immediately (remove + rehash) instead of waiting out the TTL.
+// immediately (remove + rehash) instead of waiting out the TTL. The last seq
+// tells every director which heartbeats came before the removal (#2255).
 func (c *Client) Leave() {
-	c.send(fmt.Sprintf("BACKEND-DOWN\t%s", c.opts.SelfIP))
+	c.send(fmt.Sprintf("BACKEND-DOWN\t%s\t%d", c.opts.SelfIP, c.seq.Load()))
 }
 
 // Drain sends BACKEND-FLUSH: the backend stays in the ring, new lookups

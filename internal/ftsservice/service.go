@@ -92,6 +92,9 @@ type Options struct {
 	// beforeIndexWrite runs between a message being built and the check that
 	// it is still there. Unexported: the seam is for #2026's row alone.
 	beforeIndexWrite func(uid uint32)
+
+	// afterList runs once a job has its message list and before any is read.
+	afterList func()
 }
 
 // Service implements ftsproto.Service.
@@ -1176,6 +1179,9 @@ func (s *Service) runIndex(j job) error {
 			todo = append(todo, m)
 		}
 
+		if s.opts.afterList != nil {
+			s.opts.afterList()
+		}
 		fetchCtx, cancelFetch := context.WithCancel(context.Background())
 		defer cancelFetch()
 		fetch := newFetcher(h, j.mbox.Name, s.prefetchOptions())
@@ -1188,7 +1194,10 @@ func (s *Service) runIndex(j job) error {
 			// outcome: holding a failed message's reservation would shrink the
 			// window for every message after it.
 			fetch.release(int64(m.Size))
-			if err != nil {
+			// A read that failed because the message was expunged meanwhile is
+			// an expunge, not a hole or corruption (#2257).
+			gone := err != nil && s.expungedMidJob(h, folder.ID, m)
+			if err != nil && !gone {
 				var buildErr *buildError
 				if errors.As(err, &buildErr) {
 					// A partially built document must not flush into the shard
@@ -1216,7 +1225,7 @@ func (s *Service) runIndex(j job) error {
 				if !marked && h.mailboxOf().MarkCorruptOnFetchErr(j.mbox.Name, err) {
 					marked = true
 				}
-			} else if s.expungedMidJob(h, folder.ID, m) {
+			} else if gone || s.expungedMidJob(h, folder.ID, m) {
 				// Expunged mid-job: where the body outlives the record the
 				// fetch still succeeds, and so would the document (#2026).
 				if rerr := upd.Rollback(); rerr != nil {

@@ -105,12 +105,9 @@ func (s *Server) evictUnreachable(ip string, from *client) {
 			"ip", ip, "tag", b.Tag)
 		return
 	}
-	s.recordBackendTomb(ip) // #846: before forgetBackendLease, which clears the seq
-	s.forgetBackendLease(ip)
-	s.ring.RemoveBackend(ip)
-	s.kickSessionsForBackend(ip)
+	tomb := s.removeBackend(ip, 0)
 	s.clearUnreachable(ip)
-	s.originateRingEvent("RING-CHANGE", fmt.Sprintf("%s\tdown\t%s", ip, b.Tag), from)
+	s.originateRingEvent("RING-CHANGE", fmt.Sprintf("%s\tdown\t%s\t%d", ip, b.Tag, tomb), from)
 	s.updateMetrics()
 	slog.Warn("director: backend evicted early via corroborated unreachable reports (fast-fail before TTL)",
 		"ip", ip, "tag", b.Tag)
