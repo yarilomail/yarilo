@@ -209,3 +209,27 @@ func TestTheChainKnowsATokenFromAPassword(t *testing.T) {
 		}
 	}
 }
+
+// The SQL entry would take the refused token as alice's password: only a chain
+// that hands a bearer token to non-validators lets the login in (#2247).
+func TestARefusedTokenIsNoPassword(t *testing.T) {
+	conn, rd, _ := oauthServer(t, tokenPassdb{}, &credPassdb{"alice", "bad-token"})
+	for i, mech := range []string{MechOAuthBearer, MechXOAuth2} {
+		msg := bearerMsg
+		if mech == MechXOAuth2 {
+			msg = xoauthMsg
+		}
+		fmt.Fprintf(conn, "AUTH\t%d\t%s\tservice=imap\tresp=%s\n", i+1, mech, b64(fmt.Sprintf(msg, "bad-token")))
+		if f := reply(t, rd); f[0] != "CONT" {
+			t.Fatalf("%s: %q, want the refusal challenge", mech, f)
+		}
+		fmt.Fprintf(conn, "CONT\t%d\t%s\n", i+1, b64("\x01"))
+		if f := reply(t, rd); f[0] != "FAIL" {
+			t.Errorf("%s: %q, want FAIL: the token reached the password passdb", mech, f)
+		}
+	}
+	fmt.Fprintf(conn, "AUTH\t9\tPLAIN\tservice=imap\tresp=%s\n", b64("\x00alice\x00bad-token"))
+	if f := reply(t, rd); f[0] != "OK" {
+		t.Errorf("PLAIN: %q, want OK: a password still reaches the password passdb", f)
+	}
+}
