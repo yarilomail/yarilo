@@ -119,7 +119,7 @@ func (s *Server) Serve(ln net.Listener, tlsCfg *tls.Config) error {
 	// decrypted SMTP stream; under TLS it mangled the ClientHello (#826).
 	// proxyproto stays below (PROXY header is pre-TLS).
 	if s.opts.AuthAddr != "" {
-		ln = &loginproto.PreambleListener{Listener: ln, AuthAddr: s.opts.AuthAddr, AuthTLS: s.opts.AuthTLS, ExpectedService: "smtp", TLSConfig: s.opts.PreambleTLS}
+		ln = &loginproto.PreambleListener{Listener: ln, AuthAddr: s.opts.AuthAddr, AuthTLS: s.opts.AuthTLS, ExpectedService: "submission", FormerService: "smtp", TLSConfig: s.opts.PreambleTLS}
 	}
 	if s.workarounds != 0 {
 		ln = &workaroundListener{Listener: ln, workarounds: s.workarounds}
@@ -311,7 +311,7 @@ func (s *session) scramServer(mech string) (sasl.Server, error) {
 	// Held so an AUTH the client aborts frees the service's half at once,
 	// rather than waiting out its deadline there (#1733).
 	s.cancelRelay()
-	srv := authrelay.NewRelayServer(relay, mech, "smtp", s.remoteIP.String(), loginproto.LocalIP(s.conn.Conn()), s.sid, cb)
+	srv := authrelay.NewRelayServer(relay, mech, "submission", s.remoteIP.String(), loginproto.LocalIP(s.conn.Conn()), s.sid, cb)
 	srv.OnSuccess = func(res *authrelay.AuthResult) error { return s.completeSCRAMLogin(res.Username) }
 	s.liveRelay = srv
 	return srv, nil
@@ -324,7 +324,7 @@ func (s *session) authPlain(authzid, authid, password string) error {
 	if relay == nil {
 		return errNoAuthService
 	}
-	if _, err := relay.AuthenticateAs(authzid, authid, password, "smtp", s.remoteIP.String(), loginproto.LocalIP(s.conn.Conn()), s.sid); err != nil {
+	if _, err := relay.AuthenticateAs(authzid, authid, password, "submission", s.remoteIP.String(), loginproto.LocalIP(s.conn.Conn()), s.sid); err != nil {
 		return goSmtp.ErrAuthFailed
 	}
 	return nil

@@ -36,7 +36,7 @@ func TestSubstituteBindsEveryVariable(t *testing.T) {
 
 func TestProtocolNameIsTheReferences(t *testing.T) {
 	for in, want := range map[string]string{
-		"smtp": "submission", "managesieve": "sieve",
+		"submission": "submission", "smtp": "smtp", "managesieve": "sieve",
 		"imap": "imap", "pop3": "pop3", "lmtp": "lmtp", "jmap": "jmap", "": "",
 	} {
 		if got := ProtocolName(in); got != want {
