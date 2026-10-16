@@ -56,9 +56,8 @@ func (l *lapsingLocker) HoldsResource(r string) (locks.HoldMode, bool) {
 	return locks.HoldNone, false
 }
 
-// lapseAndWait waits for the hold's context to end, not for the failed Renew:
-// the context is cancelled after Renew returns, and a check between the two
-// still sees the hold.
+// lapseAndWait waits for the hold's context to end, not the failed Renew: it is
+// cancelled after Renew returns, and a check in between still sees the hold.
 func (l *lapsingLocker) lapseAndWait(t *testing.T, ctx context.Context) {
 	l.mu.Lock()
 	l.lapsed = true
