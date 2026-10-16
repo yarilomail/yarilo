@@ -1,0 +1,9 @@
+# OAuth2 matrix, mode discovery (#2231): issuer document, JWKS by default. See hack/stand/README.md.
+components:
+  auth:
+    oauth2:
+      - mode: discovery
+        issuer_url: https://keycloak.keycloak.svc:8443/realms/yarilo
+        audience: yarilo-auth
+        username_attribute: email
+        tls_ca: /etc/yarilo/internal-tls/ca.crt

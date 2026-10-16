@@ -39,7 +39,7 @@ stringData:
 apiVersion: v1
 kind: Secret
 metadata:
-  # The same two values for yarilo-auth, read by values-sandbox-oauth2.yaml.
+  # The same two values for yarilo-auth, read by the values-sandbox-oauth2-*.yaml overlays.
   name: yarilo-oauth2-sandbox
   namespace: yarilo-sb
 type: Opaque

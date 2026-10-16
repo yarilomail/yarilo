@@ -152,8 +152,10 @@ func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 		{name: "blockprofile", allow: `^telemetry(\.pprof)?$`},
 		{name: "fsync-never", allow: `^storage(\.mail_fsync)?$`},
 		{name: "notls", allow: `^internalTLS(\.enabled)?$`},
-		// The OAuth2 matrix overlay: every login would reach the IdP, so never an arm (#2231).
-		{name: "oauth2", allow: `^components(\.auth)?$`, notAnArm: true},
+		// The OAuth2 matrix overlays: every login would reach the IdP, so never an arm (#2231).
+		{name: "oauth2-local", allow: `^components(\.auth)?$`, notAnArm: true},
+		{name: "oauth2-introspection", allow: `^components(\.auth)?$`, notAnArm: true},
+		{name: "oauth2-discovery", allow: `^components(\.auth)?$`, notAnArm: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
