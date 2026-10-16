@@ -19,6 +19,8 @@ TAG="${1:?image tag}"
 OUT="${2:?output directory}"
 NS="${YARILO_NS:-yarilo-sb}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+# The release's own pods: Keycloak (#2233) and jobs share the namespace but are not the stand.
+STAND_SEL='app.kubernetes.io/name=yarilo'
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PASSWORD='Yarilo!test1'
 # What one smoketest run counts; it moves with every check added to the binary.
@@ -48,7 +50,7 @@ verdict() {
 # pod_state lists every pod with its uid and each container's restart count: a
 # replaced pod shows as a new uid, a restarted container as a higher count.
 pod_state() {
-  kube get pods -l '!job-name' -o jsonpath='{range .items[*]}{.metadata.deletionTimestamp}|{.metadata.name} {.metadata.uid}{range .status.containerStatuses[*]} {.name}={.restartCount}{end}{"\n"}{end}' |
+  kube get pods -l "$STAND_SEL,!job-name" -o jsonpath='{range .items[*]}{.metadata.deletionTimestamp}|{.metadata.name} {.metadata.uid}{range .status.containerStatuses[*]} {.name}={.restartCount}{end}{"\n"}{end}' |
     awk -F'|' '$1 == "" { print $2 }' | sort
 }
 
@@ -56,11 +58,11 @@ pod_state() {
 # pods to be gone: a pod still terminating at the start is not a replacement.
 settle() {
   local d n waited=0
-  for d in $(kube get deploy -o name); do
+  for d in $(kube get deploy -l "$STAND_SEL" -o name); do
     kube rollout status "$d" --timeout=280s
   done
   while :; do
-    n=$(kube get pods -o jsonpath='{range .items[*]}{.metadata.deletionTimestamp}{"\n"}{end}' | grep -c . || true)
+    n=$(kube get pods -l "$STAND_SEL" -o jsonpath='{range .items[*]}{.metadata.deletionTimestamp}{"\n"}{end}' | grep -c . || true)
     [ "$n" = 0 ] && return 0
     [ "$waited" -ge 180 ] && { echo "accept: $n pods still terminating after ${waited}s" >&2; return 0; }
     sleep 5; waited=$((waited + 5))
