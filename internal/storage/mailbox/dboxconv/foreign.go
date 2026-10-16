@@ -210,9 +210,9 @@ func ReadForeignMap(storageDir string) ([]dboxindex.MapEntry, error) {
 	return seed, nil
 }
 
-// ErrHistoryLost says a store has no base and its oldest log does not start the
-// history, so the logs alone are short by what an older one held (#2253).
-var ErrHistoryLost = errors.New("no base, and no log from the start of the history is left")
+// ErrHistoryLost says neither the base's own log nor the start of the history is
+// on disk, so replaying what is left gives a short map or folder (#2253).
+var ErrHistoryLost = errors.New("neither the base's log nor the start of the history is left")
 
 // logSegment is one log of a chain and the offset its replay starts at.
 type logSegment struct {
@@ -222,7 +222,7 @@ type logSegment struct {
 }
 
 // logChain returns the logs to replay after a base at (baseSeq, baseTail), oldest
-// first; 0 is no base. The tail belongs to the log its sequence names (#2253).
+// first: from the base's tail, else from the start of the history (#2253).
 func logChain(dir, cur, prev string, baseSeq, baseTail uint32) ([]logSegment, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, cur))
 	if err != nil {
@@ -233,11 +233,8 @@ func logChain(dir, cur, prev string, baseSeq, baseTail uint32) ([]logSegment, er
 		return nil, fmt.Errorf("%s header: %w", cur, err)
 	}
 	head := logSegment{name: cur, b: raw, at: int(lh.HeaderSize)}
-	if baseSeq == lh.FileSeq {
+	if baseSeq != 0 && baseSeq == lh.FileSeq {
 		head.at = max(head.at, int(baseTail))
-		return []logSegment{head}, nil
-	}
-	if baseSeq == 0 && lh.PrevFileSeq == 0 {
 		return []logSegment{head}, nil
 	}
 
@@ -252,17 +249,19 @@ func logChain(dir, cur, prev string, baseSeq, baseTail uint32) ([]logSegment, er
 		}
 	}
 	older := logSegment{name: prev, b: pb, at: int(ph.HeaderSize)}
-	if baseSeq != 0 {
-		if pb != nil && ph.FileSeq == baseSeq {
-			older.at = max(older.at, int(baseTail))
-			return []logSegment{older, head}, nil
-		}
+	continues := pb != nil && ph.FileSeq == lh.PrevFileSeq
+	if baseSeq != 0 && continues && ph.FileSeq == baseSeq {
+		older.at = max(older.at, int(baseTail))
+		return []logSegment{older, head}, nil
+	}
+	// The whole history replays onto any base: what the base absorbed lands as it was.
+	switch {
+	case lh.PrevFileSeq == 0:
 		return []logSegment{head}, nil
+	case continues && ph.PrevFileSeq == 0:
+		return []logSegment{older, head}, nil
 	}
-	if pb == nil || ph.FileSeq != lh.PrevFileSeq || ph.PrevFileSeq != 0 {
-		return nil, fmt.Errorf("%s continues log %d: %w", cur, lh.PrevFileSeq, ErrHistoryLost)
-	}
-	return []logSegment{older, head}, nil
+	return nil, fmt.Errorf("%s continues log %d, the base names log %d: %w", cur, lh.PrevFileSeq, baseSeq, ErrHistoryLost)
 }
 
 // Folder is one of their folders as read from disk: what it holds, how to

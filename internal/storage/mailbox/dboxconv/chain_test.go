@@ -243,6 +243,10 @@ func TestAFolderBaseReadsOnFromTheRotatedLog(t *testing.T) {
 func TestALogChainShortOfItsStartIsRefused(t *testing.T) {
 	whole := dboxref.MapLog(t)
 	older, newer := rotate(whole, transactionStarts(t, whole)[1])
+	based := dboxref.MapBaseLog(t)
+	_, basedNext := rotate(based, transactionStarts(t, based)[1])
+	hdr := int(binary.LittleEndian.Uint16(basedNext[2:]))
+	_, folderNext := rotate(dboxref.IndexLog(t), transactionStarts(t, dboxref.IndexLog(t))[1])
 	for _, tc := range []struct {
 		name  string
 		files map[string][]byte
@@ -253,6 +257,24 @@ func TestALogChainShortOfItsStartIsRefused(t *testing.T) {
 		{"map: the rotated log continues one that is gone", map[string][]byte{
 			"dovecot.map.index.log":   newer,
 			"dovecot.map.index.log.2": continuing(older),
+		}},
+		{"map: the base's log was removed after the rotation", map[string][]byte{
+			"dovecot.map.index":     dboxref.MapBase(t),
+			"dovecot.map.index.log": basedNext,
+		}},
+		{"map: the base is two rotations behind", map[string][]byte{
+			"dovecot.map.index":       dboxref.MapBase(t),
+			"dovecot.map.index.log.2": basedNext,
+			"dovecot.map.index.log":   continuing(basedNext[:hdr]),
+		}},
+		{"map: a log between the base's and the current one is gone", map[string][]byte{
+			"dovecot.map.index":       dboxref.MapBase(t),
+			"dovecot.map.index.log.2": based,
+			"dovecot.map.index.log":   continuing(continuing(based[:hdr])),
+		}},
+		{"folder: the base's log was removed after the rotation", map[string][]byte{
+			"dovecot.index":     dboxref.IndexBase(t),
+			"dovecot.index.log": folderNext,
 		}},
 		{"folder: the field's rotated pair, whose older log continues a third", map[string][]byte{
 			"dovecot.index.log":   dboxref.IndexLog(t),
