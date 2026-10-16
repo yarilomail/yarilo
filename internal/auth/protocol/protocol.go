@@ -895,6 +895,7 @@ type PenaltyToSecsFunc func(count int) int
 type TokenStore interface {
 	Issue(username, sessionID, service string) (string, error)
 	Validate(tok string) (username, sessionID, service string, ok bool)
+	Consume(tok string) bool
 }
 
 // WithTokenStore attaches the session token store. When set, every successful
@@ -1156,6 +1157,8 @@ func (s *Server) handleConn(conn net.Conn) {
 			if len(fields) > 1 {
 				live.drop(fields[1])
 			}
+		case "CONSUME":
+			s.handleConsume(sc, fields)
 		}
 	}
 }
@@ -1486,6 +1489,22 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	return "ok"
 }
 
+// handleConsume retires the token of a session that opened, CONSUME\t<id>\t<token>
+// → OK or FAIL\t<id>; FAIL: it was gone, maybe into another session (#2259).
+func (s *Server) handleConsume(conn net.Conn, fields []string) {
+	if len(fields) < 3 {
+		if len(fields) >= 2 {
+			fmt.Fprintf(conn, "FAIL\t%s\n", fields[1])
+		}
+		return
+	}
+	if s.tokenStore == nil || !s.tokenStore.Consume(fields[2]) {
+		fmt.Fprintf(conn, "FAIL\t%s\n", fields[1])
+		return
+	}
+	fmt.Fprintf(conn, "OK\t%s\n", fields[1])
+}
+
 // handleVerify processes a VERIFY command from a backend pod.
 //
 // Wire format:
@@ -1494,8 +1513,8 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 //	→ OK\t<id>\tuser=<username>\tsession=<sessionID>\tservice=<service>\n
 //	→ FAIL\t<id>\n
 //
-// The token is one-time. user= and session= are verified against the
-// stored token — a mismatch is treated as a FAIL.
+// The token stays valid until CONSUME retires it or its TTL ends (#2259); a
+// user= or session= that does not match the stored token is a FAIL.
 // The metric result label is returned for the caller to observe, mirroring
 // handleAuth.
 func (s *Server) handleVerify(conn net.Conn, fields []string) string {

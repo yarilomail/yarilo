@@ -27,6 +27,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/internal/stopaccept"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
@@ -677,20 +678,10 @@ func (s *Server) RunIMAP(ctx context.Context) error {
 	s.telem.SetReady(true)
 
 	if tlsLn != nil {
-		go func() {
-			if err := s.imap.Serve(tlsLn); err != nil {
-				slog.Error("imap: TLS server error", "err", err)
-				os.Exit(1)
-			}
-		}()
+		stopaccept.Serve(ctx, "imap: TLS", tlsLn, s.imap.Serve)
 	}
 	if plainLn != nil {
-		go func() {
-			if err := s.imap.Serve(plainLn); err != nil {
-				slog.Error("imap: plain server error", "err", err)
-				os.Exit(1)
-			}
-		}()
+		stopaccept.Serve(ctx, "imap: plain", plainLn, s.imap.Serve)
 	}
 	s.startReadyFile(ctx, "imap")
 	<-ctx.Done()
@@ -732,16 +723,10 @@ func (s *Server) RunPOP3(ctx context.Context) error {
 	s.telem.SetReady(true)
 
 	if tlsLn != nil {
-		go func() {
-			slog.Error("pop3: TLS server error", "err", s.pop3.Serve(tlsLn))
-			os.Exit(1)
-		}()
+		stopaccept.Serve(ctx, "pop3: TLS", tlsLn, s.pop3.Serve)
 	}
 	if plainLn != nil {
-		go func() {
-			slog.Error("pop3: plain server error", "err", s.pop3.Serve(plainLn))
-			os.Exit(1)
-		}()
+		stopaccept.Serve(ctx, "pop3: plain", plainLn, s.pop3.Serve)
 	}
 	s.startReadyFile(ctx, "pop3")
 	<-ctx.Done()
@@ -781,12 +766,7 @@ func (s *Server) RunLMTP(ctx context.Context) error {
 
 	s.telem.SetReady(true)
 
-	go func() {
-		if err := s.lmtp.Serve(ln); err != nil {
-			slog.Error("lmtp: server error", "err", err)
-			os.Exit(1)
-		}
-	}()
+	stopaccept.Serve(ctx, "lmtp", ln, s.lmtp.Serve)
 	s.startReadyFile(ctx, "lmtp")
 	<-ctx.Done()
 	return nil
@@ -816,12 +796,7 @@ func (s *Server) RunManageSieve(ctx context.Context) error {
 
 	s.telem.SetReady(true)
 
-	go func() {
-		if err := s.managesieve.ServeManageSieve(ctx, ln); err != nil {
-			slog.Error("managesieve: server error", "err", err)
-			os.Exit(1)
-		}
-	}()
+	stopaccept.Serve(ctx, "managesieve", ln, func(l net.Listener) error { return s.managesieve.ServeManageSieve(ctx, l) })
 	s.startReadyFile(ctx, "managesieve")
 	<-ctx.Done()
 	return nil

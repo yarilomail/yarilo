@@ -56,6 +56,8 @@ type PreambleConn struct {
 	MailboxFormat string
 	realAddr      net.Addr
 	br            *bufio.Reader
+	consume       func()
+	consumeOnce   sync.Once
 }
 
 // UnwrapPreambleConn walks a net.Conn wrapper chain (each wrapper exposing
@@ -84,6 +86,16 @@ func (c *PreambleConn) RemoteAddr() net.Addr { return c.realAddr }
 // Read reads from the buffered reader (preserving any bytes already buffered
 // after the preamble line).
 func (c *PreambleConn) Read(b []byte) (int, error) { return c.br.Read(b) }
+
+// Write retires the session's token once the first bytes reach the login: the
+// session is open, so the token may open no other (#2259).
+func (c *PreambleConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if n > 0 && c.consume != nil {
+		c.consumeOnce.Do(func() { go c.consume() })
+	}
+	return n, err
+}
 
 // PreambleListener wraps a net.Listener. Each accepted TCP connection is
 // handed to a goroutine that reads the YARILO preamble, verifies the session
@@ -438,6 +450,11 @@ func (l *PreambleListener) handshake(c net.Conn) (*PreambleConn, error) {
 		MailboxFormat: mailboxFormat,
 		realAddr:      realAddr,
 		br:            br,
+		consume: func() {
+			if err := authCl.Consume(pre.Token); err != nil {
+				slog.Warn("loginproto: session token not retired", "user", username, "session", sessionID, "err", err)
+			}
+		},
 	}, nil
 }
 
