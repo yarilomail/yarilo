@@ -44,11 +44,11 @@ func TestAnEndlessLineEndsThePreAuthLoop(t *testing.T) {
 			return err
 		}},
 		{"ManageSieve atom", "", func(c net.Conn, rd *bufio.Reader) error {
-			_, _, _, err := extractManageSievePreamble(c, rd, nil, testOpts(Options{}))
+			_, _, _, err := extractManageSievePreamble(c, rd, nil, testOpts(Options{}), relayContext{})
 			return err
 		}},
 		{"ManageSieve quoted", `AUTHENTICATE "`, func(c net.Conn, rd *bufio.Reader) error {
-			_, _, _, err := extractManageSievePreamble(c, rd, nil, testOpts(Options{}))
+			_, _, _, err := extractManageSievePreamble(c, rd, nil, testOpts(Options{}), relayContext{})
 			return err
 		}},
 	} {

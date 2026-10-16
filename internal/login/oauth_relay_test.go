@@ -38,13 +38,31 @@ func oauthMsg(mech, token string) string {
 
 // protoCase drives one login protocol far enough to offer and use a mechanism.
 type protoCase struct {
-	name    string
-	run     func(c net.Conn, rd *bufio.Reader, rc relayContext) (*preamble, error)
-	caps    string // command that lists the mechanisms
-	capsEnd string // the line that ends that listing
-	auth    func(mech, b64 string) string
-	cont    string // prefix of a challenge line
-	refused string // prefix of the final refusal
+	name     string
+	run      func(c net.Conn, rd *bufio.Reader, rc relayContext) (*preamble, error)
+	caps     string // command that lists the mechanisms
+	capsEnd  string // the line that ends that listing
+	auth     func(mech, b64 string) string
+	cont     string // prefix of a challenge line
+	refused  string // prefix of the final refusal
+	greetEnd string // prefix of the greeting's last line; empty: one line
+	quoted   bool   // SASL lines travel as quoted strings (ManageSieve)
+}
+
+// saslLine is how the client sends b64 in this protocol.
+func (pc protoCase) saslLine(b64 string) string {
+	if pc.quoted {
+		return `"` + b64 + `"`
+	}
+	return b64
+}
+
+// challenge is the base64 a challenge line carries.
+func (pc protoCase) challenge(line string) string {
+	if pc.quoted {
+		return strings.Trim(line, `"`)
+	}
+	return strings.TrimPrefix(line, pc.cont)
 }
 
 var protoCases = []protoCase{
@@ -66,6 +84,12 @@ var protoCases = []protoCase{
 			return p, err
 		},
 		auth: func(m, b string) string { return "AUTH " + m + " " + b }, cont: "334 ", refused: "535"},
+	{name: "ManageSieve", caps: "CAPABILITY", capsEnd: "OK", greetEnd: "OK",
+		run: func(c net.Conn, rd *bufio.Reader, rc relayContext) (*preamble, error) {
+			p, _, _, err := extractManageSievePreamble(c, rd, nil, testOpts(Options{}), rc)
+			return p, err
+		},
+		auth: func(m, b string) string { return "AUTHENTICATE \"" + m + "\" \"" + b + "\"" }, cont: "\"ey", refused: "NO", quoted: true},
 }
 
 func startProto(t *testing.T, pc protoCase, rc relayContext) (net.Conn, *bufio.Reader, chan *preamble) {
@@ -78,7 +102,11 @@ func startProto(t *testing.T, pc protoCase, rc relayContext) (net.Conn, *bufio.R
 	}()
 	cli.SetDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
 	crd := bufio.NewReader(cli)
-	crd.ReadString('\n') //nolint:errcheck // greeting
+	if pc.greetEnd == "" {
+		crd.ReadString('\n') //nolint:errcheck // greeting
+	} else {
+		readUntil(t, crd, pc.greetEnd)
+	}
 	return cli, crd, done
 }
 
@@ -152,11 +180,11 @@ func TestEveryProxyRelaysAnOAuthRefusal(t *testing.T) {
 				cli, rd, done := startProto(t, pc, oauthRelay(t, validator))
 				fmt.Fprintf(cli, "%s\r\n", pc.auth(mech, oauthMsg(mech, "bad-token")))
 				lines := readUntil(t, rd, pc.cont)
-				raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(lines[len(lines)-1], pc.cont))
+				raw, err := base64.StdEncoding.DecodeString(pc.challenge(lines[len(lines)-1]))
 				if err != nil || !strings.Contains(string(raw), `"status"`) {
 					t.Fatalf("challenge %q, want the JSON refusal", lines[len(lines)-1])
 				}
-				fmt.Fprintf(cli, "%s\r\n", base64.StdEncoding.EncodeToString([]byte{1}))
+				fmt.Fprintf(cli, "%s\r\n", pc.saslLine(base64.StdEncoding.EncodeToString([]byte{1})))
 				readUntil(t, rd, pc.refused)
 				select {
 				case p := <-done:
@@ -237,16 +265,17 @@ func (downValidator) OAuth2Failure() (string, string) { return "", "" }
 // token from a service it should retry later (#2250).
 func TestEveryProxyNamesTheClassOfARelayedFailure(t *testing.T) {
 	want := map[string]struct{ refused, unavailable string }{
-		"IMAP": {"a1 NO [AUTHENTICATIONFAILED] ", "a1 NO [UNAVAILABLE] "},
-		"POP3": {"-ERR [AUTH] ", "-ERR [SYS/TEMP] "},
-		"SMTP": {"535 5.7.8 ", "454 4.7.0 "},
+		"IMAP":        {"a1 NO [AUTHENTICATIONFAILED] ", "a1 NO [UNAVAILABLE] "},
+		"POP3":        {"-ERR [AUTH] ", "-ERR [SYS/TEMP] "},
+		"SMTP":        {"535 5.7.8 ", "454 4.7.0 "},
+		"ManageSieve": {"NO (AUTHENTICATIONFAILED) ", "NO (TRYLATER) "},
 	}
 	for _, pc := range protoCases {
 		t.Run(pc.name+" refused", func(t *testing.T) {
 			cli, rd, _ := startProto(t, pc, oauthRelay(t, validator))
 			fmt.Fprintf(cli, "%s\r\n", pc.auth("OAUTHBEARER", oauthMsg("OAUTHBEARER", "bad-token")))
 			readUntil(t, rd, pc.cont)
-			fmt.Fprintf(cli, "%s\r\n", base64.StdEncoding.EncodeToString([]byte{1}))
+			fmt.Fprintf(cli, "%s\r\n", pc.saslLine(base64.StdEncoding.EncodeToString([]byte{1})))
 			if got := readUntil(t, rd, pc.refused); !strings.HasPrefix(got[len(got)-1], want[pc.name].refused) {
 				t.Errorf("refusal %q, want it to start %q", got[len(got)-1], want[pc.name].refused)
 			}

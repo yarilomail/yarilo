@@ -161,7 +161,7 @@ func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Co
 	case ProtocolSubmission, ProtocolSubmissions:
 		return extractSubmissionPreamble(conn, rd, extTLS, opts, rc)
 	case ProtocolManageSieve:
-		return extractManageSievePreamble(conn, rd, extTLS, opts)
+		return extractManageSievePreamble(conn, rd, extTLS, opts, rc)
 	default:
 		return nil, conn, rd, fmt.Errorf("preamble: unknown protocol %q", p)
 	}
@@ -593,7 +593,7 @@ func continueAuth(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, p Protoco
 	case ProtocolPOP3, ProtocolPOP3S:
 		return pop3CommandLoop(conn, rd, extTLS, opts, rc)
 	case ProtocolManageSieve:
-		return manageSieveCommandLoop(conn, rd, extTLS, opts)
+		return manageSieveCommandLoop(conn, rd, extTLS, opts, rc)
 	case ProtocolSubmission, ProtocolSubmissions:
 		// Re-enter the SMTP loop without the 220 greeting: mid-session, the
 		// client re-EHLOs and re-AUTHs after the 4xx (#896).

@@ -38,7 +38,7 @@ func TestExtractManageSievePreamble_AuthenticatePlainInline(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}))
+		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}), relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -71,7 +71,7 @@ func TestExtractManageSievePreamble_AuthenticatePlainTwoStep(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}))
+		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}), relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -105,7 +105,7 @@ func TestExtractManageSievePreamble_NoopThenAuth(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}))
+		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}), relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -136,7 +136,7 @@ func TestExtractManageSievePreamble_CapabilityThenAuth(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}))
+		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}), relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -164,7 +164,7 @@ func TestExtractManageSievePreamble_LogoutBeforeAuth(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		rd := bufio.NewReader(srv)
-		_, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}))
+		_, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}), relayContext{})
 		errCh <- err
 	}()
 
@@ -188,7 +188,7 @@ func TestExtractManageSievePreamble_UnknownCommand(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}))
+		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}), relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -219,7 +219,7 @@ func TestExtractManageSievePreamble_AuthLiteralArg(t *testing.T) {
 	var got *preamble
 	go func() {
 		rd := bufio.NewReader(srv)
-		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}))
+		p, _, _, err := extractManageSievePreamble(srv, rd, nil, testOpts(Options{}), relayContext{})
 		got = p
 		errCh <- err
 	}()
@@ -245,7 +245,7 @@ func TestExtractManageSievePreamble_GreetingContainsVersion(t *testing.T) {
 	go func() {
 		defer close(done)
 		rd := bufio.NewReader(srv)
-		extractManageSievePreamble(srv, rd, nil, testOpts(Options{})) //nolint:errcheck
+		extractManageSievePreamble(srv, rd, nil, testOpts(Options{}), relayContext{}) //nolint:errcheck
 	}()
 
 	crd := bufio.NewReader(cli)
@@ -272,7 +272,7 @@ func TestManageSieveGreeting_StarttlsAdvertised(t *testing.T) {
 		// Minimal TLS config — just needs to be non-nil.
 		extTLS := &tls.Config{} //nolint:gosec
 		rd := bufio.NewReader(srv)
-		extractManageSievePreamble(srv, rd, extTLS, testOpts(Options{})) //nolint:errcheck
+		extractManageSievePreamble(srv, rd, extTLS, testOpts(Options{}), relayContext{}) //nolint:errcheck
 	}()
 
 	crd := bufio.NewReader(cli)
@@ -306,7 +306,7 @@ func TestExtractManageSievePreamble_ZeroInvalidLimitNeverCloses(t *testing.T) {
 	srv, cli := pipePair(t)
 	errCh := make(chan error, 1)
 	go func() {
-		_, _, _, err := extractManageSievePreamble(srv, bufio.NewReader(srv), nil, Options{AuthMaxAttempts: 3})
+		_, _, _, err := extractManageSievePreamble(srv, bufio.NewReader(srv), nil, Options{AuthMaxAttempts: 3}, relayContext{})
 		errCh <- err
 	}()
 	crd := bufio.NewReader(cli)
