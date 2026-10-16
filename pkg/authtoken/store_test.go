@@ -14,6 +14,7 @@ import (
 type store interface {
 	Issue(username, sessionID, service string) (string, error)
 	Validate(tok string) (username, sessionID, service string, ok bool)
+	Consume(tok string) bool
 	Close()
 }
 
@@ -43,12 +44,24 @@ func runSuite(t *testing.T, s store) {
 		}
 	})
 
-	t.Run("OneTimeUse", func(t *testing.T) {
+	// One session per token, not one look: a backend that checked it and died
+	// before its session opened leaves it to the retry; the session that opens
+	// retires it (#2259).
+	t.Run("OneSessionPerToken", func(t *testing.T) {
 		tok, _ := s.Issue("bob@example.com", "sess-2", "imap")
-		s.Validate(tok) // consume
-		_, _, _, ok := s.Validate(tok)
-		if ok {
-			t.Fatal("second Validate should return ok=false (one-time use)")
+		for i := 1; i <= 2; i++ {
+			if _, _, _, ok := s.Validate(tok); !ok {
+				t.Fatalf("Validate %d before any session opened: ok=false, so a retry after a dead backend fails", i)
+			}
+		}
+		if !s.Consume(tok) {
+			t.Fatal("Consume of a live token reported it absent")
+		}
+		if _, _, _, ok := s.Validate(tok); ok {
+			t.Fatal("Validate after the session opened: ok=true, so the token opens a second session")
+		}
+		if s.Consume(tok) {
+			t.Error("a second Consume reported the token present")
 		}
 	})
 

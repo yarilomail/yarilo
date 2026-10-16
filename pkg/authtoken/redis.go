@@ -75,7 +75,7 @@ func (s *RedisStore) Issue(username, sessionID, service string) (string, error) 
 func (s *RedisStore) Validate(tok string) (username, sessionID, service string, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
-	val, err := s.client.GetDel(ctx, s.keyPrefix+tok).Result()
+	val, err := s.client.Get(ctx, s.keyPrefix+tok).Result()
 	if err != nil {
 		return "", "", "", false
 	}
@@ -84,6 +84,14 @@ func (s *RedisStore) Validate(tok string) (username, sessionID, service string, 
 		return "", "", "", false
 	}
 	return p.Username, p.SessionID, p.Service, true
+}
+
+// Consume removes tok once its session is established (#2259).
+func (s *RedisStore) Consume(tok string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+	defer cancel()
+	n, err := s.client.Del(ctx, s.keyPrefix+tok).Result()
+	return err == nil && n > 0
 }
 
 // Close is a no-op; the caller manages the Redis client lifecycle.

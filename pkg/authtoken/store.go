@@ -28,8 +28,9 @@ type entry struct {
 	expiresAt time.Time
 }
 
-// Store issues one-time session tokens (32 random bytes, hex), valid for the
-// TTL and consumed by the first successful Validate; a sweeper purges the rest.
+// Store issues one-time session tokens (32 random bytes, hex), valid for the TTL
+// until the backend that opened the session consumes it (#2259); a sweeper
+// purges the rest.
 type Store struct {
 	mu      sync.Mutex
 	entries map[string]*entry
@@ -72,19 +73,27 @@ func (s *Store) Issue(username, sessionID, service string) (string, error) {
 	return tok, nil
 }
 
-// Validate consumes tok and returns the associated username, sessionID, and service.
-// Returns ("", "", "", false) when the token is unknown, already used, or expired.
+// Validate returns the username, sessionID, and service bound to tok, leaving it
+// in place: a backend that dies before its session opens leaves it to the retry.
+// Returns ("", "", "", false) when the token is unknown, consumed, or expired.
 func (s *Store) Validate(tok string) (username, sessionID, service string, ok bool) {
 	s.mu.Lock()
 	e, exists := s.entries[tok]
-	if exists {
-		delete(s.entries, tok)
-	}
 	s.mu.Unlock()
 	if !exists || time.Now().After(e.expiresAt) {
 		return "", "", "", false
 	}
 	return e.username, e.sessionID, e.service, true
+}
+
+// Consume removes tok once a session it opened is established, so it cannot
+// open a second one. Reports whether it was there.
+func (s *Store) Consume(tok string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, exists := s.entries[tok]
+	delete(s.entries, tok)
+	return exists
 }
 
 func (s *Store) sweep() {

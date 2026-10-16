@@ -344,6 +344,17 @@ func (c *Client) Verify(token, username, sessionID string) (string, string, stri
 	return parseVerifyResponse(line)
 }
 
+// Consume retires a token whose session is established, so it opens no other
+// (#2259). A token already gone is not an error: its TTL ends it anyway.
+func (c *Client) Consume(token string) error {
+	if wireUnsafe(token) {
+		return ErrAuthFailed
+	}
+	id := c.nextID()
+	_, err := c.exchange(id, fmt.Sprintf("CONSUME\t%s\t%s", id, token))
+	return err
+}
+
 func (c *Client) nextID() string {
 	return strconv.FormatUint(c.seq.Add(1), 10)
 }

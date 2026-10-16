@@ -522,6 +522,8 @@ func (t *tokenRecorder) Validate(tok string) (string, string, string, bool) {
 	return strings.TrimPrefix(tok, "tok-"), "s1", "imap", true
 }
 
+func (t *tokenRecorder) Consume(string) bool { return true }
+
 // A SCRAM login must carry the token the password path carries: the backend
 // verifies it, so a session without one cannot open (#1733).
 func TestAScramLoginCarriesAToken(t *testing.T) {
