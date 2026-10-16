@@ -17,8 +17,8 @@ import (
 type IntrospectionMode string
 
 const (
-	// IntrospectionAuthBearer — POST with empty body and an
-	// Authorization: Bearer <token> header.
+	// IntrospectionAuthBearer — GET with an Authorization: Bearer <token>
+	// header and no token in the URL or body, as the reference does.
 	IntrospectionAuthBearer IntrospectionMode = "auth"
 
 	// IntrospectionGet — GET <url>?token=<token>. Simplest mode
@@ -170,7 +170,7 @@ func (v *IntrospectionValidator) Validate(ctx context.Context, token string) (*C
 func (v *IntrospectionValidator) buildRequest(ctx context.Context, token string) (*http.Request, error) {
 	switch v.cfg.Mode {
 	case IntrospectionAuthBearer:
-		req, err := http.NewRequestWithContext(ctx, "POST", v.cfg.URL, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", v.cfg.URL, nil)
 		if err != nil {
 			return nil, err
 		}

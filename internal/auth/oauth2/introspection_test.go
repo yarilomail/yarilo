@@ -234,3 +234,38 @@ func TestTokeninfo_5xxUpstream(t *testing.T) {
 		t.Errorf("err = %v, want ErrUpstream", err)
 	}
 }
+
+// Rows 2-4 of #2231 have no live IdP: the request the server sees is the
+// whole of what they can prove, so every part of it is asserted.
+func TestTheTransportTheServerSees(t *testing.T) {
+	tests := []struct {
+		name                      string
+		tokeninfo                 bool
+		mode                      IntrospectionMode
+		method, bearer, query, in string
+	}{
+		{"introspection post", false, IntrospectionPostForm, "POST", "", "", "token=tkn"},
+		{"introspection auth: GET, bearer header", false, IntrospectionAuthBearer, "GET", "Bearer tkn", "", ""},
+		{"introspection get: GET, token in the URL", false, IntrospectionGet, "GET", "", "token=tkn", ""},
+		{"tokeninfo: GET, ?access_token=", true, "", "GET", "", "access_token=tkn", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newIntrospectionServer(t, 200, `{"active":true,"email":"x"}`)
+			var v Validator
+			if tt.tokeninfo {
+				v, _ = NewTokeninfoValidator(TokeninfoConfig{URL: srv.URL})
+			} else {
+				v, _ = NewIntrospectionValidator(IntrospectionConfig{URL: srv.URL, Mode: tt.mode})
+			}
+			if _, err := v.Validate(context.Background(), "tkn"); err != nil {
+				t.Fatal(err)
+			}
+			got := []string{srv.method, srv.header.Get("Authorization"), srv.query, srv.body}
+			want := []string{tt.method, tt.bearer, tt.query, tt.in}
+			if strings.Join(got, "|") != strings.Join(want, "|") {
+				t.Errorf("method|Authorization|query|body = %q, want %q", got, want)
+			}
+		})
+	}
+}
