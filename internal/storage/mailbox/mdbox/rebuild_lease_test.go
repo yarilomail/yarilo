@@ -15,17 +15,16 @@ import (
 )
 
 // lapsingLocker grants each resource to a single-goroutine test; lapse drops
-// the map lease, after which its Renew fails and lost closes.
+// the map lease, after which its Renew fails.
 type lapsingLocker struct {
 	mutexLocker
 	mu     sync.Mutex
 	held   map[string]bool
 	lapsed bool
-	lost   chan struct{}
 }
 
 func newLapsingLocker() *lapsingLocker {
-	return &lapsingLocker{held: map[string]bool{}, lost: make(chan struct{})}
+	return &lapsingLocker{held: map[string]bool{}}
 }
 
 func (l *lapsingLocker) Lock(_ context.Context, r, _ string, _ time.Duration) (locks.Lock, error) {
@@ -44,11 +43,6 @@ func (l *lapsingLocker) Renew(_ context.Context, id string, _ time.Duration) err
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.lapsed && id == locks.MdboxMapKey("u@x.io") {
-		select {
-		case <-l.lost:
-		default:
-			close(l.lost)
-		}
 		return locks.ErrExpired
 	}
 	return nil
@@ -61,12 +55,16 @@ func (l *lapsingLocker) HoldsResource(r string) (locks.HoldMode, bool) {
 	}
 	return locks.HoldNone, false
 }
-func (l *lapsingLocker) lapseAndWait(t *testing.T) {
+
+// lapseAndWait waits for the hold's context to end, not for the failed Renew:
+// the context is cancelled after Renew returns, and a check between the two
+// still sees the hold.
+func (l *lapsingLocker) lapseAndWait(t *testing.T, ctx context.Context) {
 	l.mu.Lock()
 	l.lapsed = true
 	l.mu.Unlock()
 	select {
-	case <-l.lost:
+	case <-ctx.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("lapsed lease was never noticed")
 	}
@@ -89,7 +87,7 @@ func TestRebuildPastALapsedLeaseLeavesTheMapAlone(t *testing.T) {
 	if _, _, _, err := box.Save("INBOX", strings.NewReader("orphan\r\n"), 0, 0, nil, nil, [16]byte{}); err != nil {
 		t.Fatal(err)
 	}
-	beforeRebuildCommit = func() { l.lapseAndWait(t) }
+	beforeRebuildCommit = func(ctx context.Context) { l.lapseAndWait(t, ctx) }
 	t.Cleanup(func() { beforeRebuildCommit = nil })
 
 	_, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, false)
@@ -114,7 +112,7 @@ func TestHealPastALapsedLeaseExpungesNothing(t *testing.T) {
 	if err := idx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, MapUID: 999999, Size: 4, GUID: [16]byte{7}}); err != nil {
 		t.Fatal(err)
 	}
-	beforeHealScan = func() { l.lapseAndWait(t) }
+	beforeHealScan = func(ctx context.Context) { l.lapseAndWait(t, ctx) }
 	t.Cleanup(func() { beforeHealScan = nil })
 
 	healBarrier.Range(func(k, _ any) bool { healBarrier.Delete(k); return true })

@@ -24,7 +24,7 @@ func healBarrierKey(user string, folderID uint64) string {
 
 // beforeHealScan runs inside both locks, before the scan. Test seam: what the
 // serialisation row counts.
-var beforeHealScan func()
+var beforeHealScan func(context.Context)
 
 // HealCorruptFolder expunges the records whose message is gone and clears the
 // FSCKD marker in the same locked scope. An incomplete scan ABORTS it, or a
@@ -49,7 +49,7 @@ func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, 
 				}
 			}
 			if beforeHealScan != nil {
-				beforeHealScan()
+				beforeHealScan(ctx)
 			}
 			if err := stillHeld(ctx); err != nil {
 				return err
