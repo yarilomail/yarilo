@@ -43,7 +43,8 @@ func pop3Endpoint() (endpoint, error) {
 	}, nil
 }
 
-func pop3Login(user, pass string) (*pop3Session, error) {
+// pop3Open is a session past its greeting, not yet logged in.
+func pop3Open() (*pop3Session, error) {
 	ep, err := pop3Endpoint()
 	if err != nil {
 		return nil, err
@@ -61,6 +62,15 @@ func pop3Login(user, pass string) (*pop3Session, error) {
 			return nil, fmt.Errorf("greeting: %w", err)
 		}
 	}
+	return p, nil
+}
+
+func pop3Login(user, pass string) (*pop3Session, error) {
+	p, err := pop3Open()
+	if err != nil {
+		return nil, err
+	}
+	conn := p.conn
 	if err := p.ok("USER " + user); err != nil {
 		conn.Close() //nolint:errcheck
 		return nil, err

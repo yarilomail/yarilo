@@ -112,6 +112,9 @@ var (
 	flagOnly = flag.String("only", "",
 		"run only these areas, comma-separated (e.g. \"pop3\" or \"imap,jmap\"); empty runs every area")
 	flagRequireAll       = flag.Bool("require-all", false, "treat a check disabled by a missing flag as a failure")
+	flagOAuth2TokenURL   = flag.String("oauth2-token-url", "", "IdP token endpoint; enables the oauth2 rows, which log in as -imap-user with a password-grant token")
+	flagOAuth2ClientID   = flag.String("oauth2-client-id", "yarilo-test", "public client the password grant is made for")
+	flagOAuth2CA         = flag.String("oauth2-ca", "", "PEM CAs the token endpoint is verified against; empty uses the system roots")
 	flagRequireAllExcept = flag.String("require-all-except", "",
 		"comma-separated check areas -require-all does not demand (e.g. jmap), for deployments that do not run them")
 
@@ -286,6 +289,11 @@ func register() []check {
 	want("imap", *flagIMAPUser != "", "imap login", "needs -imap-user", func() error {
 		return checkIMAPLogin(*flagIMAPUser, *flagIMAPPass)
 	})
+	oauth := *flagOAuth2TokenURL != "" && *flagIMAPUser != ""
+	const oauthNeeds = "needs -oauth2-token-url and -imap-user"
+	want("oauth2", oauth, oauth2IMAPCheck, oauthNeeds, checkOAuth2IMAP)
+	want("oauth2", oauth, oauth2POP3Check, oauthNeeds, checkOAuth2POP3)
+	want("oauth2", oauth, oauth2SubmissionCheck, oauthNeeds, checkOAuth2Submission)
 	want("imap", *flagPasswdFileUser != "", "imap login (passwd-file passdb)", "needs -passwd-file-user", func() error {
 		return checkIMAPLogin(*flagPasswdFileUser, *flagPasswdFilePass)
 	})
@@ -777,47 +785,16 @@ func capNames(caps map[string]bool) []string {
 // checkSMTPSubmission requires AUTH PLAIN and STARTTLS in EHLO, then upgrades
 // and reads the capabilities again.
 func checkSMTPSubmission() error {
-	addr := net.JoinHostPort(smtpHost(), *flagSMTPSubPort)
-	conn, err := smtpDial(addr, false)
+	tlsConn, caps2, err := submissionTLS()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-
-	caps, err := smtpEHLO(conn)
-	if err != nil {
-		return err
-	}
-	if !caps["STARTTLS"] {
-		return fmt.Errorf("submission port did not advertise STARTTLS")
-	}
-	// AUTH before STARTTLS is lawful only with cleartext auth allowed, which
-	// this check cannot see; the upgrade below settles it (#1855).
-
-	// Perform STARTTLS upgrade.
-	fmt.Fprintf(conn, "STARTTLS\r\n")
-	line, err := readLine(conn)
-	if err != nil {
-		return fmt.Errorf("STARTTLS: read response: %w", err)
-	}
-	if !strings.HasPrefix(line, "220") {
-		return fmt.Errorf("STARTTLS: unexpected response %q", line)
-	}
-	tlsConn := tls.Client(conn, publicTLS(smtpHost()))
-	if err := tlsConn.Handshake(); err != nil {
-		return fmt.Errorf("STARTTLS TLS handshake: %w", err)
-	}
-
-	// Second EHLO after upgrade must still advertise AUTH PLAIN.
-	caps2, err := smtpEHLO(tlsConn)
-	if err != nil {
-		return fmt.Errorf("post-STARTTLS EHLO: %w", err)
-	}
+	defer tlsConn.Close()
 	if !caps2["AUTH PLAIN"] {
 		return fmt.Errorf("post-STARTTLS EHLO missing AUTH PLAIN")
 	}
 	if *flagIMAPUser != "" {
-		if err := smtpSubmitTransaction(tlsConn, *flagIMAPUser, *flagIMAPPass); err != nil {
+		if err := smtpSubmitTransaction(tlsConn, *flagIMAPUser, plainAuth(*flagIMAPUser, *flagIMAPPass)); err != nil {
 			return err
 		}
 	}
@@ -825,12 +802,57 @@ func checkSMTPSubmission() error {
 	return nil
 }
 
+// submissionTLS is a submission session past STARTTLS and its second EHLO.
+func submissionTLS() (net.Conn, map[string]bool, error) {
+	addr := net.JoinHostPort(smtpHost(), *flagSMTPSubPort)
+	conn, err := smtpDial(addr, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	caps, err := smtpEHLO(conn)
+	if err != nil {
+		conn.Close() //nolint:errcheck
+		return nil, nil, err
+	}
+	if !caps["STARTTLS"] {
+		conn.Close() //nolint:errcheck
+		return nil, nil, fmt.Errorf("submission port did not advertise STARTTLS")
+	}
+	// AUTH before STARTTLS is lawful only with cleartext auth allowed, which
+	// this check cannot see; the upgrade below settles it (#1855).
+
+	// Perform STARTTLS upgrade.
+	fmt.Fprintf(conn, "STARTTLS\r\n")
+	line, err := readLine(conn)
+	if err == nil && !strings.HasPrefix(line, "220") {
+		err = fmt.Errorf("unexpected response %q", line)
+	}
+	if err != nil {
+		conn.Close() //nolint:errcheck
+		return nil, nil, fmt.Errorf("STARTTLS: %w", err)
+	}
+	tlsConn := tls.Client(conn, publicTLS(smtpHost()))
+	if err := tlsConn.Handshake(); err != nil {
+		conn.Close() //nolint:errcheck
+		return nil, nil, fmt.Errorf("STARTTLS TLS handshake: %w", err)
+	}
+	caps2, err := smtpEHLO(tlsConn)
+	if err != nil {
+		tlsConn.Close() //nolint:errcheck
+		return nil, nil, fmt.Errorf("post-STARTTLS EHLO: %w", err)
+	}
+	return tlsConn, caps2, nil
+}
+
+func plainAuth(user, pass string) string {
+	return "AUTH PLAIN " + base64.StdEncoding.EncodeToString([]byte("\x00"+user+"\x00"+pass))
+}
+
 // smtpSubmitTransaction: AUTH is where the login pod hands off to the backend
 // (#2133); RSET, not DATA, so no mailbox the other rows count changes.
-func smtpSubmitTransaction(conn net.Conn, user, pass string) error {
-	creds := base64.StdEncoding.EncodeToString([]byte("\x00" + user + "\x00" + pass))
+func smtpSubmitTransaction(conn net.Conn, user, auth string) error {
 	for _, step := range []struct{ cmd, want string }{
-		{"AUTH PLAIN " + creds, "235"},
+		{auth, "235"},
 		{"MAIL FROM:<" + user + ">", "250"},
 		{"RCPT TO:<" + user + ">", "250"},
 		{"RSET", "250"},

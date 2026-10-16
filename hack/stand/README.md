@@ -51,7 +51,7 @@ issue it verifies.
 
 | Criterion | How |
 |:---|:---|
-| smoketest all checks (`SMOKE_CHECKS`) on mdbox, maildir, sdbox | `hack/smoketest/run.sh` per type |
+| smoketest: `SMOKE_CHECKS` passed, 0 failed, and skipped exactly the oauth2 rows named in `SMOKE_OAUTH2_SKIPS`, on mdbox, maildir, sdbox; the verdict reads `47 passed, 0 failed, 3 skipped (oauth2)`, and any other skip fails however the counts add up | `hack/smoketest/run.sh` per type, without the OAuth2 overlay |
 | disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
 | an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted right before and after an IMAP SELECT |
@@ -184,4 +184,20 @@ helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
   -f helm_values/values-sandbox-oauth2.yaml --set image.tag=<tag>   # window starts
 helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
   --set image.tag=<tag>                                             # window ends
+```
+
+In an OAuth2 window the smoketest runs only its oauth2 rows, once per mailbox
+type, and all three must pass; that run is its own `stand-runs.md` row, naming
+the overlay. The token comes from the password grant of `yarilo-test`, over the
+internal CA the Job already mounts:
+
+```sh
+for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
+  dir=$(mktemp -d); cp hack/smoketest/run.sh "$dir/"
+  awk -v u="$user" '{ gsub(/u1@d00001\.test/, u); print }
+    /- -imap-pass=/ { print "        - -only=oauth2"
+      print "        - -oauth2-token-url=https://keycloak.keycloak.svc:8443/realms/yarilo/protocol/openid-connect/token"
+      print "        - -oauth2-ca=/tls/ca.crt" }' hack/smoketest/job.yaml > "$dir/job.yaml"
+  bash "$dir/run.sh" <tag>
+done
 ```
