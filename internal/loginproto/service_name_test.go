@@ -2,10 +2,10 @@ package loginproto
 
 import "testing"
 
-// Submission was smtp: across a rollout either name opens it, nothing else
-// does, and a listener without a former name keeps its exact match (#2239).
+// A token opens only the service it was verified for: smtp, Submission's name
+// before 2.4.3 and Postfix's now, does not open Submission (#2239).
 func TestATokenOpensOnlyItsOwnService(t *testing.T) {
-	submission := &PreambleListener{ExpectedService: "submission", FormerService: "smtp"}
+	submission := &PreambleListener{ExpectedService: "submission"}
 	imap := &PreambleListener{ExpectedService: "imap"}
 	for _, r := range []struct {
 		l       *PreambleListener
@@ -13,7 +13,7 @@ func TestATokenOpensOnlyItsOwnService(t *testing.T) {
 		want    bool
 	}{
 		{submission, "submission", true},
-		{submission, "smtp", true},
+		{submission, "smtp", false},
 		{submission, "imap", false},
 		{submission, "", false},
 		{imap, "imap", true},
