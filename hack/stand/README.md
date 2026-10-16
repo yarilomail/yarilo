@@ -171,23 +171,38 @@ kubectl -n keycloak rollout restart deploy/keycloak   # after a realm change or 
 Issuer: `https://keycloak.keycloak.svc:8443/realms/yarilo`, HTTPS only. A
 renewed leaf is copied again the same way.
 
-The OAuth2 entries live in the overlay `helm_values/values-sandbox-oauth2.yaml`,
-laid on top of `values-sandbox.yaml` only for an OAuth2 matrix window. The
-chain stops at the first temporary failure and the entries run before SQL, so
-with the overlay every PLAIN login of the stand goes to Keycloak and Keycloak
-down stops every login: acceptance runs and A/B arms run without it, and
-`ab-arm.sh` does not know it. A window sets it and takes it off with the same
-`helm upgrade`, each recorded as a row in `stand-runs.md`:
+The OAuth2 entries live in three overlays, one entry each, so a row of the
+#2231 matrix is answered by one mode and no other:
+
+| Overlay | Mode | Matrix rows |
+|:---|:---|:---|
+| `values-sandbox-oauth2-local.yaml` | `local`: JWKS + the HS256 key | 5, 6, 8–14, 16–19, 21–26, 28; the smoketest oauth2 rows |
+| `values-sandbox-oauth2-introspection.yaml` | `introspection` (POST), password grant, forced introspection | 1, 15, 20, 27, 29 |
+| `values-sandbox-oauth2-discovery.yaml` | `discovery`, JWKS by default | 7 |
+
+Rows 2–4 (introspection by GET or bearer header, tokeninfo) have no live form:
+this Keycloak answers its introspection endpoint by POST only and refuses a
+token in the userinfo query, so the `httptest` rows in
+`internal/auth/oauth2` are where they are checked.
+
+An overlay is laid on top of `values-sandbox.yaml` only inside an OAuth2
+window. The chain stops at the first temporary failure and the entries run
+before SQL, so with an overlay every PLAIN login of the stand goes to Keycloak
+and Keycloak down stops every login: acceptance runs and A/B arms run without
+any of them, and `ab-arm.sh` knows none. A window goes overlay by overlay —
+deploy it, run that mode's rows, deploy the next — and ends on the base values
+with the same `helm upgrade`. Each step is its own `stand-runs.md` row naming
+the overlay and the image:
 
 ```sh
 helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
-  -f helm_values/values-sandbox-oauth2.yaml --set image.tag=<tag>   # window starts
+  -f helm_values/values-sandbox-oauth2-<mode>.yaml --set image.tag=<tag>   # one mode
 helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
-  --set image.tag=<tag>                                             # window ends
+  --set image.tag=<tag>                                                    # window ends
 ```
 
-In an OAuth2 window the smoketest runs only its oauth2 rows, once per mailbox
-type, and all three must pass; that run is its own `stand-runs.md` row, naming
+In an OAuth2 window the smoketest runs only its oauth2 rows, under the local
+overlay, once per mailbox type, and all three must pass; that run is its own `stand-runs.md` row, naming
 the overlay. The token comes from the password grant of `yarilo-test`, over the
 internal CA the Job already mounts:
 
