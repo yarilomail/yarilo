@@ -1,7 +1,4 @@
-# Keycloak for the OAuth2 rows of #2231: stateless, realm "yarilo" re-imported on every start.
-#   kubectl apply -f hack/internal-ca-sandbox.yaml   # once: the Issuer below
-#   kubectl apply -f helm_values/keycloak-sandbox.yaml
-#   kubectl -n yarilo-sb rollout restart deploy/yarilo-keycloak   # after a realm change
+# Keycloak for the OAuth2 rows of #2231; how to apply it: hack/stand/README.md.
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

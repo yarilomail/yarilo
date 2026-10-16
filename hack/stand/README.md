@@ -136,3 +136,18 @@ is the only unit that compares two arms of different lengths.
 The CPU profile is taken on every arm; the block profile only under the
 profiling overlay, because a pod that accounts for every blocking operation is
 not the pod the other arm is.
+
+## The OAuth2 provider
+
+`helm_values/keycloak-sandbox.yaml` runs Keycloak for the OAuth2 rows of #2231.
+It keeps no state: realm `yarilo` is imported from the file on every start, so a
+realm change is applied by re-applying and restarting:
+
+```sh
+kubectl apply -f hack/internal-ca-sandbox.yaml   # once: the Issuer its certificate comes from
+kubectl apply -f helm_values/keycloak-sandbox.yaml
+kubectl -n yarilo-sb rollout restart deploy/yarilo-keycloak
+```
+
+Issuer: `https://yarilo-keycloak.yarilo-sb.svc:8443/realms/yarilo`, HTTPS only,
+signed by `yarilo-internal-ca`.
