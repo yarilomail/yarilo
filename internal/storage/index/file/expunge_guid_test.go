@@ -50,10 +50,9 @@ func TestExpungeRecordCarriesTheMessageGUID(t *testing.T) {
 	if got[0] == got[1] {
 		t.Fatalf("both expunges report the same id %x -- the field is not the message's", got[0])
 	}
-	seen := map[[16]byte]bool{got[0]: true, got[1]: true}
-	for uid, want := range guids {
-		if !seen[want] {
-			t.Errorf("uid %d expunged as something other than its own GUID %x", uid, want)
+	for _, c := range got {
+		if want, ok := guids[c.UID]; !ok || c.GUID != want {
+			t.Errorf("uid %d expunged as %x, want its own GUID %x", c.UID, c.GUID, want)
 		}
 	}
 }

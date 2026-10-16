@@ -95,7 +95,7 @@ type Box interface {
 	Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error)
 	// VanishedGUIDs are the messages expunged past sinceModSeq, by identity;
 	// complete is false when some cannot be named.
-	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (guids [][16]byte, complete bool, err error)
+	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
 	// ExpungeFloor is the oldest modseq the folder's expunge history reaches.
 	ExpungeFloor(folderID uint64) (uint64, error)
 	// FolderStamp is the cheap proof that a folder has not moved since a read.
@@ -103,6 +103,8 @@ type Box interface {
 	// GUIDCopies is every copy of these messages the account records;
 	// ErrNoGUIDStore when it keeps no such record.
 	GUIDCopies(guids [][16]byte) ([]GUIDRecord, error)
+	// GUIDStoreComplete: for these folders, no copy in GUIDCopies means none.
+	GUIDStoreComplete(folderIDs []uint64) bool
 	// Keywords are the folder's keyword names.
 	Keywords(folderID uint64) ([]string, error)
 	// CreateFolder writes a new folder's index with the folder, best effort.

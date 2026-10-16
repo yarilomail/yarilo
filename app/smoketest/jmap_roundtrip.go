@@ -63,6 +63,9 @@ func jmapCallLib[T any](c *gojmap.Client, m gojmap.Method) (T, error) {
 	}
 	got, ok := resp.Responses[0].Args.(T)
 	if !ok {
+		if me, isErr := resp.Responses[0].Args.(*gojmap.MethodError); isErr && me.Description != nil {
+			return zero, fmt.Errorf("%s answered %s: %s", m.Name(), me.Type, *me.Description)
+		}
 		return zero, fmt.Errorf("%s answered %#v", m.Name(), resp.Responses[0].Args)
 	}
 	return got, nil
@@ -79,11 +82,7 @@ func checkJMAPRoundTrip() error {
 	if err != nil {
 		return err
 	}
-	got, err := jmapCallLib[*email.GetResponse](watcher, &email.Get{Account: account, IDs: []gojmap.ID{}})
-	if err != nil {
-		return err
-	}
-	state := got.State
+	var state string
 	// seen asks the second client what changed since its last state.
 	seen := func(step string, id gojmap.ID, pick func(*email.ChangesResponse) []gojmap.ID) error {
 		ch, err := jmapCallLib[*email.ChangesResponse](watcher, &email.Changes{Account: account, SinceState: state})
@@ -127,6 +126,8 @@ func checkJMAPRoundTrip() error {
 		return fmt.Errorf("Email/import created nothing: %+v", imp.NotCreated)
 	}
 	id := created.ID
+	// The watcher starts from the state the import itself names, not an earlier read.
+	state = imp.OldState
 	if err := seen("import", id, func(c *email.ChangesResponse) []gojmap.ID { return c.Created }); err != nil {
 		return err
 	}

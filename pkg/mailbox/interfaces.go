@@ -112,7 +112,9 @@ type GUIDRecord struct {
 // GUIDStoreRebuilder writes the per-user GUID store from what the folders say.
 // The store is derived, so this is what repairs it (#1711).
 type GUIDStoreRebuilder interface {
-	ReplaceGUIDStore(copies []GUIDRecord) error
+	// RebuildGUIDStore writes the store from these folders, holding it from the
+	// first read to the write, and marks it whole; it returns the copies written.
+	RebuildGUIDStore(folderIDs []uint64) (int, error)
 }
 
 // GUIDResolver answers where a message id lives, from the per-user GUID store
@@ -121,6 +123,9 @@ type GUIDResolver interface {
 	// GUIDCopies returns every copy recorded for these GUIDs. An empty answer
 	// means the store says nothing, not that the message does not exist.
 	GUIDCopies(guids [][16]byte) ([]GUIDRecord, error)
+	// GUIDStoreComplete is true once a rebuild made the store whole and none of
+	// these folders has missed a command since; then no copy means none exists.
+	GUIDStoreComplete(folderIDs []uint64) (bool, error)
 }
 
 // MaildirStamp is what a folder's directories and uid list looked like when the
@@ -301,8 +306,8 @@ type CorruptionMarker interface {
 	ClearFolderCorrupt(folderID uint64) error
 }
 
-// ExpungedCopy names a record a repair dropped: the uid it held and the
-// message it was, so a search index can retract the right document (#1986).
+// ExpungedCopy names an expunged record: the uid it held and the message it
+// was, for a search retract (#1986) or a JMAP change list.
 type ExpungedCopy struct {
 	UID  uint32
 	GUID [16]byte
@@ -650,7 +655,7 @@ type UserIndex interface {
 	// message is gone, so its GUID can be read from nowhere else afterwards.
 	// complete is false when a record in range cannot be named, and the caller
 	// must degrade rather than report a shorter list as the whole truth.
-	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (guids [][16]byte, complete bool, err error)
+	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
 	// FolderStamp describes the folder's files without opening it: the sizes
 	// and modification times of the base index and its log. It is a proof of
 	// unchangedness for a cached read, never a substitute for reading -- the

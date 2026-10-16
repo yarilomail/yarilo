@@ -56,6 +56,8 @@ func (s *Server) emailChanges(_ context.Context, h *userHandle, accountID string
 	for _, e := range old.Entries {
 		oldByKey[e.Key] = e
 	}
+	// goneOld are destroyed ids whose expunged copy the client could have seen.
+	goneOld := map[string]bool{}
 
 	// A merge renames the threadId of every message in the swallowed
 	// conversation, and touches no folder's markers -- so the diff below
@@ -108,7 +110,7 @@ func (s *Server) emailChanges(_ context.Context, h *userHandle, accountID string
 		resp.Created = append(resp.Created, ids.created...)
 		resp.Updated = append(resp.Updated, ids.updated...)
 
-		guids, complete, err := h.mbox.VanishedGUIDs(f.folder.ID, prevModSeq)
+		vanished, complete, err := h.mbox.VanishedGUIDs(f.folder.ID, prevModSeq)
 		if err != nil {
 			return nil, storeFailure("Email/changes vanished", accountID, err)
 		}
@@ -119,8 +121,12 @@ func (s *Server) emailChanges(_ context.Context, h *userHandle, accountID string
 			// "those still exist".
 			return nil, cannotCalculate("some deletions in that window cannot be identified")
 		}
-		for _, g := range guids {
-			resp.Destroyed = append(resp.Destroyed, mailbox.FormatObjectID(g))
+		for _, c := range vanished {
+			id := mailbox.FormatObjectID(c.GUID)
+			resp.Destroyed = append(resp.Destroyed, id)
+			if uint64(c.UID) < prevNextUID {
+				goneOld[id] = true
+			}
 		}
 	}
 
@@ -131,6 +137,7 @@ func (s *Server) emailChanges(_ context.Context, h *userHandle, accountID string
 	if len(oldByKey) > 0 {
 		return nil, cannotCalculate("a mailbox was deleted; its messages cannot be enumerated after the fact")
 	}
+	resp.Created, resp.Destroyed, resp.Updated = h.settleCopies(folders, old, goneOld, resp.Created, resp.Destroyed, resp.Updated)
 	// A record created since the client's state is reported as created and
 	// nothing else: RFC 8620 §5.2 is explicit, and a client told an id is both
 	// new and changed has to guess which list to believe. The overlap is real
@@ -424,4 +431,78 @@ func without(list []string, others ...[]string) []string {
 		}
 	}
 	return out
+}
+
+// settleCopies judges created and destroyed per Email, not per copy: alive now
+// and at the client's state is updated, at neither is in no list (RFC 8620 §5.2).
+func (h *userHandle) settleCopies(folders folderMarks, old jmapcore.Description, goneOld map[string]bool, created, destroyed, updated []string) ([]string, []string, []string) {
+	oldNext := make(map[[8]byte]uint64, len(old.Entries))
+	for _, e := range old.Entries {
+		_, _, next := fieldsOf(e)
+		oldNext[e.Key] = next
+	}
+	keyOf := make(map[uint64][8]byte, len(folders))
+	for _, f := range folders {
+		keyOf[f.folder.ID] = f.key
+	}
+	ids := append(append([]string{}, created...), destroyed...)
+	want := make(map[[16]byte]bool, len(ids))
+	guids := make([][16]byte, 0, len(ids))
+	for _, id := range ids {
+		if g, err := parseObjectID(id); err == nil && !want[g] {
+			want[g] = true
+			guids = append(guids, g)
+		}
+	}
+	// "No copy" counts only from a store marked whole; a created id it does not
+	// name means it is behind even so. Any such id sends the call to the walk.
+	var copies map[[16]byte][]emailCopy
+	ok := false
+	records, err := h.mbox.GUIDCopies(guids)
+	folderIDs := make([]uint64, 0, len(folders))
+	for _, f := range folders {
+		folderIDs = append(folderIDs, f.folder.ID)
+	}
+	complete := err == nil && h.mbox.GUIDStoreComplete(folderIDs)
+	if err == nil {
+		copies, ok = h.copiesFromRecords(records)
+	}
+	isCreated := make(map[string]bool, len(created))
+	for _, id := range created {
+		isCreated[id] = true
+	}
+	for _, id := range ids {
+		if g, perr := parseObjectID(id); ok && perr == nil && len(copies[g]) == 0 && (isCreated[id] || !complete) {
+			ok = false
+		}
+	}
+	if !ok && len(guids) > 0 {
+		copies = h.copiesByWalkAll(want)
+	}
+
+	var outCreated, outDestroyed []string
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		g, _ := parseObjectID(id)
+		now, before := len(copies[g]) > 0, goneOld[id]
+		for _, c := range copies[g] {
+			next, known := oldNext[keyOf[c.folderID]]
+			if known && uint64(c.meta.UID) < next {
+				before = true
+			}
+		}
+		switch {
+		case now && before:
+			updated = append(updated, id)
+		case now:
+			outCreated = append(outCreated, id)
+		case before:
+			outDestroyed = append(outDestroyed, id)
+		}
+	}
+	return nonNil(outCreated), nonNil(outDestroyed), updated
 }

@@ -128,7 +128,7 @@ func TestTheBoxSurfaceReachesTheIndex(t *testing.T) {
 			t.Fatal(err)
 		}
 		guids, complete, err := box.VanishedGUIDs(f.ID, 1)
-		if err != nil || !complete || len(guids) != 1 || guids[0] != msgs[0].GUID {
+		if err != nil || !complete || len(guids) != 1 || guids[0] != (mailbox.ExpungedCopy{UID: 1, GUID: msgs[0].GUID}) {
 			t.Fatalf("vanished %x complete %v, %v; want uid 1's message, complete", guids, complete, err)
 		}
 		if err := idx.ExpungeMessage(f.ID, 9); err != nil {

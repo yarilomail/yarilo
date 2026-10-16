@@ -76,4 +76,4 @@ replace github.com/emersion/go-sasl => github.com/0kaba0hub/go-sasl v0.0.0-20261
 
 replace github.com/emersion/go-smtp => github.com/0kaba0hub/go-smtp v0.0.0-20261011102647-92f8904ca8d4
 
-replace git.sr.ht/~rockorager/go-jmap => github.com/0kaba0hub/go-jmap v0.0.0-20261015133535-1fa4e19335db
+replace git.sr.ht/~rockorager/go-jmap => github.com/0kaba0hub/go-jmap v0.0.0-20261015223003-0102c41ef1af

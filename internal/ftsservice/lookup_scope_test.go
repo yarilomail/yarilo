@@ -3,7 +3,6 @@
 package ftsservice
 
 import (
-	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -148,18 +147,8 @@ func TestAHitIsResolvedThroughTheStore(t *testing.T) {
 		t.Fatalf("the search answers %v, want one uid", res.Definite)
 	}
 
-	// Rewrite the store so the copy is recorded under another uid: the answer
-	// follows the store, which is what makes it the store's to say.
-	rebuilder, ok := uidx.(mailbox.GUIDStoreRebuilder)
-	if !ok {
-		t.Fatal("this index rebuilds no GUID store")
-	}
-	resolver := uidx.(mailbox.GUIDResolver)
-	copies, err := resolver.GUIDCopies(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = copies
+	// Move the copy to another uid by the commands a session runs: the store
+	// tracks them, the document keeps uid 1, and the answer follows the store.
 	f, err := uidx.OpenFolder(testMbox.Name, testMbox.UIDValidity)
 	if err != nil {
 		t.Fatal(err)
@@ -168,15 +157,14 @@ func TestAHitIsResolvedThroughTheStore(t *testing.T) {
 	if err != nil || len(metas) != 1 {
 		t.Fatalf("the folder holds %v (err %v)", metas, err)
 	}
-	folderGUID, err := hex.DecodeString(testMbox.GUID)
+	if err := uidx.ExpungeMessage(f.ID, metas[0].UID); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := uidx.AllocateUID(f.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fg [16]byte
-	copy(fg[:], folderGUID)
-	if err := rebuilder.ReplaceGUIDStore([]mailbox.GUIDRecord{{
-		GUID: metas[0].GUID, FolderGUID: fg, UID: 42,
-	}}); err != nil {
+	if err := uidx.AppendMessage(f.ID, &mailbox.MessageMeta{UID: moved, GUID: metas[0].GUID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,7 +173,7 @@ func TestAHitIsResolvedThroughTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Definite) != 1 || res.Definite[0] != 42 {
+	if len(res.Definite) != 1 || res.Definite[0] != moved {
 		t.Errorf("the search answers %v, want the uid the store records", res.Definite)
 	}
 }
