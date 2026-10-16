@@ -74,6 +74,21 @@ func (m *Map) Records() []MapEntry {
 	return out
 }
 
+// RecordsReloaded is Records after a reload, for a caller pairing the map with
+// what is on disk now.
+func (m *Map) RecordsReloaded() ([]MapEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.reloadLocked(); err != nil {
+		return nil, fmt.Errorf("mdboxmap/records: %w", err)
+	}
+	out := make([]MapEntry, 0, m.st.count())
+	for i, n := 0, m.st.count(); i < n; i++ {
+		out = append(out, m.st.at(i))
+	}
+	return out, nil
+}
+
 // LookupMany resolves a batch of map_uids in a single lock hop.
 // Returns one MapEntry per requested UID; entries that did not
 // resolve carry UID=0. The result slice mirrors the input order.
