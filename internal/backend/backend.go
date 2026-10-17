@@ -519,6 +519,7 @@ func New(cfg *config.Config) (*Server, error) {
 			Config:          cfg.Protocol.ManageSieve,
 			MaxScriptSize:   cfg.Sieve.MaxScriptSize,
 			MaxScripts:      cfg.Sieve.MaxScripts,
+			MaxStorage:      cfg.Sieve.MaxStorage,
 			AuthAddr:        authAddr,
 			AuthTLS:         authTLS,
 			PreambleTLS:     preambleTLS[mtls.ListenerSieveBackend],
@@ -1458,4 +1459,14 @@ func QuotaServices(cfg *config.Config) (*quotawarn.Runner, *quota.Clone, error) 
 	}
 	// Zero falls back to the reference's ten seconds inside NewClone.
 	return warner, quota.NewClone(cloneDicts, time.Duration(cfg.Quota.CloneFlushDelay)*time.Second), nil
+}
+
+// BuildScriptStore is the per-user Sieve script store, the one ManageSieve
+// sessions open; JMAP takes it so both protocols share scripts and state.
+func BuildScriptStore(cfg *config.Config, locker locks.Locker) (*sieve.IndexedStore, error) {
+	d, err := buildDict(cfg, cfg.Sieve.ScriptsDictName)
+	if err != nil {
+		return nil, fmt.Errorf("backend: sieve dict: %w", err)
+	}
+	return sieve.NewScriptStore(cfg.Sieve.ScriptsDriver, cfg.Sieve.DefaultName, locker, d), nil
 }

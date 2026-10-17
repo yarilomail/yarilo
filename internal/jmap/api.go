@@ -14,8 +14,12 @@ const apiPath = "/jmap/api/"
 // declaredCapabilities is what this server implements. It is the set a client's
 // "using" is checked against, and it is passed to jmapcore rather than read
 // there.
-func declaredCapabilities() []string {
-	return []string{jmapcore.CapCore, jmapcore.CapMail, jmapcore.CapQuota}
+func declaredCapabilities(lim jmapcore.Limits) []string {
+	caps := []string{jmapcore.CapCore, jmapcore.CapMail, jmapcore.CapQuota}
+	if lim.Sieve != nil {
+		caps = append(caps, jmapcore.CapSieve)
+	}
+	return caps
 }
 
 // registry is the method set for one request. It is built per request because
@@ -29,6 +33,11 @@ func (s *Server) registry(lazy *lazyStore, accountID string) jmapcore.Registry {
 		}
 		for name, entry := range s.quotaRegistry(lazy, accountID) {
 			reg[name] = entry
+		}
+		if s.opts.Sieve != nil {
+			for name, entry := range s.sieveRegistry(lazy, accountID) {
+				reg[name] = entry
+			}
 		}
 	}
 	return reg
@@ -50,7 +59,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 		}).Write(w)
 		return
 	}
-	req, rerr := jmapcore.ParseRequest(body, declaredCapabilities(), s.opts.Limits)
+	req, rerr := jmapcore.ParseRequest(body, declaredCapabilities(s.opts.Limits), s.opts.Limits)
 	if rerr != nil {
 		slog.Debug("jmap: request rejected", "user", id.user, "session", id.sessionID, "type", rerr.Type)
 		rerr.Write(w)

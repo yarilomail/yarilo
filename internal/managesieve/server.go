@@ -38,6 +38,8 @@ type Options struct {
 	MaxScriptSize int
 	// MaxScripts is sieve_max_num_scripts; 0 lifts the count limit.
 	MaxScripts int
+	// MaxStorage is sieve_max_storage, a user's script bytes; 0 lifts it.
+	MaxStorage int
 	// SieveExtensions is the whitelist of permitted Sieve extensions.
 	// Corresponds to sieve.sieve_extensions in yarilo.yaml. Empty = allow all.
 	SieveExtensions []string
@@ -139,6 +141,7 @@ func (srv *Server) newSession(conn net.Conn, username, homeDir, sid string) *ses
 		store:             sieve.NewScriptStore(srv.opts.ScriptsDriver, defaultName, srv.opts.Locker, srv.opts.ScriptsDict),
 		maxSize:           srv.opts.MaxScriptSize,
 		maxScripts:        srv.opts.MaxScripts,
+		maxStorage:        srv.opts.MaxStorage,
 		maxLine:           int64(srv.opts.Config.MaxLineLength),
 		allowedExtensions: srv.opts.SieveExtensions,
 		sid:               sid,

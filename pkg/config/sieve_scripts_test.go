@@ -5,22 +5,31 @@ import (
 	"testing"
 )
 
-// sieve_max_num_scripts: 0 lifts the limit, a negative count is refused by name.
-func TestScriptCountIsAnOffKey(t *testing.T) {
+// The script limits: 0 lifts one, a negative value is refused by name.
+func TestScriptLimitsAreOffKeys(t *testing.T) {
+	keys := []struct {
+		key   string
+		field func(*Config) int
+	}{
+		{"sieve_max_num_scripts", func(c *Config) int { return c.Sieve.MaxScripts }},
+		{"sieve_max_storage", func(c *Config) int { return c.Sieve.MaxStorage }},
+	}
 	cases := []struct {
 		value   string
 		want    int
 		refused bool
 	}{{"0", 0, false}, {"5", 5, false}, {"-1", 0, true}}
-	for _, c := range cases {
-		cfg, err := loadYAML(t, yamlAt("sieve.sieve_max_num_scripts", c.value))
-		switch {
-		case c.refused && (err == nil || !strings.Contains(err.Error(), "sieve_max_num_scripts")):
-			t.Errorf("%s: err = %v, want a refusal naming sieve_max_num_scripts", c.value, err)
-		case !c.refused && err != nil:
-			t.Errorf("%s: %v", c.value, err)
-		case !c.refused && cfg.Sieve.MaxScripts != c.want:
-			t.Errorf("%s loads as %d", c.value, cfg.Sieve.MaxScripts)
+	for _, k := range keys {
+		for _, c := range cases {
+			cfg, err := loadYAML(t, yamlAt("sieve."+k.key, c.value))
+			switch {
+			case c.refused && (err == nil || !strings.Contains(err.Error(), k.key)):
+				t.Errorf("%s %s: err = %v, want a refusal naming it", k.key, c.value, err)
+			case !c.refused && err != nil:
+				t.Errorf("%s %s: %v", k.key, c.value, err)
+			case !c.refused && k.field(cfg) != c.want:
+				t.Errorf("%s %s loads as %d", k.key, c.value, k.field(cfg))
+			}
 		}
 	}
 }

@@ -54,15 +54,14 @@ type ScriptStore interface {
 	DefaultScriptName() string
 }
 
-// NewScriptStore returns an FsScriptStore when driver is "fs" (or empty),
-// and a DictScriptStore for any other value. The dict parameter is ignored
-// for the fs driver.
-func NewScriptStore(driver, defaultName string, locker locks.Locker, d dict.Dict) ScriptStore {
+// NewScriptStore returns the store for driver ("fs" or empty: files in the
+// home; anything else: the dict d), wrapped so every change moves the index.
+func NewScriptStore(driver, defaultName string, locker locks.Locker, d dict.Dict) *IndexedStore {
 	if defaultName == "" {
 		defaultName = FallbackDefaultName
 	}
 	if driver == "" || driver == "fs" {
-		return &FsScriptStore{DefaultName: defaultName, Locker: locker}
+		return &IndexedStore{ScriptStore: &FsScriptStore{DefaultName: defaultName, Locker: locker}, io: fsIndex{locker: locker}}
 	}
-	return &DictScriptStore{defaultName: defaultName, locker: locker, d: d}
+	return &IndexedStore{ScriptStore: &DictScriptStore{defaultName: defaultName, locker: locker, d: d}, io: dictIndex{locker: locker, d: d}}
 }

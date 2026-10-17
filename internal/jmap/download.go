@@ -54,6 +54,10 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 		s.serveUpload(w, r, h, id, up, name)
 		return
 	}
+	if isScriptBlobID(blobID) {
+		s.serveScript(w, r, h, id, blobID, name)
+		return
+	}
 	msgID, partID, isPart := parsePartBlobID(blobID)
 	if !isPart {
 		msgID = blobID
@@ -162,4 +166,22 @@ func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request, h *userHand
 	if _, err := io.Copy(w, f); err != nil {
 		slog.Debug("jmap: download aborted", "user", id.user, "blob", up.String(), "err", err)
 	}
+}
+
+// serveScript is GETSCRIPT over the download URL (RFC 9661 §2.2).
+func (s *Server) serveScript(w http.ResponseWriter, r *http.Request, h *userHandle, id identity, blobID, name string) {
+	src, found, err := s.scriptBlob(r.Context(), h, id.user, blobID)
+	if err != nil {
+		slog.Warn("jmap: script download failed", "user", id.user, "blob", blobID, "err", err)
+		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Script store unavailable")
+		return
+	}
+	if !found {
+		jmapcore.WriteProblem(w, http.StatusNotFound, "No such blob")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename="+quoteFilename(name))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(src)
 }

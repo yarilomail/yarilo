@@ -238,6 +238,7 @@ data:
       sieve_max_script_size: {{ $sieve.sieve_max_script_size | int64 }}
       sieve_max_redirects: {{ $sieve.sieve_max_redirects }}
       sieve_max_num_scripts: {{ $sieve.sieve_max_num_scripts }}
+      sieve_max_storage: {{ $sieve.sieve_max_storage | int64 }}
       sieve_max_actions: {{ $sieve.sieve_max_actions }}
       sieve_duplicate_max_period: {{ $sieve.sieve_duplicate_max_period }}
       sieve_duplicate_driver: {{ $sieve.sieve_duplicate_driver | default "file" | quote }}

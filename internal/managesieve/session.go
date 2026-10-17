@@ -29,6 +29,7 @@ type session struct {
 	store             sieve.ScriptStore
 	maxSize           int
 	maxScripts        int
+	maxStorage        int
 	maxLine           int64
 	closing           bool
 	allowedExtensions []string
@@ -365,13 +366,15 @@ func (s *session) handleCheckScript() {
 // break a limit.
 func (s *session) withinQuota(ctx context.Context, name string, size int) bool {
 	err := sieve.CheckQuota(ctx, s.store, s.username, s.homeDir, name, size,
-		sieve.Quota{MaxSize: s.maxSize, MaxScripts: s.maxScripts})
+		sieve.Quota{MaxSize: s.maxSize, MaxScripts: s.maxScripts, MaxStorage: s.maxStorage})
 	var qe *sieve.QuotaExceededError
 	switch {
 	case err == nil:
 		return true
 	case errors.As(err, &qe) && qe.Kind == sieve.QuotaMaxScripts:
 		_ = writeNO(s.w, "QUOTA/MAXSCRIPTS", ucFirst(qe.Error())+".")
+	case errors.As(err, &qe) && qe.Kind == sieve.QuotaMaxStorage:
+		_ = writeNO(s.w, "QUOTA/MAXSTORAGE", ucFirst(qe.Error())+".")
 	case errors.As(err, &qe):
 		_ = writeNO(s.w, "QUOTA/MAXSIZE", ucFirst(qe.Error())+".")
 	default:

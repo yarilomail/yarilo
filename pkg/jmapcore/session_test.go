@@ -152,3 +152,16 @@ func TestSessionStateTracksLimits(t *testing.T) {
 		t.Error("state did not change with the base URL")
 	}
 }
+
+// The session state moves with the advertised Sieve capability.
+func TestSessionStateCarriesSieve(t *testing.T) {
+	lim := testLimits()
+	plain := SessionState(lim)
+	lim.Sieve = &SieveSession{Implementation: "x", Account: SieveCapability{MaxSizeScriptName: 512}}
+	with := SessionState(lim)
+	lim.Sieve.Account.MaxSizeScriptName = 1024
+	changed := SessionState(lim)
+	if plain == with || with == changed {
+		t.Errorf("states %s, %s, %s: want each to differ", plain, with, changed)
+	}
+}
