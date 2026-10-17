@@ -3,6 +3,7 @@ package jmap
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -444,6 +445,29 @@ func TestSieveScriptStaleViewLosesNothing(t *testing.T) {
 				if src, _, _ := st.GetScript(ctx, testUser, home, name); string(src) != want {
 					t.Errorf("%s holds %q, want %q", name, src, want)
 				}
+			}
+		})
+	}
+}
+
+func TestExistingIDFallsBackToTheCallsStart(t *testing.T) {
+	start := sieve.ScriptIndex{IDs: map[string]string{"x": "S1"}}
+	cases := []struct {
+		name  string
+		fresh sieve.ScriptIndex
+		err   error
+		start sieve.ScriptIndex
+		want  string
+	}{
+		{"the fresh read names it", sieve.ScriptIndex{IDs: map[string]string{"x": "S9"}}, nil, start, "S9"},
+		{"the fresh read failed", sieve.ScriptIndex{}, errors.New("lock service down"), start, "S1"},
+		{"the fresh read does not have it", sieve.ScriptIndex{IDs: map[string]string{}}, nil, start, "S1"},
+		{"neither has it", sieve.ScriptIndex{}, errors.New("down"), sieve.ScriptIndex{IDs: map[string]string{}}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := existingID(c.fresh, c.err, c.start, testUser, "x"); got != c.want {
+				t.Errorf("existingID = %q, want %q", got, c.want)
 			}
 		})
 	}

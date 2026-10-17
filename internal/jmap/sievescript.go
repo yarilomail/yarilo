@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strconv"
@@ -218,9 +219,22 @@ func (s *Server) checkSieveName(v sieveView, name string) *jmapcore.SetError {
 }
 
 // taken is the alreadyExists for a name the store refused under its lock.
-func (s *Server) taken(ctx context.Context, user, home, name string) *jmapcore.SetError {
-	ix, _ := s.opts.Sieve.Store.Index(ctx, user, home)
-	return &jmapcore.SetError{Type: jmapcore.SetErrAlreadyExists, ExistingID: ix.IDs[name]}
+func (s *Server) taken(ctx context.Context, user, home, name string, v *sieveView) *jmapcore.SetError {
+	fresh, err := s.opts.Sieve.Store.Index(ctx, user, home)
+	return &jmapcore.SetError{Type: jmapcore.SetErrAlreadyExists, ExistingID: existingID(fresh, err, v.ix, user, name)}
+}
+
+// existingID names the script holding name: from the index read after the
+// refusal, else from the one this call started with.
+func existingID(fresh sieve.ScriptIndex, err error, start sieve.ScriptIndex, user, name string) string {
+	if err == nil && fresh.IDs[name] != "" {
+		return fresh.IDs[name]
+	}
+	if id := start.IDs[name]; id != "" {
+		return id
+	}
+	slog.Warn("jmap: alreadyExists without existingId", "user", user, "script", name, "err", err)
+	return ""
 }
 
 // checkSieveContent applies RFC 9661 §2.2 with the parser and extension list
@@ -373,7 +387,7 @@ func (s *Server) sieveCreate(ctx context.Context, h *userHandle, user string, v 
 	}
 	st := s.opts.Sieve.Store
 	if err := st.CreateScript(ctx, user, h.info.Home, name, src); errors.Is(err, sieve.ErrScriptExists) {
-		return nil, s.taken(ctx, user, h.info.Home, name)
+		return nil, s.taken(ctx, user, h.info.Home, name, v)
 	} else if err != nil {
 		return nil, &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: "the script could not be stored"}
 	}
@@ -415,7 +429,7 @@ func (s *Server) sieveUpdate(ctx context.Context, h *userHandle, user string, v 
 		}
 		// Renamed before the content is written: a refused name leaves nothing half done.
 		if err := st.RenameScript(ctx, user, home, name, *p.Name); errors.Is(err, sieve.ErrScriptExists) {
-			return nil, s.taken(ctx, user, home, *p.Name)
+			return nil, s.taken(ctx, user, home, *p.Name, v)
 		} else if err != nil {
 			return nil, &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: "the script could not be renamed"}
 		}
