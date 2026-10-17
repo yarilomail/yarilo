@@ -36,6 +36,8 @@ type Options struct {
 	// (#1286), so the server is handed the resolved value rather than reading
 	// one of two keys and choosing.
 	MaxScriptSize int
+	// MaxScripts is sieve_max_num_scripts; 0 lifts the count limit.
+	MaxScripts int
 	// SieveExtensions is the whitelist of permitted Sieve extensions.
 	// Corresponds to sieve.sieve_extensions in yarilo.yaml. Empty = allow all.
 	SieveExtensions []string
@@ -118,25 +120,27 @@ func (srv *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 	slog.Info("managesieve: session started", "user", username, "session", sid)
 
-	maxSize := srv.opts.MaxScriptSize
+	sess := srv.newSession(conn, username, userInfo.Home, sid)
+	sess.serve(ctx)
+	slog.Info("managesieve: session ended", "sid", sess.sid, "user", username)
+}
 
-	maxLine := int64(srv.opts.Config.MaxLineLength)
+func (srv *Server) newSession(conn net.Conn, username, homeDir, sid string) *session {
 	defaultName := srv.opts.DefaultName
 	if defaultName == "" {
 		defaultName = sieve.FallbackDefaultName
 	}
-	sess := &session{
+	return &session{
 		conn:              conn,
 		r:                 bufio.NewReader(conn),
 		w:                 bufio.NewWriter(conn),
 		username:          username,
-		homeDir:           userInfo.Home,
+		homeDir:           homeDir,
 		store:             sieve.NewScriptStore(srv.opts.ScriptsDriver, defaultName, srv.opts.Locker, srv.opts.ScriptsDict),
-		maxSize:           maxSize,
-		maxLine:           maxLine,
+		maxSize:           srv.opts.MaxScriptSize,
+		maxScripts:        srv.opts.MaxScripts,
+		maxLine:           int64(srv.opts.Config.MaxLineLength),
 		allowedExtensions: srv.opts.SieveExtensions,
 		sid:               sid,
 	}
-	sess.serve(ctx)
-	slog.Info("managesieve: session ended", "sid", sess.sid, "user", username)
 }
