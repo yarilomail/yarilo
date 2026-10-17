@@ -32,34 +32,41 @@ func checkJMAPSubmission() error {
 	if err != nil {
 		return err
 	}
-	imported, err := jmapCall(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],"methodCalls":[["Email/import",{"accountId":%q,"emails":{"d":{"blobId":%q,"mailboxIds":{%q:true},"keywords":{"$draft":true}}}},"0"]]}`,
-		account, up.ID, box))
+	// One request, as clients send: the draft and its submission by "#d" (RFC 8620 §5.3).
+	all, err := jmapCallAll(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],"methodCalls":[`+
+		`["Email/import",{"accountId":%q,"emails":{"d":{"blobId":%q,"mailboxIds":{%q:true},"keywords":{"$draft":true}}}},"0"],`+
+		`["EmailSubmission/set",{"accountId":%q,"create":{"c1":{"identityId":%q,"emailId":"#d"}},"onSuccessDestroyEmail":["#c1"]},"1"]]}`,
+		account, up.ID, box, account, identity))
 	if err != nil {
-		return fmt.Errorf("Email/import of the draft: %w", err)
+		return fmt.Errorf("Email/import and EmailSubmission/set: %w", err)
 	}
 	var imp struct {
 		Created map[string]struct{ ID string } `json:"created"`
-	}
-	_ = json.Unmarshal(imported, &imp)
-	draft := imp.Created["d"].ID
-	if draft == "" {
-		return fmt.Errorf("Email/import created no draft: %s", imported)
-	}
-	defer jmapCall(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],"methodCalls":[["Email/set",{"accountId":%q,"destroy":[%q]},"0"]]}`, account, draft)) //nolint:errcheck
-
-	set, err := jmapCall(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],"methodCalls":[["EmailSubmission/set",{"accountId":%q,"create":{"c1":{"identityId":%q,"emailId":%q}},"onSuccessUpdateEmail":{"#c1":{"keywords/$draft":null}}},"0"]]}`,
-		account, identity, draft))
-	if err != nil {
-		return fmt.Errorf("EmailSubmission/set: %w", err)
 	}
 	var sub struct {
 		Created map[string]struct {
 			UndoStatus string `json:"undoStatus"`
 		} `json:"created"`
 	}
-	_ = json.Unmarshal(set, &sub)
+	var destroyed struct {
+		Destroyed []string `json:"destroyed"`
+	}
+	if len(all) != 3 || all[0].name != "Email/import" || all[1].name != "EmailSubmission/set" || all[2].name != "Email/set" {
+		return fmt.Errorf("responses %v, want Email/import, EmailSubmission/set and its implicit Email/set", all)
+	}
+	_ = json.Unmarshal(all[0].args, &imp)
+	_ = json.Unmarshal(all[1].args, &sub)
+	_ = json.Unmarshal(all[2].args, &destroyed)
+	draft := imp.Created["d"].ID
+	if draft == "" {
+		return fmt.Errorf("Email/import created no draft: %s", all[0].args)
+	}
 	if sub.Created["c1"].UndoStatus != "final" {
-		return fmt.Errorf("EmailSubmission/set sent nothing: %s", set)
+		jmapCall(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],"methodCalls":[["Email/set",{"accountId":%q,"destroy":[%q]},"0"]]}`, account, draft)) //nolint:errcheck
+		return fmt.Errorf("EmailSubmission/set with emailId #d sent nothing: %s", all[1].args)
+	}
+	if len(destroyed.Destroyed) != 1 || destroyed.Destroyed[0] != draft {
+		return fmt.Errorf("the implicit Email/set did not destroy the draft %s: %s", draft, all[2].args)
 	}
 	return arrivedWithoutBcc(user, *flagJMAPPass, marker)
 }

@@ -39,6 +39,7 @@ func (s *Server) emailQuery(ctx context.Context, h *userHandle, accountID string
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveEmailFilter(ctx, req.Filter)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}

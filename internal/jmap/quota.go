@@ -163,11 +163,12 @@ func quotaStateOf(used quota.Usage, limits quota.Limits) string {
 	return fmt.Sprintf("q-%d-%d-%d-%d", used.StorageBytes, used.Messages, limits.StorageBytes, limits.Messages)
 }
 
-func (s *Server) quotaGet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) quotaGet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req jmapcore.GetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveGet(ctx, &req)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}

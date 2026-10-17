@@ -21,8 +21,9 @@ type Request struct {
 
 // Response is the API response envelope (RFC 8620 §3.4).
 type Response struct {
-	MethodResponses []Invocation      `json:"methodResponses"`
-	CreatedIDs      map[string]string `json:"createdIds,omitempty"`
+	MethodResponses []Invocation `json:"methodResponses"`
+	// CreatedIDs is a pointer so a client that sent an empty map gets one back.
+	CreatedIDs *map[string]string `json:"createdIds,omitempty"`
 	// SessionState is the same value the session resource carries, so a client
 	// can tell its cached session went stale without refetching it.
 	SessionState string `json:"sessionState"`
@@ -107,11 +108,20 @@ func ParseRequest(body []byte, declared []string, lim Limits) (*Request, *Reques
 func Execute(ctx context.Context, req *Request, reg Registry, lim Limits) *Response {
 	resp := &Response{
 		MethodResponses: make([]Invocation, 0, len(req.MethodCalls)),
-		CreatedIDs:      req.CreatedIDs,
 		SessionState:    SessionState(lim),
 	}
+	created := createdIDs{}
+	for k, v := range req.CreatedIDs {
+		created[k] = v
+	}
+	ctx = withCreatedIDs(ctx, created)
 	for _, call := range req.MethodCalls {
 		resp.MethodResponses = append(resp.MethodResponses, invoke(ctx, call, req.Using, reg, resp.MethodResponses)...)
+	}
+	// Returned only to a client that sent one, and then with what this request added (§3.4).
+	if req.CreatedIDs != nil {
+		out := map[string]string(created)
+		resp.CreatedIDs = &out
 	}
 	return resp
 }

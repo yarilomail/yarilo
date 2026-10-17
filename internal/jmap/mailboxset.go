@@ -58,11 +58,12 @@ func invalidProp(name, desc string) *jmapcore.SetError {
 }
 
 // mailboxSet implements Mailbox/set (RFC 8621 §2.5) through the mutation layer.
-func (s *Server) mailboxSet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) mailboxSet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req mailboxSetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveSet(ctx, &req.SetRequest)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -80,16 +81,21 @@ func (s *Server) mailboxSet(_ context.Context, h *userHandle, accountID string, 
 	resp := jmapcore.NewSetResponse(accountID, state)
 	sep := separator(h.info)
 
-	for _, cid := range sortedKeys(req.Create) {
-		created, serr := s.mailboxCreate(h, req.Create[cid], sep)
+	order, cyclic := createOrder(req.Create)
+	for _, cid := range cyclic {
+		resp.NotCreated[cid] = invalidProp("parentId", "the parents named form a cycle")
+	}
+	for _, cid := range order {
+		created, serr := s.mailboxCreate(h, resolveProperty(ctx, req.Create[cid], "parentId"), sep)
 		if serr != nil {
 			resp.NotCreated[cid] = serr
 			continue
 		}
 		resp.Created[cid] = created
+		noteCreated(ctx, cid, created)
 	}
 	for _, id := range sortedKeys(req.Update) {
-		if serr := s.mailboxUpdate(h, id, req.Update[id], sep); serr != nil {
+		if serr := s.mailboxUpdate(h, id, resolveProperty(ctx, req.Update[id], "parentId"), sep); serr != nil {
 			resp.NotUpdated[id] = serr
 			continue
 		}
@@ -108,6 +114,48 @@ func (s *Server) mailboxSet(_ context.Context, h *userHandle, accountID string, 
 		}
 	}
 	return resp, nil
+}
+
+// createOrder puts a create after the create of the same call its parentId
+// names as "#<creation id>" (RFC 8620 §5.3); the ones in a cycle are returned apart.
+func createOrder(create map[string]json.RawMessage) (order, cyclic []string) {
+	parent := map[string]string{}
+	for cid, raw := range create {
+		var p struct {
+			ParentID *string `json:"parentId"`
+		}
+		if json.Unmarshal(raw, &p) == nil && p.ParentID != nil {
+			if pc, ok := strings.CutPrefix(*p.ParentID, "#"); ok && create[pc] != nil {
+				parent[cid] = pc
+			}
+		}
+	}
+	// A create in a cycle, or below one, is refused: its parent is never created.
+	const visiting, done, refused = 1, 2, 3
+	mark := map[string]int{}
+	var visit func(cid string) bool
+	visit = func(cid string) bool {
+		switch mark[cid] {
+		case visiting, refused:
+			return false
+		case done:
+			return true
+		}
+		mark[cid] = visiting
+		if pc, ok := parent[cid]; ok && !visit(pc) {
+			mark[cid] = refused
+			cyclic = append(cyclic, cid)
+			return false
+		}
+		mark[cid] = done
+		order = append(order, cid)
+		return true
+	}
+	for _, cid := range sortedKeys(create) {
+		visit(cid)
+	}
+	sort.Strings(cyclic)
+	return order, cyclic
 }
 
 func sortedKeys(m map[string]json.RawMessage) []string {
