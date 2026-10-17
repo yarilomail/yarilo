@@ -17,6 +17,9 @@ import (
 // myAddressHeaders are where the user's address must appear for a reply (RFC 5230 §4.5).
 var myAddressHeaders = []string{"To", "Cc", "Bcc", "Resent-To", "Resent-Cc", "Resent-Bcc"}
 
+// listHeaders mark a list's message; vacation does not answer one (RFC 5230 §4.5).
+var listHeaders = []string{"List-Id", "List-Owner", "List-Subscribe", "List-Post", "List-Unsubscribe", "List-Help", "List-Archive"}
+
 // senderHeaders give the reply's To, with the sender's display name.
 var senderHeaders = []string{"Sender", "Resent-From", "From"}
 
@@ -37,7 +40,7 @@ func (s *Sender) sendVacation(
 	if strings.EqualFold(sender, recipient) || containsFold(resp.Addresses, sender) {
 		return nil
 	}
-	if isMailingList(hdr) || isAutoSubmitted(hdr) {
+	if isAutomaticMail(hdr) || isSystemAddress(sender) {
 		return nil
 	}
 	smtpFrom, replyFrom, ok := s.vacationAddressedTo(opts, hdr, resp.Addresses)
@@ -82,6 +85,46 @@ func (s *Sender) sendVacation(
 		}
 	}
 	return nil
+}
+
+// isAutomaticMail is a list's message, an automatic one (Auto-Submitted other
+// than no), bulk by Precedence, or one asking for no auto-reply.
+func isAutomaticMail(hdr textproto.MIMEHeader) bool {
+	for _, name := range listHeaders {
+		if len(hdr.Values(name)) > 0 {
+			return true
+		}
+	}
+	for _, v := range hdr.Values("Auto-Submitted") {
+		if !strings.EqualFold(strings.TrimSpace(v), "no") {
+			return true
+		}
+	}
+	for _, v := range hdr.Values("Precedence") {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "junk", "bulk", "list":
+			return true
+		}
+	}
+	for _, v := range hdr.Values("X-Auto-Response-Suppress") {
+		for _, flag := range strings.Split(v, ",") {
+			if f := strings.TrimSpace(flag); strings.EqualFold(f, "All") || strings.EqualFold(f, "OOF") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isSystemAddress is a sender a person does not read: a daemon or a list's
+// request and owner addresses, judged as the reference does.
+func isSystemAddress(addr string) bool {
+	local := addr
+	if i := strings.LastIndex(addr, "@"); i >= 0 {
+		local = addr[:i]
+	}
+	return strings.EqualFold(local, "MAILER-DAEMON") || strings.EqualFold(local, "LISTSERV") ||
+		strings.EqualFold(local, "majordomo") || strings.Contains(local, "-request") || strings.HasPrefix(local, "owner-")
 }
 
 // vacationAddressedTo finds the user (envelope recipient, original recipient,

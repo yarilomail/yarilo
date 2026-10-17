@@ -2218,18 +2218,17 @@ sieve:
   ## Home-dir file name for sieve_duplicate_driver=file.
   sieve_duplicate_file: ".yarilo.sieve-duplicate"
   sieve_vacation_enabled: true
-  ## vacation periods, seconds: a script's :days / :seconds is raised to the
-  ## minimum and lowered to the maximum; the default applies when it gives
-  ## none. 0 = no bound; a default period of 0 replies to every message.
+  ## vacation periods, seconds: :days / :seconds, or the default, kept between
+  ## the minimum and the maximum; 0 = no bound.
   sieve_vacation_min_period: 86400
   sieve_vacation_max_period: 5184000
   sieve_vacation_default_period: 604800
-  ## Subject of a reply whose script gives none: "Auto: <subject>", or this
-  ## template with %{subject}; sieve_vacation_default_subject when the message
-  ## has no subject ("" = "Automated reply").
+  ## A reply without :subject: "Auto: <subject>" or this template with %{subject};
+  ## a message with no subject gets default_subject ("" = "Automated reply").
   sieve_vacation_default_subject: ""
   sieve_vacation_default_subject_template: ""
-  ## The LMTP ORCPT counts as the user's address too.
+  ## The LMTP ORCPT counts as the user's address too; not in effect until LMTP
+  ## carries ORCPT to the backend.
   sieve_vacation_use_original_recipient: false
   ## Reply only to mail naming the user (or :addresses) in To/Cc/Bcc/Resent-*.
   sieve_vacation_check_recipient: true

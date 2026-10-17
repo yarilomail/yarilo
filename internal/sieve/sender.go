@@ -115,15 +115,6 @@ func (s *Sender) commandTimeout() time.Duration {
 	return time.Duration(s.cfg.SubmissionTimeout) * time.Second
 }
 
-// isMailingList reports whether the message headers indicate a mailing list.
-func isMailingList(hdr textproto.MIMEHeader) bool {
-	if hdr.Get("List-Id") != "" {
-		return true
-	}
-	prec := strings.ToLower(hdr.Get("Precedence"))
-	return prec == "bulk" || prec == "list" || prec == "junk"
-}
-
 // isAutoSubmitted reports whether the message was automatically generated
 // (Auto-Submitted header present and not "no").
 func isAutoSubmitted(hdr textproto.MIMEHeader) bool {
