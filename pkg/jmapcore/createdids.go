@@ -23,9 +23,8 @@ func AddCreated(ctx context.Context, creationID, id string) {
 	}
 }
 
-// ResolveID turns "#<creation id>" into the id created earlier in the request.
-// Anything else, an unknown creation id included, comes back as given, so it
-// is refused as any id that does not exist.
+// ResolveID turns "#<creation id>" into the id created earlier in the request;
+// anything else, an unknown creation id included, comes back as given.
 func ResolveID(ctx context.Context, id string) string {
 	cid, ok := strings.CutPrefix(id, "#")
 	if !ok {

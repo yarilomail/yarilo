@@ -412,3 +412,61 @@ func TestReusedCreationIDNamesTheLatest(t *testing.T) {
 		t.Errorf("#b = %v, want Second", got)
 	}
 }
+
+// In one Mailbox/set, a parent named as "#<creation id>" is created first,
+// whatever the creation ids sort as; a cycle is refused on parentId.
+func TestMailboxCreateOrderFollowsParents(t *testing.T) {
+	cases := []struct {
+		name    string
+		before  bool              // an earlier call created "a" already
+		create  string            // the create map
+		parents map[string]string // created child -> creation id of its parent, "" for top level
+		refused []string
+	}{
+		{"a cycle refused even when an earlier call created one of its creation ids", true,
+			`{"a":{"name":"A","parentId":"#b"},"b":{"name":"B","parentId":"#a"}}`, map[string]string{}, []string{"a", "b"}},
+		{"a parent sorting after its child", false, `{"a":{"name":"A","parentId":"#b"},"b":{"name":"B"}}`,
+			map[string]string{"a": "b", "b": ""}, nil},
+		{"a chain in reverse order", false, `{"a":{"name":"A","parentId":"#c"},"c":{"name":"C","parentId":"#d"},"d":{"name":"D"}}`,
+			map[string]string{"a": "c", "c": "d", "d": ""}, nil},
+		{"a cycle and its child refused, the rest created", false, `{"a":{"name":"A","parentId":"#b"},"b":{"name":"B","parentId":"#a"},"c":{"name":"C","parentId":"#a"},"d":{"name":"D"}}`,
+			map[string]string{"d": ""}, []string{"a", "b", "c"}},
+		{"a mailbox its own parent", false, `{"a":{"name":"A","parentId":"#a"}}`, map[string]string{}, []string{"a"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newIDEnv(t)
+			calls := []string{fmt.Sprintf(`"Mailbox/set",{"accountId":%q,"create":%s},"m"`, testUser, c.create),
+				fmt.Sprintf(`"Mailbox/get",{"accountId":%q,"ids":null,"properties":["parentId"]},"g"`, testUser)}
+			if c.before {
+				calls = append([]string{e.mailbox("a", "Old", "")}, calls...)
+			}
+			r := e.batch(t, calls...)
+			parentOf := map[string]string{}
+			list, _ := r["g"].args["list"].([]any)
+			for _, o := range list {
+				m := o.(map[string]any)
+				p, _ := m["parentId"].(string)
+				parentOf[fmt.Sprint(m["id"])] = p
+			}
+			for child, pc := range c.parents {
+				id := createdIDOf(r["m"], child)
+				want := ""
+				if pc != "" {
+					want = createdIDOf(r["m"], pc)
+				}
+				if id == "" || parentOf[id] != want || (pc != "" && want == "") {
+					t.Errorf("%s: id %q parent %q, want parent %q (%v)", child, id, parentOf[id], want, r["m"].args)
+				}
+			}
+			for _, cid := range c.refused {
+				if e := entry(r["m"].args, "notCreated", cid); e["type"] != "invalidProperties" || fmt.Sprint(e["properties"]) != "[parentId]" {
+					t.Errorf("%s: notCreated %v, want invalidProperties on parentId", cid, e)
+				}
+			}
+			if n := len(keys(r["m"].args["created"])); n != len(c.parents) {
+				t.Errorf("created %v, want %d", r["m"].args["created"], len(c.parents))
+			}
+		})
+	}
+}
