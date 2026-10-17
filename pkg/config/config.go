@@ -108,6 +108,23 @@ type SieveConfig struct {
 	DuplicateFile string `koanf:"sieve_duplicate_file"`
 	// VacationEnabled permits the vacation extension (RFC 5230). Default: true.
 	VacationEnabled bool `koanf:"sieve_vacation_enabled"`
+	// VacationMinPeriod, VacationMaxPeriod and VacationDefaultPeriod bound a
+	// script's :days / :seconds, in seconds; 0 = no bound (RFC 5230 §4.1).
+	VacationMinPeriod     int `koanf:"sieve_vacation_min_period"`
+	VacationMaxPeriod     int `koanf:"sieve_vacation_max_period"`
+	VacationDefaultPeriod int `koanf:"sieve_vacation_default_period"`
+	// VacationDefaultSubject is the subject when the message has none and the
+	// script gives none; VacationDefaultSubjectTemplate builds it from %{subject}.
+	VacationDefaultSubject         string `koanf:"sieve_vacation_default_subject"`
+	VacationDefaultSubjectTemplate string `koanf:"sieve_vacation_default_subject_template"`
+	// VacationUseOriginalRecipient also takes the LMTP ORCPT as the user's address.
+	VacationUseOriginalRecipient bool `koanf:"sieve_vacation_use_original_recipient"`
+	// VacationCheckRecipient replies only to mail naming the user in To/Cc/Bcc (RFC 5230 §4.5).
+	VacationCheckRecipient bool `koanf:"sieve_vacation_check_recipient"`
+	// VacationSendFromRecipient sends the reply from the recipient instead of <>.
+	VacationSendFromRecipient bool `koanf:"sieve_vacation_send_from_recipient"`
+	// VacationToHeaderIgnoreEnvelope takes the reply's To from the headers alone.
+	VacationToHeaderIgnoreEnvelope bool `koanf:"sieve_vacation_to_header_ignore_envelope"`
 
 	// SubmissionHost is the upstream MTA address (host[:port]) used to send
 	// outbound mail for Sieve redirect and vacation actions. Default port 25.
@@ -2628,21 +2645,22 @@ func Defaults() *Config {
 		},
 		Log: LogConfig{Level: "info"},
 		Sieve: SieveConfig{
-			DefaultName:      "yarilo",
-			DuplicateDriver:  "file",
-			DuplicateFile:    ".yarilo.sieve-duplicate",
-			VacationEnabled:  true,
-			ReportUserAgent:  "yarilo",
-			SubmissionSSL:    "no",
-			PipeBinDir:       "/usr/lib/yarilo/sieve-pipe",
-			PipeSocketDir:    "sieve-pipe",
-			PipeInputEOL:     "crlf",
-			FilterBinDir:     "/usr/lib/yarilo/sieve-filter",
-			FilterSocketDir:  "sieve-filter",
-			FilterInputEOL:   "crlf",
-			ExecuteBinDir:    "/usr/lib/yarilo/sieve-execute",
-			ExecuteSocketDir: "sieve-execute",
-			ExecuteInputEOL:  "crlf",
+			DefaultName:            "yarilo",
+			DuplicateDriver:        "file",
+			DuplicateFile:          ".yarilo.sieve-duplicate",
+			VacationEnabled:        true,
+			VacationCheckRecipient: true,
+			ReportUserAgent:        "yarilo",
+			SubmissionSSL:          "no",
+			PipeBinDir:             "/usr/lib/yarilo/sieve-pipe",
+			PipeSocketDir:          "sieve-pipe",
+			PipeInputEOL:           "crlf",
+			FilterBinDir:           "/usr/lib/yarilo/sieve-filter",
+			FilterSocketDir:        "sieve-filter",
+			FilterInputEOL:         "crlf",
+			ExecuteBinDir:          "/usr/lib/yarilo/sieve-execute",
+			ExecuteSocketDir:       "sieve-execute",
+			ExecuteInputEOL:        "crlf",
 		},
 	}
 	c.Threading.ThreadingCacheIdle = 300
@@ -2694,6 +2712,9 @@ func Defaults() *Config {
 	c.Sieve.MaxRedirects = 32
 	c.Sieve.MaxActions = 32
 	c.Sieve.DuplicateMaxPeriod = 604800
+	c.Sieve.VacationMinPeriod = 86400
+	c.Sieve.VacationMaxPeriod = 5184000
+	c.Sieve.VacationDefaultPeriod = 604800
 	c.ACL.CacheTTL = 30
 	c.Auth.FailureDelaySeconds = 2
 	c.Auth.InternalFailureDelayMs = 2000
@@ -3583,7 +3604,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 14
+const minConfigSchema = 15
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3608,6 +3629,9 @@ var schemaAdditions = map[int][]string{
 	12: {"sieve_max_storage"},
 	13: {"submission_relay_master_user", "submission_relay_ssl_ca"},
 	14: {"jmap_submission_ttl_seconds"},
+	15: {"sieve_vacation_min_period", "sieve_vacation_max_period", "sieve_vacation_default_period",
+		"sieve_vacation_default_subject", "sieve_vacation_default_subject_template", "sieve_vacation_use_original_recipient",
+		"sieve_vacation_check_recipient", "sieve_vacation_send_from_recipient", "sieve_vacation_to_header_ignore_envelope"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

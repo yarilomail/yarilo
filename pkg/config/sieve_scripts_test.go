@@ -53,3 +53,40 @@ func TestSubmissionTTLIsAnOffKey(t *testing.T) {
 		t.Errorf("default = %d, want 86400", Defaults().Protocol.JMAP.SubmissionTTLSeconds)
 	}
 }
+
+// The vacation periods: 0 lifts a bound, a negative value is refused by name;
+// the defaults are the reference's (#2277).
+func TestVacationKeys(t *testing.T) {
+	periods := []struct {
+		key   string
+		field func(*Config) int
+		def   int
+	}{
+		{"sieve_vacation_min_period", func(c *Config) int { return c.Sieve.VacationMinPeriod }, 86400},
+		{"sieve_vacation_max_period", func(c *Config) int { return c.Sieve.VacationMaxPeriod }, 5184000},
+		{"sieve_vacation_default_period", func(c *Config) int { return c.Sieve.VacationDefaultPeriod }, 604800},
+	}
+	for _, k := range periods {
+		if got := k.field(Defaults()); got != k.def {
+			t.Errorf("%s default = %d, want %d", k.key, got, k.def)
+		}
+		for _, c := range []struct {
+			value   string
+			want    int
+			refused bool
+		}{{"0", 0, false}, {"60", 60, false}, {"-1", 0, true}} {
+			cfg, err := loadYAML(t, yamlAt("sieve."+k.key, c.value))
+			switch {
+			case c.refused && (err == nil || !strings.Contains(err.Error(), k.key)):
+				t.Errorf("%s %s: err = %v, want a refusal naming it", k.key, c.value, err)
+			case !c.refused && (err != nil || k.field(cfg) != c.want):
+				t.Errorf("%s %s: %v, loads as %d", k.key, c.value, err, k.field(cfg))
+			}
+		}
+	}
+	d := Defaults().Sieve
+	if !d.VacationCheckRecipient || d.VacationUseOriginalRecipient || d.VacationSendFromRecipient || d.VacationToHeaderIgnoreEnvelope ||
+		d.VacationDefaultSubject != "" || d.VacationDefaultSubjectTemplate != "" {
+		t.Errorf("vacation defaults = %+v, want check_recipient on and the rest off and empty", d)
+	}
+}
