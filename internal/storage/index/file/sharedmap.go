@@ -154,12 +154,14 @@ func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*ind
 		// read: the base plus the whole log still answers.
 	}
 
-	view, end, err := fs.buildView()
+	// The image the view was built on, not the one taken above: two parses of
+	// one base are one image here and two record sets (#2265).
+	view, end, used, err := fs.buildView()
 	if err != nil {
 		return nil, err
 	}
-	return &indexMap{view: view, img: img, logIdent: logSt, logSeen: sizeOfLog(logSt), committedEnd: end,
-		ownsFile: img == nil || img.file != view.file}, nil
+	return &indexMap{view: view, img: used, logIdent: logSt, logSeen: sizeOfLog(logSt), committedEnd: end,
+		ownsFile: used.file != view.file}, nil
 }
 
 // extend folds [committedEnd, end) onto the map we already have.
