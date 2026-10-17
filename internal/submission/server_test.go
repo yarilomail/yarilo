@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"io"
 	"math/big"
 	"net"
@@ -18,11 +21,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
+	"golang.org/x/crypto/pbkdf2"
 
+	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
+	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/pkg/config"
 )
@@ -489,5 +494,136 @@ func TestSubmission_RelayIsToldTheSessionUser(t *testing.T) {
 	defer rec.mu.Unlock()
 	if rec.identity != "alice@example.com" {
 		t.Errorf("relay authzid = %q, want the session's alice@example.com", rec.identity)
+	}
+}
+
+// relayedSubmission serves submission over auth, relaying to a recorder that
+// is told the PLAIN authzid of every relay login.
+func relayedSubmission(t *testing.T, auth *authrelay.Client, oauth bool) (string, *identityRelay) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &identityRelay{}
+	relaySrv := goSmtp.NewServer(rec)
+	relaySrv.Domain = "relay.test"
+	relaySrv.AllowInsecureAuth = true
+	go func() { _ = relaySrv.Serve(ln) }()
+	t.Cleanup(func() { relaySrv.Close() })
+	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	relayCfg := config.RelayConfig{Host: host, Port: port, SSL: "no", User: "%u", MasterUser: "master", Password: "pw",
+		ConnectTimeout: 5, CommandTimeout: 10}
+	srv := New(Options{
+		Config:        config.SubmissionProtocolConfig{Hostname: "mx.example.com", MaxMsgSize: 1 << 20},
+		AuthRelay:     auth,
+		OAuth2Enabled: oauth,
+		Proxy:         proxy.New(relayCfg, "mx.example.com"),
+	})
+	sl, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(sl, nil) }()
+	t.Cleanup(func() { sl.Close() })
+	return sl.Addr().String(), rec
+}
+
+// scramClient is a SCRAM-SHA-256 client for go-smtp's Auth.
+type scramClient struct {
+	user, pass, nonce, clientFirstBare string
+	step                               int
+}
+
+func (c *scramClient) Start() (string, []byte, error) {
+	c.clientFirstBare = "n=" + c.user + ",r=" + c.nonce
+	return "SCRAM-SHA-256", []byte("n,," + c.clientFirstBare), nil
+}
+
+func (c *scramClient) Next(challenge []byte) ([]byte, error) {
+	c.step++
+	if c.step > 1 {
+		return nil, nil
+	}
+	serverFirst := string(challenge)
+	var nonce, saltB64 string
+	iter := 0
+	for _, attr := range strings.Split(serverFirst, ",") {
+		switch {
+		case strings.HasPrefix(attr, "r="):
+			nonce = attr[2:]
+		case strings.HasPrefix(attr, "s="):
+			saltB64 = attr[2:]
+		case strings.HasPrefix(attr, "i="):
+			iter, _ = strconv.Atoi(attr[2:])
+		}
+	}
+	salt, _ := base64.StdEncoding.DecodeString(saltB64)
+	withoutProof := "c=" + base64.StdEncoding.EncodeToString([]byte("n,,")) + ",r=" + nonce
+	authMessage := c.clientFirstBare + "," + serverFirst + "," + withoutProof
+	salted := pbkdf2.Key([]byte(c.pass), salt, iter, sha256.Size, sha256.New)
+	mac := func(key, data []byte) []byte { m := hmac.New(sha256.New, key); m.Write(data); return m.Sum(nil) }
+	clientKey := mac(salted, []byte("Client Key"))
+	stored := sha256.Sum256(clientKey)
+	sig := mac(stored[:], []byte(authMessage))
+	proof := make([]byte, len(clientKey))
+	for i := range proof {
+		proof[i] = clientKey[i] ^ sig[i]
+	}
+	return []byte(withoutProof + ",p=" + base64.StdEncoding.EncodeToString(proof)), nil
+}
+
+type scramAuth struct {
+	user  string
+	creds *sasl.ScramCredentials
+}
+
+func (a scramAuth) Authenticate(_, _, _, _ string) (*protocol.AuthResponse, error) {
+	return &protocol.AuthResponse{Result: protocol.AuthFail}, nil
+}
+
+func (a scramAuth) LookupSCRAMSha256(user string) (*sasl.ScramCredentials, error) {
+	if user == a.user {
+		return a.creds, nil
+	}
+	return nil, nil
+}
+
+// SCRAM and OAuth logins on the backend name their user to the relay, as
+// PLAIN does: without it a master would stand for the sender.
+func TestSubmission_RelayIsToldTheUserOfEveryLoginPath(t *testing.T) {
+	creds, err := sasl.GenerateScramSha256Credentials("hunter2", sasl.MinScramIterations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		auth  func(t *testing.T) *authrelay.Client
+		oauth bool
+		login sasl.Client
+	}{
+		{"SCRAM-SHA-256", func(t *testing.T) *authrelay.Client {
+			return authtest.RelayTo(t, scramAuth{user: "alice@example.com", creds: creds})
+		}, false, &scramClient{user: "alice@example.com", pass: "hunter2", nonce: "rOprNGfwEbeRWgbNEkqO"}},
+		{"OAUTHBEARER", func(t *testing.T) *authrelay.Client {
+			return authtest.RelayToChain(t, authtest.OAuthPassdb{User: "alice@example.com", Token: "tok"})
+		}, true, sasl.NewOAuthBearerClient(&sasl.OAuthBearerOptions{Username: "alice@example.com", Token: "tok"})},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			addr, rec := relayedSubmission(t, c.auth(t), c.oauth)
+			cl := dialSMTP(t, addr)
+			defer cl.Close()
+			if err := cl.Auth(c.login); err != nil {
+				t.Fatalf("AUTH %s: %v", c.name, err)
+			}
+			sendMessage(t, cl, "alice@example.com", "bob@external.com", "Subject: x\r\n\r\nx\r\n")
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			if rec.identity != "alice@example.com" {
+				t.Errorf("relay authzid = %q, want alice@example.com", rec.identity)
+			}
+		})
 	}
 }

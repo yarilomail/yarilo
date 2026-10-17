@@ -4,6 +4,7 @@
 package proxy
 
 import (
+	"cmp"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -49,6 +50,14 @@ func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP 
 			Code:         451,
 			EnhancedCode: goSmtp.EnhancedCode{4, 3, 0},
 			Message:      "Upstream MTA not configured",
+		}
+	}
+	if login == "" && s.needsLogin() {
+		slog.Error("submission/proxy: the relay names the sender, and the session has no user")
+		return &goSmtp.SMTPError{
+			Code:         451,
+			EnhancedCode: goSmtp.EnhancedCode{4, 7, 0},
+			Message:      "No user to relay as",
 		}
 	}
 
@@ -186,7 +195,14 @@ func (s *Submission) commandTimeout() time.Duration {
 func (s *Submission) relayAuth(login string) (authcid, authzid string) {
 	user := strings.NewReplacer("%{user}", login, "%u", login).Replace(s.cfg.User)
 	if s.cfg.MasterUser != "" {
-		return s.cfg.MasterUser, user
+		return s.cfg.MasterUser, cmp.Or(user, login)
 	}
 	return user, ""
+}
+
+// needsLogin: a relay user built from %u, or a master acting for nobody named,
+// cannot be given without the session's user.
+func (s *Submission) needsLogin() bool {
+	return (s.cfg.MasterUser != "" && s.cfg.User == "") ||
+		strings.Contains(s.cfg.User, "%u") || strings.Contains(s.cfg.User, "%{user}")
 }

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -26,6 +27,8 @@ func TestRelayAuth(t *testing.T) {
 		{"%u is the session's user", config.RelayConfig{User: "%u"}, "u@d.test", "u@d.test", ""},
 		{"%{user} too", config.RelayConfig{User: "%{user}"}, "u@d.test", "u@d.test", ""},
 		{"a master acting for the user", config.RelayConfig{User: "%u", MasterUser: "master"}, "u@d.test", "master", "u@d.test"},
+		{"a master with no relay user acts for the session's user", config.RelayConfig{MasterUser: "master"}, "u@d.test", "master", "u@d.test"},
+		{"a master acting for a fixed user", config.RelayConfig{User: "svc", MasterUser: "master"}, "u@d.test", "master", "svc"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -91,5 +94,52 @@ func TestSendLogsInAsTheMasterForTheUser(t *testing.T) {
 	defer seen.mu.Unlock()
 	if seen.identity != "u@d.test" || seen.username != "master" || seen.password != "pw" {
 		t.Errorf("relay saw PLAIN (%q, %q, %q), want (u@d.test, master, pw)", seen.identity, seen.username, seen.password)
+	}
+}
+
+// A relay that names the sender gets no session without one: 451, and the
+// relay is never reached.
+func TestSendWithoutAUserIsRefusedWhenTheRelayNamesTheSender(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     config.RelayConfig
+		refused bool
+	}{
+		{"%u", config.RelayConfig{User: "%u"}, true},
+		{"%{user}", config.RelayConfig{User: "%{user}"}, true},
+		{"a master acting for the session's user", config.RelayConfig{MasterUser: "master"}, true},
+		{"a master acting for a fixed user", config.RelayConfig{User: "svc", MasterUser: "master"}, false},
+		{"a fixed relay user", config.RelayConfig{User: "svc"}, false},
+		{"no relay auth", config.RelayConfig{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen := &relaySeen{}
+			srv := goSmtp.NewServer(authRelay{seen})
+			srv.Domain = "relay.test"
+			srv.AllowInsecureAuth = true
+			go srv.Serve(ln) //nolint:errcheck
+			t.Cleanup(func() { srv.Close() })
+			host, port, _ := net.SplitHostPort(ln.Addr().String())
+			cfg := c.cfg
+			cfg.Host, cfg.SSL, cfg.ConnectTimeout, cfg.CommandTimeout = host, "no", 5, 5
+			cfg.Port, _ = strconv.Atoi(port)
+
+			err = New(cfg, "mx.test").Send("u@d.test", []string{"x@e.test"}, strings.NewReader("Subject: x\r\n\r\nx\r\n"), nil, "")
+			var se *goSmtp.SMTPError
+			got := errors.As(err, &se) && se.Code == 451 && se.EnhancedCode == goSmtp.EnhancedCode{4, 7, 0}
+			if got != c.refused {
+				t.Errorf("Send = %v, want refused=%v", err, c.refused)
+			}
+			seen.mu.Lock()
+			defer seen.mu.Unlock()
+			if c.refused && (seen.username != "" || seen.identity != "") {
+				t.Errorf("the relay was reached: PLAIN (%q, %q)", seen.identity, seen.username)
+			}
+		})
 	}
 }

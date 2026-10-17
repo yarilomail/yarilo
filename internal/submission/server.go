@@ -336,11 +336,10 @@ func (s *session) authPlain(authzid, authid, password string) error {
 // startup check refuses that config, so reaching it is a bug, not a state.
 var errNoAuthService = errors.New("submission: no auth service configured")
 
-// completeSCRAMLogin is the OnSuccess hook for the session's SCRAM adapter. The
-// SCRAM server has already verified the credential; go-smtp flips the session's
-// authenticated bit once Auth's sasl.Server returns done=true, so there is
-// nothing to do here.
-func (s *session) completeSCRAMLogin(_ string) error {
+// completeSCRAMLogin is the OnSuccess hook for the session's SCRAM adapter: the
+// credential is verified, and the user is the one the relay is told.
+func (s *session) completeSCRAMLogin(username string) error {
+	s.username = username
 	return nil
 }
 
