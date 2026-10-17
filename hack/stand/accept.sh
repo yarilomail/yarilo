@@ -18,6 +18,8 @@ trap 'rc=$?; echo "accept: line $LINENO: $BASH_COMMAND exited $rc" >&2' ERR
 TAG="${1:?image tag}"
 OUT="${2:?output directory}"
 NS="${YARILO_NS:-yarilo-sb}"
+RELAY_NS="${RELAY_NS:-yarilo-relay}"
+RELAY_SELECTOR="${RELAY_SELECTOR:-app=relay-mta}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PASSWORD='Yarilo!test1'
@@ -242,6 +244,84 @@ count_lines() {
   wc -l < "$OUT/lines/$1.txt" | tr -d ' '
 }
 
+# curl_as runs curl with "login:password" fed on stdin as its config, so the
+# password is in no argument a process listing shows and in no log.
+curl_as() {
+  local cred="$1"
+  shift
+  cred=${cred//\\/\\\\}
+  cred=${cred//\"/\\\"}
+  printf 'user = "%s"\n' "$cred" | curl -sS --max-time 60 -K - "$@"
+}
+
+# smtp_send submits one message through the stand's submission listener.
+smtp_send() {
+  local login="$1" pass="$2" from="$3" to="$4" marker="$5"
+  printf 'From: <%s>\r\nTo: <%s>\r\nSubject: %s\r\nMessage-ID: <%s@accept.invalid>\r\n\r\ncross-mailbox check\r\n' \
+    "$from" "$to" "$marker" "$marker" > "$OUT/cross/$marker.eml"
+  curl_as "$login:$pass" --ssl-reqd --resolve "$MAIL_HOST:587:$SUBMISSION_IP" "smtp://$MAIL_HOST:587" \
+    --mail-from "$from" --mail-rcpt "$to" --upload-file "$OUT/cross/$marker.eml" > "$OUT/cross/$marker.smtp" 2>&1
+}
+
+jmap_post() {
+  curl_as "$1:$2" --resolve "$MAIL_HOST:443:$JMAP_IP" -H 'Content-Type: application/json' \
+    --data-binary "$3" "https://$MAIL_HOST/jmap/api/"
+}
+
+# jmap_send creates a draft and submits it by "#d" in one request, as clients
+# do; onSuccessDestroyEmail removes the draft, and a failed send removes it too.
+jmap_send() {
+  local login="$1" pass="$2" from="$3" to="$4" bcc="$5" marker="$6" using inbox ident resp draft
+  using='"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"]'
+  inbox=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Mailbox/query\",{\"accountId\":\"$from\",\"filter\":{\"role\":\"inbox\"}},\"q\"]]}" |
+    sed -n 's/.*"ids":\["\([^"]*\)".*/\1/p')
+  ident="I$(printf '%s' "$from" | tr '[:upper:]' '[:lower:]' | sha256sum | cut -c1-16)"
+  resp=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$from\",\"create\":{\"d\":{\"mailboxIds\":{\"$inbox\":true},\"keywords\":{\"\$draft\":true},\"from\":[{\"email\":\"$from\"}],\"to\":[{\"email\":\"$to\"}],\"bcc\":[{\"email\":\"$bcc\"}],\"subject\":\"$marker\",\"textBody\":[{\"partId\":\"1\",\"type\":\"text/plain\"}],\"bodyValues\":{\"1\":{\"value\":\"cross-mailbox check\"}}}}},\"e\"],[\"EmailSubmission/set\",{\"accountId\":\"$from\",\"create\":{\"s\":{\"identityId\":\"$ident\",\"emailId\":\"#d\"}},\"onSuccessDestroyEmail\":[\"#s\"]},\"s\"]]}" || true)
+  echo "$resp" > "$OUT/cross/$marker.jmap"
+  draft=$(printf '%s' "$resp" | sed -n 's/.*"created":{"d":{[^}]*"id":"\([^"]*\)".*/\1/p')
+  if printf '%s' "$resp" | grep -q '"undoStatus":"final"' && printf '%s' "$resp" | grep -q "\"destroyed\":\[\"$draft\"\]"; then
+    return 0
+  fi
+  [ -z "$draft" ] || jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$from\",\"destroy\":[\"$draft\"]},\"x\"]]}" > /dev/null || true
+  return 1
+}
+
+# delivered waits up to a minute for the marked message in the user's INBOX,
+# prints how many copies carry a Bcc header, and expunges every copy.
+delivered() {
+  local user="$1" marker="$2" out waited=0
+  while :; do
+    out=$(imap_session "a LOGIN $user $PASSWORD\r\nb SELECT INBOX\r\nc UID SEARCH RETURN (SAVE ALL) HEADER SUBJECT $marker\r\nd UID SEARCH RETURN (COUNT) HEADER SUBJECT $marker HEADER BCC \"\"\r\ne UID STORE \$ +FLAGS.SILENT (\\\\Deleted)\r\nf UID EXPUNGE \$\r\ng LOGOUT\r\n")
+    echo "$out" >> "$OUT/cross/$marker.imap"
+    if echo "$out" | grep -q '^\* ESEARCH (TAG "c") UID ALL'; then
+      echo "$out" | sed -n 's/^\* ESEARCH (TAG "d") UID COUNT \([0-9]*\).*/\1/p'
+      return 0
+    fi
+    [ "$waited" -ge 60 ] && return 1
+    sleep 3; waited=$((waited + 3))
+  done
+}
+
+# cross_check sends one message and reports what reached each recipient.
+cross_check() {
+  local how="$1" via="$2" login="$3" pass="$4" from="$5" to="$6" bcc="$7" marker bccs who
+  marker="xaccept-$(date +%s%N | sha256sum | cut -c1-10)"
+  if [ "$via" = smtp ]; then
+    smtp_send "$login" "$pass" "$from" "$to" "$marker" || { CROSS_BAD+="$via $how $from->$to: refused ($OUT/cross/$marker.smtp); "; return; }
+  else
+    jmap_send "$login" "$pass" "$from" "$to" "$bcc" "$marker" || { CROSS_BAD+="$via $how $from->$to: not sent ($OUT/cross/$marker.jmap); "; return; }
+  fi
+  CROSS_SENT+="$from "
+  for who in $to $bcc; do
+    if ! bccs=$(delivered "$who" "$marker"); then
+      CROSS_BAD+="$via $how $from->$to: nothing reached $who in 60 s; "
+    elif [ "$bccs" != 0 ]; then
+      CROSS_BAD+="$via $how $from->$to: $who got it with a Bcc header; "
+    fi
+  done
+  CROSS_OK=$((CROSS_OK + 1))
+}
+
 echo "-- tooling: $(git -C "$REPO" log --oneline -1) tag=$TAG"
 
 echo "== deploy $(date -u +%FT%TZ)"
@@ -283,6 +363,39 @@ for spec in u51@d00002.test:maildir u101@d00003.test:sdbox; do
   index=$(index_messages "$user")
   [ -n "$disk" ] && [ "$disk" = "$index" ] && verdict "disk = index $user" ok "$disk" || verdict "disk = index $user" fail "disk=${disk:-?} index=${index:-?}"
 done
+
+echo "== mail between mailboxes"
+# Own passwords and the master login, SMTP and JMAP; the relay must see the
+# real sender each time, never the master user it logs in as (#2273).
+MAIL_HOST=$(kube get cm yarilo -o jsonpath='{.data.yarilo\.yaml}' | sed -n 's/.*jmap_base_url: *"https:\/\/\([^"/]*\)".*/\1/p' || true)
+MASTER_USER=$(kube get cm yarilo -o jsonpath='{.data.yarilo\.yaml}' | sed -n 's/.*submission_relay_master_user: *"\([^"]*\)".*/\1/p' || true)
+MASTER_PW=$(kube get secret yarilo-submission-relay -o jsonpath='{.data.password}' | base64 -d || true)
+SUBMISSION_IP=$(kube get svc yarilo-submission-login -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true)
+JMAP_IP=$(kube get svc yarilo-jmap-login -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true)
+mkdir -p "$OUT/cross"
+CROSS_OK=0 CROSS_BAD="" CROSS_SENT=""
+CROSS_START=$(date -u +%FT%TZ)
+if [ -z "$MAIL_HOST" ] || [ -z "$MASTER_USER" ] || [ -z "$MASTER_PW" ] || [ -z "$SUBMISSION_IP" ] || [ -z "$JMAP_IP" ]; then
+  verdict "mail between mailboxes reaches the relay as its sender" fail "host '$MAIL_HOST', master user '$MASTER_USER', master password $([ -n "$MASTER_PW" ] && echo set || echo missing), submission '$SUBMISSION_IP', jmap '$JMAP_IP'"
+else
+  for spec in u1@d00001.test:u51@d00002.test:u101@d00003.test u51@d00002.test:u101@d00003.test:u1@d00001.test u101@d00003.test:u1@d00001.test:u51@d00002.test; do
+    IFS=: read -r from to bcc <<< "$spec"
+    cross_check "own password" smtp "$from" "$PASSWORD" "$from" "$to" ""
+    cross_check "own password" jmap "$from" "$PASSWORD" "$from" "$to" "$bcc"
+  done
+  cross_check "as $MASTER_USER" smtp "u1@d00001.test*$MASTER_USER" "$MASTER_PW" u1@d00001.test u51@d00002.test ""
+  cross_check "as $MASTER_USER" jmap "u1@d00001.test*$MASTER_USER" "$MASTER_PW" u1@d00001.test u51@d00002.test u101@d00003.test
+  sleep 5
+  kubectl -n "$RELAY_NS" --request-timeout=60s logs -l "$RELAY_SELECTOR" --since-time="$CROSS_START" --tail=-1 2>/dev/null |
+    grep -a 'sasl_username=' > "$OUT/lines/relay-sasl.txt" || true
+  seen=$(grep -ao 'sasl_username=[^ ,]*' "$OUT/lines/relay-sasl.txt" | sed 's/^sasl_username=//' | sort | uniq -c | awk '{ print $2 "x" $1 }' | tr '\n' ' ')
+  want=$(printf '%s\n' $CROSS_SENT | sort | uniq -c | awk '{ print $2 "x" $1 }' | tr '\n' ' ')
+  [ "$seen" = "$want" ] || CROSS_BAD+="relay saw sasl_username '${seen:-none}', want '$want' (lines/relay-sasl.txt); "
+  [ -z "$CROSS_BAD" ] && [ "$CROSS_OK" = 8 ] &&
+    verdict "mail between mailboxes reaches the relay as its sender" ok "8 sent and delivered, Bcc removed; relay saw $seen" ||
+    verdict "mail between mailboxes reaches the relay as its sender" fail "${CROSS_BAD:-only $CROSS_OK of 8 sent}"
+fi
+unset MASTER_PW
 
 echo "== imaptest, one type at a time"
 for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do
