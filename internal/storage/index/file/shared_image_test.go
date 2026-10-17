@@ -7,10 +7,8 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// Two parses of one base are one image to the map but two objects; a view built
-// on the cached one with an empty log uses its records as they are. Ownership
-// must follow the image the view used, or the next fold extends the cached base
-// in place, which every other handle reads (#2265).
+// Two parses of one base are one image to the map but two record sets: the next
+// fold must not extend the cached one in place, which every handle reads (#2265).
 func TestAFoldNeverWritesIntoTheCachedBase(t *testing.T) {
 	u, fs, folder := openTestFolder(t, 30)
 	if err := u.OptimizeIndex(folder.ID); err != nil {
