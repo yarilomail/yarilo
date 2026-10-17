@@ -86,8 +86,14 @@ func MapLog(t *testing.T) []byte { return read(t, "testdata/map.log") }
 // StoreFile is the storage file the index fixtures describe.
 func StoreFile(t *testing.T) []byte { return read(t, "testdata/store-m.1") }
 
+// readSeen, when set, is told every fixture read; the self-check uses it.
+var readSeen func(name string)
+
 func read(t *testing.T, name string) []byte {
 	t.Helper()
+	if readSeen != nil {
+		readSeen(name)
+	}
 	b, err := files.ReadFile(name)
 	if err != nil {
 		t.Fatalf("reference fixture %s: %v", name, err)
