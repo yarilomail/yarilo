@@ -3,6 +3,7 @@ package jmapcore
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -24,6 +25,11 @@ func SessionState(lim Limits) string {
 		b.WriteByte(';')
 	}
 	b.WriteString(lim.BaseURL)
+	if lim.Sieve != nil {
+		raw, _ := json.Marshal(lim.Sieve)
+		b.WriteByte(';')
+		b.Write(raw)
+	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:8])
 }

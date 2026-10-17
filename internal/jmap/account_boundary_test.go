@@ -1,6 +1,7 @@
 package jmap
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -47,14 +49,18 @@ func twoAccountServer(t *testing.T) (*Server, string) {
 			},
 			Locker: locker,
 		},
+		Sieve: &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil)},
 	})
+	if err := s.opts.Sieve.Store.SaveScript(context.Background(), foreignUser, infos[foreignUser].Home, "theirs", []byte("keep;\n")); err != nil {
+		t.Fatal(err)
+	}
 	return s, hex.EncodeToString(foreignGUID[:])
 }
 
 // callAs runs one method as user and returns the response name and arguments.
 func callAs(t *testing.T, s *Server, user, method, args string) (string, map[string]any) {
 	t.Helper()
-	using, _ := json.Marshal(declaredCapabilities())
+	using, _ := json.Marshal(declaredCapabilities(s.opts.Limits))
 	body := fmt.Sprintf(`{"using":%s,"methodCalls":[[%q,%s,"c0"]]}`, using, method, args)
 	r := apiRequest(body)
 	r.Header.Set(hdrUser, user)
@@ -181,6 +187,27 @@ var boundaryRows = []struct {
 	{"Mailbox/set", kindEmptyAccount, `{"destroy":["FOREIGNBOX"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	{"SieveScript/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["S1"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"SieveScript/set", kindEmptyAccount, `{"destroy":["S1"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	// S1 is the other account's script; ids are per account.
+	{"SieveScript/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["S1"]}`,
+		func(t *testing.T, s *Server, _, name string, out map[string]any) {
+			notDestroyed, _ := out["notDestroyed"].(map[string]any)
+			setErr, _ := notDestroyed["S1"].(map[string]any)
+			if name != "SieveScript/set" || setErr["type"] != "notFound" {
+				t.Errorf("answered %s %v, want notDestroyed S1 notFound", name, out)
+			}
+			_, got := callAs(t, s, foreignUser, "SieveScript/get", `{"accountId":"`+foreignUser+`","ids":["S1"]}`)
+			if list, _ := got["list"].([]any); len(list) != 1 {
+				t.Errorf("the other account's script is gone: %v", got)
+			}
 		}},
 	// Resolved globally, the other INBOX would answer forbidden, not notFound.
 	{"Mailbox/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["FOREIGNBOX"]}`,

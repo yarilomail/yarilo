@@ -90,6 +90,8 @@ type SieveConfig struct {
 	MaxRedirects int `koanf:"sieve_max_redirects"`
 	// MaxScripts caps a user's stored scripts; replacing one adds none. 0 = unlimited.
 	MaxScripts int `koanf:"sieve_max_num_scripts"`
+	// MaxStorage caps the bytes of a user's stored scripts. 0 = unlimited.
+	MaxStorage int `koanf:"sieve_max_storage"`
 	// MaxActions caps the total actions a single script may apply
 	// (fileinto, redirect, keep, ...). 0 = unlimited. Default: 32.
 	MaxActions int `koanf:"sieve_max_actions"`
@@ -3573,7 +3575,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 11
+const minConfigSchema = 12
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3595,6 +3597,7 @@ var schemaAdditions = map[int][]string{
 	9:  {"oauth2_grant_url", "oauth2_local_keys", "oauth2_force_introspection", "oauth2_tls_ca"},
 	10: {"oauth2_jwks_unknown_kid_interval_seconds"},
 	11: {"sieve_max_num_scripts"},
+	12: {"sieve_max_storage"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

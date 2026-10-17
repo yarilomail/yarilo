@@ -23,7 +23,7 @@ func TestManageSieveTakesTheSieveLimits(t *testing.T) {
 	t.Cleanup(func() { cancel(); ln.Close() }) //nolint:errcheck
 	cfg.AuthService.Addr = ln.Addr().String()
 	cfg.Services.ManageSieveBE = &config.ServiceConfig{Enabled: true}
-	cfg.Sieve.MaxScriptSize, cfg.Sieve.MaxScripts = 100, 3
+	cfg.Sieve.MaxScriptSize, cfg.Sieve.MaxScripts, cfg.Sieve.MaxStorage = 100, 3, 500
 
 	s, err := New(cfg)
 	if err != nil {
@@ -36,6 +36,9 @@ func TestManageSieveTakesTheSieveLimits(t *testing.T) {
 	opts := reflect.ValueOf(s.managesieve).Elem().FieldByName("opts")
 	if got := opts.FieldByName("MaxScripts").Int(); got != 3 {
 		t.Errorf("ManageSieve MaxScripts = %d, want sieve_max_num_scripts 3", got)
+	}
+	if got := opts.FieldByName("MaxStorage").Int(); got != 500 {
+		t.Errorf("ManageSieve MaxStorage = %d, want sieve_max_storage 500", got)
 	}
 	if got := opts.FieldByName("MaxScriptSize").Int(); got != 100 {
 		t.Errorf("ManageSieve MaxScriptSize = %d, want sieve_max_script_size 100", got)

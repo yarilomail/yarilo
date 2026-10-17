@@ -19,6 +19,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/backend"
 	"github.com/yarilomail/yarilo/internal/jmap"
 	"github.com/yarilomail/yarilo/internal/readyfile"
+	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/telemetry"
@@ -171,6 +172,12 @@ func main() {
 			"fts_addr", cfg.FTS.Addr, "fts_search", cfg.FTS.Search)
 	}
 
+	scripts, err := backend.BuildScriptStore(cfg, store.Locker)
+	if err != nil {
+		slog.Error("sieve script store", "err", err)
+		os.Exit(1)
+	}
+
 	srv := jmap.New(jmap.Options{
 		UploadTTL:         time.Duration(cfg.Protocol.JMAP.UploadTTL) * time.Second,
 		Addr:              addr,
@@ -186,6 +193,7 @@ func main() {
 		QuotaPolicy:       cfg.Quota.QuotaPolicy(),
 		QuotaName:         cfg.Quota.Name,
 		QuotaEnabled:      cfg.Quota.Enabled,
+		Sieve:             sieveScripts(cfg, scripts),
 	})
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {
@@ -193,6 +201,18 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("yarilo-jmap stopped")
+}
+
+// sieveScripts serves RFC 9661 with the sieve section's limits, the ones
+// ManageSieve enforces.
+func sieveScripts(cfg *config.Config, st *sieve.IndexedStore) *jmap.SieveScripts {
+	return &jmap.SieveScripts{
+		Store:          st,
+		Quota:          sieve.Quota{MaxSize: cfg.Sieve.MaxScriptSize, MaxScripts: cfg.Sieve.MaxScripts, MaxStorage: cfg.Sieve.MaxStorage},
+		Extensions:     cfg.Sieve.SieveExtensions,
+		MaxRedirects:   cfg.Sieve.MaxRedirects,
+		Implementation: "yarilo " + build.Version,
+	}
 }
 
 func internalTLS(cfg *config.Config) (*tls.Config, error) {

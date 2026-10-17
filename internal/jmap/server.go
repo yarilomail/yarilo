@@ -62,6 +62,8 @@ type Options struct {
 	// QuotaEnabled gates the Quota objects: with the engine off the limits in
 	// userdb are not enforced, and reporting them would be a limit that is not.
 	QuotaEnabled bool
+	// Sieve serves RFC 9661; nil leaves it unadvertised.
+	Sieve *SieveScripts
 }
 
 // Server serves the JMAP endpoint behind the login proxy.
@@ -85,6 +87,9 @@ func New(opts Options) *Server {
 	// accessor, a harmless no-op.
 	if opts.Storage != nil {
 		opts.Storage.MailboxByDriver = mailbox.MemoizeByDriver(opts.Storage.MailboxByDriver)
+	}
+	if opts.Sieve != nil {
+		opts.Limits.Sieve = opts.Sieve.session()
 	}
 	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache()}
 	s.mux.HandleFunc("GET "+jmapcore.SessionPath, s.guard(s.handleSession))

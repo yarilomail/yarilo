@@ -39,7 +39,7 @@ func TestScriptQuota(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			c := runSessionLimits(t, store, home, 100, 2)
+			c := runSessionLimits(t, store, home, 100, 2, 0)
 			c.conn.SetDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
 			c.send(tc.send)
 			lines, _ := c.readUntilResult()
@@ -63,7 +63,7 @@ func TestScriptQuota(t *testing.T) {
 func TestAZeroScriptCountLiftsTheLimit(t *testing.T) {
 	ctx := context.Background()
 	store, home := newTestStore(), t.TempDir()
-	c := runSessionLimits(t, store, home, 100, 0)
+	c := runSessionLimits(t, store, home, 100, 0, 0)
 	for _, n := range []string{"a", "b", "c"} {
 		c.send("PUTSCRIPT \"" + n + "\" {6+}\r\nkeep;\n")
 		if lines, ok := c.readUntilResult(); !ok {
@@ -72,5 +72,56 @@ func TestAZeroScriptCountLiftsTheLimit(t *testing.T) {
 	}
 	if names, _ := store.ListScripts(ctx, "u1@example.com", home); len(names) != 3 {
 		t.Errorf("scripts = %v, want three", names)
+	}
+}
+
+// Two 6-byte scripts stored and a storage limit of 20 bytes.
+func TestScriptStorageQuota(t *testing.T) {
+	cases := []struct {
+		name, send, want string
+	}{
+		{"PUTSCRIPT of a new name past the storage", "PUTSCRIPT \"c\" {9+}\r\ndiscard;\n",
+			`NO (QUOTA/MAXSTORAGE) "Script storage quota exceeded (max 20 bytes)."`},
+		{"PUTSCRIPT filling the storage exactly", "PUTSCRIPT \"c\" {8+}\r\nstop;\n\n\n", "OK"},
+		{"HAVESPACE past the storage", "HAVESPACE \"c\" 9\r\n",
+			`NO (QUOTA/MAXSTORAGE) "Script storage quota exceeded (max 20 bytes)."`},
+		{"HAVESPACE replacing a stored script", "HAVESPACE \"b\" 14\r\n", `OK "Putscript would succeed."`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, home := newTestStore(), t.TempDir()
+			for _, n := range []string{"a", "b"} {
+				if err := store.SaveScript(ctx, "u1@example.com", home, n, []byte("keep;\n")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c := runSessionLimits(t, store, home, 100, 0, 20)
+			c.conn.SetDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+			c.send(tc.send)
+			lines, _ := c.readUntilResult()
+			if got := lines[len(lines)-1]; !strings.HasPrefix(got, tc.want) {
+				t.Fatalf("reply = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// RENAMESCRIPT onto a stored name is refused by the store, under its lock, and
+// both scripts stay (RFC 5804 §2.11.1).
+func TestRenameOntoAStoredNameIsRefused(t *testing.T) {
+	ctx := context.Background()
+	store, home := newTestStore(), t.TempDir()
+	_ = store.SaveScript(ctx, "u1@example.com", home, "a", []byte("keep;\n"))
+	_ = store.SaveScript(ctx, "u1@example.com", home, "b", []byte("discard;\n"))
+	c := runSession(t, store, home)
+	c.conn.SetDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+	c.send("RENAMESCRIPT \"a\" \"b\"\r\n")
+	lines, _ := c.readUntilResult()
+	if got := lines[len(lines)-1]; !strings.HasPrefix(got, "NO (ALREADYEXISTS)") {
+		t.Fatalf("reply = %q, want NO (ALREADYEXISTS)", got)
+	}
+	if src, _, _ := store.GetScript(ctx, "u1@example.com", home, "b"); string(src) != "discard;\n" {
+		t.Errorf("b holds %q after the refused rename", src)
 	}
 }

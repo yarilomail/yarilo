@@ -22,7 +22,7 @@ export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PASSWORD='Yarilo!test1'
 # What one smoketest run passes; it moves with every check added to the binary.
-SMOKE_CHECKS=47
+SMOKE_CHECKS=48
 # The only rows a run skips: they need the OAuth2 overlay, which acceptance runs without (#2231).
 SMOKE_OAUTH2_SKIPS='oauth2 imap AUTHENTICATE OAUTHBEARER (SASL-IR) + SELECT INBOX
 oauth2 pop3 AUTH OAUTHBEARER + STAT

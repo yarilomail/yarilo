@@ -1,10 +1,12 @@
 package jmap
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
 
@@ -15,7 +17,19 @@ import (
 //
 // Checked in both directions, because each catches the other's blind spot.
 func TestAdvertisedCapabilitiesAndImplementedMethodsAgree(t *testing.T) {
-	s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
+	for _, withSieve := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sieve=%v", withSieve), func(t *testing.T) {
+			s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
+			if withSieve {
+				s.opts.Sieve = &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil)}
+				s.opts.Limits.Sieve = s.opts.Sieve.session()
+			}
+			capabilitiesAgree(t, s)
+		})
+	}
+}
+
+func capabilitiesAgree(t *testing.T, s *Server) {
 
 	lazy := &lazyStore{storage: s.opts.Storage, user: testUser}
 	defer lazy.close()
