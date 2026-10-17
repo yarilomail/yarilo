@@ -97,10 +97,10 @@ func imageFor(fs *folderState) (*baseImage, error) {
 // into private memory, up to the last whole group (#1833). It reports the
 // offset the view stands at -- a base that already holds the whole log stands
 // at the log's end, not at zero, and the next fold continues from there.
-func (fs *folderState) buildView() (*folderState, int64, error) {
+func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 	img, lg, err := fs.imageAndItsLog()
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	defer lg.close()
 	// A handle stamps traceID under fs.mu while this reader holds nothing.
@@ -120,10 +120,10 @@ func (fs *folderState) buildView() (*folderState, int64, error) {
 
 	if lg.f == nil || !lg.ok {
 		if rerr := view.refreshExtState(); rerr != nil {
-			return nil, 0, rerr
+			return nil, 0, nil, rerr
 		}
 		view.ensureVsizeLocked()
-		return view, 0, nil
+		return view, 0, img, nil
 	}
 	// Where this log meets this base, by the lineage table: an unpaired one
 	// replays whole rather than from an offset that means nothing in it.
@@ -133,10 +133,10 @@ func (fs *folderState) buildView() (*folderState, int64, error) {
 	}
 	if lg.size <= from {
 		if rerr := view.refreshExtState(); rerr != nil {
-			return nil, 0, rerr
+			return nil, 0, nil, rerr
 		}
 		view.ensureVsizeLocked()
-		return view, lg.size, nil // the base already holds everything
+		return view, lg.size, img, nil // the base already holds everything
 	}
 
 	// Only now is a copy paid for: the tail has something to apply, and the
@@ -144,13 +144,13 @@ func (fs *folderState) buildView() (*folderState, int64, error) {
 	view.file = cloneIndexFile(img.file)
 	end, aerr := view.applyLogFrom(lg, from)
 	if aerr != nil {
-		return nil, 0, aerr
+		return nil, 0, nil, aerr
 	}
 	view.logSize = end
 	// The typed halves of the header the readers ask for -- keywords, vsize,
 	// dbox -- are derived, and a view that skips them answers zero.
 	if rerr := view.refreshExtState(); rerr != nil {
-		return nil, 0, rerr
+		return nil, 0, nil, rerr
 	}
 	// A recount that finds no sizes at all does not replace an aggregate the
 	// base already knows: records carrying none add nothing (#1728).
@@ -159,7 +159,7 @@ func (fs *folderState) buildView() (*folderState, int64, error) {
 	if view.vsize.Vsize == 0 && fromHeader.Vsize > 0 {
 		view.vsize = fromHeader
 	}
-	return view, end, nil
+	return view, end, img, nil
 }
 
 // errBaseMoving says the base kept being replaced while a view was built; the

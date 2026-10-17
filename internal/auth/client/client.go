@@ -52,6 +52,9 @@ const (
 	// Generous on purpose: the server sleeps on the AUTH path (auth-penalty
 	// tarpit up to 15s, failure delay), so a legitimate reply can take seconds.
 	defaultRequestTimeout = 30 * time.Second
+	// VERIFY and CONSUME answer from a token lookup at once: past this the
+	// connection is silent, and it is dropped for a fresh one (#2262).
+	defaultVerifyTimeout = 5 * time.Second
 	// Bounds a single socket write. Separate from RequestTimeout: a healthy
 	// write drains into the send buffer in microseconds, so 5s means a
 	// blackholed peer, whatever the request budget is.
@@ -93,6 +96,8 @@ type Options struct {
 	// block forever while holding the shared mutex. Independent of
 	// RequestTimeout.
 	WriteTimeout time.Duration
+	// VerifyTimeout bounds VERIFY and CONSUME; reaching it redials (#2262).
+	VerifyTimeout time.Duration
 }
 
 type connState int
@@ -187,6 +192,9 @@ func New(addr string, tlsCfg *tls.Config, opts Options) (*Client, error) {
 	}
 	if opts.WriteTimeout <= 0 {
 		opts.WriteTimeout = defaultWriteTimeout
+	}
+	if opts.VerifyTimeout <= 0 {
+		opts.VerifyTimeout = defaultVerifyTimeout
 	}
 	c := &Client{
 		addr:    addr,
@@ -337,7 +345,7 @@ func (c *Client) Verify(token, username, sessionID string) (string, string, stri
 	}
 	id := c.nextID()
 	req := fmt.Sprintf("VERIFY\t%s\t%s\tuser=%s\tsession=%s", id, token, username, sessionID)
-	line, err := c.exchange(id, req)
+	line, err := c.exchangeWithin(id, req, c.opts.VerifyTimeout, true)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -355,7 +363,7 @@ func (c *Client) Consume(token string) error {
 		return ErrAuthFailed
 	}
 	id := c.nextID()
-	line, err := c.exchange(id, fmt.Sprintf("CONSUME\t%s\t%s", id, token))
+	line, err := c.exchangeWithin(id, fmt.Sprintf("CONSUME\t%s\t%s", id, token), c.opts.VerifyTimeout, true)
 	if err != nil {
 		return err
 	}
@@ -380,8 +388,15 @@ func (c *Client) nextID() string {
 // after a successful write returns ErrConnLost instead — the server may have
 // processed it, and a repeated AUTH would double-count the auth penalty.
 func (c *Client) exchange(id, req string) (string, error) {
-	deadline := time.Now().Add(c.opts.RequestTimeout)
+	return c.exchangeWithin(id, req, c.opts.RequestTimeout, false)
+}
+
+// exchangeWithin is exchange under its own budget; redial drops a connection
+// that let the budget pass in silence, so the next request does not wait too.
+func (c *Client) exchangeWithin(id, req string, budget time.Duration, redial bool) (string, error) {
+	deadline := time.Now().Add(budget)
 	ch := make(chan string, 1)
+	var gen uint64
 
 	for {
 		if err := c.awaitLive(deadline); err != nil {
@@ -398,7 +413,7 @@ func (c *Client) exchange(id, req string) (string, error) {
 			continue // lost the race with a reconnect; wait again
 		}
 		c.pending[id] = ch
-		gen := c.gen
+		gen = c.gen
 		// Bound the write so a blackholed peer cannot block forever while
 		// holding c.mu; on timeout we fall through to beginReconnect.
 		_ = c.conn.SetWriteDeadline(time.Now().Add(c.opts.WriteTimeout))
@@ -430,6 +445,9 @@ func (c *Client) exchange(id, req string) (string, error) {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
+		if redial {
+			c.beginReconnect(gen)
+		}
 		return "", ErrTimeout
 	}
 }

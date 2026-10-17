@@ -457,7 +457,7 @@ func TestUserKick_BroadcastsKicked(t *testing.T) {
 	}
 
 	push := readLine(t, sc2)
-	if push != "USER-KICKED\tdave@example.com" {
+	if push != "USER-KICKED\tdave@example.com\treason=admin" {
 		t.Errorf("c2 expected USER-KICKED, got %q", push)
 	}
 }
@@ -725,7 +725,7 @@ func TestBackendDown_KicksActiveSessions(t *testing.T) {
 	lines := []string{readLine(t, loginSc), readLine(t, loginSc)}
 	var kicked bool
 	for _, l := range lines {
-		if l == "USER-KICKED\tdave@example.com" {
+		if l == "USER-KICKED\tdave@example.com\treason=backend-removed" {
 			kicked = true
 		}
 	}

@@ -54,7 +54,7 @@
 //	    vhosts form: ...\t{ip}\tvhosts\t{tag}\t{count}\n — admin weight change,
 //	    replicated ring-wide; carries NO seq, never turns the backend lease-managed.
 //	  USER-MOVED\t{user}\t{ip}\t{port}\n
-//	  USER-KICKED\t{user}\n
+//	  USER-KICKED\t{user}[\treason={r}]\n   (r: admin|move|domain-move|flush|backend-removed)
 //	  USER-KILLED-EVERYWHERE\t{hash}\n               (all sessions confirmed gone)
 //
 //	Server pushes (ring-envelope form, right-neighbor connections only):
@@ -62,7 +62,7 @@
 //	    a lease-managed "up" carries port + vhosts so a gossip-only director can
 //	    add the backend to its ring: ...\t{ip}\tup\t{tag}\t{beSeq}\t{port}\t{vhosts}\n
 //	  USER-MOVED\t{originIP}\t{originPort}\t{seq}\t{user}\t{ip}\t{port}\n
-//	  USER-KICKED\t{originIP}\t{originPort}\t{seq}\t{user}[\t{oldBackendIP}]\n
+//	  USER-KICKED\t{originIP}\t{originPort}\t{seq}\t{user}[\t{oldBackendIP}][\treason={r}]\n
 //	    oldBackendIP present: drop the pin only if it still points there
 //	    (compare-and-delete). Absent: drop unconditionally. Kick fires either way.
 //	  SESSION-OPEN\t{originIP}\t{originPort}\t{seq}\t{id}\t{user}\t{backend}\t{proto}\n  (replicate the load view)
@@ -681,20 +681,23 @@ func (s *Server) writeToLogins(line string, exclude *client) {
 // authored here or arriving from a peer — is built by this one function,
 // because when the originator wrote its ring line straight to its own logins
 // they glued that field onto the username and kicked nobody, silently (#1363).
-func loginKickLine(user string) string {
-	return "USER-KICKED\t" + user
+func loginKickLine(user, reason string) string {
+	if reason == "" {
+		return "USER-KICKED\t" + user
+	}
+	return "USER-KICKED\t" + user + "\t" + proto.KickReasonField + reason
 }
 
 // originateUserKick authors a kick: logins get the login form, the ring gets
 // the ring form. A non-empty oldBackend makes it conditional — kick the user
 // off that backend, and drop the sticky pin only where it still points there.
-func (s *Server) originateUserKick(user, oldBackend string, exclude *client) {
-	s.writeToLogins(loginKickLine(user), exclude)
+func (s *Server) originateUserKick(user, oldBackend, reason string, exclude *client) {
+	s.writeToLogins(loginKickLine(user, reason), exclude)
 	if oldBackend != "" {
-		s.membership.originateUserEvent("USER-KICKED", user, oldBackend)
+		s.membership.originateUserEvent("USER-KICKED", user, oldBackend, proto.KickReasonField+reason)
 		return
 	}
-	s.membership.originateUserEvent("USER-KICKED", user)
+	s.membership.originateUserEvent("USER-KICKED", user, proto.KickReasonField+reason)
 }
 
 // originateRingEvent delivers a RING-CHANGE/USER-MOVED/USER-KICKED event
@@ -1184,7 +1187,7 @@ func (s *Server) moveUser(user, addr string, exclude *client) {
 		s.attachFlush(hash, flushCtx{user: user, oldBackend: oldIP, newBackend: host})
 		// Conditional kick: the ring line carries the old backend, the login
 		// line never does.
-		s.originateUserKick(user, oldIP, exclude)
+		s.originateUserKick(user, oldIP, proto.KickMove, exclude)
 	}
 	slog.Info("director: user moved", "user", user, "backend", addr, "kicked_old", oldIP)
 }
@@ -1219,7 +1222,7 @@ func (s *Server) handleUserKick(c *client, fields []string) {
 	// Mark the user killing (and replicate it) BEFORE the kick tears sessions
 	// down, so the LOOKUP hold is in force ring-wide for the whole drain (#847).
 	s.startKilling(HashUsername(user, s.hf))
-	s.originateUserKick(user, "", c)
+	s.originateUserKick(user, "", proto.KickAdmin, c)
 	_ = c.WriteLine("OK")
 }
 
@@ -1430,7 +1433,7 @@ func (s *Server) kickSessionsForBackend(ip string) {
 	}
 
 	kickOne := func(rec *sessionRec) {
-		_ = rec.cl.WriteLine(fmt.Sprintf("USER-KICKED\t%s", rec.user))
+		_ = rec.cl.WriteLine(loginKickLine(rec.user, proto.KickBackendRemoved))
 		slog.Info("director: kicked session", "session", rec.id, "user", rec.user, "backend", ip)
 	}
 
@@ -1602,7 +1605,7 @@ func (s *Server) expireStaleBackends(expire time.Duration) {
 // the mailbox across two backends. Only sessions whose username hashes to
 // `hash` are touched; other users on the same backend keep running. oldHost
 // is "ip:port"; sessions are keyed by backend IP.
-func (s *Server) kickStaleSessions(hash uint32, oldHost string) {
+func (s *Server) kickStaleSessions(hash uint32, oldHost, reason string) {
 	ip, _, err := net.SplitHostPort(oldHost)
 	if err != nil {
 		ip = oldHost
@@ -1619,7 +1622,7 @@ func (s *Server) kickStaleSessions(hash uint32, oldHost string) {
 	s.sessRecMu.Unlock()
 
 	for _, rec := range localSessions(victims) {
-		_ = rec.cl.WriteLine(fmt.Sprintf("USER-KICKED\t%s", rec.user))
+		_ = rec.cl.WriteLine(loginKickLine(rec.user, reason))
 		slog.Info("director: kicked stale session after ring reassignment", "session", rec.id, "user", rec.user, "old_backend", ip)
 	}
 }

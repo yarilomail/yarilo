@@ -1318,14 +1318,14 @@ func (s *Server) watchReadLoop(c *proto.Conn, wc *watchConn) error {
 				wc.deliver(fields[1], line)
 			}
 		case strings.HasPrefix(line, "USER-KICKED\t"):
-			user, ok := kickedUser(line)
+			user, reason, ok := kickedUser(line)
 			if !ok {
 				// Arity checked, not trimmed: ignoring the extra fields let a ring
 				// field travel into the username and kick nobody (#1363).
 				slog.Warn("login: malformed USER-KICKED push, ignored", "line", line)
 				break
 			}
-			s.kickUser(user)
+			s.kickUser(user, reason)
 		case line == "PING":
 			wc.pong()
 		}
@@ -1333,14 +1333,19 @@ func (s *Server) watchReadLoop(c *proto.Conn, wc *watchConn) error {
 	}
 }
 
-// kickedUser takes the username from a USER-KICKED push. Two forms only: the
-// plain kick, and the evacuation form an older director still sends.
-func kickedUser(line string) (string, bool) {
+// kickedUser takes the username and the reason from a USER-KICKED push: the
+// user, then reason=<r> (#2263) or the evacuation form an older director sends.
+func kickedUser(line string) (user, reason string, ok bool) {
 	fields := strings.Split(line, "\t")
 	if len(fields) < 2 || len(fields) > 3 || fields[1] == "" {
-		return "", false
+		return "", "", false
 	}
-	return fields[1], true
+	if len(fields) == 3 {
+		if r, has := strings.CutPrefix(fields[2], proto.KickReasonField); has {
+			reason = r
+		}
+	}
+	return fields[1], reason, true
 }
 
 // sessionSyncIDsPerLine keeps a line inside the director's 4 KiB read buffer:
@@ -1431,7 +1436,7 @@ func (s *Server) reannounceSessions() {
 
 // kickUser closes all active backend connections for the given username,
 // causing biProxy to terminate and those sessions to be dropped.
-func (s *Server) kickUser(username string) {
+func (s *Server) kickUser(username, reason string) {
 	s.sessMu.RLock()
 	sessions := make([]*liveSession, len(s.sessions[username]))
 	copy(sessions, s.sessions[username])
@@ -1441,8 +1446,11 @@ func (s *Server) kickUser(username string) {
 	// not read like a kick that never arrived (#1363).
 	slog.Info("login: user kick received", "user", username,
 		"proto", string(s.opts.Protocol), "sessions", len(sessions))
+	if reason == "" {
+		reason = "not given"
+	}
 	for _, sess := range sessions {
-		sess.close("kicked by admin or move")
+		sess.close("kicked: " + reason)
 	}
 }
 

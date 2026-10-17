@@ -2,6 +2,8 @@ package director
 
 import (
 	"log/slog"
+
+	"github.com/yarilomail/yarilo/internal/cluster/proto"
 )
 
 // kickDomainSessions ends every session of a domain that is still on the
@@ -29,6 +31,6 @@ func (s *Server) kickDomainSessions(domain, oldHost string) {
 		// The hold first, then the kick: a session opening in between would
 		// otherwise reach the backend the domain has just left.
 		s.startKilling(hash)
-		s.kickStaleSessions(hash, oldHost)
+		s.kickStaleSessions(hash, oldHost, proto.KickDomainMove)
 	}
 }
