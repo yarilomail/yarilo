@@ -103,6 +103,10 @@ type UserInfo struct {
 	// allowed to authenticate from. Empty means no IP restriction.
 	AllowNets []string
 
+	// IdentityAliases are the addresses besides the login the user sends as
+	// (`identity_aliases`, space- or comma-separated).
+	IdentityAliases []string
+
 	// ---- Director routing ---------------------------------------
 
 	// DirectorTag shards this user to a specific director backend tag
@@ -274,6 +278,7 @@ func (ui *UserInfo) VisitFields(fn func(key, value string)) {
 	str("quota_over_flag", ui.QuotaOverFlag)
 
 	list("allow_nets", ui.AllowNets)
+	list("identity_aliases", ui.IdentityAliases)
 
 	str("director_tag", ui.DirectorTag)
 

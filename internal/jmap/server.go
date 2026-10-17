@@ -64,6 +64,9 @@ type Options struct {
 	QuotaEnabled bool
 	// Sieve serves RFC 9661; nil leaves it unadvertised.
 	Sieve *SieveScripts
+	// Submission serves Identity and EmailSubmission; nil, as with no relay,
+	// leaves them unadvertised.
+	Submission *Submission
 }
 
 // Server serves the JMAP endpoint behind the login proxy.
@@ -90,6 +93,9 @@ func New(opts Options) *Server {
 	}
 	if opts.Sieve != nil {
 		opts.Limits.Sieve = opts.Sieve.session()
+	}
+	if opts.Submission != nil {
+		opts.Limits.Submission = opts.Submission.capability()
 	}
 	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache()}
 	s.mux.HandleFunc("GET "+jmapcore.SessionPath, s.guard(s.handleSession))

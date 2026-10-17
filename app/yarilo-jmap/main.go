@@ -22,6 +22,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
+	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/internal/telemetry"
 	"github.com/yarilomail/yarilo/pkg/authclient"
 	"github.com/yarilomail/yarilo/pkg/build"
@@ -194,6 +195,7 @@ func main() {
 		QuotaName:         cfg.Quota.Name,
 		QuotaEnabled:      cfg.Quota.Enabled,
 		Sieve:             sieveScripts(cfg, scripts),
+		Submission:        submission(cfg),
 	})
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {
@@ -201,6 +203,23 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("yarilo-jmap stopped")
+}
+
+// submission sends through the relay SMTP Submission uses, with its limits;
+// with no relay configured there is nothing to offer.
+func submission(cfg *config.Config) *jmap.Submission {
+	sub := cfg.Protocol.Submission
+	if sub.Relay.Host == "" {
+		return nil
+	}
+	return &jmap.Submission{
+		Sender:        submproxy.New(sub.Relay, cfg.SubmissionHostname()),
+		MaxSize:       sub.MaxMsgSize,
+		MaxRecipients: sub.MaxRecipients,
+		AddReceived:   sub.AddReceivedHeader,
+		Hostname:      cfg.SubmissionHostname(),
+		TTL:           time.Duration(cfg.Protocol.JMAP.SubmissionTTLSeconds) * time.Second,
+	}
 }
 
 // sieveScripts serves RFC 9661 with the sieve section's limits, the ones

@@ -19,6 +19,9 @@ func declaredCapabilities(lim jmapcore.Limits) []string {
 	if lim.Sieve != nil {
 		caps = append(caps, jmapcore.CapSieve)
 	}
+	if lim.Submission != nil {
+		caps = append(caps, jmapcore.CapSubmission)
+	}
 	return caps
 }
 
@@ -36,6 +39,11 @@ func (s *Server) registry(lazy *lazyStore, accountID string) jmapcore.Registry {
 		}
 		if s.opts.Sieve != nil {
 			for name, entry := range s.sieveRegistry(lazy, accountID) {
+				reg[name] = entry
+			}
+		}
+		if s.opts.Submission != nil {
+			for name, entry := range s.submissionRegistry(lazy, accountID) {
 				reg[name] = entry
 			}
 		}
@@ -69,7 +77,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 	// closes with the request. Opening up front would fail a whole batch on a
 	// dependency the batch may not use — and Core/echo, which exists to
 	// diagnose exactly that, would be the first casualty.
-	lazy := &lazyStore{storage: s.opts.Storage, user: id.user, sessionID: id.sessionID}
+	lazy := &lazyStore{storage: s.opts.Storage, user: id.user, sessionID: id.sessionID, clientIP: id.clientIP}
 	defer lazy.close()
 
 	resp := jmapcore.Execute(r.Context(), req, s.registry(lazy, id.user), s.opts.Limits)

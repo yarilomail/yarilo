@@ -148,6 +148,7 @@ protocol:
     jmap_max_objects_in_get: 500
     jmap_max_objects_in_set: 500
     jmap_max_size_upload: 40M
+    jmap_submission_ttl_seconds: 86400
     jmap_max_size_request: 10M
     ## Server ceiling on one returned body value; a smaller client
     ## maxBodyValueBytes wins, and truncated values are marked isTruncated.

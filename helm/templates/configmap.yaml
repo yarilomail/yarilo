@@ -227,6 +227,7 @@ data:
         jmap_max_query_folders: {{ $jmapP.jmap_max_query_folders }}
         jmap_snippet_max_chars: {{ $jmapP.jmap_snippet_max_chars }}
         jmap_upload_ttl: {{ $jmapP.jmap_upload_ttl }}
+        jmap_submission_ttl_seconds: {{ $jmapP.jmap_submission_ttl_seconds }}
         jmap_push_timeout: {{ $jmapP.jmap_push_timeout | default 90 }}
         jmap_cors_allow_origins:
         {{- range ($jmapP.jmap_cors_allow_origins | default list) }}

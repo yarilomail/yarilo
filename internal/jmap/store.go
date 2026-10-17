@@ -155,6 +155,8 @@ type lazyStore struct {
 	// sessionID is the login hop's id for this request, and what its locks
 	// announce (#1670).
 	sessionID string
+	// clientIP is the client's address as the login hop saw it.
+	clientIP string
 
 	storage *Storage
 	user    string

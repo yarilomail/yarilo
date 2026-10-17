@@ -165,3 +165,24 @@ func TestSessionStateCarriesSieve(t *testing.T) {
 		t.Errorf("states %s, %s, %s: want each to differ", plain, with, changed)
 	}
 }
+
+// Submission is advertised at the session and the account, with its own
+// primary account, and moves the session state.
+func TestSessionCarriesSubmission(t *testing.T) {
+	lim := testLimits()
+	plain := SessionState(lim)
+	lim.Submission = &SubmissionCapability{SubmissionExtensions: map[string][]string{"SIZE": {"100"}}}
+	sess := BuildSession(lim, "u1@example.com")
+	if _, ok := sess.Capabilities[CapSubmission]; !ok {
+		t.Error("no session-level submission capability")
+	}
+	if got := sess.Accounts["u1@example.com"].AccountCapabilities[CapSubmission]; got != lim.Submission {
+		t.Errorf("account capability = %v", got)
+	}
+	if sess.PrimaryAccounts[CapSubmission] != "u1@example.com" {
+		t.Errorf("primary account = %q", sess.PrimaryAccounts[CapSubmission])
+	}
+	if sess.State == plain {
+		t.Error("the session state did not move with the submission capability")
+	}
+}

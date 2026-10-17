@@ -1,7 +1,6 @@
 package jmap
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -17,12 +16,16 @@ import (
 //
 // Checked in both directions, because each catches the other's blind spot.
 func TestAdvertisedCapabilitiesAndImplementedMethodsAgree(t *testing.T) {
-	for _, withSieve := range []bool{false, true} {
-		t.Run(fmt.Sprintf("sieve=%v", withSieve), func(t *testing.T) {
+	for _, wired := range []string{"core and mail", "sieve", "submission"} {
+		t.Run(wired, func(t *testing.T) {
 			s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
-			if withSieve {
+			switch wired {
+			case "sieve":
 				s.opts.Sieve = &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil)}
 				s.opts.Limits.Sieve = s.opts.Sieve.session()
+			case "submission":
+				s.opts.Submission = &Submission{Sender: &fakeRelay{}}
+				s.opts.Limits.Submission = s.opts.Submission.capability()
 			}
 			capabilitiesAgree(t, s)
 		})
