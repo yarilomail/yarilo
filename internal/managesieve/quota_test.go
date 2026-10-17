@@ -106,3 +106,22 @@ func TestScriptStorageQuota(t *testing.T) {
 		})
 	}
 }
+
+// RENAMESCRIPT onto a stored name is refused by the store, under its lock, and
+// both scripts stay (RFC 5804 §2.11.1).
+func TestRenameOntoAStoredNameIsRefused(t *testing.T) {
+	ctx := context.Background()
+	store, home := newTestStore(), t.TempDir()
+	_ = store.SaveScript(ctx, "u1@example.com", home, "a", []byte("keep;\n"))
+	_ = store.SaveScript(ctx, "u1@example.com", home, "b", []byte("discard;\n"))
+	c := runSession(t, store, home)
+	c.conn.SetDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+	c.send("RENAMESCRIPT \"a\" \"b\"\r\n")
+	lines, _ := c.readUntilResult()
+	if got := lines[len(lines)-1]; !strings.HasPrefix(got, "NO (ALREADYEXISTS)") {
+		t.Fatalf("reply = %q, want NO (ALREADYEXISTS)", got)
+	}
+	if src, _, _ := store.GetScript(ctx, "u1@example.com", home, "b"); string(src) != "discard;\n" {
+		t.Errorf("b holds %q after the refused rename", src)
+	}
+}

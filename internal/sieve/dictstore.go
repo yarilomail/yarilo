@@ -206,6 +206,12 @@ func (ds *DictScriptStore) RenameScript(ctx context.Context, username, homeDir, 
 	if !found {
 		return fmt.Errorf("sieve/dict: script %q not found", oldName)
 	}
+	if _, taken, err := ds.GetScript(ctx, username, homeDir, newName); err != nil || taken {
+		if err != nil {
+			return err
+		}
+		return ErrScriptExists
+	}
 	active, err := ds.ActiveScriptName(ctx, username, homeDir)
 	if err != nil {
 		return err

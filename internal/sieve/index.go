@@ -45,8 +45,7 @@ type indexIO interface {
 }
 
 // IndexedStore is a ScriptStore whose every change moves the user's state
-// counter, so ManageSieve and JMAP agree on one state. A change runs under the
-// index lock: a listing between a rename and its index entry would re-id it.
+// counter under the index lock, so ManageSieve and JMAP agree on one state.
 type IndexedStore struct {
 	ScriptStore
 	io indexIO
@@ -101,6 +100,20 @@ func (s *IndexedStore) change(ctx context.Context, username, homeDir string, op 
 
 func (s *IndexedStore) SaveScript(ctx context.Context, username, homeDir, name string, src []byte) error {
 	return s.change(ctx, username, homeDir, func(ctx context.Context) error {
+		return s.ScriptStore.SaveScript(ctx, username, homeDir, name, src)
+	}, func(ix *ScriptIndex) { ix.assign(name) })
+}
+
+// CreateScript stores src as a new script, refusing a stored name under the
+// lock that a concurrent create or rename also takes.
+func (s *IndexedStore) CreateScript(ctx context.Context, username, homeDir, name string, src []byte) error {
+	return s.change(ctx, username, homeDir, func(ctx context.Context) error {
+		if _, found, err := s.ScriptStore.GetScript(ctx, username, homeDir, name); err != nil || found {
+			if err != nil {
+				return err
+			}
+			return ErrScriptExists
+		}
 		return s.ScriptStore.SaveScript(ctx, username, homeDir, name, src)
 	}, func(ix *ScriptIndex) { ix.assign(name) })
 }

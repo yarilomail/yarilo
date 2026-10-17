@@ -2,6 +2,7 @@ package sieve
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/yarilomail/yarilo/pkg/dict"
@@ -112,6 +113,36 @@ func TestScriptIndex(t *testing.T) {
 			}
 			if after := mustIndex(t, s, home).State; after != before {
 				t.Errorf("state %d -> %d after a failed rename", before, after)
+			}
+		}},
+		{"a rename onto a stored name is refused and keeps both", func(t *testing.T, s *IndexedStore, home string) {
+			ctx := context.Background()
+			_ = s.SaveScript(ctx, "u", home, "a", body)
+			_ = s.SaveScript(ctx, "u", home, "b", []byte("discard;\n"))
+			before := mustIndex(t, s, home)
+			if err := s.RenameScript(ctx, "u", home, "a", "b"); !errors.Is(err, ErrScriptExists) {
+				t.Fatalf("rename onto b = %v, want ErrScriptExists", err)
+			}
+			for name, want := range map[string]string{"a": "keep;\n", "b": "discard;\n"} {
+				if src, found, _ := s.GetScript(ctx, "u", home, name); !found || string(src) != want {
+					t.Errorf("%s holds %q (found %v), want %q", name, src, found, want)
+				}
+			}
+			if after := mustIndex(t, s, home); after.IDs["a"] != before.IDs["a"] || after.IDs["b"] != before.IDs["b"] || after.State != before.State {
+				t.Errorf("index %+v -> %+v after a refused rename", before, after)
+			}
+		}},
+		{"a create onto a stored name is refused", func(t *testing.T, s *IndexedStore, home string) {
+			ctx := context.Background()
+			_ = s.SaveScript(ctx, "u", home, "a", body)
+			if err := s.CreateScript(ctx, "u", home, "a", []byte("discard;\n")); !errors.Is(err, ErrScriptExists) {
+				t.Fatalf("create onto a = %v, want ErrScriptExists", err)
+			}
+			if src, _, _ := s.GetScript(ctx, "u", home, "a"); string(src) != string(body) {
+				t.Errorf("a holds %q, want the stored %q", src, body)
+			}
+			if err := s.CreateScript(ctx, "u", home, "c", body); err != nil {
+				t.Errorf("create of a new name: %v", err)
 			}
 		}},
 		{"the index is not a script", func(t *testing.T, s *IndexedStore, home string) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
 
 // sieveServer serves testUser with RFC 9661 over a fresh fs script store.
@@ -400,5 +401,50 @@ func TestSieveScriptCreateFromAScriptBlob(t *testing.T) {
 	}
 	if src, _, _ := st.GetScript(ctx, testUser, home, "copy"); string(src) != discardScript {
 		t.Errorf("copy holds %q, want %q", src, discardScript)
+	}
+}
+
+// The name check before the store is not the guard: a name taken after the
+// view was read (another session) is refused by the store, and nothing is lost.
+func TestSieveScriptStaleViewLosesNothing(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		run  func(s *Server, h *userHandle, v *sieveView, blob string) *jmapcore.SetError
+	}{
+		{"create", func(s *Server, h *userHandle, v *sieveView, blob string) *jmapcore.SetError {
+			_, serr := s.sieveCreate(ctx, h, testUser, v, json.RawMessage(`{"name":"taken","blobId":"`+blob+`"}`))
+			return serr
+		}},
+		{"rename with new content", func(s *Server, h *userHandle, v *sieveView, blob string) *jmapcore.SetError {
+			_, serr := s.sieveUpdate(ctx, h, testUser, v, v.ix.IDs["mine"], json.RawMessage(`{"name":"taken","blobId":"`+blob+`"}`))
+			return serr
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, home, st := sieveServer(t, sieve.Quota{})
+			_ = st.SaveScript(ctx, testUser, home, "mine", []byte(keepScript))
+			blob := uploadAs(t, s, testUser, "stop;\n")
+			h, err := s.opts.Storage.open(testUser, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer h.close()
+			v, err := s.sieveRead(ctx, h, testUser)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = st.SaveScript(ctx, testUser, home, "taken", []byte(discardScript))
+			serr := c.run(s, h, &v, blob)
+			if serr == nil || serr.Type != jmapcore.SetErrAlreadyExists || serr.ExistingID == "" {
+				t.Fatalf("SetError = %+v, want alreadyExists with existingId", serr)
+			}
+			for name, want := range map[string]string{"taken": discardScript, "mine": keepScript} {
+				if src, _, _ := st.GetScript(ctx, testUser, home, name); string(src) != want {
+					t.Errorf("%s holds %q, want %q", name, src, want)
+				}
+			}
+		})
 	}
 }

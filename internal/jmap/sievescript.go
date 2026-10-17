@@ -217,6 +217,12 @@ func (s *Server) checkSieveName(v sieveView, name string) *jmapcore.SetError {
 	return nil
 }
 
+// taken is the alreadyExists for a name the store refused under its lock.
+func (s *Server) taken(ctx context.Context, user, home, name string) *jmapcore.SetError {
+	ix, _ := s.opts.Sieve.Store.Index(ctx, user, home)
+	return &jmapcore.SetError{Type: jmapcore.SetErrAlreadyExists, ExistingID: ix.IDs[name]}
+}
+
 // checkSieveContent applies RFC 9661 §2.2 with the parser and extension list
 // ManageSieve uses.
 func (s *Server) checkSieveContent(src []byte) *jmapcore.SetError {
@@ -366,7 +372,9 @@ func (s *Server) sieveCreate(ctx context.Context, h *userHandle, user string, v 
 		return nil, serr
 	}
 	st := s.opts.Sieve.Store
-	if err := st.SaveScript(ctx, user, h.info.Home, name, src); err != nil {
+	if err := st.CreateScript(ctx, user, h.info.Home, name, src); errors.Is(err, sieve.ErrScriptExists) {
+		return nil, s.taken(ctx, user, h.info.Home, name)
+	} else if err != nil {
 		return nil, &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: "the script could not be stored"}
 	}
 	ix, err := st.Index(ctx, user, h.info.Home)
@@ -388,10 +396,9 @@ func (s *Server) sieveUpdate(ctx context.Context, h *userHandle, user string, v 
 		return nil, serr
 	}
 	st, home := s.opts.Sieve.Store, h.info.Home
-	var out any
+	var src []byte
 	if p.BlobID != nil {
-		src, serr := s.sieveBlob(ctx, h, user, *p.BlobID)
-		if serr != nil {
+		if src, serr = s.sieveBlob(ctx, h, user, *p.BlobID); serr != nil {
 			return nil, serr
 		}
 		if serr := s.checkSieveContent(src); serr != nil {
@@ -400,21 +407,16 @@ func (s *Server) sieveUpdate(ctx context.Context, h *userHandle, user string, v 
 		if serr := s.sieveQuota(ctx, h, user, name, len(src)); serr != nil {
 			return nil, serr
 		}
-		if p.Name != nil && *p.Name != name {
-			if serr := s.checkSieveName(*v, *p.Name); serr != nil {
-				return nil, serr
-			}
-		}
-		if err := st.SaveScript(ctx, user, home, name, src); err != nil {
-			return nil, &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: "the script could not be stored"}
-		}
-		out = map[string]any{"blobId": scriptBlobID(src)}
 	}
-	if p.Name != nil && *p.Name != name {
+	rename := p.Name != nil && *p.Name != name
+	if rename {
 		if serr := s.checkSieveName(*v, *p.Name); serr != nil {
 			return nil, serr
 		}
-		if err := st.RenameScript(ctx, user, home, name, *p.Name); err != nil {
+		// Renamed before the content is written: a refused name leaves nothing half done.
+		if err := st.RenameScript(ctx, user, home, name, *p.Name); errors.Is(err, sieve.ErrScriptExists) {
+			return nil, s.taken(ctx, user, home, *p.Name)
+		} else if err != nil {
 			return nil, &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: "the script could not be renamed"}
 		}
 		delete(v.ix.IDs, name)
@@ -422,8 +424,15 @@ func (s *Server) sieveUpdate(ctx context.Context, h *userHandle, user string, v 
 		if v.active == name {
 			v.active = *p.Name
 		}
+		name = *p.Name
 	}
-	return out, nil
+	if src == nil {
+		return nil, nil
+	}
+	if err := st.SaveScript(ctx, user, home, name, src); err != nil {
+		return nil, &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: "the script could not be stored"}
+	}
+	return map[string]any{"blobId": scriptBlobID(src)}, nil
 }
 
 // sieveActivation applies onSuccessDeactivateScript, then

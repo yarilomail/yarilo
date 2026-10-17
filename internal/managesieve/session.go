@@ -454,17 +454,10 @@ func (s *session) handleRenameScript(ctx context.Context) {
 		return
 	}
 
-	_, newExists, err := s.store.GetScript(ctx, s.username, s.homeDir, newStr)
-	if err != nil {
-		_ = writeNO(s.w, "", "Server error.")
-		return
-	}
-	if newExists {
+	if err := s.store.RenameScript(ctx, s.username, s.homeDir, oldStr, newStr); errors.Is(err, sieve.ErrScriptExists) {
 		_ = writeNO(s.w, "ALREADYEXISTS", "Target script already exists.")
 		return
-	}
-
-	if err := s.store.RenameScript(ctx, s.username, s.homeDir, oldStr, newStr); err != nil {
+	} else if err != nil {
 		slog.Error("managesieve: rename script", "sid", s.sid, "user", s.username, "old", oldStr, "new", newStr, "err", err)
 		_ = writeNO(s.w, "", "Server error renaming script.")
 		return

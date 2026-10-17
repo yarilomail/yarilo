@@ -39,8 +39,7 @@ func (e *QuotaExceededError) Error() string {
 }
 
 // CheckQuota reports whether saving size bytes as name stays within q: nil, a
-// *QuotaExceededError, or a storage error. A replaced script's count and bytes
-// are not charged twice.
+// *QuotaExceededError or a storage error; a replaced script is charged once.
 func CheckQuota(ctx context.Context, store ScriptStore, username, homeDir, name string, size int, q Quota) error {
 	if q.MaxSize > 0 && size > q.MaxSize {
 		return &QuotaExceededError{Kind: QuotaMaxSize, Limit: q.MaxSize}
