@@ -4,6 +4,7 @@ package ftsbench
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -64,7 +65,9 @@ func Run(cfg Config) (Report, error) {
 		return Report{}, err
 	}
 	mb := maildir.New()
-	idx := file.New()
+	// GUIDs are terms of every document: random ones size the index differently each run (#2279).
+	folders := uint32(0)
+	idx := file.New(file.WithGUIDSource(func() [16]byte { folders++; return benchGUID(0xf0000000 | folders) }))
 	box := mb.OpenUser(info)
 	if err := box.Init(); err != nil {
 		return Report{}, fmt.Errorf("ftsbench: init mailbox: %w", err)
@@ -83,7 +86,7 @@ func Run(cfg Config) (Report, error) {
 	}
 	metas := make([]*mailbox.MessageMeta, 0, len(corpus.Messages))
 	for _, m := range corpus.Messages {
-		name, vsize, guid, err := box.Save(benchMbox.Name, bytes.NewReader(m.Raw), m.UID, int64(len(m.Raw)), nil, nil, [16]byte{})
+		name, vsize, guid, err := box.Save(benchMbox.Name, bytes.NewReader(m.Raw), m.UID, int64(len(m.Raw)), nil, nil, benchGUID(m.UID))
 		if err != nil {
 			return Report{}, fmt.Errorf("ftsbench: save uid %d: %w", m.UID, err)
 		}
@@ -314,6 +317,13 @@ func checkHits(got, want []uint32) error {
 		}
 	}
 	return nil
+}
+
+// benchGUID is a fixed GUID for n: a message's uid, or a folder's number.
+func benchGUID(n uint32) [16]byte {
+	g := [16]byte{0: 0xbe, 1: 0x7c}
+	binary.BigEndian.PutUint32(g[12:], n)
+	return g
 }
 
 // dirSize sums the bytes of every file living under a directory named label

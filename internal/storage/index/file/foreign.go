@@ -204,7 +204,7 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	if hdr.UIDValidity == 0 {
 		return false, fmt.Errorf("fileindex/convert: folder %q: their index carries no uid_validity", fs.folder)
 	}
-	if err := fs.createFresh(hdr.UIDValidity); err != nil {
+	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID()); err != nil {
 		return false, err
 	}
 	u.rememberIdentity(fs.folder, hdr.UIDValidity)
@@ -374,7 +374,7 @@ func (u *userIndex) convertForeignSdboxFolder(fs *folderState, dir string) (bool
 	if hdr.UIDValidity == 0 {
 		return false, fmt.Errorf("fileindex/convert: folder %q: their index carries no uid_validity", fs.folder)
 	}
-	if err := fs.createFresh(hdr.UIDValidity); err != nil {
+	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID()); err != nil {
 		return false, err
 	}
 	// Recorded before their index is unlinked below, or it exists nowhere and a
