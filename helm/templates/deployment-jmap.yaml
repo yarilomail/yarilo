@@ -39,6 +39,7 @@ spec:
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-jmap" "root" $) | quote }}
             {{- include "yarilo.adminBackendEnv" . | nindent 12 }}
             {{- include "yarilo.dbEnv" . | nindent 12 }}
+            {{- include "yarilo.relayPasswordEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

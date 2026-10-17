@@ -221,7 +221,7 @@ func (s *session) Data(r io.Reader) error {
 	if s.srv.opts.Config.AddReceivedHeader {
 		body = append([]byte(s.receivedHeader()), data...)
 	}
-	if err := p.Send(s.from, s.rcpts, bytes.NewReader(body), s.remoteIP); err != nil {
+	if err := p.Send(s.from, s.rcpts, bytes.NewReader(body), s.remoteIP, s.username, s.sid); err != nil {
 		slog.Info("submission: proxy rejected", "sid", s.sid, "from", s.from, "err", err, "result", "fail")
 		return err
 	}
@@ -324,9 +324,11 @@ func (s *session) authPlain(authzid, authid, password string) error {
 	if relay == nil {
 		return errNoAuthService
 	}
-	if _, err := relay.AuthenticateAs(authzid, authid, password, "submission", s.remoteIP.String(), loginproto.LocalIP(s.conn.Conn()), s.sid); err != nil {
+	res, err := relay.AuthenticateAs(authzid, authid, password, "submission", s.remoteIP.String(), loginproto.LocalIP(s.conn.Conn()), s.sid)
+	if err != nil {
 		return goSmtp.ErrAuthFailed
 	}
+	s.username = res.Username
 	return nil
 }
 
@@ -334,11 +336,10 @@ func (s *session) authPlain(authzid, authid, password string) error {
 // startup check refuses that config, so reaching it is a bug, not a state.
 var errNoAuthService = errors.New("submission: no auth service configured")
 
-// completeSCRAMLogin is the OnSuccess hook for the session's SCRAM adapter. The
-// SCRAM server has already verified the credential; go-smtp flips the session's
-// authenticated bit once Auth's sasl.Server returns done=true, so there is
-// nothing to do here.
-func (s *session) completeSCRAMLogin(_ string) error {
+// completeSCRAMLogin is the OnSuccess hook for the session's SCRAM adapter: the
+// credential is verified, and the user is the one the relay is told.
+func (s *session) completeSCRAMLogin(username string) error {
+	s.username = username
 	return nil
 }
 

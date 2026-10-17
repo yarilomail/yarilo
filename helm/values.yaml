@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 12
+config_schema_version: 13
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2107,10 +2107,19 @@ protocol:
     relay:
       host: ""
       port: 25
+      ## user may carry %u, the session's user. With master_user set, the proxy
+      ## logs in as master_user acting for user (SASL authzid).
       user: ""
+      master_user: ""
       password: ""
+      ## A Secret holding the password, given to every container that relays as
+      ## YARILO_SUBMISSION_RELAY_PASSWORD; it takes the place of password.
+      password_secret_ref: {}
       ssl: "no"
       ssl_verify: true
+      ## ssl_ca is a PEM file the relay is verified against, empty for the system
+      ## roots. With internal_tls the internal CA is at /etc/yarilo/internal-tls/ca.crt.
+      ssl_ca: ""
       trusted: false
       connect_timeout: 30
       command_timeout: 300

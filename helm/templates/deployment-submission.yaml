@@ -43,6 +43,7 @@ spec:
                   fieldPath: status.podIP
             {{- include "yarilo.adminBackendEnv" . | nindent 12 }}
             {{- include "yarilo.dbEnv" . | nindent 12 }}
+            {{- include "yarilo.relayPasswordEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -123,6 +123,9 @@ spec:
             {{- include "yarilo.adminDirectorEnv" $root | nindent 12 }}
             {{- end }}
             {{- include "yarilo.dbEnv" $root | nindent 12 }}
+            {{- if has $p.name (list "submission" "jmap") }}
+            {{- include "yarilo.relayPasswordEnv" $root | nindent 12 }}
+            {{- end }}
             {{- with $root.Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
