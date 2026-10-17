@@ -203,3 +203,32 @@ func manyCalls(n int) string {
 	}
 	return string(body)
 }
+
+// A method's implicit calls answer right after it, under its call id, before
+// the next call in the batch (RFC 8621 §7.5).
+func TestImplicitResponsesFollowTheirMethod(t *testing.T) {
+	reg := CoreRegistry()
+	reg["Thing/set"] = MethodEntry{Capability: CapCore, Fn: func(context.Context, json.RawMessage) (any, *MethodError) {
+		return &FollowedBy{Result: map[string]int{"n": 1}, Then: []Implicit{
+			{Name: "Email/set", Result: map[string]int{"n": 2}},
+			{Name: "error", Result: &MethodError{Type: ErrServerFail}},
+		}}, nil
+	}}
+	req := &Request{Using: []string{CapCore}, MethodCalls: []Invocation{
+		{Name: "Thing/set", Args: json.RawMessage(`{}`), CallID: "c0"},
+		{Name: "Core/echo", Args: json.RawMessage(`{}`), CallID: "c1"},
+	}}
+	resp := Execute(context.Background(), req, reg, testLimits())
+	want := []struct{ name, callID, args string }{
+		{"Thing/set", "c0", `{"n":1}`}, {"Email/set", "c0", `{"n":2}`}, {"error", "c0", `{"type":"serverFail"}`}, {"Core/echo", "c1", `{}`},
+	}
+	if len(resp.MethodResponses) != len(want) {
+		t.Fatalf("got %d responses, want %d", len(resp.MethodResponses), len(want))
+	}
+	for i, w := range want {
+		r := resp.MethodResponses[i]
+		if r.Name != w.name || r.CallID != w.callID || string(r.Args) != w.args {
+			t.Errorf("response %d = %s/%s %s, want %s/%s %s", i, r.Name, r.CallID, r.Args, w.name, w.callID, w.args)
+		}
+	}
+}

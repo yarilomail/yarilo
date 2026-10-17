@@ -36,6 +36,8 @@ type Limits struct {
 	MaxObjectsInSet       int
 	// Sieve advertises RFC 9661; nil leaves it out.
 	Sieve *SieveSession
+	// Submission advertises Identity and EmailSubmission; nil leaves them out.
+	Submission *SubmissionCapability
 }
 
 // Session is the session resource of RFC 8620 §2. Field order follows the RFC
@@ -118,6 +120,11 @@ func BuildSession(lim Limits, username string) *Session {
 		UploadURL:       base + UploadPath + "{accountId}/",
 		EventSourceURL:  base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
 		State:           SessionState(lim),
+	}
+	if lim.Submission != nil {
+		sess.Capabilities[CapSubmission] = map[string]any{}
+		account.AccountCapabilities[CapSubmission] = lim.Submission
+		sess.PrimaryAccounts[CapSubmission] = username
 	}
 	if lim.Sieve != nil {
 		sess.Capabilities[CapSieve] = map[string]string{"implementation": lim.Sieve.Implementation}

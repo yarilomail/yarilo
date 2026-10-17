@@ -25,10 +25,11 @@ func SessionState(lim Limits) string {
 		b.WriteByte(';')
 	}
 	b.WriteString(lim.BaseURL)
-	if lim.Sieve != nil {
-		raw, _ := json.Marshal(lim.Sieve)
-		b.WriteByte(';')
-		b.Write(raw)
+	for _, extra := range []any{lim.Sieve, lim.Submission} {
+		if raw, _ := json.Marshal(extra); string(raw) != "null" {
+			b.WriteByte(';')
+			b.Write(raw)
+		}
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:8])

@@ -111,31 +111,44 @@ func Execute(ctx context.Context, req *Request, reg Registry, lim Limits) *Respo
 		SessionState:    SessionState(lim),
 	}
 	for _, call := range req.MethodCalls {
-		resp.MethodResponses = append(resp.MethodResponses, invoke(ctx, call, req.Using, reg, resp.MethodResponses))
+		resp.MethodResponses = append(resp.MethodResponses, invoke(ctx, call, req.Using, reg, resp.MethodResponses)...)
 	}
 	return resp
 }
 
-func invoke(ctx context.Context, call Invocation, using []string, reg Registry, done []Invocation) Invocation {
+func invoke(ctx context.Context, call Invocation, using []string, reg Registry, done []Invocation) []Invocation {
+	one := func(i Invocation) []Invocation { return []Invocation{i} }
 	entry, ok := reg[call.Name]
 	// A method the client did not declare the capability for is indistinguishable
 	// from one the server does not implement, by design (RFC 8620 §3.2).
 	if !ok || (entry.Capability != "" && !contains(using, entry.Capability)) {
-		return errorInvocation(&MethodError{Type: ErrUnknownMethod}, call.CallID)
+		return one(errorInvocation(&MethodError{Type: ErrUnknownMethod}, call.CallID))
 	}
 	args, merr := resolveBackRefs(call.Args, done)
 	if merr != nil {
-		return errorInvocation(merr, call.CallID)
+		return one(errorInvocation(merr, call.CallID))
 	}
 	result, merr := entry.Fn(ctx, args)
 	if merr != nil {
-		return errorInvocation(merr, call.CallID)
+		return one(errorInvocation(merr, call.CallID))
+	}
+	var then []Implicit
+	if f, ok := result.(*FollowedBy); ok {
+		result, then = f.Result, f.Then
 	}
 	raw, err := json.Marshal(result)
 	if err != nil {
-		return errorInvocation(&MethodError{Type: ErrServerFail, Description: err.Error()}, call.CallID)
+		return one(errorInvocation(&MethodError{Type: ErrServerFail, Description: err.Error()}, call.CallID))
 	}
-	return Invocation{Name: call.Name, Args: raw, CallID: call.CallID}
+	out := one(Invocation{Name: call.Name, Args: raw, CallID: call.CallID})
+	for _, im := range then {
+		raw, err := json.Marshal(im.Result)
+		if err != nil {
+			return append(out, errorInvocation(&MethodError{Type: ErrServerFail, Description: err.Error()}, call.CallID))
+		}
+		out = append(out, Invocation{Name: im.Name, Args: raw, CallID: call.CallID})
+	}
+	return out
 }
 
 func contains(ss []string, s string) bool {

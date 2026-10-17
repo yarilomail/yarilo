@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
@@ -49,7 +50,8 @@ func twoAccountServer(t *testing.T) (*Server, string) {
 			},
 			Locker: locker,
 		},
-		Sieve: &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil)},
+		Sieve:      &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil)},
+		Submission: &Submission{Sender: boundaryRelay, TTL: time.Hour},
 	})
 	if err := s.opts.Sieve.Store.SaveScript(context.Background(), foreignUser, infos[foreignUser].Home, "theirs", []byte("keep;\n")); err != nil {
 		t.Fatal(err)
@@ -209,6 +211,39 @@ var boundaryRows = []struct {
 				t.Errorf("the other account's script is gone: %v", got)
 			}
 		}},
+	{"EmailSubmission/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","create":{"c1":{"identityId":"x","emailId":"FOREIGN"}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"EmailSubmission/set", kindEmptyAccount, `{"create":{"c1":{"identityId":"x","emailId":"FOREIGN"}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	// FOREIGN is the other account's message: not found here, never sent.
+	{"EmailSubmission/set", kindForeignObject, `{"accountId":"` + testUser + `","create":{"c1":{"identityId":"IDENTITY","emailId":"FOREIGN"}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			e := entry(out, "notCreated", "c1")
+			if name != "EmailSubmission/set" || e["type"] != "invalidProperties" || !strings.Contains(fmt.Sprint(e["properties"]), "emailId") {
+				t.Errorf("answered %s %v, want notCreated c1 invalidProperties emailId", name, out)
+			}
+			if n := len(boundaryRelay.all()); n != 0 {
+				t.Errorf("the other account's message reached the relay (%d sends)", n)
+			}
+		}},
+	{"Identity/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["FOREIGNIDENTITY"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"Identity/set", kindEmptyAccount, `{"destroy":["FOREIGNIDENTITY"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	{"Identity/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["FOREIGNIDENTITY"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			if name != "Identity/set" || entry(out, "notDestroyed", identityID(foreignUser))["type"] != "forbidden" {
+				t.Errorf("answered %s %v, want notDestroyed forbidden", name, out)
+			}
+		}},
 	// Resolved globally, the other INBOX would answer forbidden, not notFound.
 	{"Mailbox/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["FOREIGNBOX"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
@@ -219,6 +254,10 @@ var boundaryRows = []struct {
 			}
 		}},
 }
+
+// boundaryRelay is the relay of the two-account server; a row that refuses
+// must leave it untouched.
+var boundaryRelay = &fakeRelay{}
 
 // foreignBoxID is set per row run to the other account's INBOX id.
 var foreignBoxID string
@@ -255,7 +294,8 @@ func TestMutatingMethodsKeepTheAccountBoundary(t *testing.T) {
 		t.Run(row.method+"/"+row.kind, func(t *testing.T) {
 			s, foreign := twoAccountServer(t)
 			foreignBoxID = inboxIDOf(t, s, foreignUser)
-			args := strings.NewReplacer("FOREIGNBOX", foreignBoxID, "FOREIGN", foreign, "INBOXID", inboxID(t, s)).Replace(row.args)
+			args := strings.NewReplacer("FOREIGNBOX", foreignBoxID, "FOREIGNIDENTITY", identityID(foreignUser),
+				"IDENTITY", identityID(testUser), "FOREIGN", foreign, "INBOXID", inboxID(t, s)).Replace(row.args)
 			name, out := callAs(t, s, testUser, row.method, args)
 			row.check(t, s, foreign, name, out)
 		})

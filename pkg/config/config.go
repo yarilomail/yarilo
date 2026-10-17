@@ -544,6 +544,9 @@ type JMAPProtocolConfig struct {
 	SnippetMaxChars int `koanf:"jmap_snippet_max_chars"`
 	// UploadTTL is how long an uploaded blob lives, in seconds. Default 3600.
 	UploadTTL int `koanf:"jmap_upload_ttl"`
+	// SubmissionTTLSeconds keeps an EmailSubmission record this long after
+	// sending; 0 keeps none. Default 86400.
+	SubmissionTTLSeconds int `koanf:"jmap_submission_ttl_seconds"`
 	// PushTimeout is the idle timeout for a push connection, in seconds.
 	// Default 90. Unused until the push phase.
 	PushTimeout int `koanf:"jmap_push_timeout"`
@@ -2685,6 +2688,7 @@ func Defaults() *Config {
 	c.Protocol.JMAP.MaxQueryFolders = 64
 	c.Protocol.JMAP.SnippetMaxChars = 256
 	c.Protocol.JMAP.UploadTTL = 3600
+	c.Protocol.JMAP.SubmissionTTLSeconds = 86400
 	c.Protocol.ManageSieve.MaxInvalidCommands = 3
 	c.Sieve.MaxScriptSize = 65536
 	c.Sieve.MaxRedirects = 32
@@ -3579,7 +3583,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 13
+const minConfigSchema = 14
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3603,6 +3607,7 @@ var schemaAdditions = map[int][]string{
 	11: {"sieve_max_num_scripts"},
 	12: {"sieve_max_storage"},
 	13: {"submission_relay_master_user", "submission_relay_ssl_ca"},
+	14: {"jmap_submission_ttl_seconds"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

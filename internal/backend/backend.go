@@ -1079,6 +1079,7 @@ func ResolveUserInfo(resolver *mailbox.Resolver, username string, ui *protocol.U
 	mbi.ACLGroups = ui.ACLGroups
 	mbi.QuotaRules = ui.QuotaRules
 	mbi.QuotaOverFlag = ui.QuotaOverFlag
+	mbi.IdentityAliases = ui.IdentityAliases
 	locErr, drvErr := mailbox.ApplyUserdb(mbi, mailbox.UserdbOverrides{
 		VolatileDir:  ui.VolatileDir,
 		IndexDir:     ui.IndexDir,
