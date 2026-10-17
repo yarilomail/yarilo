@@ -187,10 +187,8 @@ protocol:
       enabled: true
       per_recipient_burst: 1000
       per_recipient_window_seconds: 60
-  ## Submission proxies to the cluster's relay-mta on its submission port.
-  ## The relay authenticates through yarilo-sasl-login, so the proxy logs in as
-  ## relay-master acting for the session's user (%u), and the relay judges that
-  ## user. relay-mta's certificate is issued by the internal CA (cert-manager).
+  ## relay-mta:587, logged in as relay-master for the session's user (%u) and
+  ## verified against the internal CA that issues its certificate.
   submission:
     relay:
       host: "relay-mta.yarilo-relay.svc.cluster.local"

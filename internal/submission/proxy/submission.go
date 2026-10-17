@@ -44,10 +44,8 @@ type capabilities struct {
 	hasXCLIENT  bool
 }
 
-// Send forwards a message to the upstream MTA. clientIP feeds XCLIENT when
-// Trusted; login is the session's user, which %u in the relay user names; sid
-// names the session in the log. Transport errors → 451 4.4.0, relay auth
-// failures → 451 4.7.0. SMTP-level rejections are passed through as-is.
+// Send relays one message as login (%u), logging under sid: transport errors
+// are 451 4.4.0, relay auth 451 4.7.0, SMTP rejections pass through.
 func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP net.IP, login, sid string) error {
 	if s.cfg.Host == "" {
 		return &goSmtp.SMTPError{

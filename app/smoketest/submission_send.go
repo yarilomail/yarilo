@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// smtpReply reads one whole reply, every continuation line included: a reader
-// that stops at the first line leaves the rest as the next command's reply
-// and passes while the session is a reply behind (#2271).
+// smtpReply reads one whole reply, continuation lines included; one line per
+// command passes while the session runs a reply behind (#2271).
 func smtpReply(conn net.Conn) (string, error) {
 	for {
 		line, err := readLine(conn)
