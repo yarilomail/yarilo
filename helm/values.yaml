@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 10
+config_schema_version: 11
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2186,6 +2186,9 @@ sieve:
   sieve_default_name: "yarilo"
   sieve_max_script_size: 65536
   sieve_max_redirects: 32
+  ## sieve_max_num_scripts caps the scripts one user may store; replacing a
+  ## stored script adds none. ManageSieve refuses past it. 0 = unlimited.
+  sieve_max_num_scripts: 0
   ## sieve_max_actions caps the total actions a single script may apply (fileinto,
   ## redirect, keep, ...). Guards runaway scripts. 0 = unlimited.
   sieve_max_actions: 32

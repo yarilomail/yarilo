@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -27,6 +28,7 @@ type session struct {
 	homeDir           string
 	store             sieve.ScriptStore
 	maxSize           int
+	maxScripts        int
 	maxLine           int64
 	closing           bool
 	allowedExtensions []string
@@ -85,6 +87,8 @@ func (s *session) serve(ctx context.Context) {
 			s.handleDeleteScript(ctx)
 		case "CHECKSCRIPT":
 			s.handleCheckScript()
+		case "HAVESPACE":
+			s.handleHaveSpace(ctx)
 		case "RENAMESCRIPT":
 			s.handleRenameScript(ctx)
 		case "NOOP":
@@ -117,7 +121,7 @@ func (s *session) scriptLimit() literalLimit {
 	if limit == 0 {
 		limit = math.MaxInt64
 	}
-	return literalLimit{max: limit, code: "QUOTA/MAXSCRIPTSIZE", msg: "Script too large."}
+	return literalLimit{max: limit, code: "QUOTA/MAXSIZE", msg: fmt.Sprintf("Script is too large (max %d bytes).", s.maxSize)}
 }
 
 // argError answers a bad argument. A literal over its limit that the client
@@ -180,11 +184,6 @@ func (s *session) handlePutScript(ctx context.Context) {
 		return
 	}
 
-	if s.maxSize > 0 && len(src) > s.maxSize {
-		_ = writeNO(s.w, "QUOTA/MAXSCRIPTSIZE", "Script too large.")
-		return
-	}
-
 	nameStr := string(name)
 	if !sieve.ValidScriptName(nameStr) {
 		_ = writeNO(s.w, "", "Invalid script name.")
@@ -192,6 +191,9 @@ func (s *session) handlePutScript(ctx context.Context) {
 	}
 	if nameStr == s.store.DefaultScriptName() {
 		_ = writeNO(s.w, "", "Script name is reserved.")
+		return
+	}
+	if !s.withinQuota(ctx, nameStr, len(src)) {
 		return
 	}
 
@@ -347,11 +349,6 @@ func (s *session) handleCheckScript() {
 		return
 	}
 
-	if s.maxSize > 0 && len(src) > s.maxSize {
-		_ = writeNO(s.w, "QUOTA/MAXSCRIPTSIZE", "Script too large.")
-		return
-	}
-
 	compiled, err := gosieve.Load(bytes.NewReader(src), gosieve.DefaultOptions())
 	if err != nil {
 		_ = writeNO(s.w, "", fmt.Sprintf("Script error: %s", strings.TrimSpace(err.Error())))
@@ -362,6 +359,62 @@ func (s *session) handleCheckScript() {
 		return
 	}
 	_ = writeOK(s.w, "CHECKSCRIPT completed.")
+}
+
+// withinQuota answers NO with the RFC 5804 quota code when the save would
+// break a limit.
+func (s *session) withinQuota(ctx context.Context, name string, size int) bool {
+	err := sieve.CheckQuota(ctx, s.store, s.username, s.homeDir, name, size,
+		sieve.Quota{MaxSize: s.maxSize, MaxScripts: s.maxScripts})
+	var qe *sieve.QuotaExceededError
+	switch {
+	case err == nil:
+		return true
+	case errors.As(err, &qe) && qe.Kind == sieve.QuotaMaxScripts:
+		_ = writeNO(s.w, "QUOTA/MAXSCRIPTS", ucFirst(qe.Error())+".")
+	case errors.As(err, &qe):
+		_ = writeNO(s.w, "QUOTA/MAXSIZE", ucFirst(qe.Error())+".")
+	default:
+		slog.Error("managesieve: quota check", "sid", s.sid, "user", s.username, "script", name, "err", err)
+		_ = writeNO(s.w, "", "Server error checking quota.")
+	}
+	return false
+}
+
+func (s *session) handleHaveSpace(ctx context.Context) {
+	name, err := readString(s.r, nil, s.argLimit())
+	if err != nil {
+		s.argError(err, "Invalid string for scriptname.")
+		return
+	}
+	sizeArg, err := readAtom(s.r, int(s.maxLine))
+	skipLine(s.r)
+	if err != nil {
+		_ = writeNO(s.w, "", "Invalid scriptsize argument.")
+		return
+	}
+	size, err := strconv.ParseUint(sizeArg, 10, 63)
+	if err != nil {
+		_ = writeNO(s.w, "", "Invalid scriptsize argument.")
+		return
+	}
+	nameStr := string(name)
+	if !sieve.ValidScriptName(nameStr) {
+		_ = writeNO(s.w, "", "Invalid script name.")
+		return
+	}
+	if nameStr == s.store.DefaultScriptName() {
+		_ = writeNO(s.w, "", "Script name is reserved.")
+		return
+	}
+	if size == 0 {
+		_ = writeNO(s.w, "", "Cannot upload empty script.")
+		return
+	}
+	if !s.withinQuota(ctx, nameStr, int(size)) {
+		return
+	}
+	_ = writeOK(s.w, "Putscript would succeed.")
 }
 
 func (s *session) handleRenameScript(ctx context.Context) {

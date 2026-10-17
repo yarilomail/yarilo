@@ -164,6 +164,7 @@ sieve:
   sieve_scripts_driver: "fs"
   sieve_max_script_size: 65536
   sieve_max_redirects: 32
+  sieve_max_num_scripts: 0
   sieve_max_actions: 32
   sieve_duplicate_max_period: 604800
   sieve_duplicate_driver: "file"

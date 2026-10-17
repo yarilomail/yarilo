@@ -518,6 +518,7 @@ func New(cfg *config.Config) (*Server, error) {
 			Resolver:        resolver,
 			Config:          cfg.Protocol.ManageSieve,
 			MaxScriptSize:   cfg.Sieve.MaxScriptSize,
+			MaxScripts:      cfg.Sieve.MaxScripts,
 			AuthAddr:        authAddr,
 			AuthTLS:         authTLS,
 			PreambleTLS:     preambleTLS[mtls.ListenerSieveBackend],
