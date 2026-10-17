@@ -172,6 +172,15 @@ sieve:
   sieve_duplicate_driver: "file"
   sieve_duplicate_file: ".yarilo.sieve-duplicate"
   sieve_vacation_enabled: true
+  sieve_vacation_min_period: 86400
+  sieve_vacation_max_period: 5184000
+  sieve_vacation_default_period: 604800
+  sieve_vacation_default_subject: ""
+  sieve_vacation_default_subject_template: ""
+  sieve_vacation_use_original_recipient: false
+  sieve_vacation_check_recipient: true
+  sieve_vacation_send_from_recipient: false
+  sieve_vacation_to_header_ignore_envelope: false
   sieve_spamtest_status_header: "X-Spam-Score"
   sieve_spamtest_max_value: 10
   sieve_virustest_status_header: ""

@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 14
+config_schema_version: 15
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2218,6 +2218,25 @@ sieve:
   ## Home-dir file name for sieve_duplicate_driver=file.
   sieve_duplicate_file: ".yarilo.sieve-duplicate"
   sieve_vacation_enabled: true
+  ## vacation periods, seconds: :days / :seconds, or the default, kept between
+  ## the minimum and the maximum; 0 = no bound.
+  sieve_vacation_min_period: 86400
+  sieve_vacation_max_period: 5184000
+  sieve_vacation_default_period: 604800
+  ## A reply without :subject: "Auto: <subject>" or this template with %{subject};
+  ## a message with no subject gets default_subject ("" = "Automated reply").
+  sieve_vacation_default_subject: ""
+  sieve_vacation_default_subject_template: ""
+  ## The LMTP ORCPT counts as the user's address too; not in effect until LMTP
+  ## carries ORCPT to the backend.
+  sieve_vacation_use_original_recipient: false
+  ## Reply only to mail naming the user (or :addresses) in To/Cc/Bcc/Resent-*.
+  sieve_vacation_check_recipient: true
+  ## Envelope sender of a reply: the recipient instead of <>.
+  sieve_vacation_send_from_recipient: false
+  ## The reply's To is the first address in Sender/Resent-From/From, not the
+  ## one matching the envelope sender.
+  sieve_vacation_to_header_ignore_envelope: false
   ## spamtest / virustest (RFC 5235) status-header sources. Leave the header
   ## empty to keep the test unbacked (reports "not scanned"). The raw header
   ## value is normalised against the max_value onto the 0..10 (spam) / 0..5

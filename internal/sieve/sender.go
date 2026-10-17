@@ -24,6 +24,8 @@ import (
 // using a configured upstream MTA (submission_host).
 type Sender struct {
 	cfg config.SieveConfig
+	// send replaces submit in tests.
+	send func(ctx context.Context, from string, to []string, body *bytes.Reader) error
 }
 
 func newSender(cfg config.SieveConfig) *Sender {
@@ -33,53 +35,6 @@ func newSender(cfg config.SieveConfig) *Sender {
 // sendRedirect forwards the original message to addr with the original envelope-from.
 func (s *Sender) sendRedirect(ctx context.Context, envFrom, addr string, raw []byte) error {
 	return s.submit(ctx, envFrom, []string{addr}, bytes.NewReader(raw))
-}
-
-// sendVacation sends an RFC 5230 auto-reply to the original sender, after
-// checking dedup state and RFC 5230 §4.5 skip conditions.
-func (s *Sender) sendVacation(
-	ctx context.Context,
-	store ScriptStore,
-	opts FilterOptions,
-	hdr textproto.MIMEHeader,
-	resp interp.VacationResponse,
-) error {
-	sender := opts.EnvFrom
-	if sender == "" || sender == "<>" {
-		return nil
-	}
-
-	// RFC 5230 §4.5: skip if sender is a mailing list or auto-generated message.
-	if isMailingList(hdr) || isAutoSubmitted(hdr) {
-		return nil
-	}
-
-	intervalSecs := vacationIntervalSecs(resp)
-
-	sent, err := store.VacationSent(ctx, opts.Username, opts.HomeDir, resp.Handle, sender)
-	if err != nil {
-		return fmt.Errorf("sieve/sender: vacation dedup lookup: %w", err)
-	}
-	if sent {
-		return nil
-	}
-
-	from := resp.From
-	if from == "" {
-		from = opts.EnvTo
-	}
-
-	msg := buildVacationReply(from, sender, resp.Subject, resp.Body)
-
-	// Envelope-from is null to prevent mail loops (RFC 5230 §4.5).
-	if err := s.submit(ctx, "", []string{sender}, bytes.NewReader(msg)); err != nil {
-		return fmt.Errorf("sieve/sender: vacation send: %w", err)
-	}
-
-	if err := store.MarkVacationSent(ctx, opts.Username, opts.HomeDir, resp.Handle, sender, intervalSecs); err != nil {
-		slog.Warn("sieve/sender: vacation dedup mark failed", "user", opts.Username, "err", err)
-	}
-	return nil
 }
 
 func (s *Sender) submit(ctx context.Context, from string, to []string, body *bytes.Reader) error {
@@ -158,44 +113,6 @@ func (s *Sender) connectTimeout() time.Duration {
 
 func (s *Sender) commandTimeout() time.Duration {
 	return time.Duration(s.cfg.SubmissionTimeout) * time.Second
-}
-
-// buildVacationReply constructs a minimal RFC 5230 auto-reply message.
-func buildVacationReply(from, to, subject, body string) []byte {
-	var b bytes.Buffer
-	fmt.Fprintf(&b, "Message-ID: <%d.sieve-vacation@yarilo>\r\n", time.Now().UnixNano())
-	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 +0000"))
-	fmt.Fprintf(&b, "From: %s\r\n", from)
-	fmt.Fprintf(&b, "To: %s\r\n", to)
-	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
-	b.WriteString("Auto-Submitted: auto-replied\r\n")
-	b.WriteString("X-Auto-Response-Suppress: OOF, AutoReply\r\n")
-	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	b.WriteString("\r\n")
-	b.WriteString(body)
-	return b.Bytes()
-}
-
-// vacationIntervalSecs returns the dedup interval in seconds from a VacationResponse.
-func vacationIntervalSecs(resp interp.VacationResponse) int {
-	if resp.Seconds > 0 {
-		return resp.Seconds
-	}
-	days := resp.Days
-	if days <= 0 {
-		days = 7
-	}
-	return days * 86400
-}
-
-// isMailingList reports whether the message headers indicate a mailing list.
-func isMailingList(hdr textproto.MIMEHeader) bool {
-	if hdr.Get("List-Id") != "" {
-		return true
-	}
-	prec := strings.ToLower(hdr.Get("Precedence"))
-	return prec == "bulk" || prec == "list" || prec == "junk"
 }
 
 // isAutoSubmitted reports whether the message was automatically generated

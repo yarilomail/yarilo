@@ -6,8 +6,8 @@ github.com/0kaba0hub/go-jmap v0.0.0-20261015223003-0102c41ef1af h1:A7mFwy95GoRnf
 github.com/0kaba0hub/go-jmap v0.0.0-20261015223003-0102c41ef1af/go.mod h1:aOTCtwpZSINpDDSOkLGpHU0Kbbm5lcSDMcobX3ZtOjY=
 github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936 h1:FW7LHvBoG3hlzUdY2bCt70mF0NDQPxUQWstSP5qzyXY=
 github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936/go.mod h1:PcxAsXfepK4Fu2VjjnA/1sQ4j4TTCwHekjjcDYR71Rw=
-github.com/0kaba0hub/go-sieve v0.0.0-20261011102629-05463194f223 h1:9rE4IblVTmdiB8WZyujPUW52ai5J50tEMU/fraB7A6U=
-github.com/0kaba0hub/go-sieve v0.0.0-20261011102629-05463194f223/go.mod h1:osl9Lk7E2uvGHKyrcuTgQ3AQmQcJAd0dR2PDPNmI7ew=
+github.com/0kaba0hub/go-sieve v0.0.0-20261017221509-e4c6bde538ef h1:xMjHF1rn7UqoYuIubFDSV7BsACkuFyNEPri9ZDXDrBA=
+github.com/0kaba0hub/go-sieve v0.0.0-20261017221509-e4c6bde538ef/go.mod h1:osl9Lk7E2uvGHKyrcuTgQ3AQmQcJAd0dR2PDPNmI7ew=
 github.com/0kaba0hub/go-smtp v0.0.0-20261011102647-92f8904ca8d4 h1:Y3C1oaYQV7LfR5kNirntIphFI5IoziCHBRZiVWA2zHo=
 github.com/0kaba0hub/go-smtp v0.0.0-20261011102647-92f8904ca8d4/go.mod h1:ZtRRkbTyp2XTHCA+BmyTFTrj8xY4I+b4McvHxCU2gsQ=
 github.com/0kaba0hub/go-xapian v0.2.1 h1:fdZ68/Tr2nkj/UKo6BEmg/vgyMOvuFROowtbgP7XQNM=

@@ -250,7 +250,16 @@ data:
       sieve_duplicate_max_period: {{ $sieve.sieve_duplicate_max_period }}
       sieve_duplicate_driver: {{ $sieve.sieve_duplicate_driver | default "file" | quote }}
       sieve_duplicate_file: {{ $sieve.sieve_duplicate_file | default ".yarilo.sieve-duplicate" | quote }}
-      sieve_vacation_enabled: {{ $sieve.sieve_vacation_enabled | default true }}
+      sieve_vacation_enabled: {{ $sieve.sieve_vacation_enabled }}
+      sieve_vacation_min_period: {{ $sieve.sieve_vacation_min_period | int64 }}
+      sieve_vacation_max_period: {{ $sieve.sieve_vacation_max_period | int64 }}
+      sieve_vacation_default_period: {{ $sieve.sieve_vacation_default_period | int64 }}
+      sieve_vacation_default_subject: {{ $sieve.sieve_vacation_default_subject | quote }}
+      sieve_vacation_default_subject_template: {{ $sieve.sieve_vacation_default_subject_template | quote }}
+      sieve_vacation_use_original_recipient: {{ $sieve.sieve_vacation_use_original_recipient }}
+      sieve_vacation_check_recipient: {{ $sieve.sieve_vacation_check_recipient }}
+      sieve_vacation_send_from_recipient: {{ $sieve.sieve_vacation_send_from_recipient }}
+      sieve_vacation_to_header_ignore_envelope: {{ $sieve.sieve_vacation_to_header_ignore_envelope }}
       sieve_spamtest_status_header: {{ $sieve.sieve_spamtest_status_header | default "" | quote }}
       sieve_spamtest_max_value: {{ $sieve.sieve_spamtest_max_value }}
       sieve_virustest_status_header: {{ $sieve.sieve_virustest_status_header | default "" | quote }}

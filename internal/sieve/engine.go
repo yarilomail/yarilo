@@ -97,6 +97,8 @@ type FilterOptions struct {
 	HomeDir  string
 	EnvFrom  string
 	EnvTo    string
+	// OrigRcpt is the recipient as first given (LMTP ORCPT), when known.
+	OrigRcpt string
 	AuthUser string
 	MsgRaw   []byte
 	// FolderExists is called by the mailboxexists Sieve test (RFC 5490).
