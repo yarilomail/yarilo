@@ -21,12 +21,33 @@ NS="${YARILO_NS:-yarilo-sb}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PASSWORD='Yarilo!test1'
+# What one smoketest run passes; it moves with every check added to the binary.
+SMOKE_CHECKS=47
+# The only rows a run skips: they need the OAuth2 overlay, which acceptance runs without (#2231).
+SMOKE_OAUTH2_SKIPS='oauth2 imap AUTHENTICATE OAUTHBEARER (SASL-IR) + SELECT INBOX
+oauth2 pop3 AUTH OAUTHBEARER + STAT
+oauth2 submission AUTH OAUTHBEARER + MAIL FROM'
 mkdir -p "$OUT/logs" "$OUT/lines"
 : > "$OUT/verdict.txt"
 FAILS=0
 SKIPS=0
 
 kube() { kubectl -n "$NS" --request-timeout=60s "$@"; }
+
+# smoke_judge reads one smoketest log: every row passed but the oauth2 rows,
+# which are skipped by name; any other skip fails, however the counts add up.
+smoke_judge() {
+  local summary skips want n
+  summary=$(grep -o '"checks":[0-9]*,"passed":[0-9]*,"failed":[0-9]*,"skipped":[0-9]*' "$1" | tail -1 || true)
+  skips=$(grep '"smoke: SKIP"' "$1" | grep -o '"check":"[^"]*"' | sed 's/^"check":"//; s/"$//' | sort || true)
+  want=$(printf '%s\n' "$SMOKE_OAUTH2_SKIPS" | sort)
+  n=$(printf '%s\n' "$SMOKE_OAUTH2_SKIPS" | grep -c .)
+  if [ "$summary" = "\"checks\":$((SMOKE_CHECKS + n)),\"passed\":$SMOKE_CHECKS,\"failed\":0,\"skipped\":$n" ] && [ "$skips" = "$want" ]; then
+    echo "ok $SMOKE_CHECKS passed, 0 failed, $n skipped (oauth2)"
+  else
+    echo "fail ${summary:-no summary}; skipped: $(printf '%s' "$skips" | tr '\n' ';')"
+  fi
+}
 
 # verdict records one criterion: its name, ok, fail or skip, and what decided it.
 verdict() {
@@ -92,7 +113,7 @@ disk_messages() {
 aged_account() {
   local dom="$1" sub="$2" pattern="$3"
   kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
-    "cd /var/mail/vhosts/$dom 2>/dev/null && for u in *; do n=\$(find \"\$u/$sub\" -maxdepth 1 -name '$pattern' -mmin +1440 2>/dev/null | wc -l); [ \"\$n\" -ge 20 ] && echo \"\$u \$n\" && break; done" 2>/dev/null || true
+    "cd /var/mail/vhosts/$dom 2>/dev/null && for u in *; do n=\$(find \"\$u/$sub\" -maxdepth 1 -type f -name '$pattern' -mmin +1440 2>/dev/null | wc -l); [ \"\$n\" -ge 20 ] && echo \"\$u \$n\" && break; done" 2>/dev/null || true
 }
 
 # uid_pairs prints "user uid" for every UID both vanished and present, for the
@@ -249,10 +270,10 @@ for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
   cp "$REPO/hack/smoketest/run.sh" "$dir/"
   sed "s/u1@d00001\.test/$user/g" "$REPO/hack/smoketest/job.yaml" > "$dir/job.yaml"
   NAMESPACE="$NS" bash "$dir/run.sh" "$TAG" > "$OUT/smoke-$user.log" 2>&1 || true
-  summary=$(grep -o '"checks":[0-9]*,"passed":[0-9]*,"failed":[0-9]*' "$OUT/smoke-$user.log" | tail -1 || true)
-  case "$summary" in
-    '"checks":46,"passed":46,"failed":0') verdict "smoketest $user" ok "$summary" ;;
-    *) verdict "smoketest $user" fail "${summary:-no summary}; $(grep '"smoke: FAIL"' "$OUT/smoke-$user.log" | head -3 | cut -c1-200 | tr '\n' ' ')" ;;
+  judged=$(smoke_judge "$OUT/smoke-$user.log")
+  case "$judged" in
+    ok*) verdict "smoketest $user" ok "${judged#ok }" ;;
+    *) verdict "smoketest $user" fail "${judged#fail }; $(grep '"smoke: FAIL"' "$OUT/smoke-$user.log" | head -3 | cut -c1-200 | tr '\n' ' ')" ;;
   esac
 done
 
@@ -295,6 +316,41 @@ for spec in "${SDBOX_AGED:-}:sdbox" "${MAILDIR_AGED:-}:maildir"; do
   [ "$after" = "$before" ] && verdict "aged $type mailbox survives an open" ok "$user $after files" ||
     verdict "aged $type mailbox survives an open" fail "$user before=$before after=$after"
 done
+
+# A passdb nologin blocks the login with exactly a wrong password's answer and
+# keeps the account; the seed sets it on this account only (#2229).
+NOLOGIN_USER="${NOLOGIN_USER:-nologin@d00001.test}"
+right=$(imap_session "a LOGIN $NOLOGIN_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+wrong=$(imap_session "a LOGIN $NOLOGIN_USER wrong-$PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+case "$right" in
+  "a NO "*) [ "$right" = "$wrong" ] && verdict "passdb nologin refused as a wrong password" ok "$NOLOGIN_USER: $right" ||
+    verdict "passdb nologin refused as a wrong password" fail "right password '$right', wrong one '$wrong'" ;;
+  *) verdict "passdb nologin refused as a wrong password" fail "$NOLOGIN_USER with its password answered '${right:-nothing}'" ;;
+esac
+
+# The per-protocol rule (#2227): IMAP off in the password query, delivery off in
+# the user query, one probe each; README, acceptance.
+RULE_IMAP_USER="${RULE_IMAP_USER:-ruleimap@d00001.test}"
+RULE_LMTP_USER="${RULE_LMTP_USER:-rulelmtp@d00001.test}"
+right=$(imap_session "a LOGIN $RULE_IMAP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+wrong=$(imap_session "a LOGIN $RULE_IMAP_USER wrong-$PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+pop=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'USER $RULE_IMAP_USER\r\nPASS $PASSWORD\r\nQUIT\r\n' | nc -w 15 yarilo-pop3-login 110" | tr -d '\r' | sed -n 3p)
+case "$right|$pop" in
+  "a NO "*"|+OK"*) [ "$right" = "$wrong" ] && verdict "protocol rule: IMAP refused as a wrong password, POP3 in" ok "$RULE_IMAP_USER: imap '$right', pop3 '$pop'" ||
+    verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "right password '$right', wrong one '$wrong'" ;;
+  *) verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "$RULE_IMAP_USER: imap '${right:-nothing}', pop3 '${pop:-nothing}'" ;;
+esac
+# Refused after DATA as an unknown recipient, word for word: the login proxy
+# takes any RCPT. Both are refused, so nothing is stored.
+replies=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$RULE_LMTP_USER>\r\nRCPT TO:<nosuch-accept@d00001.test>\r\nDATA\r\nSubject: rule probe\r\n\r\nx\r\n.\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" | tr -d '\r' | grep -E '^5[0-9][0-9] ' || true)
+ruled=$(echo "$replies" | sed -n 1p); unknown=$(echo "$replies" | sed -n 2p)
+login=$(imap_session "a LOGIN $RULE_LMTP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
+case "$ruled|$login" in
+  "550 "*"|a OK"*) [ "${ruled/$RULE_LMTP_USER/X}" = "${unknown/nosuch-accept@d00001.test/X}" ] &&
+    verdict "protocol rule: delivery refused as an unknown recipient" ok "$ruled; unknown '$unknown'; imap '$login'" ||
+    verdict "protocol rule: delivery refused as an unknown recipient" fail "rule '$ruled', unknown '$unknown'" ;;
+  *) verdict "protocol rule: delivery refused as an unknown recipient" fail "$RULE_LMTP_USER: delivery '${ruled:-nothing}', imap '${login:-nothing}'" ;;
+esac
 
 uid_pairs | sort > "$OUT/uid-pairs-after.txt"
 new_pairs=$(comm -13 "$OUT/uid-pairs-before.txt" "$OUT/uid-pairs-after.txt" | tee "$OUT/lines/uid-pairs-new.txt" | wc -l | tr -d ' ')

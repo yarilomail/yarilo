@@ -43,7 +43,7 @@ const (
 	// flapping backend cannot drive a resync storm.
 	backendSyncCooldown = 10 * time.Second
 	// backendTombTTL bounds how long a removed backend blocks resurrection by a
-	// stale snapshot. Comfortably longer than propagation + a few ticks.
+	// stale snapshot, on top of backend_expire (tombTTL).
 	backendTombTTL = 5 * time.Minute
 )
 
@@ -217,13 +217,14 @@ func (s *Server) backendLeaseSeq(ip string) uint64 {
 	return s.backendSeen[ip].seq
 }
 
-// recordBackendTomb marks ip as removed at its current lease seq, blocking
-// resurrection by a stale snapshot until backendTombTTL elapses or a
-// strictly-newer record proves a genuine re-registration.
-func (s *Server) recordBackendTomb(ip string) {
+// recordBackendTomb marks ip removed at the later of its lease seq and the seq
+// the removal carried, and returns it: no record up to it re-adds ip (#2255).
+func (s *Server) recordBackendTomb(ip string, seq uint64) uint64 {
+	seq = max(seq, s.backendLeaseSeq(ip))
 	s.backendTombMu.Lock()
-	s.backendTomb[ip] = backendTombstone{seq: s.backendLeaseSeq(ip), at: time.Now()}
+	s.backendTomb[ip] = backendTombstone{seq: seq, at: time.Now()}
 	s.backendTombMu.Unlock()
+	return seq
 }
 
 func (s *Server) clearBackendTomb(ip string) {
@@ -232,9 +233,8 @@ func (s *Server) clearBackendTomb(ip string) {
 	s.backendTombMu.Unlock()
 }
 
-// backendTombActive reports whether ip is still tombstoned against a snapshot
-// record carrying recSeq — true (blocked) when the tombstone is fresh and
-// recSeq does not exceed the removal seq (a static seq==0 never exceeds it).
+// backendTombActive reports whether a record carrying recSeq is blocked by a
+// fresh tombstone: only a seq past the removal's is a newer registration (#2255).
 func (s *Server) backendTombActive(ip string, recSeq uint64) bool {
 	s.backendTombMu.Lock()
 	defer s.backendTombMu.Unlock()
@@ -242,11 +242,21 @@ func (s *Server) backendTombActive(ip string, recSeq uint64) bool {
 	if !ok {
 		return false
 	}
-	if time.Since(tomb.at) > backendTombTTL {
+	if time.Since(tomb.at) > s.tombTTL() {
 		delete(s.backendTomb, ip)
 		return false
 	}
 	return recSeq <= tomb.seq
+}
+
+// tombTTL outlives a ghost: a director holding a removed backend keeps it at
+// most backend_expire past its last heartbeat (#2255).
+func (s *Server) tombTTL() time.Duration { return backendTombTTL + s.opts.backendExpire() }
+
+// backendRemoved reports a fresh tombstone whatever the seq: no placement may
+// name a backend that left.
+func (s *Server) backendRemoved(ip string) bool {
+	return s.backendTombActive(ip, 0)
 }
 
 // writeRingLine writes one line to a ring connection under a bounded deadline,

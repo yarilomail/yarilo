@@ -351,15 +351,17 @@ func (h *userHandle) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) er
 	return h.stamped(folderID).SetMaildirStamp(folderID, s)
 }
 
-// ReplaceGUIDStore satisfies mailbox.GUIDStoreRebuilder on the handle: the
-// admin API holds one of these, not the index beneath it.
-func (h *userHandle) ReplaceGUIDStore(copies []mailbox.GUIDRecord) error {
-	return h.ui.ReplaceGUIDStore(copies)
-}
-
 // GUIDCopies satisfies mailbox.GUIDResolver on the handle too.
 func (h *userHandle) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
 	return h.ui.GUIDCopies(guids)
+}
+
+func (h *userHandle) GUIDStoreComplete(folderIDs []uint64) (bool, error) {
+	return h.ui.GUIDStoreComplete(folderIDs)
+}
+
+func (h *userHandle) RebuildGUIDStore(folderIDs []uint64) (int, error) {
+	return h.ui.RebuildGUIDStore(folderIDs)
 }
 
 func (h *userHandle) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error {
@@ -455,7 +457,7 @@ func (h *userHandle) NextModSeq(folderID uint64) (uint64, error) {
 func (h *userHandle) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
 	return h.stamped(folderID).Vanished(folderID, sinceModSeq)
 }
-func (h *userHandle) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([][16]byte, bool, error) {
+func (h *userHandle) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([]mailbox.ExpungedCopy, bool, error) {
 	return h.stamped(folderID).VanishedGUIDs(folderID, sinceModSeq)
 }
 func (h *userHandle) FolderStamp(folder string) (mailbox.FolderStamp, error) {

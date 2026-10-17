@@ -153,7 +153,7 @@ func TestLookupByGUID_ZeroReturnsNotFound(t *testing.T) {
 
 // TestGUIDInRebuildScan verifies that the GUID from the dbox trailer
 // is surfaced in the ScanRecord returned by scanStorage so the rebuild
-// resolveMapFilenames can use it for GUID-based matching.
+// pairWithMap can use it for GUID-based matching.
 func TestGUIDInRebuildScan(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	u := openTestUserMailbox(t, home)

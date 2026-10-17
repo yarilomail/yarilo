@@ -1,0 +1,17 @@
+# OAuth2 matrix, mode local (#2231): JWKS plus the HS256 key; also the smoketest oauth2 rows. See hack/stand/README.md.
+components:
+  auth:
+    oauth2:
+      - mode: local
+        jwks_url: https://keycloak.keycloak.svc:8443/realms/yarilo/protocol/openid-connect/certs
+        issuers: [https://keycloak.keycloak.svc:8443/realms/yarilo]
+        audience: yarilo-auth
+        scopes: [email]
+        username_attribute: email
+        username_validation_format: "%Lu"
+        active_attribute: email_verified
+        active_value: "true"
+        extra_fields: [sub]
+        tls_ca: /etc/yarilo/internal-tls/ca.crt
+        local_keys:
+          - {alg: HS256, azp: yarilo-test-hs256, kid: sb-hs256, secret_ref: {name: yarilo-oauth2-sandbox, key: hs256_key}}

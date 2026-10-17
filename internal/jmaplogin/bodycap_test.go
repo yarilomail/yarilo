@@ -13,8 +13,13 @@ import (
 // post sends a body to the proxy as an authenticated client would.
 func post(t *testing.T, base, authz, body string) *http.Response {
 	t.Helper()
+	return postTo(t, base, "/jmap/api/", authz, body)
+}
+
+func postTo(t *testing.T, base, path, authz, body string) *http.Response {
+	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(),
-		http.MethodPost, base+"/jmap/api/", strings.NewReader(body))
+		http.MethodPost, base+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -66,6 +71,41 @@ func TestBodyCapRefusesAtTheEdge(t *testing.T) {
 			// §3.6.1 requires the limit member, and it must name the bound.
 			if got["limit"] != "maxSizeRequest" {
 				t.Errorf("limit = %v, want maxSizeRequest", got["limit"])
+			}
+		})
+	}
+}
+
+// An upload is capped by maxSizeUpload, which is larger than a request: a body
+// over the request cap and under the upload cap passes only on the upload path.
+func TestBodyCapUploadTakesItsOwnLimit(t *testing.T) {
+	base := startProxy(t, Options{MaxSizeRequest: 128, MaxSizeUpload: 1024})
+	tests := []struct {
+		name, path string
+		size       int
+		want       int
+		limit      string
+	}{
+		{"upload between the caps", jmapcore.UploadPath + "u1/", 500, http.StatusOK, ""},
+		{"upload over its cap", jmapcore.UploadPath + "u1/", 2000, http.StatusRequestEntityTooLarge, "maxSizeUpload"},
+		{"request between the caps", "/jmap/api/", 500, http.StatusRequestEntityTooLarge, "maxSizeRequest"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := postTo(t, base, tt.path, basic("u1", "pw"), strings.Repeat("x", tt.size))
+			defer resp.Body.Close() //nolint:errcheck
+			if resp.StatusCode != tt.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+			if tt.limit == "" {
+				return
+			}
+			var got map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got["limit"] != tt.limit {
+				t.Errorf("limit = %v, want %s", got["limit"], tt.limit)
 			}
 		})
 	}

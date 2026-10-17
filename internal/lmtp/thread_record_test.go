@@ -12,6 +12,7 @@ import (
 	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -21,11 +22,12 @@ import (
 // what the recorder was told.
 func deliverThreaded(t *testing.T, s *session, box mailbox.UserMailbox, ui mailbox.UserIndex, info *mailbox.UserInfo, raw string) string {
 	t.Helper()
-	_, _, guid, err := deliverOne(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
+	mbox := mailboxbase.Open(box, ui)
+	ops := mailops.NewDelivery(s.mailopsConfig(), mbox, info)
+	_, _, guid, err := deliverOne(ops, mbox, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), info.Username, "x@y", nil)
 	if err != nil {
 		t.Fatalf("deliverOne: %v", err)
 	}
-	s.recordThread(info, info.Username, guid, []byte(raw))
 	return hex.EncodeToString(guid[:])
 }
 
@@ -113,12 +115,12 @@ func TestADeliverySurvivesAnUnwritableSidecar(t *testing.T) {
 	info.ControlDir = filepath.Join(blocked, "sub")
 
 	raw := "Message-ID: <root@x>\r\nSubject: Plan\r\n\r\nbody\r\n"
-	_, _, guid, err := deliverOne(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), nil, info.Username, "x@y", nil)
-	if err != nil {
+	// The hook logs and returns; it must not fail the delivery.
+	mbox := mailboxbase.Open(box, ui)
+	ops := mailops.NewDelivery(s.mailopsConfig(), mbox, info)
+	if _, _, _, err := deliverOne(ops, mbox, "INBOX", bytes.NewReader([]byte(raw)), int64(len(raw)), info.Username, "x@y", nil); err != nil {
 		t.Fatalf("the delivery itself failed: %v", err)
 	}
-	// The hook logs and returns; it must not panic and must not report upward.
-	s.recordThread(info, info.Username, guid, []byte(raw))
 }
 
 // statusSink collects per-recipient results, which is all LMTPData needs from

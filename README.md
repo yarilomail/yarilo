@@ -7,6 +7,8 @@
 Production-grade IMAP / POP3 / LMTP / ManageSieve / Submission mail server with built-in full-text search, written in Go.
 Multi-binary architecture — each protocol component is a separate process. Kubernetes-native via Helm.
 
+**Website:** [yarilomail.org](https://yarilomail.org) · **Docs:** [doc.yarilomail.org](https://doc.yarilomail.org)
+
 </td>
 </tr></table>
 

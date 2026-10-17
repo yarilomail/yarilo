@@ -3,6 +3,7 @@
 package stand
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,12 +145,17 @@ func TestTheCPUProfileIsTakenOnEveryArm(t *testing.T) {
 // two levels, because a sibling one level down is what quietly moves in.
 func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 	cases := []struct {
-		name  string
-		allow string
+		name     string
+		allow    string
+		notAnArm bool
 	}{
 		{name: "blockprofile", allow: `^telemetry(\.pprof)?$`},
 		{name: "fsync-never", allow: `^storage(\.mail_fsync)?$`},
 		{name: "notls", allow: `^internalTLS(\.enabled)?$`},
+		// The OAuth2 matrix overlays: every login would reach the IdP, so never an arm (#2231).
+		{name: "oauth2-local", allow: `^components(\.auth)?$`, notAnArm: true},
+		{name: "oauth2-introspection", allow: `^components(\.auth)?$`, notAnArm: true},
+		{name: "oauth2-discovery", allow: `^components(\.auth)?$`, notAnArm: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,8 +187,8 @@ func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 				}
 			}
 			// And the arm must know the name, or the overlay is unreachable.
-			if !strings.Contains(armSource(t), tc.name+")") {
-				t.Errorf("ab-arm.sh does not name the %s overlay", tc.name)
+			if named := strings.Contains(armSource(t), tc.name+")"); named == tc.notAnArm {
+				t.Errorf("ab-arm.sh naming the %s overlay is %v, want %v", tc.name, named, !tc.notAnArm)
 			}
 		})
 	}
@@ -360,5 +366,97 @@ func TestTheArmFlagsAFirstSeenOutsideItsRange(t *testing.T) {
 	}
 	if !strings.Contains(src, "cold + 0 < 20 || cold + 0 > 21") {
 		t.Error("the first-seen control does not name the range it checks")
+	}
+}
+
+func acceptSource(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("accept.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// smokeLog is a smoketest log as slog writes it: one line per skip, then the summary.
+func smokeLog(t *testing.T, checks, passed, failed int, skips map[string]string) string {
+	t.Helper()
+	var b strings.Builder
+	for name, area := range skips {
+		fmt.Fprintf(&b, `{"level":"WARN","msg":"smoke: SKIP","check":%q,"reason":"needs x","area":%q,"exempt":false}`+"\n", name, area)
+	}
+	fmt.Fprintf(&b, `{"level":"INFO","msg":"smoke: summary","checks":%d,"passed":%d,"failed":%d,"skipped":%d,"exempt":0}`+"\n",
+		checks, passed, failed, len(skips))
+	p := filepath.Join(t.TempDir(), "smoke.log")
+	if err := os.WriteFile(p, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// Acceptance skips exactly the oauth2 rows, named; a count of three made of
+// anything else is a failure (#2231).
+func TestTheSmoketestVerdictSkipsOnlyTheOAuth2RowsByName(t *testing.T) {
+	src := acceptSource(t)
+	checks := regexp.MustCompile(`(?m)^SMOKE_CHECKS=\d+$`).FindString(src)
+	names := regexp.MustCompile(`(?ms)^SMOKE_OAUTH2_SKIPS='.*?'$`).FindString(src)
+	fn := regexp.MustCompile(`(?ms)^smoke_judge\(\) \{.*?^\}`).FindString(src)
+	if checks == "" || names == "" || fn == "" {
+		t.Fatal("accept.sh lost SMOKE_CHECKS, SMOKE_OAUTH2_SKIPS or smoke_judge")
+	}
+	oauth := map[string]string{}
+	for _, n := range strings.Split(strings.Trim(strings.TrimPrefix(names, "SMOKE_OAUTH2_SKIPS="), "'"), "\n") {
+		oauth[n] = "oauth2"
+	}
+	if len(oauth) != 3 {
+		t.Fatalf("SMOKE_OAUTH2_SKIPS names %d rows, want 3", len(oauth))
+	}
+	swapped := map[string]string{"imap FTS (SEARCH BODY/TEXT/HEADER/FROM)": "imap"}
+	plusOne := map[string]string{"imap FTS (SEARCH BODY/TEXT/HEADER/FROM)": "imap"}
+	n := 0
+	for name := range oauth {
+		plusOne[name] = "oauth2"
+		if n < 2 {
+			swapped[name] = "oauth2"
+		}
+		n++
+	}
+	tests := []struct {
+		name string
+		log  string
+		ok   bool
+	}{
+		{"the oauth2 rows skipped", smokeLog(t, 50, 47, 0, oauth), true},
+		{"three skips, one of them not oauth2", smokeLog(t, 50, 47, 0, swapped), false},
+		{"another row skipped as well", smokeLog(t, 51, 47, 0, plusOne), false},
+		{"nothing skipped", smokeLog(t, 50, 50, 0, nil), false},
+		{"a failure", smokeLog(t, 50, 46, 1, oauth), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := exec.Command("bash", "-c", checks+"\n"+names+"\n"+fn+"\nsmoke_judge "+tt.log).CombinedOutput()
+			if err != nil {
+				t.Fatalf("smoke_judge: %v\n%s", err, out)
+			}
+			if got := strings.HasPrefix(string(out), "ok "); got != tt.ok {
+				t.Errorf("verdict %q, want ok=%v", out, tt.ok)
+			}
+		})
+	}
+}
+
+// The names acceptance expects are the names the binary registers.
+func TestTheAcceptedSkipsAreTheSmoketestRows(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "app", "smoketest", "oauth2.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var code []string
+	for _, m := range regexp.MustCompile(`oauth2\w+Check\s+= "([^"]+)"`).FindAllStringSubmatch(string(raw), -1) {
+		code = append(code, m[1])
+	}
+	names := regexp.MustCompile(`(?ms)^SMOKE_OAUTH2_SKIPS='(.*?)'$`).FindStringSubmatch(acceptSource(t))
+	if len(code) != 3 || names == nil || strings.Join(code, "\n") != names[1] {
+		t.Errorf("smoketest names %q, accept.sh expects %q", code, names)
 	}
 }

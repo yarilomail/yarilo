@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/emersion/go-message"
+
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
 
@@ -48,13 +50,21 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 
 	// Ownership first: the lookup walks this user's own folders, so a blob that
 	// is not theirs is simply not found and no file is opened at all.
-	found, err := s.findMessages(h, map[string]bool{blobID: true})
+	if up, ok := parseUploadID(blobID, s.uploadMax()); ok {
+		s.serveUpload(w, r, h, id, up, name)
+		return
+	}
+	msgID, partID, isPart := parsePartBlobID(blobID)
+	if !isPart {
+		msgID = blobID
+	}
+	found, err := s.findMessages(h, map[string]bool{msgID: true})
 	if err != nil {
 		slog.Warn("jmap: download lookup failed", "user", id.user, "err", err)
 		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Mail store unavailable")
 		return
 	}
-	ref, ok := found[blobID]
+	ref, ok := found[msgID]
 	if !ok {
 		jmapcore.WriteProblem(w, http.StatusNotFound, "No such blob")
 		return
@@ -68,13 +78,29 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 	}
 	defer rc.Close() //nolint:errcheck
 
+	var body io.Reader = rc
+	if isPart {
+		entity, rerr := message.Read(rc)
+		if entity == nil {
+			slog.Warn("jmap: download part parse failed", "user", id.user, "blob", blobID, "err", rerr)
+			jmapcore.WriteProblem(w, http.StatusNotFound, "No such blob")
+			return
+		}
+		decoded, found := partBody(entity, partID)
+		if !found {
+			jmapcore.WriteProblem(w, http.StatusNotFound, "No such blob")
+			return
+		}
+		body = strings.NewReader(decoded)
+	}
+
 	// application/octet-stream and an attachment disposition: a message body is
 	// never rendered inline, so a crafted blob cannot execute in the origin
 	// that serves the API.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename="+quoteFilename(name))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if _, err := io.Copy(w, rc); err != nil {
+	if _, err := io.Copy(w, body); err != nil {
 		// The status line is already sent, so this can only be logged.
 		slog.Debug("jmap: download aborted", "user", id.user, "blob", blobID, "err", err)
 	}
@@ -115,4 +141,25 @@ func quoteFilename(name string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// serveUpload streams an uploaded blob from the caller's own store.
+func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request, h *userHandle, id identity, up uploadID, name string) {
+	st, err := h.uploads(s.opts.Storage.Locker, s.opts.UploadTTL)
+	if err != nil {
+		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Mail store unavailable")
+		return
+	}
+	f, err := st.open(r.Context(), up)
+	if err != nil {
+		jmapcore.WriteProblem(w, http.StatusNotFound, "No such blob")
+		return
+	}
+	defer f.Close() //nolint:errcheck
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename="+quoteFilename(name))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if _, err := io.Copy(w, f); err != nil {
+		slog.Debug("jmap: download aborted", "user", id.user, "blob", up.String(), "err", err)
+	}
 }

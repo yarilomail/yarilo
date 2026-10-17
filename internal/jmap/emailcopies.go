@@ -23,17 +23,40 @@ func (h *userHandle) copiesOf(ref messageRef) []emailCopy {
 }
 
 func (h *userHandle) copiesThroughStore(ref messageRef) ([]emailCopy, bool) {
-	records, err := h.mbox.GUIDCopies([][16]byte{ref.meta.GUID})
+	found, ok := h.copiesByGUID([][16]byte{ref.meta.GUID})
+	if !ok || len(found[ref.meta.GUID]) == 0 {
+		return nil, false
+	}
+	return found[ref.meta.GUID], true
+}
+
+func (h *userHandle) copiesByWalk(ref messageRef) []emailCopy {
+	out := h.copiesByWalkAll(map[[16]byte]bool{ref.meta.GUID: true})[ref.meta.GUID]
+	if len(out) == 0 {
+		out = append(out, emailCopy{mailboxID: ref.mailboxID, folder: ref.folder, folderID: ref.folderID, meta: ref.meta})
+	}
+	return out
+}
+
+// copiesByGUID reads every copy of these messages from the store at once; ok is
+// false when it cannot answer or names a copy a folder no longer holds.
+func (h *userHandle) copiesByGUID(guids [][16]byte) (map[[16]byte][]emailCopy, bool) {
+	records, err := h.mbox.GUIDCopies(guids)
 	if err != nil || len(records) == 0 {
 		return nil, false
 	}
+	return h.copiesFromRecords(records)
+}
+
+// copiesFromRecords confirms each copy the store names by reading its folder.
+func (h *userHandle) copiesFromRecords(records []mailbox.GUIDRecord) (map[[16]byte][]emailCopy, bool) {
 	// Grouped by folder, and read by uid: a copy is one record, not a folder
 	// listing, and this sits on the client's synchronisation path.
 	byFolder := make(map[[16]byte][]uint32, 4)
 	for _, r := range records {
 		byFolder[r.FolderGUID] = append(byFolder[r.FolderGUID], r.UID)
 	}
-	out := make([]emailCopy, 0, len(records))
+	out := make(map[[16]byte][]emailCopy, len(records))
 	for folderGUID, uids := range byFolder {
 		name, f, ferr := h.folderByGUID(folderGUID)
 		if ferr != nil || f == nil {
@@ -50,35 +73,34 @@ func (h *userHandle) copiesThroughStore(ref messageRef) ([]emailCopy, bool) {
 			return nil, false
 		}
 		for _, m := range metas {
-			out = append(out, emailCopy{mailboxID: mailboxID(f.GUID), folder: name, folderID: f.ID, meta: m})
+			out[m.GUID] = append(out[m.GUID], emailCopy{mailboxID: mailboxID(f.GUID), folder: name, folderID: f.ID, meta: m})
 		}
 	}
 	return out, true
 }
 
-func (h *userHandle) copiesByWalk(ref messageRef) []emailCopy {
+// copiesByWalkAll reads every folder once for all of want.
+func (h *userHandle) copiesByWalkAll(want map[[16]byte]bool) map[[16]byte][]emailCopy {
+	out := make(map[[16]byte][]emailCopy, len(want))
 	entries, err := h.box.ListFolders()
 	if err != nil {
-		return []emailCopy{{mailboxID: ref.mailboxID, folder: ref.folder, folderID: ref.folderID, meta: ref.meta}}
+		return out
 	}
-	var out []emailCopy
 	for _, name := range mailbox.SelectableNames(entries) {
 		f, ferr := h.mbox.Folder(name, 0)
 		if ferr != nil {
 			continue
 		}
+		metricIDLookupFolders.Inc()
 		metas, merr := h.mbox.Messages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if merr != nil {
 			continue
 		}
 		for _, m := range metas {
-			if m.GUID == ref.meta.GUID {
-				out = append(out, emailCopy{mailboxID: mailboxID(f.GUID), folder: name, folderID: f.ID, meta: m})
+			if want[m.GUID] {
+				out[m.GUID] = append(out[m.GUID], emailCopy{mailboxID: mailboxID(f.GUID), folder: name, folderID: f.ID, meta: m})
 			}
 		}
-	}
-	if len(out) == 0 {
-		out = append(out, emailCopy{mailboxID: ref.mailboxID, folder: ref.folder, folderID: ref.folderID, meta: ref.meta})
 	}
 	return out
 }

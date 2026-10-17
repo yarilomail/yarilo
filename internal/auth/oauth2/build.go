@@ -33,23 +33,13 @@ func BuildPassdbs(ctx context.Context, entries []config.OAuth2Entry) ([]protocol
 func buildOne(ctx context.Context, e config.OAuth2Entry) (protocol.Passdb, error) {
 	timeout := time.Duration(e.HTTPTimeoutMs) * time.Millisecond
 	grace := time.Duration(e.TokenExpireGraceSeconds) * time.Second
-
-	var validator Validator
-	var err error
-	switch e.Mode {
-	case config.OAuth2ModeLocalJWT:
-		validator, err = NewLocalJWTValidator(ctx, LocalJWTConfig{
-			JWKSURL:           e.JWKSURL,
-			Issuers:           e.Issuers,
-			Audience:          e.Audience,
-			RequiredScopes:    e.Scopes,
-			UsernameAttribute: e.UsernameAttribute,
-			ExpireGrace:       grace,
-			HTTPTimeout:       timeout,
-		})
-	case config.OAuth2ModeIntrospection:
-		validator, err = NewIntrospectionValidator(IntrospectionConfig{
-			URL:               e.IntrospectionURL,
+	hc, err := NewHTTPClient(timeout, e.TLSCA)
+	if err != nil {
+		return nil, err
+	}
+	introspection := func(url string) (Validator, error) {
+		return NewIntrospectionValidator(IntrospectionConfig{
+			URL:               url,
 			Mode:              introMode(e.IntrospectionMode),
 			ClientID:          e.ClientID,
 			ClientSecret:      e.ClientSecret,
@@ -59,7 +49,31 @@ func buildOne(ctx context.Context, e config.OAuth2Entry) (protocol.Passdb, error
 			UsernameAttribute: e.UsernameAttribute,
 			ExpireGrace:       grace,
 			HTTPTimeout:       timeout,
+			HTTPClient:        hc,
 		})
+	}
+
+	var validator Validator
+	switch e.Mode {
+	case config.OAuth2ModeLocalJWT:
+		keys := make([]LocalKey, len(e.LocalKeys))
+		for i, k := range e.LocalKeys {
+			keys[i] = LocalKey{Azp: k.Azp, Alg: k.Alg, Kid: k.Kid, File: k.File}
+		}
+		validator, err = NewLocalJWTValidator(ctx, LocalJWTConfig{
+			JWKSURL:            e.JWKSURL,
+			Keys:               keys,
+			HTTPClient:         hc,
+			UnknownKIDInterval: time.Duration(e.JWKSUnknownKIDIntervalSeconds) * time.Second,
+			Issuers:            e.Issuers,
+			Audience:           e.Audience,
+			RequiredScopes:     e.Scopes,
+			UsernameAttribute:  e.UsernameAttribute,
+			ExpireGrace:        grace,
+			HTTPTimeout:        timeout,
+		})
+	case config.OAuth2ModeIntrospection:
+		validator, err = introspection(e.IntrospectionURL)
 	case config.OAuth2ModeTokeninfo:
 		validator, err = NewTokeninfoValidator(TokeninfoConfig{
 			URL:               e.TokeninfoURL,
@@ -69,6 +83,7 @@ func buildOne(ctx context.Context, e config.OAuth2Entry) (protocol.Passdb, error
 			UsernameAttribute: e.UsernameAttribute,
 			ExpireGrace:       grace,
 			HTTPTimeout:       timeout,
+			HTTPClient:        hc,
 		})
 	case config.OAuth2ModeDiscovery:
 		validator, err = NewDiscoveryValidator(ctx, DiscoveryConfig{
@@ -83,6 +98,8 @@ func buildOne(ctx context.Context, e config.OAuth2Entry) (protocol.Passdb, error
 			UsernameAttribute:   e.UsernameAttribute,
 			ExpireGrace:         grace,
 			HTTPTimeout:         timeout,
+			HTTPClient:          hc,
+			UnknownKIDInterval:  time.Duration(e.JWKSUnknownKIDIntervalSeconds) * time.Second,
 		})
 	default:
 		return nil, fmt.Errorf("oauth2: unknown mode %q (valid: local | introspection | tokeninfo | discovery)", e.Mode)
@@ -90,7 +107,30 @@ func buildOne(ctx context.Context, e config.OAuth2Entry) (protocol.Passdb, error
 	if err != nil {
 		return nil, err
 	}
+	// A tokeninfo or grant reply that does not name the user is decided by the
+	// entry's validator, or by introspection after tokeninfo (#2231).
+	settle := validator
+	if e.Mode == config.OAuth2ModeTokeninfo {
+		settle = nil
+		if e.IntrospectionURL != "" {
+			if settle, err = introspection(e.IntrospectionURL); err != nil {
+				return nil, err
+			}
+		}
+	}
+	var grant *Grant
+	if e.GrantURL != "" {
+		grant, err = NewGrant(GrantConfig{URL: e.GrantURL, ClientID: e.ClientID, ClientSecret: e.ClientSecret,
+			Scopes: e.Scopes, UsernameAttribute: e.UsernameAttribute, HTTPClient: hc})
+		if err != nil {
+			return nil, err
+		}
+	}
 	return NewPassdb(PassdbConfig{
+		Grant:                  grant,
+		Settle:                 settle,
+		SettleValidator:        e.Mode == config.OAuth2ModeTokeninfo,
+		Force:                  e.ForceIntrospection,
 		Validator:              validator,
 		UsernameTemplate:       e.UsernameValidationFormat,
 		ActiveAttribute:        e.ActiveAttribute,

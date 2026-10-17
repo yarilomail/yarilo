@@ -85,6 +85,7 @@ const (
 	lockSiteMaildirStamp    = "maildir-stamp"
 	lockSiteVirtualHeader   = "virtual-header"
 	lockSiteGUIDAppend      = "guid-append"
+	lockSiteGUIDRebuild     = "guid-rebuild"
 	lockSiteAllocateUid     = "allocate-uid"
 	lockSiteAppend          = "append"
 	lockSiteCacheExtension  = "cache-extension"

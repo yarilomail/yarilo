@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 8
+config_schema_version: 10
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -316,12 +316,13 @@ storage:
   ##                                      # base64 alphabet [A-Za-z0-9+,], and not "." "/" or "&". Startup fails
   ##                                      # on anything else rather than accepting a value that would make folder
   ##                                      # names unreadable on disk. "^" and "%" are good choices.
-  ## mailbox_list_reserved_segments: ["cur", "new", "tmp", "dbox-Mails"]
+  ## mailbox_list_reserved_segments: ["cur", "new", "tmp", "dbox-Mails", "fts-flatcurve"]
   ##                                      # names a single hierarchy segment may not equal, because the storage
   ##                                      # layout owns the directory. Only the names the layout in use actually
   ##                                      # owns are enforced: maildir++ gives every folder a leading "." so a
   ##                                      # folder called "new" is ".new" and collides with nothing, while the
-  ##                                      # dbox layouts own only their "dbox-Mails" marker. A name listed here
+  ##                                      # dbox layouts own their "dbox-Mails" marker and the "fts-flatcurve"
+  ##                                      # index directory a converted store keeps. A name listed here
   ##                                      # that the layout does not own is not a collision and is ignored.
   ##                                      # Retroactive where it does apply: a user who already owns such a
   ##                                      # folder loses access to it. [] disables the check.
@@ -955,6 +956,16 @@ components:
       #     name: yarilo-oauth2
       #     key: client_secret
       #   username_attribute: email
+      #   grant_url: https://keycloak.internal/realms/yarilo/protocol/openid-connect/token  # PLAIN/LOGIN password → token; https only
+      #   force_introspection: false   # introspection decides even when a tokeninfo/grant reply names the user
+      #   tls_ca: /etc/yarilo-ca/ca.crt  # PEM CAs trusted instead of the system roots (mount via extraVolumes)
+      # - mode: local
+      #   jwks_url: ""                 # optional when local_keys are given
+      #   jwks_unknown_kid_interval_seconds: 300  # JWKS refresh an unknown kid may trigger, at most this often; 0 = never
+      #   local_keys:                  # matched by azp claim, alg and kid header; "default" when absent
+      #     - alg: RS256               # HS256/384/512 (base64 shared secret), RS*, PS*, ES*, EdDSA (PEM public key)
+      #       kid: my-key
+      #       secret_ref: {name: yarilo-oauth2-keys, key: rs256.pem}  # or file: /path/in/pod
 
     ## policy — wforce-compatible HTTP policy-server hook. URL=""
     ## disables. When set, every login attempt POSTs JSON to the
@@ -2145,6 +2156,9 @@ protocol:
     ## Visible characters in the preview a SearchSnippet returns; the markup and
     ## HTML escapes around them are not counted. The subject is never cut.
     jmap_snippet_max_chars: 256
+    ## Seconds an uploaded blob is kept for Email/import or Email/set; each
+    ## upload of the same bytes starts the clock again.
+    jmap_upload_ttl: 3600
     ## Idle timeout for a push connection, seconds. Unused until the push phase.
     jmap_push_timeout: 90
     ## Browser origins allowed to call the JMAP endpoint. Empty denies every

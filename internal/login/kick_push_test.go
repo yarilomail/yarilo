@@ -91,12 +91,21 @@ func TestWatch_MalformedKickIsRefused(t *testing.T) {
 		"USER-KICKED\t",
 		"USER-KICKED\tu@example.com\t10.0.0.20\textra",
 	} {
-		if _, ok := kickedUser(push); ok {
+		if _, _, ok := kickedUser(push); ok {
 			t.Errorf("kickedUser(%q) accepted a malformed push", push)
 		}
 	}
-	if u, ok := kickedUser("USER-KICKED\tu@example.com\t10.0.0.20"); !ok || u != "u@example.com" {
-		t.Errorf("move kick: got %q %v, want the username alone", u, ok)
+	// The reason travels by its prefix; an older director's evacuation field is
+	// no reason at all (#2263).
+	for _, tc := range []struct{ push, reason string }{
+		{"USER-KICKED\tu@example.com\treason=backend-removed", "backend-removed"},
+		{"USER-KICKED\tu@example.com\t10.0.0.20", ""},
+		{"USER-KICKED\tu@example.com", ""},
+	} {
+		u, reason, ok := kickedUser(tc.push)
+		if !ok || u != "u@example.com" || reason != tc.reason {
+			t.Errorf("kickedUser(%q) = %q %q %v, want u@example.com %q", tc.push, u, reason, ok, tc.reason)
+		}
 	}
 }
 

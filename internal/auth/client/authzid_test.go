@@ -56,7 +56,7 @@ func TestAuthenticateAsCarriesTheTargetOnTheWire(t *testing.T) {
 
 			// The reply is what the fake server wrote; only the request matters
 			// here, so an error from parsing it is not the subject.
-			_, _ = c.AuthenticateAs(tc.authzid, tc.authcid, "secret", "imap", "10.0.0.1", "sess1")
+			_, _ = c.AuthenticateAs(tc.authzid, tc.authcid, "secret", "imap", "10.0.0.1", "", "sess1")
 
 			select {
 			case line := <-got:

@@ -176,6 +176,18 @@ func ParseLookupReply(line string) (LookupResult, error) {
 	}
 }
 
+// Why a session was kicked, carried by USER-KICKED as reason=<r> (#2263).
+const (
+	KickAdmin          = "admin"           // an operator kicked the user
+	KickMove           = "move"            // the user was placed on another backend
+	KickDomainMove     = "domain-move"     // the user's domain was moved
+	KickFlush          = "flush"           // an operator evacuated the backend
+	KickBackendRemoved = "backend-removed" // the backend left the ring
+)
+
+// KickReasonField is the USER-KICKED field naming the reason.
+const KickReasonField = "reason="
+
 // SessionOpen registers an active proxied session with the director.
 // sessionID is a login-pod-local unique ID; backendIP is the IP of the backend serving the session.
 // The director uses this to send USER-KICKED when the backend goes down.

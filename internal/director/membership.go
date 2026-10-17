@@ -908,8 +908,11 @@ func (m *Membership) applyUserLine(fields []string) {
 	if err != nil {
 		return
 	}
+	if m.srv.backendRemoved(hostIP(fields[2])) {
+		return // a placement on a backend that left (#2255)
+	}
 	if old := m.srv.userDir.MergeByHash(uint32(hash), fields[2], fields[5] == "1", seq, fields[4]); old != "" {
-		m.srv.kickStaleSessions(uint32(hash), old)
+		m.srv.kickStaleSessions(uint32(hash), old, proto.KickMove)
 	}
 }
 
@@ -1979,8 +1982,11 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 		if err != nil {
 			return
 		}
+		if m.srv.backendRemoved(hostIP(payload[1])) {
+			return // a placement on a backend that left (#2255)
+		}
 		if old := m.srv.userDir.MergeByHash(uint32(hash), payload[1], false, seq, payload[3]); old != "" {
-			m.srv.kickStaleSessions(uint32(hash), old)
+			m.srv.kickStaleSessions(uint32(hash), old, proto.KickMove)
 		}
 	case "DOMAIN-ASSIGN":
 		// payload: <domain> <backend> <assign_seq> <assign_by> (#1943)
@@ -1992,6 +1998,9 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 			return
 		}
 		domain := proto.TabUnescape(payload[0])
+		if m.srv.backendRemoved(hostIP(payload[1])) {
+			return // a placement on a backend that left (#2255)
+		}
 		if from := m.srv.domainDir.Merge(domain, payload[1], seq, payload[3]); from != "" {
 			m.srv.kickDomainSessions(domain, from)
 		}
@@ -2005,12 +2014,13 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 		// there (compare-and-delete), so the move's fresh pin — set by the
 		// USER-MOVED that flew with this kick — survives. A plain admin kick
 		// (no old IP) clears unconditionally.
-		if len(payload) >= 2 && payload[1] != "" {
-			m.srv.userDir.DeleteIfBackend(user, payload[1])
+		oldBackend, reason := kickTrailing(payload[1:])
+		if oldBackend != "" {
+			m.srv.userDir.DeleteIfBackend(user, oldBackend)
 		} else {
 			m.srv.userDir.Delete(user)
 		}
-		m.srv.broadcastToLogins(loginKickLine(user))
+		m.srv.broadcastToLogins(loginKickLine(user, reason))
 	case "SESSION-OPEN":
 		// payload: <id> <user> <backend> <proto> (#804) — a remote replica of a
 		// session another director owns; feeds the least_sessions load view.
@@ -2069,6 +2079,19 @@ func envelopeObject(kind string, payload []string) string {
 		return "member:" + payload[0] + ":" + payload[1]
 	}
 	return ""
+}
+
+// kickTrailing reads a ring kick's fields after the user: the old backend, when
+// there is one, and the reason, named by its prefix (#2263).
+func kickTrailing(fields []string) (oldBackend, reason string) {
+	for _, f := range fields {
+		if r, ok := strings.CutPrefix(f, proto.KickReasonField); ok {
+			reason = r
+		} else if f != "" && oldBackend == "" {
+			oldBackend = f
+		}
+	}
+	return oldBackend, reason
 }
 
 // broadcastRing writes line to every currently live ring connection except

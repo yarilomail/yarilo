@@ -2,6 +2,7 @@ package mdbox
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -157,7 +158,7 @@ func TestAFetchThroughTheMapSurvivesTheRewrite(t *testing.T) {
 		t.Fatalf("the fixture is not consistent: a fetch already returns %q", got)
 	}
 
-	if _, err := u.normaliseStorageFrames(); err != nil {
+	if _, err := u.normaliseStorageFrames(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := fetchBody(t, u, names[2]); !bytes.Equal(got, before) {
@@ -259,7 +260,7 @@ func TestARewriteRepointsEachCopyOfOneGUID(t *testing.T) {
 	path := u.mfilePath(1)
 	delta := reframeFirstRecord(t, path)
 	shiftMapAfterFirst(t, u, delta)
-	if _, err := u.normaliseStorageFrames(); err != nil {
+	if _, err := u.normaliseStorageFrames(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 

@@ -72,6 +72,10 @@ func MapBaseLog(t *testing.T) []byte { return read(t, "testdata/map-based.log") 
 func MapRotatedBase(t *testing.T) []byte { return read(t, "testdata/map-rotated.index") }
 func MapRotatedLog(t *testing.T) []byte  { return read(t, "testdata/map-rotated.log") }
 
+// MapRotatedPrev is the log that rotation moved away, from the start of the
+// history: with the base gone it and the bare current log are the whole map.
+func MapRotatedPrev(t *testing.T) []byte { return read(t, "testdata/map-rotated.log.2") }
+
 // MapLog is the mdbox map's transaction log. No base accompanies it, because
 // this store's map log has not rotated and the base is rewritten only once
 // enough log has been read since the last rewrite -- so a reader must handle

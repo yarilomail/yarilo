@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -160,7 +161,7 @@ func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Co
 	case ProtocolSubmission, ProtocolSubmissions:
 		return extractSubmissionPreamble(conn, rd, extTLS, opts, rc)
 	case ProtocolManageSieve:
-		return extractManageSievePreamble(conn, rd, extTLS, opts)
+		return extractManageSievePreamble(conn, rd, extTLS, opts, rc)
 	default:
 		return nil, conn, rd, fmt.Errorf("preamble: unknown protocol %q", p)
 	}
@@ -365,7 +366,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 							fmt.Fprintf(conn, "%s NO [AUTHENTICATIONFAILED] Too many failed authentications\r\n", tag) //nolint:errcheck
 							return nil, conn, rd, fmt.Errorf("imap: too many failed authentications")
 						}
-						fmt.Fprintf(conn, "%s NO Authentication failed\r\n", tag) //nolint:errcheck
+						relayedFailure(conn, ProtocolIMAP, tag, serr)
 						continue
 					}
 					return &preamble{
@@ -519,7 +520,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 						fmt.Fprintf(conn, "-ERR Too many failed authentications\r\n") //nolint:errcheck
 						return nil, conn, rd, fmt.Errorf("pop3: too many failed authentications")
 					}
-					fmt.Fprintf(conn, "-ERR Authentication failed\r\n") //nolint:errcheck
+					relayedFailure(conn, ProtocolPOP3, "", serr)
 					continue
 				}
 				return &preamble{
@@ -592,7 +593,7 @@ func continueAuth(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, p Protoco
 	case ProtocolPOP3, ProtocolPOP3S:
 		return pop3CommandLoop(conn, rd, extTLS, opts, rc)
 	case ProtocolManageSieve:
-		return manageSieveCommandLoop(conn, rd, extTLS, opts)
+		return manageSieveCommandLoop(conn, rd, extTLS, opts, rc)
 	case ProtocolSubmission, ProtocolSubmissions:
 		// Re-enter the SMTP loop without the 220 greeting: mid-session, the
 		// client re-EHLOs and re-AUTHs after the 4xx (#896).
@@ -802,11 +803,25 @@ func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string, rc r
 		}
 		out, err := runRelayedSASL(rc, conn, mech, "submission", clientIPOf(conn), initial, write, read)
 		if err != nil {
-			fmt.Fprintf(conn, "535 5.7.8 Authentication credentials invalid\r\n") //nolint:errcheck
+			relayedFailure(conn, ProtocolSubmission, "", err)
 			return nil, nil
 		}
 		return &preamble{username: out.username, authResult: out.result, ehloLine: ehloLine}, nil
 	}
+}
+
+// relayedFailure answers a failed relayed SASL exchange by its class: a
+// temp-fail is the service being unavailable, anything else a refusal (#2250).
+func relayedFailure(conn net.Conn, p Protocol, tag string, err error) {
+	if errors.Is(err, authclient.ErrTempFail) {
+		writeProtoError(conn, p, tag, imapCodeUnavailable, "service temporarily unavailable")
+		return
+	}
+	if p == ProtocolSubmission {
+		fmt.Fprintf(conn, "535 5.7.8 Authentication credentials invalid\r\n") //nolint:errcheck
+		return
+	}
+	writeProtoError(conn, p, tag, imapCodeAuthenticationFail, "Authentication failed.")
 }
 
 // decodePlainCreds splits [authzid] NUL authcid NUL passwd. Dropping the

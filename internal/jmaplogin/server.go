@@ -14,28 +14,28 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/yarilomail/yarilo/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
 
 // service is the name this proxy reports to yarilo-auth and yarilo-warden.
 const service = "jmap"
 
-// Options wires the proxy. A nil Auth or TokenValidator disables that
-// credential type rather than failing startup, so a deployment can offer one.
+// Options wires the proxy. A nil Auth or Tokens disables that credential type
+// rather than failing startup, so a deployment can offer one.
 type Options struct {
 	Addr string
 	// ExtTLS is the client-facing certificate. Nil serves plain HTTP, which is
 	// only sensible behind a TLS-terminating ingress.
 	ExtTLS *tls.Config
 
-	Auth           PasswordAuthenticator
-	TokenValidator oauth2.Validator
+	Auth   PasswordAuthenticator
+	Tokens TokenAuthenticator
 	// DisablePlainAuth refuses Basic over a connection that is not TLS-protected.
 	DisablePlainAuth bool
 
@@ -64,6 +64,8 @@ type Options struct {
 	// oversized body is refused before it is proxied and before any backend
 	// reads it. 0 leaves the body uncapped.
 	MaxSizeRequest int64
+	// MaxSizeUpload caps an upload body instead, as maxSizeUpload does.
+	MaxSizeUpload int64
 }
 
 // ConnAccountant is warden's per-user@IP connection accounting, narrowed to
@@ -83,7 +85,16 @@ type Router interface {
 // PasswordAuthenticator verifies a username and password, returning the
 // resolved username. Satisfied by the yarilo-auth client.
 type PasswordAuthenticator interface {
-	Authenticate(username, password, service, remoteIP, sessionID string) (string, error)
+	Authenticate(username, password, service, remoteIP, localIP, sessionID string) (string, error)
+}
+
+// TokenAuthenticator verifies a Bearer token in the auth service, returning the
+// user it names. Satisfied by AuthService.
+type TokenAuthenticator interface {
+	AuthenticateToken(token, service, remoteIP, localIP, sessionID string) (string, error)
+	// OffersTokens reports whether Bearer can succeed now, so it is offered
+	// only then.
+	OffersTokens() bool
 }
 
 // connState is the per-TCP-connection warden accounting. HTTP has no session
@@ -210,9 +221,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 	username, err := s.authenticate(r, clientIP, sessionOf(st))
 	if err != nil {
+		if errors.Is(err, errTemporary) {
+			jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Authentication temporarily unavailable")
+			return
+		}
 		// The reason is logged, never sent: telling a caller whether the user
 		// exists turns this endpoint into an account oracle.
-		w.Header().Set("WWW-Authenticate", `Basic realm="jmap", Bearer`)
+		s.challenge(w, errors.Is(err, errBadToken))
 		jmapcore.WriteProblem(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
@@ -235,17 +250,35 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	s.proxy.serve(w, r, backend, username, sessionOf(st), clientIP)
 }
 
+// challenge names the schemes that can succeed (RFC 7235 §4.1); a refused
+// token is invalid_token (RFC 6750 §3).
+func (s *Server) challenge(w http.ResponseWriter, badToken bool) {
+	if s.opts.Auth != nil {
+		w.Header().Add("WWW-Authenticate", `Basic realm="jmap"`)
+	}
+	if s.opts.Tokens != nil && s.opts.Tokens.OffersTokens() {
+		bearer := `Bearer realm="jmap"`
+		if badToken {
+			bearer += `, error="invalid_token"`
+		}
+		w.Header().Add("WWW-Authenticate", bearer)
+	}
+}
+
 // capBody enforces maxSizeRequest at the edge and reports whether the request
 // may continue. The refusal is the JMAP limit problem naming the bound, not a
 // bare 413: a client that cannot parse the answer cannot back off correctly.
 // The backend keeps its own cap, but a body refused here never reaches it.
 func (s *Server) capBody(w http.ResponseWriter, r *http.Request) bool {
-	limit := s.opts.MaxSizeRequest
+	limit, name := s.opts.MaxSizeRequest, "maxSizeRequest"
+	if strings.HasPrefix(r.URL.Path, jmapcore.UploadPath) {
+		limit, name = s.opts.MaxSizeUpload, "maxSizeUpload"
+	}
 	if limit <= 0 || r.Body == nil {
 		return true
 	}
 	if r.ContentLength > limit {
-		writeLimitProblem(w, "maxSizeRequest")
+		writeLimitProblem(w, name)
 		return false
 	}
 	// A body with no declared length, or one that lies, is capped as it is read

@@ -17,9 +17,9 @@ import (
 
 	"github.com/yarilomail/yarilo/pkg/build"
 	"github.com/yarilomail/yarilo/pkg/filelock"
-
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 // Config is the top-level yarilo configuration.
@@ -538,6 +538,8 @@ type JMAPProtocolConfig struct {
 	// shrink with every ampersand in the message. The subject is not cut.
 	// Default 256, the same as the Email preview.
 	SnippetMaxChars int `koanf:"jmap_snippet_max_chars"`
+	// UploadTTL is how long an uploaded blob lives, in seconds. Default 3600.
+	UploadTTL int `koanf:"jmap_upload_ttl"`
 	// PushTimeout is the idle timeout for a push connection, in seconds.
 	// Default 90. Unused until the push phase.
 	PushTimeout int `koanf:"jmap_push_timeout"`
@@ -1916,6 +1918,27 @@ type OAuth2Entry struct {
 	// HTTPTimeoutMs caps the validation round-trip (introspection
 	// / tokeninfo / discovery / JWKS-refresh). Default 5000.
 	HTTPTimeoutMs int `koanf:"oauth2_http_timeout_ms"`
+
+	// GrantURL is the token endpoint a plaintext login's password is
+	// exchanged at (password grant); needs ClientID and https.
+	GrantURL string `koanf:"oauth2_grant_url"`
+
+	// LocalKeys are operator-provisioned verification keys for mode local,
+	// tried before the JWKS; with them the JWKS is optional.
+	LocalKeys []OAuth2LocalKey `koanf:"oauth2_local_keys"`
+
+	// ForceIntrospection makes IntrospectionURL decide even when the
+	// tokeninfo or grant reply already names the user.
+	ForceIntrospection bool `koanf:"oauth2_force_introspection"`
+
+	// TLSCA is a PEM file of the CAs this entry's HTTPS calls trust, in
+	// place of the system roots. Empty = system roots.
+	TLSCA string `koanf:"oauth2_tls_ca"`
+
+	// JWKSUnknownKIDIntervalSeconds spaces the JWKS refreshes an unknown kid
+	// may trigger. Default 300; 0 = never refresh for one (#2249).
+	JWKSUnknownKIDIntervalSeconds int `koanf:"oauth2_jwks_unknown_kid_interval_seconds"`
+
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	ModeAlias                     string   `koanf:"mode"`
 	AudienceAlias                 string   `koanf:"audience"`
@@ -1936,6 +1959,16 @@ type OAuth2Entry struct {
 	ClientIDAlias                 string   `koanf:"client_id"`
 	ClientSecretAlias             string   `koanf:"client_secret"`
 	IssuersAlias                  []string `koanf:"issuers"`
+}
+
+// OAuth2LocalKey is one key a token is matched to by its azp claim, alg and
+// kid header; a missing azp or kid matches "default".
+type OAuth2LocalKey struct {
+	Azp string `koanf:"oauth2_local_key_azp"`
+	Alg string `koanf:"oauth2_local_key_alg"`
+	Kid string `koanf:"oauth2_local_key_kid"`
+	// File holds a PEM public key, or for HS* the base64 shared secret.
+	File string `koanf:"oauth2_local_key_file"`
 }
 
 // AuthPenaltyConfig configures cross-pod IP-bound auth backoff.
@@ -2348,9 +2381,9 @@ type StorageConfig struct {
 	MailboxListStorageEscapeChar string `koanf:"mailbox_list_storage_escape_char"`
 
 	// MailboxListReservedSegments are names a single hierarchy segment may not
-	// equal, because the storage layout owns the directory: cur, new, tmp and
-	// dbox-Mails. A folder called "cur" corrupts the mailbox from inside
-	// without ever leaving it, which is a different hazard from traversal.
+	// equal, because the storage layout owns the directory: cur, new, tmp,
+	// dbox-Mails and fts-flatcurve. A folder called "cur" corrupts the mailbox
+	// from inside without ever leaving it, a different hazard from traversal.
 	//
 	// The check is retroactive -- a user who already owns such a folder loses
 	// access to a folder that exists -- so it is configurable. Empty disables
@@ -2487,7 +2520,7 @@ func Defaults() *Config {
 			// The layout's own directories. A sandbox count over 996 maildir
 			// and 2338 dbox folders found no user folder colliding with one,
 			// so the default costs nothing there.
-			MailboxListReservedSegments: []string{"cur", "new", "tmp", "dbox-Mails"},
+			MailboxListReservedSegments: []string{"cur", "new", "tmp", "dbox-Mails", "fts-flatcurve"},
 		},
 		InternalTLS: InternalTLSConfig{
 			Enabled: true,
@@ -2643,6 +2676,7 @@ func Defaults() *Config {
 	c.Protocol.JMAP.QueryMaxLimit = 256
 	c.Protocol.JMAP.MaxQueryFolders = 64
 	c.Protocol.JMAP.SnippetMaxChars = 256
+	c.Protocol.JMAP.UploadTTL = 3600
 	c.Protocol.ManageSieve.MaxInvalidCommands = 3
 	c.Sieve.MaxScriptSize = 65536
 	c.Sieve.MaxRedirects = 32
@@ -2782,6 +2816,33 @@ func resolveSize(name, raw string) (int64, error) {
 	return n, nil
 }
 
+// validateSQLQueryVars refuses a query naming a variable its request never
+// carries, or one that does not exist: either would bind as empty (#2227).
+func validateSQLQueryVars(a AuthConfig) error {
+	check := func(section string, entries []PassdbEntry) error {
+		for i, e := range entries {
+			switch strings.ToLower(e.Driver) {
+			case "sqlite", "mysql", "postgres":
+			default:
+				continue
+			}
+			for _, q := range []struct {
+				kind  sqlvars.Kind
+				query string
+			}{{sqlvars.Password, e.PasswordQuery}, {sqlvars.User, e.UserQuery}, {sqlvars.Iterate, e.IterateQuery}} {
+				if err := sqlvars.Check(q.kind, q.query); err != nil {
+					return fmt.Errorf("config: %s.%d: %w", section, i, err)
+				}
+			}
+		}
+		return nil
+	}
+	if err := check("auth.passdb", a.Passdb); err != nil {
+		return err
+	}
+	return check("auth.master_users.masterdb", a.MasterUsers.Masterdb)
+}
+
 // validateMailDriver refuses a driver nothing implements: the storage layer
 // falls back to maildir, so a typo would be mail on disk in another format.
 func validateMailDriver(driver string) error {
@@ -2794,6 +2855,12 @@ func validateMailDriver(driver string) error {
 
 func (cfg *Config) validate() error {
 	if err := checkNumbers(cfg); err != nil {
+		return err
+	}
+	if err := validateSQLQueryVars(cfg.Auth); err != nil {
+		return err
+	}
+	if err := validateOAuth2(cfg.Auth.OAuth2); err != nil {
 		return err
 	}
 	if err := foldNamespaceLocations(cfg.Namespaces); err != nil {
@@ -3504,7 +3571,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 8
+const minConfigSchema = 10
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3515,14 +3582,16 @@ const minConfigSchema = 8
 // nobody would be the "N is lower than M" the version number alone already
 // gives.
 var schemaAdditions = map[int][]string{
-	1: {"chart_version", "config_schema_version", "hostname", "lmtp_add_message_id"},
-	2: {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
-	3: {"quota_full_tempfail"},
-	4: {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
-	5: {"lmtp_proxy_timeout"},
-	6: {"login_proxy_timeout"},
-	7: {"managesieve_max_line_length"},
-	8: {"lmtp_max_recipients"},
+	1:  {"chart_version", "config_schema_version", "hostname", "lmtp_add_message_id"},
+	2:  {"mailboxes", "lda_mailbox_autocreate", "lda_mailbox_autosubscribe"},
+	3:  {"quota_full_tempfail"},
+	4:  {"quota_status_success", "quota_status_toolarge", "quota_status_overquota"},
+	5:  {"lmtp_proxy_timeout"},
+	6:  {"login_proxy_timeout"},
+	7:  {"managesieve_max_line_length"},
+	8:  {"lmtp_max_recipients"},
+	9:  {"oauth2_grant_url", "oauth2_local_keys", "oauth2_force_introspection", "oauth2_tls_ca"},
+	10: {"oauth2_jwks_unknown_kid_interval_seconds"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

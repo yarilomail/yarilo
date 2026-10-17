@@ -3,7 +3,9 @@ package jmaplogin
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -11,6 +13,13 @@ import (
 // errUnauthorized is returned for every rejected credential. The cause is
 // logged, never sent.
 var errUnauthorized = errors.New("jmap-login: unauthorized")
+
+// errTemporary is the auth service failing, not the credential.
+var errTemporary = errors.New("jmap-login: authentication temporarily unavailable")
+
+// errBadToken is a refused Bearer, answered with RFC 6750's invalid_token
+// whatever refused it: telling a valid token apart would be an oracle.
+var errBadToken = fmt.Errorf("%w: bearer token refused", errUnauthorized)
 
 // authenticate resolves the request's credentials to a username. Bearer is
 // tried first and a rejected token is never retried as Basic, which would
@@ -23,15 +32,19 @@ func (s *Server) authenticate(r *http.Request, clientIP, sessionID string) (stri
 	}
 	switch strings.ToLower(scheme) {
 	case "bearer":
-		if s.opts.TokenValidator == nil {
-			return "", errUnauthorized
+		// A token is a password to whoever reads it: the cleartext rule is Basic's.
+		if s.opts.Tokens == nil || (s.opts.DisablePlainAuth && r.TLS == nil) {
+			return "", errBadToken
 		}
-		claims, err := s.opts.TokenValidator.Validate(r.Context(), cred)
-		if err != nil || claims == nil || claims.Username == "" {
+		username, err := s.opts.Tokens.AuthenticateToken(cred, service, clientIP, localIPOf(r), sessionID)
+		if err != nil {
 			slog.Info("jmap-login: bearer rejected", "ip", clientIP, "err", err)
-			return "", errUnauthorized
+			if errors.Is(err, errTemporary) {
+				return "", err
+			}
+			return "", errBadToken
 		}
-		return claims.Username, nil
+		return username, nil
 	case "basic":
 		return s.authenticateBasic(r, cred, clientIP, sessionID)
 	}
@@ -55,9 +68,12 @@ func (s *Server) authenticateBasic(r *http.Request, cred, clientIP, sessionID st
 	if !found || username == "" {
 		return "", errUnauthorized
 	}
-	resolved, err := s.opts.Auth.Authenticate(username, password, service, clientIP, sessionID)
+	resolved, err := s.opts.Auth.Authenticate(username, password, service, clientIP, localIPOf(r), sessionID)
 	if err != nil {
 		slog.Info("jmap-login: basic rejected", "user", username, "ip", clientIP, "err", err)
+		if errors.Is(err, errTemporary) {
+			return "", err
+		}
 		return "", errUnauthorized
 	}
 	if resolved == "" {
@@ -74,4 +90,12 @@ func parseAuthorization(h string) (scheme, cred string, ok bool) {
 	}
 	cred = strings.TrimSpace(cred)
 	return scheme, cred, cred != ""
+}
+
+// localIPOf is the address the request arrived at, for a query's %l (#2227).
+func localIPOf(r *http.Request) string {
+	if a, ok := r.Context().Value(http.LocalAddrContextKey).(*net.TCPAddr); ok {
+		return a.IP.String()
+	}
+	return ""
 }

@@ -1,103 +1,23 @@
 package imap
 
 import (
-	"context"
-	"fmt"
 	"log/slog"
-	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
 	imapserver "github.com/emersion/go-imap/v2/imapserver"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
-// quotaChanged invalidates the short-lived read cache after a quota-affecting
-// operation (APPEND / COPY / MOVE / EXPUNGE) so the next GETQUOTA re-sums the
-// index. Enforcement already reads fresh.
-func (s *session) quotaChanged() {
-	s.quotaCacheAt = time.Time{}
-}
-
-// quotaCacheTTL bounds how long a GETQUOTA display value is served from the
-// per-session cache before the index is re-summed. Enforcement bypasses it.
-const quotaCacheTTL = time.Second
-
-// usageAfterDelta answers the post-commit usage from the cached total plus the
-// change this session just made, when the cache is fresh enough to build on.
-//
-// The full count opens every folder of the account -- 24 us each, so 1.01 ms
-// across the 42 folders of a real mailbox, and the message count does not
-// enter into it. Run on every committed change, as the warning and clone path
-// did, fifty clients expunging in one folder produce fifty account-wide sweeps
-// and some two thousand folder-lock acquisitions per round (#1548).
-//
-// The session does not need the sweep to know the answer: it knows what it just
-// removed or added. Only somebody else's change has to be discovered, and that
-// is what the cache TTL is for.
-//
-// The timestamp is deliberately not refreshed. Extending it on every delta
-// would keep the cache alive for as long as the load lasts and another
-// session's change would never arrive; leaving it means the total is rebuilt a
-// second after its last real count, so the drift this introduces cannot
-// outlive the TTL.
-func (s *session) usageAfterDelta(dBytes, dMessages int64) (quota.Usage, bool) {
-	if s.quotaCacheAt.IsZero() || time.Since(s.quotaCacheAt) >= quotaCacheTTL {
-		return quota.Usage{}, false
-	}
-	u := s.quotaCacheUsage
-	u.StorageBytes += dBytes
-	u.Messages += dMessages
-	if u.StorageBytes < 0 {
-		u.StorageBytes = 0
-	}
-	if u.Messages < 0 {
-		u.Messages = 0
-	}
-	s.quotaCacheUsage = u
-	return u, true
-}
-
-// countUsageFor sums the account's usage from the index, naming the caller:
-// counting locks every folder, so a total without one answers nothing (#1634).
-func (s *session) countUsageFor(reason string, useCache bool) (quota.Usage, error) {
-	if s.box == nil || s.mbox == nil {
-		return quota.Usage{}, nil
-	}
-	if useCache && !s.quotaCacheAt.IsZero() && time.Since(s.quotaCacheAt) < quotaCacheTTL {
-		quota.MetricUsageCount.WithLabelValues("hit", reason).Inc()
-		return s.quotaCacheUsage, nil
-	}
-	quota.MetricUsageCount.WithLabelValues("miss", reason).Inc()
-	entries, err := s.box.ListFolders()
-	if err != nil {
-		return quota.Usage{}, err
-	}
-	u := quota.CountUsage(s.mbox, mailbox.SelectableNames(entries), s.quotaLimits())
-	s.quotaCacheUsage = u
-	s.quotaCacheAt = time.Now()
-	// Lazy quota_over_status: reconcile on the first quota operation. evalOverStatus
-	// takes u directly, so there is no re-entry into countUsage.
-	if os := s.quotaPolicy().OverStatus; os.Mask != "" && os.LazyCheck && !s.overStatusChecked {
-		s.evalOverStatus(u)
-	}
-	return u, nil
-}
-
-// *session implements SessionQuota unconditionally so go-imap's capability.go
-// cast succeeds; quotaExtensionEnabled() gates whether QUOTA is advertised and
-// GETQUOTA answers, quotaEngineEnabled() gates save-time enforcement.
+// *session implements SessionQuota unconditionally so the library's cast
+// succeeds; quotaExtensionEnabled() gates QUOTA, the mutation layer enforcement.
 var _ imapserver.SessionQuota = (*session)(nil)
 
 // quotaExtensionEnabled gates the IMAP QUOTA extension (GETQUOTA / capability).
 func (s *session) quotaExtensionEnabled() bool {
 	return s.srv.opts.IMAPQuota
-}
-
-// quotaEngineEnabled gates save-time enforcement (APPEND / COPY / MOVE).
-func (s *session) quotaEngineEnabled() bool {
-	return s.srv.opts.QuotaEngine
 }
 
 // quotaName is the quota-root name surfaced to clients (default "User quota").
@@ -116,106 +36,33 @@ func (s *session) quotaExceededMessage() string {
 	return "Quota exceeded"
 }
 
-func (s *session) quotaLimits() quota.Limits {
-	if s.userInfo == nil {
-		return quota.Limits{}
-	}
-	return quota.ParseRules(s.userInfo.QuotaRules)
-}
-
 // quotaPolicy returns the site-wide quota tunables.
 func (s *session) quotaPolicy() quota.Policy {
 	return s.srv.opts.QuotaPolicy
 }
 
-// evalOverStatus runs the quota_over_status check once per session: compares the
-// actual over-quota state (from usage u) against the flag carried in userdb and,
-// on a mismatch, runs the configured program to update the external flag. Guards
-// match the reference: mask must be set, run once, and only while the userdb
-// flag is still fresh (login within the max delay).
-func (s *session) evalOverStatus(u quota.Usage) {
-	os := s.quotaPolicy().OverStatus
-	if os.Mask == "" || s.overStatusChecked || s.userInfo == nil {
-		return
+// mailopsConfig is this server's wiring of the mutation layer.
+func (s *session) mailopsConfig() mailops.Config {
+	o := s.srv.opts
+	var rec *threads.Recorder
+	if o.Threads != nil {
+		rec = threads.NewRecorder(o.Threads)
 	}
-	if time.Since(s.overStatusLoginAt) > overStatusMaxDelay {
-		return // stale userdb flag — do not act on it
+	return mailops.Config{
+		Threads:      rec,
+		Protocol:     "imap",
+		Locker:       o.Locker,
+		FTS:          o.FTS.Client,
+		FTSAutoindex: o.FTS.Autoindex,
+		FTSMaxRecent: o.FTS.MaxRecent,
+		Quota: mailops.QuotaConfig{
+			Engine:   o.QuotaEngine,
+			Policy:   o.QuotaPolicy,
+			MailSize: o.QuotaMailSize,
+			Warner:   o.QuotaWarner,
+			Clone:    o.QuotaClone,
+		},
 	}
-	s.overStatusChecked = true
-	flagged := s.userInfo.QuotaOverFlag != "" &&
-		quota.WildcardMatchIcase(s.userInfo.QuotaOverFlag, os.Mask)
-	actual := quota.IsOverAny(u, s.quotaPolicy().Scale(s.quotaLimits()))
-	if actual != flagged {
-		s.srv.opts.QuotaWarner.FireOverStatus(
-			s.userInfo.Username, s.userInfo.Home, os.Execute, s.userInfo.QuotaOverFlag, actual)
-	}
-}
-
-// overStatusMaxDelay bounds how long after login the userdb over-flag is still
-// trusted for the quota_over_status check (mirrors the reference 10s guard).
-const overStatusMaxDelay = 10 * time.Second
-
-// captureQuotaSnap forces the quota_warning "before" baseline to the current
-// usage. Called immediately before a mutating op (expunge) so the crossing
-// detection has a correct pre-op value even on a delete-only session — the
-// SELECT-time seed can miss (usage not yet readable, or the snapshot reset
-// between SELECT and the delete). No-op without warnings configured.
-func (s *session) captureQuotaSnap() {
-	if len(s.quotaPolicy().Warnings) == 0 {
-		return
-	}
-	// The "before" side of a crossing, not a decision: cached is enough, and a
-	// fresh walk here was a second pass over every folder (#1634).
-	if u, err := s.countUsageFor("warning-baseline", true); err == nil {
-		s.quotaSnap, s.quotaSnapSet = u, true
-	}
-}
-
-// seedQuotaWarnSnap captures a baseline usage snapshot when none exists yet, so
-// a quota_warning "under" crossing fires on a delete-only session (EXPUNGE with
-// no prior save to seed the "before" side). No-op without warnings configured.
-func (s *session) seedQuotaWarnSnap() {
-	if s.quotaSnapSet {
-		return
-	}
-	s.captureQuotaSnap()
-}
-
-// fireQuotaWarnings evaluates quota_warning crossings for the transition from
-// the captured pre-op usage snapshot to after, running any matched actions.
-// No-op when no warnings are configured or no snapshot has been captured yet.
-func (s *session) fireQuotaWarnings(after quota.Usage) {
-	pol := s.quotaPolicy()
-	if len(pol.Warnings) == 0 || !s.quotaSnapSet || s.userInfo == nil {
-		return
-	}
-	before := s.quotaSnap
-	s.quotaSnap = after
-	limits := pol.Scale(s.quotaLimits())
-	s.srv.opts.QuotaWarner.Fire(s.userInfo.Username, s.userInfo.Home, pol.Warnings, limits, before, after)
-}
-
-// effectiveLimits resolves the per-folder limits then applies the site policy
-// (percentage scaling + storage extra). Grace is delivery-only and never added
-// on the interactive IMAP path.
-func (s *session) effectiveLimits(folder string) (quota.Limits, bool) {
-	lim, ignore := s.quotaLimits().EffectiveLimits(folder)
-	if ignore {
-		return lim, true
-	}
-	return s.quotaPolicy().Scale(lim), false
-}
-
-// cloneMirror hands the latest usage to the mirror, which writes it on its own
-// timer. The session never waits for a mirror: it is advisory, and the write
-// is two dict round trips (#1875).
-func (s *session) cloneMirror(u quota.Usage) {
-	if s.srv.opts.QuotaClone == nil || s.userInfo == nil {
-		return
-	}
-	// Records and returns: the write happens on the mirror's own timer, so a
-	// save never waits for two dict round trips (#1875).
-	s.srv.opts.QuotaClone.Mirror(s.userInfo.Username, u)
 }
 
 // cloneFlushFinal hands the user back to the mirror; the last session of a
@@ -232,12 +79,12 @@ func (s *session) GetQuotaRoot(mailbox string) (*imaplib.QuotaRootData, error) {
 	if !s.quotaExtensionEnabled() {
 		return &imaplib.QuotaRootData{Mailbox: mailbox}, nil
 	}
-	u, err := s.countUsageFor("getquota", true)
+	u, err := s.ops.Quota.Usage("getquota", true)
 	if err != nil {
 		slog.Warn("imap: quota get failed", "user", s.userInfo.Username, "err", err)
 		return &imaplib.QuotaRootData{Mailbox: mailbox}, nil
 	}
-	limits := s.quotaPolicy().Scale(s.quotaLimits())
+	limits := s.quotaPolicy().Scale(s.ops.Quota.Limits())
 	// quota_hidden hides the root from every user; quota_ignore_unlimited hides
 	// it only for users whose limits are all unlimited.
 	if s.quotaPolicy().Hidden || (limits.Unlimited() && s.quotaPolicy().IgnoreUnlimited) {
@@ -257,13 +104,13 @@ func (s *session) GetQuota(root string) (*imaplib.QuotaData, error) {
 		qd := imaplib.QuotaData{Name: root}
 		return &qd, nil
 	}
-	u, err := s.countUsageFor("getquota", true)
+	u, err := s.ops.Quota.Usage("getquota", true)
 	if err != nil {
 		slog.Warn("imap: quota get failed", "user", s.userInfo.Username, "err", err)
 		qd := imaplib.QuotaData{Name: root}
 		return &qd, nil
 	}
-	limits := s.quotaPolicy().Scale(s.quotaLimits())
+	limits := s.quotaPolicy().Scale(s.ops.Quota.Limits())
 	if s.quotaPolicy().Hidden || (limits.Unlimited() && s.quotaPolicy().IgnoreUnlimited) {
 		qd := imaplib.QuotaData{Name: root}
 		return &qd, nil
@@ -294,72 +141,12 @@ func buildQuotaData(u quota.Usage, lim quota.Limits, name string) imaplib.QuotaD
 	return qd
 }
 
-// quotaCheckAppend returns an IMAP error if the user is over quota
-// for the given message size in the target folder. Nil means allowed.
-// Per-folder rules (additive limits, ignore) are applied before the check.
-func (s *session) quotaCheckAppend(_ context.Context, folder string, bytes int64) error {
-	if !s.quotaEngineEnabled() || s.userInfo == nil {
-		return nil
+// quotaRefusal answers a save the quota refused with NO [OVERQUOTA]; the size
+// refusal keeps its own text so a client can tell "too large" from "full".
+func (s *session) quotaRefusal(refused *mailops.RefusedError) error {
+	text := refused.Error()
+	if refused.Reason == mailops.RefusedOverQuota {
+		text = s.quotaExceededMessage()
 	}
-	// Per-message size cap is independent of the usage limit and applies even
-	// when no quota_rule is set. Its rejection text is distinct so a client can
-	// tell "message too large" from "mailbox full".
-	if ms := s.srv.opts.QuotaMailSize; ms > 0 && bytes > ms {
-		return &imaplib.Error{
-			Type: imaplib.StatusResponseTypeNo,
-			Code: imaplib.ResponseCode("OVERQUOTA"),
-			Text: fmt.Sprintf("Requested allocation size %d exceeds max mail size %d", bytes, ms),
-		}
-	}
-	// Per-mailbox message-count cap is structural (independent of quota_rule):
-	// reject when the target folder already holds the configured message count.
-	if mmc := s.quotaPolicy().MailboxMessageCount; mmc > 0 {
-		if cur, ok := s.folderMessageCount(folder); ok && cur >= mmc {
-			return &imaplib.Error{
-				Type: imaplib.StatusResponseTypeNo,
-				Code: imaplib.ResponseCode("OVERQUOTA"),
-				Text: "Too many messages in the mailbox",
-			}
-		}
-	}
-	effLim, ignore := s.effectiveLimits(folder)
-	if ignore || effLim.Unlimited() {
-		return nil
-	}
-	// Enforcement counts for real: this decides whether a save is refused.
-	u, err := s.countUsageFor("enforce", false)
-	if err != nil {
-		return nil // fail-open: don't block on a transient index read error
-	}
-	// Capture the pre-save usage as the "before" side for quota_warning
-	// crossing detection; the post-commit hook supplies "after".
-	s.quotaSnap, s.quotaSnapSet = u, true
-	// Grace is delivery-only; interactive IMAP saves get no overshoot.
-	if quota.IsOver(u, effLim, bytes, 1) {
-		return &imaplib.Error{
-			Type: imaplib.StatusResponseTypeNo,
-			Code: imaplib.ResponseCode("OVERQUOTA"),
-			Text: s.quotaExceededMessage(),
-		}
-	}
-	return nil
-}
-
-// folderMessageCount returns the current message count of folder from the
-// index (the authoritative count backend). ok is false when the folder or
-// index is unavailable.
-func (s *session) folderMessageCount(folder string) (int64, bool) {
-	if s.box == nil || s.mbox == nil {
-		return 0, false
-	}
-	// The id, then the index's own aggregate: the same pair a count needs.
-	f, err := mailbox.Counting(s.mbox).Folder(folder, 0)
-	if err != nil {
-		return 0, false
-	}
-	md, err := s.mbox.Metadata(f.ID)
-	if err != nil {
-		return 0, false
-	}
-	return int64(md.Messages), true
+	return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Code: imaplib.ResponseCode("OVERQUOTA"), Text: text}
 }

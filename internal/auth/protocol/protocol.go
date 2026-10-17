@@ -23,6 +23,7 @@ import (
 
 	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 const (
@@ -119,6 +120,10 @@ type Request struct {
 	// RemoteIP is the client IP (no port); may be empty. Drivers
 	// enforcing allow_nets must skip the check when empty.
 	RemoteIP string
+	// LocalIP is the address the client connected to; may be empty.
+	LocalIP string
+	// Bearer: Password is a token from OAUTHBEARER/XOAUTH2, not a password.
+	Bearer bool
 
 	// Fields accumulates passdb output. Drivers may assume non-nil;
 	// Chain.Authenticate allocates it.
@@ -388,6 +393,40 @@ func (c *chainAuthenticator) LookupSCRAMSha256(username string) (*sasl.ScramCred
 	return nil, nil
 }
 
+// lookupSCRAMFor walks the chain for a verifier, each entry given the
+// request's values when it can use them (#2227).
+func (c *chainAuthenticator) lookupSCRAMFor(username string, v sqlvars.Vars, sha256 bool) (*sasl.ScramCredentials, error) {
+	for _, db := range c.chain {
+		var creds *sasl.ScramCredentials
+		var err error
+		switch {
+		case sha256:
+			if f, ok := db.(SCRAMSha256LookupFor); ok {
+				creds, err = f.LookupSCRAMSha256For(username, v)
+			} else if l, ok := db.(SCRAMSha256Lookup); ok {
+				creds, err = l.LookupSCRAMSha256(username)
+			} else {
+				continue
+			}
+		default:
+			if f, ok := db.(SCRAMSha1LookupFor); ok {
+				creds, err = f.LookupSCRAMSha1For(username, v)
+			} else if l, ok := db.(SCRAMSha1Lookup); ok {
+				creds, err = l.LookupSCRAMSha1(username)
+			} else {
+				continue
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		if creds != nil {
+			return creds, nil
+		}
+	}
+	return nil, nil
+}
+
 // LookupSCRAMSha1 mirrors LookupSCRAMSha256 for the SHA-1 family.
 // Independent of SHA-256 — a passdb may carry SCRAM-SHA-256 for
 // one user and SCRAM-SHA-1 for another, and the chain walks both
@@ -646,12 +685,17 @@ func authResultFromChain(r Result) AuthResult {
 // optional masterdb chain + separator for master-user
 // impersonation (Phase AUTH-3).
 type Server struct {
-	passdbs              []Passdb
-	userdb               Userdb
-	masterdb             []Passdb
-	masterUserSeparator  string
-	masterUsersEnabled   bool
-	failureDelay         time.Duration
+	passdbs             []Passdb
+	userdb              Userdb
+	masterdb            []Passdb
+	masterUserSeparator string
+	masterUsersEnabled  bool
+	failureDelay        time.Duration
+	// cacheByAddress keys the cache by the client's addresses too: set when
+	// a passdb's answer can depend on them.
+	cacheByAddress bool
+	// passdbReadsRequest marks a failure that may be a rule's, not a password's.
+	passdbReadsRequest   bool
 	internalFailureDelay time.Duration
 	cache                *Cache
 	penalty              PenaltyStore
@@ -727,7 +771,7 @@ func (s *Server) adoptTarget(target string, req *Request) (Result, error) {
 	if s.userdb == nil {
 		return ResultOK, nil
 	}
-	ui, err := s.userdb.Lookup(target)
+	ui, err := LookupUserdb(s.userdb, target, req.Vars())
 	if err != nil {
 		return ResultTempFail, err
 	}
@@ -851,6 +895,7 @@ type PenaltyToSecsFunc func(count int) int
 type TokenStore interface {
 	Issue(username, sessionID, service string) (string, error)
 	Validate(tok string) (username, sessionID, service string, ok bool)
+	Consume(tok string) bool
 }
 
 // WithTokenStore attaches the session token store. When set, every successful
@@ -936,6 +981,14 @@ func NewServer(passdbs []Passdb, opts ...ServerOption) *Server {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	for _, db := range append(append([]Passdb(nil), s.passdbs...), s.masterdb...) {
+		if a, ok := db.(AddressAware); ok && a.UsesAddresses() {
+			s.cacheByAddress = true
+		}
+		if r, ok := db.(interface{ UsesRequest() bool }); ok && r.UsesRequest() {
+			s.passdbReadsRequest = true
+		}
 	}
 	return s
 }
@@ -1104,6 +1157,8 @@ func (s *Server) handleConn(conn net.Conn) {
 			if len(fields) > 1 {
 				live.drop(fields[1])
 			}
+		case "CONSUME":
+			s.handleConsume(sc, fields)
 		}
 	}
 }
@@ -1148,7 +1203,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 	id := fields[1]
 	mech := fields[2]
 
-	var service, resp, ripAttr, sessionID, cbind string
+	var service, resp, ripAttr, lipAttr, sessionID, cbind string
 	for _, f := range fields[3:] {
 		switch {
 		case strings.HasPrefix(f, "service="):
@@ -1157,25 +1212,27 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 			resp = strings.TrimPrefix(f, "resp=")
 		case strings.HasPrefix(f, "rip="):
 			ripAttr = strings.TrimPrefix(f, "rip=")
+		case strings.HasPrefix(f, "lip="):
+			lipAttr = strings.TrimPrefix(f, "lip=")
 		case strings.HasPrefix(f, "session="):
 			sessionID = strings.TrimPrefix(f, "session=")
 		case strings.HasPrefix(f, "cbind="):
 			cbind = strings.TrimPrefix(f, "cbind=")
 		}
 	}
-	if strings.ContainsRune(service+ripAttr+sessionID, 0) {
+	if strings.ContainsRune(service+ripAttr+lipAttr+sessionID, 0) {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-request\n", id)
 		return "bad_request"
 	}
 	if isSCRAM(mech) {
-		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, sessionID)
+		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, lipAttr, sessionID)
 	}
 	if isOAuth(mech) {
 		remoteIP := ripAttr
 		if remoteIP == "" {
 			remoteIP = connRemoteIP(conn)
 		}
-		return s.beginOAuth(conn, live, id, mech, service, resp, remoteIP, sessionID)
+		return s.beginOAuth(conn, live, id, mech, service, resp, remoteIP, lipAttr, sessionID)
 	}
 	_ = service
 	// The initial response is base64 on the wire: raw, a TAB or LF in a
@@ -1201,7 +1258,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
 	}
-	return s.authenticatePassword(conn, id, service, remoteIP, sessionID, authzid, authid, password, plainReject)
+	return s.authenticatePassword(conn, id, service, remoteIP, lipAttr, sessionID, authzid, authid, password, false, plainReject)
 }
 
 // plainReject is a refusal of a password login: nothing to say but no.
@@ -1211,7 +1268,7 @@ func plainReject(conn net.Conn, id string) {
 
 // authenticatePassword runs a credential through the chain; reject writes a
 // refusal, which a mechanism may answer with more than FAIL.
-func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sessionID, authzid, authid, password string, reject func(net.Conn, string)) string {
+func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, localIP, sessionID, authzid, authid, password string, bearer bool, reject func(net.Conn, string)) string {
 	// Clients that cannot supply authzid encode it as `target<sep>master` in
 	// the authid field; only with master users on and no authzid given.
 	target := ""
@@ -1287,7 +1344,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sess
 		}
 	}
 
-	res, err := s.authenticate(target, master, password, service, remoteIP)
+	res, err := s.authenticate(target, master, password, service, remoteIP, localIP, bearer)
 
 	// Penalty update: success resets to 0; client-visible failure
 	// increments by 1 (capped server-side). Internal failures
@@ -1339,6 +1396,8 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sess
 			"master_user_target", target,
 			"err", err,
 			"result", "fail",
+			// No row cannot tell an unknown user from a rule on the request (#2227).
+			"request_vars", s.passdbReadsRequest,
 		)
 		// Policy report on fail too — telemetry needs both sides.
 		// policy_reject=false here: any policy-reject path
@@ -1350,6 +1409,21 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sess
 			return "tempfail"
 		}
 		return "fail"
+	}
+
+	// A protocol rule in the userdb is the only one a token login meets; a
+	// master login met it already, on its target (#2227).
+	if target == "" {
+		vars := sqlvars.Vars{Service: service, RemoteIP: remoteIP, LocalIP: localIP}
+		if out := s.refuseByUserdb(conn, id, sessionID, res.Username, vars, reject); out != "" {
+			return out
+		}
+	}
+
+	// A token login may name no user before the chain; the policy hears the
+	// one the chain resolved.
+	if policyReq.Username == "" {
+		policyReq.Username = res.Username
 	}
 
 	// Policy-server post-chain check (check_after_auth). The
@@ -1415,6 +1489,22 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sess
 	return "ok"
 }
 
+// handleConsume retires the token of a session that opened, CONSUME\t<id>\t<token>
+// → OK or FAIL\t<id>; FAIL: it was gone, maybe into another session (#2259).
+func (s *Server) handleConsume(conn net.Conn, fields []string) {
+	if len(fields) < 3 {
+		if len(fields) >= 2 {
+			fmt.Fprintf(conn, "FAIL\t%s\n", fields[1])
+		}
+		return
+	}
+	if s.tokenStore == nil || !s.tokenStore.Consume(fields[2]) {
+		fmt.Fprintf(conn, "FAIL\t%s\n", fields[1])
+		return
+	}
+	fmt.Fprintf(conn, "OK\t%s\n", fields[1])
+}
+
 // handleVerify processes a VERIFY command from a backend pod.
 //
 // Wire format:
@@ -1423,8 +1513,8 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, sess
 //	→ OK\t<id>\tuser=<username>\tsession=<sessionID>\tservice=<service>\n
 //	→ FAIL\t<id>\n
 //
-// The token is one-time. user= and session= are verified against the
-// stored token — a mismatch is treated as a FAIL.
+// The token stays valid until CONSUME retires it or its TTL ends (#2259); a
+// user= or session= that does not match the stored token is a FAIL.
 // The metric result label is returned for the caller to observe, mirroring
 // handleAuth.
 func (s *Server) handleVerify(conn net.Conn, fields []string) string {
@@ -1757,18 +1847,24 @@ func extractAltDir(f *Fields) string {
 // and ≠ master (impersonation request) the call routes through
 // RunMasterAuth: masterdb / passdb master_user flag → switch
 // identity → userdb for target.
-func (s *Server) authenticate(target, master, password, service, remoteIP string) (*AuthResponse, error) {
+func (s *Server) authenticate(target, master, password, service, remoteIP, localIP string, bearer bool) (*AuthResponse, error) {
 	// Cache key shape mirrors chainAuthenticator so the in-process
 	// and wire paths stay interchangeable for the same input.
 	// Regular flow: `<service>\t<user>`. Master flow: prefixed
 	// with `M:` and the target appended so each (master, target)
 	// pair caches independently.
 	var key, cacheUser string
+	// A passdb that reads the client's addresses answers per address: one
+	// cached for an allowed address must not stand for another (#2227).
+	keyService := service
+	if s.cacheByAddress {
+		keyService = service + "\t" + remoteIP + "\t" + localIP
+	}
 	if target != "" && target != master {
-		key = MakeCacheKey(service, "M:"+master+"\t"+target)
+		key = MakeCacheKey(keyService, "M:"+master+"\t"+target)
 		cacheUser = master
 	} else {
-		key = MakeCacheKey(service, master)
+		key = MakeCacheKey(keyService, master)
 		cacheUser = master
 	}
 	if entry, ok := s.cache.Lookup(key, password); ok {
@@ -1786,19 +1882,26 @@ func (s *Server) authenticate(target, master, password, service, remoteIP string
 		Password: password,
 		Service:  service,
 		RemoteIP: remoteIP,
+		LocalIP:  localIP,
+		Bearer:   bearer,
 		Fields:   NewFields(),
 	}
 	var (
 		result Result
 		err    error
 	)
+	chain := Chain(s.passdbs)
+	if bearer {
+		// A token is decided by the token validators alone; refused, it is no password (#2247).
+		chain = tokenValidators(s.passdbs)
+	}
 	if target != "" && target != master {
-		result, err = RunMasterAuth(Chain(s.passdbs), Chain(s.masterdb), target, req)
+		result, err = RunMasterAuth(chain, Chain(s.masterdb), target, req)
 		if err == nil && result == ResultOK {
 			result, err = s.adoptTarget(target, req)
 		}
 	} else {
-		result, err = RunAuth(Chain(s.passdbs), req)
+		result, err = RunAuth(chain, req)
 	}
 
 	if err == nil && (result == ResultOK || result == ResultFail) {

@@ -23,13 +23,14 @@ import (
 // ---- mock auth ---------------------------------------------------------------
 
 type mockAuth struct {
-	users map[string]string // username → password
-	home  string            // userdb home; the session lock lives in it
+	users      map[string]string // username → password
+	home       string            // userdb home; the session lock lives in it
+	quotaRules []string
 }
 
 func (m *mockAuth) Authenticate(user, pass, _, _ string) (*protocol.AuthResponse, error) {
 	if expected, ok := m.users[user]; ok && expected == pass {
-		return &protocol.AuthResponse{Result: protocol.AuthOK, Username: user, Home: m.home}, nil
+		return &protocol.AuthResponse{Result: protocol.AuthOK, Username: user, Home: m.home, QuotaRules: m.quotaRules}, nil
 	}
 	return &protocol.AuthResponse{Result: protocol.AuthFail}, nil
 }
@@ -180,7 +181,7 @@ func (m *mockIndex) Vanished(_ uint64, _ uint64) ([]uint32, error) {
 	return nil, nil
 }
 
-func (m *mockIndex) VanishedGUIDs(_ uint64, _ uint64) ([][16]byte, bool, error) {
+func (m *mockIndex) VanishedGUIDs(_ uint64, _ uint64) ([]mailbox.ExpungedCopy, bool, error) {
 	return nil, true, nil
 }
 

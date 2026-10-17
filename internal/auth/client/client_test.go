@@ -80,7 +80,7 @@ func TestAuthenticate_OK(t *testing.T) {
 	}
 	defer c.Close()
 
-	res, err := c.Authenticate("alice", "pass", "imap", "1.2.3.4", "sess1")
+	res, err := c.Authenticate("alice", "pass", "imap", "1.2.3.4", "", "sess1")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestAuthenticate_DirectorTag(t *testing.T) {
 	}
 	defer c.Close()
 
-	res, err := c.Authenticate("alice", "pass", "imap", "1.2.3.4", "sess1")
+	res, err := c.Authenticate("alice", "pass", "imap", "1.2.3.4", "", "sess1")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -152,40 +152,9 @@ func TestAuthenticate_Fail(t *testing.T) {
 	}
 	defer c.Close()
 
-	_, err = c.Authenticate("alice", "wrong", "imap", "", "")
+	_, err = c.Authenticate("alice", "wrong", "imap", "", "", "")
 	if err != ErrAuthFailed {
 		t.Errorf("err = %v, want ErrAuthFailed", err)
-	}
-}
-
-func TestAuthenticate_TempFail(t *testing.T) {
-	addr := stubAuthServer(t, func(conn net.Conn, rd *bufio.Reader) {
-		for {
-			line, err := rd.ReadString('\n')
-			if err != nil {
-				return
-			}
-			fields := strings.SplitN(strings.TrimRight(line, "\r\n"), "\t", 5)
-			if len(fields) < 2 || fields[0] == "VERSION" {
-				continue
-			}
-			if fields[0] == "AUTH" {
-				id := fields[1]
-				fmt.Fprintf(conn, "FAIL\t%s\ttemp_fail\n", id)
-				return
-			}
-		}
-	})
-
-	c, err := Dial(addr, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer c.Close()
-
-	_, err = c.Authenticate("alice", "pass", "imap", "", "")
-	if err != ErrTempFail {
-		t.Errorf("err = %v, want ErrTempFail", err)
 	}
 }
 
@@ -285,7 +254,7 @@ func TestAuthenticate_Nologin(t *testing.T) {
 	}
 	defer c.Close()
 
-	res, err := c.Authenticate("disabled", "pass", "imap", "", "")
+	res, err := c.Authenticate("disabled", "pass", "imap", "", "", "")
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}

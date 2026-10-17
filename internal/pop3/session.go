@@ -3,7 +3,6 @@ package pop3
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"encoding/base64"
@@ -27,6 +26,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/loginproto"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/pkg/lineio"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -69,6 +69,7 @@ type session struct {
 	// set after successful login
 	sessionLockFile string // path to dotlock file; "" when not held
 	limitIP         string // IP used for ConnLimit.Acquire; released in releaseLock
+	cloneHeld       bool   // QuotaClone.Acquire taken at login; released in releaseLock
 	pendingUser     string // temporary storage of USER arg before PASS arrives
 	userInfo        *mailbox.UserInfo
 	box             mailbox.Box
@@ -272,7 +273,7 @@ func (s *session) relayBuilder(mech, plusMech string) scramBuilder {
 		return scramBuilder{}
 	}
 	build := func(m string, cb []byte, f onSuccessFn) sasl.Server {
-		srv := authrelay.NewRelayServer(relay, m, "pop3", s.remoteIP.String(), s.sid, cb)
+		srv := authrelay.NewRelayServer(relay, m, "pop3", s.remoteIP.String(), loginproto.LocalIP(s.conn), s.sid, cb)
 		srv.OnSuccess = func(res *authrelay.AuthResult) error { return f(res.Response()) }
 		return srv
 	}
@@ -641,6 +642,10 @@ func (s *session) setupSession(res *protocol.AuthResponse) bool {
 		"messages", len(s.msgs),
 		"result", "ok",
 	)
+	// The quota mirror flushes a user's pending value when their last session
+	// closes, and QUIT's deletion is the last thing this one does.
+	s.srv.opts.QuotaClone.Acquire(userInfo.Username)
+	s.cloneHeld = true
 	return true
 }
 
@@ -651,7 +656,7 @@ func (s *session) authenticate(authzid, username, password string) (*protocol.Au
 	if relay == nil {
 		return nil, errNoAuthService
 	}
-	res, err := relay.AuthenticateAs(authzid, username, password, "pop3", s.remoteIP.String(), s.sid)
+	res, err := relay.AuthenticateAs(authzid, username, password, "pop3", s.remoteIP.String(), loginproto.LocalIP(s.conn), s.sid)
 	if err != nil {
 		return &protocol.AuthResponse{Result: protocol.AuthFail}, nil
 	}
@@ -1211,17 +1216,27 @@ func (s *session) expungeDeleted() int {
 			marked = append(marked, m)
 		}
 	}
-	removed, failed, _ := s.box.ExpungeMarked(s.folder, "INBOX", marked)
-	if s.srv.opts.Locker != nil && s.userInfo != nil {
-		key := locks.MailboxKey(s.userInfo.Username, "INBOX")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		for _, m := range removed {
-			// Best-effort: an IDLE session on a sibling pod wakes on this.
-			_ = s.srv.opts.Locker.Emit(ctx, key, locks.EventExpunged, strconv.FormatUint(uint64(m.UID), 10))
-		}
-	}
+	ops := mailops.New(s.mailopsConfig(), s.box, s.userInfo)
+	_, failed, _ := ops.ExpungeMarked(s.box, s.folder, "INBOX", marked)
 	return failed
+}
+
+// mailopsConfig is this server's wiring of the mutation layer.
+func (s *session) mailopsConfig() mailops.Config {
+	o := s.srv.opts
+	return mailops.Config{
+		Protocol:     "pop3",
+		Locker:       o.Locker,
+		FTS:          o.FTSClient,
+		FTSAutoindex: o.FTSAutoindex,
+		FTSMaxRecent: o.FTSMaxRecent,
+		Quota: mailops.QuotaConfig{
+			Engine: o.QuotaEngine,
+			Policy: o.QuotaPolicy,
+			Warner: o.QuotaWarner,
+			Clone:  o.QuotaClone,
+		},
+	}
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -1269,6 +1284,10 @@ func (s *session) releaseLock() {
 	}
 	if s.userInfo != nil {
 		s.releaseConnLimit(s.userInfo.Username)
+		if s.cloneHeld {
+			s.srv.opts.QuotaClone.Release(s.userInfo.Username)
+			s.cloneHeld = false
+		}
 	}
 	if s.box != nil {
 		s.box.Close()

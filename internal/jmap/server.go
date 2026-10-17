@@ -57,6 +57,8 @@ type Options struct {
 	QuotaPolicy quota.Policy
 	// QuotaName is the root name clients see; empty takes the shared default.
 	QuotaName string
+	// UploadTTL is how long an uploaded blob lives (jmap_upload_ttl).
+	UploadTTL time.Duration
 	// QuotaEnabled gates the Quota objects: with the engine off the limits in
 	// userdb are not enforced, and reporting them would be a limit that is not.
 	QuotaEnabled bool
@@ -88,6 +90,7 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET "+jmapcore.SessionPath, s.guard(s.handleSession))
 	s.mux.HandleFunc("POST "+apiPath, s.guard(s.handleAPI))
 	s.mux.HandleFunc("GET "+downloadPrefix, s.guard(s.handleDownload))
+	s.mux.HandleFunc("POST "+jmapcore.UploadPath, s.guard(s.handleUpload))
 	return s
 }
 

@@ -47,6 +47,10 @@ func (r *Recorder) Record(user, path, guid string, raw []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A copy keeps its GUID, and with it the conversation already recorded.
+	if id, ok := state.ThreadOfGUID(guid); ok {
+		return id, nil
+	}
 	p := PlacementFor(state, guid, raw)
 	if err := Append(path, state, p); err != nil {
 		return "", err

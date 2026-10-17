@@ -42,6 +42,8 @@ func TestValidateName(t *testing.T) {
 		{"and nested under a parent", "Work/dbox-Mails", "/", "/", "storage layout owns"},
 		{"case-insensitive", "DBOX-mails", "/", "/", "storage layout owns"},
 		{"only as a whole segment", "dbox-Mails-old", "/", "/", ""},
+		{"the FTS index directory a converted store keeps", "INBOX/fts-flatcurve", "/", "/", "storage layout owns"},
+		{"which maildir++ never has beside a folder", "fts-flatcurve", "/", ".", ""},
 		{"a maildir directory name is not the nested layout's", "cur", "/", "/", ""},
 		{"nor is it maildir's own problem, given the leading dot", "cur", "/", ".", ""},
 	}
@@ -169,7 +171,7 @@ func TestReservedSegmentsApplyOnlyWhereTheyCanCollide(t *testing.T) {
 // requirement as the config validator and the namespace builder (#1087).
 func TestValidatorAndEscaperReserveTheSameNames(t *testing.T) {
 	rules := DefaultNameRules()
-	candidates := []string{"cur", "new", "tmp", "New", "dbox-Mails", "DBOX-Mails", "Sales", "dbox-Mails-old"}
+	candidates := []string{"cur", "new", "tmp", "New", "dbox-Mails", "DBOX-Mails", "Sales", "dbox-Mails-old", "fts-flatcurve"}
 
 	for _, layoutSep := range []string{".", "/"} {
 		for _, name := range candidates {

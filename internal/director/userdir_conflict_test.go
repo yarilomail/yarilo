@@ -44,7 +44,7 @@ func TestUserDir_Conflict_LoserKicksStaleSessions(t *testing.T) {
 	}
 
 	// u's stale session on Y must be kicked; v's must survive.
-	if got := readLine(t, loginSc); got != "USER-KICKED\tu@example.com" {
+	if got := readLine(t, loginSc); got != "USER-KICKED\tu@example.com\treason=move" {
 		t.Fatalf("expected USER-KICKED for u, got %q", got)
 	}
 	srv.sessRecMu.RLock()

@@ -232,14 +232,19 @@ func TestClient_LeaveSendsBackendDown(t *testing.T) {
 	c.Leave()
 	lines := md.waitFor(t, func(ls []string) bool { return countPrefix(ls, "BACKEND-DOWN\t") >= 1 })
 
-	var down string
+	var down, lastUp string
 	for _, l := range lines {
 		if strings.HasPrefix(l, "BACKEND-DOWN\t") {
 			down = l
 		}
+		if f := strings.Split(l, "\t"); f[0] == "BACKEND-UP" && down == "" {
+			lastUp = f[len(f)-1]
+		}
 	}
-	if down != "BACKEND-DOWN\t10.0.0.9" {
-		t.Fatalf("BACKEND-DOWN = %q, want BACKEND-DOWN\\t10.0.0.9", down)
+	// The last heartbeat's seq rides along, so a director orders any heartbeat
+	// still in flight before the removal (#2255).
+	if want := "BACKEND-DOWN\t10.0.0.9\t" + lastUp; down != want {
+		t.Fatalf("BACKEND-DOWN = %q, want %q", down, want)
 	}
 }
 

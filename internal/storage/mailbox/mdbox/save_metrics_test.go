@@ -57,7 +57,7 @@ func TestSavePartsFitInsideTheWhole(t *testing.T) {
 	u, _ := newTestUser(t)
 
 	wholeBefore, wholeCountBefore := gatherHist(t, "mailbox_save_seconds", map[string]string{"driver": "mdbox"})
-	parts := []string{"read", "prepare", "open", "write", "close", "map"}
+	parts := []string{"read", "prepare", "lock", "open", "write", "close", "map"}
 	before := map[string]float64{}
 	counts := map[string]uint64{}
 	for _, p := range parts {

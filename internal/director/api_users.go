@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/yarilomail/yarilo/internal/cluster/proto"
 )
 
 func (s *Server) apiUserMove(w http.ResponseWriter, r *http.Request) {
@@ -59,12 +61,12 @@ func (s *Server) apiUserKick(w http.ResponseWriter, r *http.Request) {
 	if delay := s.opts.userKickDelay(); delay > 0 {
 		time.AfterFunc(delay, func() {
 			s.userDir.Delete(user)
-			s.originateUserKick(user, "", nil)
+			s.originateUserKick(user, "", proto.KickAdmin, nil)
 		})
 		slog.Info("director API: user kick scheduled", "user", user, "delay", delay)
 	} else {
 		s.userDir.Delete(user)
-		s.originateUserKick(user, "", nil)
+		s.originateUserKick(user, "", proto.KickAdmin, nil)
 		slog.Info("director API: user kicked", "user", user)
 	}
 	apiJSON(w, map[string]string{"status": "ok"})

@@ -16,13 +16,19 @@ var ErrLimit = errors.New("mailboxcreate: the mailbox count limit is reached")
 
 // Folder makes one folder in the store and its index; limit is
 // quota_mailbox_count, zero for none.
-func Folder(store mailbox.UserMailbox, box mailbox.Box, rel string, limit int64) error {
+func Folder(box mailbox.Box, rel string, limit int64) error {
+	return folder(box.ListFolders, box.Create, box, rel, limit)
+}
+
+// folder counts and creates through the store for a configured mailbox: its
+// creation runs inside Box.ListFolders, which must not be asked again.
+func folder(list func() ([]mailbox.FolderEntry, error), create func(string) error, box mailbox.Box, rel string, limit int64) error {
 	if limit > 0 {
-		if entries, err := store.ListFolders(); err == nil && int64(len(entries)) >= limit {
+		if entries, err := list(); err == nil && int64(len(entries)) >= limit {
 			return ErrLimit
 		}
 	}
-	if err := store.Create(rel); err != nil {
+	if err := create(rel); err != nil {
 		return err
 	}
 	box.CreateFolder(rel, uint32(time.Now().Unix()))
@@ -76,7 +82,7 @@ func One(t Target, boxes map[string]mailbox.AutoMailbox, rel string) bool {
 }
 
 func createOne(t Target, rel string, mb mailbox.AutoMailbox) bool {
-	if err := Folder(t.Store, t.Box, rel, t.Limit); err != nil {
+	if err := folder(t.Store.ListFolders, t.Store.Create, t.Box, rel, t.Limit); err != nil {
 		slog.Warn("mailboxcreate: configured mailbox not created", "user", t.Store.Username(), "folder", rel, "err", err)
 		return false
 	}

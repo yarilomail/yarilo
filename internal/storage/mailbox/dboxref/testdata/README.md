@@ -415,6 +415,7 @@ for the wrong reason.
 |---|---|
 | `map-rotated.index` | the map's base after a rotation: every record is here |
 | `map-rotated.log` | the current log, a bare 40-byte header |
+| `map-rotated.log.2` | the log the rotation moved away, from the start of the history |
 
 Three thousand and twenty messages, all of them in the base. The reference's own
 count over the store this came from:
@@ -445,13 +446,19 @@ input: the fixture's own base with one header field moved to a sequence its log
 does not carry. Said here rather than implied, because a fixture that looks like
 it covers a case it does not is worse than no fixture.
 
-## What was left out
+## The rotated log, and the store that lost its base (#2253)
 
-The store also had a 423 KB `dovecot.map.index.log.2`. It is not here: on this
-path nothing reads it -- the sequences agree, so the rotated log is never
-consulted -- and carrying it would triple this directory for bytes no test
-touches. If a rotated-away log ever needs a fixture, it needs one whose base
-points at it, which this store is not.
+`map-rotated.log.2` is the same store's 423 KB rotated log. Its `prev_file_seq`
+is 0, so it starts the history, and the current log names it as its
+predecessor (sequence 2, offset 423076). With the base present nothing reads it:
+the sequences agree. It was left out at first for that reason.
+
+The sandbox copy of this store then lost its base, and only the two logs were
+left. A reader that needs a base before it looks at the rotated log comes back
+with an empty map, and INBOX does not open. The two logs together must read as
+exactly the records the base holds, at the same file ids and offsets: the base
+and the history are two independent records of one map, and each is the oracle
+for the other.
 
 ## How it was made
 

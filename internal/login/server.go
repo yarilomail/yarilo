@@ -539,6 +539,8 @@ func (s *Server) handleConn(conn net.Conn) {
 	conn.SetDeadline(time.Now().Add(60 * time.Second)) //nolint:errcheck
 
 	remoteAddr := conn.RemoteAddr().String()
+	// Behind a trusted PROXY header this is the destination it names.
+	localIP := loginproto.LocalIP(conn)
 	clientIP, remotePort, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		clientIP = remoteAddr
@@ -659,7 +661,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			// repeat: internal failures do not touch the auth-penalty counter.
 			for tfAttempt := 0; pre.authResult == nil; tfAttempt++ {
 				authStart := time.Now()
-				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, sessID)
+				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, localIP, sessID)
 				// One observation per attempt: each is its own round-trip.
 				s.observePhase(phaseAuth, authStart)
 				if !errors.Is(aerr, authclient.ErrTempFail) {
@@ -828,7 +830,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		deadline := backendDialStart.Add(proxyTimeout)
 		for attempt := 0; ; attempt++ {
 			var berr error
-			bs, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, deadline, log)
+			// A re-route answers for the next attempt and the log too (#2255).
+			bs, backendAddr, berr = s.openBackendSession(pre, authResult, authUser, tag, backendAddr, clientIP, sessID, deadline, log)
 			if berr == nil {
 				break
 			}
@@ -1074,11 +1077,11 @@ func resolvedIdentity(res *authclient.AuthResult, claimed string) string {
 	return claimed
 }
 
-func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, deadline time.Time, log *slog.Logger) (*backendSession, error) {
+func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthResult, authUser, tag, addr, clientIP, sessID string, deadline time.Time, log *slog.Logger) (*backendSession, string, error) {
 	// A re-route re-LOOKUPs, so it takes the resolved identity (#782, #1306).
 	conn, addr, err := s.dialBackendWithReroute(authUser, tag, addr, deadline, log)
 	if err != nil {
-		return nil, fmt.Errorf("dial backend %s: %w", addr, err)
+		return nil, addr, fmt.Errorf("dial backend %s: %w", addr, err)
 	}
 	ok := false
 	defer func() {
@@ -1102,7 +1105,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 		Helo:  pre.ehloLine,
 	}
 	if _, werr := io.WriteString(conn, pre2.Format()); werr != nil {
-		return nil, fmt.Errorf("send preamble: %w", werr)
+		return nil, addr, fmt.Errorf("send preamble: %w", werr)
 	}
 
 	// The greeting carries IMAP's post-auth capabilities; a backend that closes
@@ -1112,7 +1115,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 	s.observePhase(phaseBackendPreamble, greetingStart)
 	if gerr != nil {
 		s.incResult("backend_rejected")
-		return nil, fmt.Errorf("backend rejected session: %w", gerr)
+		return nil, addr, fmt.Errorf("backend rejected session: %w", gerr)
 	}
 
 	// SMTP submission: send EHLO so the backend has a HELO domain before the
@@ -1123,12 +1126,12 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 			ehlo = "EHLO yarilo-submission-login\r\n"
 		}
 		if _, werr := io.WriteString(conn, ehlo); werr != nil {
-			return nil, fmt.Errorf("smtp ehlo send: %w", werr)
+			return nil, addr, fmt.Errorf("smtp ehlo send: %w", werr)
 		}
 		for {
 			line, rerr := lineio.ReadLine(rd, lineio.MaxClient)
 			if rerr != nil {
-				return nil, fmt.Errorf("smtp ehlo response: %w", rerr)
+				return nil, addr, fmt.Errorf("smtp ehlo response: %w", rerr)
 			}
 			if len(line) >= 4 && line[3] != '-' {
 				break
@@ -1140,13 +1143,13 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 	// bounded by it (handleConn clears deadlines again before proxying anyway).
 	conn.SetDeadline(time.Time{}) //nolint:errcheck
 	ok = true
-	return &backendSession{conn: conn, rd: rd, addr: addr, caps: caps, refusal: refusal}, nil
+	return &backendSession{conn: conn, rd: rd, addr: addr, caps: caps, refusal: refusal}, addr, nil
 }
 
 // dialBackendWithReroute reports a dead backend and re-LOOKUPs once. The same
 // address back means the ring has not dropped it yet, so it stops (#782).
 func (s *Server) dialBackendWithReroute(username, tag, addr string, deadline time.Time, log *slog.Logger) (net.Conn, string, error) {
-	conn, err := dialBackend(addr, s.opts.BackendTLS, deadline)
+	conn, err := dialBackendFn(addr, s.opts.BackendTLS, shareOf(deadline, maxBackendReroutes+1))
 	if err == nil {
 		return conn, addr, nil
 	}
@@ -1165,13 +1168,27 @@ func (s *Server) dialBackendWithReroute(username, tag, addr string, deadline tim
 			return nil, addr, fmt.Errorf("re-lookup returned the same unreachable backend %s", addr)
 		}
 		addr = newAddr
-		conn, err = dialBackend(addr, s.opts.BackendTLS, deadline)
+		conn, err = dialBackendFn(addr, s.opts.BackendTLS, shareOf(deadline, maxBackendReroutes-attempt))
 		if err == nil {
 			return conn, addr, nil
 		}
 	}
 	return nil, addr, fmt.Errorf("backend unreachable after re-route: %w", err)
 }
+
+// shareOf is the deadline for one of the attempts left under the one deadline
+// (#2124): a pod address that drops packets cannot use up the re-route's (#2255).
+func shareOf(deadline time.Time, attemptsLeft int) time.Time {
+	share := time.Now().Add(time.Until(deadline) / time.Duration(attemptsLeft))
+	if share.After(deadline) {
+		return deadline
+	}
+	return share
+}
+
+// dialBackendFn is the dial the re-route makes; a test stands in a pod address
+// that drops packets.
+var dialBackendFn = dialBackend
 
 // reportUnreachable tells the director a dial failed. Best-effort: the report
 // accelerates eviction, the TTL lease is the backstop (#782).
@@ -1301,14 +1318,14 @@ func (s *Server) watchReadLoop(c *proto.Conn, wc *watchConn) error {
 				wc.deliver(fields[1], line)
 			}
 		case strings.HasPrefix(line, "USER-KICKED\t"):
-			user, ok := kickedUser(line)
+			user, reason, ok := kickedUser(line)
 			if !ok {
 				// Arity checked, not trimmed: ignoring the extra fields let a ring
 				// field travel into the username and kick nobody (#1363).
 				slog.Warn("login: malformed USER-KICKED push, ignored", "line", line)
 				break
 			}
-			s.kickUser(user)
+			s.kickUser(user, reason)
 		case line == "PING":
 			wc.pong()
 		}
@@ -1316,14 +1333,19 @@ func (s *Server) watchReadLoop(c *proto.Conn, wc *watchConn) error {
 	}
 }
 
-// kickedUser takes the username from a USER-KICKED push. Two forms only: the
-// plain kick, and the evacuation form an older director still sends.
-func kickedUser(line string) (string, bool) {
+// kickedUser takes the username and the reason from a USER-KICKED push: the
+// user, then reason=<r> (#2263) or the evacuation form an older director sends.
+func kickedUser(line string) (user, reason string, ok bool) {
 	fields := strings.Split(line, "\t")
 	if len(fields) < 2 || len(fields) > 3 || fields[1] == "" {
-		return "", false
+		return "", "", false
 	}
-	return fields[1], true
+	if len(fields) == 3 {
+		if r, has := strings.CutPrefix(fields[2], proto.KickReasonField); has {
+			reason = r
+		}
+	}
+	return fields[1], reason, true
 }
 
 // sessionSyncIDsPerLine keeps a line inside the director's 4 KiB read buffer:
@@ -1414,7 +1436,7 @@ func (s *Server) reannounceSessions() {
 
 // kickUser closes all active backend connections for the given username,
 // causing biProxy to terminate and those sessions to be dropped.
-func (s *Server) kickUser(username string) {
+func (s *Server) kickUser(username, reason string) {
 	s.sessMu.RLock()
 	sessions := make([]*liveSession, len(s.sessions[username]))
 	copy(sessions, s.sessions[username])
@@ -1424,8 +1446,11 @@ func (s *Server) kickUser(username string) {
 	// not read like a kick that never arrived (#1363).
 	slog.Info("login: user kick received", "user", username,
 		"proto", string(s.opts.Protocol), "sessions", len(sessions))
+	if reason == "" {
+		reason = "not given"
+	}
 	for _, sess := range sessions {
-		sess.close("kicked by admin or move")
+		sess.close("kicked: " + reason)
 	}
 }
 
@@ -1761,7 +1786,8 @@ func wardenService(p Protocol) string {
 	case ProtocolPOP3, ProtocolPOP3S:
 		return "pop3"
 	case ProtocolSubmission, ProtocolSubmissions:
-		return "smtp"
+		// smtp is Postfix's over the SASL login, as in the reference (#2239).
+		return "submission"
 	case ProtocolManageSieve:
 		return "managesieve"
 	default:

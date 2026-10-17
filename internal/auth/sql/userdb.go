@@ -9,6 +9,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/pkg/sqlpool"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 // Userdb is the SQL-backed implementation of protocol.Userdb. It
@@ -85,10 +86,19 @@ const defaultUserdbQuery = `SELECT username, home, mail FROM yarilo_users WHERE 
 // backend; returns (nil, err) on driver / scan / parse errors so
 // the chain short-circuits with the operator-visible failure.
 func (u *Userdb) Lookup(username string) (*protocol.UserInfo, error) {
+	return u.LookupFor(username, sqlvars.Vars{})
+}
+
+// UsesRequest reports whether the user query reads the protocol (#2227).
+func (u *Userdb) UsesRequest() bool { return sqlvars.UsesRequest(u.userQuery) }
+
+// LookupFor is Lookup with the request's values bound; a lookup that is not a
+// login or a delivery passes none, and %s binds empty.
+func (u *Userdb) LookupFor(username string, v sqlvars.Vars) (*protocol.UserInfo, error) {
 	if !u.filter.Accepts(username) {
 		return nil, nil
 	}
-	query, args := substituteVars(u.driver, u.userQuery, username)
+	query, args := substituteVars(u.driver, u.userQuery, username, v)
 
 	rows, err := u.db.QueryContext(context.Background(), query, args...)
 	if err != nil {

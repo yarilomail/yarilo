@@ -157,7 +157,7 @@ func TestConcurrentRequestsShareOneConnection(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			user := fmt.Sprintf("u%d@d", i)
-			res, err := c.Authenticate(user, "pw", "imap", "10.0.0.1", "sid")
+			res, err := c.Authenticate(user, "pw", "imap", "10.0.0.1", "", "sid")
 			if err != nil {
 				errs <- err
 				return
@@ -196,7 +196,7 @@ func TestRepliesRoutedByIDNotArrivalOrder(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			user := fmt.Sprintf("user%d", i)
-			res, err := c.Authenticate(user, "pw", "imap", "", "")
+			res, err := c.Authenticate(user, "pw", "imap", "", "", "")
 			if err != nil {
 				errs <- err
 				return
@@ -223,7 +223,7 @@ func TestReconnectQueuesInsteadOfFailing(t *testing.T) {
 	}
 	defer c.Close()
 
-	if _, err := c.Authenticate("u@d", "pw", "imap", "", ""); err != nil {
+	if _, err := c.Authenticate("u@d", "pw", "imap", "", "", ""); err != nil {
 		t.Fatalf("warm-up Authenticate: %v", err)
 	}
 
@@ -239,7 +239,7 @@ func TestReconnectQueuesInsteadOfFailing(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		if _, err := c.Authenticate("u@d", "pw", "imap", "", ""); err == nil {
+		if _, err := c.Authenticate("u@d", "pw", "imap", "", "", ""); err == nil {
 			lastErr = nil
 			break
 		} else {
@@ -268,7 +268,7 @@ func TestVerifyAndLookupShareTheConnection(t *testing.T) {
 		call func() error
 	}{
 		{"authenticate", func() error {
-			_, err := c.Authenticate("u@d", "pw", "imap", "", "")
+			_, err := c.Authenticate("u@d", "pw", "imap", "", "", "")
 			return err
 		}},
 		{"verify", func() error {
@@ -301,7 +301,7 @@ func TestClosedClientRejectsRequests(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	if _, err := c.Authenticate("u@d", "pw", "imap", "", ""); err != ErrClosed {
+	if _, err := c.Authenticate("u@d", "pw", "imap", "", "", ""); err != ErrClosed {
 		t.Fatalf("after Close: err = %v, want ErrClosed", err)
 	}
 }

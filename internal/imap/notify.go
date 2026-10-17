@@ -9,6 +9,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -28,7 +29,7 @@ const notifyDelim = '/'
 // renameSep joins the old and new names in a rename event payload. It must be a
 // byte that never appears in a mailbox name and survives the locks wire protocol
 // (which is TAB/LF-framed and rejects those two). NUL satisfies both.
-const renameSep = "\x00"
+const renameSep = mailops.RenameSeparator
 
 // notifyStatusOpts is the fixed set of STATUS items reported for non-selected
 // mailbox activity (RFC 5465 §6): enough for a client to detect new/removed

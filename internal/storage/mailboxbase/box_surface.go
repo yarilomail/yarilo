@@ -202,13 +202,23 @@ func (b *Box) Backing(folderID uint64) (map[uint32]mailbox.BackingRef, error) {
 
 var _ mailbox.VirtualCopies = (*Box)(nil)
 
-func (b *Box) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([][16]byte, bool, error) {
+func (b *Box) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([]mailbox.ExpungedCopy, bool, error) {
 	return b.index.VanishedGUIDs(folderID, sinceModSeq)
 }
 
 func (b *Box) ExpungeFloor(folderID uint64) (uint64, error) { return b.index.ExpungeFloor(folderID) }
 
 func (b *Box) FolderStamp(name string) (mailbox.FolderStamp, error) { return b.index.FolderStamp(name) }
+
+// GUIDStoreComplete is false when the store cannot say, so a caller walks.
+func (b *Box) GUIDStoreComplete(folderIDs []uint64) bool {
+	r, ok := b.index.(mailbox.GUIDResolver)
+	if !ok {
+		return false
+	}
+	complete, err := r.GUIDStoreComplete(folderIDs)
+	return err == nil && complete
+}
 
 func (b *Box) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
 	r, ok := b.index.(mailbox.GUIDResolver)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -151,11 +153,9 @@ func TestEmailSetKeywordsReachTheStore(t *testing.T) {
 	}
 }
 
-// What is not built has to be visible in the response. A client that asks for a
-// move and is told "updated" believes the message moved; the message staying
-// put is asserted here as well, so the row fails on a silent accept rather than
-// only on a wrong error string.
-func TestEmailSetRefusesWhatIsNotImplemented(t *testing.T) {
+// A refused update is visible in the response and leaves the store as it was,
+// so a row fails on a silent accept rather than only on a wrong error string.
+func TestEmailSetRefusesWithoutTouchingTheStore(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     func(id string) string
@@ -163,26 +163,12 @@ func TestEmailSetRefusesWhatIsNotImplemented(t *testing.T) {
 		wantType string
 	}{
 		{
-			name:     "create",
-			args:     func(string) string { return fmt.Sprintf(`{"accountId":%q,"create":{"k1":{}}}`, testUser) },
-			bucket:   func(r jmapcore.SetResponse, string2 string) *jmapcore.SetError { return r.NotCreated["k1"] },
-			wantType: jmapcore.SetErrNotImplemented,
-		},
-		{
-			name: "destroy",
-			args: func(id string) string {
-				return fmt.Sprintf(`{"accountId":%q,"destroy":[%q]}`, testUser, id)
-			},
-			bucket:   func(r jmapcore.SetResponse, id string) *jmapcore.SetError { return r.NotDestroyed[id] },
-			wantType: jmapcore.SetErrNotImplemented,
-		},
-		{
-			name: "a move, which would look like success if ignored",
+			name: "a move to a mailbox that is not there",
 			args: func(id string) string {
 				return fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds":{"other":true}}}}`, testUser, id)
 			},
 			bucket:   func(r jmapcore.SetResponse, id string) *jmapcore.SetError { return r.NotUpdated[id] },
-			wantType: jmapcore.SetErrNotImplemented,
+			wantType: jmapcore.SetErrInvalidProps,
 		},
 		{
 			name: "an unknown id",
@@ -201,7 +187,7 @@ func TestEmailSetRefusesWhatIsNotImplemented(t *testing.T) {
 
 			serr := tc.bucket(resp, id)
 			if serr == nil {
-				t.Fatalf("the call reported no failure for an operation that is not built: %+v", resp)
+				t.Fatalf("the call reported no failure: %+v", resp)
 			}
 			if serr.Type != tc.wantType {
 				t.Errorf("SetError type = %q, want %q (%s)", serr.Type, tc.wantType, serr.Description)
@@ -433,4 +419,20 @@ func emailStateOf(t *testing.T, s *Server) string {
 		t.Fatalf("decode Email/get: %v -- %s", err, w.Body)
 	}
 	return got.State
+}
+
+// A keyword change wakes IDLE sessions on every pod, as an IMAP STORE does.
+func TestEmailSetPublishesTheChange(t *testing.T) {
+	s, id := storedServerWithMessage(t, "Subject: x\r\n\r\nbody\r\n", 0)
+	resp := emailSetCall(t, s, `{"accountId":"`+testUser+`","update":{"`+id+`":{"keywords/$flagged":true}}}`)
+	if _, ok := resp.Updated[id]; !ok {
+		t.Fatalf("not updated: %+v", resp)
+	}
+	l := s.opts.Storage.Locker.(*testLocker)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	want := locks.MailboxKey(testUser, "INBOX") + " " + string(locks.EventChanged)
+	if !slices.Contains(l.events, want) {
+		t.Errorf("events %v, want %q", l.events, want)
+	}
 }

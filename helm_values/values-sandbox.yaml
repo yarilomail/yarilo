@@ -569,10 +569,15 @@ components:
         ## Columns matched by name — only "password" is required.
         ## "enabled" maps to PostfixAdmin's "active"; absent columns default active.
         skip_schema: true
+        ## nologin blocks the login and keeps the account (#2229); the seed sets it
+        ## on its probe account only. The column must exist before this query.
+        ## The per-protocol rule (#2227): IMAP off per row in the password query,
+        ## delivery off per row in the user query; the seed's probes exercise both.
         password_query: |
-          SELECT password, active AS enabled, allow_nets
+          SELECT password, active AS enabled, allow_nets, nologin
           FROM mailbox
           WHERE username = %u
+            AND CASE %s WHEN 'imap' THEN imap_enabled ELSE 1 END = 1
         user_query: |
           SELECT CONCAT(home, mpath) AS home,
                  CONCAT(mbtype, ':~/', maildir,
@@ -581,6 +586,7 @@ components:
                  CONCAT('*:bytes=', quota_bytes, ':messages=', quota_messages) AS quota_rule
           FROM mailbox
           WHERE username = %u
+            AND CASE %s WHEN 'lmtp' THEN lmtp_enabled ELSE 1 END = 1
         iterate_query: |
           SELECT username
           FROM mailbox

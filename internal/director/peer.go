@@ -32,6 +32,7 @@ func applyHandshakeHost(srv *Server, line string) {
 		tag = fields[3]
 	}
 	var lastDown, lastUp int64
+	var seq uint64
 	vhosts := ring.DefaultVhosts
 	for _, f := range fields[4:] {
 		if len(f) < 2 {
@@ -48,7 +49,18 @@ func applyHandshakeHost(srv *Server, line string) {
 			lastUp = v
 		case 'V':
 			vhosts = int(v) // ring weight (#706); absent on pre-#706 peers
+		case 'S':
+			seq = uint64(v)
 		}
+	}
+	// A removed backend comes back only by a newer registration; a leased one
+	// keeps its lease here, so it expires when its heartbeats stop (#2255).
+	if srv.backendTombActive(ip, seq) {
+		slog.Info("director: removed backend in a handshake ignored", "ip", ip, "seq", seq)
+		return
+	}
+	if seq > 0 {
+		srv.recordBackendSeen(ip, seq)
 	}
 	// lastDown==0: backend never went down → Up.
 	// lastUp > lastDown: came up after last down → Up.
@@ -76,7 +88,6 @@ func applyRingChangeFields(srv *Server, payload []string) {
 	ts := time.Now().Unix()
 	switch event {
 	case "up":
-		srv.clearBackendTomb(ip) // #846: a real up event re-admits; drop any resync tombstone
 		// A gossiped heartbeat carries the backend's seq (#776, field 3) and,
 		// for lease-managed backends, its port + vhosts (fields 4-5). Refresh
 		// the lease so a heartbeat that landed on ANY director keeps the
@@ -85,8 +96,16 @@ func applyRingChangeFields(srv *Server, payload []string) {
 		if len(payload) >= 4 {
 			if v, err := strconv.ParseUint(payload[3], 10, 64); err == nil {
 				seq = v
-				srv.recordBackendSeen(ip, seq)
 			}
+		}
+		// An up older than the removal is a late one, not a re-registration (#2255).
+		if srv.backendTombActive(ip, seq) {
+			slog.Info("director: late ring change up of a removed backend ignored", "ip", ip, "seq", seq)
+			break
+		}
+		srv.clearBackendTomb(ip) // #846: a real up event re-admits; drop any resync tombstone
+		if seq > 0 {
+			srv.recordBackendSeen(ip, seq)
 		}
 		// When port is present, add the backend outright: the registration is
 		// a persistent connection to exactly ONE of N directors (ClusterIP),
@@ -132,10 +151,14 @@ func applyRingChangeFields(srv *Server, payload []string) {
 			slog.Warn("director: ring RING-CHANGE vhosts for unknown backend", "ip", ip)
 		}
 	case "down":
-		srv.recordBackendTomb(ip) // #846: block resync resurrection until a newer seq
-		srv.forgetBackendLease(ip)
-		srv.ring.RemoveBackend(ip)
-		slog.Info("director: ring change down", "ip", ip)
+		// The removal's seq travels with it: a director that never saw this
+		// backend's heartbeats still knows which ones came before (#2255).
+		var seq uint64
+		if len(payload) >= 4 {
+			seq, _ = strconv.ParseUint(payload[3], 10, 64)
+		}
+		srv.removeBackend(ip, seq)
+		slog.Info("director: ring change down", "ip", ip, "seq", seq)
 	case "flush":
 		srv.ring.SetUp(ip, false, ts)
 		// Clear the flushed backend's pins on every replica (#706) so new

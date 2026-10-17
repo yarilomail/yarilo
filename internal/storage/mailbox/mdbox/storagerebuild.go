@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -16,26 +17,36 @@ import (
 // allMessages selects every message in a folder for GetMessages.
 var allMessages = mailbox.SeqSet{{From: 1, To: 0}}
 
+// Lease of a rebuild or heal hold, renewed for as long as the work runs (#2234).
+var rebuildLockTTL, rebuildLockRenew = 90 * time.Second, 30 * time.Second
+
 // withMapLock holds the map X lock across fn, serialising a rebuild against
-// deliveries. Re-entrant: map methods under fn see HoldsResource and skip.
-func (u *userMailbox) withMapLock(fn func() error) error {
+// deliveries; fn's context is cancelled once the lease cannot be renewed.
+func (u *userMailbox) withMapLock(fn func(context.Context) error) error {
 	if u.b.locker == nil {
-		return fn()
+		return fn(context.Background())
 	}
 	key := locks.MdboxMapKey(u.username)
 	if held, err := locks.Reentrant(u.b.locker, key, "mdbox-rebuild", false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
-		return fn()
+		return fn(context.Background())
 	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "mdbox-rebuild"), 95*time.Second)
-	defer cancel()
-	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 90*time.Second)
+	err := locks.WithLockWaiting(locks.WithSite(context.Background(), "mdbox-rebuild"), u.b.locker, key, u.owner,
+		rebuildLockTTL, rebuildLockRenew, 95*time.Second, fn)
 	if err != nil {
-		return fmt.Errorf("mdbox/rebuild: acquire map lock: %w", err)
+		return fmt.Errorf("mdbox/rebuild: map lock: %w", err)
 	}
-	defer func() { _ = u.b.locker.Unlock(ctx, lk.ID) }()
-	return fn()
+	return nil
+}
+
+// stillHeld refuses a write once the lease is gone: a save may already be in
+// the file this hold was rewriting.
+func stillHeld(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mdbox: map lock lost: %w", err)
+	}
+	return nil
 }
 
 // RebuildStorage reconciles the map against the m.<N> files and recomputes every
@@ -59,10 +70,10 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 		return stats, err
 	}
 
-	err = u.withMapLock(func() error {
+	err = u.withMapLock(func(ctx context.Context) error {
 		// A frame at the size the file does not announce reads as corruption to
 		// the reference, and the rebuild is where it is rewritten (#1687).
-		fixed, nerr := u.normaliseStorageFrames()
+		fixed, nerr := u.normaliseStorageFrames(ctx)
 		if nerr != nil {
 			return nerr
 		}
@@ -70,9 +81,26 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 		// Abort on an incomplete scan: a half-corrupt m.<N> or a transient I/O read
 		// is indistinguishable from "message gone", so expunging on it would delete
 		// live mail. The wrapped error names the bad file; move/repair it and re-run.
-		scanned, serr := u.scanStorage()
+		located, serr := u.scanLocated()
 		if serr != nil {
 			return fmt.Errorf("mdbox/rebuild: refusing to rebuild on an incomplete scan; move or repair the named m.<N> and re-run: %w", serr)
+		}
+		scanned := make([]mailbox.ScanRecord, len(located))
+		guidOwner := make(map[[16]byte]uint32, len(located))
+		var moved []mdboxmap.MovedRecord
+		for i, r := range located {
+			scanned[i] = r.scan
+			if r.entry.UID == 0 {
+				continue
+			}
+			if r.scan.GUID != ([16]byte{}) {
+				guidOwner[r.scan.GUID] = r.entry.UID
+			}
+			if r.entry.FileID != r.fileID || r.entry.Offset != r.physicalOffset {
+				moved = append(moved, mdboxmap.MovedRecord{
+					UID: r.entry.UID, FileID: r.fileID, Offset: r.physicalOffset, Size: r.length, GUID: r.entry.GUID,
+				})
+			}
 		}
 		stats.Scanned = len(scanned)
 
@@ -101,10 +129,11 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 			if oerr != nil {
 				return fmt.Errorf("mdbox/rebuild: open %q: %w", fe.Name, oerr)
 			}
-			dropped, rerr := u.resetFolderToPresent(idx, f, present)
+			dropped, remapped, rerr := u.resetFolderToPresent(idx, f, present, guidOwner)
 			if rerr != nil {
 				return rerr
 			}
+			stats.Remapped += remapped
 			if len(dropped) > 0 {
 				if stats.ExpungedCopies == nil {
 					stats.ExpungedCopies = make(map[string][]mailbox.ExpungedCopy)
@@ -153,6 +182,22 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 			stats.OrphansRestored = restored
 		}
 
+		if beforeRebuildCommit != nil {
+			beforeRebuildCommit(ctx)
+		}
+		if err := stillHeld(ctx); err != nil {
+			return err
+		}
+		// An entry found by its GUID at another place follows its bytes (#2236).
+		if len(moved) > 0 {
+			if err := m.AppendMove(moved, nil); err != nil {
+				return fmt.Errorf("mdbox/rebuild: repoint: %w", err)
+			}
+			stats.Repointed = len(moved)
+		}
+		if err := stillHeld(ctx); err != nil {
+			return err
+		}
 		// Drop map records whose message vanished from storage.
 		dropped, derr := m.ExpungeVanished(presentUIDs)
 		if derr != nil {
@@ -162,6 +207,9 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 
 		// Recompute refcounts from the actual references (including just-restored
 		// orphans): unreferenced records go to zero-ref so purge reclaims them.
+		if err := stillHeld(ctx); err != nil {
+			return err
+		}
 		zeroed, rerr := m.SetRefcountsFromReferences(refCount)
 		if rerr != nil {
 			return fmt.Errorf("mdbox/rebuild: recompute refcounts: %w", rerr)
@@ -183,6 +231,10 @@ func (u *userMailbox) RebuildStorage(box mailbox.Box, idx mailbox.UserIndex, res
 	stats.RebuildCount = m.RebuildCount()
 	return stats, nil
 }
+
+// beforeRebuildCommit marks where a rebuild starts writing the map, for the row
+// that lapses its lease there.
+var beforeRebuildCommit func(context.Context)
 
 // restoreTaggedOrphans re-files every unreferenced message carrying an
 // orig-mailbox tag, through the same path a delivery takes so the folder's
@@ -257,17 +309,27 @@ func (u *userMailbox) openOrCreateFolder(box mailbox.Box, name string, cache map
 
 // resetFolderToPresent drops the folder's records whose map_uid the scan did not
 // find, keeping everything else intact, and returns the dropped UIDs.
-func (u *userMailbox) resetFolderToPresent(idx mailbox.UserIndex, f *mailbox.Folder, present map[string]*mailbox.ScanRecord) ([]mailbox.ExpungedCopy, error) {
+func (u *userMailbox) resetFolderToPresent(idx mailbox.UserIndex, f *mailbox.Folder, present map[string]*mailbox.ScanRecord, guidOwner map[[16]byte]uint32) ([]mailbox.ExpungedCopy, int, error) {
 	existing, err := idx.GetMessages(f.ID, allMessages)
 	if err != nil {
-		return nil, fmt.Errorf("mdbox/rebuild: get messages %q: %w", f.Name, err)
+		return nil, 0, fmt.Errorf("mdbox/rebuild: get messages %q: %w", f.Name, err)
 	}
+	var zero [16]byte
+	remapped := 0
 	rebuilt := make([]*mailbox.MessageMeta, 0, len(existing))
 	for _, mm := range existing {
 		if mm.MapUID == 0 {
 			continue
 		}
-		if _, ok := present[strconv.FormatUint(uint64(mm.MapUID), 10)]; !ok {
+		rec, ok := present[strconv.FormatUint(uint64(mm.MapUID), 10)]
+		// The GUID wins over a map_uid that is gone or names other bytes (#2236).
+		if mm.GUID != zero && (!ok || (rec.GUID != zero && rec.GUID != mm.GUID)) {
+			if owner, has := guidOwner[mm.GUID]; has {
+				mm.MapUID, ok = owner, true
+				remapped++
+			}
+		}
+		if !ok {
 			continue // map_uid vanished from storage; drop this record
 		}
 		rebuilt = append(rebuilt, mm)
@@ -275,7 +337,7 @@ func (u *userMailbox) resetFolderToPresent(idx mailbox.UserIndex, f *mailbox.Fol
 	sort.Slice(rebuilt, func(i, j int) bool { return rebuilt[i].UID < rebuilt[j].UID })
 	expunged, err := idx.ResetFolder(f.ID, rebuilt)
 	if err != nil {
-		return nil, fmt.Errorf("mdbox/rebuild: reset %q: %w", f.Name, err)
+		return nil, 0, fmt.Errorf("mdbox/rebuild: reset %q: %w", f.Name, err)
 	}
-	return expunged, nil
+	return expunged, remapped, nil
 }

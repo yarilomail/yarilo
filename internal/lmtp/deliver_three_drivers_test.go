@@ -42,8 +42,8 @@ func TestADeliveredMessageIsReadableFromItsRecord(t *testing.T) {
 			defer ui.Close() //nolint:errcheck
 
 			raw := "From: a@b\r\nSubject: delivered\r\n\r\n" + tc.driver + " body\r\n"
-			if _, _, _, err := deliverOne(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)),
-				int64(len(raw)), nil, info.Username, "x@y", nil); err != nil {
+			if _, _, _, err := deliverTest(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)),
+				int64(len(raw)), info.Username, "x@y", nil); err != nil {
 				t.Fatalf("deliver: %v", err)
 			}
 
@@ -102,8 +102,8 @@ func TestNoSidecarIsWrittenByADelivery(t *testing.T) {
 			ui := idx.OpenUser(info)
 			defer ui.Close() //nolint:errcheck
 			raw := "From: a@b\r\n\r\nbody\r\n"
-			if _, _, _, err := deliverOne(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)),
-				int64(len(raw)), nil, info.Username, "x@y", nil); err != nil {
+			if _, _, _, err := deliverTest(mailboxbase.Open(box, ui), "INBOX", bytes.NewReader([]byte(raw)),
+				int64(len(raw)), info.Username, "x@y", nil); err != nil {
 				t.Fatal(err)
 			}
 

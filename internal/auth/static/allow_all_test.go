@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
 // A userdb-only lookup asks the passdbs first unless allow_all_users is set,
@@ -25,7 +26,7 @@ func TestUserdbAsksThePassdbsUnlessAllowAll(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		db.SetUserExists(known)
+		db.SetUserExists(func(u string, _ sqlvars.Vars) (bool, error) { return known(u) }, false)
 		ui, err := db.Lookup(c.user)
 		if err != nil {
 			t.Fatal(err)

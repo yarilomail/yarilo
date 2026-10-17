@@ -39,7 +39,7 @@ func TestKickUser_FreesTheSessionWhileTheClientIsSilent(t *testing.T) {
 	s.sessions["u@example.com"] = []*liveSession{sess}
 	_ = client // held open on purpose, never read from, never closed
 
-	s.kickUser("u@example.com")
+	s.kickUser("u@example.com", "admin")
 
 	select {
 	case <-done:

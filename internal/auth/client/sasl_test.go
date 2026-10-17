@@ -78,7 +78,7 @@ func TestTheMechanismListIsReadOncePerConnection(t *testing.T) {
 		if got := c.Mechanisms(); len(got) != 3 {
 			t.Fatalf("Mechanisms() = %v, want the three announced", got)
 		}
-		x, step, serr := c.BeginSASL("SCRAM-SHA-256", "imap", "", "s1", nil, []byte("n,,n=alice,r=nonce"))
+		x, step, serr := c.BeginSASL("SCRAM-SHA-256", "imap", "", "", "s1", nil, []byte("n,,n=alice,r=nonce"))
 		if serr != nil {
 			t.Fatalf("begin: %v", serr)
 		}
@@ -118,7 +118,7 @@ func TestAnAbandonedRelayIsCancelled(t *testing.T) {
 	}
 	defer c.Close() //nolint:errcheck
 
-	srv := NewRelayServer(c, "SCRAM-SHA-256", "imap", "", "s1", nil)
+	srv := NewRelayServer(c, "SCRAM-SHA-256", "imap", "", "", "s1", nil)
 	if _, _, nerr := srv.Next([]byte("n,,n=alice,r=nonce")); nerr != nil {
 		t.Fatalf("first step: %v", nerr)
 	}

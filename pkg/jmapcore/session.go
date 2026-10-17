@@ -18,6 +18,9 @@ const (
 // only this URL and discovers everything else from what it returns.
 const SessionPath = "/.well-known/jmap"
 
+// UploadPath prefixes the upload URL; the login edge caps it by maxSizeUpload.
+const UploadPath = "/jmap/upload/"
+
 // Limits are the server's advertised bounds. Clients batch against them, so a
 // caller must publish the same numbers it enforces.
 type Limits struct {
@@ -110,7 +113,7 @@ func BuildSession(lim Limits, username string) *Session {
 		Username:        username,
 		APIURL:          base + "/jmap/api/",
 		DownloadURL:     base + "/jmap/download/{accountId}/{blobId}/{name}?accept={type}",
-		UploadURL:       base + "/jmap/upload/{accountId}/",
+		UploadURL:       base + UploadPath + "{accountId}/",
 		EventSourceURL:  base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
 		State:           SessionState(lim),
 	}

@@ -10,6 +10,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -354,6 +355,14 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 
 // mailbox is the handle's account mail.
 func (h *nsHandle) mailbox() mailbox.Box { return h.mbox }
+
+// folderACL is h's ACL store for the mutation layer; none is a nil interface.
+func (h *nsHandle) folderACL() mailops.FolderACL {
+	if h.acl == nil {
+		return nil
+	}
+	return h.acl
+}
 
 // mailboxBackendFor returns the MailboxBackend for a namespace, selected by the
 // resolved user's driver -- ui is the owner's userdb identity for an

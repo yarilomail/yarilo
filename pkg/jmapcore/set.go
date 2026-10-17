@@ -61,6 +61,8 @@ type SetError struct {
 	Type        string   `json:"type"`
 	Description string   `json:"description,omitempty"`
 	Properties  []string `json:"properties,omitempty"`
+	// NotFound lists every missing blob of a blobNotFound (RFC 8621 §4.6).
+	NotFound []string `json:"notFound,omitempty"`
 }
 
 // SetError types from RFC 8620 §5.3, plus one of ours.
@@ -73,6 +75,11 @@ const (
 	SetErrWillDestroy  = "willDestroy"
 	SetErrInvalidProps = "invalidProperties"
 	SetErrSingleton    = "singleton"
+	// SetErrAlreadyExists, SetErrMailboxHasChild and SetErrMailboxHasEmail are
+	// RFC 8621 §2.5's for Mailbox/set.
+	SetErrAlreadyExists   = "alreadyExists"
+	SetErrMailboxHasChild = "mailboxHasChild"
+	SetErrMailboxHasEmail = "mailboxHasEmail"
 	// SetErrNotImplemented is ours. §5.3 lets a method define further types,
 	// and the alternative was worse: reporting an unbuilt operation as
 	// "forbidden" tells a client it lacks permission and invites it to retry

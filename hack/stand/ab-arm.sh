@@ -155,6 +155,7 @@ overlay_allows() {
     blockprofile) echo '^telemetry(\.pprof)?$' ;;
     fsync-never) echo '^storage(\.mail_fsync)?$' ;;
     notls) echo '^internalTLS(\.enabled)?$' ;;
+    no-protocol-rule) echo '^components(\.auth)?$' ;;
     *) return 1 ;;
   esac
 }

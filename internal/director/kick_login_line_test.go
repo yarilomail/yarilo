@@ -35,8 +35,8 @@ func TestMoveKick_LoginLineCarriesTheUsernameOnly(t *testing.T) {
 	if kick == "" {
 		t.Fatal("the moving director never pushed USER-KICKED to its own login client")
 	}
-	if want := "USER-KICKED\tu@example.com"; kick != want {
-		t.Errorf("login kick line = %q, want %q — the ring's old-backend field must not reach a login", kick, want)
+	if want := "USER-KICKED\tu@example.com\treason=move"; kick != want {
+		t.Errorf("login kick line = %q, want %q — the ring's old-backend field must not reach a login, the reason must (#2263)", kick, want)
 	}
 }
 
@@ -49,11 +49,20 @@ func TestLoginKickLine_IsTheOnlyBuilder(t *testing.T) {
 	readHandshake(t, loginSc)
 	sendHandshake(t, loginConn)
 
-	// Arrived from a peer, conditional form (user + old backend).
-	srv.membership.applyEnvelope("USER-KICKED", []string{"u@example.com", "10.0.0.20"}, "10.0.0.99:9102", 7)
-	relayed := readLine(t, loginSc)
-
-	if want := loginKickLine("u@example.com"); relayed != want {
-		t.Fatalf("relayed kick = %q, want %q", relayed, want)
+	// Arrived from a peer: conditional form (user + old backend), with and
+	// without the reason a peer before #2263 did not send.
+	for i, tc := range []struct {
+		payload []string
+		reason  string
+	}{
+		{[]string{"u@example.com", "10.0.0.20", "reason=move"}, "move"},
+		{[]string{"u@example.com", "reason=admin"}, "admin"},
+		{[]string{"u@example.com", "10.0.0.20"}, ""},
+	} {
+		srv.membership.applyEnvelope("USER-KICKED", tc.payload, "10.0.0.99:9102", uint64(7+i))
+		relayed := readLine(t, loginSc)
+		if want := loginKickLine("u@example.com", tc.reason); relayed != want {
+			t.Fatalf("payload %q relayed as %q, want %q", tc.payload, relayed, want)
+		}
 	}
 }

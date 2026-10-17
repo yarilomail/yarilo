@@ -1,6 +1,7 @@
 package mdbox
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -223,7 +224,7 @@ func parseHeaderSize(mh []byte) (uint64, error) {
 
 // normaliseStorageFrames rewrites every m.<N> holding a record at the other
 // size. One pass per file per rebuild, as the reference bounds it (#1687).
-func (u *userMailbox) normaliseStorageFrames() (int, error) {
+func (u *userMailbox) normaliseStorageFrames(ctx context.Context) (int, error) {
 	countDirReads.Add(1)
 	entries, err := os.ReadDir(u.storagePath())
 	if err != nil {
@@ -261,6 +262,9 @@ func (u *userMailbox) normaliseStorageFrames() (int, error) {
 		}
 		if landed == nil {
 			continue
+		}
+		if err := stillHeld(ctx); err != nil {
+			return fixed, err
 		}
 		if rerr := repointMap(m, fileID, landed); rerr != nil {
 			return fixed, rerr

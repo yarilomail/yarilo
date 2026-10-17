@@ -33,6 +33,25 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 	info := &mailbox.UserInfo{Username: testUser, Home: home, Separator: "/"}
 	locker := &testLocker{}
 
+	guid := seedMessage(t, info, locker, raw)
+
+	s := New(Options{
+		Trust:             ResolveTrust(false, true, []*net.IPNet{mustCIDR(t, "192.0.2.0/24")}),
+		Limits:            testLimits(),
+		MaxBodyValueBytes: ceiling,
+		Storage: &Storage{
+			Mailbox:     maildir.New(),
+			Index:       file.New(file.WithLocker(locker)),
+			ResolveUser: func(string) (*mailbox.UserInfo, error) { return info, nil },
+			Locker:      locker,
+		},
+	})
+	return s, hex.EncodeToString(guid[:]), home
+}
+
+// seedMessage delivers raw into the user's INBOX as uid 1, flagged \Seen.
+func seedMessage(t testing.TB, info *mailbox.UserInfo, locker *testLocker, raw string) [16]byte {
+	t.Helper()
 	mb := maildir.New()
 	box := mb.OpenUser(info)
 	t.Cleanup(func() { box.Close() }) //nolint:errcheck
@@ -67,19 +86,7 @@ func storedServerWithMessageAt(t testing.TB, raw string, ceiling uint32) (*Serve
 	if err := ui.Close(); err != nil {
 		t.Fatalf("index close: %v", err)
 	}
-
-	s := New(Options{
-		Trust:             ResolveTrust(false, true, []*net.IPNet{mustCIDR(t, "192.0.2.0/24")}),
-		Limits:            testLimits(),
-		MaxBodyValueBytes: ceiling,
-		Storage: &Storage{
-			Mailbox:     maildir.New(),
-			Index:       file.New(file.WithLocker(locker)),
-			ResolveUser: func(string) (*mailbox.UserInfo, error) { return info, nil },
-			Locker:      locker,
-		},
-	})
-	return s, hex.EncodeToString(guid[:]), home
+	return guid
 }
 
 // unreadableMailFiles takes read access off every delivered message, so a read
@@ -109,4 +116,21 @@ func postAPIRaw(t *testing.T, s *Server, body string) *httptest.ResponseRecorder
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, apiRequest(body))
 	return w
+}
+
+// writeFlagBatch is another session's flag write, outside the layer.
+func writeFlagBatch(box mailbox.Box, folderID uint64, batch map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsResult, error) {
+	tx, err := box.Begin(folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	for uid, upd := range batch {
+		tx.UpdateFlags(uid, upd)
+	}
+	out, cerr := tx.Commit()
+	if cerr != nil {
+		return nil, cerr
+	}
+	return out.Flags, nil
 }

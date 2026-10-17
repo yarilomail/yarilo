@@ -34,6 +34,17 @@ func (s *Server) oauth2Passdb() OAuth2Passdb {
 	return nil
 }
 
+// tokenValidators is the part of the chain a bearer token may reach.
+func tokenValidators(passdbs []Passdb) Chain {
+	var out Chain
+	for _, db := range passdbs {
+		if _, ok := db.(OAuth2Passdb); ok {
+			out = append(out, db)
+		}
+	}
+	return out
+}
+
 var errOAuthRequest = errors.New("oauth: malformed client response")
 
 // parseOAuthBearer reads gs2-header ^A *(key=value ^A) ^A (RFC 7628 §3.1).
@@ -44,11 +55,13 @@ func parseOAuthBearer(msg []byte) (user, token string, err error) {
 	}
 	parts := strings.SplitN(string(header), ",", 3)
 	if len(parts) != 3 || parts[2] != "" || strings.HasPrefix(parts[0], "p=") ||
-		(parts[0] != "n" && parts[0] != "y") || !strings.HasPrefix(parts[1], "a=") {
+		(parts[0] != "n" && parts[0] != "y") || (parts[1] != "" && !strings.HasPrefix(parts[1], "a=")) {
 		return "", "", errOAuthRequest
 	}
+	// The authzid is optional (RFC 7628 §3.1): without one the token names the
+	// user, and the OAuth2 passdb answers with that name.
 	user = strings.NewReplacer("=2C", ",", "=3D", "=").Replace(strings.TrimPrefix(parts[1], "a="))
-	if user == "" || !bytes.HasSuffix(rest, []byte{1}) {
+	if (parts[1] != "" && user == "") || !bytes.HasSuffix(rest, []byte{1}) {
 		return "", "", errOAuthRequest
 	}
 	return bearer(user, strings.Split(string(rest[:len(rest)-1]), "\x01"))
@@ -117,13 +130,13 @@ func oauthFailure(mech, status string, db OAuth2Passdb) []byte {
 
 // beginOAuth starts an OAuth login. Without an initial response the client is
 // sent an empty challenge first.
-func (s *Server) beginOAuth(conn net.Conn, live *exchanges, id, mech, service, resp, remoteIP, sessionID string) string {
+func (s *Server) beginOAuth(conn net.Conn, live *exchanges, id, mech, service, resp, remoteIP, localIP, sessionID string) string {
 	db := s.oauth2Passdb()
 	if db == nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=unsupported mechanism\n", id)
 		return "bad_request"
 	}
-	x := &saslExchange{mech: mech, service: service, rip: remoteIP, session: sessionID, oauthDB: db}
+	x := &saslExchange{mech: mech, service: service, rip: remoteIP, lip: localIP, session: sessionID, oauthDB: db}
 	first, err := decodeResp(resp)
 	if err != nil || len(first) == 0 {
 		live.put(id, x)
@@ -157,7 +170,7 @@ func (s *Server) runOAuth(conn net.Conn, live *exchanges, id string, x *saslExch
 		return "fail"
 	}
 	x.username = user
-	return s.authenticatePassword(conn, id, x.service, x.rip, x.session, "", user, token, refuse("invalid_token"))
+	return s.authenticatePassword(conn, id, x.service, x.rip, x.lip, x.session, "", user, token, true, refuse("invalid_token"))
 }
 
 // continueOAuth carries a response into an OAuth login: its first message, or

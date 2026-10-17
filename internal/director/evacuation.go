@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/yarilomail/yarilo/internal/cluster/proto"
 )
 
 // evacuation is the resumable state of a graceful backend drain (#849). It holds a
@@ -101,7 +103,7 @@ func (s *Server) evacPumpLocked(e *evacuation) {
 			newBackend = b.IP
 		}
 		s.attachFlush(hash, flushCtx{user: user, oldBackend: e.ip, newBackend: newBackend})
-		s.originateUserKick(user, e.ip, nil)
+		s.originateUserKick(user, e.ip, proto.KickFlush, nil)
 	}
 }
 

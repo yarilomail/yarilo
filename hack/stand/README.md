@@ -25,6 +25,18 @@ KUBECONFIG=~/.kube/sbox.yaml \
 | `YARILO_ARM_OVERLAY` | — | a second values file from `helm_values/values-sandbox-<name>.yaml` |
 | `YARILO_ARM_BLOCKPROFILE` | 0 | the profiling overlay; this makes the arm a latency arm, not a throughput one |
 
+### Overlays
+
+`YARILO_ARM_OVERLAY=<name>` lays `helm_values/values-sandbox-<name>.yaml` over the
+stand's values for one arm; `ab-arm.sh` refuses an overlay carrying keys outside
+the ones allowed for it. An overlay is never deployed on its own.
+
+- `no-protocol-rule` (#2227): the stand's `components.auth.passdb` list without
+  the per-protocol rule, the two `CASE %s` lines, to price the userdb lookup the
+  rule adds to every login. It repeats the whole list because helm replaces
+  lists, so keep it in step with `values-sandbox.yaml`: the only difference is
+  those two lines.
+
 ## The acceptance run
 
 ```
@@ -39,10 +51,13 @@ issue it verifies.
 
 | Criterion | How |
 |:---|:---|
-| smoketest 46/46 on mdbox, maildir, sdbox | `hack/smoketest/run.sh` per type |
+| smoketest: `SMOKE_CHECKS` passed, 0 failed, and skipped exactly the oauth2 rows named in `SMOKE_OAUTH2_SKIPS`, on mdbox, maildir, sdbox; the verdict reads `47 passed, 0 failed, 3 skipped (oauth2)`, and any other skip fails however the counts add up | `hack/smoketest/run.sh` per type, without the OAuth2 overlay |
 | disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
 | an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted right before and after an IMAP SELECT |
+| a passdb nologin refused as a wrong password | `nologin@d00001.test` (`mailbox.nologin = 1`, set by `hack/db/seed-sandbox.sh`) logs in over IMAP with its password and with a wrong one; both answer the same `NO` (#2229) |
+| a per-protocol rule: IMAP refused as a wrong password, POP3 in | `ruleimap@d00001.test` (`mailbox.imap_enabled = 0`; the stand's password query reads it through `CASE %s`) answers IMAP with its password exactly as with a wrong one, and logs in over POP3 (#2227) |
+| a per-protocol rule: delivery refused as an unknown recipient | `rulelmtp@d00001.test` (`mailbox.lmtp_enabled = 0`; the stand's user query reads it through `CASE %s`) and a nonexistent address in one LMTP transaction: the login proxy takes both RCPTs, the backend answers both after DATA with the same reply but for the address (`550 5.1.1 … No such user here`), so nothing is stored; the probe's own IMAP login succeeds (#2227) |
 | no new vanished-and-present uid | QRESYNC on u53–u70@d00002.test before and after (#2176) |
 | no pod restarted or replaced | pod uids and restart counts at the start, once every Deployment has rolled out and no pod is terminating, and at the end; Job pods (smoketest, imaptest) left out |
 | no `panic`, `stopped-naming`, `reconcile-unfinished`, `append-failed`, `list-rename`, `reactive-heal`, `message-swept` lines | every container's log since the start |
@@ -136,3 +151,68 @@ is the only unit that compares two arms of different lengths.
 The CPU profile is taken on every arm; the block profile only under the
 profiling overlay, because a pod that accounts for every blocking operation is
 not the pod the other arm is.
+
+## The OAuth2 provider
+
+`helm_values/keycloak-sandbox.yaml` runs Keycloak for the OAuth2 rows of #2231,
+in its own namespace `keycloak`. It keeps no state: realm `yarilo` is imported
+from the file on every start, so a realm change is applied by re-applying and
+restarting. Its certificate is a leaf issued in `yarilo-sb` by the stand's
+internal CA; only the leaf Secret is copied to `keycloak`, never the CA key:
+
+```sh
+kubectl apply -f hack/internal-ca-sandbox.yaml   # once, in yarilo-sb
+kubectl apply -f helm_values/keycloak-sandbox.yaml
+kubectl -n yarilo-sb wait certificate/keycloak-tls --for=condition=Ready --timeout=120s
+kubectl -n yarilo-sb get secret keycloak-tls -o go-template='{"apiVersion":"v1","kind":"Secret","type":"kubernetes.io/tls","metadata":{"name":"keycloak-tls","namespace":"keycloak"},"data":{"tls.crt":"{{index .data "tls.crt"}}","tls.key":"{{index .data "tls.key"}}","ca.crt":"{{index .data "ca.crt"}}"}}' | kubectl apply -f -
+kubectl -n keycloak rollout restart deploy/keycloak   # after a realm change or a renewed leaf
+```
+
+Issuer: `https://keycloak.keycloak.svc:8443/realms/yarilo`, HTTPS only. A
+renewed leaf is copied again the same way.
+
+The OAuth2 entries live in three overlays, one entry each, so a row of the
+#2231 matrix is answered by one mode and no other:
+
+| Overlay | Mode | Matrix rows |
+|:---|:---|:---|
+| `values-sandbox-oauth2-local.yaml` | `local`: JWKS + the HS256 key | 5, 6, 8–14, 16–19, 21–26, 28; the smoketest oauth2 rows |
+| `values-sandbox-oauth2-introspection.yaml` | `introspection` (POST), password grant, forced introspection | 1, 15, 20, 27, 29 |
+| `values-sandbox-oauth2-discovery.yaml` | `discovery`, JWKS by default | 7 |
+
+Rows 2–4 (introspection by GET or bearer header, tokeninfo) have no live form:
+this Keycloak answers its introspection endpoint by POST only and refuses a
+token in the userinfo query, so the `httptest` rows in
+`internal/auth/oauth2` are where they are checked.
+
+An overlay is laid on top of `values-sandbox.yaml` only inside an OAuth2
+window. The chain stops at the first temporary failure and the entries run
+before SQL, so with an overlay every PLAIN login of the stand goes to Keycloak
+and Keycloak down stops every login: acceptance runs and A/B arms run without
+any of them, and `ab-arm.sh` knows none. A window goes overlay by overlay —
+deploy it, run that mode's rows, deploy the next — and ends on the base values
+with the same `helm upgrade`. Each step is its own `stand-runs.md` row naming
+the overlay and the image:
+
+```sh
+helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
+  -f helm_values/values-sandbox-oauth2-<mode>.yaml --set image.tag=<tag>   # one mode
+helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
+  --set image.tag=<tag>                                                    # window ends
+```
+
+In an OAuth2 window the smoketest runs only its oauth2 rows, under the local
+overlay, once per mailbox type, and all three must pass; that run is its own `stand-runs.md` row, naming
+the overlay. The token comes from the password grant of `yarilo-test`, over the
+internal CA the Job already mounts:
+
+```sh
+for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
+  dir=$(mktemp -d); cp hack/smoketest/run.sh "$dir/"
+  awk -v u="$user" '{ gsub(/u1@d00001\.test/, u); print }
+    /- -imap-pass=/ { print "        - -only=oauth2"
+      print "        - -oauth2-token-url=https://keycloak.keycloak.svc:8443/realms/yarilo/protocol/openid-connect/token"
+      print "        - -oauth2-ca=/tls/ca.crt" }' hack/smoketest/job.yaml > "$dir/job.yaml"
+  bash "$dir/run.sh" <tag>
+done
+```

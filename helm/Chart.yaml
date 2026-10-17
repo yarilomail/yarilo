@@ -3,8 +3,8 @@ name: yarilo
 description: Production-grade IMAP/POP3/Submission mail server
 type: application
 
-version: 2.4.2
-appVersion: "2.4.2"
+version: 2.4.3
+appVersion: "2.4.3"
 
 # Release status of the line this chart deploys.
 annotations:
@@ -15,7 +15,15 @@ keywords:
   - submission
   - lmtp
   - mail
+  - pop3
+  - jmap
+  - sieve
+  - managesieve
+  - mail-server
+  - email
+  - kubernetes
+  - full-text-search
 icon: https://raw.githubusercontent.com/yarilomail/yarilo/main/docs/icon.svg
-home: https://github.com/yarilomail/yarilo
+home: https://yarilomail.org
 sources:
   - https://github.com/yarilomail/yarilo

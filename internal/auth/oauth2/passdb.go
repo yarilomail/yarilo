@@ -38,6 +38,15 @@ type PassdbConfig struct {
 	// Scope and OpenIDConfigurationURL are named in a refused login's reply.
 	Scope                  string
 	OpenIDConfigurationURL string
+
+	// Grant, when set, exchanges a plaintext login's password for a token.
+	Grant *Grant
+	// Settle decides a token whose tokeninfo or grant reply did not name the
+	// user (or always, with Force); nil keeps the reply.
+	Settle Validator
+	// SettleValidator sends Validator's own reply through Settle (tokeninfo).
+	SettleValidator bool
+	Force           bool
 }
 
 // Passdb adapts a Validator to the protocol.Passdb surface so an
@@ -86,7 +95,7 @@ func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	claims, err := p.cfg.Validator.Validate(ctx, token)
+	claims, err := p.resolve(ctx, req)
 	if err != nil {
 		// Upstream errors are transient; ResultTempFail so failure-delay
 		// / penalty engage correctly.
@@ -121,6 +130,30 @@ func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
 		}
 	}
 	return protocol.ResultOK, nil
+}
+
+func (p *Passdb) resolve(ctx context.Context, req *protocol.Request) (*Claims, error) {
+	if p.cfg.Grant != nil && !req.Bearer {
+		token, reply, err := p.cfg.Grant.Exchange(ctx, req.Username, req.Password)
+		if err != nil {
+			return nil, err
+		}
+		return p.settle(ctx, token, reply)
+	}
+	claims, err := p.cfg.Validator.Validate(ctx, req.Password)
+	if err != nil || !p.cfg.SettleValidator {
+		return claims, err
+	}
+	return p.settle(ctx, req.Password, claims)
+}
+
+func (p *Passdb) settle(ctx context.Context, token string, reply *Claims) (*Claims, error) {
+	_, active := reply.Extra[p.cfg.ActiveAttribute]
+	named := reply.Username != "" && (p.cfg.ActiveAttribute == "" || active)
+	if (named && !p.cfg.Force) || p.cfg.Settle == nil {
+		return reply, nil
+	}
+	return p.cfg.Settle.Validate(ctx, token)
 }
 
 // DriverName satisfies protocol.DriverName for passdb metrics.

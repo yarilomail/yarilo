@@ -13,11 +13,13 @@ import (
 )
 
 // manageSieveGreeting sends the pre-auth capability block to the client.
-func manageSieveGreeting(conn net.Conn, extTLS *tls.Config, opts Options) error {
-	var mechs string
-	if !opts.DisablePlainAuth || extTLS == nil {
-		mechs = "PLAIN LOGIN"
+func manageSieveGreeting(conn net.Conn, extTLS *tls.Config, opts Options, rc relayContext) error {
+	cleartextOK := !opts.DisablePlainAuth || extTLS == nil
+	var list []string
+	if cleartextOK {
+		list = []string{"PLAIN", "LOGIN"}
 	}
+	mechs := strings.Join(append(list, advertisedRelay(rc, conn, cleartextOK)...), " ")
 	if _, err := fmt.Fprintf(conn, "%q %q\r\n", "IMPLEMENTATION", "yarilo ManageSieve"); err != nil {
 		return err
 	}
@@ -49,14 +51,14 @@ func manageSieveGreeting(conn net.Conn, extTLS *tls.Config, opts Options) error 
 // extractManageSievePreamble sends the greeting then handles the pre-auth
 // command loop (CAPABILITY, AUTHENTICATE, STARTTLS, NOOP, LOGOUT) until
 // the client authenticates successfully.
-func extractManageSievePreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options) (*preamble, net.Conn, *bufio.Reader, error) {
-	if err := manageSieveGreeting(conn, extTLS, opts); err != nil {
+func extractManageSievePreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
+	if err := manageSieveGreeting(conn, extTLS, opts, rc); err != nil {
 		return nil, conn, rd, fmt.Errorf("managesieve: greeting: %w", err)
 	}
-	return manageSieveCommandLoop(conn, rd, extTLS, opts)
+	return manageSieveCommandLoop(conn, rd, extTLS, opts, rc)
 }
 
-func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options) (*preamble, net.Conn, *bufio.Reader, error) {
+func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	maxInvalid := opts.SieveMaxInvalidCmds
 	invalidCmds := 0
 	for {
@@ -71,11 +73,11 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 		switch strings.ToUpper(cmd) {
 		case "CAPABILITY":
 			msSkipLine(rd)
-			if err := manageSieveGreeting(conn, extTLS, opts); err != nil {
+			if err := manageSieveGreeting(conn, extTLS, opts, rc); err != nil {
 				return nil, conn, rd, err
 			}
 		case "AUTHENTICATE":
-			pre, err := msHandleAuthenticate(conn, rd, cleartextRefused(conn, opts))
+			pre, err := msHandleAuthenticate(conn, rd, cleartextRefused(conn, opts), rc)
 			if err != nil {
 				return nil, conn, rd, err
 			}
@@ -97,7 +99,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 			conn = tlsConn
 			rd = bufio.NewReaderSize(conn, 4096)
 			extTLS = nil // prevent a second STARTTLS offer
-			if err := manageSieveGreeting(conn, nil, opts); err != nil {
+			if err := manageSieveGreeting(conn, nil, opts, rc); err != nil {
 				return nil, conn, rd, err
 			}
 		case "NOOP":
@@ -121,7 +123,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 
 // msHandleAuthenticate processes AUTHENTICATE mechanism [initial-response].
 // Returns a non-nil *preamble on success; nil on auth failure (caller retries).
-func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool) (*preamble, error) {
+func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool, rc relayContext) (*preamble, error) {
 	mechBytes, err := msReadString(rd, conn)
 	if err != nil {
 		if errors.Is(err, errMSLiteralTooLarge) {
@@ -164,6 +166,9 @@ func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool) (*
 		}
 	}
 
+	if isRelayMech(mech) {
+		return msHandleRelayed(conn, rd, mech, initResp, rc)
+	}
 	switch mech {
 	case "PLAIN":
 		return msHandlePlain(conn, rd, initResp)
@@ -173,6 +178,45 @@ func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool) (*
 		fmt.Fprintf(conn, "NO \"Unsupported mechanism.\"\r\n") //nolint:errcheck
 		return nil, nil
 	}
+}
+
+// msHandleRelayed runs a mechanism the auth service offers (OAuth, SCRAM) in
+// ManageSieve's spelling: base64 in quoted strings, "*" to cancel (#2248).
+func msHandleRelayed(conn net.Conn, rd *bufio.Reader, mech string, initResp []byte, rc relayContext) (*preamble, error) {
+	read := func() ([]byte, error) {
+		resp, err := msReadLastArg(rd, conn)
+		if err != nil {
+			return nil, err
+		}
+		if string(resp) == "*" {
+			return nil, fmt.Errorf("managesieve: the client cancelled the exchange")
+		}
+		return base64.StdEncoding.DecodeString(string(resp))
+	}
+	write := func(challenge []byte) error {
+		_, err := fmt.Fprintf(conn, "%q\r\n", base64.StdEncoding.EncodeToString(challenge))
+		return err
+	}
+	var initial []byte
+	var err error
+	if initResp != nil {
+		initial, err = base64.StdEncoding.DecodeString(string(initResp))
+	} else if err = write(nil); err == nil {
+		initial, err = read()
+	}
+	if err != nil {
+		if errors.Is(err, errMSLiteralTooLarge) {
+			return nil, err
+		}
+		fmt.Fprintf(conn, "NO \"Bad response.\"\r\n") //nolint:errcheck
+		return nil, nil
+	}
+	out, serr := runRelayedSASL(rc, conn, mech, "managesieve", clientIPOf(conn), initial, write, read)
+	if serr != nil {
+		relayedFailure(conn, ProtocolManageSieve, "", serr)
+		return nil, nil
+	}
+	return &preamble{username: out.username, authResult: out.result}, nil
 }
 
 func msHandlePlain(conn net.Conn, rd *bufio.Reader, initResp []byte) (*preamble, error) {

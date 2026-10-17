@@ -27,6 +27,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/quotawarn"
 	"github.com/yarilomail/yarilo/internal/readyfile"
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/internal/stopaccept"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
@@ -151,25 +152,10 @@ func New(cfg *config.Config) (*Server, error) {
 	// reads the index
 	idx := file.New(IndexOptions(cfg.Storage, locker)...)
 
-	// ---- quota_warning action runner (shared by IMAP + LMTP) ----
-	quotaWarner := quotawarn.New(cfg.Quota.WarningBinDir, cfg.Quota.WarningExecTimeout)
-
-	// ---- quota_clone mirror (fan-out to N dicts, shared by IMAP + LMTP) ----
-	var cloneDicts []dict.Dict
-	for _, name := range cfg.Quota.CloneDicts {
-		d, err := buildDict(cfg, name)
-		if err != nil {
-			return nil, fmt.Errorf("backend: quota_clone dict %q: %w", name, err)
-		}
-		if d == nil {
-			slog.Warn("quota_clone_dicts references an undefined dict", "name", name)
-			continue
-		}
-		cloneDicts = append(cloneDicts, d)
+	quotaWarner, quotaClone, err := QuotaServices(cfg)
+	if err != nil {
+		return nil, err
 	}
-	// The mirror's own timer owns the delay now; zero falls back to the
-	// reference's ten seconds inside NewClone.
-	quotaClone := quota.NewClone(cloneDicts, time.Duration(cfg.Quota.CloneFlushDelay)*time.Second)
 
 	ftsClient, ftsChain, err := BuildFTS(cfg)
 	if err != nil {
@@ -411,6 +397,14 @@ func New(cfg *config.Config) (*Server, error) {
 			FailureDelay:       time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 
 			DboxReactiveRebuild: cfg.Storage.DboxReactiveRebuild,
+
+			FTSClient:    ftsClient,
+			FTSAutoindex: cfg.FTS.Autoindex,
+			FTSMaxRecent: cfg.FTS.AutoindexMaxRecentMsgs,
+			QuotaEngine:  cfg.Quota.Enabled,
+			QuotaPolicy:  cfg.Quota.QuotaPolicy(),
+			QuotaWarner:  quotaWarner,
+			QuotaClone:   quotaClone,
 		})
 	}
 
@@ -507,7 +501,8 @@ func New(cfg *config.Config) (*Server, error) {
 				lmtpResolver = &mailbox.Resolver{}
 			}
 			// dial the auth-master lazily over internal mTLS; see lazyUserdbLookup
-			lmtpOpts.UserdbLookup = lazyUserdbLookup(addr,
+			// A delivery names itself: a userdb rule on lmtp refuses it (#2227).
+			lmtpOpts.UserdbLookup = lazyUserdbLookup(addr, "lmtp",
 				func() (*authclient.Client, error) { return authclient.Dial(addr, authTLS) },
 				lmtpResolver)
 		}
@@ -683,20 +678,10 @@ func (s *Server) RunIMAP(ctx context.Context) error {
 	s.telem.SetReady(true)
 
 	if tlsLn != nil {
-		go func() {
-			if err := s.imap.Serve(tlsLn); err != nil {
-				slog.Error("imap: TLS server error", "err", err)
-				os.Exit(1)
-			}
-		}()
+		stopaccept.Serve(ctx, "imap: TLS", tlsLn, s.imap.Serve)
 	}
 	if plainLn != nil {
-		go func() {
-			if err := s.imap.Serve(plainLn); err != nil {
-				slog.Error("imap: plain server error", "err", err)
-				os.Exit(1)
-			}
-		}()
+		stopaccept.Serve(ctx, "imap: plain", plainLn, s.imap.Serve)
 	}
 	s.startReadyFile(ctx, "imap")
 	<-ctx.Done()
@@ -738,16 +723,10 @@ func (s *Server) RunPOP3(ctx context.Context) error {
 	s.telem.SetReady(true)
 
 	if tlsLn != nil {
-		go func() {
-			slog.Error("pop3: TLS server error", "err", s.pop3.Serve(tlsLn))
-			os.Exit(1)
-		}()
+		stopaccept.Serve(ctx, "pop3: TLS", tlsLn, s.pop3.Serve)
 	}
 	if plainLn != nil {
-		go func() {
-			slog.Error("pop3: plain server error", "err", s.pop3.Serve(plainLn))
-			os.Exit(1)
-		}()
+		stopaccept.Serve(ctx, "pop3: plain", plainLn, s.pop3.Serve)
 	}
 	s.startReadyFile(ctx, "pop3")
 	<-ctx.Done()
@@ -787,12 +766,7 @@ func (s *Server) RunLMTP(ctx context.Context) error {
 
 	s.telem.SetReady(true)
 
-	go func() {
-		if err := s.lmtp.Serve(ln); err != nil {
-			slog.Error("lmtp: server error", "err", err)
-			os.Exit(1)
-		}
-	}()
+	stopaccept.Serve(ctx, "lmtp", ln, s.lmtp.Serve)
 	s.startReadyFile(ctx, "lmtp")
 	<-ctx.Done()
 	return nil
@@ -822,12 +796,7 @@ func (s *Server) RunManageSieve(ctx context.Context) error {
 
 	s.telem.SetReady(true)
 
-	go func() {
-		if err := s.managesieve.ServeManageSieve(ctx, ln); err != nil {
-			slog.Error("managesieve: server error", "err", err)
-			os.Exit(1)
-		}
-	}()
+	stopaccept.Serve(ctx, "managesieve", ln, func(l net.Listener) error { return s.managesieve.ServeManageSieve(ctx, l) })
 	s.startReadyFile(ctx, "managesieve")
 	<-ctx.Done()
 	return nil
@@ -1037,7 +1006,7 @@ func parseCIDRs(cidrs []string) []*net.IPNet {
 // via yarilo-auth. The client is dialled lazily on first lookup and re-dialled
 // on error; an eager dial at New would block readiness when yarilo-auth is
 // slow or when a plain dial hits an mTLS listener (#821).
-func lazyUserdbLookup(addr string, dial func() (*authclient.Client, error), resolver *mailbox.Resolver) func(context.Context, string) (*mailbox.UserInfo, error) {
+func lazyUserdbLookup(addr, service string, dial func() (*authclient.Client, error), resolver *mailbox.Resolver) func(context.Context, string) (*mailbox.UserInfo, error) {
 	var acMu sync.Mutex
 	var ac *authclient.Client
 	return func(ctx context.Context, username string) (*mailbox.UserInfo, error) {
@@ -1053,7 +1022,7 @@ func lazyUserdbLookup(addr string, dial func() (*authclient.Client, error), reso
 		cur := ac
 		acMu.Unlock()
 
-		ui, err := cur.Userdb(ctx, username)
+		ui, err := cur.UserdbFor(ctx, username, service)
 		if err != nil {
 			acMu.Lock()
 			if ac == cur {
@@ -1070,7 +1039,7 @@ func lazyUserdbLookup(addr string, dial func() (*authclient.Client, error), reso
 			}
 			cur = ac
 			acMu.Unlock()
-			ui, err = cur.Userdb(ctx, username)
+			ui, err = cur.UserdbFor(ctx, username, service)
 			if err != nil {
 				return nil, err
 			}
@@ -1089,7 +1058,8 @@ func ownerUserdbLookup(masterAddr string, authTLS *tls.Config, resolver *mailbox
 	if resolver == nil {
 		resolver = &mailbox.Resolver{}
 	}
-	return lazyUserdbLookup(masterAddr,
+	// An owner lookup is neither a login nor a delivery: no protocol.
+	return lazyUserdbLookup(masterAddr, "",
 		func() (*authclient.Client, error) { return authclient.Dial(masterAddr, authTLS) },
 		resolver)
 }
@@ -1467,4 +1437,24 @@ func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error)
 		return nil, nil, err
 	}
 	return ftsproto.NewPool(fc.Addr, tlsCfg, fc.MaxConns, 10*time.Second), chain, nil
+}
+
+// QuotaServices builds the quota_warning runner and the quota_clone mirror
+// every server that changes mail shares.
+func QuotaServices(cfg *config.Config) (*quotawarn.Runner, *quota.Clone, error) {
+	warner := quotawarn.New(cfg.Quota.WarningBinDir, cfg.Quota.WarningExecTimeout)
+	var cloneDicts []dict.Dict
+	for _, name := range cfg.Quota.CloneDicts {
+		d, err := buildDict(cfg, name)
+		if err != nil {
+			return nil, nil, fmt.Errorf("backend: quota_clone dict %q: %w", name, err)
+		}
+		if d == nil {
+			slog.Warn("quota_clone_dicts references an undefined dict", "name", name)
+			continue
+		}
+		cloneDicts = append(cloneDicts, d)
+	}
+	// Zero falls back to the reference's ten seconds inside NewClone.
+	return warner, quota.NewClone(cloneDicts, time.Duration(cfg.Quota.CloneFlushDelay)*time.Second), nil
 }

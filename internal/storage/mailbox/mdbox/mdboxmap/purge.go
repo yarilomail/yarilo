@@ -25,35 +25,39 @@ func (m *Map) AppendMove(moved []MovedRecord, expunged []uint32) error {
 		if err := m.reloadLocked(); err != nil {
 			return err
 		}
-		// 1) Rewrite physical pointers and GUID for moved records.
-		for _, mv := range moved {
-			i, ok := m.findLocked(mv.UID)
-			if !ok {
-				return fmt.Errorf("mdboxmap/move: map_uid %d not found", mv.UID)
-			}
-			e := m.st.at(i)
-			e.FileID, e.Offset, e.Size = mv.FileID, mv.Offset, mv.Size
-			if mv.GUID != ([16]byte{}) {
-				e.GUID = mv.GUID
-			}
-			m.st.setAt(i, e)
-			if mv.FileID > m.highestFileID {
-				m.highestFileID = mv.FileID
-			}
-		}
-		// 2) Expunge zero-ref records.
-		if len(expunged) > 0 {
-			drop := make(map[uint32]bool, len(expunged))
-			for _, uid := range expunged {
-				if _, ok := m.findLocked(uid); !ok {
-					return fmt.Errorf("mdboxmap/move: expunge target %d not found", uid)
-				}
-				drop[uid] = true
-			}
-			m.st.removeFunc(func(uid uint32) bool { return drop[uid] })
-		}
-		return m.flushLocked()
+		return m.appendMoveLocked(moved, expunged)
 	})
+}
+
+func (m *Map) appendMoveLocked(moved []MovedRecord, expunged []uint32) error {
+	// 1) Rewrite physical pointers and GUID for moved records.
+	for _, mv := range moved {
+		i, ok := m.findLocked(mv.UID)
+		if !ok {
+			return fmt.Errorf("mdboxmap/move: map_uid %d not found", mv.UID)
+		}
+		e := m.st.at(i)
+		e.FileID, e.Offset, e.Size = mv.FileID, mv.Offset, mv.Size
+		if mv.GUID != ([16]byte{}) {
+			e.GUID = mv.GUID
+		}
+		m.st.setAt(i, e)
+		if mv.FileID > m.highestFileID {
+			m.highestFileID = mv.FileID
+		}
+	}
+	// 2) Expunge zero-ref records.
+	if len(expunged) > 0 {
+		drop := make(map[uint32]bool, len(expunged))
+		for _, uid := range expunged {
+			if _, ok := m.findLocked(uid); !ok {
+				return fmt.Errorf("mdboxmap/move: expunge target %d not found", uid)
+			}
+			drop[uid] = true
+		}
+		m.st.removeFunc(func(uid uint32) bool { return drop[uid] })
+	}
+	return m.flushLocked()
 }
 
 // ExpungeVanished drops every record a storage scan could not read, under the

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/time/rate"
 )
 
 // LocalJWTConfig configures a LocalJWTValidator. The JWKS endpoint
@@ -17,8 +19,11 @@ import (
 type LocalJWTConfig struct {
 	// JWKSURL is the JSON Web Key Set endpoint (typically
 	// `<issuer>/.well-known/jwks.json` or surfaced by OIDC
-	// discovery). REQUIRED.
+	// discovery). Required unless Keys are given.
 	JWKSURL string
+
+	// Keys are tried before the JWKS.
+	Keys []LocalKey
 
 	// Issuers lists allowed `iss` claim values. Empty = no check
 	// (any signed token from a key in the JWKS is accepted —
@@ -48,21 +53,29 @@ type LocalJWTConfig struct {
 
 	// HTTPTimeout caps the JWKS fetch round-trip.
 	HTTPTimeout time.Duration
+
+	// HTTPClient fetches the JWKS; nil uses the default client.
+	HTTPClient *http.Client
+
+	// UnknownKIDInterval spaces the JWKS refreshes an unknown kid triggers;
+	// 0 never refreshes for one.
+	UnknownKIDInterval time.Duration
 }
 
 // LocalJWTValidator verifies JWT bearer tokens locally against a
 // cached JWKS. No HTTP call per login — JWKS refresh happens on a
 // timer or after a signature-verify miss (unknown kid).
 type LocalJWTValidator struct {
-	cfg LocalJWTConfig
-	kf  keyfunc.Keyfunc
+	cfg  LocalJWTConfig
+	kf   keyfunc.Keyfunc
+	keys map[localKeyID]any
 }
 
 // NewLocalJWTValidator prefetches the JWKS, so the first login does not pay for
 // it and a misconfiguration fails at construction.
 func NewLocalJWTValidator(ctx context.Context, cfg LocalJWTConfig) (*LocalJWTValidator, error) {
-	if cfg.JWKSURL == "" {
-		return nil, fmt.Errorf("oauth2: LocalJWT requires JWKSURL")
+	if cfg.JWKSURL == "" && len(cfg.Keys) == 0 {
+		return nil, fmt.Errorf("oauth2: LocalJWT requires JWKSURL or local keys")
 	}
 	if cfg.UsernameAttribute == "" {
 		cfg.UsernameAttribute = "email"
@@ -70,18 +83,34 @@ func NewLocalJWTValidator(ctx context.Context, cfg LocalJWTConfig) (*LocalJWTVal
 	if cfg.RefreshInterval == 0 {
 		cfg.RefreshInterval = time.Hour
 	}
-	kf, err := keyfunc.NewDefaultCtx(ctx, []string{cfg.JWKSURL})
+	keys, err := loadLocalKeys(cfg.Keys)
+	if err != nil {
+		return nil, err
+	}
+	v := &LocalJWTValidator{cfg: cfg, keys: keys}
+	if cfg.JWKSURL == "" {
+		return v, nil
+	}
+	unknownKID := rate.NewLimiter(0, 0)
+	if cfg.UnknownKIDInterval > 0 {
+		unknownKID = rate.NewLimiter(rate.Every(cfg.UnknownKIDInterval), 1)
+	}
+	v.kf, err = keyfunc.NewDefaultOverrideCtx(ctx, []string{cfg.JWKSURL}, keyfunc.Override{
+		Client: cfg.HTTPClient, HTTPTimeout: cfg.HTTPTimeout, RefreshInterval: cfg.RefreshInterval,
+		RefreshUnknownKID: unknownKID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("oauth2: JWKS fetch %s: %w", cfg.JWKSURL, errors.Join(ErrUpstream, err))
 	}
-	return &LocalJWTValidator{cfg: cfg, kf: kf}, nil
+	return v, nil
 }
 
 // Validate parses + verifies the token signature, then checks
 // iss / aud / scope / exp+grace / active claims.
 func (v *LocalJWTValidator) Validate(_ context.Context, token string) (*Claims, error) {
-	tok, err := jwt.Parse(token, v.kf.Keyfunc,
-		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "EdDSA"}),
+	tok, err := jwt.Parse(token, v.localKey,
+		jwt.WithValidMethods([]string{"HS256", "HS384", "HS512", "RS256", "RS384", "RS512",
+			"PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"}),
 		jwt.WithLeeway(v.cfg.ExpireGrace),
 	)
 	if err != nil {
@@ -91,6 +120,8 @@ func (v *LocalJWTValidator) Validate(_ context.Context, token string) (*Claims, 
 			return nil, fmt.Errorf("%w: %v", ErrTokenExpired, err)
 		case errors.Is(err, jwt.ErrTokenNotValidYet):
 			return nil, fmt.Errorf("%w: %v", ErrTokenInactive, err)
+		case errors.Is(err, ErrIssuerMismatch):
+			return nil, fmt.Errorf("%w: %v", ErrIssuerMismatch, err)
 		default:
 			return nil, fmt.Errorf("%w: %v", ErrTokenInvalid, err)
 		}

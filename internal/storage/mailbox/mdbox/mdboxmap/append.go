@@ -1,6 +1,9 @@
 package mdboxmap
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // AppendBatch is one in-flight save: Next(size) returns where to write a body and
 // Finish allocates the map_uids. Finish MUST be called exactly once.
@@ -48,28 +51,35 @@ func (m *Map) AppendRecords(layouts []RecordLayout) ([]uint32, error) {
 	if len(layouts) == 0 {
 		return nil, nil
 	}
-	out := make([]uint32, len(layouts))
+	var out []uint32
 	err := m.withMapLock(func() error {
 		if err := m.reloadLocked(); err != nil {
 			return err
 		}
-		added := make([]MapEntry, 0, len(layouts))
-		for i, l := range layouts {
-			e := MapEntry{UID: m.nextMapUID, FileID: l.FileID, Offset: l.Offset, Size: l.Size, RefCount: 1, GUID: l.GUID}
-			m.st.insert(e)
-			added = append(added, e)
-			m.nextMapUID++
-			if l.FileID > m.highestFileID {
-				m.highestFileID = l.FileID
-			}
-			out[i] = e.UID
-		}
-		return m.commitAppendLocked(added)
+		var err error
+		out, err = m.appendRecordsLocked(layouts)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (m *Map) appendRecordsLocked(layouts []RecordLayout) ([]uint32, error) {
+	out := make([]uint32, len(layouts))
+	added := make([]MapEntry, 0, len(layouts))
+	for i, l := range layouts {
+		e := MapEntry{UID: m.nextMapUID, FileID: l.FileID, Offset: l.Offset, Size: l.Size, RefCount: 1, GUID: l.GUID}
+		m.st.insert(e)
+		added = append(added, e)
+		m.nextMapUID++
+		if l.FileID > m.highestFileID {
+			m.highestFileID = l.FileID
+		}
+		out[i] = e.UID
+	}
+	return out, m.commitAppendLocked(added)
 }
 
 // ImportOnce appends what fn produces only if the map is still empty, decided in
@@ -121,15 +131,85 @@ func (m *Map) AllocFileID() (uint32, error) {
 		if err := m.reloadLocked(); err != nil {
 			return err
 		}
-		next := m.highestFileID + 1
-		if next == 0 {
-			next = 1
-		}
-		m.highestFileID = next
-		assigned = next
-		return m.flushLocked()
+		var err error
+		assigned, err = m.allocFileIDLocked()
+		return err
 	})
 	return assigned, err
+}
+
+func (m *Map) allocFileIDLocked() (uint32, error) {
+	next := m.highestFileID + 1
+	if next == 0 {
+		next = 1
+	}
+	m.highestFileID = next
+	return next, m.flushLocked()
+}
+
+// Placement is the map under one hold from the choice of file through the map
+// append, so no peer derives the same m.<N> offset (#2234).
+type Placement struct {
+	m   *Map
+	ctx context.Context
+}
+
+// Place runs fn under a renewed map lock on a freshly reloaded map.
+func (m *Map) Place(fn func(*Placement) error) error {
+	return m.withMapLockRenewing(func(ctx context.Context) error {
+		if err := m.reloadLocked(); err != nil {
+			return err
+		}
+		return fn(&Placement{m: m, ctx: ctx})
+	})
+}
+
+// Held fails once the lease is lost: a write past it can land on a peer's bytes.
+func (p *Placement) Held() error {
+	if err := p.ctx.Err(); err != nil {
+		return fmt.Errorf("mdboxmap/place: map lock lost: %w", err)
+	}
+	return nil
+}
+
+// HighestFileID is the newest file_id as of this hold.
+func (p *Placement) HighestFileID() uint32 { return p.m.highestFileID }
+
+// CreateTime is CreateTime under this hold.
+func (p *Placement) CreateTime(fileID uint32) (int64, bool) { return p.m.createTimeLocked(fileID) }
+
+// AllocFileID is AllocFileID under this hold.
+func (p *Placement) AllocFileID() (uint32, error) { return p.m.allocFileIDLocked() }
+
+// RecordFileCreated is RecordFileCreated under this hold.
+func (p *Placement) RecordFileCreated(fileID uint32, ts int64) error {
+	return p.m.recordFileCreatedLocked(fileID, ts)
+}
+
+// RecordsInFile is RecordsInFile under this hold.
+func (p *Placement) RecordsInFile(fileID uint32) []MapEntry { return p.m.recordsInFileLocked(fileID) }
+
+// AppendMove is AppendMove under this hold, refused once the lease is lost.
+func (p *Placement) AppendMove(moved []MovedRecord, expunged []uint32) error {
+	if err := p.Held(); err != nil {
+		return err
+	}
+	if len(moved) == 0 && len(expunged) == 0 {
+		return nil
+	}
+	return p.m.appendMoveLocked(moved, expunged)
+}
+
+// AppendRecord is AppendRecord under this hold.
+func (p *Placement) AppendRecord(fileID, offset, size uint32, guid [16]byte) (uint32, error) {
+	if err := p.Held(); err != nil {
+		return 0, err
+	}
+	uids, err := p.m.appendRecordsLocked([]RecordLayout{{FileID: fileID, Offset: offset, Size: size, GUID: guid}})
+	if err != nil {
+		return 0, err
+	}
+	return uids[0], nil
 }
 
 // Next reserves a (file_id, offset), packing into one file until rotateSize would

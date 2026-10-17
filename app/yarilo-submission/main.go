@@ -17,6 +17,7 @@ import (
 	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
 
 	"github.com/yarilomail/yarilo/internal/readyfile"
+	"github.com/yarilomail/yarilo/internal/stopaccept"
 	submsvr "github.com/yarilomail/yarilo/internal/submission"
 	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/internal/telemetry"
@@ -125,12 +126,7 @@ func main() {
 			slog.Error("submission: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
 		}
-		go func() {
-			if err := srv.Serve(ln, nil); err != nil {
-				slog.Error("submission: server error", "err", err)
-				os.Exit(1)
-			}
-		}()
+		stopaccept.Serve(ctx, "submission:", ln, func(l net.Listener) error { return srv.Serve(l, nil) })
 		slog.Info("submission: listening", "addr", addr, "tls", "starttls")
 	}
 
@@ -142,12 +138,7 @@ func main() {
 			slog.Error("submissions: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
 		}
-		go func() {
-			if err := srv.Serve(ln, extTLS); err != nil {
-				slog.Error("submissions: server error", "err", err)
-				os.Exit(1)
-			}
-		}()
+		stopaccept.Serve(ctx, "submissions:", ln, func(l net.Listener) error { return srv.Serve(l, extTLS) })
 		slog.Info("submission: listening", "addr", addr, "tls", "implicit")
 	}
 

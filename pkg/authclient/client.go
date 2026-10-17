@@ -203,14 +203,24 @@ func (c *Client) Close() error {
 //
 // Mirrors the [protocol.Userdb] "not found is nil/nil" contract.
 func (c *Client) Userdb(ctx context.Context, username string) (*protocol.UserInfo, error) {
+	return c.UserdbFor(ctx, username, "")
+}
+
+// UserdbFor is Userdb on behalf of a protocol: a login or a delivery names
+// itself, so a userdb rule on %s can refuse it (#2227). Empty sends none.
+func (c *Client) UserdbFor(ctx context.Context, username, service string) (*protocol.UserInfo, error) {
 	if c.closed.Load() {
 		return nil, ErrClosed
 	}
 	id := c.allocID()
-	if strings.ContainsAny(username, "\t\r\n\x00") {
+	if strings.ContainsAny(username+service, "\t\r\n\x00") {
 		return nil, fmt.Errorf("authclient: username %q cannot cross the wire", username)
 	}
-	line, err := c.exchange(ctx, fmt.Sprintf("USER\t%s\t%s\n", id, username))
+	req := fmt.Sprintf("USER\t%s\t%s", id, username)
+	if service != "" {
+		req += "\tservice=" + service
+	}
+	line, err := c.exchange(ctx, req+"\n")
 	if err != nil {
 		return nil, err
 	}

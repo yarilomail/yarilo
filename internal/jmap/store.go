@@ -1,13 +1,13 @@
 package jmap
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
@@ -45,6 +45,9 @@ type Storage struct {
 	Mailboxes map[string]mailbox.AutoMailbox
 	// MailboxLimit is quota_mailbox_count, zero for none.
 	MailboxLimit int64
+	// Ops is the mutation layer's wiring: FTS and the quota services. Its
+	// Locker and Protocol are this Storage's.
+	Ops mailops.Config
 }
 
 // userHandle is one request's view of a user's mail. JMAP has no session, so a
@@ -58,6 +61,10 @@ type userHandle struct {
 	subs       *subs.Store
 	specialUse *specialuse.Store
 
+	// ops runs this request's mutations and what follows them (#2207).
+	ops *mailops.Ops
+	// acl is the personal namespace's ACL store, the one IMAP writes.
+	acl *acl.Store
 	// quotaUsage is the last count and when it was taken: four methods answer
 	// from one count, and a request asking several of them counted the whole
 	// account once per method (#1875).
@@ -111,7 +118,9 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	h.threads = s.Threads
 	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)
 	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info), mailboxbase.WithAuto(s.boxAuto(h)))
+	h.ops = mailops.New(s.mailopsConfig(), h.mbox, info)
 	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)
+	h.acl = acl.New(info.Home, info.MailPath, info.Driver, info.Separator, info.StorageEscapeChar, username, owner, acl.Policy{}, s.Locker)
 	return h, nil
 }
 
@@ -183,15 +192,21 @@ func (s *Storage) boxAuto(h *userHandle) mailboxbase.Auto {
 		Mailboxes: s.Mailboxes,
 		Limit:     s.MailboxLimit,
 		Created: func(rel string) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			if err := s.Locker.Emit(ctx, locks.MailboxListKey(h.info.Username), locks.EventMailboxCreate, rel); err != nil {
-				slog.Debug("jmap: emit list event failed", "folder", rel, "err", err)
-			}
+			mailops.New(s.mailopsConfig(), nil, h.info).EmitList(locks.EventMailboxCreate, rel)
 		},
 		Subscribe: func(rel string) error {
 			_, err := h.subs.AddOwn(rel)
 			return err
 		},
 	}
+}
+
+// mailopsConfig is the layer's wiring for this backend.
+func (s *Storage) mailopsConfig() mailops.Config {
+	cfg := s.Ops
+	cfg.Protocol, cfg.Locker = "jmap", s.Locker
+	if s.Threads != nil {
+		cfg.Threads = threads.NewRecorder(s.Threads)
+	}
+	return cfg
 }

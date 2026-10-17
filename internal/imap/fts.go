@@ -2,8 +2,6 @@ package imap
 
 import (
 	"errors"
-	"log/slog"
-	"sync"
 	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
@@ -11,7 +9,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/fts/language"
 	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // FTSOptions wires full-text search into IMAP sessions. Nil Client disables
@@ -46,18 +43,6 @@ type FTSOptions struct {
 	SearchEnabled bool
 }
 
-// folderGUIDWarned dedupes the missing-GUID warning to one per folder per
-// process; the condition is a property of the folder, not of the message.
-var folderGUIDWarned sync.Map
-
-func warnFolderWithoutGUID(user, folder string) {
-	if _, seen := folderGUIDWarned.LoadOrStore(user+"\x00"+folder, struct{}{}); seen {
-		return
-	}
-	slog.Warn("imap: folder has no GUID; full-text indexing skipped for it",
-		"user", user, "folder", folder)
-}
-
 // searchOptions is the evaluator's share of the FTS wiring.
 func (o FTSOptions) searchOptions() search.Options {
 	return search.Options{
@@ -77,67 +62,6 @@ func searchError(err error) *imaplib.Error {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Mailbox is still being indexed, try again later"}
 	}
 	return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Full-text search unavailable"}
-}
-
-// ftsNotify fires the delivery/expunge hooks toward the yarilo-fts service —
-// best-effort and asynchronous: the index heals via rescan if a hook is lost.
-// Only the folder name travels; the service resolves the rest itself.
-func (s *session) ftsNotify(f *mailbox.Folder, expunged bool, uid uint32, guid [16]byte) {
-	o := s.srv.opts.FTS
-	if o.Client == nil || s.userInfo == nil || f == nil || f.Name == "" {
-		return
-	}
-	if !expunged && !o.Autoindex {
-		return
-	}
-	user := s.userInfo.Username
-	// The GUID is the folder's identity for the index, and it is what the
-	// index path is keyed by -- an empty one would name a path built from a
-	// value that is not there, so the hook is skipped instead (#1183). Said
-	// once per folder: per message it would drown the reason it matters.
-	mbox := search.RefOf(f)
-	if mbox.GUID == "" {
-		warnFolderWithoutGUID(user, f.Name)
-		return
-	}
-	go func() {
-		var err error
-		if expunged {
-			err = o.Client.Expunge(user, mbox, uid, guid)
-		} else {
-			err = o.Client.Index(user, mbox, uid, o.MaxRecent)
-		}
-		if err != nil {
-			slog.Debug("imap: fts notify failed",
-				"user", user, "folder", mbox.Name, "expunged", expunged, "err", err)
-			return
-		}
-		// Breadcrumb: confirm the FTS index/expunge notify was sent, so an
-		// indexing gap (message delivered but never handed to FTS) is visible.
-		slog.Debug("imap: fts notify sent",
-			"user", user, "folder", mbox.Name, "uid", uid, "expunged", expunged)
-	}()
-}
-
-// ftsDropFolder retracts a deleted mailbox, best-effort off the command path:
-// a rescan's orphan sweep is what makes a lost one harmless (#2022).
-func (s *session) ftsDropFolder(f *mailbox.Folder) {
-	o := s.srv.opts.FTS
-	if o.Client == nil || s.userInfo == nil || f == nil || f.Name == "" {
-		return
-	}
-	mbox := search.RefOf(f)
-	if mbox.GUID == "" {
-		warnFolderWithoutGUID(s.userInfo.Username, f.Name)
-		return
-	}
-	user := s.userInfo.Username
-	go func() {
-		if err := o.Client.DropFolder(user, mbox); err != nil {
-			slog.Warn("imap: fts drop folder failed",
-				"user", user, "folder", mbox.Name, "err", err)
-		}
-	}()
 }
 
 // relevancyScores normalizes raw per-UID engine weights to the RFC 4731/6203

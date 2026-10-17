@@ -110,9 +110,15 @@ jobs:
       - name: Create issue if a pin is behind
         if: steps.check.outputs.stale == 'true'
         uses: actions/github-script@v9
+        # The list is markdown full of backticks; spliced into the script as a
+        # template literal it closed the literal early and the step died with
+        # a SyntaxError every time there was something to report. Through env
+        # it is data, never code.
+        env:
+          LIST: ${{ steps.check.outputs.list }}
         with:
           script: |
-            const list = `${{ steps.check.outputs.list }}`;
+            const list = process.env.LIST;
             const title = 'Fork pins are behind their yarilo-patches branches';
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,

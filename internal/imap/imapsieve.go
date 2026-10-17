@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -170,8 +171,7 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 	// folder has to exist by the time the handle is taken.
 	if create {
 		if h, rel, derr := s.dispatch(name); derr == nil {
-			_ = h.box.Create(rel) // idempotent for imapsieve fileinto :create
-			h.mailbox().CreateFolder(rel, uint32(time.Now().Unix()))
+			_ = s.ops.CreateFolder(h.mailbox(), rel, name) // an existing folder is refused, and kept
 		}
 	}
 	dh, drel, df, err := s.ensureFolderHandle(name)
@@ -182,19 +182,14 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 	// Sieve setflag/addflag name keywords as freely as system flags, and both
 	// the store and the record keep the two apart (#1605).
 	sysFlags, kws := mailbox.SplitStoredFlags(flags)
-	newFilename, vsize, guid, err := dh.box.Save(drel, bytes.NewReader(raw), 0, int64(len(raw)), sysFlags, kws, [16]byte{})
+	saved, err := s.ops.Save(dh.mailbox(), drel, df, mailops.SaveRequest{
+		Body: bytes.NewReader(raw), Size: int64(len(raw)), Flags: sysFlags, Keywords: kws, QuotaFolder: name,
+	})
 	if err != nil {
 		slog.Warn("imapsieve: fileinto save", "folder", name, "err", err)
 		return
 	}
-	nm := &mailbox.MessageMeta{
-		Flags: sysFlags, Keywords: kws, Size: uint32(len(raw)), VSize: vsize, InternalDate: time.Now(), GUID: guid,
-	}
-	if err := dh.mailbox().RecordSaved(df, drel, newFilename, nm); err != nil {
-		_ = dh.mailbox().Discard(drel, newFilename, nm)
-		slog.Warn("imapsieve: fileinto record", "folder", name, "err", err)
-		return
-	}
+	nm, newFilename := saved.Meta, saved.Filename
 	// Explicit write confirmation (#625): a sieve fileinto lands a message the same
 	// way LMTP/APPEND do, but previously only logged on error — so a message that
 	// "vanished" could not be told apart from one that was never written. Mirrors
@@ -206,7 +201,6 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 		"file", newFilename,
 		"size", nm.Size,
 	)
-	s.emitMailboxChangeSized(df, locks.EventDelivered, nm.UID, usageDelta(nm), nm.GUID)
 }
 
 // imapSieveExpunge removes the message from its current mailbox.

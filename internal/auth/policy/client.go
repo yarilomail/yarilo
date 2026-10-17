@@ -104,7 +104,7 @@ type Request struct {
 	Username  string // resolved/requested username before chain
 	Password  string // plain — used only to compute pwhash, never stored
 	RemoteIP  string // client IP as a string ("" allowed)
-	Service   string // "imap" / "pop3" / "smtp" / "lmtp"
+	Service   string // "imap" / "pop3" / "submission" / "lmtp"; "smtp" is Postfix
 	DeviceID  string // free-form client tag (empty allowed)
 	SessionID string // unique per auth attempt (empty allowed)
 	TLS       bool   // whether the client connection was TLS-secured

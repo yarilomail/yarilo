@@ -665,14 +665,6 @@ func TestSearchESearchReturnOptions(t *testing.T) {
 			t.Errorf("All should be empty when RETURN omits ALL; got %v", data.AllUIDs())
 		}
 	})
-
-	// NOTE on RETURN SAVE / $: server-side support is implemented
-	// (substituteSearchRes + savedSearchUIDs in session). go-imap/v2
-	// v2.0.0-beta.8's imapclient.returnSearchOptions omits ReturnSave from
-	// the wire serialisation, so an end-to-end client test would never
-	// emit `RETURN SAVE` and the server-side path stays untested via this
-	// path. Re-enable when upstream ships the client fix (or via a raw
-	// connection test in a follow-up).
 }
 
 func TestStatusSize(t *testing.T) {

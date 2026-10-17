@@ -52,6 +52,9 @@ const (
 	// Generous on purpose: the server sleeps on the AUTH path (auth-penalty
 	// tarpit up to 15s, failure delay), so a legitimate reply can take seconds.
 	defaultRequestTimeout = 30 * time.Second
+	// VERIFY and CONSUME answer from a token lookup at once: past this the
+	// connection is silent, and it is dropped for a fresh one (#2262).
+	defaultVerifyTimeout = 5 * time.Second
 	// Bounds a single socket write. Separate from RequestTimeout: a healthy
 	// write drains into the send buffer in microseconds, so 5s means a
 	// blackholed peer, whatever the request budget is.
@@ -93,6 +96,8 @@ type Options struct {
 	// block forever while holding the shared mutex. Independent of
 	// RequestTimeout.
 	WriteTimeout time.Duration
+	// VerifyTimeout bounds VERIFY and CONSUME; reaching it redials (#2262).
+	VerifyTimeout time.Duration
 }
 
 type connState int
@@ -188,6 +193,9 @@ func New(addr string, tlsCfg *tls.Config, opts Options) (*Client, error) {
 	if opts.WriteTimeout <= 0 {
 		opts.WriteTimeout = defaultWriteTimeout
 	}
+	if opts.VerifyTimeout <= 0 {
+		opts.VerifyTimeout = defaultVerifyTimeout
+	}
 	c := &Client{
 		addr:    addr,
 		tlsCfg:  tlsCfg,
@@ -238,9 +246,9 @@ func (c *Client) Close() error {
 }
 
 // Authenticate sends an AUTH command for the given credentials and returns the
-// result. remoteIP and sessionID may be empty strings (omitted from request).
-func (c *Client) Authenticate(username, password, service, remoteIP, sessionID string) (*AuthResult, error) {
-	return c.AuthenticateAs("", username, password, service, remoteIP, sessionID)
+// result. remoteIP, localIP and sessionID may be empty (omitted from request).
+func (c *Client) Authenticate(username, password, service, remoteIP, localIP, sessionID string) (*AuthResult, error) {
+	return c.AuthenticateAs("", username, password, service, remoteIP, localIP, sessionID)
 }
 
 // AuthenticateAs is Authenticate with an impersonation target: authzid is the
@@ -252,8 +260,8 @@ func (c *Client) Authenticate(username, password, service, remoteIP, sessionID s
 // -- discarded every master login before it left the pod, so the service saw a
 // plain login of the master and refused it (#1305). Whether impersonation is
 // granted stays the service's decision; the client only carries the request.
-func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, sessionID string) (*AuthResult, error) {
-	if wireUnsafe(authzid, authcid, service, remoteIP, sessionID) {
+func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, localIP, sessionID string) (*AuthResult, error) {
+	if wireUnsafe(authzid, authcid, service, remoteIP, localIP, sessionID) {
 		return nil, ErrAuthFailed
 	}
 	id := c.nextID()
@@ -274,6 +282,10 @@ func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, s
 	if remoteIP != "" {
 		sb.WriteString("\trip=")
 		sb.WriteString(remoteIP)
+	}
+	if localIP != "" {
+		sb.WriteString("\tlip=")
+		sb.WriteString(localIP)
 	}
 	if sessionID != "" {
 		sb.WriteString("\tsession=")
@@ -333,11 +345,36 @@ func (c *Client) Verify(token, username, sessionID string) (string, string, stri
 	}
 	id := c.nextID()
 	req := fmt.Sprintf("VERIFY\t%s\t%s\tuser=%s\tsession=%s", id, token, username, sessionID)
-	line, err := c.exchange(id, req)
+	line, err := c.exchangeWithin(id, req, c.opts.VerifyTimeout, true)
 	if err != nil {
 		return "", "", "", err
 	}
 	return parseVerifyResponse(line)
+}
+
+// ErrTokenGone says a token to retire was no longer there: retired by another
+// session, or expired (#2259).
+var ErrTokenGone = errors.New("auth/client: token already retired or expired")
+
+// Consume retires a token whose session is established, so it opens no other
+// (#2259).
+func (c *Client) Consume(token string) error {
+	if wireUnsafe(token) {
+		return ErrAuthFailed
+	}
+	id := c.nextID()
+	line, err := c.exchangeWithin(id, fmt.Sprintf("CONSUME\t%s\t%s", id, token), c.opts.VerifyTimeout, true)
+	if err != nil {
+		return err
+	}
+	switch verb, _, _ := strings.Cut(line, "\t"); verb {
+	case "OK":
+		return nil
+	case "FAIL":
+		return ErrTokenGone
+	default:
+		return fmt.Errorf("auth/client: unknown consume verb %q", verb)
+	}
 }
 
 func (c *Client) nextID() string {
@@ -351,8 +388,15 @@ func (c *Client) nextID() string {
 // after a successful write returns ErrConnLost instead — the server may have
 // processed it, and a repeated AUTH would double-count the auth penalty.
 func (c *Client) exchange(id, req string) (string, error) {
-	deadline := time.Now().Add(c.opts.RequestTimeout)
+	return c.exchangeWithin(id, req, c.opts.RequestTimeout, false)
+}
+
+// exchangeWithin is exchange under its own budget; redial drops a connection
+// that let the budget pass in silence, so the next request does not wait too.
+func (c *Client) exchangeWithin(id, req string, budget time.Duration, redial bool) (string, error) {
+	deadline := time.Now().Add(budget)
 	ch := make(chan string, 1)
+	var gen uint64
 
 	for {
 		if err := c.awaitLive(deadline); err != nil {
@@ -369,7 +413,7 @@ func (c *Client) exchange(id, req string) (string, error) {
 			continue // lost the race with a reconnect; wait again
 		}
 		c.pending[id] = ch
-		gen := c.gen
+		gen = c.gen
 		// Bound the write so a blackholed peer cannot block forever while
 		// holding c.mu; on timeout we fall through to beginReconnect.
 		_ = c.conn.SetWriteDeadline(time.Now().Add(c.opts.WriteTimeout))
@@ -401,6 +445,9 @@ func (c *Client) exchange(id, req string) (string, error) {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
+		if redial {
+			c.beginReconnect(gen)
+		}
 		return "", ErrTimeout
 	}
 }
@@ -631,6 +678,9 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 			switch {
 			case f == "nologin":
 				res.Nologin = true
+			case strings.HasPrefix(f, "nologin="):
+				// The service sends a passdb's field as key=value (#2229).
+				res.Nologin = protocol.IsTruthy(f[len("nologin="):])
 			case strings.HasPrefix(f, "user="):
 				res.Username = f[len("user="):]
 			case strings.HasPrefix(f, "allow_nets="):
@@ -648,7 +698,7 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 		return res, nil
 	case "FAIL":
 		for _, f := range fields[2:] {
-			if f == "temp_fail" {
+			if f == "code=temp_fail" {
 				return nil, ErrTempFail
 			}
 		}

@@ -2,7 +2,6 @@ package file
 
 import (
 	"fmt"
-	"log/slog"
 	"sort"
 
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -219,9 +218,7 @@ func (t *indexTx) trackGUIDs(fs *folderState) {
 	// The store is derived: a failure is logged and rebuilt, never returned,
 	// because the mail is written and the client was told so.
 	if err := t.idx.applyGUIDBatch(b); err != nil {
-		metricGUIDTrackFailed.Inc()
-		slog.Warn("fileindex: the guid store did not take this command; it is derived and rebuildable",
-			"user", t.idx.username, "folder", fs.folder, "err", err)
+		t.idx.guidTrackFailed(fs, err)
 	}
 }
 

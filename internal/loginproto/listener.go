@@ -56,6 +56,8 @@ type PreambleConn struct {
 	MailboxFormat string
 	realAddr      net.Addr
 	br            *bufio.Reader
+	consume       func()
+	consumeOnce   sync.Once
 }
 
 // UnwrapPreambleConn walks a net.Conn wrapper chain (each wrapper exposing
@@ -84,6 +86,16 @@ func (c *PreambleConn) RemoteAddr() net.Addr { return c.realAddr }
 // Read reads from the buffered reader (preserving any bytes already buffered
 // after the preamble line).
 func (c *PreambleConn) Read(b []byte) (int, error) { return c.br.Read(b) }
+
+// Write retires the session's token once the first bytes reach the login: the
+// session is open, so the token may open no other (#2259).
+func (c *PreambleConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if n > 0 && c.consume != nil {
+		c.consumeOnce.Do(func() { go c.consume() })
+	}
+	return n, err
+}
 
 // PreambleListener wraps a net.Listener. Each accepted TCP connection is
 // handed to a goroutine that reads the YARILO preamble, verifies the session
@@ -382,7 +394,7 @@ func (l *PreambleListener) handshake(c net.Conn) (*PreambleConn, error) {
 	if username == "" {
 		return nil, fmt.Errorf("token verify: empty username")
 	}
-	if l.ExpectedService != "" && service != l.ExpectedService {
+	if !l.serviceAccepted(service) {
 		return nil, fmt.Errorf("token verify: service mismatch: got %q want %q", service, l.ExpectedService)
 	}
 
@@ -438,5 +450,31 @@ func (l *PreambleListener) handshake(c net.Conn) (*PreambleConn, error) {
 		MailboxFormat: mailboxFormat,
 		realAddr:      realAddr,
 		br:            br,
+		consume: func() {
+			if err := authCl.Consume(pre.Token); err != nil {
+				slog.Warn("loginproto: session token not retired", "user", username, "session", sessionID, "err", err)
+			}
+		},
 	}, nil
+}
+
+// LocalIP is the address the client connected to, for a query's %l (#2227);
+// empty for a connection a login proxy handed over, whose socket is the proxy's.
+func LocalIP(c net.Conn) string {
+	if c == nil {
+		return ""
+	}
+	if _, ok := c.(*PreambleConn); ok {
+		return ""
+	}
+	if tcp, ok := c.LocalAddr().(*net.TCPAddr); ok {
+		return tcp.IP.String()
+	}
+	return ""
+}
+
+// serviceAccepted says whether a token verified for service may open this
+// listener's sessions.
+func (l *PreambleListener) serviceAccepted(service string) bool {
+	return l.ExpectedService == "" || service == l.ExpectedService
 }

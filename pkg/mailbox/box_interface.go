@@ -1,6 +1,9 @@
 package mailbox
 
-import "io"
+import (
+	"io"
+	"time"
+)
 
 // Box is one account's mail, both halves at once: a consumer asks it for a
 // message and never assembles the pair. Implemented with storage (#1715).
@@ -34,6 +37,8 @@ type Box interface {
 	// Save writes a body and answers the driver's name, size and GUID; the
 	// record is the caller's, and Discard undoes a save whose record failed.
 	Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (name string, vsize uint32, outGUID [16]byte, err error)
+	// SaveReceived is Save keeping received as the INTERNALDATE in storage.
+	SaveReceived(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte, received time.Time) (name string, vsize uint32, outGUID [16]byte, err error)
 	Discard(folder, saved string, m *MessageMeta) error
 	// Restore undoes a Move whose record did not land: the body returns to
 	// srcFolder under orig, and the source record stays valid.
@@ -69,6 +74,13 @@ type Box interface {
 	RemoveHeld(folder, name string) error
 	// RemoveMessage unlinks a body, leaving the record to the caller.
 	RemoveMessage(folder string, m *MessageMeta) error
+	// Create makes a folder in the store; CreateFolder writes its index.
+	Create(name string) error
+	// Remove unlinks a body by name, for a record already gone.
+	Remove(folder, name string) error
+	// Move relocates a body to another folder of this store, keeping guid;
+	// Restore undoes it.
+	Move(srcFolder, dstFolder, name string, guid [16]byte) (newName string, outGUID [16]byte, err error)
 
 	// Store is the body half, for the storage side alone: a protocol server
 	// reaching for it is refused by the guard (#1805).
@@ -83,7 +95,7 @@ type Box interface {
 	Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error)
 	// VanishedGUIDs are the messages expunged past sinceModSeq, by identity;
 	// complete is false when some cannot be named.
-	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (guids [][16]byte, complete bool, err error)
+	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
 	// ExpungeFloor is the oldest modseq the folder's expunge history reaches.
 	ExpungeFloor(folderID uint64) (uint64, error)
 	// FolderStamp is the cheap proof that a folder has not moved since a read.
@@ -91,6 +103,8 @@ type Box interface {
 	// GUIDCopies is every copy of these messages the account records;
 	// ErrNoGUIDStore when it keeps no such record.
 	GUIDCopies(guids [][16]byte) ([]GUIDRecord, error)
+	// GUIDStoreComplete: for these folders, no copy in GUIDCopies means none.
+	GUIDStoreComplete(folderIDs []uint64) bool
 	// Keywords are the folder's keyword names.
 	Keywords(folderID uint64) ([]string, error)
 	// CreateFolder writes a new folder's index with the folder, best effort.
