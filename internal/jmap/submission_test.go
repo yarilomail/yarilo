@@ -27,16 +27,17 @@ type sent struct {
 }
 
 type fakeRelay struct {
-	mu   sync.Mutex
-	sent []sent
-	err  error
+	mu      sync.Mutex
+	sent    []sent
+	err     error
+	okFirst int // sends that go through before err
 }
 
 func (f *fakeRelay) Send(from string, rcpts []string, body io.Reader, ip net.IP, login, sid string) error {
 	b, _ := io.ReadAll(body)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.err != nil {
+	if f.err != nil && len(f.sent) >= f.okFirst {
 		return f.err
 	}
 	f.sent = append(f.sent, sent{from, rcpts, string(b), ip, login, sid})
@@ -276,6 +277,43 @@ func TestEmailSubmissionRelayRefusals(t *testing.T) {
 				t.Errorf("records = %v, want %d", list, c.wantStored)
 			}
 		})
+	}
+}
+
+// A temporary refusal after a send in the same call leaves the sent one in
+// created and fails only this create and the ones not yet attempted.
+func TestEmailSubmissionTemporaryRefusalAfterASend(t *testing.T) {
+	relay := &fakeRelay{err: &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 4, 0}, Message: "Failed to connect"}, okFirst: 1}
+	s, emailID, _ := submissionServer(t, draftHeaders+"\r\nb\r\n", relay, Submission{})
+	using, _ := json.Marshal(declaredCapabilities(s.opts.Limits))
+	one := fmt.Sprintf(`{"identityId":%q,"emailId":%q}`, identityID(testUser), emailID)
+	body := fmt.Sprintf(`{"using":%s,"methodCalls":[["EmailSubmission/set",{"accountId":%q,"create":{"c1":%s,"c2":%s,"c3":%s},"onSuccessUpdateEmail":{"#c1":{"keywords/$seen":true}}},"0"]]}`,
+		using, testUser, one, one, one)
+	w := postAPIRaw(t, s, body)
+	var resp struct {
+		MethodResponses [][]json.RawMessage `json:"methodResponses"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || len(resp.MethodResponses) != 2 {
+		t.Fatalf("responses = %s, want EmailSubmission/set then Email/set", w.Body)
+	}
+	var name string
+	var out map[string]any
+	_ = json.Unmarshal(resp.MethodResponses[0][0], &name)
+	_ = json.Unmarshal(resp.MethodResponses[0][1], &out)
+	if name != "EmailSubmission/set" || entry(out, "created", "c1")["id"] == nil {
+		t.Fatalf("first response = %s %v, want c1 created", name, out)
+	}
+	for _, cid := range []string{"c2", "c3"} {
+		if e := entry(out, "notCreated", cid); e["type"] != "serverFail" || e["description"] == nil {
+			t.Errorf("notCreated %s = %v, want serverFail with a description", cid, e)
+		}
+	}
+	if n := len(relay.all()); n != 1 {
+		t.Errorf("relay sends = %d, want 1", n)
+	}
+	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`)
+	if list, _ := get["list"].([]any); len(list) != 1 {
+		t.Errorf("records = %v, want c1's", list)
 	}
 }
 

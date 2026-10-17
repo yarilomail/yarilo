@@ -344,8 +344,8 @@ type submissionSetRequest struct {
 	OnSuccessDestroyEmail []string                   `json:"onSuccessDestroyEmail"`
 }
 
-// relayFailure is a temporary refusal, answered at the method level so the
-// client retries rather than taking the message for forbidden.
+// relayFailure is a temporary refusal before anything went, answered at the
+// method level so the client retries rather than taking it for forbidden.
 type relayFailure struct{ err error }
 
 func (e *relayFailure) Error() string { return e.err.Error() }
@@ -372,10 +372,20 @@ func (s *Server) submissionSet(ctx context.Context, h *userHandle, lazy *lazySto
 		}
 		resp = jmapcore.NewSetResponse(accountID, state)
 		changed := false
-		for _, cid := range sortedKeys(req.Create) {
+		cids := sortedKeys(req.Create)
+		for i, cid := range cids {
 			rec, serr, err := s.submissionCreate(ctx, h, lazy, accountID, req.Create[cid])
-			if err != nil {
+			if err != nil && len(created) == 0 {
 				temp = &relayFailure{err}
+				break
+			}
+			if err != nil {
+				// Some already went: report them, and leave this and the rest unsent.
+				slog.Warn("jmap: EmailSubmission relay temporarily refused", "session", lazy.sessionID, "sent_before_it", len(created))
+				merr := storeFailure("EmailSubmission/set relay", accountID, err)
+				for _, rest := range cids[i:] {
+					resp.NotCreated[rest] = &jmapcore.SetError{Type: merr.Type, Description: "the relay refused for now; not sent, try again"}
+				}
 				break
 			}
 			if serr != nil {
@@ -424,7 +434,7 @@ func (s *Server) submissionSet(ctx context.Context, h *userHandle, lazy *lazySto
 	case err != nil:
 		return nil, storeFailure("EmailSubmission/set", accountID, err)
 	case temp != nil:
-		slog.Warn("jmap: EmailSubmission relay temporarily refused", "session", lazy.sessionID, "sent_before_it", len(created))
+		slog.Warn("jmap: EmailSubmission relay temporarily refused", "session", lazy.sessionID, "sent_before_it", 0)
 		return nil, storeFailure("EmailSubmission/set relay", accountID, temp.err)
 	}
 	return s.submissionOnSuccess(ctx, h, accountID, &req, created, resp)
@@ -495,7 +505,7 @@ type submissionProps struct {
 }
 
 // submissionCreate checks and sends one message. A SetError refuses this
-// object; an error is the relay's temporary refusal, which ends the call.
+// object; an error is the relay's temporary refusal, which stops sending.
 func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazyStore, accountID string, raw json.RawMessage) (jmapcore.EmailSubmission, *jmapcore.SetError, error) {
 	var none jmapcore.EmailSubmission
 	var fields map[string]json.RawMessage
