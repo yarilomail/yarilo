@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/textproto"
@@ -137,6 +138,8 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		spamMax:         e.cfg.SpamMaxValue,
 		virusHeader:     e.cfg.VirusStatusHeader,
 		virusMax:        e.cfg.VirusMaxValue,
+		personal:        e.personalScripts(opts.Username, opts.HomeDir),
+		extensions:      e.cfg.SieveExtensions,
 	}
 
 	var merged FilterResult
@@ -299,6 +302,16 @@ func (e *Engine) runScript(ctx context.Context, script *gosieve.Script, opts Fil
 	return result, nil
 }
 
+// personalScripts reads the user's scripts from the store the active one comes from.
+func (e *Engine) personalScripts(username, homeDir string) func(context.Context, string) ([]byte, bool, error) {
+	if e.store == nil {
+		return nil
+	}
+	return func(ctx context.Context, name string) ([]byte, bool, error) {
+		return e.store.GetScript(ctx, username, homeDir, name)
+	}
+}
+
 func parseHeaders(raw []byte) textproto.MIMEHeader {
 	r := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw)))
 	hdr, _ := r.ReadMIMEHeader()
@@ -323,6 +336,39 @@ type policy struct {
 	spamMax     float64
 	virusHeader string
 	virusMax    float64
+
+	// personal reads a script of the user's own for include :personal (RFC 6609).
+	personal func(ctx context.Context, name string) ([]byte, bool, error)
+	// extensions is sieve_extensions, applied to an included script as to the active one.
+	extensions []string
+}
+
+var _ interp.ScriptLoader = (*policy)(nil)
+
+// LoadPersonalScript implements interp.ScriptLoader from the user's store; an
+// included script is held to sieve_extensions like the one that includes it.
+func (p *policy) LoadPersonalScript(ctx context.Context, name string) (io.ReadCloser, error) {
+	if p.personal == nil {
+		return nil, nil
+	}
+	src, found, err := p.personal(ctx, name)
+	if err != nil || !found {
+		return nil, err
+	}
+	script, err := gosieve.Load(bytes.NewReader(src), gosieve.DefaultOptions())
+	if err != nil {
+		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
+	}
+	if err := CheckExtensions(script, p.extensions); err != nil {
+		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
+	}
+	return io.NopCloser(bytes.NewReader(src)), nil
+}
+
+// LoadGlobalScript implements interp.ScriptLoader: there is no global script
+// location yet, so every :global script is missing (#2283).
+func (p *policy) LoadGlobalScript(context.Context, string) (io.ReadCloser, error) {
+	return nil, nil
 }
 
 // SpamScore implements interp.SpamVirusChecker: it reads the configured spam
