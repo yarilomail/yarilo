@@ -143,6 +143,7 @@ func (s *Server) sieveGet(ctx context.Context, h *userHandle, accountID string, 
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveGet(ctx, &req)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -296,6 +297,7 @@ func (s *Server) sieveSet(ctx context.Context, h *userHandle, accountID string, 
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveSet(ctx, &req.SetRequest)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -319,6 +321,7 @@ func (s *Server) sieveSet(ctx context.Context, h *userHandle, accountID string, 
 			continue
 		}
 		resp.Created[cid] = created
+		noteCreated(ctx, cid, created)
 	}
 	for _, id := range sortedKeys(req.Update) {
 		updated, serr := s.sieveUpdate(ctx, h, accountID, &v, id, req.Update[id])
@@ -473,11 +476,7 @@ func (s *Server) sieveActivation(ctx context.Context, user, home string, v *siev
 	if req.OnSuccessActivateScript == nil {
 		return nil
 	}
-	target := *req.OnSuccessActivateScript
-	if cid, ok := strings.CutPrefix(target, "#"); ok {
-		m, _ := resp.Created[cid].(map[string]any)
-		target, _ = m["id"].(string)
-	}
+	target := jmapcore.ResolveID(ctx, *req.OnSuccessActivateScript)
 	name, ok := v.ix.NameOf(target)
 	if !ok || name == v.active {
 		return nil

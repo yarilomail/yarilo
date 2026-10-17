@@ -34,6 +34,10 @@ func (s *Server) emailSet(ctx context.Context, h *userHandle, accountID string, 
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveSet(ctx, &req)
+	for id, raw := range req.Update {
+		req.Update[id] = resolveEmailPatch(ctx, raw)
+	}
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -63,6 +67,7 @@ func (s *Server) emailSet(ctx context.Context, h *userHandle, accountID string, 
 			continue
 		}
 		resp.Created[cid] = created
+		noteCreated(ctx, cid, created)
 	}
 	if len(req.Update) == 0 {
 		return s.finishSet(h, accountID, req.Destroy, resp)

@@ -167,6 +167,7 @@ func (s *Server) submissionGet(ctx context.Context, h *userHandle, accountID str
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveGet(ctx, &req)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -263,6 +264,9 @@ func (s *Server) submissionQuery(ctx context.Context, h *userHandle, accountID s
 			return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 		}
 	}
+	jmapcore.ResolveIDs(ctx, f.IdentityIDs)
+	jmapcore.ResolveIDs(ctx, f.EmailIDs)
+	jmapcore.ResolveIDs(ctx, f.ThreadIDs)
 	for _, c := range req.Sort {
 		switch c.Property {
 		case "emailId", "threadId", "sentAt", "sendAt":
@@ -356,6 +360,7 @@ func (s *Server) submissionSet(ctx context.Context, h *userHandle, lazy *lazySto
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveSet(ctx, &req.SetRequest)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -374,7 +379,8 @@ func (s *Server) submissionSet(ctx context.Context, h *userHandle, lazy *lazySto
 		changed := false
 		cids := sortedKeys(req.Create)
 		for i, cid := range cids {
-			rec, serr, err := s.submissionCreate(ctx, h, lazy, accountID, req.Create[cid])
+			raw := resolveProperty(ctx, resolveProperty(ctx, req.Create[cid], "identityId"), "emailId")
+			rec, serr, err := s.submissionCreate(ctx, h, lazy, accountID, raw)
 			if err != nil && len(created) == 0 {
 				temp = &relayFailure{err}
 				break
@@ -395,6 +401,7 @@ func (s *Server) submissionSet(ctx context.Context, h *userHandle, lazy *lazySto
 			recs.Next++
 			rec.ID = "ES" + strconv.FormatUint(recs.Next, 10)
 			created[cid] = rec
+			jmapcore.AddCreated(ctx, cid, rec.ID)
 			if s.opts.Submission.TTL > 0 {
 				recs.Records = append(recs.Records, rec)
 				changed = true

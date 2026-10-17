@@ -343,10 +343,24 @@ func jmapCall(body string) (json.RawMessage, error) {
 // jmapCallRaw returns the first method response's name and arguments without
 // judging either, for the checks whose expected answer is a refusal.
 func jmapCallRaw(body string) (name string, args json.RawMessage, err error) {
+	all, err := jmapCallAll(body)
+	if err != nil {
+		return "", nil, err
+	}
+	return all[0].name, all[0].args, nil
+}
+
+type jmapResponse struct {
+	name string
+	args json.RawMessage
+}
+
+// jmapCallAll returns every method response of one request, in order.
+func jmapCallAll(body string) ([]jmapResponse, error) {
 	url := jmapAPIURL()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, strings.NewReader(body))
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if *flagJMAPUser != "" {
@@ -354,26 +368,31 @@ func jmapCallRaw(body string) (name string, args json.RawMessage, err error) {
 	}
 	resp, err := jmapClient().Do(req)
 	if err != nil {
-		return "", nil, fmt.Errorf("post %s: %w", url, err)
+		return nil, fmt.Errorf("post %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
 	if resp.StatusCode != http.StatusOK {
-		return "", nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw)
 	}
 	var out struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", nil, fmt.Errorf("decode response: %w", err)
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	if len(out.MethodResponses) == 0 || len(out.MethodResponses[0]) != 3 {
-		return "", nil, fmt.Errorf("malformed response: %s", raw)
+	if len(out.MethodResponses) == 0 {
+		return nil, fmt.Errorf("malformed response: %s", raw)
 	}
-	if err := json.Unmarshal(out.MethodResponses[0][0], &name); err != nil {
-		return "", nil, fmt.Errorf("response name: %w", err)
+	all := make([]jmapResponse, 0, len(out.MethodResponses))
+	for _, r := range out.MethodResponses {
+		var name string
+		if len(r) != 3 || json.Unmarshal(r[0], &name) != nil {
+			return nil, fmt.Errorf("malformed response: %s", raw)
+		}
+		all = append(all, jmapResponse{name, r[1]})
 	}
-	return name, out.MethodResponses[0][1], nil
+	return all, nil
 }
 
 // jmapAPIURL is where the batch endpoint lives. Separate so a test can point it

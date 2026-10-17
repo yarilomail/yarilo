@@ -63,11 +63,12 @@ func allowedBy(id jmapcore.Identity, addr string) bool {
 	return strings.EqualFold(id.Email, addr)
 }
 
-func (s *Server) identityGet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) identityGet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req jmapcore.GetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveGet(ctx, &req)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -111,11 +112,12 @@ func (s *Server) identityChanges(_ context.Context, h *userHandle, accountID str
 }
 
 // identitySet refuses every object: identities come from userdb here.
-func (s *Server) identitySet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) identitySet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req jmapcore.SetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveSet(ctx, &req)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}

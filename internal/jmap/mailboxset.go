@@ -58,11 +58,12 @@ func invalidProp(name, desc string) *jmapcore.SetError {
 }
 
 // mailboxSet implements Mailbox/set (RFC 8621 §2.5) through the mutation layer.
-func (s *Server) mailboxSet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) mailboxSet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req mailboxSetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveSet(ctx, &req.SetRequest)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -81,15 +82,16 @@ func (s *Server) mailboxSet(_ context.Context, h *userHandle, accountID string, 
 	sep := separator(h.info)
 
 	for _, cid := range sortedKeys(req.Create) {
-		created, serr := s.mailboxCreate(h, req.Create[cid], sep)
+		created, serr := s.mailboxCreate(h, resolveProperty(ctx, req.Create[cid], "parentId"), sep)
 		if serr != nil {
 			resp.NotCreated[cid] = serr
 			continue
 		}
 		resp.Created[cid] = created
+		noteCreated(ctx, cid, created)
 	}
 	for _, id := range sortedKeys(req.Update) {
-		if serr := s.mailboxUpdate(h, id, req.Update[id], sep); serr != nil {
+		if serr := s.mailboxUpdate(h, id, resolveProperty(ctx, req.Update[id], "parentId"), sep); serr != nil {
 			resp.NotUpdated[id] = serr
 			continue
 		}
