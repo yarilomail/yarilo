@@ -6,10 +6,13 @@ package proxy
 import (
 	"cmp"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -42,9 +45,10 @@ type capabilities struct {
 }
 
 // Send forwards a message to the upstream MTA. clientIP feeds XCLIENT when
-// Trusted; login is the session's user, which %u in the relay user names.
-// Transport errors → 451 4.4.0. SMTP-level rejections are passed through as-is.
-func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP net.IP, login string) error {
+// Trusted; login is the session's user, which %u in the relay user names; sid
+// names the session in the log. Transport errors → 451 4.4.0, relay auth
+// failures → 451 4.7.0. SMTP-level rejections are passed through as-is.
+func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP net.IP, login, sid string) error {
 	if s.cfg.Host == "" {
 		return &goSmtp.SMTPError{
 			Code:         451,
@@ -53,12 +57,8 @@ func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP 
 		}
 	}
 	if login == "" && s.needsLogin() {
-		slog.Error("submission/proxy: the relay names the sender, and the session has no user")
-		return &goSmtp.SMTPError{
-			Code:         451,
-			EnhancedCode: goSmtp.EnhancedCode{4, 7, 0},
-			Message:      "No user to relay as",
-		}
+		slog.Error("submission/proxy: the relay names the sender, and the session has no user", "sid", sid)
+		return errRelayAuth
 	}
 
 	c, err := s.dial()
@@ -98,12 +98,8 @@ func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP 
 	if authcid, authzid := s.relayAuth(login); authcid != "" {
 		auth := sasl.NewPlainClient(authzid, authcid, s.cfg.Password)
 		if err := c.Auth(auth); err != nil {
-			slog.Error("submission/proxy: auth failed", "user", authcid, "for", authzid, "err", err)
-			return &goSmtp.SMTPError{
-				Code:         451,
-				EnhancedCode: goSmtp.EnhancedCode{4, 7, 0},
-				Message:      "Upstream authentication failed",
-			}
+			slog.Error("submission/proxy: relay auth failed", "sid", sid, "user", authcid, "for", authzid, "err", err)
+			return errRelayAuth
 		}
 	}
 
@@ -141,9 +137,13 @@ func (s *Submission) dial() (*goSmtp.Client, error) {
 
 	switch s.cfg.SSL {
 	case "smtps":
+		tc, err := s.tlsConfig()
+		if err != nil {
+			return nil, err
+		}
 		d := &tls.Dialer{
 			NetDialer: &net.Dialer{Timeout: ct},
-			Config:    s.tlsConfig(),
+			Config:    tc,
 		}
 		conn, err := d.Dial("tcp", addr)
 		if err != nil {
@@ -151,12 +151,16 @@ func (s *Submission) dial() (*goSmtp.Client, error) {
 		}
 		c = goSmtp.NewClient(conn)
 	case "starttls":
+		tc, err := s.tlsConfig()
+		if err != nil {
+			return nil, err
+		}
 		conn, err := net.DialTimeout("tcp", addr, ct)
 		if err != nil {
 			return nil, err
 		}
 		var startErr error
-		c, startErr = goSmtp.NewClientStartTLS(conn, s.tlsConfig())
+		c, startErr = goSmtp.NewClientStartTLS(conn, tc)
 		if startErr != nil {
 			conn.Close()
 			return nil, startErr
@@ -175,11 +179,25 @@ func (s *Submission) dial() (*goSmtp.Client, error) {
 	return c, nil
 }
 
-func (s *Submission) tlsConfig() *tls.Config {
-	return &tls.Config{
+// tlsConfig verifies the relay against submission_relay_ssl_ca when set, the
+// system roots otherwise.
+func (s *Submission) tlsConfig() (*tls.Config, error) {
+	tc := &tls.Config{
 		ServerName:         s.cfg.Host,
 		InsecureSkipVerify: !s.cfg.SSLVerify, //nolint:gosec
 	}
+	if s.cfg.SSLCA == "" {
+		return tc, nil
+	}
+	pem, err := os.ReadFile(s.cfg.SSLCA)
+	if err != nil {
+		return nil, fmt.Errorf("submission/proxy: relay CA: %w", err)
+	}
+	tc.RootCAs = x509.NewCertPool()
+	if !tc.RootCAs.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("submission/proxy: relay CA %s holds no certificate", s.cfg.SSLCA)
+	}
+	return tc, nil
 }
 
 func (s *Submission) connectTimeout() time.Duration {
@@ -205,4 +223,12 @@ func (s *Submission) relayAuth(login string) (authcid, authzid string) {
 func (s *Submission) needsLogin() bool {
 	return (s.cfg.MasterUser != "" && s.cfg.User == "") ||
 		strings.Contains(s.cfg.User, "%u") || strings.Contains(s.cfg.User, "%{user}")
+}
+
+// errRelayAuth is what the client is told when the relay cannot be logged in
+// to; the reason goes to the log with the session id.
+var errRelayAuth = &goSmtp.SMTPError{
+	Code:         451,
+	EnhancedCode: goSmtp.EnhancedCode{4, 7, 0},
+	Message:      "Temporary authentication failure, try again later",
 }

@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"bytes"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -86,7 +88,7 @@ func TestSendLogsInAsTheMasterForTheUser(t *testing.T) {
 	cfg := config.RelayConfig{Host: host, Port: p, SSL: "no", User: "%u", MasterUser: "master", Password: "pw",
 		ConnectTimeout: 5, CommandTimeout: 5}
 
-	err = New(cfg, "mx.test").Send("u@d.test", []string{"x@e.test"}, strings.NewReader("Subject: x\r\n\r\nx\r\n"), nil, "u@d.test")
+	err = New(cfg, "mx.test").Send("u@d.test", []string{"x@e.test"}, strings.NewReader("Subject: x\r\n\r\nx\r\n"), nil, "u@d.test", "sid1")
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -129,9 +131,17 @@ func TestSendWithoutAUserIsRefusedWhenTheRelayNamesTheSender(t *testing.T) {
 			cfg.Host, cfg.SSL, cfg.ConnectTimeout, cfg.CommandTimeout = host, "no", 5, 5
 			cfg.Port, _ = strconv.Atoi(port)
 
-			err = New(cfg, "mx.test").Send("u@d.test", []string{"x@e.test"}, strings.NewReader("Subject: x\r\n\r\nx\r\n"), nil, "")
+			var logged bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+			err = New(cfg, "mx.test").Send("u@d.test", []string{"x@e.test"}, strings.NewReader("Subject: x\r\n\r\nx\r\n"), nil, "", "sid1")
+			slog.SetDefault(prev)
 			var se *goSmtp.SMTPError
-			got := errors.As(err, &se) && se.Code == 451 && se.EnhancedCode == goSmtp.EnhancedCode{4, 7, 0}
+			got := errors.As(err, &se) && se.Code == 451 && se.EnhancedCode == goSmtp.EnhancedCode{4, 7, 0} &&
+				se.Message == "Temporary authentication failure, try again later"
+			if c.refused && !strings.Contains(logged.String(), "sid=sid1") {
+				t.Errorf("the refusal's log names no session: %q", logged.String())
+			}
 			if got != c.refused {
 				t.Errorf("Send = %v, want refused=%v", err, c.refused)
 			}
@@ -143,3 +153,50 @@ func TestSendWithoutAUserIsRefusedWhenTheRelayNamesTheSender(t *testing.T) {
 		})
 	}
 }
+
+// A relay that refuses the login is a temporary failure for the client; the
+// reason, with the session, is in the log.
+func TestARefusedRelayLoginIsATemporaryAuthFailure(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := goSmtp.NewServer(refusingRelay{})
+	srv.Domain = "relay.test"
+	srv.AllowInsecureAuth = true
+	go srv.Serve(ln) //nolint:errcheck
+	t.Cleanup(func() { srv.Close() })
+	host, port, _ := net.SplitHostPort(ln.Addr().String())
+	p, _ := strconv.Atoi(port)
+	cfg := config.RelayConfig{Host: host, Port: p, SSL: "no", User: "%u", MasterUser: "master", Password: "bad",
+		ConnectTimeout: 5, CommandTimeout: 5}
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	err = New(cfg, "mx.test").Send("u@d.test", []string{"x@e.test"}, strings.NewReader("Subject: x\r\n\r\nx\r\n"), nil, "u@d.test", "sid7")
+	slog.SetDefault(prev)
+	var se *goSmtp.SMTPError
+	if !errors.As(err, &se) || se.Code != 451 || se.EnhancedCode != (goSmtp.EnhancedCode{4, 7, 0}) ||
+		se.Message != "Temporary authentication failure, try again later" {
+		t.Errorf("Send = %v, want 451 4.7.0 Temporary authentication failure, try again later", err)
+	}
+	if !strings.Contains(logged.String(), "sid=sid7") || !strings.Contains(logged.String(), "relay auth failed") {
+		t.Errorf("the log does not name the session and the cause: %q", logged.String())
+	}
+}
+
+type refusingRelay struct{}
+
+func (refusingRelay) NewSession(*goSmtp.Conn) (goSmtp.Session, error) { return refusingSession{}, nil }
+
+type refusingSession struct{}
+
+func (refusingSession) AuthMechanisms() []string { return []string{sasl.Plain} }
+func (refusingSession) Auth(string) (sasl.Server, error) {
+	return sasl.NewPlainServer(func(string, string, string) error { return goSmtp.ErrAuthFailed }), nil
+}
+func (refusingSession) Mail(string, *goSmtp.MailOptions) error { return nil }
+func (refusingSession) Rcpt(string, *goSmtp.RcptOptions) error { return nil }
+func (refusingSession) Data(r io.Reader) error                 { _, _ = io.ReadAll(r); return nil }
+func (refusingSession) Reset()                                 {}
+func (refusingSession) Logout() error                          { return nil }

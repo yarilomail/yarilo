@@ -2117,6 +2117,9 @@ protocol:
       password_secret_ref: {}
       ssl: "no"
       ssl_verify: true
+      ## ssl_ca is a PEM file the relay is verified against, empty for the system
+      ## roots. With internal_tls the internal CA is at /etc/yarilo/internal-tls/ca.crt.
+      ssl_ca: ""
       trusted: false
       connect_timeout: 30
       command_timeout: 300

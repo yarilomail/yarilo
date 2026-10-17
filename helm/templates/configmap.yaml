@@ -199,6 +199,7 @@ data:
           {{- end }}
           submission_relay_ssl: {{ .Values.protocol.submission.relay.ssl | quote }}
           submission_relay_ssl_verify: {{ .Values.protocol.submission.relay.ssl_verify }}
+          submission_relay_ssl_ca: {{ .Values.protocol.submission.relay.ssl_ca | quote }}
           submission_relay_trusted: {{ .Values.protocol.submission.relay.trusted }}
           submission_relay_connect_timeout: {{ .Values.protocol.submission.relay.connect_timeout }}
           submission_relay_command_timeout: {{ .Values.protocol.submission.relay.command_timeout }}

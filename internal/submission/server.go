@@ -221,7 +221,7 @@ func (s *session) Data(r io.Reader) error {
 	if s.srv.opts.Config.AddReceivedHeader {
 		body = append([]byte(s.receivedHeader()), data...)
 	}
-	if err := p.Send(s.from, s.rcpts, bytes.NewReader(body), s.remoteIP, s.username); err != nil {
+	if err := p.Send(s.from, s.rcpts, bytes.NewReader(body), s.remoteIP, s.username, s.sid); err != nil {
 		slog.Info("submission: proxy rejected", "sid", s.sid, "from", s.from, "err", err, "result", "fail")
 		return err
 	}

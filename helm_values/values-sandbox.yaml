@@ -190,13 +190,14 @@ protocol:
   ## Submission proxies to the cluster's relay-mta on its submission port.
   ## The relay authenticates through yarilo-sasl-login, so the proxy logs in as
   ## relay-master acting for the session's user (%u), and the relay judges that
-  ## user. Its certificate is not issued for the service name, hence no verify.
+  ## user. relay-mta's certificate is issued by the internal CA (cert-manager).
   submission:
     relay:
       host: "relay-mta.yarilo-relay.svc.cluster.local"
       port: 587
       ssl: "starttls"
-      ssl_verify: false
+      ssl_verify: true
+      ssl_ca: "/etc/yarilo/internal-tls/ca.crt"
       user: "%u"
       master_user: "relay-master"
       password_secret_ref:
