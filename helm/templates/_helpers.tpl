@@ -708,3 +708,16 @@ names maps the yarilo name to the chart's; free maps (fields, settings) are neve
 {{- end -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+The relay password from its Secret, for every container that relays mail.
+*/}}
+{{- define "yarilo.relayPasswordEnv" -}}
+{{- with (.Values.protocol.submission.relay.password_secret_ref | default dict).name }}
+- name: YARILO_SUBMISSION_RELAY_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $.Values.protocol.submission.relay.password_secret_ref.key | default "password" }}
+{{- end }}
+{{- end }}

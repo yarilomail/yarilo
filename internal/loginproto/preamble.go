@@ -34,23 +34,23 @@ func (p Preamble) Format() string {
 	b.WriteString("YARILO")
 	if p.Addr != "" {
 		b.WriteString("\tADDR=")
-		b.WriteString(p.Addr)
+		b.WriteString(fieldValue(p.Addr))
 	}
 	if p.SessionID != "" {
 		b.WriteString("\tSESSION=")
-		b.WriteString(p.SessionID)
+		b.WriteString(fieldValue(p.SessionID))
 	}
 	if p.User != "" {
 		b.WriteString("\tUSER=")
-		b.WriteString(p.User)
+		b.WriteString(fieldValue(p.User))
 	}
 	if p.Token != "" {
 		b.WriteString("\tTOKEN=")
-		b.WriteString(p.Token)
+		b.WriteString(fieldValue(p.Token))
 	}
 	if p.Helo != "" {
 		b.WriteString("\tHELO=")
-		b.WriteString(p.Helo)
+		b.WriteString(fieldValue(p.Helo))
 	}
 	b.WriteByte('\n')
 	return b.String()
@@ -93,4 +93,14 @@ func ParseLine(line string) (Preamble, error) {
 		}
 	}
 	return p, nil
+}
+
+// fieldValue drops the bytes that would end a field or the line early.
+func fieldValue(v string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\r' || r == '\n' {
+			return -1
+		}
+		return r
+	}, v)
 }

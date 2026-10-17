@@ -67,6 +67,7 @@ spec:
         # The submission path is on the stand since #1863; its backend is
         # behind submission-login, which terminates TLS on 587.
         - -smtp-sub
+        - -smtp-sub-send
         - -smtp-host=yarilo-submission-login
         - -smtp-sub-port=587
         - -imap-user=u1@d00001.test

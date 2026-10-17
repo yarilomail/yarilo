@@ -191,7 +191,12 @@ data:
           submission_relay_host: {{ .Values.protocol.submission.relay.host | quote }}
           submission_relay_port: {{ .Values.protocol.submission.relay.port }}
           submission_relay_user: {{ .Values.protocol.submission.relay.user | quote }}
+          submission_relay_master_user: {{ .Values.protocol.submission.relay.master_user | quote }}
+          {{- if (.Values.protocol.submission.relay.password_secret_ref | default dict).name }}
+          submission_relay_password: "${YARILO_SUBMISSION_RELAY_PASSWORD}"
+          {{- else }}
           submission_relay_password: {{ .Values.protocol.submission.relay.password | quote }}
+          {{- end }}
           submission_relay_ssl: {{ .Values.protocol.submission.relay.ssl | quote }}
           submission_relay_ssl_verify: {{ .Values.protocol.submission.relay.ssl_verify }}
           submission_relay_trusted: {{ .Values.protocol.submission.relay.trusted }}

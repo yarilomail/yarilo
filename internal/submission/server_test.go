@@ -422,3 +422,72 @@ func TestSubmission_ReceivedHeader_Suppressed(t *testing.T) {
 		t.Fatalf("expected body to start with original headers, got:\n%s", string(got))
 	}
 }
+
+// identityRelay records the PLAIN authzid the proxy logs in with.
+type identityRelay struct {
+	mu       sync.Mutex
+	identity string
+}
+
+func (r *identityRelay) NewSession(*goSmtp.Conn) (goSmtp.Session, error) {
+	return &identityRelaySession{r}, nil
+}
+
+type identityRelaySession struct{ r *identityRelay }
+
+func (s *identityRelaySession) AuthMechanisms() []string { return []string{sasl.Plain} }
+func (s *identityRelaySession) Auth(string) (sasl.Server, error) {
+	return sasl.NewPlainServer(func(identity, _, _ string) error {
+		s.r.mu.Lock()
+		defer s.r.mu.Unlock()
+		s.r.identity = identity
+		return nil
+	}), nil
+}
+func (s *identityRelaySession) Mail(string, *goSmtp.MailOptions) error { return nil }
+func (s *identityRelaySession) Rcpt(string, *goSmtp.RcptOptions) error { return nil }
+func (s *identityRelaySession) Data(r io.Reader) error                 { _, _ = io.ReadAll(r); return nil }
+func (s *identityRelaySession) Reset()                                 {}
+func (s *identityRelaySession) Logout() error                          { return nil }
+
+// A user who logged in on the backend itself is the one the relay is told.
+func TestSubmission_RelayIsToldTheSessionUser(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &identityRelay{}
+	relaySrv := goSmtp.NewServer(rec)
+	relaySrv.Domain = "relay.test"
+	relaySrv.AllowInsecureAuth = true
+	go func() { _ = relaySrv.Serve(ln) }()
+	t.Cleanup(func() { relaySrv.Close() })
+	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	relayCfg := config.RelayConfig{Host: host, Port: port, SSL: "no", User: "%u", MasterUser: "master", Password: "pw",
+		ConnectTimeout: 5, CommandTimeout: 10}
+
+	srv := New(Options{
+		Config:    config.SubmissionProtocolConfig{Hostname: "mx.example.com", MaxMsgSize: 1 << 20},
+		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
+		Proxy:     proxy.New(relayCfg, "mx.example.com"),
+	})
+	sl, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(sl, nil) }()
+	t.Cleanup(func() { sl.Close() })
+
+	c := dialSMTP(t, sl.Addr().String())
+	defer c.Close()
+	if err := c.Auth(plainAuth("alice@example.com", "secret")); err != nil {
+		t.Fatalf("AUTH: %v", err)
+	}
+	sendMessage(t, c, "alice@example.com", "bob@external.com", "Subject: x\r\n\r\nx\r\n")
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.identity != "alice@example.com" {
+		t.Errorf("relay authzid = %q, want the session's alice@example.com", rec.identity)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-sasl"
@@ -39,10 +40,10 @@ type capabilities struct {
 	hasXCLIENT  bool
 }
 
-// Send forwards a message to the upstream MTA.
-// clientIP is the originating MUA address; used for XCLIENT when Trusted=true.
+// Send forwards a message to the upstream MTA. clientIP feeds XCLIENT when
+// Trusted; login is the session's user, which %u in the relay user names.
 // Transport errors → 451 4.4.0. SMTP-level rejections are passed through as-is.
-func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP net.IP) error {
+func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP net.IP, login string) error {
 	if s.cfg.Host == "" {
 		return &goSmtp.SMTPError{
 			Code:         451,
@@ -85,10 +86,10 @@ func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP 
 		}
 	}
 
-	if s.cfg.User != "" {
-		auth := sasl.NewPlainClient("", s.cfg.User, s.cfg.Password)
+	if authcid, authzid := s.relayAuth(login); authcid != "" {
+		auth := sasl.NewPlainClient(authzid, authcid, s.cfg.Password)
 		if err := c.Auth(auth); err != nil {
-			slog.Error("submission/proxy: auth failed", "user", s.cfg.User, "err", err)
+			slog.Error("submission/proxy: auth failed", "user", authcid, "for", authzid, "err", err)
 			return &goSmtp.SMTPError{
 				Code:         451,
 				EnhancedCode: goSmtp.EnhancedCode{4, 7, 0},
@@ -178,4 +179,14 @@ func (s *Submission) connectTimeout() time.Duration {
 
 func (s *Submission) commandTimeout() time.Duration {
 	return time.Duration(s.cfg.CommandTimeout) * time.Second
+}
+
+// relayAuth is the PLAIN identity the relay is given: the relay user, or with a
+// master user that master acting for the relay user, as the reference does.
+func (s *Submission) relayAuth(login string) (authcid, authzid string) {
+	user := strings.NewReplacer("%{user}", login, "%u", login).Replace(s.cfg.User)
+	if s.cfg.MasterUser != "" {
+		return s.cfg.MasterUser, user
+	}
+	return user, ""
 }

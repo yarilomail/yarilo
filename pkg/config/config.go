@@ -731,9 +731,11 @@ type SubmissionProtocolConfig struct {
 // RelayConfig holds SMTP relay settings (submission_relay_* knobs).
 // Host must be non-empty to enable relaying; otherwise submission returns 451.
 type RelayConfig struct {
-	Host           string `koanf:"submission_relay_host"`
-	Port           int    `koanf:"submission_relay_port"` // default 25
-	User           string `koanf:"submission_relay_user"`
+	Host string `koanf:"submission_relay_host"`
+	Port int    `koanf:"submission_relay_port"` // default 25
+	User string `koanf:"submission_relay_user"` // %u is the session's user
+	// MasterUser, when set, authenticates as this user acting for User.
+	MasterUser     string `koanf:"submission_relay_master_user"`
 	Password       string `koanf:"submission_relay_password"`        // supports ${ENV_VAR}
 	SSL            string `koanf:"submission_relay_ssl"`             // no | smtps | starttls
 	SSLVerify      bool   `koanf:"submission_relay_ssl_verify"`      // default true
@@ -3575,7 +3577,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 12
+const minConfigSchema = 13
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3598,6 +3600,7 @@ var schemaAdditions = map[int][]string{
 	10: {"oauth2_jwks_unknown_kid_interval_seconds"},
 	11: {"sieve_max_num_scripts"},
 	12: {"sieve_max_storage"},
+	13: {"submission_relay_master_user"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
