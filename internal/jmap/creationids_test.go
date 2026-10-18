@@ -10,6 +10,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/fts/language"
 	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
 
 // idEnv is one server with a stored message, a relay and a script store.
@@ -27,6 +28,7 @@ func newIDEnv(t *testing.T) idEnv {
 	s, emailID, _ := submissionServer(t, draftHeaders+"\r\nb\r\n", relay, Submission{})
 	s.opts.Sieve = &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil), MaxRedirects: 32, Implementation: "yarilo test"}
 	s.opts.Limits.Sieve = s.opts.Sieve.session()
+	s.opts.Sieve.Vacation, s.opts.Limits.Vacation = true, &jmapcore.VacationCapability{}
 	s.opts.Limits.MaxSizeUpload = 4096
 	s.opts.UploadTTL = time.Hour
 	return idEnv{s: s, inbox: inboxID(t, s), emailID: emailID, relay: relay, blob: uploadAs(t, s, testUser, keepScript)}
@@ -156,6 +158,8 @@ var idArguments = map[string][]string{
 	"SieveScript/get":       {"ids"},
 	"SieveScript/set":       {"update", "destroy", "onSuccessActivateScript"},
 	"Quota/get":             {"ids"},
+	"VacationResponse/get":  {"ids"},
+	"VacationResponse/set":  {"update", "destroy"},
 }
 
 // noIDArguments names the methods that take no such id, and why.
@@ -361,6 +365,18 @@ func idRows() []idRow {
 			r := e.batch(t, e.script("v"), fmt.Sprintf(`"SieveScript/set",{"accountId":%q,"onSuccessActivateScript":"#v"},"a"`, testUser),
 				fmt.Sprintf(`"SieveScript/get",{"accountId":%q,"ids":["#v"],"properties":["isActive"]},"g"`, testUser))
 			return want(slices.Equal(listIDs(r["g"], "isActive"), []string{"true"}), "after activation %v (set %v)", r["g"].args, r["a"].args)
+		}},
+		{"VacationResponse/get", "ids", func(t *testing.T, e idEnv) error {
+			r := e.batchWith(t, `{"v":"singleton"}`, fmt.Sprintf(`"VacationResponse/get",{"accountId":%q,"ids":["#v"]},"g"`, testUser))
+			return want(slices.Equal(listIDs(r["g"], "id"), []string{"singleton"}), "VacationResponse/get = %v", r["g"].args)
+		}},
+		{"VacationResponse/set", "update", func(t *testing.T, e idEnv) error {
+			r := e.batchWith(t, `{"v":"singleton"}`, fmt.Sprintf(`"VacationResponse/set",{"accountId":%q,"update":{"#v":{"subject":"x"}}},"u"`, testUser))
+			return want(slices.Equal(keys(r["u"].args["updated"]), []string{"singleton"}), "VacationResponse/set = %v", r["u"].args)
+		}},
+		{"VacationResponse/set", "destroy", func(t *testing.T, e idEnv) error {
+			r := e.batchWith(t, `{"v":"singleton"}`, fmt.Sprintf(`"VacationResponse/set",{"accountId":%q,"destroy":["#v"]},"x"`, testUser))
+			return want(entry(r["x"].args, "notDestroyed", "singleton")["type"] == "singleton", "VacationResponse/set = %v", r["x"].args)
 		}},
 		{"Quota/get", "ids", func(t *testing.T, e idEnv) error {
 			r := e.batchWith(t, `{"q":"Qnone"}`, fmt.Sprintf(`"Quota/get",{"accountId":%q,"ids":["#q"]},"g"`, testUser))

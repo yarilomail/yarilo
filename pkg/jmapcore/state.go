@@ -25,7 +25,7 @@ func SessionState(lim Limits) string {
 		b.WriteByte(';')
 	}
 	b.WriteString(lim.BaseURL)
-	for _, extra := range []any{lim.Sieve, lim.Submission} {
+	for _, extra := range []any{lim.Sieve, lim.Submission, lim.Vacation} {
 		if raw, _ := json.Marshal(extra); string(raw) != "null" {
 			b.WriteByte(';')
 			b.Write(raw)

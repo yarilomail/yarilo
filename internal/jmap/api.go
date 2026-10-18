@@ -22,6 +22,9 @@ func declaredCapabilities(lim jmapcore.Limits) []string {
 	if lim.Submission != nil {
 		caps = append(caps, jmapcore.CapSubmission)
 	}
+	if lim.Vacation != nil {
+		caps = append(caps, jmapcore.CapVacation)
+	}
 	return caps
 }
 
@@ -40,6 +43,11 @@ func (s *Server) registry(lazy *lazyStore, accountID string) jmapcore.Registry {
 		if s.opts.Sieve != nil {
 			for name, entry := range s.sieveRegistry(lazy, accountID) {
 				reg[name] = entry
+			}
+			if s.opts.Sieve.Vacation {
+				for name, entry := range s.vacationRegistry(lazy, accountID) {
+					reg[name] = entry
+				}
 			}
 		}
 		if s.opts.Submission != nil {

@@ -93,6 +93,9 @@ func New(opts Options) *Server {
 	}
 	if opts.Sieve != nil {
 		opts.Limits.Sieve = opts.Sieve.session()
+		if opts.Sieve.Vacation {
+			opts.Limits.Vacation = &jmapcore.VacationCapability{}
+		}
 	}
 	if opts.Submission != nil {
 		opts.Limits.Submission = opts.Submission.capability()

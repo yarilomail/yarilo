@@ -186,3 +186,22 @@ func TestSessionCarriesSubmission(t *testing.T) {
 		t.Error("the session state did not move with the submission capability")
 	}
 }
+
+func TestSessionCarriesVacation(t *testing.T) {
+	lim := testLimits()
+	plain := SessionState(lim)
+	if _, ok := BuildSession(lim, "u1@example.com").Capabilities[CapVacation]; ok {
+		t.Error("vacation advertised without it")
+	}
+	lim.Vacation = &VacationCapability{}
+	sess := BuildSession(lim, "u1@example.com")
+	if _, ok := sess.Capabilities[CapVacation]; !ok {
+		t.Error("no session-level vacation capability")
+	}
+	if _, ok := sess.Accounts["u1@example.com"].AccountCapabilities[CapVacation]; !ok || sess.PrimaryAccounts[CapVacation] != "u1@example.com" {
+		t.Errorf("account capability or primary account missing: %+v", sess)
+	}
+	if sess.State == plain {
+		t.Error("the session state did not move with the vacation capability")
+	}
+}

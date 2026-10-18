@@ -50,7 +50,7 @@ func twoAccountServer(t *testing.T) (*Server, string) {
 			},
 			Locker: locker,
 		},
-		Sieve:      &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil)},
+		Sieve:      &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil), Vacation: true},
 		Submission: &Submission{Sender: boundaryRelay, TTL: time.Hour},
 	})
 	if err := s.opts.Sieve.Store.SaveScript(context.Background(), foreignUser, infos[foreignUser].Home, "theirs", []byte("keep;\n")); err != nil {
@@ -228,6 +228,25 @@ var boundaryRows = []struct {
 			}
 			if n := len(boundaryRelay.all()); n != 0 {
 				t.Errorf("the other account's message reached the relay (%d sends)", n)
+			}
+		}},
+	{"VacationResponse/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","update":{"singleton":{"isEnabled":true}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"VacationResponse/set", kindEmptyAccount, `{"update":{"singleton":{"isEnabled":true}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	// "singleton" is each account's own: enabling ours leaves theirs as it was.
+	{"VacationResponse/set", kindForeignObject, `{"accountId":"` + testUser + `","update":{"singleton":{"isEnabled":true}}}`,
+		func(t *testing.T, s *Server, _, name string, out map[string]any) {
+			if name != "VacationResponse/set" || entry(out, "notUpdated", "singleton") != nil {
+				t.Errorf("answered %s %v, want our singleton updated", name, out)
+			}
+			_, got := callAs(t, s, foreignUser, "SieveScript/get", `{"accountId":"`+foreignUser+`","ids":null,"properties":["name"]}`)
+			if fmt.Sprint(got["list"]) != "[map[id:S1 name:theirs]]" {
+				t.Errorf("the other account's scripts changed: %v", got["list"])
 			}
 		}},
 	{"Identity/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["FOREIGNIDENTITY"]}`,

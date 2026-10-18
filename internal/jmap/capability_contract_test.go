@@ -16,13 +16,17 @@ import (
 //
 // Checked in both directions, because each catches the other's blind spot.
 func TestAdvertisedCapabilitiesAndImplementedMethodsAgree(t *testing.T) {
-	for _, wired := range []string{"core and mail", "sieve", "submission"} {
+	for _, wired := range []string{"core and mail", "sieve", "vacation", "submission"} {
 		t.Run(wired, func(t *testing.T) {
 			s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
 			switch wired {
 			case "sieve":
 				s.opts.Sieve = &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil)}
 				s.opts.Limits.Sieve = s.opts.Sieve.session()
+			case "vacation":
+				s.opts.Sieve = &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil), Vacation: true}
+				s.opts.Limits.Sieve = s.opts.Sieve.session()
+				s.opts.Limits.Vacation = &jmapcore.VacationCapability{}
 			case "submission":
 				s.opts.Submission = &Submission{Sender: &fakeRelay{}}
 				s.opts.Limits.Submission = s.opts.Submission.capability()
