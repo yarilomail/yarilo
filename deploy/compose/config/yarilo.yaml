@@ -230,6 +230,7 @@ sieve:
     - vnd.yarilo.report
     - environment
     - vnd.yarilo.environment
+  sieve_global_extensions: []
   imapsieve_enabled: true
   imapsieve_script_dir: "/etc/yarilo/imapsieve"
   sieve_pipe_bin_dir: "/usr/lib/yarilo/sieve-pipe"

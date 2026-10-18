@@ -153,6 +153,23 @@ func TestSieveGlobalReachesTheConfig(t *testing.T) {
 	}
 }
 
+// sieve_global_extensions reaches the config as written, and its default is
+// none (#2290).
+func TestSieveGlobalExtensionsReachTheConfig(t *testing.T) {
+	for _, c := range []struct{ extra, want string }{
+		{"", "[]"},
+		{"sieve:\n  sieve_global_extensions: [vnd.yarilo.pipe, vnd.yarilo.execute]\n", "[vnd.yarilo.pipe vnd.yarilo.execute]"},
+	} {
+		out, err := renderWith(t, c.extra)
+		if err != nil {
+			t.Fatalf("helm template: %v\n%s", err, out)
+		}
+		if got := fmt.Sprint(loadRendered(t, out).Sieve.GlobalExtensions); got != c.want {
+			t.Errorf("sieve_global_extensions = %s, want %s", got, c.want)
+		}
+	}
+}
+
 // The SQL pool settings of a passdb entry reach the config.
 func TestPassdbPoolSettingsReachTheConfig(t *testing.T) {
 	out, err := renderWith(t, `

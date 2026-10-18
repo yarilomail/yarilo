@@ -2,15 +2,18 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"reflect"
 	"testing"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/pkg/config"
 )
 
-// The sieve section's limits reach the ManageSieve server.
+// The sieve section's limits, and the user's extension set, reach the
+// ManageSieve server.
 func TestManageSieveTakesTheSieveLimits(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.MaildirRoot = t.TempDir()
@@ -24,6 +27,7 @@ func TestManageSieveTakesTheSieveLimits(t *testing.T) {
 	cfg.AuthService.Addr = ln.Addr().String()
 	cfg.Services.ManageSieveBE = &config.ServiceConfig{Enabled: true}
 	cfg.Sieve.MaxScriptSize, cfg.Sieve.MaxScripts, cfg.Sieve.MaxStorage = 100, 3, 500
+	cfg.Sieve.SieveExtensions, cfg.Sieve.GlobalExtensions = []string{"fileinto"}, []string{"vnd.yarilo.pipe"}
 
 	s, err := New(cfg)
 	if err != nil {
@@ -42,5 +46,9 @@ func TestManageSieveTakesTheSieveLimits(t *testing.T) {
 	}
 	if got := opts.FieldByName("MaxScriptSize").Int(); got != 100 {
 		t.Errorf("ManageSieve MaxScriptSize = %d, want sieve_max_script_size 100", got)
+	}
+	want := sieve.ExtensionSet{List: []string{"fileinto"}, Deny: []string{"vnd.yarilo.pipe"}}
+	if got := fmt.Sprint(opts.FieldByName("SieveExtensions")); got != fmt.Sprint(want) {
+		t.Errorf("ManageSieve SieveExtensions = %+v, want the user's set %+v", got, want)
 	}
 }

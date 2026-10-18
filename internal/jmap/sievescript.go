@@ -27,8 +27,8 @@ type SieveScripts struct {
 	Store *sieve.IndexedStore
 	// Quota is sieve_max_script_size, sieve_max_num_scripts, sieve_max_storage.
 	Quota sieve.Quota
-	// Extensions is sieve_extensions; empty allows every supported one.
-	Extensions   []string
+	// Extensions is what a user's script may use (sieve.UserExtensions).
+	Extensions   sieve.ExtensionSet
 	MaxRedirects int
 	// Implementation is the session capability's "implementation".
 	Implementation string

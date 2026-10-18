@@ -7,6 +7,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/yarilomail/yarilo/internal/sieve"
 )
 
 // PUTSCRIPT and CHECKSCRIPT under sieve_extensions [ihave]: require "ihave" opens
@@ -27,7 +29,7 @@ func TestUploadIhaveHoldsToSieveExtensions(t *testing.T) {
 		client, server := net.Pipe()
 		sess := &session{conn: server, r: bufio.NewReader(server), w: bufio.NewWriter(server),
 			username: "u1@example.com", homeDir: t.TempDir(), store: newTestStore(),
-			maxSize: 65536, maxLine: 65536, allowedExtensions: []string{"ihave"}}
+			maxSize: 65536, maxLine: 65536, allowedExtensions: sieve.ExtensionSet{List: []string{"ihave"}}}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		go sess.serve(ctx)
 		tc := &testClient{t: t, conn: client, r: bufio.NewReader(client)}

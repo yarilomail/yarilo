@@ -167,6 +167,9 @@ type SieveConfig struct {
 	// SieveExtensions whitelists the extensions users may require.
 	// Empty = allow all; non-empty = enforced at PUTSCRIPT and delivery time.
 	SieveExtensions []string `koanf:"sieve_extensions"`
+	// GlobalExtensions are the extensions only the administrator's scripts may
+	// use, on top of sieve_extensions; users' scripts never get them (#2290).
+	GlobalExtensions []string `koanf:"sieve_global_extensions"`
 
 	// ScriptsDriver selects the script storage backend: "fs" (default) stores
 	// scripts as files in the user's home directory; "redis" uses the dict
@@ -3609,7 +3612,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 16
+const minConfigSchema = 17
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3638,6 +3641,7 @@ var schemaAdditions = map[int][]string{
 		"sieve_vacation_default_subject", "sieve_vacation_default_subject_template", "sieve_vacation_use_original_recipient",
 		"sieve_vacation_check_recipient", "sieve_vacation_send_from_recipient", "sieve_vacation_to_header_ignore_envelope"},
 	16: {"sieve_global"},
+	17: {"sieve_global_extensions"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

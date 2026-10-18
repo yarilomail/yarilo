@@ -20,7 +20,7 @@ func sieveServer(t *testing.T, q sieve.Quota, exts ...string) (*Server, string, 
 	t.Helper()
 	s, _, home := storedServerWithMessageAt(t, "Subject: seed\r\n\r\nseed\r\n", 0)
 	st := sieve.NewScriptStore("fs", "", nil, nil)
-	s.opts.Sieve = &SieveScripts{Store: st, Quota: q, Extensions: exts, MaxRedirects: 32, Implementation: "yarilo test"}
+	s.opts.Sieve = &SieveScripts{Store: st, Quota: q, Extensions: sieve.ExtensionSet{List: exts}, MaxRedirects: 32, Implementation: "yarilo test"}
 	s.opts.Limits.Sieve = s.opts.Sieve.session()
 	s.opts.Limits.MaxSizeUpload = 4096
 	s.opts.UploadTTL = time.Hour
@@ -337,6 +337,20 @@ func TestSieveScriptValidateIhaveHoldsToSieveExtensions(t *testing.T) {
 		if (c.want == nil && out["error"] != nil) || (c.want != nil && e["type"] != c.want) {
 			t.Errorf("validate %q = %v, want %v", c.script, out["error"], c.want)
 		}
+	}
+}
+
+// A global-only extension is left out of sieveExtensions and refused at
+// validate for a user's script (#2290).
+func TestSieveScriptLeavesGlobalExtensionsOut(t *testing.T) {
+	s, _, _ := sieveServer(t, sieve.Quota{})
+	s.opts.Sieve.Extensions = sieve.ExtensionSet{List: []string{"fileinto", "envelope"}, Deny: []string{"fileinto"}}
+	if got := fmt.Sprint(s.opts.Sieve.session().Account.SieveExtensions); got != "[envelope]" {
+		t.Errorf("sieveExtensions = %s, want [envelope]", got)
+	}
+	out := sieveCall(t, s, "SieveScript/validate", `{"accountId":"`+testUser+`","blobId":"`+uploadAs(t, s, testUser, `require "fileinto"; fileinto "X";`)+`"}`)
+	if e, _ := out["error"].(map[string]any); e["type"] != "invalidSieve" {
+		t.Errorf("validate = %v, want invalidSieve", out["error"])
 	}
 }
 

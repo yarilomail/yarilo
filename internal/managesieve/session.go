@@ -32,7 +32,7 @@ type session struct {
 	maxStorage        int
 	maxLine           int64
 	closing           bool
-	allowedExtensions []string
+	allowedExtensions sieve.ExtensionSet
 	// sid is the warden session correlation ID from the login-proxy preamble
 	// (loginproto.PreambleConn.SessionID) — included on every command
 	// dispatch and error line so a session's activity greps as one thread.
