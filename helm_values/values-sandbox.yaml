@@ -222,6 +222,7 @@ sieve:
   ## redis: the duplicate test dedups across both backend pods (dict sieve_duplicate).
   sieve_duplicate_driver: redis
   sieve_vacation_enabled: true
+  sieve_vacation_use_original_recipient: true
   sieve_submission_host: "relay-fwd.yarilo-relay.svc.cluster.local:25"
   sieve_submission_ssl: "no"
   sieve_submission_auth_secret: "sieve-smtp-auth"
