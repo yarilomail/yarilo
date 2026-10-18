@@ -46,6 +46,16 @@ func TestTheConfigMapRendersTheSchema(t *testing.T) {
 	}
 }
 
+// Every schema step names what it added, or a chart one step behind is warned
+// about nothing.
+func TestEverySchemaStepNamesItsSettings(t *testing.T) {
+	for v := 1; v <= minConfigSchema; v++ {
+		if len(schemaAdditions[v]) == 0 {
+			t.Errorf("schemaAdditions has no entry for schema %d", v)
+		}
+	}
+}
+
 // Every version in the additions table has to be one the binary could ask for.
 // An entry above minConfigSchema names settings for a schema nothing requires,
 // which is a bump somebody forgot.

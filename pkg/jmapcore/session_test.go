@@ -152,3 +152,56 @@ func TestSessionStateTracksLimits(t *testing.T) {
 		t.Error("state did not change with the base URL")
 	}
 }
+
+// The session state moves with the advertised Sieve capability.
+func TestSessionStateCarriesSieve(t *testing.T) {
+	lim := testLimits()
+	plain := SessionState(lim)
+	lim.Sieve = &SieveSession{Implementation: "x", Account: SieveCapability{MaxSizeScriptName: 512}}
+	with := SessionState(lim)
+	lim.Sieve.Account.MaxSizeScriptName = 1024
+	changed := SessionState(lim)
+	if plain == with || with == changed {
+		t.Errorf("states %s, %s, %s: want each to differ", plain, with, changed)
+	}
+}
+
+// Submission is advertised at the session and the account, with its own
+// primary account, and moves the session state.
+func TestSessionCarriesSubmission(t *testing.T) {
+	lim := testLimits()
+	plain := SessionState(lim)
+	lim.Submission = &SubmissionCapability{SubmissionExtensions: map[string][]string{"SIZE": {"100"}}}
+	sess := BuildSession(lim, "u1@example.com")
+	if _, ok := sess.Capabilities[CapSubmission]; !ok {
+		t.Error("no session-level submission capability")
+	}
+	if got := sess.Accounts["u1@example.com"].AccountCapabilities[CapSubmission]; got != lim.Submission {
+		t.Errorf("account capability = %v", got)
+	}
+	if sess.PrimaryAccounts[CapSubmission] != "u1@example.com" {
+		t.Errorf("primary account = %q", sess.PrimaryAccounts[CapSubmission])
+	}
+	if sess.State == plain {
+		t.Error("the session state did not move with the submission capability")
+	}
+}
+
+func TestSessionCarriesVacation(t *testing.T) {
+	lim := testLimits()
+	plain := SessionState(lim)
+	if _, ok := BuildSession(lim, "u1@example.com").Capabilities[CapVacation]; ok {
+		t.Error("vacation advertised without it")
+	}
+	lim.Vacation = &VacationCapability{}
+	sess := BuildSession(lim, "u1@example.com")
+	if _, ok := sess.Capabilities[CapVacation]; !ok {
+		t.Error("no session-level vacation capability")
+	}
+	if _, ok := sess.Accounts["u1@example.com"].AccountCapabilities[CapVacation]; !ok || sess.PrimaryAccounts[CapVacation] != "u1@example.com" {
+		t.Errorf("account capability or primary account missing: %+v", sess)
+	}
+	if sess.State == plain {
+		t.Error("the session state did not move with the vacation capability")
+	}
+}

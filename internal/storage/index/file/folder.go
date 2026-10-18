@@ -239,7 +239,7 @@ func (u *userIndex) loadOrInitMissing(fs *folderState, uidValidity uint32) error
 			if fs.intent == intentCreate {
 				// A folder being created has no past: nothing of theirs to
 				// adopt into a name somebody just asked for.
-				return fs.createFresh(u.newFolderUIDValidity(fs.folder, uidValidity))
+				return fs.createFresh(u.newFolderUIDValidity(fs.folder, uidValidity), u.newFolderGUID())
 			}
 			switch converted, cerr := u.convertForeignFolder(fs); {
 			case cerr != nil:
@@ -250,7 +250,7 @@ func (u *userIndex) loadOrInitMissing(fs *folderState, uidValidity uint32) error
 			if err := u.refuseIfIndexLost(fs); err != nil {
 				return err
 			}
-			return fs.createFresh(u.identityFor(fs.folder, uidValidity))
+			return fs.createFresh(u.identityFor(fs.folder, uidValidity), u.newFolderGUID())
 		case err != nil:
 			return fmt.Errorf("fileindex/openfolder: stat (locked recheck): %w", err)
 		}
@@ -372,7 +372,7 @@ func (u *userIndex) loadModern(fs *folderState) error {
 
 // createFresh initialises a brand-new folder state, used for first-ever
 // OpenFolder and as the fallback after a corrupt file is moved aside.
-func (fs *folderState) createFresh(uidValidity uint32) error {
+func (fs *folderState) createFresh(uidValidity uint32, guid [16]byte) error {
 	// This resets NextUID to 1; log the caller so an unexpected reset of an
 	// established folder can be traced.
 	if pc, _, _, ok := runtime.Caller(1); ok {
@@ -388,7 +388,6 @@ func (fs *folderState) createFresh(uidValidity uint32) error {
 		uidValidity = uint32(time.Now().Unix())
 	}
 	indexID := uint32(time.Now().Unix())
-	guid := generateGUID()
 	exts := defaultExtensions(uidValidity, guid)
 	mf, err := mailindex.NewFile(indexID, exts)
 	if err != nil {

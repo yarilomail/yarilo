@@ -4,6 +4,9 @@ package ftsbench
 
 import (
 	"testing"
+
+	"github.com/yarilomail/yarilo/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // indexRatioCap bounds on-disk index size as a multiple of the corpus
@@ -88,9 +91,38 @@ func TestCopiesZeroChangesNothing(t *testing.T) {
 		t.Errorf("with the knob at zero the run indexed %d messages (%d hits), without it %d (%d)",
 			zero.Corpus, zero.Hits, plain.Corpus, plain.Hits)
 	}
-	// Bytes, within one glass block: where the last commit falls decides a
-	// single 8K block, and that is not the knob doing anything.
-	if diff := zero.IndexBytes - plain.IndexBytes; diff > 8192 || diff < -8192 {
+	if zero.IndexBytes != plain.IndexBytes {
 		t.Errorf("with the knob at zero the index is %d bytes, without it %d", zero.IndexBytes, plain.IndexBytes)
+	}
+}
+
+// The run indexes fixed GUIDs, the folder's and every message's: they are terms
+// of every document, and random ones sized the index differently each run (#2279).
+func TestTheRunIndexesFixedGUIDs(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Run(Config{Root: root, Corpus: 20, HitEvery: 10, Iterations: 1}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := (&mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}).UserInfo(benchUser, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ui := file.New(file.WithNoCreate()).OpenUser(info)
+	defer ui.Close() //nolint:errcheck
+	f, err := ui.OpenFolder(benchMbox.Name, benchMbox.UIDValidity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.GUID != benchGUID(0xf0000001) {
+		t.Errorf("folder GUID %x, want the first fixed one", f.GUID)
+	}
+	msgs, err := ui.GetMessages(f.ID, nil)
+	if err != nil || len(msgs) != 20 {
+		t.Fatalf("%d messages, %v", len(msgs), err)
+	}
+	for _, m := range msgs {
+		if m.GUID != benchGUID(m.UID) {
+			t.Errorf("uid %d GUID %x, want the one made from its uid", m.UID, m.GUID)
+		}
 	}
 }

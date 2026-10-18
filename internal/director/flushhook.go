@@ -14,6 +14,9 @@ import (
 // it only matters for a descendant the group kill could not reach.
 const flushWaitDelay = 2 * time.Second
 
+// flushSince reads time since the kill mark; a test stands in a stepped clock.
+var flushSince = time.Since
+
 // flushProgramTimeout is the operator's bound, or the default when unset.
 func (s *Server) flushProgramTimeout() time.Duration { return s.opts.FlushProgramTimeout }
 
@@ -79,9 +82,10 @@ func execFlushProgram(prog string, bound time.Duration, args ...string) (out []b
 	// long as the grandchild ran: the bound measured nothing, and the
 	// grandchild outlived it either way (#1368).
 	isolateProcessGroup(cmd)
-	var killedAt atomic.Int64
+	var killedAt atomic.Pointer[time.Time]
 	cmd.Cancel = func() error {
-		killedAt.Store(time.Now().UnixNano())
+		now := time.Now()
+		killedAt.Store(&now)
 		return killProcessTree(cmd)
 	}
 	cmd.WaitDelay = flushWaitDelay
@@ -95,7 +99,9 @@ func execFlushProgram(prog string, bound time.Duration, args ...string) (out []b
 	// start -- the question is how long the pipes stayed open AFTER the tree was
 	// signalled, and a bound longer than the delay would otherwise mark every
 	// timeout as an escape.
+	// The mark keeps its monotonic reading: the delay's timer starts after it, so
+	// a wall-clock step cannot pull a real escape under the delay (#2293).
 	killed := killedAt.Load()
-	escaped = killed != 0 && time.Since(time.Unix(0, killed)) >= flushWaitDelay
+	escaped = killed != nil && flushSince(*killed) >= flushWaitDelay
 	return out, true, escaped, err
 }

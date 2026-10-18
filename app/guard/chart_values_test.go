@@ -95,6 +95,81 @@ namespaces:
 	}
 }
 
+// The vacation keys reach the config as written: an explicit false or 0 is
+// not replaced by the chart (#2277).
+func TestVacationKeysReachTheConfig(t *testing.T) {
+	out, err := renderWith(t, `
+sieve:
+  sieve_vacation_enabled: false
+  sieve_vacation_min_period: 0
+  sieve_vacation_max_period: 0
+  sieve_vacation_default_period: 0
+  sieve_vacation_default_subject: "Away"
+  sieve_vacation_default_subject_template: "Re: %{subject}"
+  sieve_vacation_use_original_recipient: true
+  sieve_vacation_check_recipient: false
+  sieve_vacation_send_from_recipient: true
+  sieve_vacation_to_header_ignore_envelope: true
+`)
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	v := loadRendered(t, out).Sieve
+	checks := []struct {
+		name      string
+		got, want any
+	}{
+		{"sieve_vacation_enabled", v.VacationEnabled, false},
+		{"sieve_vacation_min_period", v.VacationMinPeriod, 0},
+		{"sieve_vacation_max_period", v.VacationMaxPeriod, 0},
+		{"sieve_vacation_default_period", v.VacationDefaultPeriod, 0},
+		{"sieve_vacation_default_subject", v.VacationDefaultSubject, "Away"},
+		{"sieve_vacation_default_subject_template", v.VacationDefaultSubjectTemplate, "Re: %{subject}"},
+		{"sieve_vacation_use_original_recipient", v.VacationUseOriginalRecipient, true},
+		{"sieve_vacation_check_recipient", v.VacationCheckRecipient, false},
+		{"sieve_vacation_send_from_recipient", v.VacationSendFromRecipient, true},
+		{"sieve_vacation_to_header_ignore_envelope", v.VacationToHeaderIgnoreEnvelope, true},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
+		}
+	}
+}
+
+// sieve_global reaches the config as written, and its default is none (#2283).
+func TestSieveGlobalReachesTheConfig(t *testing.T) {
+	for _, c := range []struct{ extra, want string }{
+		{"", ""},
+		{"sieve:\n  sieve_global: \"/etc/yarilo/sieve-global\"\n", "/etc/yarilo/sieve-global"},
+	} {
+		out, err := renderWith(t, c.extra)
+		if err != nil {
+			t.Fatalf("helm template: %v\n%s", err, out)
+		}
+		if got := loadRendered(t, out).Sieve.Global; got != c.want {
+			t.Errorf("sieve_global = %q, want %q", got, c.want)
+		}
+	}
+}
+
+// sieve_global_extensions reaches the config as written, and its default is
+// none (#2290).
+func TestSieveGlobalExtensionsReachTheConfig(t *testing.T) {
+	for _, c := range []struct{ extra, want string }{
+		{"", "[]"},
+		{"sieve:\n  sieve_global_extensions: [vnd.yarilo.pipe, vnd.yarilo.execute]\n", "[vnd.yarilo.pipe vnd.yarilo.execute]"},
+	} {
+		out, err := renderWith(t, c.extra)
+		if err != nil {
+			t.Fatalf("helm template: %v\n%s", err, out)
+		}
+		if got := fmt.Sprint(loadRendered(t, out).Sieve.GlobalExtensions); got != c.want {
+			t.Errorf("sieve_global_extensions = %s, want %s", got, c.want)
+		}
+	}
+}
+
 // The SQL pool settings of a passdb entry reach the config.
 func TestPassdbPoolSettingsReachTheConfig(t *testing.T) {
 	out, err := renderWith(t, `

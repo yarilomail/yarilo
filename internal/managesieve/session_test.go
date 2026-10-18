@@ -51,16 +51,23 @@ func newTestStore() *sieve.FsScriptStore {
 
 func runSession(t *testing.T, store *sieve.FsScriptStore, homeDir string) *testClient {
 	t.Helper()
+	return runSessionLimits(t, store, homeDir, 65536, 0, 0)
+}
+
+func runSessionLimits(t *testing.T, store *sieve.FsScriptStore, homeDir string, maxSize, maxScripts, maxStorage int) *testClient {
+	t.Helper()
 	client, server := net.Pipe()
 	sess := &session{
-		conn:     server,
-		r:        bufio.NewReader(server),
-		w:        bufio.NewWriter(server),
-		username: "u1@example.com",
-		homeDir:  homeDir,
-		store:    store,
-		maxSize:  65536,
-		maxLine:  65536,
+		conn:       server,
+		r:          bufio.NewReader(server),
+		w:          bufio.NewWriter(server),
+		username:   "u1@example.com",
+		homeDir:    homeDir,
+		store:      store,
+		maxSize:    maxSize,
+		maxScripts: maxScripts,
+		maxStorage: maxStorage,
+		maxLine:    65536,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)

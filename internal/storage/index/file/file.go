@@ -119,6 +119,9 @@ type Backend struct {
 	// fabricated one reads as healthy and empty, hiding what the store held.
 	noCreate bool
 
+	// guidSource gives a new folder its GUID; nil draws a random one.
+	guidSource func() [16]byte
+
 	logCompactMinBytes int64
 	logCompactMaxBytes int64
 	logCompactMinAge   time.Duration
@@ -166,6 +169,12 @@ func WithFsync(m mailbox.FsyncMode) Option {
 // WithListUTF8 sets the on-disk name encoding; it must match the mailbox
 // backend's, or the two trees spell a folder differently (#1586).
 func WithListUTF8(v bool) Option { return func(b *Backend) { b.listUTF8 = v } }
+
+// WithGUIDSource gives each new folder the GUID fn returns instead of a random
+// one, for a run that must index the same bytes every time (#2279).
+func WithGUIDSource(fn func() [16]byte) Option {
+	return func(b *Backend) { b.guidSource = fn }
+}
 
 // WithNoCreate refuses to initialise a missing folder index. Use it in any tool
 // that must observe a store rather than establish one.
@@ -1078,6 +1087,14 @@ func seqSetContains(s mailbox.SeqSet, uid uint32) bool {
 		}
 	}
 	return false
+}
+
+// newFolderGUID is the GUID a folder created now gets.
+func (u *userIndex) newFolderGUID() [16]byte {
+	if u.b.guidSource != nil {
+		return u.b.guidSource()
+	}
+	return generateGUID()
 }
 
 // generateGUID returns a fresh random 16-byte folder GUID.

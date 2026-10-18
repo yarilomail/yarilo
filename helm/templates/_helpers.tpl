@@ -383,6 +383,8 @@ Args: dict "root" $ "itls" <internalTLS config>.
   mountPath: {{ $root.Values.storage.maildir_root | default "/var/mail/vhosts" }}
 {{- end }}
 {{- include "yarilo.internalTLSMount" (dict "root" $root "itls" .itls "role" .role "vol" (printf "internal-tls-%s" .role)) }}
+{{- include "yarilo.sieveGlobalMount" (dict "root" $root "role" .role) }}
+{{- include "yarilo.imapsieveMount" (dict "root" $root "role" .role) }}
 {{- /* extraVolumes are rendered on the StatefulSet, so the matching mounts
        belong on every backend container. Without them a volume an operator
        added is present in the pod and mounted nowhere: a passwd-file passdb
@@ -708,3 +710,64 @@ names maps the yarilo name to the chart's; free maps (fields, settings) are neve
 {{- end -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+The relay password from its Secret, for every container that relays mail.
+*/}}
+{{- define "yarilo.relayPasswordEnv" -}}
+{{- with (.Values.protocol.submission.relay.password_secret_ref | default dict).name }}
+- name: YARILO_SUBMISSION_RELAY_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $.Values.protocol.submission.relay.password_secret_ref.key | default "password" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Global Sieve scripts (include :global, #2283): mounted where Sieve runs, the
+lmtp and imap containers. Pass the ROOT and the container's role.
+*/}}
+{{- define "yarilo.sieveGlobalOn" -}}
+{{- if and .Values.sieve.sieve_global_scripts .Values.sieve.sieve_global }}true{{ end -}}
+{{- end -}}
+
+{{- define "yarilo.sieveGlobalMount" -}}
+{{- if and (include "yarilo.sieveGlobalOn" .root) (has .role (list "lmtp" "imap")) }}
+- name: sieve-global
+  mountPath: {{ .root.Values.sieve.sieve_global | quote }}
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "yarilo.sieveGlobalVolume" -}}
+{{- if include "yarilo.sieveGlobalOn" . }}
+- name: sieve-global
+  configMap:
+    name: {{ include "yarilo.fullname" . }}-sieve-global
+{{- end }}
+{{- end -}}
+
+{{/*
+Admin imapsieve scripts: mounted in the imap container only (#2292). Pass the
+ROOT and the container's role.
+*/}}
+{{- define "yarilo.imapsieveOn" -}}
+{{- if and .Values.sieve.imapsieve_enabled .Values.sieve.imapsieve_scripts .Values.sieve.imapsieve_script_dir }}true{{ end -}}
+{{- end -}}
+
+{{- define "yarilo.imapsieveMount" -}}
+{{- if and (include "yarilo.imapsieveOn" .root) (eq .role "imap") }}
+- name: imapsieve-scripts
+  mountPath: {{ .root.Values.sieve.imapsieve_script_dir | quote }}
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "yarilo.imapsieveVolume" -}}
+{{- if include "yarilo.imapsieveOn" . }}
+- name: imapsieve-scripts
+  configMap:
+    name: {{ include "yarilo.fullname" . }}-imapsieve-scripts
+{{- end }}
+{{- end -}}

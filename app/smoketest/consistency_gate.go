@@ -129,6 +129,14 @@ func registerConsistency(checks *[]check) {
 	row("consistency managesieve script takes effect on the next delivery",
 		func() error { return checkConsistencySieve(imapUser, imapPass) },
 		sieve, imap, delivery)
+
+	row("consistency jmap SieveScript is managesieve's active script and takes effect",
+		func() error { return checkConsistencyJMAPSieve(imapUser, imapPass) },
+		jmap, sieve, imap, delivery)
+
+	row("consistency jmap VacationResponse is managesieve's active script and answers a delivery",
+		func() error { return checkConsistencyJMAPVacation(imapUser, imapPass) },
+		jmap, sieve, imap, delivery)
 }
 
 // consistencyAccount is the account every row reads through both surfaces.

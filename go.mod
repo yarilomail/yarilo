@@ -68,12 +68,12 @@ require (
 	rsc.io/binaryregexp v0.2.0 // indirect
 )
 
-replace github.com/foxcpp/go-sieve => github.com/0kaba0hub/go-sieve v0.0.0-20261011102629-05463194f223
+replace github.com/foxcpp/go-sieve => github.com/0kaba0hub/go-sieve v0.0.0-20261018182007-060cf390ce68
 
 replace github.com/emersion/go-imap/v2 => github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261015222939-e71f974ae303
 
 replace github.com/emersion/go-sasl => github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936
 
-replace github.com/emersion/go-smtp => github.com/0kaba0hub/go-smtp v0.0.0-20261011102647-92f8904ca8d4
+replace github.com/emersion/go-smtp => github.com/0kaba0hub/go-smtp v0.0.0-20261018014604-bd73853c5d5b
 
 replace git.sr.ht/~rockorager/go-jmap => github.com/0kaba0hub/go-jmap v0.0.0-20261015223003-0102c41ef1af

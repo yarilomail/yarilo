@@ -1,6 +1,7 @@
 package jmap
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -10,7 +11,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/yarilomail/yarilo/internal/sieve"
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -47,14 +50,19 @@ func twoAccountServer(t *testing.T) (*Server, string) {
 			},
 			Locker: locker,
 		},
+		Sieve:      &SieveScripts{Store: sieve.NewScriptStore("fs", "", nil, nil), Vacation: true},
+		Submission: &Submission{Sender: boundaryRelay, TTL: time.Hour},
 	})
+	if err := s.opts.Sieve.Store.SaveScript(context.Background(), foreignUser, infos[foreignUser].Home, "theirs", []byte("keep;\n")); err != nil {
+		t.Fatal(err)
+	}
 	return s, hex.EncodeToString(foreignGUID[:])
 }
 
 // callAs runs one method as user and returns the response name and arguments.
 func callAs(t *testing.T, s *Server, user, method, args string) (string, map[string]any) {
 	t.Helper()
-	using, _ := json.Marshal(declaredCapabilities())
+	using, _ := json.Marshal(declaredCapabilities(s.opts.Limits))
 	body := fmt.Sprintf(`{"using":%s,"methodCalls":[[%q,%s,"c0"]]}`, using, method, args)
 	r := apiRequest(body)
 	r.Header.Set(hdrUser, user)
@@ -182,6 +190,79 @@ var boundaryRows = []struct {
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "invalidArguments")
 		}},
+	{"SieveScript/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["S1"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"SieveScript/set", kindEmptyAccount, `{"destroy":["S1"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	// S1 is the other account's script; ids are per account.
+	{"SieveScript/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["S1"]}`,
+		func(t *testing.T, s *Server, _, name string, out map[string]any) {
+			notDestroyed, _ := out["notDestroyed"].(map[string]any)
+			setErr, _ := notDestroyed["S1"].(map[string]any)
+			if name != "SieveScript/set" || setErr["type"] != "notFound" {
+				t.Errorf("answered %s %v, want notDestroyed S1 notFound", name, out)
+			}
+			_, got := callAs(t, s, foreignUser, "SieveScript/get", `{"accountId":"`+foreignUser+`","ids":["S1"]}`)
+			if list, _ := got["list"].([]any); len(list) != 1 {
+				t.Errorf("the other account's script is gone: %v", got)
+			}
+		}},
+	{"EmailSubmission/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","create":{"c1":{"identityId":"x","emailId":"FOREIGN"}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"EmailSubmission/set", kindEmptyAccount, `{"create":{"c1":{"identityId":"x","emailId":"FOREIGN"}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	// FOREIGN is the other account's message: not found here, never sent.
+	{"EmailSubmission/set", kindForeignObject, `{"accountId":"` + testUser + `","create":{"c1":{"identityId":"IDENTITY","emailId":"FOREIGN"}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			e := entry(out, "notCreated", "c1")
+			if name != "EmailSubmission/set" || e["type"] != "invalidProperties" || !strings.Contains(fmt.Sprint(e["properties"]), "emailId") {
+				t.Errorf("answered %s %v, want notCreated c1 invalidProperties emailId", name, out)
+			}
+			if n := len(boundaryRelay.all()); n != 0 {
+				t.Errorf("the other account's message reached the relay (%d sends)", n)
+			}
+		}},
+	{"VacationResponse/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","update":{"singleton":{"isEnabled":true}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"VacationResponse/set", kindEmptyAccount, `{"update":{"singleton":{"isEnabled":true}}}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	// "singleton" is each account's own: enabling ours leaves theirs as it was.
+	{"VacationResponse/set", kindForeignObject, `{"accountId":"` + testUser + `","update":{"singleton":{"isEnabled":true}}}`,
+		func(t *testing.T, s *Server, _, name string, out map[string]any) {
+			if name != "VacationResponse/set" || entry(out, "notUpdated", "singleton") != nil {
+				t.Errorf("answered %s %v, want our singleton updated", name, out)
+			}
+			_, got := callAs(t, s, foreignUser, "SieveScript/get", `{"accountId":"`+foreignUser+`","ids":null,"properties":["name"]}`)
+			if fmt.Sprint(got["list"]) != "[map[id:S1 name:theirs]]" {
+				t.Errorf("the other account's scripts changed: %v", got["list"])
+			}
+		}},
+	{"Identity/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["FOREIGNIDENTITY"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "accountNotFound")
+		}},
+	{"Identity/set", kindEmptyAccount, `{"destroy":["FOREIGNIDENTITY"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			wantMethodError(t, name, out, "invalidArguments")
+		}},
+	{"Identity/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["FOREIGNIDENTITY"]}`,
+		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
+			if name != "Identity/set" || entry(out, "notDestroyed", identityID(foreignUser))["type"] != "forbidden" {
+				t.Errorf("answered %s %v, want notDestroyed forbidden", name, out)
+			}
+		}},
 	// Resolved globally, the other INBOX would answer forbidden, not notFound.
 	{"Mailbox/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["FOREIGNBOX"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
@@ -192,6 +273,10 @@ var boundaryRows = []struct {
 			}
 		}},
 }
+
+// boundaryRelay is the relay of the two-account server; a row that refuses
+// must leave it untouched.
+var boundaryRelay = &fakeRelay{}
 
 // foreignBoxID is set per row run to the other account's INBOX id.
 var foreignBoxID string
@@ -228,7 +313,8 @@ func TestMutatingMethodsKeepTheAccountBoundary(t *testing.T) {
 		t.Run(row.method+"/"+row.kind, func(t *testing.T) {
 			s, foreign := twoAccountServer(t)
 			foreignBoxID = inboxIDOf(t, s, foreignUser)
-			args := strings.NewReplacer("FOREIGNBOX", foreignBoxID, "FOREIGN", foreign, "INBOXID", inboxID(t, s)).Replace(row.args)
+			args := strings.NewReplacer("FOREIGNBOX", foreignBoxID, "FOREIGNIDENTITY", identityID(foreignUser),
+				"IDENTITY", identityID(testUser), "FOREIGN", foreign, "INBOXID", inboxID(t, s)).Replace(row.args)
 			name, out := callAs(t, s, testUser, row.method, args)
 			row.check(t, s, foreign, name, out)
 		})

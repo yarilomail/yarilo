@@ -86,6 +86,10 @@ type UserInfo struct {
 	// quota_over_status check reconciles against actual usage at login.
 	QuotaOverFlag string
 
+	// IdentityAliases are the userdb `identity_aliases`: the addresses besides
+	// the login the user sends as.
+	IdentityAliases []string
+
 	// SessionID is what this work announces in the lock owner: the proxy's
 	// session, a delivery's connection id, an admin request's. Read it through
 	// LockID, so a hand-built UserInfo cannot lock anonymously (#1670).

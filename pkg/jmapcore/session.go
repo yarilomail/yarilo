@@ -34,6 +34,12 @@ type Limits struct {
 	MaxCallsInRequest     int
 	MaxObjectsInGet       int
 	MaxObjectsInSet       int
+	// Sieve advertises RFC 9661; nil leaves it out.
+	Sieve *SieveSession
+	// Submission advertises Identity and EmailSubmission; nil leaves them out.
+	Submission *SubmissionCapability
+	// Vacation advertises VacationResponse; nil leaves it out.
+	Vacation *VacationCapability
 }
 
 // Session is the session resource of RFC 8620 §2. Field order follows the RFC
@@ -98,7 +104,7 @@ func BuildSession(lim Limits, username string) *Session {
 			CapQuota: map[string]any{},
 		},
 	}
-	return &Session{
+	sess := &Session{
 		Capabilities: map[string]any{
 			CapCore: CoreCapabilityFor(lim),
 			// Mail is advertised at the session level with an empty object;
@@ -117,6 +123,22 @@ func BuildSession(lim Limits, username string) *Session {
 		EventSourceURL:  base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
 		State:           SessionState(lim),
 	}
+	if lim.Submission != nil {
+		sess.Capabilities[CapSubmission] = map[string]any{}
+		account.AccountCapabilities[CapSubmission] = lim.Submission
+		sess.PrimaryAccounts[CapSubmission] = username
+	}
+	if lim.Vacation != nil {
+		sess.Capabilities[CapVacation] = map[string]any{}
+		account.AccountCapabilities[CapVacation] = lim.Vacation
+		sess.PrimaryAccounts[CapVacation] = username
+	}
+	if lim.Sieve != nil {
+		sess.Capabilities[CapSieve] = map[string]string{"implementation": lim.Sieve.Implementation}
+		account.AccountCapabilities[CapSieve] = lim.Sieve.Account
+		sess.PrimaryAccounts[CapSieve] = username
+	}
+	return sess
 }
 
 // CoreCapabilityFor renders the core capability from the advertised limits.

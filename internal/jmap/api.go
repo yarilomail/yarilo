@@ -14,8 +14,18 @@ const apiPath = "/jmap/api/"
 // declaredCapabilities is what this server implements. It is the set a client's
 // "using" is checked against, and it is passed to jmapcore rather than read
 // there.
-func declaredCapabilities() []string {
-	return []string{jmapcore.CapCore, jmapcore.CapMail, jmapcore.CapQuota}
+func declaredCapabilities(lim jmapcore.Limits) []string {
+	caps := []string{jmapcore.CapCore, jmapcore.CapMail, jmapcore.CapQuota}
+	if lim.Sieve != nil {
+		caps = append(caps, jmapcore.CapSieve)
+	}
+	if lim.Submission != nil {
+		caps = append(caps, jmapcore.CapSubmission)
+	}
+	if lim.Vacation != nil {
+		caps = append(caps, jmapcore.CapVacation)
+	}
+	return caps
 }
 
 // registry is the method set for one request. It is built per request because
@@ -29,6 +39,21 @@ func (s *Server) registry(lazy *lazyStore, accountID string) jmapcore.Registry {
 		}
 		for name, entry := range s.quotaRegistry(lazy, accountID) {
 			reg[name] = entry
+		}
+		if s.opts.Sieve != nil {
+			for name, entry := range s.sieveRegistry(lazy, accountID) {
+				reg[name] = entry
+			}
+			if s.opts.Sieve.Vacation {
+				for name, entry := range s.vacationRegistry(lazy, accountID) {
+					reg[name] = entry
+				}
+			}
+		}
+		if s.opts.Submission != nil {
+			for name, entry := range s.submissionRegistry(lazy, accountID) {
+				reg[name] = entry
+			}
 		}
 	}
 	return reg
@@ -50,7 +75,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 		}).Write(w)
 		return
 	}
-	req, rerr := jmapcore.ParseRequest(body, declaredCapabilities(), s.opts.Limits)
+	req, rerr := jmapcore.ParseRequest(body, declaredCapabilities(s.opts.Limits), s.opts.Limits)
 	if rerr != nil {
 		slog.Debug("jmap: request rejected", "user", id.user, "session", id.sessionID, "type", rerr.Type)
 		rerr.Write(w)
@@ -60,7 +85,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 	// closes with the request. Opening up front would fail a whole batch on a
 	// dependency the batch may not use — and Core/echo, which exists to
 	// diagnose exactly that, would be the first casualty.
-	lazy := &lazyStore{storage: s.opts.Storage, user: id.user, sessionID: id.sessionID}
+	lazy := &lazyStore{storage: s.opts.Storage, user: id.user, sessionID: id.sessionID, clientIP: id.clientIP}
 	defer lazy.close()
 
 	resp := jmapcore.Execute(r.Context(), req, s.registry(lazy, id.user), s.opts.Limits)

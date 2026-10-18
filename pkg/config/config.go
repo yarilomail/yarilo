@@ -88,6 +88,10 @@ type SieveConfig struct {
 	MaxScriptSize int `koanf:"sieve_max_script_size"`
 	// MaxRedirects is the maximum number of redirect actions per message. Default: 32.
 	MaxRedirects int `koanf:"sieve_max_redirects"`
+	// MaxScripts caps a user's stored scripts; replacing one adds none. 0 = unlimited.
+	MaxScripts int `koanf:"sieve_max_num_scripts"`
+	// MaxStorage caps the bytes of a user's stored scripts. 0 = unlimited.
+	MaxStorage int `koanf:"sieve_max_storage"`
 	// MaxActions caps the total actions a single script may apply
 	// (fileinto, redirect, keep, ...). 0 = unlimited. Default: 32.
 	MaxActions int `koanf:"sieve_max_actions"`
@@ -104,6 +108,23 @@ type SieveConfig struct {
 	DuplicateFile string `koanf:"sieve_duplicate_file"`
 	// VacationEnabled permits the vacation extension (RFC 5230). Default: true.
 	VacationEnabled bool `koanf:"sieve_vacation_enabled"`
+	// VacationMinPeriod, VacationMaxPeriod and VacationDefaultPeriod bound a
+	// script's :days / :seconds, in seconds; 0 = no bound (RFC 5230 §4.1).
+	VacationMinPeriod     int `koanf:"sieve_vacation_min_period"`
+	VacationMaxPeriod     int `koanf:"sieve_vacation_max_period"`
+	VacationDefaultPeriod int `koanf:"sieve_vacation_default_period"`
+	// VacationDefaultSubject is the subject when the message has none and the
+	// script gives none; VacationDefaultSubjectTemplate builds it from %{subject}.
+	VacationDefaultSubject         string `koanf:"sieve_vacation_default_subject"`
+	VacationDefaultSubjectTemplate string `koanf:"sieve_vacation_default_subject_template"`
+	// VacationUseOriginalRecipient also takes the LMTP ORCPT as the user's address.
+	VacationUseOriginalRecipient bool `koanf:"sieve_vacation_use_original_recipient"`
+	// VacationCheckRecipient replies only to mail naming the user in To/Cc/Bcc (RFC 5230 §4.5).
+	VacationCheckRecipient bool `koanf:"sieve_vacation_check_recipient"`
+	// VacationSendFromRecipient sends the reply from the recipient instead of <>.
+	VacationSendFromRecipient bool `koanf:"sieve_vacation_send_from_recipient"`
+	// VacationToHeaderIgnoreEnvelope takes the reply's To from the headers alone.
+	VacationToHeaderIgnoreEnvelope bool `koanf:"sieve_vacation_to_header_ignore_envelope"`
 
 	// SubmissionHost is the upstream MTA address (host[:port]) used to send
 	// outbound mail for Sieve redirect and vacation actions. Default port 25.
@@ -127,6 +148,9 @@ type SieveConfig struct {
 	GlobalBefore []string `koanf:"sieve_global_before"`
 	// GlobalAfter is the same, executed after the user's active script.
 	GlobalAfter []string `koanf:"sieve_global_after"`
+	// Global is the directory of the scripts include :global names (RFC 6609),
+	// <name>.sieve each; empty means there are none.
+	Global string `koanf:"sieve_global"`
 
 	// ImapSieveEnabled activates imapsieve (RFC 6785): Sieve scripts on IMAP
 	// events (APPEND, COPY/MOVE, flag change). Per-mailbox binding is via the
@@ -143,6 +167,9 @@ type SieveConfig struct {
 	// SieveExtensions whitelists the extensions users may require.
 	// Empty = allow all; non-empty = enforced at PUTSCRIPT and delivery time.
 	SieveExtensions []string `koanf:"sieve_extensions"`
+	// GlobalExtensions are the extensions only the administrator's scripts may
+	// use, on top of sieve_extensions; users' scripts never get them (#2290).
+	GlobalExtensions []string `koanf:"sieve_global_extensions"`
 
 	// ScriptsDriver selects the script storage backend: "fs" (default) stores
 	// scripts as files in the user's home directory; "redis" uses the dict
@@ -540,6 +567,9 @@ type JMAPProtocolConfig struct {
 	SnippetMaxChars int `koanf:"jmap_snippet_max_chars"`
 	// UploadTTL is how long an uploaded blob lives, in seconds. Default 3600.
 	UploadTTL int `koanf:"jmap_upload_ttl"`
+	// SubmissionTTLSeconds keeps an EmailSubmission record this long after
+	// sending; 0 keeps none. Default 86400.
+	SubmissionTTLSeconds int `koanf:"jmap_submission_ttl_seconds"`
 	// PushTimeout is the idle timeout for a push connection, in seconds.
 	// Default 90. Unused until the push phase.
 	PushTimeout int `koanf:"jmap_push_timeout"`
@@ -727,12 +757,16 @@ type SubmissionProtocolConfig struct {
 // RelayConfig holds SMTP relay settings (submission_relay_* knobs).
 // Host must be non-empty to enable relaying; otherwise submission returns 451.
 type RelayConfig struct {
-	Host           string `koanf:"submission_relay_host"`
-	Port           int    `koanf:"submission_relay_port"` // default 25
-	User           string `koanf:"submission_relay_user"`
-	Password       string `koanf:"submission_relay_password"`        // supports ${ENV_VAR}
-	SSL            string `koanf:"submission_relay_ssl"`             // no | smtps | starttls
-	SSLVerify      bool   `koanf:"submission_relay_ssl_verify"`      // default true
+	Host string `koanf:"submission_relay_host"`
+	Port int    `koanf:"submission_relay_port"` // default 25
+	User string `koanf:"submission_relay_user"` // %u is the session's user
+	// MasterUser, when set, authenticates as this user acting for User.
+	MasterUser string `koanf:"submission_relay_master_user"`
+	Password   string `koanf:"submission_relay_password"`   // supports ${ENV_VAR}
+	SSL        string `koanf:"submission_relay_ssl"`        // no | smtps | starttls
+	SSLVerify  bool   `koanf:"submission_relay_ssl_verify"` // default true
+	// SSLCA is a PEM file the relay is verified against; empty = system roots.
+	SSLCA          string `koanf:"submission_relay_ssl_ca"`
 	Trusted        bool   `koanf:"submission_relay_trusted"`         // send XCLIENT to relay (Postfix)
 	ConnectTimeout int    `koanf:"submission_relay_connect_timeout"` // seconds, default 30
 	CommandTimeout int    `koanf:"submission_relay_command_timeout"` // seconds, default 300
@@ -2461,7 +2495,8 @@ func Defaults() *Config {
 			HAProxy: HAProxyConfig{
 				HAProxyTrustedNetworks: defaultTrustedNets,
 			},
-			XClient: XClientConfig{TrustedNets: defaultTrustedNets},
+			// Trust no forwarded address until the operator names the proxies' networks.
+			XClient: XClientConfig{},
 		},
 		Protocol: ProtocolConfig{
 			JMAP: JMAPProtocolConfig{
@@ -2617,21 +2652,22 @@ func Defaults() *Config {
 		},
 		Log: LogConfig{Level: "info"},
 		Sieve: SieveConfig{
-			DefaultName:      "yarilo",
-			DuplicateDriver:  "file",
-			DuplicateFile:    ".yarilo.sieve-duplicate",
-			VacationEnabled:  true,
-			ReportUserAgent:  "yarilo",
-			SubmissionSSL:    "no",
-			PipeBinDir:       "/usr/lib/yarilo/sieve-pipe",
-			PipeSocketDir:    "sieve-pipe",
-			PipeInputEOL:     "crlf",
-			FilterBinDir:     "/usr/lib/yarilo/sieve-filter",
-			FilterSocketDir:  "sieve-filter",
-			FilterInputEOL:   "crlf",
-			ExecuteBinDir:    "/usr/lib/yarilo/sieve-execute",
-			ExecuteSocketDir: "sieve-execute",
-			ExecuteInputEOL:  "crlf",
+			DefaultName:            "yarilo",
+			DuplicateDriver:        "file",
+			DuplicateFile:          ".yarilo.sieve-duplicate",
+			VacationEnabled:        true,
+			VacationCheckRecipient: true,
+			ReportUserAgent:        "yarilo",
+			SubmissionSSL:          "no",
+			PipeBinDir:             "/usr/lib/yarilo/sieve-pipe",
+			PipeSocketDir:          "sieve-pipe",
+			PipeInputEOL:           "crlf",
+			FilterBinDir:           "/usr/lib/yarilo/sieve-filter",
+			FilterSocketDir:        "sieve-filter",
+			FilterInputEOL:         "crlf",
+			ExecuteBinDir:          "/usr/lib/yarilo/sieve-execute",
+			ExecuteSocketDir:       "sieve-execute",
+			ExecuteInputEOL:        "crlf",
 		},
 	}
 	c.Threading.ThreadingCacheIdle = 300
@@ -2677,11 +2713,15 @@ func Defaults() *Config {
 	c.Protocol.JMAP.MaxQueryFolders = 64
 	c.Protocol.JMAP.SnippetMaxChars = 256
 	c.Protocol.JMAP.UploadTTL = 3600
+	c.Protocol.JMAP.SubmissionTTLSeconds = 86400
 	c.Protocol.ManageSieve.MaxInvalidCommands = 3
 	c.Sieve.MaxScriptSize = 65536
 	c.Sieve.MaxRedirects = 32
 	c.Sieve.MaxActions = 32
 	c.Sieve.DuplicateMaxPeriod = 604800
+	c.Sieve.VacationMinPeriod = 86400
+	c.Sieve.VacationMaxPeriod = 5184000
+	c.Sieve.VacationDefaultPeriod = 604800
 	c.ACL.CacheTTL = 30
 	c.Auth.FailureDelaySeconds = 2
 	c.Auth.InternalFailureDelayMs = 2000
@@ -2792,6 +2832,7 @@ func Load(path string) (*Config, error) {
 	warnRetiredKeys(k, retiredKeys())
 	warnChartSkew(cfg.ChartVersion)
 	warnConfigSchemaSkew(cfg.ConfigSchemaVersion)
+	warnXClientUntrusted(cfg)
 	if err := refuseInvertedPairs(cfg); err != nil {
 		return nil, err
 	}
@@ -3571,7 +3612,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 10
+const minConfigSchema = 17
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3592,6 +3633,15 @@ var schemaAdditions = map[int][]string{
 	8:  {"lmtp_max_recipients"},
 	9:  {"oauth2_grant_url", "oauth2_local_keys", "oauth2_force_introspection", "oauth2_tls_ca"},
 	10: {"oauth2_jwks_unknown_kid_interval_seconds"},
+	11: {"sieve_max_num_scripts"},
+	12: {"sieve_max_storage"},
+	13: {"submission_relay_master_user", "submission_relay_ssl_ca"},
+	14: {"jmap_submission_ttl_seconds"},
+	15: {"sieve_vacation_min_period", "sieve_vacation_max_period", "sieve_vacation_default_period",
+		"sieve_vacation_default_subject", "sieve_vacation_default_subject_template", "sieve_vacation_use_original_recipient",
+		"sieve_vacation_check_recipient", "sieve_vacation_send_from_recipient", "sieve_vacation_to_header_ignore_envelope"},
+	16: {"sieve_global"},
+	17: {"sieve_global_extensions"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
@@ -3603,6 +3653,28 @@ var schemaAdditions = map[int][]string{
 // silent. That is not a corner case: it is every change between two releases,
 // and it once cost a day, with three pod names where one configured hostname
 // was expected reading as a code defect (#1528).
+// warnXClientUntrusted says when a listener takes forwarded client addresses
+// while general.xclient.trusted_nets names no peer that may send them.
+func warnXClientUntrusted(cfg *Config) {
+	if len(cfg.General.XClient.TrustedNets) > 0 {
+		return
+	}
+	s := cfg.Services
+	for _, l := range []struct {
+		name string
+		svc  *ServiceConfig
+	}{
+		{"imap", s.IMAP}, {"imaps", s.IMAPS}, {"pop3", s.POP3}, {"pop3s", s.POP3S},
+		{"submission", s.Submission}, {"submissions", s.Submissions}, {"lmtp", s.LMTP},
+		{"jmap", s.JMAP}, {"jmap_be", s.JMAPBE},
+	} {
+		if l.svc != nil && l.svc.XClient {
+			slog.Warn("config: xclient_protocol is on but general.xclient.trusted_nets is empty: no forwarded client address is trusted",
+				"listener", l.name)
+		}
+	}
+}
+
 func warnConfigSchemaSkew(fromConfig int) {
 	if build.ChartVersion == "dev" {
 		// A local build is not deployed from a chart.

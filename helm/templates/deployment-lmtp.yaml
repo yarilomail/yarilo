@@ -89,6 +89,7 @@ spec:
               mountPath: {{ .Values.storage.maildir_root }}
             {{- end }}
             {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.lmtp.internalTLS "role" "lmtp") | nindent 12 }}
+            {{- include "yarilo.sieveGlobalMount" (dict "root" $ "role" "lmtp") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -104,6 +105,7 @@ spec:
             claimName: {{ include "yarilo.fullname" . }}-mail
         {{- end }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.lmtp.internalTLS "role" "lmtp") | nindent 8 }}
+        {{- include "yarilo.sieveGlobalVolume" $ | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

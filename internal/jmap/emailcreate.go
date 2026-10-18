@@ -96,7 +96,7 @@ func (s *Server) emailCreate(ctx context.Context, h *userHandle, raw json.RawMes
 	if err := json.Unmarshal(raw, &e); err != nil {
 		return nil, invalidProp("", err.Error())
 	}
-	targets, serr := h.importTargets(e.MailboxIDs)
+	targets, serr := h.importTargets(jmapcore.ResolveKeys(ctx, e.MailboxIDs))
 	if serr != nil {
 		return nil, serr
 	}

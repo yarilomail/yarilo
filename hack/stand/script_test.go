@@ -426,11 +426,11 @@ func TestTheSmoketestVerdictSkipsOnlyTheOAuth2RowsByName(t *testing.T) {
 		log  string
 		ok   bool
 	}{
-		{"the oauth2 rows skipped", smokeLog(t, 50, 47, 0, oauth), true},
-		{"three skips, one of them not oauth2", smokeLog(t, 50, 47, 0, swapped), false},
-		{"another row skipped as well", smokeLog(t, 51, 47, 0, plusOne), false},
-		{"nothing skipped", smokeLog(t, 50, 50, 0, nil), false},
-		{"a failure", smokeLog(t, 50, 46, 1, oauth), false},
+		{"the oauth2 rows skipped", smokeLog(t, 54, 51, 0, oauth), true},
+		{"three skips, one of them not oauth2", smokeLog(t, 54, 51, 0, swapped), false},
+		{"another row skipped as well", smokeLog(t, 55, 51, 0, plusOne), false},
+		{"nothing skipped", smokeLog(t, 54, 54, 0, nil), false},
+		{"a failure", smokeLog(t, 54, 50, 1, oauth), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

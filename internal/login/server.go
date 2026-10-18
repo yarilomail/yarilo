@@ -1102,7 +1102,7 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 		// the two, and a name that merely resembles it fails (#1306).
 		User:  authUser,
 		Token: authResult.Token,
-		Helo:  pre.ehloLine,
+		Helo:  heloDomain(pre.ehloLine),
 	}
 	if _, werr := io.WriteString(conn, pre2.Format()); werr != nil {
 		return nil, addr, fmt.Errorf("send preamble: %w", werr)
@@ -1133,9 +1133,15 @@ func (s *Server) openBackendSession(pre *preamble, authResult *authclient.AuthRe
 			if rerr != nil {
 				return nil, addr, fmt.Errorf("smtp ehlo response: %w", rerr)
 			}
-			if len(line) >= 4 && line[3] != '-' {
-				break
+			if len(line) >= 4 && line[3] == '-' {
+				continue
 			}
+			// Anything but 250 is a reply to something else; passing it as the
+			// EHLO reply leaks the real one to the client, a reply behind (#2271).
+			if !strings.HasPrefix(line, "250") {
+				return nil, addr, fmt.Errorf("smtp ehlo response: %q", strings.TrimRight(line, "\r\n"))
+			}
+			break
 		}
 	}
 
@@ -1795,6 +1801,15 @@ func wardenService(p Protocol) string {
 	}
 }
 
+// remoteHost is the peer's address without its port, as handleConn reads it.
+func remoteHost(conn net.Conn) string {
+	host, _, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		return conn.RemoteAddr().String()
+	}
+	return host
+}
+
 // ipInNets gates XCLIENT/ID forwarding on the trusted nets; empty trusts
 // nobody (#742).
 func ipInNets(ip string, nets []*net.IPNet) bool {
@@ -1826,4 +1841,12 @@ func haProxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) 
 		}
 		return proxyproto.IGNORE, nil
 	}
+}
+
+// heloDomain is the domain of a client's EHLO or HELO line.
+func heloDomain(line string) string {
+	if f := strings.Fields(line); len(f) > 1 {
+		return f[1]
+	}
+	return ""
 }

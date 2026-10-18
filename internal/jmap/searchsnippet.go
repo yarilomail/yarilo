@@ -19,11 +19,13 @@ import (
 // The engine reports no term positions (flatcurve: Positions false), so the
 // highlighting is produced here: the message text is read again and matched
 // against the same expanded terms the lookup used.
-func (s *Server) searchSnippet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) searchSnippet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req jmapcore.SearchSnippetGetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	jmapcore.ResolveIDs(ctx, req.EmailIDs)
+	resolveEmailFilter(ctx, req.Filter)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}

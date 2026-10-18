@@ -30,3 +30,5 @@ There is no bounty program.
 
 Published advisories and the full policy are at
 [yarilomail.org/security](https://yarilomail.org/security).
+
+Fixes with no advisory of their own are listed under Security in the release notes. In 2.4.4 that is [#2297](https://github.com/yarilomail/yarilo/issues/2297): `require "ihave"` bypassed the `sieve_extensions` whitelist, but only on installations that had added `ihave` to `sieve_extensions`; the default list does not include it.

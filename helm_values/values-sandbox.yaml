@@ -187,12 +187,30 @@ protocol:
       enabled: true
       per_recipient_burst: 1000
       per_recipient_window_seconds: 60
+  ## relay-mta:587, logged in as relay-master for the session's user (%u) and
+  ## verified against the internal CA that issues its certificate.
+  submission:
+    relay:
+      host: "relay-mta.yarilo-relay.svc.cluster.local"
+      port: 587
+      ssl: "starttls"
+      ssl_verify: true
+      ssl_ca: "/etc/yarilo/internal-tls/ca.crt"
+      user: "%u"
+      master_user: "relay-master"
+      password_secret_ref:
+        name: yarilo-submission-relay
+        key: password
   managesieve:
     max_script_size: 65536
 
 sieve:
   sieve_enabled: true
   sieve_default_name: "yarilo"
+  sieve_global: "/etc/yarilo/sieve-global"
+  sieve_global_scripts:
+    site-keep: |
+      keep;
   imapsieve_enabled: true
   imapsieve_script_dir: "/etc/yarilo/imapsieve"
   imapsieve_scripts:
@@ -201,11 +219,14 @@ sieve:
       if environment :is "imap.cause" "APPEND" { fileinto :create "ImapSieveArchive"; }
   sieve_max_script_size: 65536
   sieve_max_redirects: 32
+  sieve_max_num_scripts: 0
+  sieve_max_storage: 0
   sieve_max_actions: 32
   sieve_spamtest_status_header: "X-Spam-Score"
   ## redis: the duplicate test dedups across both backend pods (dict sieve_duplicate).
   sieve_duplicate_driver: redis
   sieve_vacation_enabled: true
+  sieve_vacation_use_original_recipient: true
   sieve_submission_host: "relay-fwd.yarilo-relay.svc.cluster.local:25"
   sieve_submission_ssl: "no"
   sieve_submission_auth_secret: "sieve-smtp-auth"
@@ -233,6 +254,7 @@ sieve:
     - redirect
     - copy
     - vacation
+    - include
     - enotify
     - spamtest
     - spamtestplus
@@ -550,7 +572,7 @@ components:
     ## MySQL as the main passdb; skip_schema + an explicit query, per the
     ## #1299 contract.
     master_users:
-      enabled: false
+      enabled: true
       separator: "*"
       masterdb:
         - driver: mysql

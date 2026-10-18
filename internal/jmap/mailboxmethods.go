@@ -105,11 +105,12 @@ func (s *Server) withStore(lazy *lazyStore, accountID string, fn func(*userHandl
 }
 
 // mailboxGet implements Mailbox/get (RFC 8621 §2.1).
-func (s *Server) mailboxGet(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) mailboxGet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req jmapcore.GetRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	resolveGet(ctx, &req)
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -153,10 +154,14 @@ func (s *Server) mailboxGet(_ context.Context, h *userHandle, accountID string, 
 }
 
 // mailboxQuery implements Mailbox/query (RFC 8621 §2.3).
-func (s *Server) mailboxQuery(_ context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
+func (s *Server) mailboxQuery(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {
 	var req jmapcore.MailboxQueryRequest
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
+	}
+	if req.Filter != nil && req.Filter.ParentID != nil {
+		id := jmapcore.ResolveID(ctx, *req.Filter.ParentID)
+		req.Filter.ParentID = &id
 	}
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr

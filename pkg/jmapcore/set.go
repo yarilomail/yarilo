@@ -63,6 +63,13 @@ type SetError struct {
 	Properties  []string `json:"properties,omitempty"`
 	// NotFound lists every missing blob of a blobNotFound (RFC 8621 §4.6).
 	NotFound []string `json:"notFound,omitempty"`
+	// ExistingID names the object an alreadyExists collided with (RFC 9661 §2.4).
+	ExistingID string `json:"existingId,omitempty"`
+	// MaxSize, MaxRecipients and InvalidRecipients go with tooLarge,
+	// tooManyRecipients and invalidRecipients (RFC 8621 §7.5).
+	MaxSize           *int64   `json:"maxSize,omitempty"`
+	MaxRecipients     *int     `json:"maxRecipients,omitempty"`
+	InvalidRecipients []string `json:"invalidRecipients,omitempty"`
 }
 
 // SetError types from RFC 8620 §5.3, plus one of ours.

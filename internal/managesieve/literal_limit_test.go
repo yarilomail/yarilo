@@ -17,7 +17,7 @@ func TestALiteralOverItsLimitIsRefusedUnread(t *testing.T) {
 		{"negative", "PUTSCRIPT \"a\" {-1+}\r\n", "NO", false},
 		{"name over the line limit, sync", "GETSCRIPT {65537}\r\n", `NO "Literal size too large."`, false},
 		{"name over the line limit", "GETSCRIPT {65537+}\r\n", `NO "Literal size too large."`, true},
-		{"script over its limit", "PUTSCRIPT \"a\" {65537+}\r\n", `NO (QUOTA/MAXSCRIPTSIZE) "Script too large."`, true},
+		{"script over its limit", "PUTSCRIPT \"a\" {65537+}\r\n", `NO (QUOTA/MAXSIZE) "Script is too large (max 65536 bytes)."`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := runSession(t, newTestStore(), t.TempDir())

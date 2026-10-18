@@ -42,6 +42,10 @@ func (e *Engine) RunIMAPEvent(ctx context.Context, opts IMAPEventOptions) (*Filt
 		spamMax:      e.cfg.SpamMaxValue,
 		virusHeader:  e.cfg.VirusStatusHeader,
 		virusMax:     e.cfg.VirusMaxValue,
+		personal:     e.personalScripts(opts.Username, opts.HomeDir),
+		personalExt:  UserExtensions(e.cfg),
+		globalExt:    AdminExtensions(e.cfg),
+		globalDir:    e.cfg.Global,
 	}
 	fopts := FilterOptions{
 		Username: opts.Username,
@@ -126,14 +130,14 @@ func (e *Engine) loadImapScript(name string) (*gosieve.Script, error) {
 		}
 		return nil, err
 	}
-	sieveOpts := gosieve.DefaultOptions()
+	sieveOpts := CompileOptions(AdminExtensions(e.cfg))
 	sieveOpts.Interp.MaxRedirects = e.cfg.MaxRedirects
 	sieveOpts.Interp.MaxActions = e.cfg.MaxActions
 	script, err := gosieve.Load(bytes.NewReader(src), sieveOpts)
 	if err != nil {
 		return nil, fmt.Errorf("imapsieve: compile %s: %w", name, err)
 	}
-	if extErr := CheckExtensions(script, e.cfg.SieveExtensions); extErr != nil {
+	if extErr := CheckExtensions(script, AdminExtensions(e.cfg)); extErr != nil {
 		return nil, fmt.Errorf("imapsieve: %w", extErr)
 	}
 	return script, nil

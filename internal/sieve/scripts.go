@@ -271,6 +271,9 @@ func (ss *FsScriptStore) RenameScript(ctx context.Context, username, homeDir, ol
 		return fmt.Errorf("sieve/scripts: %q is a reserved script name", ss.DefaultName)
 	}
 	return ss.withLock(ctx, username, homeDir, func(ctx context.Context) error {
+		if _, err := os.Lstat(ss.namedPath(homeDir, newName)); err == nil {
+			return ErrScriptExists
+		}
 		if err := os.Rename(ss.namedPath(homeDir, oldName), ss.namedPath(homeDir, newName)); err != nil {
 			return fmt.Errorf("sieve/scripts: rename: %w", err)
 		}

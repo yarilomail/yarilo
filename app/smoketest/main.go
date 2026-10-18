@@ -55,6 +55,7 @@ var (
 	flagInternalServerName = flag.String("internal-server-name", "", "pinned internal name the admin APIs' certificates are verified against (internal_tls.server_name)")
 	flagSMTPMX             = flag.Bool("smtp-mx", false, "check SMTP MX EHLO (port -smtp-mx-port)")
 	flagSMTPSub            = flag.Bool("smtp-sub", false, "check SMTP submission EHLO+STARTTLS, then AUTH and a transaction as -imap-user (port -smtp-sub-port)")
+	flagSMTPSubSend        = flag.Bool("smtp-sub-send", false, "send one message through submission and its relay, and find it in -imap-user's INBOX")
 	flagProxyProtocol      = flag.Bool("proxy-protocol", false, "send HAProxy PROXY header before SMTP banner")
 	flagXClient            = flag.Bool("xclient", false, "check that MX port advertises XCLIENT in EHLO")
 	flagPOP3S              = flag.Bool("pop3s", false, "check POP3S greeting and CAPA")
@@ -276,6 +277,8 @@ func register() []check {
 	want("telemetry", telemetry, "telemetry /readyz", "needs -telemetry", checkReady)
 	want("smtp", *flagSMTPMX, "smtp MX EHLO", "needs -smtp-mx", checkSMTPMX)
 	want("smtp", *flagSMTPSub, "smtp submission EHLO+STARTTLS", "needs -smtp-sub", checkSMTPSubmission)
+	want("smtp", *flagSMTPSubSend && *flagIMAPUser != "", "smtp submission sends through the relay to a mailbox",
+		"needs -smtp-sub-send and -imap-user", checkSMTPSubmissionSend)
 	want("smtp", *flagProxyProtocol, "smtp MX PROXY protocol", "needs -proxy-protocol", checkSMTPProxyProtocol)
 	want("smtp", *flagXClient, "smtp MX XCLIENT cap", "needs -xclient", checkSMTPXClient)
 	want("pop3s", *flagPOP3S, "pop3s CAPA", "needs -pop3s", checkPOP3S)
@@ -352,6 +355,8 @@ func register() []check {
 	want("jmap", jmap, "jmap Mailbox/query + back-referenced get", "needs -jmap", checkJMAPMailboxQuery)
 	want("jmap", jmap, "jmap Email/query -> Email/get -> download", "needs -jmap", checkJMAPEmailDiscovery)
 	want("jmap", jmap, "jmap round trip through a client library (upload, import, read, move, destroy)", "needs -jmap", checkJMAPRoundTrip)
+	want("jmap", jmap && *flagSMTPSubSend, "jmap EmailSubmission sends a draft through the relay, without its Bcc",
+		"needs -jmap and -smtp-sub-send (a relay)", checkJMAPSubmission)
 	want("jmap", jmap, "jmap download refuses another account's blob", "needs -jmap", checkJMAPDownloadIsolation)
 	want("jmap", jmap && *flagJMAPUser != "" && *flagFTSUser != "",
 		"jmap Email/query over full-text search",
@@ -858,7 +863,7 @@ func smtpSubmitTransaction(conn net.Conn, user, auth string) error {
 		{"RSET", "250"},
 	} {
 		fmt.Fprintf(conn, "%s\r\n", step.cmd)
-		line, err := readLine(conn)
+		line, err := smtpReply(conn)
 		if err != nil {
 			return fmt.Errorf("%s: read response: %w", strings.Fields(step.cmd)[0], err)
 		}

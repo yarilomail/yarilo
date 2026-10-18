@@ -132,6 +132,10 @@ func AssignField(info *UserInfo, key, value string) error {
 		info.QuotaOverFlag = value
 	case "allow_nets":
 		info.AllowNets = append(info.AllowNets, SplitCSV(value)...)
+	case "identity_aliases":
+		info.IdentityAliases = append(info.IdentityAliases, strings.FieldsFunc(value, func(r rune) bool {
+			return r == ',' || r == ' ' || r == '\t'
+		})...)
 	case "director_tag":
 		info.DirectorTag = value
 	case "nologin":

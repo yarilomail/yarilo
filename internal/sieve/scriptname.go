@@ -11,6 +11,9 @@ const maxScriptNameLen = 256
 // ErrInvalidScriptName is returned for a name ValidScriptName refuses.
 var ErrInvalidScriptName = errors.New("sieve: invalid script name")
 
+// ErrScriptExists refuses a rename or a create onto a stored name.
+var ErrScriptExists = errors.New("sieve: script already exists")
+
 // ValidScriptName reports whether name may name a stored script: valid UTF-8,
 // 1 to 256 characters, no control or separator characters, no path element.
 func ValidScriptName(name string) bool {

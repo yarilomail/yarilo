@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 10
+config_schema_version: 17
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2107,10 +2107,19 @@ protocol:
     relay:
       host: ""
       port: 25
+      ## user may carry %u, the session's user. With master_user set, the proxy
+      ## logs in as master_user acting for user (SASL authzid).
       user: ""
+      master_user: ""
       password: ""
+      ## A Secret holding the password, given to every container that relays as
+      ## YARILO_SUBMISSION_RELAY_PASSWORD; it takes the place of password.
+      password_secret_ref: {}
       ssl: "no"
       ssl_verify: true
+      ## ssl_ca is a PEM file the relay is verified against, empty for the system
+      ## roots. With internal_tls the internal CA is at /etc/yarilo/internal-tls/ca.crt.
+      ssl_ca: ""
       trusted: false
       connect_timeout: 30
       command_timeout: 300
@@ -2159,6 +2168,9 @@ protocol:
     ## Seconds an uploaded blob is kept for Email/import or Email/set; each
     ## upload of the same bytes starts the clock again.
     jmap_upload_ttl: 3600
+    ## jmap_submission_ttl_seconds keeps an EmailSubmission record this long
+    ## after sending, for EmailSubmission/get; 0 keeps none.
+    jmap_submission_ttl_seconds: 86400
     ## Idle timeout for a push connection, seconds. Unused until the push phase.
     jmap_push_timeout: 90
     ## Browser origins allowed to call the JMAP endpoint. Empty denies every
@@ -2186,6 +2198,12 @@ sieve:
   sieve_default_name: "yarilo"
   sieve_max_script_size: 65536
   sieve_max_redirects: 32
+  ## sieve_max_num_scripts caps the scripts one user may store; replacing a
+  ## stored script adds none. ManageSieve refuses past it. 0 = unlimited.
+  sieve_max_num_scripts: 0
+  ## sieve_max_storage caps the bytes of one user's stored scripts; a replaced
+  ## script is not charged twice. 0 = unlimited.
+  sieve_max_storage: 0
   ## sieve_max_actions caps the total actions a single script may apply (fileinto,
   ## redirect, keep, ...). Guards runaway scripts. 0 = unlimited.
   sieve_max_actions: 32
@@ -2199,7 +2217,32 @@ sieve:
   sieve_duplicate_driver: "file"
   ## Home-dir file name for sieve_duplicate_driver=file.
   sieve_duplicate_file: ".yarilo.sieve-duplicate"
+  ## Directory of the scripts `include :global` names, <name>.sieve each; users
+  ## cannot write it. Empty: a :global include finds nothing.
+  sieve_global: ""
+  ## Global scripts, keyed by name: a ConfigMap mounted read-only at sieve_global
+  ## in the lmtp and imap containers. Empty: provide the directory yourself.
+  sieve_global_scripts: {}
   sieve_vacation_enabled: true
+  ## vacation periods, seconds: :days / :seconds, or the default, kept between
+  ## the minimum and the maximum; 0 = no bound.
+  sieve_vacation_min_period: 86400
+  sieve_vacation_max_period: 5184000
+  sieve_vacation_default_period: 604800
+  ## A reply without :subject: "Auto: <subject>" or this template with %{subject};
+  ## a message with no subject gets default_subject ("" = "Automated reply").
+  sieve_vacation_default_subject: ""
+  sieve_vacation_default_subject_template: ""
+  ## The LMTP ORCPT counts as the user's address too; only a relay that sends
+  ## ORCPT without DSN gives one (Postfix does not).
+  sieve_vacation_use_original_recipient: false
+  ## Reply only to mail naming the user (or :addresses) in To/Cc/Bcc/Resent-*.
+  sieve_vacation_check_recipient: true
+  ## Envelope sender of a reply: the recipient instead of <>.
+  sieve_vacation_send_from_recipient: false
+  ## The reply's To is the first address in Sender/Resent-From/From, not the
+  ## one matching the envelope sender.
+  sieve_vacation_to_header_ignore_envelope: false
   ## spamtest / virustest (RFC 5235) status-header sources. Leave the header
   ## empty to keep the test unbacked (reports "not scanned"). The raw header
   ## value is normalised against the max_value onto the 0..10 (spam) / 0..5
@@ -2265,6 +2308,9 @@ sieve:
     - vnd.yarilo.pipe
     - vnd.yarilo.filter
 
+  ## Extensions only the administrator's scripts may use, on top of
+  ## sieve_extensions; a user's script never gets them (docs: SIEVE).
+  sieve_global_extensions: []
   ## sieveEnvironment exposes operator-defined key-value pairs to Sieve scripts
   ## via the vnd.yarilo.environment extension as vnd.yarilo.config.<key> items.
   ## Corresponds to the sieve_environment setting.
@@ -2359,9 +2405,9 @@ general:
   ## the final client IP. `enabled` toggles xclient_protocol on every listener.
   xclient:
     enabled: false
-    trusted_nets:
-      - "127.0.0.1/32"
-      - "10.0.0.0/8"
+    ## The proxies whose forwarded client address is trusted, and the only peers
+    ## EHLO lists XCLIENT to. Empty trusts none: name the proxies' networks.
+    trusted_nets: []
 
 ## -------------------------------------------------------------------
 ## Redis — state backend for yarilo-locks (and future yarilo-warden).

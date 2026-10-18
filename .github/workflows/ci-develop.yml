@@ -136,6 +136,27 @@ jobs:
             BUILD_VERSION=${{ steps.version.outputs.dev_tag }}
             BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
 
+  disk:
+    name: Prune runner disk
+    ## A full disk stops CI and the stand's acceptance at once; always(), since
+    ## a build that failed on a full disk is the case this job exists for.
+    needs: [build]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux]
+    permissions: {}
+    steps:
+      - name: Prune
+        run: |
+          set -euo pipefail
+          docker system prune -af --filter "until=48h"
+          docker builder prune -f --keep-storage 10GB
+          # Go marks an entry when it uses one, so the gate's variants stay warm.
+          cache=$(go env GOCACHE 2>/dev/null || echo "$HOME/.cache/go-build")
+          if [ -d "$cache" ]; then
+            find "$cache" -ignore_readdir_race -type f -mmin +2880 -delete
+          fi
+          df -h / | tail -1
+
   prune:
     name: Prune old dev tags
     ## Its own job, so housekeeping that fails is red on its own and a build

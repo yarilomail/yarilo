@@ -148,6 +148,7 @@ protocol:
     jmap_max_objects_in_get: 500
     jmap_max_objects_in_set: 500
     jmap_max_size_upload: 40M
+    jmap_submission_ttl_seconds: 86400
     jmap_max_size_request: 10M
     ## Server ceiling on one returned body value; a smaller client
     ## maxBodyValueBytes wins, and truncated values are marked isTruncated.
@@ -164,11 +165,23 @@ sieve:
   sieve_scripts_driver: "fs"
   sieve_max_script_size: 65536
   sieve_max_redirects: 32
+  sieve_max_num_scripts: 0
+  sieve_max_storage: 0
   sieve_max_actions: 32
   sieve_duplicate_max_period: 604800
   sieve_duplicate_driver: "file"
   sieve_duplicate_file: ".yarilo.sieve-duplicate"
+  sieve_global: ""
   sieve_vacation_enabled: true
+  sieve_vacation_min_period: 86400
+  sieve_vacation_max_period: 5184000
+  sieve_vacation_default_period: 604800
+  sieve_vacation_default_subject: ""
+  sieve_vacation_default_subject_template: ""
+  sieve_vacation_use_original_recipient: false
+  sieve_vacation_check_recipient: true
+  sieve_vacation_send_from_recipient: false
+  sieve_vacation_to_header_ignore_envelope: false
   sieve_spamtest_status_header: "X-Spam-Score"
   sieve_spamtest_max_value: 10
   sieve_virustest_status_header: ""
@@ -217,6 +230,7 @@ sieve:
     - vnd.yarilo.report
     - environment
     - vnd.yarilo.environment
+  sieve_global_extensions: []
   imapsieve_enabled: true
   imapsieve_script_dir: "/etc/yarilo/imapsieve"
   sieve_pipe_bin_dir: "/usr/lib/yarilo/sieve-pipe"

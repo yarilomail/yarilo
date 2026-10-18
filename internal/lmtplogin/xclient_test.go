@@ -1,7 +1,9 @@
 package lmtplogin
 
 import (
+	"bufio"
 	"net"
+	"strings"
 	"testing"
 
 	goSmtp "github.com/emersion/go-smtp"
@@ -63,5 +65,51 @@ func TestIPInNets(t *testing.T) {
 	}
 	if ipInNets("10.0.0.1", nil) {
 		t.Error("empty nets must trust nobody")
+	}
+}
+
+// LHLO lists XCLIENT only to a relay in general.xclient.trusted_nets.
+func TestLHLOAdvertisesXClientOnlyToTrustedRelays(t *testing.T) {
+	cases := []struct {
+		name string
+		nets []*net.IPNet
+		want bool
+	}{
+		{"a trusted relay", mustCIDRs(t, "127.0.0.0/8"), true},
+		{"a relay outside trusted_nets", mustCIDRs(t, "10.0.0.0/8"), false},
+		{"trusted_nets empty", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := New(testOpts(Options{Hostname: "lmtp.test", XClient: true, XClientNets: c.nets}))
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			go s.srv.Serve(l) //nolint:errcheck
+			defer s.srv.Close()
+			cli, err := net.Dial("tcp", l.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cli.Close()
+			rd := bufio.NewReader(cli)
+			rd.ReadString('\n') // greeting
+			cli.Write([]byte("LHLO relay\r\n"))
+			var caps []string
+			for {
+				line, err := rd.ReadString('\n')
+				if err != nil {
+					t.Fatalf("LHLO: %v after %v", err, caps)
+				}
+				caps = append(caps, strings.TrimSpace(line))
+				if strings.HasPrefix(line, "250 ") {
+					break
+				}
+			}
+			if got := strings.Contains(strings.Join(caps, "\n"), "XCLIENT"); got != c.want {
+				t.Errorf("XCLIENT listed %v, want %v: %v", got, c.want, caps)
+			}
+		})
 	}
 }

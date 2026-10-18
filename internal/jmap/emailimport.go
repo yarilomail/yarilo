@@ -45,6 +45,10 @@ func (s *Server) emailImport(ctx context.Context, h *userHandle, accountID strin
 	if err := json.Unmarshal(args, &req); err != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: err.Error()}
 	}
+	for cid, e := range req.Emails {
+		e.MailboxIDs = jmapcore.ResolveKeys(ctx, e.MailboxIDs)
+		req.Emails[cid] = e
+	}
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
@@ -74,6 +78,7 @@ func (s *Server) emailImport(ctx context.Context, h *userHandle, accountID strin
 			continue
 		}
 		resp.Created[cid] = created
+		noteCreated(ctx, cid, created)
 	}
 	if len(resp.Created) > 0 {
 		if after, err := s.emailState(h); err == nil {
