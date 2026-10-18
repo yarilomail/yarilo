@@ -150,6 +150,11 @@ jobs:
           set -euo pipefail
           docker system prune -af --filter "until=48h"
           docker builder prune -f --keep-storage 10GB
+          # Go marks an entry when it uses one, so the gate's variants stay warm.
+          cache=$(go env GOCACHE 2>/dev/null || echo "$HOME/.cache/go-build")
+          if [ -d "$cache" ]; then
+            find "$cache" -ignore_readdir_race -type f -mmin +2880 -delete
+          fi
           df -h / | tail -1
 
   prune:
