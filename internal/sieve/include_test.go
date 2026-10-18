@@ -97,9 +97,8 @@ func TestIncludeInIMAPEvent(t *testing.T) {
 	}
 }
 
-// include :global reads sieve_global: the script runs, a missing one fails
-// unless :optional, a name is never a path, and personal and global scripts
-// of one name are told apart (#2283).
+// include :global reads sieve_global; a name is never a path, and personal
+// and global scripts of one name stay apart (#2283).
 func TestIncludeGlobal(t *testing.T) {
 	cases := []struct {
 		name    string
