@@ -274,6 +274,10 @@ data:
       sieve_extensions:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with $sieve.sieve_global_extensions }}
+      sieve_global_extensions:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with $sieve.sieve_environment }}
       sieve_environment:
         {{- toYaml . | nindent 8 }}

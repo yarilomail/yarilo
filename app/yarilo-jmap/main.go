@@ -228,10 +228,10 @@ func sieveScripts(cfg *config.Config, st *sieve.IndexedStore) *jmap.SieveScripts
 	return &jmap.SieveScripts{
 		Store:          st,
 		Quota:          sieve.Quota{MaxSize: cfg.Sieve.MaxScriptSize, MaxScripts: cfg.Sieve.MaxScripts, MaxStorage: cfg.Sieve.MaxStorage},
-		Extensions:     cfg.Sieve.SieveExtensions,
+		Extensions:     sieve.UserExtensions(cfg.Sieve),
 		MaxRedirects:   cfg.Sieve.MaxRedirects,
 		Implementation: "yarilo " + build.Version,
-		Vacation:       cfg.Sieve.VacationEnabled && sieve.ExtensionAllowed(cfg.Sieve.SieveExtensions, "vacation"),
+		Vacation:       cfg.Sieve.VacationEnabled && sieve.UserExtensions(cfg.Sieve).Has("vacation"),
 	}
 }
 

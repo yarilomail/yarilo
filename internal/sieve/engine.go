@@ -58,20 +58,23 @@ func New(cfg config.SieveConfig, locker locks.Locker, d dict.Dict, dupDict dict.
 		dupDict: dupDict,
 		locker:  locker,
 	}
-	e.globalBefore = loadGlobalScripts(cfg.GlobalBefore)
-	e.globalAfter = loadGlobalScripts(cfg.GlobalAfter)
+	admin := AdminExtensions(cfg)
+	e.globalBefore = loadGlobalScripts(cfg.GlobalBefore, admin)
+	e.globalAfter = loadGlobalScripts(cfg.GlobalAfter, admin)
 	if cfg.ImapSieveEnabled {
-		e.imapGlobalBefore = loadGlobalScripts(cfg.ImapSieveGlobalBefore)
-		e.imapGlobalAfter = loadGlobalScripts(cfg.ImapSieveGlobalAfter)
+		e.imapGlobalBefore = loadGlobalScripts(cfg.ImapSieveGlobalBefore, admin)
+		e.imapGlobalAfter = loadGlobalScripts(cfg.ImapSieveGlobalAfter, admin)
 	}
 	return e
 }
 
-func loadGlobalScripts(paths []string) []*gosieve.Script {
+// loadGlobalScripts compiles the administrator's before/after scripts, held to
+// the administrator's set; one that uses more is logged and left out (#2290).
+func loadGlobalScripts(paths []string, admin ExtensionSet) []*gosieve.Script {
 	if len(paths) == 0 {
 		return nil
 	}
-	opts := gosieve.DefaultOptions()
+	opts := CompileOptions(admin)
 	var scripts []*gosieve.Script
 	for _, p := range paths {
 		src, err := os.ReadFile(p)
@@ -82,6 +85,10 @@ func loadGlobalScripts(paths []string) []*gosieve.Script {
 		script, err := gosieve.Load(bytes.NewReader(src), opts)
 		if err != nil {
 			slog.Error("sieve: global script compile error", "path", p, "err", err)
+			continue
+		}
+		if err := CheckExtensions(script, admin); err != nil {
+			slog.Error("sieve: global script uses a forbidden extension, skipping", "path", p, "err", err)
 			continue
 		}
 		scripts = append(scripts, script)
@@ -141,7 +148,8 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		virusHeader:     e.cfg.VirusStatusHeader,
 		virusMax:        e.cfg.VirusMaxValue,
 		personal:        e.personalScripts(opts.Username, opts.HomeDir),
-		extensions:      e.cfg.SieveExtensions,
+		personalExt:     UserExtensions(e.cfg),
+		globalExt:       AdminExtensions(e.cfg),
 		globalDir:       e.cfg.Global,
 	}
 
@@ -165,7 +173,7 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 	}
 	if src != nil {
 		anyScriptRan = true
-		sieveOpts := CompileOptions(e.cfg.SieveExtensions)
+		sieveOpts := CompileOptions(UserExtensions(e.cfg))
 		sieveOpts.Interp.MaxRedirects = e.cfg.MaxRedirects
 		sieveOpts.Interp.MaxActions = e.cfg.MaxActions
 		sieveOpts.Interp.DebugLog = makeDebugLogger(opts.HomeDir)
@@ -173,7 +181,7 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		if err != nil {
 			slog.Error("sieve: script compile error, skipping user script",
 				"user", opts.Username, "err", err)
-		} else if extErr := CheckExtensions(script, e.cfg.SieveExtensions); extErr != nil {
+		} else if extErr := CheckExtensions(script, UserExtensions(e.cfg)); extErr != nil {
 			slog.Warn("sieve: script uses forbidden extension, skipping",
 				"user", opts.Username, "err", extErr)
 		} else {
@@ -342,16 +350,27 @@ type policy struct {
 
 	// personal reads a script of the user's own for include :personal (RFC 6609).
 	personal func(ctx context.Context, name string) ([]byte, bool, error)
-	// extensions is sieve_extensions, applied to an included script as to the active one.
-	extensions []string
+	// personalExt and globalExt hold a :personal and a :global include (#2290).
+	personalExt, globalExt ExtensionSet
 	// globalDir is sieve_global, where include :global reads from; "" has none.
 	globalDir string
 }
 
 var _ interp.ScriptLoader = (*policy)(nil)
+var _ interp.IncludeAllower = (*policy)(nil)
 
-// LoadPersonalScript implements interp.ScriptLoader from the user's store; an
-// included script is held to sieve_extensions like the one that includes it.
+// IncludeAllowed gives an included script its location's set, which its ihave
+// answers from; nil is every supported extension.
+func (p *policy) IncludeAllowed(location string) func(string) bool {
+	x := p.personalExt
+	if location == "global" {
+		x = p.globalExt
+	}
+	return CompileOptions(x).Interp.Allowed
+}
+
+// LoadPersonalScript implements interp.ScriptLoader from the user's store; the
+// script is held to the user's set whoever includes it.
 func (p *policy) LoadPersonalScript(ctx context.Context, name string) (io.ReadCloser, error) {
 	if p.personal == nil {
 		return nil, nil
@@ -360,7 +379,7 @@ func (p *policy) LoadPersonalScript(ctx context.Context, name string) (io.ReadCl
 	if err != nil || !found {
 		return nil, err
 	}
-	return p.checkedInclude(name, src)
+	return p.checkedInclude(name, src, p.personalExt)
 }
 
 // LoadGlobalScript implements interp.ScriptLoader from sieve_global. The name
@@ -376,17 +395,17 @@ func (p *policy) LoadGlobalScript(_ context.Context, name string) (io.ReadCloser
 	if err != nil {
 		return nil, fmt.Errorf("sieve/engine: global script %q: %w", name, err)
 	}
-	return p.checkedInclude(name, src)
+	return p.checkedInclude(name, src, p.globalExt)
 }
 
-// checkedInclude compiles an included script and holds it to sieve_extensions
-// before it runs, as the including one was.
-func (p *policy) checkedInclude(name string, src []byte) (io.ReadCloser, error) {
-	script, err := gosieve.Load(bytes.NewReader(src), CompileOptions(p.extensions))
+// checkedInclude compiles an included script and holds it to its location's
+// set before it runs.
+func (p *policy) checkedInclude(name string, src []byte, x ExtensionSet) (io.ReadCloser, error) {
+	script, err := gosieve.Load(bytes.NewReader(src), CompileOptions(x))
 	if err != nil {
 		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
 	}
-	if err := CheckExtensions(script, p.extensions); err != nil {
+	if err := CheckExtensions(script, x); err != nil {
 		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
 	}
 	return io.NopCloser(bytes.NewReader(src)), nil

@@ -526,7 +526,7 @@ func New(cfg *config.Config) (*Server, error) {
 			MasterAddr:      masterAddr,
 			MasterPool:      masterPool,
 			MasterTLS:       authTLS,
-			SieveExtensions: cfg.Sieve.SieveExtensions,
+			SieveExtensions: sieve.UserExtensions(cfg.Sieve),
 			ScriptsDriver:   cfg.Sieve.ScriptsDriver,
 			ScriptsDict:     sieveDict,
 		})

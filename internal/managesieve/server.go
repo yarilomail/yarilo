@@ -40,9 +40,9 @@ type Options struct {
 	MaxScripts int
 	// MaxStorage is sieve_max_storage, a user's script bytes; 0 lifts it.
 	MaxStorage int
-	// SieveExtensions is the whitelist of permitted Sieve extensions.
-	// Corresponds to sieve.sieve_extensions in yarilo.yaml. Empty = allow all.
-	SieveExtensions []string
+	// SieveExtensions is what a user's script may use: sieve_extensions less
+	// sieve_global_extensions (sieve.UserExtensions).
+	SieveExtensions sieve.ExtensionSet
 	// ScriptsDriver selects the script storage backend: "fs" (default) or "redis".
 	ScriptsDriver string
 	// ScriptsDict is the dict instance used when ScriptsDriver is "redis".

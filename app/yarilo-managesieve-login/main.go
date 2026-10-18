@@ -122,7 +122,7 @@ func main() {
 		AuthTLS:             intTLS,
 		AuthMaxAttempts:     cfg.Auth.MaxAttempts,
 		DisablePlainAuth:    svcs.ManageSieve.PlainAuthDisabled(),
-		SieveExtensions:     strings.Join(sieve.SupportedExtensions, " "),
+		SieveExtensions:     sieveCapability(cfg.Sieve),
 		SieveMaxInvalidCmds: cfg.Protocol.ManageSieve.MaxInvalidCommands,
 		WardenAddr:          cfg.WardenService.ClientAddr(),
 		WardenTLS:           intTLS,
@@ -208,4 +208,10 @@ func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 		}
 	}()
 	return tel
+}
+
+// sieveCapability is the SIEVE capability the login advertises: what a user's
+// script may use, as the backend session lists it (#2290).
+func sieveCapability(c config.SieveConfig) string {
+	return strings.Join(sieve.EffectiveExtensions(sieve.UserExtensions(c)), " ")
 }

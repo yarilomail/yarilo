@@ -5,6 +5,8 @@ import (
 	"slices"
 
 	gosieve "github.com/foxcpp/go-sieve"
+
+	"github.com/yarilomail/yarilo/pkg/config"
 )
 
 // SupportedExtensions lists all Sieve extensions available in this build.
@@ -25,56 +27,61 @@ var SupportedExtensions = []string{
 	"vnd.yarilo.execute",
 }
 
-// EffectiveExtensions returns the intersection of SupportedExtensions and allowed.
-// When allowed is empty, SupportedExtensions is returned as-is.
-func EffectiveExtensions(allowed []string) []string {
-	if len(allowed) == 0 {
-		return SupportedExtensions
+// ExtensionSet is what one kind of script may use: List (empty: every
+// supported extension) less Deny.
+type ExtensionSet struct {
+	List []string
+	Deny []string
+}
+
+// UserExtensions is a user's set: sieve_extensions less the global-only ones.
+func UserExtensions(c config.SieveConfig) ExtensionSet {
+	return ExtensionSet{List: c.SieveExtensions, Deny: c.GlobalExtensions}
+}
+
+// AdminExtensions is the set of the administrator's scripts: sieve_extensions
+// and sieve_global_extensions (#2290).
+func AdminExtensions(c config.SieveConfig) ExtensionSet {
+	if len(c.SieveExtensions) == 0 {
+		return ExtensionSet{}
 	}
-	set := make(map[string]struct{}, len(allowed))
-	for _, e := range allowed {
-		set[e] = struct{}{}
-	}
-	out := make([]string, 0, len(allowed))
+	return ExtensionSet{List: append(slices.Clone(c.SieveExtensions), c.GlobalExtensions...)}
+}
+
+// Has says whether the set lets a script use ext.
+func (x ExtensionSet) Has(ext string) bool {
+	return (len(x.List) == 0 || slices.Contains(x.List, ext)) && !slices.Contains(x.Deny, ext)
+}
+
+// EffectiveExtensions is the part of SupportedExtensions the set allows: what
+// a capability list advertises.
+func EffectiveExtensions(x ExtensionSet) []string {
+	out := make([]string, 0, len(SupportedExtensions))
 	for _, e := range SupportedExtensions {
-		if _, ok := set[e]; ok {
+		if x.Has(e) {
 			out = append(out, e)
 		}
 	}
 	return out
 }
 
-// CheckExtensions verifies that every extension required by script is present
-// in the allowed list. Returns an error naming the first forbidden extension.
-// When allowed is empty, all extensions are permitted.
-func CheckExtensions(script *gosieve.Script, allowed []string) error {
-	if len(allowed) == 0 {
-		return nil
-	}
-	set := make(map[string]struct{}, len(allowed))
-	for _, e := range allowed {
-		set[e] = struct{}{}
-	}
+// CheckExtensions verifies that every extension script uses is in the set and
+// names the first one that is not.
+func CheckExtensions(script *gosieve.Script, x ExtensionSet) error {
 	for _, ext := range script.Extensions() {
-		if _, ok := set[ext]; !ok {
+		if !x.Has(ext) {
 			return fmt.Errorf("extension '%s' is not permitted", ext)
 		}
 	}
 	return nil
 }
 
-// CompileOptions are the load options for a script held to allowed: ihave
-// answers from the same list CheckExtensions holds it to (#2297).
-func CompileOptions(allowed []string) gosieve.Options {
+// CompileOptions are the load options for a script held to the set: ihave
+// answers from the same set CheckExtensions holds it to (#2297).
+func CompileOptions(x ExtensionSet) gosieve.Options {
 	opts := gosieve.DefaultOptions()
-	if len(allowed) > 0 {
-		opts.Interp.Allowed = func(ext string) bool { return slices.Contains(allowed, ext) }
+	if len(x.List) > 0 || len(x.Deny) > 0 {
+		opts.Interp.Allowed = x.Has
 	}
 	return opts
-}
-
-// ExtensionAllowed says whether sieve_extensions lets a script require ext; an
-// empty list allows every supported one.
-func ExtensionAllowed(allowed []string, ext string) bool {
-	return len(allowed) == 0 || slices.Contains(allowed, ext)
 }
