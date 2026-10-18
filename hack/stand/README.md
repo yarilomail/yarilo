@@ -74,6 +74,8 @@ Every matched line is kept verbatim in `<out-dir>/lines/<name>.txt`, and every
 container's log in `<out-dir>/logs/`: a count alone explains nothing once the
 pods are replaced (#2183).
 
+The runner's disk is pruned by the `Prune runner disk` job of `ci-develop.yml` after every develop build: images, containers and build cache older than 48 h go, and the build cache is capped at 10 GB.
+
 ## The quick arm
 
 A question about one storage type does not need the other two: a maildir
