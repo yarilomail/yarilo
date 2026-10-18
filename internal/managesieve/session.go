@@ -198,7 +198,7 @@ func (s *session) handlePutScript(ctx context.Context) {
 		return
 	}
 
-	compiled, err := gosieve.Load(bytes.NewReader(src), gosieve.DefaultOptions())
+	compiled, err := gosieve.Load(bytes.NewReader(src), sieve.CompileOptions(s.allowedExtensions))
 	if err != nil {
 		_ = writeNO(s.w, "", fmt.Sprintf("Script error: %s", strings.TrimSpace(err.Error())))
 		return
@@ -350,7 +350,7 @@ func (s *session) handleCheckScript() {
 		return
 	}
 
-	compiled, err := gosieve.Load(bytes.NewReader(src), gosieve.DefaultOptions())
+	compiled, err := gosieve.Load(bytes.NewReader(src), sieve.CompileOptions(s.allowedExtensions))
 	if err != nil {
 		_ = writeNO(s.w, "", fmt.Sprintf("Script error: %s", strings.TrimSpace(err.Error())))
 		return

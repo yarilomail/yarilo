@@ -129,7 +129,7 @@ func (e *Engine) loadImapScript(name string) (*gosieve.Script, error) {
 		}
 		return nil, err
 	}
-	sieveOpts := gosieve.DefaultOptions()
+	sieveOpts := CompileOptions(e.cfg.SieveExtensions)
 	sieveOpts.Interp.MaxRedirects = e.cfg.MaxRedirects
 	sieveOpts.Interp.MaxActions = e.cfg.MaxActions
 	script, err := gosieve.Load(bytes.NewReader(src), sieveOpts)

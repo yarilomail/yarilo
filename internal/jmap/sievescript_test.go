@@ -320,6 +320,26 @@ func TestSieveScriptValidate(t *testing.T) {
 	}
 }
 
+// validate under sieve_extensions [ihave]: require "ihave" opens nothing
+// outside an ihave block, and a block under a refused extension is dead (#2297).
+func TestSieveScriptValidateIhaveHoldsToSieveExtensions(t *testing.T) {
+	s, _, _ := sieveServer(t, sieve.Quota{}, "ihave")
+	for _, c := range []struct {
+		script string
+		want   any
+	}{
+		{`require "ihave"; execute "prog";`, "invalidSieve"},
+		{`require "ihave"; fileinto "X";`, "invalidSieve"},
+		{`require "ihave"; if ihave "fileinto" { fileinto "X"; }`, nil},
+	} {
+		out := sieveCall(t, s, "SieveScript/validate", `{"accountId":"`+testUser+`","blobId":"`+uploadAs(t, s, testUser, c.script)+`"}`)
+		e, _ := out["error"].(map[string]any)
+		if (c.want == nil && out["error"] != nil) || (c.want != nil && e["type"] != c.want) {
+			t.Errorf("validate %q = %v, want %v", c.script, out["error"], c.want)
+		}
+	}
+}
+
 // GETSCRIPT over the download URL, by the blob id SieveScript/get gives.
 func TestSieveScriptDownload(t *testing.T) {
 	ctx := context.Background()

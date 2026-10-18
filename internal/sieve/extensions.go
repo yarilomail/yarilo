@@ -63,6 +63,16 @@ func CheckExtensions(script *gosieve.Script, allowed []string) error {
 	return nil
 }
 
+// CompileOptions are the load options for a script held to allowed: ihave
+// answers from the same list CheckExtensions holds it to (#2297).
+func CompileOptions(allowed []string) gosieve.Options {
+	opts := gosieve.DefaultOptions()
+	if len(allowed) > 0 {
+		opts.Interp.Allowed = func(ext string) bool { return slices.Contains(allowed, ext) }
+	}
+	return opts
+}
+
 // ExtensionAllowed says whether sieve_extensions lets a script require ext; an
 // empty list allows every supported one.
 func ExtensionAllowed(allowed []string, ext string) bool {
