@@ -176,6 +176,28 @@ const escapedDescendantLifetime = 20 * time.Second
 // output pipes open. Wait must come back on its own delay and SAY the
 // descendant may have survived, rather than sitting for as long as it runs.
 func TestFlushHook_EscapedDescendantStillReleasesTheWait(t *testing.T) {
+	runEscapingHook(t)
+}
+
+// A wall-clock mark is read 5 ms short, as after a clock step; the escape is
+// still reported, because the mark is read on the monotonic clock (#2293).
+func TestFlushHook_EscapeSurvivesAWallClockStep(t *testing.T) {
+	orig := flushSince
+	t.Cleanup(func() { flushSince = orig })
+	flushSince = func(mark time.Time) time.Duration {
+		d := time.Since(mark)
+		if mark == mark.Round(0) { // Round(0) strips the monotonic reading
+			d -= 5 * time.Millisecond
+		}
+		return d
+	}
+	runEscapingHook(t)
+}
+
+// runEscapingHook runs the setsid hook under a 3 s bound and asserts the wait
+// came back on its delay and reported the escape.
+func runEscapingHook(t *testing.T) {
+	t.Helper()
 	const bound = 3 * time.Second
 	pidFile := filepath.Join(t.TempDir(), "escaped.pid")
 	t.Setenv(helperEscapingHookEnv, pidFile)
