@@ -138,10 +138,10 @@ jobs:
 
   disk:
     name: Prune runner disk
-    ## The runner builds every image and keeps it; a full disk stops CI and the
-    ## stand's acceptance at once. Its own job, as the tag prune below.
+    ## A full disk stops CI and the stand's acceptance at once; always(), since
+    ## a build that failed on a full disk is the case this job exists for.
     needs: [build]
-    if: github.event_name != 'pull_request'
+    if: always() && github.event_name != 'pull_request'
     runs-on: [self-hosted, linux]
     permissions: {}
     steps:
