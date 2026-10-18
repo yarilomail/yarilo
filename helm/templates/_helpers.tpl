@@ -384,6 +384,7 @@ Args: dict "root" $ "itls" <internalTLS config>.
 {{- end }}
 {{- include "yarilo.internalTLSMount" (dict "root" $root "itls" .itls "role" .role "vol" (printf "internal-tls-%s" .role)) }}
 {{- include "yarilo.sieveGlobalMount" (dict "root" $root "role" .role) }}
+{{- include "yarilo.imapsieveMount" (dict "root" $root "role" .role) }}
 {{- /* extraVolumes are rendered on the StatefulSet, so the matching mounts
        belong on every backend container. Without them a volume an operator
        added is present in the pod and mounted nowhere: a passwd-file passdb
@@ -744,5 +745,29 @@ lmtp and imap containers. Pass the ROOT and the container's role.
 - name: sieve-global
   configMap:
     name: {{ include "yarilo.fullname" . }}-sieve-global
+{{- end }}
+{{- end -}}
+
+{{/*
+Admin imapsieve scripts: mounted in the imap container only (#2292). Pass the
+ROOT and the container's role.
+*/}}
+{{- define "yarilo.imapsieveOn" -}}
+{{- if and .Values.sieve.imapsieve_enabled .Values.sieve.imapsieve_scripts .Values.sieve.imapsieve_script_dir }}true{{ end -}}
+{{- end -}}
+
+{{- define "yarilo.imapsieveMount" -}}
+{{- if and (include "yarilo.imapsieveOn" .root) (eq .role "imap") }}
+- name: imapsieve-scripts
+  mountPath: {{ .root.Values.sieve.imapsieve_script_dir | quote }}
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "yarilo.imapsieveVolume" -}}
+{{- if include "yarilo.imapsieveOn" . }}
+- name: imapsieve-scripts
+  configMap:
+    name: {{ include "yarilo.fullname" . }}-imapsieve-scripts
 {{- end }}
 {{- end -}}
