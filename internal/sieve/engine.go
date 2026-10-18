@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
 	"net/textproto"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,6 +142,7 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		virusMax:        e.cfg.VirusMaxValue,
 		personal:        e.personalScripts(opts.Username, opts.HomeDir),
 		extensions:      e.cfg.SieveExtensions,
+		globalDir:       e.cfg.Global,
 	}
 
 	var merged FilterResult
@@ -341,6 +344,8 @@ type policy struct {
 	personal func(ctx context.Context, name string) ([]byte, bool, error)
 	// extensions is sieve_extensions, applied to an included script as to the active one.
 	extensions []string
+	// globalDir is sieve_global, where include :global reads from; "" has none.
+	globalDir string
 }
 
 var _ interp.ScriptLoader = (*policy)(nil)
@@ -355,6 +360,28 @@ func (p *policy) LoadPersonalScript(ctx context.Context, name string) (io.ReadCl
 	if err != nil || !found {
 		return nil, err
 	}
+	return p.checkedInclude(name, src)
+}
+
+// LoadGlobalScript implements interp.ScriptLoader from sieve_global. The name
+// is a script name, never a path, so nothing outside that directory is read.
+func (p *policy) LoadGlobalScript(_ context.Context, name string) (io.ReadCloser, error) {
+	if p.globalDir == "" || !ValidScriptName(name) {
+		return nil, nil
+	}
+	src, err := os.ReadFile(filepath.Join(p.globalDir, name+sieveExt))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sieve/engine: global script %q: %w", name, err)
+	}
+	return p.checkedInclude(name, src)
+}
+
+// checkedInclude compiles an included script and holds it to sieve_extensions
+// before it runs, as the including one was.
+func (p *policy) checkedInclude(name string, src []byte) (io.ReadCloser, error) {
 	script, err := gosieve.Load(bytes.NewReader(src), gosieve.DefaultOptions())
 	if err != nil {
 		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
@@ -363,12 +390,6 @@ func (p *policy) LoadPersonalScript(ctx context.Context, name string) (io.ReadCl
 		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
 	}
 	return io.NopCloser(bytes.NewReader(src)), nil
-}
-
-// LoadGlobalScript implements interp.ScriptLoader: there is no global script
-// location yet, so every :global script is missing (#2283).
-func (p *policy) LoadGlobalScript(context.Context, string) (io.ReadCloser, error) {
-	return nil, nil
 }
 
 // SpamScore implements interp.SpamVirusChecker: it reads the configured spam

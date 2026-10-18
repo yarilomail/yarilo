@@ -84,6 +84,7 @@ spec:
               mountPath: {{ .Values.storage.maildir_root }}
             {{- end }}
             {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.imap.internalTLS "role" "imap") | nindent 12 }}
+            {{- include "yarilo.sieveGlobalMount" (dict "root" $ "role" "imap") | nindent 12 }}
             {{- if and .Values.sieve.imapsieve_enabled .Values.sieve.imapsieve_scripts .Values.sieve.imapsieve_script_dir }}
             - name: imapsieve-scripts
               mountPath: {{ .Values.sieve.imapsieve_script_dir | quote }}
@@ -104,6 +105,7 @@ spec:
             claimName: {{ include "yarilo.fullname" . }}-mail
         {{- end }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.imap.internalTLS "role" "imap") | nindent 8 }}
+        {{- include "yarilo.sieveGlobalVolume" $ | nindent 8 }}
         {{- if and .Values.sieve.imapsieve_enabled .Values.sieve.imapsieve_scripts .Values.sieve.imapsieve_script_dir }}
         - name: imapsieve-scripts
           configMap:

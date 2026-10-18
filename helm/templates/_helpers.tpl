@@ -383,6 +383,7 @@ Args: dict "root" $ "itls" <internalTLS config>.
   mountPath: {{ $root.Values.storage.maildir_root | default "/var/mail/vhosts" }}
 {{- end }}
 {{- include "yarilo.internalTLSMount" (dict "root" $root "itls" .itls "role" .role "vol" (printf "internal-tls-%s" .role)) }}
+{{- include "yarilo.sieveGlobalMount" (dict "root" $root "role" .role) }}
 {{- /* extraVolumes are rendered on the StatefulSet, so the matching mounts
        belong on every backend container. Without them a volume an operator
        added is present in the pod and mounted nowhere: a passwd-file passdb
@@ -721,3 +722,27 @@ The relay password from its Secret, for every container that relays mail.
       key: {{ $.Values.protocol.submission.relay.password_secret_ref.key | default "password" }}
 {{- end }}
 {{- end }}
+
+{{/*
+Global Sieve scripts (include :global, #2283): mounted where Sieve runs, the
+lmtp and imap containers. Pass the ROOT and the container's role.
+*/}}
+{{- define "yarilo.sieveGlobalOn" -}}
+{{- if and .Values.sieve.sieve_global_scripts .Values.sieve.sieve_global }}true{{ end -}}
+{{- end -}}
+
+{{- define "yarilo.sieveGlobalMount" -}}
+{{- if and (include "yarilo.sieveGlobalOn" .root) (has .role (list "lmtp" "imap")) }}
+- name: sieve-global
+  mountPath: {{ .root.Values.sieve.sieve_global | quote }}
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "yarilo.sieveGlobalVolume" -}}
+{{- if include "yarilo.sieveGlobalOn" . }}
+- name: sieve-global
+  configMap:
+    name: {{ include "yarilo.fullname" . }}-sieve-global
+{{- end }}
+{{- end -}}

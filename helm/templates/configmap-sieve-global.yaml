@@ -1,0 +1,16 @@
+{{- if and .Values.sieve.sieve_global_scripts .Values.sieve.sieve_global }}
+# Global Sieve scripts for include :global (RFC 6609), <name>.sieve each,
+# mounted read-only at sieve.sieve_global in the lmtp and imap containers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "yarilo.fullname" . }}-sieve-global
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yarilo.labels" . | nindent 4 }}
+data:
+  {{- range $name, $content := .Values.sieve.sieve_global_scripts }}
+  {{ $name }}.sieve: |
+    {{- $content | nindent 4 }}
+  {{- end }}
+{{- end }}

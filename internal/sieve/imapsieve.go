@@ -44,6 +44,7 @@ func (e *Engine) RunIMAPEvent(ctx context.Context, opts IMAPEventOptions) (*Filt
 		virusMax:     e.cfg.VirusMaxValue,
 		personal:     e.personalScripts(opts.Username, opts.HomeDir),
 		extensions:   e.cfg.SieveExtensions,
+		globalDir:    e.cfg.Global,
 	}
 	fopts := FilterOptions{
 		Username: opts.Username,

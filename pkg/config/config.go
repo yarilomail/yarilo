@@ -148,6 +148,9 @@ type SieveConfig struct {
 	GlobalBefore []string `koanf:"sieve_global_before"`
 	// GlobalAfter is the same, executed after the user's active script.
 	GlobalAfter []string `koanf:"sieve_global_after"`
+	// Global is the directory of the scripts include :global names (RFC 6609),
+	// <name>.sieve each; empty means there are none.
+	Global string `koanf:"sieve_global"`
 
 	// ImapSieveEnabled activates imapsieve (RFC 6785): Sieve scripts on IMAP
 	// events (APPEND, COPY/MOVE, flag change). Per-mailbox binding is via the
@@ -3606,7 +3609,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 15
+const minConfigSchema = 16
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3634,6 +3637,7 @@ var schemaAdditions = map[int][]string{
 	15: {"sieve_vacation_min_period", "sieve_vacation_max_period", "sieve_vacation_default_period",
 		"sieve_vacation_default_subject", "sieve_vacation_default_subject_template", "sieve_vacation_use_original_recipient",
 		"sieve_vacation_check_recipient", "sieve_vacation_send_from_recipient", "sieve_vacation_to_header_ignore_envelope"},
+	16: {"sieve_global"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
