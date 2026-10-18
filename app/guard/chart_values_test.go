@@ -137,6 +137,22 @@ sieve:
 	}
 }
 
+// sieve_global reaches the config as written, and its default is none (#2283).
+func TestSieveGlobalReachesTheConfig(t *testing.T) {
+	for _, c := range []struct{ extra, want string }{
+		{"", ""},
+		{"sieve:\n  sieve_global: \"/etc/yarilo/sieve-global\"\n", "/etc/yarilo/sieve-global"},
+	} {
+		out, err := renderWith(t, c.extra)
+		if err != nil {
+			t.Fatalf("helm template: %v\n%s", err, out)
+		}
+		if got := loadRendered(t, out).Sieve.Global; got != c.want {
+			t.Errorf("sieve_global = %q, want %q", got, c.want)
+		}
+	}
+}
+
 // The SQL pool settings of a passdb entry reach the config.
 func TestPassdbPoolSettingsReachTheConfig(t *testing.T) {
 	out, err := renderWith(t, `

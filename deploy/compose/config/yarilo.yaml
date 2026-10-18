@@ -171,6 +171,7 @@ sieve:
   sieve_duplicate_max_period: 604800
   sieve_duplicate_driver: "file"
   sieve_duplicate_file: ".yarilo.sieve-duplicate"
+  sieve_global: ""
   sieve_vacation_enabled: true
   sieve_vacation_min_period: 86400
   sieve_vacation_max_period: 5184000

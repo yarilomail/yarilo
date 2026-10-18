@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 15
+config_schema_version: 16
 
 image:
   repository: ghcr.io/yarilomail/yarilo
@@ -2217,6 +2217,12 @@ sieve:
   sieve_duplicate_driver: "file"
   ## Home-dir file name for sieve_duplicate_driver=file.
   sieve_duplicate_file: ".yarilo.sieve-duplicate"
+  ## Directory of the scripts `include :global` names, <name>.sieve each; users
+  ## cannot write it. Empty: a :global include finds nothing.
+  sieve_global: ""
+  ## Global scripts, keyed by name: a ConfigMap mounted read-only at sieve_global
+  ## in the lmtp and imap containers. Empty: provide the directory yourself.
+  sieve_global_scripts: {}
   sieve_vacation_enabled: true
   ## vacation periods, seconds: :days / :seconds, or the default, kept between
   ## the minimum and the maximum; 0 = no bound.

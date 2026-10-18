@@ -322,6 +322,7 @@ spec:
         {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- include "yarilo.sieveGlobalVolume" . | nindent 8 }}
         # shared readiness signal (#788): protocol containers touch, sidecar reads
         - name: ready
           emptyDir: {}

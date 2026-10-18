@@ -207,6 +207,10 @@ protocol:
 sieve:
   sieve_enabled: true
   sieve_default_name: "yarilo"
+  sieve_global: "/etc/yarilo/sieve-global"
+  sieve_global_scripts:
+    site-keep: |
+      keep;
   imapsieve_enabled: true
   imapsieve_script_dir: "/etc/yarilo/imapsieve"
   imapsieve_scripts:
