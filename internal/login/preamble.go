@@ -645,7 +645,8 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			if mechs != "" {
 				caps += "250-AUTH" + mechs + "\r\n"
 			}
-			if opts.XClient {
+			// Listed only to a peer that may use it: anyone else is told nothing of trust.
+			if opts.XClient && ipInNets(remoteHost(conn), opts.XClientNets) {
 				caps += "250-XCLIENT ADDR PORT\r\n"
 			}
 			caps += "250 8BITMIME\r\n"

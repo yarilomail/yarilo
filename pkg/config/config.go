@@ -2489,7 +2489,8 @@ func Defaults() *Config {
 			HAProxy: HAProxyConfig{
 				HAProxyTrustedNetworks: defaultTrustedNets,
 			},
-			XClient: XClientConfig{TrustedNets: defaultTrustedNets},
+			// Trust no forwarded address until the operator names the proxies' networks.
+			XClient: XClientConfig{},
 		},
 		Protocol: ProtocolConfig{
 			JMAP: JMAPProtocolConfig{
@@ -2825,6 +2826,7 @@ func Load(path string) (*Config, error) {
 	warnRetiredKeys(k, retiredKeys())
 	warnChartSkew(cfg.ChartVersion)
 	warnConfigSchemaSkew(cfg.ConfigSchemaVersion)
+	warnXClientUntrusted(cfg)
 	if err := refuseInvertedPairs(cfg); err != nil {
 		return nil, err
 	}
@@ -3643,6 +3645,28 @@ var schemaAdditions = map[int][]string{
 // silent. That is not a corner case: it is every change between two releases,
 // and it once cost a day, with three pod names where one configured hostname
 // was expected reading as a code defect (#1528).
+// warnXClientUntrusted says when a listener takes forwarded client addresses
+// while general.xclient.trusted_nets names no peer that may send them.
+func warnXClientUntrusted(cfg *Config) {
+	if len(cfg.General.XClient.TrustedNets) > 0 {
+		return
+	}
+	s := cfg.Services
+	for _, l := range []struct {
+		name string
+		svc  *ServiceConfig
+	}{
+		{"imap", s.IMAP}, {"imaps", s.IMAPS}, {"pop3", s.POP3}, {"pop3s", s.POP3S},
+		{"submission", s.Submission}, {"submissions", s.Submissions}, {"lmtp", s.LMTP},
+		{"jmap", s.JMAP}, {"jmap_be", s.JMAPBE},
+	} {
+		if l.svc != nil && l.svc.XClient {
+			slog.Warn("config: xclient_protocol is on but general.xclient.trusted_nets is empty: no forwarded client address is trusted",
+				"listener", l.name)
+		}
+	}
+}
+
 func warnConfigSchemaSkew(fromConfig int) {
 	if build.ChartVersion == "dev" {
 		// A local build is not deployed from a chart.
