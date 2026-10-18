@@ -249,7 +249,7 @@ func (s *Server) checkSieveContent(src []byte) *jmapcore.SetError {
 	if len(src) == 0 || !utf8.Valid(src) {
 		return &jmapcore.SetError{Type: jmapcore.SetErrInvalidSieve, Description: "a script is UTF-8 of at least one character"}
 	}
-	compiled, err := gosieve.Load(bytes.NewReader(src), gosieve.DefaultOptions())
+	compiled, err := gosieve.Load(bytes.NewReader(src), sieve.CompileOptions(s.opts.Sieve.Extensions))
 	if err != nil {
 		return &jmapcore.SetError{Type: jmapcore.SetErrInvalidSieve, Description: strings.TrimSpace(err.Error())}
 	}

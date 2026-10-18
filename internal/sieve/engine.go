@@ -165,7 +165,7 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 	}
 	if src != nil {
 		anyScriptRan = true
-		sieveOpts := gosieve.DefaultOptions()
+		sieveOpts := CompileOptions(e.cfg.SieveExtensions)
 		sieveOpts.Interp.MaxRedirects = e.cfg.MaxRedirects
 		sieveOpts.Interp.MaxActions = e.cfg.MaxActions
 		sieveOpts.Interp.DebugLog = makeDebugLogger(opts.HomeDir)
@@ -382,7 +382,7 @@ func (p *policy) LoadGlobalScript(_ context.Context, name string) (io.ReadCloser
 // checkedInclude compiles an included script and holds it to sieve_extensions
 // before it runs, as the including one was.
 func (p *policy) checkedInclude(name string, src []byte) (io.ReadCloser, error) {
-	script, err := gosieve.Load(bytes.NewReader(src), gosieve.DefaultOptions())
+	script, err := gosieve.Load(bytes.NewReader(src), CompileOptions(p.extensions))
 	if err != nil {
 		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
 	}
