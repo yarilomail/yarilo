@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -88,5 +90,35 @@ func TestVacationKeys(t *testing.T) {
 	if !d.VacationCheckRecipient || d.VacationUseOriginalRecipient || d.VacationSendFromRecipient || d.VacationToHeaderIgnoreEnvelope ||
 		d.VacationDefaultSubject != "" || d.VacationDefaultSubjectTemplate != "" {
 		t.Errorf("vacation defaults = %+v, want check_recipient on and the rest off and empty", d)
+	}
+}
+
+// general.xclient.trusted_nets trusts no peer by default, and a listener that
+// takes forwarded addresses with nobody trusted says so at load.
+func TestXClientTrustsNobodyByDefault(t *testing.T) {
+	if n := Defaults().General.XClient.TrustedNets; len(n) != 0 {
+		t.Errorf("default trusted_nets = %v, want none", n)
+	}
+	cases := []struct {
+		name, body string
+		warn       bool
+	}{
+		{"xclient on, nobody trusted", "services:\n  submission:\n    xclient_protocol: true\n", true},
+		{"xclient on, a network trusted", "general:\n  xclient:\n    trusted_nets: [\"10.0.0.0/8\"]\nservices:\n  submission:\n    xclient_protocol: true\n", false},
+		{"xclient off", "services:\n  submission:\n    xclient_protocol: false\n", false},
+		{"the JMAP backend's trust mode 2, nobody trusted", "services:\n  jmap_be:\n    xclient_protocol: true\n", true},
+	}
+	for _, c := range cases {
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+		_, err := loadYAML(t, c.body)
+		slog.SetDefault(prev)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := strings.Contains(buf.String(), "trusted_nets is empty"); got != c.warn {
+			t.Errorf("%s: warned %v, want %v:\n%s", c.name, got, c.warn, buf.String())
+		}
 	}
 }

@@ -1801,6 +1801,15 @@ func wardenService(p Protocol) string {
 	}
 }
 
+// remoteHost is the peer's address without its port, as handleConn reads it.
+func remoteHost(conn net.Conn) string {
+	host, _, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		return conn.RemoteAddr().String()
+	}
+	return host
+}
+
 // ipInNets gates XCLIENT/ID forwarding on the trusted nets; empty trusts
 // nobody (#742).
 func ipInNets(ip string, nets []*net.IPNet) bool {

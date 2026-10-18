@@ -132,6 +132,11 @@ func New(opts Options) *Server {
 	srv.ReadTimeout = opts.ReadTimeout
 	srv.WriteTimeout = opts.WriteTimeout
 	srv.EnableXCLIENT = opts.XClient
+	// Listed only to a trusted relay, the same rule as the login listeners.
+	srv.XCLIENTAdvertise = func(remote net.Addr) bool {
+		host, _, err := net.SplitHostPort(remote.String())
+		return err == nil && ipInNets(host, opts.XClientNets)
+	}
 	srv.MaxMessageBytes = opts.MaxMessageBytes
 	srv.MaxRecipients = opts.MaxRecipients
 

@@ -188,11 +188,9 @@ func TestSubmissionPreamble_ForwardedXClient(t *testing.T) {
 	crd := bufio.NewReader(cli)
 	crd.ReadString('\n') // 220 greeting
 
+	// Whether EHLO lists XCLIENT is the peer's trust (TestSubmissionAdvertisesXClientOnlyToTrustedPeers).
 	cli.Write([]byte("EHLO relay\r\n"))
-	sawXClient := readEHLOCaps(t, crd)
-	if !sawXClient {
-		t.Fatalf("EHLO must advertise XCLIENT when enabled")
-	}
+	readEHLOCaps(t, crd)
 
 	cli.Write([]byte("XCLIENT ADDR=203.0.113.9\r\n"))
 	reset, _ := crd.ReadString('\n')

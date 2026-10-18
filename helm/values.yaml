@@ -2396,9 +2396,9 @@ general:
   ## the final client IP. `enabled` toggles xclient_protocol on every listener.
   xclient:
     enabled: false
-    trusted_nets:
-      - "127.0.0.1/32"
-      - "10.0.0.0/8"
+    ## The proxies whose forwarded client address is trusted, and the only peers
+    ## EHLO lists XCLIENT to. Empty trusts none: name the proxies' networks.
+    trusted_nets: []
 
 ## -------------------------------------------------------------------
 ## Redis — state backend for yarilo-locks (and future yarilo-warden).
