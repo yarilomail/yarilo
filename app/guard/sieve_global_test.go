@@ -9,9 +9,9 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// sieveGlobalShape is what a render says about the global scripts: the
-// ConfigMap's keys (nil: no ConfigMap), and which containers mount them where.
-func sieveGlobalShape(t *testing.T, out []byte) (keys []string, mounts map[string]string, volume bool) {
+// scriptsShape is what a render says about a scripts volume on the backend:
+// its ConfigMap's keys (nil: no ConfigMap), and which containers mount it where.
+func scriptsShape(t *testing.T, out []byte, vol string) (keys []string, mounts map[string]string, volume bool) {
 	t.Helper()
 	mounts = map[string]string{}
 	for _, doc := range strings.Split(string(out), "\n---\n") {
@@ -42,7 +42,7 @@ func sieveGlobalShape(t *testing.T, out []byte) (keys []string, mounts map[strin
 		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
 			t.Fatalf("parse chart output: %v", err)
 		}
-		if obj.Kind == "ConfigMap" && strings.HasSuffix(obj.Metadata.Name, "-sieve-global") {
+		if obj.Kind == "ConfigMap" && strings.HasSuffix(obj.Metadata.Name, "-"+vol) {
 			keys = []string{}
 			for k := range obj.Data {
 				keys = append(keys, k)
@@ -52,13 +52,13 @@ func sieveGlobalShape(t *testing.T, out []byte) (keys []string, mounts map[strin
 			continue
 		}
 		for _, v := range obj.Spec.Template.Spec.Volumes {
-			volume = volume || v.Name == "sieve-global"
+			volume = volume || v.Name == vol
 		}
 		for _, c := range obj.Spec.Template.Spec.Containers {
 			for _, m := range c.VolumeMounts {
-				if m.Name == "sieve-global" {
+				if m.Name == vol {
 					if !m.ReadOnly {
-						t.Errorf("%s mounts the global scripts writable", c.Name)
+						t.Errorf("%s mounts %s writable", c.Name, vol)
 					}
 					mounts[c.Name] = m.MountPath
 				}
@@ -76,7 +76,7 @@ func TestSieveGlobalScriptsReachLMTPAndIMAP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
-	keys, mounts, volume := sieveGlobalShape(t, out)
+	keys, mounts, volume := scriptsShape(t, out, "sieve-global")
 	if !slices.Equal(keys, []string{"site-keep.sieve"}) || !volume {
 		t.Errorf("ConfigMap keys %v, volume %v; want the sandbox's site-keep.sieve and a volume", keys, volume)
 	}
@@ -92,7 +92,7 @@ func TestNoSieveGlobalScriptsRenderNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
 	}
-	keys, mounts, volume := sieveGlobalShape(t, out)
+	keys, mounts, volume := scriptsShape(t, out, "sieve-global")
 	if keys != nil || len(mounts) != 0 || volume {
 		t.Errorf("with no scripts: ConfigMap keys %v, mounts %v, volume %v", keys, mounts, volume)
 	}
