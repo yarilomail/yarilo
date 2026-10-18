@@ -231,6 +231,7 @@ func sieveScripts(cfg *config.Config, st *sieve.IndexedStore) *jmap.SieveScripts
 		Extensions:     cfg.Sieve.SieveExtensions,
 		MaxRedirects:   cfg.Sieve.MaxRedirects,
 		Implementation: "yarilo " + build.Version,
+		Vacation:       cfg.Sieve.VacationEnabled && sieve.ExtensionAllowed(cfg.Sieve.SieveExtensions, "vacation"),
 	}
 }
 

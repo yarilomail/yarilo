@@ -32,6 +32,8 @@ type SieveScripts struct {
 	MaxRedirects int
 	// Implementation is the session capability's "implementation".
 	Implementation string
+	// Vacation serves VacationResponse on these scripts (sieve_vacation_enabled).
+	Vacation bool
 }
 
 // maxSieveNameOctets is the RFC 9661 floor; a name also stays within the

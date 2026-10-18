@@ -2,6 +2,7 @@ package sieve
 
 import (
 	"fmt"
+	"slices"
 
 	gosieve "github.com/foxcpp/go-sieve"
 )
@@ -60,4 +61,10 @@ func CheckExtensions(script *gosieve.Script, allowed []string) error {
 		}
 	}
 	return nil
+}
+
+// ExtensionAllowed says whether sieve_extensions lets a script require ext; an
+// empty list allows every supported one.
+func ExtensionAllowed(allowed []string, ext string) bool {
+	return len(allowed) == 0 || slices.Contains(allowed, ext)
 }
