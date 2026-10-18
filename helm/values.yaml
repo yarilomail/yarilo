@@ -2227,8 +2227,8 @@ sieve:
   ## a message with no subject gets default_subject ("" = "Automated reply").
   sieve_vacation_default_subject: ""
   sieve_vacation_default_subject_template: ""
-  ## The LMTP ORCPT counts as the user's address too; not in effect until LMTP
-  ## carries ORCPT to the backend.
+  ## The LMTP ORCPT counts as the user's address too; only a relay that sends
+  ## ORCPT without DSN gives one (Postfix does not).
   sieve_vacation_use_original_recipient: false
   ## Reply only to mail naming the user (or :addresses) in To/Cc/Bcc/Resent-*.
   sieve_vacation_check_recipient: true

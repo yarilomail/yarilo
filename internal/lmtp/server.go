@@ -142,6 +142,8 @@ func New(opts Options) *Server {
 	srv := goSmtp.NewServer(be)
 	srv.Domain = opts.Hostname
 	srv.LMTP = true
+	// ORCPT is taken without DSN, as from lmtp-login; DSN itself is not offered.
+	srv.AcceptORCPT = true
 	srv.TLSConfig = opts.TLSConfig
 	srv.ReadTimeout = time.Duration(opts.Config.ReadTimeout) * time.Second
 	srv.WriteTimeout = time.Duration(opts.Config.WriteTimeout) * time.Second
@@ -225,6 +227,9 @@ type session struct {
 	// so LMTPData can use correct Home and QuotaRules without re-querying.
 	rcptUserInfo map[string]*mailbox.UserInfo
 
+	// orcpt is each recipient's ORCPT, when the relay gave one (RFC 3461).
+	orcpt map[string]string
+
 	// connID identifies this LMTP connection (see nextConnID).
 	connID uint64
 
@@ -296,9 +301,18 @@ func (s *session) Mail(from string, _ *goSmtp.MailOptions) error {
 	return nil
 }
 
-func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
+func (s *session) Rcpt(to string, opts *goSmtp.RcptOptions) error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "RCPT", "to", to)
-	return s.rcptLocal(to)
+	if err := s.rcptLocal(to); err != nil {
+		return err
+	}
+	if opts != nil && opts.OriginalRecipient != "" {
+		if s.orcpt == nil {
+			s.orcpt = map[string]string{}
+		}
+		s.orcpt[to] = opts.OriginalRecipient
+	}
+	return nil
 }
 
 func (s *session) rcptLocal(to string) error {
@@ -677,6 +691,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				HomeDir:  userInfo.Home,
 				EnvFrom:  s.from,
 				EnvTo:    rcpt,
+				OrigRcpt: s.orcpt[rcpt],
 				MsgRaw:   msg,
 				FolderExists: func(_ context.Context, f string) (bool, error) {
 					box, _, rel, closeTarget := s.deliveryTarget(userInfo, rcptBox, rcptMbox, f, false)
@@ -776,6 +791,7 @@ func (s *session) Reset() {
 	s.from = ""
 	s.rcpts = nil
 	s.rcptUserInfo = nil
+	s.orcpt = nil
 }
 
 func (s *session) Logout() error {
