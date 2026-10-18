@@ -132,6 +132,8 @@ func New(opts Options) *Server {
 	srv.ReadTimeout = opts.ReadTimeout
 	srv.WriteTimeout = opts.WriteTimeout
 	srv.EnableXCLIENT = opts.XClient
+	// ORCPT is taken without offering DSN, as the reference's LMTP does.
+	srv.AcceptORCPT = true
 	// Listed only to a trusted relay, the same rule as the login listeners.
 	srv.XCLIENTAdvertise = func(remote net.Addr) bool {
 		host, _, err := net.SplitHostPort(remote.String())
@@ -192,6 +194,7 @@ type rcptEntry struct {
 	token       string // one-time session token from yarilo-auth
 	backendAddr string // resolved backend address (per-recipient in director mode)
 	timeout     time.Duration
+	orcpt       goSmtp.RcptOptions // the relay's ORCPT, passed on as given
 }
 
 type session struct {
@@ -229,7 +232,7 @@ func (s *session) Mail(from string, _ *goSmtp.MailOptions) error {
 	return nil
 }
 
-func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
+func (s *session) Rcpt(to string, opts *goSmtp.RcptOptions) error {
 	username := rcptUsername(to)
 	if username == "" {
 		return &goSmtp.SMTPError{Code: 501, EnhancedCode: goSmtp.EnhancedCode{5, 1, 3}, Message: "Bad recipient address"}
@@ -272,7 +275,11 @@ func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
 		return &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary auth error"}
 	}
 
-	s.rcpts = append(s.rcpts, rcptEntry{to: to, username: username, wardenID: wardenID, token: tok, backendAddr: backendAddr, timeout: timeout})
+	e := rcptEntry{to: to, username: username, wardenID: wardenID, token: tok, backendAddr: backendAddr, timeout: timeout}
+	if opts != nil && opts.OriginalRecipient != "" {
+		e.orcpt = goSmtp.RcptOptions{OriginalRecipientType: opts.OriginalRecipientType, OriginalRecipient: opts.OriginalRecipient}
+	}
+	s.rcpts = append(s.rcpts, e)
 	return nil
 }
 
@@ -303,7 +310,7 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				User:      e.username,
 				Token:     e.token,
 			}
-			rerr := fanOutOne(e.backendAddr, s.opts.Hostname, s.from, e.to, data, pre, e.timeout, s.opts.BackendTLS)
+			rerr := fanOutOne(e.backendAddr, s.opts.Hostname, s.from, e.to, e.orcpt, data, pre, e.timeout, s.opts.BackendTLS)
 			if rerr == nil {
 				slog.Info("lmtplogin: delivered", "rcpt", e.to, "size", len(data))
 			} else {
@@ -609,7 +616,7 @@ func dialBackend(addr string, timeout time.Duration, tlsCfg *tls.Config) (net.Co
 
 // fanOutOne opens a single backend connection for rcpt, writes the preamble,
 // then completes a minimal LMTP transaction: LHLO → MAIL FROM → RCPT TO → DATA.
-func fanOutOne(backendAddr, hostname, from, rcpt string, data []byte, pre loginproto.Preamble, timeout time.Duration, tlsCfg *tls.Config) error {
+func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOptions, data []byte, pre loginproto.Preamble, timeout time.Duration, tlsCfg *tls.Config) error {
 	conn, err := dialBackend(backendAddr, timeout, tlsCfg)
 	if err != nil {
 		return err
@@ -626,13 +633,15 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, data []byte, pre loginp
 	}
 
 	c := goSmtp.NewClientLMTP(conn)
+	// The backend takes ORCPT without announcing DSN.
+	c.ForceORCPT = true
 	if err := c.Hello(hostname); err != nil {
 		return fmt.Errorf("lmtplogin: LHLO: %w", err)
 	}
 	if err := c.Mail(from, nil); err != nil {
 		return fmt.Errorf("lmtplogin: MAIL FROM: %w", err)
 	}
-	if err := c.Rcpt(rcpt, nil); err != nil {
+	if err := c.Rcpt(rcpt, &orcpt); err != nil {
 		return err
 	}
 	wc, err := c.Data()
