@@ -2309,10 +2309,7 @@ sieve:
     - vnd.yarilo.filter
 
   ## Extensions only the administrator's scripts may use, on top of
-  ## sieve_extensions: sieve_global_before / sieve_global_after,
-  ## imapsieve_scripts and imapsieve_global_before / _after, and :global
-  ## includes. A user's script never gets them, even if sieve_extensions lists
-  ## them: refused at upload, false under ihave, left out of the capability list.
+  ## sieve_extensions; a user's script never gets them (docs: SIEVE).
   sieve_global_extensions: []
   ## sieveEnvironment exposes operator-defined key-value pairs to Sieve scripts
   ## via the vnd.yarilo.environment extension as vnd.yarilo.config.<key> items.
