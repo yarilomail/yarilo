@@ -249,6 +249,7 @@ sieve:
     - redirect
     - copy
     - vacation
+    - include
     - enotify
     - spamtest
     - spamtestplus
