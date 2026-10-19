@@ -1,0 +1,4 @@
+# Artifact Hub repository metadata. CI pushes it to
+# ghcr.io/yarilomail/charts/yarilo:artifacthub.io on every release; it proves
+# control of the chart repository (Verified Publisher).
+repositoryID: 87921d38-1357-43b2-9fa5-7d3b467520bf
