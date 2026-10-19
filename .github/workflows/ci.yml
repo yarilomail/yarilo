@@ -231,6 +231,33 @@ jobs:
           name: ${{ steps.version.outputs.tag }}
           body_path: RELEASE_NOTES.md
 
+      ## The chart goes to ghcr.io/<owner>/charts/yarilo as an OCI artifact,
+      ## which is what Artifact Hub indexes. A separate package from the image,
+      ## so the GHCR cleanup below never touches it.
+      - name: Set up Helm
+        if: steps.version.outputs.is_release == 'true'
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          ## Same pin as the lint job in gate.yml.
+          version: v3.19.0
+
+      - name: Push Helm chart to GHCR
+        if: steps.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CHART_REPO="oci://ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts"
+          VERSION="${{ steps.version.outputs.chart_version }}"
+          echo "${GH_TOKEN}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+          # A published chart version is never overwritten: the recovery state
+          # re-runs this step for a commit whose chart may already be there.
+          if helm show chart "${CHART_REPO}/yarilo" --version "${VERSION}" >/dev/null 2>&1; then
+            echo "::notice::chart yarilo ${VERSION} is already in ${CHART_REPO}; not pushing it again"
+            exit 0
+          fi
+          helm package helm --destination "${RUNNER_TEMP}/chart"
+          helm push "${RUNNER_TEMP}/chart/yarilo-${VERSION}.tgz" "${CHART_REPO}"
+
       ## GHCR is the working set and is pruned; Docker Hub is the durable
       ## archive and is never cleaned. That split is what makes "roll back
       ## after a bad upgrade" available to an operator several releases
