@@ -1,9 +1,9 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261015222939-e71f974ae303 h1:zpLcqZUyoYlZgLMouO3XwFBidDKJAMY+gyJbQyefMGo=
-github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261015222939-e71f974ae303/go.mod h1:dhoFe2Q0PwLrMD7oZw8ODuaD0vLYPe5uj2wcOMnvh48=
-github.com/0kaba0hub/go-jmap v0.0.0-20261015223003-0102c41ef1af h1:A7mFwy95GoRnfmLVZucyzhKgdS+NWSI1e6k7AEX9/tw=
-github.com/0kaba0hub/go-jmap v0.0.0-20261015223003-0102c41ef1af/go.mod h1:aOTCtwpZSINpDDSOkLGpHU0Kbbm5lcSDMcobX3ZtOjY=
+github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261016103316-76519d180b6e h1:gBcZEk4GDvnTKK2a+EaPmzdmiVvcDAwe8Ki02AHVOlc=
+github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261016103316-76519d180b6e/go.mod h1:dhoFe2Q0PwLrMD7oZw8ODuaD0vLYPe5uj2wcOMnvh48=
+github.com/0kaba0hub/go-jmap v0.0.0-20261016103019-5fc1fd81bbe5 h1:8GD2yKQAFy+L6LnUQ3OtyQtUS0+c0CISPkZrhUcniw8=
+github.com/0kaba0hub/go-jmap v0.0.0-20261016103019-5fc1fd81bbe5/go.mod h1:aOTCtwpZSINpDDSOkLGpHU0Kbbm5lcSDMcobX3ZtOjY=
 github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936 h1:FW7LHvBoG3hlzUdY2bCt70mF0NDQPxUQWstSP5qzyXY=
 github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936/go.mod h1:PcxAsXfepK4Fu2VjjnA/1sQ4j4TTCwHekjjcDYR71Rw=
 github.com/0kaba0hub/go-sieve v0.0.0-20261018182007-060cf390ce68 h1:70iSDYdWkt1Jp7TaQl6pRLCNjM+Z2Ncvf+5szFBIFO8=
