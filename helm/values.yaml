@@ -15,9 +15,8 @@ hostname: ""
 config_schema_version: 17
 
 image:
-  ## Docker Hub is the durable archive: every release tag stays there. GHCR is
-  ## the CI working set and is pruned, so a default pointing there broke
-  ## `helm install` once its release tag was deleted (4ea1887e, #1816).
+  ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
+  ## its `latest` is a develop build.
   repository: docker.io/0kaba0/yarilo
   tag: ""
   pullPolicy: IfNotPresent
