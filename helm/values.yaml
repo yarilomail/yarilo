@@ -15,7 +15,9 @@ hostname: ""
 config_schema_version: 17
 
 image:
-  repository: ghcr.io/yarilomail/yarilo
+  ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
+  ## its `latest` is a develop build.
+  repository: docker.io/0kaba0/yarilo
   tag: ""
   pullPolicy: IfNotPresent
 
