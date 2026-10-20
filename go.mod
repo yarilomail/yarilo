@@ -17,11 +17,11 @@ require (
 	github.com/foxcpp/go-sieve v0.0.0-20260703081245-75bf8d082267
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/google/pprof v0.0.0-20261008003335-7bae8d8c4c9e
+	github.com/google/pprof v0.0.0-20261016150608-1facf8f91b50
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/file v1.2.1
-	github.com/knadh/koanf/v2 v2.3.8
+	github.com/knadh/koanf/v2 v2.4.1
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
@@ -53,7 +53,7 @@ require (
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/prometheus/common v0.72.1 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -70,10 +70,10 @@ require (
 
 replace github.com/foxcpp/go-sieve => github.com/0kaba0hub/go-sieve v0.0.0-20261018182007-060cf390ce68
 
-replace github.com/emersion/go-imap/v2 => github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261015222939-e71f974ae303
+replace github.com/emersion/go-imap/v2 => github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261016103316-76519d180b6e
 
 replace github.com/emersion/go-sasl => github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936
 
 replace github.com/emersion/go-smtp => github.com/0kaba0hub/go-smtp v0.0.0-20261018014604-bd73853c5d5b
 
-replace git.sr.ht/~rockorager/go-jmap => github.com/0kaba0hub/go-jmap v0.0.0-20261015223003-0102c41ef1af
+replace git.sr.ht/~rockorager/go-jmap => github.com/0kaba0hub/go-jmap v0.0.0-20261016103019-5fc1fd81bbe5
