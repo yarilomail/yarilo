@@ -53,27 +53,55 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create issue if updates available
-        if: steps.check.outputs.has_updates == 'true'
+      - name: Open, refresh or close the issue
         uses: actions/github-script@v9
+        # Through env the list is data; spliced into the script it is code.
+        env:
+          UPDATES: ${{ steps.check.outputs.updates }}
+          HAS_UPDATES: ${{ steps.check.outputs.has_updates }}
         with:
           script: |
-            const updates = `${{ steps.check.outputs.updates }}`;
+            const title = 'Go dependency updates available';
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
               labels: 'dependencies'
             });
-            const alreadyOpen = existing.data.some(i => i.title === 'Go dependency updates available');
-            if (alreadyOpen) {
-              core.info('Issue already open, skipping');
+            const open = existing.data.find(i => i.title === title);
+            if (process.env.HAS_UPDATES !== 'true') {
+              if (open) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: open.number, state: 'closed', state_reason: 'completed',
+                });
+                core.info(`Closed #${open.number}: no updates left`);
+              }
+              return;
+            }
+            const body = [
+              'The following Go modules have newer versions available:',
+              '',
+              '```',
+              process.env.UPDATES,
+              '```',
+              '',
+              'To update one, run:',
+              '```sh',
+              'go get <module>@latest && go mod tidy',
+              '```',
+              '',
+              'Only modules yarilo builds or tests with are listed; test dependencies of dependencies are not ours to bump.',
+            ].join('\n');
+            if (open) {
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: open.number, body,
+              });
+              core.info(`Refreshed #${open.number}`);
               return;
             }
             await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'Go dependency updates available',
-              labels: ['dependencies'],
-              body: `The following Go modules have newer versions available:\n\n\`\`\`\n${updates}\n\`\`\`\n\nTo update one, run:\n\`\`\`sh\ngo get <module>@latest && go mod tidy\n\`\`\`\n\nOnly modules yarilo builds or tests with are listed; test dependencies of dependencies are not ours to bump.`
+              owner: context.repo.owner, repo: context.repo.repo,
+              title, labels: ['dependencies'], body,
             });
