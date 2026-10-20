@@ -3,12 +3,21 @@ name: yarilo
 description: Production-grade IMAP/POP3/Submission mail server
 type: application
 
-version: 2.4.4
-appVersion: "2.4.4"
+version: 2.4.5-dev.1
+appVersion: "2.4.5-dev.1"
 
 # Release status of the line this chart deploys.
 annotations:
   yarilo.mail/status: stable
+  # Shown on the Artifact Hub package page.
+  artifacthub.io/license: AGPL-3.0
+  artifacthub.io/links: |
+    - name: Website
+      url: https://yarilomail.org
+    - name: Documentation
+      url: https://doc.yarilomail.org
+    - name: Source
+      url: https://github.com/yarilomail/yarilo
 
 keywords:
   - imap
