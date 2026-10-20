@@ -177,6 +177,4 @@ jobs:
           delete-tags: '-dev\.'
           keep-n-tagged: ${{ env.KEEP_DEV_TAGS }}
           exclude-tags: '^(latest|\d+\.\d+\.\d+)$'
-          ## First run reads only; turned off once its log shows the plan.
-          dry-run: true
           token: ${{ secrets.GITHUB_TOKEN }}
