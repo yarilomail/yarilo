@@ -167,13 +167,23 @@ jobs:
     permissions:
       packages: write
     steps:
+      ## Counted in tagged images, not package versions. One push is three
+      ## package versions (index, platform manifest, attestation), and
+      ## delete-package-versions matches ignore-versions against digests,
+      ## not tags (4ea1887e): with three kept it deleted every release tag
+      ## (#1816). dataaxiom walks the manifest graph, so untagged children
+      ## of a tagged image are never orphaned -- its dry run in #1262 found
+      ## nothing to delete; #1263 reverted it with #1259, which had done the
+      ## damage. Only dev tags are pruned here; releases and latest are
+      ## excluded from every rule.
       - name: Prune
-        uses: actions/delete-package-versions@v5
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
-          package-name: yarilo
-          package-type: container
-          min-versions-to-keep: ${{ env.KEEP_DEV_TAGS }}
-          ## Releases and `latest` are never ours to delete: a version is
-          ## removed with every name it carries.
-          ignore-versions: '^(latest|\d+\.\d+\.\d+)$'
+          package: yarilo
+          use-regex: true
+          delete-tags: '-dev\.'
+          keep-n-tagged: ${{ env.KEEP_DEV_TAGS }}
+          exclude-tags: '^(latest|\d+\.\d+\.\d+)$'
+          ## First run reads only; turned off once its log shows the plan.
+          dry-run: true
           token: ${{ secrets.GITHUB_TOKEN }}
