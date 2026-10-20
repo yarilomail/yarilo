@@ -167,15 +167,8 @@ jobs:
     permissions:
       packages: write
     steps:
-      ## Counted in tagged images, not package versions. One push is three
-      ## package versions (index, platform manifest, attestation), and
-      ## delete-package-versions matches ignore-versions against digests,
-      ## not tags (4ea1887e): with three kept it deleted every release tag
-      ## (#1816). dataaxiom walks the manifest graph, so untagged children
-      ## of a tagged image are never orphaned -- its dry run in #1262 found
-      ## nothing to delete; #1263 reverted it with #1259, which had done the
-      ## damage. Only dev tags are pruned here; releases and latest are
-      ## excluded from every rule.
+      ## Keeps the newest dev tags with their child manifests; releases and
+      ## latest are excluded from every rule.
       - name: Prune
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:

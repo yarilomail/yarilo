@@ -280,12 +280,8 @@ jobs:
       ## archive and is never cleaned. That split is what makes "roll back
       ## after a bad upgrade" available to an operator several releases
       ## behind, rather than only to one who upgraded yesterday (#1217).
-      ##
-      ## Counted in tagged images with dataaxiom, which walks the manifest
-      ## graph; see the prune job in ci-develop.yml for why not
-      ## delete-package-versions (4ea1887e, #1262, #1263, #1816). Releases
-      ## and latest are excluded from every rule, so the release images the
-      ## chart has pointed at stay pullable.
+      ## Keeps the 16 newest tagged images with their child manifests;
+      ## releases and latest are excluded, so chart-pinned images stay.
       - name: Cleanup old GHCR versions
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
