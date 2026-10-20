@@ -280,11 +280,18 @@ jobs:
       ## archive and is never cleaned. That split is what makes "roll back
       ## after a bad upgrade" available to an operator several releases
       ## behind, rather than only to one who upgraded yesterday (#1217).
+      ## Keeps the 16 newest tagged images with their child manifests;
+      ## releases and latest are excluded, so chart-pinned images stay.
       - name: Cleanup old GHCR versions
-        uses: actions/delete-package-versions@v5
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
-          package-name: yarilo
-          package-type: container
-          min-versions-to-keep: 16
-          ignore-versions: '^\d+\.\d+\.\d+$'
+          package: yarilo
+          use-regex: true
+          keep-n-tagged: 16
+          exclude-tags: '^(latest|\d+\.\d+\.\d+)$'
+          delete-untagged: true
+          delete-ghost-images: true
+          delete-partial-images: true
+          ## First run reads only; turned off once its log shows the plan.
+          dry-run: true
           token: ${{ secrets.GITHUB_TOKEN }}
