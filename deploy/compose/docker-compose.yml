@@ -4,7 +4,8 @@
 ## each service selects its component via YARILO_COMPONENT. See DOCKER-COMPOSE.md.
 name: yarilo
 
-x-image: &image ghcr.io/yarilomail/yarilo:${YARILO_TAG:-latest}
+## Docker Hub: `latest` there is the main line; on GHCR it is the develop build.
+x-image: &image docker.io/0kaba0/yarilo:${YARILO_TAG:-latest}
 
 x-health: &health
   test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
