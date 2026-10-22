@@ -1079,7 +1079,7 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	owner := locks.Owner(userInfo.Username, userInfo.LockID())
 	s.specialUse = specialuse.New(
 		userInfo.Home, userInfo.Username, owner, s.srv.opts.Locker,
-		s.srv.opts.SpecialUseDefaults, counters.For(userInfo, owner, s.srv.opts.Locker),
+		s.srv.opts.SpecialUseDefaults, counters.For(userInfo),
 	)
 
 	// Audit log. master_user is non-empty only on the impersonation path;

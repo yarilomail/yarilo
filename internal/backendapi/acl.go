@@ -620,7 +620,7 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 			present[f] = exists
 		}
 	}
-	store := acl.New(bundle.folderHome(), bundle.info.MailPath, bundle.info.Driver, bundle.info.Separator, bundle.info.StorageEscapeChar, uc.info.Username, uc.lockOwner(), acl.Policy{}, s.opts.Locker, counters.For(bundle.info, uc.lockOwner(), s.opts.Locker))
+	store := acl.New(bundle.folderHome(), bundle.info.MailPath, bundle.info.Driver, bundle.info.Separator, bundle.info.StorageEscapeChar, uc.info.Username, uc.lockOwner(), acl.Policy{}, s.opts.Locker, counters.For(bundle.info))
 	// Admin grants feed owner discovery like IMAP ones: the registry hangs off
 	// the index write, so both surfaces sync it through the one chain (#1168).
 	// The personal store gets it too when it backs an owner-templated space

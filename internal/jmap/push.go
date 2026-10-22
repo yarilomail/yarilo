@@ -261,14 +261,12 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 		return
 	}
 
-	// Without an id the first look only fixes the base; with one, whatever
-	// changed after it is sent at once.
+	// Without an id the first look only fixes the base. With one, every
+	// requested type's state is sent at once: the id may predate a move.
 	since := wt.snapshot().Highest
-	// An id past the counter names nothing this account issued (the counter
-	// was lost or reset), so every requested type is sent.
 	everything := false
-	if v, perr := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64); perr == nil {
-		since, everything = v, v > since
+	if _, perr := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64); perr == nil {
+		everything = true
 		select {
 		case notify <- struct{}{}:
 		default:

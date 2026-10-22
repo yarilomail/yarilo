@@ -36,7 +36,6 @@ var resourceClasses = map[string]struct{}{
 	"threads":  {},
 	"subs":     {},
 	"acllist":  {},
-	"counters": {},
 }
 
 // resourceClass returns the prefix of a lock key when it is one this code

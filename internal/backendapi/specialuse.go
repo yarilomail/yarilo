@@ -161,7 +161,7 @@ func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request, 
 		uc.lockOwner(),
 		s.opts.Locker,
 		s.opts.SpecialUseDefaults,
-		counters.For(bundle.info, uc.lockOwner(), s.opts.Locker),
+		counters.For(bundle.info),
 	)
 	// One owner of NFC for all three special-use handlers, resolved here so
 	// none of them addresses a decomposed spelling of a folder (#1113).

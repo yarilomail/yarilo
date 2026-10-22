@@ -119,7 +119,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	}
 	h.folders = s.folderIdentitiesFor(username)
 	h.threads = s.Threads
-	h.counter = counters.For(info, owner, s.Locker)
+	h.counter = counters.For(info)
 	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker, h.counter)
 	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info), mailboxbase.WithAuto(s.boxAuto(h)))
 	h.ops = mailops.New(s.mailopsConfig(), h.mbox, info)

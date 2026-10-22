@@ -64,7 +64,7 @@ func (s *IndexedStore) update(ctx context.Context, username, homeDir string, fn 
 		return c, ferr
 	})
 	if err == nil && changed && homeDir != "" {
-		c := counters.New(homeDir, username, locks.Owner(username, "sieve"), s.locker)
+		c := counters.New(homeDir, username)
 		if berr := c.Bump(counters.SieveScript, counters.VacationResponse); berr != nil {
 			slog.Warn("sieve: change counter not moved", "user", username, "err", berr)
 		}

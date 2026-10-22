@@ -15,10 +15,6 @@ package locks
 // Acquire first in any multi-resource sequence.
 func IndexKey(user string) string { return "idx:" + user }
 
-// CountersKey guards the per-user change counter. A leaf: nothing is acquired
-// under it, so it may be taken while any other key is held.
-func CountersKey(user string) string { return "counters:" + user }
-
 // MdboxMapKey returns the lock key for the user-wide mdbox map
 // (yarilo.map.index). The mdbox driver acquires this BEFORE any
 // MailboxKey when allocating map_uids / file_ids; this is the

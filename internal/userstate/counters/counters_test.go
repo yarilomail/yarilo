@@ -1,7 +1,9 @@
 package counters
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -10,7 +12,7 @@ import (
 
 func TestBumpRecordsEachTypeAtTheNewValue(t *testing.T) {
 	dir := t.TempDir()
-	c := New(dir, "u", "o", nil)
+	c := New(dir, "u")
 	steps := []struct {
 		types []Type
 		want  Snapshot
@@ -72,7 +74,7 @@ func TestConcurrentBumpsAreNotLost(t *testing.T) {
 			if i%2 == 1 {
 				typ = Mailbox
 			}
-			if err := New(dir, "u", "o", nil).Bump(typ); err != nil {
+			if err := New(dir, "u").Bump(typ); err != nil {
 				t.Error(err)
 			}
 		}(i)
@@ -86,7 +88,48 @@ func TestConcurrentBumpsAreNotLost(t *testing.T) {
 		t.Fatalf("highest %d, want %d", s.Highest, n)
 	}
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 1 {
-		t.Fatalf("temporary files left behind: %d entries", len(entries))
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if want := []string{FileName, FileName + ".lock"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("left behind %v, want %v", names, want)
+	}
+}
+
+// Two processes bumping one account's counter at once lose nothing: the
+// process mutex cannot see the other one, the file lock can.
+func TestBumpsFromTwoProcessesAreNotLost(t *testing.T) {
+	if dir := os.Getenv("COUNTERS_BUMP_DIR"); dir != "" {
+		for i := 0; i < 200; i++ {
+			if err := New(dir, "u").Bump(Email); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
+		os.Exit(0)
+	}
+	dir := t.TempDir()
+	var cmds []*exec.Cmd
+	for i := 0; i < 2; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestBumpsFromTwoProcessesAreNotLost$")
+		cmd.Env = append(os.Environ(), "COUNTERS_BUMP_DIR="+dir)
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		cmds = append(cmds, cmd)
+	}
+	for _, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := Read(Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Highest != 400 {
+		t.Fatalf("highest %d after 2 x 200 bumps", s.Highest)
 	}
 }

@@ -56,7 +56,7 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	// The sidecar is written after the folder's commit moved Thread, so it
 	// moves again: a reader between the two saw the old conversation.
 	if wrote {
-		if berr := counters.For(o.user, owner, o.cfg.Locker).Bump(counters.Thread); berr != nil {
+		if berr := counters.For(o.user).Bump(counters.Thread); berr != nil {
 			slog.Warn(o.cfg.Protocol+": change counter not moved", "user", user, "err", berr)
 		}
 	}
