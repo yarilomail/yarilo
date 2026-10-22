@@ -136,6 +136,44 @@ jobs:
             BUILD_VERSION=${{ steps.version.outputs.dev_tag }}
             BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
 
+  ## Exported to the docs repo's settings-export branch, which its PR check reads.
+  settings:
+    name: Settings export
+    if: github.event_name != 'pull_request'
+    needs: [gate]
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          ## Same as gate.yml: the runner's local Go cache is the one that works.
+          cache: false
+
+      - name: Export
+        run: go run ./hack/settingsexport > settings.json
+
+      ## Build output, so one commit force-pushed, like gh-pages there.
+      - name: Publish to the docs repo
+        env:
+          DOCS_TOKEN: ${{ secrets.DOCS_TAG_TOKEN }}
+        run: |
+          [ -n "${DOCS_TOKEN}" ] || { echo "::error::secret DOCS_TAG_TOKEN is not set"; exit 1; }
+          out=$(mktemp -d)
+          cp settings.json "${out}/"
+          cd "${out}"
+          git init -q -b settings-export
+          git add settings.json
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -qm "Settings export of yarilo ${GITHUB_SHA::8}"
+          git push -qf "https://x-access-token:${DOCS_TOKEN}@github.com/yarilomail/documentation.git" HEAD:settings-export
+
   disk:
     name: Prune runner disk
     ## A full disk stops CI and the stand's acceptance at once; always(), since
