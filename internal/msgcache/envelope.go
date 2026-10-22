@@ -1,7 +1,7 @@
 // Package msgcache reads and writes the per-folder index cache
 // (yarilo.index.cache) that lets a listing answer without opening message
 // files. Shared by the protocol servers: one cache, one set of invalidation
-// rules. Format and invalidation: https://doc.yarilomail.org/BACKEND-API
+// rules. Format and invalidation: https://doc.yarilomail.org/latest/architecture/backend_api.html
 package msgcache
 
 import (

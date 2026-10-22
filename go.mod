@@ -1,6 +1,6 @@
 module github.com/yarilomail/yarilo
 
-go 1.26.9
+go 1.26.10
 
 require (
 	git.sr.ht/~rockorager/go-jmap v0.5.3
