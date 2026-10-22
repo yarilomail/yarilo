@@ -57,11 +57,12 @@ env:
 jobs:
   gate:
     uses: ./.github/workflows/gate.yml
-    ## A called workflow cannot ask for more than its caller grants,
-    ## and the test job publishes a check run.
+    ## A called workflow cannot ask for more than its caller grants: the test
+    ## job publishes a check run, and Changes reads the gated-tree artifacts.
     permissions:
       contents: read
       checks: write
+      actions: read
 
   build:
     name: Build & Push (develop)

@@ -25,6 +25,7 @@ jobs:
     runs-on: [self-hosted, linux]
     permissions:
       contents: read
+      actions: read
     outputs:
       code: ${{ steps.check.outputs.code }}
     steps:
@@ -35,10 +36,23 @@ jobs:
 
       - name: Does this change any code
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # A push has already been filtered by the caller's own paths, and a
-          # manual run is asked for deliberately: only a pull request has a
-          # base to compare against.
+          # A push whose tree passed the gate on its pull request is not gated
+          # again; any other push, and a manual run, is.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TREE=$(git rev-parse "${GITHUB_SHA}^{tree}")
+            HIT=$(curl -fsS -H "Authorization: Bearer ${GH_TOKEN}" \
+              "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=gated-tree-${TREE}&per_page=20" |
+              jq -r '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty') || HIT=""
+            if [ -n "${HIT}" ]; then
+              echo "code=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::tree ${TREE} passed the gate in ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${HIT}; lint and test are skipped"
+              exit 0
+            fi
+            echo "tree ${TREE} has no gated-tree artifact; the gate runs in full"
+          fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -229,3 +243,29 @@ jobs:
           path: /tmp/test-output.log
           retention-days: 14
 
+  ## The tree a pull request's gate passed, so the push that merges it is not
+  ## gated twice; on refs/pull/N/merge it is the tree the merge will produce.
+  record:
+    name: Record the gated tree
+    needs: [lint, test]
+    if: github.event_name == 'pull_request' && needs.lint.result == 'success' && needs.test.result == 'success'
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Name the tree
+        id: tree
+        run: |
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+          : > "${RUNNER_TEMP}/gated"
+
+      - name: Upload the marker
+        uses: actions/upload-artifact@v7
+        with:
+          name: gated-tree-${{ steps.tree.outputs.tree }}
+          path: ${{ runner.temp }}/gated
+          retention-days: 7
+          if-no-files-found: error
