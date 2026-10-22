@@ -27,6 +27,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -37,10 +38,11 @@ type Store struct {
 	owner    string
 	locker   locks.Locker
 	defaults map[string]imaplib.MailboxAttr
+	counter  counters.Bumper
 }
 
 // New constructs a Store rooted at home/special_use.
-func New(home, username, owner string, locker locks.Locker, defaults map[string]string) *Store {
+func New(home, username, owner string, locker locks.Locker, defaults map[string]string, counter counters.Bumper) *Store {
 	mapped := make(map[string]imaplib.MailboxAttr, len(defaults))
 	for folder, attr := range defaults {
 		mapped[folder] = imaplib.MailboxAttr(attr)
@@ -51,14 +53,27 @@ func New(home, username, owner string, locker locks.Locker, defaults map[string]
 		owner:    owner,
 		locker:   locker,
 		defaults: mapped,
+		counter:  counter,
 	}
+}
+
+// moved raises the counter once the lock is released, after a write.
+func (s *Store) moved(err error, wrote bool) error {
+	if err != nil || !wrote {
+		return err
+	}
+	if berr := s.counter.Bump(counters.Mailbox); berr != nil {
+		slog.Warn("userstate/specialuse: change counter not moved", "user", s.username, "err", berr)
+	}
+	return nil
 }
 
 // Set records folder as having the supplied special-use attr.
 // RFC 6154 §3: a folder carries at most one special-use; subsequent
 // Set replaces. Idempotent if (folder, attr) is already on disk.
 func (s *Store) Set(folder string, attr imaplib.MailboxAttr) error {
-	return s.withLock(func() error {
+	wrote := false
+	err := s.withLock(func() error {
 		overrides, err := s.load()
 		if err != nil {
 			return err
@@ -67,14 +82,17 @@ func (s *Store) Set(folder string, attr imaplib.MailboxAttr) error {
 			return nil
 		}
 		overrides[folder] = attr
+		wrote = true
 		return s.writeAtomic(overrides)
 	})
+	return s.moved(err, wrote)
 }
 
 // Delete drops the on-disk override for folder. The default mapping
 // (if any) becomes visible again on the next Get. Idempotent.
 func (s *Store) Delete(folder string) error {
-	return s.withLock(func() error {
+	wrote := false
+	err := s.withLock(func() error {
 		overrides, err := s.load()
 		if err != nil {
 			return err
@@ -83,8 +101,10 @@ func (s *Store) Delete(folder string) error {
 			return nil
 		}
 		delete(overrides, folder)
+		wrote = true
 		return s.writeAtomic(overrides)
 	})
+	return s.moved(err, wrote)
 }
 
 // Attrs returns the special-use attribute of every folder that has one:

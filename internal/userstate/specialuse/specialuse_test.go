@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	imaplib "github.com/emersion/go-imap/v2"
+
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 )
 
 func TestSpecialUseDefaultsAndOverrides(t *testing.T) {
@@ -12,7 +14,7 @@ func TestSpecialUseDefaultsAndOverrides(t *testing.T) {
 		"Sent":   `\Sent`,
 		"Drafts": `\Drafts`,
 	}
-	store := New(home, "alice@example.com", "test.bin/1/alice@example.com/sess1", nil, defaults)
+	store := New(home, "alice@example.com", "test.bin/1/alice@example.com/sess1", nil, defaults, counters.Discard)
 
 	cases := []struct {
 		name     string
@@ -47,7 +49,7 @@ func TestSpecialUseDefaultsAndOverrides(t *testing.T) {
 
 func TestSpecialUseSnapshotMissingFile(t *testing.T) {
 	home := t.TempDir()
-	store := New(home, "alice", "test.bin/1/alice@example.com/sess1", nil, nil)
+	store := New(home, "alice", "test.bin/1/alice@example.com/sess1", nil, nil, counters.Discard)
 	snap, err := store.Snapshot()
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)

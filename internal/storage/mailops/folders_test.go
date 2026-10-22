@@ -13,6 +13,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
@@ -89,7 +90,7 @@ func TestCreateFolderHoldsTheMailboxCount(t *testing.T) {
 // folder, dropped with it. The file itself lives in the folder and moves anyway.
 func TestFolderACLFollowsTheFolder(t *testing.T) {
 	o, box, _, info := folderOps(t, 0)
-	store := acl.New(info.Home, info.MailPath, info.Driver, "/", "", info.Username, "test", acl.Policy{}, nil)
+	store := acl.New(info.Home, info.MailPath, info.Driver, "/", "", info.Username, "test", acl.Policy{}, nil, counters.Discard)
 	if err := o.CreateFolder(box, "A", "A"); err != nil {
 		t.Fatal(err)
 	}

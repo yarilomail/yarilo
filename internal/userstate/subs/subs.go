@@ -18,12 +18,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -40,22 +42,36 @@ type Store struct {
 	username  string
 	owner     string
 	locker    locks.Locker
+	counter   counters.Bumper
 }
 
 // New constructs a Store rooted at home/<filename>.
-func New(home, filename, username, owner string, locker locks.Locker) *Store {
+func New(home, filename, username, owner string, locker locks.Locker, counter counters.Bumper) *Store {
 	return &Store{
 		path:      filepath.Join(home, filename),
 		separator: "/",
 		username:  username,
 		owner:     owner,
 		locker:    locker,
+		counter:   counter,
 	}
+}
+
+// moved raises the counter once the lock is released, after a write.
+func (s *Store) moved(err error, wrote bool) error {
+	if err != nil || !wrote {
+		return err
+	}
+	if berr := s.counter.Bump(counters.Mailbox); berr != nil {
+		slog.Warn("userstate/subs: change counter not moved", "user", s.username, "err", berr)
+	}
+	return nil
 }
 
 // Add records folder as subscribed. Idempotent.
 func (s *Store) Add(folder string) error {
-	return s.withLock(func() error {
+	wrote := false
+	err := s.withLock(func() error {
 		subs, err := s.load()
 		if err != nil {
 			return err
@@ -64,14 +80,16 @@ func (s *Store) Add(folder string) error {
 			return nil
 		}
 		subs[folder] = struct{}{}
+		wrote = true
 		return s.writeAtomic(subs)
 	})
+	return s.moved(err, wrote)
 }
 
 // AddOwn is Add that leaves another implementation's file as it is, answering
 // false: a subscription the server adds on its own must not convert their file.
 func (s *Store) AddOwn(folder string) (bool, error) {
-	added := false
+	added, wrote := false, false
 	err := s.withLock(func() error {
 		raw, err := os.ReadFile(s.path)
 		if err != nil && !os.IsNotExist(err) {
@@ -89,14 +107,16 @@ func (s *Store) AddOwn(folder string) (bool, error) {
 			return nil
 		}
 		subs[folder] = struct{}{}
+		wrote = true
 		return s.writeAtomic(subs)
 	})
-	return added, err
+	return added, s.moved(err, wrote)
 }
 
 // Remove drops folder from the subscription set. Idempotent.
 func (s *Store) Remove(folder string) error {
-	return s.withLock(func() error {
+	wrote := false
+	err := s.withLock(func() error {
 		subs, err := s.load()
 		if err != nil {
 			return err
@@ -105,8 +125,10 @@ func (s *Store) Remove(folder string) error {
 			return nil
 		}
 		delete(subs, folder)
+		wrote = true
 		return s.writeAtomic(subs)
 	})
+	return s.moved(err, wrote)
 }
 
 // Snapshot returns the current set. No distributed lock is acquired:

@@ -196,6 +196,7 @@ func main() {
 		QuotaEnabled:      cfg.Quota.Enabled,
 		Sieve:             sieveScripts(cfg, scripts),
 		Submission:        submission(cfg),
+		PushPoll:          time.Duration(cfg.Protocol.JMAP.PushPoll) * time.Second,
 	})
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {

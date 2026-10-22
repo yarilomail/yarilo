@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -420,5 +422,34 @@ func TestSubmissionCapabilityIsRefusedWithoutARelay(t *testing.T) {
 	body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:submission"],"methodCalls":[["Identity/get",{"accountId":"` + testUser + `"},"c0"]]}`
 	if w := postAPIRaw(t, s, body); w.Code != 400 || !strings.Contains(w.Body.String(), "unknownCapability") {
 		t.Errorf("status %d %s, want 400 unknownCapability", w.Code, w.Body)
+	}
+}
+
+// A kept or dropped record moves EmailSubmission; a read that changes nothing
+// does not.
+func TestEmailSubmissionRecordsMoveTheirType(t *testing.T) {
+	s, emailID, home := submissionServer(t, draftHeaders+"\r\nb\r\n", &fakeRelay{}, Submission{})
+	var id string
+	steps := []struct {
+		name string
+		call func()
+		want []counters.Type
+	}{
+		{"create", func() {
+			out := subCall(t, s, "EmailSubmission/set", createSubmission(identityID(testUser), emailID, ""))
+			id, _ = entry(out, "created", "c1")["id"].(string)
+		}, []counters.Type{counters.EmailSubmission}},
+		{"get", func() { subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`) }, nil},
+		{"destroy", func() {
+			subCall(t, s, "EmailSubmission/set", `{"accountId":"`+testUser+`","destroy":["`+id+`"]}`)
+		}, []counters.Type{counters.EmailSubmission}},
+	}
+	for _, st := range steps {
+		before, _ := counters.Read(counters.Path(home))
+		st.call()
+		after, _ := counters.Read(counters.Path(home))
+		if got := after.ChangedAfter(before.Highest); !reflect.DeepEqual(got, st.want) {
+			t.Errorf("%s moved %v, want %v", st.name, got, st.want)
+		}
 	}
 }

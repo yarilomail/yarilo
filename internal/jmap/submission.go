@@ -20,6 +20,7 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -97,6 +98,14 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 		return fmt.Errorf("jmap: no control root for %s", h.info.Username)
 	}
 	path := filepath.Join(root, submissionFile)
+	wrote := false
+	defer func() {
+		if wrote && h.counter != nil {
+			if berr := h.counter.Bump(counters.EmailSubmission); berr != nil {
+				slog.Warn("jmap: change counter not moved", "user", h.info.Username, "err", berr)
+			}
+		}
+	}()
 	run := func(context.Context) error {
 		var recs submissionRecords
 		raw, err := os.ReadFile(path)
@@ -124,7 +133,11 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 		if err := os.WriteFile(path+".tmp", b, 0o600); err != nil {
 			return fmt.Errorf("jmap: write submissions: %w", err)
 		}
-		return os.Rename(path+".tmp", path)
+		if err := os.Rename(path+".tmp", path); err != nil {
+			return err
+		}
+		wrote = true
+		return nil
 	}
 	locker := s.opts.Storage.Locker
 	if locker == nil {

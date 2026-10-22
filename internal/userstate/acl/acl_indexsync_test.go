@@ -3,6 +3,7 @@ package acl
 import (
 	"testing"
 
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -12,7 +13,7 @@ import (
 // grants that were changed or removed while `yarctl acl get` (the file) was
 // right.
 func TestUpdate_KeepsListIndexInSync(t *testing.T) {
-	s := New(t.TempDir(), "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
+	s := New(t.TempDir(), "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
 	bob := mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}
 
 	// SETACL-style: grant bob lr.

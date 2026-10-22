@@ -106,6 +106,7 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 		return mailbox.TxResult{}, err
 	}
 	t.idx.noteCacheExpunged(t.folderID, gone)
+	t.idx.bump(txMoves(t.ops)...)
 	return out, nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -176,7 +177,7 @@ func TestForeignSubscriptionsSurviveTheConversion(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	store := subs.New(mailbox.ControlRoot(info), "subscriptions", info.Username, "test.bin/1/alice@example.com/sess1", dial())
+	store := subs.New(mailbox.ControlRoot(info), "subscriptions", info.Username, "test.bin/1/alice@example.com/sess1", dial(), counters.Discard)
 	snap, err := store.Snapshot()
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)
