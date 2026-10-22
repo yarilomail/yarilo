@@ -107,6 +107,7 @@ func TestTheResourceLabelIsAClosedSet(t *testing.T) {
 		{ThreadsKey("alice@example.com"), "threads"},
 		{SubscriptionsKey("alice@example.com"), "subs"},
 		{ACLListKey("/home/alice"), "acllist"},
+		{CountersKey("alice@example.com"), "counters"},
 
 		// Not from the constructors, and each one is a way the label could
 		// have become a user identifier.
@@ -136,7 +137,7 @@ func TestEveryConstructorHasAClass(t *testing.T) {
 	for _, key := range []string{
 		IndexKey("u"), MdboxMapKey("u"), MailboxKey("u", "f"), FTSKey("u", "f"),
 		MailboxListKey("u"), DeliverKey("u", "f"), SieveScriptsKey("u"),
-		ThreadsKey("u"), SubscriptionsKey("u"), ACLListKey("/h"),
+		ThreadsKey("u"), SubscriptionsKey("u"), ACLListKey("/h"), CountersKey("u"),
 	} {
 		if resourceClass(key) == "other" {
 			t.Errorf("%q has no class, so its contention would be invisible", key)
