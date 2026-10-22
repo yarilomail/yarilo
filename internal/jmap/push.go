@@ -264,8 +264,11 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 	// Without an id the first look only fixes the base; with one, whatever
 	// changed after it is sent at once.
 	since := wt.snapshot().Highest
+	// An id past the counter names nothing this account issued (the counter
+	// was lost or reset), so every requested type is sent.
+	everything := false
 	if v, perr := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64); perr == nil {
-		since = v
+		since, everything = v, v > since
 		select {
 		case notify <- struct{}{}:
 		default:
@@ -293,6 +296,9 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 		case <-notify:
 			snap := wt.snapshot()
 			changed := intersect(snap.ChangedAfter(since), types)
+			if everything {
+				changed, everything = types, false
+			}
 			since = snap.Highest
 			if len(changed) == 0 {
 				continue

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -193,6 +194,28 @@ func TestReconnectSendsOnlyTypesChangedAfterTheID(t *testing.T) {
 	got := changed(ev2)
 	if _, ok := got["Mailbox"]; !ok || len(got) != 1 {
 		t.Errorf("reconnect sent %v, want Mailbox alone", got)
+	}
+}
+
+// An id past the counter is not one this account issued: the counter file was
+// lost or reset. Every requested type is sent, or the client waits in silence.
+func TestUnknownLastEventIDSendsEveryRequestedType(t *testing.T) {
+	f := pushServer(t, testPoll, 0)
+	snap, err := counters.Read(counters.Path(f.info.Home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ahead := strconv.FormatUint(snap.Highest+100, 10)
+	st := f.open(t, "types=Email,Mailbox,Thread,Quota&closeafter=state", ahead)
+	ev, ok := st.next(t, "state", 20*testPoll)
+	if !ok {
+		t.Fatal("no event for an id past the counter")
+	}
+	got := changed(ev)
+	for _, typ := range []string{"Email", "Mailbox", "Thread", "Quota"} {
+		if _, ok := got[typ]; !ok {
+			t.Errorf("%s missing from %v", typ, got)
+		}
 	}
 }
 
