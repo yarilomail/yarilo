@@ -67,6 +67,8 @@ type Options struct {
 	// Submission serves Identity and EmailSubmission; nil, as with no relay,
 	// leaves them unadvertised.
 	Submission *Submission
+	// PushPoll is how often a push stream looks for changes; 0 turns push off.
+	PushPoll time.Duration
 }
 
 // Server serves the JMAP endpoint behind the login proxy.
@@ -77,6 +79,8 @@ type Server struct {
 	// Shared across requests on purpose: the handle is not, which is why the
 	// walk was paid in full on every poll (#1343).
 	states *stateCache
+	// push serves EventSource streams; nil when push is off.
+	push *pushHub
 }
 
 // New builds the server and registers its routes.
@@ -101,6 +105,10 @@ func New(opts Options) *Server {
 		opts.Limits.Submission = opts.Submission.capability()
 	}
 	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache()}
+	if opts.PushPoll > 0 {
+		s.push = newPushHub(s, opts.PushPoll)
+	}
+	s.mux.HandleFunc("GET "+eventSourcePath, s.guard(s.handleEventSource))
 	s.mux.HandleFunc("GET "+jmapcore.SessionPath, s.guard(s.handleSession))
 	s.mux.HandleFunc("POST "+apiPath, s.guard(s.handleAPI))
 	s.mux.HandleFunc("GET "+downloadPrefix, s.guard(s.handleDownload))
@@ -144,6 +152,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	}()
 	select {
 	case <-ctx.Done():
+		// Streams never finish on their own; Shutdown would wait them out.
+		if s.push != nil {
+			close(s.push.done)
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)

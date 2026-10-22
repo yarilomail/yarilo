@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 )
 
@@ -86,7 +87,7 @@ func TestTheStoreReadsTheirFileAtOurPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "subscriptions"), dboxref.Subscriptions(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store := subs.New(dir, "subscriptions", "u1@example.com", "test", nil)
+	store := subs.New(dir, "subscriptions", "u1@example.com", "test", nil, counters.Discard)
 	snap, err := store.Snapshot()
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)
@@ -115,7 +116,7 @@ func TestTheStoreReadsTheirFileAtOurPath(t *testing.T) {
 // that merely has names in it.
 func TestOurOwnFileIsUnaffected(t *testing.T) {
 	dir := t.TempDir()
-	store := subs.New(dir, "subscriptions", "u1@example.com", "test", nil)
+	store := subs.New(dir, "subscriptions", "u1@example.com", "test", nil, counters.Discard)
 	for _, name := range []string{"INBOX", "Вхідні/Робота"} {
 		if err := store.Add(name); err != nil {
 			t.Fatal(err)

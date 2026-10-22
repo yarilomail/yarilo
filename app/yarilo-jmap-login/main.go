@@ -110,6 +110,7 @@ func main() {
 	}()
 
 	srv := jmaplogin.New(serverOptions(cfg, svc, addr, extTLS, intTLS, auth, wardenPool))
+	srv.WatchKicks(ctx, kicks(cfg, intTLS))
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {
 		slog.Error("jmap-login server failed", "err", err)
@@ -136,6 +137,17 @@ func router(cfg *config.Config) jmaplogin.Router {
 		LocalIP: os.Getenv("POD_IP"),
 		Port:    backendPort(cfg),
 	}
+}
+
+// kicks names where kicks come from: warden for a session, and the director,
+// when routing through one, for a user.
+func kicks(cfg *config.Config, intTLS *tls.Config) jmaplogin.Kicks {
+	k := jmaplogin.Kicks{WardenAddr: cfg.WardenService.Addr, WardenTLS: intTLS, LocalIP: os.Getenv("POD_IP")}
+	if cfg.JMAPLoginService.BackendAddr == "" {
+		k.DirectorAddr = cfg.JMAPLoginService.DirectorAddr
+		k.DirectorTLS = intTLS
+	}
+	return k
 }
 
 // backendPort is the JMAP container's port, which differs from whatever the

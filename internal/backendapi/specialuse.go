@@ -6,6 +6,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -160,6 +161,7 @@ func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request, 
 		uc.lockOwner(),
 		s.opts.Locker,
 		s.opts.SpecialUseDefaults,
+		counters.For(bundle.info, uc.lockOwner(), s.opts.Locker),
 	)
 	// One owner of NFC for all three special-use handlers, resolved here so
 	// none of them addresses a decomposed spelling of a folder (#1113).

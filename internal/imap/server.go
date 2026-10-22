@@ -36,6 +36,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/storage/search"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
@@ -1078,7 +1079,7 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	owner := locks.Owner(userInfo.Username, userInfo.LockID())
 	s.specialUse = specialuse.New(
 		userInfo.Home, userInfo.Username, owner, s.srv.opts.Locker,
-		s.srv.opts.SpecialUseDefaults,
+		s.srv.opts.SpecialUseDefaults, counters.For(userInfo, owner, s.srv.opts.Locker),
 	)
 
 	// Audit log. master_user is non-empty only on the impersonation path;

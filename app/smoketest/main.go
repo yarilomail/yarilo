@@ -78,11 +78,13 @@ var (
 	// get the wrong greeting and an error pointing somewhere else.
 	flagDeliveryProto = flag.String("delivery-proto", "smtp", `protocol the delivery endpoint speaks: "smtp" (EHLO) or "lmtp" (LHLO)`)
 
-	flagJMAP           = flag.Bool("jmap", false, "check the JMAP session resource (GET /.well-known/jmap)")
-	flagJMAPHost       = flag.String("jmap-host", "", "JMAP hostname (defaults to -host)")
-	flagJMAPPort       = flag.String("jmap-port", "8443", "JMAP HTTPS port")
-	flagJMAPUser       = flag.String("jmap-user", "", "JMAP Basic auth username")
-	flagJMAPPass       = flag.String("jmap-pass", "", "password for -jmap-user")
+	flagJMAP         = flag.Bool("jmap", false, "check the JMAP session resource (GET /.well-known/jmap)")
+	flagJMAPHost     = flag.String("jmap-host", "", "JMAP hostname (defaults to -host)")
+	flagJMAPPort     = flag.String("jmap-port", "8443", "JMAP HTTPS port")
+	flagJMAPUser     = flag.String("jmap-user", "", "JMAP Basic auth username")
+	flagJMAPPass     = flag.String("jmap-pass", "", "password for -jmap-user")
+	flagJMAPPushPoll = flag.Int("jmap-push-poll", 60,
+		"protocol.jmap.jmap_push_poll of the deployment; the push row waits two of them")
 	flagJMAPMaxRequest = flag.Int("jmap-max-size-request", 10485760,
 		"protocol.jmap.jmap_max_size_request of the deployment; the body-cap check sends one byte more")
 

@@ -13,6 +13,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -54,7 +55,7 @@ func TestResolvingEveryFolderCostsOneRoundTrip(t *testing.T) {
 		t.Run(fmt.Sprintf("%d folders", folders), func(t *testing.T) {
 			lk := &countingLocker{}
 			store := New(t.TempDir(), "alice@example.com", "test.bin/1/alice@example.com/sess1", lk,
-				map[string]string{"Sent": `\Sent`, "Drafts": `\Drafts`})
+				map[string]string{"Sent": `\Sent`, "Drafts": `\Drafts`}, counters.Discard)
 
 			attrs := store.Attrs()
 			for i := range folders {
@@ -78,7 +79,7 @@ func TestResolvingEveryFolderCostsOneRoundTrip(t *testing.T) {
 func TestOneReadStillLayersOverridesOverDefaults(t *testing.T) {
 	lk := &countingLocker{}
 	store := New(t.TempDir(), "alice@example.com", "test.bin/1/alice@example.com/sess1", lk,
-		map[string]string{"Sent": `\Sent`, "Drafts": `\Drafts`})
+		map[string]string{"Sent": `\Sent`, "Drafts": `\Drafts`}, counters.Discard)
 	if err := store.Set("Archive", `\Archive`); err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestUnreadableOverridesFallBackLoudly(t *testing.T) {
 	defer slog.SetDefault(old)
 
 	store := New(t.TempDir(), "alice@example.com", "test.bin/1/alice@example.com/sess1", failingLocker{},
-		map[string]string{"Sent": `\Sent`})
+		map[string]string{"Sent": `\Sent`}, counters.Discard)
 
 	attrs := store.Attrs()
 	if got := attrs["Sent"]; got != `\Sent` {

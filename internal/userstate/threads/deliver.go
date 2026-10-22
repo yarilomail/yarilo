@@ -40,23 +40,29 @@ func NewRecorder(cache *Cache) *Recorder {
 // than different behaviour: today every message is its own thread, which is
 // exactly threadID == guid.
 func (r *Recorder) Record(user, path, guid string, raw []byte) (string, error) {
+	id, _, err := r.RecordNew(user, path, guid, raw)
+	return id, err
+}
+
+// RecordNew is Record that also says whether the sidecar was written.
+func (r *Recorder) RecordNew(user, path, guid string, raw []byte) (string, bool, error) {
 	if guid == "" {
-		return "", fmt.Errorf("threads: delivery has no guid")
+		return "", false, fmt.Errorf("threads: delivery has no guid")
 	}
 	state, err := r.cache.Get(user, path)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	// A copy keeps its GUID, and with it the conversation already recorded.
 	if id, ok := state.ThreadOfGUID(guid); ok {
-		return id, nil
+		return id, false, nil
 	}
 	p := PlacementFor(state, guid, raw)
 	if err := Append(path, state, p); err != nil {
-		return "", err
+		return "", false, err
 	}
 	r.cache.Note(user, path)
-	return p.ThreadID, nil
+	return p.ThreadID, true, nil
 }
 
 // PlacementFor decides where one message belongs, given what the account

@@ -61,7 +61,7 @@ func NewScriptStore(driver, defaultName string, locker locks.Locker, d dict.Dict
 		defaultName = FallbackDefaultName
 	}
 	if driver == "" || driver == "fs" {
-		return &IndexedStore{ScriptStore: &FsScriptStore{DefaultName: defaultName, Locker: locker}, io: fsIndex{locker: locker}}
+		return &IndexedStore{ScriptStore: &FsScriptStore{DefaultName: defaultName, Locker: locker}, io: fsIndex{locker: locker}, locker: locker}
 	}
-	return &IndexedStore{ScriptStore: &DictScriptStore{defaultName: defaultName, locker: locker, d: d}, io: dictIndex{locker: locker, d: d}}
+	return &IndexedStore{ScriptStore: &DictScriptStore{defaultName: defaultName, locker: locker, d: d}, io: dictIndex{locker: locker, d: d}, locker: locker}
 }

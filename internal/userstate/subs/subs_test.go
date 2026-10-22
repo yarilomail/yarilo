@@ -3,11 +3,13 @@ package subs
 import (
 	"sort"
 	"testing"
+
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 )
 
 func TestSubsAddSnapshotRemove(t *testing.T) {
 	home := t.TempDir()
-	store := New(home, "subscriptions", "alice@example.com", "test/1/alice@example.com", nil)
+	store := New(home, "subscriptions", "alice@example.com", "test/1/alice@example.com", nil, counters.Discard)
 
 	cases := []struct {
 		op       string
@@ -48,7 +50,7 @@ func TestSubsAddSnapshotRemove(t *testing.T) {
 
 func TestSubsSnapshotEmptyWhenMissing(t *testing.T) {
 	home := t.TempDir()
-	store := New(home, "subscriptions", "alice", "owner", nil)
+	store := New(home, "subscriptions", "alice", "owner", nil, counters.Discard)
 	snap, err := store.Snapshot()
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)

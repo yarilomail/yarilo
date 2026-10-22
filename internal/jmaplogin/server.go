@@ -109,6 +109,8 @@ type connState struct {
 	// never authenticated, and such a connection is never accounted: brute
 	// force on it is yarilo-auth's penalty to handle, not a connection count.
 	user string
+	// conn is what a kick closes.
+	conn net.Conn
 }
 
 type ctxKey struct{}
@@ -136,6 +138,9 @@ func New(opts Options) *Server {
 // Handler exposes the routes for tests without binding a port.
 func (s *Server) Handler() http.Handler { return s.mux }
 
+// serverTimeout bounds a request's read and its response's write.
+var serverTimeout = 60 * time.Second
+
 // Serve runs until ctx is cancelled, then drains in-flight requests.
 func (s *Server) Serve(ctx context.Context) error {
 	srv := &http.Server{
@@ -143,11 +148,11 @@ func (s *Server) Serve(ctx context.Context) error {
 		Handler:           s.mux,
 		TLSConfig:         s.opts.ExtTLS,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		ReadTimeout:       serverTimeout,
+		WriteTimeout:      serverTimeout,
 		IdleTimeout:       120 * time.Second,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			st := &connState{ip: hostOnly(c.RemoteAddr().String())}
+			st := &connState{ip: hostOnly(c.RemoteAddr().String()), conn: c}
 			s.conns.Store(c, st)
 			return context.WithValue(ctx, ctxKey{}, st)
 		},
@@ -246,6 +251,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("jmap-login: backend lookup failed", "user", username, "err", err)
 		jmapcore.WriteProblem(w, http.StatusBadGateway, "No backend for this user")
 		return
+	}
+	// A push stream outlives the write timeout by design; a kick ends it.
+	if strings.HasPrefix(r.URL.Path, eventSourcePath) {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	}
 	s.proxy.serve(w, r, backend, username, sessionOf(st), clientIP)
 }

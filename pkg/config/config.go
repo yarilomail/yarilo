@@ -570,9 +570,9 @@ type JMAPProtocolConfig struct {
 	// SubmissionTTLSeconds keeps an EmailSubmission record this long after
 	// sending; 0 keeps none. Default 86400.
 	SubmissionTTLSeconds int `koanf:"jmap_submission_ttl_seconds"`
-	// PushTimeout is the idle timeout for a push connection, in seconds.
-	// Default 90. Unused until the push phase.
-	PushTimeout int `koanf:"jmap_push_timeout"`
+	// PushPoll is how often a push stream looks for changes, in seconds; 0
+	// turns push off. Default 60.
+	PushPoll int `koanf:"jmap_push_poll"`
 }
 
 type LMTPProtocolConfig struct {
@@ -2792,7 +2792,7 @@ func Defaults() *Config {
 	c.Telemetry.LivenessWatchdog.TimeoutSeconds = 5
 	c.Telemetry.LivenessWatchdog.FailureThreshold = 3
 	c.Protocol.LMTP.UserConcurrencyLimit = 10
-	c.Protocol.JMAP.PushTimeout = 90
+	c.Protocol.JMAP.PushPoll = 60
 	for _, sh := range []*ShutdownConfig{&c.AuthService.Shutdown, &c.WardenService.Shutdown,
 		&c.DirectorService.Shutdown, &c.LocksService.Shutdown} {
 		sh.KillTimeout = 5

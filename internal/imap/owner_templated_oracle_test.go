@@ -16,6 +16,7 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	aclstore "github.com/yarilomail/yarilo/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	mailboxpkg "github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -77,7 +78,7 @@ func TestOwnerTemplated_GrantedPeerIsNotHidden(t *testing.T) {
 	aliceHome := filepath.Join(root, "alice")
 
 	// Grant bob the lookup right on the root of alice's space.
-	st := aclstore.New(aliceHome, filepath.Join(aliceHome, "Maildir"), "maildir", "/", "", "alice", "test", aclstore.Policy{}, nil)
+	st := aclstore.New(aliceHome, filepath.Join(aliceHome, "Maildir"), "maildir", "/", "", "alice", "test", aclstore.Policy{}, nil, counters.Discard)
 	if err := st.Set("", mailboxpkg.ACL{
 		{Identifier: mailboxpkg.Identifier{Type: mailboxpkg.IDUser, Name: "bob"}, Rights: "l"},
 	}); err != nil {
