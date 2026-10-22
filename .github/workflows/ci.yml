@@ -295,3 +295,25 @@ jobs:
           ## First run reads only; turned off once its log shows the plan.
           dry-run: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      ## The same tag on the docs repo's main publishes that version of the
+      ## docs. A tag already there is never moved.
+      - name: Tag the documentation
+        if: steps.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_TAG_TOKEN }}
+          DOCS_REPO: yarilomail/documentation
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          # Without it, gh would fall back to the runner's own login.
+          [ -n "${GH_TOKEN}" ] || { echo "::error::secret DOCS_TAG_TOKEN is not set"; exit 1; }
+          CODE=$(gh api "repos/${DOCS_REPO}/git/ref/tags/${TAG}" \
+            --silent --include 2>/dev/null | head -1 | grep -oE '[0-9]{3}' | head -1 || true)
+          case "${CODE}" in
+            200) echo "::notice::${DOCS_REPO} already has ${TAG}; leaving it"; exit 0 ;;
+            404) ;;
+            *)   echo "::error::asking ${DOCS_REPO} about ${TAG} answered ${CODE:-nothing}"; exit 1 ;;
+          esac
+          SHA=$(gh api "repos/${DOCS_REPO}/git/ref/heads/main" -q .object.sha)
+          gh api "repos/${DOCS_REPO}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${SHA}" --silent
+          echo "Tagged ${DOCS_REPO}@${SHA::7} as ${TAG}"

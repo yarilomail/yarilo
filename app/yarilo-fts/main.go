@@ -2,7 +2,7 @@
 // indexes — indexing queue + worker and the LOOKUP endpoint — speaking the
 // pkg/ftsproto wire protocol. Engine selection is explicit via fts.fts_engine;
 // the flatcurve engine is present only in binaries built with -tags flatcurve
-// (the fts image). See https://doc.yarilomail.org/FTS.
+// (the fts image). See https://doc.yarilomail.org/latest/features/fts.html.
 package main
 
 import (

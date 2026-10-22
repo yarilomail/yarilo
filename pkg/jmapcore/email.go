@@ -133,7 +133,7 @@ var headerDerivedProperties = map[string]bool{
 //
 // "references" and "headers" are absent because ENVELOPE does not hold them,
 // and header:* forms can name any field at all. See
-// https://doc.yarilomail.org/JMAP.
+// https://doc.yarilomail.org/latest/protocols/jmap.html.
 var envelopeDerivedProperties = map[string]bool{
 	"messageId": true,
 	"inReplyTo": true,

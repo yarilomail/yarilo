@@ -1145,7 +1145,7 @@ func (c LocksClientConfig) StartupWait() time.Duration {
 // FTSConfig configures full-text search: the engine selection, the
 // yarilo-fts service topology and the indexing/search behaviour. The engine
 // is required when enabled — startup fails fast on a missing or unknown name
-// so the active engine is always stated in config. See https://doc.yarilomail.org/FTS.
+// so the active engine is always stated in config. See https://doc.yarilomail.org/latest/features/fts.html.
 type FTSConfig struct {
 	Enabled bool `koanf:"enabled"`
 	// Engine selects the active FTS engine: "flatcurve" (Xapian, cgo image)

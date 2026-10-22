@@ -24,7 +24,7 @@ docs/icon.png (SVG is not accepted). Category: Networking (+ Security).
 
 ## Architecture
 
-Each protocol and infrastructure role is a **separate compiled binary** — no monolith, no mode flags. Login proxies terminate TLS and pass the authenticated connection to session backends; a director ring provides consistent-hash routing with sticky per-user sessions; shared `yarilo-auth` and `yarilo-locks` services back authentication and cross-process write coordination. The same binaries serve a single-node standalone install and a sharded clustered deployment — topology is configuration, not code. See [ARCHITECTURE](https://doc.yarilomail.org/ARCHITECTURE) and [DEPLOYMENT](https://doc.yarilomail.org/DEPLOYMENT).
+Each protocol and infrastructure role is a **separate compiled binary** — no monolith, no mode flags. Login proxies terminate TLS and pass the authenticated connection to session backends; a director ring provides consistent-hash routing with sticky per-user sessions; shared `yarilo-auth` and `yarilo-locks` services back authentication and cross-process write coordination. The same binaries serve a single-node standalone install and a sharded clustered deployment — topology is configuration, not code. See [ARCHITECTURE](https://doc.yarilomail.org/latest/architecture/) and [DEPLOYMENT](https://doc.yarilomail.org/latest/installation/deployment.html).
 
 ## One image, many components
 
@@ -80,7 +80,7 @@ Admin/API tokens (`YARILO_ADMIN_TOKEN`, `DIRECTOR_API_TOKEN`, …) gate the cont
 
 ### Kubernetes (recommended)
 
-yarilo is designed for Kubernetes via its Helm chart — login proxies, an optional director ring, co-located backend StatefulSets per storage tag, and shared services. See [DEPLOYMENT](https://doc.yarilomail.org/DEPLOYMENT).
+yarilo is designed for Kubernetes via its Helm chart — login proxies, an optional director ring, co-located backend StatefulSets per storage tag, and shared services. See [DEPLOYMENT](https://doc.yarilomail.org/latest/installation/deployment.html).
 
 ### Local (standalone)
 
