@@ -24,7 +24,7 @@ import (
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// On-disk format constants (see https://doc.yarilomail.org/FTS for the format specification).
+// On-disk format constants (see https://doc.yarilomail.org/latest/features/fts.html for the format specification).
 const (
 	Label         = mailbox.FTSIndexDir
 	dbPrefix      = "index."
@@ -185,7 +185,7 @@ func (e *Engine) OpenUser(_ context.Context, user fts.UserRef) (fts.UserIndex, e
 }
 
 // mboxState holds the open write shard for one mailbox. The service is the
-// sole writer (https://doc.yarilomail.org/FTS §4), so a plain mutex per user index suffices.
+// sole writer (https://doc.yarilomail.org/latest/features/fts.html §4), so a plain mutex per user index suffices.
 type mboxState struct {
 	dir     string
 	eng     *Engine        // gives commitCurrent access to opts.RotateTime without threading it through every call site

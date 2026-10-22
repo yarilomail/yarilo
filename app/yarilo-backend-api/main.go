@@ -6,7 +6,7 @@
 // backend user ..., backend index ..., backend subscriptions ...,
 // backend specialuse ..., backend metadata ...).
 //
-// Wire reference: https://doc.yarilomail.org/BACKEND-API
+// Wire reference: https://doc.yarilomail.org/latest/architecture/backend_api.html
 //
 // Configuration: backend_api section of yarilo.yaml + storage /
 // namespaces / dicts / locks_client / internal_tls sections.
