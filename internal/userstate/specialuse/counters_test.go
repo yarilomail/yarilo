@@ -9,7 +9,7 @@ import (
 // A role is a Mailbox property, so setting or dropping one moves Mailbox.
 func TestRoleWritesMoveMailbox(t *testing.T) {
 	dir := t.TempDir()
-	s := New(dir, "u", "o", nil, nil, counters.New(dir, "u", "o", nil))
+	s := New(dir, "u", "o", nil, nil, counters.New(dir, "u"))
 	steps := []struct {
 		name  string
 		write func() error

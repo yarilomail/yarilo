@@ -4,7 +4,6 @@ package counters
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -71,15 +70,13 @@ func (discard) Bump(...Type) error { return nil }
 
 // Counter is one account's counter.
 type Counter struct {
-	path   string
-	user   string
-	owner  string
-	locker locks.Locker
+	path string
+	user string
 }
 
 // For is the counter of the account ui describes.
-func For(ui *mailbox.UserInfo, owner string, l locks.Locker) *Counter {
-	return New(Dir(ui.Home, mailbox.ControlRoot(ui)), ui.Username, owner, l)
+func For(ui *mailbox.UserInfo) *Counter {
+	return New(Dir(ui.Home, mailbox.ControlRoot(ui)), ui.Username)
 }
 
 // Dir is where the counter lives: the home, which every writer is given, else
@@ -92,11 +89,14 @@ func Dir(home, controlRoot string) string {
 }
 
 // New returns the counter in dir.
-func New(dir, user, owner string, l locks.Locker) *Counter {
-	return &Counter{path: filepath.Join(dir, FileName), user: user, owner: owner, locker: l}
+func New(dir, user string) *Counter {
+	return &Counter{path: filepath.Join(dir, FileName), user: user}
 }
 
-// pathMu orders this process's writers per file; the locker orders processes.
+// lockWait bounds the wait for another process's bump of the same file.
+const lockWait = 30 * time.Second
+
+// pathMu orders this process's writers per file; a file lock orders processes.
 var (
 	pathMuMu sync.Mutex
 	pathMu   = map[string]*sync.Mutex{}
@@ -207,22 +207,16 @@ func write(path string, s Snapshot) error {
 	return nil
 }
 
+// withLock holds the file lock beside the counter: the counter itself is
+// replaced by rename, so a lock on it would be on an inode that is gone.
 func (c *Counter) withLock(fn func() error) error {
-	if c.locker == nil {
-		return fn()
+	if err := os.MkdirAll(filepath.Dir(c.path), 0o700); err != nil {
+		return fmt.Errorf("counters: mkdir: %w", err)
 	}
-	key := locks.CountersKey(c.user)
-	if held, err := locks.Reentrant(c.locker, key, "counters-bump", false); err != nil {
-		return err
-	} else if held != locks.HoldNone {
-		return fn()
-	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "counters-bump"), 35*time.Second)
-	defer cancel()
-	lk, err := locks.Acquire(ctx, c.locker, key, c.owner, 30*time.Second)
+	h, err := filelock.Take(c.path+".lock", filelock.MethodFcntl, lockWait)
 	if err != nil {
 		return fmt.Errorf("counters: lock: %w", err)
 	}
-	defer func() { _ = c.locker.Unlock(ctx, lk.ID) }()
+	defer func() { _ = h.Release() }()
 	return fn()
 }

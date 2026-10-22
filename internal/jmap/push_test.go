@@ -146,7 +146,7 @@ func (f *pushFixture) flag(t *testing.T, keyword string) {
 func (f *pushFixture) subscribe(t *testing.T, folder string) {
 	t.Helper()
 	owner := locks.Owner(testUser, "test")
-	c := counters.For(f.info, owner, f.locker)
+	c := counters.For(f.info)
 	if err := subs.New(f.info.Home, "subscriptions", testUser, owner, f.locker, c).Add(folder); err != nil {
 		t.Fatal(err)
 	}
@@ -175,46 +175,25 @@ func TestFlagChangeArrivesWithinOnePoll(t *testing.T) {
 	}
 }
 
-// A reconnect names the last event it saw and gets only what changed after it.
-func TestReconnectSendsOnlyTypesChangedAfterTheID(t *testing.T) {
-	f := pushServer(t, testPoll, 0)
-	st := f.open(t, "types=Email,Mailbox&closeafter=state", "")
-	time.Sleep(2 * testPoll)
-	f.flag(t, "$flagged")
-	ev, ok := st.next(t, "state", 20*testPoll)
-	if !ok {
-		t.Fatal("no first event")
-	}
-	f.subscribe(t, "Work") // Mailbox only, while disconnected
-	again := f.open(t, "types=Email,Mailbox", ev.id)
-	ev2, ok := again.next(t, "state", 20*testPoll)
-	if !ok {
-		t.Fatal("no event on reconnect")
-	}
-	got := changed(ev2)
-	if _, ok := got["Mailbox"]; !ok || len(got) != 1 {
-		t.Errorf("reconnect sent %v, want Mailbox alone", got)
-	}
-}
-
-// An id past the counter is not one this account issued: the counter file was
-// lost or reset. Every requested type is sent, or the client waits in silence.
-func TestUnknownLastEventIDSendsEveryRequestedType(t *testing.T) {
+// A reconnect gets every requested type's state, whatever its id says: the id
+// may come from a pod the user has since been moved away from.
+func TestReconnectSendsEveryRequestedType(t *testing.T) {
 	f := pushServer(t, testPoll, 0)
 	snap, err := counters.Read(counters.Path(f.info.Home))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ahead := strconv.FormatUint(snap.Highest+100, 10)
-	st := f.open(t, "types=Email,Mailbox,Thread,Quota&closeafter=state", ahead)
-	ev, ok := st.next(t, "state", 20*testPoll)
-	if !ok {
-		t.Fatal("no event for an id past the counter")
-	}
-	got := changed(ev)
-	for _, typ := range []string{"Email", "Mailbox", "Thread", "Quota"} {
-		if _, ok := got[typ]; !ok {
-			t.Errorf("%s missing from %v", typ, got)
+	for _, id := range []uint64{snap.Highest, snap.Highest + 100, 0} {
+		st := f.open(t, "types=Email,Mailbox,Thread,Quota&closeafter=state", strconv.FormatUint(id, 10))
+		ev, ok := st.next(t, "state", 20*testPoll)
+		if !ok {
+			t.Fatalf("id %d: no event on reconnect", id)
+		}
+		got := changed(ev)
+		for _, typ := range []string{"Email", "Mailbox", "Thread", "Quota"} {
+			if _, ok := got[typ]; !ok {
+				t.Errorf("id %d: %s missing from %v", id, typ, got)
+			}
 		}
 	}
 }

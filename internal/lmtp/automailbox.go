@@ -19,7 +19,7 @@ func (s *session) boxAuto(personal *mailbox.UserInfo, i int, nsUI *mailbox.UserI
 		// No namespaces block: the personal store and its one file.
 		return mailboxbase.Auto{Subscribe: func(rel string) error {
 			owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
-			_, err := subs.New(mailbox.ControlRoot(personal), "subscriptions", personal.Username, owner, s.opts.Locker, counters.For(personal, owner, s.opts.Locker)).AddOwn(rel)
+			_, err := subs.New(mailbox.ControlRoot(personal), "subscriptions", personal.Username, owner, s.opts.Locker, counters.For(personal)).AddOwn(rel)
 			return err
 		}}
 	}

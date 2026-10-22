@@ -269,7 +269,7 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserIndex {
 		}
 		ui.uidValidity = uidvalidity.New(ui.controlRoot, ui.username, ui.owner, b.locker)
 		ui.folders = folders.New(ui.controlRoot, ui.username, ui.owner, b.locker)
-		ui.counter = counters.New(counters.Dir(ui.home, ui.controlRoot), ui.username, ui.owner, b.locker)
+		ui.counter = counters.New(counters.Dir(ui.home, ui.controlRoot), ui.username)
 		ref = &refUserIndex{ui: ui}
 		b.users[key] = ref
 	}

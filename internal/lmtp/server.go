@@ -591,7 +591,7 @@ func (s *session) postAllowed(ui *mailbox.UserInfo, ns *config.NamespaceConfig, 
 		GlobalsOnly:       s.opts.ACLGlobalsOnly,
 		Global:            s.opts.ACLGlobal,
 		CacheTTL:          s.opts.ACLCacheTTL,
-	}, s.opts.Locker, counters.For(ui, lockOwner, s.opts.Locker))
+	}, s.opts.Locker, counters.For(ui))
 	var sep byte = '/'
 	if ns.Separator != "" {
 		sep = ns.Separator[0]

@@ -14,13 +14,13 @@ func ForNamespace(namespaces []config.NamespaceConfig, i int, nsUI, personal *ma
 	ns := namespaces[i]
 	if ns.KeepsSubscriptions() {
 		file := mailbox.SubsFileFor(shapes, i, ns.Prefix, separatorOf(ns))
-		return New(mailbox.ControlRoot(nsUI), file, personal.Username, owner, locker, counters.For(personal, owner, locker)), ""
+		return New(mailbox.ControlRoot(nsUI), file, personal.Username, owner, locker, counters.For(personal)), ""
 	}
 	file := "subscriptions"
 	if p := mailbox.PrimaryPersonalIndex(shapes); p >= 0 {
 		file = mailbox.SubsFileFor(shapes, p, namespaces[p].Prefix, separatorOf(namespaces[p]))
 	}
-	return New(mailbox.ControlRoot(personal), file, personal.Username, owner, locker, counters.For(personal, owner, locker)), ns.Prefix
+	return New(mailbox.ControlRoot(personal), file, personal.Username, owner, locker, counters.For(personal)), ns.Prefix
 }
 
 func separatorOf(ns config.NamespaceConfig) string {

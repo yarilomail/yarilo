@@ -82,7 +82,7 @@ func (s *Server) handleSubsMigrate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dest := subs.New(personal.folderControlRoot(), mailbox.NamespaceSubsFile(personal.spec.Prefix, personal.spec.Separator, personal.spec.Type),
-		uc.info.Username, uc.lockOwner(), s.opts.Locker, counters.For(uc.info, uc.lockOwner(), s.opts.Locker))
+		uc.info.Username, uc.lockOwner(), s.opts.Locker, counters.For(uc.info))
 	existing, err := dest.Snapshot()
 	if err != nil {
 		apiError(w, "read destination: "+err.Error(), http.StatusInternalServerError)

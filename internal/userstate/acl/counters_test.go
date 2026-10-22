@@ -11,7 +11,7 @@ import (
 // an update that declines to change anything does not.
 func TestACLWritesMoveMailbox(t *testing.T) {
 	dir := t.TempDir()
-	s := New(dir, "", "maildir", "/", "", "u", "o", Policy{}, nil, counters.New(dir, "u", "o", nil))
+	s := New(dir, "", "maildir", "/", "", "u", "o", Policy{}, nil, counters.New(dir, "u"))
 	bob := mailbox.ACL{{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"}}
 	steps := []struct {
 		name  string

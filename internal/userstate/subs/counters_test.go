@@ -10,7 +10,7 @@ import (
 // one changes nothing and must not wake a push stream.
 func TestSubscriptionWritesMoveMailbox(t *testing.T) {
 	dir := t.TempDir()
-	s := New(dir, "subscriptions", "u", "o", nil, counters.New(dir, "u", "o", nil))
+	s := New(dir, "subscriptions", "u", "o", nil, counters.New(dir, "u"))
 	steps := []struct {
 		name  string
 		write func() error

@@ -323,7 +323,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 	// Subscriptions live in the control root. One spelling of that rule, so
 	// this cannot drift from where the other services write (#1437).
 	subsRoot := mailbox.ControlRoot(ui)
-	store := subs.New(subsRoot, subsFile, ui.Username, owner, s.srv.opts.Locker, counters.For(ui, owner, s.srv.opts.Locker))
+	store := subs.New(subsRoot, subsFile, ui.Username, owner, s.srv.opts.Locker, counters.For(ui))
 	// acl_defaults_from_inbox applies to personal/shared namespaces only.
 	defaultsFromInbox := s.srv.opts.ACLDefaultsFromInbox &&
 		(spec.Type == NamespacePersonal || spec.Type == NamespaceShared)
@@ -332,7 +332,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		GlobalsOnly:       s.srv.opts.ACLGlobalsOnly,
 		CacheTTL:          s.srv.opts.ACLCacheTTL,
 		Global:            s.srv.opts.ACLGlobal,
-	}, s.srv.opts.Locker, counters.For(ui, owner, s.srv.opts.Locker))
+	}, s.srv.opts.Locker, counters.For(ui))
 	// The namespace-instance owner. A personal namespace is owned by the user
 	// it was opened for; a fixed shared/public one by nobody. Owner-templated
 	// namespaces (B1) set this to the resolved owner, and isOwner then works for
