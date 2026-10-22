@@ -93,6 +93,30 @@ was. The first-seen count stays the control: 20 accounts log in per run, so a
 `first-seen` outside 20-21 is a different start rather than a different image,
 and the arm marks it as `first_seen_off=1`.
 
+## Two folders, one account
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/store-parallel.sh <label> <out-dir>
+```
+
+Two imaptest halves, one pod, write flags into `PushA` and `PushB` of one
+account at once: the profile that shows a per-account lock serialising writes
+two folders kept apart (#714). Run it right after an arm, against the image
+that arm deployed, and in the same slot as the other arms of the window.
+
+| knob | default | what it changes |
+|:---|:---|:---|
+| `YARILO_STORE_TYPES` | `mdbox maildir sdbox` | which storage types run |
+| `YARILO_STORE_CLIENTS` | 5 | clients per folder |
+| `YARILO_STORE_SECS` | 60 | seconds per type |
+| `YARILO_STORE_MSGS` | 100 | messages copied from INBOX into each folder |
+
+Each type prints `store_parallel` (stores per second, from imaptest's totals)
+and `store_latency` (count, p50 and p99 bounds of `imap_command_seconds` for
+`Store`, and of `yarilo_locks_acquire_wait_seconds` for the `counters` and
+`mbox` classes, from the delta across the run). The server's `Store` count must
+equal the two halves' total; a gap means the page was read from the wrong pods.
+
 ## The same start
 
 Mailbox fill moves throughput further than most things under test, so every arm
