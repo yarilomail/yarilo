@@ -136,6 +136,34 @@ jobs:
             BUILD_VERSION=${{ steps.version.outputs.dev_tag }}
             BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
 
+  ## The docs repo checks its settings data against this export of develop.
+  settings:
+    name: Settings export
+    if: github.event_name != 'pull_request'
+    needs: [gate]
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          ## Same as gate.yml: the runner's local Go cache is the one that works.
+          cache: false
+
+      - name: Export
+        run: go run ./hack/settingsexport > settings.json
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: settings
+          path: settings.json
+
   disk:
     name: Prune runner disk
     ## A full disk stops CI and the stand's acceptance at once; always(), since
