@@ -189,10 +189,3 @@ var metricGUIDRebuilt = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fileindex_guid_store_rebuilt_total",
 	Help: "Times the per-user GUID store was rebuilt from the folder indexes.",
 })
-
-// metricCounterBumpFailed counts committed writes whose change counter did not
-// move: a push stream misses them until the next write.
-var metricCounterBumpFailed = promauto.NewCounter(prometheus.CounterOpts{
-	Name: "fileindex_change_counter_bump_failed_total",
-	Help: "Committed writes after which the account's change counter could not be raised.",
-})

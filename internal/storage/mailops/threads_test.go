@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/pkg/locks/lockstest"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -38,28 +39,27 @@ func TestHeaderCaptureKeepsOnlyTheHeaderBlock(t *testing.T) {
 }
 
 // The sidecar is written after the folder's commit, so recording a new
-// conversation moves Thread again; a copy, already threaded, does not.
-func TestRecordingAThreadMovesThread(t *testing.T) {
-	home := t.TempDir()
-	user := &mailbox.UserInfo{Username: "u@example.com", Home: home}
-	o := &Ops{cfg: Config{Threads: threads.NewRecorder(nil), Protocol: "test"}, user: user}
+// conversation is announced on the account's threads; a copy is not.
+func TestRecordingAThreadEmits(t *testing.T) {
+	rec := &lockstest.Recorder{}
+	user := &mailbox.UserInfo{Username: "u@example.com", Home: t.TempDir()}
+	o := &Ops{cfg: Config{Threads: threads.NewRecorder(nil), Protocol: "test", Locker: rec}, user: user}
 	raw := []byte("Message-ID: <a@x>\r\nSubject: s\r\n\r\n")
 	steps := []struct {
 		name  string
 		guid  byte
-		moves bool
+		emits bool
 	}{
 		{"new message", 1, true},
 		{"copy of it", 1, false},
 		{"another message", 2, true},
 	}
+	key := locks.ThreadsKey(user.Username)
 	for _, st := range steps {
-		before, _ := counters.Read(counters.Path(home))
+		before := rec.Count(key, locks.EventThreads)
 		o.recordThread([16]byte{st.guid}, raw)
-		after, _ := counters.Read(counters.Path(home))
-		got := after.ChangedAfter(before.Highest)
-		if moved := len(got) == 1 && got[0] == counters.Thread; moved != st.moves || (!st.moves && len(got) != 0) {
-			t.Errorf("%s moved %v, want Thread=%v", st.name, got, st.moves)
+		if got := rec.Count(key, locks.EventThreads) - before; got != map[bool]int{true: 1}[st.emits] {
+			t.Errorf("%s emitted %d, want emits=%v", st.name, got, st.emits)
 		}
 	}
 }

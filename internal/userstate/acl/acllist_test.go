@@ -8,13 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 func TestList_SnapshotEmptyReturnsNil(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	got, err := s.ListSnapshot()
 	if err != nil {
 		t.Fatalf("ListSnapshot: %v", err)
@@ -26,7 +25,7 @@ func TestList_SnapshotEmptyReturnsNil(t *testing.T) {
 
 func TestList_SetPopulatesIndex(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	acl := mailbox.ACL{
 		{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: mailbox.MustParseRights("lr")},
 		{Identifier: mailbox.Identifier{Type: mailbox.IDAnyone}, Rights: mailbox.MustParseRights("l")},
@@ -50,7 +49,7 @@ func TestList_SetPopulatesIndex(t *testing.T) {
 
 func TestList_RoundTripAcrossInstance(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	if err := s.Set("A", mailbox.ACL{
 		{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"},
 	}); err != nil {
@@ -62,7 +61,7 @@ func TestList_RoundTripAcrossInstance(t *testing.T) {
 		t.Fatalf("Set B: %v", err)
 	}
 	// Re-open Store to confirm the file is the only source of truth.
-	s2 := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s2 := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	entries, err := s2.ListSnapshot()
 	if err != nil {
 		t.Fatalf("ListSnapshot: %v", err)
@@ -85,7 +84,7 @@ func TestList_RoundTripAcrossInstance(t *testing.T) {
 
 func TestList_SetReplaceDropsOldEntries(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	if err := s.Set("Shared/team", mailbox.ACL{
 		{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"},
 		{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "carol"}, Rights: "lr"},
@@ -108,7 +107,7 @@ func TestList_SetReplaceDropsOldEntries(t *testing.T) {
 
 func TestList_RemoveDropsAllEntriesForMailbox(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	if err := s.Set("A", mailbox.ACL{
 		{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"},
 		{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "carol"}, Rights: "lr"},
@@ -131,7 +130,7 @@ func TestList_RemoveDropsAllEntriesForMailbox(t *testing.T) {
 
 func TestList_RenameRewritesMailboxField(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	if err := s.Set("Old", mailbox.ACL{
 		{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"},
 	}); err != nil {
@@ -159,7 +158,7 @@ func TestList_RenameRewritesMailboxField(t *testing.T) {
 
 func TestList_RenameMissingFileIsNoop(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	if err := s.Rename("Old", "New"); err != nil {
 		t.Errorf("Rename of missing file should be nil, got %v", err)
 	}
@@ -167,7 +166,7 @@ func TestList_RenameMissingFileIsNoop(t *testing.T) {
 
 func TestList_LookupAppliesEffectiveSemantics(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	// Box A: bob has 'lr' — visible to lookup.
 	// Box B: bob has only 's' (no 'l') — NOT visible.
 	// Box C: anyone has 'l', bob has '-l' negative — masked.
@@ -213,8 +212,8 @@ func TestList_SortedDeterministic(t *testing.T) {
 	// when given the same entries in any order.
 	home1 := t.TempDir()
 	home2 := t.TempDir()
-	s1 := New(home1, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
-	s2 := New(home2, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s1 := New(home1, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
+	s2 := New(home2, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	for _, mbox := range []string{"Z", "A", "M"} {
 		_ = s1.Set(mbox, mailbox.ACL{
 			{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"},
@@ -239,7 +238,7 @@ func TestList_ParseErrorAnnotatesLine(t *testing.T) {
 		[]byte("A\tuser=bob\tlr\nB\tuser=carol\tINVALID\n"), 0o600); err != nil {
 		t.Fatalf("seed bad file: %v", err)
 	}
-	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	_, err := s.ListSnapshot()
 	if err == nil {
 		t.Fatal("expected parse error")
@@ -262,7 +261,7 @@ func TestList_RebuildMergesAndReplaceAllReplaces(t *testing.T) {
 	seed := func(t *testing.T) *Store {
 		t.Helper()
 		home := t.TempDir()
-		s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+		s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 		// State the callback does not know about: another folder's rows.
 		if err := os.WriteFile(filepath.Join(home, ListFileName),
 			[]byte("Other\tuser=ghost\tlr\n"), 0o600); err != nil {

@@ -10,7 +10,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -90,7 +89,7 @@ func TestDeliveryTargetRoutesNamespaces(t *testing.T) {
 func TestDeliveryTargetPostRight(t *testing.T) {
 	seedPostACL := func(t *testing.T, publicDir, folder, body string) {
 		t.Helper()
-		st := acl.New(publicDir, publicDir, "maildir", "/", "", "", "", acl.Policy{}, nil, counters.Discard)
+		st := acl.New(publicDir, publicDir, "maildir", "/", "", "", "", acl.Policy{}, nil)
 		p := st.Path(folder)
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			t.Fatalf("mkdir acl dir: %v", err)

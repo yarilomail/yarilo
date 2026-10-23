@@ -403,6 +403,19 @@ func (l *testLocker) Emit(_ context.Context, resource string, t locks.EventType,
 	l.events = append(l.events, resource+" "+string(t))
 	return nil
 }
+
+func (l *testLocker) emitted(event string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, e := range l.events {
+		if e == event {
+			n++
+		}
+	}
+	return n
+}
+
 func (l *testLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

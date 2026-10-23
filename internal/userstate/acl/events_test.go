@@ -3,20 +3,21 @@ package acl
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
+	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/pkg/locks/lockstest"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
-// Rights are a Mailbox property (myRights), so every ACL write moves Mailbox;
-// an update that declines to change anything does not.
-func TestACLWritesMoveMailbox(t *testing.T) {
-	dir := t.TempDir()
-	s := New(dir, "", "maildir", "/", "", "u", "o", Policy{}, nil, counters.New(dir, "u"))
+// Rights are a Mailbox property (myRights), so every ACL write is announced on
+// the account's folder list; an update that declines to change anything is not.
+func TestACLWritesEmit(t *testing.T) {
+	rec := &lockstest.Recorder{}
+	s := New(t.TempDir(), "", "maildir", "/", "", "u", locks.Owner("u", "test"), Policy{}, rec)
 	bob := mailbox.ACL{{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"}}
 	steps := []struct {
 		name  string
 		write func() error
-		moves bool
+		emits bool
 	}{
 		{"set", func() error { return s.Set("Work", bob) }, true},
 		{"update declined", func() error {
@@ -26,14 +27,12 @@ func TestACLWritesMoveMailbox(t *testing.T) {
 		{"remove", func() error { return s.Remove("Projects") }, true},
 	}
 	for _, st := range steps {
-		before, _ := counters.Read(counters.Path(dir))
+		before := rec.Count(locks.MailboxListKey("u"), locks.EventACL)
 		if err := st.write(); err != nil {
 			t.Fatalf("%s: %v", st.name, err)
 		}
-		after, _ := counters.Read(counters.Path(dir))
-		got := after.ChangedAfter(before.Highest)
-		if moved := len(got) == 1 && got[0] == counters.Mailbox; moved != st.moves || (!st.moves && len(got) != 0) {
-			t.Errorf("%s moved %v, want Mailbox=%v", st.name, got, st.moves)
+		if got := rec.Count(locks.MailboxListKey("u"), locks.EventACL) - before; got != map[bool]int{true: 1}[st.emits] {
+			t.Errorf("%s emitted %d, want emits=%v", st.name, got, st.emits)
 		}
 	}
 }

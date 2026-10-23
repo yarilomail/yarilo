@@ -67,7 +67,8 @@ type Options struct {
 	// Submission serves Identity and EmailSubmission; nil, as with no relay,
 	// leaves them unadvertised.
 	Submission *Submission
-	// PushPoll is how often a push stream looks for changes; 0 turns push off.
+	// PushPoll is the safety recompute of a push stream's states, for events
+	// lost while the lock service's channel was down; 0 turns push off.
 	PushPoll time.Duration
 }
 

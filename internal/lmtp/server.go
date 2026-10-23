@@ -22,7 +22,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/dict"
@@ -591,7 +590,7 @@ func (s *session) postAllowed(ui *mailbox.UserInfo, ns *config.NamespaceConfig, 
 		GlobalsOnly:       s.opts.ACLGlobalsOnly,
 		Global:            s.opts.ACLGlobal,
 		CacheTTL:          s.opts.ACLCacheTTL,
-	}, s.opts.Locker, counters.For(ui))
+	}, s.opts.Locker)
 	var sep byte = '/'
 	if ns.Separator != "" {
 		sep = ns.Separator[0]

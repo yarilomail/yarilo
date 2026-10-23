@@ -1,7 +1,6 @@
 package subs
 
 import (
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -14,13 +13,13 @@ func ForNamespace(namespaces []config.NamespaceConfig, i int, nsUI, personal *ma
 	ns := namespaces[i]
 	if ns.KeepsSubscriptions() {
 		file := mailbox.SubsFileFor(shapes, i, ns.Prefix, separatorOf(ns))
-		return New(mailbox.ControlRoot(nsUI), file, personal.Username, owner, locker, counters.For(personal)), ""
+		return New(mailbox.ControlRoot(nsUI), file, personal.Username, owner, locker), ""
 	}
 	file := "subscriptions"
 	if p := mailbox.PrimaryPersonalIndex(shapes); p >= 0 {
 		file = mailbox.SubsFileFor(shapes, p, namespaces[p].Prefix, separatorOf(namespaces[p]))
 	}
-	return New(mailbox.ControlRoot(personal), file, personal.Username, owner, locker, counters.For(personal)), ns.Prefix
+	return New(mailbox.ControlRoot(personal), file, personal.Username, owner, locker), ns.Prefix
 }
 
 func separatorOf(ns config.NamespaceConfig) string {

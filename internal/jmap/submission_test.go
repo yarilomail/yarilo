@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -15,7 +14,7 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
+	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -425,31 +424,32 @@ func TestSubmissionCapabilityIsRefusedWithoutARelay(t *testing.T) {
 	}
 }
 
-// A kept or dropped record moves EmailSubmission; a read that changes nothing
-// does not.
-func TestEmailSubmissionRecordsMoveTheirType(t *testing.T) {
-	s, emailID, home := submissionServer(t, draftHeaders+"\r\nb\r\n", &fakeRelay{}, Submission{})
+// A kept or dropped record emits on the account's submissions; a read that
+// changes nothing does not.
+func TestEmailSubmissionRecordsEmit(t *testing.T) {
+	s, emailID, _ := submissionServer(t, draftHeaders+"\r\nb\r\n", &fakeRelay{}, Submission{})
+	l := s.opts.Storage.Locker.(*testLocker)
 	var id string
 	steps := []struct {
 		name string
 		call func()
-		want []counters.Type
+		want int
 	}{
 		{"create", func() {
 			out := subCall(t, s, "EmailSubmission/set", createSubmission(identityID(testUser), emailID, ""))
 			id, _ = entry(out, "created", "c1")["id"].(string)
-		}, []counters.Type{counters.EmailSubmission}},
-		{"get", func() { subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`) }, nil},
+		}, 1},
+		{"get", func() { subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`) }, 0},
 		{"destroy", func() {
 			subCall(t, s, "EmailSubmission/set", `{"accountId":"`+testUser+`","destroy":["`+id+`"]}`)
-		}, []counters.Type{counters.EmailSubmission}},
+		}, 1},
 	}
+	want := locks.SubmissionsKey(testUser) + " " + string(locks.EventSubmission)
 	for _, st := range steps {
-		before, _ := counters.Read(counters.Path(home))
+		before := l.emitted(want)
 		st.call()
-		after, _ := counters.Read(counters.Path(home))
-		if got := after.ChangedAfter(before.Highest); !reflect.DeepEqual(got, st.want) {
-			t.Errorf("%s moved %v, want %v", st.name, got, st.want)
+		if got := l.emitted(want) - before; got != st.want {
+			t.Errorf("%s emitted %d, want %d", st.name, got, st.want)
 		}
 	}
 }

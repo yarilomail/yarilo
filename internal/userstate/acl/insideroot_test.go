@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -15,7 +14,7 @@ import (
 // user's tree shares (#1091).
 func TestStoreRefusesNamesThatLandOutsideTheNamespace(t *testing.T) {
 	root := t.TempDir()
-	s := New(root, root, "maildir", "/", "", "u@d.test", "test", Policy{}, nil, counters.Discard)
+	s := New(root, root, "maildir", "/", "", "u@d.test", "test", Policy{}, nil)
 	grant := mailbox.ACL{{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"}}
 
 	// Only the names that actually escape. ".." is refused a layer up, by the
@@ -38,7 +37,7 @@ func TestStoreRefusesNamesThatLandOutsideTheNamespace(t *testing.T) {
 // rather than bounded it.
 func TestStoreStillWritesOrdinaryNames(t *testing.T) {
 	root := t.TempDir()
-	s := New(root, root, "maildir", "/", "", "u@d.test", "test", Policy{}, nil, counters.Discard)
+	s := New(root, root, "maildir", "/", "", "u@d.test", "test", Policy{}, nil)
 	grant := mailbox.ACL{{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"}}
 
 	for _, folder := range []string{"Sales", "Work/2026", "INBOX"} {
@@ -55,7 +54,7 @@ func TestStoreStillWritesOrdinaryNames(t *testing.T) {
 // second having to unpick the first.
 func TestStoreAllowsAnyFileInsideTheNamespaceRoot(t *testing.T) {
 	root := t.TempDir()
-	s := New(root, root, "mdbox", "/", "", "u@d.test", "test", Policy{}, nil, counters.Discard)
+	s := New(root, root, "mdbox", "/", "", "u@d.test", "test", Policy{}, nil)
 
 	// mdbox gives the root its own directory today, so "" is already such a
 	// case: inside the root, not a folder anyone named.
@@ -71,7 +70,7 @@ func TestStoreAllowsAnyFileInsideTheNamespaceRoot(t *testing.T) {
 func TestGuardAllowsTheRealNamespaceRootFile(t *testing.T) {
 	for _, driver := range []string{"maildir", "mdbox", "sdbox"} {
 		root := t.TempDir()
-		s := New(root, root, driver, "/", "", "u@d.test", "test", Policy{}, nil, counters.Discard)
+		s := New(root, root, driver, "/", "", "u@d.test", "test", Policy{}, nil)
 
 		if err := s.checkInsideRoot(""); err != nil {
 			t.Errorf("%s: the namespace root was refused by the guard: %v", driver, err)

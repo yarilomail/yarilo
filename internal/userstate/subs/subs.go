@@ -18,14 +18,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -42,29 +40,25 @@ type Store struct {
 	username  string
 	owner     string
 	locker    locks.Locker
-	counter   counters.Bumper
 }
 
 // New constructs a Store rooted at home/<filename>.
-func New(home, filename, username, owner string, locker locks.Locker, counter counters.Bumper) *Store {
+func New(home, filename, username, owner string, locker locks.Locker) *Store {
 	return &Store{
 		path:      filepath.Join(home, filename),
 		separator: "/",
 		username:  username,
 		owner:     owner,
 		locker:    locker,
-		counter:   counter,
 	}
 }
 
-// moved raises the counter once the lock is released, after a write.
+// moved announces a write once the lock is released.
 func (s *Store) moved(err error, wrote bool) error {
 	if err != nil || !wrote {
 		return err
 	}
-	if berr := s.counter.Bump("subs", counters.Mailbox); berr != nil {
-		slog.Warn("userstate/subs: change counter not moved", "user", s.username, "err", berr)
-	}
+	locks.EmitBest(s.locker, locks.SubscriptionsKey(s.username), locks.EventSubscriptions, "")
 	return nil
 }
 

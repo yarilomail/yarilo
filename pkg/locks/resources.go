@@ -1,5 +1,7 @@
 package locks
 
+import "strings"
+
 // Resource-key constructors. Storage code MUST use these instead of building
 // strings inline, so a future prefix change can be tracked through the
 // compiler instead of grep. Naming follows the convention in
@@ -66,6 +68,32 @@ func ThreadsKey(user string) string { return "threads:" + user }
 // file (LIST-EXTENDED §SELECT SUBSCRIBED / RETURN SUBSCRIBED). Independent
 // of mailbox keys — subscribe is metadata, never racing with mail writes.
 func SubscriptionsKey(user string) string { return "subs:" + user }
+
+// SubmissionsKey guards one user's EmailSubmission records.
+func SubmissionsKey(user string) string { return "jmapsubmissions:" + user }
+
+// AccountKey is the event channel of one account: every event emitted on one of
+// the user's keys is delivered there too, carrying the key it was emitted on.
+func AccountKey(user string) string { return accountPrefix + user }
+
+const accountPrefix = "acct:"
+
+// accountScoped names the keys whose events an account subscriber receives;
+// the user is the key's second field.
+var accountScoped = map[string]bool{
+	"mbox": true, "mlist": true, "sieve": true, "subs": true, "threads": true, "jmapsubmissions": true,
+}
+
+// accountOf returns the user a key belongs to, or "" for a key no account
+// subscriber hears.
+func accountOf(resource string) string {
+	prefix, rest, ok := strings.Cut(resource, ":")
+	if !ok || !accountScoped[prefix] {
+		return ""
+	}
+	user, _, _ := strings.Cut(rest, ":")
+	return user
+}
 
 // ACLListKey returns the lock key for the per-namespace yarilo-acl-list
 // global index — one file per namespace-root that mirrors which

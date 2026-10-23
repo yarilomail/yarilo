@@ -5,7 +5,6 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -19,7 +18,7 @@ func (s *session) boxAuto(personal *mailbox.UserInfo, i int, nsUI *mailbox.UserI
 		// No namespaces block: the personal store and its one file.
 		return mailboxbase.Auto{Subscribe: func(rel string) error {
 			owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
-			_, err := subs.New(mailbox.ControlRoot(personal), "subscriptions", personal.Username, owner, s.opts.Locker, counters.For(personal)).AddOwn(rel)
+			_, err := subs.New(mailbox.ControlRoot(personal), "subscriptions", personal.Username, owner, s.opts.Locker).AddOwn(rel)
 			return err
 		}}
 	}

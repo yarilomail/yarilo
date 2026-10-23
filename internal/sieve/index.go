@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
@@ -54,8 +52,8 @@ type IndexedStore struct {
 	locker locks.Locker
 }
 
-// update is io.update that, after a change, moves the account's counter: a
-// vacation reply is a script, so both types move together.
+// update is io.update that announces a change: a vacation reply is a script,
+// so one event stands for both.
 func (s *IndexedStore) update(ctx context.Context, username, homeDir string, fn func(context.Context, *ScriptIndex) (bool, error)) (ScriptIndex, error) {
 	changed := false
 	ix, err := s.io.update(ctx, username, homeDir, func(ctx context.Context, ix *ScriptIndex) (bool, error) {
@@ -63,11 +61,8 @@ func (s *IndexedStore) update(ctx context.Context, username, homeDir string, fn 
 		changed = c && ferr == nil
 		return c, ferr
 	})
-	if err == nil && changed && homeDir != "" {
-		c := counters.New(homeDir, username)
-		if berr := c.Bump("sieve", counters.SieveScript, counters.VacationResponse); berr != nil {
-			slog.Warn("sieve: change counter not moved", "user", username, "err", berr)
-		}
+	if err == nil && changed {
+		locks.EmitBest(s.locker, locks.SieveScriptsKey(username), locks.EventSieve, "")
 	}
 	return ix, err
 }

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -53,12 +52,10 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 		slog.Warn(o.cfg.Protocol+": message saved but not threaded", "user", user, "err", err)
 		return
 	}
-	// The sidecar is written after the folder's commit moved Thread, so it
-	// moves again: a reader between the two saw the old conversation.
+	// The sidecar is written after the folder's event went out: a reader
+	// between the two saw the old conversation.
 	if wrote {
-		if berr := counters.For(o.user).Bump("threads", counters.Thread); berr != nil {
-			slog.Warn(o.cfg.Protocol+": change counter not moved", "user", user, "err", berr)
-		}
+		locks.EmitBest(o.cfg.Locker, locks.ThreadsKey(user), locks.EventThreads, "")
 	}
 }
 

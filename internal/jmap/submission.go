@@ -20,7 +20,6 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -100,10 +99,8 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 	path := filepath.Join(root, submissionFile)
 	wrote := false
 	defer func() {
-		if wrote && h.counter != nil {
-			if berr := h.counter.Bump("submission", counters.EmailSubmission); berr != nil {
-				slog.Warn("jmap: change counter not moved", "user", h.info.Username, "err", berr)
-			}
+		if wrote {
+			locks.EmitBest(s.opts.Storage.Locker, locks.SubmissionsKey(h.info.Username), locks.EventSubmission, "")
 		}
 	}()
 	run := func(context.Context) error {
@@ -143,7 +140,7 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 	if locker == nil {
 		return run(ctx)
 	}
-	return locks.WithLockWaiting(locks.WithSite(ctx, "jmap-submission"), locker, "jmapsubmissions:"+h.info.Username,
+	return locks.WithLockWaiting(locks.WithSite(ctx, "jmap-submission"), locker, locks.SubmissionsKey(h.info.Username),
 		locks.Owner(h.info.Username, h.info.LockID()), submissionLockTTL, submissionLockRenew, submissionLockWait, run)
 }
 
