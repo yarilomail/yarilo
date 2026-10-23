@@ -127,13 +127,15 @@ A JMAP push stream is held open on one backend pod, straight to its JMAP
 container over internal mTLS, while mail for the same account is delivered
 over LMTP to the pod the director pins it to: the time from each delivery's
 `250` to the stream's StateChange naming `Email` is the cross-pod path of push
-events. The account is the first candidate pinned away from the stream's pod.
+events. The account is the first candidate the director places, and the stream goes to
+a backend pod it is not on.
 One run on one image, never alongside a window arm; bash 5, so the runner.
 
 | knob | default | what it changes |
 |:---|:---|:---|
-| `YARILO_PUSH_POD` | `yarilo-backend-1` | the pod holding the stream |
-| `YARILO_PUSH_USERS` | `u1`..`u8@d00001.test` | candidate accounts, first pinned elsewhere wins |
+| `YARILO_PUSH_PASS` | the sandbox Secret, through `hack/sandbox/creds.sh` | the accounts' password, for the IMAP login that places an account |
+| `YARILO_PUSH_POD` | any backend pod the account is not on | the pod holding the stream |
+| `YARILO_PUSH_USERS` | `u1`, `u51`, `u101`, `u2`, `u52`, `u102` of the three type domains | candidate accounts, first pinned elsewhere wins; an unplaced one is logged in once over IMAP so the director places it |
 | `YARILO_PUSH_COUNT` | 50 | deliveries |
 | `YARILO_PUSH_PAUSE` | 2 | seconds between deliveries |
 | `YARILO_PUSH_WAIT` | 10 | seconds a delivery's event may take before it counts as lost |
