@@ -18,6 +18,8 @@ type BoxTx interface {
 	UpdateFlags(uid uint32, upd FlagsUpdate)
 	Expunge(uid uint32)
 	Append(m *MessageMeta)
+	// MarkDirty says the record's flags are ahead of storage, or no longer.
+	MarkDirty(uid uint32, dirty bool)
 	// Commit writes what is still true; a change to a record that moved or
 	// went is skipped and named in TxResult.Skipped, the rest is written.
 	Commit() (TxResult, error)

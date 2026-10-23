@@ -194,6 +194,14 @@ func SetTestFlagRenameDelay(d time.Duration) func() {
 	return func() { beforeFlagRename = nil }
 }
 
+// SetTestBeforeFlagRename runs fn before each flag rename. Test seam for a
+// caller outside this package that has to stop a writer between its index
+// transaction and the rename.
+func SetTestBeforeFlagRename(fn func()) func() {
+	beforeFlagRename = fn
+	return func() { beforeFlagRename = nil }
+}
+
 // listReads counts the times the list was read off disk, so "one read per
 // folder" is a number a row asserts rather than a claim (#1700).
 var listReads atomic.Int64
