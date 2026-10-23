@@ -15,7 +15,8 @@ NS="${YARILO_NS:-yarilo-sb}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 STREAM_POD="${YARILO_PUSH_POD:-}"
 CANDIDATES="${YARILO_PUSH_USERS:-u1@d00001.test u51@d00002.test u101@d00003.test u2@d00001.test u52@d00002.test u102@d00003.test}"
-PASS="${YARILO_PUSH_PASS:-}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
+PASS="${YARILO_PUSH_PASS:-$(sandbox_password)}"
 COUNT="${YARILO_PUSH_COUNT:-50}"
 PAUSE="${YARILO_PUSH_PAUSE:-2}"
 WAIT="${YARILO_PUSH_WAIT:-10}"
@@ -25,10 +26,6 @@ LMTP_PORT=18024
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 
-if [ -z "$PASS" ]; then
-  echo "push-latency: set YARILO_PUSH_PASS to the stand accounts' password; an unplaced account is logged in with it" >&2
-  exit 1
-fi
 if [ -z "${EPOCHREALTIME:-}" ]; then
   echo "push-latency: needs bash 5 (EPOCHREALTIME); run it on the runner" >&2
   exit 1
