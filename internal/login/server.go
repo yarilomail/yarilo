@@ -151,6 +151,10 @@ type Options struct {
 	// XClientNets are the CIDRs whose forwarded client IP is trusted: the
 	// socket peer must sit inside one. Empty trusts nobody.
 	XClientNets []*net.IPNet
+	// SubmissionMaxMessageBytes and SubmissionMaxRecipients are yarilo-submission's
+	// limits (protocol.submission), stated in EHLO; 0 means none.
+	SubmissionMaxMessageBytes int64
+	SubmissionMaxRecipients   int
 }
 
 // liveSession tracks one active proxied session for kick support.

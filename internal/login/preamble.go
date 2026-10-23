@@ -649,7 +649,17 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			if opts.XClient && ipInNets(remoteHost(conn), opts.XClientNets) {
 				caps += "250-XCLIENT ADDR PORT\r\n"
 			}
-			caps += "250 8BITMIME\r\n"
+			// The client keeps this reply for the session, so it lists what
+			// yarilo-submission serves behind it, with the same limits.
+			caps += "250-PIPELINING\r\n250-8BITMIME\r\n250-ENHANCEDSTATUSCODES\r\n250-CHUNKING\r\n"
+			if opts.SubmissionMaxRecipients > 0 {
+				caps += fmt.Sprintf("250-LIMITS RCPTMAX=%d\r\n", opts.SubmissionMaxRecipients)
+			}
+			if opts.SubmissionMaxMessageBytes > 0 {
+				caps += fmt.Sprintf("250 SIZE %d\r\n", opts.SubmissionMaxMessageBytes)
+			} else {
+				caps += "250 SIZE\r\n"
+			}
 			if _, err := io.WriteString(conn, caps); err != nil {
 				return nil, conn, rd, fmt.Errorf("smtp: send ehlo resp: %w", err)
 			}
