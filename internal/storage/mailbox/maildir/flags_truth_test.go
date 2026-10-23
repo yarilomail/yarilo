@@ -169,3 +169,86 @@ func TestANamelessRecordIsNotNamedFromASidecar(t *testing.T) {
 		}
 	}
 }
+
+// countingIndex counts the index writes a sync pass makes.
+type countingIndex struct {
+	mailbox.UserIndex
+	single, commits int
+}
+
+func (c *countingIndex) ExpungeMessage(folderID uint64, uid uint32) error {
+	c.single++
+	return c.UserIndex.ExpungeMessage(folderID, uid)
+}
+
+func (c *countingIndex) UpdateFlags(folderID uint64, uid uint32, flags, keywords []string) error {
+	c.single++
+	return c.UserIndex.UpdateFlags(folderID, uid, flags, keywords)
+}
+
+func (c *countingIndex) Begin(folderID uint64) (mailbox.IndexTx, error) {
+	tx, err := c.UserIndex.Begin(folderID)
+	if err != nil {
+		return nil, err
+	}
+	return &countingTx{IndexTx: tx, c: c}, nil
+}
+
+type countingTx struct {
+	mailbox.IndexTx
+	c *countingIndex
+}
+
+func (t *countingTx) Commit() (mailbox.TxResult, error) {
+	t.c.commits++
+	return t.IndexTx.Commit()
+}
+
+// A pass that takes flags from several names and drops a vanished message writes
+// it all in one transaction, not one index write per message (#714).
+func TestASyncPassWritesItsFlagsInOneTransaction(t *testing.T) {
+	box, idx, folder := recSetup(t)
+	for uid := uint32(1); uid <= 5; uid++ {
+		name, _, _, err := box.Save("INBOX", strings.NewReader("body\n"), 0, 5, nil, nil, [16]byte{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, aerr := box.AssignUID("INBOX", name, uid); aerr != nil {
+			t.Fatalf("assign uid: %v", aerr)
+		}
+		recAppend(t, box, idx, folder, name, &mailbox.MessageMeta{
+			UID: uid, Size: 5, VSize: 5, Flags: []string{`\Seen`},
+		})
+	}
+	gone, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 5, To: 5}})
+	var victim string
+	base := filepath.Base(storedName(t, box, "INBOX", gone[0]))
+	_ = filepath.Walk(box.mailPath, func(p string, fi os.FileInfo, _ error) error {
+		if fi != nil && !fi.IsDir() && fi.Name() == base {
+			victim = p
+		}
+		return nil
+	})
+	if victim == "" {
+		t.Fatalf("no file %s under %s", base, box.mailPath)
+	}
+	if err := os.Remove(victim); err != nil {
+		t.Fatal(err)
+	}
+	counted := &countingIndex{UserIndex: idx}
+	if _, err := box.ReconcileIndex(mailboxbase.Open(box, counted), counted, folder); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if len(msgs) != 4 {
+		t.Fatalf("%d records after the pass, want 4: the vanished one stayed", len(msgs))
+	}
+	for _, m := range msgs {
+		if hasFlagIn(m.Flags, `\Seen`) {
+			t.Fatalf("uid %d kept \\Seen the name does not carry", m.UID)
+		}
+	}
+	if counted.single != 0 || counted.commits != 1 {
+		t.Errorf("4 flag changes and an expunge took %d single writes and %d transactions, want 0 and 1", counted.single, counted.commits)
+	}
+}
