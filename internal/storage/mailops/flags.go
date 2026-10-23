@@ -15,7 +15,7 @@ func (o *Ops) UpdateFlags(box mailbox.Box, f *mailbox.Folder, batch map[uint32]m
 	defer tx.Rollback()
 	// Where the file name carries the flags, the index holds the truth until
 	// the rename lands: a sync in between must not take the old name back.
-	names := keepsFlagsInNames(box)
+	names := mailbox.KeepsFlagsInNames(box.Store())
 	for uid, upd := range batch {
 		tx.UpdateFlags(uid, upd)
 		if names {
@@ -28,12 +28,4 @@ func (o *Ops) UpdateFlags(box mailbox.Box, f *mailbox.Folder, batch map[uint32]m
 	}
 	o.EmitMessage(f.Name, locks.EventChanged, 0)
 	return out.Flags, nil
-}
-
-func keepsFlagsInNames(box mailbox.Box) bool {
-	switch mailbox.Driver(box.Store()).(type) {
-	case mailbox.FlagWriterMulti, mailbox.FlagWriter:
-		return true
-	}
-	return false
 }

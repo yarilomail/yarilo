@@ -194,9 +194,8 @@ func SetTestFlagRenameDelay(d time.Duration) func() {
 	return func() { beforeFlagRename = nil }
 }
 
-// SetTestBeforeFlagRename runs fn before each flag rename. Test seam for a
-// caller outside this package that has to stop a writer between its index
-// transaction and the rename.
+// SetTestBeforeFlagRename runs fn before each flag rename: a test outside this
+// package stops a writer between its index write and the rename.
 func SetTestBeforeFlagRename(fn func()) func() {
 	beforeFlagRename = fn
 	return func() { beforeFlagRename = nil }
