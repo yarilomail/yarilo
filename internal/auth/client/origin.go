@@ -2,6 +2,7 @@ package client
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
@@ -15,7 +16,27 @@ type origin struct {
 	secured   string
 	clientID  string
 	noPenalty bool
+	addrs     Addresses
+	localName string
+	ja3Hash   string
 }
+
+// Addresses are the client connection's ports, and the TCP peer's own
+// address and ports where a proxy or a forwarder stands between.
+type Addresses struct {
+	LocalPort, RemotePort         int
+	RealLocalIP, RealRemoteIP     string
+	RealLocalPort, RealRemotePort int
+}
+
+// Conn gives the connection's ports and real addresses.
+func Conn(a Addresses) Option { return func(o *origin) { o.addrs = a } }
+
+// LocalName is the server name the client asked for in TLS.
+func LocalName(name string) Option { return func(o *origin) { o.localName = name } }
+
+// JA3Hash is the MD5 of the client's TLS hello fingerprint.
+func JA3Hash(h string) Option { return func(o *origin) { o.ja3Hash = h } }
 
 // TLS says the mail client's connection is TLS.
 func TLS() Option { return func(o *origin) { o.secured = "tls" } }
@@ -38,9 +59,22 @@ func writeOrigin(sb *strings.Builder, opts []Option) {
 	if o.noPenalty {
 		sb.WriteString("\tno-penalty")
 	}
-	if o.clientID != "" {
-		sb.WriteString("\tclient_id=")
-		sb.WriteString(protocol.TabEscape(o.clientID))
+	a := o.addrs
+	for _, f := range []struct {
+		key string
+		n   int
+	}{{"lport", a.LocalPort}, {"rport", a.RemotePort}, {"real_lport", a.RealLocalPort}, {"real_rport", a.RealRemotePort}} {
+		if f.n > 0 {
+			sb.WriteString("\t" + f.key + "=" + strconv.Itoa(f.n))
+		}
+	}
+	for _, f := range []struct{ key, v string }{
+		{"real_lip", a.RealLocalIP}, {"real_rip", a.RealRemoteIP},
+		{"local_name", o.localName}, {"ssl_ja3_hash", o.ja3Hash}, {"client_id", o.clientID},
+	} {
+		if f.v != "" {
+			sb.WriteString("\t" + f.key + "=" + protocol.TabEscape(f.v))
+		}
 	}
 }
 

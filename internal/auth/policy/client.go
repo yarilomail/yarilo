@@ -103,14 +103,18 @@ type Decision struct {
 // Request is the structured input to a policy call. The client hashes
 // (username, password) and POSTs the JSON template wforce expects.
 type Request struct {
-	Username  string // resolved/requested username before chain
-	Password  string // plain — used only to compute pwhash, never stored
-	RemoteIP  string // client IP as a string ("" allowed)
-	LocalIP   string // the address the client connected to
-	Service   string // "imap" / "pop3" / "submission" / "lmtp"; "smtp" is Postfix
-	DeviceID  string // free-form client tag (empty allowed)
-	SessionID string // unique per auth attempt (empty allowed)
-	TLS       bool   // whether the client connection was TLS-secured
+	Username string // resolved/requested username before chain
+	Password string // plain — used only to compute pwhash, never stored
+	RemoteIP string // client IP as a string ("" allowed)
+	LocalIP  string // the address the client connected to
+	// Vars is the variable table templates expand against; Passdb and Userdb
+	// answer the passdb: and userdb: providers.
+	Vars           map[string]string
+	Passdb, Userdb map[string]string
+	Service        string // "imap" / "pop3" / "submission" / "lmtp"; "smtp" is Postfix
+	DeviceID       string // free-form client tag (empty allowed)
+	SessionID      string // unique per auth attempt (empty allowed)
+	TLS            bool   // whether the client connection was TLS-secured
 	// FailType is the post-auth classification. Only used by
 	// CheckAfter and ReportAfter. Empty for CheckBefore.
 	//   "" / "policy" / "internal" / "credentials" / "expired"
@@ -207,10 +211,7 @@ func (c *Client) do(ctx context.Context, command string, req Request, _ bool) (D
 func (c *Client) doWithStatus(ctx context.Context, command string, req Request,
 	includeStatus, success, policyReject bool) (Decision, error) {
 
-	body, err := c.buildPayload(req, includeStatus, success, policyReject)
-	if err != nil {
-		return c.failoverDecision(), fmt.Errorf("build payload: %w", err)
-	}
+	body := c.body(req, c.hashPassword(req.Username, req.Password), includeStatus, success, policyReject)
 
 	url := joinCommand(c.cfg.URL, command)
 
@@ -284,32 +285,6 @@ func (c *Client) failoverDecision() Decision {
 		return Decision{Reject: true, Message: "policy server unavailable"}
 	}
 	return Decision{Continue: true}
-}
-
-// buildPayload assembles the JSON body: the configured attributes, then the
-// outcome on a post-auth call and tls, as the reference appends them.
-func (c *Client) buildPayload(req Request, includeStatus, success, policyReject bool) ([]byte, error) {
-	pwhash := c.hashPassword(req.Username, req.Password)
-	body := make(map[string]any, len(c.attrs)+3)
-	for _, a := range c.attrs {
-		v := a.value(req, pwhash)
-		if a.object == "" {
-			body[a.key] = v
-			continue
-		}
-		obj, _ := body[a.object].(map[string]any)
-		if obj == nil {
-			obj = map[string]any{}
-			body[a.object] = obj
-		}
-		obj[a.key] = v
-	}
-	if includeStatus {
-		body["success"] = success
-		body["policy_reject"] = policyReject
-	}
-	body["tls"] = req.TLS
-	return json.Marshal(body)
 }
 
 // hashPassword returns the hex-encoded, truncated digest of

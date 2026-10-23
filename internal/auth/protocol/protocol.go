@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,6 +47,8 @@ const (
 // the legacy typed members drive the wire output.
 type AuthResponse struct {
 	Result AuthResult
+	// PassdbID is the 1-based place of the passdb that answered; 0 unknown.
+	PassdbID int
 	// FailType names a refusal for the policy server: credentials, account
 	// or internal; empty on success. Never on the wire.
 	FailType string
@@ -133,6 +136,8 @@ type Request struct {
 	Fields *Fields
 	// Unknown is set when every driver passed: no passdb knows the user.
 	Unknown bool
+	// PassdbID is the 1-based place in the chain of the driver that answered.
+	PassdbID int
 }
 
 // Result classifies a passdb outcome. Separate from AuthResult
@@ -338,6 +343,7 @@ func responseFromCache(reqUser string, entry *CacheEntry) *AuthResponse {
 	resp := &AuthResponse{
 		Result:   authResultFromChain(entry.Result),
 		FailType: failType(entry.Result, entry.Unknown),
+		PassdbID: entry.PassdbID,
 		Fields:   entry.Fields,
 	}
 	if entry.Fields != nil {
@@ -658,7 +664,7 @@ func (c Chain) Authenticate(req *Request) (Result, error) {
 	if req.Fields == nil {
 		req.Fields = NewFields()
 	}
-	for _, db := range c {
+	for i, db := range c {
 		snap := req.Fields.Snapshot()
 		start := time.Now()
 		result, err := db.Authenticate(req)
@@ -673,6 +679,7 @@ func (c Chain) Authenticate(req *Request) (Result, error) {
 		}
 		// ResultOK / ResultFail — driver's mutations kept,
 		// chain stops.
+		req.PassdbID = i + 1
 		return result, err
 	}
 	req.Unknown = true
@@ -863,15 +870,19 @@ type PolicyChecker interface {
 // shape policy.Client accepts; defined here so the wire Server
 // can call without the policy package import.
 type PolicyRequest struct {
-	Username  string
-	Password  string
-	RemoteIP  string
-	LocalIP   string
-	Service   string
-	DeviceID  string
-	SessionID string
-	TLS       bool
-	FailType  string
+	Username string
+	Password string
+	RemoteIP string
+	LocalIP  string
+	// Vars is the variable table a template may name; Passdb and Userdb are
+	// the fields of the passdb: and userdb: providers.
+	Vars           map[string]string
+	Passdb, Userdb map[string]string
+	Service        string
+	DeviceID       string
+	SessionID      string
+	TLS            bool
+	FailType       string
 }
 
 // PolicyDecision is the parsed verdict. Continue=true means
@@ -1119,6 +1130,8 @@ func (s *Server) handleConn(conn net.Conn) {
 	sem := make(chan struct{}, limit)
 	// One conversation spans several commands, so it cannot live in a handler.
 	live := newExchanges()
+	// cpid is the login process's pid, from its handshake.
+	var cpid int
 
 	// Server → Client handshake. Written before any handler exists, so the
 	// plain conn is safe here.
@@ -1156,9 +1169,12 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		switch fields[0] {
 		case "CPID":
-			// client pid — ignore for now
+			if len(fields) > 1 {
+				cpid, _ = strconv.Atoi(fields[1])
+			}
 		case "AUTH", "VERIFY":
 			verb := fields[0]
+			clientPID := cpid
 			// strings.Split allocated a fresh slice for this line, so the
 			// goroutine owns it outright.
 			args := fields
@@ -1171,7 +1187,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				defer func() { <-sem }()
 				start := time.Now()
 				if verb == "AUTH" {
-					observeRequest("AUTH", s.handleAuth(sc, live, args), start)
+					observeRequest("AUTH", s.handleAuth(sc, live, args, clientPID), start)
 					return
 				}
 				observeRequest("VERIFY", s.handleVerify(sc, args), start)
@@ -1229,7 +1245,7 @@ func connRemoteIP(conn net.Conn) string {
 // for it ("ok" | "fail" | "tempfail" | "bad_request"). The label is returned
 // rather than observed here so the caller times the whole verb, including the
 // deliberate delays this function applies.
-func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) string {
+func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string, cpid int) string {
 	if len(fields) < 3 {
 		return "bad_request"
 	}
@@ -1237,7 +1253,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 	mech := fields[2]
 
 	var service, resp, ripAttr, lipAttr, sessionID, cbind string
-	var cc clientConn
+	cc := clientConn{mechanism: mech, cpid: cpid}
 	for _, f := range fields[3:] {
 		if cc.parseField(f) {
 			continue
@@ -1354,10 +1370,12 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	// sleep then continue to the chain. Errors honour the
 	// policy client's RejectOnFail setting internally; here we
 	// only see the resulting Decision.
+	vars := policyVars{user: master, original: master, password: password, service: service,
+		rip: remoteIP, lip: localIP, session: sessionID, mechanism: cc.mechanism, cpid: cc.cpid, cc: cc}
 	policyReq := PolicyRequest{
 		Username: master, Password: password, RemoteIP: remoteIP, LocalIP: localIP,
 		Service: service, SessionID: sessionID, TLS: cc.secured == "tls",
-		DeviceID: cc.clientID,
+		DeviceID: cc.clientID, Vars: vars.table(),
 	}
 	var po policyOutcome
 	usePolicy := s.policy != nil && target == ""
@@ -1440,6 +1458,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 			policyReq.FailType = "internal"
 			if res != nil && err == nil {
 				policyReq.FailType = res.FailType
+				s.policyAfterChain(&policyReq, vars, res)
 			}
 			s.policyReport(policyReq, false, false)
 		}
@@ -1463,6 +1482,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	if policyReq.Username == "" {
 		policyReq.Username = res.Username
 	}
+	s.policyAfterChain(&policyReq, vars, res)
 
 	// Policy-server post-chain check (check_after_auth). The
 	// policy server now has the success outcome; it may downgrade
@@ -1937,15 +1957,14 @@ func (s *Server) authenticate(target, master, password, service, remoteIP, local
 
 	switch {
 	case err != nil:
-	case result == ResultOK:
-		s.cache.Insert(key, cacheUser, password, result, req.Fields)
-	case result == ResultFail:
-		s.cache.InsertFail(key, cacheUser, password, req.Fields, req.Unknown)
+	case result == ResultOK || result == ResultFail:
+		s.cache.InsertFrom(key, cacheUser, password, result, req)
 	}
 
 	resp := &AuthResponse{
 		Result:   authResultFromChain(result),
 		FailType: failType(result, req.Unknown),
+		PassdbID: req.PassdbID,
 		Fields:   req.Fields,
 	}
 	if err != nil {

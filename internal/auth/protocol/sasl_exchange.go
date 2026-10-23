@@ -185,9 +185,12 @@ var errPolicyRefused = errors.New("auth: refused by the policy server")
 // policyRequest is the exchange as the policy server sees it; SCRAM carries no
 // password, so pwhash is over the user alone.
 func (x *saslExchange) policyRequest() PolicyRequest {
+	vars := policyVars{user: x.username, original: x.username, service: x.service, rip: x.rip,
+		lip: x.lip, session: x.session, mechanism: x.mech, cpid: x.client.cpid, cc: x.client}
 	return PolicyRequest{
 		Username: x.username, RemoteIP: x.rip, LocalIP: x.lip, Service: x.service,
 		SessionID: x.session, TLS: x.client.secured == "tls", DeviceID: x.client.clientID,
+		Vars: vars.table(),
 	}
 }
 
