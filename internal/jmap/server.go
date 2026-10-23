@@ -67,7 +67,8 @@ type Options struct {
 	// Submission serves Identity and EmailSubmission; nil, as with no relay,
 	// leaves them unadvertised.
 	Submission *Submission
-	// PushPoll is how often a push stream looks for changes; 0 turns push off.
+	// PushPoll is the safety recompute of a push stream's states, for events
+	// lost while the lock service's channel was down; 0 turns it off.
 	PushPoll time.Duration
 }
 
@@ -105,7 +106,9 @@ func New(opts Options) *Server {
 		opts.Limits.Submission = opts.Submission.capability()
 	}
 	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache()}
-	if opts.PushPoll > 0 {
+	// Push runs on the lock service's events, the recompute as a safety net;
+	// with neither there is nothing to push from.
+	if opts.Storage != nil && (opts.Storage.Locker != nil || opts.PushPoll > 0) {
 		s.push = newPushHub(s, opts.PushPoll)
 	}
 	s.mux.HandleFunc("GET "+eventSourcePath, s.guard(s.handleEventSource))

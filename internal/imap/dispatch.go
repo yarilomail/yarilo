@@ -12,7 +12,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -289,7 +288,7 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 				continue
 			}
 			cand := acl.New(ownerUI.Home, ownerUI.MailPath, ownerUI.Driver, ownerUI.Separator,
-				ownerUI.StorageEscapeChar, personalUI.Username, owner, acl.Policy{}, nil, counters.Discard)
+				ownerUI.StorageEscapeChar, personalUI.Username, owner, acl.Policy{}, nil)
 			if cand.ListPath() == primary.acl.ListPath() {
 				primary.acl.SetRegistry(acl.NewRegistry(s.srv.opts.SharedDict, personalUI.Username))
 				break
@@ -323,7 +322,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 	// Subscriptions live in the control root. One spelling of that rule, so
 	// this cannot drift from where the other services write (#1437).
 	subsRoot := mailbox.ControlRoot(ui)
-	store := subs.New(subsRoot, subsFile, ui.Username, owner, s.srv.opts.Locker, counters.For(ui))
+	store := subs.New(subsRoot, subsFile, ui.Username, owner, s.srv.opts.Locker)
 	// acl_defaults_from_inbox applies to personal/shared namespaces only.
 	defaultsFromInbox := s.srv.opts.ACLDefaultsFromInbox &&
 		(spec.Type == NamespacePersonal || spec.Type == NamespaceShared)
@@ -332,7 +331,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		GlobalsOnly:       s.srv.opts.ACLGlobalsOnly,
 		CacheTTL:          s.srv.opts.ACLCacheTTL,
 		Global:            s.srv.opts.ACLGlobal,
-	}, s.srv.opts.Locker, counters.For(ui))
+	}, s.srv.opts.Locker)
 	// The namespace-instance owner. A personal namespace is owned by the user
 	// it was opened for; a fixed shared/public one by nobody. Owner-templated
 	// namespaces (B1) set this to the resolved owner, and isOwner then works for

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/config"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -620,7 +619,7 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 			present[f] = exists
 		}
 	}
-	store := acl.New(bundle.folderHome(), bundle.info.MailPath, bundle.info.Driver, bundle.info.Separator, bundle.info.StorageEscapeChar, uc.info.Username, uc.lockOwner(), acl.Policy{}, s.opts.Locker, counters.For(bundle.info))
+	store := acl.New(bundle.folderHome(), bundle.info.MailPath, bundle.info.Driver, bundle.info.Separator, bundle.info.StorageEscapeChar, uc.info.Username, uc.lockOwner(), acl.Policy{}, s.opts.Locker)
 	// Admin grants feed owner discovery like IMAP ones: the registry hangs off
 	// the index write, so both surfaces sync it through the one chain (#1168).
 	// The personal store gets it too when it backs an owner-templated space
@@ -643,7 +642,7 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 				continue
 			}
 			cand := acl.New(ownerUI.Home, ownerUI.MailPath, ownerUI.Driver, ownerUI.Separator,
-				ownerUI.StorageEscapeChar, uc.info.Username, uc.lockOwner(), acl.Policy{}, nil, counters.Discard)
+				ownerUI.StorageEscapeChar, uc.info.Username, uc.lockOwner(), acl.Policy{}, nil)
 			if cand.ListPath() == store.ListPath() {
 				store.SetRegistry(acl.NewRegistry(s.opts.SharedDict, uc.info.Username))
 				break

@@ -12,7 +12,6 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/mailboxcreate"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
@@ -118,9 +117,7 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 			uc.info.Username,
 			uc.lockOwner(),
 			s.opts.Locker,
-			s.opts.SpecialUseDefaults,
-			counters.For(bundle.info),
-		)
+			s.opts.SpecialUseDefaults)
 		if err := store.Set(req.Folder, imaplib.MailboxAttr(req.SpecialUse)); err != nil {
 			// Folder is created; rolling back is worse than reporting the
 			// partial state. Surface as 200 with a warning.
@@ -371,9 +368,7 @@ func (s *Server) materialiseFolderACL(bundle *nsBundle, folder string) error {
 		bundle.info.Username,
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
-		s.opts.Locker,
-		counters.For(bundle.info),
-	)
+		s.opts.Locker)
 	return store.MaterialiseOnCreate(folder)
 }
 
@@ -389,9 +384,7 @@ func (s *Server) dropFolderACL(bundle *nsBundle, folder string) error {
 		bundle.info.Username,
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
-		s.opts.Locker,
-		counters.For(bundle.info),
-	)
+		s.opts.Locker)
 	return store.Remove(folder)
 }
 
@@ -407,9 +400,7 @@ func (s *Server) renameFolderACL(bundle *nsBundle, oldFolder, newFolder string) 
 		bundle.info.Username,
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
-		s.opts.Locker,
-		counters.For(bundle.info),
-	)
+		s.opts.Locker)
 	return store.Rename(oldFolder, newFolder)
 }
 

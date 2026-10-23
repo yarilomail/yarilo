@@ -8,6 +8,7 @@ package locks
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -47,6 +48,14 @@ const (
 	EventMailboxRename      EventType = "mbox-rename"      // payload: old\x00new
 	EventMailboxSubscribe   EventType = "mbox-subscribe"   // payload: name
 	EventMailboxUnsubscribe EventType = "mbox-unsubscribe" // payload: name
+
+	// Per-user state writes, published on the account's own keys for push.
+	EventSubscriptions EventType = "subs"       // on SubscriptionsKey
+	EventRole          EventType = "role"       // on MailboxListKey: a special-use role
+	EventACL           EventType = "acl"        // on MailboxListKey: a folder's rights
+	EventSieve         EventType = "sieve"      // on SieveScriptsKey
+	EventThreads       EventType = "threads"    // on ThreadsKey
+	EventSubmission    EventType = "submission" // on SubmissionsKey
 )
 
 // Event is a server-emitted notification published on a resource channel.
@@ -182,4 +191,17 @@ type Backend interface {
 
 	// Close shuts the backend down — closes Redis pool, stops sweepers, etc.
 	Close() error
+}
+
+// EmitBest publishes an event after a write, best effort: a lost one costs a
+// push client at most one recompute interval.
+func EmitBest(l Locker, resource string, t EventType, payload string) {
+	if l == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := l.Emit(ctx, resource, t, payload); err != nil {
+		slog.Debug("locks: event not emitted", "resource", resource, "type", string(t), "err", err)
+	}
 }

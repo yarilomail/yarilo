@@ -27,7 +27,6 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -38,11 +37,10 @@ type Store struct {
 	owner    string
 	locker   locks.Locker
 	defaults map[string]imaplib.MailboxAttr
-	counter  counters.Bumper
 }
 
 // New constructs a Store rooted at home/special_use.
-func New(home, username, owner string, locker locks.Locker, defaults map[string]string, counter counters.Bumper) *Store {
+func New(home, username, owner string, locker locks.Locker, defaults map[string]string) *Store {
 	mapped := make(map[string]imaplib.MailboxAttr, len(defaults))
 	for folder, attr := range defaults {
 		mapped[folder] = imaplib.MailboxAttr(attr)
@@ -53,18 +51,16 @@ func New(home, username, owner string, locker locks.Locker, defaults map[string]
 		owner:    owner,
 		locker:   locker,
 		defaults: mapped,
-		counter:  counter,
 	}
 }
 
-// moved raises the counter once the lock is released, after a write.
+// moved announces a write once the lock is released: a role is a Mailbox
+// property.
 func (s *Store) moved(err error, wrote bool) error {
 	if err != nil || !wrote {
 		return err
 	}
-	if berr := s.counter.Bump("specialuse", counters.Mailbox); berr != nil {
-		slog.Warn("userstate/specialuse: change counter not moved", "user", s.username, "err", berr)
-	}
+	locks.EmitBest(s.locker, locks.MailboxListKey(s.username), locks.EventRole, "")
 	return nil
 }
 

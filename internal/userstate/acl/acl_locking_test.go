@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -18,7 +17,7 @@ import (
 // path to fix a corrupt file. The constant function ignores the current value,
 // so Update no longer requires the load to succeed for it.
 func TestSet_RepairsCorruptFile(t *testing.T) {
-	s := New(t.TempDir(), "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(t.TempDir(), "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	path := s.Path("Broken")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -61,7 +60,7 @@ func TestSet_RepairsCorruptFile(t *testing.T) {
 // locker that tracks holds.
 func TestListRebuild_ResolvesBeforeListLock(t *testing.T) {
 	lk := &trackingLocker{held: map[string]bool{}}
-	s := New(t.TempDir(), "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, lk, counters.Discard)
+	s := New(t.TempDir(), "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, lk)
 	listKey := locks.ACLListKey(s.mailboxesRoot())
 
 	heldDuringResolve := false

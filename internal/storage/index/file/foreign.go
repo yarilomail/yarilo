@@ -283,7 +283,7 @@ func (u *userIndex) carryForeignSubscriptions() error {
 	// The personal namespace's file: a foreign store has one subscription file
 	// and per-namespace siblings have no counterpart there.
 	store := subs.New(u.controlRoot, mailbox.NamespaceSubsFile("", u.separator, "personal"),
-		u.username, u.owner, u.b.locker, u.counter)
+		u.username, u.owner, u.b.locker)
 	for _, name := range names {
 		if err := store.Add(name); err != nil {
 			return fmt.Errorf("fileindex/convert: subscribe %q: %w", name, err)

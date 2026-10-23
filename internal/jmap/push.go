@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/userstate/counters"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
 // eventSourcePath is where the session resource points clients (RFC 8620 §7.3).
@@ -22,10 +22,13 @@ const eventSourcePath = "/jmap/eventsource/"
 
 // pushHub keeps one watcher per account with an open stream in this pod.
 type pushHub struct {
-	srv  *Server
+	srv *Server
+	// poll is the safety recompute interval; 0 leaves the events alone.
 	poll time.Duration
 	// done ends every stream when the server shuts down.
 	done chan struct{}
+	// seq names state events; an id is only ever compared by the client.
+	seq atomic.Uint64
 
 	mu       sync.Mutex
 	watchers map[string]*watcher
@@ -35,42 +38,32 @@ func newPushHub(s *Server, poll time.Duration) *pushHub {
 	return &pushHub{srv: s, poll: poll, done: make(chan struct{}), watchers: map[string]*watcher{}}
 }
 
-// watcher polls one account's counter and keeps each type's state at the
-// counter value it was computed for, so streams of one account share the work.
+// watcher hears one account's events and tells its streams which types moved.
 type watcher struct {
 	hub  *pushHub
 	user string
-	path string
 
 	mu     sync.Mutex
 	refs   int
-	snap   counters.Snapshot
-	states map[counters.Type]cachedState
-	subs   map[chan struct{}]struct{}
-	stop   chan struct{}
-}
-
-type cachedState struct {
-	at    uint64
-	state string
+	subs   map[chan []counters.Type]struct{}
+	cancel context.CancelFunc
+	// ready closes once the first subscription is asked, so a base taken
+	// after it misses no write.
+	ready chan struct{}
 }
 
 // join returns the account's watcher, starting it on the first stream.
-func (p *pushHub) join(user, path string) (*watcher, chan struct{}) {
+func (p *pushHub) join(user string) (*watcher, chan []counters.Type) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	w := p.watchers[user]
 	if w == nil {
-		snap, err := counters.Read(path)
-		if err != nil {
-			slog.Warn("jmap: push counter unreadable", "user", user, "err", err)
-		}
-		w = &watcher{hub: p, user: user, path: path, snap: snap,
-			states: map[counters.Type]cachedState{}, subs: map[chan struct{}]struct{}{}, stop: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		w = &watcher{hub: p, user: user, subs: map[chan []counters.Type]struct{}{}, cancel: cancel, ready: make(chan struct{})}
 		p.watchers[user] = w
-		go w.run()
+		go w.run(ctx)
 	}
-	ch := make(chan struct{}, 1)
+	ch := make(chan []counters.Type, 1)
 	w.mu.Lock()
 	w.refs++
 	w.subs[ch] = struct{}{}
@@ -78,7 +71,7 @@ func (p *pushHub) join(user, path string) (*watcher, chan struct{}) {
 	return w, ch
 }
 
-func (p *pushHub) leave(w *watcher, ch chan struct{}) {
+func (p *pushHub) leave(w *watcher, ch chan []counters.Type) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	w.mu.Lock()
@@ -87,74 +80,128 @@ func (p *pushHub) leave(w *watcher, ch chan struct{}) {
 	last := w.refs == 0
 	w.mu.Unlock()
 	if last {
-		close(w.stop)
+		w.cancel()
 		delete(p.watchers, w.user)
 	}
 }
 
-func (w *watcher) run() {
-	t := time.NewTicker(w.hub.poll)
-	defer t.Stop()
-	for {
-		select {
-		case <-w.stop:
-			return
-		case <-t.C:
-		}
-		snap, err := counters.Read(w.path)
-		if err != nil {
-			slog.Warn("jmap: push counter unreadable", "user", w.user, "err", err)
-			continue
-		}
-		w.mu.Lock()
-		moved := snap.Highest != w.snap.Highest
-		if moved {
-			w.snap = snap
-			for ch := range w.subs {
-				select {
-				case ch <- struct{}{}:
-				default:
-				}
+// pushResubscribe is the pause before a dropped event channel is asked again.
+const pushResubscribe = 2 * time.Second
+
+func (w *watcher) run(ctx context.Context) {
+	var tick <-chan time.Time
+	if w.hub.poll > 0 {
+		t := time.NewTicker(w.hub.poll)
+		defer t.Stop()
+		tick = t.C
+	}
+	for ctx.Err() == nil {
+		var events <-chan locks.Event
+		if l := w.hub.srv.opts.Storage.Locker; l != nil {
+			ch, err := l.Subscribe(ctx, locks.AccountKey(w.user))
+			if err != nil {
+				slog.Warn("jmap: push events unavailable", "user", w.user, "err", err)
+			} else {
+				events = ch
 			}
 		}
-		w.mu.Unlock()
-	}
-}
-
-func (w *watcher) snapshot() counters.Snapshot {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.snap
-}
-
-// statesOf answers the current state of each type, computing only those whose
-// counter moved since the cached answer.
-func (w *watcher) statesOf(ctx context.Context, snap counters.Snapshot, types []counters.Type) (map[counters.Type]string, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	out := make(map[counters.Type]string, len(types))
-	var stale []counters.Type
-	for _, t := range types {
-		if c, ok := w.states[t]; ok && c.at == snap.ByType[t] {
-			out[t] = c.state
-		} else {
-			stale = append(stale, t)
+		w.markReady()
+		w.listen(ctx, events, tick)
+		if ctx.Err() != nil {
+			return
+		}
+		// Events may have been lost while the channel was down.
+		w.notify(allTypes)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pushResubscribe):
 		}
 	}
-	if len(stale) == 0 {
-		return out, nil
+}
+
+func (w *watcher) markReady() {
+	select {
+	case <-w.ready:
+	default:
+		close(w.ready)
 	}
-	h, err := w.hub.srv.opts.Storage.open(w.user, "")
+}
+
+// listen serves one event channel until it closes; with none, the safety
+// interval alone.
+func (w *watcher) listen(ctx context.Context, events <-chan locks.Event, tick <-chan time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick:
+			w.notify(allTypes)
+		case evt, ok := <-events:
+			if !ok {
+				return
+			}
+			if types := typesOfEvent(evt); len(types) > 0 {
+				w.notify(types)
+			}
+		}
+	}
+}
+
+// allTypes stands for every type: a recompute, or events that may be lost.
+var allTypes = []counters.Type{counters.Email, counters.Mailbox, counters.Thread, counters.Quota,
+	counters.Identity, counters.EmailSubmission, counters.SieveScript, counters.VacationResponse}
+
+func (w *watcher) notify(types []counters.Type) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for ch := range w.subs {
+		select {
+		case ch <- types:
+		default:
+			// The stream has not read the last one: it reads everything instead.
+			select {
+			case <-ch:
+			default:
+			}
+			ch <- allTypes
+		}
+	}
+}
+
+// typesOfEvent maps an event to the types whose state it can move, by the key
+// it was emitted on.
+func typesOfEvent(evt locks.Event) []counters.Type {
+	prefix, _, _ := strings.Cut(evt.Resource, ":")
+	switch prefix {
+	case "mbox":
+		return counters.Mail
+	case "mlist", "subs":
+		return []counters.Type{counters.Mailbox}
+	case "sieve":
+		return []counters.Type{counters.SieveScript, counters.VacationResponse}
+	case "threads":
+		return []counters.Type{counters.Thread}
+	case "jmapsubmissions":
+		return []counters.Type{counters.EmailSubmission}
+	}
+	return nil
+}
+
+// statesOf answers the current state of each type, by the same functions /get
+// answers with.
+func (s *Server) statesOf(ctx context.Context, user string, types []counters.Type) (map[counters.Type]string, error) {
+	h, err := s.opts.Storage.open(user, "")
 	if err != nil {
 		return nil, err
 	}
 	defer h.close()
-	for _, t := range stale {
-		st, err := w.hub.srv.typeState(ctx, h, t)
+	out := make(map[counters.Type]string, len(types))
+	for _, t := range types {
+		st, err := s.typeState(ctx, h, t)
 		if err != nil {
 			return nil, fmt.Errorf("jmap: %s state: %w", t, err)
 		}
-		w.states[t] = cachedState{at: snap.ByType[t], state: st}
 		out[t] = st
 	}
 	return out, nil
@@ -238,21 +285,32 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 	closeAfter := q.Get("closeafter") == "state"
 	ping, _ := strconv.Atoi(q.Get("ping"))
 
-	info, err := s.opts.Storage.ResolveUser(id.user)
-	if err != nil {
-		jmapcore.WriteProblem(w, http.StatusInternalServerError, "User unavailable")
-		return
-	}
-	path := counters.Path(counters.Dir(info.Home, mailbox.ControlRoot(info)))
-
 	// The stream outlives the server's write timeout by design.
 	rc := http.NewResponseController(w)
 	_ = rc.SetWriteDeadline(time.Time{})
 
-	wt, notify := s.push.join(id.user, path)
+	wt, notify := s.push.join(id.user)
 	defer s.push.leave(wt, notify)
 	metricPushStreams.Inc()
 	defer metricPushStreams.Dec()
+	select {
+	case <-wt.ready:
+	case <-r.Context().Done():
+		return
+	case <-s.push.done:
+		return
+	}
+
+	// Without an id the states at connect are the base. With one, every
+	// requested type's state is sent at once: the id may predate a move.
+	sent := map[counters.Type]string{}
+	if _, perr := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64); perr == nil {
+		notify <- types
+	} else if base, err := s.statesOf(r.Context(), id.user, types); err == nil {
+		sent = base
+	} else {
+		slog.Warn("jmap: push base state", "user", id.user, "err", err)
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -260,19 +318,6 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 	if err := rc.Flush(); err != nil {
 		return
 	}
-
-	// Without an id the first look only fixes the base. With one, every
-	// requested type's state is sent at once: the id may predate a move.
-	since := wt.snapshot().Highest
-	everything := false
-	if _, perr := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64); perr == nil {
-		everything = true
-		select {
-		case notify <- struct{}{}:
-		default:
-		}
-	}
-	sent := map[counters.Type]string{}
 
 	var pings <-chan time.Time
 	if ping > 0 {
@@ -291,24 +336,19 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 				return
 			}
 			metricPushEvents.WithLabelValues("ping").Inc()
-		case <-notify:
-			snap := wt.snapshot()
-			changed := intersect(snap.ChangedAfter(since), types)
-			if everything {
-				changed, everything = types, false
-			}
-			since = snap.Highest
+		case moved := <-notify:
+			changed := intersect(moved, types)
 			if len(changed) == 0 {
 				continue
 			}
-			states, err := wt.statesOf(r.Context(), snap, changed)
+			states, err := s.statesOf(r.Context(), id.user, changed)
 			if err != nil {
 				slog.Warn("jmap: push state", "user", id.user, "err", err)
 				continue
 			}
 			out := map[string]string{}
 			for t, st := range states {
-				if sent[t] != st {
+				if prev, ok := sent[t]; !ok || prev != st {
 					out[string(t)] = st
 					sent[t] = st
 				}
@@ -317,7 +357,7 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 				continue
 			}
 			change := map[string]any{"@type": "StateChange", "changed": map[string]any{id.user: out}}
-			if err := writeEvent(w, rc, "state", strconv.FormatUint(snap.Highest, 10), change); err != nil {
+			if err := writeEvent(w, rc, "state", strconv.FormatUint(s.push.seq.Add(1), 10), change); err != nil {
 				return
 			}
 			metricPushEvents.WithLabelValues("state").Inc()

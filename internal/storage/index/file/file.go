@@ -26,7 +26,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/logrotate"
 	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/folders"
 	"github.com/yarilomail/yarilo/internal/userstate/uidvalidity"
 	"github.com/yarilomail/yarilo/pkg/filelock"
@@ -269,7 +268,6 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserIndex {
 		}
 		ui.uidValidity = uidvalidity.New(ui.controlRoot, ui.username, ui.owner, b.locker)
 		ui.folders = folders.New(ui.controlRoot, ui.username, ui.owner, b.locker)
-		ui.counter = counters.New(counters.Dir(ui.home, ui.controlRoot), ui.username)
 		ref = &refUserIndex{ui: ui}
 		b.users[key] = ref
 	}
@@ -543,9 +541,7 @@ type userIndex struct {
 	uidValidity *uidvalidity.Allocator
 	// folders remembers what each folder was created with, so losing a folder
 	// index does not lose its identity.
-	folders *folders.Store
-	// counter moves after a visible write, once the folder lock is released.
-	counter  counters.Bumper
+	folders  *folders.Store
 	username string
 	owner    string
 
@@ -911,14 +907,6 @@ func (u *userIndex) Close() error {
 // RenameFolder moves the index directory, taking both per-folder locks in
 // lexicographic order so concurrent renames and writes cannot deadlock.
 func (u *userIndex) RenameFolder(oldName, newName string) error {
-	err := u.renameFolder(oldName, newName)
-	if err == nil {
-		u.bump(lockSiteRename, counters.Mailbox)
-	}
-	return err
-}
-
-func (u *userIndex) renameFolder(oldName, newName string) error {
 	return u.withTwoFolderLocks(oldName, newName, func() error {
 		oldDir := u.folderTreeDir(u.indexDir(oldName))
 		newDir := u.folderTreeDir(u.indexDir(newName))
@@ -968,14 +956,6 @@ func (u *userIndex) folderTreeDir(dir string) string {
 // DeleteFolder removes the index directory and its volatile twin after
 // UserMailbox.Delete, so the index does not outlive it. Idempotent.
 func (u *userIndex) DeleteFolder(folder string) error {
-	err := u.deleteFolder(folder)
-	if err == nil {
-		u.bump("delete-folder", counters.Mail...)
-	}
-	return err
-}
-
-func (u *userIndex) deleteFolder(folder string) error {
 	return u.withTwoFolderLocks(folder, folder, func() error {
 		// The folder's identity, read while the index is still there: the
 		// store is keyed by it and the directory is about to go.

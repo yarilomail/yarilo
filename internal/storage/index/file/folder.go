@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/filelock"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -45,11 +44,7 @@ func (u *userIndex) OpenFolder(folder string, uidValidity uint32, traceID string
 // CreateFolder makes a folder's index, and says so. It never looks for another
 // implementation's index: a folder being created has no past to adopt.
 func (u *userIndex) CreateFolder(folder string, uidValidity uint32, traceID string) (*mailbox.Folder, error) {
-	f, err := u.openFolder(folder, uidValidity, traceID, intentCreate)
-	if err == nil {
-		u.bump("create-folder", counters.Mailbox)
-	}
-	return f, err
+	return u.openFolder(folder, uidValidity, traceID, intentCreate)
 }
 
 func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string, intent openIntent) (*mailbox.Folder, error) {
@@ -675,16 +670,11 @@ func (fs *folderState) flush() error {
 // committed state. A missing file is swallowed so the caller can createFresh.
 // withFolderSite is withFolder with the caller recorded: a total naming no
 // caller says how many acquisitions there were, not which to change (#1827).
-func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folderState) error) (err error) {
+func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folderState) error) error {
 	fs, err := u.state(folderID)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err == nil && siteMoves[site] != nil {
-			u.bump(site, siteMoves[site]...)
-		}
-	}()
 	err = u.withFolderLockSite(fs, site, func() error {
 		// The reload is inside the hold: two processes that read NextUID unheld
 		// hand out the same uid (#1840). A refresh only reads.

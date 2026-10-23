@@ -7,7 +7,6 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 )
 
@@ -17,7 +16,7 @@ import (
 // names the personal namespace can actually match — and must not drop personal
 // folders that merely share a head with another namespace's prefix.
 func TestExpandNotifySpec_SubscribedKeepsOnlyPersonalNames(t *testing.T) {
-	store := subs.New(t.TempDir(), "subscriptions", "alice", "test", nil, counters.Discard)
+	store := subs.New(t.TempDir(), "subscriptions", "alice", "test", nil)
 	for _, key := range []string{
 		"INBOX",
 		"Work",

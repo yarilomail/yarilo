@@ -8,7 +8,6 @@ import (
 	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/internal/userstate/threads"
@@ -61,8 +60,6 @@ type userHandle struct {
 	mbox       mailbox.Box
 	subs       *subs.Store
 	specialUse *specialuse.Store
-	// counter is the account's change counter, for writers outside the index.
-	counter *counters.Counter
 
 	// ops runs this request's mutations and what follows them (#2207).
 	ops *mailops.Ops
@@ -119,12 +116,11 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	}
 	h.folders = s.folderIdentitiesFor(username)
 	h.threads = s.Threads
-	h.counter = counters.For(info)
-	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker, h.counter)
+	h.subs = subs.New(controlRoot(info), subsFile, username, owner, s.Locker)
 	h.mbox = mailboxbase.Open(h.box, s.Index.OpenUser(info), mailboxbase.WithAuto(s.boxAuto(h)))
 	h.ops = mailops.New(s.mailopsConfig(), h.mbox, info)
-	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults, h.counter)
-	h.acl = acl.New(info.Home, info.MailPath, info.Driver, info.Separator, info.StorageEscapeChar, username, owner, acl.Policy{}, s.Locker, h.counter)
+	h.specialUse = specialuse.New(info.Home, username, owner, s.Locker, s.SpecialUseDefaults)
+	h.acl = acl.New(info.Home, info.MailPath, info.Driver, info.Separator, info.StorageEscapeChar, username, owner, acl.Policy{}, s.Locker)
 	return h, nil
 }
 

@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -82,7 +81,7 @@ func (s *Server) handleSubsMigrate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dest := subs.New(personal.folderControlRoot(), mailbox.NamespaceSubsFile(personal.spec.Prefix, personal.spec.Separator, personal.spec.Type),
-		uc.info.Username, uc.lockOwner(), s.opts.Locker, counters.For(uc.info))
+		uc.info.Username, uc.lockOwner(), s.opts.Locker)
 	existing, err := dest.Snapshot()
 	if err != nil {
 		apiError(w, "read destination: "+err.Error(), http.StatusInternalServerError)
@@ -111,7 +110,7 @@ func (s *Server) handleSubsMigrate(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sources = append(sources, name)
-		src := subs.New(root, name, uc.info.Username, uc.lockOwner(), s.opts.Locker, counters.Discard)
+		src := subs.New(root, name, uc.info.Username, uc.lockOwner(), s.opts.Locker)
 		rows, rerr := src.Snapshot()
 		if rerr != nil {
 			apiError(w, "read "+name+": "+rerr.Error(), http.StatusInternalServerError)

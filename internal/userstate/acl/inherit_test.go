@@ -3,7 +3,6 @@ package acl
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
@@ -18,7 +17,7 @@ func userEntry(name, rights string) mailbox.Entry {
 // file named only the peer (#1111).
 func TestMaterialiseOnCreateWritesWhatTheMailboxInherits(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "mdbox", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "mdbox", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	if err := s.Set("", mailbox.ACL{userEntry("bob", "lrskxa")}); err != nil {
 		t.Fatalf("Set root: %v", err)
 	}
@@ -63,7 +62,7 @@ func TestMaterialiseOnCreateWritesWhatTheMailboxInherits(t *testing.T) {
 // to leave that identifier out" are the same file on disk.
 func TestMaterialiseExistingAddsOnlyWhatIsMissing(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "mdbox", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "mdbox", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	if err := s.Set("", mailbox.ACL{userEntry("bob", "lrskxa"), userEntry("dave", "lr")}); err != nil {
 		t.Fatalf("Set root: %v", err)
 	}
@@ -123,7 +122,7 @@ func TestMaterialiseExistingAddsOnlyWhatIsMissing(t *testing.T) {
 // what it inherits, and writing a file would freeze a value that is still live.
 func TestMaterialiseExistingLeavesInheritingMailboxesAlone(t *testing.T) {
 	home := t.TempDir()
-	s := New(home, "", "mdbox", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil, counters.Discard)
+	s := New(home, "", "mdbox", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
 	if err := s.Set("", mailbox.ACL{userEntry("bob", "lr")}); err != nil {
 		t.Fatalf("Set root: %v", err)
 	}

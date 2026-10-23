@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -57,7 +56,6 @@ type Store struct {
 	username string
 	owner    string
 	locker   locks.Locker
-	counter  counters.Bumper
 
 	// ttl bounds how long a cached parsed ACL is trusted before its file's
 	// mtime+size are re-validated. Zero disables caching.
@@ -88,7 +86,7 @@ type cacheEntry struct {
 
 // New constructs a Store rooted at mailPath when set, else home. pol carries
 // the operator ACL knobs; locker may be nil for tests / single-process runs.
-func New(home, mailPath, driver, separator, escapeChar, username, owner string, pol Policy, locker locks.Locker, counter counters.Bumper) *Store {
+func New(home, mailPath, driver, separator, escapeChar, username, owner string, pol Policy, locker locks.Locker) *Store {
 	root := home
 	if mailPath != "" {
 		root = mailPath
@@ -104,7 +102,6 @@ func New(home, mailPath, driver, separator, escapeChar, username, owner string, 
 		globalsOnly:       pol.GlobalsOnly,
 		global:            pol.Global,
 		locker:            locker,
-		counter:           counter,
 		ttl:               pol.CacheTTL,
 		clock:             time.Now,
 	}
@@ -470,15 +467,13 @@ func (s *Store) Update(folder string, fn func(mailbox.ACL) (mailbox.ACL, error))
 	return s.moved(err, wrote)
 }
 
-// moved raises the counter once the lock is released: rights are part of what
-// a client sees of a mailbox.
+// moved announces a write once the lock is released: rights are a Mailbox
+// property.
 func (s *Store) moved(err error, wrote bool) error {
 	if err != nil || !wrote {
 		return err
 	}
-	if berr := s.counter.Bump("acl", counters.Mailbox); berr != nil {
-		slog.Warn("userstate/acl: change counter not moved", "user", s.username, "err", berr)
-	}
+	locks.EmitBest(s.locker, locks.MailboxListKey(s.username), locks.EventACL, "")
 	return nil
 }
 
