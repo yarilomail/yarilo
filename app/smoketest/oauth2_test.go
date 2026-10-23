@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
@@ -28,11 +29,12 @@ func TestOAuthBearerPayload(t *testing.T) {
 // The token comes from the password grant over a CA the run names, as
 // oauth2_tls_ca names it for yarilo-auth.
 func TestOAuth2TokenThroughTheNamedCA(t *testing.T) {
+	pw := rand.Text()
 	var got []string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm() //nolint:errcheck
 		got = []string{r.PostForm.Get("grant_type"), r.PostForm.Get("client_id"), r.PostForm.Get("username"), r.PostForm.Get("password")}
-		if r.PostForm.Get("password") != "pw-test" {
+		if r.PostForm.Get("password") != pw {
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error":"invalid_grant"}`)
 			return
@@ -48,15 +50,15 @@ func TestOAuth2TokenThroughTheNamedCA(t *testing.T) {
 	setFlag(t, flagOAuth2ClientID, "yarilo-test")
 
 	setFlag(t, flagOAuth2CA, "")
-	if _, err := oauth2Token("u1@d00001.test", "pw-test"); err == nil {
+	if _, err := oauth2Token("u1@d00001.test", pw); err == nil {
 		t.Fatal("a token came through a CA nobody named")
 	}
 	setFlag(t, flagOAuth2CA, ca)
-	tok, err := oauth2Token("u1@d00001.test", "pw-test")
+	tok, err := oauth2Token("u1@d00001.test", pw)
 	if err != nil || tok != "tok" {
 		t.Fatalf("token = %q, %v", tok, err)
 	}
-	if strings.Join(got, "|") != "password|yarilo-test|u1@d00001.test|pw-test" {
+	if strings.Join(got, "|") != "password|yarilo-test|u1@d00001.test|"+pw {
 		t.Errorf("form = %v", got)
 	}
 	if _, err := oauth2Token("u1@d00001.test", "wrong"); err == nil || !strings.Contains(err.Error(), "invalid_grant") {
