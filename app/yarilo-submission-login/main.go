@@ -152,6 +152,9 @@ func main() {
 			HAProxyNets:         haproxyNets,
 			XClient:             svcs.Submissions.XClient,
 			XClientNets:         xclientNets,
+
+			SubmissionMaxMessageBytes: cfg.Protocol.Submission.MaxMsgSize,
+			SubmissionMaxRecipients:   cfg.Protocol.Submission.MaxRecipients,
 		})
 		loginServers = append(loginServers, srv)
 		go func(srv *login.Server, ln net.Listener) {
@@ -204,6 +207,9 @@ func main() {
 			TransientRetries:    cfg.Login.TransientRetries,
 			TransientReloginCap: cfg.Login.TransientReloginCap,
 			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
+
+			SubmissionMaxMessageBytes: cfg.Protocol.Submission.MaxMsgSize,
+			SubmissionMaxRecipients:   cfg.Protocol.Submission.MaxRecipients,
 		})
 		loginServers = append(loginServers, srv)
 		go func(srv *login.Server, ln net.Listener) {
