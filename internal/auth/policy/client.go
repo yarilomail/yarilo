@@ -79,8 +79,8 @@ type Config struct {
 	RejectOnFail bool
 
 	// LogOnly: still POST and log decisions, but Check methods return
-	// continue regardless of the server's response. For shadow-mode
-	// rollout before enforcing.
+	// continue with no tarpit, whatever the server answers and when it
+	// fails. For shadow-mode rollout before enforcing.
 	LogOnly bool
 
 	// HTTPClient is the underlying transport. nil → http.DefaultClient
@@ -205,10 +205,26 @@ func (c *Client) do(ctx context.Context, command string, req Request, _ bool) (D
 	return c.doWithStatus(ctx, command, req, false, false, false)
 }
 
-// doWithStatus is the actual HTTP round-trip, shared by both Check
-// variants and ReportAfter. The booleans gate emission of the
-// post-decision fields.
+// doWithStatus is shared by both Check variants and ReportAfter. The
+// booleans gate emission of the post-decision fields.
 func (c *Client) doWithStatus(ctx context.Context, command string, req Request,
+	includeStatus, success, policyReject bool) (Decision, error) {
+	d, err := c.roundTrip(ctx, command, req, includeStatus, success, policyReject)
+	if c.cfg.LogOnly && (d.Reject || d.TarpitSecs > 0) {
+		slog.Info("auth/policy: log-only mode ignoring the policy's action",
+			"service", req.Service,
+			"user", req.Username,
+			"remote", req.RemoteIP,
+			"reject", d.Reject,
+			"tarpit_secs", d.TarpitSecs,
+			"msg", d.Message,
+		)
+		return Decision{Continue: true}, err
+	}
+	return d, err
+}
+
+func (c *Client) roundTrip(ctx context.Context, command string, req Request,
 	includeStatus, success, policyReject bool) (Decision, error) {
 
 	body := c.body(req, c.hashPassword(req.Username, req.Password), includeStatus, success, policyReject)
@@ -264,16 +280,6 @@ func (c *Client) doWithStatus(ctx context.Context, command string, req Request,
 	case parsed.Status > 0:
 		d.Continue = true
 		d.TarpitSecs = parsed.Status
-	}
-
-	if c.cfg.LogOnly && !d.Continue {
-		slog.Info("auth/policy: log-only mode ignoring reject",
-			"service", req.Service,
-			"user", req.Username,
-			"remote", req.RemoteIP,
-			"msg", d.Message,
-		)
-		return Decision{Continue: true}, nil
 	}
 	return d, nil
 }
