@@ -27,12 +27,15 @@ import (
 // The rows run against a real wforce and the sandbox's yarilo with the policy
 // overlay on; hack/stand/policy-wforce.sh sets the environment and runs them.
 // wforce's policy: a tarpit past 3 different failed passwords per IP+login, a
-// refusal with refuseMessage past 50 per IP; every request's fields logged.
+// refusal with refuseMessage past 50 per IP, a longer tarpit past 20 per login
+// from any IP; every request's fields logged.
 
 const (
-	tarpitSecs    = 3
-	refuseAfter   = 50
-	refuseMessage = "Too many failed logins, try again later"
+	tarpitSecs       = 3
+	refuseAfter      = 50
+	refuseMessage    = "Too many failed logins, try again later"
+	loginTarpitAfter = 20
+	loginTarpitSecs  = 10
 )
 
 type sandbox struct {
@@ -107,6 +110,18 @@ func (sb sandbox) failures(t *testing.T, login, ip string, n int) {
 	for i := range n {
 		sb.wforceCall(t, "report", map[string]any{"login": login, "remote": ip,
 			"pwhash": fmt.Sprintf("%x", sha256.Sum256([]byte(login+fmt.Sprint(i))))[:3], "success": false, "policy_reject": false, "protocol": "imap", "session_id": standSeed})
+	}
+}
+
+// fromMany reports one failed password for login from each of n addresses,
+// every password different, and clears those addresses when the row ends.
+func (sb sandbox) fromMany(t *testing.T, login string, n int) {
+	t.Helper()
+	for i := range n {
+		ip := fmt.Sprintf("198.51.100.%d", i+1)
+		t.Cleanup(func() { sb.reset(t, login, ip) })
+		sb.wforceCall(t, "report", map[string]any{"login": login, "remote": ip,
+			"pwhash": fmt.Sprintf("%x", sha256.Sum256([]byte(login+ip)))[:3], "success": false, "policy_reject": false, "protocol": "imap", "session_id": standSeed})
 	}
 }
 
@@ -226,6 +241,12 @@ func TestWforceDecisions(t *testing.T) {
 		{"past the per-IP threshold the login is refused", "192.0.2.23", func(_, ip string) { sb.spray(t, ip, refuseAfter+5) }, func(d Decision) string {
 			if !d.Reject {
 				return fmt.Sprintf("%+v, want a refusal", d)
+			}
+			return ""
+		}},
+		{"one login from many addresses tarpits", "192.0.2.27", func(login, _ string) { sb.fromMany(t, login, loginTarpitAfter+10) }, func(d Decision) string {
+			if !d.Continue || d.TarpitSecs != loginTarpitSecs {
+				return fmt.Sprintf("%+v, want a %ds tarpit", d, loginTarpitSecs)
 			}
 			return ""
 		}},
