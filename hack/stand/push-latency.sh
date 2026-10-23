@@ -13,8 +13,9 @@ LABEL="${1:?label}"
 OUT="${2:?output directory}"
 NS="${YARILO_NS:-yarilo-sb}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
-STREAM_POD="${YARILO_PUSH_POD:-yarilo-backend-1}"
-CANDIDATES="${YARILO_PUSH_USERS:-u1@d00001.test u2@d00001.test u3@d00001.test u4@d00001.test u5@d00001.test u6@d00001.test u7@d00001.test u8@d00001.test}"
+STREAM_POD="${YARILO_PUSH_POD:-}"
+CANDIDATES="${YARILO_PUSH_USERS:-u1@d00001.test u51@d00002.test u101@d00003.test u2@d00001.test u52@d00002.test u102@d00003.test}"
+PASS="${YARILO_PUSH_PASS:-Yarilo!test1}"
 COUNT="${YARILO_PUSH_COUNT:-50}"
 PAUSE="${YARILO_PUSH_PAUSE:-2}"
 WAIT="${YARILO_PUSH_WAIT:-10}"
@@ -43,20 +44,38 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# pinned_elsewhere picks a user the director pins to a pod other than the
-# stream's, so the delivery and the stream are on two pods.
-pinned_elsewhere() {
-  local director stream_ip u pin
-  director=$(kube get pods -l app.kubernetes.io/component=director -o jsonpath='{.items[0].metadata.name}' || true)
-  stream_ip=$(kube get pod "$STREAM_POD" -o jsonpath='{.status.podIP}')
-  [ -n "$director" ] && [ -n "$stream_ip" ] || return 1
-  for u in $CANDIDATES; do
-    pin=$(kube exec "$director" -- yarctl -O json director map --user "$u" 2>/dev/null |
+# pin is the backend IP the director pins a user to; the map is a peek and
+# places nobody, so an unplaced user is logged in once over IMAP first.
+pin() {
+  local at
+  at=$(kube exec "$1" -- yarctl -O json director map --user "$2" 2>/dev/null |
+    sed -n 's/.*"backend": *"\([^":]*\).*/\1/p' || true)
+  if [ -z "$at" ]; then
+    kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
+      "printf 'a LOGIN $2 $PASS\r\nb LOGOUT\r\n' | nc -w 15 yarilo-imap-login 143" >> "$LOG" 2>&1 || true
+    at=$(kube exec "$1" -- yarctl -O json director map --user "$2" 2>/dev/null |
       sed -n 's/.*"backend": *"\([^":]*\).*/\1/p' || true)
-    if [ -n "$pin" ] && [ "$pin" != "$stream_ip" ]; then
-      echo "$u $pin"
-      return 0
-    fi
+  fi
+  echo "$at"
+}
+
+# pinned_elsewhere prints a user, the backend IP the director pins it to, and
+# a backend pod other than that one for the stream: two pods, by construction.
+pinned_elsewhere() {
+  local director u at pod ip
+  director=$(kube get pods -l app.kubernetes.io/component=director -o jsonpath='{.items[0].metadata.name}' || true)
+  [ -n "$director" ] || return 1
+  for u in $CANDIDATES; do
+    at=$(pin "$director" "$u")
+    echo "candidate $u pinned to ${at:-nothing}" >> "$LOG"
+    [ -n "$at" ] || continue
+    while read -r pod ip; do
+      if [ "$ip" != "$at" ] && { [ -z "$STREAM_POD" ] || [ "$pod" = "$STREAM_POD" ]; }; then
+        echo "$u $at $pod"
+        return 0
+      fi
+    done < <(kube get pods -l app.kubernetes.io/component=backend \
+      -o jsonpath='{range .items[*]}{.metadata.name} {.status.podIP}{"\n"}{end}')
   done
   return 1
 }
@@ -104,9 +123,9 @@ lmtp_reply() {
 
 lmtp_send() { printf '%s\r\n' "$@" >&3; printf '> %s\n' "$@" >> "$LOG"; }
 
-read -r USER_NAME PIN <<<"$(pinned_elsewhere)" || true
+read -r USER_NAME PIN STREAM_POD <<<"$(pinned_elsewhere)" || true
 if [ -z "${USER_NAME:-}" ]; then
-  echo "push-latency: none of the candidates is pinned away from $STREAM_POD; set YARILO_PUSH_USERS" >&2
+  echo "push-latency: no candidate is pinned away from a backend pod${STREAM_POD:+ ($STREAM_POD)}; see $LOG" >&2
   exit 1
 fi
 client_cert
