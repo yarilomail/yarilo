@@ -276,8 +276,9 @@ The auth policy rows of #2317 run against wforce, deployed into namespace
 `wforce` from the `k8s_wforce` chart; its Secret and yarilo's credentials for
 it (`yarilo-auth-policy`: the API header and the hash nonce) are made by
 `hack/sandbox/secrets.sh`. wforce tarpits past 3 different failed passwords
-per IP+login, refuses past 50 per IP with a message for the client, and logs
-every field of every request it gets.
+per IP+login, refuses past 50 per IP with a message for the client, tarpits
+past 20 per login from any IP (k8s_wforce 0.1.2), and logs every field of
+every request it gets.
 
 `values-sandbox-wforce.yaml` turns the policy on in full: checked before and
 after the exchange, reported after it, not log-only, fail-open. Like the OAuth2
