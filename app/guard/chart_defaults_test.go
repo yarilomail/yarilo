@@ -13,6 +13,8 @@ import (
 var chartDiffers = map[string]string{
 	"director_service.director_domain_rebalance_percent": "documented as 0 in the binary, 20 in the chart",
 	"config_schema_version":                              "stamped by the chart",
+	"backend_register.readiness_protocols":               "the protocol components the release enables in the pod",
+	"locks_client.endpoints":                             "the release's own yarilo-locks Service",
 }
 
 // setByTheRender are values this test's own renders choose, keyed by the extra values text.
@@ -51,14 +53,54 @@ func numbersByPath(v reflect.Value, path string, out map[string]float64) {
 	}
 }
 
+// listsByPath flattens every list of strings to its config path; nil and empty are one value.
+func listsByPath(v reflect.Value, path string, out map[string][]string) {
+	switch v.Kind() {
+	case reflect.Pointer:
+		if !v.IsNil() {
+			listsByPath(v.Elem(), path, out)
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			f := v.Type().Field(i)
+			tag := strings.Split(f.Tag.Get("koanf"), ",")[0]
+			if tag == "" || tag == "-" || !f.IsExported() {
+				continue
+			}
+			listsByPath(v.Field(i), strings.TrimPrefix(path+"."+tag, "."), out)
+		}
+	case reflect.Slice:
+		if v.Type().Elem().Kind() == reflect.String {
+			l := make([]string, v.Len())
+			for i := range l {
+				l[i] = v.Index(i).String()
+			}
+			out[path] = l
+		}
+	}
+}
+
 // values.yaml carries the binary's defaults: a release that sets nothing loads
 // what config.Defaults() holds, with every optional component off and on.
 func TestTheChartCarriesTheBinaryDefaults(t *testing.T) {
 	want := map[string]float64{}
 	numbersByPath(reflect.ValueOf(config.Defaults()).Elem(), "", want)
+	wantLists := map[string][]string{}
+	listsByPath(reflect.ValueOf(config.Defaults()).Elem(), "", wantLists)
 	for _, extra := range []string{"", allOn} {
+		rendered := loadRendered(t, mustRender(t, extra))
 		got := map[string]float64{}
-		numbersByPath(reflect.ValueOf(loadRendered(t, mustRender(t, extra))).Elem(), "", got)
+		numbersByPath(reflect.ValueOf(rendered).Elem(), "", got)
+		gotLists := map[string][]string{}
+		listsByPath(reflect.ValueOf(rendered).Elem(), "", gotLists)
+		for path, w := range wantLists {
+			if _, ok := chartDiffers[path]; ok {
+				continue
+			}
+			if g := gotLists[path]; strings.Join(g, "\x00") != strings.Join(w, "\x00") {
+				t.Errorf("%q: %s = %q in the chart, %q in config.Defaults()", extra, path, g, w)
+			}
+		}
 		for path, w := range want {
 			if _, ok := chartDiffers[path]; ok {
 				continue
