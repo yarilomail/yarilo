@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Makes or updates every Secret of the sandbox from the environment, so no
 # password of it is in git. Run it before the manifests that read them, and
-# again to change a value.
+# again to change a value. Pods read a Secret at start: restart them after, the
+# relay's (namespace yarilo-relay) included.
 #
 # Usage:
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml \
@@ -36,6 +37,11 @@ apply_secret db mysql \
   --from-literal=MYSQL_USER=yarilo \
   --from-literal=MYSQL_PASSWORD="$YARILO_DB_PASSWORD" \
   --from-literal=MYSQL_ROOT_PASSWORD="$YARILO_DB_ROOT_PASSWORD"
+
+# The relay's Postfix looks recipients up with these; its other keys are left as they are.
+printf '{"stringData":{"MYSQL_PASSWORD":"%s","MYSQL_ROOT_PASSWORD":"%s"}}' \
+  "$YARILO_DB_PASSWORD" "$YARILO_DB_ROOT_PASSWORD" |
+  kubectl --kubeconfig="$KCFG" -n yarilo-relay patch secret yarilo-mysql --type merge --patch-file /dev/stdin
 
 apply_secret yarilo-sb yarilo-mysql \
   --from-literal=dsn="yarilo:${YARILO_DB_PASSWORD}@tcp(mysql.db.svc:3306)/yarilo?parseTime=true&charset=utf8mb4"
