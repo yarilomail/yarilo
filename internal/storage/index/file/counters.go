@@ -36,11 +36,11 @@ func txMoves(ops []txOp) []counters.Type {
 
 // bump moves the account's counter. The write is already committed, so a
 // failure here is logged, not returned: the client's write did succeed.
-func (u *userIndex) bump(types ...counters.Type) {
+func (u *userIndex) bump(site string, types ...counters.Type) {
 	if u.counter == nil || len(types) == 0 {
 		return
 	}
-	if err := u.counter.Bump(types...); err != nil {
+	if err := u.counter.Bump(site, types...); err != nil {
 		metricCounterBumpFailed.Inc()
 		slog.Warn("fileindex: change counter not moved", "user", u.username, "err", err)
 	}

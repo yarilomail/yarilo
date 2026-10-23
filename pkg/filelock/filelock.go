@@ -172,3 +172,75 @@ func (h *Hold) Release() error {
 	}
 	return cerr
 }
+
+// Kept is a lock file left open between takes. Closing any descriptor of a
+// file drops its fcntl locks, so one path has one Kept per process.
+type Kept struct {
+	path   string
+	method Method
+	mu     sync.Mutex
+	f      *os.File
+}
+
+// Keep returns a lock on path that opens its file once.
+func Keep(path string, method Method) *Kept { return &Kept{path: path, method: method} }
+
+// Take locks path; the returned func unlocks it and leaves the file open.
+func (k *Kept) Take(wait time.Duration) (func(), error) {
+	deadline := time.Now().Add(wait)
+	for !k.mu.TryLock() {
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("filelock: %s is held by this process after %s: %w", k.path, wait, ErrBusy)
+		}
+		time.Sleep(pollInterval)
+	}
+	method := k.method
+	if volumeRefused(k.path) {
+		method = MethodDotlock
+	}
+	if method != MethodDotlock {
+		err := k.lockOpen(method, time.Until(deadline))
+		if err == nil {
+			return func() { _ = unlockFD(k.f, method); k.mu.Unlock() }, nil
+		}
+		if !unsupported(err) {
+			k.mu.Unlock()
+			return nil, err
+		}
+		reportFallback(k.path, method)
+		_ = k.closeLocked()
+	}
+	h, err := takeDotlock(k.path, time.Until(deadline))
+	if err != nil {
+		k.mu.Unlock()
+		return nil, err
+	}
+	return func() { _ = h.releaseDotlock(); k.mu.Unlock() }, nil
+}
+
+func (k *Kept) lockOpen(method Method, wait time.Duration) error {
+	if k.f == nil {
+		f, err := os.OpenFile(k.path, os.O_RDWR|os.O_CREATE, 0o600)
+		if err != nil {
+			return fmt.Errorf("filelock: open %s: %w", k.path, err)
+		}
+		k.f = f
+	}
+	return lockFD(k.f, method, wait)
+}
+
+// Close releases the file. The caller ensures no Take is in progress.
+func (k *Kept) Close() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.closeLocked()
+}
+
+func (k *Kept) closeLocked() error {
+	if k.f == nil {
+		return nil
+	}
+	err := k.f.Close()
+	k.f = nil
+	return err
+}

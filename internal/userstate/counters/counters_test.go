@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 )
@@ -23,7 +24,7 @@ func TestBumpRecordsEachTypeAtTheNewValue(t *testing.T) {
 		{nil, Snapshot{3, map[Type]uint64{Email: 3, Mailbox: 1, Identity: 2}}},
 	}
 	for i, st := range steps {
-		if err := c.Bump(st.types...); err != nil {
+		if err := c.Bump("test", st.types...); err != nil {
 			t.Fatalf("step %d: %v", i, err)
 		}
 		got, err := Read(Path(dir))
@@ -74,7 +75,7 @@ func TestConcurrentBumpsAreNotLost(t *testing.T) {
 			if i%2 == 1 {
 				typ = Mailbox
 			}
-			if err := New(dir, "u").Bump(typ); err != nil {
+			if err := New(dir, "u").Bump("test", typ); err != nil {
 				t.Error(err)
 			}
 		}(i)
@@ -102,7 +103,7 @@ func TestConcurrentBumpsAreNotLost(t *testing.T) {
 func TestBumpsFromTwoProcessesAreNotLost(t *testing.T) {
 	if dir := os.Getenv("COUNTERS_BUMP_DIR"); dir != "" {
 		for i := 0; i < 200; i++ {
-			if err := New(dir, "u").Bump(Email); err != nil {
+			if err := New(dir, "u").Bump("test", Email); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
@@ -131,5 +132,91 @@ func TestBumpsFromTwoProcessesAreNotLost(t *testing.T) {
 	}
 	if s.Highest != 400 {
 		t.Fatalf("highest %d after 2 x 200 bumps", s.Highest)
+	}
+}
+
+// A process touching many accounts keeps at most maxKept lock files open, and
+// a counter whose state was closed still bumps from where it was.
+func TestIdleLockFilesAreClosedPastTheBound(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "first")
+	if err := New(first, "u").Bump("test", Email); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxKept+10; i++ {
+		if err := New(filepath.Join(root, strconv.Itoa(i)), "u").Bump("test", Email); err != nil {
+			t.Fatal(err)
+		}
+	}
+	statesMu.Lock()
+	n := len(states)
+	statesMu.Unlock()
+	if n > maxKept {
+		t.Fatalf("%d lock files kept open, bound %d", n, maxKept)
+	}
+	if err := New(first, "u").Bump("test", Mailbox); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Read(Path(first))
+	if err != nil || s.Highest != 2 {
+		t.Fatalf("after reopening: %+v, %v", s, err)
+	}
+}
+
+// Closing idle lock files must never close one a bump holds: that would drop
+// the fcntl lock mid-bump and let the other process interleave.
+func TestClosingIdleLockFilesKeepsAHeldOne(t *testing.T) {
+	if dir := os.Getenv("COUNTERS_CHURN_DIR"); dir != "" {
+		maxKept = 4
+		done := make(chan struct{})
+		go func() {
+			for i := 0; ; i++ {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				_ = New(filepath.Join(dir, "churn", strconv.Itoa(os.Getpid()), strconv.Itoa(i%64)), "u").Bump("test", Email)
+			}
+		}()
+		var wg sync.WaitGroup
+		for g := 0; g < 4; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < 75; i++ {
+					if err := New(filepath.Join(dir, "shared"), "u").Bump("test", Email); err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						os.Exit(1)
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		close(done)
+		os.Exit(0)
+	}
+	dir := t.TempDir()
+	var cmds []*exec.Cmd
+	for i := 0; i < 2; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestClosingIdleLockFilesKeepsAHeldOne$")
+		cmd.Env = append(os.Environ(), "COUNTERS_CHURN_DIR="+dir)
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		cmds = append(cmds, cmd)
+	}
+	for _, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := Read(Path(filepath.Join(dir, "shared")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Highest != 600 {
+		t.Fatalf("highest %d after 2 x 300 bumps under eviction pressure", s.Highest)
 	}
 }

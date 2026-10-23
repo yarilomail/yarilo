@@ -101,7 +101,7 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 	wrote := false
 	defer func() {
 		if wrote && h.counter != nil {
-			if berr := h.counter.Bump(counters.EmailSubmission); berr != nil {
+			if berr := h.counter.Bump("submission", counters.EmailSubmission); berr != nil {
 				slog.Warn("jmap: change counter not moved", "user", h.info.Username, "err", berr)
 			}
 		}

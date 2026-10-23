@@ -476,7 +476,7 @@ func (s *Store) moved(err error, wrote bool) error {
 	if err != nil || !wrote {
 		return err
 	}
-	if berr := s.counter.Bump(counters.Mailbox); berr != nil {
+	if berr := s.counter.Bump("acl", counters.Mailbox); berr != nil {
 		slog.Warn("userstate/acl: change counter not moved", "user", s.username, "err", berr)
 	}
 	return nil

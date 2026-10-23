@@ -47,7 +47,7 @@ func (u *userIndex) OpenFolder(folder string, uidValidity uint32, traceID string
 func (u *userIndex) CreateFolder(folder string, uidValidity uint32, traceID string) (*mailbox.Folder, error) {
 	f, err := u.openFolder(folder, uidValidity, traceID, intentCreate)
 	if err == nil {
-		u.bump(counters.Mailbox)
+		u.bump("create-folder", counters.Mailbox)
 	}
 	return f, err
 }
@@ -682,7 +682,7 @@ func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folder
 	}
 	defer func() {
 		if err == nil && siteMoves[site] != nil {
-			u.bump(siteMoves[site]...)
+			u.bump(site, siteMoves[site]...)
 		}
 	}()
 	err = u.withFolderLockSite(fs, site, func() error {
