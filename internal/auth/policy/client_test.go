@@ -176,15 +176,31 @@ func TestFailoverDecision_RejectOnFail(t *testing.T) {
 
 // TestLogOnly_IgnoresReject — log-only mode treats Reject as
 // continue (but caller's log surfaces the would-have-rejected).
-func TestLogOnly_IgnoresReject(t *testing.T) {
-	srv, _ := newPolicyServer(t, 200, `{"status":-1,"msg":"abuse"}`)
-	c, _ := New(Config{URL: srv.URL, HashNonce: "salt", LogOnly: true})
-	d, err := c.CheckBefore(context.Background(), Request{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !d.Continue || d.Reject {
-		t.Errorf("log-only failed to ignore reject: %+v", d)
+// Log-only ignores every action the server asks for, a tarpit as well as a
+// refusal, and a refusal on failure.
+func TestLogOnlyActsOnNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		logOnly    bool
+		httpStatus int
+		body       string
+		want       Decision
+	}{
+		{"a refusal", true, 200, `{"status":-1,"msg":"abuse"}`, Decision{Continue: true}},
+		{"a tarpit", true, 200, `{"status":5}`, Decision{Continue: true}},
+		{"a failure with reject_on_fail", true, 500, "", Decision{Continue: true}},
+		{"an allow", true, 200, `{"status":0}`, Decision{Continue: true}},
+		{"a tarpit without log-only", false, 200, `{"status":5}`, Decision{Continue: true, TarpitSecs: 5}},
+		{"a refusal without log-only", false, 200, `{"status":-1,"msg":"abuse"}`, Decision{Reject: true, Message: "abuse"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := newPolicyServer(t, tc.httpStatus, tc.body)
+			c, _ := New(Config{URL: srv.URL, HashNonce: "salt", LogOnly: tc.logOnly, RejectOnFail: true})
+			d, _ := c.CheckBefore(context.Background(), Request{})
+			if d != tc.want {
+				t.Errorf("decision %+v, want %+v", d, tc.want)
+			}
+		})
 	}
 }
 
