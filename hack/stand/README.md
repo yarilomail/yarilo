@@ -40,7 +40,7 @@ the ones allowed for it. An overlay is never deployed on its own.
 ## The acceptance run
 
 ```
-KUBECONFIG=~/.kube/sbox.yaml YARILO_PASSWORD=... bash hack/stand/accept.sh <image-tag> <out-dir>
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/accept.sh <image-tag> <out-dir>
 ```
 
 What a rollout after a merge must pass, judged and written as `PASS`/`FAIL`/`SKIP`
@@ -96,7 +96,7 @@ and the arm marks it as `first_seen_off=1`.
 ## Two folders, one account
 
 ```
-KUBECONFIG=~/.kube/sbox.yaml YARILO_PASSWORD=... bash hack/stand/store-parallel.sh <label> <out-dir>
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/store-parallel.sh <label> <out-dir>
 ```
 
 Two imaptest halves, one pod, write flags into `PushA` and `PushB` of one

@@ -11,9 +11,11 @@
 
 set -euo pipefail
 
-# The seed below runs with its output hidden; a missing password must stop here.
-: "${YARILO_PASSWORD:?set YARILO_PASSWORD, the password of the sandbox test accounts}"
-: "${YARILO_DB_PASSWORD:?set YARILO_DB_PASSWORD, the password of the sandbox database user}"
+# The seed below runs with its output hidden; an unreadable password must stop here.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
+YARILO_PASSWORD="$(sandbox_password)"
+YARILO_DB_PASSWORD="$(sandbox_db_password)"
+export YARILO_PASSWORD YARILO_DB_PASSWORD
 
 # An arm that ends anywhere but its own last line says so: three runs died
 # inside the fill leaving only the line before it (#1875).

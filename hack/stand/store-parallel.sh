@@ -18,7 +18,8 @@ TYPES="${YARILO_STORE_TYPES:-mdbox maildir sdbox}"
 CLIENTS="${YARILO_STORE_CLIENTS:-5}"
 SECS="${YARILO_STORE_SECS:-60}"
 MSGS="${YARILO_STORE_MSGS:-100}"
-PASS="${YARILO_STORE_PASS:-${YARILO_PASSWORD:?set YARILO_PASSWORD, the password of the sandbox test accounts}}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
+PASS="${YARILO_STORE_PASS:-$(sandbox_password)}"
 IMAPTEST_IMAGE="${YARILO_IMAPTEST_IMAGE:-dovecot/imaptest:latest}"
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
