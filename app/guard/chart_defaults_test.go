@@ -15,7 +15,15 @@ var chartDiffers = map[string]string{
 	"config_schema_version":                              "stamped by the chart",
 }
 
-// numbersByPath flattens every numeric setting to its config path.
+// setByTheRender are values this test's own renders choose, keyed by the extra values text.
+var setByTheRender = map[string]map[string]string{
+	"":    {"internal_tls.enabled": "renderWith turns internal TLS off"},
+	allOn: {"internal_tls.enabled": "renderWith turns internal TLS off", "fts.enabled": "allOn turns FTS on"},
+}
+
+const allOn = "fts:\n  enabled: true\ncomponents:\n  saslLogin:\n    enabled: true\n  manageSieveLogin:\n    enabled: true\n  quotaStatus:\n    enabled: true\n  dict:\n    enabled: true\n"
+
+// numbersByPath flattens every numeric and boolean setting to its config path; a bool is 0 or 1.
 func numbersByPath(v reflect.Value, path string, out map[string]float64) {
 	switch v.Kind() {
 	case reflect.Pointer:
@@ -35,6 +43,11 @@ func numbersByPath(v reflect.Value, path string, out map[string]float64) {
 		var n float64
 		fmt.Sscan(fmt.Sprint(v.Interface()), &n)
 		out[path] = n
+	case reflect.Bool:
+		out[path] = 0
+		if v.Bool() {
+			out[path] = 1
+		}
 	}
 }
 
@@ -43,12 +56,14 @@ func numbersByPath(v reflect.Value, path string, out map[string]float64) {
 func TestTheChartCarriesTheBinaryDefaults(t *testing.T) {
 	want := map[string]float64{}
 	numbersByPath(reflect.ValueOf(config.Defaults()).Elem(), "", want)
-	allOn := "fts:\n  enabled: true\ncomponents:\n  saslLogin:\n    enabled: true\n  manageSieveLogin:\n    enabled: true\n  quotaStatus:\n    enabled: true\n  dict:\n    enabled: true\n"
 	for _, extra := range []string{"", allOn} {
 		got := map[string]float64{}
 		numbersByPath(reflect.ValueOf(loadRendered(t, mustRender(t, extra))).Elem(), "", got)
 		for path, w := range want {
 			if _, ok := chartDiffers[path]; ok {
+				continue
+			}
+			if _, ok := setByTheRender[extra][path]; ok {
 				continue
 			}
 			if got[path] != w {
