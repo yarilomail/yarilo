@@ -2670,6 +2670,7 @@ func Defaults() *Config {
 			ExecuteInputEOL:        "crlf",
 		},
 	}
+	c.Threading.Enabled = true
 	c.Threading.ThreadingCacheIdle = 300
 	c.Storage.LockStaleTimeout = 180
 	c.Storage.MailCachePurgeDeletePercentage = 20
