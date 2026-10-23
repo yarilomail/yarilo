@@ -96,21 +96,49 @@ func New(dir, user string) *Counter {
 // lockWait bounds the wait for another process's bump of the same file.
 const lockWait = 30 * time.Second
 
-// pathMu orders this process's writers per file; a file lock orders processes.
+// maxKept bounds the lock files a process keeps open; idle ones past it close.
+const maxKept = 256
+
+// fileState is one counter file's writers in this process: the mutex orders
+// them, the kept file lock orders processes.
+type fileState struct {
+	mu    sync.Mutex
+	refs  int
+	lock  *filelock.Kept
+	dirOK bool
+}
+
 var (
-	pathMuMu sync.Mutex
-	pathMu   = map[string]*sync.Mutex{}
+	statesMu sync.Mutex
+	states   = map[string]*fileState{}
 )
 
-func lockPath(path string) *sync.Mutex {
-	pathMuMu.Lock()
-	defer pathMuMu.Unlock()
-	m := pathMu[path]
-	if m == nil {
-		m = &sync.Mutex{}
-		pathMu[path] = m
+func acquire(path string) *fileState {
+	statesMu.Lock()
+	defer statesMu.Unlock()
+	st := states[path]
+	if st == nil {
+		// Beside the counter, not on it: a rename replaces the counter's inode.
+		st = &fileState{lock: filelock.Keep(path+".lock", filelock.MethodFcntl)}
+		states[path] = st
 	}
-	return m
+	st.refs++
+	return st
+}
+
+func release(st *fileState) {
+	statesMu.Lock()
+	defer statesMu.Unlock()
+	st.refs--
+	if len(states) <= maxKept {
+		return
+	}
+	for p, s := range states {
+		if s.refs == 0 {
+			_ = s.lock.Close()
+			delete(states, p)
+		}
+	}
 }
 
 // Bump raises the counter and records the new value against each type.
@@ -118,20 +146,34 @@ func (c *Counter) Bump(types ...Type) error {
 	if len(types) == 0 {
 		return nil
 	}
-	mu := lockPath(c.path)
-	mu.Lock()
-	defer mu.Unlock()
-	return c.withLock(func() error {
-		s, err := Read(c.path)
-		if err != nil {
-			return err
+	st := acquire(c.path)
+	defer release(st)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !st.dirOK {
+		if err := os.MkdirAll(filepath.Dir(c.path), 0o700); err != nil {
+			return fmt.Errorf("counters: mkdir: %w", err)
 		}
-		s.Highest++
-		for _, t := range types {
-			s.ByType[t] = s.Highest
-		}
-		return write(c.path, s)
-	})
+		st.dirOK = true
+	}
+	unlock, err := st.lock.Take(lockWait)
+	if err != nil {
+		return fmt.Errorf("counters: lock: %w", err)
+	}
+	defer unlock()
+	s, err := Read(c.path)
+	if err != nil {
+		return err
+	}
+	s.Highest++
+	for _, t := range types {
+		s.ByType[t] = s.Highest
+	}
+	if err := write(c.path, s); err != nil {
+		return err
+	}
+	metricBumps.Inc()
+	return nil
 }
 
 // Read returns the counter at path without a lock: it is replaced whole, so a
@@ -171,11 +213,9 @@ func Read(path string) (Snapshot, error) {
 // Path is the counter file of the account whose control root is dir.
 func Path(dir string) string { return filepath.Join(dir, FileName) }
 
+// write replaces the counter through a temporary file of this process's own;
+// the caller holds the file lock, so no other process writes it meanwhile.
 func write(path string, s Snapshot) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("counters: mkdir: %w", err)
-	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "highest %d\n", s.Highest)
 	names := make([]string, 0, len(s.ByType))
@@ -186,37 +226,14 @@ func write(path string, s Snapshot) error {
 	for _, n := range names {
 		fmt.Fprintf(&b, "%s %d\n", n, s.ByType[Type(n)])
 	}
-	tmp, err := os.CreateTemp(dir, FileName+".tmp.*")
-	if err != nil {
-		return fmt.Errorf("counters: temp: %w", err)
-	}
-	name := tmp.Name()
-	if _, err := tmp.WriteString(b.String()); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(name)
+	tmp := path + ".tmp." + strconv.Itoa(os.Getpid())
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("counters: write: %w", err)
 	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
-		return fmt.Errorf("counters: close: %w", err)
-	}
-	if err := os.Rename(name, path); err != nil {
-		_ = os.Remove(name)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("counters: rename: %w", err)
 	}
 	return nil
-}
-
-// withLock holds the file lock beside the counter: the counter itself is
-// replaced by rename, so a lock on it would be on an inode that is gone.
-func (c *Counter) withLock(fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o700); err != nil {
-		return fmt.Errorf("counters: mkdir: %w", err)
-	}
-	h, err := filelock.Take(c.path+".lock", filelock.MethodFcntl, lockWait)
-	if err != nil {
-		return fmt.Errorf("counters: lock: %w", err)
-	}
-	defer func() { _ = h.Release() }()
-	return fn()
 }

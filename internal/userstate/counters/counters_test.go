@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 )
@@ -131,5 +132,33 @@ func TestBumpsFromTwoProcessesAreNotLost(t *testing.T) {
 	}
 	if s.Highest != 400 {
 		t.Fatalf("highest %d after 2 x 200 bumps", s.Highest)
+	}
+}
+
+// A process touching many accounts keeps at most maxKept lock files open, and
+// a counter whose state was closed still bumps from where it was.
+func TestIdleLockFilesAreClosedPastTheBound(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "first")
+	if err := New(first, "u").Bump(Email); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxKept+10; i++ {
+		if err := New(filepath.Join(root, strconv.Itoa(i)), "u").Bump(Email); err != nil {
+			t.Fatal(err)
+		}
+	}
+	statesMu.Lock()
+	n := len(states)
+	statesMu.Unlock()
+	if n > maxKept {
+		t.Fatalf("%d lock files kept open, bound %d", n, maxKept)
+	}
+	if err := New(first, "u").Bump(Mailbox); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Read(Path(first))
+	if err != nil || s.Highest != 2 {
+		t.Fatalf("after reopening: %+v, %v", s, err)
 	}
 }

@@ -113,8 +113,9 @@ that arm deployed, and in the same slot as the other arms of the window.
 
 Each type prints `store_parallel` (stores per second, from imaptest's totals)
 and `store_latency` (count, p50 and p99 bounds of `imap_command_seconds` for
-`Store`, and of `yarilo_locks_acquire_wait_seconds` for the `counters` and
-`mbox` classes, from the delta across the run). The server's `Store` count must
+`Store`, and of `yarilo_locks_acquire_wait_seconds` for the `mbox` class, from
+the delta across the run) and `store_bumps` (raises of the change counter, in
+total and per STORE, from `counters_bump_total`). The server's `Store` count must
 equal the two halves' total; a gap means the page was read from the wrong pods.
 
 ## The same start
