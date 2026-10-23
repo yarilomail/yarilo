@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -410,6 +411,7 @@ func TestTheSmoketestVerdictSkipsOnlyTheOAuth2RowsByName(t *testing.T) {
 	for _, n := range strings.Split(strings.Trim(strings.TrimPrefix(names, "SMOKE_OAUTH2_SKIPS="), "'"), "\n") {
 		oauth[n] = "oauth2"
 	}
+	passed, _ := strconv.Atoi(strings.TrimPrefix(checks, "SMOKE_CHECKS="))
 	if len(oauth) != 3 {
 		t.Fatalf("SMOKE_OAUTH2_SKIPS names %d rows, want 3", len(oauth))
 	}
@@ -428,11 +430,12 @@ func TestTheSmoketestVerdictSkipsOnlyTheOAuth2RowsByName(t *testing.T) {
 		log  string
 		ok   bool
 	}{
-		{"the oauth2 rows skipped", smokeLog(t, 54, 51, 0, oauth), true},
-		{"three skips, one of them not oauth2", smokeLog(t, 54, 51, 0, swapped), false},
-		{"another row skipped as well", smokeLog(t, 55, 51, 0, plusOne), false},
-		{"nothing skipped", smokeLog(t, 54, 54, 0, nil), false},
-		{"a failure", smokeLog(t, 54, 50, 1, oauth), false},
+		{"the oauth2 rows skipped", smokeLog(t, passed+3, passed, 0, oauth), true},
+		{"three skips, one of them not oauth2", smokeLog(t, passed+3, passed, 0, swapped), false},
+		{"another row skipped as well", smokeLog(t, passed+4, passed, 0, plusOne), false},
+		{"nothing skipped", smokeLog(t, passed+3, passed+3, 0, nil), false},
+		{"a failure", smokeLog(t, passed+3, passed-1, 1, oauth), false},
+		{"a row more than SMOKE_CHECKS", smokeLog(t, passed+4, passed+1, 0, oauth), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
