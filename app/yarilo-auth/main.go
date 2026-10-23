@@ -171,16 +171,7 @@ func main() {
 
 	// Policy server: HTTP hook into wforce or equivalent. URL="" disables.
 	if cfg.Auth.Policy.URL != "" {
-		pc, err := policy.New(policy.Config{
-			URL:              cfg.Auth.Policy.URL,
-			APIHeader:        cfg.Auth.Policy.APIHeader,
-			HashMech:         cfg.Auth.Policy.HashMech,
-			HashNonce:        cfg.Auth.Policy.HashNonce,
-			HashTruncateBits: cfg.Auth.Policy.HashTruncateBits,
-			Timeout:          time.Duration(cfg.Auth.Policy.TimeoutMs) * time.Millisecond,
-			RejectOnFail:     cfg.Auth.Policy.RejectOnFail,
-			LogOnly:          cfg.Auth.Policy.LogOnly,
-		})
+		pc, err := policy.New(policyConfig(cfg))
 		if err != nil {
 			slog.Error("policy client init", "err", err)
 			os.Exit(1)
@@ -370,4 +361,20 @@ func buildTokenStore(cfg config.AuthTokenConfig, dialRetries int) (protocol.Toke
 	slog.Info("auth: token store backend=memory")
 	s := authtoken.New(ttl)
 	return s, s.Close
+}
+
+// policyConfig is the policy client's configuration from yarilo.yaml.
+func policyConfig(cfg *config.Config) policy.Config {
+	p := cfg.Auth.Policy
+	return policy.Config{
+		URL:               p.URL,
+		APIHeader:         p.APIHeader,
+		HashMech:          p.HashMech,
+		HashNonce:         p.HashNonce,
+		HashTruncateBits:  p.HashTruncateBits,
+		Timeout:           time.Duration(p.TimeoutMs) * time.Millisecond,
+		RejectOnFail:      p.RejectOnFail,
+		LogOnly:           p.LogOnly,
+		RequestAttributes: p.RequestAttributes,
+	}
 }

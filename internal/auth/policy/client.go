@@ -20,7 +20,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 )
@@ -87,6 +86,9 @@ type Config struct {
 	// HTTPClient is the underlying transport. nil → http.DefaultClient
 	// with a Timeout wrapper.
 	HTTPClient *http.Client
+	// RequestAttributes is the request body, key to value template; nil sends
+	// DefaultRequestAttributes.
+	RequestAttributes map[string]string
 }
 
 // Decision is the policy-server result: Continue (status 0), Reject (status <0),
@@ -104,6 +106,7 @@ type Request struct {
 	Username  string // resolved/requested username before chain
 	Password  string // plain — used only to compute pwhash, never stored
 	RemoteIP  string // client IP as a string ("" allowed)
+	LocalIP   string // the address the client connected to
 	Service   string // "imap" / "pop3" / "submission" / "lmtp"; "smtp" is Postfix
 	DeviceID  string // free-form client tag (empty allowed)
 	SessionID string // unique per auth attempt (empty allowed)
@@ -117,8 +120,9 @@ type Request struct {
 
 // Client is the policy-server HTTP client. Safe for concurrent use.
 type Client struct {
-	cfg Config
-	hc  *http.Client
+	cfg   Config
+	hc    *http.Client
+	attrs []attribute
 }
 
 var (
@@ -150,11 +154,15 @@ func New(cfg Config) (*Client, error) {
 	if cfg.HashMech == "" {
 		cfg.HashMech = "sha256"
 	}
+	attrs, err := compileAttributes(cfg.RequestAttributes)
+	if err != nil {
+		return nil, err
+	}
 	hc := cfg.HTTPClient
 	if hc == nil {
 		hc = &http.Client{Timeout: cfg.Timeout}
 	}
-	return &Client{cfg: cfg, hc: hc}, nil
+	return &Client{cfg: cfg, hc: hc, attrs: attrs}, nil
 }
 
 // CheckBefore POSTs ?command=allow with `success` / `policy_reject`
@@ -278,36 +286,30 @@ func (c *Client) failoverDecision() Decision {
 	return Decision{Continue: true}
 }
 
-// buildPayload assembles the JSON body. Keys are alphabetic to match
-// the wforce wire format.
+// buildPayload assembles the JSON body: the configured attributes, then the
+// outcome on a post-auth call and tls, as the reference appends them.
 func (c *Client) buildPayload(req Request, includeStatus, success, policyReject bool) ([]byte, error) {
-	type field struct {
-		key   string
-		value interface{}
-	}
-	fields := []field{
-		{"device_id", req.DeviceID},
-		{"fail_type", req.FailType},
-		{"login", req.Username},
-		{"protocol", req.Service},
-		{"pwhash", c.hashPassword(req.Username, req.Password)},
-		{"remote", req.RemoteIP},
-		{"session_id", req.SessionID},
-		{"tls", req.TLS},
+	pwhash := c.hashPassword(req.Username, req.Password)
+	body := make(map[string]any, len(c.attrs)+3)
+	for _, a := range c.attrs {
+		v := a.value(req, pwhash)
+		if a.object == "" {
+			body[a.key] = v
+			continue
+		}
+		obj, _ := body[a.object].(map[string]any)
+		if obj == nil {
+			obj = map[string]any{}
+			body[a.object] = obj
+		}
+		obj[a.key] = v
 	}
 	if includeStatus {
-		fields = append(fields,
-			field{"policy_reject", policyReject},
-			field{"success", success},
-		)
+		body["success"] = success
+		body["policy_reject"] = policyReject
 	}
-	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
-
-	m := make(map[string]interface{}, len(fields))
-	for _, f := range fields {
-		m[f.key] = f.value
-	}
-	return json.Marshal(m)
+	body["tls"] = req.TLS
+	return json.Marshal(body)
 }
 
 // hashPassword returns the hex-encoded, truncated digest of

@@ -226,6 +226,7 @@ var canonicalNames = []struct{ at, yarilo, chart string }{
 	{"components.auth.policy", "auth_policy_check_before_auth", "check_before"},
 	{"components.auth.policy", "auth_policy_check_after_auth", "check_after"},
 	{"components.auth.policy", "auth_policy_report_after_auth", "report_after"},
+	{"components.auth.policy", "auth_policy_request_attributes", "request_attributes"},
 	{"components.auth.passdb[0]", "passwd_file_path", "passwd_file"},
 	{"components.auth.passdb[0]", "passdb_sql_query", "password_query"},
 	{"components.auth.passdb[0]", "userdb_sql_query", "user_query"},
@@ -291,6 +292,8 @@ func TestCanonicalNamesAreRefused(t *testing.T) {
 				wantLine = "true"
 			case "ttl_seconds", "negative_ttl_seconds": // rendered through int64
 				value, wantLine = "777", "777"
+			case "request_attributes": // a map, rendered entry by entry
+				value = `{a: "v-request_attributes"}` // sorts before the defaults
 			}
 			out, err = renderWith(t, valuesAt(c.at, c.chart, value))
 			if err != nil {
