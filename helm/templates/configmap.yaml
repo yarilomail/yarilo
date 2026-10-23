@@ -350,6 +350,12 @@ data:
         auth_policy_log_only: {{ .Values.components.auth.policy.log_only | default false }}
         auth_policy_check_before_auth: {{ if hasKey $auth.policy "check_before" }}{{ $auth.policy.check_before }}{{ else }}true{{ end }}
         auth_policy_check_after_auth: {{ if hasKey $auth.policy "check_after" }}{{ $auth.policy.check_after }}{{ else }}true{{ end }}
+        {{- with $auth.policy.request_attributes }}
+        auth_policy_request_attributes:
+          {{- range $key, $tmpl := . }}
+          {{ $key | quote }}: {{ $tmpl | quote }}
+          {{- end }}
+        {{- end }}
         auth_policy_report_after_auth: {{ if hasKey $auth.policy "report_after" }}{{ $auth.policy.report_after }}{{ else }}true{{ end }}
       oauth2:
         {{- range $i, $e := (.Values.components.auth.oauth2 | default list) }}

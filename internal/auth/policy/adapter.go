@@ -37,6 +37,7 @@ func toRequest(r protocol.PolicyRequest) Request {
 		Username:  r.Username,
 		Password:  r.Password,
 		RemoteIP:  r.RemoteIP,
+		LocalIP:   r.LocalIP,
 		Service:   r.Service,
 		DeviceID:  r.DeviceID,
 		SessionID: r.SessionID,

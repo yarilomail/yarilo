@@ -998,6 +998,16 @@ components:
       check_before: true
       check_after: true
       report_after: true
+      ## The request body: key to value template, "key/subkey" nested in an
+      ## object; %{name} variables. A map: an entry here adds or replaces one.
+      request_attributes:
+        login: "%{requested_username}"
+        pwhash: "%{hashed_password}"
+        remote: "%{remote_ip}"
+        device_id: "%{client_id}"
+        protocol: "%{protocol}"
+        session_id: "%{session}"
+        fail_type: "%{fail_type}"
 
     ## masterUsers — master-user impersonation
     ## (SASL PLAIN authzid). OPT-IN, disabled by default. While

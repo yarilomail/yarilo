@@ -866,6 +866,7 @@ type PolicyRequest struct {
 	Username  string
 	Password  string
 	RemoteIP  string
+	LocalIP   string
 	Service   string
 	DeviceID  string
 	SessionID string
@@ -1354,7 +1355,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	// policy client's RejectOnFail setting internally; here we
 	// only see the resulting Decision.
 	policyReq := PolicyRequest{
-		Username: master, Password: password, RemoteIP: remoteIP,
+		Username: master, Password: password, RemoteIP: remoteIP, LocalIP: localIP,
 		Service: service, SessionID: sessionID, TLS: cc.secured == "tls",
 		DeviceID: cc.clientID,
 	}

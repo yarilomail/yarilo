@@ -2091,6 +2091,9 @@ type AuthPolicyConfig struct {
 	// ReportAfter: POST ?command=report fire-and-forget after
 	// every decision. Default true.
 	ReportAfter bool `koanf:"auth_policy_report_after_auth"`
+	// RequestAttributes is the request body: key to value template, a
+	// key/subkey nested; %{name} variables (#2317).
+	RequestAttributes map[string]string `koanf:"auth_policy_request_attributes"`
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	URLAlias              string `koanf:"url"`
 	APIHeaderAlias        string `koanf:"api_header"`
@@ -2597,6 +2600,15 @@ func Defaults() *Config {
 				CheckBefore: true,
 				CheckAfter:  true,
 				ReportAfter: true,
+				RequestAttributes: map[string]string{
+					"login":      "%{requested_username}",
+					"pwhash":     "%{hashed_password}",
+					"remote":     "%{remote_ip}",
+					"device_id":  "%{client_id}",
+					"protocol":   "%{protocol}",
+					"session_id": "%{session}",
+					"fail_type":  "%{fail_type}",
+				},
 			},
 		},
 		DirectorService: DirectorServiceConfig{

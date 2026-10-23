@@ -85,6 +85,12 @@ func TestThePolicyHearsTheClientConnection(t *testing.T) {
 			}
 			return ""
 		}},
+		{"lip is the local address", "\tlip=198.51.100.7", func(r PolicyRequest) string {
+			if r.LocalIP != "198.51.100.7" {
+				return fmt.Sprintf("LocalIP %q", r.LocalIP)
+			}
+			return ""
+		}},
 		{"secured=tls is TLS", "\tsecured=tls", func(r PolicyRequest) string {
 			if !r.TLS {
 				return "TLS false"
@@ -268,5 +274,16 @@ func TestAScramLoginGoesThroughThePolicy(t *testing.T) {
 				t.Errorf("report %+v, want a failure with fail_type %s", r[0], tc.wantReport)
 			}
 		})
+	}
+}
+
+// A SCRAM exchange tells the policy what the AUTH line told the service.
+func TestAScramExchangeCarriesItsConnection(t *testing.T) {
+	x := &saslExchange{username: "alice", rip: "192.0.2.1", lip: "198.51.100.2", service: "imap", session: "s1",
+		client: clientConn{secured: "tls", clientID: `"name" "x"`}}
+	want := PolicyRequest{Username: "alice", RemoteIP: "192.0.2.1", LocalIP: "198.51.100.2", Service: "imap",
+		SessionID: "s1", TLS: true, DeviceID: `"name" "x"`}
+	if got := x.policyRequest(); got != want {
+		t.Errorf("policyRequest = %+v, want %+v", got, want)
 	}
 }

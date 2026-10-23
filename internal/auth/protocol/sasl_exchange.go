@@ -186,7 +186,7 @@ var errPolicyRefused = errors.New("auth: refused by the policy server")
 // password, so pwhash is over the user alone.
 func (x *saslExchange) policyRequest() PolicyRequest {
 	return PolicyRequest{
-		Username: x.username, RemoteIP: x.rip, Service: x.service,
+		Username: x.username, RemoteIP: x.rip, LocalIP: x.lip, Service: x.service,
 		SessionID: x.session, TLS: x.client.secured == "tls", DeviceID: x.client.clientID,
 	}
 }
