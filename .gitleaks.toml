@@ -21,10 +21,3 @@ paths = ['''internal/auth/client/client_test\.go''']
 description = "Invoices.2026 — the example mailbox name used throughout the storage-escaping work (#1078). generic-api-key reads a dotted folder name as a high-entropy key. Not path-scoped: it was, and the finding simply moved to the next file that explained the feature. The literal is fixed and carries no secret, so the exact string is allowlisted wherever it appears rather than chased from file to file."
 regexTarget = "match"
 regexes = ['Invoices\.2026']
-
-[[allowlists]]
-description = "HS256 key of the sandbox Keycloak (#2231): base64url of a readable 64-byte ASCII string, committed so the static-key rows can configure yarilo from git. AND-scoped to the file AND this exact literal."
-condition = "AND"
-regexTarget = "match"
-regexes = ['eWFyaWxvLXNhbmRib3gtaHMyNTYta2V5']
-paths = ['''helm_values/keycloak-sandbox\.yaml''']

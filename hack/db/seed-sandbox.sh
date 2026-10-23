@@ -4,13 +4,16 @@
 # owns those rows, and no other one (#1806, #1943).
 #
 # Usage:
-#   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml bash hack/db/seed-sandbox.sh
+#   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml YARILO_DB_PASSWORD=... YARILO_PASSWORD=... \
+#     bash hack/db/seed-sandbox.sh
 
 set -euo pipefail
 
 DB_NS="${DB_NS:-db}"
 DB_POD="${DB_POD:-mysql-0}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
+DB_PASSWORD="${YARILO_DB_PASSWORD:?set YARILO_DB_PASSWORD, the password of the sandbox database user}"
+ACCOUNT_PASSWORD="${YARILO_PASSWORD:?set YARILO_PASSWORD, the password to give the seeded accounts}"
 OVER_USER="${OVER_USER:-over@d00001.test}"
 SCRAM_USER="${SCRAM_USER:-scram@d00001.test}"
 NOLOGIN_USER="${NOLOGIN_USER:-nologin@d00001.test}"
@@ -19,12 +22,12 @@ RULE_LMTP_USER="${RULE_LMTP_USER:-rulelmtp@d00001.test}"
 
 mysql_do() {
   kubectl --kubeconfig="$KCFG" exec -i -n "$DB_NS" "$DB_POD" -- \
-    mysql -u yarilo -psandbox-secret yarilo "$@"
+    mysql -u yarilo -p"$DB_PASSWORD" yarilo "$@"
 }
 
 echo "Generating SHA512-CRYPT hash ..."
 PLAIN_HASH=$(kubectl --kubeconfig="$KCFG" exec -n "$DB_NS" "$DB_POD" -- \
-  openssl passwd -6 'Yarilo!test1')
+  openssl passwd -6 "$ACCOUNT_PASSWORD")
 
 echo "Ensuring quota_clone mapped table (quota) exists ..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

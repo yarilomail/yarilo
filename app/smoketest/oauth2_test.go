@@ -32,7 +32,7 @@ func TestOAuth2TokenThroughTheNamedCA(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm() //nolint:errcheck
 		got = []string{r.PostForm.Get("grant_type"), r.PostForm.Get("client_id"), r.PostForm.Get("username"), r.PostForm.Get("password")}
-		if r.PostForm.Get("password") != "Yarilo!test1" {
+		if r.PostForm.Get("password") != "pw-test" {
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error":"invalid_grant"}`)
 			return
@@ -48,15 +48,15 @@ func TestOAuth2TokenThroughTheNamedCA(t *testing.T) {
 	setFlag(t, flagOAuth2ClientID, "yarilo-test")
 
 	setFlag(t, flagOAuth2CA, "")
-	if _, err := oauth2Token("u1@d00001.test", "Yarilo!test1"); err == nil {
+	if _, err := oauth2Token("u1@d00001.test", "pw-test"); err == nil {
 		t.Fatal("a token came through a CA nobody named")
 	}
 	setFlag(t, flagOAuth2CA, ca)
-	tok, err := oauth2Token("u1@d00001.test", "Yarilo!test1")
+	tok, err := oauth2Token("u1@d00001.test", "pw-test")
 	if err != nil || tok != "tok" {
 		t.Fatalf("token = %q, %v", tok, err)
 	}
-	if strings.Join(got, "|") != "password|yarilo-test|u1@d00001.test|Yarilo!test1" {
+	if strings.Join(got, "|") != "password|yarilo-test|u1@d00001.test|pw-test" {
 		t.Errorf("form = %v", got)
 	}
 	if _, err := oauth2Token("u1@d00001.test", "wrong"); err == nil || !strings.Contains(err.Error(), "invalid_grant") {

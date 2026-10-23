@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# The seed below runs with its output hidden; a missing password must stop here.
+: "${YARILO_PASSWORD:?set YARILO_PASSWORD, the password of the sandbox test accounts}"
+: "${YARILO_DB_PASSWORD:?set YARILO_DB_PASSWORD, the password of the sandbox database user}"
+
 # An arm that ends anywhere but its own last line says so: three runs died
 # inside the fill leaving only the line before it (#1875).
 trap 'rc=$?; [ "$rc" = 0 ] || echo "ab-arm: arm ${ARM:-?} ended during ${STEP:-?} with status $rc" >&2' EXIT

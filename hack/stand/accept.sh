@@ -5,7 +5,7 @@
 # explains nothing once the pods are replaced (#2183).
 #
 # Usage:
-#   KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/accept.sh <image-tag> <out-dir>
+#   KUBECONFIG=~/.kube/sbox.yaml YARILO_PASSWORD=... bash hack/stand/accept.sh <image-tag> <out-dir>
 #
 # Runs on the runner, like a window. Exits 1 when any criterion fails; a SKIP
 # (a criterion that cannot run yet) is counted apart and does not.
@@ -22,7 +22,7 @@ RELAY_NS="${RELAY_NS:-yarilo-relay}"
 RELAY_SELECTOR="${RELAY_SELECTOR:-app=relay-mta}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PASSWORD='Yarilo!test1'
+PASSWORD="${YARILO_PASSWORD:?set YARILO_PASSWORD, the password of the sandbox test accounts}"
 # What one smoketest run passes; it moves with every check added to the binary.
 SMOKE_CHECKS=51
 # The only rows a run skips: they need the OAuth2 overlay, which acceptance runs without (#2231).

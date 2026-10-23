@@ -14,7 +14,7 @@ OUT="${3:?output directory}"
 NS="${YARILO_NS:-yarilo-sb}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 USER_NAME="${YARILO_USER:-u1@d00001.test}"
-PASSWORD="${YARILO_PASSWORD:-Yarilo!test1}"
+PASSWORD="${YARILO_PASSWORD:?set YARILO_PASSWORD, the password of the sandbox test accounts}"
 PORT="${YARILO_LOCAL_PORT:-11143}"
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" "$@"; }
