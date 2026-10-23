@@ -571,8 +571,8 @@ type JMAPProtocolConfig struct {
 	// sending; 0 keeps none. Default 86400.
 	SubmissionTTLSeconds int `koanf:"jmap_submission_ttl_seconds"`
 	// PushPoll is how often a push stream's states are recomputed, in seconds,
-	// for events lost while the lock service was out of reach; 0 turns it off.
-	// Default 60.
+	// for events lost while the lock service was out of reach; 0 turns push
+	// off. Default 60.
 	PushPoll int `koanf:"jmap_push_poll"`
 }
 

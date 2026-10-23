@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -243,13 +245,70 @@ func TestWriteRightAfterConnectArrives(t *testing.T) {
 	}
 }
 
-// A write that reached no event still arrives, by the recompute; with the
-// recompute off it does not.
+// changedFirst is a lock service whose subscription opens with an event
+// already waiting, so the watcher wakes the stream before it sends anything.
+type changedFirst struct{ locks.Locker }
+
+func (l changedFirst) Subscribe(ctx context.Context, resource string) (<-chan locks.Event, error) {
+	in, err := l.Locker.Subscribe(ctx, resource)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan locks.Event, 1)
+	out <- locks.Event{Resource: locks.MailboxKey(testUser, "INBOX")}
+	go func() {
+		defer close(out)
+		for e := range in {
+			out <- e
+		}
+	}()
+	return out, nil
+}
+
+// A reconnect with a change already waiting still gets its full state.
+func TestReconnectAfterAChangeIsNotStuck(t *testing.T) {
+	f := pushServer(t, time.Hour, 0)
+	f.s.opts.Storage.Locker = changedFirst{f.events}
+	for i := range 10 {
+		st := f.open(t, "types=Email,Mailbox&closeafter=state", "7")
+		if _, ok := st.next(t, "state", eventWait); !ok {
+			t.Fatalf("reconnect %d: no state", i)
+		}
+	}
+}
+
+// failingFirst is a lock service out of reach for the first subscription.
+type failingFirst struct {
+	locks.Locker
+	tried *atomic.Bool
+}
+
+func (l failingFirst) Subscribe(ctx context.Context, resource string) (<-chan locks.Event, error) {
+	if !l.tried.Swap(true) {
+		return nil, errors.New("lock service out of reach")
+	}
+	return l.Locker.Subscribe(ctx, resource)
+}
+
+// A subscription that failed is asked again, and what was written meanwhile
+// arrives once it lands.
+func TestFailedSubscriptionIsRetried(t *testing.T) {
+	f := pushServer(t, time.Hour, 0)
+	f.s.opts.Storage.Locker = failingFirst{f.events, &atomic.Bool{}}
+	st := f.open(t, "types=Email", "")
+	f.flag(t, "$flagged")
+	if _, ok := st.next(t, "state", pushResubscribe+eventWait); !ok {
+		t.Fatal("no state after the lock service came back")
+	}
+}
+
+// A write that reached no event still arrives, by the recompute, and not
+// before it.
 func TestRecomputeCatchesALostEvent(t *testing.T) {
 	for _, tc := range []struct {
 		poll time.Duration
 		want bool
-	}{{testPoll, true}, {0, false}} {
+	}{{testPoll, true}, {time.Hour, false}} {
 		f := pushServer(t, tc.poll, 0)
 		st := f.open(t, "types=Mailbox", "")
 		subscribeThrough(t, f.info.Home, f.locker, "Work") // emits nowhere
@@ -380,9 +439,8 @@ func TestStreamOutlivesTheWriteTimeout(t *testing.T) {
 	}
 }
 
-func TestNoStorageAnswersNoContent(t *testing.T) {
-	f := pushServer(t, testPoll, 0)
-	f.s.opts.Storage = nil
+func TestPushOffAnswersNoContent(t *testing.T) {
+	f := pushServer(t, 0, 0)
 	st := f.open(t, "types=Email", "")
 	if st.resp.StatusCode != http.StatusNoContent {
 		t.Errorf("status %d, want 204", st.resp.StatusCode)

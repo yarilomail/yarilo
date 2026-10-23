@@ -3,6 +3,7 @@ package jmap
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,7 +24,7 @@ const eventSourcePath = "/jmap/eventsource/"
 // pushHub keeps one watcher per account with an open stream in this pod.
 type pushHub struct {
 	srv *Server
-	// poll is the safety recompute interval; 0 leaves the events alone.
+	// poll is the safety recompute interval.
 	poll time.Duration
 	// done ends every stream when the server shuts down.
 	done chan struct{}
@@ -85,38 +86,28 @@ func (p *pushHub) leave(w *watcher, ch chan []counters.Type) {
 	}
 }
 
-// pushResubscribe is the pause before a dropped event channel is asked again.
+// pushResubscribe is the pause before the event channel is asked again.
 const pushResubscribe = 2 * time.Second
 
 func (w *watcher) run(ctx context.Context) {
-	var tick <-chan time.Time
-	if w.hub.poll > 0 {
-		t := time.NewTicker(w.hub.poll)
-		defer t.Stop()
-		tick = t.C
-	}
+	t := time.NewTicker(w.hub.poll)
+	defer t.Stop()
+	lost := false
 	for ctx.Err() == nil {
 		var events <-chan locks.Event
+		err := errors.New("no lock service")
 		if l := w.hub.srv.opts.Storage.Locker; l != nil {
-			ch, err := l.Subscribe(ctx, locks.AccountKey(w.user))
-			if err != nil {
-				slog.Warn("jmap: push events unavailable", "user", w.user, "err", err)
-			} else {
-				events = ch
-			}
+			events, err = l.Subscribe(ctx, locks.AccountKey(w.user))
 		}
+		if err != nil {
+			slog.Warn("jmap: push events unavailable", "user", w.user, "err", err)
+		} else if lost {
+			// Events may have been missed while the channel was down.
+			w.notify(allTypes)
+		}
+		lost = true
 		w.markReady()
-		w.listen(ctx, events, tick)
-		if ctx.Err() != nil {
-			return
-		}
-		// Events may have been lost while the channel was down.
-		w.notify(allTypes)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(pushResubscribe):
-		}
+		w.listen(ctx, events, t.C)
 	}
 }
 
@@ -128,18 +119,25 @@ func (w *watcher) markReady() {
 	}
 }
 
-// listen serves one event channel until it closes; with none, the safety
-// interval alone.
+// listen serves the event channel and the safety interval; once the channel
+// is missing or closed, it returns after pushResubscribe for another try.
 func (w *watcher) listen(ctx context.Context, events <-chan locks.Event, tick <-chan time.Time) {
+	var retry <-chan time.Time
+	if events == nil {
+		retry = time.After(pushResubscribe)
+	}
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-retry:
 			return
 		case <-tick:
 			w.notify(allTypes)
 		case evt, ok := <-events:
 			if !ok {
-				return
+				events, retry = nil, time.After(pushResubscribe)
+				continue
 			}
 			if types := typesOfEvent(evt); len(types) > 0 {
 				w.notify(types)
@@ -304,8 +302,9 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 	// Without an id the states at connect are the base. With one, every
 	// requested type's state is sent at once: the id may predate a move.
 	sent := map[counters.Type]string{}
+	var first []counters.Type
 	if _, perr := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64); perr == nil {
-		notify <- types
+		first = types
 	} else if base, err := s.statesOf(r.Context(), id.user, types); err == nil {
 		sent = base
 	} else {
@@ -326,44 +325,49 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 		pings = t.C
 	}
 	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-s.push.done:
-			return
-		case <-pings:
-			if err := writeEvent(w, rc, "ping", "", map[string]int{"interval": ping}); err != nil {
+		moved := first
+		first = nil
+		if moved == nil {
+			select {
+			case <-r.Context().Done():
 				return
-			}
-			metricPushEvents.WithLabelValues("ping").Inc()
-		case moved := <-notify:
-			changed := intersect(moved, types)
-			if len(changed) == 0 {
-				continue
-			}
-			states, err := s.statesOf(r.Context(), id.user, changed)
-			if err != nil {
-				slog.Warn("jmap: push state", "user", id.user, "err", err)
-				continue
-			}
-			out := map[string]string{}
-			for t, st := range states {
-				if prev, ok := sent[t]; !ok || prev != st {
-					out[string(t)] = st
-					sent[t] = st
+			case <-s.push.done:
+				return
+			case <-pings:
+				if err := writeEvent(w, rc, "ping", "", map[string]int{"interval": ping}); err != nil {
+					return
 				}
-			}
-			if len(out) == 0 {
+				metricPushEvents.WithLabelValues("ping").Inc()
 				continue
+			case moved = <-notify:
 			}
-			change := map[string]any{"@type": "StateChange", "changed": map[string]any{id.user: out}}
-			if err := writeEvent(w, rc, "state", strconv.FormatUint(s.push.seq.Add(1), 10), change); err != nil {
-				return
+		}
+		changed := intersect(moved, types)
+		if len(changed) == 0 {
+			continue
+		}
+		states, err := s.statesOf(r.Context(), id.user, changed)
+		if err != nil {
+			slog.Warn("jmap: push state", "user", id.user, "err", err)
+			continue
+		}
+		out := map[string]string{}
+		for t, st := range states {
+			if prev, ok := sent[t]; !ok || prev != st {
+				out[string(t)] = st
+				sent[t] = st
 			}
-			metricPushEvents.WithLabelValues("state").Inc()
-			if closeAfter {
-				return
-			}
+		}
+		if len(out) == 0 {
+			continue
+		}
+		change := map[string]any{"@type": "StateChange", "changed": map[string]any{id.user: out}}
+		if err := writeEvent(w, rc, "state", strconv.FormatUint(s.push.seq.Add(1), 10), change); err != nil {
+			return
+		}
+		metricPushEvents.WithLabelValues("state").Inc()
+		if closeAfter {
+			return
 		}
 	}
 }

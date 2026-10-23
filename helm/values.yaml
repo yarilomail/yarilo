@@ -2173,8 +2173,8 @@ protocol:
     ## jmap_submission_ttl_seconds keeps an EmailSubmission record this long
     ## after sending, for EmailSubmission/get; 0 keeps none.
     jmap_submission_ttl_seconds: 86400
-    ## Seconds between recomputes of a push stream's states, for events lost
-    ## while the lock service was out of reach; 0 turns the recompute off.
+    ## Seconds between safety recomputes of a push stream's states, for events
+    ## lost while the lock service was out of reach; 0 turns push off.
     jmap_push_poll: 60
     ## Browser origins allowed to call the JMAP endpoint. Empty denies every
     ## cross-origin request, which is the default: an endpoint any page can
