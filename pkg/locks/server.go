@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -394,6 +395,13 @@ func (s *Server) handleEmit(ctx context.Context, w io.Writer, fields []string, p
 		_ = writeFields(w, respError, "internal")
 		return
 	}
+	// The account's channel hears it too, the key in front of the payload: the
+	// writer still sends one EMIT.
+	if user := accountOf(fields[1]); user != "" {
+		if err := s.backend.Publish(ctx, AccountKey(user), EventType(fields[2]), fields[1]+"\x00"+fields[3]); err != nil {
+			s.logger.Warn("locks: account publish failed", "peer", peer, "user", user, "err", err)
+		}
+	}
 	_ = writeFields(w, respOK)
 }
 
@@ -426,6 +434,9 @@ func (s *Server) handleSubscribe(ctx context.Context, conn net.Conn, fields []st
 		case evt, ok := <-ch:
 			if !ok {
 				return
+			}
+			if strings.HasPrefix(resource, accountPrefix) {
+				evt.Resource, evt.Payload, _ = strings.Cut(evt.Payload, "\x00")
 			}
 			if err := writeFields(conn, respEvent, evt.Resource, string(evt.Type), evt.Payload); err != nil {
 				return

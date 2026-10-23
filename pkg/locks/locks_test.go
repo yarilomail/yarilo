@@ -31,6 +31,7 @@ func runSuite(t *testing.T, name string, factory lockerFactory) {
 		t.Run("Renew", func(t *testing.T) { testRenew(t, factory) })
 		t.Run("UnlockUnknown", func(t *testing.T) { testUnlockUnknown(t, factory) })
 		t.Run("Subscribe", func(t *testing.T) { testSubscribe(t, factory) })
+		t.Run("AccountSubscribe", func(t *testing.T) { testAccountSubscribe(t, factory) })
 		t.Run("ResourceKeyOrdering", func(t *testing.T) { testResourceKeys(t, factory) })
 		t.Run("Counter", func(t *testing.T) { testCounter(t, factory) })
 		t.Run("SharedConcurrentReaders", func(t *testing.T) { testSharedConcurrentReaders(t, factory) })
@@ -133,6 +134,56 @@ func testSubscribe(t *testing.T, factory lockerFactory) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for event")
+	}
+}
+
+// An account subscriber hears every account-scoped key of its user, with the key
+// the event was emitted on; another user's events and unscoped keys stay out.
+func testAccountSubscribe(t *testing.T, factory lockerFactory) {
+	l, cleanup := factory(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ch, err := l.Subscribe(ctx, locks.AccountKey("carol"))
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	emits := []struct {
+		resource string
+		t        locks.EventType
+		payload  string
+		heard    bool
+	}{
+		{locks.MailboxKey("carol", "INBOX"), locks.EventDelivered, "msg-1", true},
+		{locks.MailboxKey("dave", "INBOX"), locks.EventDelivered, "msg-2", false},
+		{locks.IndexKey("carol"), locks.EventChanged, "", false},
+		{locks.MailboxListKey("carol"), locks.EventMailboxCreate, "Work", true},
+		{locks.SieveScriptsKey("carol"), locks.EventChanged, "", true},
+		{locks.SubmissionsKey("carol"), locks.EventChanged, "", true},
+	}
+	for _, e := range emits {
+		if err := l.Emit(ctx, e.resource, e.t, e.payload); err != nil {
+			t.Fatalf("emit %s: %v", e.resource, err)
+		}
+	}
+	for _, e := range emits {
+		if !e.heard {
+			continue
+		}
+		select {
+		case evt := <-ch:
+			if evt.Resource != e.resource || evt.Type != e.t || evt.Payload != e.payload {
+				t.Fatalf("got %+v, want %s %s %q", evt, e.resource, e.t, e.payload)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for the event on %s", e.resource)
+		}
+	}
+	select {
+	case evt := <-ch:
+		t.Fatalf("an event the account must not hear: %+v", evt)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
