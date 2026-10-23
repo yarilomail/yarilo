@@ -187,6 +187,12 @@ data:
         submission_max_recipients: {{ .Values.protocol.submission.max_recipients }}
         recipient_delimiter: {{ .Values.protocol.submission.recipient_delimiter | quote }}
         submission_add_received_header: {{ .Values.protocol.submission.add_received_header }}
+        {{- with .Values.protocol.submission.client_workarounds }}
+        submission_client_workarounds:
+          {{- range . }}
+          - {{ . | quote }}
+          {{- end }}
+        {{- end }}
         relay:
           submission_relay_host: {{ .Values.protocol.submission.relay.host | quote }}
           submission_relay_port: {{ .Values.protocol.submission.relay.port }}

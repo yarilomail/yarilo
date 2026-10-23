@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 17
+config_schema_version: 18
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
