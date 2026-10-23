@@ -58,6 +58,7 @@ func (t *boxTx) Expunge(uid uint32) {
 }
 
 func (t *boxTx) Append(m *mailbox.MessageMeta)     { t.tx.Append(m) }
+func (t *boxTx) MarkDirty(uid uint32, dirty bool)  { t.tx.MarkDirty(uid, dirty) }
 func (t *boxTx) Commit() (mailbox.TxResult, error) { return t.tx.Commit() }
 func (t *boxTx) Rollback()                         { t.tx.Rollback() }
 
