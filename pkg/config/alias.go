@@ -16,7 +16,8 @@ import (
 //     that silently picks a winner changes behaviour on a config nobody edited;
 //   - the deprecation is logged once at load, naming both spellings, not on
 //     every read;
-//   - documentation and values.yaml carry the canonical spelling alone.
+//   - documentation carries the canonical spelling; the chart keeps its own
+//     value names and refuses the canonical ones (yarilo.refuseCanonical).
 //
 // Presence is asked of koanf rather than inferred from a zero value: a key set
 // to 0 or "" is set, and adopting an alias only because the canonical field

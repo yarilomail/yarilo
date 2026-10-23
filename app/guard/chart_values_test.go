@@ -211,6 +211,9 @@ func TestQuotaStatusLooksUpOnTheReleaseAuth(t *testing.T) {
 // own name for the same setting, with that name and where the entry sits.
 var canonicalNames = []struct{ at, yarilo, chart string }{
 	{"components.auth", "auth_failure_delay", "failure_delay"},
+	{"components.auth.cache", "auth_cache_size", "cache_size"},
+	{"components.auth.cache", "auth_cache_ttl", "ttl_seconds"},
+	{"components.auth.cache", "auth_cache_negative_ttl", "negative_ttl_seconds"},
 	{"components.auth.master_users", "auth_master_user_separator", "separator"},
 	{"quota", "quota_storage_grace", "quota_grace"},
 	{"components.auth.policy", "auth_policy_server_url", "url"},
@@ -282,13 +285,16 @@ func TestCanonicalNamesAreRefused(t *testing.T) {
 				t.Errorf("the failure does not say %q:\n%s", want, out)
 			}
 			// The chart's own name carries the same value into the config.
-			out, err = renderWith(t, valuesAt(c.at, c.chart, `"v-`+c.chart+`"`))
+			value, wantLine := `"v-`+c.chart+`"`, "v-"+c.chart // a block scalar puts it on the next line
+			switch c.chart {
+			case "prefer_introspection":
+				wantLine = "true"
+			case "ttl_seconds", "negative_ttl_seconds": // rendered through int64
+				value, wantLine = "777", "777"
+			}
+			out, err = renderWith(t, valuesAt(c.at, c.chart, value))
 			if err != nil {
 				t.Fatalf("helm template with %s: %v\n%s", c.chart, err, out)
-			}
-			wantLine := "v-" + c.chart // a block scalar puts it on the next line
-			if c.chart == "prefer_introspection" {
-				wantLine = "true"
 			}
 			found := false
 			lines := strings.Split(renderedConfig(t, string(out)), "\n")
