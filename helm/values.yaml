@@ -2282,33 +2282,9 @@ sieve:
   imapsieve_scripts: {}
   imapsieve_global_before: []
   imapsieve_global_after: []
-  ## sieve_extensions is the whitelist of Sieve extensions users may declare with
-  ## require. Corresponds to the sieve_extensions. Empty list = allow all
-  ## (backwards-compatible). Operators who need enotify/include/extlists must add
-  ## them explicitly.
-  sieve_extensions:
-    - fileinto
-    - reject
-    - ereject
-    - envelope
-    - encoded-character
-    - variables
-    - relational
-    - subaddress
-    - body
-    - date
-    - index
-    - mailbox
-    - duplicate
-    - imap4flags
-    - redirect
-    - copy
-    - vacation
-    - environment
-    - vnd.yarilo.debug
-    - vnd.yarilo.environment
-    - vnd.yarilo.pipe
-    - vnd.yarilo.filter
+  ## Extensions users may require. Empty allows every extension the engine declares,
+  ## as the binary does without the chart; set a list to restrict them.
+  sieve_extensions: []
 
   ## Extensions only the administrator's scripts may use, on top of
   ## sieve_extensions; a user's script never gets them (docs: SIEVE).
