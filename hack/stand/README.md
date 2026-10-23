@@ -117,6 +117,30 @@ and `store_latency` (count, p50 and p99 bounds of `imap_command_seconds` for
 the delta across the run). The server's `Store` count must
 equal the two halves' total; a gap means the page was read from the wrong pods.
 
+## Push across pods
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/push-latency.sh <label> <out-dir>
+```
+
+A JMAP push stream is held open on one backend pod, straight to its JMAP
+container over internal mTLS, while mail for the same account is delivered
+over LMTP to the pod the director pins it to: the time from each delivery's
+`250` to the stream's StateChange naming `Email` is the cross-pod path of push
+events. The account is the first candidate pinned away from the stream's pod.
+One run on one image, never alongside a window arm; bash 5, so the runner.
+
+| knob | default | what it changes |
+|:---|:---|:---|
+| `YARILO_PUSH_POD` | `yarilo-backend-1` | the pod holding the stream |
+| `YARILO_PUSH_USERS` | `u1`..`u8@d00001.test` | candidate accounts, first pinned elsewhere wins |
+| `YARILO_PUSH_COUNT` | 50 | deliveries |
+| `YARILO_PUSH_PAUSE` | 2 | seconds between deliveries |
+| `YARILO_PUSH_WAIT` | 10 | seconds a delivery's event may take before it counts as lost |
+
+It prints `push_latency` (count, lost, p50, p99 and max in milliseconds). A
+lost event fails the run. The stand-runs row takes p99 under 1 s as its bar.
+
 ## The same start
 
 Mailbox fill moves throughput further than most things under test, so every arm
@@ -187,7 +211,7 @@ from the file on every start, so a realm change is applied by re-applying and
 restarting. Its certificate is a leaf issued in `yarilo-sb` by the stand's
 internal CA; only the leaf Secret is copied to `keycloak`, never the CA key:
 
-```sh
+```
 kubectl apply -f hack/internal-ca-sandbox.yaml   # once, in yarilo-sb
 kubectl apply -f helm_values/keycloak-sandbox.yaml
 kubectl -n yarilo-sb wait certificate/keycloak-tls --for=condition=Ready --timeout=120s
@@ -221,7 +245,7 @@ deploy it, run that mode's rows, deploy the next — and ends on the base values
 with the same `helm upgrade`. Each step is its own `stand-runs.md` row naming
 the overlay and the image:
 
-```sh
+```
 helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
   -f helm_values/values-sandbox-oauth2-<mode>.yaml --set image.tag=<tag>   # one mode
 helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
@@ -233,7 +257,7 @@ overlay, once per mailbox type, and all three must pass; that run is its own `st
 the overlay. The token comes from the password grant of `yarilo-test`, over the
 internal CA the Job already mounts:
 
-```sh
+```
 for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
   dir=$(mktemp -d); cp hack/smoketest/run.sh "$dir/"
   awk -v u="$user" '{ gsub(/u1@d00001\.test/, u); print }
