@@ -3,10 +3,13 @@ package login
 import (
 	"bufio"
 	"context"
+	"crypto/md5"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -132,25 +135,65 @@ func TestKeptClientIDIsBounded(t *testing.T) {
 	}
 }
 
+// An IMAPS login over TCP: the AUTH line carries TLS, the name the client
+// asked for, its hello fingerprint, the ports and the real peer.
 func TestTheAuthLineSaysWhatTheConnectionIs(t *testing.T) {
-	c1, c2 := net.Pipe()
-	defer c1.Close()                                                 //nolint:errcheck
-	defer c2.Close()                                                 //nolint:errcheck
-	tlsConn := tls.Client(c1, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec
-	for _, tc := range []struct {
-		name      string
-		conn      net.Conn
-		clientID  string
-		noPenalty bool
-		want      int
-	}{
-		{"plain, nothing known", c1, "", false, 0},
-		{"TLS", tlsConn, "", false, 1},
-		{"TLS, an ID and a trusted peer", tlsConn, `"name" "x"`, true, 3},
-	} {
-		if got := len(authOrigin(tc.conn, tc.clientID, tc.noPenalty)); got != tc.want {
-			t.Errorf("%s: %d options, want %d", tc.name, got, tc.want)
+	serverTLS, clientTLS := cleartextTLS(t)
+	got := make(chan string, 4)
+	srv := New(testOpts(Options{Protocol: ProtocolIMAPS, AuthAddr: capturingAuth(t, got), BackendAddr: "127.0.0.1:1",
+		LocalIP: "127.0.0.1", ExtTLS: serverTLS}))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close() //nolint:errcheck
+	go func() {
+		if c, err := ln.Accept(); err == nil {
+			srv.handleConn(c)
 		}
+	}()
+	clientTLS.ServerName = "mail.example.org"
+	c, err := tls.Dial("tcp", ln.Addr().String(), clientTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close() //nolint:errcheck
+	rd := bufio.NewReader(c)
+	rd.ReadString('\n') //nolint:errcheck
+	fmt.Fprint(c, "a1 LOGIN alice secret\r\n")
+	var line string
+	select {
+	case line = <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no AUTH reached the service")
+	}
+	_, clientPort, _ := net.SplitHostPort(c.LocalAddr().String())
+	_, serverPort, _ := net.SplitHostPort(ln.Addr().String())
+	for _, want := range []string{
+		"\tsecured=tls", "\tlocal_name=mail.example.org", "\trport=" + clientPort, "\tlport=" + serverPort,
+		"\treal_rip=127.0.0.1", "\treal_lip=127.0.0.1", "\treal_rport=" + clientPort, "\treal_lport=" + serverPort,
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("AUTH %q lacks %q", line, want)
+		}
+	}
+	if !regexp.MustCompile(`\tssl_ja3_hash=[0-9a-f]{32}(\t|\n|$)`).MatchString(line) {
+		t.Errorf("AUTH %q has no JA3 hash", line)
+	}
+}
+
+// The fingerprint is the reference's: GREASE values out of extensions and
+// groups, kept in ciphers, the version the server's highest less one.
+func TestJA3IsTheReferences(t *testing.T) {
+	h := &tls.ClientHelloInfo{
+		CipherSuites:    []uint16{0x0a0a, 4865, 4866},
+		Extensions:      []uint16{0x1a1a, 0, 10, 11},
+		SupportedCurves: []tls.CurveID{0x2a2a, 29, 23},
+		SupportedPoints: []uint8{0},
+	}
+	sum := md5.Sum([]byte("771,2570-4865-4866,0-10-11,29-23,0")) //nolint:gosec // JA3
+	if got := ja3Hash(h, tls.VersionTLS13); got != hex.EncodeToString(sum[:]) {
+		t.Errorf("ja3 %s, want the hash of 771,2570-4865-4866,0-10-11,29-23,0", got)
 	}
 }
 
@@ -289,5 +332,101 @@ func TestATrustedPeerLogsInWithoutPenalty(t *testing.T) {
 				t.Fatal("no AUTH reached the service")
 			}
 		})
+	}
+}
+
+// Behind a PROXY header the client is the one the header names, and the real
+// peer is the proxy itself.
+func TestBehindAProxyTheRealPeerIsTheProxy(t *testing.T) {
+	got := make(chan string, 4)
+	_, loopback, _ := net.ParseCIDR("127.0.0.0/8")
+	srv := New(testOpts(Options{Protocol: ProtocolIMAP, AuthAddr: capturingAuth(t, got), BackendAddr: "127.0.0.1:1",
+		LocalIP: "127.0.0.1", HAProxy: true, HAProxyTimeout: 5 * time.Second, HAProxyNets: []*net.IPNet{loopback}}))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln) //nolint:errcheck
+	defer ln.Close() //nolint:errcheck
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close() //nolint:errcheck
+	fmt.Fprint(c, "PROXY TCP4 192.0.2.10 198.51.100.20 51000 143\r\n")
+	rd := bufio.NewReader(c)
+	rd.ReadString('\n') //nolint:errcheck
+	fmt.Fprint(c, "a1 LOGIN alice secret\r\n")
+	var line string
+	select {
+	case line = <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no AUTH reached the service")
+	}
+	_, proxyPort, _ := net.SplitHostPort(c.LocalAddr().String())
+	for _, want := range []string{
+		"\trip=192.0.2.10", "\trport=51000", "\tlport=143",
+		"\treal_rip=127.0.0.1", "\treal_rport=" + proxyPort,
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("AUTH %q lacks %q", line, want)
+		}
+	}
+}
+
+// authLineOver runs one IMAP login over TCP, with lines sent first, and
+// returns the AUTH line the service got.
+func authLineOver(t *testing.T, opts Options, lines ...string) string {
+	t.Helper()
+	got := make(chan string, 4)
+	opts.Protocol, opts.AuthAddr, opts.BackendAddr, opts.LocalIP = ProtocolIMAP, capturingAuth(t, got), "127.0.0.1:1", "127.0.0.1"
+	srv := New(testOpts(opts))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln)                 //nolint:errcheck
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() }) //nolint:errcheck
+	rd := bufio.NewReader(c)
+	for _, l := range lines {
+		fmt.Fprint(c, l)
+	}
+	rd.ReadString('\n') //nolint:errcheck
+	fmt.Fprint(c, "a1 LOGIN alice secret\r\n")
+	select {
+	case line := <-got:
+		return line
+	case <-time.After(5 * time.Second):
+		t.Fatal("no AUTH reached the service")
+	}
+	return ""
+}
+
+// A trusted forwarder's client port is the client's port.
+func TestAForwardedPortIsTheClientPort(t *testing.T) {
+	_, loopback, _ := net.ParseCIDR("127.0.0.0/8")
+	line := authLineOver(t, Options{XClient: true, XClientNets: []*net.IPNet{loopback}},
+		`a0 ID ("x-originating-ip" "203.0.113.9" "x-originating-port" "54321")`+"\r\n")
+	for _, want := range []string{"\trip=203.0.113.9", "\trport=54321", "\treal_rip=127.0.0.1"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("AUTH %q lacks %q", line, want)
+		}
+	}
+}
+
+// Behind a PROXY header, trust is the proxy's own address, not the client's
+// it names.
+func TestNoPenaltyIsForTheRealPeer(t *testing.T) {
+	_, loopback, _ := net.ParseCIDR("127.0.0.0/8")
+	line := authLineOver(t, Options{HAProxy: true, HAProxyTimeout: 5 * time.Second,
+		HAProxyNets: []*net.IPNet{loopback}, XClientNets: []*net.IPNet{loopback}},
+		"PROXY TCP4 192.0.2.10 198.51.100.20 51000 143\r\n")
+	if !strings.Contains(line, "\tno-penalty") {
+		t.Errorf("AUTH %q: a trusted proxy's login is penalised", line)
 	}
 }

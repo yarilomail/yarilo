@@ -2,8 +2,12 @@ package policy
 
 import (
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/yarilomail/yarilo/pkg/expand"
 	"github.com/yarilomail/yarilo/pkg/sqlvars"
 )
 
@@ -19,114 +23,211 @@ var DefaultRequestAttributes = map[string]string{
 	"fail_type":  "%{fail_type}",
 }
 
-// attrVars are the variables an attribute may name.
-var attrVars = map[string]func(r Request, pwhash string) string{
-	"requested_username": func(r Request, _ string) string { return r.Username },
-	"user":               func(r Request, _ string) string { return r.Username },
-	"username":           func(r Request, _ string) string { l, _ := sqlvars.SplitUser(r.Username); return l },
-	"domain":             func(r Request, _ string) string { _, d := sqlvars.SplitUser(r.Username); return d },
-	"hashed_password":    func(_ Request, h string) string { return h },
-	"protocol":           func(r Request, _ string) string { return sqlvars.ProtocolName(r.Service) },
-	"service":            func(r Request, _ string) string { return sqlvars.ProtocolName(r.Service) },
-	"remote_ip":          func(r Request, _ string) string { return r.RemoteIP },
-	"rip":                func(r Request, _ string) string { return r.RemoteIP },
-	"local_ip":           func(r Request, _ string) string { return r.LocalIP },
-	"lip":                func(r Request, _ string) string { return r.LocalIP },
-	"session":            func(r Request, _ string) string { return r.SessionID },
-	"client_id":          func(r Request, _ string) string { return r.DeviceID },
-	"fail_type":          func(r Request, _ string) string { return r.FailType },
+// VariableNames are the variables a template may name besides the providers:
+// the auth request's and the three the policy adds.
+var VariableNames = []string{
+	"user", "protocol", "home", "local_ip", "remote_ip", "client_pid", "password", "id",
+	"mechanism", "secured", "local_port", "remote_port", "cert", "login_user", "session",
+	"real_local_ip", "real_remote_ip", "real_local_port", "real_remote_port", "domain_first",
+	"domain_last", "master_user", "session_pid", "original_user", "auth_user", "local_name",
+	"client_id", "ssl_ja3_hash", "ssl_client_cert_fp", "ssl_client_cert_pubkey_fp", "owner_user",
+	"requested_username", "hashed_password", "fail_type",
 }
 
-// attribute is one body key and its value template, split into literals and
-// variables at load.
+// attribute is one body value: its path of object names and its template.
 type attribute struct {
-	object, key string // object is empty for a top-level key
-	parts       []templatePart
+	path []string
+	prog *expand.Program
 }
 
-type templatePart struct {
-	literal string
-	expand  func(Request, string) string
-}
+// compileAttributes parses every template and expands it once against an
+// empty request, so a template naming an unknown variable stops the service
+// at start rather than sending empty values.
+// processProviders read yarilo-auth's own environment, which must not leave
+// the cluster in a policy body.
+var processProviders = map[string]bool{"env": true, "process": true, "system": true}
 
-// compileAttributes parses every template, refusing an unknown variable: sent
-// as empty, it would look to the policy like a client that sent nothing.
 func compileAttributes(attrs map[string]string) ([]attribute, error) {
 	if attrs == nil {
 		attrs = DefaultRequestAttributes
 	}
-	out := make([]attribute, 0, len(attrs))
-	for key, tmpl := range attrs {
-		parts, err := compileTemplate(tmpl)
+	keys := make([]string, 0, len(attrs))
+	for k := range attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	empty := make(map[string]string, len(VariableNames))
+	for _, n := range VariableNames {
+		empty[n] = ""
+	}
+	out := make([]attribute, 0, len(keys))
+	leaves := map[string]bool{}
+	for _, key := range keys {
+		path := strings.Split(key, "/")
+		for _, part := range path {
+			if part == "" {
+				return nil, fmt.Errorf("policy: auth_policy_request_attributes %q: empty object or key", key)
+			}
+		}
+		leaves[key] = true
+		prog, err := expand.Parse(attrs[key])
 		if err != nil {
 			return nil, fmt.Errorf("policy: auth_policy_request_attributes %s: %w", key, err)
 		}
-		a := attribute{key: key, parts: parts}
-		// A key/subkey is subkey inside the object key, as the reference nests.
-		if obj, sub, ok := strings.Cut(key, "/"); ok {
-			if obj == "" || sub == "" {
-				return nil, fmt.Errorf("policy: auth_policy_request_attributes %q: empty object or key", key)
+		for _, n := range prog.Names() {
+			if prefix, _, ok := strings.Cut(n, ":"); ok && processProviders[prefix] {
+				return nil, fmt.Errorf("policy: auth_policy_request_attributes %s: %%{%s} reads yarilo-auth itself, refused", key, n)
 			}
-			a.object, a.key = obj, sub
 		}
-		out = append(out, a)
+		if _, err := prog.Execute(templateParams(empty, nil, nil)); err != nil {
+			return nil, fmt.Errorf("policy: auth_policy_request_attributes %s: %w", key, err)
+		}
+		out = append(out, attribute{path: path, prog: prog})
 	}
-	for _, a := range out {
-		if a.object != "" {
-			if _, clash := attrs[a.object]; clash {
-				return nil, fmt.Errorf("policy: auth_policy_request_attributes %q is both a value and an object", a.object)
+	for _, key := range keys {
+		for i := strings.IndexByte(key, '/'); i >= 0; i = nextSlash(key, i) {
+			if leaves[key[:i]] {
+				return nil, fmt.Errorf("policy: auth_policy_request_attributes %q is both a value and an object", key[:i])
 			}
 		}
 	}
 	return out, nil
 }
 
-func compileTemplate(s string) ([]templatePart, error) {
-	var parts []templatePart
-	var lit strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] != '%' {
-			lit.WriteByte(s[i])
-			continue
-		}
-		if i+1 < len(s) && s[i+1] == '%' {
-			lit.WriteByte('%')
-			i++
-			continue
-		}
-		if i+1 >= len(s) || s[i+1] != '{' {
-			return nil, fmt.Errorf("a %% not followed by {name} at offset %d", i)
-		}
-		end := strings.IndexByte(s[i+2:], '}')
-		if end < 0 {
-			return nil, fmt.Errorf("unterminated %%{ at offset %d", i)
-		}
-		name := strings.TrimSpace(s[i+2 : i+2+end])
-		fn, ok := attrVars[name]
-		if !ok {
-			return nil, fmt.Errorf("unknown variable %%{%s}", name)
-		}
-		if lit.Len() > 0 {
-			parts = append(parts, templatePart{literal: lit.String()})
-			lit.Reset()
-		}
-		parts = append(parts, templatePart{expand: fn})
-		i += end + 2
+func nextSlash(s string, i int) int {
+	j := strings.IndexByte(s[i+1:], '/')
+	if j < 0 {
+		return -1
 	}
-	if lit.Len() > 0 {
-		parts = append(parts, templatePart{literal: lit.String()})
-	}
-	return parts, nil
+	return i + 1 + j
 }
 
-func (a attribute) value(r Request, pwhash string) string {
+// templateParams is the expansion of one request: its variables, and the
+// passdb: and userdb: fields, each value JSON-escaped where it lands.
+func templateParams(vars, passdb, userdb map[string]string) *expand.Params {
+	field := func(m map[string]string) expand.Lookup {
+		return func(name string) (string, error) { return m[name], nil }
+	}
+	return &expand.Params{
+		Table:          vars,
+		Providers:      map[string]expand.Lookup{"passdb": field(passdb), "userdb": field(userdb)},
+		Escape:         func(s string) (string, error) { return jsonEscape(s), nil },
+		EscapeLiterals: true,
+	}
+}
+
+// body is the JSON request body: the attributes in key order, nested by
+// their paths, then the outcome where it applies and tls.
+func (c *Client) body(req Request, pwhash string, includeStatus, success, policyReject bool) []byte {
+	vars := make(map[string]string, len(VariableNames))
+	src := req.Vars
+	if len(src) == 0 {
+		src = requestVars(req)
+	}
+	for _, n := range VariableNames {
+		vars[n] = src[n]
+	}
+	vars["requested_username"] = req.Username
+	vars["hashed_password"] = pwhash
+	vars["fail_type"] = req.FailType
+	params := templateParams(vars, req.Passdb, req.Userdb)
+
 	var b strings.Builder
-	for _, p := range a.parts {
-		if p.expand != nil {
-			b.WriteString(p.expand(r, pwhash))
-		} else {
-			b.WriteString(p.literal)
+	b.WriteByte('{')
+	var open []string
+	first := true
+	for _, a := range c.attrs {
+		common := 0
+		for common < len(open) && common < len(a.path)-1 && open[common] == a.path[common] {
+			common++
 		}
+		for len(open) > common {
+			b.WriteByte('}')
+			open = open[:len(open)-1]
+		}
+		for _, obj := range a.path[len(open) : len(a.path)-1] {
+			if !first {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, `"%s":{`, jsonEscape(obj))
+			open = append(open, obj)
+			first = true
+		}
+		value, err := a.prog.Execute(params)
+		if err != nil {
+			slog.Warn("auth/policy: attribute not expanded", "key", strings.Join(a.path, "/"), "err", err)
+			value = ""
+		}
+		if !first {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `"%s":"%s"`, jsonEscape(a.path[len(a.path)-1]), value)
+		first = false
+	}
+	for range open {
+		b.WriteByte('}')
+	}
+	sep := func() {
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
+	}
+	if includeStatus {
+		sep()
+		fmt.Fprintf(&b, `"success":%t`, success)
+		sep()
+		fmt.Fprintf(&b, `"policy_reject":%t`, policyReject)
+	}
+	sep()
+	fmt.Fprintf(&b, `"tls":%t}`, req.TLS)
+	return []byte(b.String())
+}
+
+// requestVars fills the table from a request's own fields, for a caller that
+// built none.
+func requestVars(req Request) map[string]string {
+	return map[string]string{
+		"user": req.Username, "original_user": req.Username, "auth_user": req.Username,
+		"owner_user": req.Username, "remote_ip": req.RemoteIP, "real_remote_ip": req.RemoteIP,
+		"local_ip": req.LocalIP, "real_local_ip": req.LocalIP, "protocol": sqlvars.ProtocolName(req.Service),
+		"session": req.SessionID, "client_id": req.DeviceID, "local_port": "0", "remote_port": "0",
+		"real_local_port": "0", "real_remote_port": "0", "client_pid": "0",
+	}
+}
+
+// jsonEscape escapes a string for a JSON string literal the way the
+// reference does: invalid UTF-8 becomes U+FFFD, U+2028 and U+2029 are escaped.
+func jsonEscape(s string) string {
+	var b strings.Builder
+	for len(s) > 0 {
+		r, n := utf8.DecodeRuneInString(s)
+		if r == utf8.RuneError && n <= 1 {
+			b.WriteRune(utf8.RuneError)
+			s = s[1:]
+			continue
+		}
+		switch {
+		case r == '\b':
+			b.WriteString(`\b`)
+		case r == '\f':
+			b.WriteString(`\f`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == '"':
+			b.WriteString(`\"`)
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r < 0x20 || r == 0x2028 || r == 0x2029:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteString(s[:n])
+		}
+		s = s[n:]
 	}
 	return b.String()
 }

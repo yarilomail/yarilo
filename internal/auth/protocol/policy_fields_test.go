@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/base64"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -283,7 +284,84 @@ func TestAScramExchangeCarriesItsConnection(t *testing.T) {
 		client: clientConn{secured: "tls", clientID: `"name" "x"`}}
 	want := PolicyRequest{Username: "alice", RemoteIP: "192.0.2.1", LocalIP: "198.51.100.2", Service: "imap",
 		SessionID: "s1", TLS: true, DeviceID: `"name" "x"`}
-	if got := x.policyRequest(); got != want {
+	got := x.policyRequest()
+	vars := got.Vars
+	got.Vars = nil
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("policyRequest = %+v, want %+v", got, want)
+	}
+	if vars["local_ip"] != "198.51.100.2" || vars["secured"] != "TLS" || vars["client_id"] != `"name" "x"` {
+		t.Errorf("vars %v", vars)
+	}
+}
+
+// fieldsPassdb is a second passdb that knows alice and leaves fields.
+type fieldsPassdb struct{}
+
+func (fieldsPassdb) Authenticate(req *Request) (Result, error) {
+	if req.Username != "alice@example.com" || req.Password != "secret" {
+		return ResultNext, nil
+	}
+	req.Fields.Set("user", "alice@example.com")
+	req.Fields.Set("tenant", "acme")
+	req.Fields.Set("userdb_quota_rule", "*:storage=1G")
+	return ResultOK, nil
+}
+
+// The variable table holds what the AUTH line and the connection said, and
+// after the chain which passdb answered and the fields it left.
+func TestThePolicyHearsTheVariableTable(t *testing.T) {
+	p := &stubPolicy{beforeDecision: PolicyDecision{Continue: true}, afterDecision: PolicyDecision{Continue: true}}
+	srv, _ := policyServer(t, p, []Passdb{&knownPassdb{"bob", "x"}, fieldsPassdb{}})
+	addr, cancel := startTestServer(t, srv)
+	defer cancel()
+	conn, sc := dialAndHandshake(t, addr)
+	defer conn.Close() //nolint:errcheck
+	fmt.Fprint(conn, "CPID\t4242\n")
+	fmt.Fprintf(conn, "AUTH\t1\tPLAIN\tservice=managesieve\t%s\trip=192.0.2.1\tlip=198.51.100.2\tsession=s1"+
+		"\tsecured=tls\tlport=4190\trport=51000\treal_rip=10.0.0.5\treal_rport=33000\tlocal_name=mail.example.org"+
+		"\tssl_ja3_hash=0123456789abcdef0123456789abcdef\tvalid-client-cert\n", plainResp("alice@example.com", "secret"))
+	if !sc.Scan() || !strings.HasPrefix(sc.Text(), "OK\t") {
+		t.Fatalf("reply %q", sc.Text())
+	}
+	p.mu.Lock()
+	before, after := p.beforeCalls[0].Vars, p.afterCalls[0].req
+	p.mu.Unlock()
+	for _, tc := range []struct{ name, want string }{
+		{"user", "alice@example.com"}, {"protocol", "sieve"}, {"mechanism", "PLAIN"}, {"secured", "TLS"},
+		{"client_pid", "4242"}, {"remote_ip", "192.0.2.1"}, {"local_ip", "198.51.100.2"},
+		{"remote_port", "51000"}, {"local_port", "4190"}, {"real_remote_ip", "10.0.0.5"},
+		{"real_local_ip", "198.51.100.2"}, {"real_remote_port", "33000"}, {"real_local_port", "4190"},
+		{"local_name", "mail.example.org"}, {"ssl_ja3_hash", "0123456789abcdef0123456789abcdef"},
+		{"cert", "valid"}, {"session", "s1"}, {"password", "secret"}, {"domain_first", "example.com"},
+		{"domain_last", "example.com"}, {"original_user", "alice@example.com"}, {"auth_user", "alice@example.com"},
+		{"owner_user", "alice@example.com"}, {"id", ""},
+	} {
+		if got := before[tc.name]; got != tc.want {
+			t.Errorf("before: %s = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if after.Vars["id"] != "2" {
+		t.Errorf("after: id = %q, want 2, the second passdb", after.Vars["id"])
+	}
+	if after.Passdb["tenant"] != "acme" || after.Userdb["quota_rule"] != "*:storage=1G" {
+		t.Errorf("after: passdb %v, userdb %v", after.Passdb, after.Userdb)
+	}
+}
+
+// Without real_ fields the real address is the plain one, and unset ports
+// read 0, as the reference's table reads them.
+func TestRealAddressesFallBack(t *testing.T) {
+	v := policyVars{rip: "192.0.2.1", lip: "198.51.100.2"}.table()
+	for _, tc := range []struct{ name, want string }{
+		{"real_remote_ip", "192.0.2.1"}, {"real_local_ip", "198.51.100.2"},
+		{"remote_port", "0"}, {"real_remote_port", "0"}, {"domain_first", ""},
+	} {
+		if v[tc.name] != tc.want {
+			t.Errorf("%s = %q, want %q", tc.name, v[tc.name], tc.want)
+		}
+	}
+	if d := (policyVars{user: "a@b@c"}).table(); d["domain_first"] != "b" || d["domain_last"] != "c" {
+		t.Errorf("a@b@c: domain_first %q, domain_last %q, want b and c", d["domain_first"], d["domain_last"])
 	}
 }

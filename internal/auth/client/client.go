@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -623,7 +624,7 @@ func (c *Client) dial() (net.Conn, *bufio.Reader, error) {
 // handshake exchanges VERSION lines. Runs before readLoop starts, so the
 // id-less banner is never seen by the demultiplexer.
 func handshake(conn net.Conn, rd *bufio.Reader) ([]string, error) {
-	if _, err := fmt.Fprintln(conn, "VERSION\t1\t0"); err != nil {
+	if _, err := fmt.Fprintf(conn, "VERSION\t1\t0\nCPID\t%d\n", os.Getpid()); err != nil {
 		return nil, fmt.Errorf("auth/client: handshake write: %w", err)
 	}
 	gotVersion := false

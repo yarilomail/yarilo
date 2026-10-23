@@ -20,28 +20,60 @@ type clientConn struct {
 	clientID string
 	// noPenalty is a client the login process trusts: no tarpit, no penalty.
 	noPenalty bool
+	// validCert is a client certificate the login process verified.
+	validCert bool
+	// fields are the remaining connection values, by their AUTH names.
+	fields map[string]string
+	// mechanism and cpid come from the AUTH line and the connection.
+	mechanism string
+	cpid      int
+}
+
+// connFields are the AUTH values kept as they are, for the variables the
+// policy's templates may name.
+var connFields = map[string]bool{
+	"lport": true, "rport": true, "real_lip": true, "real_rip": true, "real_lport": true,
+	"real_rport": true, "local_name": true, "ssl_ja3_hash": true, "ssl_client_cert_fp": true,
+	"ssl_client_cert_pubkey_fp": true,
 }
 
 // parseField reads one AUTH field into c; false when the field is not one
 // of its keys.
 func (c *clientConn) parseField(f string) bool {
+	key, value, hasValue := strings.Cut(f, "=")
 	switch {
 	case f == "secured":
 		c.secured = "secured"
-	case strings.HasPrefix(f, "secured="):
-		if v := f[len("secured="):]; v == "tls" {
+	case key == "secured" && hasValue:
+		if value == "tls" {
 			c.secured = "tls"
 		} else {
 			c.secured = "secured"
 		}
-	case strings.HasPrefix(f, "client_id="):
-		c.clientID = TabUnescape(f[len("client_id="):])
+	case key == "client_id" && hasValue:
+		c.clientID = TabUnescape(value)
 	case f == "no-penalty":
 		c.noPenalty = true
+	case f == "valid-client-cert":
+		c.validCert = true
+	case hasValue && connFields[key]:
+		if c.fields == nil {
+			c.fields = map[string]string{}
+		}
+		c.fields[key] = TabUnescape(value)
 	default:
 		return false
 	}
 	return true
+}
+
+// field is an AUTH value; a real_ one falls back to its plain counterpart, as
+// the login sends real_ only when a proxy stands between.
+func (c *clientConn) field(key, fallback string) string {
+	if v, ok := c.fields[key]; ok {
+		return v
+	}
+	return fallback
 }
 
 // policyOutcome is what the policy did to one login, for the audit log.

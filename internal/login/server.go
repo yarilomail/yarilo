@@ -443,6 +443,7 @@ func New(opts Options) *Server {
 	var b [3]byte
 	_, _ = crand.Read(b[:])
 	seed := uint64(b[0])<<16 | uint64(b[1])<<8 | uint64(b[2])
+	opts.ExtTLS, opts.StarttlsTLS = recordHello(opts.ExtTLS), recordHello(opts.StarttlsTLS)
 	return &Server{
 		opts:     opts,
 		seed:     encodeSessionPart(seed, sessionIDAlphabet[:51], 4),
@@ -556,7 +557,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	sessID := s.newSessionID()
 	// A peer the proxy trusts to forward addresses is a proxy: its logins are
 	// not tarpitted or penalised for the clients behind it.
-	noPenalty := ipInNets(clientIP, s.opts.XClientNets)
+	peerIP, _ := hostPort(realConn(conn).RemoteAddr())
+	noPenalty := ipInNets(peerIP, s.opts.XClientNets)
+	defer helloHashes.Delete(conn)
 	log := slog.With("sid", sessID, "proto", string(s.opts.Protocol), "remote_ip", clientIP, "remote_port", remotePort)
 	log.Info("login: connect")
 
@@ -671,7 +674,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			for tfAttempt := 0; pre.authResult == nil; tfAttempt++ {
 				authStart := time.Now()
 				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, localIP, sessID,
-					authOrigin(authConn, pre.clientID, noPenalty)...)
+					authOrigin(authConn, pre.clientID, noPenalty, forwardedPort(clientIP, pre))...)
 				// One observation per attempt: each is its own round-trip.
 				s.observePhase(phaseAuth, authStart)
 				if !errors.Is(aerr, authclient.ErrTempFail) {
@@ -1859,6 +1862,15 @@ func haProxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) 
 func heloDomain(line string) string {
 	if f := strings.Fields(line); len(f) > 1 {
 		return f[1]
+	}
+	return ""
+}
+
+// forwardedPort is the port a trusted forwarder named, once its address took
+// the socket's place.
+func forwardedPort(clientIP string, pre *preamble) string {
+	if pre.forwardIP != "" && clientIP == pre.forwardIP {
+		return pre.forwardPort
 	}
 	return ""
 }
