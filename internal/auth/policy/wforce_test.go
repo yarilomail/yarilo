@@ -98,12 +98,15 @@ func (sb sandbox) reset(t *testing.T, login, ip string) {
 	sb.wforceCall(t, "reset", map[string]any{"login": login, "ip": ip})
 }
 
+// standSeed marks what a row sends wforce itself, apart from a stand login.
+const standSeed = "stand-seed"
+
 // failures reports n different failed passwords for login from ip.
 func (sb sandbox) failures(t *testing.T, login, ip string, n int) {
 	t.Helper()
 	for i := range n {
 		sb.wforceCall(t, "report", map[string]any{"login": login, "remote": ip,
-			"pwhash": fmt.Sprintf("%x", sha256.Sum256([]byte(login+fmt.Sprint(i))))[:3], "success": false, "policy_reject": false, "protocol": "imap"})
+			"pwhash": fmt.Sprintf("%x", sha256.Sum256([]byte(login+fmt.Sprint(i))))[:3], "success": false, "policy_reject": false, "protocol": "imap", "session_id": standSeed})
 	}
 }
 
@@ -239,7 +242,7 @@ func TestWforceDecisions(t *testing.T) {
 			sb.reset(t, login, tc.ip)
 			t.Cleanup(func() { sb.reset(t, login, tc.ip) })
 			tc.prepare(login, tc.ip)
-			d, err := c.CheckBefore(ctx, Request{Username: login, Password: "x", RemoteIP: tc.ip, Service: "imap"})
+			d, err := c.CheckBefore(ctx, Request{Username: login, Password: "x", RemoteIP: tc.ip, Service: "imap", SessionID: standSeed})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -264,7 +267,7 @@ func TestWforceReportsReachIt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			login := "report-" + tc.want + "@test.invalid"
 			since := time.Now()
-			c.ReportAfter(context.Background(), Request{Username: login, Password: "x", RemoteIP: "192.0.2.25", Service: "imap"}, tc.success, false)
+			c.ReportAfter(context.Background(), Request{Username: login, Password: "x", RemoteIP: "192.0.2.25", Service: "imap", SessionID: standSeed}, tc.success, false)
 			r, ok := first(sb.waitRequests(t, login, since, 1), "report")
 			if !ok {
 				t.Fatal("wforce logged no report")
