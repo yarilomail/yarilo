@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -65,8 +66,12 @@ func authLine(t *testing.T, srv *Server, line string) string {
 	return sc.Text()
 }
 
-// alice:secret as a PLAIN response.
-const alicePlain = "resp=AGFsaWNlAHNlY3JldA=="
+// plainResp is the resp= field of a PLAIN login.
+func plainResp(user, pass string) string {
+	return "resp=" + base64.StdEncoding.EncodeToString([]byte("\x00"+user+"\x00"+pass))
+}
+
+var alicePlain = plainResp("alice", "secret")
 
 func TestThePolicyHearsTheClientConnection(t *testing.T) {
 	cases := []struct {
@@ -122,8 +127,8 @@ func TestAFailureIsReportedWithItsType(t *testing.T) {
 	cases := []struct {
 		name, resp, want string
 	}{
-		{"a wrong password", "resp=AGFsaWNlAHdyb25n", "credentials"}, // alice:wrong
-		{"an unknown account", "resp=AGJvYgBzZWNyZXQ=", "account"},   // bob:secret
+		{"a wrong password", plainResp("alice", "wrong"), "credentials"},
+		{"an unknown account", plainResp("bob", "secret"), "account"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -148,7 +153,7 @@ func TestACachedFailureKeepsItsType(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close() //nolint:errcheck
 	for id := 1; id <= 2; id++ {
-		fmt.Fprintf(conn, "AUTH\t%d\tPLAIN\tservice=imap\tresp=AGJvYgBzZWNyZXQ=\n", id)
+		fmt.Fprintf(conn, "AUTH\t%d\tPLAIN\tservice=imap\t%s\n", id, plainResp("bob", "secret"))
 		sc.Scan()
 	}
 	got := p.waitReports(t, 2)
