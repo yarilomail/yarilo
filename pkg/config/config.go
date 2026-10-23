@@ -3613,7 +3613,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 17
+const minConfigSchema = 18
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3643,6 +3643,7 @@ var schemaAdditions = map[int][]string{
 		"sieve_vacation_check_recipient", "sieve_vacation_send_from_recipient", "sieve_vacation_to_header_ignore_envelope"},
 	16: {"sieve_global"},
 	17: {"sieve_global_extensions"},
+	18: {"submission_client_workarounds"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
