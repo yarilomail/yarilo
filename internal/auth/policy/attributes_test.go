@@ -105,6 +105,8 @@ func TestAttributesAreTemplates(t *testing.T) {
 		{"key/subkey nests", map[string]string{"attrs/client": "%{client_id}"}, []string{"attrs", "client"}, `"name" "x"`},
 		{"deeper keys nest deeper", map[string]string{"a/b/c": "%{session}"}, []string{"a", "b", "c"}, "s1"},
 		{"spaces inside braces", map[string]string{"s": "%{ session }"}, []string{"s"}, "s1"},
+		{"other providers stay", map[string]string{"g": "%{generate:uuid | substr(8, 1)}"}, []string{"g"}, "-"},
+		{"a literal naming env stays", map[string]string{"l": "%{literal('env:HOME')}"}, []string{"l"}, "env:HOME"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got any = bodyFor(t, tc.attrs)
@@ -171,6 +173,11 @@ func TestABadAttributeIsRefusedAtLoad(t *testing.T) {
 		{"empty subkey", map[string]string{"x/": "%{user}"}},
 		{"value and object", map[string]string{"x": "%{user}", "x/y": "%{user}"}},
 		{"value and deeper object", map[string]string{"x/y": "%{user}", "x/y/z": "%{user}"}},
+		{"the process environment", map[string]string{"x": "%{env:YARILO_AUTH_POLICY_HASH_NONCE}"}},
+		{"the environment behind a default", map[string]string{"x": "%{env:HOME | default('')}"}},
+		{"the environment as an argument", map[string]string{"x": "%{user | concat(env:HOME)}"}},
+		{"the process", map[string]string{"x": "%{process:uid}"}},
+		{"the system", map[string]string{"x": "%{system:hostname}"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := New(Config{URL: "http://x", HashNonce: "n", RequestAttributes: tc.attrs}); err == nil {

@@ -43,6 +43,10 @@ type attribute struct {
 // compileAttributes parses every template and expands it once against an
 // empty request, so a template naming an unknown variable stops the service
 // at start rather than sending empty values.
+// processProviders read yarilo-auth's own environment, which must not leave
+// the cluster in a policy body.
+var processProviders = map[string]bool{"env": true, "process": true, "system": true}
+
 func compileAttributes(attrs map[string]string) ([]attribute, error) {
 	if attrs == nil {
 		attrs = DefaultRequestAttributes
@@ -69,6 +73,11 @@ func compileAttributes(attrs map[string]string) ([]attribute, error) {
 		prog, err := expand.Parse(attrs[key])
 		if err != nil {
 			return nil, fmt.Errorf("policy: auth_policy_request_attributes %s: %w", key, err)
+		}
+		for _, n := range prog.Names() {
+			if prefix, _, ok := strings.Cut(n, ":"); ok && processProviders[prefix] {
+				return nil, fmt.Errorf("policy: auth_policy_request_attributes %s: %%{%s} reads yarilo-auth itself, refused", key, n)
+			}
 		}
 		if _, err := prog.Execute(templateParams(empty, nil, nil)); err != nil {
 			return nil, fmt.Errorf("policy: auth_policy_request_attributes %s: %w", key, err)

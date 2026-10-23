@@ -46,6 +46,27 @@ type Program struct {
 	programs []*program
 }
 
+// Names lists every variable and prefix:name the template may read.
+func (prog *Program) Names() []string {
+	var out []string
+	for _, pr := range prog.programs {
+		if pr.onlyLiteral {
+			continue
+		}
+		for i, st := range pr.stmts {
+			if i == 0 {
+				out = append(out, st.function)
+			}
+			for _, p := range st.params {
+				if p.typ == paramVariable {
+					out = append(out, p.str)
+				}
+			}
+		}
+	}
+	return out
+}
+
 type tokenKind int
 
 const (

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -557,4 +558,26 @@ func TestDecryptRefusesAZeroPadByte(t *testing.T) {
 	runCases(t, p, []expandCase{
 		fails("%{ct | unhexlify | decrypt(algorithm='aes-128-ecb', key=key, iv='', raw=1)}", "bad decrypt"),
 	})
+}
+
+func TestNames(t *testing.T) {
+	for _, tc := range []struct {
+		tmpl string
+		want []string
+	}{
+		{"plain text", nil},
+		{"%{user}", []string{"user"}},
+		{"a %{user} b", []string{"user"}},
+		{"%{literal('env:HOME')}", []string{"literal"}},
+		{"%{user | concat(env:HOME, 'x') | default(home)}", []string{"user", "env:HOME", "home"}},
+		{"%{a + b}", []string{"a", "b"}},
+	} {
+		prog, err := Parse(tc.tmpl)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.tmpl, err)
+		}
+		if got := prog.Names(); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: names %q, want %q", tc.tmpl, got, tc.want)
+		}
+	}
 }
