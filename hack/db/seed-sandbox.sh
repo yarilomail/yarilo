@@ -154,8 +154,13 @@ LMTP_PORT="${LMTP_PORT:-24}"
 kube() { kubectl --kubeconfig="$KCFG" -n "$YARILO_NS" "$@"; }
 
 # A SCRAM-SHA-256 verifier for the sandbox password, so the service has a
-# mechanism to announce; generated with sasl.GenerateScramSha256Credentials.
-SCRAM_PASSWORD='{SCRAM-SHA-256}4096,rVWY5tn9RRHylcRuVMDh+Q==,CDuPU6P3lQho2V+PqMFpgA+StYaqyyUoBqoZRkhQa/k=,ZQl7BB7E33Klr/aYgxpFiof+ISzx8uUewXhLo1CiJTw='
+# mechanism to announce. The password goes over stdin, not on a command line.
+SCRAM_PASSWORD=$(printf '%s\n' "$ACCOUNT_PASSWORD" |
+  kube exec -i "${YARCTL_POD:-deploy/yarilo-auth}" -- yarctl auth scram-verifier --iterations 4096 2>/dev/null)
+case "$SCRAM_PASSWORD" in
+  "{SCRAM-SHA-256}"*) ;;
+  *) echo "seed: could not generate the SCRAM verifier" >&2; exit 1 ;;
+esac
 
 echo "Seeding $SCRAM_USER (SCRAM-SHA-256 verifier) ..."
 SCRAM_OUT=$(mysql_do <<SQL 2>&1
