@@ -10,7 +10,7 @@
 #   KC_ADMIN_PASSWORD=... KC_CLIENT_SECRET=... KC_HS256_KEY=... \
 #     bash hack/sandbox/secrets.sh
 #
-# KC_HS256_KEY is base64url of 64 bytes: openssl rand 64 | basenc --base64url -w0 | tr -d =
+# Needs kubectl and jq. KC_HS256_KEY is base64url of 64 bytes: openssl rand 64 | basenc --base64url -w0 | tr -d =
 
 set -euo pipefail
 
@@ -39,8 +39,7 @@ apply_secret db mysql \
   --from-literal=MYSQL_ROOT_PASSWORD="$YARILO_DB_ROOT_PASSWORD"
 
 # The relay's Postfix looks recipients up with these; its other keys are left as they are.
-printf '{"stringData":{"MYSQL_PASSWORD":"%s","MYSQL_ROOT_PASSWORD":"%s"}}' \
-  "$YARILO_DB_PASSWORD" "$YARILO_DB_ROOT_PASSWORD" |
+jq -n '{stringData: {MYSQL_PASSWORD: env.YARILO_DB_PASSWORD, MYSQL_ROOT_PASSWORD: env.YARILO_DB_ROOT_PASSWORD}}' |
   kubectl --kubeconfig="$KCFG" -n yarilo-relay patch secret yarilo-mysql --type merge --patch-file /dev/stdin
 
 apply_secret yarilo-sb yarilo-mysql \
