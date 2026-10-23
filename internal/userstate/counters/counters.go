@@ -58,7 +58,7 @@ func (s Snapshot) ChangedAfter(since uint64) []Type {
 
 // Bumper is what a writer holds: the counter of the account it writes to.
 type Bumper interface {
-	Bump(types ...Type) error
+	Bump(site string, types ...Type) error
 }
 
 // Discard is a Bumper for a writer that has no account behind it.
@@ -66,7 +66,7 @@ var Discard Bumper = discard{}
 
 type discard struct{}
 
-func (discard) Bump(...Type) error { return nil }
+func (discard) Bump(string, ...Type) error { return nil }
 
 // Counter is one account's counter.
 type Counter struct {
@@ -97,7 +97,7 @@ func New(dir, user string) *Counter {
 const lockWait = 30 * time.Second
 
 // maxKept bounds the lock files a process keeps open; idle ones past it close.
-const maxKept = 256
+var maxKept = 256
 
 // fileState is one counter file's writers in this process: the mutex orders
 // them, the kept file lock orders processes.
@@ -133,16 +133,20 @@ func release(st *fileState) {
 	if len(states) <= maxKept {
 		return
 	}
+	// Only a path no bump holds, and under its own mutex: closing any
+	// descriptor of the file drops this process's fcntl lock on it.
 	for p, s := range states {
-		if s.refs == 0 {
+		if s.refs == 0 && s.mu.TryLock() {
 			_ = s.lock.Close()
+			s.mu.Unlock()
 			delete(states, p)
 		}
 	}
 }
 
-// Bump raises the counter and records the new value against each type.
-func (c *Counter) Bump(types ...Type) error {
+// Bump raises the counter and records the new value against each type; site
+// names the write path for counters_bump_total.
+func (c *Counter) Bump(site string, types ...Type) error {
 	if len(types) == 0 {
 		return nil
 	}
@@ -172,7 +176,7 @@ func (c *Counter) Bump(types ...Type) error {
 	if err := write(c.path, s); err != nil {
 		return err
 	}
-	metricBumps.Inc()
+	metricBumps.WithLabelValues(site).Inc()
 	return nil
 }
 

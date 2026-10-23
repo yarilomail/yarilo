@@ -83,7 +83,7 @@ backend_metrics() {
   local pod
   for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
     kube exec "$pod" -c yarilo-imap -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics' 2>/dev/null |
-      grep -E '^(imap_command_seconds_bucket\{command="Store"|yarilo_locks_acquire_wait_seconds_bucket\{resource="mbox"|counters_bump_total )' || true
+      grep -E '^(imap_command_seconds_bucket\{command="Store"|yarilo_locks_acquire_wait_seconds_bucket\{resource="mbox"|counters_bump_total\{)' || true
   done
 }
 
@@ -142,7 +142,16 @@ for t in $TYPES; do
   fi
   echo "store_parallel type=$t user=$user stores=$(( a + b )) per_sec=$(( (a + b) / SECS )) pusha=$a pushb=$b"
   quantiles "$OUT/store-$LABEL-$t-before.txt" "$OUT/store-$LABEL-$t-after.txt" | sed "s/^/store_latency type=$t /"
-  bumps=$(awk 'FILENAME == ARGV[1] && $1 == "counters_bump_total" { b += $2; next } $1 == "counters_bump_total" { a += $2 } END { print a - b }' \
-    "$OUT/store-$LABEL-$t-before.txt" "$OUT/store-$LABEL-$t-after.txt")
-  echo "store_bumps type=$t bumps=$bumps per_store=$(awk -v b="$bumps" -v s=$(( a + b )) 'BEGIN { if (s > 0) printf "%.2f", b / s }')"
+  stores_n=$(( a + b ))
+  awk -v n="$stores_n" -v t="$t" '
+    $1 !~ /^counters_bump_total\{/ { next }
+    { site = $1; sub(/.*site="/, "", site); sub(/".*/, "", site) }
+    FILENAME == ARGV[1] { before[site] += $2; next }
+    { after[site] += $2 }
+    END {
+      for (s in after) {
+        d = after[s] - before[s]
+        if (d > 0) printf "store_bumps type=%s site=%s bumps=%d per_store=%.2f\n", t, s, d, (n > 0 ? d / n : 0)
+      }
+    }' "$OUT/store-$LABEL-$t-before.txt" "$OUT/store-$LABEL-$t-after.txt" | sort
 done

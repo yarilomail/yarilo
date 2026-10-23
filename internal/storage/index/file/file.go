@@ -913,7 +913,7 @@ func (u *userIndex) Close() error {
 func (u *userIndex) RenameFolder(oldName, newName string) error {
 	err := u.renameFolder(oldName, newName)
 	if err == nil {
-		u.bump(counters.Mailbox)
+		u.bump(lockSiteRename, counters.Mailbox)
 	}
 	return err
 }
@@ -970,7 +970,7 @@ func (u *userIndex) folderTreeDir(dir string) string {
 func (u *userIndex) DeleteFolder(folder string) error {
 	err := u.deleteFolder(folder)
 	if err == nil {
-		u.bump(counters.Mail...)
+		u.bump("delete-folder", counters.Mail...)
 	}
 	return err
 }
