@@ -30,6 +30,9 @@ type pushHub struct {
 	done chan struct{}
 	// seq names state events; an id is only ever compared by the client.
 	seq atomic.Uint64
+	// down is set while subscriptions fail, so an outage logs once, not per
+	// account per retry.
+	down atomic.Bool
 
 	mu       sync.Mutex
 	watchers map[string]*watcher
@@ -100,8 +103,13 @@ func (w *watcher) run(ctx context.Context) {
 			events, err = l.Subscribe(ctx, locks.AccountKey(w.user))
 		}
 		if err != nil {
-			slog.Warn("jmap: push events unavailable", "user", w.user, "err", err)
-		} else if lost {
+			if w.hub.down.CompareAndSwap(false, true) {
+				slog.Warn("jmap: push events unavailable, streams fall back to the recompute", "user", w.user, "err", err)
+			}
+		} else if w.hub.down.CompareAndSwap(true, false) {
+			slog.Info("jmap: push events back", "user", w.user)
+		}
+		if err == nil && lost {
 			// Events may have been missed while the channel was down.
 			w.notify(allTypes)
 		}

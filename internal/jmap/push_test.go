@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -299,6 +300,67 @@ func TestFailedSubscriptionIsRetried(t *testing.T) {
 	f.flag(t, "$flagged")
 	if _, ok := st.next(t, "state", pushResubscribe+eventWait); !ok {
 		t.Fatal("no state after the lock service came back")
+	}
+}
+
+// switchable is a lock service whose subscriptions fail while down is set.
+type switchable struct {
+	locks.Locker
+	down *atomic.Bool
+}
+
+func (l switchable) Subscribe(ctx context.Context, resource string) (<-chan locks.Event, error) {
+	if l.down.Load() {
+		return nil, errors.New("lock service out of reach")
+	}
+	return l.Locker.Subscribe(ctx, resource)
+}
+
+// pushLogs counts the push messages logged at each level.
+type pushLogs struct {
+	mu     sync.Mutex
+	counts map[string]int
+}
+
+func (h *pushLogs) Enabled(context.Context, slog.Level) bool { return true }
+func (h *pushLogs) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h *pushLogs) WithGroup(string) slog.Handler            { return h }
+func (h *pushLogs) Handle(_ context.Context, r slog.Record) error {
+	if strings.HasPrefix(r.Message, "jmap: push events") {
+		h.mu.Lock()
+		h.counts[r.Level.String()]++
+		h.mu.Unlock()
+	}
+	return nil
+}
+
+func (h *pushLogs) count(level slog.Level) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.counts[level.String()]
+}
+
+// An outage of the lock service is logged once when it starts and once when
+// it ends, however many retries it spans.
+func TestOutageLogsOnceEachWay(t *testing.T) {
+	logs := &pushLogs{counts: map[string]int{}}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(logs))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f := pushServer(t, time.Hour, 0)
+	down := &atomic.Bool{}
+	down.Store(true)
+	f.s.opts.Storage.Locker = switchable{f.events, down}
+	st := f.open(t, "types=Email", "")
+	time.Sleep(2*pushResubscribe + pushResubscribe/2) // three failed tries
+	down.Store(false)
+	f.flag(t, "$flagged")
+	if _, ok := st.next(t, "state", pushResubscribe+eventWait); !ok {
+		t.Fatal("no state after the lock service came back")
+	}
+	if w, i := logs.count(slog.LevelWarn), logs.count(slog.LevelInfo); w != 1 || i != 1 {
+		t.Errorf("logged %d warnings and %d recoveries, want 1 and 1", w, i)
 	}
 }
 
