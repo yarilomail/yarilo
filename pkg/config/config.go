@@ -668,12 +668,15 @@ type LMTPProxyConfig struct {
 }
 
 type IMAPProtocolConfig struct {
-	IdleNotifyInterval int      `koanf:"imap_idle_notify_interval"` // seconds; 0 = disabled
-	MaxLineLength      int      `koanf:"imap_max_line_length"`      // bytes; 0 = unlimited
-	IDSend             string   `koanf:"imap_id_send"`              // ID pairs; * = default; empty = disabled
-	LoginGreeting      string   `koanf:"login_greeting"`
-	LogoutFormat       string   `koanf:"imap_logout_format"`
-	ClientWorkarounds  []string `koanf:"imap_client_workarounds"`
+	IdleNotifyInterval int    `koanf:"imap_idle_notify_interval"` // seconds; 0 = disabled
+	MaxLineLength      int    `koanf:"imap_max_line_length"`      // bytes; 0 = unlimited
+	IDSend             string `koanf:"imap_id_send"`              // ID pairs; * = default; empty = disabled
+	// IDRetain keeps what a client says in ID before login and hands it to the
+	// auth service as client_id, which the policy server sees as device_id.
+	IDRetain          bool     `koanf:"imap_id_retain"`
+	LoginGreeting     string   `koanf:"login_greeting"`
+	LogoutFormat      string   `koanf:"imap_logout_format"`
+	ClientWorkarounds []string `koanf:"imap_client_workarounds"`
 	// IMAPQuota toggles the IMAP QUOTA extension (RFC 9208). Independent of
 	// the quota engine (enforcement). Default on.
 	IMAPQuota bool `koanf:"imap_quota"`

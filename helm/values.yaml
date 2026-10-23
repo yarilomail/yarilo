@@ -2020,6 +2020,9 @@ protocol:
     imap_idle_notify_interval: 120
     imap_max_line_length: 65536
     imap_id_send: "name *"
+    ## Keep the ID a client sends before login and pass it to the auth policy
+    ## server as device_id.
+    imap_id_retain: false
     login_greeting: ""
     imap_logout_format: ""
     client_workarounds: []

@@ -211,7 +211,7 @@ func msHandleRelayed(conn net.Conn, rd *bufio.Reader, mech string, initResp []by
 		fmt.Fprintf(conn, "NO \"Bad response.\"\r\n") //nolint:errcheck
 		return nil, nil
 	}
-	out, serr := runRelayedSASL(rc, conn, mech, "managesieve", clientIPOf(conn), initial, write, read)
+	out, serr := runRelayedSASL(rc, conn, mech, "managesieve", clientIPOf(conn), "", initial, write, read)
 	if serr != nil {
 		relayedFailure(conn, ProtocolManageSieve, "", serr)
 		return nil, nil

@@ -358,6 +358,15 @@ func (c *imapConn) login(t *testing.T, user, pass string) string {
 	return c.cmd(t, fmt.Sprintf("LOGIN %q %q", user, pass))
 }
 
+// plain runs AUTHENTICATE PLAIN with an initial response, as mail clients do.
+func (c *imapConn) plain(t *testing.T, user, pass string) string {
+	t.Helper()
+	return c.cmd(t, "AUTHENTICATE PLAIN "+base64.StdEncoding.EncodeToString([]byte("\x00"+user+"\x00"+pass)))
+}
+
+// thunderbirdID is the ID Thunderbird sends before it authenticates.
+const thunderbirdID = `ID ("name" "Thunderbird" "version" "140.4.0")`
+
 // scram runs AUTHENTICATE SCRAM-SHA-256 and returns the tagged reply.
 func (c *imapConn) scram(t *testing.T, user, pass string) string {
 	t.Helper()
@@ -445,6 +454,10 @@ func TestSandboxLoginBody(t *testing.T) {
 			c.cmd(t, `ID ("name" "policy-test")`)
 			c.login(t, u, sb.password)
 		}, "device_id", `"name" "policy-test"`, false},
+		{"a Thunderbird login carries its ID as device_id", "u22@d00001.test", func(c *imapConn, u string) {
+			c.cmd(t, thunderbirdID)
+			c.plain(t, u, sb.password)
+		}, "device_id", `"name" "Thunderbird" "version" "140.4.0"`, false},
 		{"a wrong password reports fail_type credentials", "u17@d00001.test", func(c *imapConn, u string) { c.login(t, u, "not-"+sb.password) }, "fail_type", "credentials", true},
 		{"an unknown account reports fail_type account", "nobody-policy@d00001.test", func(c *imapConn, u string) { c.login(t, u, sb.password) }, "fail_type", "account", true},
 		{"a success is reported", "u18@d00001.test", func(c *imapConn, u string) { c.login(t, u, sb.password) }, "success", "true", true},

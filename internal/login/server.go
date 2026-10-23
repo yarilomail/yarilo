@@ -126,6 +126,8 @@ type Options struct {
 	// before it is closed; 0 = 3. Mirrors auth_max_attempts.
 	AuthMaxAttempts int
 
+	// IMAPIDRetain keeps the client's ID pairs for the auth service (client_id).
+	IMAPIDRetain bool
 	// DisablePlainAuth refuses PLAIN and LOGIN, and hides them, on a connection
 	// that is not TLS, not proxied and not local.
 	DisablePlainAuth bool
@@ -552,6 +554,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	sessID := s.newSessionID()
+	// A peer the proxy trusts to forward addresses is a proxy: its logins are
+	// not tarpitted or penalised for the clients behind it.
+	noPenalty := ipInNets(clientIP, s.opts.XClientNets)
 	log := slog.With("sid", sessID, "proto", string(s.opts.Protocol), "remote_ip", clientIP, "remote_port", remotePort)
 	log.Info("login: connect")
 
@@ -573,7 +578,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	// Extract preamble: speak the protocol pre-auth exchange to collect credentials.
 	// authConn/authRd may be TLS-upgraded from the original conn/rd if STARTTLS happened.
 	preambleStart := time.Now()
-	pre, authConn, authRd, err := extractPreamble(conn, rd, s.opts.Protocol, s.opts.StarttlsTLS, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
+	pre, authConn, authRd, err := extractPreamble(conn, rd, s.opts.Protocol, s.opts.StarttlsTLS, s.opts, relayContext{dial: s.authClient, sessionID: sessID, noPenalty: noPenalty})
 	if err != nil {
 		log.Debug("login: preamble", "err", err)
 		s.incResult("preamble_error")
@@ -665,7 +670,8 @@ func (s *Server) handleConn(conn net.Conn) {
 			// repeat: internal failures do not touch the auth-penalty counter.
 			for tfAttempt := 0; pre.authResult == nil; tfAttempt++ {
 				authStart := time.Now()
-				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, localIP, sessID)
+				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, localIP, sessID,
+					authOrigin(authConn, pre.clientID, noPenalty)...)
 				// One observation per attempt: each is its own round-trip.
 				s.observePhase(phaseAuth, authStart)
 				if !errors.Is(aerr, authclient.ErrTempFail) {
@@ -710,20 +716,22 @@ func (s *Server) handleConn(conn net.Conn) {
 				break
 			}
 
+			// The service's reason, a policy server's message, is for the client.
+			reason := authclient.RefusalReason(aerr)
 			if attempt >= maxAuthAttempts || !isRetriableProtocol(s.opts.Protocol) {
 				// Tagged NO [AUTHENTICATIONFAILED] then * BYE: the last LOGIN must
 				// get a tagged reply before the close announcement.
-				writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeAuthenticationFail, "Too many failed authentications")
+				writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeAuthenticationFail, orDefault(reason, "Too many failed authentications"))
 				writeProtoClose(authConn, s.opts.Protocol, "closing")
 				return outcomeClose, nil
 			}
-			writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeAuthenticationFail, "Authentication failed.")
+			writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeAuthenticationFail, orDefault(reason, "Authentication failed."))
 
 			var retryExtTLS *tls.Config
 			if _, ok := authConn.(*tls.Conn); !ok {
 				retryExtTLS = s.opts.StarttlsTLS
 			}
-			pre, authConn, authRd, err = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
+			pre, authConn, authRd, err = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID, noPenalty: noPenalty})
 			if err != nil {
 				log.Debug("login: preamble retry", "err", err)
 				return outcomeClose, nil
@@ -881,7 +889,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			retryExtTLS = s.opts.StarttlsTLS
 		}
 		var cerr error
-		pre, authConn, authRd, cerr = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
+		pre, authConn, authRd, cerr = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID, noPenalty: noPenalty})
 		if cerr != nil {
 			log.Debug("login: transient re-login: client did not retry", "err", cerr)
 			return

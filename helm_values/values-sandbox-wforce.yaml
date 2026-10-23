@@ -12,3 +12,7 @@ components:
       report_after: true
       log_only: false
       reject_on_fail: false
+# The client's ID reaches the policy as device_id only when it is kept.
+protocol:
+  imap:
+    imap_id_retain: true

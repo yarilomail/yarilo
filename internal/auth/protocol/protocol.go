@@ -45,7 +45,10 @@ const (
 // When Fields is set the OK reply is emitted from the bag; when nil,
 // the legacy typed members drive the wire output.
 type AuthResponse struct {
-	Result   AuthResult
+	Result AuthResult
+	// FailType names a refusal for the policy server: credentials, account
+	// or internal; empty on success. Never on the wire.
+	FailType string
 	Username string
 	Home     string
 	MailLoc  string
@@ -128,6 +131,8 @@ type Request struct {
 	// Fields accumulates passdb output. Drivers may assume non-nil;
 	// Chain.Authenticate allocates it.
 	Fields *Fields
+	// Unknown is set when every driver passed: no passdb knows the user.
+	Unknown bool
 }
 
 // Result classifies a passdb outcome. Separate from AuthResult
@@ -281,13 +286,21 @@ func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP 
 	// cached — the next attempt should retry the chain so a
 	// transient backend outage does not lock users out for the
 	// neg-TTL window.
-	if err == nil && (result == ResultOK || result == ResultFail) {
+	switch {
+	case err != nil:
+	case result == ResultOK:
 		c.cache.Insert(key, username, password, result, req.Fields)
+	case result == ResultFail:
+		c.cache.InsertFail(key, username, password, req.Fields, req.Unknown)
 	}
 
 	resp := &AuthResponse{
-		Result: authResultFromChain(result),
-		Fields: req.Fields,
+		Result:   authResultFromChain(result),
+		FailType: failType(result, req.Unknown),
+		Fields:   req.Fields,
+	}
+	if err != nil {
+		resp.FailType = "internal"
 	}
 	if v, ok := req.Fields.Get("user"); ok {
 		resp.Username = v
@@ -323,8 +336,9 @@ func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP 
 // byte-identical to a fresh chain run for the same input.
 func responseFromCache(reqUser string, entry *CacheEntry) *AuthResponse {
 	resp := &AuthResponse{
-		Result: authResultFromChain(entry.Result),
-		Fields: entry.Fields,
+		Result:   authResultFromChain(entry.Result),
+		FailType: failType(entry.Result, entry.Unknown),
+		Fields:   entry.Fields,
 	}
 	if entry.Fields != nil {
 		if v, ok := entry.Fields.Get("user"); ok {
@@ -661,7 +675,22 @@ func (c Chain) Authenticate(req *Request) (Result, error) {
 		// chain stops.
 		return result, err
 	}
+	req.Unknown = true
 	return ResultFail, nil
+}
+
+// failType is the policy server's name for a chain outcome.
+func failType(r Result, unknown bool) string {
+	switch {
+	case r == ResultOK:
+		return ""
+	case r == ResultTempFail:
+		return "internal"
+	case unknown:
+		return "account"
+	default:
+		return "credentials"
+	}
 }
 
 // authResultFromChain maps the chain-internal Result onto the
@@ -702,12 +731,14 @@ type Server struct {
 	penaltyToSecs        PenaltyToSecsFunc
 	policy               PolicyChecker
 	policyMode           PolicyMode
-	tokenStore           TokenStore
-	connUID              atomic.Uint64
-	pid                  int
-	cookie               string
-	defaultMailPath      string
-	defaultInboxPath     string
+	// sleep applies a policy tarpit; tests count it instead of waiting.
+	sleep            func(time.Duration)
+	tokenStore       TokenStore
+	connUID          atomic.Uint64
+	pid              int
+	cookie           string
+	defaultMailPath  string
+	defaultInboxPath string
 	// maxConcurrentRequests bounds in-flight commands per connection (#887).
 	// 0 selects DefaultMaxConcurrentRequests.
 	maxConcurrentRequests int
@@ -978,6 +1009,7 @@ func NewServer(passdbs []Passdb, opts ...ServerOption) *Server {
 		passdbs: passdbs,
 		pid:     os.Getpid(),
 		cookie:  hex.EncodeToString(cookie),
+		sleep:   time.Sleep,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -1204,7 +1236,11 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 	mech := fields[2]
 
 	var service, resp, ripAttr, lipAttr, sessionID, cbind string
+	var cc clientConn
 	for _, f := range fields[3:] {
+		if cc.parseField(f) {
+			continue
+		}
 		switch {
 		case strings.HasPrefix(f, "service="):
 			service = strings.TrimPrefix(f, "service=")
@@ -1225,14 +1261,14 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		return "bad_request"
 	}
 	if isSCRAM(mech) {
-		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, lipAttr, sessionID)
+		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, lipAttr, sessionID, cc)
 	}
 	if isOAuth(mech) {
 		remoteIP := ripAttr
 		if remoteIP == "" {
 			remoteIP = connRemoteIP(conn)
 		}
-		return s.beginOAuth(conn, live, id, mech, service, resp, remoteIP, lipAttr, sessionID)
+		return s.beginOAuth(conn, live, id, mech, service, resp, remoteIP, lipAttr, sessionID, cc)
 	}
 	_ = service
 	// The initial response is base64 on the wire: raw, a TAB or LF in a
@@ -1258,7 +1294,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
 	}
-	return s.authenticatePassword(conn, id, service, remoteIP, lipAttr, sessionID, authzid, authid, password, false, plainReject)
+	return s.authenticatePassword(conn, id, service, remoteIP, lipAttr, sessionID, cc, authzid, authid, password, false, plainReject)
 }
 
 // plainReject is a refusal of a password login: nothing to say but no.
@@ -1268,7 +1304,7 @@ func plainReject(conn net.Conn, id string) {
 
 // authenticatePassword runs a credential through the chain; reject writes a
 // refusal, which a mechanism may answer with more than FAIL.
-func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, localIP, sessionID, authzid, authid, password string, bearer bool, reject func(net.Conn, string)) string {
+func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, localIP, sessionID string, cc clientConn, authzid, authid, password string, bearer bool, reject func(net.Conn, string)) string {
 	// Clients that cannot supply authzid encode it as `target<sep>master` in
 	// the authid field; only with master users on and no authzid given.
 	target := ""
@@ -1296,7 +1332,8 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	// Master-user flows are exempt — admin sessions should never
 	// be tarpitted (matches the policy-server exemption).
 	penaltyCount := 0
-	if s.penalty != nil && remoteIP != "" && target == "" {
+	penalize := s.penalty != nil && remoteIP != "" && target == "" && !cc.noPenalty
+	if penalize {
 		n, perr := s.penalty.PenaltyLookup(remoteIP)
 		if perr != nil {
 			slog.Warn("auth: penalty lookup failed", "ip", remoteIP, "err", perr)
@@ -1318,29 +1355,25 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	// only see the resulting Decision.
 	policyReq := PolicyRequest{
 		Username: master, Password: password, RemoteIP: remoteIP,
-		Service: service,
+		Service: service, SessionID: sessionID, TLS: cc.secured == "tls",
+		DeviceID: cc.clientID,
 	}
-	if s.policy != nil && s.policyMode.CheckBefore && target == "" {
-		d, perr := s.policy.CheckBefore(context.Background(), policyReq)
-		if perr != nil {
-			slog.Warn("auth: policy CheckBefore error", "err", perr)
-		}
+	var po policyOutcome
+	usePolicy := s.policy != nil && target == ""
+	if usePolicy && s.policyMode.CheckBefore {
+		d := s.policyCheck("before", policyReq, cc.noPenalty, &po)
 		if d.Reject {
 			slog.Info("auth: policy rejected pre-chain",
 				"sid", sessionID, "proto", service, "user", master, "msg", d.Message, "result", "fail")
 			if s.failureDelay > 0 {
 				time.Sleep(s.failureDelay)
 			}
-			reject(conn, id)
+			refuseWith(d.Message, reject)(conn, id)
 			// Pre-chain reject IS the result — report it so the
 			// policy server's telemetry sees its own decision.
-			if s.policy != nil && s.policyMode.ReportAfter {
-				go s.policy.ReportAfter(context.Background(), policyReq, false, true)
-			}
+			policyReq.FailType = "policy"
+			s.policyReport(policyReq, false, true)
 			return "fail"
-		}
-		if d.TarpitSecs > 0 {
-			time.Sleep(time.Duration(d.TarpitSecs) * time.Second)
 		}
 	}
 
@@ -1351,7 +1384,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	// (temp_fail) do NOT update the counter — a passdb outage is
 	// not the client's fault and shouldn't lock them out when the
 	// backend comes back. Master flows still don't update.
-	if s.penalty != nil && remoteIP != "" && target == "" {
+	if penalize {
 		switch {
 		case err == nil && res != nil && res.Result == AuthOK:
 			if uerr := s.penalty.PenaltyUpdate(remoteIP, 0); uerr != nil {
@@ -1389,7 +1422,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 		// cannot distinguish unknown-user from wrong-password
 		// through the protocol. Logs ARE allowed to be specific
 		// because they don't reach the client.
-		slog.Info("auth: fail",
+		slog.Info("auth: fail", append([]any{
 			"sid", sessionID,
 			"proto", service,
 			"user", master,
@@ -1398,12 +1431,16 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 			"result", "fail",
 			// No row cannot tell an unknown user from a rule on the request (#2227).
 			"request_vars", s.passdbReadsRequest,
-		)
+		}, po.logAttrs()...)...)
 		// Policy report on fail too — telemetry needs both sides.
 		// policy_reject=false here: any policy-reject path
 		// early-returns above with its own ReportAfter call.
-		if s.policy != nil && s.policyMode.ReportAfter && target == "" {
-			go s.policy.ReportAfter(context.Background(), policyReq, false, false)
+		if usePolicy {
+			policyReq.FailType = "internal"
+			if res != nil && err == nil {
+				policyReq.FailType = res.FailType
+			}
+			s.policyReport(policyReq, false, false)
 		}
 		if isInternal {
 			return "tempfail"
@@ -1431,27 +1468,20 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	// to fail (e.g. account-takeover detection). Master flows
 	// exempt as before. Errors stay non-fatal — CheckAfter's own
 	// failover-decision honours RejectOnFail.
-	if s.policy != nil && s.policyMode.CheckAfter && target == "" {
-		d, perr := s.policy.CheckAfter(context.Background(), policyReq, true, false)
-		if perr != nil {
-			slog.Warn("auth: policy CheckAfter error", "err", perr)
-		}
+	if usePolicy && s.policyMode.CheckAfter {
+		d := s.policyCheck("after", policyReq, cc.noPenalty, &po)
 		if d.Reject {
 			slog.Info("auth: policy rejected post-chain",
 				"sid", sessionID, "proto", service, "user", res.Username, "msg", d.Message, "result", "fail")
 			if s.failureDelay > 0 {
 				time.Sleep(s.failureDelay)
 			}
-			reject(conn, id)
+			refuseWith(d.Message, reject)(conn, id)
 			// Report this as a failed login for downstream
 			// analytics even though the chain accepted.
-			if s.policyMode.ReportAfter {
-				go s.policy.ReportAfter(context.Background(), policyReq, false, true)
-			}
+			policyReq.FailType = "policy"
+			s.policyReport(policyReq, false, true)
 			return "fail"
-		}
-		if d.TarpitSecs > 0 {
-			time.Sleep(time.Duration(d.TarpitSecs) * time.Second)
 		}
 	}
 
@@ -1471,20 +1501,20 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	if res.Fields != nil {
 		loggedMaster, _ = res.Fields.Get("master_user")
 	}
-	slog.Info("auth: ok",
+	slog.Info("auth: ok", append([]any{
 		"sid", sessionID,
 		"proto", service,
 		"user", res.Username,
 		"master_user", loggedMaster,
 		"result", "ok",
-	)
+	}, po.logAttrs()...)...)
 
 	// Policy report (fire-and-forget post-decision telemetry).
 	// Goroutine so the wire reply is not blocked on the report
 	// HTTP round-trip. policy_reject=false: any policy-reject
 	// path early-returns above with its own ReportAfter call.
-	if s.policy != nil && s.policyMode.ReportAfter && target == "" {
-		go s.policy.ReportAfter(context.Background(), policyReq, true, false)
+	if usePolicy {
+		s.policyReport(policyReq, true, false)
 	}
 	return "ok"
 }
@@ -1904,13 +1934,21 @@ func (s *Server) authenticate(target, master, password, service, remoteIP, local
 		result, err = RunAuth(chain, req)
 	}
 
-	if err == nil && (result == ResultOK || result == ResultFail) {
+	switch {
+	case err != nil:
+	case result == ResultOK:
 		s.cache.Insert(key, cacheUser, password, result, req.Fields)
+	case result == ResultFail:
+		s.cache.InsertFail(key, cacheUser, password, req.Fields, req.Unknown)
 	}
 
 	resp := &AuthResponse{
-		Result: authResultFromChain(result),
-		Fields: req.Fields,
+		Result:   authResultFromChain(result),
+		FailType: failType(result, req.Unknown),
+		Fields:   req.Fields,
+	}
+	if err != nil {
+		resp.FailType = "internal"
 	}
 	if v, ok := req.Fields.Get("user"); ok {
 		resp.Username = v

@@ -22,6 +22,31 @@ type relayDialer func() (*authclient.Client, error)
 type relayContext struct {
 	dial      relayDialer
 	sessionID string
+	// noPenalty is a peer trusted to forward addresses, see handleConn.
+	noPenalty bool
+}
+
+// authOrigin is what the AUTH line says about the client's connection: TLS,
+// the client's ID when kept, and a trusted peer's exemption from penalties.
+func authOrigin(conn net.Conn, clientID string, noPenalty bool) []authclient.Option {
+	var opts []authclient.Option
+	if _, ok := conn.(*tls.Conn); ok {
+		opts = append(opts, authclient.TLS())
+	}
+	if clientID != "" {
+		opts = append(opts, authclient.ClientID(clientID))
+	}
+	if noPenalty {
+		opts = append(opts, authclient.NoPenalty())
+	}
+	return opts
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // relayMechanisms are what the service announced and the proxy relays: SCRAM,
@@ -97,7 +122,7 @@ type saslRelayOutcome struct {
 func runRelayedSASL(
 	rc relayContext,
 	conn net.Conn,
-	mech, service, clientIP string,
+	mech, service, clientIP, clientID string,
 	initial []byte,
 	writeChallenge func([]byte) error,
 	readResponse func() ([]byte, error),
@@ -115,7 +140,8 @@ func runRelayedSASL(
 			return nil, fmt.Errorf("login: %s needs a channel binding this connection has none of", mech)
 		}
 	}
-	srv := authclient.NewRelayServer(cl, mech, service, clientIP, loginproto.LocalIP(conn), rc.sessionID, cb)
+	srv := authclient.NewRelayServer(cl, mech, service, clientIP, loginproto.LocalIP(conn), rc.sessionID, cb,
+		authOrigin(conn, clientID, rc.noPenalty)...)
 	// An exchange the client abandons frees the service's half at once, rather
 	// than waiting out its deadline there (#1733).
 	defer srv.Cancel()
