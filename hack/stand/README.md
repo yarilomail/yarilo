@@ -133,6 +133,7 @@ One run on one image, never alongside a window arm; bash 5, so the runner.
 
 | knob | default | what it changes |
 |:---|:---|:---|
+| `YARILO_PUSH_PASS` | none, required | the stand accounts' password, for the IMAP login that places an account |
 | `YARILO_PUSH_POD` | any backend pod the account is not on | the pod holding the stream |
 | `YARILO_PUSH_USERS` | `u1`, `u51`, `u101`, `u2`, `u52`, `u102` of the three type domains | candidate accounts, first pinned elsewhere wins; an unplaced one is logged in once over IMAP so the director places it |
 | `YARILO_PUSH_COUNT` | 50 | deliveries |
