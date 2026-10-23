@@ -19,7 +19,8 @@ func NewAuthService(cl *authclient.Client) AuthService { return AuthService{cl: 
 
 // Authenticate satisfies PasswordAuthenticator.
 func (a AuthService) Authenticate(username, password, svc, remoteIP, localIP, sessionID string) (string, error) {
-	res, err := a.cl.Authenticate(username, password, svc, remoteIP, localIP, sessionID)
+	// JMAP is served over HTTPS only.
+	res, err := a.cl.AuthenticateAs("", username, password, svc, remoteIP, localIP, sessionID, authclient.TLS())
 	if err != nil {
 		return "", classify(err)
 	}
@@ -33,7 +34,7 @@ func (a AuthService) AuthenticateToken(token, svc, remoteIP, localIP, sessionID 
 		return "", errUnauthorized
 	}
 	initial := []byte("n,,\x01auth=Bearer " + token + "\x01\x01")
-	x, step, err := a.cl.BeginSASL(protocol.MechOAuthBearer, svc, remoteIP, localIP, sessionID, nil, initial)
+	x, step, err := a.cl.BeginSASL(protocol.MechOAuthBearer, svc, remoteIP, localIP, sessionID, nil, initial, authclient.TLS())
 	if err != nil {
 		return "", classify(err)
 	}

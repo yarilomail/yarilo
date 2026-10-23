@@ -157,7 +157,7 @@ func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 		{name: "oauth2-introspection", allow: `^components(\.auth)?$`, notAnArm: true},
 		{name: "oauth2-discovery", allow: `^components(\.auth)?$`, notAnArm: true},
 		// The policy overlay: every login would reach wforce, so never an arm (#2317).
-		{name: "wforce", allow: `^components(\.auth)?$`, notAnArm: true},
+		{name: "wforce", allow: `^(components(\.auth)?|protocol(\.imap)?)$`, notAnArm: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

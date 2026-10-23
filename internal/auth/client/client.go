@@ -260,7 +260,7 @@ func (c *Client) Authenticate(username, password, service, remoteIP, localIP, se
 // -- discarded every master login before it left the pod, so the service saw a
 // plain login of the master and refused it (#1305). Whether impersonation is
 // granted stays the service's decision; the client only carries the request.
-func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, localIP, sessionID string) (*AuthResult, error) {
+func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, localIP, sessionID string, opts ...Option) (*AuthResult, error) {
 	if wireUnsafe(authzid, authcid, service, remoteIP, localIP, sessionID) {
 		return nil, ErrAuthFailed
 	}
@@ -291,6 +291,7 @@ func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, l
 		sb.WriteString("\tsession=")
 		sb.WriteString(sessionID)
 	}
+	writeOrigin(&sb, opts)
 
 	line, err := c.exchange(id, sb.String())
 	if err != nil {
@@ -697,10 +698,17 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 		res.DirectorTag = res.Userdb.DirectorTag
 		return res, nil
 	case "FAIL":
+		reason := ""
 		for _, f := range fields[2:] {
 			if f == "code=temp_fail" {
 				return nil, ErrTempFail
 			}
+			if strings.HasPrefix(f, "reason=") {
+				reason = protocol.TabUnescape(f[len("reason="):])
+			}
+		}
+		if reason != "" {
+			return nil, &RefusedError{Reason: reason}
 		}
 		return nil, ErrAuthFailed
 	default:

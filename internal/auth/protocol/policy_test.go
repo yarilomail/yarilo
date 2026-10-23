@@ -93,7 +93,7 @@ func TestWire_Policy_CheckBeforeContinues(t *testing.T) {
 }
 
 // TestWire_Policy_CheckBeforeRejectsPreChain — Reject pre-chain
-// MUST surface as opaque FAIL and the passdb MUST NOT run.
+// carries its message as the reason and the passdb MUST NOT run.
 func TestWire_Policy_CheckBeforeRejectsPreChain(t *testing.T) {
 	p := &stubPolicy{
 		beforeDecision: PolicyDecision{Reject: true, Message: "abuse"},
@@ -118,8 +118,9 @@ func TestWire_Policy_CheckBeforeRejectsPreChain(t *testing.T) {
 	if !sc.Scan() {
 		t.Fatal("no reply")
 	}
-	if sc.Text() != "FAIL\t2" {
-		t.Errorf("policy reject leaked details: %q (want FAIL\\t2)", sc.Text())
+	// The policy server's message is the reason the login shows the client.
+	if sc.Text() != "FAIL\t2\treason=abuse" {
+		t.Errorf("policy reject: %q, want FAIL\\t2\\treason=abuse", sc.Text())
 	}
 }
 
@@ -143,8 +144,8 @@ func TestWire_Policy_CheckAfterDowngradesSuccess(t *testing.T) {
 	if !sc.Scan() {
 		t.Fatal("no reply")
 	}
-	if sc.Text() != "FAIL\t3" {
-		t.Errorf("after-reject did not downgrade OK: %q", sc.Text())
+	if sc.Text() != "FAIL\t3\treason=takeover" {
+		t.Errorf("after-reject did not downgrade OK with its message: %q", sc.Text())
 	}
 
 	p.mu.Lock()

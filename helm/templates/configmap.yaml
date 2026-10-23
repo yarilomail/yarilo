@@ -127,6 +127,7 @@ data:
         imap_quota: {{ .Values.protocol.imap.imap_quota }}
         imap_max_line_length: {{ .Values.protocol.imap.imap_max_line_length | int64 }}
         imap_id_send: {{ .Values.protocol.imap.imap_id_send | quote }}
+        imap_id_retain: {{ .Values.protocol.imap.imap_id_retain }}
         login_greeting: {{ .Values.protocol.imap.login_greeting | quote }}
         imap_logout_format: {{ .Values.protocol.imap.imap_logout_format | quote }}
         {{- with .Values.protocol.imap.client_workarounds }}

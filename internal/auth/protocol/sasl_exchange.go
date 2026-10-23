@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -39,6 +40,13 @@ type saslExchange struct {
 	rip      string
 	lip      string
 	session  string
+	client   clientConn
+	// unknown is a lookup no passdb answered; refused, a policy refusal and
+	// its message. policy is what the policy did, for the log.
+	unknown bool
+	refused bool
+	refusal string
+	policy  policyOutcome
 	// oauthDB is set on an OAuth login; oauthRefused once its refusal was
 	// sent and only the client's acknowledgement is awaited.
 	oauthDB      OAuth2Passdb
@@ -135,14 +143,22 @@ func (s *Server) startSCRAM(mech string, cbData []byte, v sqlvars.Vars) (*saslEx
 	x := &saslExchange{mech: mech}
 	// The verifier is looked up with the request's values: a protocol rule in
 	// the password query holds for SCRAM as it does for a password (#2227).
-	sha256Lookup := func(user string) (*sasl.ScramCredentials, error) {
+	lookup := func(user string, sha256 bool) (*sasl.ScramCredentials, error) {
 		x.username = user
-		return chain.lookupSCRAMFor(user, v, true)
+		// The check runs where the credentials are looked up, as for a
+		// password: a SCRAM login is judged like any other.
+		if s.policy != nil && s.policyMode.CheckBefore {
+			if d := s.policyCheck("before", x.policyRequest(), x.client.noPenalty, &x.policy); d.Reject {
+				x.refused, x.refusal = true, d.Message
+				return nil, errPolicyRefused
+			}
+		}
+		creds, err := chain.lookupSCRAMFor(user, v, sha256)
+		x.unknown = err == nil && creds == nil
+		return creds, err
 	}
-	sha1Lookup := func(user string) (*sasl.ScramCredentials, error) {
-		x.username = user
-		return chain.lookupSCRAMFor(user, v, false)
-	}
+	sha256Lookup := func(user string) (*sasl.ScramCredentials, error) { return lookup(user, true) }
+	sha1Lookup := func(user string) (*sasl.ScramCredentials, error) { return lookup(user, false) }
 	switch mech {
 	case MechScramSha256:
 		x.server = sasl.NewScramSha256Server(sha256Lookup)
@@ -162,6 +178,17 @@ func (s *Server) startSCRAM(mech string, cbData []byte, v sqlvars.Vars) (*saslEx
 		return nil, fmt.Errorf("mechanism %q is not a SCRAM one", mech)
 	}
 	return x, nil
+}
+
+var errPolicyRefused = errors.New("auth: refused by the policy server")
+
+// policyRequest is the exchange as the policy server sees it; SCRAM carries no
+// password, so pwhash is over the user alone.
+func (x *saslExchange) policyRequest() PolicyRequest {
+	return PolicyRequest{
+		Username: x.username, RemoteIP: x.rip, Service: x.service,
+		SessionID: x.session, TLS: x.client.secured == "tls", DeviceID: x.client.clientID,
+	}
 }
 
 // step runs one round of the conversation and says what the wire should carry.
@@ -193,7 +220,7 @@ func isSCRAM(mech string) bool { return strings.HasPrefix(mech, "SCRAM-") }
 
 // beginSCRAM starts a conversation the session relays. The reply is a CONT
 // challenge, or the same OK/FAIL a PLAIN login ends with.
-func (s *Server) beginSCRAM(conn net.Conn, live *exchanges, id, mech, service, resp, cbind, rip, lip, sessionID string) string {
+func (s *Server) beginSCRAM(conn net.Conn, live *exchanges, id, mech, service, resp, cbind, rip, lip, sessionID string, cc clientConn) string {
 	cbData, err := decodeResp(cbind)
 	if err != nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
@@ -204,7 +231,7 @@ func (s *Server) beginSCRAM(conn net.Conn, live *exchanges, id, mech, service, r
 		fmt.Fprintf(conn, "FAIL\t%s\treason=%s\n", id, err)
 		return "bad_request"
 	}
-	x.service, x.rip, x.lip, x.session = service, rip, lip, sessionID
+	x.service, x.rip, x.lip, x.session, x.client = service, rip, lip, sessionID, cc
 	first, err := decodeResp(resp)
 	if err != nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
@@ -250,9 +277,22 @@ func (s *Server) advanceSCRAM(conn net.Conn, live *exchanges, id string, x *sasl
 		if s.failureDelay > 0 {
 			time.Sleep(s.failureDelay)
 		}
-		slog.Info("auth: sasl exchange failed",
-			"sid", x.session, "proto", x.service, "mech", x.mech, "user", x.user(), "result", "fail")
-		fmt.Fprintf(conn, "FAIL\t%s\n", id)
+		slog.Info("auth: sasl exchange failed", append([]any{
+			"sid", x.session, "proto", x.service, "mech", x.mech, "user", x.user(), "result", "fail"},
+			x.policy.logAttrs()...)...)
+		refuseWith(x.refusal, plainReject)(conn, id)
+		if x.username != "" {
+			req := x.policyRequest()
+			switch {
+			case x.refused:
+				req.FailType = "policy"
+			case x.unknown:
+				req.FailType = "account"
+			default:
+				req.FailType = "credentials"
+			}
+			s.policyReport(req, false, x.refused)
+		}
 		return "fail"
 	}
 	if !done {
@@ -264,6 +304,18 @@ func (s *Server) advanceSCRAM(conn net.Conn, live *exchanges, id string, x *sasl
 	vars := sqlvars.Vars{Service: x.service, RemoteIP: x.rip, LocalIP: x.lip}
 	if out := s.refuseByUserdb(conn, id, x.session, user, vars, plainReject); out != "" {
 		return out
+	}
+	if s.policy != nil && s.policyMode.CheckAfter {
+		if d := s.policyCheck("after", x.policyRequest(), x.client.noPenalty, &x.policy); d.Reject {
+			if s.failureDelay > 0 {
+				time.Sleep(s.failureDelay)
+			}
+			refuseWith(d.Message, plainReject)(conn, id)
+			req := x.policyRequest()
+			req.FailType = "policy"
+			s.policyReport(req, false, true)
+			return "fail"
+		}
 	}
 	// The same reply the password path sends, token included: a session
 	// without one cannot open a backend, whatever proved the identity.
@@ -282,7 +334,9 @@ func (s *Server) advanceSCRAM(conn net.Conn, live *exchanges, id string, x *sasl
 		reply += "\tresp=" + encodeChallenge(challenge)
 	}
 	fmt.Fprintln(conn, reply)
-	slog.Info("auth: sasl exchange succeeded",
-		"sid", x.session, "proto", x.service, "mech", x.mech, "user", user, "result", "ok")
+	slog.Info("auth: sasl exchange succeeded", append([]any{
+		"sid", x.session, "proto", x.service, "mech", x.mech, "user", user, "result", "ok"},
+		x.policy.logAttrs()...)...)
+	s.policyReport(x.policyRequest(), true, false)
 	return "ok"
 }
