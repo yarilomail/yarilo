@@ -269,3 +269,33 @@ for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
   bash "$dir/run.sh" <tag>
 done
 ```
+
+## The policy server
+
+The auth policy rows of #2317 run against wforce, deployed into namespace
+`wforce` from the `k8s_wforce` chart; its Secret and yarilo's credentials for
+it (`yarilo-auth-policy`: the API header and the hash nonce) are made by
+`hack/sandbox/secrets.sh`. wforce tarpits past 3 different failed passwords
+per IP+login, refuses past 50 per IP with a message for the client, and logs
+every field of every request it gets.
+
+`values-sandbox-wforce.yaml` turns the policy on in full: checked before and
+after the exchange, reported after it, not log-only, fail-open. Like the OAuth2
+overlays it is laid on only for its own rows, since every login of the stand
+then waits on wforce; acceptance runs and A/B arms run without it, and
+`ab-arm.sh` knows it not:
+
+```
+helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
+  -f helm_values/values-sandbox-wforce.yaml --set image.tag=<tag>   # rows on
+KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml bash hack/stand/policy-wforce.sh -v
+helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
+  --set image.tag=<tag>                                             # rows off
+```
+
+`policy-wforce.sh` forwards wforce's API, takes the passwords through
+`hack/sandbox/creds.sh` and runs `go test -tags wforce ./internal/auth/policy/`:
+the client's decisions and body fields against wforce, then logins through the
+stand's IMAP (`YARILO_IMAP_ADDR`, else a forward to `yarilo-imap-login`), each row reading
+back from wforce's log what the server sent and checking what it did with the
+answer. Needs go and a route to the stand.

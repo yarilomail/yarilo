@@ -8,9 +8,11 @@
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml \
 #   YARILO_PASSWORD=... YARILO_DB_PASSWORD=... YARILO_DB_ROOT_PASSWORD=... \
 #   KC_ADMIN_PASSWORD=... KC_CLIENT_SECRET=... KC_HS256_KEY=... \
+#   WFORCE_PASSWORD=... WFORCE_KEY=... AUTH_POLICY_NONCE=... \
 #     bash hack/sandbox/secrets.sh
 #
 # Needs kubectl and jq. KC_HS256_KEY is base64url of 64 bytes: openssl rand 64 | basenc --base64url -w0 | tr -d =
+# WFORCE_KEY is base64 of 32 bytes: openssl rand -base64 32.
 
 set -euo pipefail
 
@@ -20,6 +22,9 @@ set -euo pipefail
 : "${KC_ADMIN_PASSWORD:?set KC_ADMIN_PASSWORD, the Keycloak admin password}"
 : "${KC_CLIENT_SECRET:?set KC_CLIENT_SECRET, the secret of the Keycloak client yarilo-auth}"
 : "${KC_HS256_KEY:?set KC_HS256_KEY, the HS256 key behind client yarilo-test-hs256}"
+: "${WFORCE_PASSWORD:?set WFORCE_PASSWORD, the password of the policy server's API}"
+: "${WFORCE_KEY:?set WFORCE_KEY, the policy server's replication and console key}"
+: "${AUTH_POLICY_NONCE:?set AUTH_POLICY_NONCE, the salt of the password hash sent to the policy server}"
 
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 
@@ -64,3 +69,12 @@ apply_secret yarilo-sb yarilo-oauth2-sandbox \
 # Read by the jobs in hack/ as SANDBOX_PASSWORD.
 apply_secret yarilo-sb sandbox-test-account \
   --from-literal=password="$YARILO_PASSWORD"
+
+# The policy server (k8s_wforce) and yarilo's credentials for it.
+apply_secret wforce wforce \
+  --from-literal=password="$WFORCE_PASSWORD" \
+  --from-literal=key="$WFORCE_KEY"
+
+apply_secret yarilo-sb yarilo-auth-policy \
+  --from-literal=api_header="Authorization: Basic $(printf 'wforce:%s' "$WFORCE_PASSWORD" | base64 | tr -d '\n')" \
+  --from-literal=hash_nonce="$AUTH_POLICY_NONCE"

@@ -1,0 +1,14 @@
+# The auth policy rows of #2317: every login checked before and after the
+# exchange and reported after it, against the sandbox's wforce. Credentials
+# from Secret yarilo-auth-policy (hack/sandbox/secrets.sh). See hack/stand/README.md.
+components:
+  auth:
+    policy:
+      url: http://wforce.wforce.svc.cluster.local:8084/
+      api_header_secret_ref: {name: yarilo-auth-policy, key: api_header}
+      hash_nonce_secret_ref: {name: yarilo-auth-policy, key: hash_nonce}
+      check_before: true
+      check_after: true
+      report_after: true
+      log_only: false
+      reject_on_fail: false

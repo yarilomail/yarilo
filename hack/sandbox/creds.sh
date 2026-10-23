@@ -24,3 +24,9 @@ sandbox_db_password() {
   if [ -n "${YARILO_DB_PASSWORD:-}" ]; then printf '%s' "$YARILO_DB_PASSWORD"; return; fi
   _sandbox_secret "${DB_NS:-db}" mysql MYSQL_PASSWORD
 }
+
+# The policy server's API password.
+sandbox_wforce_password() {
+  if [ -n "${WFORCE_PASSWORD:-}" ]; then printf '%s' "$WFORCE_PASSWORD"; return; fi
+  _sandbox_secret wforce wforce password
+}
