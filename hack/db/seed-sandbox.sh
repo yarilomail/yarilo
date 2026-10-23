@@ -11,6 +11,9 @@ set -euo pipefail
 DB_NS="${DB_NS:-db}"
 DB_POD="${DB_POD:-mysql-0}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
+DB_PASSWORD="$(sandbox_db_password)"
+ACCOUNT_PASSWORD="$(sandbox_password)"
 OVER_USER="${OVER_USER:-over@d00001.test}"
 SCRAM_USER="${SCRAM_USER:-scram@d00001.test}"
 NOLOGIN_USER="${NOLOGIN_USER:-nologin@d00001.test}"
@@ -19,12 +22,12 @@ RULE_LMTP_USER="${RULE_LMTP_USER:-rulelmtp@d00001.test}"
 
 mysql_do() {
   kubectl --kubeconfig="$KCFG" exec -i -n "$DB_NS" "$DB_POD" -- \
-    mysql -u yarilo -psandbox-secret yarilo "$@"
+    mysql -u yarilo -p"$DB_PASSWORD" yarilo "$@"
 }
 
 echo "Generating SHA512-CRYPT hash ..."
 PLAIN_HASH=$(kubectl --kubeconfig="$KCFG" exec -n "$DB_NS" "$DB_POD" -- \
-  openssl passwd -6 'Yarilo!test1')
+  openssl passwd -6 "$ACCOUNT_PASSWORD")
 
 echo "Ensuring quota_clone mapped table (quota) exists ..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -151,8 +154,13 @@ LMTP_PORT="${LMTP_PORT:-24}"
 kube() { kubectl --kubeconfig="$KCFG" -n "$YARILO_NS" "$@"; }
 
 # A SCRAM-SHA-256 verifier for the sandbox password, so the service has a
-# mechanism to announce; generated with sasl.GenerateScramSha256Credentials.
-SCRAM_PASSWORD='{SCRAM-SHA-256}4096,rVWY5tn9RRHylcRuVMDh+Q==,CDuPU6P3lQho2V+PqMFpgA+StYaqyyUoBqoZRkhQa/k=,ZQl7BB7E33Klr/aYgxpFiof+ISzx8uUewXhLo1CiJTw='
+# mechanism to announce. The password goes over stdin, not on a command line.
+SCRAM_PASSWORD=$(printf '%s\n' "$ACCOUNT_PASSWORD" |
+  kube exec -i "${YARCTL_POD:-deploy/yarilo-auth}" -- yarctl auth scram-verifier --iterations 4096 2>/dev/null)
+case "$SCRAM_PASSWORD" in
+  "{SCRAM-SHA-256}"*) ;;
+  *) echo "seed: could not generate the SCRAM verifier" >&2; exit 1 ;;
+esac
 
 echo "Seeding $SCRAM_USER (SCRAM-SHA-256 verifier) ..."
 SCRAM_OUT=$(mysql_do <<SQL 2>&1

@@ -344,7 +344,7 @@ redis:
   passwordSecret:
     name: yarilo-redis-password
 
-## DSN injected from the yarilo-mysql Secret created by mysql-sandbox.yaml.
+## DSN injected from the yarilo-mysql Secret made by hack/sandbox/secrets.sh.
 extraEnv:
   - name: YARILO_DB_DSN
     valueFrom:

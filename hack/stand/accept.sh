@@ -22,7 +22,8 @@ RELAY_NS="${RELAY_NS:-yarilo-relay}"
 RELAY_SELECTOR="${RELAY_SELECTOR:-app=relay-mta}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PASSWORD='Yarilo!test1'
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
+PASSWORD="$(sandbox_password)"
 # What one smoketest run passes; it moves with every check added to the binary.
 SMOKE_CHECKS=51
 # The only rows a run skips: they need the OAuth2 overlay, which acceptance runs without (#2231).

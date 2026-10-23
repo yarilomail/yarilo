@@ -22,11 +22,17 @@ spec:
       containers:
       - name: loadtest
         image: ghcr.io/yarilomail/yarilo-loadtest:latest
+        env:
+        - name: SANDBOX_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sandbox-test-account
+              key: password
         args:
         - -protocol=pop3
         - -addr=yarilo-pop3-login.yarilo-sb.svc.cluster.local:110
         - -users=u1@d00001.test:50,u51@d00002.test:50,u101@d00003.test:50
-        - -password=Yarilo!test1
+        - -password=$(SANDBOX_PASSWORD)
         - -concurrency=16
         - -duration=3m
         # Bounded retrieval: an unbounded RETR loop walks the whole maildrop, so
