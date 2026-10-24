@@ -198,6 +198,7 @@ func main() {
 		Submission:        submission(cfg),
 		PushPoll:          time.Duration(cfg.Protocol.JMAP.PushPoll) * time.Second,
 		WebSocketTimeout:  time.Duration(cfg.Protocol.JMAP.WebSocketTimeout) * time.Second,
+		WebSocketTicket:   cfg.Protocol.JMAP.WebSocketTicketTTL > 0,
 	})
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {

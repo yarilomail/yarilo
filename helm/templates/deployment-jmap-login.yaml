@@ -44,6 +44,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+            - name: JMAP_WEBSOCKET_TICKET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-jmap-websocket-ticket" (include "yarilo.fullname" $) }}
+                  key: key
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

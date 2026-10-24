@@ -55,6 +55,10 @@ func main() {
 		slog.Error("config validation failed", "err", err)
 		os.Exit(1)
 	}
+	// A config from before the key keeps starting; its clients go without tickets.
+	if cfg.Protocol.JMAP.WebSocketTicketTTL > 0 && cfg.JMAPLoginService.WebSocketTicketKey == "" {
+		slog.Warn("jmap-login: jmap_login_service.websocket_ticket_key is empty, no WebSocket tickets are issued")
+	}
 
 	extTLS, err := clientTLS(cfg, svc)
 	if err != nil {
@@ -219,6 +223,8 @@ func serverOptions(cfg *config.Config, svc *config.ServiceConfig, addr string, e
 		CORSAllowOrigins:   cfg.Protocol.JMAP.CORSAllowOrigins,
 		MaxSizeRequest:     cfg.Protocol.JMAP.MaxSizeRequest,
 		MaxSizeUpload:      cfg.Protocol.JMAP.MaxSizeUpload,
+		WebSocketTicketKey: cfg.JMAPLoginService.WebSocketTicketKey,
+		WebSocketTicketTTL: time.Duration(cfg.Protocol.JMAP.WebSocketTicketTTL) * time.Second,
 	}
 }
 

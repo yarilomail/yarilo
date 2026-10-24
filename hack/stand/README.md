@@ -51,7 +51,7 @@ issue it verifies.
 
 | Criterion | How |
 |:---|:---|
-| smoketest: `SMOKE_CHECKS` passed, 0 failed, and skipped exactly the oauth2 rows named in `SMOKE_OAUTH2_SKIPS`, on mdbox, maildir, sdbox; the verdict reads `55 passed, 0 failed, 3 skipped (oauth2)`, and any other skip fails however the counts add up | `hack/smoketest/run.sh` per type, without the OAuth2 overlay |
+| smoketest: `SMOKE_CHECKS` passed, 0 failed, and skipped exactly the oauth2 rows named in `SMOKE_OAUTH2_SKIPS`, on mdbox, maildir, sdbox; the verdict reads `56 passed, 0 failed, 3 skipped (oauth2)`, and any other skip fails however the counts add up | `hack/smoketest/run.sh` per type, without the OAuth2 overlay |
 | disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
 | mail between mailboxes reaches the relay as its sender | from the runner with `curl`: u1→u51, u51→u101, u101→u1 over SMTP 587 and over JMAP (`Email/set` and `EmailSubmission/set` with `"emailId":"#d"` in one request, a Bcc to the third user), each with its own password, then u1→u51 over both logged in as `u1@d00001.test*<submission_relay_master_user>`; every copy must reach INBOX without a Bcc header and is expunged, and relay-mta's `sasl_username` lines since the first send must be exactly the senders, never the master user (#2273). The master password is read from Secret `yarilo-submission-relay` and given to `curl` on stdin, never as an argument; sent messages and replies are in `<out-dir>/cross/` |
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |

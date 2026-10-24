@@ -577,6 +577,9 @@ type JMAPProtocolConfig struct {
 	// WebSocketTimeout closes a WebSocket that answers nothing, a ping
 	// included, for this many seconds; 0 turns WebSocket off. Default 1800.
 	WebSocketTimeout int `koanf:"jmap_websocket_timeout"`
+	// WebSocketTicketTTL is how long a WebSocket ticket from
+	// jmap_login_service is valid, in seconds; 0 issues none. Default 60.
+	WebSocketTicketTTL int `koanf:"jmap_websocket_ticket_ttl"`
 }
 
 type LMTPProtocolConfig struct {
@@ -1668,6 +1671,9 @@ type JMAPLoginServiceConfig struct {
 	DirectorAddr string `koanf:"director_addr"`
 	BackendPort  int    `koanf:"backend_port"`
 	DirectorTag  string `koanf:"director_tag"`
+	// WebSocketTicketKey signs WebSocket tickets; every jmap-login replica
+	// needs the same one.
+	WebSocketTicketKey string `koanf:"websocket_ticket_key"`
 }
 
 // POP3LoginServiceConfig mirrors IMAPLoginServiceConfig for the POP3 proxy.
@@ -2814,6 +2820,7 @@ func Defaults() *Config {
 	c.Protocol.LMTP.UserConcurrencyLimit = 10
 	c.Protocol.JMAP.PushPoll = 60
 	c.Protocol.JMAP.WebSocketTimeout = 1800
+	c.Protocol.JMAP.WebSocketTicketTTL = 60
 	for _, sh := range []*ShutdownConfig{&c.AuthService.Shutdown, &c.WardenService.Shutdown,
 		&c.DirectorService.Shutdown, &c.LocksService.Shutdown} {
 		sh.KillTimeout = 5
