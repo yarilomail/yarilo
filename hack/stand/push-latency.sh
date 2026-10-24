@@ -68,7 +68,8 @@ pin() {
 # a backend pod other than that one for the stream: two pods, by construction.
 pinned_elsewhere() {
   local director u at pod ip
-  director=$(kube get pods -l app.kubernetes.io/component=director -o jsonpath='{.items[0].metadata.name}' || true)
+  # A pod still terminating after a rollout is listed but refuses exec.
+  director=$(kube get pods -l app.kubernetes.io/component=director -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | head -1 || true)
   [ -n "$director" ] || return 1
   for u in $CANDIDATES; do
     at=$(pin "$director" "$u")

@@ -471,7 +471,8 @@ new_pairs=$(comm -13 "$OUT/uid-pairs-before.txt" "$OUT/uid-pairs-after.txt" | te
 [ "$new_pairs" = 0 ] && verdict "no new vanished-and-present uid" ok "0" || verdict "no new vanished-and-present uid" fail "$new_pairs (lines/uid-pairs-new.txt)"
 
 echo "== explicit domain rebalance"
-DIRECTORS=$(kube get pods -l app.kubernetes.io/component=director -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}' || true)
+# A pod still terminating after the rollout is listed but refuses exec.
+DIRECTORS=$(kube get pods -l app.kubernetes.io/component=director -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | tr '\n' ' ' || true)
 DIRECTOR=${DIRECTORS%% *}
 UP=$(kube exec "$DIRECTOR" -- yarctl director backends list 2>/dev/null | awk '$0 ~ /[[:space:]]up[[:space:]]/ {print $1}' | sort || true)
 : > "$OUT/rebalance.txt"
