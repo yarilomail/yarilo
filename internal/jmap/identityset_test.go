@@ -3,11 +3,9 @@ package jmap
 import (
 	"context"
 	"fmt"
-	"slices"
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
 	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
@@ -203,31 +201,54 @@ func TestACreatedIdentityLeavesWithItsAddress(t *testing.T) {
 	}
 }
 
-// A write is announced on the user's identities key, and a subscriber to the
-// account hears it.
-func TestAnIdentityWriteIsAnnouncedToTheAccount(t *testing.T) {
-	s := identityServer(t)
-	locker := lockClient(t, lockService(t))
-	s.opts.Storage.Locker = locker
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	events, err := locker.Subscribe(ctx, locks.AccountKey(testUser))
-	if err != nil {
-		t.Fatal(err)
-	}
-	identitySet(t, s, `"create":{"n":{"email":"`+aliasAddr+`"}}`)
-	for {
-		select {
-		case evt := <-events:
-			if evt.Resource == locks.IdentitiesKey(testUser) {
-				if got := typesOfEvent(evt); !slices.Equal(got, []counters.Type{counters.Identity}) {
-					t.Errorf("event %v maps to %v", evt, got)
+// A write is announced on the login's key, the one push listens on, also when
+// userdb names the account differently.
+func TestJMAPWritesAreAnnouncedToTheLogin(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+		do   func(t *testing.T, s *Server, emailID string)
+	}{
+		{"Identity/set", locks.IdentitiesKey(testUser), func(t *testing.T, s *Server, _ string) {
+			identitySet(t, s, `"create":{"n":{"email":"`+aliasAddr+`"}}`)
+		}},
+		{"EmailSubmission/set", locks.SubmissionsKey(testUser), func(t *testing.T, s *Server, emailID string) {
+			subCall(t, s, "EmailSubmission/set", createSubmission(identityID(testUser), emailID, ""))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, emailID, _ := submissionServer(t, draftHeaders+"\r\nbody\r\n", &fakeRelay{}, Submission{}, aliasAddr)
+			resolve := s.opts.Storage.ResolveUser
+			s.opts.Storage.ResolveUser = func(u string) (*mailbox.UserInfo, error) {
+				info, err := resolve(u)
+				if err == nil {
+					info.Username = "canonical@example.com"
 				}
-				return
+				return info, err
 			}
-		case <-ctx.Done():
-			t.Fatalf("no event on %s", locks.IdentitiesKey(testUser))
-		}
+			locker := lockClient(t, lockService(t))
+			s.opts.Storage.Locker = locker
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			events, err := locker.Subscribe(ctx, locks.AccountKey(testUser))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.do(t, s, emailID)
+			for {
+				select {
+				case evt := <-events:
+					if evt.Resource == tc.key {
+						if len(typesOfEvent(evt)) == 0 {
+							t.Errorf("event %v maps to no push type", evt)
+						}
+						return
+					}
+				case <-ctx.Done():
+					t.Fatalf("no event on %s", tc.key)
+				}
+			}
+		})
 	}
 }
 

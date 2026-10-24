@@ -160,7 +160,7 @@ func (s *Server) withIdentities(ctx context.Context, h *userHandle, fn func(*sto
 	wrote := false
 	defer func() {
 		if wrote {
-			locks.EmitBest(s.opts.Storage.Locker, locks.IdentitiesKey(h.info.Username), locks.EventIdentities, "")
+			locks.EmitBest(s.opts.Storage.Locker, locks.IdentitiesKey(h.user), locks.EventIdentities, "")
 		}
 	}()
 	run := func(context.Context) error {
@@ -189,7 +189,7 @@ func (s *Server) withIdentities(ctx context.Context, h *userHandle, fn func(*sto
 	if locker == nil {
 		return run(ctx)
 	}
-	return locks.WithLockWaiting(locks.WithSite(ctx, "jmap-identity"), locker, locks.IdentitiesKey(h.info.Username),
+	return locks.WithLockWaiting(locks.WithSite(ctx, "jmap-identity"), locker, locks.IdentitiesKey(h.user),
 		locks.Owner(h.info.Username, h.info.LockID()), submissionLockTTL, submissionLockRenew, submissionLockWait, run)
 }
 
