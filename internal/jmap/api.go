@@ -1,6 +1,7 @@
 package jmap
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,6 +25,9 @@ func declaredCapabilities(lim jmapcore.Limits) []string {
 	}
 	if lim.Vacation != nil {
 		caps = append(caps, jmapcore.CapVacation)
+	}
+	if lim.WebSocket != nil {
+		caps = append(caps, jmapcore.CapWebSocket)
 	}
 	return caps
 }
@@ -75,11 +79,20 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 		}).Write(w)
 		return
 	}
+	resp, rerr := s.runRequest(r.Context(), body, id)
+	if rerr != nil {
+		rerr.Write(w)
+		return
+	}
+	jmapcore.WriteJSON(w, http.StatusOK, resp)
+}
+
+// runRequest parses and runs one API request, over HTTP or a WebSocket.
+func (s *Server) runRequest(ctx context.Context, body []byte, id identity) (*jmapcore.Response, *jmapcore.RequestError) {
 	req, rerr := jmapcore.ParseRequest(body, declaredCapabilities(s.opts.Limits), s.opts.Limits)
 	if rerr != nil {
 		slog.Debug("jmap: request rejected", "user", id.user, "session", id.sessionID, "type", rerr.Type)
-		rerr.Write(w)
-		return
+		return nil, rerr
 	}
 	// The store opens lazily, on the first method that actually needs it, and
 	// closes with the request. Opening up front would fail a whole batch on a
@@ -88,7 +101,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 	lazy := &lazyStore{storage: s.opts.Storage, user: id.user, sessionID: id.sessionID, clientIP: id.clientIP}
 	defer lazy.close()
 
-	resp := jmapcore.Execute(r.Context(), req, s.registry(lazy, id.user), s.opts.Limits)
+	resp := jmapcore.Execute(ctx, req, s.registry(lazy, id.user), s.opts.Limits)
 	slog.Debug("jmap: api", "user", id.user, "session", id.sessionID, "calls", len(req.MethodCalls))
-	jmapcore.WriteJSON(w, http.StatusOK, resp)
+	return resp, nil
 }

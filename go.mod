@@ -10,6 +10,8 @@ require (
 	github.com/abadojack/whatlanggo v1.0.1
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/blevesearch/snowballstem v0.9.0
+	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/coder/websocket v1.8.15
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8.0.20260619144330-06898882abab
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
@@ -39,7 +41,6 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/MicahParks/jwkset v0.11.3 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

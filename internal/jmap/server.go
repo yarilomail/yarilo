@@ -70,6 +70,9 @@ type Options struct {
 	// PushPoll is the safety recompute of a push stream's states, for events
 	// lost while the lock service's channel was down; 0 turns push off.
 	PushPoll time.Duration
+	// WebSocketTimeout closes a WebSocket that answers nothing for this long;
+	// 0 turns WebSocket off.
+	WebSocketTimeout time.Duration
 }
 
 // Server serves the JMAP endpoint behind the login proxy.
@@ -82,6 +85,8 @@ type Server struct {
 	states *stateCache
 	// push serves EventSource streams; nil when push is off.
 	push *pushHub
+	// done closes every WebSocket when the server shuts down.
+	done chan struct{}
 }
 
 // New builds the server and registers its routes.
@@ -105,11 +110,15 @@ func New(opts Options) *Server {
 	if opts.Submission != nil {
 		opts.Limits.Submission = opts.Submission.capability()
 	}
-	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache()}
+	if opts.WebSocketTimeout > 0 {
+		opts.Limits.WebSocket = &jmapcore.WebSocketCapability{SupportsPush: opts.PushPoll > 0}
+	}
+	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache(), done: make(chan struct{})}
 	if opts.PushPoll > 0 {
 		s.push = newPushHub(s, opts.PushPoll)
 	}
 	s.mux.HandleFunc("GET "+eventSourcePath, s.guard(s.handleEventSource))
+	s.mux.HandleFunc("GET "+jmapcore.WebSocketPath, s.guard(s.handleWebSocket))
 	s.mux.HandleFunc("GET "+jmapcore.SessionPath, s.guard(s.handleSession))
 	s.mux.HandleFunc("POST "+apiPath, s.guard(s.handleAPI))
 	s.mux.HandleFunc("GET "+downloadPrefix, s.guard(s.handleDownload))
@@ -157,6 +166,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		if s.push != nil {
 			close(s.push.done)
 		}
+		close(s.done)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)

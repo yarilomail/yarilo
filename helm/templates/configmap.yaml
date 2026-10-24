@@ -236,6 +236,7 @@ data:
         jmap_upload_ttl: {{ $jmapP.jmap_upload_ttl }}
         jmap_submission_ttl_seconds: {{ $jmapP.jmap_submission_ttl_seconds }}
         jmap_push_poll: {{ $jmapP.jmap_push_poll }}
+        jmap_websocket_timeout: {{ $jmapP.jmap_websocket_timeout }}
         jmap_cors_allow_origins:
         {{- range ($jmapP.jmap_cors_allow_origins | default list) }}
           - {{ . | quote }}

@@ -331,6 +331,7 @@ components:
   locks: {client: {startup_wait: 0}}
   director: {write_timeout: 0, user_kick_delay: 0, max_parallel_kicks: 0, anti_entropy_interval: 0, tombstone_ttl: 0}
 storage: {storage_lock_stale_timeout: 0, mail_cache_purge_delete_percentage: 0, mail_cache_purge_continued_percentage: 0}
+protocol: {jmap: {jmap_websocket_timeout: 0}}
 `)
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
@@ -357,6 +358,7 @@ storage: {storage_lock_stale_timeout: 0, mail_cache_purge_delete_percentage: 0, 
 		{"max_parallel_kicks", def.DirectorService.MaxParallelKicks, off.DirectorService.MaxParallelKicks, 100},
 		{"anti_entropy_interval", def.DirectorService.AntiEntropyInterval, off.DirectorService.AntiEntropyInterval, 3},
 		{"tombstone_ttl", def.DirectorService.TombstoneTTL, off.DirectorService.TombstoneTTL, 600},
+		{"jmap_websocket_timeout", def.Protocol.JMAP.WebSocketTimeout, off.Protocol.JMAP.WebSocketTimeout, 1800},
 	}
 	for _, r := range rows {
 		if r.def != r.wantDef {
