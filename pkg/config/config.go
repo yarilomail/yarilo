@@ -3343,10 +3343,14 @@ func sortedMailboxNames(m map[string]NamespaceMailboxConfig) []string {
 }
 
 // PersonalAutoMailboxes is the primary personal namespace's mailboxes block,
-// for a server that sees that namespace only.
+// for a server that sees that namespace only; with no namespaces configured,
+// the default set.
 func (cfg *Config) PersonalAutoMailboxes() map[string]mailbox.AutoMailbox {
 	if i := mailbox.PrimaryPersonalIndex(NamespaceShapes(cfg.Namespaces)); i >= 0 {
 		return cfg.Namespaces[i].AutoMailboxes()
+	}
+	if len(cfg.Namespaces) == 0 {
+		return mailbox.DefaultMailboxes()
 	}
 	return nil
 }

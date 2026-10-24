@@ -220,6 +220,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.cors.apply(w, origin)
 	}
+	// A path no route serves is 404 before authentication: a client probing
+	// discovery (webfinger, OIDC) reads 401 as a failure, not as an absence.
+	if !servedPath(r.URL.Path) {
+		jmapcore.WriteProblem(w, http.StatusNotFound, "Not found")
+		return
+	}
 
 	username, err := s.authenticate(r, clientIP, sessionOf(st))
 	if err != nil {
@@ -342,6 +348,12 @@ func (s *Server) account(st *connState, username, ip string) error {
 
 // releaseConn drops the connection's warden accounting. A connection that never
 // authenticated holds none.
+// servedPath reports whether the backend serves path: the session resource
+// and everything under /jmap/.
+func servedPath(path string) bool {
+	return path == jmapcore.SessionPath || strings.HasPrefix(path, "/jmap/")
+}
+
 // forget ends c's accounting, once.
 func (s *Server) forget(c net.Conn) {
 	v, loaded := s.conns.LoadAndDelete(c)

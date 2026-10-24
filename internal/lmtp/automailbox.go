@@ -15,12 +15,19 @@ import (
 // opened as nsUI: a delivery opens a folder as any server does (#2005).
 func (s *session) boxAuto(personal *mailbox.UserInfo, i int, nsUI *mailbox.UserInfo) mailboxbase.Auto {
 	if i < 0 || i >= len(s.opts.Namespaces) {
-		// No namespaces block: the personal store and its one file.
-		return mailboxbase.Auto{Subscribe: func(rel string) error {
-			owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
-			_, err := subs.New(mailbox.ControlRoot(personal), "subscriptions", personal.Username, owner, s.opts.Locker).AddOwn(rel)
-			return err
-		}}
+		// No namespaces block: the personal store, its one file, the default set.
+		return mailboxbase.Auto{
+			Mailboxes: mailbox.DefaultMailboxes(),
+			Limit:     s.opts.QuotaPolicy.MailboxCount,
+			Created: func(rel string) {
+				mailops.New(s.mailopsConfig(), nil, personal).EmitList(locks.EventMailboxCreate, rel)
+			},
+			Subscribe: func(rel string) error {
+				owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
+				_, err := subs.New(mailbox.ControlRoot(personal), "subscriptions", personal.Username, owner, s.opts.Locker).AddOwn(rel)
+				return err
+			},
+		}
 	}
 	ns := s.opts.Namespaces[i]
 	return mailboxbase.Auto{

@@ -146,6 +146,8 @@ func TestRenameInboxHoldsTheMailboxCount(t *testing.T) {
 		AuthRelay:   authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		QuotaEngine: true,
 		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxCount: 2},
+		// A namespace naming no mailboxes, so the count is the test's own.
+		Namespaces: []imapserver.NamespaceSpec{{Type: imapserver.NamespacePersonal, Separator: '.', List: imapserver.ListYes, Inbox: true}},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2/imapclient"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 // The LIST reference selects what to match; it is not glued onto results.
@@ -29,7 +31,7 @@ func TestListReferenceIsNotPrefixedOntoResults(t *testing.T) {
 
 	bare := listNames(t, c, "", "*")
 	for _, name := range bare {
-		if name == "INBOX" || name == "Work" || name == "Work.2026" {
+		if name == "INBOX" || name == "Work" || name == "Work.2026" || defaultMailbox(name) {
 			continue
 		}
 		t.Errorf("LIST \"\" \"*\" returned %q, which is not a mailbox of this user", name)
@@ -55,7 +57,7 @@ func TestListWildcards(t *testing.T) {
 		ref, pattern string
 		want         []string
 	}{
-		{"", "*", []string{"INBOX", "Work", "Work.2026", "Wardrobe"}},
+		{"", "*", []string{"INBOX", "Work", "Work.2026", "Wardrobe", "Drafts", "Junk", "Sent", "Trash"}},
 		{"", "W*", []string{"Work", "Work.2026", "Wardrobe"}},
 		{"", "W%", []string{"Work", "Wardrobe"}}, // % stops at the separator
 		{"", "Work.%", []string{"Work.2026"}},    // a subtree
@@ -69,6 +71,12 @@ func TestListWildcards(t *testing.T) {
 			t.Errorf("LIST %q %q = %v, want %v", tc.ref, tc.pattern, got, tc.want)
 		}
 	}
+}
+
+// defaultMailbox is one the server makes when no namespace names its own.
+func defaultMailbox(name string) bool {
+	_, ok := mailbox.DefaultMailboxes()[name]
+	return ok
 }
 
 func sameSet(got, want []string) bool {

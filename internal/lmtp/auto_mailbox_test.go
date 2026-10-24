@@ -93,3 +93,38 @@ func messagesIn(t *testing.T, ui *mailbox.UserInfo, folder string) int {
 	}
 	return len(msgs)
 }
+
+// With no namespaces configured, a delivery to a default mailbox makes and
+// subscribes it, as a server with that block does; any other folder is not made.
+func TestADeliveryWithNoNamespacesMakesADefaultMailbox(t *testing.T) {
+	for _, tc := range []struct {
+		folder, want, wantSubs string
+	}{
+		{"Sent", "Sent", "Sent\n"},
+		{"Junk", "Junk", "Junk\n"},
+		{"Lists", "INBOX", ""},
+	} {
+		t.Run(tc.folder, func(t *testing.T) {
+			root := t.TempDir()
+			resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
+			backend := maildir.New()
+			s := &session{opts: testOpts(Options{
+				Mailbox: backend, Index: fileindex.New(), Resolver: resolver,
+				Config: config.LMTPProtocolConfig{SaveToDetailMailbox: true},
+			})}
+			s.from = "sender@x"
+			s.rcpts = []string{"alice+" + tc.folder + "@example.com"}
+			if err := s.LMTPData(strings.NewReader("Subject: d\r\n\r\nbody\r\n"), &statusSink{}); err != nil {
+				t.Fatalf("LMTPData: %v", err)
+			}
+			ui, _ := resolver.UserInfo("alice@example.com", "")
+			if n := messagesIn(t, ui, tc.want); n != 1 {
+				t.Fatalf("%s holds %d messages, want the delivery there", tc.want, n)
+			}
+			subs, _ := os.ReadFile(filepath.Join(mailbox.ControlRoot(ui), "subscriptions"))
+			if string(subs) != tc.wantSubs {
+				t.Fatalf("subscriptions holds %q, want %q", subs, tc.wantSubs)
+			}
+		})
+	}
+}

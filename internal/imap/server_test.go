@@ -201,16 +201,17 @@ func TestDelete(t *testing.T) {
 	c := startAuthClient(t, "user@test.com", "testpass")
 	defer func() { c.Logout().Wait() }() //nolint:errcheck
 
-	if err := c.Create("Trash", nil).Wait(); err != nil {
-		t.Fatalf("CREATE Trash: %v", err)
+	// Not a default mailbox: those are made again on the next SELECT.
+	if err := c.Create("Old", nil).Wait(); err != nil {
+		t.Fatalf("CREATE Old: %v", err)
 	}
-	if err := c.Delete("Trash").Wait(); err != nil {
-		t.Fatalf("DELETE Trash: %v", err)
+	if err := c.Delete("Old").Wait(); err != nil {
+		t.Fatalf("DELETE Old: %v", err)
 	}
 
-	_, err := c.Select("Trash", nil).Wait()
+	_, err := c.Select("Old", nil).Wait()
 	if err == nil {
-		t.Fatal("expected SELECT Trash to fail after DELETE")
+		t.Fatal("expected SELECT Old to fail after DELETE")
 	}
 }
 
