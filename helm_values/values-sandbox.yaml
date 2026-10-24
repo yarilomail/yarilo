@@ -760,6 +760,13 @@ components:
     backend_port: 10587
     tls:
       secretName: yarilo-tls
+    ## On the shared address with the other login pods, so mail-sb and its
+    ## certificate reach 587 too.
+    service:
+      type: LoadBalancer
+      annotations:
+        metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
+        metallb.universe.tf/allow-shared-ip: "yarilo-mail"
 
   ## JMAP backend — one more container in the co-located pod, reached only by
   ## jmapLogin. internalTLS is on cluster-wide here, so the peer certificate is
