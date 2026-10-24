@@ -3100,6 +3100,7 @@ func expandEnv(cfg *Config) {
 	expandSvcSSL(cfg.Services.POP3S)
 	cfg.DirectorService.API.Token = expand(cfg.DirectorService.API.Token)
 	cfg.DirectorService.RingSecret = expand(cfg.DirectorService.RingSecret)
+	cfg.JMAPLoginService.WebSocketTicketKey = expand(cfg.JMAPLoginService.WebSocketTicketKey)
 	cfg.BackendAPI.Token = expand(cfg.BackendAPI.Token)
 	cfg.Auth.Token.RedisPassword = expand(cfg.Auth.Token.RedisPassword)
 	cfg.WardenService.RedisPassword = expand(cfg.WardenService.RedisPassword)
