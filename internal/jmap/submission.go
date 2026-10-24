@@ -100,7 +100,7 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 	wrote := false
 	defer func() {
 		if wrote {
-			locks.EmitBest(s.opts.Storage.Locker, locks.SubmissionsKey(h.info.Username), locks.EventSubmission, "")
+			locks.EmitBest(s.opts.Storage.Locker, locks.SubmissionsKey(h.user), locks.EventSubmission, "")
 		}
 	}()
 	run := func(context.Context) error {
@@ -140,7 +140,7 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 	if locker == nil {
 		return run(ctx)
 	}
-	return locks.WithLockWaiting(locks.WithSite(ctx, "jmap-submission"), locker, locks.SubmissionsKey(h.info.Username),
+	return locks.WithLockWaiting(locks.WithSite(ctx, "jmap-submission"), locker, locks.SubmissionsKey(h.user),
 		locks.Owner(h.info.Username, h.info.LockID()), submissionLockTTL, submissionLockRenew, submissionLockWait, run)
 }
 
