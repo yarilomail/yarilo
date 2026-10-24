@@ -390,7 +390,7 @@ func (s *Server) submissionSet(ctx context.Context, h *userHandle, lazy *lazySto
 		cids := sortedKeys(req.Create)
 		for i, cid := range cids {
 			raw := resolveProperty(ctx, resolveProperty(ctx, req.Create[cid], "identityId"), "emailId")
-			rec, serr, err := s.submissionCreate(ctx, h, lazy, accountID, raw)
+			rec, serr, err := s.submissionCreate(ctx, h, lazy, raw)
 			if err != nil && len(created) == 0 {
 				temp = &relayFailure{err}
 				break
@@ -523,7 +523,7 @@ type submissionProps struct {
 
 // submissionCreate checks and sends one message. A SetError refuses this
 // object; an error is the relay's temporary refusal, which stops sending.
-func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazyStore, accountID string, raw json.RawMessage) (jmapcore.EmailSubmission, *jmapcore.SetError, error) {
+func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazyStore, raw json.RawMessage) (jmapcore.EmailSubmission, *jmapcore.SetError, error) {
 	var none jmapcore.EmailSubmission
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -601,13 +601,13 @@ func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazySt
 	if err := s.opts.Submission.Sender.Send(env.MailFrom.Email, rcpts, bytes.NewReader(out), net.ParseIP(lazy.clientIP), lazy.user, lazy.sessionID); err != nil {
 		var se *goSmtp.SMTPError
 		if errors.As(err, &se) && se.Code >= 500 {
-			slog.Info("jmap: EmailSubmission refused by the relay", "user", accountID, "session", lazy.sessionID, "err", err)
+			slog.Info("jmap: EmailSubmission refused by the relay", "user", lazy.user, "session", lazy.sessionID, "err", err)
 			return none, &jmapcore.SetError{Type: jmapcore.SetErrForbiddenToSend,
 				Description: fmt.Sprintf("%d %d.%d.%d %s", se.Code, se.EnhancedCode[0], se.EnhancedCode[1], se.EnhancedCode[2], se.Message)}, nil
 		}
 		return none, nil, err
 	}
-	slog.Info("jmap: EmailSubmission sent", "user", accountID, "session", lazy.sessionID, "email", *p.EmailID, "rcpts", len(rcpts))
+	slog.Info("jmap: EmailSubmission sent", "user", lazy.user, "session", lazy.sessionID, "email", *p.EmailID, "rcpts", len(rcpts))
 	return jmapcore.EmailSubmission{IdentityID: identity.ID, EmailID: *p.EmailID, ThreadID: h.threadOf(*p.EmailID),
 		Envelope: env, SendAt: time.Now().UTC().Truncate(time.Second), UndoStatus: "final",
 		DsnBlobIDs: []string{}, MdnBlobIDs: []string{}}, nil, nil
