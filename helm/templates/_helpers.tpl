@@ -537,7 +537,7 @@ it accepts. The guard checks the roles against mtls.Allowed both ways.
 {{- $rows = append $rows (dict "listener" "locks" "server" "locks" "ports" (list (include "yarilo.portNum" (($c.locks.service | default dict).listen | default ":9104"))) "roles" (concat (list "backend-api" "fts" "jmap" "admin") $sessions)) }}
 {{- end }}
 {{- if $c.dict.enabled }}
-{{- $rows = append $rows (dict "listener" "dict" "server" "dict" "ports" (list (include "yarilo.portNum" ($c.dict.listen | default ":9107"))) "roles" $sessions) }}
+{{- $rows = append $rows (dict "listener" "dict" "server" "dict" "ports" (list (include "yarilo.portNum" ($c.dict.listen | default ":9107"))) "roles" (concat (list "jmap") $sessions)) }}
 {{- end }}
 {{- if $c.director.enabled }}
 {{- $rows = append $rows (dict "listener" "director" "server" "director" "ports" (list (toString $c.director.directorPort)) "roles" (concat (list "director" "backend-api" "backend-reg") $logins)) }}

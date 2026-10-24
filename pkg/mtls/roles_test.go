@@ -61,7 +61,7 @@ var wantAllowed = map[mtls.Listener][]mtls.Role{
 	mtls.ListenerWarden: {"auth", "imap-login", "pop3-login", "submission-login", "managesieve-login",
 		"lmtp-login", "jmap-login", "backend-api", "imap"},
 	mtls.ListenerLocks: {"backend-api", "fts", "jmap", "admin", "imap", "pop3", "lmtp", "managesieve"},
-	mtls.ListenerDict:  {"imap", "pop3", "lmtp", "managesieve"},
+	mtls.ListenerDict:  {"jmap", "imap", "pop3", "lmtp", "managesieve"},
 	mtls.ListenerDirector: {"director", "imap-login", "pop3-login", "submission-login", "managesieve-login",
 		"lmtp-login", "jmap-login", "backend-api", "backend-reg"},
 	mtls.ListenerDirectorAPI:   {"admin", "director-admin"},
