@@ -1,0 +1,11 @@
+# The JMAP client runs of the groupware investigation (#965): every request's
+# capabilities and methods in yarilo-jmap's log, and the two web clients served
+# from the runner through an SSH tunnel allowed as browser origins. Laid on only
+# for those runs, then the stand goes back to the base values.
+logLevelOverrides:
+  yarilo-jmap: debug
+protocol:
+  jmap:
+    jmap_cors_allow_origins:
+      - "http://localhost:3000"
+      - "http://localhost:3001"
