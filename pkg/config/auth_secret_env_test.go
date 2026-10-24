@@ -24,6 +24,8 @@ auth:
         static_password: "${TEST_AUTH_SECRET}"
       - driver: passwd-file
         passwd_file_path: "/run/${TEST_AUTH_SECRET}"
+jmap_login_service:
+  websocket_ticket_key: "${TEST_AUTH_SECRET}"
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +41,7 @@ auth:
 		{"auth.policy.auth_policy_hash_nonce", cfg.Auth.Policy.HashNonce, want},
 		{"auth.master_users.masterdb[0].static_password", cfg.Auth.MasterUsers.Masterdb[0].StaticPassword, want},
 		{"auth.master_users.masterdb[1].passwd_file_path", cfg.Auth.MasterUsers.Masterdb[1].PasswdFile, "/run/" + want},
+		{"jmap_login_service.websocket_ticket_key", cfg.JMAPLoginService.WebSocketTicketKey, want},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {

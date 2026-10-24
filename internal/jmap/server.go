@@ -75,6 +75,8 @@ type Options struct {
 	// WebSocketTimeout closes a WebSocket that answers nothing for this long;
 	// 0 turns WebSocket off.
 	WebSocketTimeout time.Duration
+	// WebSocketTicket advertises the ticket jmap-login issues for a WebSocket.
+	WebSocketTicket bool
 }
 
 // Server serves the JMAP endpoint behind the login proxy.
@@ -118,6 +120,7 @@ func New(opts Options) *Server {
 	}
 	if opts.WebSocketTimeout > 0 {
 		opts.Limits.WebSocket = &jmapcore.WebSocketCapability{SupportsPush: opts.PushPoll > 0}
+		opts.Limits.WebSocketTicket = opts.WebSocketTicket
 	}
 	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache(), done: make(chan struct{})}
 	if opts.PushPoll > 0 {

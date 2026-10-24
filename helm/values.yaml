@@ -2192,6 +2192,11 @@ protocol:
     ## Seconds a JMAP WebSocket may answer nothing, a ping included, before it
     ## is closed; 0 turns WebSocket off.
     jmap_websocket_timeout: 1800
+    ## Seconds a WebSocket ticket is valid. A browser cannot send credentials
+    ## on a WebSocket, so a web client that cannot use EventSource asks
+    ## jmap-login for a ticket and opens the WebSocket with it; 0 issues none
+    ## and leaves the ticket capability out of the session.
+    jmap_websocket_ticket_ttl: 60
     ## Browser origins allowed to call the JMAP endpoint. Empty denies every
     ## cross-origin request, which is the default: an endpoint any page can
     ## call with the user's credentials is an account-takeover surface. Exact

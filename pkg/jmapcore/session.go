@@ -43,6 +43,9 @@ type Limits struct {
 	Submission *SubmissionCapability
 	// WebSocket advertises RFC 8887; nil leaves it out.
 	WebSocket *WebSocketCapability
+	// WebSocketTicket advertises the ticket extension with WebSocket, at the
+	// session and the account level, where the client looks for both.
+	WebSocketTicket bool
 	// Vacation advertises VacationResponse; nil leaves it out.
 	Vacation *VacationCapability
 }
@@ -138,6 +141,12 @@ func BuildSession(lim Limits, username string) *Session {
 		ws := *lim.WebSocket
 		ws.URL = webSocketURL(base)
 		sess.Capabilities[CapWebSocket] = ws
+		if lim.WebSocketTicket {
+			t := WebSocketTicketCapability{GenerationEndpoint: base + WebSocketTicketPath}
+			sess.Capabilities[CapWebSocketTicket] = t
+			account.AccountCapabilities[CapWebSocket] = ws
+			account.AccountCapabilities[CapWebSocketTicket] = t
+		}
 	}
 	if lim.Submission != nil {
 		sess.Capabilities[CapSubmission] = map[string]any{}

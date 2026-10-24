@@ -67,6 +67,10 @@ type Options struct {
 	MaxSizeRequest int64
 	// MaxSizeUpload caps an upload body instead, as maxSizeUpload does.
 	MaxSizeUpload int64
+	// WebSocketTicketKey and WebSocketTicketTTL issue WebSocket tickets; an
+	// empty key or a zero TTL issues none.
+	WebSocketTicketKey string
+	WebSocketTicketTTL time.Duration
 }
 
 // ConnAccountant is warden's per-user@IP connection accounting, narrowed to
@@ -118,10 +122,11 @@ type ctxKey struct{}
 
 // Server is the JMAP login proxy.
 type Server struct {
-	opts  Options
-	mux   *http.ServeMux
-	proxy *backendProxy
-	cors  cors
+	opts    Options
+	mux     *http.ServeMux
+	proxy   *backendProxy
+	cors    cors
+	tickets *tickets
 
 	// conns maps a live connection to its accounting state so its close can
 	// release it; ConnContext cannot see the close.
@@ -130,7 +135,8 @@ type Server struct {
 
 // New builds the proxy.
 func New(opts Options) *Server {
-	s := &Server{opts: opts, mux: http.NewServeMux(), cors: newCORS(opts.CORSAllowOrigins)}
+	s := &Server{opts: opts, mux: http.NewServeMux(), cors: newCORS(opts.CORSAllowOrigins),
+		tickets: newTickets(opts.WebSocketTicketKey, opts.WebSocketTicketTTL)}
 	s.proxy = newBackendProxy(opts)
 	s.mux.HandleFunc("/", s.handle)
 	return s
@@ -227,7 +233,19 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username, err := s.authenticate(r, clientIP, sessionOf(st))
+	if r.URL.Path == jmapcore.WebSocketTicketPath {
+		s.handleTicket(w, r, st, clientIP)
+		return
+	}
+
+	var username string
+	var err error
+	if ticket := s.wsTicket(r); ticket != "" {
+		username, err = s.tickets.check(ticket, clientIP)
+		dropTicket(r)
+	} else {
+		username, err = s.authenticate(r, clientIP, sessionOf(st))
+	}
 	if err != nil {
 		if errors.Is(err, errTemporary) {
 			jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Authentication temporarily unavailable")

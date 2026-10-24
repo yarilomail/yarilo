@@ -237,6 +237,7 @@ data:
         jmap_submission_ttl_seconds: {{ $jmapP.jmap_submission_ttl_seconds }}
         jmap_push_poll: {{ $jmapP.jmap_push_poll }}
         jmap_websocket_timeout: {{ $jmapP.jmap_websocket_timeout }}
+        jmap_websocket_ticket_ttl: {{ $jmapP.jmap_websocket_ticket_ttl }}
         jmap_cors_allow_origins:
         {{- range ($jmapP.jmap_cors_allow_origins | default list) }}
           - {{ . | quote }}
@@ -958,6 +959,7 @@ data:
       director_addr: {{ .Values.components.jmapLogin.director_addr | quote }}
       backend_port: {{ .Values.components.jmapLogin.backend_port | default 0 }}
       director_tag: {{ .Values.components.jmapLogin.director_tag | quote }}
+      websocket_ticket_key: "${JMAP_WEBSOCKET_TICKET_KEY}"
     {{- end }}
 
     {{- if .Values.components.submissionLogin.enabled }}

@@ -53,3 +53,25 @@ func TestTheBinaryWiresBearerToTheAuthService(t *testing.T) {
 		t.Errorf("a valid token through the binary's wiring answered %q, %v; want alice", user, err)
 	}
 }
+
+func TestTheTicketKeyIsCheckedAtStart(t *testing.T) {
+	cases := []struct {
+		name, key string
+		ttl       int
+		warn, err bool
+	}{
+		{"a key", "k3y", 60, false, false},
+		{"a placeholder left by a missing Secret", "${JMAP_WEBSOCKET_TICKET_KEY}", 60, false, true},
+		{"a placeholder with tickets off", "${JMAP_WEBSOCKET_TICKET_KEY}", 0, false, true},
+		{"no key, tickets on", "", 60, true, false},
+		{"no key, tickets off", "", 0, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			warn, err := checkTicketKey(tc.key, tc.ttl)
+			if (warn != "") != tc.warn || (err != nil) != tc.err {
+				t.Errorf("checkTicketKey = %q, %v; want warn %v, err %v", warn, err, tc.warn, tc.err)
+			}
+		})
+	}
+}
