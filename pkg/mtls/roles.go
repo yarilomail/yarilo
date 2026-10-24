@@ -94,7 +94,7 @@ var allowed = map[Listener][]Role{
 	ListenerWarden: {RoleAuth, RoleIMAPLogin, RolePOP3Login, RoleSubmissionLogin, RoleManageSieveLogin,
 		RoleLMTPLogin, RoleJMAPLogin, RoleBackendAPI, RoleIMAP},
 	ListenerLocks: append([]Role{RoleBackendAPI, RoleFTS, RoleJMAP, RoleAdmin}, sessions...),
-	ListenerDict:  sessions,
+	ListenerDict:  append([]Role{RoleJMAP}, sessions...),
 	ListenerDirector: {RoleDirector, RoleIMAPLogin, RolePOP3Login, RoleSubmissionLogin, RoleManageSieveLogin,
 		RoleLMTPLogin, RoleJMAPLogin, RoleBackendAPI, RoleBackendReg},
 	ListenerDirectorAPI:   {RoleAdmin, RoleDirectorAdmin},
