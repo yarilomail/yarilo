@@ -69,3 +69,31 @@ func TestHeaderPropertyNeedsHeadersNotStructure(t *testing.T) {
 		t.Errorf("HeaderProperties = %+v, want the one parsed property", hp)
 	}
 }
+
+func TestHeaderFormAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		form HeaderForm
+		want bool
+	}{
+		{"Subject", FormRaw, true},
+		{"Subject", FormText, true},
+		{"list-id", FormText, true},
+		{"From", FormText, false},
+		{"From", FormAddresses, true},
+		{"Resent-Reply-To", FormGroupedAddresses, true},
+		{"Subject", FormAddresses, false},
+		{"References", FormMessageIDs, true},
+		{"Received", FormMessageIDs, false},
+		{"Resent-Date", FormDate, true},
+		{"Subject", FormDate, false},
+		{"List-Post", FormURLs, true},
+		{"Date", FormURLs, false},
+		{"X-Anything", FormURLs, true},
+		{"User-Agent", FormText, true},
+	} {
+		if got := HeaderFormAllowed(tc.name, tc.form); got != tc.want {
+			t.Errorf("%s %s: %v, want %v", tc.name, tc.form, got, tc.want)
+		}
+	}
+}

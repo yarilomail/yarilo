@@ -68,12 +68,62 @@ func checkJMAPSubmission() error {
 	if len(destroyed.Destroyed) != 1 || destroyed.Destroyed[0] != draft {
 		return fmt.Errorf("the implicit Email/set did not destroy the draft %s: %s", draft, all[2].args)
 	}
-	return arrivedWithoutBcc(user, *flagJMAPPass, marker)
+	return arrivedWithoutBcc(user, *flagJMAPPass, marker, "")
+}
+
+// checkJMAPCreateAndSend sends as a web client does: Email/set creates the
+// message with a header:* property and EmailSubmission/set sends it by "#m".
+func checkJMAPCreateAndSend() error {
+	_, account, err := jmapLibClient()
+	if err != nil {
+		return err
+	}
+	user := *flagJMAPUser
+	identity, err := jmapIdentityOf(account, user)
+	if err != nil {
+		return err
+	}
+	box, err := jmapInboxID()
+	if err != nil {
+		return err
+	}
+	marker := "xjmapcreate-" + uniqueID()
+	all, err := jmapCallAll(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],"methodCalls":[`+
+		`["Email/set",{"accountId":%q,"create":{"m":{"mailboxIds":{%q:true},"keywords":{"$draft":true},"from":[{"email":%q}],"to":[{"email":%q}],"subject":%q,`+
+		`"header:User-Agent:asText":%q,"htmlBody":[{"partId":"h","type":"text/html"}],"bodyValues":{"h":{"value":"<p>created with Email/set</p>"}}}}},"0"],`+
+		`["EmailSubmission/set",{"accountId":%q,"create":{"c1":{"identityId":%q,"emailId":"#m"}},"onSuccessDestroyEmail":["#c1"]},"1"]]}`,
+		account, box, user, user, marker, marker, account, identity))
+	if err != nil {
+		return fmt.Errorf("Email/set and EmailSubmission/set: %w", err)
+	}
+	var created struct {
+		Created    map[string]struct{ ID string } `json:"created"`
+		NotCreated map[string]any                 `json:"notCreated"`
+	}
+	if len(all) < 2 || all[0].name != "Email/set" || all[1].name != "EmailSubmission/set" {
+		return fmt.Errorf("responses %v, want Email/set and EmailSubmission/set", all)
+	}
+	_ = json.Unmarshal(all[0].args, &created)
+	if created.Created["m"].ID == "" {
+		return fmt.Errorf("Email/set with header:User-Agent:asText created nothing: %v", created.NotCreated)
+	}
+	var sub struct {
+		Created map[string]struct {
+			UndoStatus string `json:"undoStatus"`
+		} `json:"created"`
+	}
+	_ = json.Unmarshal(all[1].args, &sub)
+	if sub.Created["c1"].UndoStatus != "final" {
+		jmapCall(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],"methodCalls":[["Email/set",{"accountId":%q,"destroy":[%q]},"0"]]}`, account, created.Created["m"].ID)) //nolint:errcheck
+		return fmt.Errorf("EmailSubmission/set with emailId #m sent nothing: %s", all[1].args)
+	}
+	return arrivedWithoutBcc(user, *flagJMAPPass, marker, " HEADER USER-AGENT "+marker)
 }
 
 // arrivedWithoutBcc waits for the delivered copy (the draft is in the same
-// INBOX, so it is told apart by having passed the relay) and requires no Bcc.
-func arrivedWithoutBcc(user, pass, marker string) error {
+// INBOX, so it is told apart by having passed the relay) and requires no Bcc;
+// also is more search criteria the copy must match.
+func arrivedWithoutBcc(user, pass, marker, also string) error {
 	c, err := imapDial()
 	if err != nil {
 		return err
@@ -82,7 +132,7 @@ func arrivedWithoutBcc(user, pass, marker string) error {
 	if err := c.login(user, pass); err != nil {
 		return fmt.Errorf("login: %w", err)
 	}
-	delivered := "HEADER SUBJECT " + marker + " HEADER RECEIVED relay"
+	delivered := "HEADER SUBJECT " + marker + " HEADER RECEIVED relay" + also
 	for start := time.Now(); ; {
 		if _, err := c.selectFolder("INBOX"); err != nil {
 			return fmt.Errorf("select INBOX: %w", err)
