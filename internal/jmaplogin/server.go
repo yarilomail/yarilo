@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	proxyproto "github.com/pires/go-proxyproto"
@@ -122,8 +123,8 @@ type Server struct {
 	proxy *backendProxy
 	cors  cors
 
-	// conns maps a live connection to its accounting state so the ConnState
-	// hook can release it; ConnContext cannot see the close.
+	// conns maps a live connection to its accounting state so its close can
+	// release it; ConnContext cannot see the close.
 	conns sync.Map // net.Conn -> *connState
 }
 
@@ -154,19 +155,13 @@ func (s *Server) Serve(ctx context.Context) error {
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			st := &connState{ip: hostOnly(c.RemoteAddr().String()), conn: c}
 			s.conns.Store(c, st)
+			// Released on close, which a hijacked connection (a WebSocket
+			// upgrade) reports only through its trackedConn.
+			if tc := trackedOf(c); tc != nil {
+				f := func() { s.forget(c) }
+				tc.onClose.Store(&f)
+			}
 			return context.WithValue(ctx, ctxKey{}, st)
-		},
-		ConnState: func(c net.Conn, state http.ConnState) {
-			if state != http.StateClosed && state != http.StateHijacked {
-				return
-			}
-			v, loaded := s.conns.LoadAndDelete(c)
-			if !loaded {
-				return
-			}
-			if st, ok := v.(*connState); ok {
-				s.releaseConn(st)
-			}
 		},
 	}
 
@@ -183,6 +178,8 @@ func (s *Server) Serve(ctx context.Context) error {
 			Policy:            proxyPolicy(s.opts.HAProxyTrustedNets),
 		}
 	}
+
+	ln = trackListener{ln}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -345,6 +342,55 @@ func (s *Server) account(st *connState, username, ip string) error {
 
 // releaseConn drops the connection's warden accounting. A connection that never
 // authenticated holds none.
+// forget ends c's accounting, once.
+func (s *Server) forget(c net.Conn) {
+	v, loaded := s.conns.LoadAndDelete(c)
+	if !loaded {
+		return
+	}
+	if st, ok := v.(*connState); ok {
+		s.releaseConn(st)
+	}
+}
+
+// trackListener wraps every accepted connection in a trackedConn.
+type trackListener struct{ net.Listener }
+
+func (l trackListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &trackedConn{Conn: c}, nil
+}
+
+// trackedConn runs onClose on its first Close, which the HTTP server no
+// longer reports once a handler has hijacked the connection.
+type trackedConn struct {
+	net.Conn
+	once    sync.Once
+	onClose atomic.Pointer[func()]
+}
+
+func (c *trackedConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() {
+		if f := c.onClose.Load(); f != nil {
+			(*f)()
+		}
+	})
+	return err
+}
+
+// trackedOf finds the trackedConn under c, which TLS wraps.
+func trackedOf(c net.Conn) *trackedConn {
+	if t, ok := c.(*tls.Conn); ok {
+		c = t.NetConn()
+	}
+	tc, _ := c.(*trackedConn)
+	return tc
+}
+
 func (s *Server) releaseConn(st *connState) {
 	if s.opts.Warden == nil {
 		return
