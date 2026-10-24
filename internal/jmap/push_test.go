@@ -110,6 +110,9 @@ func pushServer(t *testing.T, poll, writeTimeout time.Duration, with ...func(*Op
 	ts.Config.ReadTimeout = writeTimeout
 	ts.Start()
 	t.Cleanup(ts.Close)
+	// A WebSocket handler is hijacked, so ts.Close does not wait for it; it must
+	// be done with the home before t.TempDir removes it.
+	t.Cleanup(func() { s.stopWebSockets(context.Background()) })
 	return &pushFixture{s: s, ts: ts, info: info, locker: locker, events: events, socket: socket, email: hex.EncodeToString(guid[:])}
 }
 

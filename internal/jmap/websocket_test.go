@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
 )
@@ -355,11 +356,32 @@ func TestASilentWebSocketIsClosed(t *testing.T) {
 func TestShutdownClosesAWebSocket(t *testing.T) {
 	f := pushServer(t, hour, 0)
 	c := f.mustWS(t)
-	close(f.s.done)
+	f.s.stopOnce.Do(func() { close(f.s.done) })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, _, err := c.Read(ctx)
 	if got := websocket.CloseStatus(err); got != websocket.StatusGoingAway {
 		t.Errorf("close status %v (%v), want going away", got, err)
+	}
+}
+
+// Stopping waits for every WebSocket handler: a hijacked connection is
+// outside what http.Server.Shutdown waits for, and a handler still running
+// would touch a store the caller is about to remove.
+func TestStoppingWaitsForTheWebSocketHandlers(t *testing.T) {
+	before := testutil.ToFloat64(metricWebSockets)
+	f := pushServer(t, hour, 0)
+	for range 3 {
+		c := f.mustWS(t)
+		wsSend(t, c, echoRequest)
+		if _, ok := wsNext(t, c, "Response", time.Second); !ok {
+			t.Fatal("no Response")
+		}
+		// A reading client answers the close at once.
+		_ = c.CloseRead(context.Background())
+	}
+	f.s.stopWebSockets(context.Background())
+	if got := testutil.ToFloat64(metricWebSockets); got != before {
+		t.Errorf("%v WebSocket handlers still running after the stop", got-before)
 	}
 }

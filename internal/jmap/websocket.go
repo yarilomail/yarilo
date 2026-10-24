@@ -64,6 +64,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request, id iden
 		slog.Debug("jmap: websocket refused", "user", id.user, "err", err)
 		return
 	}
+	s.websockets.Add(1)
+	defer s.websockets.Done()
 	// The size check is ours, so an oversized request gets a RequestError.
 	c.SetReadLimit(-1)
 	metricWebSockets.Inc()

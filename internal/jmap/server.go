@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
@@ -86,7 +87,11 @@ type Server struct {
 	// push serves EventSource streams; nil when push is off.
 	push *pushHub
 	// done closes every WebSocket when the server shuts down.
-	done chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
+	// websockets counts the WebSocket handlers still running: a hijacked
+	// connection is outside what http.Server.Shutdown waits for.
+	websockets sync.WaitGroup
 }
 
 // New builds the server and registers its routes.
@@ -166,15 +171,28 @@ func (s *Server) Serve(ctx context.Context) error {
 		if s.push != nil {
 			close(s.push.done)
 		}
-		close(s.done)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		err := srv.Shutdown(shutdownCtx)
+		s.stopWebSockets(shutdownCtx)
+		return err
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
+	}
+}
+
+// stopWebSockets closes every WebSocket and waits for their handlers, so none
+// touches a user's store after the server has stopped.
+func (s *Server) stopWebSockets(ctx context.Context) {
+	s.stopOnce.Do(func() { close(s.done) })
+	waited := make(chan struct{})
+	go func() { s.websockets.Wait(); close(waited) }()
+	select {
+	case <-waited:
+	case <-ctx.Done():
 	}
 }
 
