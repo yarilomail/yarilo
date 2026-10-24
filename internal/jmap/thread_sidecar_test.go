@@ -97,7 +97,7 @@ func TestThreadGetReturnsTheConversation(t *testing.T) {
 
 	payload := callAPI(t, s, fmt.Sprintf(
 		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-		  "methodCalls":[["Thread/get",{"accountId":%q,"ids":[%q]},"c0"]]}`, testUser, root))
+		  "methodCalls":[["Thread/get",{"accountId":%q,"ids":[%q]},"c0"]]}`, testAccount, root))
 
 	list, _ := payload["list"].([]any)
 	if len(list) != 1 {
@@ -133,7 +133,7 @@ func TestEmailThreadIdNamesTheConversation(t *testing.T) {
 	payload := callAPI(t, s, fmt.Sprintf(
 		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 		  "methodCalls":[["Email/get",{"accountId":%q,"ids":[%q],"properties":["id","threadId"]},"c0"]]}`,
-		testUser, reply))
+		testAccount, reply))
 
 	list, _ := payload["list"].([]any)
 	if len(list) != 1 {
@@ -158,7 +158,7 @@ func TestWithoutASidecarEveryMessageIsItsOwnThread(t *testing.T) {
 	payload := callAPI(t, s, fmt.Sprintf(
 		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 		  "methodCalls":[["Email/get",{"accountId":%q,"ids":[%q],"properties":["id","threadId"]},"c0"]]}`,
-		testUser, id))
+		testAccount, id))
 
 	list, _ := payload["list"].([]any)
 	if len(list) != 1 {

@@ -29,7 +29,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 		jmapcore.WriteProblem(w, http.StatusNotFound, "Malformed download URL")
 		return
 	}
-	if accountID != "" && accountID != id.user {
+	if accountID != "" && accountID != jmapcore.AccountID(id.user) {
 		// Another account's blob is indistinguishable from one that does not
 		// exist: answering differently would confirm what the caller guessed.
 		slog.Warn("jmap: download for another account", "user", id.user, "account", accountID)

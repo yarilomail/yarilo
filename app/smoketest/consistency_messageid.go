@@ -150,7 +150,7 @@ func jmapReadMessageID(marker string) (*reading, error) {
 		return nil, err
 	}
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Email/get",{"accountId":"` + *flagJMAPUser + `","ids":["` + id + `"],` +
+		`"methodCalls":[["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + id + `"],` +
 		`"properties":["id","messageId"]},"c0"]]}`)
 	if err != nil {
 		return nil, fmt.Errorf("Email/get: %w", err)

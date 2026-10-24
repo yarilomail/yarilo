@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/pkg/locks"
 	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
@@ -223,7 +224,9 @@ func (s *Server) guard(next handlerFunc) http.HandlerFunc {
 			jmapcore.WriteProblem(w, http.StatusLoopDetected, "Proxy TTL exhausted")
 			return
 		}
-		next(w, r, id)
+		// The lock owner rides the context, as managesieve and delivery set it:
+		// a store below the method has no other way to learn it (#1670).
+		next(w, r.WithContext(locks.WithID(r.Context(), id.sessionID)), id)
 	}
 }
 

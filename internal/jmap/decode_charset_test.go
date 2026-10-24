@@ -23,9 +23,9 @@ func TestEmailGetDecodesTheCharsetsMailUses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, id, _ := storedServerWithMessageAt(t, cp1251Message, 0)
 			// Warm through the envelope path, so the cached row is read back.
-			emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+envelopeProps+`}`)
+			emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":`+envelopeProps+`}`)
 
-			email := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
+			email := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],
 				"properties":`+tc.props+`}`))
 			if got, _ := email["subject"].(string); got != "Пропозиція" {
 				t.Errorf("subject = %q, want the decoded windows-1251 text", got)

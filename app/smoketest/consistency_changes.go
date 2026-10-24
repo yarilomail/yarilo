@@ -113,7 +113,7 @@ func checkConsistencyChanges(user, pass string) error {
 
 func jmapEmailState() (string, error) {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Email/get",{"accountId":"` + *flagJMAPUser + `","ids":[],"properties":["id"]},"c0"]]}`)
+		`"methodCalls":[["Email/get",{"accountId":"` + jmapAccountID() + `","ids":[],"properties":["id"]},"c0"]]}`)
 	if err != nil {
 		return "", fmt.Errorf("Email/get for state: %w", err)
 	}
@@ -133,7 +133,7 @@ func jmapEmailState() (string, error) {
 // sinceState, and the state it hands back.
 func jmapEmailChanges(sinceState string) ([]string, string, error) {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Email/changes",{"accountId":"` + *flagJMAPUser + `","sinceState":"` + sinceState + `"},"c0"]]}`)
+		`"methodCalls":[["Email/changes",{"accountId":"` + jmapAccountID() + `","sinceState":"` + sinceState + `"},"c0"]]}`)
 	if err != nil {
 		return nil, "", fmt.Errorf("Email/changes: %w", err)
 	}
@@ -149,7 +149,7 @@ func jmapEmailChanges(sinceState string) ([]string, string, error) {
 
 func jmapMailboxState() (string, error) {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Mailbox/get",{"accountId":"` + *flagJMAPUser + `","ids":[],"properties":["id"]},"c0"]]}`)
+		`"methodCalls":[["Mailbox/get",{"accountId":"` + jmapAccountID() + `","ids":[],"properties":["id"]},"c0"]]}`)
 	if err != nil {
 		return "", fmt.Errorf("Mailbox/get for state: %w", err)
 	}
@@ -169,7 +169,7 @@ func jmapMailboxState() (string, error) {
 // sinceState, and the state handed back.
 func jmapMailboxChanges(sinceState string) ([]string, string, error) {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Mailbox/changes",{"accountId":"` + *flagJMAPUser + `","sinceState":"` + sinceState + `"},"c0"]]}`)
+		`"methodCalls":[["Mailbox/changes",{"accountId":"` + jmapAccountID() + `","sinceState":"` + sinceState + `"},"c0"]]}`)
 	if err != nil {
 		return nil, "", fmt.Errorf("Mailbox/changes: %w", err)
 	}
@@ -186,7 +186,7 @@ func jmapMailboxChanges(sinceState string) ([]string, string, error) {
 // jmapInboxID is the mailbox the probe is delivered to.
 func jmapInboxID() (string, error) {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Mailbox/query",{"accountId":"` + *flagJMAPUser + `","filter":{"role":"inbox"}},"c0"]]}`)
+		`"methodCalls":[["Mailbox/query",{"accountId":"` + jmapAccountID() + `","filter":{"role":"inbox"}},"c0"]]}`)
 	if err != nil {
 		return "", fmt.Errorf("Mailbox/query for the inbox: %w", err)
 	}
@@ -206,7 +206,7 @@ func jmapInboxID() (string, error) {
 // unreadEmails changes when $seen does.
 func jmapClearKeyword(id, keyword string) error {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Email/set",{"accountId":"` + *flagJMAPUser + `","update":{"` + id + `":` +
+		`"methodCalls":[["Email/set",{"accountId":"` + jmapAccountID() + `","update":{"` + id + `":` +
 		`{"keywords/` + keyword + `":null}}},"c0"]]}`)
 	if err != nil {
 		return err

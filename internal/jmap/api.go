@@ -104,7 +104,7 @@ func (s *Server) runRequest(ctx context.Context, path string, body []byte, id id
 	lazy := &lazyStore{storage: s.opts.Storage, user: id.user, sessionID: id.sessionID, clientIP: id.clientIP}
 	defer lazy.close()
 
-	resp := jmapcore.Execute(ctx, req, s.registry(lazy, id.user), s.opts.Limits)
+	resp := jmapcore.Execute(ctx, req, s.registry(lazy, jmapcore.AccountID(id.user)), s.opts.Limits)
 	return resp, nil
 }
 

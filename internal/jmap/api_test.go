@@ -176,7 +176,7 @@ func TestBrokenStoreLeavesStorelessMethodsWorking(t *testing.T) {
 	s.Handler().ServeHTTP(w, apiRequest(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 		"methodCalls":[
 			["Core/echo",{"alive":true},"c0"],
-			["Mailbox/get",{"accountId":"u1@example.com"},"c1"],
+			["Mailbox/get",{"accountId":"`+testAccount+`"},"c1"],
 			["Core/echo",{"still":true},"c2"]]}`))
 
 	if w.Code != http.StatusOK {

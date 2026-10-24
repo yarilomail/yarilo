@@ -125,7 +125,7 @@ func cleanupSmokeFolder(c *imapClient) error {
 // jmapMailboxID resolves a folder name to its JMAP id.
 func jmapMailboxID(name string) (string, error) {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Mailbox/get",{"accountId":"` + *flagJMAPUser + `","ids":null},"c0"]]}`)
+		`["Mailbox/get",{"accountId":"` + jmapAccountID() + `","ids":null},"c0"]]}`)
 	if err != nil {
 		return "", err
 	}
@@ -150,7 +150,7 @@ func jmapMailboxID(name string) (string, error) {
 // jmapNewestEmail returns the id of the newest message in one mailbox.
 func jmapNewestEmail(mailboxID string) (string, error) {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Email/query",{"accountId":"` + *flagJMAPUser + `","limit":1,` +
+		`["Email/query",{"accountId":"` + jmapAccountID() + `","limit":1,` +
 		`"filter":{"inMailbox":"` + mailboxID + `"},` +
 		`"sort":[{"property":"receivedAt","isAscending":false}]},"c0"]]}`)
 	if err != nil {
@@ -240,7 +240,7 @@ func verifyHeaderForms(emailID string) error {
 	}
 
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Email/get",{"accountId":"` + *flagJMAPUser + `","ids":["` + emailID + `"],` +
+		`["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + emailID + `"],` +
 		`"properties":` + string(encoded) + `},"c0"]]}`)
 	if err != nil {
 		return err
@@ -331,7 +331,7 @@ func verifyPropertyValidation(emailID string) error {
 		// jmapCallRaw, not jmapCall: the expected answer here IS a method
 		// error, and jmapCall reports one as a failure of the call.
 		name, args, err := jmapCallRaw(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-			`["Email/get",{"accountId":"` + *flagJMAPUser + `","ids":["` + emailID + `"],` +
+			`["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + emailID + `"],` +
 			`"properties":["id","` + property + `"]},"c0"]]}`)
 		if err != nil {
 			return err

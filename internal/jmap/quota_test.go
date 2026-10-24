@@ -105,7 +105,7 @@ func quotaCall(t *testing.T, s *Server, method, args string) map[string]any {
 func TestQuotaGetAnswersTheAccountRoot(t *testing.T) {
 	s, vsize := quotaServer(t, []string{"*:storage=10M"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
 
-	got := quotaCall(t, s, "Quota/get", `{"accountId":"`+testUser+`"}`)
+	got := quotaCall(t, s, "Quota/get", `{"accountId":"`+testAccount+`"}`)
 	if got["__name"] != "Quota/get" {
 		t.Fatalf("answered %v: %v", got["__name"], got)
 	}
@@ -151,7 +151,7 @@ func TestTheCountRootAppearsOnlyWithAMessageLimit(t *testing.T) {
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			s, _ := quotaServer(t, row.rules, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
-			got := quotaCall(t, s, "Quota/query", `{"accountId":"`+testUser+`"}`)
+			got := quotaCall(t, s, "Quota/query", `{"accountId":"`+testAccount+`"}`)
 			ids, _ := got["ids"].([]any)
 			var names []string
 			for _, id := range ids {
@@ -168,7 +168,7 @@ func TestTheCountRootAppearsOnlyWithAMessageLimit(t *testing.T) {
 // would announce a bound nothing applies.
 func TestNoQuotaObjectsWhenTheEngineIsOff(t *testing.T) {
 	s, _ := quotaServer(t, []string{"*:storage=10M"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, false)
-	got := quotaCall(t, s, "Quota/get", `{"accountId":"`+testUser+`"}`)
+	got := quotaCall(t, s, "Quota/get", `{"accountId":"`+testAccount+`"}`)
 	if list, _ := got["list"].([]any); len(list) != 0 {
 		t.Errorf("list = %v, want nothing while the engine is off", got["list"])
 	}
@@ -178,13 +178,13 @@ func TestNoQuotaObjectsWhenTheEngineIsOff(t *testing.T) {
 // did not: a client polling a still mailbox must see an empty answer.
 func TestQuotaChangesNamesWhatMoved(t *testing.T) {
 	s, _ := quotaServer(t, []string{"*:storage=10M"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
-	now := quotaCall(t, s, "Quota/get", `{"accountId":"`+testUser+`"}`)
+	now := quotaCall(t, s, "Quota/get", `{"accountId":"`+testAccount+`"}`)
 	state, _ := now["state"].(string)
 	if state == "" {
 		t.Fatal("Quota/get returned no state")
 	}
 
-	same := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testUser+`","sinceState":"`+state+`"}`)
+	same := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testAccount+`","sinceState":"`+state+`"}`)
 	if updated, _ := same["updated"].([]any); len(updated) != 0 {
 		t.Errorf("updated = %v against its own state, want nothing", same["updated"])
 	}
@@ -193,7 +193,7 @@ func TestQuotaChangesNamesWhatMoved(t *testing.T) {
 	}
 
 	// A state from a lighter mailbox: the octets root moved since.
-	moved := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testUser+`","sinceState":"q-0-0-10485760-0"}`)
+	moved := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testAccount+`","sinceState":"q-0-0-10485760-0"}`)
 	updated, _ := moved["updated"].([]any)
 	if len(updated) != 1 || updated[0] != "octets" {
 		t.Errorf("updated = %v, want [octets]", moved["updated"])
@@ -204,7 +204,7 @@ func TestQuotaChangesNamesWhatMoved(t *testing.T) {
 // what sends a client back to Quota/get instead of trusting a guess.
 func TestQuotaChangesRefusesAForeignState(t *testing.T) {
 	s, _ := quotaServer(t, []string{"*:storage=10M"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
-	got := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testUser+`","sinceState":"not-a-state"}`)
+	got := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testAccount+`","sinceState":"not-a-state"}`)
 	if got["__name"] != "error" {
 		t.Fatalf("answered %v, want an error: %v", got["__name"], got)
 	}
@@ -218,7 +218,7 @@ func TestQuotaChangesRefusesAForeignState(t *testing.T) {
 func TestQuotaQueryChangesReportsTheRootThatAppeared(t *testing.T) {
 	s, _ := quotaServer(t, []string{"*:storage=10M:messages=100"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
 	// A state from when only storage was limited.
-	got := quotaCall(t, s, "Quota/queryChanges", `{"accountId":"`+testUser+`","sinceQueryState":"q-0-0-10485760-0"}`)
+	got := quotaCall(t, s, "Quota/queryChanges", `{"accountId":"`+testAccount+`","sinceQueryState":"q-0-0-10485760-0"}`)
 	added, _ := got["added"].([]any)
 	if len(added) != 1 {
 		t.Fatalf("added = %v, want the count root alone", got["added"])
@@ -236,7 +236,7 @@ func TestQuotaQueryChangesReportsTheRootThatAppeared(t *testing.T) {
 // limit while delivery enforces another.
 func TestTheReportedLimitIsTheScaledOne(t *testing.T) {
 	s, _ := quotaServer(t, []string{"*:storage=10M"}, quota.Policy{StoragePercentage: 50, MessagePercentage: 100}, true)
-	got := quotaCall(t, s, "Quota/get", `{"accountId":"`+testUser+`"}`)
+	got := quotaCall(t, s, "Quota/get", `{"accountId":"`+testAccount+`"}`)
 	list, _ := got["list"].([]any)
 	if len(list) != 1 {
 		t.Fatalf("list = %v", got["list"])
@@ -251,7 +251,7 @@ func TestTheReportedLimitIsTheScaledOne(t *testing.T) {
 // value when the server narrows nothing; absent is a response short an argument.
 func TestQuotaChangesCarriesUpdatedProperties(t *testing.T) {
 	s, _ := quotaServer(t, []string{"*:storage=10M"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
-	got := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testUser+`","sinceState":"q-0-0-10485760-0"}`)
+	got := quotaCall(t, s, "Quota/changes", `{"accountId":"`+testAccount+`","sinceState":"q-0-0-10485760-0"}`)
 	value, present := got["updatedProperties"]
 	if !present {
 		t.Fatalf("updatedProperties is absent from %v", got)
@@ -266,18 +266,18 @@ func TestQuotaChangesCarriesUpdatedProperties(t *testing.T) {
 func TestTheQuotaFilterIsTheOneTheRFCDefines(t *testing.T) {
 	s, _ := quotaServer(t, []string{"*:storage=10M:messages=100"}, quota.Policy{StoragePercentage: 100, MessagePercentage: 100}, true)
 
-	one := quotaCall(t, s, "Quota/query", `{"accountId":"`+testUser+`","filter":{"resourceType":"count"}}`)
+	one := quotaCall(t, s, "Quota/query", `{"accountId":"`+testAccount+`","filter":{"resourceType":"count"}}`)
 	ids, _ := one["ids"].([]any)
 	if len(ids) != 1 || ids[0] != "count" {
 		t.Errorf("filtered ids = %v, want [count]", one["ids"])
 	}
 
-	byType := quotaCall(t, s, "Quota/query", `{"accountId":"`+testUser+`","filter":{"type":"Mail"}}`)
+	byType := quotaCall(t, s, "Quota/query", `{"accountId":"`+testAccount+`","filter":{"type":"Mail"}}`)
 	if ids, _ := byType["ids"].([]any); len(ids) != 2 {
 		t.Errorf("type=Mail ids = %v, want both roots", byType["ids"])
 	}
 
-	unknown := quotaCall(t, s, "Quota/query", `{"accountId":"`+testUser+`","filter":{"types":["Mail"]}}`)
+	unknown := quotaCall(t, s, "Quota/query", `{"accountId":"`+testAccount+`","filter":{"types":["Mail"]}}`)
 	if unknown["__name"] != "error" {
 		t.Fatalf("a filter naming an unknown field answered %v: %v", unknown["__name"], unknown)
 	}

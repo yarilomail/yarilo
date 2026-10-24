@@ -6,7 +6,10 @@
 // arguments.
 package jmapcore
 
-import "strings"
+import (
+	"encoding/base64"
+	"strings"
+)
 
 // Capability URNs advertised in the session resource.
 const (
@@ -93,11 +96,17 @@ type MailCapability struct {
 // is the only one RFC 8620 requires.
 var CollationAlgorithms = []string{"i;ascii-numeric", "i;ascii-casemap", "i;octet"}
 
-// BuildSession renders the session resource for one authenticated user.
-// accountID is the username: one account per user, and RFC 8620 only requires
-// the id to be stable and opaque to the client.
+// AccountID is the user's account id: RFC 8620 §1.2 allows only the URL-safe
+// base64 alphabet, so the username is encoded, behind a letter.
+func AccountID(username string) string {
+	return "a" + base64.RawURLEncoding.EncodeToString([]byte(username))
+}
+
+// BuildSession renders the session resource for one authenticated user: one
+// account per user, its id AccountID(username).
 func BuildSession(lim Limits, username string) *Session {
 	base := strings.TrimRight(lim.BaseURL, "/")
+	id := AccountID(username)
 	account := Account{
 		Name:       username,
 		IsPersonal: true,
@@ -116,8 +125,8 @@ func BuildSession(lim Limits, username string) *Session {
 			// Quota objects, not in the capability.
 			CapQuota: map[string]any{},
 		},
-		Accounts:        map[string]Account{username: account},
-		PrimaryAccounts: map[string]string{CapMail: username, CapQuota: username},
+		Accounts:        map[string]Account{id: account},
+		PrimaryAccounts: map[string]string{CapMail: id, CapQuota: id},
 		Username:        username,
 		APIURL:          base + "/jmap/api/",
 		DownloadURL:     base + "/jmap/download/{accountId}/{blobId}/{name}?accept={type}",
@@ -133,17 +142,17 @@ func BuildSession(lim Limits, username string) *Session {
 	if lim.Submission != nil {
 		sess.Capabilities[CapSubmission] = map[string]any{}
 		account.AccountCapabilities[CapSubmission] = lim.Submission
-		sess.PrimaryAccounts[CapSubmission] = username
+		sess.PrimaryAccounts[CapSubmission] = id
 	}
 	if lim.Vacation != nil {
 		sess.Capabilities[CapVacation] = map[string]any{}
 		account.AccountCapabilities[CapVacation] = lim.Vacation
-		sess.PrimaryAccounts[CapVacation] = username
+		sess.PrimaryAccounts[CapVacation] = id
 	}
 	if lim.Sieve != nil {
 		sess.Capabilities[CapSieve] = map[string]string{"implementation": lim.Sieve.Implementation}
 		account.AccountCapabilities[CapSieve] = lim.Sieve.Account
-		sess.PrimaryAccounts[CapSieve] = username
+		sess.PrimaryAccounts[CapSieve] = id
 	}
 	return sess
 }

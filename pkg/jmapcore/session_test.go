@@ -2,6 +2,7 @@ package jmapcore
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -101,7 +102,7 @@ func TestSessionCoreLimitsFromCaller(t *testing.T) {
 func TestSessionAccount(t *testing.T) {
 	const user = "u1@example.com"
 	sess := BuildSession(testLimits(), user)
-	acct, ok := sess.Accounts[user]
+	acct, ok := sess.Accounts[AccountID(user)]
 	if !ok {
 		t.Fatalf("no account for %q: %v", user, sess.Accounts)
 	}
@@ -111,7 +112,7 @@ func TestSessionAccount(t *testing.T) {
 	if _, ok := acct.AccountCapabilities[CapMail]; !ok {
 		t.Error("account is missing the mail capability")
 	}
-	if sess.PrimaryAccounts[CapMail] != user {
+	if sess.PrimaryAccounts[CapMail] != AccountID(user) {
 		t.Errorf("primaryAccounts[mail] = %q", sess.PrimaryAccounts[CapMail])
 	}
 }
@@ -176,10 +177,10 @@ func TestSessionCarriesSubmission(t *testing.T) {
 	if _, ok := sess.Capabilities[CapSubmission]; !ok {
 		t.Error("no session-level submission capability")
 	}
-	if got := sess.Accounts["u1@example.com"].AccountCapabilities[CapSubmission]; got != lim.Submission {
+	if got := sess.Accounts[AccountID("u1@example.com")].AccountCapabilities[CapSubmission]; got != lim.Submission {
 		t.Errorf("account capability = %v", got)
 	}
-	if sess.PrimaryAccounts[CapSubmission] != "u1@example.com" {
+	if sess.PrimaryAccounts[CapSubmission] != AccountID("u1@example.com") {
 		t.Errorf("primary account = %q", sess.PrimaryAccounts[CapSubmission])
 	}
 	if sess.State == plain {
@@ -198,10 +199,40 @@ func TestSessionCarriesVacation(t *testing.T) {
 	if _, ok := sess.Capabilities[CapVacation]; !ok {
 		t.Error("no session-level vacation capability")
 	}
-	if _, ok := sess.Accounts["u1@example.com"].AccountCapabilities[CapVacation]; !ok || sess.PrimaryAccounts[CapVacation] != "u1@example.com" {
+	if _, ok := sess.Accounts[AccountID("u1@example.com")].AccountCapabilities[CapVacation]; !ok || sess.PrimaryAccounts[CapVacation] != AccountID("u1@example.com") {
 		t.Errorf("account capability or primary account missing: %+v", sess)
 	}
 	if sess.State == plain {
 		t.Error("the session state did not move with the vacation capability")
 	}
+}
+
+// Every id the session names is an RFC 8620 §1.2 Id: 1-255 characters of the
+// URL-safe base64 alphabet. A client library that checks it refuses the
+// whole session otherwise.
+func TestSessionIDsAreJMAPIds(t *testing.T) {
+	for _, user := range []string{"u1@example.com", "first.last+tag@sub.example.org", "u", "юзер@приклад.укр"} {
+		sess := BuildSession(testLimits(), user)
+		ids := []string{}
+		for id := range sess.Accounts {
+			ids = append(ids, id)
+		}
+		for _, id := range sess.PrimaryAccounts {
+			ids = append(ids, id)
+		}
+		for _, id := range ids {
+			if !validID(id) {
+				t.Errorf("%s: account id %q is not a JMAP Id", user, id)
+			}
+		}
+		if AccountID(user) == AccountID(user+"x") {
+			t.Errorf("%s: two users share an account id", user)
+		}
+	}
+}
+
+// validID is RFC 8620 §1.2 with the leading character a client library also
+// insists on: alphanumeric first, then the URL-safe alphabet.
+func validID(id string) bool {
+	return regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,254}$`).MatchString(id)
 }

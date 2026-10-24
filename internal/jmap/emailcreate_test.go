@@ -16,7 +16,7 @@ import (
 
 func createCall(t *testing.T, s *Server, email string) map[string]any {
 	t.Helper()
-	name, out := callAs(t, s, testUser, "Email/set", fmt.Sprintf(`{"accountId":%q,"create":{"c1":%s}}`, testUser, email))
+	name, out := callAs(t, s, testUser, "Email/set", fmt.Sprintf(`{"accountId":%q,"create":{"c1":%s}}`, testAccount, email))
 	if name != "Email/set" {
 		t.Fatalf("answered %s %v", name, out)
 	}
@@ -38,7 +38,7 @@ func createdID(t *testing.T, out map[string]any) string {
 func rawOf(t *testing.T, s *Server, id string) string {
 	t.Helper()
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testUser+"/"+id+"/m.eml"))
+	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+id+"/m.eml"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("download %d", w.Code)
 	}
@@ -76,8 +76,8 @@ func mimeShape(t *testing.T, raw string) []string {
 func TestEmailSetCreateBuildsTheTree(t *testing.T) {
 	s, _ := uploadServer(t)
 	inbox := inboxID(t, s)
-	pic := uploadedID(t, upload(t, s, testUser, strings.NewReader("\x89PNG not really")))
-	latin := uploadedID(t, upload(t, s, testUser, strings.NewReader("caf\xe9")))
+	pic := uploadedID(t, upload(t, s, testAccount, strings.NewReader("\x89PNG not really")))
+	latin := uploadedID(t, upload(t, s, testAccount, strings.NewReader("caf\xe9")))
 	cases := []struct {
 		name, body string
 		shape      []string
@@ -110,12 +110,12 @@ func TestEmailSetCreateBuildsTheTree(t *testing.T) {
 func TestEmailSetCreateKeepsAttachmentBytes(t *testing.T) {
 	s, _ := uploadServer(t)
 	payload := "\x00\x01binary\xff" + strings.Repeat("z", 200)
-	blob := uploadedID(t, upload(t, s, testUser, strings.NewReader(payload)))
+	blob := uploadedID(t, upload(t, s, testAccount, strings.NewReader(payload)))
 	id := createdID(t, createCall(t, s, fmt.Sprintf(`{"mailboxIds":{%q:true},"attachments":[{"blobId":%q,"type":"application/octet-stream","name":"b.bin"}]}`, inboxID(t, s), blob)))
-	got := emailGet(t, s, fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["attachments"]}`, testUser, id))
+	got := emailGet(t, s, fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["attachments"]}`, testAccount, id))
 	att := firstEmail(t, got)["attachments"].([]any)[0].(map[string]any)
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testUser+"/"+att["blobId"].(string)+"/b.bin"))
+	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+att["blobId"].(string)+"/b.bin"))
 	if w.Body.String() != payload {
 		t.Errorf("attachment came back %d bytes, want %d", w.Body.Len(), len(payload))
 	}
@@ -129,7 +129,7 @@ func TestEmailSetCreateJoinsTheThread(t *testing.T) {
 	root := createdID(t, createCall(t, s, fmt.Sprintf(`{"mailboxIds":{%q:true},"messageId":["root@x"],"subject":"Plan",%s}`, inbox, body)))
 	out := createCall(t, s, fmt.Sprintf(`{"mailboxIds":{%q:true},"messageId":["reply@x"],"inReplyTo":["root@x"],"subject":"Re: Plan",%s}`, inbox, body))
 	reply, _ := out["created"].(map[string]any)["c1"].(map[string]any)
-	got := emailGet(t, s, fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["threadId"]}`, testUser, root))
+	got := emailGet(t, s, fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["threadId"]}`, testAccount, root))
 	if reply["threadId"] != firstEmail(t, got)["threadId"] {
 		t.Errorf("reply in %v, root in %v", reply["threadId"], firstEmail(t, got)["threadId"])
 	}

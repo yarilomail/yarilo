@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/internal/userstate/counters"
+	"github.com/yarilomail/yarilo/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/pkg/locks"
 )
 
@@ -230,15 +231,15 @@ func (s *Server) typeState(ctx context.Context, h *userHandle, t counters.Type) 
 		_, st, err := s.quotaObjects(h)
 		return st, err
 	case counters.Identity:
-		return identityState(h.identities(h.info.Username)), nil
+		return identityState(h.identities()), nil
 	case counters.EmailSubmission:
 		recs, err := s.readRecords(ctx, h)
 		return strconv.FormatUint(recs.State, 10), err
 	case counters.SieveScript:
-		v, err := s.sieveRead(ctx, h, h.info.Username)
+		v, err := s.sieveRead(ctx, h, h.user)
 		return v.state, err
 	case counters.VacationResponse:
-		vv, err := s.vacationRead(ctx, h, h.info.Username)
+		vv, err := s.vacationRead(ctx, h, h.user)
 		return vv.v.state, err
 	}
 	return "", fmt.Errorf("jmap: no state for %s", t)
@@ -354,7 +355,7 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 		if len(out) == 0 {
 			continue
 		}
-		change := map[string]any{"@type": "StateChange", "changed": map[string]any{id.user: out}}
+		change := map[string]any{"@type": "StateChange", "changed": map[string]any{jmapcore.AccountID(id.user): out}}
 		if err := writeEvent(w, rc, "state", strconv.FormatUint(s.push.seq.Add(1), 10), change); err != nil {
 			return
 		}

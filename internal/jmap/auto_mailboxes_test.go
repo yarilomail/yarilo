@@ -33,7 +33,7 @@ func TestAFreshAccountShowsTheConfiguredMailboxesOverJMAP(t *testing.T) {
 		},
 	})
 	got := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Mailbox/get",{"accountId":"u1@example.com"},"c0"]]}`)
+		["Mailbox/get",{"accountId":"`+testAccount+`"},"c0"]]}`)
 	seen := map[string]map[string]any{}
 	for _, item := range got["list"].([]any) {
 		mb := item.(map[string]any)

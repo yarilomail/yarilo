@@ -101,7 +101,7 @@ func TestChangesRefusesWhatItCannotDiff(t *testing.T) {
 				since = mailboxState(list)
 			}
 			_, errType := changesCall(t, s, tc.method,
-				fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+				fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 			if errType != tc.wantErr {
 				t.Errorf("error = %q, want %q", errType, tc.wantErr)
 			}
@@ -117,10 +117,10 @@ func TestEmailChangesNamesWhatChanged(t *testing.T) {
 	s, id, _ := storedServerWithMessageAt(t, setTestMessage, 0)
 	since := emailStateOf(t, s)
 
-	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testUser, id))
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testAccount, id))
 
 	payload, errType := changesCall(t, s, "Email/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType != "" {
 		t.Fatalf("Email/changes refused: %s", errType)
 	}
@@ -150,7 +150,7 @@ func TestEmailChangesIsEmptyWhenNothingHappened(t *testing.T) {
 	since := emailStateOf(t, s)
 
 	payload, errType := changesCall(t, s, "Email/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType != "" {
 		t.Fatalf("Email/changes refused: %s", errType)
 	}
@@ -169,10 +169,10 @@ func TestEmailChangesIsEmptyWhenNothingHappened(t *testing.T) {
 func TestEmailChangesRefusesMoreThanMaxChanges(t *testing.T) {
 	s, id, _ := storedServerWithMessageAt(t, setTestMessage, 0)
 	since := emailStateOf(t, s)
-	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testUser, id))
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testAccount, id))
 
 	_, errType := changesCall(t, s, "Email/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q,"maxChanges":0}`, testUser, since))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q,"maxChanges":0}`, testAccount, since))
 	if errType != "" {
 		t.Errorf("maxChanges 0 means no limit, not a refusal: %s", errType)
 	}
@@ -219,7 +219,7 @@ func TestEmailChangesReportsDestroyedByID(t *testing.T) {
 	destroyMessage(t, h, marks[0].folder.ID, 1)
 
 	payload, errType := changesCall(t, s, "Email/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType != "" {
 		t.Fatalf("Email/changes refused: %s", errType)
 	}
@@ -251,7 +251,7 @@ func TestEmailChangesRefusesBelowTheExpungeFloor(t *testing.T) {
 	}
 
 	payload, errType := changesCall(t, s, "Email/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType != "cannotCalculateChanges" {
 		t.Fatalf("a state below the floor answered %q with %v -- an empty destroyed list is read as 'nothing was deleted'",
 			errType, payload)
@@ -262,7 +262,7 @@ func TestEmailChangesRefusesBelowTheExpungeFloor(t *testing.T) {
 func mailboxStateOf(t *testing.T, s *Server) string {
 	t.Helper()
 	body := fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-		"methodCalls":[["Mailbox/get",{"accountId":%q,"ids":[]},"c0"]]}`, testUser)
+		"methodCalls":[["Mailbox/get",{"accountId":%q,"ids":[]},"c0"]]}`, testAccount)
 	w := postAPIRaw(t, s, body)
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
@@ -314,7 +314,7 @@ func TestMailboxChangesReportsCreatedUpdatedAndDestroyed(t *testing.T) {
 		t.Fatalf("open new folder: %v", err)
 	}
 	payload, errType := changesCall(t, s, "Mailbox/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType != "" {
 		t.Fatalf("Mailbox/changes refused after a create: %s", errType)
 	}
@@ -334,7 +334,7 @@ func TestMailboxChangesReportsCreatedUpdatedAndDestroyed(t *testing.T) {
 		t.Fatalf("rename index: %v", err)
 	}
 	payload, errType = changesCall(t, s, "Mailbox/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType != "" {
 		t.Fatalf("Mailbox/changes refused after a rename: %s", errType)
 	}
@@ -356,7 +356,7 @@ func TestMailboxChangesReportsCreatedUpdatedAndDestroyed(t *testing.T) {
 		t.Fatalf("delete: %v", err)
 	}
 	payload, errType = changesCall(t, s, "Mailbox/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType != "" {
 		t.Fatalf("Mailbox/changes refused after a delete: %s", errType)
 	}
@@ -398,7 +398,7 @@ func TestMailboxChangesRefusesAnUnnameableDeletion(t *testing.T) {
 	})
 
 	_, errType := changesCall(t, s, "Mailbox/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, desc.String()))
+		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, desc.String()))
 	if errType != "cannotCalculateChanges" {
 		t.Errorf("a deletion the server cannot name answered %q; it must refuse rather than invent an id", errType)
 	}

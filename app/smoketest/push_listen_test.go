@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/pkg/jmapcore"
+
 	"github.com/coder/websocket"
 )
 
@@ -37,8 +39,8 @@ func TestPushListenPrintsTheAccountsEmailChanges(t *testing.T) {
 		for _, m := range []string{
 			`{"@type":"Response","requestId":"e","methodResponses":[]}`,
 			`{"@type":"StateChange","changed":{"other@x":{"Email":"s1"}}}`,
-			`{"@type":"StateChange","changed":{"u@x":{"Mailbox":"s1"}}}`,
-			`{"@type":"StateChange","changed":{"u@x":{"Email":"s2"}}}`,
+			`{"@type":"StateChange","changed":{"` + jmapcore.AccountID("u@x") + `":{"Mailbox":"s1"}}}`,
+			`{"@type":"StateChange","changed":{"` + jmapcore.AccountID("u@x") + `":{"Email":"s2"}}}`,
 		} {
 			if err := c.Write(ctx, websocket.MessageText, []byte(m)); err != nil {
 				return

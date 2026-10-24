@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/yarilomail/yarilo/pkg/jmapcore"
+
 	"github.com/coder/websocket"
 )
 
@@ -76,7 +78,8 @@ func runPushListen() error {
 		var change struct {
 			Changed map[string]map[string]string `json:"changed"`
 		}
-		if json.Unmarshal(data, &change) == nil && change.Changed[*flagPushListenUser]["Email"] != "" {
+		// The hop has no session to read the id from; it is the server's encoding.
+		if json.Unmarshal(data, &change) == nil && change.Changed[jmapcore.AccountID(*flagPushListenUser)]["Email"] != "" {
 			fmt.Println("state Email")
 		}
 	}

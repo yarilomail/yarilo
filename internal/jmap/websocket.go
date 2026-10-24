@@ -305,7 +305,7 @@ func (ws *wsConn) pushLoop(ctx context.Context, types []counters.Type, pushState
 		}
 		ws.send(ctx, map[string]any{
 			"@type":     "StateChange",
-			"changed":   map[string]any{user: out},
+			"changed":   map[string]any{jmapcore.AccountID(user): out},
 			"pushState": encodePushState(sent),
 		})
 		metricPushEvents.WithLabelValues("state").Inc()

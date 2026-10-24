@@ -16,7 +16,7 @@ const partMessage = "From: a@example.com\r\nSubject: parts\r\nMIME-Version: 1.0\
 
 func TestPartBlobIDsDownloadTheirDecodedBody(t *testing.T) {
 	s, id := storedServerWithMessage(t, partMessage, 0)
-	got := emailGet(t, s, `{"accountId":"`+testUser+`","ids":["`+id+`"],"properties":["attachments","textBody"]}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["attachments","textBody"]}`)
 	att := firstEmail(t, got)["attachments"].([]any)[0].(map[string]any)
 	blob, _ := att["blobId"].(string)
 	if blob != "P"+id+"-2" {
@@ -37,7 +37,7 @@ func TestPartBlobIDsDownloadTheirDecodedBody(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testUser+"/"+tc.blob+"/x"))
+			s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+tc.blob+"/x"))
 			if w.Code != tc.code {
 				t.Fatalf("status %d, want %d: %s", w.Code, tc.code, w.Body)
 			}
@@ -52,7 +52,7 @@ func TestPartBlobIDsDownloadTheirDecodedBody(t *testing.T) {
 func TestPartBlobOfAnotherAccountIsNotFound(t *testing.T) {
 	s, foreign := twoAccountServer(t)
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testUser+"/P"+foreign+"-1/x"))
+	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/P"+foreign+"-1/x"))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status %d, want 404", w.Code)
 	}

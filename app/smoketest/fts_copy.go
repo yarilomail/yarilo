@@ -79,7 +79,7 @@ func checkFTSDocumentIsMessage(user, pass string, withJMAP bool) (err error) {
 	// While both copies are alive: two copies of one message answer under one
 	// emailId, which an expunged one could not distinguish (RFC 8474 §5.1).
 	if withJMAP {
-		if err := assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder, len(copyUIDs)+1); err != nil {
+		if err := assertOneEmailIDForCopies(marker, copyFolder, otherFolder, len(copyUIDs)+1); err != nil {
 			return err
 		}
 	}
@@ -204,8 +204,8 @@ func backendFTSCounts(user string) (docs, copies, messages uint64, err error) {
 
 // The judgement that separates "document = the message" from "document = the
 // copy": two copies answer under one emailId, narrowed by the folder.
-func assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder string, copies int) error {
-	ids, _, err := jmapQueryText(user, marker)
+func assertOneEmailIDForCopies(marker, copyFolder, otherFolder string, copies int) error {
+	ids, _, err := jmapQueryText(marker)
 	if err != nil {
 		return fmt.Errorf("Email/query text %q: %w", marker, err)
 	}
@@ -221,14 +221,14 @@ func assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder string, cop
 	if err != nil {
 		return err
 	}
-	in, err := jmapQueryTextIn(user, marker, copyID)
+	in, err := jmapQueryTextIn(marker, copyID)
 	if err != nil {
 		return fmt.Errorf("Email/query inMailbox %q: %w", copyFolder, err)
 	}
 	if len(in) != 1 || in[0] != ids[0] {
 		return fmt.Errorf("Email/query inMailbox %q returned %v, want the single id %v", copyFolder, in, ids)
 	}
-	out, err := jmapQueryTextIn(user, marker, otherID)
+	out, err := jmapQueryTextIn(marker, otherID)
 	if err != nil {
 		return fmt.Errorf("Email/query inMailbox %q: %w", otherFolder, err)
 	}
@@ -238,7 +238,7 @@ func assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder string, cop
 	}
 	// Where it is, is a property of the Email: both mailboxes holding a copy
 	// are named by one object (RFC 8621 §4).
-	boxes, err := jmapMailboxIDsOf(user, ids[0])
+	boxes, err := jmapMailboxIDsOf(ids[0])
 	if err != nil {
 		return err
 	}
@@ -256,9 +256,9 @@ func assertOneEmailIDForCopies(user, marker, copyFolder, otherFolder string, cop
 }
 
 // jmapMailboxIDsOf reads one Email's mailboxIds.
-func jmapMailboxIDsOf(user, id string) (map[string]bool, error) {
+func jmapMailboxIDsOf(id string) (map[string]bool, error) {
 	args, err := jmapCall(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Email/get",{"accountId":"` + user + `","ids":["` + id + `"],"properties":["id","mailboxIds"]},"c0"]]}`)
+		`["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + id + `"],"properties":["id","mailboxIds"]},"c0"]]}`)
 	if err != nil {
 		return nil, err
 	}
@@ -309,13 +309,13 @@ func assertHits(c *imapClient, folder, marker string, want int) error {
 
 // jmapQueryTextIn runs Email/query with a text condition scoped to one
 // mailbox.
-func jmapQueryTextIn(user, text, mailboxID string) ([]string, error) {
+func jmapQueryTextIn(text, mailboxID string) ([]string, error) {
 	filter, err := json.Marshal(map[string]string{"text": text, "inMailbox": mailboxID})
 	if err != nil {
 		return nil, err
 	}
 	args, err := jmapCall(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Email/query",{"accountId":"` + user + `","filter":` + string(filter) + `},"c0"]]}`)
+		`["Email/query",{"accountId":"` + jmapAccountID() + `","filter":` + string(filter) + `},"c0"]]}`)
 	if err != nil {
 		return nil, err
 	}

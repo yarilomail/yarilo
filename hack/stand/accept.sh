@@ -269,21 +269,29 @@ jmap_post() {
     --data-binary "$3" "https://$MAIL_HOST/jmap/api/"
 }
 
+# jmap_account is the login's mail account id, from its session as a client
+# reads it: the server's id, not the address.
+jmap_account() {
+  curl_as "$1:$2" --resolve "$MAIL_HOST:443:$JMAP_IP" "https://$MAIL_HOST/.well-known/jmap" |
+    sed -n 's/.*"primaryAccounts":{[^}]*"urn:ietf:params:jmap:mail":"\([^"]*\)".*/\1/p'
+}
+
 # jmap_send creates a draft and submits it by "#d" in one request, as clients
 # do; onSuccessDestroyEmail removes the draft, and a failed send removes it too.
 jmap_send() {
-  local login="$1" pass="$2" from="$3" to="$4" bcc="$5" marker="$6" using inbox ident resp draft
+  local login="$1" pass="$2" from="$3" to="$4" bcc="$5" marker="$6" using acct inbox ident resp draft
   using='"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"]'
-  inbox=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Mailbox/query\",{\"accountId\":\"$from\",\"filter\":{\"role\":\"inbox\"}},\"q\"]]}" |
+  acct=$(jmap_account "$login" "$pass")
+  inbox=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Mailbox/query\",{\"accountId\":\"$acct\",\"filter\":{\"role\":\"inbox\"}},\"q\"]]}" |
     sed -n 's/.*"ids":\["\([^"]*\)".*/\1/p')
   ident="I$(printf '%s' "$from" | tr '[:upper:]' '[:lower:]' | sha256sum | cut -c1-16)"
-  resp=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$from\",\"create\":{\"d\":{\"mailboxIds\":{\"$inbox\":true},\"keywords\":{\"\$draft\":true},\"from\":[{\"email\":\"$from\"}],\"to\":[{\"email\":\"$to\"}],\"bcc\":[{\"email\":\"$bcc\"}],\"subject\":\"$marker\",\"textBody\":[{\"partId\":\"1\",\"type\":\"text/plain\"}],\"bodyValues\":{\"1\":{\"value\":\"cross-mailbox check\"}}}}},\"e\"],[\"EmailSubmission/set\",{\"accountId\":\"$from\",\"create\":{\"s\":{\"identityId\":\"$ident\",\"emailId\":\"#d\"}},\"onSuccessDestroyEmail\":[\"#s\"]},\"s\"]]}" || true)
+  resp=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$acct\",\"create\":{\"d\":{\"mailboxIds\":{\"$inbox\":true},\"keywords\":{\"\$draft\":true},\"from\":[{\"email\":\"$from\"}],\"to\":[{\"email\":\"$to\"}],\"bcc\":[{\"email\":\"$bcc\"}],\"subject\":\"$marker\",\"textBody\":[{\"partId\":\"1\",\"type\":\"text/plain\"}],\"bodyValues\":{\"1\":{\"value\":\"cross-mailbox check\"}}}}},\"e\"],[\"EmailSubmission/set\",{\"accountId\":\"$acct\",\"create\":{\"s\":{\"identityId\":\"$ident\",\"emailId\":\"#d\"}},\"onSuccessDestroyEmail\":[\"#s\"]},\"s\"]]}" || true)
   echo "$resp" > "$OUT/cross/$marker.jmap"
   draft=$(printf '%s' "$resp" | sed -n 's/.*"created":{"d":{[^}]*"id":"\([^"]*\)".*/\1/p')
   if printf '%s' "$resp" | grep -q '"undoStatus":"final"' && printf '%s' "$resp" | grep -q "\"destroyed\":\[\"$draft\"\]"; then
     return 0
   fi
-  [ -z "$draft" ] || jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$from\",\"destroy\":[\"$draft\"]},\"x\"]]}" > /dev/null || true
+  [ -z "$draft" ] || jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$acct\",\"destroy\":[\"$draft\"]},\"x\"]]}" > /dev/null || true
   return 1
 }
 

@@ -138,7 +138,7 @@ func markersAmong(c *imapClient, hits []string, markers []string) ([]string, err
 func jmapQueryMarkers(term string, want int) (*reading, error) {
 	deadline := time.Now().Add(*flagIMAPReadTimeout)
 	for {
-		ids, errType, err := jmapQueryText(*flagJMAPUser, term)
+		ids, errType, err := jmapQueryText(term)
 		if err != nil {
 			return nil, err
 		}
@@ -148,7 +148,7 @@ func jmapQueryMarkers(term string, want int) (*reading, error) {
 		if len(ids) >= want || time.Now().After(deadline) {
 			var markers []string
 			for _, id := range ids {
-				subject, err := jmapSubjectOf(*flagJMAPUser, id)
+				subject, err := jmapSubjectOf(id)
 				if err != nil {
 					return nil, err
 				}
