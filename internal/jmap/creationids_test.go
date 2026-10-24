@@ -296,7 +296,7 @@ func idRows() []idRow {
 		{"Identity/set", "update", func(t *testing.T, e idEnv) error {
 			id := identityID(testUser)
 			r := e.batchWith(t, fmt.Sprintf(`{"i":%q}`, id), fmt.Sprintf(`"Identity/set",{"accountId":%q,"update":{"#i":{"name":"x"}}},"u"`, testAccount))
-			return want(slices.Equal(keys(r["u"].args["notUpdated"]), []string{id}), "Identity/set = %v, want %s refused", r["u"].args, id)
+			return want(slices.Equal(keys(r["u"].args["updated"]), []string{id}), "Identity/set = %v, want %s updated", r["u"].args, id)
 		}},
 		{"Identity/set", "destroy", func(t *testing.T, e idEnv) error {
 			id := identityID(testUser)

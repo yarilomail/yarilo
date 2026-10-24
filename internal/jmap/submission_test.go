@@ -103,7 +103,7 @@ func TestIdentities(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var got []string
-			for _, id := range identities(c.user, c.aliases) {
+			for _, id := range derivedIdentities(c.user, c.aliases) {
 				got = append(got, id.Email)
 				if id.ID != identityID(id.Email) || id.MayDelete || id.Name != "" {
 					t.Errorf("identity %+v: want the address's id, mayDelete false, no name", id)
@@ -133,10 +133,6 @@ func TestIdentityMethods(t *testing.T) {
 	name, out := callAs(t, s, testUser, "Identity/changes", `{"accountId":"`+testAccount+`","sinceState":"old"}`)
 	if name != "error" || out["type"] != "cannotCalculateChanges" {
 		t.Errorf("Identity/changes from another state answered %s %v", name, out)
-	}
-	set := subCall(t, s, "Identity/set", `{"accountId":"`+testAccount+`","create":{"c1":{"email":"n@example.com"}},"destroy":["`+identityID(testUser)+`"]}`)
-	if entry(set, "notCreated", "c1")["type"] != "forbidden" {
-		t.Errorf("Identity/set = %v, want each object forbidden", set)
 	}
 }
 

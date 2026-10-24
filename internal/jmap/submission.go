@@ -546,11 +546,15 @@ func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazySt
 	if p.IdentityID == nil {
 		return none, invalidProp("identityId", "identityId is required"), nil
 	}
-	i := slices.IndexFunc(h.identities(), func(id jmapcore.Identity) bool { return id.ID == *p.IdentityID })
+	all, err := h.identities()
+	if err != nil {
+		return none, nil, err
+	}
+	i := slices.IndexFunc(all, func(id jmapcore.Identity) bool { return id.ID == *p.IdentityID })
 	if i < 0 {
 		return none, invalidProp("identityId", "no such identity"), nil
 	}
-	identity := h.identities()[i]
+	identity := all[i]
 	if p.EmailID == nil {
 		return none, invalidProp("emailId", "emailId is required"), nil
 	}

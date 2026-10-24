@@ -368,6 +368,8 @@ func register() []check {
 		"needs -jmap and -smtp-sub-send (a relay)", checkJMAPSubmission)
 	want("jmap", jmap && *flagSMTPSubSend, "jmap Email/set with a header:* property, sent through the relay",
 		"needs -jmap and -smtp-sub-send (a relay)", checkJMAPCreateAndSend)
+	want("jmap", jmap && *flagSMTPSubSend, "jmap Identity/set creates an identity, sends through it, destroys it",
+		"needs -jmap and -smtp-sub-send (a relay)", checkJMAPIdentity)
 	want("jmap", jmap, "jmap download refuses another account's blob", "needs -jmap", checkJMAPDownloadIsolation)
 	want("jmap", jmap && *flagJMAPUser != "" && *flagFTSUser != "",
 		"jmap Email/query over full-text search",

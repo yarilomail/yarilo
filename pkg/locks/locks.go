@@ -56,6 +56,7 @@ const (
 	EventSieve         EventType = "sieve"      // on SieveScriptsKey
 	EventThreads       EventType = "threads"    // on ThreadsKey
 	EventSubmission    EventType = "submission" // on SubmissionsKey
+	EventIdentities    EventType = "identities" // on IdentitiesKey
 )
 
 // Event is a server-emitted notification published on a resource channel.
