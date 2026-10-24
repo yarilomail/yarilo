@@ -30,13 +30,13 @@ func TestClientLibraryUploadsAndImports(t *testing.T) {
 	if err := c.Authenticate(); err != nil {
 		t.Fatalf("session: %v", err)
 	}
-	up, err := c.Upload(gojmap.ID(testUser), strings.NewReader(importable))
+	up, err := c.Upload(gojmap.ID(testAccount), strings.NewReader(importable))
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 	req := &gojmap.Request{}
 	req.Invoke(&email.Import{
-		Account: gojmap.ID(testUser),
+		Account: gojmap.ID(testAccount),
 		Emails: map[string]*email.EmailImport{"c1": {
 			BlobID:     up.ID,
 			MailboxIDs: map[gojmap.ID]bool{gojmap.ID(inboxID(t, s)): true},

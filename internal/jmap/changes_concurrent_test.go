@@ -72,7 +72,7 @@ func TestConcurrentDeliveryAndFlagChangeBothAppear(t *testing.T) {
 			}
 
 			payload, errType := changesCall(t, s, "Email/changes",
-				fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+				fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 			if errType != "" {
 				t.Fatalf("Email/changes refused after two concurrent writes: %s", errType)
 			}

@@ -54,6 +54,8 @@ type Storage struct {
 // handle lives for one request and is closed with it: a cache would need an
 // invalidation story that nothing here can supply.
 type userHandle struct {
+	// user is the login the request carries; the account id only encodes it.
+	user       string
 	info       *mailbox.UserInfo
 	threads    *threads.Cache
 	box        mailbox.UserMailbox
@@ -105,6 +107,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	// (#1670).
 	owner := locks.Owner(username, info.LockID())
 	h := &userHandle{
+		user: username,
 		info: info,
 		box:  s.mailboxFor(info).OpenUser(info),
 	}

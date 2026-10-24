@@ -15,12 +15,12 @@ func TestEmailGetAnswersEnvelopePropertiesFromCache(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
 
 	// Warm: this request parses the message and writes the envelope back.
-	warm := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
+	warm := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],
 		"properties":`+envelopeProps+`}`))
 
 	unreadableMailFiles(t, home)
 
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],
 		"properties":`+envelopeProps+`}`)
 	if notFound, _ := got["notFound"].([]any); len(notFound) != 0 {
 		t.Fatalf("envelope properties were not served from the cache: %v", got)
@@ -57,10 +57,10 @@ func TestEmailGetParsesForPropertiesTheEnvelopeDoesNotCarry(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, id, home := storedServerWithMessageAt(t, richMessage, 0)
 			// Warm the cache through a request the envelope does satisfy.
-			emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+envelopeProps+`}`)
+			emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":`+envelopeProps+`}`)
 			unreadableMailFiles(t, home)
 
-			got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+tc.props+`}`)
+			got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":`+tc.props+`}`)
 			if notFound, _ := got["notFound"].([]any); len(notFound) != 1 {
 				t.Errorf("%s was answered from an envelope that does not carry it: %v", tc.name, got)
 			}
@@ -82,10 +82,10 @@ const encodedNameMessage = "From: =?utf-8?B?0J7Qu9C10LrRgdCw0L3QtNGA?= <alex@exa
 func TestEmailGetDecodesAddressNamesFromTheCache(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, encodedNameMessage, 0)
 
-	warm := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
+	warm := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],
 		"properties":`+envelopeProps+`}`))
 	unreadableMailFiles(t, home)
-	cached := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
+	cached := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],
 		"properties":`+envelopeProps+`}`))
 
 	name := func(email map[string]any) any {
@@ -117,18 +117,18 @@ func TestEmailGetOpensTheCacheOncePerFolder(t *testing.T) {
 	s := storedServer(t)
 	locker := s.opts.Storage.Locker.(*testLocker)
 
-	ids := idsOf(t, emailQuery(t, s, `{"accountId":"u1@example.com"}`))
+	ids := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`"}`))
 	if len(ids) < 2 {
 		t.Fatalf("need at least two messages in one folder, got %v", ids)
 	}
 
 	props := `"properties":["id","subject","from"]`
 	before := locker.acquisitions()
-	emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+ids[0]+`"],`+props+`}`)
+	emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+ids[0]+`"],`+props+`}`)
 	one := locker.acquisitions() - before
 
 	before = locker.acquisitions()
-	emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+strings.Join(ids, `","`)+`"],`+props+`}`)
+	emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+strings.Join(ids, `","`)+`"],`+props+`}`)
 	many := locker.acquisitions() - before
 
 	if many != one {

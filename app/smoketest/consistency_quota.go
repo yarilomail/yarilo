@@ -213,17 +213,17 @@ func checkConsistencyQuotaJMAP(user string) error {
 	if err != nil {
 		return fmt.Errorf("read quota over imap: %w", err)
 	}
-	right, err := jmapReadQuota(user)
+	right, err := jmapReadQuota()
 	if err != nil {
 		return fmt.Errorf("read quota over jmap: %w", err)
 	}
 	return judgeRow("imap<->jmap quota", left, right, defaultAllowances())
 }
 
-func jmapReadQuota(user string) (*reading, error) {
+func jmapReadQuota() (*reading, error) {
 	args, err := jmapCall(fmt.Sprintf(
 		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:quota"],`+
-			`"methodCalls":[["Quota/get",{"accountId":%q},"c0"]]}`, user))
+			`"methodCalls":[["Quota/get",{"accountId":%q},"c0"]]}`, jmapAccountID()))
 	if err != nil {
 		return nil, err
 	}

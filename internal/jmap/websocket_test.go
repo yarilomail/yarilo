@@ -83,7 +83,7 @@ func wsNext(t *testing.T, c *websocket.Conn, typ string, within time.Duration) (
 
 func wsChanged(m map[string]any) map[string]any {
 	c, _ := m["changed"].(map[string]any)
-	out, _ := c[testUser].(map[string]any)
+	out, _ := c[testAccount].(map[string]any)
 	return out
 }
 
@@ -254,7 +254,7 @@ func TestAChangeRightAfterTheEnableIsPushed(t *testing.T) {
 	c := f.mustWS(t)
 	wsSend(t, c, `{"@type":"WebSocketPushEnable","dataTypes":["Email"]}`)
 	wsSend(t, c, `{"@type":"Request","id":"s","using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],`+
-		`"methodCalls":[["Email/set",{"accountId":"`+testUser+`","update":{"`+f.email+`":{"keywords/$seen":true}}},"c0"]]}`)
+		`"methodCalls":[["Email/set",{"accountId":"`+testAccount+`","update":{"`+f.email+`":{"keywords/$seen":true}}},"c0"]]}`)
 	if _, ok := wsNext(t, c, "StateChange", eventWait); !ok {
 		t.Error("no StateChange for the change made after the enable")
 	}

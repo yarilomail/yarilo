@@ -53,8 +53,8 @@ func identityState(ids []jmapcore.Identity) string {
 	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
-func (h *userHandle) identities(user string) []jmapcore.Identity {
-	return identities(user, h.info.IdentityAliases)
+func (h *userHandle) identities() []jmapcore.Identity {
+	return identities(h.user, h.info.IdentityAliases)
 }
 
 // allowedBy says whether addr is one of the identity's addresses: the identity
@@ -76,7 +76,7 @@ func (s *Server) identityGet(ctx context.Context, h *userHandle, accountID strin
 	if unknown := jmapcore.UnknownProperties(jmapcore.Identity{}, props); len(unknown) > 0 {
 		return nil, jmapcore.InvalidProperties(unknown)
 	}
-	all := h.identities(accountID)
+	all := h.identities()
 	resp := jmapcore.GetResponse[any]{AccountID: accountID, State: identityState(all), List: []any{}, NotFound: []string{}}
 	for _, id := range all {
 		if req.IDs == nil || slices.Contains(*req.IDs, id.ID) {
@@ -103,7 +103,7 @@ func (s *Server) identityChanges(_ context.Context, h *userHandle, accountID str
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
-	state := identityState(h.identities(accountID))
+	state := identityState(h.identities())
 	if req.SinceState != state {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrCannotCalculateChanges}
 	}
@@ -121,7 +121,7 @@ func (s *Server) identitySet(ctx context.Context, h *userHandle, accountID strin
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
-	state := identityState(h.identities(accountID))
+	state := identityState(h.identities())
 	if req.IfInState != nil && *req.IfInState != state {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrStateMismatch}
 	}

@@ -130,7 +130,7 @@ func jmapReadProbe(marker string) (*reading, error) {
 		return nil, err
 	}
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Email/get",{"accountId":"` + *flagJMAPUser + `","ids":["` + id + `"],` +
+		`"methodCalls":[["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + id + `"],` +
 		`"properties":["id","subject","size","receivedAt"]},"c0"]]}`)
 	if err != nil {
 		return nil, fmt.Errorf("Email/get: %w", err)
@@ -164,7 +164,7 @@ func jmapProbeID(marker string) (string, error) {
 	deadline := time.Now().Add(*flagTimeout * 3)
 	for {
 		raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-			`"methodCalls":[["Email/query",{"accountId":"` + *flagJMAPUser + `",` +
+			`"methodCalls":[["Email/query",{"accountId":"` + jmapAccountID() + `",` +
 			`"filter":{"subject":"` + marker + `"}},"c0"]]}`)
 		if err == nil {
 			var resp struct {

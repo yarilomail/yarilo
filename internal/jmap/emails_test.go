@@ -57,7 +57,7 @@ func firstEmail(t *testing.T, got map[string]any) map[string]any {
 // The envelope fields come from the headers, decoded.
 func TestEmailGetEnvelopeFields(t *testing.T) {
 	s, id := emailServer(t, 0)
-	email := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"]}`))
+	email := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]}`))
 
 	if email["subject"] != "Привіт" {
 		t.Errorf("subject = %v, want the decoded word", email["subject"])
@@ -89,7 +89,7 @@ func TestEmailGetEnvelopeFields(t *testing.T) {
 // come back with none, however many parts the message has.
 func TestEmailGetOmitsBodyValuesUnlessAsked(t *testing.T) {
 	s, id := emailServer(t, 0)
-	email := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"]}`))
+	email := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]}`))
 	bodyValues, _ := email["bodyValues"].(map[string]any)
 	if len(bodyValues) != 0 {
 		t.Errorf("bodyValues = %v, want empty when none was requested", bodyValues)
@@ -115,7 +115,7 @@ func TestEmailGetFetchesOnlyTheRequestedBodyKind(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			email := firstEmail(t, emailGet(t, s,
-				`{"accountId":"u1@example.com","ids":["`+id+`"],`+tt.args+`}`))
+				`{"accountId":"`+testAccount+`","ids":["`+id+`"],`+tt.args+`}`))
 			bodyValues, _ := email["bodyValues"].(map[string]any)
 			if len(bodyValues) != tt.wantParts {
 				t.Fatalf("bodyValues has %d parts, want %d: %v", len(bodyValues), tt.wantParts, bodyValues)
@@ -139,7 +139,7 @@ func TestEmailGetCeilingTruncatesAndSaysSo(t *testing.T) {
 	// 5 bytes lands inside the two-byte runes of "Привіт".
 	s, id := emailServer(t, 5)
 	email := firstEmail(t, emailGet(t, s,
-		`{"accountId":"u1@example.com","ids":["`+id+`"],"fetchTextBodyValues":true}`))
+		`{"accountId":"`+testAccount+`","ids":["`+id+`"],"fetchTextBodyValues":true}`))
 	bodyValues, _ := email["bodyValues"].(map[string]any)
 	if len(bodyValues) != 1 {
 		t.Fatalf("bodyValues = %v", bodyValues)
@@ -178,7 +178,7 @@ func TestEmailGetClientCapInteractsWithTheCeiling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			email := firstEmail(t, emailGet(t, s,
-				`{"accountId":"u1@example.com","ids":["`+id+`"],"fetchTextBodyValues":true`+tt.args+`}`))
+				`{"accountId":"`+testAccount+`","ids":["`+id+`"],"fetchTextBodyValues":true`+tt.args+`}`))
 			for _, v := range email["bodyValues"].(map[string]any) {
 				bv := v.(map[string]any)
 				if bv["isTruncated"] != tt.wantTruncated {
@@ -196,7 +196,7 @@ func TestEmailGetClientCapInteractsWithTheCeiling(t *testing.T) {
 // collapsed, so a client can render a list without fetching bodies.
 func TestEmailGetPreview(t *testing.T) {
 	s, id := emailServer(t, 0)
-	email := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"]}`))
+	email := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]}`))
 	preview, _ := email["preview"].(string)
 	if !strings.HasPrefix(preview, "Привіт, це тіло") {
 		t.Errorf("preview = %q", preview)
@@ -211,7 +211,7 @@ func TestEmailGetPreview(t *testing.T) {
 func TestEmailGetIDHandling(t *testing.T) {
 	s, id := emailServer(t, 0)
 
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`","nope"]}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`","nope"]}`)
 	if list, _ := got["list"].([]any); len(list) != 1 {
 		t.Errorf("list has %d emails, want 1", len(list))
 	}
@@ -221,7 +221,7 @@ func TestEmailGetIDHandling(t *testing.T) {
 	}
 
 	w := postAPIRaw(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Email/get",{"accountId":"u1@example.com","ids":null},"c0"]]}`)
+		["Email/get",{"accountId":"`+testAccount+`","ids":null},"c0"]]}`)
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
 	}
@@ -241,7 +241,7 @@ func TestEmailGetIDHandling(t *testing.T) {
 // EMAILID: one message is one object whichever protocol reaches it.
 func TestEmailIDIsTheMessageGUID(t *testing.T) {
 	s, id := emailServer(t, 0)
-	email := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"]}`))
+	email := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]}`))
 	if email["id"] != id {
 		t.Errorf("id = %v, want %s", email["id"], id)
 	}
@@ -256,7 +256,7 @@ func TestEmailIDIsTheMessageGUID(t *testing.T) {
 // \Seen becomes $seen: the keyword vocabulary is JMAP's, not IMAP's.
 func TestEmailKeywordsUseTheJMAPVocabulary(t *testing.T) {
 	s, id := emailServer(t, 0)
-	email := firstEmail(t, emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"]}`))
+	email := firstEmail(t, emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]}`))
 	keywords, _ := email["keywords"].(map[string]any)
 	if keywords["$seen"] != true {
 		t.Errorf("keywords = %v, want $seen", keywords)
@@ -282,7 +282,7 @@ func TestEmailGetDoesNotOpenTheMessageForIndexOnlyProperties(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
 	unreadableMailFiles(t, home)
 
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],
 		"properties":["id","mailboxIds","keywords","size","receivedAt"]}`)
 	email := firstEmail(t, got)
 	if email["id"] != id {
@@ -294,7 +294,7 @@ func TestEmailGetDoesNotOpenTheMessageForIndexOnlyProperties(t *testing.T) {
 
 	// The same store cannot answer a body request: that is what proves the
 	// first call really did skip the read rather than reading a cached copy.
-	body := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"fetchTextBodyValues":true}`)
+	body := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"fetchTextBodyValues":true}`)
 	notFound, _ := body["notFound"].([]any)
 	if len(notFound) != 1 {
 		t.Errorf("a body request succeeded with no message on disk: %v", body)
@@ -307,7 +307,7 @@ func TestEmailGetOpensTheMessageForEnvelopeProperties(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
 	unreadableMailFiles(t, home)
 
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","subject"]}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","subject"]}`)
 	if notFound, _ := got["notFound"].([]any); len(notFound) != 1 {
 		t.Errorf("subject was answered without reading the message: %v", got)
 	}

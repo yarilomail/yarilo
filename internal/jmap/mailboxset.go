@@ -173,8 +173,8 @@ func (h *userHandle) parentName(id *string) (string, bool) {
 	if id == nil {
 		return "", true
 	}
-	if name, ok := strings.CutPrefix(*id, "container:"); ok {
-		return name, name != ""
+	if name, ok := containerName(*id); ok {
+		return name, true
 	}
 	t, ok := h.targetFolder(*id)
 	return t.name, ok

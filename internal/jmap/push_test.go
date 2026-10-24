@@ -188,14 +188,14 @@ func (st *stream) next(t *testing.T, event string, within time.Duration) (sse, b
 
 func changed(ev sse) map[string]any {
 	c, _ := ev.data["changed"].(map[string]any)
-	m, _ := c[testUser].(map[string]any)
+	m, _ := c[testAccount].(map[string]any)
 	return m
 }
 
 // flag sets a keyword the way a client does, through the mail store.
 func (f *pushFixture) flag(t *testing.T, keyword string) {
 	t.Helper()
-	args := `{"accountId":"` + testUser + `","update":{"` + f.email + `":{"keywords/` + keyword + `":true}}}`
+	args := `{"accountId":"` + testAccount + `","update":{"` + f.email + `":{"keywords/` + keyword + `":true}}}`
 	if name, out := callAs(t, f.s, testUser, "Email/set", args); name != "Email/set" || out["updated"] == nil {
 		t.Fatalf("Email/set answered %s %v", name, out)
 	}

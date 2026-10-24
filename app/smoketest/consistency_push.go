@@ -80,7 +80,7 @@ func checkConsistencyPush(user, pass string) error {
 		if err := json.Unmarshal([]byte(data), &change); err != nil {
 			return fmt.Errorf("decode StateChange: %w", err)
 		}
-		if change.Type != "StateChange" || change.Changed[*flagJMAPUser]["Email"] == "" {
+		if change.Type != "StateChange" || change.Changed[jmapAccountID()]["Email"] == "" {
 			return fmt.Errorf("event %s does not name the account's Email state", data)
 		}
 		return nil
@@ -155,7 +155,7 @@ func checkConsistencyWebSocket(user, pass string) error {
 	if err := json.Unmarshal(data, &change); err != nil {
 		return fmt.Errorf("decode StateChange: %w", err)
 	}
-	if change.Changed[*flagJMAPUser]["Email"] == "" || change.PushState == "" {
+	if change.Changed[jmapAccountID()]["Email"] == "" || change.PushState == "" {
 		return fmt.Errorf("StateChange %s does not name the account's Email state with a pushState", data)
 	}
 	return nil

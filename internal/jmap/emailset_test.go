@@ -133,7 +133,7 @@ func TestEmailSetKeywordsReachTheStore(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s, id, home := storedServerWithMessageAt(t, setTestMessage, 0)
-			resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:%s}}`, testUser, id, tc.patch))
+			resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:%s}}`, testAccount, id, tc.patch))
 
 			if len(resp.NotUpdated) != 0 {
 				t.Fatalf("update refused: %+v", resp.NotUpdated[id])
@@ -165,7 +165,7 @@ func TestEmailSetRefusesWithoutTouchingTheStore(t *testing.T) {
 		{
 			name: "a move to a mailbox that is not there",
 			args: func(id string) string {
-				return fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds":{"other":true}}}}`, testUser, id)
+				return fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds":{"other":true}}}}`, testAccount, id)
 			},
 			bucket:   func(r jmapcore.SetResponse, id string) *jmapcore.SetError { return r.NotUpdated[id] },
 			wantType: jmapcore.SetErrInvalidProps,
@@ -173,7 +173,7 @@ func TestEmailSetRefusesWithoutTouchingTheStore(t *testing.T) {
 		{
 			name: "an unknown id",
 			args: func(string) string {
-				return fmt.Sprintf(`{"accountId":%q,"update":{"nosuchid":{"keywords":{}}}}`, testUser)
+				return fmt.Sprintf(`{"accountId":%q,"update":{"nosuchid":{"keywords":{}}}}`, testAccount)
 			},
 			bucket:   func(r jmapcore.SetResponse, string2 string) *jmapcore.SetError { return r.NotUpdated["nosuchid"] },
 			wantType: jmapcore.SetErrNotFound,
@@ -212,7 +212,7 @@ func TestEmailSetHonoursIfInState(t *testing.T) {
 
 	body := fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 		"methodCalls":[["Email/set",{"accountId":%q,"ifInState":"999","update":{%q:{"keywords":{}}}},"c0"]]}`,
-		testUser, id)
+		testAccount, id)
 	w := postAPIRaw(t, s, body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body)
@@ -230,7 +230,7 @@ func TestEmailSetHonoursIfInState(t *testing.T) {
 	// still, which is the opposite of what a versioned format is for.
 	current := emailStateOf(t, s)
 	resp := emailSetCall(t, s,
-		fmt.Sprintf(`{"accountId":%q,"ifInState":%q,"update":{%q:{"keywords":{}}}}`, testUser, current, id))
+		fmt.Sprintf(`{"accountId":%q,"ifInState":%q,"update":{%q:{"keywords":{}}}}`, testAccount, current, id))
 	if _, ok := resp.Updated[id]; !ok {
 		t.Errorf("a matching ifInState was refused: %+v", resp.NotUpdated[id])
 	}
@@ -364,7 +364,7 @@ func TestEmailSetPatchDoesNotEraseAConcurrentKeyword(t *testing.T) {
 			}
 			s.opts.Storage.Index = rb
 
-			resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:%s}}`, testUser, id, tc.patch))
+			resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:%s}}`, testAccount, id, tc.patch))
 			if len(resp.NotUpdated) != 0 {
 				t.Fatalf("update refused: %+v", resp.NotUpdated[id])
 			}
@@ -386,7 +386,7 @@ func TestEmailSetPatchDoesNotEraseAConcurrentKeyword(t *testing.T) {
 func TestEmailSetRefusesAPropertyGivenTwice(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, setTestMessage, 0)
 	resp := emailSetCall(t, s,
-		fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords":{"$draft":true},"keywords/$seen":true}}}`, testUser, id))
+		fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords":{"$draft":true},"keywords/$seen":true}}}`, testAccount, id))
 
 	serr := resp.NotUpdated[id]
 	if serr == nil {
@@ -404,7 +404,7 @@ func TestEmailSetRefusesAPropertyGivenTwice(t *testing.T) {
 func emailStateOf(t *testing.T, s *Server) string {
 	t.Helper()
 	body := fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-		"methodCalls":[["Email/get",{"accountId":%q,"ids":[]},"c0"]]}`, testUser)
+		"methodCalls":[["Email/get",{"accountId":%q,"ids":[]},"c0"]]}`, testAccount)
 	w := postAPIRaw(t, s, body)
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
@@ -424,7 +424,7 @@ func emailStateOf(t *testing.T, s *Server) string {
 // A keyword change wakes IDLE sessions on every pod, as an IMAP STORE does.
 func TestEmailSetPublishesTheChange(t *testing.T) {
 	s, id := storedServerWithMessage(t, "Subject: x\r\n\r\nbody\r\n", 0)
-	resp := emailSetCall(t, s, `{"accountId":"`+testUser+`","update":{"`+id+`":{"keywords/$flagged":true}}}`)
+	resp := emailSetCall(t, s, `{"accountId":"`+testAccount+`","update":{"`+id+`":{"keywords/$flagged":true}}}`)
 	if _, ok := resp.Updated[id]; !ok {
 		t.Fatalf("not updated: %+v", resp)
 	}

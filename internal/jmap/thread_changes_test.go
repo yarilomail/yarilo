@@ -115,7 +115,7 @@ func idList(t *testing.T, payload map[string]any, field string) []string {
 
 func threadStateOf(t *testing.T, ts *threadedServer) string {
 	t.Helper()
-	p := ts.call(t, "Thread/get", fmt.Sprintf(`{"accountId":%q,"ids":[]}`, testUser))
+	p := ts.call(t, "Thread/get", fmt.Sprintf(`{"accountId":%q,"ids":[]}`, testAccount))
 	state, _ := p["state"].(string)
 	if state == "" {
 		t.Fatalf("Thread/get returned no state: %v", p)
@@ -136,7 +136,7 @@ func TestThreadChangesReportsAMergeAsDestroyedAndUpdated(t *testing.T) {
 	// The late message that answers both, joining the two conversations.
 	ts.deliver(t, "Message-ID: <c@x>\r\nReferences: <a@x> <b@x>\r\nSubject: Re: One\r\n\r\nbody\r\n")
 
-	payload := ts.call(t, "Thread/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+	payload := ts.call(t, "Thread/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType, _ := payload["type"].(string); errType != "" {
 		t.Fatalf("Thread/changes refused: %v", payload)
 	}
@@ -167,7 +167,7 @@ func TestThreadChangesReportsANewConversationAsCreated(t *testing.T) {
 
 	fresh := ts.deliver(t, "Message-ID: <z@x>\r\nSubject: Unrelated\r\n\r\nbody\r\n")
 
-	payload := ts.call(t, "Thread/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+	payload := ts.call(t, "Thread/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	created := idList(t, payload, "created")
 	if len(created) != 1 || created[0] != fresh {
 		t.Errorf("created = %v, want the new conversation %q", created, fresh)
@@ -190,7 +190,7 @@ func TestEmailChangesReportsMessagesWhoseThreadWasRenamed(t *testing.T) {
 
 	ts.deliver(t, "Message-ID: <c@x>\r\nReferences: <a@x> <b@x>\r\nSubject: Re: One\r\n\r\nbody\r\n")
 
-	payload := ts.call(t, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+	payload := ts.call(t, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType, _ := payload["type"].(string); errType != "" {
 		t.Fatalf("Email/changes refused: %v", payload)
 	}
@@ -214,7 +214,7 @@ func TestThreadChangesRefusesAStateItDidNotIssue(t *testing.T) {
 		// changesCall, not the plain call: this row is about the refusal, and
 		// the helper that fatals on a method error cannot see one.
 		payload, errType := changesCall(t, ts.srv, "Thread/changes",
-			fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+			fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 		if got := errType; got != "cannotCalculateChanges" {
 			t.Errorf("sinceState %q answered %q/%v, want cannotCalculateChanges", since, errType, payload)
 		}
@@ -234,7 +234,7 @@ func TestAMessageIsNeverBothCreatedAndUpdated(t *testing.T) {
 
 	late := ts.deliver(t, "Message-ID: <c@x>\r\nReferences: <a@x> <b@x>\r\nSubject: Re: One\r\n\r\nbody\r\n")
 
-	payload := ts.call(t, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+	payload := ts.call(t, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	created := idList(t, payload, "created")
 	updated := idList(t, payload, "updated")
 

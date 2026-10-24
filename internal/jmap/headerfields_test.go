@@ -46,7 +46,7 @@ func headerPropPresent(t *testing.T, s *Server, id, property string) (any, bool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+string(raw)+`}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":`+string(raw)+`}`)
 	v, present := firstEmail(t, got)[property]
 	return v, present
 }

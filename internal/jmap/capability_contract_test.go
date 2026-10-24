@@ -120,7 +120,7 @@ func TestQueryChangesRefusesInsteadOfBeingAbsent(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
 			_, errType := changesCall(t, s, method,
-				`{"accountId":"`+testUser+`","sinceState":"1-ZQ"}`)
+				`{"accountId":"`+testAccount+`","sinceState":"1-ZQ"}`)
 			if errType != "cannotCalculateChanges" {
 				t.Errorf("%s answered %q, want cannotCalculateChanges", method, errType)
 			}

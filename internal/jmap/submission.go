@@ -546,11 +546,11 @@ func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazySt
 	if p.IdentityID == nil {
 		return none, invalidProp("identityId", "identityId is required"), nil
 	}
-	i := slices.IndexFunc(h.identities(accountID), func(id jmapcore.Identity) bool { return id.ID == *p.IdentityID })
+	i := slices.IndexFunc(h.identities(), func(id jmapcore.Identity) bool { return id.ID == *p.IdentityID })
 	if i < 0 {
 		return none, invalidProp("identityId", "no such identity"), nil
 	}
-	identity := h.identities(accountID)[i]
+	identity := h.identities()[i]
 	if p.EmailID == nil {
 		return none, invalidProp("emailId", "emailId is required"), nil
 	}
@@ -598,7 +598,7 @@ func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazySt
 	for _, r := range env.RcptTo {
 		rcpts = append(rcpts, r.Email)
 	}
-	if err := s.opts.Submission.Sender.Send(env.MailFrom.Email, rcpts, bytes.NewReader(out), net.ParseIP(lazy.clientIP), accountID, lazy.sessionID); err != nil {
+	if err := s.opts.Submission.Sender.Send(env.MailFrom.Email, rcpts, bytes.NewReader(out), net.ParseIP(lazy.clientIP), lazy.user, lazy.sessionID); err != nil {
 		var se *goSmtp.SMTPError
 		if errors.As(err, &se) && se.Code >= 500 {
 			slog.Info("jmap: EmailSubmission refused by the relay", "user", accountID, "session", lazy.sessionID, "err", err)

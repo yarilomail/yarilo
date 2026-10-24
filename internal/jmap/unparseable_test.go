@@ -34,7 +34,7 @@ func TestUnparseableMessageIsNotReportedAsMissing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"]`+tt.properties+`}`)
+			got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]`+tt.properties+`}`)
 			if notFound, _ := got["notFound"].([]any); len(notFound) != 0 {
 				t.Fatalf("notFound = %v — the message exists, it just cannot be parsed", notFound)
 			}
@@ -54,18 +54,18 @@ func TestUnparseableMessageIsNotReportedAsMissing(t *testing.T) {
 func TestUnparseableMessageIsConsistentAcrossMethods(t *testing.T) {
 	s, id := storedServerWithMessage(t, brokenMessage, 0)
 
-	ids := idsOf(t, emailQuery(t, s, `{"accountId":"u1@example.com"}`))
+	ids := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`"}`))
 	if len(ids) != 1 || ids[0] != id {
 		t.Fatalf("Email/query returned %v, want [%s]", ids, id)
 	}
 
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","subject"]}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","subject"]}`)
 	if notFound, _ := got["notFound"].([]any); len(notFound) != 0 {
 		t.Fatalf("Email/get says notFound while Email/query lists it: %v", notFound)
 	}
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/u1@example.com/"+id+"/m.eml"))
+	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+id+"/m.eml"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("download status = %d, want 200 — it serves the bytes the other two describe", w.Code)
 	}
@@ -78,14 +78,14 @@ func TestUnreadableFileStaysNotFound(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
 	unreadableMailFiles(t, home)
 
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","subject"]}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","subject"]}`)
 	notFound, _ := got["notFound"].([]any)
 	if len(notFound) != 1 {
 		t.Errorf("notFound = %v, want the id: an unfetchable message is absent, not merely unparseable", notFound)
 	}
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/u1@example.com/"+id+"/m.eml"))
+	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+id+"/m.eml"))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("download status = %d, want 404 — it must agree with Email/get", w.Code)
 	}

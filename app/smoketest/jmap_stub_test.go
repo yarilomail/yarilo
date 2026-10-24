@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,7 +20,15 @@ import (
 // green because they covered the helpers and never the HTTP path (#1043).
 func stubJMAP(t *testing.T, handler http.HandlerFunc) {
 	t.Helper()
-	srv := httptest.NewTLSServer(handler)
+	jmapAccount = &accountCache{}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/.well-known/jmap" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"primaryAccounts":{"urn:ietf:params:jmap:mail":"u1@example.com"}}`) //nolint:errcheck
+			return
+		}
+		handler(w, r)
+	}))
 	t.Cleanup(srv.Close)
 
 	parsed, err := url.Parse(srv.URL)

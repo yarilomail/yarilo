@@ -133,8 +133,8 @@ func BenchmarkFolderScalingMailboxGet(b *testing.B) {
 	for _, folders := range folderCounts {
 		b.Run(fmt.Sprintf("folders=%d", folders), func(b *testing.B) {
 			s := benchServer(b, folders, 5)
-			const body = `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-				"methodCalls":[["Mailbox/get",{"accountId":"u1@example.com","ids":null},"c0"]]}`
+			body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+				"methodCalls":[["Mailbox/get",{"accountId":"` + testAccount + `","ids":null},"c0"]]}`
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				post(b, s, body)
@@ -150,11 +150,11 @@ func BenchmarkFolderScalingEmailQueryGet(b *testing.B) {
 	for _, folders := range folderCounts {
 		b.Run(fmt.Sprintf("folders=%d", folders), func(b *testing.B) {
 			s := benchServer(b, folders, 5)
-			const body = `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+			body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":10,
+					["Email/query",{"accountId":"` + testAccount + `","limit":10,
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"],
-					["Email/get",{"accountId":"u1@example.com",
+					["Email/get",{"accountId":"` + testAccount + `",
 						"#ids":{"resultOf":"q0","name":"Email/query","path":"/ids"},
 						"properties":["id","subject","receivedAt"]},"g0"]]}`
 			b.ResetTimer()
@@ -180,12 +180,12 @@ func BenchmarkFolderScalingEmailQueryInOneMailbox(b *testing.B) {
 			// Resolve INBOX's id the way a client does, from Mailbox/get.
 			w := httptest.NewRecorder()
 			s.Handler().ServeHTTP(w, apiRequest(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-				"methodCalls":[["Mailbox/get",{"accountId":"u1@example.com","ids":null},"c0"]]}`))
+				"methodCalls":[["Mailbox/get",{"accountId":"`+testAccount+`","ids":null},"c0"]]}`))
 			id := firstMailboxID(b, w.Body.String())
 
 			body := fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":10,
+					["Email/query",{"accountId":"`+testAccount+`","limit":10,
 						"filter":{"inMailbox":%q},
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"]]}`, id)
 			b.ResetTimer()
@@ -221,9 +221,9 @@ func BenchmarkAnswerSizeEmailQueryGet(b *testing.B) {
 			s := benchServer(b, 20, 10)
 			body := fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":%d,
+					["Email/query",{"accountId":"`+testAccount+`","limit":%d,
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"],
-					["Email/get",{"accountId":"u1@example.com",
+					["Email/get",{"accountId":"`+testAccount+`",
 						"#ids":{"resultOf":"q0","name":"Email/query","path":"/ids"},
 						"properties":["id","subject","receivedAt"]},"g0"]]}`, limit)
 			b.ResetTimer()
@@ -245,11 +245,11 @@ func BenchmarkListingProperties(b *testing.B) {
 	for _, kb := range []int{2, 64, 512} {
 		b.Run(fmt.Sprintf("message=%dKB", kb), func(b *testing.B) {
 			s := benchServerSized(b, 1, 10, kb*1024)
-			const body = `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+			body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":10,
+					["Email/query",{"accountId":"` + testAccount + `","limit":10,
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"],
-					["Email/get",{"accountId":"u1@example.com",
+					["Email/get",{"accountId":"` + testAccount + `",
 						"#ids":{"resultOf":"q0","name":"Email/query","path":"/ids"},
 						"properties":["id","subject","from","receivedAt","threadId"]},"g0"]]}`
 			b.ResetTimer()
@@ -267,11 +267,11 @@ func BenchmarkReadingAMessage(b *testing.B) {
 	for _, kb := range []int{2, 64, 512} {
 		b.Run(fmt.Sprintf("message=%dKB", kb), func(b *testing.B) {
 			s := benchServerSized(b, 1, 10, kb*1024)
-			const body = `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+			body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":10,
+					["Email/query",{"accountId":"` + testAccount + `","limit":10,
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"],
-					["Email/get",{"accountId":"u1@example.com",
+					["Email/get",{"accountId":"` + testAccount + `",
 						"#ids":{"resultOf":"q0","name":"Email/query","path":"/ids"},
 						"fetchTextBodyValues":true,
 						"properties":["id","subject","textBody","bodyValues"]},"g0"]]}`
