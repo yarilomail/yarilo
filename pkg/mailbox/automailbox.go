@@ -16,6 +16,17 @@ type AutoMailbox struct {
 	SpecialUse string
 }
 
+// DefaultMailboxes are a personal namespace's mailboxes when the configuration
+// names none: the four special-use folders, made and subscribed.
+func DefaultMailboxes() map[string]AutoMailbox {
+	return map[string]AutoMailbox{
+		"Drafts": {Auto: AutoSubscribe, SpecialUse: `\Drafts`},
+		"Junk":   {Auto: AutoSubscribe, SpecialUse: `\Junk`},
+		"Sent":   {Auto: AutoSubscribe, SpecialUse: `\Sent`},
+		"Trash":  {Auto: AutoSubscribe, SpecialUse: `\Trash`},
+	}
+}
+
 // NormalizeAuto folds a configured auto mode; ok is false for an unknown one.
 // Empty is no.
 func NormalizeAuto(mode string) (string, bool) {

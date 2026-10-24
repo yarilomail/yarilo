@@ -269,27 +269,27 @@ func TestIMAPBackends_CreateDelete(t *testing.T) {
 			c := startServerWith(t, mb)
 			defer func() { c.Logout().Wait() }() //nolint:errcheck
 
-			if err := c.Create("Sent", nil).Wait(); err != nil {
-				t.Fatalf("CREATE Sent: %v", err)
+			if err := c.Create("Projects", nil).Wait(); err != nil {
+				t.Fatalf("CREATE Projects: %v", err)
 			}
 
-			// LIST — Sent must appear.
+			// LIST — Projects must appear. Not a default mailbox: those are made again on LIST.
 			listData, err := c.List("", "*", nil).Collect()
 			if err != nil {
 				t.Fatalf("LIST: %v", err)
 			}
 			found := false
 			for _, m := range listData {
-				if m.Mailbox == "Sent" {
+				if m.Mailbox == "Projects" {
 					found = true
 				}
 			}
 			if !found {
-				t.Errorf("Sent not found in LIST after CREATE")
+				t.Errorf("Projects not found in LIST after CREATE")
 			}
 
-			if err := c.Delete("Sent").Wait(); err != nil {
-				t.Fatalf("DELETE Sent: %v", err)
+			if err := c.Delete("Projects").Wait(); err != nil {
+				t.Fatalf("DELETE Projects: %v", err)
 			}
 
 			listData2, err := c.List("", "*", nil).Collect()
@@ -297,8 +297,8 @@ func TestIMAPBackends_CreateDelete(t *testing.T) {
 				t.Fatalf("LIST after DELETE: %v", err)
 			}
 			for _, m := range listData2 {
-				if m.Mailbox == "Sent" {
-					t.Errorf("Sent still in LIST after DELETE")
+				if m.Mailbox == "Projects" {
+					t.Errorf("Projects still in LIST after DELETE")
 				}
 			}
 		})

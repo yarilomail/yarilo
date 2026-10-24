@@ -5,6 +5,7 @@ import (
 
 	"github.com/knadh/koanf/v2"
 
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 	"github.com/yarilomail/yarilo/pkg/quota"
 )
 
@@ -253,6 +254,14 @@ func listEntryDefaults(k *koanf.Koanf, cfg *Config) {
 	for i := range cfg.Quota.Warnings {
 		if !has("quota.quota_warnings", i, "quota_warning_percentage") {
 			cfg.Quota.Warnings[i].Percentage = 100
+		}
+	}
+	// The namespace owning INBOX takes the default set; a personal view (a
+	// virtual namespace) is not a store and takes nothing.
+	if i := mailbox.PrimaryPersonalIndex(NamespaceShapes(cfg.Namespaces)); i >= 0 && !has("namespaces", i, "mailboxes") {
+		cfg.Namespaces[i].Mailboxes = map[string]NamespaceMailboxConfig{}
+		for name, mb := range mailbox.DefaultMailboxes() {
+			cfg.Namespaces[i].Mailboxes[name] = NamespaceMailboxConfig{Auto: mb.Auto, SpecialUse: mb.SpecialUse}
 		}
 	}
 	for i := range cfg.DirectorService.MailServers {

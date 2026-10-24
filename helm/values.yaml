@@ -3041,10 +3041,15 @@ namespaces: []
 #     # leave `location:` unset.
 #     mailboxes:                  # made on any open, delivery included; subscribe
 #                                 # once when made. special_use: personal only.
+#                                 # Left out, the namespace owning INBOX (and a
+#                                 # server with no namespaces) takes Sent,
+#                                 # Drafts, Trash and Junk, each subscribe with
+#                                 # its special_use. A block replaces that set;
+#                                 # `mailboxes: {}` makes none.
 #       Sent:   { auto: subscribe, special_use: "\\Sent" }
 #       Drafts: { auto: subscribe, special_use: "\\Drafts" }
 #       Trash:  { auto: subscribe, special_use: "\\Trash" }
-#       Junk:   { auto: create,    special_use: "\\Junk" }
+#       Junk:   { auto: subscribe, special_use: "\\Junk" }
 #   - type: shared
 #     prefix: "Shared/"
 #     separator: "."

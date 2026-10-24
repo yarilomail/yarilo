@@ -1,8 +1,11 @@
 package config
 
 import (
+	"maps"
 	"strings"
 	"testing"
+
+	"github.com/yarilomail/yarilo/pkg/mailbox"
 )
 
 const personalNS = `
@@ -110,5 +113,62 @@ protocol:
 				t.Fatalf("Receipts is not in the folded map: %v", cfg.Protocol.IMAP.SpecialUseDefaults)
 			}
 		})
+	}
+}
+
+// The namespace owning INBOX that names no mailboxes takes the default set,
+// as a server with no namespaces does; a block of its own, even an empty one,
+// replaces the set, and no other namespace takes it.
+func TestTheDefaultMailboxes(t *testing.T) {
+	def := mailbox.DefaultMailboxes()
+	for _, tc := range []struct {
+		name, yaml string
+		want       map[string]mailbox.AutoMailbox
+	}{
+		{"no namespaces", "", def},
+		{"a personal namespace without a block", personalNS, def},
+		{"a block of its own", personalNS + `
+    mailboxes:
+      Receipts: { auto: subscribe }
+`, map[string]mailbox.AutoMailbox{"Receipts": {Auto: mailbox.AutoSubscribe}}},
+		{"an empty block", personalNS + `
+    mailboxes: {}
+`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := loadYAML(t, tc.yaml)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.PersonalAutoMailboxes(); !maps.Equal(got, tc.want) {
+				t.Errorf("mailboxes %v, want %v", got, tc.want)
+			}
+		})
+	}
+	cfg, err := loadYAML(t, personalNS+`
+  - type: personal
+    prefix: "Virtual/"
+    separator: "/"
+    location: "virtual:/etc/yarilo/virtual:INDEX=%h/index/virtual"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Namespaces[1].AutoMailboxes(); got != nil {
+		t.Errorf("the virtual namespace took %v, want none", got)
+	}
+}
+
+// The set is the four special-use folders, each made, subscribed and marked.
+func TestTheDefaultSetIsTheFourSpecialUseFolders(t *testing.T) {
+	want := map[string]string{"Sent": `\Sent`, "Drafts": `\Drafts`, "Trash": `\Trash`, "Junk": `\Junk`}
+	got := mailbox.DefaultMailboxes()
+	if len(got) != len(want) {
+		t.Fatalf("set %v, want %v", got, want)
+	}
+	for name, attr := range want {
+		if mb := got[name]; mb.Auto != mailbox.AutoSubscribe || mb.SpecialUse != attr {
+			t.Errorf("%s = %+v, want subscribe %s", name, mb, attr)
+		}
 	}
 }

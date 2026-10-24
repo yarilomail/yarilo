@@ -72,8 +72,13 @@ namespaces:
     list: "yes"
     subscriptions: true
     inbox: true
-    # One auto mailbox, so every account shows it made and subscribed (#2005).
+    # A block of its own replaces the default set, so the four are listed
+    # with the one extra auto mailbox every account shows made (#2005).
     mailboxes:
+      Sent:     { auto: subscribe, special_use: "\\Sent" }
+      Drafts:   { auto: subscribe, special_use: "\\Drafts" }
+      Trash:    { auto: subscribe, special_use: "\\Trash" }
+      Junk:     { auto: subscribe, special_use: "\\Junk" }
       Receipts: { auto: subscribe }
   # A public namespace is declared as type: shared with a public prefix and
   # location; there is no "public" type. It was silently skipped, so nothing
