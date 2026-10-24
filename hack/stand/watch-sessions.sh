@@ -22,7 +22,7 @@ echo "# samples: every ${EVERY}s, sessions per backend from the director" >> "$s
 
 while :; do
   ts=$(date +%H:%M:%S)
-  pod=$(kube get pods -l app.kubernetes.io/component=director -o name 2>/dev/null | head -1 | cut -d/ -f2)
+  pod=$(kube get pods -l app.kubernetes.io/component=director -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' 2>/dev/null | head -1)
   if [ -n "$pod" ]; then
     page=$(kube exec "$pod" -- yarctl -O json director backends list 2>/dev/null)
     # yarctl indents its JSON, so the colon carries a space; the pair is read in
