@@ -175,3 +175,68 @@ func jmapIdentityOf(account gojmap.ID, user string) (string, error) {
 	}
 	return "", fmt.Errorf("no identity for %s among %v", user, got.List)
 }
+
+// checkJMAPIdentity creates an identity, sends through it by its creation id,
+// and destroys it again (RFC 8621 §6.3).
+func checkJMAPIdentity() error {
+	_, account, err := jmapLibClient()
+	if err != nil {
+		return err
+	}
+	user := *flagJMAPUser
+	box, err := jmapInboxID()
+	if err != nil {
+		return err
+	}
+	marker := "xjmapidentity-" + uniqueID()
+	all, err := jmapCallAll(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"],"methodCalls":[`+
+		`["Identity/set",{"accountId":%q,"create":{"i":{"email":%q,"name":%q}}},"0"],`+
+		`["Email/set",{"accountId":%q,"create":{"m":{"mailboxIds":{%q:true},"keywords":{"$draft":true},"from":[{"email":%q}],"to":[{"email":%q}],"subject":%q,`+
+		`"textBody":[{"partId":"t","type":"text/plain"}],"bodyValues":{"t":{"value":"sent through a created identity"}}}}},"1"],`+
+		`["EmailSubmission/set",{"accountId":%q,"create":{"c1":{"identityId":"#i","emailId":"#m"}},"onSuccessDestroyEmail":["#c1"]},"2"]]}`,
+		account, user, marker, account, box, user, user, marker, account))
+	if err != nil {
+		return fmt.Errorf("Identity/set, Email/set and EmailSubmission/set: %w", err)
+	}
+	if len(all) < 3 || all[0].name != "Identity/set" || all[2].name != "EmailSubmission/set" {
+		return fmt.Errorf("responses %v, want Identity/set, Email/set and EmailSubmission/set", all)
+	}
+	var ident struct {
+		Created    map[string]struct{ ID string } `json:"created"`
+		NotCreated map[string]any                 `json:"notCreated"`
+	}
+	_ = json.Unmarshal(all[0].args, &ident)
+	id := ident.Created["i"].ID
+	if id == "" {
+		return fmt.Errorf("Identity/set created nothing: %v", ident.NotCreated)
+	}
+	destroy := func() error {
+		out, err := jmapCall(fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:submission"],"methodCalls":[["Identity/set",{"accountId":%q,"destroy":[%q]},"0"]]}`, account, id))
+		if err != nil {
+			return fmt.Errorf("Identity/set destroy: %w", err)
+		}
+		var got struct {
+			Destroyed []string `json:"destroyed"`
+		}
+		_ = json.Unmarshal(out, &got)
+		if len(got.Destroyed) != 1 || got.Destroyed[0] != id {
+			return fmt.Errorf("Identity/set did not destroy %s: %s", id, out)
+		}
+		return nil
+	}
+	var sub struct {
+		Created map[string]struct {
+			UndoStatus string `json:"undoStatus"`
+		} `json:"created"`
+	}
+	_ = json.Unmarshal(all[2].args, &sub)
+	if sub.Created["c1"].UndoStatus != "final" {
+		_ = destroy()
+		return fmt.Errorf("EmailSubmission/set with identityId #i sent nothing: %s", all[2].args)
+	}
+	if err := arrivedWithoutBcc(user, *flagJMAPPass, marker, ""); err != nil {
+		_ = destroy()
+		return err
+	}
+	return destroy()
+}

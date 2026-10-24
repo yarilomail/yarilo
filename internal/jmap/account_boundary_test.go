@@ -261,8 +261,8 @@ var boundaryRows = []struct {
 		}},
 	{"Identity/set", kindForeignObject, `{"accountId":"` + testAccount + `","destroy":["FOREIGNIDENTITY"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
-			if name != "Identity/set" || entry(out, "notDestroyed", identityID(foreignUser))["type"] != "forbidden" {
-				t.Errorf("answered %s %v, want notDestroyed forbidden", name, out)
+			if name != "Identity/set" || entry(out, "notDestroyed", identityID(foreignUser))["type"] != "notFound" {
+				t.Errorf("answered %s %v, want notDestroyed notFound", name, out)
 			}
 		}},
 	// Resolved globally, the other INBOX would answer forbidden, not notFound.

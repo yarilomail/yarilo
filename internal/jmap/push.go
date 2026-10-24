@@ -191,6 +191,8 @@ func typesOfEvent(evt locks.Event) []counters.Type {
 		return []counters.Type{counters.Thread}
 	case "jmapsubmissions":
 		return []counters.Type{counters.EmailSubmission}
+	case "jmapidentities":
+		return []counters.Type{counters.Identity}
 	}
 	return nil
 }
@@ -231,7 +233,8 @@ func (s *Server) typeState(ctx context.Context, h *userHandle, t counters.Type) 
 		_, st, err := s.quotaObjects(h)
 		return st, err
 	case counters.Identity:
-		return identityState(h.identities()), nil
+		all, err := h.identities()
+		return identityState(all), err
 	case counters.EmailSubmission:
 		recs, err := s.readRecords(ctx, h)
 		return strconv.FormatUint(recs.State, 10), err

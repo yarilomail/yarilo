@@ -72,6 +72,9 @@ func SubscriptionsKey(user string) string { return "subs:" + user }
 // SubmissionsKey guards one user's EmailSubmission records.
 func SubmissionsKey(user string) string { return "jmapsubmissions:" + user }
 
+// IdentitiesKey guards one user's stored JMAP identities.
+func IdentitiesKey(user string) string { return "jmapidentities:" + user }
+
 // AccountKey is the event channel of one account: every event emitted on one of
 // the user's keys is delivered there too, carrying the key it was emitted on.
 func AccountKey(user string) string { return accountPrefix + user }
@@ -82,6 +85,7 @@ const accountPrefix = "acct:"
 // the user is the key's second field.
 var accountScoped = map[string]bool{
 	"mbox": true, "mlist": true, "sieve": true, "subs": true, "threads": true, "jmapsubmissions": true,
+	"jmapidentities": true,
 }
 
 // accountOf returns the user a key belongs to, or "" for a key no account
