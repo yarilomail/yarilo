@@ -574,6 +574,9 @@ type JMAPProtocolConfig struct {
 	// for events lost while the lock service was out of reach; 0 turns push
 	// off. Default 60.
 	PushPoll int `koanf:"jmap_push_poll"`
+	// WebSocketTimeout closes a WebSocket that answers nothing, a ping
+	// included, for this many seconds; 0 turns WebSocket off. Default 1800.
+	WebSocketTimeout int `koanf:"jmap_websocket_timeout"`
 }
 
 type LMTPProtocolConfig struct {
@@ -2810,6 +2813,7 @@ func Defaults() *Config {
 	c.Telemetry.LivenessWatchdog.FailureThreshold = 3
 	c.Protocol.LMTP.UserConcurrencyLimit = 10
 	c.Protocol.JMAP.PushPoll = 60
+	c.Protocol.JMAP.WebSocketTimeout = 1800
 	for _, sh := range []*ShutdownConfig{&c.AuthService.Shutdown, &c.WardenService.Shutdown,
 		&c.DirectorService.Shutdown, &c.LocksService.Shutdown} {
 		sh.KillTimeout = 5

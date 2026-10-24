@@ -350,22 +350,7 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 			case moved = <-notify:
 			}
 		}
-		changed := intersect(moved, types)
-		if len(changed) == 0 {
-			continue
-		}
-		states, err := s.statesOf(r.Context(), id.user, changed)
-		if err != nil {
-			slog.Warn("jmap: push state", "user", id.user, "err", err)
-			continue
-		}
-		out := map[string]string{}
-		for t, st := range states {
-			if prev, ok := sent[t]; !ok || prev != st {
-				out[string(t)] = st
-				sent[t] = st
-			}
-		}
+		out := s.newStates(r.Context(), id.user, intersect(moved, types), sent)
 		if len(out) == 0 {
 			continue
 		}
@@ -378,6 +363,27 @@ func (s *Server) handleEventSource(w http.ResponseWriter, r *http.Request, id id
 			return
 		}
 	}
+}
+
+// newStates returns the states of types that differ from sent, and records
+// them there.
+func (s *Server) newStates(ctx context.Context, user string, types []counters.Type, sent map[counters.Type]string) map[string]string {
+	if len(types) == 0 {
+		return nil
+	}
+	states, err := s.statesOf(ctx, user, types)
+	if err != nil {
+		slog.Warn("jmap: push state", "user", user, "err", err)
+		return nil
+	}
+	out := map[string]string{}
+	for t, st := range states {
+		if prev, ok := sent[t]; !ok || prev != st {
+			out[string(t)] = st
+			sent[t] = st
+		}
+	}
+	return out
 }
 
 func intersect(changed, want []counters.Type) []counters.Type {

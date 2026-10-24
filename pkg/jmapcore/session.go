@@ -38,6 +38,8 @@ type Limits struct {
 	Sieve *SieveSession
 	// Submission advertises Identity and EmailSubmission; nil leaves them out.
 	Submission *SubmissionCapability
+	// WebSocket advertises RFC 8887; nil leaves it out.
+	WebSocket *WebSocketCapability
 	// Vacation advertises VacationResponse; nil leaves it out.
 	Vacation *VacationCapability
 }
@@ -122,6 +124,11 @@ func BuildSession(lim Limits, username string) *Session {
 		UploadURL:       base + UploadPath + "{accountId}/",
 		EventSourceURL:  base + "/jmap/eventsource/?types={types}&closeafter={closeafter}&ping={ping}",
 		State:           SessionState(lim),
+	}
+	if lim.WebSocket != nil {
+		ws := *lim.WebSocket
+		ws.URL = webSocketURL(base)
+		sess.Capabilities[CapWebSocket] = ws
 	}
 	if lim.Submission != nil {
 		sess.Capabilities[CapSubmission] = map[string]any{}

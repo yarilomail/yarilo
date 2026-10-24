@@ -66,6 +66,7 @@ func offKeys(cfg *Config) []intKey {
 		{"protocol.jmap.jmap_snippet_max_chars", &cfg.Protocol.JMAP.SnippetMaxChars},
 		{"protocol.jmap.jmap_submission_ttl_seconds", &cfg.Protocol.JMAP.SubmissionTTLSeconds},
 		{"protocol.jmap.jmap_push_poll", &cfg.Protocol.JMAP.PushPoll},
+		{"protocol.jmap.jmap_websocket_timeout", &cfg.Protocol.JMAP.WebSocketTimeout},
 		{"protocol.lmtp.lmtp_max_recipients", &cfg.Protocol.LMTP.MaxRecipients},
 		{"protocol.submission.submission_max_recipients", &cfg.Protocol.Submission.MaxRecipients},
 		{"protocol.managesieve.max_invalid_commands", &cfg.Protocol.ManageSieve.MaxInvalidCommands},

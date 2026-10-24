@@ -231,6 +231,13 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	flag.Parse()
 
+	if *flagPushListen != "" {
+		if err := runPushListen(); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "push-listen:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := validateDeliveryProto(*flagDeliveryProto); err != nil {
 		slog.Error("smoke: bad -delivery-proto", "err", err)
 		os.Exit(2)

@@ -103,6 +103,10 @@ func registerConsistency(checks *[]check) {
 		func() error { return checkConsistencyPush(imapUser, imapPass) },
 		imap, jmap, delivery)
 
+	row("consistency imap flag arrives as a StateChange on the jmap websocket",
+		func() error { return checkConsistencyWebSocket(imapUser, imapPass) },
+		imap, jmap, delivery)
+
 	row("consistency imap SEARCH <-> jmap Email/query over one term",
 		func() error { return checkConsistencySearch(imapUser, imapPass) },
 		imap, jmap, delivery, fts)

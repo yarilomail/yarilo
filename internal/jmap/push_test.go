@@ -76,7 +76,7 @@ func lockClient(t testing.TB, socket string) locks.Locker {
 
 // pushServer is a stored server with push on, reachable over a real socket so
 // a stream can be read while it is open.
-func pushServer(t *testing.T, poll, writeTimeout time.Duration) *pushFixture {
+func pushServer(t *testing.T, poll, writeTimeout time.Duration, with ...func(*Options)) *pushFixture {
 	t.Helper()
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: testUser, Home: home, Separator: "/"}
@@ -89,17 +89,22 @@ func pushServer(t *testing.T, poll, writeTimeout time.Duration) *pushFixture {
 	_ = box.Close()
 	socket := lockService(t)
 	events := lockClient(t, socket)
-	s := New(Options{
-		Trust:    ResolveTrust(false, true, []*net.IPNet{mustCIDR(t, "127.0.0.0/8"), mustCIDR(t, "192.0.2.0/24")}),
-		Limits:   testLimits(),
-		PushPoll: poll,
+	opts := Options{
+		Trust:            ResolveTrust(false, true, []*net.IPNet{mustCIDR(t, "127.0.0.0/8"), mustCIDR(t, "192.0.2.0/24")}),
+		Limits:           testLimits(),
+		PushPoll:         poll,
+		WebSocketTimeout: time.Minute,
 		Storage: &Storage{
 			Mailbox:     maildir.New(),
 			Index:       file.New(file.WithLocker(locker)),
 			ResolveUser: func(string) (*mailbox.UserInfo, error) { return info, nil },
 			Locker:      events,
 		},
-	})
+	}
+	for _, w := range with {
+		w(&opts)
+	}
+	s := New(opts)
 	ts := httptest.NewUnstartedServer(s.Handler())
 	ts.Config.WriteTimeout = writeTimeout
 	ts.Config.ReadTimeout = writeTimeout

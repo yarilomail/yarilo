@@ -36,4 +36,8 @@ var (
 		Name: "jmap_push_events_total",
 		Help: "Events sent on push streams, by event: state or ping.",
 	}, []string{"event"})
+	metricWebSockets = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "jmap_websockets",
+		Help: "JMAP WebSocket connections open in this pod.",
+	})
 )
