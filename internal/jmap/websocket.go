@@ -46,6 +46,10 @@ func offersJMAP(r *http.Request) bool {
 
 // handleWebSocket serves JMAP over WebSocket (RFC 8887).
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request, id identity) {
+	// Counted before the upgrade: until the hijack Shutdown waits for the
+	// request, after it only this counter does.
+	s.websockets.Add(1)
+	defer s.websockets.Done()
 	if s.opts.WebSocketTimeout <= 0 {
 		http.NotFound(w, r)
 		return
@@ -64,8 +68,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request, id iden
 		slog.Debug("jmap: websocket refused", "user", id.user, "err", err)
 		return
 	}
-	s.websockets.Add(1)
-	defer s.websockets.Done()
 	// The size check is ours, so an oversized request gets a RequestError.
 	c.SetReadLimit(-1)
 	metricWebSockets.Inc()
