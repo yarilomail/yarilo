@@ -154,7 +154,7 @@ func (ws *wsConn) message(ctx context.Context, body []byte) {
 	push := ws.s.push != nil
 	switch {
 	case m.Type == "Request":
-		resp, rerr := ws.s.runRequest(ctx, body, ws.id)
+		resp, rerr := ws.s.runRequest(ctx, jmapcore.WebSocketPath, body, ws.id)
 		if rerr != nil {
 			ws.send(ctx, requestError(m.ID, rerr))
 			return

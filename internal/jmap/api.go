@@ -2,6 +2,7 @@ package jmap
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -79,7 +80,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 		}).Write(w)
 		return
 	}
-	resp, rerr := s.runRequest(r.Context(), body, id)
+	resp, rerr := s.runRequest(r.Context(), r.URL.Path, body, id)
 	if rerr != nil {
 		rerr.Write(w)
 		return
@@ -88,12 +89,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 }
 
 // runRequest parses and runs one API request, over HTTP or a WebSocket.
-func (s *Server) runRequest(ctx context.Context, body []byte, id identity) (*jmapcore.Response, *jmapcore.RequestError) {
+func (s *Server) runRequest(ctx context.Context, path string, body []byte, id identity) (*jmapcore.Response, *jmapcore.RequestError) {
 	req, rerr := jmapcore.ParseRequest(body, declaredCapabilities(s.opts.Limits), s.opts.Limits)
 	if rerr != nil {
-		slog.Debug("jmap: request rejected", "user", id.user, "session", id.sessionID, "type", rerr.Type)
+		slog.Debug("jmap: request rejected", "user", id.user, "session", id.sessionID, "path", path,
+			"type", rerr.Type, "detail", rerr.Detail, "request", requestOutline(body))
 		return nil, rerr
 	}
+	slog.Debug("jmap: request", "user", id.user, "session", id.sessionID, "path", path, "request", requestOutline(body))
 	// The store opens lazily, on the first method that actually needs it, and
 	// closes with the request. Opening up front would fail a whole batch on a
 	// dependency the batch may not use — and Core/echo, which exists to
@@ -102,6 +105,26 @@ func (s *Server) runRequest(ctx context.Context, body []byte, id identity) (*jma
 	defer lazy.close()
 
 	resp := jmapcore.Execute(ctx, req, s.registry(lazy, id.user), s.opts.Limits)
-	slog.Debug("jmap: api", "user", id.user, "session", id.sessionID, "calls", len(req.MethodCalls))
 	return resp, nil
+}
+
+// requestOutline is what a request asks for: its capabilities and method
+// names, never arguments. It reads a request ParseRequest refused as well,
+// and only when the line is written.
+type requestOutline []byte
+
+func (o requestOutline) LogValue() slog.Value {
+	var r struct {
+		Using       []string            `json:"using"`
+		MethodCalls [][]json.RawMessage `json:"methodCalls"`
+	}
+	_ = json.Unmarshal(o, &r)
+	var methods []string
+	for _, call := range r.MethodCalls {
+		var name string
+		if len(call) > 0 && json.Unmarshal(call[0], &name) == nil {
+			methods = append(methods, name)
+		}
+	}
+	return slog.GroupValue(slog.Any("using", r.Using), slog.Any("methods", methods))
 }
