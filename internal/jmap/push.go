@@ -236,10 +236,10 @@ func (s *Server) typeState(ctx context.Context, h *userHandle, t counters.Type) 
 		recs, err := s.readRecords(ctx, h)
 		return strconv.FormatUint(recs.State, 10), err
 	case counters.SieveScript:
-		v, err := s.sieveRead(ctx, h, h.info.Username)
+		v, err := s.sieveRead(ctx, h, h.user)
 		return v.state, err
 	case counters.VacationResponse:
-		vv, err := s.vacationRead(ctx, h, h.info.Username)
+		vv, err := s.vacationRead(ctx, h, h.user)
 		return vv.v.state, err
 	}
 	return "", fmt.Errorf("jmap: no state for %s", t)

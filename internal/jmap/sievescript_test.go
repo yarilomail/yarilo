@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/internal/userstate/counters"
+	"github.com/yarilomail/yarilo/pkg/mailbox"
+
 	"github.com/yarilomail/yarilo/pkg/dict"
 	"github.com/yarilomail/yarilo/pkg/dict/memory"
 	"github.com/yarilomail/yarilo/pkg/locks"
@@ -558,5 +561,41 @@ func TestTheDictStoreFindsWhatJMAPWrote(t *testing.T) {
 	vacationUpdate(t, s, `{"isEnabled":true,"subject":"Away","textBody":"Back."}`)
 	if v := vacationGetOne(t, s); v["isEnabled"] != true {
 		t.Errorf("VacationResponse after enabling = %v", v)
+	}
+}
+
+// Push reads a script's state under the key the methods write it under, the
+// login, even where userdb names the user otherwise.
+func TestPushSeesAScriptWrittenUnderTheLogin(t *testing.T) {
+	s, _, _ := vacationServer(t)
+	d, err := memory.New(dict.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.opts.Sieve.Store = sieve.NewScriptStore("dict", "", nil, d)
+	resolve := s.opts.Storage.ResolveUser
+	s.opts.Storage.ResolveUser = func(u string) (*mailbox.UserInfo, error) {
+		info, err := resolve(u)
+		if err == nil {
+			info.Username = "canonical@example.com"
+		}
+		return info, err
+	}
+	state := func() map[counters.Type]string {
+		got, err := s.statesOf(context.Background(), testUser, []counters.Type{counters.SieveScript, counters.VacationResponse})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	before := state()
+	sieveCall(t, s, "SieveScript/set", createArgs(uploadAs(t, s, testUser, keepScript), "mine", ""))
+	if after := state(); after[counters.SieveScript] == before[counters.SieveScript] {
+		t.Errorf("SieveScript state %q did not move after a write", after[counters.SieveScript])
+	}
+	before = state()
+	vacationUpdate(t, s, `{"isEnabled":true,"subject":"Away","textBody":"Back."}`)
+	if after := state(); after[counters.VacationResponse] == before[counters.VacationResponse] {
+		t.Errorf("VacationResponse state %q did not move after a write", after[counters.VacationResponse])
 	}
 }
