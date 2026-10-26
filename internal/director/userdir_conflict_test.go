@@ -47,6 +47,11 @@ func TestUserDir_Conflict_LoserKicksStaleSessions(t *testing.T) {
 	if got := readLine(t, loginSc); got != "USER-KICKED\tu@example.com\treason=move" {
 		t.Fatalf("expected USER-KICKED for u, got %q", got)
 	}
+	// The login closes the kicked session; that close removes the record.
+	loginConn.Write([]byte("SESSION-CLOSE\tsU\n"))
+	if got := readLine(t, loginSc); got != "OK" {
+		t.Fatalf("SESSION-CLOSE u: %q", got)
+	}
 	srv.sessRecMu.RLock()
 	_, uAlive := srv.sessById["sU"]
 	_, vAlive := srv.sessById["sV"]
