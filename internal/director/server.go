@@ -1610,16 +1610,17 @@ func (s *Server) kickStaleSessions(hash uint32, oldHost, reason string) {
 	if err != nil {
 		ip = oldHost
 	}
-	s.sessRecMu.Lock()
+	// The records stay until the login's SESSION-CLOSE: that close is what
+	// confirms the kill and releases the LOOKUP hold, and a record already
+	// gone made it confirm only at user_kill_timeout.
+	s.sessRecMu.RLock()
 	var victims []*sessionRec
 	for id := range s.sessByBE[ip] {
 		if rec, ok := s.sessById[id]; ok && HashUsername(rec.user, s.hf) == hash {
 			victims = append(victims, rec)
-			delete(s.sessById, id)
-			delete(s.sessByBE[ip], id)
 		}
 	}
-	s.sessRecMu.Unlock()
+	s.sessRecMu.RUnlock()
 
 	for _, rec := range localSessions(victims) {
 		_ = rec.cl.WriteLine(loginKickLine(rec.user, reason))
