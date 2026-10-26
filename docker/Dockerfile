@@ -76,7 +76,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
             -trimpath -o "/out/$cmd" "./app/$cmd"; \
     done
 
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 # tini is PID 1 (see ENTRYPOINT): the components that run external programs --
 # the director's flush hook, sieve pipe/filter/execute, the quota-warning
 # script -- leave orphaned grandchildren behind when one is killed, and Go
