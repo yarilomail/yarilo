@@ -71,7 +71,7 @@ require (
 
 replace github.com/foxcpp/go-sieve => github.com/0kaba0hub/go-sieve v0.0.0-20261018182007-060cf390ce68
 
-replace github.com/emersion/go-imap/v2 => github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261023153918-e213d25f66ea
+replace github.com/emersion/go-imap/v2 => github.com/0kaba0hub/go-imap/v2 v2.0.0-beta.8.0.20261027164708-b1c8d55f59c5
 
 replace github.com/emersion/go-sasl => github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936
 
