@@ -98,16 +98,19 @@ func TestADeliveryOverTheWireIsReadableFromItsRecord(t *testing.T) {
 	}
 }
 
-// <Postmaster> carries no domain (RFC 5321 §4.1.1.3): userdb is asked for the
-// name as it is, and only its answer decides between delivery and 550 5.1.1.
-func TestADomainlessPostmasterIsLookedUpAsItIs(t *testing.T) {
+// A recipient without a domain, <Postmaster> (RFC 5321 §4.1.1.3) or any name
+// over LMTP: userdb is asked for it as it is, and only its answer decides.
+func TestADomainlessRecipientIsLookedUpAsItIs(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
+		rcpt  string
 		known bool
 		want  string
 	}{
-		{"known to userdb", true, "250 "},
-		{"unknown to userdb", false, "550 5.1.1 "},
+		{"Postmaster known to userdb", "Postmaster", true, "250 "},
+		{"Postmaster unknown to userdb", "Postmaster", false, "550 5.1.1 "},
+		{"any name known to userdb", "abuse", true, "250 "},
+		{"any name unknown to userdb", "abuse", false, "550 5.1.1 "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -141,12 +144,12 @@ func TestADomainlessPostmasterIsLookedUpAsItIs(t *testing.T) {
 			sendLHLO(t, conn, sc)
 			fmt.Fprintf(conn, "MAIL FROM:<sender@external.com>\r\n") //nolint:errcheck
 			sc.Scan()
-			fmt.Fprintf(conn, "RCPT TO:<Postmaster>\r\n") //nolint:errcheck
+			fmt.Fprintf(conn, "RCPT TO:<%s>\r\n", tc.rcpt) //nolint:errcheck
 			sc.Scan()
 			rcpt := sc.Text()
 			if tc.known {
 				if !strings.HasPrefix(rcpt, "250") {
-					t.Fatalf("RCPT TO:<Postmaster> answered %q", rcpt)
+					t.Fatalf("RCPT TO:<%s> answered %q", tc.rcpt, rcpt)
 				}
 				fmt.Fprintf(conn, "DATA\r\n") //nolint:errcheck
 				sc.Scan()
@@ -156,10 +159,10 @@ func TestADomainlessPostmasterIsLookedUpAsItIs(t *testing.T) {
 			}
 			fmt.Fprintf(conn, "QUIT\r\n") //nolint:errcheck
 			if !strings.HasPrefix(rcpt, tc.want) {
-				t.Errorf("the reply for <Postmaster> is %q, want %q", rcpt, tc.want)
+				t.Errorf("the reply for <%s> is %q, want %q", tc.rcpt, rcpt, tc.want)
 			}
-			if len(asked) != 1 || asked[0] != "Postmaster" {
-				t.Errorf("userdb was asked for %q, want [\"Postmaster\"]", asked)
+			if len(asked) != 1 || asked[0] != tc.rcpt {
+				t.Errorf("userdb was asked for %q, want [%q]", asked, tc.rcpt)
 			}
 		})
 	}

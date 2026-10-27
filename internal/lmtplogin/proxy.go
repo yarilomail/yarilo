@@ -671,7 +671,7 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOption
 // ---- helpers ----------------------------------------------------------------
 
 // rcptUsername returns the userdb name of an RCPT path without brackets or
-// +detail (user+folder@domain → user@domain); <Postmaster> stays domainless.
+// +detail (user+folder@domain → user@domain); a name without a domain stays so.
 func rcptUsername(to string) string {
 	to = strings.Trim(strings.TrimSpace(to), "<>")
 	local, domain, hasDomain := to, "", false

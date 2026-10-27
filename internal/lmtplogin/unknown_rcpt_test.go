@@ -62,6 +62,7 @@ func TestAnUnknownRecipientIsRefusedBeforeTheDirector(t *testing.T) {
 
 	known := startTestAuthWithUserdb(t, fakeUserdb{
 		"alice@example.com": {Username: "alice@example.com"},
+		"abuse":             {Username: "abuse"},
 	})
 	cases := []struct {
 		name        string
@@ -72,6 +73,8 @@ func TestAnUnknownRecipientIsRefusedBeforeTheDirector(t *testing.T) {
 	}{
 		{"unknown", known, "nobody@example.com", "550 5.1.1 ", 0},
 		{"known", known, "alice@example.com", "250 ", 1},
+		{"known without a domain", known, "abuse", "250 ", 1},
+		{"unknown without a domain", known, "nobody", "550 5.1.1 ", 0},
 		{"userdb unreachable", downAddr, "alice@example.com", "451 4.3.0 ", 0},
 	}
 	for _, tc := range cases {
