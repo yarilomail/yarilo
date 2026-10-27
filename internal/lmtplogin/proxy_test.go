@@ -30,9 +30,12 @@ func TestRcptUsername(t *testing.T) {
 		{"<alice+tag@example.com>", "alice@example.com"},
 		{"<alice+a+b@example.com>", "alice@example.com"},
 		{"alice@sub.example.com", "alice@sub.example.com"},
-		// no @ → empty
-		{"notauser", ""},
+		// no domain: looked up as it is, as <Postmaster> must be (RFC 5321 §4.5.1)
+		{"notauser", "notauser"},
+		{"<Postmaster>", "Postmaster"},
+		{"<postmaster+tag>", "postmaster"},
 		{"", ""},
+		{"<>", ""},
 		// @ but empty local
 		{"@example.com", "@example.com"},
 	}
