@@ -485,7 +485,7 @@ func (s *session) issueToken(username, wardenID string) (string, error) {
 const masterCallTimeout = 5 * time.Second
 
 // userFields looks up the recipient's director_tag and proxy_timeout. A failed
-// lookup is 451, a proxy_timeout this proxy cannot read 550; not found is none.
+// lookup is 451, an unknown user 550 5.1.1 before any LOOKUP, a bad proxy_timeout 550.
 func (s *session) userFields(username string) (string, time.Duration, error) {
 	if s.opts.AuthMasterAddr == "" {
 		return "", 0, nil
@@ -512,7 +512,7 @@ func (s *session) userFields(username string) (string, time.Duration, error) {
 		return "", 0, &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary user lookup failure"}
 	}
 	if ui == nil {
-		return "", 0, nil
+		return "", 0, &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 1, 1}, Message: "No such user here"}
 	}
 	timeout, err := protocol.ParseProxyTimeout(ui.ProxyTimeout)
 	if err != nil {
