@@ -3,12 +3,15 @@ package lmtplogin
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	goSmtp "github.com/emersion/go-smtp"
 
 	"github.com/yarilomail/yarilo/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/internal/loginproto"
@@ -70,14 +73,16 @@ func TestResolveDirectorTag(t *testing.T) {
 	if got := userTag(s, "bob@example.com"); got != "" {
 		t.Errorf("bob (no override): resolveDirectorTag = %q, want %q", got, "")
 	}
-	if got := userTag(s, "carol@example.com"); got != "" {
-		t.Errorf("carol (unknown user): resolveDirectorTag = %q, want %q", got, "")
+	var smtpErr *goSmtp.SMTPError
+	if _, _, err := s.userFields("carol@example.com"); !errors.As(err, &smtpErr) ||
+		smtpErr.Code != 550 || smtpErr.EnhancedCode != (goSmtp.EnhancedCode{5, 1, 1}) {
+		t.Errorf("carol (unknown user): userFields error = %v, want 550 5.1.1", err)
 	}
 
 	// AuthMasterAddr unset — must not attempt a dial, just return "".
 	s2 := &session{opts: testOpts(Options{})}
-	if got := userTag(s2, "alice@example.com"); got != "" {
-		t.Errorf("no AuthMasterAddr: resolveDirectorTag = %q, want %q", got, "")
+	if tag, _, err := s2.userFields("alice@example.com"); tag != "" || err != nil {
+		t.Errorf("no AuthMasterAddr: userFields = %q, %v, want \"\", nil", tag, err)
 	}
 }
 
@@ -101,11 +106,11 @@ func startTestWarden(t *testing.T) string {
 }
 
 // startTestAuth spins a real yarilo-auth master server backed by an in-memory
-// token store. SESSION commands succeed and return real one-time tokens.
+// token store. Every user exists; SESSION commands return real one-time tokens.
 func startTestAuth(t *testing.T) string {
 	t.Helper()
 	store := authtoken.New(30 * time.Second)
-	srv := protocol.NewMasterServer(nil, protocol.WithMasterTokenStore(store))
+	srv := protocol.NewMasterServer(everyUser{}, protocol.WithMasterTokenStore(store))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("auth listen: %v", err)
@@ -127,9 +132,16 @@ func (f fakeUserdb) Lookup(username string) (*protocol.UserInfo, error) {
 	return f[username], nil
 }
 
-// startTestAuthWithUserdb is startTestAuth with a userdb attached, so USER
+// everyUser is a userdb that knows every name it is asked for.
+type everyUser struct{}
+
+func (everyUser) Lookup(username string) (*protocol.UserInfo, error) {
+	return &protocol.UserInfo{Username: username}, nil
+}
+
+// startTestAuthWithUserdb is startTestAuth with a given userdb, so USER
 // lookups (the master protocol's USER command, used by Client.Userdb) hit
-// real data instead of always returning NOTFOUND.
+// its data: a name it does not hold is NOTFOUND.
 func startTestAuthWithUserdb(t *testing.T, userdb protocol.Userdb) string {
 	t.Helper()
 	store := authtoken.New(30 * time.Second)
