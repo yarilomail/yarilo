@@ -24,6 +24,17 @@ KUBECONFIG=~/.kube/sbox.yaml \
 | `YARILO_ARM_TYPES` | `mdbox maildir sdbox` | which storage types the arm wipes, fills and runs |
 | `YARILO_ARM_OVERLAY` | — | a second values file from `helm_values/values-sandbox-<name>.yaml` |
 | `YARILO_ARM_BLOCKPROFILE` | 0 | the profiling overlay; this makes the arm a latency arm, not a throughput one |
+| `YARILO_ARM_CHART` | this checkout | a checkout whose `helm/` and `helm_values/` the arm deploys; checked clean and named in the arm's output as `-- chart:` |
+
+### A release's arm
+
+A release window runs the last release as arm A with its own chart and values,
+under this tooling: a worktree at the release tag beside the runner's checkout.
+
+```
+git -C ~/stand worktree add ~/stand-v2.4.4 v2.4.4
+YARILO_ARM_CHART=~/stand-v2.4.4 bash hack/stand/ab-arm.sh A1 2.4.4 <out-dir>
+```
 
 ### Overlays
 
