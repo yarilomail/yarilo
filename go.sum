@@ -8,8 +8,8 @@ github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936 h1:FW7LHvBoG3hlz
 github.com/0kaba0hub/go-sasl v0.0.0-20261011102754-64eaad5b5936/go.mod h1:PcxAsXfepK4Fu2VjjnA/1sQ4j4TTCwHekjjcDYR71Rw=
 github.com/0kaba0hub/go-sieve v0.0.0-20261018182007-060cf390ce68 h1:70iSDYdWkt1Jp7TaQl6pRLCNjM+Z2Ncvf+5szFBIFO8=
 github.com/0kaba0hub/go-sieve v0.0.0-20261018182007-060cf390ce68/go.mod h1:osl9Lk7E2uvGHKyrcuTgQ3AQmQcJAd0dR2PDPNmI7ew=
-github.com/0kaba0hub/go-smtp v0.0.0-20261025105858-ea93948bb9d6 h1:VL8E8eGs/GGs6vdHWVtqLMevPvqH0/M0wYEnnG+xMLo=
-github.com/0kaba0hub/go-smtp v0.0.0-20261025105858-ea93948bb9d6/go.mod h1:ZtRRkbTyp2XTHCA+BmyTFTrj8xY4I+b4McvHxCU2gsQ=
+github.com/0kaba0hub/go-smtp v0.0.0-20261027175222-f84b533c2918 h1:5S7YicSfX0GLF+jToEj7lkwUE7sLwngZUt4lFRnrNUY=
+github.com/0kaba0hub/go-smtp v0.0.0-20261027175222-f84b533c2918/go.mod h1:ZtRRkbTyp2XTHCA+BmyTFTrj8xY4I+b4McvHxCU2gsQ=
 github.com/0kaba0hub/go-xapian v0.2.1 h1:fdZ68/Tr2nkj/UKo6BEmg/vgyMOvuFROowtbgP7XQNM=
 github.com/0kaba0hub/go-xapian v0.2.1/go.mod h1:CGAxZyJsdWsdOjY0oQPxWwFqGQLlKCFDhUb7BBijMEc=
 github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5 h1:IEjq88XO4PuBDcvmjQJcQGg+w+UaafSy8G5Kcb5tBhI=
