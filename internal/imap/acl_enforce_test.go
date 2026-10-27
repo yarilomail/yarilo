@@ -1406,3 +1406,44 @@ func TestACLEnforce_GetACLDoesNotInventAnOwnerForTheCaller(t *testing.T) {
 		t.Errorf("the real anyone entry is missing: %+v", data.Rights)
 	}
 }
+
+// SELECT answers [READ-ONLY] only when none of i, e, w, t, s is held: any one
+// of them is a way to change the mailbox. EXAMINE stays [READ-ONLY].
+func TestACLEnforce_SelectReadOnlyWithoutAChangeRight(t *testing.T) {
+	cases := []struct {
+		name     string
+		rights   string // "" = alice's own INBOX, no ACL file
+		examine  bool
+		readOnly bool
+	}{
+		{"insert", "lri", false, false},
+		{"expunge", "lre", false, false},
+		{"write", "lrw", false, false},
+		{"delete message", "lrt", false, false},
+		{"write seen", "lrs", false, false},
+		{"read only", "lr", false, true},
+		{"examine with insert", "lri", true, true},
+		{"own mailbox without an ACL", "", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			aliceHome, dial := enforceServerWithShared(t)
+			a := dial("alice")
+			if _, err := a.Select("INBOX", nil).Wait(); err != nil {
+				t.Fatalf("alice SELECT INBOX: %v", err)
+			}
+			c, name := a, "INBOX"
+			if tc.rights != "" {
+				seedACL(t, aliceHome, "INBOX", "user=bob "+tc.rights+"\n")
+				c, name = dial("bob"), "Shared/INBOX"
+			}
+			data, err := c.Select(name, &imaplib.SelectOptions{ReadOnly: tc.examine}).Wait()
+			if err != nil {
+				t.Fatalf("SELECT %s with %q: %v", name, tc.rights, err)
+			}
+			if data.ReadOnly != tc.readOnly {
+				t.Errorf("SELECT %s with %q: READ-ONLY is %v, want %v", name, tc.rights, data.ReadOnly, tc.readOnly)
+			}
+		})
+	}
+}

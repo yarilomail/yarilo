@@ -68,6 +68,27 @@ func (s *session) requireRight(h *nsHandle, folder string, right rune) error {
 	return s.aclRefusal(h, folder, right)
 }
 
+// selectReadOnly reports whether SELECT answers [READ-ONLY]: the user holds
+// none of the rights that change a mailbox (i, e, w, t, s).
+func (s *session) selectReadOnly(h *nsHandle, folder string) (bool, error) {
+	if !s.aclEnforced(h) {
+		return false, nil
+	}
+	effective, err := s.effectiveRights(h, folder)
+	if err != nil {
+		return false, aclUnavailable(folder, err)
+	}
+	for _, r := range []rune{
+		mailbox.RightInsert, mailbox.RightExpunge, mailbox.RightWrite,
+		mailbox.RightDeleteMessage, mailbox.RightWriteSeen,
+	} {
+		if effective.Has(r) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // requireMetadataAccess gates RFC 5464 mailbox METADATA: the accessing user
 // needs the lookup right plus at least one access right (r/s/w/i/p). Owner
 // and ACL-disabled sessions pass without a lookup.

@@ -1124,6 +1124,10 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	if err := s.requireRight(h, rel, mailbox.RightRead); err != nil {
 		return nil, err
 	}
+	readOnly, err := s.selectReadOnly(h, rel)
+	if err != nil {
+		return nil, err
+	}
 	tOpen := time.Now()
 	f, err := h.mailbox().Folder(rel, uint32(time.Now().Unix()))
 	if err != nil {
@@ -1193,6 +1197,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		UIDNext:        imaplib.UID(f.NextUID),
 		HighestModSeq:  f.HighestModSeq,
 		MailboxID:      mailbox.FormatObjectID(f.GUID), // RFC 8474 OBJECTID
+		ReadOnly:       readOnly,
 	}
 	// QRESYNC SELECT (RFC 7162 §3.2): on matching UIDVALIDITY, reply with
 	// VANISHED (EARLIER) listing UIDs expunged since the client's modseq.
