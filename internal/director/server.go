@@ -1586,9 +1586,8 @@ func (s *Server) expireStaleBackends(expire time.Duration) {
 			s.forgetBackendLease(ip)
 			continue
 		}
-		// The last of its tag stays registered, so its next heartbeat brings it
-		// back, but out of routing: a dead backend in the ring made every login
-		// of the tag wait out login_proxy_timeout instead of failing at once.
+		// The last of its tag stays registered for its next heartbeat, but out of
+		// routing, so the tag's logins fail at once rather than at login_proxy_timeout.
 		if s.ring.CountBackendsInTag(b.Tag) <= 1 {
 			if b.Up && s.ring.SetUp(ip, false, now.Unix()) {
 				s.updateMetrics()
