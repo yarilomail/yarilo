@@ -462,8 +462,8 @@ case "$right|$pop" in
     verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "right password '$right', wrong one '$wrong'" ;;
   *) verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "$RULE_IMAP_USER: imap '${right:-nothing}', pop3 '${pop:-nothing}'" ;;
 esac
-# Refused after DATA as an unknown recipient, word for word: the login proxy
-# takes any RCPT. Both are refused, so nothing is stored.
+# Refused at RCPT as an unknown recipient, word for word: the login proxy asks
+# userdb on behalf of lmtp. Both are refused, so nothing is stored.
 replies=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$RULE_LMTP_USER>\r\nRCPT TO:<nosuch-accept@d00001.test>\r\nDATA\r\nSubject: rule probe\r\n\r\nx\r\n.\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" | tr -d '\r' | grep -E '^5[0-9][0-9] ' || true)
 ruled=$(echo "$replies" | sed -n 1p); unknown=$(echo "$replies" | sed -n 2p)
 login=$(imap_session "a LOGIN $RULE_LMTP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)

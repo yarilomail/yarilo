@@ -86,6 +86,17 @@ func (p *Pool) Userdb(ctx context.Context, username string) (*protocol.UserInfo,
 	return ui, err
 }
 
+// UserdbFor is Userdb on behalf of a protocol, so a userdb rule on %s applies.
+func (p *Pool) UserdbFor(ctx context.Context, username, service string) (*protocol.UserInfo, error) {
+	var ui *protocol.UserInfo
+	err := p.do(ctx, func(c *Client) error {
+		var err error
+		ui, err = c.UserdbFor(ctx, username, service)
+		return err
+	})
+	return ui, err
+}
+
 // IssueSession issues a session token, reusing a pooled connection when one is
 // available. Same contract as Userdb: the call travels to a connection rather
 // than a connection being opened for the call.

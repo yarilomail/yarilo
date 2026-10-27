@@ -496,7 +496,7 @@ func (s *session) userFields(username string) (string, time.Duration, error) {
 	var ui *protocol.UserInfo
 	var err error
 	if s.opts.AuthMasterPool != nil {
-		ui, err = s.opts.AuthMasterPool.Userdb(ctx, username)
+		ui, err = s.opts.AuthMasterPool.UserdbFor(ctx, username, "lmtp")
 	} else {
 		s.authMu.Lock()
 		c, derr := s.ensureAuthClient()
@@ -504,7 +504,7 @@ func (s *session) userFields(username string) (string, time.Duration, error) {
 		if derr != nil {
 			err = derr
 		} else {
-			ui, err = c.Userdb(ctx, username)
+			ui, err = c.UserdbFor(ctx, username, "lmtp")
 		}
 	}
 	if err != nil {
