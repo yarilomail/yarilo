@@ -670,18 +670,19 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOption
 
 // ---- helpers ----------------------------------------------------------------
 
-// rcptUsername strips angle brackets, trims spaces, removes plus-detail
-// extension (user+folder@domain → user@domain), and returns the canonical
-// user@domain string that yarilo-auth and the mailbox backend expect.
+// rcptUsername returns the userdb name of an RCPT path without brackets or
+// +detail (user+folder@domain → user@domain); <Postmaster> stays domainless.
 func rcptUsername(to string) string {
 	to = strings.Trim(strings.TrimSpace(to), "<>")
-	at := strings.LastIndex(to, "@")
-	if at < 0 {
-		return ""
+	local, domain, hasDomain := to, "", false
+	if at := strings.LastIndex(to, "@"); at >= 0 {
+		local, domain, hasDomain = to[:at], to[at+1:], true
 	}
-	local, domain := to[:at], to[at+1:]
 	if plus := strings.Index(local, "+"); plus >= 0 {
 		local = local[:plus]
+	}
+	if !hasDomain {
+		return local
 	}
 	return local + "@" + domain
 }
