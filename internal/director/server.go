@@ -1586,9 +1586,14 @@ func (s *Server) expireStaleBackends(expire time.Duration) {
 			s.forgetBackendLease(ip)
 			continue
 		}
+		// The last of its tag stays registered for its next heartbeat, but out of
+		// routing, so the tag's logins fail at once rather than at login_proxy_timeout.
 		if s.ring.CountBackendsInTag(b.Tag) <= 1 {
-			slog.Warn("director: backend lease expired but it is the LAST in its tag — keeping to avoid total blackhole",
-				"ip", ip, "tag", b.Tag)
+			if b.Up && s.ring.SetUp(ip, false, now.Unix()) {
+				s.updateMetrics()
+				slog.Warn("director: the last backend of its tag stopped heartbeating; kept registered, out of routing until it heartbeats again",
+					"ip", ip, "tag", b.Tag, "expire", expire)
+			}
 			continue
 		}
 		tomb := s.removeBackend(ip, 0)
