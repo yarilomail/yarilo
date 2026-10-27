@@ -9,6 +9,7 @@ import (
 
 	"github.com/yarilomail/yarilo/internal/auth/authtest"
 
+	"github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/pkg/config"
 )
 
@@ -86,6 +87,7 @@ func TestWorkaround_Integration(t *testing.T) {
 			Workarounds: []string{"whitespace-before-path"},
 		},
 		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
+		Proxy:     proxy.New(buildStubRelay(t), "mx.example.com"),
 	}
 	srv := New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

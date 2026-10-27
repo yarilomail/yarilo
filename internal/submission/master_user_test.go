@@ -10,6 +10,7 @@ import (
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
+	"github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/pkg/config"
 )
 
@@ -66,6 +67,7 @@ func buildMasterTestServer(t *testing.T, auth Authenticator) (string, func()) {
 			MaxMsgSize: 1 << 20,
 		},
 		AuthRelay: masterRelay(t, auth),
+		Proxy:     proxy.New(buildStubRelay(t), "mx.example.com"),
 	}
 	srv := New(opts)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
