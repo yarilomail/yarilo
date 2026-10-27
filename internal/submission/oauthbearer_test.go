@@ -10,6 +10,7 @@ import (
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
+	"github.com/yarilomail/yarilo/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/pkg/config"
 )
 
@@ -35,6 +36,7 @@ func buildOAuthBearerServer(t *testing.T, auth Authenticator, enabled bool) (str
 			MaxMsgSize: 1 << 20,
 		},
 		AuthRelay:     authtest.RelayTo(t, authtest.PlainOnly(auth)),
+		Proxy:         proxy.New(buildStubRelay(t), "mx.example.com"),
 		OAuth2Enabled: enabled,
 	}
 	srv := New(opts)
