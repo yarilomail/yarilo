@@ -1,6 +1,7 @@
 package director
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +88,40 @@ func TestBackendLease_NeverExpiresLastOfTag(t *testing.T) {
 
 	if !hasBackend(s, "10.0.0.1") {
 		t.Error("the last backend of a tag must never be expired")
+	}
+}
+
+// The last backend of a tag that stops heartbeating stays registered but out of
+// routing: its tag's LOOKUPs fail at once instead of sending every login to a
+// dead pod, the other tag is untouched, and the next heartbeat brings it back.
+func TestTheLastSilentBackendOfATagLeavesRouting(t *testing.T) {
+	s := NewWithOptions(testOptions(Options{BackendExpire: 50 * time.Millisecond}))
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 10143, Tag: "a", Up: true})
+	s.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.2", Port: 10143, Tag: "b", Up: true})
+	s.recordBackendSeen("10.0.0.1", 1)
+	lookup := func(tag string) string {
+		conn := &captureConn{}
+		s.handleLookup(&client{conn: conn}, []string{"LOOKUP", "7", "u1@one.test", tag})
+		return string(conn.written)
+	}
+
+	time.Sleep(80 * time.Millisecond)
+	s.expireStaleBackends(50 * time.Millisecond)
+
+	b := s.ring.GetBackend("10.0.0.1")
+	if b == nil || b.Up {
+		t.Fatalf("the last silent backend of its tag: %+v, want registered and out of routing", b)
+	}
+	if got := lookup("a"); !strings.Contains(got, "FAIL\t7\treason=no-backends") {
+		t.Errorf("LOOKUP in the silent tag answered %q, want no-backends at once", got)
+	}
+	if got := lookup("b"); !strings.Contains(got, "10.0.0.2") {
+		t.Errorf("LOOKUP in the other tag answered %q, want its backend", got)
+	}
+
+	s.handleBackendUp(&client{conn: nopConn{}}, []string{"BACKEND-UP", "10.0.0.1", "10143", "a", "100", "2"})
+	if got := lookup("a"); !strings.Contains(got, "10.0.0.1") {
+		t.Errorf("LOOKUP after the backend heartbeats again answered %q, want it back", got)
 	}
 }
 
