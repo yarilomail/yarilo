@@ -73,6 +73,29 @@ func TestTheArmDeployGuardsItsOverlay(t *testing.T) {
 	}
 }
 
+// The chart an arm deploys comes from one place, checked like the tooling: a
+// release's arm must not run this checkout's chart, nor a dirty one.
+func TestTheArmDeploysTheChartItNames(t *testing.T) {
+	src := armSource(t)
+	for _, want := range []string{
+		`CHART="${YARILO_ARM_CHART:-$REPO}"`,
+		`git -C "$CHART" status --porcelain`,
+		`echo "-- chart: $(git -C "$CHART" describe`,
+		`upgrade yarilo "$CHART/helm"`,
+		`-f "$CHART/helm_values/values-sandbox.yaml"`,
+		`OVERLAY="$CHART/helm_values/`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("ab-arm.sh lacks %s", want)
+		}
+	}
+	for _, stale := range []string{`"$REPO/helm"`, `"$REPO/helm_values/`} {
+		if strings.Contains(src, stale) {
+			t.Errorf("ab-arm.sh still deploys from %s", stale)
+		}
+	}
+}
+
 // armSource is the arm as CI can read it: what it greps for, what it prints,
 // and which steps a carried arm skips.
 func armSource(t *testing.T) string {

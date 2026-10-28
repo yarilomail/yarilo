@@ -8,6 +8,9 @@
 # Usage:
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml \
 #     bash hack/stand/ab-arm.sh <arm-label> <image-tag> <out-dir>
+#
+# YARILO_ARM_CHART names a checkout whose helm/ and helm_values/ the arm deploys
+# instead of this one's, so a release's own chart runs under this tooling.
 
 set -euo pipefail
 
@@ -27,6 +30,7 @@ OUT="${3:?output directory}"
 NS="${YARILO_NS:-yarilo-sb}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHART="${YARILO_ARM_CHART:-$REPO}"
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 
@@ -61,6 +65,18 @@ if [ -n "${YARILO_ARM_COMMIT:-}" ] && [ "$head" != "$YARILO_ARM_COMMIT" ]; then
   exit 1
 fi
 echo "-- tooling: $(git -C "$REPO" log --oneline -1 2>/dev/null)"
+if [ "$CHART" != "$REPO" ]; then
+  dirty=$(git -C "$CHART" status --porcelain 2>&1) || {
+    echo "ab-arm: YARILO_ARM_CHART=$CHART is not a checkout: $dirty" >&2
+    exit 1
+  }
+  if [ -n "$dirty" ]; then
+    echo "ab-arm: the chart checkout at $CHART is not clean, so the arm would deploy a chart nobody reviewed:" >&2
+    printf '%s\n' "$dirty" >&2
+    exit 1
+  fi
+fi
+echo "-- chart: $(git -C "$CHART" describe --tags --always 2>/dev/null) ($CHART)"
 
 IMAGE_REPO="${YARILO_IMAGE_REPO:-yarilomail/yarilo}"
 
@@ -171,7 +187,7 @@ if [ -n "$OVERLAY_NAME" ]; then
     echo "ab-arm: no overlay is named $OVERLAY_NAME" >&2
     exit 1
   }
-  OVERLAY="$REPO/helm_values/values-sandbox-$OVERLAY_NAME.yaml"
+  OVERLAY="$CHART/helm_values/values-sandbox-$OVERLAY_NAME.yaml"
   [ -f "$OVERLAY" ] || { echo "ab-arm: $OVERLAY is missing" >&2; exit 1; }
   # Both levels the header promises: a guard that reads only the first lets a
   # sibling key in, and the file then says one thing while the arm does another.
@@ -381,8 +397,8 @@ step "deploy"
 # The knobs beside the tag, so a window says what kind of arm it is: a quick
 # arm's numbers are per-login ratios, not throughput (README.md).
 echo "== arm $ARM: $TAG types=[$TYPES] fill=$FILL"
-helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
-  -f "$REPO/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} \
+helm --kubeconfig="$KCFG" upgrade yarilo "$CHART/helm" -n "$NS" \
+  -f "$CHART/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} \
   --set image.tag="$TAG" --timeout 10m >/dev/null
 
 deadline=$(( $(date +%s) + 600 ))
