@@ -13,19 +13,49 @@ import (
 const flagRecent = `\Recent`
 
 // selectRecent takes the folder's \Recent messages at SELECT and only reads
-// them at EXAMINE; a virtual folder has none (RFC 3501 §6.3.1, §6.3.2).
+// them at EXAMINE (RFC 3501 §6.3.1, §6.3.2).
 func (s *session) selectRecent(f *mailbox.Folder, msgs []*mailbox.MessageMeta, examine bool) {
 	s.recent = nil
 	s.claimsRecent = false
-	if s.isVirtualSelected() {
-		return
-	}
 	if examine {
 		s.addRecent(f.FirstRecentUID, f.NextUID)
 		return
 	}
 	s.claimsRecent = true
 	s.claimRecent(f, msgs)
+	s.claimPlusFolders()
+}
+
+// claimPlusFolders takes the \Recent messages of the folders a selected virtual
+// mailbox names with "+", for this session (virtual-config.c:154-156).
+func (s *session) claimPlusFolders() {
+	if !s.isVirtualSelected() {
+		return
+	}
+	vc, ok := mailbox.Driver(s.folderNS.box).(virtualConfigured)
+	if !ok {
+		return
+	}
+	cfg, err := vc.Config(s.folder.Name)
+	if err != nil {
+		return
+	}
+	backing, err := s.backingFolders()
+	if err != nil {
+		return
+	}
+	for _, b := range backing {
+		if !cfg.ClearsRecent(b.name) {
+			continue
+		}
+		f, err := s.primary.mailbox().Folder(b.name, 0)
+		if err != nil || f.FirstRecentUID >= f.NextUID {
+			continue
+		}
+		if _, _, err := s.primary.mailbox().ClaimRecent(f); err != nil {
+			slog.Warn("imap: recent claim failed", "user", s.username(), "folder", b.name, "err", err)
+		}
+	}
 }
 
 // claimRecent takes what no session holds yet. The unlocked check keeps a
@@ -107,7 +137,7 @@ func recentInFolder(f *mailbox.Folder, msgs []*mailbox.MessageMeta) uint32 {
 // recentArrived settles \Recent for messages a poll found: a SELECT takes
 // them, an EXAMINE reads the folder's mark.
 func (s *session) recentArrived(f *mailbox.Folder, arrived []*mailbox.MessageMeta) {
-	if s.isVirtualSelected() || len(arrived) == 0 {
+	if len(arrived) == 0 {
 		return
 	}
 	if s.claimsRecent {
