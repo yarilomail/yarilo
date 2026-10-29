@@ -420,7 +420,19 @@ func (fs *folderState) refreshExtStateFromDisk() error {
 	fs.file.Extensions = exts
 	err = fs.refreshExtState()
 	fs.file.Extensions = saved
-	return err
+	if err != nil {
+		return err
+	}
+	// Every header is the disk's: a fold raises the expunge floor and mints a
+	// lineage without touching a record. A header-only one joins the list.
+	for _, d := range exts {
+		if e := findExt(fs.file.Extensions, d.Name); e != nil {
+			e.HdrData, e.HdrSize = d.HdrData, d.HdrSize
+		} else if d.RecordSize == 0 {
+			fs.file.Extensions = append(fs.file.Extensions, d)
+		}
+	}
+	return nil
 }
 
 // refreshExtState re-parses the dbox-hdr and keywords extension headers

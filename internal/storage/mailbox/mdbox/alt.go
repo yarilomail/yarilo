@@ -171,6 +171,7 @@ func (u *userMailbox) altMoveFile(p *mdboxmap.Placement, srcFileID uint32, eligi
 	// Rewrite stayers into a fresh src file.
 	stayRecords, err := u.compactRecordsToTier(srcPath, mfileInTier(srcTier, newSrcFileID), newSrcFileID, toStay)
 	if err != nil {
+		_ = os.Remove(mfileInTier(dstTier, newDstFileID))
 		return err
 	}
 

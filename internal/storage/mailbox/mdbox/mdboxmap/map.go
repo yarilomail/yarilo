@@ -546,13 +546,28 @@ func (m *Map) invalidateLocked() {
 	m.logSize = -1
 }
 
+// removeLog drops a folded log. Test seam: a fold whose base landed but whose
+// log stayed is the failure a caller must not answer by deleting storage.
+var removeLog = os.Remove
+
+// SetTestLogRemoval installs fn as the log removal and returns a restore.
+func SetTestLogRemoval(fn func(string) error) func() {
+	removeLog = fn
+	return func() { removeLog = os.Remove }
+}
+
 // flushLocked rewrites the base and drops the log; caller MUST hold m.mu. Base
 // first, carrying the offset it folded, or a crash between them doubles deltas.
-func (m *Map) flushLocked() error {
+func (m *Map) flushLocked() (err error) {
 	start := time.Now()
 	defer func() {
 		metricMapFlush.Inc()
 		metricMapFlushSeconds.Observe(time.Since(start).Seconds())
+		// The caller changed the records before asking: a refused write leaves
+		// memory ahead of the disk, so the next access reads the disk again.
+		if err != nil {
+			m.invalidateLocked()
+		}
 	}()
 	seq, size, err := m.logIdentityLocked()
 	if err != nil {
@@ -563,7 +578,7 @@ func (m *Map) flushLocked() error {
 	if err := m.writeBaseLocked(); err != nil {
 		return err
 	}
-	if err := os.Remove(m.logPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := removeLog(m.logPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("mdboxmap/flush: remove log: %w", err)
 	}
 	m.logLineage = m.lineage
