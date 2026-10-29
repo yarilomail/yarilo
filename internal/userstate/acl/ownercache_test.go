@@ -209,6 +209,7 @@ var errBroken = errors.New("acl test: the dict is down")
 type gatedDict struct {
 	dict.Dict
 	release chan struct{}
+	entered chan struct{} // receives each iteration as it starts, when set
 	mu      sync.Mutex
 	calls   map[string]int
 }
@@ -217,6 +218,9 @@ func (g *gatedDict) Iterate(ctx context.Context, set *dict.OpSettings, path stri
 	g.mu.Lock()
 	g.calls[path]++
 	g.mu.Unlock()
+	if g.entered != nil {
+		g.entered <- struct{}{}
+	}
 	<-g.release
 	return g.Dict.Iterate(ctx, set, path, flags)
 }
@@ -260,5 +264,62 @@ func TestConcurrentMissesShareOneScan(t *testing.T) {
 		if errs[i] != nil || len(answers[i]) != 1 || answers[i][0] != "alice" {
 			t.Fatalf("session %d answered %v, %v; want [alice]", i, answers[i], errs[i])
 		}
+	}
+}
+
+// The session that started a scan leaving mid-way does not answer for the
+// others: the scan runs on, once, and every waiter gets its owners.
+func TestALeavingSessionDoesNotFailTheScan(t *testing.T) {
+	d := regDict(t)
+	clockFor(t)
+	grant(t, d, "alice", mailbox.Identifier{Type: mailbox.IDAnyone})
+	const waiters = 5
+	joined := make(chan struct{}, waiters)
+	joinedScan = func() { joined <- struct{}{} }
+	t.Cleanup(func() { joinedScan = func() {} })
+	g := &gatedDict{Dict: d, release: make(chan struct{}), entered: make(chan struct{}, 1), calls: map[string]int{}}
+	path := fwdPrefix + "anyone/"
+
+	leaderCtx, leave := context.WithCancel(context.Background())
+	leaderErr := make(chan error, 1)
+	go func() {
+		_, err := owners.cachedPath(leaderCtx, g, path)
+		leaderErr <- err
+	}()
+	select {
+	case <-g.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the leading session's scan never started")
+	}
+	answers := make([][]string, waiters)
+	errs := make([]error, waiters)
+	var wg sync.WaitGroup
+	for i := 0; i < waiters; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			answers[i], errs[i] = owners.cachedPath(context.Background(), g, path)
+		}(i)
+	}
+	for n := 0; n < waiters; n++ {
+		select {
+		case <-joined:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%d of %d waiters joined the scan", n, waiters)
+		}
+	}
+	leave()
+	if err := <-leaderErr; !errors.Is(err, context.Canceled) {
+		t.Errorf("the leaving session answered %v, want its own cancellation", err)
+	}
+	close(g.release)
+	wg.Wait()
+	for i := range answers {
+		if errs[i] != nil || len(answers[i]) != 1 || answers[i][0] != "alice" {
+			t.Errorf("waiter %d answered %v, %v after the leader left; want [alice]", i, answers[i], errs[i])
+		}
+	}
+	if g.calls[path] != 1 {
+		t.Errorf("%s iterated %d times, want once", path, g.calls[path])
 	}
 }

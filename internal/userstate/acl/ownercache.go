@@ -15,6 +15,10 @@ import (
 // hour-long SHARED_NS_RETRY_SECS gate (#1875).
 const OwnerScanTTL = time.Hour
 
+// ownerScanTimeout bounds a scan no session's context bounds, as the dict proxy
+// bounds a request.
+const ownerScanTimeout = 10 * time.Second
+
 // ownerCache holds one answer per registry path. The paths differ in who owns
 // them: anyone/ and group/<g>/ are the same rows for everyone who reads them,
 // so one process reads each once; user/<u>/ is that user's own.
@@ -90,25 +94,32 @@ func (c *ownerCache) cachedPath(ctx context.Context, d dict.Dict, path string) (
 		c.mu.Unlock()
 		return e.owners, nil
 	}
-	if f := c.flight[path]; f != nil {
+	f := c.flight[path]
+	if f != nil {
 		c.mu.Unlock()
 		joinedScan()
-		select {
-		case <-f.done:
-			return f.owners, f.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	} else {
+		f = &ownerScan{done: make(chan struct{})}
+		c.flight[path] = f
+		c.mu.Unlock()
+		// Detached from the session that started it: its client leaving must
+		// not become the answer of every session waiting on the scan.
+		go func() {
+			sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ownerScanTimeout)
+			defer cancel()
+			f.owners, f.err = c.scan(sctx, d, path, e, ok)
+			c.mu.Lock()
+			delete(c.flight, path)
+			c.mu.Unlock()
+			close(f.done)
+		}()
 	}
-	f := &ownerScan{done: make(chan struct{})}
-	c.flight[path] = f
-	c.mu.Unlock()
-	f.owners, f.err = c.scan(ctx, d, path, e, ok)
-	c.mu.Lock()
-	delete(c.flight, path)
-	c.mu.Unlock()
-	close(f.done)
-	return f.owners, f.err
+	select {
+	case <-f.done:
+		return f.owners, f.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // scan reads one path and records the answer; e is the stale entry, if any.
