@@ -421,6 +421,11 @@ type Folder struct {
 	Messages      uint32
 	Unseen        uint32
 	HighestModSeq uint64
+	// FirstRecentUID is the lowest UID no session has claimed as \Recent; an
+	// index that never recorded one reads 1 (RFC 3501 §2.3.2).
+	FirstRecentUID uint32
+	// Recent counts the messages at or above FirstRecentUID.
+	Recent uint32
 	// GUID is a stable 16-byte identifier stamped at folder creation time.
 	// Survives RENAME (unlike Name). Used as the key namespace for per-folder
 	// metadata in pkg/dict (RFC 5464 METADATA) and as the rename-stable handle
@@ -430,6 +435,14 @@ type Folder struct {
 	// a driver detected a missing/corrupt message and flagged the index for a
 	// rebuild on the next open. The session runs the rebuild and clears the marker.
 	Fsckd bool
+}
+
+// RecentClaimer moves a folder's \Recent mark past its last UID for the session
+// that selects it. Kept off the core UserIndex interface; callers type-assert.
+type RecentClaimer interface {
+	// ClaimRecent returns the UIDs [from, to) the caller now holds as \Recent
+	// and moves the mark to to; it writes nothing when the range is empty.
+	ClaimRecent(folderID uint64) (from, to uint32, err error)
 }
 
 // SeqSet is a set of UIDs or sequence numbers (use UID=0 for seq).

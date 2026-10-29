@@ -520,17 +520,51 @@ func (fs *folderState) snapshot(id uint64) (*mailbox.Folder, error) {
 	if fs.file.Header.MessagesCount > fs.file.Header.SeenMessagesCount {
 		unseen = fs.file.Header.MessagesCount - fs.file.Header.SeenMessagesCount
 	}
+	first := fs.firstRecentUID()
 	return &mailbox.Folder{
-		ID:            id,
-		Name:          fs.folder,
-		UIDValidity:   fs.file.Header.UIDValidity,
-		NextUID:       fs.file.Header.NextUID,
-		Messages:      fs.file.Header.MessagesCount,
-		Unseen:        unseen,
-		HighestModSeq: highest,
-		GUID:          fs.hdr.MailboxGUID,
-		Fsckd:         fs.file.Header.Flags&mailindex.HdrFlagFsckd != 0,
+		ID:             id,
+		Name:           fs.folder,
+		UIDValidity:    fs.file.Header.UIDValidity,
+		NextUID:        fs.file.Header.NextUID,
+		Messages:       fs.file.Header.MessagesCount,
+		Unseen:         unseen,
+		HighestModSeq:  highest,
+		FirstRecentUID: first,
+		Recent:         fs.countFrom(first),
+		GUID:           fs.hdr.MailboxGUID,
+		Fsckd:          fs.file.Header.Flags&mailindex.HdrFlagFsckd != 0,
 	}, nil
+}
+
+// firstRecentUID reads the \Recent mark; 0, an index that never wrote one,
+// makes every message recent once (RFC 3501 §2.3.2).
+func (fs *folderState) firstRecentUID() uint32 {
+	if fs.file.Header.FirstRecentUID == 0 {
+		return 1
+	}
+	return fs.file.Header.FirstRecentUID
+}
+
+// countFrom counts the records at or above uid; records are in UID order.
+func (fs *folderState) countFrom(uid uint32) uint32 {
+	recs := fs.file.Records
+	i := sort.Search(len(recs), func(i int) bool { return recs[i].UID >= uid })
+	return uint32(len(recs) - i)
+}
+
+// ClaimRecent moves the \Recent mark to the next UID under the folder hold, so
+// of two sessions selecting at once exactly one gets each message.
+func (u *userIndex) ClaimRecent(folderID uint64) (from, to uint32, err error) {
+	err = u.withFolderSite(folderID, lockSiteClaimRecent, func(fs *folderState) error {
+		from, to = fs.firstRecentUID(), fs.file.Header.NextUID
+		if from >= to {
+			from = to
+			return nil
+		}
+		fs.file.Header.FirstRecentUID = to
+		return fs.appendMutLog(encU32Update(48, to))
+	})
+	return from, to, err
 }
 
 // highestModSeq reads the modseq extension header.
@@ -2589,6 +2623,8 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 						fs.file.Header.SeenMessagesCount = v
 					case 44:
 						fs.file.Header.DeletedMessagesCount = v
+					case 48:
+						fs.file.Header.FirstRecentUID = v
 					}
 				}
 			}
