@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -71,7 +72,7 @@ func New(cfg dict.Config) (dict.Dict, error) {
 		opts.DialTimeout = d
 	}
 	prefix, _ := cfg.Settings["prefix"].(string)
-	return &Dict{client: redis.NewClient(opts), prefix: prefix}, nil
+	return &Dict{client: redis.NewClient(opts), prefix: prefix, now: time.Now, rebuildDone: make(chan struct{})}, nil
 }
 
 // Dict is the Redis driver.
@@ -79,6 +80,116 @@ type Dict struct {
 	client *redis.Client
 	prefix string
 	closed atomic.Bool
+	now    func() time.Time // test seam for the expiry index
+	// rebuilt starts the once-per-process rebuild; rebuildDone closes when it ends.
+	rebuilt     atomic.Bool
+	rebuildDone chan struct{}
+	builds      atomic.Int32 // how many builds this process started
+}
+
+// The key index makes a prefix read cost what it returns: SCAN walks the whole
+// db, which the dict shares with locks and counters (#2387). INTERNALS §32.
+func (d *Dict) idxKey() string    { return d.prefix + "\x00keys" }
+func (d *Dict) expKey() string    { return d.prefix + "\x00expiry" }
+func (d *Dict) markerKey() string { return d.prefix + "\x00indexed" }
+
+// pruneScript drops index entries whose key is gone and re-scores those still
+// alive; ARGV[1] is now, the rest are keys to check, or none to take the due.
+var pruneScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+local keys = {}
+for i = 2, #ARGV do keys[#keys + 1] = ARGV[i] end
+if #keys == 0 then
+  keys = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now, 'LIMIT', 0, 64)
+end
+for _, k in ipairs(keys) do
+  local ttl = redis.call('PTTL', k)
+  if ttl == -2 then
+    redis.call('ZREM', KEYS[1], k)
+    redis.call('ZREM', KEYS[2], k)
+  elseif ttl == -1 then
+    redis.call('ZREM', KEYS[2], k)
+  else
+    redis.call('ZADD', KEYS[2], now + math.ceil(ttl / 1000), k)
+  end
+end
+return #keys
+`)
+
+// buildScript indexes one SCAN batch in one command: ZADD of each key, and of
+// those with a TTL to the expiry index. ARGV[1] is now, the rest the keys.
+var buildScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+for i = 2, #ARGV do
+  local k = ARGV[i]
+  redis.call('ZADD', KEYS[1], 0, k)
+  local ttl = redis.call('PTTL', k)
+  if ttl > 0 then redis.call('ZADD', KEYS[2], now + math.ceil(ttl / 1000), k) end
+end
+return #ARGV - 1
+`)
+
+// ensureIndexed builds the index before the first read when none exists. With
+// one there, each process rebuilds it once in the background: keys an older pod
+// wrote without index entries during a rollout are listed after it.
+func (d *Dict) ensureIndexed(ctx context.Context) error {
+	n, err := d.client.Exists(ctx, d.markerKey()).Result()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		d.rebuilt.Store(true)
+		d.builds.Add(1)
+		defer d.closeRebuild()
+		return d.build(ctx)
+	}
+	if !d.rebuilt.Swap(true) {
+		d.builds.Add(1)
+		go func() {
+			defer d.closeRebuild()
+			if err := d.build(context.Background()); err != nil {
+				slog.Warn("dict/redis: index rebuild failed", "prefix", d.prefix, "err", err)
+			}
+		}()
+	}
+	return nil
+}
+
+func (d *Dict) closeRebuild() {
+	select {
+	case <-d.rebuildDone:
+	default:
+		close(d.rebuildDone)
+	}
+}
+
+// build adds every key under the prefix to the index, then sets the marker;
+// ZADD makes two builds at once harmless.
+func (d *Dict) build(ctx context.Context) error {
+	var cursor uint64
+	for {
+		batch, next, err := d.client.Scan(ctx, cursor, d.prefix+"*", 1000).Result()
+		if err != nil {
+			return fmt.Errorf("index scan: %w", err)
+		}
+		keys := make([]any, 1, len(batch)+1)
+		keys[0] = d.now().Unix()
+		for _, full := range batch {
+			if !strings.Contains(full[len(d.prefix):], "\x00") {
+				keys = append(keys, full)
+			}
+		}
+		if len(keys) > 1 {
+			if err := buildScript.Run(ctx, d.client, []string{d.idxKey(), d.expKey()}, keys...).Err(); err != nil && !errors.Is(err, redis.Nil) {
+				return fmt.Errorf("index fill: %w", err)
+			}
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	return d.client.Set(ctx, d.markerKey(), "1", 0).Err()
 }
 
 // Name implements dict.Dict.
@@ -149,38 +260,48 @@ func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, f
 		return &iterator{rows: rows, idx: -1}, nil
 	}
 
-	pattern := d.key(set, path) + "*"
+	if err := d.ensureIndexed(ctx); err != nil {
+		return nil, err
+	}
+	base := d.key(set, path)
+	members, err := d.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key: d.idxKey(), Start: "[" + base, Stop: "(" + base + "\xff", ByLex: true,
+	}).Result()
+	if err != nil {
+		return nil, fmt.Errorf("index range: %w", err)
+	}
 	var (
-		cursor uint64
-		rows   []iterRow
+		rows []iterRow
+		gone []any
 	)
-	for {
-		batch, next, err := d.client.Scan(ctx, cursor, pattern, 256).Result()
+	for start := 0; start < len(members); start += 256 {
+		chunk := members[start:min(start+256, len(members))]
+		vals, err := d.client.MGet(ctx, chunk...).Result()
 		if err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
+			return nil, fmt.Errorf("get during iterate: %w", err)
 		}
-		for _, full := range batch {
+		for i, full := range chunk {
+			v, ok := vals[i].(string)
+			if !ok {
+				gone = append(gone, full)
+				continue
+			}
 			k := d.trim(set, full)
 			if !dict.PathMatches(path, k, recurse, false) {
 				continue
 			}
 			row := iterRow{key: k}
 			if !noValue {
-				v, err := d.client.Get(ctx, full).Bytes()
-				if err == redis.Nil {
-					continue
-				}
-				if err != nil {
-					return nil, fmt.Errorf("get during scan: %w", err)
-				}
-				row.values = [][]byte{v}
+				row.values = [][]byte{[]byte(v)}
 			}
 			rows = append(rows, row)
 		}
-		if next == 0 {
-			break
+	}
+	if len(gone) > 0 {
+		args := append([]any{d.now().Unix()}, gone...)
+		if err := pruneScript.Run(ctx, d.client, []string{d.idxKey(), d.expKey()}, args...).Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("index prune: %w", err)
 		}
-		cursor = next
 	}
 	applySortFlags(rows, flags)
 	return &iterator{rows: rows, idx: -1}, nil
@@ -331,22 +452,29 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 		}
 	}
 
+	expireAt := float64(t.d.now().Add(t.ttl).Unix() + 1)
 	_, err := t.d.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		for _, op := range t.buf.Ops {
 			full := t.d.key(set, op.Key)
 			switch op.Kind {
 			case dict.OpSet:
+				p.Set(ctx, full, op.Value, t.ttl)
+				p.ZAdd(ctx, t.d.idxKey(), redis.Z{Member: full})
 				if t.ttl > 0 {
-					p.Set(ctx, full, op.Value, t.ttl)
+					p.ZAdd(ctx, t.d.expKey(), redis.Z{Score: expireAt, Member: full})
 				} else {
-					p.Set(ctx, full, op.Value, 0)
+					p.ZRem(ctx, t.d.expKey(), full)
 				}
 			case dict.OpUnset:
 				p.Del(ctx, full)
+				p.ZRem(ctx, t.d.idxKey(), full)
+				p.ZRem(ctx, t.d.expKey(), full)
 			case dict.OpAtomicInc:
 				p.IncrBy(ctx, full, op.Delta)
+				p.ZAdd(ctx, t.d.idxKey(), redis.Z{Member: full})
 				if t.ttl > 0 {
 					p.Expire(ctx, full, t.ttl)
+					p.ZAdd(ctx, t.d.expKey(), redis.Z{Score: expireAt, Member: full})
 				}
 			}
 		}
@@ -362,6 +490,11 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 			return dict.CommitWriteUncertain, err
 		}
 		return dict.CommitFailed, err
+	}
+	if t.ttl > 0 {
+		// Bounded upkeep on the writes that make expiring keys, so the index of a
+		// dict nobody iterates still does not grow without end.
+		_ = pruneScript.Run(ctx, t.d.client, []string{t.d.idxKey(), t.d.expKey()}, t.d.now().Unix()).Err()
 	}
 	return dict.CommitOK, nil
 }
