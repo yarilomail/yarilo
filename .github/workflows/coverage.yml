@@ -51,12 +51,12 @@ jobs:
       ## tests; the flatcurve engine only builds with its tag, so it runs apart.
       - name: Run tests with coverage
         run: |
-          go test -count=1 -coverpkg=./... -coverprofile=/tmp/cover-all.out ./...
+          go test -count=1 -coverpkg=./... -coverprofile="$RUNNER_TEMP"/cover-all.out ./...
           if ! dpkg -s libxapian-dev >/dev/null 2>&1 || ! command -v g++ >/dev/null; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq libxapian-dev g++
           fi
-          CGO_ENABLED=1 go test -count=1 -tags flatcurve -coverpkg=./... -coverprofile=/tmp/cover-fc.out \
+          CGO_ENABLED=1 go test -count=1 -tags flatcurve -coverpkg=./... -coverprofile="$RUNNER_TEMP"/cover-fc.out \
             ./internal/fts/flatcurve/ ./internal/ftsservice/ ./internal/ftsbench/
 
       ## Every test binary writes a block for every package, so the raw profiles
@@ -65,14 +65,14 @@ jobs:
         run: |
           awk 'FNR == 1 { if (NR == 1) print; next }
                { k = $1 " " $2; if (!(k in n) || $3 > n[k]) n[k] = $3 }
-               END { for (k in n) print k, n[k] }' /tmp/cover-all.out /tmp/cover-fc.out > /tmp/cover.out
-          ls -l /tmp/cover.out
-          go tool cover -func=/tmp/cover.out | tail -1
+               END { for (k in n) print k, n[k] }' "$RUNNER_TEMP"/cover-all.out "$RUNNER_TEMP"/cover-fc.out > "$RUNNER_TEMP"/cover.out
+          ls -l "$RUNNER_TEMP"/cover.out
+          go tool cover -func="$RUNNER_TEMP"/cover.out | tail -1
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: /tmp/cover.out
+          files: ${{ runner.temp }}/cover.out
           disable_search: true
           fail_ci_if_error: true
