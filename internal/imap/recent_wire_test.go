@@ -15,7 +15,13 @@ import (
 // lock service; each login is a session of its own.
 func recentServer(t *testing.T) (net.Conn, *bufio.Reader, func() (net.Conn, *bufio.Reader)) {
 	t.Helper()
-	conn, rd := virtualServerWith(t, map[string]string{"All": "INBOX\n"},
+	return recentServerWith(t, "INBOX\n")
+}
+
+// recentServerWith is recentServer with Virtual/All configured as config.
+func recentServerWith(t *testing.T, config string) (net.Conn, *bufio.Reader, func() (net.Conn, *bufio.Reader)) {
+	t.Helper()
+	conn, rd := virtualServerWith(t, map[string]string{"All": config},
 		func(t *testing.T, box mailbox.UserMailbox, ui mailbox.UserIndex) {
 			saveInto(t, box, ui, "INBOX", 1, "one", nil)
 			saveInto(t, box, ui, "INBOX", 2, "two", nil)
@@ -225,23 +231,6 @@ func TestSearchReadsRecent(t *testing.T) {
 	}
 }
 
-// A virtual folder reports no \Recent and takes none from its folders.
-func TestAVirtualFolderHasNoRecent(t *testing.T) {
-	a, ard, login := recentServer(t)
-	if got := recentOf(command(t, a, ard, "a2", "SELECT Virtual/All")); got != 0 {
-		t.Errorf("virtual SELECT: RECENT %d, want 0", got)
-	}
-	for _, l := range command(t, a, ard, "a3", "STATUS Virtual/All (RECENT)") {
-		if strings.HasPrefix(l, "* STATUS") && !strings.Contains(l, "RECENT 0") {
-			t.Errorf("virtual STATUS answered %q, want RECENT 0", l)
-		}
-	}
-	b, brd := login()
-	if got := recentOf(command(t, b, brd, "b2", "SELECT INBOX")); got != 2 {
-		t.Errorf("SELECT INBOX after the virtual one: RECENT %d, want 2", got)
-	}
-}
-
 // A client cannot set \Recent (RFC 3501 §2.3.2), in STORE or APPEND.
 func TestAClientCannotSetRecent(t *testing.T) {
 	a, ard, _ := recentServer(t)
@@ -254,5 +243,93 @@ func TestAClientCannotSetRecent(t *testing.T) {
 	fmt.Fprintf(a, "a4 APPEND INBOX (\\Recent) {%d+}\r\n%s\r\n", len(raw), raw)
 	if line := readTagged(t, ard, "a4"); !strings.HasPrefix(line, "a4 BAD") {
 		t.Errorf("APPEND (\\Recent) answered %q, want BAD", line)
+	}
+}
+
+// A virtual mailbox keeps \Recent of its own: the first SELECT takes its
+// records, a second sees none, and only the first has the flag.
+func TestAVirtualMailboxHasRecentOfItsOwn(t *testing.T) {
+	a, ard, login := recentServer(t)
+	if got := recentOf(command(t, a, ard, "a2", "SELECT Virtual/All")); got != 2 {
+		t.Errorf("first virtual SELECT: RECENT %d, want 2", got)
+	}
+	b, brd := login()
+	if got := recentOf(command(t, b, brd, "b2", "SELECT Virtual/All")); got != 0 {
+		t.Errorf("second virtual SELECT: RECENT %d, want 0", got)
+	}
+	if got := flaggedRecent(command(t, a, ard, "a3", "FETCH 1:* (FLAGS)")); got != "1,2" {
+		t.Errorf("first session FETCH: \\Recent on %q, want 1,2", got)
+	}
+	if got := flaggedRecent(command(t, b, brd, "b3", "FETCH 1:* (FLAGS)")); got != "" {
+		t.Errorf("second session FETCH: \\Recent on %q, want none", got)
+	}
+}
+
+// "+" before a folder takes that folder's \Recent with the virtual SELECT; a
+// folder named without it keeps them.
+func TestAPlusFolderGivesUpItsRecent(t *testing.T) {
+	cases := []struct {
+		config string
+		want   int
+	}{
+		{"+INBOX\n", 0},
+		{"INBOX\n", 2},
+	}
+	for _, tc := range cases {
+		t.Run(strings.TrimSpace(tc.config), func(t *testing.T) {
+			a, ard, login := recentServerWith(t, tc.config)
+			command(t, a, ard, "a2", "SELECT Virtual/All")
+			b, brd := login()
+			if got := recentOf(command(t, b, brd, "b2", "SELECT INBOX")); got != tc.want {
+				t.Errorf("SELECT INBOX after the virtual SELECT: RECENT %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// EXAMINE and STATUS of a virtual mailbox read its \Recent and leave it.
+func TestExamineAndStatusLeaveVirtualRecent(t *testing.T) {
+	a, ard, login := recentServer(t)
+	if got := recentOf(command(t, a, ard, "a2", "EXAMINE Virtual/All")); got != 2 {
+		t.Errorf("virtual EXAMINE: RECENT %d, want 2", got)
+	}
+	b, brd := login()
+	for _, l := range command(t, b, brd, "b2", "STATUS Virtual/All (RECENT)") {
+		if strings.HasPrefix(l, "* STATUS") && !strings.Contains(l, "RECENT 2") {
+			t.Errorf("virtual STATUS answered %q, want RECENT 2", l)
+		}
+	}
+	if got := recentOf(command(t, b, brd, "b3", "SELECT Virtual/All")); got != 2 {
+		t.Errorf("virtual SELECT after EXAMINE and STATUS: RECENT %d, want 2", got)
+	}
+}
+
+// A rev2 session selecting a virtual mailbox sees no \Recent but takes it.
+func TestARev2SessionTakesVirtualRecentUnseen(t *testing.T) {
+	a, ard, login := recentServer(t)
+	command(t, a, ard, "a2", "ENABLE IMAP4rev2")
+	if got := recentOf(command(t, a, ard, "a3", "SELECT Virtual/All")); got != -1 {
+		t.Errorf("rev2 virtual SELECT: RECENT %d, want no RECENT response", got)
+	}
+	if got := flaggedRecent(command(t, a, ard, "a4", "FETCH 1:* (FLAGS)")); got != "" {
+		t.Errorf("rev2 virtual FETCH: \\Recent on %q, want none", got)
+	}
+	b, brd := login()
+	if got := recentOf(command(t, b, brd, "b2", "SELECT Virtual/All")); got != 0 {
+		t.Errorf("virtual SELECT after a rev2 one: RECENT %d, want 0", got)
+	}
+}
+
+// Mail arriving in a "+" folder while the virtual mailbox is selected is taken
+// at the next poll, as the folder is held open with the selection.
+func TestAPlusFolderGivesUpArrivalsToo(t *testing.T) {
+	a, ard, login := recentServerWith(t, "+INBOX\n")
+	command(t, a, ard, "a2", "SELECT Virtual/All")
+	b, brd := login()
+	appendInbox(t, b, brd, "b2", "three")
+	command(t, a, ard, "a3", "NOOP")
+	c, crd := login()
+	if got := recentOf(command(t, c, crd, "c2", "SELECT INBOX")); got != 0 {
+		t.Errorf("SELECT INBOX after the poll: RECENT %d, want 0", got)
 	}
 }

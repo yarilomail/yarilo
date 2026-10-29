@@ -217,6 +217,20 @@ func ruleFor(cfg *Config, folder string) string {
 	return ""
 }
 
+// ClearsRecent reports whether the line that names folder starts with "+": a
+// SELECT of the virtual mailbox takes that folder's \Recent messages.
+func (c *Config) ClearsRecent(folder string) bool {
+	for _, b := range c.Boxes {
+		if b.Negative || b.MetadataEntry != "" {
+			continue
+		}
+		if b.Pattern == folder || matchPattern(b.Pattern, folder) {
+			return b.ClearRecent
+		}
+	}
+	return false
+}
+
 // matchPattern is the IMAP LIST match of the reference: "*" spans the
 // hierarchy, "%" stops at the separator.
 func matchPattern(pattern, name string) bool {

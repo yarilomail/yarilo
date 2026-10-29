@@ -2083,10 +2083,7 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 		d.HighestModSeq = f.HighestModSeq
 	}
 	if opts.NumRecent {
-		var n uint32 // a virtual folder has no \Recent
-		if !s.isVirtualName(name) {
-			n = recentInFolder(f, msgs)
-		}
+		n := recentInFolder(f, msgs)
 		d.NumRecent = &n
 	}
 	if opts.MailboxID {
@@ -2262,6 +2259,9 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	// pass goes out untagged and the command completes.
 	if err := s.pollVirtual(w); err != nil {
 		return err
+	}
+	if s.claimsRecent {
+		s.claimPlusFolders()
 	}
 
 	// The reopen settles the folder, so an IDLE / NOOP client sees an
