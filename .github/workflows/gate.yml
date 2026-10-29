@@ -225,7 +225,9 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y -qq libxapian-dev g++
           fi
-          CGO_ENABLED=1 go test -tags flatcurve ./internal/fts/flatcurve/ ./internal/ftsservice/ ./internal/ftsbench/ ./app/smoketest/
+          CGO_ENABLED=1 go test -tags flatcurve ./internal/fts/flatcurve/ ./internal/ftsservice/ ./internal/ftsbench/
+          # Only the smoketest rows the tag adds: the untagged run above has the rest.
+          CGO_ENABLED=1 go test -tags flatcurve -run '^TestFTS' ./app/smoketest/
 
       - name: Publish test results
         uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3

@@ -23,6 +23,8 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/memory"
 	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
@@ -44,6 +46,8 @@ type localStand struct {
 	locker   locks.Locker
 	lmtpAddr string
 	relayCfg *config.RelayConfig
+	authAddr string
+	metadata dict.Dict
 }
 
 // standQuotaRule is the user's limit, from userdb as production has it: the
@@ -122,6 +126,10 @@ func (s *localStand) withIMAP(t *testing.T, tune ...func(*imapserver.Options)) {
 		},
 	}
 	opts.QuotaPolicy = quotaPolicyAll()
+	if s.metadata == nil {
+		s.metadata = mustMemoryDict(t)
+	}
+	opts.MetadataDict = s.metadata
 	for _, f := range tune {
 		f(&opts)
 	}
@@ -293,4 +301,15 @@ func (s *localStand) withPOP3(t *testing.T) {
 	setFlag(t, flagPOP3TLS, "none")
 	setFlag(t, flagPOP3User, standUser)
 	setFlag(t, flagPOP3Pass, standPass)
+}
+
+// mustMemoryDict is an in-process dict, the shape the chart gives METADATA by default.
+func mustMemoryDict(t *testing.T) dict.Dict {
+	t.Helper()
+	d, err := memory.New(dict.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
 }
