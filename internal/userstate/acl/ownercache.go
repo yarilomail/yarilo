@@ -15,13 +15,30 @@ import (
 // hour-long SHARED_NS_RETRY_SECS gate (#1875).
 const OwnerScanTTL = time.Hour
 
+// ownerScanTimeout bounds a scan no session's context bounds, as the dict proxy
+// bounds a request.
+const ownerScanTimeout = 10 * time.Second
+
 // ownerCache holds one answer per registry path. The paths differ in who owns
 // them: anyone/ and group/<g>/ are the same rows for everyone who reads them,
 // so one process reads each once; user/<u>/ is that user's own.
 type ownerCache struct {
 	mu      sync.Mutex
 	entries map[string]ownerEntry
-	now     func() time.Time // test seam
+	// flight is the scan of a path in progress: a cold cache after a pod start
+	// must not send every LISTing session to scan anyone/ at once (#2381).
+	flight map[string]*ownerScan
+	now    func() time.Time // test seam
+}
+
+// joinedScan lets a test see a miss wait for a scan already in flight.
+var joinedScan = func() {}
+
+// ownerScan is one registry read others wait for; done closes once it has an answer.
+type ownerScan struct {
+	done   chan struct{}
+	owners []string
+	err    error
 }
 
 type ownerEntry struct {
@@ -29,7 +46,7 @@ type ownerEntry struct {
 	read   time.Time
 }
 
-var owners = &ownerCache{entries: map[string]ownerEntry{}, now: time.Now}
+var owners = &ownerCache{entries: map[string]ownerEntry{}, flight: map[string]*ownerScan{}, now: time.Now}
 
 // InvalidatePrincipals drops the answers a grant has just made wrong. The keys
 // are read by the principal a grant names -- user/<seer>/, group/<g>/,
@@ -73,12 +90,40 @@ func ResetScans() { scans.mu.Lock(); scans.n = 0; scans.mu.Unlock() }
 func (c *ownerCache) cachedPath(ctx context.Context, d dict.Dict, path string) ([]string, error) {
 	c.mu.Lock()
 	e, ok := c.entries[path]
-	fresh := ok && c.now().Sub(e.read) < OwnerScanTTL
-	c.mu.Unlock()
-	if fresh {
+	if ok && c.now().Sub(e.read) < OwnerScanTTL {
+		c.mu.Unlock()
 		return e.owners, nil
 	}
+	f := c.flight[path]
+	if f != nil {
+		c.mu.Unlock()
+		joinedScan()
+	} else {
+		f = &ownerScan{done: make(chan struct{})}
+		c.flight[path] = f
+		c.mu.Unlock()
+		// Detached from the session that started it: its client leaving must
+		// not become the answer of every session waiting on the scan.
+		go func() {
+			sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ownerScanTimeout)
+			defer cancel()
+			f.owners, f.err = c.scan(sctx, d, path, e, ok)
+			c.mu.Lock()
+			delete(c.flight, path)
+			c.mu.Unlock()
+			close(f.done)
+		}()
+	}
+	select {
+	case <-f.done:
+		return f.owners, f.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 
+// scan reads one path and records the answer; e is the stale entry, if any.
+func (c *ownerCache) scan(ctx context.Context, d dict.Dict, path string, e ownerEntry, ok bool) ([]string, error) {
 	countScan()
 	list, err := scanPath(ctx, d, path)
 	if err != nil {
