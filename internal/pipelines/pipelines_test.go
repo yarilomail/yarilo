@@ -185,3 +185,53 @@ func TestEveryBranchTriggeredWorkflowCoversDevelop(t *testing.T) {
 		t.Errorf("found %d branch-triggered workflows; this guard is reading the wrong directory", checked)
 	}
 }
+
+// Every app/ directory is either an entry point the coverage report leaves out
+// or counted for a reason named here, so a new command means deciding.
+func TestEveryCommandIsCountedOrLeftOutOfCoverage(t *testing.T) {
+	counted := map[string]string{
+		"guard":          "tests only, no statements",
+		"smoketest":      "the post-deploy checks; tested against local servers",
+		"yarctl":         "the admin CLI's commands",
+		"yarilo-migrate": "the offline format migration",
+	}
+	body, err := os.ReadFile(filepath.Join("..", "..", "codecov.yml"))
+	if err != nil {
+		t.Fatalf("read codecov.yml: %v", err)
+	}
+	var cfg struct {
+		Ignore []string `yaml:"ignore"`
+	}
+	if err := yaml.Unmarshal(body, &cfg); err != nil {
+		t.Fatalf("parse codecov.yml: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join("..", "..", "app"))
+	if err != nil {
+		t.Fatalf("read app: %v", err)
+	}
+	dirs := map[string]bool{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		dirs[name] = true
+		ignored := slices.Contains(cfg.Ignore, "app/"+name+"/**")
+		_, kept := counted[name]
+		switch {
+		case ignored && kept:
+			t.Errorf("app/%s is both counted (%s) and left out of coverage", name, counted[name])
+		case !ignored && !kept:
+			t.Errorf("app/%s is neither left out in codecov.yml nor named as counted here", name)
+		}
+	}
+	for _, pattern := range cfg.Ignore {
+		name := strings.TrimSuffix(strings.TrimPrefix(pattern, "app/"), "/**")
+		if !dirs[name] {
+			t.Errorf("codecov.yml leaves out %q, which is no app/ directory", pattern)
+		}
+	}
+	if len(dirs) < 10 {
+		t.Errorf("found %d app/ directories; this guard is reading the wrong place", len(dirs))
+	}
+}
