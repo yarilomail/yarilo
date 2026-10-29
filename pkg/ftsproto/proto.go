@@ -40,10 +40,13 @@ import (
 )
 
 const (
-	// 2: EXPUNGE carries the message GUID. The index names messages, so a
-	// copy cannot be found from (folder, uid) alone any more (#1986).
+	// ProtocolVersion 2: EXPUNGE carries the message GUID, since the index
+	// names messages and a copy is not found from (folder, uid) alone (#1986).
 	ProtocolVersion = "2"
+)
 
+// The command verbs, one per Service method plus the handshake.
+const (
 	CmdVersion  = "VERSION"
 	CmdIndex    = "INDEX"
 	CmdPrepend  = "PREPEND"
@@ -52,19 +55,21 @@ const (
 	CmdStatus   = "STATUS"
 	CmdRescan   = "RESCAN"
 	CmdOptimize = "OPTIMIZE"
-	// Whole-user rescan: one hold for every folder, rather than one call and
+	// CmdRescanUser rescans the whole user under one hold, not one call and
 	// one hold per folder (#1986).
 	CmdRescanUser = "RESCANUSER"
-	// Operator counts for one user. A command of its own, so an old server
-	// answers NO rather than a field an old client would misread (#2021).
+	// CmdCounts is the operator counts for one user; a verb of its own, so an
+	// old server answers NO rather than a field an old client misreads (#2021).
 	CmdCounts = "COUNTS"
-	// A deleted mailbox: its documents keep no terms of a folder that is gone,
-	// and one index per user means they outlive it otherwise (#2022).
+	// CmdDropFolder retracts a deleted folder: one index per user means its
+	// documents would otherwise keep the terms of a folder that is gone (#2022).
 	CmdDropFolder = "DROPFOLDER"
-	// One search over a set of folders, answered with every copy inside the
-	// set. A command of its own, so the protocol version stays (#1986).
+	// CmdLookupIn is one search over a set of folders, answered with every copy
+	// inside the set; a verb of its own, so the protocol version stays (#1986).
 	CmdLookupIn = "LOOKUPIN"
+)
 
+const (
 	replyOK = "OK"
 	replyNO = "NO"
 
@@ -82,16 +87,27 @@ const (
 // Service is the operation surface both the wire server and the embedded
 // client dispatch into. Implemented by internal/ftsservice.
 type Service interface {
+	// Index queues autoindexing of mbox up to maxUID; an excluded folder is skipped.
 	Index(user string, mbox fts.MailboxRef, maxUID uint32, maxRecent int) error
+	// Prepend queues mbox up to maxUID ahead of autoindex work: a search is waiting.
 	Prepend(user string, mbox fts.MailboxRef, maxUID uint32) error
+	// Expunge removes the copy uid of the message guid from mbox.
 	Expunge(user string, mbox fts.MailboxRef, uid uint32, guid [16]byte) error
+	// Lookup runs q against one folder.
 	Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Result, error)
+	// Status reports the last indexed UID and the checksum recorded for mbox.
 	Status(user string, mbox fts.MailboxRef) (lastUID, checksum uint32, err error)
+	// Rescan reconciles the index of mbox with the folder's messages.
 	Rescan(user string, mbox fts.MailboxRef) error
+	// RescanUser reconciles every folder of user under one hold, returning those done.
 	RescanUser(user string) ([]string, error)
+	// Counts reports documents, live copies, distinct messages and unrecorded ones.
 	Counts(user string) (docs, copies, messages, unrecorded uint64, err error)
+	// DropFolder retracts a folder the account no longer has.
 	DropFolder(user string, mbox fts.MailboxRef) error
+	// LookupIn runs q once over a set of folders.
 	LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error)
+	// Optimize compacts the index of user.
 	Optimize(user string) error
 }
 
@@ -105,9 +121,10 @@ type Client interface {
 // Embedded wraps an in-process Service as a Client (tests / CLI runs).
 type Embedded struct{ Service }
 
+// Close implements Client; there is nothing to close.
 func (Embedded) Close() error { return nil }
 
-// EncodeQuery / DecodeQuery carry an fts.Query as one TAB-safe field.
+// EncodeQuery carries an fts.Query as one TAB-safe field.
 func EncodeQuery(q fts.Query) (string, error) {
 	b, err := json.Marshal(q)
 	if err != nil {
@@ -116,6 +133,7 @@ func EncodeQuery(q fts.Query) (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
+// DecodeQuery reads a field EncodeQuery wrote.
 func DecodeQuery(s string) (fts.Query, error) {
 	var q fts.Query
 	b, err := base64.StdEncoding.DecodeString(s)
@@ -128,7 +146,7 @@ func DecodeQuery(s string) (fts.Query, error) {
 	return q, nil
 }
 
-// EncodeResult / DecodeResult carry an fts.Result the same way.
+// EncodeResult carries an fts.Result as one TAB-safe field.
 func EncodeResult(r fts.Result) (string, error) {
 	b, err := json.Marshal(r)
 	if err != nil {
@@ -137,6 +155,7 @@ func EncodeResult(r fts.Result) (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
+// DecodeResult reads a field EncodeResult wrote.
 func DecodeResult(s string) (fts.Result, error) {
 	var r fts.Result
 	b, err := base64.StdEncoding.DecodeString(s)
@@ -175,6 +194,7 @@ func decodeB64JSON(s string, v any) error {
 	return nil
 }
 
+// LookupIn implements Service.
 func (r *Remote) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
 	req, err := encodeB64JSON(lookupInRequest{Folders: folders, Query: q})
 	if err != nil {
@@ -235,6 +255,7 @@ func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Remote, erro
 	return r, nil
 }
 
+// Close implements Client.
 func (r *Remote) Close() error { return r.conn.Close() }
 
 func (r *Remote) roundTrip(req string) (string, error) {
@@ -288,6 +309,7 @@ func refusalError(rest string) error {
 	return fmt.Errorf("ftsproto: server: %s", rest)
 }
 
+// Index implements Service.
 func (r *Remote) Index(user string, m fts.MailboxRef, maxUID uint32, maxRecent int) error {
 	f := append([]string{CmdIndex, user}, MboxFields(m)...)
 	f = append(f, strconv.FormatUint(uint64(maxUID), 10), strconv.Itoa(maxRecent))
@@ -295,6 +317,7 @@ func (r *Remote) Index(user string, m fts.MailboxRef, maxUID uint32, maxRecent i
 	return err
 }
 
+// Prepend implements Service.
 func (r *Remote) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	f := append([]string{CmdPrepend, user}, MboxFields(m)...)
 	f = append(f, strconv.FormatUint(uint64(maxUID), 10))
@@ -302,6 +325,7 @@ func (r *Remote) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return err
 }
 
+// Expunge implements Service.
 func (r *Remote) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
 	f := append([]string{CmdExpunge, user}, MboxFields(m)...)
 	f = append(f, strconv.FormatUint(uint64(uid), 10), hex.EncodeToString(guid[:]))
@@ -309,6 +333,7 @@ func (r *Remote) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byt
 	return err
 }
 
+// Lookup implements Service.
 func (r *Remote) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, error) {
 	enc, err := EncodeQuery(q)
 	if err != nil {
@@ -323,6 +348,7 @@ func (r *Remote) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result,
 	return DecodeResult(payload)
 }
 
+// Status implements Service.
 func (r *Remote) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	payload, err := r.call(append([]string{CmdStatus, user}, MboxFields(m)...)...)
 	if err != nil {
@@ -340,11 +366,13 @@ func (r *Remote) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	return uint32(l), uint32(s), nil
 }
 
+// Rescan implements Service.
 func (r *Remote) Rescan(user string, m fts.MailboxRef) error {
 	_, err := r.call(append([]string{CmdRescan, user}, MboxFields(m)...)...)
 	return err
 }
 
+// RescanUser implements Service.
 func (r *Remote) RescanUser(user string) ([]string, error) {
 	payload, err := r.call(CmdRescanUser, user)
 	if err != nil {
@@ -356,6 +384,7 @@ func (r *Remote) RescanUser(user string) ([]string, error) {
 	return strings.Split(payload, "\t"), nil
 }
 
+// Counts implements Service.
 func (r *Remote) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	payload, err := r.call(CmdCounts, user)
 	if err != nil {
@@ -378,11 +407,13 @@ func (r *Remote) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	return out[0], out[1], out[2], out[3], nil
 }
 
+// DropFolder implements Service.
 func (r *Remote) DropFolder(user string, m fts.MailboxRef) error {
 	_, err := r.call(append([]string{CmdDropFolder, user}, MboxFields(m)...)...)
 	return err
 }
 
+// Optimize implements Service.
 func (r *Remote) Optimize(user string) error {
 	_, err := r.call(CmdOptimize, user)
 	return err

@@ -18,18 +18,6 @@ var ErrCorruptStorage = errors.New("mailbox: corrupt message storage")
 // reclaimed: gone, not corrupt, so nothing is marked for a rebuild.
 var ErrExpunged = errors.New("mailbox: message expunged")
 
-// CorruptionMarker is an optional capability of an IndexBackend handle that
-// persists a per-folder "needs rebuild" marker so a corrupt message detected on
-// one read triggers a heal on the next open. Kept off the core UserIndex interface;
-// callers type-assert. The marker is exposed read-side as Folder.Fsckd.
-// UIDSpaceAdopter takes a folder's UID space from what a store already records
-// rather than minting a fresh one. Kept off the core UserIndex interface, like
-// CorruptionMarker: callers type-assert.
-//
-// For adopting a store another implementation wrote. A client reconnecting over
-// the same mailbox keeps its cache only if both the UIDVALIDITY and the UIDs are
-// the ones it saw; a fresh UID space makes it refetch everything, which costs
-// what a migration over IMAP costs.
 // FlagWriter records a message's flag state where the storage keeps it, and
 // returns the name the message now has.
 //
@@ -57,6 +45,14 @@ type FlagWriter interface {
 // folder it opens, and most of them are ordinary folders with mail in them.
 var ErrUIDSpaceInUse = errors.New("the folder already holds messages")
 
+// UIDSpaceAdopter takes a folder's UID space from what a store already records
+// rather than minting a fresh one. Kept off the core UserIndex interface, like
+// CorruptionMarker: callers type-assert.
+//
+// For adopting a store another implementation wrote. A client reconnecting over
+// the same mailbox keeps its cache only if both the UIDVALIDITY and the UIDs are
+// the ones it saw; a fresh UID space makes it refetch everything, which costs
+// what a migration over IMAP costs.
 type UIDSpaceAdopter interface {
 	// AdoptUIDSpace sets the folder's UIDVALIDITY and next UID. It must refuse a
 	// folder that already holds messages: rewriting the UID space under a
@@ -298,6 +294,10 @@ type FlagsDirtyMarker interface {
 	SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error
 }
 
+// CorruptionMarker is an optional capability of an IndexBackend handle that
+// persists a per-folder "needs rebuild" marker so a corrupt message detected on
+// one read triggers a heal on the next open. Kept off the core UserIndex interface;
+// callers type-assert. The marker is exposed read-side as Folder.Fsckd.
 type CorruptionMarker interface {
 	// MarkFolderCorrupt sets the marker. Idempotent.
 	MarkFolderCorrupt(folderID uint64) error
@@ -435,6 +435,7 @@ type Folder struct {
 // SeqSet is a set of UIDs or sequence numbers (use UID=0 for seq).
 type SeqSet []SeqRange
 
+// SeqRange is one inclusive range of a SeqSet.
 type SeqRange struct {
 	From, To uint32 // inclusive; To==0 means '*'
 }
@@ -756,6 +757,7 @@ type FolderGoneError struct{ Folder string }
 
 func (e *FolderGoneError) Error() string { return "mailbox: folder " + e.Folder + " was deleted" }
 
+// Is makes errors.Is(err, ErrFolderGone) hold.
 func (e *FolderGoneError) Is(target error) bool { return target == ErrFolderGone }
 
 // ErrNoSpace is wrapped by a write the volume refused for room. The data is

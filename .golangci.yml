@@ -13,8 +13,15 @@ linters:
     - unparam
     - bodyclose
     - noctx
+    - revive
 
 linters-settings:
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - disableStutteringCheck
+      - name: package-comments
   goimports:
     local-prefixes: github.com/yarilomail/yarilo/v2
   errcheck:
@@ -22,11 +29,24 @@ linters-settings:
     check-blank: false
 
 issues:
+  ## The default exclusions drop revive's missing-comment reports.
+  include:
+    - EXC0012
+    - EXC0013
+    - EXC0014
+    - EXC0015
   exclude-rules:
     - path: "_test\\.go"
       linters:
         - errcheck
         - unparam
+    ## pkg/ is the importable API: its exported identifiers carry godoc (#2316).
+    - path-except: "^pkg/"
+      linters:
+        - revive
+    - path: "_test\\.go"
+      linters:
+        - revive
   max-issues-per-linter: 0
   max-same-issues: 0
 

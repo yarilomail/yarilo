@@ -392,6 +392,8 @@ type GeneralConfig struct {
 	StartupDialRetries int `koanf:"startup_dial_retries"`
 }
 
+// SSLConfig is general.ssl: the server certificate and the TLS settings every listener
+// uses unless its own section overrides them.
 type SSLConfig struct {
 	// Canonical spellings (2.4). The pre-beta names below are aliases.
 	SSLServerCert    string `koanf:"ssl_server_cert_file"`
@@ -409,6 +411,7 @@ type SSLConfig struct {
 	PreferServerAlias  bool   `koanf:"prefer_server_ciphers"`
 }
 
+// HAProxyConfig is general.haproxy: who may send a PROXY header, and how long to wait for it.
 type HAProxyConfig struct {
 	Timeout int `koanf:"timeout"` // seconds to wait for PROXY header
 	// HAProxyTrustedNetworks lists the CIDRs allowed to send a PROXY header.
@@ -427,6 +430,7 @@ type XClientConfig struct {
 	TrustedNets []string `koanf:"trusted_nets"` // CIDRs whose forwarded client IP (XCLIENT/ID) is trusted
 }
 
+// LimitsConfig is general.limits.
 type LimitsConfig struct {
 	MaxUserIPConnections int `koanf:"mail_max_userip_connections"` // 0 = unlimited
 }
@@ -582,6 +586,7 @@ type JMAPProtocolConfig struct {
 	WebSocketTicketTTL int `koanf:"jmap_websocket_ticket_ttl"`
 }
 
+// LMTPProtocolConfig is protocol.lmtp.
 type LMTPProtocolConfig struct {
 	// Greeting shown in the 220 banner. Default: "Yarilo ready."
 	LoginGreeting string `koanf:"login_greeting"`
@@ -673,6 +678,7 @@ type LMTPProxyConfig struct {
 	TimeoutAlias int `koanf:"timeout"`
 }
 
+// IMAPProtocolConfig is protocol.imap.
 type IMAPProtocolConfig struct {
 	IdleNotifyInterval int    `koanf:"imap_idle_notify_interval"` // seconds; 0 = disabled
 	MaxLineLength      int    `koanf:"imap_max_line_length"`      // bytes; 0 = unlimited
@@ -736,6 +742,7 @@ type GlobalACLEntry struct {
 	Rights     string `koanf:"rights"`
 }
 
+// POP3ProtocolConfig is protocol.pop3.
 type POP3ProtocolConfig struct {
 	NoFlagUpdates  bool   `koanf:"pop3_no_flag_updates"`
 	ReuseXUIDL     bool   `koanf:"pop3_reuse_xuidl"`
@@ -748,6 +755,7 @@ type POP3ProtocolConfig struct {
 	LockSession    bool   `koanf:"pop3_lock_session"` // dotlock file to prevent IMAP+POP3 conflicts
 }
 
+// SubmissionProtocolConfig is protocol.submission.
 type SubmissionProtocolConfig struct {
 	Hostname           string      `koanf:"hostname"`
 	MaxMsgSize         int64       `koanf:"-"` // resolved from MaxMsgSizeRaw at load
@@ -1086,11 +1094,6 @@ func (c AuthServiceConfig) ClientAddr() string {
 	return c.Listen
 }
 
-// LocksClientConfig configures how session processes (yarilo-imap,
-// yarilo-pop3, yarilo-submission, yarilo-lmtp) connect to a yarilo-locks
-// service. Empty Mode disables cross-process locking — single-process tests
-// and CLI dev runs. Production k8s sets Mode=remote with one or more
-// Endpoints pointing at the yarilo-locks ClusterIP Service.
 // ThreadingConfig controls conversation threading: which messages a delivery
 // records as belonging together.
 type ThreadingConfig struct {
@@ -1130,6 +1133,11 @@ func (c AuthClientConfig) PoolIdleTimeout() time.Duration {
 	return time.Duration(c.PoolIdleTimeoutSecs) * time.Second
 }
 
+// LocksClientConfig configures how session processes (yarilo-imap,
+// yarilo-pop3, yarilo-submission, yarilo-lmtp) connect to a yarilo-locks
+// service. Empty Mode disables cross-process locking — single-process tests
+// and CLI dev runs. Production k8s sets Mode=remote with one or more
+// Endpoints pointing at the yarilo-locks ClusterIP Service.
 type LocksClientConfig struct {
 	Mode      string   `koanf:"mode"`      // remote | embedded | ""
 	Endpoints []string `koanf:"endpoints"` // remote: ["yarilo-locks.svc:9104", ...]
@@ -1148,6 +1156,8 @@ func (c AuthServiceConfig) StartupWait() time.Duration {
 	return time.Duration(c.StartupWaitSeconds) * time.Second
 }
 
+// StartupWait is how long a process waits at startup for yarilo-locks to answer; 0
+// does not wait.
 func (c LocksClientConfig) StartupWait() time.Duration {
 	return time.Duration(c.StartupWaitSeconds) * time.Second
 }
@@ -1791,6 +1801,7 @@ type ShutdownConfig struct {
 	KillTimeout        int `koanf:"kill_timeout"`         // seconds after grace before SIGKILL
 }
 
+// AuthConfig is the auth section: the passdb chain and master users.
 type AuthConfig struct {
 	Passdb []PassdbEntry `koanf:"passdb"`
 
@@ -2188,6 +2199,7 @@ type MasterUsersConfig struct {
 	SeparatorAlias string `koanf:"separator"`
 }
 
+// PassdbEntry is one backend of a passdb or masterdb chain.
 type PassdbEntry struct {
 	Driver            string `koanf:"driver"`                         // sqlite | mysql | postgres | passwd-file
 	DSN               string `koanf:"dsn"`                            // SQL drivers
@@ -2225,6 +2237,7 @@ type PassdbEntry struct {
 	PasswdFileAlias        string `koanf:"passwd_file"`
 }
 
+// StorageConfig is the storage section: the mailbox driver and where mail lives.
 type StorageConfig struct {
 	// MailDriver names the mailbox storage driver (maildir / mdbox / sdbox).
 	// Canonical spelling; "mailbox" is the pre-beta alias.
@@ -2441,6 +2454,7 @@ type StorageConfig struct {
 	MailboxListReservedSegments []string `koanf:"mailbox_list_reserved_segments"`
 }
 
+// TelemetryConfig is the telemetry section: health, metrics and profiling.
 type TelemetryConfig struct {
 	Listen           string                 `koanf:"listen"`
 	LivenessWatchdog LivenessWatchdogConfig `koanf:"liveness_watchdog"`
@@ -2495,6 +2509,7 @@ type LivenessWatchdogConfig struct {
 	FaultInjectionEnabled bool `koanf:"liveness_watchdog_fault_injection_enabled"`
 }
 
+// LogConfig is the log section.
 type LogConfig struct {
 	Level string `koanf:"level"`
 }
@@ -3211,7 +3226,7 @@ func validateStorageEscapeChar(c string) error {
 	return nil
 }
 
-// validateNamespaceTypes refuses a namespace type the server does not
+// ValidateNamespaceTypes refuses a namespace type the server does not
 // implement, rather than dropping the namespace with a log line.
 //
 // Skipping loses the whole namespace, and every mailbox addressed under its

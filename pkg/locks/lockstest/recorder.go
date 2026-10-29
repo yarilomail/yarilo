@@ -31,21 +31,28 @@ func (r *Recorder) Count(resource string, t locks.EventType) int {
 	return n
 }
 
+// Lock implements locks.Locker.
 func (r *Recorder) Lock(_ context.Context, resource, owner string, _ time.Duration) (locks.Lock, error) {
 	return locks.Lock{ID: resource, Resource: resource, Owner: owner}, nil
 }
 
+// LockShared implements locks.Locker.
 func (r *Recorder) LockShared(ctx context.Context, resource, owner string, ttl time.Duration) (locks.Lock, error) {
 	return r.Lock(ctx, resource, owner, ttl)
 }
 
-func (r *Recorder) Unlock(context.Context, string) error               { return nil }
+// Unlock implements locks.Locker.
+func (r *Recorder) Unlock(context.Context, string) error { return nil }
+
+// Renew implements locks.Locker.
 func (r *Recorder) Renew(context.Context, string, time.Duration) error { return nil }
 
+// Subscribe implements locks.Locker.
 func (r *Recorder) Subscribe(context.Context, string) (<-chan locks.Event, error) {
 	return make(chan locks.Event), nil
 }
 
+// Emit records the event as "resource type".
 func (r *Recorder) Emit(_ context.Context, resource string, t locks.EventType, _ string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -53,7 +60,11 @@ func (r *Recorder) Emit(_ context.Context, resource string, t locks.EventType, _
 	return nil
 }
 
+// HoldsResource implements locks.Locker.
 func (r *Recorder) HoldsResource(string) (locks.HoldMode, bool) { return locks.HoldNone, false }
 
+// IncrementCounter implements locks.Locker.
 func (r *Recorder) IncrementCounter(context.Context, string, int64) (int64, error) { return 0, nil }
-func (r *Recorder) Close() error                                                   { return nil }
+
+// Close implements locks.Locker.
+func (r *Recorder) Close() error { return nil }

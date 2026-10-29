@@ -79,6 +79,7 @@ type OpSettings struct {
 // their durability requirements.
 type CommitResult int
 
+// The results a Commit reports.
 const (
 	CommitOK             CommitResult = 1
 	CommitNotFound       CommitResult = 0
@@ -86,13 +87,6 @@ const (
 	CommitWriteUncertain CommitResult = -2
 )
 
-// Dict is the read/write contract every driver implements.
-//
-// All read methods (Lookup, Iterate) honour context cancellation;
-// drivers that block on I/O MUST return ctx.Err() promptly. Mutations
-// flow through Begin → Tx; there is no direct Set/Unset on Dict by
-// design — the transaction-only mutation surface keeps drivers'
-// write paths consistent. Close releases all driver resources;
 // UserScoped is implemented by drivers that hold per-user state in memory.
 // A caller that serves one user for a while -- a session -- says so, and the
 // driver keeps the state for exactly that long; an operation from nobody in
@@ -117,6 +111,13 @@ func ReleaseUser(d Dict, set *OpSettings) {
 	}
 }
 
+// Dict is the read/write contract every driver implements.
+//
+// All read methods (Lookup, Iterate) honour context cancellation;
+// drivers that block on I/O MUST return ctx.Err() promptly. Mutations
+// flow through Begin → Tx; there is no direct Set/Unset on Dict by
+// design — the transaction-only mutation surface keeps drivers'
+// write paths consistent. Close releases all driver resources;
 // subsequent calls on a closed Dict return ErrClosed.
 type Dict interface {
 	// Lookup returns every value bound to key, plus found=true when at

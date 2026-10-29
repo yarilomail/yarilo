@@ -73,6 +73,7 @@ func isServerReply(err error) bool {
 	return err != nil && len(err.Error()) >= 17 && err.Error()[:17] == "ftsproto: server:"
 }
 
+// Close implements Client.
 func (l *Lazy) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -84,18 +85,22 @@ func (l *Lazy) Close() error {
 	return nil
 }
 
+// Index implements Service.
 func (l *Lazy) Index(user string, m fts.MailboxRef, maxUID uint32, maxRecent int) error {
 	return l.do(func(c *Remote) error { return c.Index(user, m, maxUID, maxRecent) })
 }
 
+// Prepend implements Service.
 func (l *Lazy) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return l.do(func(c *Remote) error { return c.Prepend(user, m, maxUID) })
 }
 
+// Expunge implements Service.
 func (l *Lazy) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
 	return l.do(func(c *Remote) error { return c.Expunge(user, m, uid, guid) })
 }
 
+// Lookup implements Service.
 func (l *Lazy) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, error) {
 	var res fts.Result
 	err := l.do(func(c *Remote) error {
@@ -106,6 +111,7 @@ func (l *Lazy) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, e
 	return res, err
 }
 
+// Status implements Service.
 func (l *Lazy) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	var last, sum uint32
 	err := l.do(func(c *Remote) error {
@@ -116,6 +122,7 @@ func (l *Lazy) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	return last, sum, err
 }
 
+// Counts implements Service.
 func (l *Lazy) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	var docs, copies, messages, unrecorded uint64
 	err := l.do(func(c *Remote) error {
@@ -126,6 +133,7 @@ func (l *Lazy) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	return docs, copies, messages, unrecorded, err
 }
 
+// LookupIn implements Service.
 func (l *Lazy) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
 	var res fts.SetResult
 	err := l.do(func(c *Remote) error {
@@ -136,14 +144,17 @@ func (l *Lazy) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts
 	return res, err
 }
 
+// DropFolder implements Service.
 func (l *Lazy) DropFolder(user string, m fts.MailboxRef) error {
 	return l.do(func(c *Remote) error { return c.DropFolder(user, m) })
 }
 
+// Rescan implements Service.
 func (l *Lazy) Rescan(user string, m fts.MailboxRef) error {
 	return l.do(func(c *Remote) error { return c.Rescan(user, m) })
 }
 
+// RescanUser implements Service.
 func (l *Lazy) RescanUser(user string) ([]string, error) {
 	var done []string
 	err := l.do(func(c *Remote) error {
@@ -154,6 +165,7 @@ func (l *Lazy) RescanUser(user string) ([]string, error) {
 	return done, err
 }
 
+// Optimize implements Service.
 func (l *Lazy) Optimize(user string) error {
 	return l.do(func(c *Remote) error { return c.Optimize(user) })
 }

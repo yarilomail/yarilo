@@ -6,6 +6,7 @@ import "crypto/tls"
 // belongs to a sibling process or to the login proxy in front of it.
 type SessionRole string
 
+// The session roles, by listener.
 const (
 	RoleIMAP        SessionRole = "imap"
 	RolePOP3        SessionRole = "pop3"

@@ -153,6 +153,7 @@ func (rs Rights) String() string { return string(rs) }
 // callers can use it as a sentinel.
 type IdentifierType int
 
+// The identifier kinds, IDInvalid first.
 const (
 	IDInvalid IdentifierType = iota
 	IDAnyone
