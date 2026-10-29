@@ -88,9 +88,8 @@ func sieveExtensions() string {
 	return out
 }
 
-// standSieve is the sieve config the stand runs with: the sandbox's own
-// extensions and spamtest header, vacation and notify relayed through the MTA
-// stand-in.
+// standSieve is the stand's sieve config: the sandbox's extensions and spamtest
+// header, vacation and notify relayed through the MTA stand-in.
 func (s *localStand) standSieve(t *testing.T) config.SieveConfig {
 	t.Helper()
 	c := config.Defaults().Sieve
