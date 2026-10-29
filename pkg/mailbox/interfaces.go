@@ -445,6 +445,12 @@ type RecentClaimer interface {
 	ClaimRecent(folderID uint64) (from, to uint32, err error)
 }
 
+// StoreReconciler brings the index and a driver's own UID records into
+// agreement, writing back a record's row when only the row is missing.
+type StoreReconciler interface {
+	ReconcileIndex(box Box, idx UserIndex, folder *Folder) (SyncStats, error)
+}
+
 // SeqSet is a set of UIDs or sequence numbers (use UID=0 for seq).
 type SeqSet []SeqRange
 

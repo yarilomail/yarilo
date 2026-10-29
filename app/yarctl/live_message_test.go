@@ -119,3 +119,29 @@ func TestExpungeTakesTheDeleted(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// A repair over mail the index never saw leaves every message readable (#2392).
+func TestRepairLeavesMessagesReadable(t *testing.T) {
+	b := startLiveBackend(t)
+	md := filepath.Join(b.root, "example.com", "alice", "Maildir")
+	for _, d := range []string{"cur", "new", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(md, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(md, "cur", "1700000000.M1P1.host:2,S"), []byte(liveMsg1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var rep struct {
+		Rebuild struct {
+			UIDsAssigned int `json:"uids_assigned"`
+		} `json:"rebuild"`
+	}
+	decode(t, mustYarctl(t, "backend", "folder", "repair", liveUser, "INBOX"), &rep)
+	if rep.Rebuild.UIDsAssigned != 1 {
+		t.Fatalf("repair assigned %d UIDs, want 1", rep.Rebuild.UIDsAssigned)
+	}
+	if raw := mustYarctl(t, "backend", "mailbox", "message", "get", "raw", liveUser, "INBOX", "--uid", "1"); !strings.Contains(raw, "Subject: m1") {
+		t.Errorf("uid 1 after the repair read %q", raw)
+	}
+}
