@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -71,7 +72,7 @@ func New(cfg dict.Config) (dict.Dict, error) {
 		opts.DialTimeout = d
 	}
 	prefix, _ := cfg.Settings["prefix"].(string)
-	return &Dict{client: redis.NewClient(opts), prefix: prefix, now: time.Now}, nil
+	return &Dict{client: redis.NewClient(opts), prefix: prefix, now: time.Now, rebuildDone: make(chan struct{})}, nil
 }
 
 // Dict is the Redis driver.
@@ -80,6 +81,10 @@ type Dict struct {
 	prefix string
 	closed atomic.Bool
 	now    func() time.Time // test seam for the expiry index
+	// rebuilt starts the once-per-process rebuild; rebuildDone closes when it ends.
+	rebuilt     atomic.Bool
+	rebuildDone chan struct{}
+	builds      atomic.Int32 // how many builds this process started
 }
 
 // The key index makes a prefix read cost what it returns: SCAN walks the whole
@@ -111,13 +116,43 @@ end
 return #keys
 `)
 
-// ensureIndexed builds the index once from the keys already there, so a dict
-// written before it lists them without a migration step.
+// ensureIndexed builds the index before the first read when none exists. With
+// one there, each process rebuilds it once in the background: keys an older pod
+// wrote without index entries during a rollout are listed after it.
 func (d *Dict) ensureIndexed(ctx context.Context) error {
 	n, err := d.client.Exists(ctx, d.markerKey()).Result()
-	if err != nil || n > 0 {
+	if err != nil {
 		return err
 	}
+	if n == 0 {
+		d.rebuilt.Store(true)
+		d.builds.Add(1)
+		defer d.closeRebuild()
+		return d.build(ctx)
+	}
+	if !d.rebuilt.Swap(true) {
+		d.builds.Add(1)
+		go func() {
+			defer d.closeRebuild()
+			if err := d.build(context.Background()); err != nil {
+				slog.Warn("dict/redis: index rebuild failed", "prefix", d.prefix, "err", err)
+			}
+		}()
+	}
+	return nil
+}
+
+func (d *Dict) closeRebuild() {
+	select {
+	case <-d.rebuildDone:
+	default:
+		close(d.rebuildDone)
+	}
+}
+
+// build adds every key under the prefix to the index, then sets the marker;
+// ZADD makes two builds at once harmless.
+func (d *Dict) build(ctx context.Context) error {
 	var cursor uint64
 	for {
 		batch, next, err := d.client.Scan(ctx, cursor, d.prefix+"*", 1000).Result()

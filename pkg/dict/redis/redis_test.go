@@ -189,3 +189,28 @@ func TestExpiredKeysLeaveTheIndex(t *testing.T) {
 		t.Errorf("expiry index holds %v, want dup:x/3", members)
 	}
 }
+
+// A key an older pod wrote without its index entry, after the index was built,
+// is listed once a process starting later has rebuilt the index.
+func TestARestartPicksUpKeysWrittenWithoutTheIndex(t *testing.T) {
+	mr := miniredis.RunT(t)
+	first := openIndexed(t, mr, "acl:")
+	setKeys(t, first, nil, "shared/anyone/alice", "1")
+	listed(t, first, "shared/")
+	mr.Set("acl:shared/anyone/bob", "1") // an older pod: no index entry
+
+	next := openIndexed(t, mr, "acl:")
+	listed(t, next, "shared/")
+	select {
+	case <-next.rebuildDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the rebuild of a starting process never finished")
+	}
+	if got := listed(t, next, "shared/anyone/"); strings.Join(got, ",") != "shared/anyone/alice,shared/anyone/bob" {
+		t.Errorf("after the restart rebuild: listed %v", got)
+	}
+	listed(t, next, "shared/")
+	if n := next.builds.Load(); n != 1 {
+		t.Errorf("a process rebuilt the index %d times over three iterates, want once", n)
+	}
+}
