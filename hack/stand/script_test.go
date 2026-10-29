@@ -488,3 +488,48 @@ func TestTheAcceptedSkipsAreTheSmoketestRows(t *testing.T) {
 		t.Errorf("smoketest names %q, accept.sh expects %q", code, names)
 	}
 }
+
+// An APPEND whose connection a domain move closed is not a failed append; any
+// other APPEND error, or one outside the kick's two seconds, still is (#2388).
+func TestAKickedAppendIsLeftOut(t *testing.T) {
+	fn := regexp.MustCompile(`(?ms)^not_kicked\(\) \{.*?^\}`).FindString(acceptSource(t))
+	if fn == "" {
+		t.Fatal("accept.sh lost not_kicked")
+	}
+	line := func(at, msg string) string {
+		return fmt.Sprintf(`{"time":"2026-10-29T%sZ","level":"ERROR","msg":%q,"service":"imap"}`, at, msg)
+	}
+	pipe := "handling APPEND command: write tcp 10.1.114.43:10143->10.1.114.39:44570: write: broken pipe"
+	kicks := `{"time":"2026-10-29T14:57:40.504577421Z","level":"INFO","msg":"director: domain moved, kicking its sessions off the old backend"}` + "\n"
+	cases := []struct {
+		name string
+		line string
+		kept bool
+	}{
+		{"broken pipe just after the kick", line("14:57:40.551953302", pipe), false},
+		{"reset within two seconds", line("14:57:42.100000000", "handling APPEND command: read: connection reset by peer"), false},
+		{"broken pipe after the window", line("14:57:43.000000000", pipe), true},
+		{"broken pipe before the kick", line("14:57:40.100000000", pipe), true},
+		{"another error at the kick", line("14:57:40.600000000", "handling APPEND command: quota exceeded"), true},
+	}
+	dir := t.TempDir()
+	kf := filepath.Join(dir, "kicks")
+	if err := os.WriteFile(kf, []byte(kicks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lf := filepath.Join(t.TempDir(), "lines")
+			if err := os.WriteFile(lf, []byte(tc.line+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command("bash", "-c", fn+"\nnot_kicked "+kf+" "+lf).CombinedOutput()
+			if err != nil {
+				t.Fatalf("not_kicked: %v\n%s", err, out)
+			}
+			if kept := strings.TrimSpace(string(out)) != ""; kept != tc.kept {
+				t.Errorf("kept = %v, want %v (output %q)", kept, tc.kept, out)
+			}
+		})
+	}
+}

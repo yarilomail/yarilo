@@ -245,6 +245,26 @@ count_lines() {
   wc -l < "$OUT/lines/$1.txt" | tr -d ' '
 }
 
+# not_kicked prints the lines of $2 that are no write to a connection a domain
+# move in $1 closed: a broken pipe or reset within 2 s after a kick (#2388).
+not_kicked() {
+  awk '
+    function at(line,   s, day, sec) {
+      if (!match(line, /"time":"[0-9]+-[0-9]+-[0-9]+T[0-9]+:[0-9]+:[0-9.]+/)) return -1
+      s = substr(line, RSTART + 8, RLENGTH - 8)
+      day = substr(s, 1, 4) * 372 + substr(s, 6, 2) * 31 + substr(s, 9, 2)
+      sec = substr(s, 12, 2) * 3600 + substr(s, 15, 2) * 60 + substr(s, 18)
+      return day * 86400 + sec
+    }
+    FNR == NR { if ((t = at($0)) >= 0) kick[++n] = t; next }
+    {
+      t = at($0)
+      if (t >= 0 && $0 ~ /broken pipe|connection reset by peer/)
+        for (i = 1; i <= n; i++) if (t >= kick[i] && t - kick[i] <= 2) next
+      print
+    }' "$1" "$2"
+}
+
 # curl_as runs curl with "login:password" fed on stdin as its config, so the
 # password is in no argument a process listing shows and in no log.
 curl_as() {
@@ -542,7 +562,17 @@ for spec in \
   "message-swept|removed a save that never got a name.*\"file\":\"u\\."; do
   name=${spec%%|*}
   n=$(count_lines "$name" "${spec#*|}")
-  [ "$n" = 0 ] && verdict "no $name lines" ok "0" || verdict "no $name lines" fail "$n (lines/$name.txt)"
+  kicked=""
+  if [ "$name" = append-failed ] && [ "$n" != 0 ]; then
+    grep -ahE "domain moved, kicking its sessions" "$OUT"/logs/yarilo-director-*.log > "$OUT/lines/domain-kicks.txt" 2>/dev/null || true
+    not_kicked "$OUT/lines/domain-kicks.txt" "$OUT/lines/$name.txt" > "$OUT/lines/$name-unkicked.txt"
+    left=$(wc -l < "$OUT/lines/$name-unkicked.txt" | tr -d ' ')
+    kicked=", $((n - left)) by a domain move left out (lines/domain-kicks.txt)"
+    n=$left
+  fi
+  file=$name.txt
+  [ -n "$kicked" ] && file=$name-unkicked.txt
+  [ "$n" = 0 ] && verdict "no $name lines" ok "0$kicked" || verdict "no $name lines" fail "$n (lines/$file)$kicked"
 done
 
 
