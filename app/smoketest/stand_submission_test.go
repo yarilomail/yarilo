@@ -47,10 +47,11 @@ func standTLS(t *testing.T) *tls.Config {
 
 // lmtpRelay stands in for the deployment's MTA: it takes what submission
 // relays and hands it to the stand's LMTP, as Postfix hands it to lmtp-login.
-type lmtpRelay struct{ lmtpAddr string }
+// It reads the LMTP address per message: the relay can start before LMTP does.
+type lmtpRelay struct{ stand *localStand }
 
 func (r lmtpRelay) NewSession(*goSmtp.Conn) (goSmtp.Session, error) {
-	return &lmtpRelaySession{addr: r.lmtpAddr}, nil
+	return &lmtpRelaySession{addr: r.stand.lmtpAddr}, nil
 }
 
 type lmtpRelaySession struct {
@@ -152,7 +153,7 @@ func (s *localStand) relay(t *testing.T) config.RelayConfig {
 		return *s.relayCfg
 	}
 	rln, _ := s.listen(t)
-	relay := goSmtp.NewServer(lmtpRelay{lmtpAddr: s.lmtpAddr})
+	relay := goSmtp.NewServer(lmtpRelay{stand: s})
 	relay.Domain = "relay.test"
 	go func() { _ = relay.Serve(rln) }()
 	host, portStr, _ := net.SplitHostPort(rln.Addr().String())
