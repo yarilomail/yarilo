@@ -116,6 +116,19 @@ end
 return #keys
 `)
 
+// buildScript indexes one SCAN batch in one command: ZADD of each key, and of
+// those with a TTL to the expiry index. ARGV[1] is now, the rest the keys.
+var buildScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+for i = 2, #ARGV do
+  local k = ARGV[i]
+  redis.call('ZADD', KEYS[1], 0, k)
+  local ttl = redis.call('PTTL', k)
+  if ttl > 0 then redis.call('ZADD', KEYS[2], now + math.ceil(ttl / 1000), k) end
+end
+return #ARGV - 1
+`)
+
 // ensureIndexed builds the index before the first read when none exists. With
 // one there, each process rebuilds it once in the background: keys an older pod
 // wrote without index entries during a rollout are listed after it.
@@ -159,24 +172,16 @@ func (d *Dict) build(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("index scan: %w", err)
 		}
-		p := d.client.Pipeline()
-		ttls := make([]*redis.DurationCmd, 0, len(batch))
-		keys := make([]string, 0, len(batch))
+		keys := make([]any, 1, len(batch)+1)
+		keys[0] = d.now().Unix()
 		for _, full := range batch {
-			if strings.Contains(full[len(d.prefix):], "\x00") {
-				continue
+			if !strings.Contains(full[len(d.prefix):], "\x00") {
+				keys = append(keys, full)
 			}
-			p.ZAdd(ctx, d.idxKey(), redis.Z{Member: full})
-			ttls = append(ttls, p.PTTL(ctx, full))
-			keys = append(keys, full)
 		}
-		if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return fmt.Errorf("index fill: %w", err)
-		}
-		now := d.now().Unix()
-		for i, c := range ttls {
-			if ttl := c.Val(); ttl > 0 {
-				d.client.ZAdd(ctx, d.expKey(), redis.Z{Score: float64(now + int64(ttl/time.Second) + 1), Member: keys[i]})
+		if len(keys) > 1 {
+			if err := buildScript.Run(ctx, d.client, []string{d.idxKey(), d.expKey()}, keys...).Err(); err != nil && !errors.Is(err, redis.Nil) {
+				return fmt.Errorf("index fill: %w", err)
 			}
 		}
 		if next == 0 {

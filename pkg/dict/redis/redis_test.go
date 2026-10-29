@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/yarilomail/yarilo/v2/pkg/dict"
 	"github.com/yarilomail/yarilo/v2/pkg/dict/dicttest"
@@ -213,4 +215,38 @@ func TestARestartPicksUpKeysWrittenWithoutTheIndex(t *testing.T) {
 	if n := next.builds.Load(); n != 1 {
 		t.Errorf("a process rebuilt the index %d times over three iterates, want once", n)
 	}
+}
+
+// A build costs a fixed number of commands per SCAN batch, not one per
+// expiring key: a dict of sieve duplicates holds thousands of them.
+func TestABuildOfManyExpiringKeysIsBatched(t *testing.T) {
+	mr := miniredis.RunT(t)
+	for i := 0; i < 2000; i++ {
+		k := fmt.Sprintf("dup:x/%d", i)
+		mr.Set(k, "1")
+		mr.SetTTL(k, time.Hour)
+	}
+	d := openIndexed(t, mr, "dup:")
+	trips := &roundTrips{}
+	d.client.AddHook(trips)
+	if err := d.build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := trips.n.Load(); n > 10 {
+		t.Errorf("building an index of 2000 expiring keys took %d round trips", n)
+	}
+	if members, _ := mr.ZMembers(d.expKey()); len(members) != 2000 {
+		t.Errorf("expiry index holds %d keys, want 2000", len(members))
+	}
+}
+
+// roundTrips counts the requests a client sends: a command or a pipeline each.
+type roundTrips struct{ n atomic.Int32 }
+
+func (r *roundTrips) DialHook(next goredis.DialHook) goredis.DialHook { return next }
+func (r *roundTrips) ProcessHook(next goredis.ProcessHook) goredis.ProcessHook {
+	return func(ctx context.Context, cmd goredis.Cmder) error { r.n.Add(1); return next(ctx, cmd) }
+}
+func (r *roundTrips) ProcessPipelineHook(next goredis.ProcessPipelineHook) goredis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []goredis.Cmder) error { r.n.Add(1); return next(ctx, cmds) }
 }
