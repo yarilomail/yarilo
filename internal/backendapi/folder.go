@@ -158,7 +158,7 @@ func (s *Server) handleFolderStats(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "folder required", http.StatusBadRequest)
 		return
 	}
-	uc, err := s.openUserContextReadOnly(req.User)
+	uc, err := s.openUserContextSettled(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -233,7 +233,7 @@ func (s *Server) folderInfoCommon(w http.ResponseWriter, r *http.Request) (*fold
 	if req.Folder == "" {
 		return nil, http.StatusBadRequest, errFolderRequired
 	}
-	uc, err := s.openUserContextReadOnly(req.User)
+	uc, err := s.openUserContextSettled(req.User)
 	if err != nil {
 		return nil, http.StatusBadRequest, err
 	}

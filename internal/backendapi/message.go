@@ -58,7 +58,7 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uc, err := s.openUserContextReadOnly(req.User)
+	uc, err := s.openUserContextSettled(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return

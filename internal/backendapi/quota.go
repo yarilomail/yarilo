@@ -110,7 +110,7 @@ func lookupInt(ctx context.Context, d dict.Dict, set *dict.OpSettings, key strin
 // userCountUsage sums the authoritative index-derived usage across a user's
 // personal-namespace folders (the count backend). Shared by /show and /recalc.
 func (s *Server) userCountUsage(user, namespace string) (quota.Usage, quota.Limits, error) {
-	uc, err := s.openUserContextReadOnly(user)
+	uc, err := s.openUserContextSettled(user)
 	if err != nil {
 		return quota.Usage{}, quota.Limits{}, err
 	}
@@ -132,7 +132,13 @@ func (s *Server) userCountUsage(user, namespace string) (quota.Usage, quota.Limi
 			limits = quota.ParseRules(pui.QuotaRules)
 		}
 	}
-	return quota.CountUsage(bundle.mbox, mailbox.SelectableNames(folders), limits), limits, nil
+	names := mailbox.SelectableNames(folders)
+	// Each folder settled first, as the reference's count backend syncs before
+	// it reads a size (quota-count.c:52): stored mail counts (#2391).
+	for _, name := range names {
+		_, _ = bundle.mbox.Folder(name, 0)
+	}
+	return quota.CountUsage(bundle.mbox, names, limits), limits, nil
 }
 
 type quotaShowResponse struct {
@@ -206,7 +212,7 @@ func (s *Server) handleQuotaRecalc(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	uc, err := s.openUserContextReadOnly(req.User)
+	uc, err := s.openUserContextSettled(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return
