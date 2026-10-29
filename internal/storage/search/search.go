@@ -301,6 +301,10 @@ func (o Options) folderPlan(user string, f *mailbox.Folder, c *imaplib.SearchCri
 	for _, h := range res.Definite {
 		if h.Folder == mbox.GUID {
 			p.Covered[h.UID] = true
+			// fts_search_strict reads a definite hit too, as Plan does.
+			if o.Strict {
+				p.Verify[h.UID] = true
+			}
 		}
 	}
 	for _, h := range res.Maybe {

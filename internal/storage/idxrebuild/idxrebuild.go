@@ -139,11 +139,6 @@ func RebuildFolder(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder)
 			// Preserve the AltTier marker so Fetch of alt-moved mail still
 			// skips the primary open after a rebuild.
 			newMeta.AltTier = old.AltTier
-			// Preserve GUID when the driver did not stamp one (maildir).
-			var zero [16]byte
-			if newMeta.GUID == zero {
-				newMeta.GUID = old.GUID
-			}
 			stats.UIDsPreserved++
 		} else {
 			newMeta.UID = nextUID
