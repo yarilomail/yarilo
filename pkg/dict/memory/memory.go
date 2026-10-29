@@ -45,8 +45,10 @@ type row struct {
 	expires time.Time // zero = no TTL
 }
 
+// Name implements dict.Dict.
 func (d *Dict) Name() string { return "memory" }
 
+// Close implements dict.Dict.
 func (d *Dict) Close() error {
 	d.closed.Store(true)
 	d.mu.Lock()
@@ -55,8 +57,10 @@ func (d *Dict) Close() error {
 	return nil
 }
 
+// Wait implements dict.Dict.
 func (d *Dict) Wait(_ context.Context) error { return nil }
 
+// Lookup implements dict.Dict.
 func (d *Dict) Lookup(ctx context.Context, _ *dict.OpSettings, key string) ([][]byte, bool, error) {
 	if err := d.guard(ctx); err != nil {
 		return nil, false, err
@@ -78,6 +82,7 @@ func (d *Dict) Lookup(ctx context.Context, _ *dict.OpSettings, key string) ([][]
 	return out, true, nil
 }
 
+// Iterate implements dict.Dict.
 func (d *Dict) Iterate(ctx context.Context, _ *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
 	if err := d.guard(ctx); err != nil {
 		return nil, err
@@ -131,6 +136,7 @@ func (d *Dict) Iterate(ctx context.Context, _ *dict.OpSettings, path string, fla
 	return &iterator{rows: rows, idx: -1}, nil
 }
 
+// Begin implements dict.Dict.
 func (d *Dict) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, error) {
 	if err := d.guard(ctx); err != nil {
 		return nil, err
@@ -142,6 +148,7 @@ func (d *Dict) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, error)
 	return &tx{d: d, expire: expire}, nil
 }
 
+// ExpireScan implements dict.Dict.
 func (d *Dict) ExpireScan(ctx context.Context) error {
 	if err := d.guard(ctx); err != nil {
 		return err

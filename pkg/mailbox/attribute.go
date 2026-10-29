@@ -28,6 +28,7 @@ import (
 // AttrScope distinguishes per-user-private from per-resource-shared attributes.
 type AttrScope int
 
+// The two scopes.
 const (
 	AttrPrivate AttrScope = iota
 	AttrShared

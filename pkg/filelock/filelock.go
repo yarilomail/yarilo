@@ -60,6 +60,7 @@ func reportFallback(path string, method Method) {
 // on any close of that file in the process, and readers close it (#1840).
 type Method string
 
+// The lock methods, by their configured name.
 const (
 	MethodFcntl   Method = "fcntl"
 	MethodFlock   Method = "flock"

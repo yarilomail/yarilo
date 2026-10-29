@@ -24,8 +24,8 @@ var metricOverridden = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Dotlocks taken over from a holder that no longer holds them, by how it was established: dead means the local pid in the lock file is gone, stale means nothing changed for the stale timeout.",
 }, []string{"reason"}) // dead | stale
 
-// DefaultStaleTimeout: a dotlock whose file and protected file sit unchanged
-// this long is abandoned, the reference's value for the same file.
+// DefaultStaleTimeout is how long a dotlock and its protected file sit unchanged
+// before the lock counts as abandoned, the reference's value for the same file.
 const DefaultStaleTimeout = 3 * time.Minute
 
 var (

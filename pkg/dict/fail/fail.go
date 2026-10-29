@@ -34,21 +34,32 @@ func New(cfg dict.Config) (dict.Dict, error) {
 	return &Dict{msg: msg}, nil
 }
 
+// Dict is the fail driver: every operation returns the configured error.
 type Dict struct{ msg string }
 
-func (d *Dict) Name() string                       { return "fail" }
-func (d *Dict) Close() error                       { return nil }
-func (d *Dict) Wait(_ context.Context) error       { return nil }
+// Name implements dict.Dict.
+func (d *Dict) Name() string { return "fail" }
+
+// Close implements dict.Dict.
+func (d *Dict) Close() error { return nil }
+
+// Wait implements dict.Dict.
+func (d *Dict) Wait(_ context.Context) error { return nil }
+
+// ExpireScan implements dict.Dict.
 func (d *Dict) ExpireScan(_ context.Context) error { return d.err("expire-scan") }
 
+// Lookup implements dict.Dict.
 func (d *Dict) Lookup(_ context.Context, _ *dict.OpSettings, _ string) ([][]byte, bool, error) {
 	return nil, false, d.err("lookup")
 }
 
+// Iterate implements dict.Dict.
 func (d *Dict) Iterate(_ context.Context, _ *dict.OpSettings, _ string, _ dict.IterFlag) (dict.Iterator, error) {
 	return nil, d.err("iterate")
 }
 
+// Begin implements dict.Dict.
 func (d *Dict) Begin(_ context.Context, _ *dict.OpSettings) (dict.Tx, error) {
 	return nil, d.err("begin")
 }

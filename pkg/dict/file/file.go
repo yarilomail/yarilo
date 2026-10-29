@@ -80,6 +80,7 @@ const lockWait = 30 * time.Second
 
 const formatVersion = 1
 
+// Dict is the file driver over one JSON file.
 type Dict struct {
 	tmpl   string
 	method filelock.Method
@@ -195,9 +196,13 @@ type wireEntry struct {
 	row
 }
 
-func (d *Dict) Name() string                 { return "file" }
+// Name implements dict.Dict.
+func (d *Dict) Name() string { return "file" }
+
+// Wait implements dict.Dict.
 func (d *Dict) Wait(_ context.Context) error { return nil }
 
+// Close implements dict.Dict.
 func (d *Dict) Close() error {
 	d.closed.Store(true)
 	d.mu.Lock()
@@ -317,6 +322,7 @@ func (s *store) flushLocked() error {
 	return nil
 }
 
+// Lookup implements dict.Dict.
 func (d *Dict) Lookup(ctx context.Context, set *dict.OpSettings, key string) ([][]byte, bool, error) {
 	if err := d.guard(ctx); err != nil {
 		return nil, false, err
@@ -344,6 +350,7 @@ func (d *Dict) Lookup(ctx context.Context, set *dict.OpSettings, key string) ([]
 	return out, true, nil
 }
 
+// Iterate implements dict.Dict.
 func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
 	if err := d.guard(ctx); err != nil {
 		return nil, err
@@ -401,6 +408,7 @@ func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, f
 	return &iterator{rows: rows, idx: -1}, nil
 }
 
+// Begin implements dict.Dict.
 func (d *Dict) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, error) {
 	if err := d.guard(ctx); err != nil {
 		return nil, err

@@ -16,6 +16,7 @@ type MemoryTx struct {
 // TxOpKind is one buffered operation in a MemoryTx.
 type TxOpKind int
 
+// The operations a MemoryTx buffers.
 const (
 	OpSet TxOpKind = iota
 	OpUnset

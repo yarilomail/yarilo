@@ -54,6 +54,8 @@ func NewRedis(client *redis.Client, ttl time.Duration, opts ...RedisOption) *Red
 	return s
 }
 
+// Issue generates a token bound to username, sessionID, and service, kept in
+// Redis for the TTL so any replica validates it.
 func (s *RedisStore) Issue(username, sessionID, service string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -72,6 +74,8 @@ func (s *RedisStore) Issue(username, sessionID, service string) (string, error) 
 	return tok, nil
 }
 
+// Validate returns what tok is bound to and leaves it for a retry; ok is false
+// when unknown, consumed, expired or Redis did not answer.
 func (s *RedisStore) Validate(tok string) (username, sessionID, service string, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()

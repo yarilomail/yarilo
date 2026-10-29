@@ -19,6 +19,7 @@ const RoleSuffix = ".role.yarilo.internal"
 // for the operator tools.
 type Role string
 
+// The roles, by the name a certificate carries.
 const (
 	RoleAuth             Role = "auth"
 	RoleWarden           Role = "warden"
@@ -58,6 +59,7 @@ var Roles = []Role{
 // Listener names an internal server socket; the allow-list is keyed by it.
 type Listener string
 
+// The internal listeners.
 const (
 	ListenerAuthClient    Listener = "auth-client"
 	ListenerAuthMaster    Listener = "auth-master"

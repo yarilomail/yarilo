@@ -74,16 +74,23 @@ func New(cfg dict.Config) (dict.Dict, error) {
 	return &Dict{client: redis.NewClient(opts), prefix: prefix}, nil
 }
 
+// Dict is the Redis driver.
 type Dict struct {
 	client *redis.Client
 	prefix string
 	closed atomic.Bool
 }
 
-func (d *Dict) Name() string                       { return "redis" }
-func (d *Dict) ExpireScan(_ context.Context) error { return nil }
-func (d *Dict) Wait(_ context.Context) error       { return nil }
+// Name implements dict.Dict.
+func (d *Dict) Name() string { return "redis" }
 
+// ExpireScan implements dict.Dict.
+func (d *Dict) ExpireScan(_ context.Context) error { return nil }
+
+// Wait implements dict.Dict.
+func (d *Dict) Wait(_ context.Context) error { return nil }
+
+// Close implements dict.Dict.
 func (d *Dict) Close() error {
 	d.closed.Store(true)
 	return d.client.Close()
@@ -101,6 +108,7 @@ func (d *Dict) trim(set *dict.OpSettings, k string) string {
 	return k
 }
 
+// Lookup implements dict.Dict.
 func (d *Dict) Lookup(ctx context.Context, set *dict.OpSettings, key string) ([][]byte, bool, error) {
 	if d.closed.Load() {
 		return nil, false, dict.ErrClosed
@@ -115,6 +123,7 @@ func (d *Dict) Lookup(ctx context.Context, set *dict.OpSettings, key string) ([]
 	return [][]byte{v}, true, nil
 }
 
+// Iterate implements dict.Dict.
 func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
 	if d.closed.Load() {
 		return nil, dict.ErrClosed
@@ -177,6 +186,7 @@ func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, f
 	return &iterator{rows: rows, idx: -1}, nil
 }
 
+// Begin implements dict.Dict.
 func (d *Dict) Begin(_ context.Context, set *dict.OpSettings) (dict.Tx, error) {
 	if d.closed.Load() {
 		return nil, dict.ErrClosed

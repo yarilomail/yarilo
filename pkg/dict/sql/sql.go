@@ -219,6 +219,7 @@ func validIdent(s string) bool {
 	return true
 }
 
+// Dict is the database/sql driver.
 type Dict struct {
 	db     *stdsql.DB
 	driver string
@@ -230,7 +231,10 @@ type Dict struct {
 
 func (d *Dict) mapped() bool { return len(d.maps) > 0 }
 
-func (d *Dict) Name() string                 { return "sql" }
+// Name implements dict.Dict.
+func (d *Dict) Name() string { return "sql" }
+
+// Wait implements dict.Dict.
 func (d *Dict) Wait(_ context.Context) error { return nil }
 
 // scope combines the per-Dict namespace with the per-op username to key entries
@@ -253,6 +257,7 @@ func opUser(set *dict.OpSettings) string {
 	return set.Username
 }
 
+// Close implements dict.Dict.
 func (d *Dict) Close() error {
 	d.closed.Store(true)
 	return d.db.Close()
@@ -308,6 +313,7 @@ func (d *Dict) argsFor(names ...string) string {
 	return strings.Join(parts, " AND ")
 }
 
+// Lookup implements dict.Dict.
 func (d *Dict) Lookup(ctx context.Context, set *dict.OpSettings, key string) ([][]byte, bool, error) {
 	if d.closed.Load() {
 		return nil, false, dict.ErrClosed
@@ -387,6 +393,7 @@ func (d *Dict) mappedUpsert(e mapEntry) string {
 	}
 }
 
+// Iterate implements dict.Dict.
 func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
 	if d.closed.Load() {
 		return nil, dict.ErrClosed
@@ -454,6 +461,7 @@ func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, f
 	return &iterator{rows: out, idx: -1}, nil
 }
 
+// Begin implements dict.Dict.
 func (d *Dict) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, error) {
 	if d.closed.Load() {
 		return nil, dict.ErrClosed
@@ -473,6 +481,7 @@ func (d *Dict) Begin(ctx context.Context, set *dict.OpSettings) (dict.Tx, error)
 	return &tx{d: d, sqlTx: t, expires: expire, ns: d.scope(user), user: user}, nil
 }
 
+// ExpireScan implements dict.Dict.
 func (d *Dict) ExpireScan(ctx context.Context) error {
 	if d.closed.Load() {
 		return dict.ErrClosed

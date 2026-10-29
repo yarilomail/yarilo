@@ -24,6 +24,7 @@ type HeaderProperty struct {
 // HeaderForm is one of the forms of §4.1.3.
 type HeaderForm string
 
+// The header forms, by their property suffix.
 const (
 	FormRaw              HeaderForm = "asRaw"
 	FormText             HeaderForm = "asText"

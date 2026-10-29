@@ -93,6 +93,6 @@ type VirtualCopies interface {
 	Backing(folderID uint64) (map[uint32]BackingRef, error)
 }
 
-// ErrNoGUIDStore: the account keeps no record of copies by message, so a
+// ErrNoGUIDStore says the account keeps no record of copies by message, so a
 // caller finds them another way.
 var ErrNoGUIDStore = errors.New("mailbox: no record of copies by message")
