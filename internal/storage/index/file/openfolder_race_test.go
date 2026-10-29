@@ -119,9 +119,8 @@ func TestOpenFolderConcurrentFirstOpenNoUIDRegression(t *testing.T) {
 				regressed.Store(true)
 				t.Errorf("lmtp allocated regressed UID %d after previously committing %d", uid, prev)
 			}
-			ms, _ := lmtp.NextModSeq(f.ID)
 			if err := lmtp.AppendMessage(f.ID, &mailbox.MessageMeta{
-				UID: uid, ModSeq: ms, Size: 100,
+				UID: uid, Size: 100,
 			}); err != nil {
 				t.Errorf("lmtp AppendMessage uid=%d: %v", uid, err)
 				return

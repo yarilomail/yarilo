@@ -96,7 +96,6 @@ const (
 	lockSiteExpunge         = "expunge"
 	lockSiteExpungeFloor    = "expunge-floor"
 	lockSiteMarkCorrupt     = "mark-corrupt"
-	lockSiteNextModseq      = "next-modseq"
 	lockSiteOptimize        = "optimize"
 	lockSiteRecomputeVsize  = "recompute-vsize"
 	lockSiteResetFolder     = "reset-folder"

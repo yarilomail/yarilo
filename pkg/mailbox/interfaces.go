@@ -641,9 +641,6 @@ type UserIndex interface {
 	// cross-process mailbox lock. If the caller fails between AllocateUID and
 	// AppendMessage the UID is burnt (uid hole), reconciled by a later rebuild.
 	AllocateUID(folderID uint64) (uint32, error)
-	// AllocateUIDWithModSeq atomically reserves the folder's next UID and
-	// pre-allocates the next modseq value in one lock/reload/flush cycle.
-	AllocateUIDWithModSeq(folderID uint64) (uid uint32, modseq uint64, err error)
 	// AllocateAndAppend assigns a UID and records the message in a single
 	// lock/reload/flush cycle: m.UID and m.ModSeq are filled in by the call.
 	AllocateAndAppend(folderID uint64, m *MessageMeta) error
@@ -667,7 +664,6 @@ type UserIndex interface {
 	SetAltTier(folderID uint64, filenames []string, altTier bool) error
 	GetMessages(folderID uint64, uids SeqSet) ([]*MessageMeta, error)
 	ExpungeMessage(folderID uint64, uid uint32) error
-	NextModSeq(folderID uint64) (uint64, error)
 	// Vanished returns UIDs expunged from folderID with modseq strictly
 	// greater than sinceModSeq. Drives QRESYNC (RFC 7162) SELECT and
 	// UID FETCH (CHANGEDSINCE N VANISHED) responses.

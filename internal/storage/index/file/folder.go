@@ -1140,26 +1140,6 @@ func (u *userIndex) AllocateUID(folderID uint64) (uint32, error) {
 	return assigned, err
 }
 
-func (u *userIndex) AllocateUIDWithModSeq(folderID uint64) (uint32, uint64, error) {
-	var uid uint32
-	var modseq uint64
-	err := u.withFolderSite(folderID, lockSiteAllocateUid, func(fs *folderState) error {
-		next := fs.file.Header.NextUID
-		if next == 0 {
-			next = 1
-		}
-		fs.file.Header.NextUID = next + 1
-		uid = next
-		var err error
-		modseq, err = fs.bumpModSeqHeader()
-		if err != nil {
-			return err
-		}
-		return fs.appendMutLog(encU32Update(28, fs.file.Header.NextUID))
-	})
-	return uid, modseq, err
-}
-
 func (u *userIndex) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) error {
 	return u.AllocateAndAppendNamed(folderID, m, nil)
 }
@@ -1679,23 +1659,6 @@ func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbo
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UID < out[j].UID })
 	return out, nil
-}
-
-// NextModSeq bumps highest_modseq and returns the post-bump value. Used
-// by CONDSTORE writers that claim a modseq before writing the change.
-func (u *userIndex) NextModSeq(folderID uint64) (uint64, error) {
-	var out uint64
-	err := u.withFolderSite(folderID, lockSiteNextModseq, func(fs *folderState) error {
-		v, err := fs.bumpModSeqHeader()
-		if err != nil {
-			return err
-		}
-		out = v
-		// No flush needed; the subsequent AppendMessage / UpdateFlags
-		// TxModseqUpdate log record persists the modseq.
-		return nil
-	})
-	return out, err
 }
 
 // Vanished returns every UID expunged with modseq above sinceModSeq, driving

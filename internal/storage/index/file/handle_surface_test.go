@@ -176,37 +176,25 @@ func TestRemoveFlagsKeepsWhatItDoesNotName(t *testing.T) {
 	}
 }
 
-// Reservations hand out climbing uids and modseqs; another process gets the next
-// uid. A reserved modseq is not yet seen elsewhere (#2398).
-func TestReservedUIDsAndModseqsClimb(t *testing.T) {
+// Appends from two processes take uids and modseqs that climb across both:
+// each append journals its modseq in the cycle that hands out its uid (#2398).
+func TestAppendsFromTwoProcessesClimb(t *testing.T) {
 	dial := lockstest.Server(t)
 	home := t.TempDir()
 	a, b := process(t, home, dial()), process(t, home, dial())
-	fa := inbox(t, a)
-	uid1, ms1, err := a.AllocateUIDWithModSeq(fa.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	uid2, ms2, err := a.AllocateUIDWithModSeq(fa.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if uid2 != uid1+1 || ms2 <= ms1 {
-		t.Errorf("second reservation uid %d modseq %d after uid %d modseq %d", uid2, ms2, uid1, ms1)
-	}
-	next, err := a.NextModSeq(fa.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next <= ms2 {
-		t.Errorf("next modseq %d not above the reserved %d", next, ms2)
-	}
-	fb := inbox(t, b)
-	uid3, _, err := b.AllocateUIDWithModSeq(fb.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if uid3 != uid2+1 {
-		t.Errorf("the other process reserved uid %d, want %d", uid3, uid2+1)
+	fa, fb := inbox(t, a), inbox(t, b)
+	var last mailbox.MessageMeta
+	for i, p := range []struct {
+		idx mailbox.UserIndex
+		id  uint64
+	}{{a, fa.ID}, {b, fb.ID}, {a, fa.ID}, {b, fb.ID}} {
+		m := &mailbox.MessageMeta{Size: 10}
+		if err := p.idx.AllocateAndAppend(p.id, m); err != nil {
+			t.Fatal(err)
+		}
+		if i > 0 && (m.UID != last.UID+1 || m.ModSeq <= last.ModSeq) {
+			t.Errorf("append %d took uid %d modseq %d after uid %d modseq %d", i, m.UID, m.ModSeq, last.UID, last.ModSeq)
+		}
+		last = *m
 	}
 }

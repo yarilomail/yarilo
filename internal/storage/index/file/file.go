@@ -387,9 +387,6 @@ func (h *userHandle) ClaimRecent(folderID uint64) (uint32, uint32, error) {
 func (h *userHandle) AllocateUID(folderID uint64) (uint32, error) {
 	return h.stamped(folderID).AllocateUID(folderID)
 }
-func (h *userHandle) AllocateUIDWithModSeq(folderID uint64) (uint32, uint64, error) {
-	return h.stamped(folderID).AllocateUIDWithModSeq(folderID)
-}
 func (h *userHandle) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) error {
 	return h.stamped(folderID).AllocateAndAppend(folderID, m)
 }
@@ -467,9 +464,6 @@ func (h *userHandle) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error 
 }
 func (h *userHandle) ExpungeMessage(folderID uint64, uid uint32) error {
 	return h.stamped(folderID).ExpungeMessage(folderID, uid)
-}
-func (h *userHandle) NextModSeq(folderID uint64) (uint64, error) {
-	return h.stamped(folderID).NextModSeq(folderID)
 }
 func (h *userHandle) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
 	return h.stamped(folderID).Vanished(folderID, sinceModSeq)
