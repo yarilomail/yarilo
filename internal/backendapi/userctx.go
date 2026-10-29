@@ -107,6 +107,12 @@ func (s *Server) openUserContextDeferred(username string) (*userContext, error) 
 	return s.openUserContextInner(username, openDeferred)
 }
 
+// openUserContextSettled is for a verb that reports what a folder holds: its
+// Folder settles the folder as a SELECT does, and nothing is made by Init (#2391).
+func (s *Server) openUserContextSettled(username string) (*userContext, error) {
+	return s.openUserContextInner(username, openSettled)
+}
+
 // checkedMaterialise checks the names on a bundle that has touched no disk, and
 // only then brings the account into being (#1774).
 func checkedMaterialise(w http.ResponseWriter, b *nsBundle, readOnly bool, names ...string) bool {
@@ -156,6 +162,9 @@ const (
 	openEager openMode = iota
 	openRead
 	openDeferred
+	// openSettled is openRead's refusal of a missing home with a box that
+	// settles: a verb reporting what a folder holds (#2391).
+	openSettled
 )
 
 func (s *Server) openUserContextInner(username string, mode openMode) (*userContext, error) {
@@ -215,6 +224,8 @@ func (s *Server) openUserContextInner(username string, mode openMode) (*userCont
 		bundle, err = s.openNSReadOnly(personalSpec, ui, personalMB)
 	case openDeferred:
 		bundle, err = s.openNSDeferred(personalSpec, ui, personalMB)
+	case openSettled:
+		bundle, err = s.openNSSettled(personalSpec, ui, personalMB)
 	default:
 		bundle, err = s.openNS(personalSpec, ui, personalMB)
 	}
@@ -350,6 +361,17 @@ func (s *Server) openNSReadOnly(spec config.NamespaceConfig, ui *mailbox.UserInf
 		}
 	}
 	return s.openNSInner(spec, ui, mb, openRead)
+}
+
+// openNSSettled is openNSReadOnly's (nil, nil) for a missing home, and otherwise
+// a bundle whose Folder settles.
+func (s *Server) openNSSettled(spec config.NamespaceConfig, ui *mailbox.UserInfo, mb mailbox.MailboxBackend) (*nsBundle, error) {
+	if ui.Home != "" {
+		if _, err := os.Stat(ui.Home); os.IsNotExist(err) {
+			return nil, nil
+		}
+	}
+	return s.openNSInner(spec, ui, mb, openDeferred)
 }
 
 // openNSDeferred opens a namespace without Init: the bundle a write validates on
