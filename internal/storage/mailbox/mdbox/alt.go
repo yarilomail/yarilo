@@ -136,6 +136,7 @@ func (u *userMailbox) altMoveFile(p *mdboxmap.Placement, srcFileID uint32, eligi
 			return err
 		}
 		if err := p.AppendMove(moved, nil); err != nil {
+			_ = os.Remove(mfileInTier(dstTier, newFileID))
 			return fmt.Errorf("mdbox/altmove: append-move m.%d→m.%d: %w", srcFileID, newFileID, err)
 		}
 		sz, _ := u.fileSize(srcPath)
@@ -171,11 +172,14 @@ func (u *userMailbox) altMoveFile(p *mdboxmap.Placement, srcFileID uint32, eligi
 	// Rewrite stayers into a fresh src file.
 	stayRecords, err := u.compactRecordsToTier(srcPath, mfileInTier(srcTier, newSrcFileID), newSrcFileID, toStay)
 	if err != nil {
+		_ = os.Remove(mfileInTier(dstTier, newDstFileID))
 		return err
 	}
 
 	allMoved := append(movedRecords, stayRecords...)
 	if err := p.AppendMove(allMoved, nil); err != nil {
+		_ = os.Remove(mfileInTier(dstTier, newDstFileID))
+		_ = os.Remove(mfileInTier(srcTier, newSrcFileID))
 		return fmt.Errorf("mdbox/altmove: append-move partial m.%d: %w", srcFileID, err)
 	}
 	sz, _ := u.fileSize(srcPath)

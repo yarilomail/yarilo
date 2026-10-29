@@ -195,33 +195,6 @@ func (u *userIndex) AppendGUIDRecord(r mailbox.GUIDRecord) error {
 	})
 }
 
-// RemoveGUIDRecords drops every copy the store holds for one uid of one
-// folder: an expunge removes the copy, not the message.
-func (u *userIndex) RemoveGUIDRecords(folderGUID [16]byte, uid uint32) error {
-	id, err := u.openGUIDStore()
-	if err != nil {
-		return err
-	}
-	return u.withFolderSite(id, lockSiteGUIDAppend, func(fs *folderState) error {
-		var gone []uint32
-		for i := range fs.file.Records {
-			r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
-			if ok && r.FolderGUID == folderGUID && r.UID == uid {
-				gone = append(gone, fs.file.Records[i].UID)
-			}
-		}
-		if len(gone) == 0 {
-			return nil
-		}
-		for _, sequence := range gone {
-			if _, eerr := fs.expungeLocked(sequence, 0); eerr != nil {
-				return eerr
-			}
-		}
-		return fs.flush()
-	})
-}
-
 // GUIDRecords reads every copy the store holds. A store in an older shape
 // reads as empty: it is derived, and its folder field is a number.
 func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {

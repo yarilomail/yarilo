@@ -548,11 +548,16 @@ func (m *Map) invalidateLocked() {
 
 // flushLocked rewrites the base and drops the log; caller MUST hold m.mu. Base
 // first, carrying the offset it folded, or a crash between them doubles deltas.
-func (m *Map) flushLocked() error {
+func (m *Map) flushLocked() (err error) {
 	start := time.Now()
 	defer func() {
 		metricMapFlush.Inc()
 		metricMapFlushSeconds.Observe(time.Since(start).Seconds())
+		// The caller changed the records before asking: a refused write leaves
+		// memory ahead of the disk, so the next access reads the disk again.
+		if err != nil {
+			m.invalidateLocked()
+		}
 	}()
 	seq, size, err := m.logIdentityLocked()
 	if err != nil {
