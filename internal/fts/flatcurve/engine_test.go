@@ -17,7 +17,7 @@ import (
 
 	"github.com/0kaba0hub/go-xapian"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 func testEngine(t *testing.T, opts Options) (fts.UserIndex, fts.UserRef) {

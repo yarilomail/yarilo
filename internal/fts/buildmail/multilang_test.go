@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
 )
 
 func mustMultiChain(t *testing.T, languages ...string) *language.MultiChain {

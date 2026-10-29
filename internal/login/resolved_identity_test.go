@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
 )
 
 // A master login in the separator form types "target*master" and authenticates

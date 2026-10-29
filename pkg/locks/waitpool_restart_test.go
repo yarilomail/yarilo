@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // memoryFactoryRestartable is memoryFactory with a way to stop the server and

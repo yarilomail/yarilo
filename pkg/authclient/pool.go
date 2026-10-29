@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // Pool keeps a small number of master-protocol connections open for userdb

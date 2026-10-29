@@ -6,7 +6,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
 )
 
 // The head decode must answer exactly what the full decode answers for the

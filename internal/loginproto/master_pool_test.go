@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	masterclient "github.com/yarilomail/yarilo/pkg/authclient"
+	masterclient "github.com/yarilomail/yarilo/v2/pkg/authclient"
 )
 
 // countingMaster answers the master protocol and counts connections, which is

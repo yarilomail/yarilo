@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 func TestImap4flagsAddflagKeep(t *testing.T) {

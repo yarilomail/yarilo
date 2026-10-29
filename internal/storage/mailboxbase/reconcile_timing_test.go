@@ -7,7 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 )
 
 // reconcileWalks is how many walks of one kind the histogram has timed: the

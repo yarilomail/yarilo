@@ -3,12 +3,12 @@ package lmtp
 import (
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // boxAuto is namespace i's configured mailboxes for a delivery to personal,

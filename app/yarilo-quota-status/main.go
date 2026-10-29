@@ -18,20 +18,20 @@ import (
 	"os/signal"
 	"syscall"
 
-	_ "github.com/yarilomail/yarilo/pkg/dict/drivers/all"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/drivers/all"
 
-	backendpkg "github.com/yarilomail/yarilo/internal/backend"
-	"github.com/yarilomail/yarilo/internal/quotastatus"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	backendpkg "github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/internal/quotastatus"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // version is set via pkg/build; kept for vet compatibility

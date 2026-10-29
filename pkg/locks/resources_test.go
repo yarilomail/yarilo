@@ -3,7 +3,7 @@ package locks_test
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // The full-text index and the mail index are different resources with

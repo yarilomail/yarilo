@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/mtls/mtlstest"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls/mtlstest"
 )
 
 // A command outside the peer's role closes the connection; its own commands

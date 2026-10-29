@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 // Dict keys for per-user quota counters.

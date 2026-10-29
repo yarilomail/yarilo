@@ -3,8 +3,8 @@ package msgcache
 import (
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // StoreEnvelope seeds the cache from a struct. Test-only: a writer building

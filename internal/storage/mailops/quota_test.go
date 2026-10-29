@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 func TestAfterDeltaAppliesTheChange(t *testing.T) {

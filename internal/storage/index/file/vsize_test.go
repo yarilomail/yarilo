@@ -3,7 +3,7 @@ package file
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestVsizeAggregate covers the hdr-vsize extension: appends fold the per-message

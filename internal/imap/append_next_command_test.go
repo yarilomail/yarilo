@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	mailboxpkg "github.com/yarilomail/yarilo/pkg/mailbox"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	mailboxpkg "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // sandboxLikeServer matches the accept chain the field runs: both line

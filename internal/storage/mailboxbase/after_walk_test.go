@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 )
 
 // deliverToNew puts a message where a delivery puts it and settles both

@@ -3,7 +3,7 @@ package static
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // A base64 shared credential is the ordinary way to generate one, and base64

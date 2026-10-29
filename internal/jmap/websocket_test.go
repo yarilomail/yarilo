@@ -12,7 +12,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // hour keeps the safety recompute out of the way: only events move a state.

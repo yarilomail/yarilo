@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // parsedTrailer carries the per-message metadata recovered from a record's

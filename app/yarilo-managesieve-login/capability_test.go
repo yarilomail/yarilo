@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // The login advertises a user's set: sieve_extensions less the global-only.

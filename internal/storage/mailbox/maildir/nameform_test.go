@@ -3,7 +3,7 @@ package maildir
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // folderDiskName is form-preserving and round-trips, including a combining mark

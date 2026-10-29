@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // The session resource is a contract: what it advertises is what a client will

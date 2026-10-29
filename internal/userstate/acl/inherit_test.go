@@ -3,7 +3,7 @@ package acl
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func userEntry(name, rights string) mailbox.Entry {

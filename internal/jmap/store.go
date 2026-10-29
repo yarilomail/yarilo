@@ -5,15 +5,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/specialuse"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Storage wires everything a request needs to reach one user's mail. It mirrors

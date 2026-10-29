@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/director"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/director"
 )
 
 // When the director a login is watching drains, the login reaches the next one

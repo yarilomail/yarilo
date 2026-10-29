@@ -8,7 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 )
 
 // TestMetricsIncrement verifies the FTS metrics are registered and move.

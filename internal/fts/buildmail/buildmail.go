@@ -19,10 +19,10 @@ import (
 	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset"
 
-	"github.com/yarilomail/yarilo/internal/fts/decoder"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mimesalvage"
+	"github.com/yarilomail/yarilo/v2/internal/fts/decoder"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/mimesalvage"
 )
 
 // Options selects which headers are indexed and how much body text is fed.

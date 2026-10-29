@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/uidvalidity"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/uidvalidity"
 )
 
 func newAlloc(t *testing.T) (*uidvalidity.Allocator, string) {

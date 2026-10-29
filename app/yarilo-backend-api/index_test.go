@@ -4,9 +4,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/backend"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // The admin API's index takes the storage settings from the config, purge share

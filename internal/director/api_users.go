@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 func (s *Server) apiUserMove(w http.ResponseWriter, r *http.Request) {

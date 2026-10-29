@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // openSession registers a session for user routed to backendIP, returning the

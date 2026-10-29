@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // Extension names match the canonical wire spec. These are the

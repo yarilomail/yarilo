@@ -12,7 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/yarilomail/yarilo/internal/connlimit"
+	"github.com/yarilomail/yarilo/v2/internal/connlimit"
 )
 
 // StateBackend is warden's pluggable shared-state store: in-memory (default,

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 
 	"github.com/emersion/go-sasl"
 )

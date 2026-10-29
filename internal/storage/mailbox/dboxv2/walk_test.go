@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
 )
 
 // Every record of a file the reference wrote, walked without an index.

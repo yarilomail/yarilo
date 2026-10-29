@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxconv"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxconv"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // mailRootDir is where the messages are, as opposed to where our index is. The

@@ -16,7 +16,7 @@ import (
 
 	"github.com/emersion/go-imap/v2/imapserver"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const (

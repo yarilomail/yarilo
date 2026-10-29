@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
 )
 
 // Their file's version-2 header. Version 1 has none, and its lines are whole

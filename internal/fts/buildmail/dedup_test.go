@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/fts/decoder"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/internal/fts/decoder"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 const alternativeTwinMsg = "Subject: dup\r\n" +

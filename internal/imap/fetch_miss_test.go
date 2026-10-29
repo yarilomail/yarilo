@@ -8,7 +8,7 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const missMultipart = "From: alice@example.com\r\nSubject: miss probe\r\nMIME-Version: 1.0\r\n" +

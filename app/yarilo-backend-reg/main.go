@@ -18,12 +18,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/backendreg"
-	"github.com/yarilomail/yarilo/internal/readyfile"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/backendreg"
+	"github.com/yarilomail/yarilo/v2/internal/readyfile"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func main() {

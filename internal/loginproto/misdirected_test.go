@@ -8,7 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	masterclient "github.com/yarilomail/yarilo/pkg/authclient"
+	masterclient "github.com/yarilomail/yarilo/v2/pkg/authclient"
 )
 
 // counterFor reads one reason off the refusal counter.

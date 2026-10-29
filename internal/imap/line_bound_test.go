@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/lineio/linetest"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio/linetest"
 )
 
 // The line limit is held while reading, not checked once the line is in.

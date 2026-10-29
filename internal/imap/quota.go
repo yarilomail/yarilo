@@ -6,9 +6,9 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	imapserver "github.com/emersion/go-imap/v2/imapserver"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // *session implements SessionQuota unconditionally so the library's cast

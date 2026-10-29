@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // chartDiffers are the keys whose chart value is not the binary's on purpose.

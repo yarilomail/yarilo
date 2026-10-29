@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // changesCall posts one Foo/changes and returns either the response or the

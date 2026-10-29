@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Stats reports what a RebuildFolder pass did.

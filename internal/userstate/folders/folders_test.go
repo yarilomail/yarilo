@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/folders"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/folders"
 )
 
 func newStore(t *testing.T) (*folders.Store, string) {

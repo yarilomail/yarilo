@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/pkg/fts"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // slowFTS answers Status with nothing indexed until after a delay, then reports

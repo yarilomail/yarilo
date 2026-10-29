@@ -5,8 +5,8 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // flagCorruptOnRead persists the folder's FSCKD marker when a read failed on

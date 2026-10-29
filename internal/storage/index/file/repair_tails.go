@@ -3,7 +3,7 @@ package file
 import (
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // RepairRecordTails rewrites the storage key, virtual size and guid of the named

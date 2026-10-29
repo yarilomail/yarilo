@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // Recorder grants every lock at once and records every emitted event as

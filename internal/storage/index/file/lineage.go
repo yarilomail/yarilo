@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // The base index and its log are paired by a lineage extension: wire layout

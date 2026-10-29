@@ -23,14 +23,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/logrotate"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/internal/userstate/folders"
-	"github.com/yarilomail/yarilo/internal/userstate/uidvalidity"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/logrotate"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/folders"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/uidvalidity"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The fold thresholds live in one place for both logs; see internal/storage/logrotate.

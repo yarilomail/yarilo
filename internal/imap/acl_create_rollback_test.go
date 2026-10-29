@@ -8,8 +8,8 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/folders"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/folders"
 )
 
 // A CREATE that cannot grant its creator the admin right leaves a mailbox

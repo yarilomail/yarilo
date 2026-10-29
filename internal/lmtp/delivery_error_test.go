@@ -8,9 +8,9 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A full volume must not bounce the message: 5xx tells the sending MTA never,

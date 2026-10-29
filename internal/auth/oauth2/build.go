@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // BuildPassdbs constructs one Passdb per configured OAuth2Entry.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // resolveOwnerUserInfo resolves the owner of an owner-templated namespace

@@ -3,7 +3,7 @@ package file
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Each write names the call that made it, and no mutation is left unnamed:

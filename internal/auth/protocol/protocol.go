@@ -22,9 +22,9 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 const (

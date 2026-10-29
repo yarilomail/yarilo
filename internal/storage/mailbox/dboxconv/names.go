@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
 )
 
 // AdoptNames brings the folder directories under root/mailboxes to this

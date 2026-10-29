@@ -8,16 +8,16 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	mailboxpkg "github.com/yarilomail/yarilo/pkg/mailbox"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	mailboxpkg "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // heteroOwnerServer gives each owner a different driver in the userdb -- alice

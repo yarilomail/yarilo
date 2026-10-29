@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // renderWith renders the chart defaults plus one values text. Internal TLS off:

@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // registerSubscriptionRoutes registers IMAP subscription routes.

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestApplyLogTruncatesGenuineTornTail is a regression test for applyLog's

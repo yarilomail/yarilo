@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // fakeUserdb returns a per-owner UserInfo the way the auth-master lookup would:

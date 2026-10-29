@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // defaultDialTimeout caps the initial TCP/TLS handshake so a stalled master

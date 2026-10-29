@@ -6,7 +6,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 )
 
 func reasonCount(t *testing.T, result, reason string) float64 {

@@ -16,13 +16,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/login"
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/login"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // An mdbox message is named by the map_uid its own index record carries, as the

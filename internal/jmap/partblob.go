@@ -5,7 +5,7 @@ import (
 
 	"github.com/emersion/go-message"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // partBlobID names one leaf part of a message (#2208): P, the message's id,

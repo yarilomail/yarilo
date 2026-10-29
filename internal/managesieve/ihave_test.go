@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
 )
 
 // PUTSCRIPT and CHECKSCRIPT under sieve_extensions [ihave]: require "ihave" opens

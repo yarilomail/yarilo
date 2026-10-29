@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // mailboxIDs maps folder name to mailbox id for the caller.

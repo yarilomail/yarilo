@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // systemFlagBits is their flag byte, listed rather than masked: a mask would

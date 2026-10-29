@@ -10,7 +10,7 @@ import (
 
 	"github.com/emersion/go-message"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // registerMessageRoutes registers the message-level read. It is the only route

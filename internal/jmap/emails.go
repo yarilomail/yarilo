@@ -14,9 +14,9 @@ import (
 	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/charset"
 
-	"github.com/yarilomail/yarilo/internal/msgcache"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/msgcache"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // previewChars is the length of the preview string (RFC 8621 §4.1.4 leaves it

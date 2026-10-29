@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	masterclient "github.com/yarilomail/yarilo/pkg/authclient"
+	masterclient "github.com/yarilomail/yarilo/v2/pkg/authclient"
 )
 
 // captureLogs installs a handler at Debug and gives the buffer back, so a test

@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // ftsExpunge invalidates FTS documents for UIDs a rebuild dropped.

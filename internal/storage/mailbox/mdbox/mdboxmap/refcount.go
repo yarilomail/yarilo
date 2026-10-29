@@ -3,7 +3,7 @@ package mdboxmap
 import (
 	"fmt"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // UpdateRefcounts applies a delta to every listed map_uid under one lock hop.

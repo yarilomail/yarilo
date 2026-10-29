@@ -9,8 +9,8 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // RelayTo serves auth against the given chain and returns a client dialled at

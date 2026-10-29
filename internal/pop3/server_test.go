@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
-	"github.com/yarilomail/yarilo/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
 )
 
 // ---- mock auth ---------------------------------------------------------------

@@ -3,7 +3,7 @@ package jmap
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The keying, asserted where it actually decides. A cache keyed on the folder

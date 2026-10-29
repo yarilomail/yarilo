@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // baseImage is one version of a base file, parsed once and never written to

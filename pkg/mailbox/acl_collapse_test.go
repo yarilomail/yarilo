@@ -3,7 +3,7 @@ package mailbox_test
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // One entry per identifier and sign, decided at parse.

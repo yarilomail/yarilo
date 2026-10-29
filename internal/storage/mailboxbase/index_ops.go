@@ -1,6 +1,6 @@
 package mailboxbase
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
 // UpdateFlags applies one delta to one message's record. Where names carry the
 // flags the record is marked dirty with it, so a sync before the rename keeps it.

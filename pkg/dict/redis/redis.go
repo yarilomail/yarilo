@@ -26,7 +26,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 func init() {

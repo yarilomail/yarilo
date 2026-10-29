@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // filterEvaluator returns the evaluator this deployment can answer filters

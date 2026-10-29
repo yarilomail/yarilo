@@ -5,7 +5,7 @@ package ftsservice
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A retraction that never arrived must not outlive a compaction: the store is

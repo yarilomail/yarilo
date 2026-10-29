@@ -1,7 +1,7 @@
 package imap
 
 import (
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // SetTestSessionID stands in for the login proxy's preamble, so a test

@@ -6,9 +6,9 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/internal/storage/search"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/storage/search"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
 )
 
 // FTSOptions wires full-text search into IMAP sessions. Nil Client disables

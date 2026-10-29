@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // JMAP sends through the relay SMTP Submission uses, with its limits; with no

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 func vacationServer(t *testing.T, exts ...string) (*Server, string, *sieve.IndexedStore) {

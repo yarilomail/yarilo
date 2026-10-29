@@ -13,8 +13,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	authsql "github.com/yarilomail/yarilo/v2/internal/auth/sql"
 )
 
 func openTestDB(t *testing.T) (*authsql.Passdb, string) {

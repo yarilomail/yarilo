@@ -3,8 +3,8 @@ package static
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // A userdb-only lookup asks the passdbs first unless allow_all_users is set,

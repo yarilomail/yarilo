@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A commit whose log write fails must leave the folder as it was: the reference

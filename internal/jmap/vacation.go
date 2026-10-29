@@ -15,8 +15,8 @@ import (
 	"github.com/foxcpp/go-sieve/lexer"
 	"github.com/foxcpp/go-sieve/parser"
 
-	"github.com/yarilomail/yarilo/internal/fts/buildmail"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/fts/buildmail"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // vacationScript is the managed script's name; the object lives in its header.

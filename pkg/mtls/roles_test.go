@@ -9,8 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/mtls/mtlstest"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls/mtlstest"
 )
 
 func parseCert(t *testing.T, file string) *x509.Certificate {

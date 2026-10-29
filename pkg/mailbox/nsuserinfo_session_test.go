@@ -3,7 +3,7 @@ package mailbox
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // A namespace handle takes the same lock owner as the session it came from.

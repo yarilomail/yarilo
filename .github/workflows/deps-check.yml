@@ -35,7 +35,7 @@ jobs:
           # -deps -test ./... is the honest set: what our binaries import, plus
           # what OUR tests import. Someone else's test dependency is theirs.
           MODS=$(go list -deps -test -f '{{with .Module}}{{.Path}}{{end}}' ./... \
-            | sort -u | grep -v '^$' | grep -v '^github.com/yarilomail/yarilo$')
+            | sort -u | grep -v '^$' | grep -v '^github.com/yarilomail/yarilo/v2$')
           if [ -z "$MODS" ]; then
             echo "::error::could not list module dependencies; refusing to report 'no updates' from a check that checked nothing"
             exit 1

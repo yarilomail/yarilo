@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // An index pass that cannot take the mailbox lock has not failed — it has been

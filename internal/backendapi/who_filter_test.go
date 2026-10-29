@@ -3,7 +3,7 @@ package backendapi
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/warden"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 func TestFilterLocalBackend(t *testing.T) {

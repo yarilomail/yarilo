@@ -7,7 +7,7 @@ package scram
 import (
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // Session is a sasl.Server wrapper driven via Next().

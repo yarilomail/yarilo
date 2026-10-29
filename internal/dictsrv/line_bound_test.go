@@ -5,8 +5,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/lineio/linetest"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio/linetest"
 )
 
 func TestTheDictServerCutsAnEndlessLine(t *testing.T) {

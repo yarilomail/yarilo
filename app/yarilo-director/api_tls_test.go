@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/director"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/mtls/mtlstest"
+	"github.com/yarilomail/yarilo/v2/internal/director"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls/mtlstest"
 )
 
 // With internal TLS the admin API is mTLS for the admin role; the token stays (#2132).

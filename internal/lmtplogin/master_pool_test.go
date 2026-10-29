@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 )
 
 // fakeMaster answers the master protocol and counts connections. The count is

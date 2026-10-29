@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Two backends on one home stand for two processes; every record must read back

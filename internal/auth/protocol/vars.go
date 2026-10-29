@@ -8,7 +8,7 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // Vars are the values a query may filter a lookup on besides the name (#2227).

@@ -5,7 +5,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 type submissionWorkarounds uint32

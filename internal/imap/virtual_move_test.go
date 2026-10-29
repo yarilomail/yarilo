@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Only the flagged message is kept, so virtual uid 1 is INBOX uid 2: a COPYUID

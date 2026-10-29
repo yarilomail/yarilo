@@ -4,7 +4,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxindex"
 )
 
 // referenceLayout is the mailboxes directory of a store the reference wrote,

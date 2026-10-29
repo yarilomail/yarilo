@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // rebuildRequest is the wire body for /api/backend/index/rebuild.

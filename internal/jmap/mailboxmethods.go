@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // mailboxRegistry binds the Mailbox methods for one authenticated user. The

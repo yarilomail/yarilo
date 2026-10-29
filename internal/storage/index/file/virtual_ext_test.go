@@ -3,7 +3,7 @@ package file
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A backing folder is remembered by its GUID, so a rename leaves the mapping

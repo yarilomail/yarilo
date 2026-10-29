@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	masterclient "github.com/yarilomail/yarilo/pkg/authclient"
+	masterclient "github.com/yarilomail/yarilo/v2/pkg/authclient"
 )
 
 // preambleRejected counts connections refused before a session began, by

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func flagsOf(t *testing.T, ui *userIndex, folderID uint64, uid uint32) (flags, keywords []string) {

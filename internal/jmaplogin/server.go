@@ -21,7 +21,7 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // service is the name this proxy reports to yarilo-auth and yarilo-warden.

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/yarilomail/yarilo/internal/backend"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 var debug bool

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxconv"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxconv"
 )
 
 // Their FTS index carries index files of its own; counted as an unconverted

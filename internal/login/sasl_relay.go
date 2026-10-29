@@ -11,9 +11,9 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // relayDialer hands the proxy the auth-service client. It is the Server's own

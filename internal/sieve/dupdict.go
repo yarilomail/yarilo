@@ -8,7 +8,7 @@ import (
 
 	"github.com/foxcpp/go-sieve/interp"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 // DictDuplicateTracker backs the Sieve duplicate test (RFC 7352) with a dict,

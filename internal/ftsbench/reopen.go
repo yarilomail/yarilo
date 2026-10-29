@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/fts/flatcurve"
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/internal/fts/flatcurve"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // The commit path decision (#1397) turns on one ratio: what a close-and-reopen

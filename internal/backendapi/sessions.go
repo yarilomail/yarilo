@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/warden"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 // registerSessionRoutes registers session-control routes.

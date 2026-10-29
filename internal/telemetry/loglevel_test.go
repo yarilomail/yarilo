@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
 )
 
 func levelFromBody(t *testing.T, body string) string {

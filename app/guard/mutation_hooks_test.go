@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const quotaPkg = "github.com/yarilomail/yarilo/pkg/quota"
+const quotaPkg = "github.com/yarilomail/yarilo/v2/pkg/quota"
 
 // hookCeilings is each protocol package's count of direct quota, FTS and event
 // calls; it only goes down, to zero once the mutation layer owns them (#2207).

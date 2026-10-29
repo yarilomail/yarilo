@@ -3,7 +3,7 @@ package mailbox_test
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The three evaluator defects of #1117, each with an input that tells the two

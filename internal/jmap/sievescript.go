@@ -17,8 +17,8 @@ import (
 
 	gosieve "github.com/foxcpp/go-sieve"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // SieveScripts wires RFC 9661 to the script store ManageSieve uses, so a script

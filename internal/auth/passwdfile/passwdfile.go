@@ -14,8 +14,8 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/auth/scheme"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/scheme"
 )
 
 // userdbFieldPrefix marks an extra field as userdb-only (not forwarded on the

@@ -5,7 +5,7 @@ import (
 
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The LIST reference selects what to match; it is not glued onto results.

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
 )
 
 // PurgeStats reports what a single Purge invocation accomplished.

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // OpenMessage reads a message's body from what the record says. A driver that

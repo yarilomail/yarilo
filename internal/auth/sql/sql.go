@@ -14,10 +14,10 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/auth/scheme"
-	"github.com/yarilomail/yarilo/pkg/sqlpool"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/scheme"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlpool"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (registered as "pgx")

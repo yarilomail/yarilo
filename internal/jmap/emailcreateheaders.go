@@ -9,7 +9,7 @@ import (
 
 	"github.com/emersion/go-message/textproto"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // headerField is one field a create writes, with every value in the order the

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Runner executes warning programs from a bin dir. A nil *Runner is a no-op, so

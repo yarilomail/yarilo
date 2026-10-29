@@ -3,8 +3,8 @@ package dboxv2
 import (
 	"path/filepath"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // RecordSize answers from the message's own dbox metadata, counting the body

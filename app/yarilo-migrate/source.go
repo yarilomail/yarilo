@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	dboxv1 "github.com/yarilomail/yarilo/internal/storage/mailbox/dbox/v1legacy"
-	mdboxv1 "github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/v1legacy"
+	dboxv1 "github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dbox/v1legacy"
+	mdboxv1 "github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/v1legacy"
 )
 
 // sourceMessage is one decoded message handed from a source

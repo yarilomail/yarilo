@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // ruled is a userdb with a rule on %s: alice is unknown to the protocol off.

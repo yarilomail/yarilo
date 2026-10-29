@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	authclient "github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	authclient "github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Building the lookup must not dial yarilo-auth; the dial happens on the

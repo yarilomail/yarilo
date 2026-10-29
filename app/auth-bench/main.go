@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func main() {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/emersion/go-message"
 
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
 )
 
 func createCall(t *testing.T, s *Server, email string) map[string]any {

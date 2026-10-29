@@ -5,7 +5,7 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // MessageSize is the size to report for a message: the record's own numbers

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/threading"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/threading"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Recorder places a delivered message in a conversation and records it.

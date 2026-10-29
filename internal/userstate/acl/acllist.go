@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // ListFileName is the on-disk per-namespace global index of mailboxes

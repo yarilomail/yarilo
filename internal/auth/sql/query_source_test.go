@@ -9,7 +9,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
+	authsql "github.com/yarilomail/yarilo/v2/internal/auth/sql"
 )
 
 // An absent password query does not mean "no query": it means a query against

@@ -3,7 +3,7 @@ package jmap
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // RFC 8621 §4.1.1 maps the five IMAP system flags onto $-keywords, and carries

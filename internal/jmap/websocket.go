@@ -13,8 +13,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/counters"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // wsSubprotocol is the one RFC 8887 §4.2 registers.

@@ -7,7 +7,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
 )
 
 // realisticEnvelope is the shape a mailing-list message has: a handful of

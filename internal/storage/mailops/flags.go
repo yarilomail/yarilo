@@ -1,8 +1,8 @@
 package mailops
 
 import (
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // UpdateFlags applies one change per uid to f in one transaction (#1827) and

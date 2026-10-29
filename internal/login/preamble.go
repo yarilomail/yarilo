@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/xclient"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/xclient"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // cleartextDisabledMsg is the refusal of a cleartext login on an open line.

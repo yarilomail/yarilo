@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
 )
 
 // rerouteStubDirector is a director stub whose LOOKUP reply is supplied by

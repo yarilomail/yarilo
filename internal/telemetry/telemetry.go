@@ -15,7 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/yarilomail/yarilo/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
 )
 
 // logLevelDesc describes the active-log-level metric, letting an operator

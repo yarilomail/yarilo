@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // backendSetHash is a stable hash over the routing fields {ip, port, tag,
