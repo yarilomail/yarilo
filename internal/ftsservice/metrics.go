@@ -23,6 +23,13 @@ var (
 		Help: "Autoindex requests skipped by fts_autoindex_exclude.",
 	})
 
+	// metricAutoindexSkippedRecent counts autoindex passes skipped for holding
+	// more \Recent messages than fts_autoindex_max_recent_msgs.
+	metricAutoindexSkippedRecent = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fts_autoindex_skipped_recent_total",
+		Help: "Autoindex passes skipped because the folder held more \\Recent messages than fts_autoindex_max_recent_msgs.",
+	})
+
 	metricIndexMessages = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fts_index_messages_total",
 		Help: "Messages indexed by the FTS worker.",

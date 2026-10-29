@@ -1106,6 +1106,14 @@ func (s *Service) runIndex(j job) error {
 		return fmt.Errorf("ftsservice: open folder: %w", err)
 	}
 	curUIDV := folder.UIDValidity
+	// A folder piling up mail nobody reads is not autoindexed; the same \Recent
+	// mark as IMAP's, read without a sync (fts_autoindex_max_recent_msgs).
+	if j.maxRecent > 0 && folder.Recent > uint32(j.maxRecent) {
+		metricAutoindexSkippedRecent.Inc()
+		slog.Debug("fts: autoindex skipped, too many recent", "user", j.user, "folder", j.mbox.Name,
+			"recent", folder.Recent, "max_recent", j.maxRecent)
+		return nil
+	}
 	// The indexer's answer moves a checkpoint, which is a write — but a
 	// monotonic one: indexing fewer messages than exist means the next pass
 	// catches up, and the checkpoint only ever moves forward. So a snapshot one
