@@ -1,15 +1,11 @@
 package mailindex
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync/atomic"
-	"time"
-
-	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // tmpSeq disambiguates .tmp.<pid>.<seq> filenames. PID alone is not enough when
@@ -50,7 +46,7 @@ type RecreateInput struct {
 // hardlink old to .backup, then rename tmp into place.
 //
 // Caller MUST hold the cross-process write lock — Recreate takes none of its
-// own; call it from inside WithSyncLock. Returns the .backup hardlink path when
+// own. Returns the .backup hardlink path when
 // KeepBackup is true. On any error the tmp is removed and the .index unchanged.
 func Recreate(in RecreateInput) (backupPath string, err error) {
 	if in.Path == "" {
@@ -184,37 +180,4 @@ func copyTmp(src, dst string, fsync bool) error {
 		}
 	}
 	return out.Close()
-}
-
-// SyncLockKey returns the locks resource key "mailindex:<absolute-path>".
-// The path in the key means concurrent operations on different files do not
-// contend.
-func SyncLockKey(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	return "mailindex:" + abs
-}
-
-// WithSyncLock runs fn under the cross-process write lock for the index path,
-// held for ttl (renewal is up to fn; typical sync ops finish well within it).
-// owner appears in BUSY reports; use "<process>/<pid>/<context>".
-//
-// Acquire errors propagate immediately; an Unlock error is wrapped after fn.
-func WithSyncLock(ctx context.Context, l locks.Locker, path, owner string, ttl time.Duration, fn func() error) error {
-	if l == nil {
-		// No locker wired (unit tests / dev CLI): single-process-only.
-		return fn()
-	}
-	key := SyncLockKey(path)
-	lk, err := locks.Acquire(locks.WithSite(ctx, "mailindex-sync"), l, key, owner, ttl)
-	if err != nil {
-		return fmt.Errorf("mailindex/sync: acquire %s: %w", key, err)
-	}
-	fnErr := fn()
-	if err := l.Unlock(context.Background(), lk.ID); err != nil && fnErr == nil {
-		return fmt.Errorf("mailindex/sync: unlock %s: %w", key, err)
-	}
-	return fnErr
 }

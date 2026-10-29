@@ -2,7 +2,6 @@ package mailindex
 
 import (
 	"encoding/binary"
-	"fmt"
 )
 
 // TxType is the type-enum portion of a transaction-log record's type field
@@ -94,32 +93,11 @@ const TxExtIntroNewExt uint32 = 0xffffffff
 // hdr_size / record_size / record_align; only grow.
 const TxExtIntroFlagNoShrink uint16 = 0x01
 
-// TxExtReset: bump the last-introduced extension's reset_id, optionally
-// preserving its old per-record bytes.
-type TxExtReset struct {
-	NewResetID    uint32
-	PreserveData  uint8
-	UnusedPadding [3]uint8
-}
-
 // TxExtHdrUpdate: patch bytes [Offset, Offset+Size) of the last EXT_INTRO'd
-// extension's header. 16-bit offset+size; for >=64KB patches use TxExtHdrUpdate32.
+// extension's header. 16-bit offset+size; TxTypeExtHdrUpdate32 is the wide one.
 type TxExtHdrUpdate struct {
 	Offset uint16
 	Data   []byte
-}
-
-// TxExtHdrUpdate32 is the 32-bit-offset variant for headers >=64KB.
-type TxExtHdrUpdate32 struct {
-	Offset uint32
-	Data   []byte
-}
-
-// TxExtRecUpdate: write Data into the last EXT_INTRO'd extension's per-record
-// slot for UID. Data length must equal that extension's record_size.
-type TxExtRecUpdate struct {
-	UID  uint32
-	Data []byte
 }
 
 // TxExtAtomicInc: atomically add Diff (signed) to the last EXT_INTRO'd
@@ -307,16 +285,6 @@ func DecodeTxExtHdrUpdatePayload(payload []byte) (TxExtHdrUpdate, bool) {
 	}, true
 }
 
-// EncodeTxExtResetPayload emits the payload for EXT_RESET.
-// 8 bytes: new_reset_id(4) + preserve_data(1) + unused[3].
-func EncodeTxExtResetPayload(rec TxExtReset) []byte {
-	out := make([]byte, 8)
-	binary.LittleEndian.PutUint32(out[0:], rec.NewResetID)
-	out[4] = rec.PreserveData
-	copy(out[5:], rec.UnusedPadding[:])
-	return out
-}
-
 // EncodeTxExtHdrUpdatePayload emits payload for EXT_HDR_UPDATE.
 // Layout: offset(2) + size(2) + data + 0..3 padding.
 func EncodeTxExtHdrUpdatePayload(rec TxExtHdrUpdate) []byte {
@@ -328,46 +296,6 @@ func EncodeTxExtHdrUpdatePayload(rec TxExtHdrUpdate) []byte {
 	le.PutUint16(out[2:], uint16(len(rec.Data)))
 	copy(out[4:], rec.Data)
 	return out
-}
-
-// EncodeTxExtHdrUpdate32Payload is the 32-bit offset+size variant of
-// EncodeTxExtHdrUpdatePayload.
-func EncodeTxExtHdrUpdate32Payload(rec TxExtHdrUpdate32) []byte {
-	size := 8 + len(rec.Data)
-	pad := (4 - (size % 4)) % 4
-	out := make([]byte, size+pad)
-	le := binary.LittleEndian
-	le.PutUint32(out[0:], rec.Offset)
-	le.PutUint32(out[4:], uint32(len(rec.Data)))
-	copy(out[8:], rec.Data)
-	return out
-}
-
-// EncodeTxExtRecUpdatePayload emits the payload for EXT_REC_UPDATE. Layout per
-// record: uid(4) + data + 0..3 padding to 32-bit alignment. Data length comes
-// from the last EXT_INTRO's record_size.
-func EncodeTxExtRecUpdatePayload(recs []TxExtRecUpdate) ([]byte, error) {
-	if len(recs) == 0 {
-		return nil, nil
-	}
-	recDataLen := len(recs[0].Data)
-	for i := range recs {
-		if len(recs[i].Data) != recDataLen {
-			return nil, fmt.Errorf("mailindex: EXT_REC_UPDATE record %d has %d bytes, want %d: %w",
-				i, len(recs[i].Data), recDataLen, ErrCorrupted)
-		}
-	}
-	recSize := 4 + recDataLen
-	pad := (4 - (recSize % 4)) % 4
-	stride := recSize + pad
-	out := make([]byte, stride*len(recs))
-	le := binary.LittleEndian
-	for i, r := range recs {
-		off := i * stride
-		le.PutUint32(out[off:], r.UID)
-		copy(out[off+4:off+4+recDataLen], r.Data)
-	}
-	return out, nil
 }
 
 // EncodeTxExtAtomicIncPayload emits the payload for EXT_ATOMIC_INC. 8 bytes

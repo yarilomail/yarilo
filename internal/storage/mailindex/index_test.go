@@ -2,7 +2,6 @@ package mailindex
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -163,42 +162,6 @@ func TestRecreateRejectsLayoutMismatch(t *testing.T) {
 		t.Errorf("got %v, want ErrCorrupted on RecordSize mismatch", err)
 	}
 }
-
-func TestSyncLockKeyDeterminism(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, "x.index")
-	k1 := SyncLockKey(path)
-	k2 := SyncLockKey(path)
-	if k1 != k2 {
-		t.Errorf("SyncLockKey not deterministic: %q vs %q", k1, k2)
-	}
-	other := SyncLockKey(filepath.Join(tmpDir, "y.index"))
-	if k1 == other {
-		t.Errorf("SyncLockKey collision across paths: %q", k1)
-	}
-}
-
-func TestWithSyncLockNilLocker(t *testing.T) {
-	// nil locker → no-op wrapper. The fn must run, the error
-	// must propagate.
-	called := false
-	err := WithSyncLock(context.Background(), nil, "x", "owner", 0, func() error {
-		called = true
-		return errors.New("inner")
-	})
-	if !called {
-		t.Error("fn not called when locker is nil")
-	}
-	if err == nil || err.Error() != "inner" {
-		t.Errorf("err=%v, want inner error propagated", err)
-	}
-}
-
-// Integration of WithSyncLock against a real locks.Locker is
-// covered by pkg/locks/locks_test.go's suite (every backend
-// must pass the Counter/Acquire/Renew/Subscribe contract). Here
-// we only confirm the nil-locker fast path and the deterministic
-// key derivation — anything more belongs in the consumer's tests.
 
 func TestRecreateTmpDir(t *testing.T) {
 	indexDir := t.TempDir()
