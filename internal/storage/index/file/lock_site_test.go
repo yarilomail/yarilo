@@ -39,10 +39,6 @@ func TestAWriteIsCountedUnderItsOwnCaller(t *testing.T) {
 			_, aerr := ui.AllocateUID(f.ID)
 			return aerr
 		}},
-		{lockSiteNextModseq, func() error {
-			_, merr := ui.NextModSeq(f.ID)
-			return merr
-		}},
 	}
 	for _, tc := range cases {
 		before := at(tc.site)

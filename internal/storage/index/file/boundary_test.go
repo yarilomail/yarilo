@@ -16,8 +16,7 @@ func TestBoundaryPartialWriteDiscarded(t *testing.T) {
 	b := openIdx(dir, testUser)
 	f, _ := b.OpenFolder("INBOX", 0, "")
 
-	modseq, _ := b.NextModSeq(f.ID)
-	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, ModSeq: modseq, Size: 100}); err != nil {
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 100}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	b.Close() //nolint:errcheck
@@ -58,8 +57,7 @@ func TestBoundaryMidTransactionCrashDiscarded(t *testing.T) {
 	f, _ := b.OpenFolder("INBOX", 0, "")
 
 	// Write one good message so we have a baseline.
-	modseq, _ := b.NextModSeq(f.ID)
-	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, ModSeq: modseq, Size: 100}); err != nil {
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 100}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	b.Close() //nolint:errcheck
@@ -113,9 +111,8 @@ func TestBoundaryTwoCompleteGroups(t *testing.T) {
 	f, _ := b.OpenFolder("INBOX", 0, "")
 
 	for i, name := range []string{"a.eml", "b.eml"} {
-		modseq, _ := b.NextModSeq(f.ID)
 		if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: uint32(i + 1), ModSeq: modseq, Size: 100,
+			UID: uint32(i + 1), Size: 100,
 		}); err != nil {
 			t.Fatalf("AppendMessage %s: %v", name, err)
 		}

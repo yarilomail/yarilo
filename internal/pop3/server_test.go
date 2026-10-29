@@ -159,7 +159,6 @@ func (m *mockIndex) OpenFolder(folder string, uv uint32) (*mailbox.Folder, error
 func (m *mockIndex) SaveFolder(_ *mailbox.Folder) error                       { return nil }
 func (m *mockIndex) AppendMessage(_ uint64, _ *mailbox.MessageMeta) error     { return nil }
 func (m *mockIndex) AllocateUID(_ uint64) (uint32, error)                     { return 0, nil }
-func (m *mockIndex) AllocateUIDWithModSeq(_ uint64) (uint32, uint64, error)   { return 0, 0, nil }
 func (m *mockIndex) AllocateAndAppend(_ uint64, _ *mailbox.MessageMeta) error { return nil }
 func (m *mockIndex) UpdateFlags(_ uint64, _ uint32, _, _ []string) error      { return nil }
 func (m *mockIndex) AddFlags(_ uint64, _ uint32, _, _ []string) error         { return nil }
@@ -176,7 +175,6 @@ func (m *mockIndex) FolderVSize(_ uint64) (uint64, uint32, error)   { return 0, 
 func (m *mockIndex) RecomputeVSize(_ uint64) error                  { return nil }
 func (m *mockIndex) GUIDBackfillNeeded(_ uint64) (bool, error)      { return false, nil }
 func (m *mockIndex) SetGUIDs(_ uint64, _ map[uint32][16]byte) error { return nil }
-func (m *mockIndex) NextModSeq(_ uint64) (uint64, error)            { return 1, nil }
 func (m *mockIndex) Vanished(_ uint64, _ uint64) ([]uint32, error) {
 	return nil, nil
 }
