@@ -3,7 +3,7 @@ package file
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A base rewritten between a view's image and its log open pairs the old base

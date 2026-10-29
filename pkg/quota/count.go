@@ -1,7 +1,7 @@
 package quota
 
 import (
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // FolderVSizer is the slice of the index a count needs: a folder's aggregate

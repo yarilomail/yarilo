@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 func jobFor(user, folder string) job {

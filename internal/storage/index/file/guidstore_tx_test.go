@@ -8,8 +8,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func guidTxFolder(t *testing.T) (*userIndex, string, uint64) {

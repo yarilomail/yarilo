@@ -7,8 +7,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Utilisation has to survive the sampling interval. A pass takes tens of

@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // cacheTTL bounds how long a display value is served before a recount.

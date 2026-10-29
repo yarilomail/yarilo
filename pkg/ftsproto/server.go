@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/lineio"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // Serve accepts connections on ln and dispatches requests into svc until ln

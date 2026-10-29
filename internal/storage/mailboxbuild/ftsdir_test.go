@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // With the shipped defaults no dbox folder may be made inside the FTS index

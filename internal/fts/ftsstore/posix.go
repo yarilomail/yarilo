@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // StorageTypeNFS is the declared medium whose metadata operations are committed

@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/fts/buildmail"
-	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/fts/buildmail"
+	"github.com/yarilomail/yarilo/v2/internal/fts/ftsstore"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Options wires the service dependencies.

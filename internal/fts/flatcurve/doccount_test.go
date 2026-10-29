@@ -5,7 +5,7 @@ package flatcurve
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // A copy is not a second document: the count an operator reads has to tell

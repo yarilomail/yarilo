@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/counters"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const testPoll = 50 * time.Millisecond

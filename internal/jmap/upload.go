@@ -18,10 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The upload store's lock, as the thread recorder's: a request would rather

@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/counters"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/counters"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // eventSourcePath is where the session resource points clients (RFC 8620 §7.3).

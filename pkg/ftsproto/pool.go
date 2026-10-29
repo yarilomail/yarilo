@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // ErrPoolExhausted is returned when no connection became free within the wait

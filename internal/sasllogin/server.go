@@ -19,7 +19,7 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // Options configures a Server.

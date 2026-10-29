@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
 )
 
 // Files the reference implementation wrote are read, body and trailer both.

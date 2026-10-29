@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/fts/flatcurve"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/fts/flatcurve"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // newSdboxTestService is newTestServiceIn on sdbox, the driver that heals and

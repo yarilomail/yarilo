@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/mailboxcreate"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/mailboxcreate"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 type mailboxSetRequest struct {

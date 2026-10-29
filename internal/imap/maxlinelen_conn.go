@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // maxLineLenListener wraps a net.Listener and enforces a per-line byte limit

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // benchIndex builds an index of docs messages over a vocabulary wide enough

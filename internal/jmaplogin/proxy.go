@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // firstHopTTL is the X-Proxy-TTL this proxy always emits. The login layer is

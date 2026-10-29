@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // readTimer counts the time actually spent blocked reading message bytes.

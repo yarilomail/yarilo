@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // Rebalance moves one domain at a time and never the same domain twice in a

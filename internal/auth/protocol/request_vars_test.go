@@ -12,7 +12,7 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // ruledUserdb knows alice except for the refused protocols, as a user_query

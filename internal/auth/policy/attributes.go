@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/yarilomail/yarilo/pkg/expand"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/expand"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // DefaultRequestAttributes is the request body when none is configured: the

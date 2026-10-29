@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // Identity, size, header and body must come from one descriptor. Reading the

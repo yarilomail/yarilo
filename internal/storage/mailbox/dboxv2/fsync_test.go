@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A delivery is answered only after the body is on the disk, in the mode that

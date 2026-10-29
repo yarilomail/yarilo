@@ -3,7 +3,7 @@ package mailboxbase
 import (
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // FlagsWritten records settled flags where the driver keeps them, marking a

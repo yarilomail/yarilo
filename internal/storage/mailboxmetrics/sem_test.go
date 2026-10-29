@@ -9,10 +9,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Every driver has the same write semaphore, so every driver must time the

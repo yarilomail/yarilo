@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/sasllogin"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/sasllogin"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func main() {

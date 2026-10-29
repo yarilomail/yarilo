@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // evacuation is the resumable state of a graceful backend drain (#849). It holds a

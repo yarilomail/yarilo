@@ -5,9 +5,9 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A window that appends asks for a purge before its locks go, as the reference

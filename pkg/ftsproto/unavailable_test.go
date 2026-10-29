@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // failingService fails every call with a chosen error, so the tests below

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // tmpSeq disambiguates .tmp.<pid>.<seq> filenames. PID alone is not enough when

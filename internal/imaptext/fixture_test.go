@@ -8,7 +8,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-message/textproto"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
 )
 
 // rawFileHeader reads the fixture's header without decoding anything.

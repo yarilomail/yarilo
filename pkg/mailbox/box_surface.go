@@ -7,7 +7,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-message/textproto"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // BoxTx is one command's changes to one folder, written once. A change to a

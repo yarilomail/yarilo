@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/crlf"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/crlf"
 )
 
 func TestLineEndings(t *testing.T) {

@@ -15,9 +15,9 @@ import (
 // driverConstructors names every constructor passdbs.Build owns, by package.
 // OAuth2 is not here: it is built apart so SQL never sees a bearer token.
 var driverConstructors = map[string]string{
-	"github.com/yarilomail/yarilo/internal/auth/sql":        "New",
-	"github.com/yarilomail/yarilo/internal/auth/passwdfile": "New",
-	"github.com/yarilomail/yarilo/internal/auth/static":     "New",
+	"github.com/yarilomail/yarilo/v2/internal/auth/sql":        "New",
+	"github.com/yarilomail/yarilo/v2/internal/auth/passwdfile": "New",
+	"github.com/yarilomail/yarilo/v2/internal/auth/static":     "New",
 }
 
 func TestNoBinaryBuildsItsOwnPassdbChain(t *testing.T) {

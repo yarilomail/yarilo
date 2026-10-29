@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 )
 
 func newTestServer(t *testing.T) (*telemetry.Server, *httptest.Server) {

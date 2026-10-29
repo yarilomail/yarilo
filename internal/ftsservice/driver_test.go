@@ -3,7 +3,7 @@ package ftsservice
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // stubBackend marks which backend mailboxFor picked.

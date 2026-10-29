@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A keyword letter in a filename means what the folder's keyword file says it

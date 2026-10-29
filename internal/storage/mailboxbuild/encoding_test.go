@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The on-disk folder name is asserted by reading the directory, not by reading

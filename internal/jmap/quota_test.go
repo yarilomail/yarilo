@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // quotaServer delivers one message and serves it under the given rules, so the

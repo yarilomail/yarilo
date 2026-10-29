@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Options configures the quota-status policy server.

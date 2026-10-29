@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/logrotate"
+	"github.com/yarilomail/yarilo/v2/internal/storage/logrotate"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // The map keeps an append-only log beside the base: a delivery appends instead of

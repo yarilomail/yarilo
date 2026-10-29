@@ -3,7 +3,7 @@ package director
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // TestMapPeekVsResolver guards the #813 split: introspection (peek =

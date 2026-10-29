@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // chartFilters are the chart's default language_filters.

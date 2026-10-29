@@ -3,9 +3,9 @@ package acl
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/locks/lockstest"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Rights are a Mailbox property (myRights), so every ACL write is announced on

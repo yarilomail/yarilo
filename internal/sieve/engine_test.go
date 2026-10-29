@@ -7,7 +7,7 @@ import (
 
 	"github.com/foxcpp/go-sieve/interp"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 func newTestEngine(t *testing.T) *Engine {

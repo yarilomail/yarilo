@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // statAs reports a file's real stat with another inode number: the inode a

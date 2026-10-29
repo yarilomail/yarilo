@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // PassdbConfig configures how a Validator is exposed as a

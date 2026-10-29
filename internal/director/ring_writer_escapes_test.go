@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // ringTap registers a fake ring connection and returns a reader for whatever

@@ -15,11 +15,11 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Index is the slice of the index surface the cache needs. Asserted at use:

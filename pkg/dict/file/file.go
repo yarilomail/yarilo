@@ -33,9 +33,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/varexpand"
-	"github.com/yarilomail/yarilo/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/varexpand"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 )
 
 // DriverName is how this driver is named in config, and what a caller matches

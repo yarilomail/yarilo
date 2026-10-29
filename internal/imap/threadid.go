@@ -1,8 +1,8 @@
 package imap
 
 import (
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // threadIDs answers FETCH THREADID (RFC 8474) for one whole command.

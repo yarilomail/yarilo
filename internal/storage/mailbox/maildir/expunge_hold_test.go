@@ -10,8 +10,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const holdBody = "From: a@b\r\nSubject: x\r\n\r\nbody\r\n"

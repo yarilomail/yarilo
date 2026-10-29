@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/msgcache"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/msgcache"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // What JMAP writes back is what IMAP answers with: the cached envelope keeps

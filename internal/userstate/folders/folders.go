@@ -34,7 +34,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // FileName is the record's name under the control root.

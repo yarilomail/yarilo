@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/memory"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 func TestParseRules_StorageUnits(t *testing.T) {

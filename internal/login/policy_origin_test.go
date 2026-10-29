@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // recordingPolicy answers every check with decision and keeps the requests.

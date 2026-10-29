@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
 )
 
 // framesAt reports, per header size, how many records the file carries.

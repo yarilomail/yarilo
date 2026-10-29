@@ -7,9 +7,9 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 func (s *Server) registerQuotaRoutes() {

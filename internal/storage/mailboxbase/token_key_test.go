@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileidx "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Two accounts may hold the same folder name at different roots: a key that

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/msgcache"
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/msgcache"
+	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // boxTx remembers the modseq each record was read at, so a change applies to

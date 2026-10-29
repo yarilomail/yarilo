@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 func TestRecorderCountsByResourceAndType(t *testing.T) {

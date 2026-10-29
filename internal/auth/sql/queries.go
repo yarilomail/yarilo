@@ -1,6 +1,6 @@
 package sql
 
-import "github.com/yarilomail/yarilo/pkg/sqlvars"
+import "github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 
 // substituteVars binds the query's variables as positional parameters (? for
 // sqlite and mysql, $N for postgres); the grammar is sqlvars'.

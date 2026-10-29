@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/dicttest"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/dicttest"
 )
 
 func TestContractSuite(t *testing.T) {

@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	_ "github.com/yarilomail/yarilo/pkg/dict/memory"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // An operator asking who granted this user is answered from the registry, not

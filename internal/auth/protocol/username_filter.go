@@ -3,7 +3,7 @@ package protocol
 import (
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // UsernameFilter is a passdb entry's username_filter as the reference reads it:

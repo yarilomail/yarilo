@@ -5,8 +5,8 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // nil is a designed value here: Open returns it on every miss, and

@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // Store is a per-user subscription file. Construct one per (home,

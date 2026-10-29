@@ -3,7 +3,7 @@ package acl
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Update -- the read-modify-write IMAP SETACL/DELETEACL use -- must keep the

@@ -10,8 +10,8 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // SERVERBUG says "this server is broken, the request will never work", and a

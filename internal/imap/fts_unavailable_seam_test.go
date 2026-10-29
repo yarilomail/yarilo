@@ -8,8 +8,8 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
 )
 
 // Through SEARCH, not through the classifier. The classifier was right twice

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // Backend-set auto-resync (#846 PR-2): each anti-entropy tick a director sends

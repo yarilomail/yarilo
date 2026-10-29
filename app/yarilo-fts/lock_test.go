@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // ftsLockService runs the real service: the site is a wire field, and a fake

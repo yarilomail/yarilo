@@ -5,8 +5,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/director"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/director"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // The admin API is bound before startAPI returns: a taken port or a refused

@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/fts/flatcurve"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/fts/flatcurve"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // serviceOn builds a service over an EXISTING storage root, so two of them can

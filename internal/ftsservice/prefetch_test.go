@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // fakeBox serves message bodies and can fail a chosen one, which is how the

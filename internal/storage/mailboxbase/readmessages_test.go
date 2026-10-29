@@ -3,7 +3,7 @@ package mailboxbase
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // lockedOnly is an index without the optional capability — every index that

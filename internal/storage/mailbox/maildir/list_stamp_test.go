@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // rewriteList renames over the list the way a writer does, and pins the mtime:

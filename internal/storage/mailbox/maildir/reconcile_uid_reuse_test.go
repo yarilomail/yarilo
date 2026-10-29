@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // oneDelivered is a reconciled folder holding one message in cur/: its record

@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileidx "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // An open between the record and the body finds a file no record names, so the

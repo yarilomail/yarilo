@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Opening the store resolves the user against yarilo-auth, so this is where a

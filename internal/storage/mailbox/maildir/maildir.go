@@ -22,11 +22,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Backend is the Maildir MailboxBackend factory. Holds only

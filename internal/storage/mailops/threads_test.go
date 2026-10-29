@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/locks/lockstest"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Threading reads headers only, so a save keeps the header block and nothing

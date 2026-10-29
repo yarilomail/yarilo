@@ -8,8 +8,8 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // Trap (c): the field table a folder ends up with names only fields the

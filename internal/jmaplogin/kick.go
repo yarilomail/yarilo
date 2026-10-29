@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/warden"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 // kickChannel is warden's channel for this proxy's kicks; the payload is the

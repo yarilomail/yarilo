@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // The sieve section's limits, and the user's extension set, reach the

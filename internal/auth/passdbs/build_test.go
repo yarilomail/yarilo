@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 func TestBuild_PasswdFile(t *testing.T) {

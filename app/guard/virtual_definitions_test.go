@@ -7,7 +7,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/virtual"
 )
 
 // The stand's own configuration, not a shape invented here: the namespace is

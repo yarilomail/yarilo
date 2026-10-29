@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The writer skips a message it cannot name, so the results are shorter than

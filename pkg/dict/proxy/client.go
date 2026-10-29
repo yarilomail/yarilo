@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // Client is a dict.Dict served by yarilo-dict. Connections are pooled: an

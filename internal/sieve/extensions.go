@@ -6,7 +6,7 @@ import (
 
 	gosieve "github.com/foxcpp/go-sieve"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // SupportedExtensions lists all Sieve extensions available in this build.

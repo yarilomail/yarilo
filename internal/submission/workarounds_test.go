@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
-	"github.com/yarilomail/yarilo/internal/submission/proxy"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 func TestParseWorkarounds(t *testing.T) {

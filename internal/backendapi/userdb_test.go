@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	_ "github.com/yarilomail/yarilo/pkg/dict/memory"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // stubIteratorUserdb mirrors the shape pkg/authclient's tests use —

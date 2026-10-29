@@ -5,7 +5,7 @@ package flatcurve
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
+	"github.com/yarilomail/yarilo/v2/internal/fts/ftsstore"
 )
 
 // An engine built with the nfs type still compacts correctly -- skipping the

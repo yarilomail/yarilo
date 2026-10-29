@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // clockFor gives the cache a hand-wound clock and resets everything the rows

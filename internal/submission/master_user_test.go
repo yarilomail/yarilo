@@ -4,14 +4,14 @@ import (
 	"net"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
 
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/internal/submission/proxy"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // stubMasterAuth implements both Authenticator and

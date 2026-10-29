@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // openTestFolder gives a folder with n messages in it, and the state behind it.

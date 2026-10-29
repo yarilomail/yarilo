@@ -3,7 +3,7 @@ package director
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // TestResolveUserBackend_Sticky guards #792: the admin resolver must return the

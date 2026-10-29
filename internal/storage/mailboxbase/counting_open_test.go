@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Counting usage needs the index alone, as the reference opens read-only with no

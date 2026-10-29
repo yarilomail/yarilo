@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // Wire protocol — TAB-delimited, LF-terminated. Same bytes for embedded

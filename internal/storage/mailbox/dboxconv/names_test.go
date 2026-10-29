@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxconv"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxconv"
 )
 
 // The four combinations of "what this deployment writes" and "what is on disk".

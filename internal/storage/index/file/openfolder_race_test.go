@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // raceTestLockServer spins up a real embedded locks.Server on a Unix socket

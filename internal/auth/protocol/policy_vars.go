@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // policyVars is the variable table a policy template expands against: the

@@ -15,11 +15,11 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // Config is the top-level yarilo configuration.

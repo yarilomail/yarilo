@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	indexfile "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func foreignHome(t *testing.T) string {

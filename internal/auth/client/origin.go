@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // Option is something the login process knows about the mail client's

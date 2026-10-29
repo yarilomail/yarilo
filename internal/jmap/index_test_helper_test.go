@@ -1,6 +1,6 @@
 package jmap
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
 // index is the handle's index, for a test that plays another session on it;
 // the code under test reaches it only through Box.

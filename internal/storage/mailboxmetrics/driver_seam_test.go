@@ -11,10 +11,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func writeFailures(t *testing.T, driver, reason string) float64 {

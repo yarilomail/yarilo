@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 // registerDictRoutes wires the dict admin surface. Every endpoint is

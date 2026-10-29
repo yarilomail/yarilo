@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func TestList_SnapshotEmptyReturnsNil(t *testing.T) {

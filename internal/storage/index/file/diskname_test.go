@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	indexfile "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The index tree spells a folder the way the mail tree does.

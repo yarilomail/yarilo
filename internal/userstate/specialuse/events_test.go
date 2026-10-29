@@ -3,8 +3,8 @@ package specialuse
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/locks/lockstest"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
 )
 
 // A role is a Mailbox property, so setting or dropping one is announced on the

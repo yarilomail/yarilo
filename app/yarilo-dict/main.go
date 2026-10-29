@@ -14,14 +14,14 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/yarilomail/yarilo/internal/dictsrv"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	_ "github.com/yarilomail/yarilo/pkg/dict/drivers/all" // the engines live here
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/dictsrv"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/drivers/all" // the engines live here
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func main() {

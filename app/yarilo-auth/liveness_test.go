@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 )
 
 // TestAuthLivenessCheckHappy: with a live cache and an open (or absent) gate the

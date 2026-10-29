@@ -16,9 +16,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 var errLogIndexIDMismatch = errors.New("fileindex: log IndexID does not match base index")
@@ -3172,7 +3172,7 @@ func callingSite() string {
 }
 
 // indexPkgPath is this package, matched as a prefix of a frame's function name.
-const indexPkgPath = "github.com/yarilomail/yarilo/internal/storage/index/file."
+const indexPkgPath = "github.com/yarilomail/yarilo/v2/internal/storage/index/file."
 
 // readableThrough reports whether the file holds every byte up to end, leaving
 // the descriptor where it found it (#1833).

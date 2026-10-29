@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 // The owner registry answers "who granted me anything" -- a discovery

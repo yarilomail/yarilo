@@ -5,8 +5,8 @@ import (
 	"net"
 	"testing"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // flagged accepts alice/secret and sets nologin to the given value.

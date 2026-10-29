@@ -1,7 +1,7 @@
 package jmap
 
 import (
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // emailCopy is one mailbox that holds the message, with the record that

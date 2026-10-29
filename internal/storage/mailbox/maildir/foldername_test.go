@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A maildir mailbox is its own root: INBOX is the mail directory and subfolders

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Where FTS data goes was derived and had no way to be stated. The two kinds of

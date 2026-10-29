@@ -16,8 +16,8 @@ import (
 
 	gosieve "github.com/foxcpp/go-sieve"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 type session struct {

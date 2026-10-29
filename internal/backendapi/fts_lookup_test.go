@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"testing"
 
-	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/fts"
+	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 func lookupServer(t *testing.T) (*httptest.Server, *fakeFTS, ftsquery.Expander) {

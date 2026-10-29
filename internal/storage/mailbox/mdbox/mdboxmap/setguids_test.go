@@ -3,7 +3,7 @@ package mdboxmap_test
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
 )
 
 // SetGUIDs fills in what a converted store lacks and does not touch what it

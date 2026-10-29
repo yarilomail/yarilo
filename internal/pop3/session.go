@@ -21,15 +21,15 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/oauth2"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/pkg/lineio"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/oauth2"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const (

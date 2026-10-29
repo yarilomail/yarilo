@@ -1,6 +1,6 @@
 package imap
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
 // isOwnerTemplated reports whether spec's prefix carries the owner variable.
 // The detection and the variable itself live in pkg/mailbox, so config

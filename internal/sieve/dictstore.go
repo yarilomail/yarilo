@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // DictScriptStore stores Sieve scripts and vacation dedup state in a dict

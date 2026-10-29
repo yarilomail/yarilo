@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // TestUserDir_LookupPropagatesToRing is the #772 PR-2 end-to-end: a fresh

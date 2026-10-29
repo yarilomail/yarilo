@@ -35,7 +35,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // Member identifies one director replica by its ring-protocol address.

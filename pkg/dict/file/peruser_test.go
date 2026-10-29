@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	_ "github.com/yarilomail/yarilo/pkg/dict/file"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/file"
 )
 
 func open(t *testing.T, path string) dict.Dict {

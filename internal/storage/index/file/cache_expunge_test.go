@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // cachedFolder holds n messages, those in cached with a cache record each; any

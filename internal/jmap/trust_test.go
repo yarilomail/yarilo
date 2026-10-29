@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func testLimits() jmapcore.Limits {

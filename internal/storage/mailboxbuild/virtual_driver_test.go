@@ -3,8 +3,8 @@ package mailboxbuild
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A namespace whose location names the virtual driver gets that backend, or

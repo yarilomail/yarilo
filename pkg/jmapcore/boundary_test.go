@@ -10,7 +10,7 @@ import (
 
 // modulePath is this repository's module. Nothing under it may be imported
 // here.
-const modulePath = "github.com/yarilomail/yarilo"
+const modulePath = "github.com/yarilomail/yarilo/v2"
 
 // This package is meant to be extracted as a standalone library. One import of
 // a yarilo package turns that split from a move into a refactor, which is why

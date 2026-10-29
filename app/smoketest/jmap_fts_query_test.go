@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
 )
 
 // ftsQueryStub answers Email/query from hits(text) and Email/get from

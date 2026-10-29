@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func appendSubject(t *testing.T, rc *rawConn, folder, subject string) {

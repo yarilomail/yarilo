@@ -4,12 +4,12 @@ import (
 	"reflect"
 	"testing"
 
-	imapsvr "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	imapsvr "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func TestBuildNamespaces(t *testing.T) {

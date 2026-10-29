@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
 )
 
 // stubToken is what the fake service issues; a login without one is refused

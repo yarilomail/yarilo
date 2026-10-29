@@ -8,7 +8,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
 )
 
 // A flag write commits to the index, then renames each file. A session that

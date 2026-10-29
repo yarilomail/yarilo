@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/warden"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 func freeAddr(t *testing.T) string {

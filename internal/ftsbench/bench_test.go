@@ -5,8 +5,8 @@ package ftsbench
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // indexRatioCap bounds on-disk index size as a multiple of the corpus

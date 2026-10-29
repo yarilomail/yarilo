@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // registerFolderRoutes registers folder admin routes. Reads live

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
 )
 
 // setService answers LOOKUPIN with what it is given and keeps what it was asked.

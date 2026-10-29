@@ -36,13 +36,13 @@ import (
 	"strings"
 	"time"
 
-	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Server is the backend-API HTTP server. Construct with New, then call

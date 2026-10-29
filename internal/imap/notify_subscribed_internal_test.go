@@ -7,7 +7,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
 )
 
 // The SUBSCRIBED watch set is compared against personal-relative folder names,

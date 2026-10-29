@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 const (

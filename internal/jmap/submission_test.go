@@ -14,8 +14,8 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // sent is one message the fake relay was handed.

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestReloadDetectsBaseReplacedUnderSameMtime reproduces #666: reload()'s

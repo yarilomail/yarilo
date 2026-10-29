@@ -3,8 +3,8 @@ package msgcache
 import (
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Head is the part of an envelope that ordering uses: SORT and THREAD compare

@@ -6,7 +6,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
 )
 
 // Round-trip with inputs that distinguish: UTF-8 in names and subject, an

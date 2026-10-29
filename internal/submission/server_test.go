@@ -26,11 +26,11 @@ import (
 	goSmtp "github.com/emersion/go-smtp"
 	"golang.org/x/crypto/pbkdf2"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/submission/proxy"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // stubAuth accepts only alice@example.com / secret.

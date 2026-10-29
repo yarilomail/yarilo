@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/pkg/config"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // The session binaries verify no credential themselves, so a backend with no

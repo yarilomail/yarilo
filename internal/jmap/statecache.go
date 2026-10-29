@@ -3,7 +3,7 @@ package jmap
 import (
 	"sync"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // stateCache holds the per-folder markers the Email state is built from, so a

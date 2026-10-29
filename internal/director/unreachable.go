@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // Active fast-fail re-route (#782). Between a backend dying and its heartbeat

@@ -1,8 +1,8 @@
 package mailops
 
 import (
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // ExpungeMarked removes msgs from folder of box under one hold, then runs the hooks

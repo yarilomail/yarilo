@@ -9,9 +9,9 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // recoveredMaildirFolder is a user whose INBOX holds one record in the damaged

@@ -4,7 +4,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // VANISHED reads the journal in one call, not two per record: it runs on every

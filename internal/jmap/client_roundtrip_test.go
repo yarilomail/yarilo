@@ -9,7 +9,7 @@ import (
 	gojmap "git.sr.ht/~rockorager/go-jmap"
 	"git.sr.ht/~rockorager/go-jmap/mail/email"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // A real client library uploads (it takes 201 only from the yarilo-patches

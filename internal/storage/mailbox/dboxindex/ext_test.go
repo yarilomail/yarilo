@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
 )
 
 func loadBase(t *testing.T) (dboxindex.Header, []dboxindex.Record, []dboxindex.Extension) {

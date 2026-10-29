@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // ErrNotYarilo is returned when the first line of a connection is not a YARILO preamble.

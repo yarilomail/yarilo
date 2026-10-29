@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
 )
 
 // The server's limits reach every session it opens.

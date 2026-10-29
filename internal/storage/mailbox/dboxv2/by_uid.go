@@ -5,7 +5,7 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // An sdbox message is named by its uid, so the record is the whole answer and

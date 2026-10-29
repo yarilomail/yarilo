@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"net/http"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // registerIndexRoutes registers index routes: dump (read-only),

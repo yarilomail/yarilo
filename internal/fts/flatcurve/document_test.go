@@ -5,7 +5,7 @@ package flatcurve
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 var archive = fts.MailboxRef{GUID: "g2", Name: "Archive", UIDValidity: 1}

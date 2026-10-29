@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // threadIDServer seeds an account with a conversation -- recorded exactly as a

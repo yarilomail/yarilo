@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // markingBox answers RecordExists from a set the test controls and counts the

@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	indexfile "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Creating a folder and opening one are different questions, and only the

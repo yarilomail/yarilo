@@ -13,8 +13,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxindex"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // Map is the handle for one user's map index; every mutation routes through it so

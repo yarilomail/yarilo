@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
 )
 
 // What a client is told when the ACL state cannot be read must not be our

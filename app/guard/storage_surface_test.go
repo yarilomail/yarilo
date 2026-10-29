@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-const mailboxPkg = "github.com/yarilomail/yarilo/pkg/mailbox"
+const mailboxPkg = "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
 // storageSide are the packages that are part of the storage and may declare the
 // index or the store in their own signatures; the list is the whole exception (#1805).

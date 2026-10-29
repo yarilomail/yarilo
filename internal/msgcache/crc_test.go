@@ -6,7 +6,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A record that does not hash to what the index recorded is not this message's

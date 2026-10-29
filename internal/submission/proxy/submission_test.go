@@ -14,7 +14,7 @@ import (
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 func TestRelayAuth(t *testing.T) {

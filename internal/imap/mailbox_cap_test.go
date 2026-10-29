@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // A folder takes messages up to its cap, not one short of it.

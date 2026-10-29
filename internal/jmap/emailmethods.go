@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // emailGet implements Email/get (RFC 8621 §4.2).

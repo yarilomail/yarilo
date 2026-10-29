@@ -6,10 +6,10 @@ import (
 	"sync"
 	"testing"
 
-	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	indexfile "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Two sessions opening two different folders of a foreign store at the same

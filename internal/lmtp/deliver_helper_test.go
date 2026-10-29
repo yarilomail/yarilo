@@ -3,8 +3,8 @@ package lmtp
 import (
 	"io"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // deliverTest delivers through a layer with no services wired.

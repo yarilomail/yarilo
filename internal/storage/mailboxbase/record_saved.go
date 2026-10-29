@@ -3,7 +3,7 @@ package mailboxbase
 import (
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // RecordSaved allocates the uid and records the message; a driver named by uid

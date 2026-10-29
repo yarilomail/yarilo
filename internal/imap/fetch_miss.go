@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // errNoRecordAddress is a FETCH item the store cannot find from the record.

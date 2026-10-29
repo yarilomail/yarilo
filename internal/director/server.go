@@ -93,9 +93,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 const (

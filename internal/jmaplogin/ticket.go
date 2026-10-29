@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 var errBadTicket = fmt.Errorf("%w: websocket ticket refused", errUnauthorized)

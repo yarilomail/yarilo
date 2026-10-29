@@ -10,16 +10,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
-	"github.com/yarilomail/yarilo/internal/userdbinfo"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
+	indexfile "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/v2/internal/userdbinfo"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // guidOpts is one pre-migration invocation. Layout, driver and locking come

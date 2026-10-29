@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // ServerName is the pinned internal name every issued certificate carries.

@@ -4,7 +4,7 @@ import (
 	"maps"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // What yarilo.yaml says the body is reaches the policy client.

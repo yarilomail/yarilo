@@ -3,7 +3,7 @@ package submission
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
 )
 
 // TestUnwrapPreambleConn_ThroughWorkaround guards #830: the #828 reorder put the

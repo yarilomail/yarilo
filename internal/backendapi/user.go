@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // registerUserRoutes wires the user admin surface.

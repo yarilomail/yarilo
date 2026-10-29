@@ -5,8 +5,8 @@ import (
 
 	"github.com/knadh/koanf/v2"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // intKey names one integer setting by its config path.

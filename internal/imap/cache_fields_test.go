@@ -10,13 +10,13 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const cachedTestBody = "From: Ann <ann@example.com>\r\n" +

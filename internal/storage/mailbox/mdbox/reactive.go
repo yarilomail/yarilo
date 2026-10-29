@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // ErrHealDeferred says the heal was not attempted: it already failed at this

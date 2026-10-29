@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // TestEmitArrivesAtSubscriber wires the pkg/locks EVENT channel end-to-end

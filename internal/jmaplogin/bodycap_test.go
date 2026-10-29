@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // post sends a body to the proxy as an authenticated client would.

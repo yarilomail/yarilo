@@ -24,12 +24,12 @@ import (
 	goSmtp "github.com/emersion/go-smtp"
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/lmtpreply"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/internal/warden"
-	"github.com/yarilomail/yarilo/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/lmtpreply"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 )
 
 // Options configures the lmtp-login proxy.

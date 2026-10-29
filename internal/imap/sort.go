@@ -8,8 +8,8 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 
-	"github.com/yarilomail/yarilo/internal/imapthread"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/imapthread"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Sort implements the SORT command (RFC 5256 §3): the searched messages,

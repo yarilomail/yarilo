@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
 )
 
 // A user's session under a global-only fileinto: CAPABILITY leaves it out and

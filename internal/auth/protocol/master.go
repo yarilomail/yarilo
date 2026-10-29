@@ -15,9 +15,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // Master-protocol constants, versioned separately from the client protocol.

@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/0kaba0hub/go-xapian"
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // A copy belongs to its message's document wherever that sits: adding reached

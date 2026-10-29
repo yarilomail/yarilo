@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // Format v1 is the mailindex-backed base, kept because the format on disk decides

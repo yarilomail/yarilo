@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // logReader is one open descriptor on the log: identity, size, header and body

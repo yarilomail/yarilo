@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // dictDialers are the exported backend builders that reach the dict service,

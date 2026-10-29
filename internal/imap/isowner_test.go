@@ -3,7 +3,7 @@ package imap
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // isOwner is by person, not by namespace type. The distinguishing cases are the

@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // boolParam reports whether query param name is a truthy flag ("1", "true",

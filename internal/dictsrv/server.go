@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/proxy"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/proxy"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // Server answers for the dicts it holds. An unknown name is refused by name:

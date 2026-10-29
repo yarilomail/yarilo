@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 type setting struct {

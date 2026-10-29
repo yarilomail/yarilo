@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Fifty readers under one writer: a reader takes no lock, and what it sees is

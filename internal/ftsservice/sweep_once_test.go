@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // countingSweepIndex records how often the sweep asked it anything.

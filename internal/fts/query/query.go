@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // Header is one HEADER criterion; an empty Value asks only that the field exist.

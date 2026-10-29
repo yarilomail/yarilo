@@ -3,7 +3,7 @@ package file
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Content read must not carry the identity of the file that replaced it: every

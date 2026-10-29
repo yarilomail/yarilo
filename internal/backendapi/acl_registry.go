@@ -3,7 +3,7 @@ package backendapi
 import (
 	"net/http"
 
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
 )
 
 // registerACLRegistryRoutes wires the owner-discovery registry admin surface

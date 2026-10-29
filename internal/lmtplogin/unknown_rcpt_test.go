@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	authclient "github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	authclient "github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // startLookupCountingDirector answers every LOOKUP with a HOST and counts them.

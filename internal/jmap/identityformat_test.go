@@ -3,8 +3,8 @@ package jmap
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Cross-protocol identity must be a construction, not a coincidence: an id a

@@ -16,14 +16,14 @@ import (
 	"syscall"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/jmaplogin"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/internal/warden"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/jmaplogin"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func main() {

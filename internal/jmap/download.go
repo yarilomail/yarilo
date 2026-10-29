@@ -8,7 +8,7 @@ import (
 
 	"github.com/emersion/go-message"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // downloadPrefix is the path the session resource advertises as downloadUrl:

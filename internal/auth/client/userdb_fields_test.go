@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 var errNoVerdict = errors.New("the exchange ended without a verdict")

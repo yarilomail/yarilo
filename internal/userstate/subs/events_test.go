@@ -3,8 +3,8 @@ package subs
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/locks/lockstest"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
 )
 
 // A subscription change is announced on the account's subscriptions; repeating

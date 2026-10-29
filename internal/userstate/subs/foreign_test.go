@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
 )
 
 // Their subscription file, read as a client would see the names.
