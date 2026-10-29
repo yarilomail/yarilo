@@ -376,6 +376,14 @@ func (h *userHandle) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 func (h *userHandle) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error {
 	return h.stamped(folderID).AppendMessage(folderID, m)
 }
+
+// The handle is what OpenUser returns, so the capability is asserted on it.
+var _ mailbox.RecentClaimer = (*userHandle)(nil)
+
+func (h *userHandle) ClaimRecent(folderID uint64) (uint32, uint32, error) {
+	return h.stamped(folderID).ClaimRecent(folderID)
+}
+
 func (h *userHandle) AllocateUID(folderID uint64) (uint32, error) {
 	return h.stamped(folderID).AllocateUID(folderID)
 }

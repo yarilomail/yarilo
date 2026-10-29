@@ -557,6 +557,10 @@ type session struct {
 	// via subsequent * FLAGS responses; used to detect new keywords during Poll.
 	// Nil when no folder is selected.
 	knownKeywords map[string]struct{}
+	// recent is the UIDs this session holds as \Recent; claimsRecent is set
+	// for a SELECT, which takes new arrivals too, and clear for EXAMINE.
+	recent       imaplib.UIDSet
+	claimsRecent bool
 
 	// NOTIFY (RFC 5465) state. notifyActive is set by NOTIFY SET and cleared
 	// by NOTIFY NONE; while set, unsolicited responses for the selected
@@ -1175,6 +1179,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	for i, m := range msgs {
 		s.knownMsgs[i] = sessionMsg{uid: m.UID, modseq: m.ModSeq}
 	}
+	s.selectRecent(f, msgs, opts != nil && opts.ReadOnly)
 	s.syncModSeq = f.HighestModSeq
 	s.hasPendingExpunge = false
 	sysFlags := []imaplib.Flag{
@@ -1193,6 +1198,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		Flags:          allFlags,
 		PermanentFlags: append(allFlags, imaplib.Flag(`\*`)),
 		NumMessages:    uint32(len(msgs)),
+		NumRecent:      s.numRecent(),
 		UIDValidity:    f.UIDValidity,
 		UIDNext:        imaplib.UID(f.NextUID),
 		HighestModSeq:  f.HighestModSeq,
@@ -1233,6 +1239,7 @@ func (s *session) Unselect() error {
 	s.syncModSeq = 0
 	s.hasPendingExpunge = false
 	s.knownKeywords = nil
+	s.recent, s.claimsRecent = nil, false
 	s.pushWardenSelect("")
 	return nil
 }
@@ -2076,7 +2083,10 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 		d.HighestModSeq = f.HighestModSeq
 	}
 	if opts.NumRecent {
-		var n uint32 // RECENT tracking not implemented; RFC 9051 permits 0
+		var n uint32 // a virtual folder has no \Recent
+		if !s.isVirtualName(name) {
+			n = recentInFolder(f, msgs)
+		}
 		d.NumRecent = &n
 	}
 	if opts.MailboxID {
@@ -2088,6 +2098,11 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.AppendOptions) (*imaplib.AppendData, error) {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Append")
 	tAppend := time.Now()
+	if opts != nil {
+		if err := refuseRecent(opts.Flags); err != nil {
+			return nil, err
+		}
+	}
 	if target, redirected, err := s.virtualSaveTarget(name); err != nil {
 		return nil, err
 	} else if redirected {
@@ -2385,6 +2400,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 				allFlags = append(allFlags, imaplib.Flag(k))
 			}
 			// The writer adds MODSEQ once the client enabled CONDSTORE (RFC 7162 3.2.4).
+			allFlags = s.withRecent(allFlags, p.uid)
 			if err := w.WriteMessageFlagsModSeq(p.seq, imaplib.UID(p.uid), allFlags, p.ci.modseq); err != nil {
 				return err
 			}
@@ -2400,6 +2416,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 			knownSet[km.uid] = struct{}{}
 		}
 		added := 0
+		var arrived []*mailbox.MessageMeta
 		var newKwsFromAppend []string
 		newKwSetFromAppend := make(map[string]struct{})
 		for _, m := range current {
@@ -2407,6 +2424,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 				continue
 			}
 			s.knownMsgs = append(s.knownMsgs, sessionMsg{uid: m.UID, modseq: m.ModSeq})
+			arrived = append(arrived, m)
 			added++
 			for _, kw := range m.Keywords {
 				if _, known := s.knownKeywords[kw]; known {
@@ -2439,6 +2457,10 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		}
 		if added > 0 {
 			if err := w.WriteNumMessages(uint32(len(s.knownMsgs))); err != nil {
+				return err
+			}
+			s.recentArrived(refreshed, arrived)
+			if err := w.WriteNumRecent(s.numRecent()); err != nil {
 				return err
 			}
 		}
@@ -2673,7 +2695,7 @@ func (s *session) matchMessage(seqNum uint32, m *mailbox.MessageMeta, criteria *
 		}
 	}
 
-	return search.Match(seqNum, m, criteria, rawMsg), rawMsg, nil
+	return search.Match(seqNum, s.recentMeta(m), criteria, rawMsg), rawMsg, nil
 }
 
 func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriteria, opts *imaplib.SearchOptions) (*imaplib.SearchData, error) {
@@ -2899,7 +2921,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 						rc.Close()
 					}
 				}
-				if search.Match(uint32(i+1), m, matchCrit, raw) {
+				if search.Match(uint32(i+1), s.recentMeta(m), matchCrit, raw) {
 					saved.AddNum(imaplib.UID(m.UID))
 				}
 			}
@@ -3165,7 +3187,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			}
 		}
 		if opts.Flags || seenJustSet {
-			mw.WriteFlags(toImapFlags(append(m.Flags, m.Keywords...)))
+			mw.WriteFlags(s.withRecent(toImapFlags(append(m.Flags, m.Keywords...)), m.UID))
 		}
 		if opts.UID {
 			mw.WriteUID(imaplib.UID(m.UID))
@@ -3391,6 +3413,9 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
 	if storeFlags != nil {
+		if err := refuseRecent(storeFlags.Flags); err != nil {
+			return err
+		}
 		if err := s.requireAllRightsOnSelected(storeFlagRights(storeFlags.Flags)); err != nil {
 			return err
 		}
@@ -3562,7 +3587,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		}
 		for _, p := range pending {
 			mw := w.CreateMessage(p.seqNum)
-			mw.WriteFlags(toImapFlags(append(p.newFlags, p.newKW...)))
+			mw.WriteFlags(s.withRecent(toImapFlags(append(p.newFlags, p.newKW...)), p.uid))
 			mw.WriteUID(imaplib.UID(p.uid))
 			if r := results[p.uid]; r.ModSeq > 0 {
 				mw.WriteModSeq(r.ModSeq)

@@ -87,6 +87,7 @@ const (
 	lockSiteGUIDAppend      = "guid-append"
 	lockSiteGUIDRebuild     = "guid-rebuild"
 	lockSiteAllocateUid     = "allocate-uid"
+	lockSiteClaimRecent     = "claim-recent"
 	lockSiteAppend          = "append"
 	lockSiteCacheExtension  = "cache-extension"
 	lockSiteCacheGeneration = "cache-generation"
