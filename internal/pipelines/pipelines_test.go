@@ -145,6 +145,7 @@ func TestEveryBranchTriggeredWorkflowCoversDevelop(t *testing.T) {
 	masterOnly := map[string]string{
 		"ci.yml":                     "the master pipeline; develop has ci-develop.yml",
 		"dockerhub-description.yaml": "publishes the description of what master released",
+		"coverage.yml":               "reports what was released; develop is measured by a manual run",
 	}
 	dir := filepath.Join("..", "..", ".github", "workflows")
 	entries, err := os.ReadDir(dir)
