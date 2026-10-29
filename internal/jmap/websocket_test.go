@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -383,5 +386,114 @@ func TestStoppingWaitsForTheWebSocketHandlers(t *testing.T) {
 	f.s.stopWebSockets(context.Background())
 	if got := testutil.ToFloat64(metricWebSockets); got != before {
 		t.Errorf("%v WebSocket handlers still running after the stop", got-before)
+	}
+}
+
+// stallListener hands out connections whose writes block while stalled, as a
+// client that stops reading does once the socket buffers are full.
+type stallListener struct {
+	net.Listener
+	stalled atomic.Bool
+	blocked chan *stallConn // receives each write that blocks
+	release chan struct{}
+}
+
+func (l *stallListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &stallConn{Conn: c, l: l, closed: make(chan struct{})}, nil
+}
+
+type stallConn struct {
+	net.Conn
+	l         *stallListener
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+func (c *stallConn) Write(p []byte) (int, error) {
+	if c.l.stalled.Load() {
+		c.l.blocked <- c
+		select {
+		case <-c.l.release:
+		case <-c.closed:
+			return 0, net.ErrClosed
+		}
+	}
+	return c.Conn.Write(p)
+}
+
+func (c *stallConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+// Disabling push while a StateChange is stuck on a client that is not reading
+// stops the subscription and keeps the connection: the next request is answered.
+func TestAPushDisableDuringABlockedWriteKeepsTheConnection(t *testing.T) {
+	stall := &stallListener{blocked: make(chan *stallConn, 1), release: make(chan struct{})}
+	wrapListener = func(l net.Listener) net.Listener { stall.Listener = l; return stall }
+	stopped := make(chan struct{}, 1)
+	pushStopped = func() { stopped <- struct{}{} }
+	t.Cleanup(func() {
+		wrapListener = func(l net.Listener) net.Listener { return l }
+		pushStopped = func() {}
+	})
+	f := pushServer(t, hour, 0)
+	c := f.mustWS(t)
+	enable(t, c, `{"@type":"WebSocketPushEnable","dataTypes":["Email"]}`)
+
+	stall.stalled.Store(true)
+	f.flag(t, "$seen")
+	var conn *stallConn
+	select {
+	case conn = <-stall.blocked:
+	case <-time.After(eventWait):
+		t.Fatal("the StateChange write never started")
+	}
+	stall.stalled.Store(false)
+	wsSend(t, c, `{"@type":"WebSocketPushDisable"}`)
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("the disable was not handled")
+	}
+	select {
+	case <-conn.closed:
+		t.Fatal("the disable closed the connection under a write in progress")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(stall.release)
+
+	wsSend(t, c, echoRequest)
+	if _, ok := wsNext(t, c, "Response", time.Second); !ok {
+		t.Fatal("no Response after a disable during a blocked write: the connection was closed")
+	}
+}
+
+// A write stuck on a client that stopped reading ends within the timeout: the
+// ping cannot get the writer, fails, and closes the connection.
+func TestAStuckWriteIsClosedWithinTheTimeout(t *testing.T) {
+	stall := &stallListener{blocked: make(chan *stallConn, 1), release: make(chan struct{})}
+	wrapListener = func(l net.Listener) net.Listener { stall.Listener = l; return stall }
+	t.Cleanup(func() { wrapListener = func(l net.Listener) net.Listener { return l } })
+	f := pushServer(t, hour, 0, func(o *Options) { o.WebSocketTimeout = 400 * time.Millisecond })
+	c := f.mustWS(t)
+	enable(t, c, `{"@type":"WebSocketPushEnable","dataTypes":["Email"]}`)
+
+	stall.stalled.Store(true)
+	f.flag(t, "$seen")
+	var conn *stallConn
+	select {
+	case conn = <-stall.blocked:
+	case <-time.After(eventWait):
+		t.Fatal("the StateChange write never started")
+	}
+	select {
+	case <-conn.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a write stuck past the timeout left the connection open")
 	}
 }

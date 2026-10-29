@@ -26,6 +26,8 @@ type wsConn struct {
 	s  *Server
 	c  *websocket.Conn
 	id identity
+	// life is the connection's own context: every write runs on it.
+	life context.Context
 
 	mu         sync.Mutex
 	stopPush   context.CancelFunc
@@ -76,7 +78,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request, id iden
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	ws := &wsConn{s: s, c: c, id: id}
+	ws := &wsConn{s: s, c: c, id: id, life: ctx}
 	defer ws.disablePush()
 	go ws.keepAlive(ctx, s.opts.WebSocketTimeout)
 	go func() {
@@ -105,7 +107,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request, id iden
 			if _, err := io.Copy(io.Discard, rd); err != nil {
 				return
 			}
-			ws.send(ctx, requestError(nil, &jmapcore.RequestError{
+			ws.send(requestError(nil, &jmapcore.RequestError{
 				Type: jmapcore.ProblemLimit, Status: http.StatusRequestEntityTooLarge,
 				Limit: "maxSizeRequest", Detail: "The request exceeds maxSizeRequest.",
 			}))
@@ -150,7 +152,7 @@ type wsMessage struct {
 func (ws *wsConn) message(ctx context.Context, body []byte) {
 	var m wsMessage
 	if err := json.Unmarshal(body, &m); err != nil {
-		ws.send(ctx, requestError(nil, &jmapcore.RequestError{
+		ws.send(requestError(nil, &jmapcore.RequestError{
 			Type: jmapcore.ProblemNotJSON, Status: http.StatusBadRequest, Detail: "The message is not valid JSON.",
 		}))
 		return
@@ -160,29 +162,31 @@ func (ws *wsConn) message(ctx context.Context, body []byte) {
 	case m.Type == "Request":
 		resp, rerr := ws.s.runRequest(ctx, jmapcore.WebSocketPath, body, ws.id)
 		if rerr != nil {
-			ws.send(ctx, requestError(m.ID, rerr))
+			ws.send(requestError(m.ID, rerr))
 			return
 		}
-		ws.send(ctx, response(m.ID, resp))
+		ws.send(response(m.ID, resp))
 	case m.Type == "WebSocketPushEnable" && push:
 		ws.enablePush(m.DataTypes, m.PushState)
 	case m.Type == "WebSocketPushDisable" && push:
 		ws.disablePush()
 	default:
-		ws.send(ctx, requestError(m.ID, &jmapcore.RequestError{
+		ws.send(requestError(m.ID, &jmapcore.RequestError{
 			Type: jmapcore.ProblemNotRequest, Status: http.StatusBadRequest,
 			Detail: "Unknown message @type: " + m.Type,
 		}))
 	}
 }
 
-func (ws *wsConn) send(ctx context.Context, v any) {
+// send writes on the connection's context, never a subscription's: a context
+// cancelled mid-write closes the whole socket. keepAlive bounds a stuck write.
+func (ws *wsConn) send(v any) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		slog.Warn("jmap: websocket encode", "user", ws.id.user, "err", err)
 		return
 	}
-	if err := ws.c.Write(ctx, websocket.MessageText, b); err != nil {
+	if err := ws.c.Write(ws.life, websocket.MessageText, b); err != nil {
 		slog.Debug("jmap: websocket write", "user", ws.id.user, "err", err)
 	}
 }
@@ -251,9 +255,13 @@ func (ws *wsConn) disablePush() {
 	ws.mu.Unlock()
 	if cancel != nil {
 		cancel()
+		pushStopped()
 		<-exited
 	}
 }
+
+// pushStopped lets a test act between a subscription's cancel and its exit.
+var pushStopped = func() {}
 
 // beforePushBase lets a test widen the window before a subscription's base.
 var beforePushBase = func() {}
@@ -303,7 +311,7 @@ func (ws *wsConn) pushLoop(ctx context.Context, types []counters.Type, pushState
 		if len(out) == 0 {
 			continue
 		}
-		ws.send(ctx, map[string]any{
+		ws.send(map[string]any{
 			"@type":     "StateChange",
 			"changed":   map[string]any{jmapcore.AccountID(user): out},
 			"pushState": encodePushState(sent),

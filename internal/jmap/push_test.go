@@ -76,6 +76,9 @@ func lockClient(t testing.TB, socket string) locks.Locker {
 
 // pushServer is a stored server with push on, reachable over a real socket so
 // a stream can be read while it is open.
+// wrapListener lets a test stand between the server and its connections.
+var wrapListener = func(l net.Listener) net.Listener { return l }
+
 func pushServer(t *testing.T, poll, writeTimeout time.Duration, with ...func(*Options)) *pushFixture {
 	t.Helper()
 	home := t.TempDir()
@@ -108,6 +111,7 @@ func pushServer(t *testing.T, poll, writeTimeout time.Duration, with ...func(*Op
 	ts := httptest.NewUnstartedServer(s.Handler())
 	ts.Config.WriteTimeout = writeTimeout
 	ts.Config.ReadTimeout = writeTimeout
+	ts.Listener = wrapListener(ts.Listener)
 	ts.Start()
 	t.Cleanup(ts.Close)
 	// A WebSocket handler is hijacked, so ts.Close does not wait for it; it must
