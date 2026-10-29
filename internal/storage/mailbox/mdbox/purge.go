@@ -99,7 +99,6 @@ func (u *userMailbox) purgeFile(p *mdboxmap.Placement, fileID uint32, stats *Pur
 		slog.Warn("mdbox: record compacted file create-time failed", "user", u.username, "file_id", newID, "err", rerr)
 	}
 	if err := p.AppendMove(moved, dead); err != nil {
-		_ = os.Remove(u.mfilePath(newID))
 		return fmt.Errorf("mdbox/purge: append-move file=%d→%d: %w", fileID, newID, err)
 	}
 	oldPath := u.mfilePath(fileID)
