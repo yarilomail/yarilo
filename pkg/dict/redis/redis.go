@@ -71,7 +71,7 @@ func New(cfg dict.Config) (dict.Dict, error) {
 		opts.DialTimeout = d
 	}
 	prefix, _ := cfg.Settings["prefix"].(string)
-	return &Dict{client: redis.NewClient(opts), prefix: prefix}, nil
+	return &Dict{client: redis.NewClient(opts), prefix: prefix, now: time.Now}, nil
 }
 
 // Dict is the Redis driver.
@@ -79,6 +79,77 @@ type Dict struct {
 	client *redis.Client
 	prefix string
 	closed atomic.Bool
+	now    func() time.Time // test seam for the expiry index
+}
+
+// The key index makes a prefix read cost what it returns: SCAN walks the whole
+// db, which the dict shares with locks and counters (#2387). INTERNALS §32.
+func (d *Dict) idxKey() string    { return d.prefix + "\x00keys" }
+func (d *Dict) expKey() string    { return d.prefix + "\x00expiry" }
+func (d *Dict) markerKey() string { return d.prefix + "\x00indexed" }
+
+// pruneScript drops index entries whose key is gone and re-scores those still
+// alive; ARGV[1] is now, the rest are keys to check, or none to take the due.
+var pruneScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+local keys = {}
+for i = 2, #ARGV do keys[#keys + 1] = ARGV[i] end
+if #keys == 0 then
+  keys = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', now, 'LIMIT', 0, 64)
+end
+for _, k in ipairs(keys) do
+  local ttl = redis.call('PTTL', k)
+  if ttl == -2 then
+    redis.call('ZREM', KEYS[1], k)
+    redis.call('ZREM', KEYS[2], k)
+  elseif ttl == -1 then
+    redis.call('ZREM', KEYS[2], k)
+  else
+    redis.call('ZADD', KEYS[2], now + math.ceil(ttl / 1000), k)
+  end
+end
+return #keys
+`)
+
+// ensureIndexed builds the index once from the keys already there, so a dict
+// written before it lists them without a migration step.
+func (d *Dict) ensureIndexed(ctx context.Context) error {
+	n, err := d.client.Exists(ctx, d.markerKey()).Result()
+	if err != nil || n > 0 {
+		return err
+	}
+	var cursor uint64
+	for {
+		batch, next, err := d.client.Scan(ctx, cursor, d.prefix+"*", 1000).Result()
+		if err != nil {
+			return fmt.Errorf("index scan: %w", err)
+		}
+		p := d.client.Pipeline()
+		ttls := make([]*redis.DurationCmd, 0, len(batch))
+		keys := make([]string, 0, len(batch))
+		for _, full := range batch {
+			if strings.Contains(full[len(d.prefix):], "\x00") {
+				continue
+			}
+			p.ZAdd(ctx, d.idxKey(), redis.Z{Member: full})
+			ttls = append(ttls, p.PTTL(ctx, full))
+			keys = append(keys, full)
+		}
+		if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return fmt.Errorf("index fill: %w", err)
+		}
+		now := d.now().Unix()
+		for i, c := range ttls {
+			if ttl := c.Val(); ttl > 0 {
+				d.client.ZAdd(ctx, d.expKey(), redis.Z{Score: float64(now + int64(ttl/time.Second) + 1), Member: keys[i]})
+			}
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	return d.client.Set(ctx, d.markerKey(), "1", 0).Err()
 }
 
 // Name implements dict.Dict.
@@ -149,38 +220,48 @@ func (d *Dict) Iterate(ctx context.Context, set *dict.OpSettings, path string, f
 		return &iterator{rows: rows, idx: -1}, nil
 	}
 
-	pattern := d.key(set, path) + "*"
+	if err := d.ensureIndexed(ctx); err != nil {
+		return nil, err
+	}
+	base := d.key(set, path)
+	members, err := d.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key: d.idxKey(), Start: "[" + base, Stop: "(" + base + "\xff", ByLex: true,
+	}).Result()
+	if err != nil {
+		return nil, fmt.Errorf("index range: %w", err)
+	}
 	var (
-		cursor uint64
-		rows   []iterRow
+		rows []iterRow
+		gone []any
 	)
-	for {
-		batch, next, err := d.client.Scan(ctx, cursor, pattern, 256).Result()
+	for start := 0; start < len(members); start += 256 {
+		chunk := members[start:min(start+256, len(members))]
+		vals, err := d.client.MGet(ctx, chunk...).Result()
 		if err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
+			return nil, fmt.Errorf("get during iterate: %w", err)
 		}
-		for _, full := range batch {
+		for i, full := range chunk {
+			v, ok := vals[i].(string)
+			if !ok {
+				gone = append(gone, full)
+				continue
+			}
 			k := d.trim(set, full)
 			if !dict.PathMatches(path, k, recurse, false) {
 				continue
 			}
 			row := iterRow{key: k}
 			if !noValue {
-				v, err := d.client.Get(ctx, full).Bytes()
-				if err == redis.Nil {
-					continue
-				}
-				if err != nil {
-					return nil, fmt.Errorf("get during scan: %w", err)
-				}
-				row.values = [][]byte{v}
+				row.values = [][]byte{[]byte(v)}
 			}
 			rows = append(rows, row)
 		}
-		if next == 0 {
-			break
+	}
+	if len(gone) > 0 {
+		args := append([]any{d.now().Unix()}, gone...)
+		if err := pruneScript.Run(ctx, d.client, []string{d.idxKey(), d.expKey()}, args...).Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("index prune: %w", err)
 		}
-		cursor = next
 	}
 	applySortFlags(rows, flags)
 	return &iterator{rows: rows, idx: -1}, nil
@@ -331,22 +412,29 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 		}
 	}
 
+	expireAt := float64(t.d.now().Add(t.ttl).Unix() + 1)
 	_, err := t.d.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		for _, op := range t.buf.Ops {
 			full := t.d.key(set, op.Key)
 			switch op.Kind {
 			case dict.OpSet:
+				p.Set(ctx, full, op.Value, t.ttl)
+				p.ZAdd(ctx, t.d.idxKey(), redis.Z{Member: full})
 				if t.ttl > 0 {
-					p.Set(ctx, full, op.Value, t.ttl)
+					p.ZAdd(ctx, t.d.expKey(), redis.Z{Score: expireAt, Member: full})
 				} else {
-					p.Set(ctx, full, op.Value, 0)
+					p.ZRem(ctx, t.d.expKey(), full)
 				}
 			case dict.OpUnset:
 				p.Del(ctx, full)
+				p.ZRem(ctx, t.d.idxKey(), full)
+				p.ZRem(ctx, t.d.expKey(), full)
 			case dict.OpAtomicInc:
 				p.IncrBy(ctx, full, op.Delta)
+				p.ZAdd(ctx, t.d.idxKey(), redis.Z{Member: full})
 				if t.ttl > 0 {
 					p.Expire(ctx, full, t.ttl)
+					p.ZAdd(ctx, t.d.expKey(), redis.Z{Score: expireAt, Member: full})
 				}
 			}
 		}
@@ -362,6 +450,11 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 			return dict.CommitWriteUncertain, err
 		}
 		return dict.CommitFailed, err
+	}
+	if t.ttl > 0 {
+		// Bounded upkeep on the writes that make expiring keys, so the index of a
+		// dict nobody iterates still does not grow without end.
+		_ = pruneScript.Run(ctx, t.d.client, []string{t.d.idxKey(), t.d.expKey()}, t.d.now().Unix()).Err()
 	}
 	return dict.CommitOK, nil
 }
