@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -203,3 +204,61 @@ func (f *failingDict) Iterate(context.Context, *dict.OpSettings, string, dict.It
 }
 
 var errBroken = errors.New("acl test: the dict is down")
+
+// gatedDict holds every registry iteration until released and counts them by path.
+type gatedDict struct {
+	dict.Dict
+	release chan struct{}
+	mu      sync.Mutex
+	calls   map[string]int
+}
+
+func (g *gatedDict) Iterate(ctx context.Context, set *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
+	g.mu.Lock()
+	g.calls[path]++
+	g.mu.Unlock()
+	<-g.release
+	return g.Dict.Iterate(ctx, set, path, flags)
+}
+
+// Sessions missing the same path at once share one scan: after a pod start
+// every LIST missed anyone/ together and filled the dict pool (#2381).
+func TestConcurrentMissesShareOneScan(t *testing.T) {
+	d := regDict(t)
+	clockFor(t)
+	grant(t, d, "alice", mailbox.Identifier{Type: mailbox.IDAnyone})
+	const sessions = 20
+	joined := make(chan struct{}, sessions)
+	joinedScan = func() { joined <- struct{}{} }
+	t.Cleanup(func() { joinedScan = func() {} })
+	g := &gatedDict{Dict: d, release: make(chan struct{}), calls: map[string]int{}}
+
+	path := fwdPrefix + "anyone/"
+	answers := make([][]string, sessions)
+	errs := make([]error, sessions)
+	var wg sync.WaitGroup
+	for i := 0; i < sessions; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			answers[i], errs[i] = owners.cachedPath(context.Background(), g, path)
+		}(i)
+	}
+	for n := 0; n < sessions-1; n++ {
+		select {
+		case <-joined:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%d of %d misses waited for the scan in flight; the rest scanned on their own", n, sessions-1)
+		}
+	}
+	close(g.release)
+	wg.Wait()
+	if g.calls[path] != 1 {
+		t.Errorf("%d sessions scanned %s %d times, want once", sessions, path, g.calls[path])
+	}
+	for i := range answers {
+		if errs[i] != nil || len(answers[i]) != 1 || answers[i][0] != "alice" {
+			t.Fatalf("session %d answered %v, %v; want [alice]", i, answers[i], errs[i])
+		}
+	}
+}

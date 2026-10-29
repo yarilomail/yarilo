@@ -21,7 +21,20 @@ const OwnerScanTTL = time.Hour
 type ownerCache struct {
 	mu      sync.Mutex
 	entries map[string]ownerEntry
-	now     func() time.Time // test seam
+	// flight is the scan of a path in progress: a cold cache after a pod start
+	// must not send every LISTing session to scan anyone/ at once (#2381).
+	flight map[string]*ownerScan
+	now    func() time.Time // test seam
+}
+
+// joinedScan lets a test see a miss wait for a scan already in flight.
+var joinedScan = func() {}
+
+// ownerScan is one registry read others wait for; done closes once it has an answer.
+type ownerScan struct {
+	done   chan struct{}
+	owners []string
+	err    error
 }
 
 type ownerEntry struct {
@@ -29,7 +42,7 @@ type ownerEntry struct {
 	read   time.Time
 }
 
-var owners = &ownerCache{entries: map[string]ownerEntry{}, now: time.Now}
+var owners = &ownerCache{entries: map[string]ownerEntry{}, flight: map[string]*ownerScan{}, now: time.Now}
 
 // InvalidatePrincipals drops the answers a grant has just made wrong. The keys
 // are read by the principal a grant names -- user/<seer>/, group/<g>/,
@@ -73,12 +86,33 @@ func ResetScans() { scans.mu.Lock(); scans.n = 0; scans.mu.Unlock() }
 func (c *ownerCache) cachedPath(ctx context.Context, d dict.Dict, path string) ([]string, error) {
 	c.mu.Lock()
 	e, ok := c.entries[path]
-	fresh := ok && c.now().Sub(e.read) < OwnerScanTTL
-	c.mu.Unlock()
-	if fresh {
+	if ok && c.now().Sub(e.read) < OwnerScanTTL {
+		c.mu.Unlock()
 		return e.owners, nil
 	}
+	if f := c.flight[path]; f != nil {
+		c.mu.Unlock()
+		joinedScan()
+		select {
+		case <-f.done:
+			return f.owners, f.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	f := &ownerScan{done: make(chan struct{})}
+	c.flight[path] = f
+	c.mu.Unlock()
+	f.owners, f.err = c.scan(ctx, d, path, e, ok)
+	c.mu.Lock()
+	delete(c.flight, path)
+	c.mu.Unlock()
+	close(f.done)
+	return f.owners, f.err
+}
 
+// scan reads one path and records the answer; e is the stale entry, if any.
+func (c *ownerCache) scan(ctx context.Context, d dict.Dict, path string, e ownerEntry, ok bool) ([]string, error) {
 	countScan()
 	list, err := scanPath(ctx, d, path)
 	if err != nil {
