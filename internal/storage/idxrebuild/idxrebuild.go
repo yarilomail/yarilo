@@ -164,6 +164,16 @@ func RebuildFolder(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder)
 		return stats, fmt.Errorf("idxrebuild/reset folder: %w", err)
 	}
 	stats.ExpungedCopies = expunged
+	// A UID minted here is in no row of a driver that keeps its own (maildir),
+	// and a read by UID fails until a session relinks it (#2392): relink now.
+	if r, ok := mailbox.Driver(b.Store()).(mailbox.StoreReconciler); ok {
+		if folder, err = idx.OpenFolder(folder.Name, folder.UIDValidity); err != nil {
+			return stats, fmt.Errorf("idxrebuild/reopen: %w", err)
+		}
+		if _, err := r.ReconcileIndex(b, idx, folder); err != nil {
+			return stats, fmt.Errorf("idxrebuild/relink: %w", err)
+		}
+	}
 	return stats, nil
 }
 
