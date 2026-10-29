@@ -90,6 +90,29 @@ func TestQueueMergeKeepsTheWidestRange(t *testing.T) {
 	}
 }
 
+// A request without a limit, a search catch-up, lifts the limit of the pending
+// autoindex request, as the reference merges them: the search is never skipped.
+func TestQueueMergeLetsNoLimitWin(t *testing.T) {
+	for _, order := range []string{"limit first", "no limit first"} {
+		q := newQueue()
+		limited, open := inbox("u1"), inbox("u1")
+		limited.maxRecent = 10
+		first, second := limited, open
+		if order == "no limit first" {
+			first, second = open, limited
+		}
+		q.push(first, false)
+		q.push(second, true)
+		j, ok := q.pop(context.Background())
+		if !ok {
+			t.Fatal("nothing queued")
+		}
+		if j.maxRecent != 0 {
+			t.Errorf("%s: maxRecent = %d, want 0", order, j.maxRecent)
+		}
+	}
+}
+
 // A priority request for a mailbox already queued moves it forward instead of
 // adding a second entry.
 func TestQueuePriorityMovesRatherThanDuplicates(t *testing.T) {

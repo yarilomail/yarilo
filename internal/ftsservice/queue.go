@@ -123,16 +123,13 @@ func (q *queue) push(j job, front bool) {
 
 // merge folds a new request into the pending one. The pass must cover the
 // highest UID either request asked for, or the later request's messages would
-// be skipped. max_recent takes the smaller bound: it is a limit, and the
-// stricter of two limits is the one both callers can live with.
+// be skipped. max_recent takes the smaller bound, 0 (none) included: a search
+// catch-up merged into an autoindex request is never skipped, as in the reference.
 func (e *entry) merge(j job) {
 	if j.maxUID > e.job.maxUID {
 		e.job.maxUID = j.maxUID
 	}
-	switch {
-	case e.job.maxRecent == 0:
-		e.job.maxRecent = j.maxRecent
-	case j.maxRecent > 0 && j.maxRecent < e.job.maxRecent:
+	if j.maxRecent < e.job.maxRecent {
 		e.job.maxRecent = j.maxRecent
 	}
 	// A fresh request restarts the backoff: it is new evidence that the mailbox
