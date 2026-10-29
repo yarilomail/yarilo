@@ -1,0 +1,36 @@
+## The README's "Test coverage" section says what is left out and why;
+## internal/pipelines holds every app/ directory to this list or a named reason.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch: off
+comment: false
+ignore:
+  - "app/auth-bench/**"
+  - "app/fts-bench/**"
+  - "app/smoketest-e2e/**"
+  - "app/yarilo-auth/**"
+  - "app/yarilo-backend-api/**"
+  - "app/yarilo-backend-reg/**"
+  - "app/yarilo-dict/**"
+  - "app/yarilo-director/**"
+  - "app/yarilo-fts/**"
+  - "app/yarilo-imap-login/**"
+  - "app/yarilo-imap/**"
+  - "app/yarilo-jmap-login/**"
+  - "app/yarilo-jmap/**"
+  - "app/yarilo-lmtp-login/**"
+  - "app/yarilo-lmtp/**"
+  - "app/yarilo-locks/**"
+  - "app/yarilo-managesieve-login/**"
+  - "app/yarilo-managesieve/**"
+  - "app/yarilo-pop3-login/**"
+  - "app/yarilo-pop3/**"
+  - "app/yarilo-quota-status/**"
+  - "app/yarilo-sasl-login/**"
+  - "app/yarilo-submission-login/**"
+  - "app/yarilo-submission/**"
+  - "app/yarilo-warden/**"
+  - "app/yarilo/**"

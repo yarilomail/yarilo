@@ -16,7 +16,7 @@ Multi-binary architecture — each protocol component is a separate process. Kub
      out one per row while Safari kept them inline, from the same GitHub-rendered
      HTML; as a top-level paragraph they get the full README width and both
      browsers agree. Keep them here, on one line. -->
-[![CI](https://github.com/yarilomail/yarilo/actions/workflows/ci.yml/badge.svg)](https://github.com/yarilomail/yarilo/actions/workflows/ci.yml) [![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/) [![Platform](https://img.shields.io/badge/platform-linux%2Famd64-blue)](https://github.com/yarilomail/yarilo) [![License: AGPL v3](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE) ![Status: stable](https://img.shields.io/badge/status-stable-brightgreen)
+[![CI](https://github.com/yarilomail/yarilo/actions/workflows/ci.yml/badge.svg)](https://github.com/yarilomail/yarilo/actions/workflows/ci.yml) [![Coverage](https://codecov.io/gh/yarilomail/yarilo/branch/develop/graph/badge.svg)](https://codecov.io/gh/yarilomail/yarilo/tree/develop) [![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/) [![Platform](https://img.shields.io/badge/platform-linux%2Famd64-blue)](https://github.com/yarilomail/yarilo) [![License: AGPL v3](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE) ![Status: stable](https://img.shields.io/badge/status-stable-brightgreen)
 
 ---
 
@@ -242,6 +242,14 @@ same locks the services take; it is then safe to run against a live store.
 Without `--config` it runs unlocked, which is only safe with the store stopped.
 Repeat runs are no-ops: a stamped folder is recorded as done and an already
 assigned GUID is never rewritten.
+
+---
+
+## Test coverage
+
+The coverage badge reports `develop`, measured by `.github/workflows/coverage.yml` on every push that changes code: the whole tree with `-coverpkg=./...`, so a package's statements count when any package's tests run them, plus the `flatcurve` engine under its build tag.
+
+Left out (`codecov.yml`): the `main` packages in `app/` that are entry points, which wire the config into components tested in `internal/` and start them, and the stand tools (`auth-bench`, `fts-bench`, `smoketest-e2e`) that run against a live deployment. Counted: `yarctl`, `smoketest` and `yarilo-migrate`, which hold command logic of their own.
 
 ---
 
