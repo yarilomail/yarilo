@@ -98,12 +98,15 @@ func (s *session) numRecent() uint32 {
 
 // rev2 reports whether the client enabled IMAP4rev2, which has no \Recent.
 func (s *session) rev2() bool {
-	return s.imapConn != nil && s.imapConn.EnabledCaps().Has(imaplib.CapIMAP4rev2)
+	if !s.isRev2 && s.enabledCaps != nil {
+		s.isRev2 = s.enabledCaps().Has(imaplib.CapIMAP4rev2)
+	}
+	return s.isRev2
 }
 
 // withRecent adds \Recent to a message's FETCH FLAGS for the session holding it.
 func (s *session) withRecent(flags []imaplib.Flag, uid uint32) []imaplib.Flag {
-	if s.rev2() || !s.recent.Contains(imaplib.UID(uid)) {
+	if !s.recent.Contains(imaplib.UID(uid)) || s.rev2() {
 		return flags
 	}
 	return append(flags, flagRecent)
