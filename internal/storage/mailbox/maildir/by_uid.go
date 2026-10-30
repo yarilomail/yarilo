@@ -41,6 +41,14 @@ func (u *userMailbox) recordPathOnce(folder string, m *mailbox.MessageMeta) (str
 		return "", err
 	}
 	if base == "" {
+		// The window trusts the map a walk loaded; a row another session
+		// appended since, a COPY's, is not in it until the list is read again.
+		u.folderCacheFor(folder).closeWindow("uid-miss")
+		if base, err = u.baseForUID(folder, m.UID); err != nil {
+			return "", err
+		}
+	}
+	if base == "" {
 		return "", fmt.Errorf("maildir/by-uid: %q uid %d is in no list entry: %w",
 			folder, m.UID, mailbox.ErrCorruptStorage)
 	}
@@ -144,6 +152,20 @@ func (u *userMailbox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.Read
 	if err != nil {
 		return nil, err
 	}
+	if beforeOpen != nil {
+		beforeOpen()
+	}
+	rc, err := u.Fetch(folder, name, m.AltTier)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return rc, err
+	}
+	// A STORE renamed the file between the lookup and the open: one more
+	// lookup takes the name it wears now.
+	metricListingRetry.WithLabelValues("open").Inc()
+	u.folderCacheFor(folder).invalidateDirEntries("open")
+	if name, err = u.RecordPath(folder, m); err != nil {
+		return nil, err
+	}
 	return u.Fetch(folder, name, m.AltTier)
 }
 
@@ -192,6 +214,16 @@ func ForgetReports() {
 func SetTestFlagRenameDelay(d time.Duration) func() {
 	beforeFlagRename = func() { time.Sleep(d) }
 	return func() { beforeFlagRename = nil }
+}
+
+// beforeOpen runs between a record's lookup and its open.
+var beforeOpen func()
+
+// SetTestBeforeOpen runs fn between a record's lookup and its open: a test
+// expunges or renames the message in that gap. Test seam.
+func SetTestBeforeOpen(fn func()) func() {
+	beforeOpen = fn
+	return func() { beforeOpen = nil }
 }
 
 // SetTestBeforeFlagRename runs fn before each flag rename: a test outside this

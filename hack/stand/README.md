@@ -199,7 +199,7 @@ another name. What the summary fields are made of:
 | `listing: list_whole` / `list_tail` | `maildir_uidlist_read_total{mode=...}` |
 | `listing: dir_name` / `dir_scan` / `dir_remove` | `maildir_dir_read_total{reason=...}` |
 | `listing: miss_none` / `miss_stale` | `maildir_listing_miss_total{reason=...}` |
-| `listing: retry_path` / `retry_rename` | `maildir_listing_retry_total{at=...}` |
+| `listing: retry_path` / `retry_rename` / `retry_open` | `maildir_listing_retry_total{at=...}` |
 | `listing: stat_dir` / `stat_list` | `maildir_cache_stat_total{what=...}` |
 | `listing: shut_own` / `shut_expunge` / `shut_other` | `maildir_window_closed_total{by=...}` |
 | `listing: stamp_hit` / `stamp_miss` | `maildir_uidlist_stamp_hit_total`, `..._miss_total` |

@@ -3157,10 +3157,15 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		// from a file that is there says more than one lost because the message
 		// had been expunged, and a message that produced both is the first.
 		reason := ""
+		var reasonErr error
 		mark := func(what string, err error) {
 			unreadable = append(unreadable, what)
-			if r := unreadableReason(err); reason == "" || r == reasonUnreadable {
-				reason = r
+			r := unreadableReason(err)
+			if r == reasonUnreadable && err != nil && s.expungedUnderUs(m, err) {
+				r = reasonGone
+			}
+			if reason == "" || r == reasonUnreadable {
+				reason, reasonErr = r, err
 			}
 		}
 		// Implicit \Seen: update index before writing FLAGS so the response
@@ -3383,7 +3388,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			slog.Warn("imap: fetch answered without attributes it could not read",
 				"user", s.userInfo.Username, "folder", s.folder.Name,
 				"uid", m.UID, "reason", reason,
-				"missing", strings.Join(unreadable, ","))
+				"missing", strings.Join(unreadable, ","), "err", reasonErr)
 		}
 		mw.Close() //nolint:errcheck
 	}
@@ -3679,6 +3684,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		filename string
 	}
 	var copied []copiedMsg
+	var saves []*mailbox.MessageMeta
 	var selected []*mailbox.MessageMeta
 	var batchBytes, largest int64
 	for _, m := range msgs {
@@ -3699,6 +3705,13 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	for _, m := range selected {
 		// The selected-message read: a virtual record reads its copy (as the reference does).
 		rc, fetchErr := s.fetchSelected(m)
+		if fetchErr != nil && s.expungedUnderUs(m, fetchErr) {
+			// RFC 2180 §4.4.1: a failed COPY leaves the destination as it was.
+			s.undoCopies(destH, destRel, destFolder, saves)
+			return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo,
+				Code: imaplib.ResponseCode("EXPUNGEISSUED"),
+				Text: "Some of the requested messages no longer exist."}
+		}
 		if fetchErr != nil {
 			return nil, fmt.Errorf("imap/copy fetch: %w", fetchErr)
 		}
@@ -3719,6 +3732,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		srcUIDs.AddNum(imaplib.UID(m.UID))
 		dstUIDs.AddNum(imaplib.UID(saved.Meta.UID))
 		copied = append(copied, copiedMsg{uid: saved.Meta.UID, filename: saved.Filename})
+		saves = append(saves, saved.Meta)
 	}
 	// imapsieve (RFC 6785): COPY cause fires on the destination mailbox for each
 	// copied message, after the copy is recorded (so COPYUID reflects the initial
