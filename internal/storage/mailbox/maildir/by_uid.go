@@ -161,7 +161,7 @@ func (u *userMailbox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.Read
 	}
 	// A STORE renamed the file between the lookup and the open: one more
 	// lookup takes the name it wears now.
-	metricListingRetry.WithLabelValues("rename").Inc()
+	metricListingRetry.WithLabelValues("open").Inc()
 	u.folderCacheFor(folder).invalidateDirEntries("open")
 	if name, err = u.RecordPath(folder, m); err != nil {
 		return nil, err

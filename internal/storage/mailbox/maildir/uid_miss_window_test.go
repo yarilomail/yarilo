@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -74,6 +76,7 @@ func TestAFileRenamedBeforeTheOpenIsRead(t *testing.T) {
 		}
 	})
 	defer restore()
+	opens, renames := testutil.ToFloat64(metricListingRetry.WithLabelValues("open")), testutil.ToFloat64(metricListingRetry.WithLabelValues("rename"))
 	rc, err := box.OpenRecord("INBOX", m)
 	if err != nil {
 		t.Fatalf("a file renamed between lookup and open: %v", err)
@@ -82,6 +85,13 @@ func TestAFileRenamedBeforeTheOpenIsRead(t *testing.T) {
 	rc.Close()
 	if !strings.Contains(string(body), "From: a@b") {
 		t.Errorf("read %q, want the message", body)
+	}
+	// Counted as a read's retry, apart from a flag write's.
+	if got := testutil.ToFloat64(metricListingRetry.WithLabelValues("open")) - opens; got != 1 {
+		t.Errorf("at=open counted %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(metricListingRetry.WithLabelValues("rename")) - renames; got != 0 {
+		t.Errorf("at=rename counted %v for a read, want 0", got)
 	}
 }
 
