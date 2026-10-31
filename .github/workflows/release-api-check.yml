@@ -47,11 +47,19 @@ jobs:
           $R delete-asset "${GITHUB_REPOSITORY}" "${KNOWN}" "${ASSET}"
           test "$(count)" = 0
 
-      - name: The docs token reads the docs repo and finds main
+      # The tag is outside v*, so the docs deploy and the Pages tag policy never see it.
+      - name: The docs token tags main and deletes the tag
         env:
           GH_TOKEN: ${{ secrets.DOCS_TAG_TOKEN }}
           DOCS_REPO: yarilomail/documentation
         run: |
           [ -n "${GH_TOKEN}" ] || { echo "::error::secret DOCS_TAG_TOKEN is not set"; exit 1; }
-          test "$(hack/release/github.sh status "repos/${DOCS_REPO}/git/ref/tags/${KNOWN}")" = 200
-          DRY_RUN=1 hack/release/github.sh tag-main "${DOCS_REPO}" "${KNOWN}"
+          R=hack/release/github.sh
+          TMP="release-api-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "$($R status "repos/${DOCS_REPO}/git/ref/tags/${KNOWN}")" = 200
+          test "$($R status "repos/${DOCS_REPO}/git/ref/tags/${TMP}")" = 404
+          trap '$R delete-tag "${DOCS_REPO}" "${TMP}" 2>/dev/null || true' EXIT
+          $R tag-main "${DOCS_REPO}" "${TMP}"
+          test "$($R status "repos/${DOCS_REPO}/git/ref/tags/${TMP}")" = 200
+          $R delete-tag "${DOCS_REPO}" "${TMP}"
+          test "$($R status "repos/${DOCS_REPO}/git/ref/tags/${TMP}")" = 404

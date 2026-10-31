@@ -63,8 +63,13 @@ tag-main)
 		-d "$(jq -nc --arg ref "refs/tags/$tag" --arg sha "$sha" '{ref: $ref, sha: $sha}')" >/dev/null
 	echo "Tagged $repo@${sha::7} as $tag"
 	;;
+delete-tag)
+	# REPO TAG
+	call DELETE "$API/repos/$2/git/refs/tags/$3" >/dev/null
+	echo "deleted tag $3 from $2"
+	;;
 *)
-	echo "usage: $0 status PATH | upload-asset REPO TAG FILE | assets REPO TAG | delete-asset REPO TAG NAME | tag-main REPO TAG" >&2
+	echo "usage: $0 status PATH | upload-asset REPO TAG FILE | assets REPO TAG | delete-asset REPO TAG NAME | tag-main REPO TAG | delete-tag REPO TAG" >&2
 	exit 2
 	;;
 esac
