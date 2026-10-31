@@ -1,0 +1,65 @@
+name: Release API check - yarilo
+
+## The release job's GitHub calls, on the runner that releases, against a release
+## already out: a change to them is proven before the next cut, not on it.
+on:
+  pull_request:
+    paths:
+      - "hack/release/**"
+      - ".github/workflows/release-api-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  KNOWN: v2.4.5
+  ASSET: release-api-check.txt
+
+jobs:
+  check:
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: A release answers 200, a missing one 404, a bad token neither
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          R=hack/release/github.sh
+          P="repos/${GITHUB_REPOSITORY}/releases/tags"
+          test "$($R status "$P/${KNOWN}")" = 200
+          test "$($R status "$P/v0.0.0")" = 404
+          test "$(GH_TOKEN=invalid $R status "$P/${KNOWN}")" = 401
+
+      - name: An asset uploaded twice is there once, and goes when deleted
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          R=hack/release/github.sh
+          count() { $R assets "${GITHUB_REPOSITORY}" "${KNOWN}" | grep -cx "${ASSET}" || true; }
+          echo "run ${GITHUB_RUN_ID}" > "${RUNNER_TEMP}/${ASSET}"
+          trap '$R delete-asset "${GITHUB_REPOSITORY}" "${KNOWN}" "${ASSET}"' EXIT
+          $R upload-asset "${GITHUB_REPOSITORY}" "${KNOWN}" "${RUNNER_TEMP}/${ASSET}"
+          $R upload-asset "${GITHUB_REPOSITORY}" "${KNOWN}" "${RUNNER_TEMP}/${ASSET}"
+          test "$(count)" = 1
+          $R delete-asset "${GITHUB_REPOSITORY}" "${KNOWN}" "${ASSET}"
+          test "$(count)" = 0
+
+      # The tag is outside v*, so the docs deploy and the Pages tag policy never see it.
+      - name: The docs token tags main and deletes the tag
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_TAG_TOKEN }}
+          DOCS_REPO: yarilomail/documentation
+        run: |
+          [ -n "${GH_TOKEN}" ] || { echo "::error::secret DOCS_TAG_TOKEN is not set"; exit 1; }
+          R=hack/release/github.sh
+          TMP="release-api-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "$($R status "repos/${DOCS_REPO}/git/ref/tags/${KNOWN}")" = 200
+          test "$($R status "repos/${DOCS_REPO}/git/ref/tags/${TMP}")" = 404
+          trap '$R delete-tag "${DOCS_REPO}" "${TMP}" 2>/dev/null || true' EXIT
+          $R tag-main "${DOCS_REPO}" "${TMP}"
+          test "$($R status "repos/${DOCS_REPO}/git/ref/tags/${TMP}")" = 200
+          $R delete-tag "${DOCS_REPO}" "${TMP}"
+          test "$($R status "repos/${DOCS_REPO}/git/ref/tags/${TMP}")" = 404
