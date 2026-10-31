@@ -1,6 +1,6 @@
 // Package proxy implements the outbound submission proxy.
 // Accepts an authenticated session from an MUA and forwards it to
-// the configured upstream MTA — one TCP connection per message, fail-closed.
+// the configured upstream MTA - one TCP connection per transaction, fail-closed.
 package proxy
 
 import (
@@ -20,11 +20,11 @@ import (
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // Submission proxies outbound mail to the configured upstream MTA.
-// One connection per message, fail-closed (4xx to client) on any transport error.
+// One connection per transaction, fail-closed (4xx to client) on any transport error.
 type Submission struct {
 	cfg      config.RelayConfig
 	hostname string // EHLO hostname sent to the upstream
@@ -47,8 +47,84 @@ type capabilities struct {
 // Send relays one message as login (%u), logging under sid: transport errors
 // are 451 4.4.0, relay auth 451 4.7.0, SMTP rejections pass through.
 func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP net.IP, login, sid string) error {
+	c, err := s.open(clientIP, login, sid)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return relayErr(c.SendMail(from, rcpts, body), "send")
+}
+
+// Transaction is one relay transaction kept open from MAIL FROM to the end of
+// DATA, so each command reaches the relay when the client sends it.
+type Transaction struct {
+	c *goSmtp.Client
+}
+
+// Begin opens the relay connection and sends MAIL FROM; errors as Send's.
+func (s *Submission) Begin(from string, clientIP net.IP, login, sid string) (*Transaction, error) {
+	c, err := s.open(clientIP, login, sid)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Mail(from, nil); err != nil {
+		c.Close()
+		return nil, relayErr(err, "MAIL")
+	}
+	return &Transaction{c: c}, nil
+}
+
+// Rcpt relays one RCPT TO; the relay's refusal is the client's reply.
+func (t *Transaction) Rcpt(to string) error {
+	return relayErr(t.c.Rcpt(to, nil), "RCPT")
+}
+
+// Data relays the message and ends the transaction and the connection.
+func (t *Transaction) Data(body io.Reader) error {
+	defer t.close()
+	w, err := t.c.Data()
+	if err != nil {
+		return relayErr(err, "DATA")
+	}
+	if _, err := io.Copy(w, body); err != nil {
+		_ = w.Close()
+		return relayErr(err, "DATA")
+	}
+	return relayErr(w.Close(), "DATA")
+}
+
+// Abort ends an unfinished transaction and closes the relay connection.
+func (t *Transaction) Abort() {
+	t.close()
+}
+
+func (t *Transaction) close() {
+	_ = t.c.Quit()
+	_ = t.c.Close()
+}
+
+// relayErr passes a relay's SMTP reply through as it is; a transport failure
+// becomes 451 4.4.0.
+func relayErr(err error, stage string) error {
+	if err == nil {
+		return nil
+	}
+	var smtpErr *goSmtp.SMTPError
+	if errors.As(err, &smtpErr) {
+		return smtpErr
+	}
+	slog.Error("submission/proxy: send failed", "stage", stage, "err", err)
+	return &goSmtp.SMTPError{
+		Code:         451,
+		EnhancedCode: goSmtp.EnhancedCode{4, 4, 0},
+		Message:      "Upstream send error",
+	}
+}
+
+// open connects and logs in to the relay as login (%u), logging under sid.
+func (s *Submission) open(clientIP net.IP, login, sid string) (*goSmtp.Client, error) {
 	if s.cfg.Host == "" {
-		return &goSmtp.SMTPError{
+		return nil, &goSmtp.SMTPError{
 			Code:         451,
 			EnhancedCode: goSmtp.EnhancedCode{4, 3, 0},
 			Message:      "Upstream MTA not configured",
@@ -56,23 +132,23 @@ func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP 
 	}
 	if login == "" && s.needsLogin() {
 		slog.Error("submission/proxy: the relay names the sender, and the session has no user", "sid", sid)
-		return errRelayAuth
+		return nil, errRelayAuth
 	}
 
 	c, err := s.dial()
 	if err != nil {
 		slog.Error("submission/proxy: connect failed", "host", s.cfg.Host, "err", err)
-		return &goSmtp.SMTPError{
+		return nil, &goSmtp.SMTPError{
 			Code:         451,
 			EnhancedCode: goSmtp.EnhancedCode{4, 4, 0},
 			Message:      "Failed to connect to upstream MTA",
 		}
 	}
-	defer c.Close()
 
 	if err := c.Hello(s.hostname); err != nil {
+		c.Close()
 		slog.Error("submission/proxy: EHLO failed", "err", err)
-		return &goSmtp.SMTPError{
+		return nil, &goSmtp.SMTPError{
 			Code:         451,
 			EnhancedCode: goSmtp.EnhancedCode{4, 4, 0},
 			Message:      "Upstream EHLO failed",
@@ -96,24 +172,12 @@ func (s *Submission) Send(from string, rcpts []string, body io.Reader, clientIP 
 	if authcid, authzid := s.relayAuth(login); authcid != "" {
 		auth := sasl.NewPlainClient(authzid, authcid, s.cfg.Password)
 		if err := c.Auth(auth); err != nil {
+			c.Close()
 			slog.Error("submission/proxy: relay auth failed", "sid", sid, "user", authcid, "for", authzid, "err", err)
-			return errRelayAuth
+			return nil, errRelayAuth
 		}
 	}
-
-	if err := c.SendMail(from, rcpts, body); err != nil {
-		var smtpErr *goSmtp.SMTPError
-		if errors.As(err, &smtpErr) {
-			return smtpErr
-		}
-		slog.Error("submission/proxy: send failed", "err", err)
-		return &goSmtp.SMTPError{
-			Code:         451,
-			EnhancedCode: goSmtp.EnhancedCode{4, 4, 0},
-			Message:      "Upstream send error",
-		}
-	}
-	return nil
+	return c, nil
 }
 
 func (s *Submission) probeCapabilities(c *goSmtp.Client) capabilities {

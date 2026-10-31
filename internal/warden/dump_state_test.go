@@ -65,7 +65,7 @@ func TestStateBackendDumpContract(t *testing.T) {
 
 // TestRedisDumpShowsDrift proves Dump surfaces a leaked counter: sessions expire
 // by TTL (pod crash) without a DISCONNECT, so the counter stays above the live
-// tally until reconcile — exactly what an operator inspects.
+// tally until reconcile - exactly what an operator inspects.
 func TestRedisDumpShowsDrift(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

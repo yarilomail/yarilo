@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
 )
 
 // A submission process that starts without an auth service would accept

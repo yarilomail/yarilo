@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -68,6 +69,29 @@ func TestTheArmDeployGuardsItsOverlay(t *testing.T) {
 		if strings.Contains(line, "overlay_args") || strings.Contains(line, "curls") ||
 			strings.Contains(line, "pids") || strings.Contains(line, "files") {
 			t.Errorf("unguarded expansion, empty is a legitimate value here:\n  %s", strings.TrimSpace(line))
+		}
+	}
+}
+
+// The chart an arm deploys comes from one place, checked like the tooling: a
+// release's arm must not run this checkout's chart, nor a dirty one.
+func TestTheArmDeploysTheChartItNames(t *testing.T) {
+	src := armSource(t)
+	for _, want := range []string{
+		`CHART="${YARILO_ARM_CHART:-$REPO}"`,
+		`git -C "$CHART" status --porcelain`,
+		`echo "-- chart: $(git -C "$CHART" describe`,
+		`upgrade yarilo "$CHART/helm"`,
+		`-f "$CHART/helm_values/values-sandbox.yaml"`,
+		`OVERLAY="$CHART/helm_values/`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("ab-arm.sh lacks %s", want)
+		}
+	}
+	for _, stale := range []string{`"$REPO/helm"`, `"$REPO/helm_values/`} {
+		if strings.Contains(src, stale) {
+			t.Errorf("ab-arm.sh still deploys from %s", stale)
 		}
 	}
 }
@@ -156,6 +180,8 @@ func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 		{name: "oauth2-local", allow: `^components(\.auth)?$`, notAnArm: true},
 		{name: "oauth2-introspection", allow: `^components(\.auth)?$`, notAnArm: true},
 		{name: "oauth2-discovery", allow: `^components(\.auth)?$`, notAnArm: true},
+		// The policy overlay: every login would reach wforce, so never an arm (#2317).
+		{name: "wforce", allow: `^(components(\.auth)?|protocol(\.imap)?)$`, notAnArm: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -408,6 +434,7 @@ func TestTheSmoketestVerdictSkipsOnlyTheOAuth2RowsByName(t *testing.T) {
 	for _, n := range strings.Split(strings.Trim(strings.TrimPrefix(names, "SMOKE_OAUTH2_SKIPS="), "'"), "\n") {
 		oauth[n] = "oauth2"
 	}
+	passed, _ := strconv.Atoi(strings.TrimPrefix(checks, "SMOKE_CHECKS="))
 	if len(oauth) != 3 {
 		t.Fatalf("SMOKE_OAUTH2_SKIPS names %d rows, want 3", len(oauth))
 	}
@@ -426,11 +453,12 @@ func TestTheSmoketestVerdictSkipsOnlyTheOAuth2RowsByName(t *testing.T) {
 		log  string
 		ok   bool
 	}{
-		{"the oauth2 rows skipped", smokeLog(t, 54, 51, 0, oauth), true},
-		{"three skips, one of them not oauth2", smokeLog(t, 54, 51, 0, swapped), false},
-		{"another row skipped as well", smokeLog(t, 55, 51, 0, plusOne), false},
-		{"nothing skipped", smokeLog(t, 54, 54, 0, nil), false},
-		{"a failure", smokeLog(t, 54, 50, 1, oauth), false},
+		{"the oauth2 rows skipped", smokeLog(t, passed+3, passed, 0, oauth), true},
+		{"three skips, one of them not oauth2", smokeLog(t, passed+3, passed, 0, swapped), false},
+		{"another row skipped as well", smokeLog(t, passed+4, passed, 0, plusOne), false},
+		{"nothing skipped", smokeLog(t, passed+3, passed+3, 0, nil), false},
+		{"a failure", smokeLog(t, passed+3, passed-1, 1, oauth), false},
+		{"a row more than SMOKE_CHECKS", smokeLog(t, passed+4, passed+1, 0, oauth), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -458,5 +486,50 @@ func TestTheAcceptedSkipsAreTheSmoketestRows(t *testing.T) {
 	names := regexp.MustCompile(`(?ms)^SMOKE_OAUTH2_SKIPS='(.*?)'$`).FindStringSubmatch(acceptSource(t))
 	if len(code) != 3 || names == nil || strings.Join(code, "\n") != names[1] {
 		t.Errorf("smoketest names %q, accept.sh expects %q", code, names)
+	}
+}
+
+// An APPEND whose connection a domain move closed is not a failed append; any
+// other APPEND error, or one outside the kick's two seconds, still is (#2388).
+func TestAKickedAppendIsLeftOut(t *testing.T) {
+	fn := regexp.MustCompile(`(?ms)^not_kicked\(\) \{.*?^\}`).FindString(acceptSource(t))
+	if fn == "" {
+		t.Fatal("accept.sh lost not_kicked")
+	}
+	line := func(at, msg string) string {
+		return fmt.Sprintf(`{"time":"2026-10-29T%sZ","level":"ERROR","msg":%q,"service":"imap"}`, at, msg)
+	}
+	pipe := "handling APPEND command: write tcp 10.1.114.43:10143->10.1.114.39:44570: write: broken pipe"
+	kicks := `{"time":"2026-10-29T14:57:40.504577421Z","level":"INFO","msg":"director: domain moved, kicking its sessions off the old backend"}` + "\n"
+	cases := []struct {
+		name string
+		line string
+		kept bool
+	}{
+		{"broken pipe just after the kick", line("14:57:40.551953302", pipe), false},
+		{"reset within two seconds", line("14:57:42.100000000", "handling APPEND command: read: connection reset by peer"), false},
+		{"broken pipe after the window", line("14:57:43.000000000", pipe), true},
+		{"broken pipe before the kick", line("14:57:40.100000000", pipe), true},
+		{"another error at the kick", line("14:57:40.600000000", "handling APPEND command: quota exceeded"), true},
+	}
+	dir := t.TempDir()
+	kf := filepath.Join(dir, "kicks")
+	if err := os.WriteFile(kf, []byte(kicks), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lf := filepath.Join(t.TempDir(), "lines")
+			if err := os.WriteFile(lf, []byte(tc.line+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command("bash", "-c", fn+"\nnot_kicked "+kf+" "+lf).CombinedOutput()
+			if err != nil {
+				t.Fatalf("not_kicked: %v\n%s", err, out)
+			}
+			if kept := strings.TrimSpace(string(out)) != ""; kept != tc.kept {
+				t.Errorf("kept = %v, want %v (output %q)", kept, tc.kept, out)
+			}
+		})
 	}
 }

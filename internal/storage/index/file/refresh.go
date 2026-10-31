@@ -1,6 +1,6 @@
 package file
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
 // RefreshFolder re-reads the base and the log under the folder's lock: a caller
 // decides on the folder, not on what this process last read (#1739).

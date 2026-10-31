@@ -29,20 +29,20 @@ func checkJMAPFTSQuery(user string) error {
 		return fmt.Errorf("deliver: %w", err)
 	}
 
-	return assertFTSQueryFindsOnly(user, marker, absent, subject)
+	return assertFTSQueryFindsOnly(marker, absent, subject)
 }
 
 // assertFTSQueryFindsOnly is the judgement, kept apart from the delivery above
 // so it can be exercised without a cluster: the check is only as good as what
 // it refuses, and what it refuses is here.
-func assertFTSQueryFindsOnly(user, marker, absent, subject string) error {
+func assertFTSQueryFindsOnly(marker, absent, subject string) error {
 	// Indexing is asynchronous; the same budget the IMAP check waits with.
 	deadline := time.Now().Add(*flagTimeout * 3)
 	var ids []string
 	var lastErr error
 	for time.Now().Before(deadline) {
 		var kind string
-		ids, kind, lastErr = jmapQueryText(user, marker)
+		ids, kind, lastErr = jmapQueryText(marker)
 		switch {
 		// Only the type that says "retry" is retried. Waiting out anything
 		// else -- a transport failure, an unconfigured search, a bad argument
@@ -72,7 +72,7 @@ func assertFTSQueryFindsOnly(user, marker, absent, subject string) error {
 	if len(ids) != 1 {
 		return fmt.Errorf("Email/query text %q returned %d messages, want exactly the delivered one", marker, len(ids))
 	}
-	subj, err := jmapSubjectOf(user, ids[0])
+	subj, err := jmapSubjectOf(ids[0])
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func assertFTSQueryFindsOnly(user, marker, absent, subject string) error {
 	// A marker that was never delivered must find nothing. Without this a
 	// backend that ignores the condition and returns everything passes the
 	// assertion above.
-	other, _, err := jmapQueryText(user, absent)
+	other, _, err := jmapQueryText(absent)
 	if err != nil {
 		return fmt.Errorf("Email/query for an absent marker: %w", err)
 	}
@@ -114,13 +114,13 @@ const jmapServerUnavailable = "serverUnavailable"
 // jmapQueryText runs Email/query with one text condition. It returns the
 // method error's type alongside the error, because the wait above must tell a
 // lagging index from a broken one -- the distinction #1204 exists to carry.
-func jmapQueryText(user, text string) (ids []string, errType string, err error) {
+func jmapQueryText(text string) (ids []string, errType string, err error) {
 	filter, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
 		return nil, "", err
 	}
 	name, args, err := jmapCallRaw(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Email/query",{"accountId":"` + user + `","filter":` + string(filter) + `},"c0"]]}`)
+		`["Email/query",{"accountId":"` + jmapAccountID() + `","filter":` + string(filter) + `},"c0"]]}`)
 	if err != nil {
 		return nil, "", err
 	}
@@ -143,9 +143,9 @@ func jmapQueryText(user, text string) (ids []string, errType string, err error) 
 
 // jmapSubjectOf reads one message's subject, which is what identifies the hit
 // as the message that was just delivered.
-func jmapSubjectOf(user, id string) (string, error) {
+func jmapSubjectOf(id string) (string, error) {
 	args, err := jmapCall(`{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Email/get",{"accountId":"` + user + `","ids":["` + id + `"],"properties":["id","subject"]},"c0"]]}`)
+		`["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + id + `"],"properties":["id","subject"]},"c0"]]}`)
 	if err != nil {
 		return "", err
 	}

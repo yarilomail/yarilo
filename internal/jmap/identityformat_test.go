@@ -3,14 +3,14 @@ package jmap
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Cross-protocol identity must be a construction, not a coincidence: an id a
 // client reads over JMAP has to be the string IMAP reports for the same object
 // (RFC 8474 EMAILID / MAILBOXID). Formatting it inline here would keep working
-// until the day the shared formatter changes, and then diverge silently — this
+// until the day the shared formatter changes, and then diverge silently - this
 // test is the anchor that stops the inline version coming back.
 func TestObjectIDsUseTheSharedFormatter(t *testing.T) {
 	guids := [][16]byte{

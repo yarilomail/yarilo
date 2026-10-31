@@ -127,6 +127,7 @@ data:
         imap_quota: {{ .Values.protocol.imap.imap_quota }}
         imap_max_line_length: {{ .Values.protocol.imap.imap_max_line_length | int64 }}
         imap_id_send: {{ .Values.protocol.imap.imap_id_send | quote }}
+        imap_id_retain: {{ .Values.protocol.imap.imap_id_retain }}
         login_greeting: {{ .Values.protocol.imap.login_greeting | quote }}
         imap_logout_format: {{ .Values.protocol.imap.imap_logout_format | quote }}
         {{- with .Values.protocol.imap.client_workarounds }}
@@ -187,6 +188,12 @@ data:
         submission_max_recipients: {{ .Values.protocol.submission.max_recipients }}
         recipient_delimiter: {{ .Values.protocol.submission.recipient_delimiter | quote }}
         submission_add_received_header: {{ .Values.protocol.submission.add_received_header }}
+        {{- with .Values.protocol.submission.client_workarounds }}
+        submission_client_workarounds:
+          {{- range . }}
+          - {{ . | quote }}
+          {{- end }}
+        {{- end }}
         relay:
           submission_relay_host: {{ .Values.protocol.submission.relay.host | quote }}
           submission_relay_port: {{ .Values.protocol.submission.relay.port }}
@@ -222,13 +229,15 @@ data:
         jmap_max_objects_in_set: {{ $jmapP.jmap_max_objects_in_set }}
         jmap_max_size_upload: {{ $jmapP.jmap_max_size_upload | default "40M" | quote }}
         jmap_max_size_request: {{ $jmapP.jmap_max_size_request | default "10M" | quote }}
-        jmap_max_body_value_bytes: {{ $jmapP.jmap_max_body_value_bytes | default "256K" | quote }}
+        jmap_max_body_value_bytes: {{ $jmapP.jmap_max_body_value_bytes | quote }}
         jmap_query_max_limit: {{ $jmapP.jmap_query_max_limit }}
         jmap_max_query_folders: {{ $jmapP.jmap_max_query_folders }}
         jmap_snippet_max_chars: {{ $jmapP.jmap_snippet_max_chars }}
         jmap_upload_ttl: {{ $jmapP.jmap_upload_ttl }}
         jmap_submission_ttl_seconds: {{ $jmapP.jmap_submission_ttl_seconds }}
-        jmap_push_timeout: {{ $jmapP.jmap_push_timeout | default 90 }}
+        jmap_push_poll: {{ $jmapP.jmap_push_poll }}
+        jmap_websocket_timeout: {{ $jmapP.jmap_websocket_timeout }}
+        jmap_websocket_ticket_ttl: {{ $jmapP.jmap_websocket_ticket_ttl }}
         jmap_cors_allow_origins:
         {{- range ($jmapP.jmap_cors_allow_origins | default list) }}
           - {{ . | quote }}
@@ -307,7 +316,8 @@ data:
 
     {{- $auth := .Values.components.auth }}
     {{- include "yarilo.refuseCanonical" (dict "path" "components.auth" "obj" $auth "names" (dict "auth_failure_delay" "failure_delay")) }}
-    {{- include "yarilo.refuseCanonical" (dict "path" "components.auth.policy" "obj" $auth.policy "names" (dict "auth_policy_server_url" "url" "auth_policy_server_api_header" "api_header" "auth_policy_hash_mech" "hash_mech" "auth_policy_hash_nonce" "hash_nonce" "auth_policy_hash_truncate" "hash_truncate_bits" "auth_policy_reject_on_fail" "reject_on_fail" "auth_policy_log_only" "log_only" "auth_policy_check_before_auth" "check_before" "auth_policy_check_after_auth" "check_after" "auth_policy_report_after_auth" "report_after")) }}
+    {{- include "yarilo.refuseCanonical" (dict "path" "components.auth.cache" "obj" $auth.cache "names" (dict "auth_cache_size" "cache_size" "auth_cache_ttl" "ttl_seconds" "auth_cache_negative_ttl" "negative_ttl_seconds")) }}
+    {{- include "yarilo.refuseCanonical" (dict "path" "components.auth.policy" "obj" $auth.policy "names" (dict "auth_policy_server_url" "url" "auth_policy_server_api_header" "api_header" "auth_policy_hash_mech" "hash_mech" "auth_policy_hash_nonce" "hash_nonce" "auth_policy_hash_truncate" "hash_truncate_bits" "auth_policy_reject_on_fail" "reject_on_fail" "auth_policy_log_only" "log_only" "auth_policy_check_before_auth" "check_before" "auth_policy_check_after_auth" "check_after" "auth_policy_report_after_auth" "report_after" "auth_policy_request_attributes" "request_attributes")) }}
     {{- include "yarilo.refuseCanonical" (dict "path" "components.auth.master_users" "obj" $auth.master_users "names" (dict "auth_master_user_separator" "separator")) }}
     {{- range $i, $e := ($auth.oauth2 | default list) }}
     {{- include "yarilo.refuseCanonical" (dict "path" (printf "components.auth.oauth2[%d]" $i) "obj" $e "names" (dict "oauth2_mode" "mode" "oauth2_jwks_url" "jwks_url" "oauth2_introspection_url" "introspection_url" "oauth2_tokeninfo_url" "tokeninfo_url" "oauth2_issuer_url" "issuer_url" "oauth2_introspection_mode" "introspection_mode" "oauth2_prefer_introspection" "prefer_introspection" "oauth2_client_id" "client_id" "oauth2_client_secret" "client_secret" "oauth2_issuers" "issuers" "oauth2_audience" "audience" "oauth2_scope" "scopes" "oauth2_username_attribute" "username_attribute" "oauth2_username_validation_format" "username_validation_format" "oauth2_active_attribute" "active_attribute" "oauth2_active_value" "active_value" "oauth2_fields" "extra_fields" "oauth2_token_expire_grace_seconds" "token_expire_grace_seconds" "oauth2_http_timeout_ms" "http_timeout_ms" "oauth2_grant_url" "grant_url" "oauth2_local_keys" "local_keys" "oauth2_force_introspection" "force_introspection" "oauth2_tls_ca" "tls_ca" "oauth2_jwks_unknown_kid_interval_seconds" "jwks_unknown_kid_interval_seconds")) }}
@@ -342,6 +352,12 @@ data:
         auth_policy_log_only: {{ .Values.components.auth.policy.log_only | default false }}
         auth_policy_check_before_auth: {{ if hasKey $auth.policy "check_before" }}{{ $auth.policy.check_before }}{{ else }}true{{ end }}
         auth_policy_check_after_auth: {{ if hasKey $auth.policy "check_after" }}{{ $auth.policy.check_after }}{{ else }}true{{ end }}
+        {{- with $auth.policy.request_attributes }}
+        auth_policy_request_attributes:
+          {{- range $key, $tmpl := . }}
+          {{ $key | quote }}: {{ $tmpl | quote }}
+          {{- end }}
+        {{- end }}
         auth_policy_report_after_auth: {{ if hasKey $auth.policy "report_after" }}{{ $auth.policy.report_after }}{{ else }}true{{ end }}
       oauth2:
         {{- range $i, $e := (.Values.components.auth.oauth2 | default list) }}
@@ -729,7 +745,7 @@ data:
 
     {{- $storage := .Values.storage }}
     {{- if and $storage $storage.volatileDir }}
-    {{- fail "storage.volatileDir is not read by this chart; the key is storage.volatile_dir. Rename it — as written, the index tmp file keeps its fsync on the mail volume." }}
+    {{- fail "storage.volatileDir is not read by this chart; the key is storage.volatile_dir. Rename it - as written, the index tmp file keeps its fsync on the mail volume." }}
     {{- end }}
     {{- if $storage }}
     storage:
@@ -848,7 +864,7 @@ data:
 
     {{- include "yarilo.internalTLSNoComponentFlags" . }}
     internal_tls:
-      {{- /* Single source for "internal mTLS on anywhere" — the same helper yarctl's
+      {{- /* Single source for "internal mTLS on anywhere" - the same helper yarctl's
              backend client keys on (#954), so the server-HTTPS decision and the
              admin-client decision can never drift. */}}
       {{- $anyTLS := eq (include "yarilo.internalTLSEnabled" .) "true" }}
@@ -943,6 +959,7 @@ data:
       director_addr: {{ .Values.components.jmapLogin.director_addr | quote }}
       backend_port: {{ .Values.components.jmapLogin.backend_port | default 0 }}
       director_tag: {{ .Values.components.jmapLogin.director_tag | quote }}
+      websocket_ticket_key: "${JMAP_WEBSOCKET_TICKET_KEY}"
     {{- end }}
 
     {{- if .Values.components.submissionLogin.enabled }}
@@ -1025,7 +1042,7 @@ data:
 
     {{- end }}
     {{- if hasKey .Values.components.auth "wait_pool_size" }}
-    {{- fail "components.auth.wait_pool_size is not read by this chart; the key is components.locks.client.wait_pool_size. Move it — as written, the lock client keeps the default." }}
+    {{- fail "components.auth.wait_pool_size is not read by this chart; the key is components.locks.client.wait_pool_size. Move it - as written, the lock client keeps the default." }}
     {{- end }}
     ## Every session binary (yarilo-imap / pop3 / submission / lmtp) dials this.
     locks_client:
@@ -1132,7 +1149,7 @@ data:
       ## (#763) can poll each peer directly. The ClusterIP -director
       ## resolves to a single virtual IP, which load-balances every dial
       ## randomly (including back to self) and silently reintroduces the
-      ## formation partition #759 fought — that Service stays the LOOKUP
+      ## formation partition #759 fought - that Service stays the LOOKUP
       ## endpoint for login pods, not the ring seed. A lone replica
       ## (N=1) needs no seed at all.
       {{- $peers := .Values.components.director.peers }}
@@ -1157,7 +1174,7 @@ data:
     ## yarilo-backend-reg sidecar (one BACKEND-UP for the pod IP) and by the
     ## protocol containers' readiness touchers. An empty director_addr disables
     ## registration (standalone / non-cluster runs). director_addr auto-derives
-    ## to the ClusterIP -director Service — the same LOOKUP endpoint — when
+    ## to the ClusterIP -director Service - the same LOOKUP endpoint - when
     ## register is enabled and no explicit override is set; any replica answers,
     ## the registration gossips ring-wide.
     {{- $reg := .Values.backend_register }}
@@ -1175,7 +1192,7 @@ data:
       readiness_stale_after: {{ $reg.readiness_stale_after }}
       {{- /* The sidecar gate must wait on exactly the protocols that actually
              run in the pod. Under co-located, derive the list from the same
-             components.<proto>.enabled flags the StatefulSet filters on — a
+             components.<proto>.enabled flags the StatefulSet filters on - a
              disabled protocol has no ready-file and would otherwise silence the
              heartbeat forever. Otherwise fall back to the explicit values list. */}}
       {{- if .Values.components.backend.coLocated }}

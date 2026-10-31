@@ -7,8 +7,8 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // ACL enforcement entry points. The require* helpers resolve a folder name
@@ -66,6 +66,27 @@ func (s *session) requireRight(h *nsHandle, folder string, right rune) error {
 		return nil
 	}
 	return s.aclRefusal(h, folder, right)
+}
+
+// selectReadOnly reports whether SELECT answers [READ-ONLY]: the user holds
+// none of the rights that change a mailbox (i, e, w, t, s).
+func (s *session) selectReadOnly(h *nsHandle, folder string) (bool, error) {
+	if !s.aclEnforced(h) {
+		return false, nil
+	}
+	effective, err := s.effectiveRights(h, folder)
+	if err != nil {
+		return false, aclUnavailable(folder, err)
+	}
+	for _, r := range []rune{
+		mailbox.RightInsert, mailbox.RightExpunge, mailbox.RightWrite,
+		mailbox.RightDeleteMessage, mailbox.RightWriteSeen,
+	} {
+		if effective.Has(r) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // requireMetadataAccess gates RFC 5464 mailbox METADATA: the accessing user

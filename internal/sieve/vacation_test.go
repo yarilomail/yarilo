@@ -10,7 +10,7 @@ import (
 
 	"github.com/foxcpp/go-sieve/interp"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // markStore records the vacation marks; nothing else of the store is used.

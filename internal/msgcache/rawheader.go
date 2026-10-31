@@ -3,8 +3,8 @@ package msgcache
 import (
 	"github.com/emersion/go-message/textproto"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // RawHeader gives imaptext the header values as the message carried them: the

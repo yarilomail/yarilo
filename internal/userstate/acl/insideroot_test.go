@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The admin path writes the files the IMAP commands read, so a name IMAP
 // refuses must not be writable here. "." and "/" were: on maildir both resolve
-// to <mailroot>/../yarilo-acl — outside the namespace, in the directory every
+// to <mailroot>/../yarilo-acl - outside the namespace, in the directory every
 // user's tree shares (#1091).
 func TestStoreRefusesNamesThatLandOutsideTheNamespace(t *testing.T) {
 	root := t.TempDir()
@@ -19,7 +19,7 @@ func TestStoreRefusesNamesThatLandOutsideTheNamespace(t *testing.T) {
 
 	// Only the names that actually escape. ".." is refused a layer up, by the
 	// name rules, because on maildir it resolves to a directory called "..."
-	// *inside* the root — junk, but not an escape, and this guard answers
+	// *inside* the root - junk, but not an escape, and this guard answers
 	// about escapes.
 	for _, folder := range []string{".", "/"} {
 		err := s.Set(folder, grant)
@@ -66,7 +66,7 @@ func TestStoreAllowsAnyFileInsideTheNamespaceRoot(t *testing.T) {
 // The guard was written before the root ACL had a real spelling, so it asserted
 // a property about a hypothesis: "a file inside the root will pass". Now that
 // RootFileName exists, it is run against the name actually chosen, on every
-// layout — the maildir case being the one the old collision made impossible.
+// layout - the maildir case being the one the old collision made impossible.
 func TestGuardAllowsTheRealNamespaceRootFile(t *testing.T) {
 	for _, driver := range []string{"maildir", "mdbox", "sdbox"} {
 		root := t.TempDir()
@@ -82,7 +82,7 @@ func TestGuardAllowsTheRealNamespaceRootFile(t *testing.T) {
 			t.Errorf("%s: Path(\"\") = %q, which is not the root ACL file", driver, got)
 		}
 		if !strings.HasPrefix(got, s.mailboxesRoot()) {
-			t.Errorf("%s: root ACL %q is outside %q — the guard passed it for the wrong reason",
+			t.Errorf("%s: root ACL %q is outside %q - the guard passed it for the wrong reason",
 				driver, got, s.mailboxesRoot())
 		}
 	}

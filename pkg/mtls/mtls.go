@@ -46,7 +46,7 @@ func ServerConfig(certFile, keyFile, caFile string, l Listener) (*tls.Config, er
 // session_cache_ttl.
 func ClientConfig(certFile, keyFile, caFile, serverName string, cacheSize, cacheTTLSecs int) (*tls.Config, error) {
 	if serverName == "" {
-		return nil, fmt.Errorf("mtls: empty ServerName — set internal_tls.server_name (or ring_tls_server_name for the director ring); mTLS peer verification needs a stable pinned name")
+		return nil, fmt.Errorf("mtls: empty ServerName - set internal_tls.server_name (or ring_tls_server_name for the director ring); mTLS peer verification needs a stable pinned name")
 	}
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {

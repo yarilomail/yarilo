@@ -7,12 +7,20 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/counters"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // sieveServer serves testUser with RFC 9661 over a fresh fs script store.
@@ -52,7 +60,7 @@ func createArgs(blob, name, extra string) string {
 	if name != "" {
 		nameField = `,"name":"` + name + `"`
 	}
-	return `{"accountId":"` + testUser + `","create":{"c1":{"blobId":"` + blob + `"` + nameField + `}}` + extra + `}`
+	return `{"accountId":"` + testAccount + `","create":{"c1":{"blobId":"` + blob + `"` + nameField + `}}` + extra + `}`
 }
 
 func TestSieveScriptCreate(t *testing.T) {
@@ -87,11 +95,11 @@ func TestSieveScriptCreateWithoutAName(t *testing.T) {
 // A script stored over ManageSieve is listed, and moves the state.
 func TestSieveScriptSeesManageSieveWrites(t *testing.T) {
 	s, home, st := sieveServer(t, sieve.Quota{})
-	before := sieveCall(t, s, "SieveScript/get", `{"accountId":"`+testUser+`","ids":null}`)
+	before := sieveCall(t, s, "SieveScript/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	if err := st.SaveScript(context.Background(), testUser, home, "from-managesieve", []byte(keepScript)); err != nil {
 		t.Fatal(err)
 	}
-	after := sieveCall(t, s, "SieveScript/get", `{"accountId":"`+testUser+`","ids":null}`)
+	after := sieveCall(t, s, "SieveScript/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	list, _ := after["list"].([]any)
 	if len(list) != 1 || !strings.Contains(fmt.Sprint(list[0]), "from-managesieve") {
 		t.Errorf("list = %v, want the ManageSieve script", list)
@@ -174,12 +182,12 @@ func TestSieveScriptActivation(t *testing.T) {
 	}
 	two, _ := entry(out, "created", "c1")["id"].(string)
 
-	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testUser+`","destroy":["`+two+`"]}`)
+	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testAccount+`","destroy":["`+two+`"]}`)
 	if entry(out, "notDestroyed", two)["type"] != "sieveIsActive" {
 		t.Errorf("destroying the active script = %v, want sieveIsActive", out)
 	}
 
-	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testUser+`","onSuccessDeactivateScript":true}`)
+	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testAccount+`","onSuccessDeactivateScript":true}`)
 	if entry(out, "updated", two)["isActive"] != false {
 		t.Errorf("updated = %v, want %s reported inactive", out["updated"], two)
 	}
@@ -187,7 +195,7 @@ func TestSieveScriptActivation(t *testing.T) {
 		t.Errorf("active = %q after deactivation", active)
 	}
 
-	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testUser+`","destroy":["`+two+`"]}`)
+	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testAccount+`","destroy":["`+two+`"]}`)
 	if d, _ := out["destroyed"].([]any); len(d) != 1 {
 		t.Errorf("destroyed = %v, want %s", out["destroyed"], two)
 	}
@@ -201,7 +209,7 @@ func TestSieveScriptDeactivateThenActivate(t *testing.T) {
 	blob := uploadAs(t, s, testUser, keepScript)
 	out := sieveCall(t, s, "SieveScript/set", createArgs(blob, "one", ""))
 	one, _ := entry(out, "created", "c1")["id"].(string)
-	sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testUser+`","onSuccessDeactivateScript":true,"onSuccessActivateScript":"`+one+`"}`)
+	sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testAccount+`","onSuccessDeactivateScript":true,"onSuccessActivateScript":"`+one+`"}`)
 	if active, _ := st.ActiveScriptName(ctx, testUser, home); active != "one" {
 		t.Errorf("active = %q, want one", active)
 	}
@@ -213,7 +221,7 @@ func TestSieveScriptActivationNeedsEverySuccess(t *testing.T) {
 	s, home, st := sieveServer(t, sieve.Quota{})
 	good := uploadAs(t, s, testUser, keepScript)
 	bad := uploadAs(t, s, testUser, "if true {")
-	args := `{"accountId":"` + testUser + `","create":{"c1":{"blobId":"` + good + `","name":"ok"},"c2":{"blobId":"` + bad + `","name":"bad"}},"onSuccessActivateScript":"#c1"}`
+	args := `{"accountId":"` + testAccount + `","create":{"c1":{"blobId":"` + good + `","name":"ok"},"c2":{"blobId":"` + bad + `","name":"bad"}},"onSuccessActivateScript":"#c1"}`
 	out := sieveCall(t, s, "SieveScript/set", args)
 	if entry(out, "created", "c1")["isActive"] != false {
 		t.Errorf("created c1 = %v, want inactive", entry(out, "created", "c1"))
@@ -230,13 +238,13 @@ func TestSieveScriptUpdate(t *testing.T) {
 	id, _ := entry(out, "created", "c1")["id"].(string)
 	sieveCall(t, s, "SieveScript/set", createArgs(uploadAs(t, s, testUser, keepScript), "other", ""))
 
-	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testUser+`","update":{"`+id+`":{"name":"other"}}}`)
+	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testAccount+`","update":{"`+id+`":{"name":"other"}}}`)
 	if e := entry(out, "notUpdated", id); e["type"] != "alreadyExists" || e["existingId"] == nil {
 		t.Errorf("renaming onto a taken name = %v, want alreadyExists with existingId", e)
 	}
 
 	blob := uploadAs(t, s, testUser, discardScript)
-	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testUser+`","update":{"`+id+`":{"name":"new","blobId":"`+blob+`"}}}`)
+	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testAccount+`","update":{"`+id+`":{"name":"new","blobId":"`+blob+`"}}}`)
 	if _, ok := out["updated"].(map[string]any)[id]; !ok {
 		t.Fatalf("update = %v", out)
 	}
@@ -247,13 +255,13 @@ func TestSieveScriptUpdate(t *testing.T) {
 	if active, _ := st.ActiveScriptName(ctx, testUser, home); active != "new" {
 		t.Errorf("active = %q, want the renamed script", active)
 	}
-	got := sieveCall(t, s, "SieveScript/get", `{"accountId":"`+testUser+`","ids":["`+id+`"]}`)
+	got := sieveCall(t, s, "SieveScript/get", `{"accountId":"`+testAccount+`","ids":["`+id+`"]}`)
 	if list, _ := got["list"].([]any); len(list) != 1 || !strings.Contains(fmt.Sprint(list[0]), "name:new") {
 		t.Errorf("get %s = %v, want the same id under the new name", id, got)
 	}
 
 	// Renamed and deactivated in one call: the deactivation names the same id.
-	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testUser+`","update":{"`+id+`":{"name":"newer"}},"onSuccessDeactivateScript":true}`)
+	out = sieveCall(t, s, "SieveScript/set", `{"accountId":"`+testAccount+`","update":{"`+id+`":{"name":"newer"}},"onSuccessDeactivateScript":true}`)
 	if entry(out, "updated", id)["isActive"] != false {
 		t.Errorf("updated = %v, want %s reported inactive", out["updated"], id)
 	}
@@ -261,7 +269,7 @@ func TestSieveScriptUpdate(t *testing.T) {
 
 func TestSieveScriptIfInState(t *testing.T) {
 	s, _, _ := sieveServer(t, sieve.Quota{})
-	name, out := callAs(t, s, testUser, "SieveScript/set", `{"accountId":"`+testUser+`","ifInState":"999","destroy":[]}`)
+	name, out := callAs(t, s, testUser, "SieveScript/set", `{"accountId":"`+testAccount+`","ifInState":"999","destroy":[]}`)
 	if name != "error" || out["type"] != "stateMismatch" {
 		t.Errorf("answered %s %v, want stateMismatch", name, out)
 	}
@@ -288,7 +296,7 @@ func TestSieveScriptQuery(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out := sieveCall(t, s, "SieveScript/query", `{"accountId":"`+testUser+`",`+c.args+`}`)
+			out := sieveCall(t, s, "SieveScript/query", `{"accountId":"`+testAccount+`",`+c.args+`}`)
 			var want []any
 			for _, n := range c.want {
 				want = append(want, ix.IDs[n])
@@ -299,7 +307,7 @@ func TestSieveScriptQuery(t *testing.T) {
 		})
 	}
 	for _, bad := range []string{`"filter":{"blobId":"x"}`, `"sort":[{"property":"blobId"}]`} {
-		name, out := callAs(t, s, testUser, "SieveScript/query", `{"accountId":"`+testUser+`",`+bad+`}`)
+		name, out := callAs(t, s, testUser, "SieveScript/query", `{"accountId":"`+testAccount+`",`+bad+`}`)
 		if name != "error" || !strings.HasPrefix(fmt.Sprint(out["type"]), "unsupported") {
 			t.Errorf("%s answered %s %v, want unsupportedFilter/Sort", bad, name, out)
 		}
@@ -312,7 +320,7 @@ func TestSieveScriptValidate(t *testing.T) {
 		script string
 		want   any
 	}{{keepScript, nil}, {"if true {", "invalidSieve"}} {
-		out := sieveCall(t, s, "SieveScript/validate", `{"accountId":"`+testUser+`","blobId":"`+uploadAs(t, s, testUser, c.script)+`"}`)
+		out := sieveCall(t, s, "SieveScript/validate", `{"accountId":"`+testAccount+`","blobId":"`+uploadAs(t, s, testUser, c.script)+`"}`)
 		e, _ := out["error"].(map[string]any)
 		if (c.want == nil && out["error"] != nil) || (c.want != nil && e["type"] != c.want) {
 			t.Errorf("validate %q = %v, want %v", c.script, out["error"], c.want)
@@ -332,7 +340,7 @@ func TestSieveScriptValidateIhaveHoldsToSieveExtensions(t *testing.T) {
 		{`require "ihave"; fileinto "X";`, "invalidSieve"},
 		{`require "ihave"; if ihave "fileinto" { fileinto "X"; }`, nil},
 	} {
-		out := sieveCall(t, s, "SieveScript/validate", `{"accountId":"`+testUser+`","blobId":"`+uploadAs(t, s, testUser, c.script)+`"}`)
+		out := sieveCall(t, s, "SieveScript/validate", `{"accountId":"`+testAccount+`","blobId":"`+uploadAs(t, s, testUser, c.script)+`"}`)
 		e, _ := out["error"].(map[string]any)
 		if (c.want == nil && out["error"] != nil) || (c.want != nil && e["type"] != c.want) {
 			t.Errorf("validate %q = %v, want %v", c.script, out["error"], c.want)
@@ -348,7 +356,7 @@ func TestSieveScriptLeavesGlobalExtensionsOut(t *testing.T) {
 	if got := fmt.Sprint(s.opts.Sieve.session().Account.SieveExtensions); got != "[envelope]" {
 		t.Errorf("sieveExtensions = %s, want [envelope]", got)
 	}
-	out := sieveCall(t, s, "SieveScript/validate", `{"accountId":"`+testUser+`","blobId":"`+uploadAs(t, s, testUser, `require "fileinto"; fileinto "X";`)+`"}`)
+	out := sieveCall(t, s, "SieveScript/validate", `{"accountId":"`+testAccount+`","blobId":"`+uploadAs(t, s, testUser, `require "fileinto"; fileinto "X";`)+`"}`)
 	if e, _ := out["error"].(map[string]any); e["type"] != "invalidSieve" {
 		t.Errorf("validate = %v, want invalidSieve", out["error"])
 	}
@@ -359,7 +367,7 @@ func TestSieveScriptDownload(t *testing.T) {
 	ctx := context.Background()
 	s, home, st := sieveServer(t, sieve.Quota{})
 	_ = st.SaveScript(ctx, testUser, home, "dl", []byte(discardScript))
-	r := httptest.NewRequest(http.MethodGet, "/jmap/download/"+testUser+"/"+scriptBlobID([]byte(discardScript))+"/dl.sieve", nil)
+	r := httptest.NewRequest(http.MethodGet, "/jmap/download/"+testAccount+"/"+scriptBlobID([]byte(discardScript))+"/dl.sieve", nil)
 	r.RemoteAddr = trustedPeer
 	r.Header.Set(hdrUser, testUser)
 	r.Header.Set(hdrSessionID, "deadbeefdeadbeef")
@@ -418,7 +426,7 @@ func TestNewAdvertisesSieveFromItsOptions(t *testing.T) {
 // the door, not answered method by method.
 func TestSieveCapabilityIsRefusedWhereItIsNotServed(t *testing.T) {
 	s, _, _ := storedServerWithMessageAt(t, "Subject: seed\r\n\r\nseed\r\n", 0)
-	body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:sieve"],"methodCalls":[["SieveScript/get",{"accountId":"` + testUser + `"},"c0"]]}`
+	body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:sieve"],"methodCalls":[["SieveScript/get",{"accountId":"` + testAccount + `"},"c0"]]}`
 	w := postAPIRaw(t, s, body)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "unknownCapability") {
 		t.Errorf("status %d %s, want 400 unknownCapability", w.Code, w.Body)
@@ -504,5 +512,90 @@ func TestExistingIDFallsBackToTheCallsStart(t *testing.T) {
 				t.Errorf("existingID = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// A script write is announced on the user's key, so it reaches the account's
+// push: the store is handed the login, never the account id that encodes it.
+func TestAScriptWriteIsAnnouncedOnTheUsersKey(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		do   func(t *testing.T, s *Server)
+	}{
+		{"SieveScript/set", func(t *testing.T, s *Server) {
+			sieveCall(t, s, "SieveScript/set", createArgs(uploadAs(t, s, testUser, keepScript), "mine", ""))
+		}},
+		{"VacationResponse/set", func(t *testing.T, s *Server) {
+			vacationUpdate(t, s, `{"isEnabled":true,"subject":"Away","textBody":"Back on Monday."}`)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := vacationServer(t)
+			rec := &testLocker{}
+			s.opts.Sieve.Store = sieve.NewScriptStore("fs", "", rec, nil)
+			tc.do(t, s)
+			rec.mu.Lock()
+			events := append([]string(nil), rec.events...)
+			rec.mu.Unlock()
+			if !slices.ContainsFunc(events, func(e string) bool { return strings.HasPrefix(e, locks.SieveScriptsKey(testUser)+" ") }) {
+				t.Errorf("events %v, want one on %s", events, locks.SieveScriptsKey(testUser))
+			}
+		})
+	}
+}
+
+// On a store keyed by user (the dict driver) a script is written and read
+// under the login, so what one call wrote the next one finds.
+func TestTheDictStoreFindsWhatJMAPWrote(t *testing.T) {
+	s, _, _ := vacationServer(t)
+	d, err := memory.New(dict.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.opts.Sieve.Store = sieve.NewScriptStore("dict", "", nil, d)
+	sieveCall(t, s, "SieveScript/set", createArgs(uploadAs(t, s, testUser, keepScript), "mine", ""))
+	got := sieveCall(t, s, "SieveScript/get", `{"accountId":"`+testAccount+`","ids":null,"properties":["name"]}`)
+	if list, _ := got["list"].([]any); len(list) != 1 {
+		t.Fatalf("SieveScript/get list %v, want the one written", got["list"])
+	}
+	vacationUpdate(t, s, `{"isEnabled":true,"subject":"Away","textBody":"Back."}`)
+	if v := vacationGetOne(t, s); v["isEnabled"] != true {
+		t.Errorf("VacationResponse after enabling = %v", v)
+	}
+}
+
+// Push reads a script's state under the key the methods write it under, the
+// login, even where userdb names the user otherwise.
+func TestPushSeesAScriptWrittenUnderTheLogin(t *testing.T) {
+	s, _, _ := vacationServer(t)
+	d, err := memory.New(dict.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.opts.Sieve.Store = sieve.NewScriptStore("dict", "", nil, d)
+	resolve := s.opts.Storage.ResolveUser
+	s.opts.Storage.ResolveUser = func(u string) (*mailbox.UserInfo, error) {
+		info, err := resolve(u)
+		if err == nil {
+			info.Username = "canonical@example.com"
+		}
+		return info, err
+	}
+	state := func() map[counters.Type]string {
+		got, err := s.statesOf(context.Background(), testUser, []counters.Type{counters.SieveScript, counters.VacationResponse})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	before := state()
+	sieveCall(t, s, "SieveScript/set", createArgs(uploadAs(t, s, testUser, keepScript), "mine", ""))
+	if after := state(); after[counters.SieveScript] == before[counters.SieveScript] {
+		t.Errorf("SieveScript state %q did not move after a write", after[counters.SieveScript])
+	}
+	before = state()
+	vacationUpdate(t, s, `{"isEnabled":true,"subject":"Away","textBody":"Back."}`)
+	if after := state(); after[counters.VacationResponse] == before[counters.VacationResponse] {
+		t.Errorf("VacationResponse state %q did not move after a write", after[counters.VacationResponse])
 	}
 }

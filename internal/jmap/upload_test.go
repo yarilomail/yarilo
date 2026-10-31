@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 const importable = "From: a@example.com\r\nSubject: imported\r\n\r\nimported body\r\n"
@@ -46,6 +48,12 @@ func upload(t *testing.T, s *Server, account string, body io.Reader) *httptest.R
 
 func uploadedID(t *testing.T, w *httptest.ResponseRecorder) string {
 	t.Helper()
+	return uploadedIDIn(t, w, testAccount)
+}
+
+// uploadedIDIn is the blob id of an upload made in account.
+func uploadedIDIn(t *testing.T, w *httptest.ResponseRecorder, account string) string {
+	t.Helper()
 	if w.Code != http.StatusCreated {
 		t.Fatalf("upload status %d: %s", w.Code, w.Body)
 	}
@@ -53,16 +61,20 @@ func uploadedID(t *testing.T, w *httptest.ResponseRecorder) string {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
+	// The upload answers the account it was made in (RFC 8620 §6.1).
+	if got["accountId"] != account {
+		t.Errorf("upload accountId %v, want %q", got["accountId"], account)
+	}
 	return got["blobId"].(string)
 }
 
 func TestUploadStoresByContentInTheControlRoot(t *testing.T) {
 	s, home := uploadServer(t)
-	first := uploadedID(t, upload(t, s, testUser, strings.NewReader(importable)))
+	first := uploadedID(t, upload(t, s, testAccount, strings.NewReader(importable)))
 	if !strings.HasPrefix(first, "U") || !strings.HasSuffix(first, fmt.Sprintf("-%d", len(importable))) {
 		t.Errorf("blob id %q", first)
 	}
-	if again := uploadedID(t, upload(t, s, testUser, strings.NewReader(importable))); again != first {
+	if again := uploadedID(t, upload(t, s, testAccount, strings.NewReader(importable))); again != first {
 		t.Errorf("the same bytes got %q, then %q", first, again)
 	}
 	entries, _ := os.ReadDir(filepath.Join(home, "jmap-blobs", "tmp"))
@@ -78,11 +90,12 @@ func TestUploadRefusals(t *testing.T) {
 		body          io.Reader
 		code          int
 	}{
-		{"another account", foreignUser, strings.NewReader(importable), http.StatusNotFound},
+		{"another account", jmapcore.AccountID(foreignUser), strings.NewReader(importable), http.StatusNotFound},
+		{"the username, not the account id", testUser, strings.NewReader(importable), http.StatusNotFound},
 		{"no account", "", strings.NewReader(importable), http.StatusNotFound},
-		{"over the cap", testUser, strings.NewReader(strings.Repeat("x", 300)), http.StatusRequestEntityTooLarge},
+		{"over the cap", testAccount, strings.NewReader(strings.Repeat("x", 300)), http.StatusRequestEntityTooLarge},
 		// No Content-Length: the body is cut at the cap while it is read.
-		{"over the cap, chunked", testUser, io.MultiReader(strings.NewReader(strings.Repeat("x", 300))), http.StatusRequestEntityTooLarge},
+		{"over the cap, chunked", testAccount, io.MultiReader(strings.NewReader(strings.Repeat("x", 300))), http.StatusRequestEntityTooLarge},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,7 +117,7 @@ func TestUploadIsHeldToTheQuota(t *testing.T) {
 	body := strings.Repeat("y", 200)
 	accepted := 0
 	for i := 0; i < 8; i++ {
-		w := upload(t, s, testUser, strings.NewReader(body+fmt.Sprint(i)))
+		w := upload(t, s, testAccount, strings.NewReader(body+fmt.Sprint(i)))
 		if w.Code == http.StatusInsufficientStorage {
 			break
 		}
@@ -119,7 +132,7 @@ func TestUploadIsHeldToTheQuota(t *testing.T) {
 func importCall(t *testing.T, s *Server, blob string, keywords string) map[string]any {
 	t.Helper()
 	args := fmt.Sprintf(`{"accountId":%q,"emails":{"c1":{"blobId":%q,"mailboxIds":{%q:true},"keywords":%s}}}`,
-		testUser, blob, inboxID(t, s), keywords)
+		testAccount, blob, inboxID(t, s), keywords)
 	name, out := callAs(t, s, testUser, "Email/import", args)
 	if name != "Email/import" {
 		t.Fatalf("answered %s %v", name, out)
@@ -129,7 +142,7 @@ func importCall(t *testing.T, s *Server, blob string, keywords string) map[strin
 
 func TestImportTakesAnUploadIntoAMailbox(t *testing.T) {
 	s, _ := uploadServer(t)
-	blob := uploadedID(t, upload(t, s, testUser, strings.NewReader(importable)))
+	blob := uploadedID(t, upload(t, s, testAccount, strings.NewReader(importable)))
 	out := importCall(t, s, blob, `{"$seen":true,"work":true}`)
 	created, _ := out["created"].(map[string]any)
 	c1, _ := created["c1"].(map[string]any)
@@ -137,7 +150,7 @@ func TestImportTakesAnUploadIntoAMailbox(t *testing.T) {
 	if id == "" || out["newState"] == out["oldState"] {
 		t.Fatalf("import %v", out)
 	}
-	got := emailGet(t, s, `{"accountId":"`+testUser+`","ids":["`+id+`"],"properties":["subject","keywords","mailboxIds"]}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["subject","keywords","mailboxIds"]}`)
 	email := firstEmail(t, got)
 	kw := fmt.Sprint(email["keywords"])
 	if email["subject"] != "imported" || !strings.Contains(kw, "$seen") || !strings.Contains(kw, "work") {
@@ -155,7 +168,7 @@ func TestImportRefusesWhatItCannotRead(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "jmap-blobs", "tmp", forged), []byte(importable), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	expired := uploadedID(t, upload(t, s, testUser, strings.NewReader(importable+"x")))
+	expired := uploadedID(t, upload(t, s, testAccount, strings.NewReader(importable+"x")))
 	old := time.Now().Add(-2 * time.Hour)
 	if err := os.Chtimes(filepath.Join(home, "jmap-blobs", "tmp", expired), old, old); err != nil {
 		t.Fatal(err)
@@ -178,14 +191,14 @@ func TestImportRefusesWhatItCannotRead(t *testing.T) {
 
 func uploadAs(t *testing.T, s *Server, user string, body string) string {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodPost, "/jmap/upload/"+user+"/", strings.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/jmap/upload/"+jmapcore.AccountID(user)+"/", strings.NewReader(body))
 	r.RemoteAddr = trustedPeer
 	r.Header.Set(hdrUser, user)
 	r.Header.Set(hdrSessionID, "deadbeefdeadbeef")
 	r.Header.Set(hdrProxyTTL, "4")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
-	return uploadedID(t, w)
+	return uploadedIDIn(t, w, jmapcore.AccountID(user))
 }
 
 // The URL the session advertises serves what the upload stored, to its owner.
@@ -212,7 +225,7 @@ func TestDownloadServesAnUpload(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testUser+"/"+tc.blob+"/x"))
+			s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+tc.blob+"/x"))
 			if w.Code != tc.code {
 				t.Fatalf("status %d, want %d", w.Code, tc.code)
 			}
@@ -232,7 +245,7 @@ func TestImportedReplyJoinsItsThread(t *testing.T) {
 	reply := "Message-ID: <reply@x>\r\nIn-Reply-To: <root@x>\r\nSubject: Re: Plan\r\n\r\nbody\r\n"
 	var threadsOf []any
 	for _, raw := range []string{root, reply} {
-		blob := uploadedID(t, upload(t, s, testUser, strings.NewReader(raw)))
+		blob := uploadedID(t, upload(t, s, testAccount, strings.NewReader(raw)))
 		created, _ := importCall(t, s, blob, `{}`)["created"].(map[string]any)
 		c1, _ := created["c1"].(map[string]any)
 		threadsOf = append(threadsOf, c1["threadId"])

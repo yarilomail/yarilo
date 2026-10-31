@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
 )
 
 // The ConfigMap and the binary must come from one chart version, and when they

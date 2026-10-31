@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 func jmapHost() string {
@@ -128,7 +130,7 @@ func checkJMAPBatch() error {
 		return fmt.Errorf("response carries no sessionState: %s", raw)
 	}
 	// The second response must be the echo, not an error, and must carry the
-	// ids the first call produced — that is the back-reference having resolved.
+	// ids the first call produced - that is the back-reference having resolved.
 	var name string
 	if err := json.Unmarshal(out.MethodResponses[1][0], &name); err != nil {
 		return fmt.Errorf("second response name: %w", err)
@@ -194,7 +196,7 @@ func checkJMAPBodyCap() error {
 // mailbox names a parent that is in the same response.
 func checkJMAPMailboxes() error {
 	body := `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Mailbox/get",{"accountId":"` + *flagJMAPUser + `"},"c0"]]}`
+		`["Mailbox/get",{"accountId":"` + jmapAccountID() + `"},"c0"]]}`
 	args, err := jmapCall(body)
 	if err != nil {
 		return err
@@ -253,8 +255,8 @@ func checkJMAPMailboxes() error {
 // Mailbox/get does and states plainly that it cannot calculate changes.
 func checkJMAPMailboxQuery() error {
 	body := `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Mailbox/query",{"accountId":"` + *flagJMAPUser + `","filter":{"role":"inbox"}},"c0"],` +
-		`["Mailbox/get",{"accountId":"` + *flagJMAPUser + `",` +
+		`["Mailbox/query",{"accountId":"` + jmapAccountID() + `","filter":{"role":"inbox"}},"c0"],` +
+		`["Mailbox/get",{"accountId":"` + jmapAccountID() + `",` +
 		`"#ids":{"resultOf":"c0","name":"Mailbox/query","path":"/ids"}},"c1"]]}`
 	url := "https://" + net.JoinHostPort(jmapHost(), *flagJMAPPort) + "/jmap/api/"
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, strings.NewReader(body))
@@ -395,6 +397,42 @@ func jmapCallAll(body string) ([]jmapResponse, error) {
 	return all, nil
 }
 
+// jmapAccountID is the configured user's mail account id, read from the
+// session as a client reads it: the id is the server's, not the username.
+func jmapAccountID() string {
+	c := jmapAccount
+	c.once.Do(func() {
+		url := "https://" + net.JoinHostPort(jmapHost(), *flagJMAPPort) + "/.well-known/jmap"
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		if err != nil {
+			return
+		}
+		req.SetBasicAuth(*flagJMAPUser, *flagJMAPPass)
+		resp, err := jmapClient().Do(req)
+		if err != nil {
+			slog.Warn("smoke: jmap session for the account id", "err", err)
+			return
+		}
+		defer resp.Body.Close()
+		var session struct {
+			PrimaryAccounts map[string]string `json:"primaryAccounts"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 256<<10)).Decode(&session); err != nil {
+			slog.Warn("smoke: jmap session for the account id", "err", err)
+			return
+		}
+		c.id = session.PrimaryAccounts["urn:ietf:params:jmap:mail"]
+	})
+	return c.id
+}
+
+type accountCache struct {
+	once sync.Once
+	id   string
+}
+
+var jmapAccount = &accountCache{}
+
 // jmapAPIURL is where the batch endpoint lives. Separate so a test can point it
 // at a stub without a cluster.
 func jmapAPIURL() string {
@@ -406,8 +444,8 @@ func jmapAPIURL() string {
 // serves the same message. One batch, so a failure names which step broke.
 func checkJMAPEmailDiscovery() error {
 	body := `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[` +
-		`["Email/query",{"accountId":"` + *flagJMAPUser + `","limit":1},"c0"],` +
-		`["Email/get",{"accountId":"` + *flagJMAPUser + `",` +
+		`["Email/query",{"accountId":"` + jmapAccountID() + `","limit":1},"c0"],` +
+		`["Email/get",{"accountId":"` + jmapAccountID() + `",` +
 		`"#ids":{"resultOf":"c0","name":"Email/query","path":"/ids"},` +
 		`"properties":["id","blobId","subject","preview","size"]},"c1"]]}`
 	url := "https://" + net.JoinHostPort(jmapHost(), *flagJMAPPort) + "/jmap/api/"
@@ -447,7 +485,7 @@ func checkJMAPEmailDiscovery() error {
 		return fmt.Errorf("decode Email/query: %w", err)
 	}
 	if len(query.IDs) == 0 {
-		return fmt.Errorf("Email/query found no messages — the mailbox must not be empty for this check: %s", raw)
+		return fmt.Errorf("Email/query found no messages - the mailbox must not be empty for this check: %s", raw)
 	}
 	if query.QueryState == "" {
 		return fmt.Errorf("Email/query carries no queryState")
@@ -481,7 +519,7 @@ func checkJMAPEmailDiscovery() error {
 
 	// The blob the same batch named must download, and be non-empty.
 	dl := "https://" + net.JoinHostPort(jmapHost(), *flagJMAPPort) +
-		"/jmap/download/" + *flagJMAPUser + "/" + get.List[0].BlobID + "/message.eml"
+		"/jmap/download/" + jmapAccountID() + "/" + get.List[0].BlobID + "/message.eml"
 	dreq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, dl, nil)
 	if err != nil {
 		return err
@@ -511,7 +549,7 @@ func checkJMAPEmailDiscovery() error {
 }
 
 // checkJMAPDownloadIsolation proves a blob is refused for another account
-// rather than served — ownership is the precondition the endpoint rests on.
+// rather than served - ownership is the precondition the endpoint rests on.
 func checkJMAPDownloadIsolation() error {
 	dl := "https://" + net.JoinHostPort(jmapHost(), *flagJMAPPort) +
 		"/jmap/download/somebody-else@example.invalid/deadbeef/message.eml"

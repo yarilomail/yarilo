@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Stats reports what a RebuildFolder pass did.
@@ -33,11 +33,11 @@ type Stats struct {
 // ExpungeMessage each (which writes a QRESYNC tombstone and decrements the quota
 // aggregate). It never assigns UIDs and never does a full ResetFolder, so it
 // cannot race a concurrent delivery into duplicate UIDs the way a full rebuild
-// can — a message the index does not yet know about is simply left alone rather
+// can - a message the index does not yet know about is simply left alone rather
 // than imported. Returns the number of records expunged.
 //
 // The caller holds the folder's mailbox lock. Orphan files on disk that the
-// index has never seen are NOT imported here — that is corruption repair, not
+// index has never seen are NOT imported here - that is corruption repair, not
 // orphan adoption, which belongs to the operator rebuild.
 func ExpungeMissing(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
 	scanned, err := b.Store().Scan(folder.Name)
@@ -139,11 +139,6 @@ func RebuildFolder(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder)
 			// Preserve the AltTier marker so Fetch of alt-moved mail still
 			// skips the primary open after a rebuild.
 			newMeta.AltTier = old.AltTier
-			// Preserve GUID when the driver did not stamp one (maildir).
-			var zero [16]byte
-			if newMeta.GUID == zero {
-				newMeta.GUID = old.GUID
-			}
 			stats.UIDsPreserved++
 		} else {
 			newMeta.UID = nextUID
@@ -164,6 +159,16 @@ func RebuildFolder(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder)
 		return stats, fmt.Errorf("idxrebuild/reset folder: %w", err)
 	}
 	stats.ExpungedCopies = expunged
+	// A UID minted here is in no row of a driver that keeps its own (maildir),
+	// and a read by UID fails until a session relinks it (#2392): relink now.
+	if r, ok := mailbox.Driver(b.Store()).(mailbox.StoreReconciler); ok {
+		if folder, err = idx.OpenFolder(folder.Name, folder.UIDValidity); err != nil {
+			return stats, fmt.Errorf("idxrebuild/reopen: %w", err)
+		}
+		if _, err := r.ReconcileIndex(b, idx, folder); err != nil {
+			return stats, fmt.Errorf("idxrebuild/relink: %w", err)
+		}
+	}
 	return stats, nil
 }
 

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 func snippetGet(t *testing.T, s *Server, args string) map[string]any {
@@ -35,7 +35,7 @@ func snippetServer(t *testing.T, raw string) *Server {
 
 func snippetIDs(t *testing.T, s *Server) string {
 	t.Helper()
-	ids := idsOf(t, emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`))
+	ids := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"needle"}}`))
 	if len(ids) != 1 {
 		t.Fatalf("ids = %v, want one message to snippet", ids)
 	}
@@ -70,7 +70,7 @@ func TestSearchSnippetEscapesBeforeMarking(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := snippetServer(t, "Subject: hi\r\nFrom: alice@example.com\r\n\r\n"+tc.body+"\r\n")
 			id := snippetIDs(t, s)
-			got := snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+			got := snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 				"filter":{"text":"needle"}}`)
 			preview, _ := firstSnippet(t, got)["preview"].(string)
 			for _, want := range tc.wantIn {
@@ -93,7 +93,7 @@ func TestSearchSnippetEscapesBeforeMarking(t *testing.T) {
 func TestSearchSnippetNullsThePartWithNoMatch(t *testing.T) {
 	s := snippetServer(t, "Subject: the needle in the subject\r\nFrom: alice@example.com\r\n\r\nnothing to see\r\n")
 	id := snippetIDs(t, s)
-	got := firstSnippet(t, snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+	got := firstSnippet(t, snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 		"filter":{"text":"needle"}}`))
 
 	subject, _ := got["subject"].(string)
@@ -110,7 +110,7 @@ func TestSearchSnippetNullsThePartWithNoMatch(t *testing.T) {
 func TestSearchSnippetMarksWholeTokens(t *testing.T) {
 	s := snippetServer(t, "Subject: hi\r\nFrom: alice@example.com\r\n\r\nneedles and needlework and needle\r\n")
 	id := snippetIDs(t, s)
-	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 		"filter":{"text":"needle"}}`))["preview"].(string)
 
 	// Whatever the stemmer decides about needles/needlework, no mark may end
@@ -133,12 +133,12 @@ func TestSearchSnippetBoundsTheIDCount(t *testing.T) {
 	id := snippetIDs(t, s)
 
 	s.opts.Limits.MaxObjectsInGet = 1
-	if got := snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+	if got := snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 		"filter":{"text":"needle"}}`); got["list"] == nil {
 		t.Errorf("a request at the limit was refused: %v", got)
 	}
 
-	err := snippetGetError(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`","other"],
+	err := snippetGetError(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`","other"],
 		"filter":{"text":"needle"}}`)
 	if err["type"] != "requestTooLarge" {
 		t.Errorf("type = %v, want requestTooLarge", err["type"])
@@ -153,7 +153,7 @@ func TestSearchSnippetWindowsAroundTheHit(t *testing.T) {
 	filler := strings.Repeat("padding words here ", 120) // ~2 KB either side
 	s := snippetServer(t, "Subject: hi\r\nFrom: alice@example.com\r\n\r\n"+filler+"the needle at last "+filler+"\r\n")
 	id := snippetIDs(t, s)
-	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 		"filter":{"text":"needle"}}`))["preview"].(string)
 
 	if !strings.Contains(preview, "<mark>needle</mark>") {
@@ -181,7 +181,7 @@ func TestSearchSnippetPreviewSkipsTheHTMLSource(t *testing.T) {
 		"<div style=\"color:red\"><p>the needle in html</p></div>\r\n--b1--\r\n"
 	s := snippetServer(t, raw)
 	id := snippetIDs(t, s)
-	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 		"filter":{"text":"needle"}}`))["preview"].(string)
 
 	if !strings.Contains(preview, "<mark>needle</mark>") {
@@ -202,7 +202,7 @@ func TestSearchSnippetStripsAnHTMLOnlyBody(t *testing.T) {
 		"<div><p>the needle in html</p></div>\r\n"
 	s := snippetServer(t, raw)
 	id := snippetIDs(t, s)
-	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 		"filter":{"text":"needle"}}`))["preview"].(string)
 
 	if !strings.Contains(preview, "<mark>needle</mark>") {
@@ -220,7 +220,7 @@ func TestSearchSnippetStripsAnHTMLOnlyBody(t *testing.T) {
 func TestSearchSnippetDoesNotClaimMoreTextThanThereIs(t *testing.T) {
 	s := snippetServer(t, "Subject: hi\r\nFrom: alice@example.com\r\n\r\nthe needle is right here\r\n")
 	id := snippetIDs(t, s)
-	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 		"filter":{"text":"needle"}}`))["preview"].(string)
 
 	if strings.HasSuffix(preview, "\u2026") {
@@ -239,7 +239,7 @@ func TestSearchSnippetOpensOnAWordBoundaryInNonLatinText(t *testing.T) {
 	filler := strings.Repeat("\u0441\u043b\u043e\u0432\u043e\u2014", 80)
 	s := snippetServer(t, "Subject: hi\r\nFrom: alice@example.com\r\n\r\n\u043f\u043e\u0447\u0430\u0442\u043e\u043a "+filler+"needle \u043a\u0456\u043d\u0435\u0446\u044c\r\n")
 	id := snippetIDs(t, s)
-	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"u1@example.com","emailIds":["`+id+`"],
+	preview, _ := firstSnippet(t, snippetGet(t, s, `{"accountId":"`+testAccount+`","emailIds":["`+id+`"],
 		"filter":{"text":"needle"}}`))["preview"].(string)
 
 	trimmed := strings.TrimPrefix(preview, "\u2026")

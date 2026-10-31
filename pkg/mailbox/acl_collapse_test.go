@@ -3,7 +3,7 @@ package mailbox_test
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // One entry per identifier and sign, decided at parse.
@@ -70,7 +70,7 @@ func TestParseACLCollapsesDuplicateIdentifiers(t *testing.T) {
 	}
 }
 
-// The structural half — with a fixture that can tell the behaviours apart.
+// The structural half - with a fixture that can tell the behaviours apart.
 //
 // The first version of this test used user=u2 lrs + -user=u2 s and passed
 // under the defect too: with no lower-tier negative underneath, "replace" and
@@ -94,7 +94,7 @@ func TestPositiveAndNegativeOrderDoesNotMatter(t *testing.T) {
 		t.Errorf("same ACL, different line order: %q vs %q", gotF, gotR)
 	}
 	if gotF != "lr" {
-		t.Errorf("effective = %q, want lr — the user-tier negative replaces the authenticated-tier one", gotF)
+		t.Errorf("effective = %q, want lr - the user-tier negative replaces the authenticated-tier one", gotF)
 	}
 }
 

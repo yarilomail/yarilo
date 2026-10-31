@@ -3,7 +3,7 @@ package dboxv2
 import (
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // SweepTemps removes what a save never published, at most once an hour per

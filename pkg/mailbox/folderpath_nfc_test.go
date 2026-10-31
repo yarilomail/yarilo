@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const (
@@ -14,7 +14,7 @@ const (
 
 // The path builder no longer normalises: NFC lives at the name-entry boundary
 // now, so FolderSubpathEscaped takes the name exactly as given. Two spellings
-// therefore give two paths here — which is correct, because by the time a name
+// therefore give two paths here - which is correct, because by the time a name
 // reaches this function it has already been through NormalizeName once.
 //
 // This is the inverse of the old #1092 assertion, and deliberately so: proving

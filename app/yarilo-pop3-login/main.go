@@ -16,12 +16,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/login"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/login"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -114,7 +114,7 @@ func main() {
 
 	tel := startTelemetry(cfg.Telemetry)
 
-	// Port 995 — implicit TLS (POP3S).
+	// Port 995 - implicit TLS (POP3S).
 	if svcs.POP3S.Active() {
 		addr := fmt.Sprintf(":%d", svcs.POP3S.Port)
 		ln, err := net.Listen("tcp", addr)
@@ -166,7 +166,7 @@ func main() {
 		slog.Info("pop3-login: listening", "addr", addr, "tls", "implicit")
 	}
 
-	// Port 110 — STARTTLS.
+	// Port 110 - STARTTLS.
 	if svcs.POP3.Active() {
 		addr := fmt.Sprintf(":%d", svcs.POP3.Port)
 		ln, err := net.Listen("tcp", addr)

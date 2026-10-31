@@ -111,7 +111,7 @@ func TestHexWidth(t *testing.T) {
 
 // A template we cannot expand is a misconfiguration. Passing it through
 // verbatim is what let a 2.4 config produce a directory literally named
-// "%{user | sha1 % 256 | hex(2)}" — created, used, and silent.
+// "%{user | sha1 % 256 | hex(2)}" - created, used, and silent.
 func TestUnexpandableTemplatesAreRefused(t *testing.T) {
 	tests := []struct {
 		name string

@@ -13,7 +13,7 @@ import (
 //
 // The judgement lives here, apart from the reading, and is exercised against
 // stubs. A comparison that only ever runs against a cluster hides its own
-// reading errors until a rollout — which is how an Email/query verification
+// reading errors until a rollout - which is how an Email/query verification
 // compared against undecoded headers and stayed green (#1043, #1206).
 
 // surface names one protocol face of the server. Used in messages and in the
@@ -55,7 +55,7 @@ func (r *reading) set(name string, values []string) *reading {
 }
 
 // allowance is a difference two surfaces are permitted to have about the same
-// fact — a real equivalence, not a defect. The list is explicit, short and
+// fact - a real equivalence, not a defect. The list is explicit, short and
 // data: an `if` buried in a comparison is a permission nobody can review.
 //
 // The list growing is itself a signal. Each entry is either a genuine

@@ -2,7 +2,7 @@
 
 Each list is its published source **plus** the words yarilo had already added to
 it. Recorded here so the next person can check a list against its origin instead
-of re-deriving it by intuition — which is what produced the state this file
+of re-deriving it by intuition - which is what produced the state this file
 exists to prevent.
 
 | Language | Source | Words |
@@ -36,12 +36,12 @@ had lost half:
 | it | 146 | 279 | 142 | 9 |
 
 The signature was visible without knowing any of the languages: one form of a
-pair present and the other absent, and repeated entries — `que` twice in
+pair present and the other absent, and repeated entries - `que` twice in
 Spanish, four repeats in Italian. A list taken whole does not repeat itself.
 
 **But the words beyond the source were not noise.** French Snowball has no
-`est` and no `été` — "is" and "been", two of the commonest words in the
-language — and yarilo's list had both, with tests relying on them. Replacing
+`est` and no `été` - "is" and "been", two of the commonest words in the
+language - and yarilo's list had both, with tests relying on them. Replacing
 the lists wholesale would have deleted somebody's earlier correction.
 
 So the lists here are the union: nothing that was in either is gone.
@@ -69,7 +69,7 @@ that was damaged, which is the position this started from.
 `uk` has no Snowball list, because Snowball has no Ukrainian stemmer.
 
 The 73 words shipped before were `stopwords-iso/stopwords-uk`, whole and
-unmodified — the one list here that had *not* been hand-edited. Its problem was
+unmodified - the one list here that had *not* been hand-edited. Its problem was
 the source: it does not contain `і`, `в`, `не` or `на`, four of the most
 frequent words in the language.
 
@@ -78,5 +78,5 @@ stemmer, the chain is `lowercase → stopwords → passthrough`, so stopwords ar
 the only content filter Ukrainian gets, and it was the one that was thinnest.
 
 spaCy's list carries all four and 467 words in total, and covers 58 of the 73.
-The 15 it does not carry — `авжеж`, `вздовж`, `всередині`, `дещо`, `замість`,
-`отже` among them — are kept, as everywhere else here.
+The 15 it does not carry - `авжеж`, `вздовж`, `всередині`, `дещо`, `замість`,
+`отже` among them - are kept, as everywhere else here.

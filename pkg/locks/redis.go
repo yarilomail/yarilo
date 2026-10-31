@@ -52,7 +52,7 @@ func NewRedisBackend(rdb redis.UniversalClient, opts ...RedisOption) *RedisBacke
 // lockValue is the stored value: "<resource>|<owner>|<kind>", kind ∈
 // {"x","s"} (exclusive/shared). Used to enforce owner-checked release/renew
 // (an owner cannot release another owner's lock that happened to take the
-// same ID — even though IDs are random 16-byte, this defends against ID
+// same ID - even though IDs are random 16-byte, this defends against ID
 // forgery in a multi-tenant deployment), and to route Release/Renew to the
 // correct secondary index (resKey vs sharedKey) without the caller having to
 // track kind itself. The reverse split is performed server-side in the Lua
@@ -63,14 +63,14 @@ func lockValue(resource, owner, kind, site string) string {
 	return resource + "|" + owner + "|" + kind + "|" + site
 }
 
-// resKey for the secondary index "resource → lockID" — the exclusive holder,
+// resKey for the secondary index "resource → lockID" - the exclusive holder,
 // at most one per resource at a time. Stored as a sibling key with the same TTL.
 func (b *RedisBackend) resKey(resource string) string {
 	return b.keyPrefix + "res:" + resource
 }
 
 // sharedKey for the secondary index of shared holders on resource: a ZSET
-// with member=lockID, score=expiry_ms — lets AcquireExclusive atomically
+// with member=lockID, score=expiry_ms - lets AcquireExclusive atomically
 // prune expired shared holders (ZREMRANGEBYSCORE) and check ZCARD without a
 // per-member TTL sweeper.
 func (b *RedisBackend) sharedKey(resource string) string {
@@ -357,6 +357,23 @@ func (b *RedisBackend) Publish(ctx context.Context, resource string, t EventType
 		return fmt.Errorf("locks/redis: publish: %w", err)
 	}
 	return nil
+}
+
+// PublishAll implements Backend: one pipeline, which Redis runs in order.
+func (b *RedisBackend) PublishAll(ctx context.Context, evs []Event) []error {
+	pipe := b.rdb.Pipeline()
+	cmds := make([]*redis.IntCmd, len(evs))
+	for i, e := range evs {
+		cmds[i] = pipe.Publish(ctx, b.channel(e.Resource), string(e.Type)+"\t"+e.Payload)
+	}
+	_, _ = pipe.Exec(ctx)
+	errs := make([]error, len(evs))
+	for i, c := range cmds {
+		if err := c.Err(); err != nil {
+			errs[i] = fmt.Errorf("locks/redis: publish: %w", err)
+		}
+	}
+	return errs
 }
 
 // Subscribe implements Backend. The cancel function must be called to release

@@ -19,12 +19,12 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/internal/warden"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // Protocol identifies the mail protocol handled by the login pod.
@@ -126,6 +126,8 @@ type Options struct {
 	// before it is closed; 0 = 3. Mirrors auth_max_attempts.
 	AuthMaxAttempts int
 
+	// IMAPIDRetain keeps the client's ID pairs for the auth service (client_id).
+	IMAPIDRetain bool
 	// DisablePlainAuth refuses PLAIN and LOGIN, and hides them, on a connection
 	// that is not TLS, not proxied and not local.
 	DisablePlainAuth bool
@@ -151,6 +153,10 @@ type Options struct {
 	// XClientNets are the CIDRs whose forwarded client IP is trusted: the
 	// socket peer must sit inside one. Empty trusts nobody.
 	XClientNets []*net.IPNet
+	// SubmissionMaxMessageBytes and SubmissionMaxRecipients are yarilo-submission's
+	// limits (protocol.submission), stated in EHLO; 0 means none.
+	SubmissionMaxMessageBytes int64
+	SubmissionMaxRecipients   int
 }
 
 // liveSession tracks one active proxied session for kick support.
@@ -437,6 +443,7 @@ func New(opts Options) *Server {
 	var b [3]byte
 	_, _ = crand.Read(b[:])
 	seed := uint64(b[0])<<16 | uint64(b[1])<<8 | uint64(b[2])
+	opts.ExtTLS, opts.StarttlsTLS = recordHello(opts.ExtTLS), recordHello(opts.StarttlsTLS)
 	return &Server{
 		opts:     opts,
 		seed:     encodeSessionPart(seed, sessionIDAlphabet[:51], 4),
@@ -473,7 +480,7 @@ func (s *Server) Serve(ln net.Listener) error {
 			draining := s.draining
 			s.drainMu.Unlock()
 			if draining {
-				return nil // listener closed by Shutdown — clean stop
+				return nil // listener closed by Shutdown - clean stop
 			}
 			return fmt.Errorf("login: accept: %w", err)
 		}
@@ -548,6 +555,11 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	sessID := s.newSessionID()
+	// A peer the proxy trusts to forward addresses is a proxy: its logins are
+	// not tarpitted or penalised for the clients behind it.
+	peerIP, _ := hostPort(realConn(conn).RemoteAddr())
+	noPenalty := ipInNets(peerIP, s.opts.XClientNets)
+	defer helloHashes.Delete(conn)
 	log := slog.With("sid", sessID, "proto", string(s.opts.Protocol), "remote_ip", clientIP, "remote_port", remotePort)
 	log.Info("login: connect")
 
@@ -569,7 +581,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	// Extract preamble: speak the protocol pre-auth exchange to collect credentials.
 	// authConn/authRd may be TLS-upgraded from the original conn/rd if STARTTLS happened.
 	preambleStart := time.Now()
-	pre, authConn, authRd, err := extractPreamble(conn, rd, s.opts.Protocol, s.opts.StarttlsTLS, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
+	pre, authConn, authRd, err := extractPreamble(conn, rd, s.opts.Protocol, s.opts.StarttlsTLS, s.opts, relayContext{dial: s.authClient, sessionID: sessID, noPenalty: noPenalty})
 	if err != nil {
 		log.Debug("login: preamble", "err", err)
 		s.incResult("preamble_error")
@@ -601,7 +613,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			s.incResult("unavailable")
 			return outcomeClose, nil
 		}
-		// Shared multiplexed client — no per-login handshake. The phase metric
+		// Shared multiplexed client - no per-login handshake. The phase metric
 		// reads ~0 except on the first login after a pod start or auth reconnect.
 		authDialStart := time.Now()
 		var authCl *authclient.Client
@@ -661,7 +673,8 @@ func (s *Server) handleConn(conn net.Conn) {
 			// repeat: internal failures do not touch the auth-penalty counter.
 			for tfAttempt := 0; pre.authResult == nil; tfAttempt++ {
 				authStart := time.Now()
-				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, localIP, sessID)
+				authResult, aerr = authCl.AuthenticateAs(pre.authzid, pre.username, pre.password, wardenService(s.opts.Protocol), clientIP, localIP, sessID,
+					authOrigin(authConn, pre.clientID, noPenalty, forwardedPort(clientIP, pre))...)
 				// One observation per attempt: each is its own round-trip.
 				s.observePhase(phaseAuth, authStart)
 				if !errors.Is(aerr, authclient.ErrTempFail) {
@@ -706,20 +719,22 @@ func (s *Server) handleConn(conn net.Conn) {
 				break
 			}
 
+			// The service's reason, a policy server's message, is for the client.
+			reason := authclient.RefusalReason(aerr)
 			if attempt >= maxAuthAttempts || !isRetriableProtocol(s.opts.Protocol) {
 				// Tagged NO [AUTHENTICATIONFAILED] then * BYE: the last LOGIN must
 				// get a tagged reply before the close announcement.
-				writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeAuthenticationFail, "Too many failed authentications")
+				writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeAuthenticationFail, orDefault(reason, "Too many failed authentications"))
 				writeProtoClose(authConn, s.opts.Protocol, "closing")
 				return outcomeClose, nil
 			}
-			writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeAuthenticationFail, "Authentication failed.")
+			writeProtoError(authConn, s.opts.Protocol, pre.cmdTag, imapCodeAuthenticationFail, orDefault(reason, "Authentication failed."))
 
 			var retryExtTLS *tls.Config
 			if _, ok := authConn.(*tls.Conn); !ok {
 				retryExtTLS = s.opts.StarttlsTLS
 			}
-			pre, authConn, authRd, err = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
+			pre, authConn, authRd, err = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID, noPenalty: noPenalty})
 			if err != nil {
 				log.Debug("login: preamble retry", "err", err)
 				return outcomeClose, nil
@@ -877,7 +892,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			retryExtTLS = s.opts.StarttlsTLS
 		}
 		var cerr error
-		pre, authConn, authRd, cerr = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID})
+		pre, authConn, authRd, cerr = continueAuth(authConn, authRd, retryExtTLS, s.opts.Protocol, s.opts, relayContext{dial: s.authClient, sessionID: sessID, noPenalty: noPenalty})
 		if cerr != nil {
 			log.Debug("login: transient re-login: client did not retry", "err", cerr)
 			return
@@ -935,7 +950,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	log.Info("login: session routed", "user", pre.username, "backend", backendAddr, "result", "ok")
 	s.incResult("ok")
 
-	// Auth is confirmed — tell the client before entering proxy mode.
+	// Auth is confirmed - tell the client before entering proxy mode.
 	writeProtoAuthOK(authConn, s.opts.Protocol, pre.cmdTag, backendCaps)
 
 	authConn.SetDeadline(time.Time{})    //nolint:errcheck
@@ -1164,7 +1179,7 @@ func (s *Server) dialBackendWithReroute(username, tag, addr string, deadline tim
 		return nil, addr, err
 	}
 	for attempt := 0; attempt < maxBackendReroutes; attempt++ {
-		log.Warn("login: backend dial failed — reporting unreachable and re-looking-up", "addr", addr, "err", err)
+		log.Warn("login: backend dial failed - reporting unreachable and re-looking-up", "addr", addr, "err", err)
 		s.reportUnreachable(addr)
 		newAddr, lerr := s.directorLookup(username, tag)
 		if lerr != nil {
@@ -1847,6 +1862,15 @@ func haProxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) 
 func heloDomain(line string) string {
 	if f := strings.Fields(line); len(f) > 1 {
 		return f[1]
+	}
+	return ""
+}
+
+// forwardedPort is the port a trusted forwarder named, once its address took
+// the socket's place.
+func forwardedPort(clientIP string, pre *preamble) string {
+	if pre.forwardIP != "" && clientIP == pre.forwardIP {
+		return pre.forwardPort
 	}
 	return ""
 }

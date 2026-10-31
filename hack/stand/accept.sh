@@ -22,9 +22,10 @@ RELAY_NS="${RELAY_NS:-yarilo-relay}"
 RELAY_SELECTOR="${RELAY_SELECTOR:-app=relay-mta}"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PASSWORD='Yarilo!test1'
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
+PASSWORD="$(sandbox_password)"
 # What one smoketest run passes; it moves with every check added to the binary.
-SMOKE_CHECKS=51
+SMOKE_CHECKS=56
 # The only rows a run skips: they need the OAuth2 overlay, which acceptance runs without (#2231).
 SMOKE_OAUTH2_SKIPS='oauth2 imap AUTHENTICATE OAUTHBEARER (SASL-IR) + SELECT INBOX
 oauth2 pop3 AUTH OAUTHBEARER + STAT
@@ -244,6 +245,26 @@ count_lines() {
   wc -l < "$OUT/lines/$1.txt" | tr -d ' '
 }
 
+# not_kicked prints the lines of $2 that are no write to a connection a domain
+# move in $1 closed: a broken pipe or reset within 2 s after a kick (#2388).
+not_kicked() {
+  awk '
+    function at(line,   s, day, sec) {
+      if (!match(line, /"time":"[0-9]+-[0-9]+-[0-9]+T[0-9]+:[0-9]+:[0-9.]+/)) return -1
+      s = substr(line, RSTART + 8, RLENGTH - 8)
+      day = substr(s, 1, 4) * 372 + substr(s, 6, 2) * 31 + substr(s, 9, 2)
+      sec = substr(s, 12, 2) * 3600 + substr(s, 15, 2) * 60 + substr(s, 18)
+      return day * 86400 + sec
+    }
+    FNR == NR { if ((t = at($0)) >= 0) kick[++n] = t; next }
+    {
+      t = at($0)
+      if (t >= 0 && $0 ~ /broken pipe|connection reset by peer/)
+        for (i = 1; i <= n; i++) if (t >= kick[i] && t - kick[i] <= 2) next
+      print
+    }' "$1" "$2"
+}
+
 # curl_as runs curl with "login:password" fed on stdin as its config, so the
 # password is in no argument a process listing shows and in no log.
 curl_as() {
@@ -268,21 +289,29 @@ jmap_post() {
     --data-binary "$3" "https://$MAIL_HOST/jmap/api/"
 }
 
+# jmap_account is the login's mail account id, from its session as a client
+# reads it: the server's id, not the address.
+jmap_account() {
+  curl_as "$1:$2" --resolve "$MAIL_HOST:443:$JMAP_IP" "https://$MAIL_HOST/.well-known/jmap" |
+    sed -n 's/.*"primaryAccounts":{[^}]*"urn:ietf:params:jmap:mail":"\([^"]*\)".*/\1/p'
+}
+
 # jmap_send creates a draft and submits it by "#d" in one request, as clients
 # do; onSuccessDestroyEmail removes the draft, and a failed send removes it too.
 jmap_send() {
-  local login="$1" pass="$2" from="$3" to="$4" bcc="$5" marker="$6" using inbox ident resp draft
+  local login="$1" pass="$2" from="$3" to="$4" bcc="$5" marker="$6" using acct inbox ident resp draft
   using='"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail","urn:ietf:params:jmap:submission"]'
-  inbox=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Mailbox/query\",{\"accountId\":\"$from\",\"filter\":{\"role\":\"inbox\"}},\"q\"]]}" |
+  acct=$(jmap_account "$login" "$pass")
+  inbox=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Mailbox/query\",{\"accountId\":\"$acct\",\"filter\":{\"role\":\"inbox\"}},\"q\"]]}" |
     sed -n 's/.*"ids":\["\([^"]*\)".*/\1/p')
   ident="I$(printf '%s' "$from" | tr '[:upper:]' '[:lower:]' | sha256sum | cut -c1-16)"
-  resp=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$from\",\"create\":{\"d\":{\"mailboxIds\":{\"$inbox\":true},\"keywords\":{\"\$draft\":true},\"from\":[{\"email\":\"$from\"}],\"to\":[{\"email\":\"$to\"}],\"bcc\":[{\"email\":\"$bcc\"}],\"subject\":\"$marker\",\"textBody\":[{\"partId\":\"1\",\"type\":\"text/plain\"}],\"bodyValues\":{\"1\":{\"value\":\"cross-mailbox check\"}}}}},\"e\"],[\"EmailSubmission/set\",{\"accountId\":\"$from\",\"create\":{\"s\":{\"identityId\":\"$ident\",\"emailId\":\"#d\"}},\"onSuccessDestroyEmail\":[\"#s\"]},\"s\"]]}" || true)
+  resp=$(jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$acct\",\"create\":{\"d\":{\"mailboxIds\":{\"$inbox\":true},\"keywords\":{\"\$draft\":true},\"from\":[{\"email\":\"$from\"}],\"to\":[{\"email\":\"$to\"}],\"bcc\":[{\"email\":\"$bcc\"}],\"subject\":\"$marker\",\"textBody\":[{\"partId\":\"1\",\"type\":\"text/plain\"}],\"bodyValues\":{\"1\":{\"value\":\"cross-mailbox check\"}}}}},\"e\"],[\"EmailSubmission/set\",{\"accountId\":\"$acct\",\"create\":{\"s\":{\"identityId\":\"$ident\",\"emailId\":\"#d\"}},\"onSuccessDestroyEmail\":[\"#s\"]},\"s\"]]}" || true)
   echo "$resp" > "$OUT/cross/$marker.jmap"
   draft=$(printf '%s' "$resp" | sed -n 's/.*"created":{"d":{[^}]*"id":"\([^"]*\)".*/\1/p')
   if printf '%s' "$resp" | grep -q '"undoStatus":"final"' && printf '%s' "$resp" | grep -q "\"destroyed\":\[\"$draft\"\]"; then
     return 0
   fi
-  [ -z "$draft" ] || jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$from\",\"destroy\":[\"$draft\"]},\"x\"]]}" > /dev/null || true
+  [ -z "$draft" ] || jmap_post "$login" "$pass" "{$using,\"methodCalls\":[[\"Email/set\",{\"accountId\":\"$acct\",\"destroy\":[\"$draft\"]},\"x\"]]}" > /dev/null || true
   return 1
 }
 
@@ -453,8 +482,8 @@ case "$right|$pop" in
     verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "right password '$right', wrong one '$wrong'" ;;
   *) verdict "protocol rule: IMAP refused as a wrong password, POP3 in" fail "$RULE_IMAP_USER: imap '${right:-nothing}', pop3 '${pop:-nothing}'" ;;
 esac
-# Refused after DATA as an unknown recipient, word for word: the login proxy
-# takes any RCPT. Both are refused, so nothing is stored.
+# Refused at RCPT as an unknown recipient, word for word: the login proxy asks
+# userdb on behalf of lmtp. Both are refused, so nothing is stored.
 replies=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$RULE_LMTP_USER>\r\nRCPT TO:<nosuch-accept@d00001.test>\r\nDATA\r\nSubject: rule probe\r\n\r\nx\r\n.\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" | tr -d '\r' | grep -E '^5[0-9][0-9] ' || true)
 ruled=$(echo "$replies" | sed -n 1p); unknown=$(echo "$replies" | sed -n 2p)
 login=$(imap_session "a LOGIN $RULE_LMTP_USER $PASSWORD\r\nb LOGOUT\r\n" | grep '^a ' || true)
@@ -470,7 +499,8 @@ new_pairs=$(comm -13 "$OUT/uid-pairs-before.txt" "$OUT/uid-pairs-after.txt" | te
 [ "$new_pairs" = 0 ] && verdict "no new vanished-and-present uid" ok "0" || verdict "no new vanished-and-present uid" fail "$new_pairs (lines/uid-pairs-new.txt)"
 
 echo "== explicit domain rebalance"
-DIRECTORS=$(kube get pods -l app.kubernetes.io/component=director -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}' || true)
+# A pod still terminating after the rollout is listed but refuses exec.
+DIRECTORS=$(kube get pods -l app.kubernetes.io/component=director -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}' | tr '\n' ' ' || true)
 DIRECTOR=${DIRECTORS%% *}
 UP=$(kube exec "$DIRECTOR" -- yarctl director backends list 2>/dev/null | awk '$0 ~ /[[:space:]]up[[:space:]]/ {print $1}' | sort || true)
 : > "$OUT/rebalance.txt"
@@ -532,7 +562,17 @@ for spec in \
   "message-swept|removed a save that never got a name.*\"file\":\"u\\."; do
   name=${spec%%|*}
   n=$(count_lines "$name" "${spec#*|}")
-  [ "$n" = 0 ] && verdict "no $name lines" ok "0" || verdict "no $name lines" fail "$n (lines/$name.txt)"
+  kicked=""
+  if [ "$name" = append-failed ] && [ "$n" != 0 ]; then
+    grep -ahE "domain moved, kicking its sessions" "$OUT"/logs/yarilo-director-*.log > "$OUT/lines/domain-kicks.txt" 2>/dev/null || true
+    not_kicked "$OUT/lines/domain-kicks.txt" "$OUT/lines/$name.txt" > "$OUT/lines/$name-unkicked.txt"
+    left=$(wc -l < "$OUT/lines/$name-unkicked.txt" | tr -d ' ')
+    kicked=", $((n - left)) by a domain move left out (lines/domain-kicks.txt)"
+    n=$left
+  fi
+  file=$name.txt
+  [ -n "$kicked" ] && file=$name-unkicked.txt
+  [ "$n" = 0 ] && verdict "no $name lines" ok "0$kicked" || verdict "no $name lines" fail "$n (lines/$file)$kicked"
 done
 
 

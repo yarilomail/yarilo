@@ -5,10 +5,10 @@ import (
 	"net"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	authclient "github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	authclient "github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // lmtpOff is a userdb with a rule on %s refusing delivery.

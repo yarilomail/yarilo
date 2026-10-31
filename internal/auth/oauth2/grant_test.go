@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // The token endpoint's answer decides between a wrong password and an outage.

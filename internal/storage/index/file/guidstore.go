@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The per-user GUID store: one record per copy, opened by its own name so no
@@ -191,33 +191,6 @@ func (u *userIndex) AppendGUIDRecord(r mailbox.GUIDRecord) error {
 			GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 			Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
 		})
-		return fs.flush()
-	})
-}
-
-// RemoveGUIDRecords drops every copy the store holds for one uid of one
-// folder: an expunge removes the copy, not the message.
-func (u *userIndex) RemoveGUIDRecords(folderGUID [16]byte, uid uint32) error {
-	id, err := u.openGUIDStore()
-	if err != nil {
-		return err
-	}
-	return u.withFolderSite(id, lockSiteGUIDAppend, func(fs *folderState) error {
-		var gone []uint32
-		for i := range fs.file.Records {
-			r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
-			if ok && r.FolderGUID == folderGUID && r.UID == uid {
-				gone = append(gone, fs.file.Records[i].UID)
-			}
-		}
-		if len(gone) == 0 {
-			return nil
-		}
-		for _, sequence := range gone {
-			if _, eerr := fs.expungeLocked(sequence, 0); eerr != nil {
-				return eerr
-			}
-		}
 		return fs.flush()
 	})
 }

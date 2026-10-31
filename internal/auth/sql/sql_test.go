@@ -13,8 +13,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	authsql "github.com/yarilomail/yarilo/v2/internal/auth/sql"
 )
 
 func openTestDB(t *testing.T) (*authsql.Passdb, string) {
@@ -177,7 +177,7 @@ func TestNew_UnsupportedDriver(t *testing.T) {
 }
 
 // runDriverSmoke exercises end-to-end CREATE TABLE + INSERT + Authenticate
-// against a real MySQL/Postgres server. Requires an env-var DSN — skipped
+// against a real MySQL/Postgres server. Requires an env-var DSN - skipped
 // otherwise so CI without DB credentials still passes.
 func runDriverSmoke(t *testing.T, driver, dsn, insertParam string) {
 	t.Helper()

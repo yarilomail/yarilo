@@ -45,7 +45,7 @@ func checkConsistencyMessageID(user, pass string) error {
 // be exercised without a server.
 func messageIDVerdict(left *reading) error {
 	if id := left.fields["messageId"]; isAbsent(id) || id == "" {
-		return fmt.Errorf("delivered without a Message-ID and stored without one: imap says %q — "+
+		return fmt.Errorf("delivered without a Message-ID and stored without one: imap says %q - "+
 			"the message can never be replied to or threaded, and the header cannot be added afterwards", id)
 	}
 	return nil
@@ -150,7 +150,7 @@ func jmapReadMessageID(marker string) (*reading, error) {
 		return nil, err
 	}
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Email/get",{"accountId":"` + *flagJMAPUser + `","ids":["` + id + `"],` +
+		`"methodCalls":[["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + id + `"],` +
 		`"properties":["id","messageId"]},"c0"]]}`)
 	if err != nil {
 		return nil, fmt.Errorf("Email/get: %w", err)

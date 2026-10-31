@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // filterEvaluator returns the evaluator this deployment can answer filters
@@ -225,7 +225,7 @@ func (s *Server) queryScope(h *userHandle, f *jmapcore.EmailFilter) (*queryScope
 //
 // It is not a change log: a flag change in a folder the query reads moves the
 // state even when the filter does not depend on flags. That is coarser than
-// necessary and finer than a digest of everything — the precise answer needs a
+// necessary and finer than a digest of everything - the precise answer needs a
 // change journal, which is a later phase.
 func (q *queryScope) state(f *jmapcore.EmailFilter, sort []jmapcore.Comparator) string {
 	h := sha256.New()

@@ -1,9 +1,11 @@
 # Stand-alone Postgres for yarilo sandbox with split passdb/userdb schema.
 # Sits alongside the yarilo Release in namespace yarilo-sb.
 #
-# Apply BEFORE the yarilo helm install so the DSN secret + tables exist.
+# Apply BEFORE the yarilo helm install so the tables exist.
 #
 #   kubectl apply -f helm_values/postgres-sandbox.yaml
+#
+# The yarilo-postgres Secret it reads is made outside git by hack/sandbox/secrets.sh.
 #
 # Resets are easy: kubectl delete -f .../postgres-sandbox.yaml; PVC is then
 # garbage-collected.
@@ -12,20 +14,6 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: yarilo-sb
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: yarilo-postgres
-  namespace: yarilo-sb
-type: Opaque
-stringData:
-  # Yarilo passdb DSN — referenced from values-sandbox.yaml via DB_DSN.
-  dsn: "postgres://yarilo:sandbox-secret@yarilo-postgres:5432/yarilo?sslmode=disable"
-  # Same credentials, split out so the StatefulSet can initialise the DB.
-  POSTGRES_DB: "yarilo"
-  POSTGRES_USER: "yarilo"
-  POSTGRES_PASSWORD: "sandbox-secret"
 ---
 # Schema mounted into /docker-entrypoint-initdb.d/. Postgres runs every .sql
 # file in alphabetical order on the FIRST startup only (it checks for the
@@ -43,7 +31,7 @@ data:
     -- so the same yarilo wiring works against multi-table production schemas.
     --
     -- password column holds reference-style "{SCHEME}hash". Supported schemes:
-    -- BCRYPT, SHA512-CRYPT, PLAIN. See https://doc.yarilomail.org/AUTH.
+    -- BCRYPT, SHA512-CRYPT, PLAIN. See https://doc.yarilomail.org/latest/auth/.
     --
     -- Read-status per column (yarilo HEAD):
     --   username, password, active       → used now (passwordQuery)
@@ -54,7 +42,7 @@ data:
     --   allow_nets, director_tag,
     --   display_name, last_login_at      → forward-compat, not yet read by
     --                                       yarilo (quota engine, director,
-    --                                       login ACL — future phases)
+    --                                       login ACL - future phases)
     CREATE TABLE IF NOT EXISTS users (
         username       VARCHAR(254) PRIMARY KEY,          -- RFC 5321 envelope max (full email)
         password       VARCHAR(255) NOT NULL,             -- enough for {BCRYPT}/{SHA512-CRYPT} + headroom

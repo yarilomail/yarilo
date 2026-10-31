@@ -1,6 +1,6 @@
 // Package mailboxbuild is the single place a MailboxBackend is constructed from
-// storage config. Every binary — the session servers (internal/backend), the
-// operator API (yarilo-backend-api) and the indexer (yarilo-fts) — builds mdbox
+// storage config. Every binary - the session servers (internal/backend), the
+// operator API (yarilo-backend-api) and the indexer (yarilo-fts) - builds mdbox
 // (and the other drivers) through ByDriver, so the per-driver tuning (alt storage,
 // rotate size/interval, preallocate) can never drift between them (#639).
 //
@@ -13,15 +13,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // ByDriver constructs a MailboxBackend for the named driver from sc, applying
@@ -92,7 +92,7 @@ func mapLogRotation(sc config.StorageConfig) mdbox.Option {
 
 // ParseIntervalSeconds converts a duration string ("30s", "5m", "1h") or a bare
 // second count ("30") into whole seconds. Empty, "0", or an unparseable value
-// yields 0 (disabled) — the same lenient contract as quota.ParseSize, so a
+// yields 0 (disabled) - the same lenient contract as quota.ParseSize, so a
 // malformed knob degrades to the safe default rather than failing startup.
 func ParseIntervalSeconds(s string) int {
 	if s == "" || s == "0" {

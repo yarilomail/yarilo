@@ -1,7 +1,7 @@
 // smoketest-e2e drives a live yarilo instance end-to-end:
 //
-//  1. AUTH PLAIN over submission STARTTLS — verifies passdb wiring.
-//  2. Deliver a test message via LMTP — verifies storage write path.
+//  1. AUTH PLAIN over submission STARTTLS - verifies passdb wiring.
+//  2. Deliver a test message via LMTP - verifies storage write path.
 //  3. Read the delivered message via IMAPS (LOGIN, SELECT, FETCH).
 //  4. Read the same message via POP3S (USER/PASS, STAT, RETR).
 //
@@ -217,7 +217,7 @@ func imapVerifyINBOX(auth func(*imapclient.Client) error) error {
 		return fmt.Errorf("imap select: %w", err)
 	}
 	if mb.NumMessages < 1 {
-		return fmt.Errorf("INBOX is empty — expected the LMTP-delivered message")
+		return fmt.Errorf("INBOX is empty - expected the LMTP-delivered message")
 	}
 	return nil
 }

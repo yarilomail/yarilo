@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The claim under test (#1026): JMAP read latency is driven by how many folders
 // an account has rather than by how much the client asked for. Every request is
-// said to walk the whole folder set — Email/query building its scope, Email/get
+// said to walk the whole folder set - Email/query building its scope, Email/get
 // resolving ids, Mailbox/get reading counters.
 //
 // That claim came from reading the code, and reading the code produced a lever
@@ -111,7 +111,7 @@ func mustCIDRB(b *testing.B, s string) *net.IPNet {
 }
 
 // post issues one API batch and fails the benchmark if the server did not
-// answer it — a benchmark timing an error path measures nothing.
+// answer it - a benchmark timing an error path measures nothing.
 func post(b *testing.B, s *Server, body string) {
 	b.Helper()
 	w := httptest.NewRecorder()
@@ -133,8 +133,8 @@ func BenchmarkFolderScalingMailboxGet(b *testing.B) {
 	for _, folders := range folderCounts {
 		b.Run(fmt.Sprintf("folders=%d", folders), func(b *testing.B) {
 			s := benchServer(b, folders, 5)
-			const body = `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-				"methodCalls":[["Mailbox/get",{"accountId":"u1@example.com","ids":null},"c0"]]}`
+			body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+				"methodCalls":[["Mailbox/get",{"accountId":"` + testAccount + `","ids":null},"c0"]]}`
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				post(b, s, body)
@@ -150,11 +150,11 @@ func BenchmarkFolderScalingEmailQueryGet(b *testing.B) {
 	for _, folders := range folderCounts {
 		b.Run(fmt.Sprintf("folders=%d", folders), func(b *testing.B) {
 			s := benchServer(b, folders, 5)
-			const body = `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+			body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":10,
+					["Email/query",{"accountId":"` + testAccount + `","limit":10,
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"],
-					["Email/get",{"accountId":"u1@example.com",
+					["Email/get",{"accountId":"` + testAccount + `",
 						"#ids":{"resultOf":"q0","name":"Email/query","path":"/ids"},
 						"properties":["id","subject","receivedAt"]},"g0"]]}`
 			b.ResetTimer()
@@ -170,7 +170,7 @@ func BenchmarkFolderScalingEmailQueryGet(b *testing.B) {
 // the filter narrows the answer without narrowing the work.
 //
 // It cannot simply be reordered. The JMAP mailbox id is the folder's GUID, and
-// the GUID lives inside the folder's own index — so "which folder is mailbox X"
+// the GUID lives inside the folder's own index - so "which folder is mailbox X"
 // is a question that can only be answered by opening folders. That is the thing
 // missing at the account level, and this benchmark is what would show it fixed.
 func BenchmarkFolderScalingEmailQueryInOneMailbox(b *testing.B) {
@@ -180,12 +180,12 @@ func BenchmarkFolderScalingEmailQueryInOneMailbox(b *testing.B) {
 			// Resolve INBOX's id the way a client does, from Mailbox/get.
 			w := httptest.NewRecorder()
 			s.Handler().ServeHTTP(w, apiRequest(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-				"methodCalls":[["Mailbox/get",{"accountId":"u1@example.com","ids":null},"c0"]]}`))
+				"methodCalls":[["Mailbox/get",{"accountId":"`+testAccount+`","ids":null},"c0"]]}`))
 			id := firstMailboxID(b, w.Body.String())
 
 			body := fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":10,
+					["Email/query",{"accountId":"`+testAccount+`","limit":10,
 						"filter":{"inMailbox":%q},
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"]]}`, id)
 			b.ResetTimer()
@@ -221,9 +221,9 @@ func BenchmarkAnswerSizeEmailQueryGet(b *testing.B) {
 			s := benchServer(b, 20, 10)
 			body := fmt.Sprintf(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":%d,
+					["Email/query",{"accountId":"`+testAccount+`","limit":%d,
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"],
-					["Email/get",{"accountId":"u1@example.com",
+					["Email/get",{"accountId":"`+testAccount+`",
 						"#ids":{"resultOf":"q0","name":"Email/query","path":"/ids"},
 						"properties":["id","subject","receivedAt"]},"g0"]]}`, limit)
 			b.ResetTimer()
@@ -245,11 +245,11 @@ func BenchmarkListingProperties(b *testing.B) {
 	for _, kb := range []int{2, 64, 512} {
 		b.Run(fmt.Sprintf("message=%dKB", kb), func(b *testing.B) {
 			s := benchServerSized(b, 1, 10, kb*1024)
-			const body = `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+			body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":10,
+					["Email/query",{"accountId":"` + testAccount + `","limit":10,
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"],
-					["Email/get",{"accountId":"u1@example.com",
+					["Email/get",{"accountId":"` + testAccount + `",
 						"#ids":{"resultOf":"q0","name":"Email/query","path":"/ids"},
 						"properties":["id","subject","from","receivedAt","threadId"]},"g0"]]}`
 			b.ResetTimer()
@@ -267,11 +267,11 @@ func BenchmarkReadingAMessage(b *testing.B) {
 	for _, kb := range []int{2, 64, 512} {
 		b.Run(fmt.Sprintf("message=%dKB", kb), func(b *testing.B) {
 			s := benchServerSized(b, 1, 10, kb*1024)
-			const body = `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+			body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 				"methodCalls":[
-					["Email/query",{"accountId":"u1@example.com","limit":10,
+					["Email/query",{"accountId":"` + testAccount + `","limit":10,
 						"sort":[{"property":"receivedAt","isAscending":false}]},"q0"],
-					["Email/get",{"accountId":"u1@example.com",
+					["Email/get",{"accountId":"` + testAccount + `",
 						"#ids":{"resultOf":"q0","name":"Email/query","path":"/ids"},
 						"fetchTextBodyValues":true,
 						"properties":["id","subject","textBody","bodyValues"]},"g0"]]}`

@@ -130,13 +130,13 @@ func oauthFailure(mech, status string, db OAuth2Passdb) []byte {
 
 // beginOAuth starts an OAuth login. Without an initial response the client is
 // sent an empty challenge first.
-func (s *Server) beginOAuth(conn net.Conn, live *exchanges, id, mech, service, resp, remoteIP, localIP, sessionID string) string {
+func (s *Server) beginOAuth(conn net.Conn, live *exchanges, id, mech, service, resp, remoteIP, localIP, sessionID string, cc clientConn) string {
 	db := s.oauth2Passdb()
 	if db == nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=unsupported mechanism\n", id)
 		return "bad_request"
 	}
-	x := &saslExchange{mech: mech, service: service, rip: remoteIP, lip: localIP, session: sessionID, oauthDB: db}
+	x := &saslExchange{mech: mech, service: service, rip: remoteIP, lip: localIP, session: sessionID, client: cc, oauthDB: db}
 	first, err := decodeResp(resp)
 	if err != nil || len(first) == 0 {
 		live.put(id, x)
@@ -170,7 +170,7 @@ func (s *Server) runOAuth(conn net.Conn, live *exchanges, id string, x *saslExch
 		return "fail"
 	}
 	x.username = user
-	return s.authenticatePassword(conn, id, x.service, x.rip, x.lip, x.session, "", user, token, true, refuse("invalid_token"))
+	return s.authenticatePassword(conn, id, x.service, x.rip, x.lip, x.session, x.client, "", user, token, true, refuse("invalid_token"))
 }
 
 // continueOAuth carries a response into an OAuth login: its first message, or

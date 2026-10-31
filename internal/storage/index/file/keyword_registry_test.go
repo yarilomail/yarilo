@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A keyword is stored as a bit; the name the bit stands for lives in the
 // extension header. A reader that keeps records it already holds must still
 // re-read that header, or a bit set by another process decodes to no name and
-// the keyword is silently gone — which is how a custom keyword set over IMAP
+// the keyword is silently gone - which is how a custom keyword set over IMAP
 // became invisible over JMAP (#1278).
 //
 // Asserted here, in the layer that resolves bits to names. Routed through the

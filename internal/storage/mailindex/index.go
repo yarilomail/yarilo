@@ -8,7 +8,7 @@ import (
 )
 
 // File is the parsed contents of one .index file (header + ext
-// table + records). Designed for whole-file read/write — Phase 1
+// table + records). Designed for whole-file read/write - Phase 1
 // does not implement streaming partial reads. Higher layers
 // (per-folder index driver, mdbox map) keep their own in-memory
 // state and call Recreate when they need to flush.
@@ -66,14 +66,14 @@ func Read(r io.Reader) (*File, error) {
 			return nil, fmt.Errorf("mailindex/read: %w", err)
 		}
 	}
-	// 3. Records — repeat hdr.RecordSize-byte chunks until EOF.
+	// 3. Records - repeat hdr.RecordSize-byte chunks until EOF.
 	if hdr.RecordSize == 0 {
 		return nil, fmt.Errorf("mailindex/read: header has zero RecordSize: %w", ErrCorrupted)
 	}
 	// Rebuild the layout from the extensions we just read so
 	// EncodeRecord/DecodeRecord can find each extension's
 	// (record_offset, record_size). We don't trust the
-	// in-record offsets from the on-disk ext table blindly —
+	// in-record offsets from the on-disk ext table blindly -
 	// re-deriving them lets us catch corrupt layouts.
 	layout, err := ComputeRecordLayout(exts)
 	if err != nil {
@@ -84,7 +84,7 @@ func Read(r io.Reader) (*File, error) {
 	// because that's the offset records were actually written
 	// at. We log/return ErrCorrupted so the caller can decide.
 	if !layoutOffsetsMatch(exts, layout.Extensions) {
-		// Preserve the on-disk layout exactly — important for
+		// Preserve the on-disk layout exactly - important for
 		// drop-in compat with files produced by other writers.
 		layout = RecordLayout{
 			RecordSize: hdr.RecordSize,
@@ -92,7 +92,7 @@ func Read(r io.Reader) (*File, error) {
 		}
 	} else if layout.RecordSize != hdr.RecordSize {
 		// Computed layout agrees on offsets but disagrees on
-		// total size — that's a bug in our own writer.
+		// total size - that's a bug in our own writer.
 		return nil, fmt.Errorf("mailindex/read: header RecordSize=%d, layout=%d: %w",
 			hdr.RecordSize, layout.RecordSize, ErrCorrupted)
 	}
@@ -172,7 +172,7 @@ func NewFile(indexID uint32, exts []Extension) (*File, error) {
 // AddHeaderExtension appends a header-only extension (RecordSize 0) and fixes up
 // Header.HeaderSize, Header.RecordSize and Layout so Recreate accepts the file.
 // It is a no-op when an extension with the same name already exists. Used to
-// backfill extensions onto indexes written before that extension existed —
+// backfill extensions onto indexes written before that extension existed -
 // simply appending to Extensions is not enough, because Recreate rejects a file
 // whose HeaderSize no longer matches the encoded extension headers.
 func (f *File) AddHeaderExtension(name string, hdrData []byte, recordAlign uint16, resetID uint32) error {

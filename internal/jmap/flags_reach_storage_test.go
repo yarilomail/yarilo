@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // curName is the one file in INBOX/cur, whose trailer carries the flags.
@@ -56,7 +56,7 @@ func reconcile(t *testing.T, home string) {
 func TestAJMAPKeywordReachesTheNameAndSurvivesAReconcile(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, setTestMessage, 0)
 
-	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testUser, id))
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testAccount, id))
 
 	name := curName(t, home)
 	if _, trailer, ok := strings.Cut(name, ":2,"); !ok || !strings.Contains(trailer, "F") {
@@ -82,7 +82,7 @@ func TestAFlagWriteThatCannotLandLeavesTheRecordDirty(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(cur, 0o700) }) //nolint:errcheck
 
-	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testUser, id))
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testAccount, id))
 	if got := curName(t, home); got != before {
 		t.Fatalf("the file was renamed to %q under a directory that forbids it", got)
 	}

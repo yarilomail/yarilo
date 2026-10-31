@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // rebuildRequest is the wire body for /api/backend/index/rebuild.
@@ -43,7 +43,7 @@ func (s *Server) handleIndexRebuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ResetUIDs {
-		apiError(w, "reset_uids=true not supported in v1 — DELETE+CREATE the folder via IMAP instead", http.StatusNotImplemented)
+		apiError(w, "reset_uids=true not supported in v1 - DELETE+CREATE the folder via IMAP instead", http.StatusNotImplemented)
 		return
 	}
 	req.Folder = mailbox.NormalizeName(req.Folder, s.skipNFC())
@@ -204,9 +204,9 @@ func (s *Server) handleStorageRebuild(w http.ResponseWriter, r *http.Request) {
 		s.ftsExpunge(uc, folderName, uids)
 	}
 
-	note := "run with the user's mailboxes quiesced — no concurrent delivery or folder ops (operator repair tool). Unreferenced messages are set zero-ref for the next purge; orphan restore requires restore_orphans=true AND an ORIG_MAILBOX tag"
+	note := "run with the user's mailboxes quiesced - no concurrent delivery or folder ops (operator repair tool). Unreferenced messages are set zero-ref for the next purge; orphan restore requires restore_orphans=true AND an ORIG_MAILBOX tag"
 	if req.RestoreOrphans {
-		note = "restore_orphans=true: unreferenced messages with an ORIG_MAILBOX tag were re-filed into their home folder (default flags — flags are not recoverable for an orphan); the rest are zero-ref for purge. Run with the user's mailboxes quiesced"
+		note = "restore_orphans=true: unreferenced messages with an ORIG_MAILBOX tag were re-filed into their home folder (default flags - flags are not recoverable for an orphan); the rest are zero-ref for purge. Run with the user's mailboxes quiesced"
 	}
 	apiJSON(w, storageRebuildStats{
 		Scanned:             st.Scanned,
@@ -247,7 +247,7 @@ type optimizeStats struct {
 }
 
 // foldSizes is what the filesystem says about one journal pair. LogBytes is -1
-// when the log file does not exist — the state folding the mdbox map leaves,
+// when the log file does not exist - the state folding the mdbox map leaves,
 // and a different fact from a log of zero bytes.
 type foldSizes struct {
 	BaseBytes int64 `json:"base_bytes"`
@@ -486,7 +486,7 @@ func (s *Server) handleFolderRepair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ResetUIDs {
-		apiError(w, "reset_uids=true not supported in v1 — DELETE+CREATE the folder via IMAP instead", http.StatusNotImplemented)
+		apiError(w, "reset_uids=true not supported in v1 - DELETE+CREATE the folder via IMAP instead", http.StatusNotImplemented)
 		return
 	}
 	req.Folder = mailbox.NormalizeName(req.Folder, s.skipNFC())

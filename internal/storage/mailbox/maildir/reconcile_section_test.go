@@ -8,10 +8,10 @@ import (
 	"sync"
 	"testing"
 
-	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
+	fileidx "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The folder lock is not held across a directory walk, and the stats taken

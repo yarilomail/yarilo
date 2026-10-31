@@ -3,11 +3,11 @@ package maildir
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // folderDiskName is form-preserving and round-trips, including a combining mark
-// straight after the escape character — the input that broke every earlier
+// straight after the escape character - the input that broke every earlier
 // version of this code.
 //
 // The reason it now just works: the driver no longer normalises. NFC runs once
@@ -16,7 +16,7 @@ import (
 // into the escape's hex ("^" -> "^5e", and a following mark stays a separate
 // rune instead of merging with the "e"). The ordering question that #1078,
 // #1092 and #1113 each got wrong no longer exists, because there is nothing to
-// order — one owner, upstream (#1113).
+// order - one owner, upstream (#1113).
 func TestFolderDiskNameRoundTripsEveryForm(t *testing.T) {
 	names := []string{
 		"^́x",         // combining mark straight after the escape character
@@ -46,7 +46,7 @@ func TestFolderDiskNameRoundTripsEveryForm(t *testing.T) {
 			}
 			logical = mailbox.UnescapeStorageName(logical, "^")
 			if logical != name {
-				t.Errorf("utf8=%v: %q stored as %q, read back as %q — not form-preserving", listUTF8, name, disk, logical)
+				t.Errorf("utf8=%v: %q stored as %q, read back as %q - not form-preserving", listUTF8, name, disk, logical)
 			}
 		}
 	}

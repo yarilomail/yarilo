@@ -25,3 +25,19 @@ var (
 		Help: "Where a lookup was answered from: store is the per-user GUID store, walk is the folder scan it replaces.",
 	}, []string{"source"})
 )
+
+// Push streams open in this pod and the events they carried.
+var (
+	metricPushStreams = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "jmap_push_streams",
+		Help: "EventSource streams open in this pod.",
+	})
+	metricPushEvents = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "jmap_push_events_total",
+		Help: "Events sent on push streams, by event: state or ping.",
+	}, []string{"event"})
+	metricWebSockets = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "jmap_websockets",
+		Help: "JMAP WebSocket connections open in this pod.",
+	})
+)

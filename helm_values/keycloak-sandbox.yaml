@@ -1,4 +1,5 @@
 # Keycloak for the OAuth2 rows of #2231; how to apply it: hack/stand/README.md.
+# Its Secrets (keycloak, yarilo-oauth2-sandbox) are made outside git by hack/sandbox/secrets.sh.
 ---
 apiVersion: v1
 kind: Namespace
@@ -22,30 +23,6 @@ spec:
     - keycloak
     - keycloak.keycloak.svc
     - keycloak.keycloak.svc.cluster.local
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: keycloak
-  namespace: keycloak
-type: Opaque
-stringData:
-  admin_password: "sandbox-secret"
-  # yarilo-auth: introspection and password-grant credentials (oauth2 client_secret_ref).
-  client_secret: "sandbox-keycloak-client"
-  # base64url of the 64-byte HS256 key behind client yarilo-test-hs256 (static-key rows).
-  hs256_key: "eWFyaWxvLXNhbmRib3gtaHMyNTYta2V5LWZvci1sb2NhbC12YWxpZGF0aW9uLXJvd3Mtbm90LWEtc2VjcmV0IQ"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  # The same two values for yarilo-auth, read by the values-sandbox-oauth2-*.yaml overlays.
-  name: yarilo-oauth2-sandbox
-  namespace: yarilo-sb
-type: Opaque
-stringData:
-  client_secret: "sandbox-keycloak-client"
-  hs256_key: "eWFyaWxvLXNhbmRib3gtaHMyNTYta2V5LWZvci1sb2NhbC12YWxpZGF0aW9uLXJvd3Mtbm90LWEtc2VjcmV0IQ"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -125,19 +102,19 @@ data:
       "users": [
         {"username": "u1@d00001.test", "email": "u1@d00001.test", "emailVerified": true,
          "firstName": "u1", "lastName": "mdbox", "enabled": true,
-         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]},
+         "credentials": [{"type": "password", "value": "${KC_SB_USER_PASSWORD}", "temporary": false}]},
         {"username": "u2@d00001.test", "email": "u2@d00001.test", "emailVerified": true,
          "firstName": "u2", "lastName": "mdbox", "enabled": true,
-         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]},
+         "credentials": [{"type": "password", "value": "${KC_SB_USER_PASSWORD}", "temporary": false}]},
         {"username": "u51@d00002.test", "email": "u51@d00002.test", "emailVerified": true,
          "firstName": "u51", "lastName": "maildir", "enabled": true,
-         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]},
+         "credentials": [{"type": "password", "value": "${KC_SB_USER_PASSWORD}", "temporary": false}]},
         {"username": "u101@d00003.test", "email": "u101@d00003.test", "emailVerified": true,
          "firstName": "u101", "lastName": "sdbox", "enabled": true,
-         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]},
+         "credentials": [{"type": "password", "value": "${KC_SB_USER_PASSWORD}", "temporary": false}]},
         {"username": "u3@d00001.test", "email": "u3@d00001.test", "emailVerified": false,
          "firstName": "u3", "lastName": "inactive", "enabled": true,
-         "credentials": [{"type": "password", "value": "Yarilo!test1", "temporary": false}]}
+         "credentials": [{"type": "password", "value": "${KC_SB_USER_PASSWORD}", "temporary": false}]}
       ]
     }
 ---
@@ -177,6 +154,8 @@ spec:
               valueFrom: {secretKeyRef: {name: keycloak, key: client_secret}}
             - name: KC_SB_HS256_KEY
               valueFrom: {secretKeyRef: {name: keycloak, key: hs256_key}}
+            - name: KC_SB_USER_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak, key: user_password}}
           ports:
             - {name: https, containerPort: 8443}
             - {name: management, containerPort: 9000}

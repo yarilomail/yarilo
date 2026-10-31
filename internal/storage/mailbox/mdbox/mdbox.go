@@ -19,12 +19,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/crlf"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/crlf"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Directory layout constants.

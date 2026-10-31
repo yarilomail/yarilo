@@ -7,19 +7,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/quotawarn"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/quotawarn"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // quotaAuthStub authenticates one user and returns a quota_rule so the session
@@ -100,7 +100,7 @@ func TestQuotaWarnUnderDeleteOnly(t *testing.T) {
 func runDeleteOnlyUnder(t *testing.T, newMB func() mailbox.MailboxBackend) {
 	dir := t.TempDir()
 
-	// Server A — deliver a message well over the 1000-byte limit (as LMTP would).
+	// Server A - deliver a message well over the 1000-byte limit (as LMTP would).
 	a := startQuotaWarnServer(t, dir, newMB(), false)
 	big := "From: s@x\r\nTo: user@test.com\r\nSubject: big\r\n\r\n" + strings.Repeat("X", 4000) + "\r\n"
 	ac := a.Append("INBOX", int64(len(big)), nil)
@@ -121,7 +121,7 @@ func runDeleteOnlyUnder(t *testing.T, newMB func() mailbox.MailboxBackend) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(old)
 
-	// Server B — fresh session (separate index instance), delete-only expunge.
+	// Server B - fresh session (separate index instance), delete-only expunge.
 	b := startQuotaWarnServer(t, dir, newMB(), true)
 	if _, err := b.Select("INBOX", nil).Wait(); err != nil {
 		t.Fatal(err)

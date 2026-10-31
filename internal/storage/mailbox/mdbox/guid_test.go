@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // openTestUserMailbox creates a Backend + userMailbox rooted at home.
@@ -63,7 +63,7 @@ func TestGUIDIndexed(t *testing.T) {
 }
 
 // TestGUIDPreservedAfterPurge verifies that a compacted record keeps
-// its original GUID — the GUID must survive the purge compaction path.
+// its original GUID - the GUID must survive the purge compaction path.
 func TestGUIDPreservedAfterPurge(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	u := openTestUserMailbox(t, home)
@@ -102,7 +102,7 @@ func TestGUIDPreservedAfterPurge(t *testing.T) {
 		t.Fatalf("Remove: %v", err)
 	}
 
-	// Purge — compacts the file.
+	// Purge - compacts the file.
 	if _, err := u.Purge(); err != nil {
 		t.Fatalf("Purge: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestGUIDPreservedAfterPurge(t *testing.T) {
 	}
 }
 
-// TestLookupByGUID_ZeroReturnsNotFound — zero GUID must never match.
+// TestLookupByGUID_ZeroReturnsNotFound - zero GUID must never match.
 func TestLookupByGUID_ZeroReturnsNotFound(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	u := openTestUserMailbox(t, home)
@@ -172,7 +172,7 @@ func TestGUIDInRebuildScan(t *testing.T) {
 	// The scan record must carry a non-zero GUID.
 	rec := recs[0]
 	if rec.GUID == ([16]byte{}) {
-		t.Error("ScanRecord.GUID is zero — trailer was not parsed")
+		t.Error("ScanRecord.GUID is zero - trailer was not parsed")
 	}
 
 	// The GUID must match what the map stores.

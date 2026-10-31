@@ -49,7 +49,7 @@ type Policy struct {
 
 // MatchWarnings returns the warnings whose configured threshold is crossed by
 // the usage transition before→after under limits. A crossing fires exactly once
-// (before on one side of the warning limit, after on the other) — the same
+// (before on one side of the warning limit, after on the other) - the same
 // edge-trigger semantics as the quota_warning_match reference.
 func MatchWarnings(warnings []Warning, limits Limits, before, after Usage) []Warning {
 	var fired []Warning

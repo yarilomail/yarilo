@@ -44,7 +44,7 @@ func TestParseHeaderProperty(t *testing.T) {
 				t.Errorf("= %+v, want name=%s form=%s all=%v", got, tc.name, tc.form, tc.all)
 			}
 			if got.Property != tc.property {
-				t.Errorf("Property = %q, want the name as written — it is the response key", got.Property)
+				t.Errorf("Property = %q, want the name as written - it is the response key", got.Property)
 			}
 		})
 	}
@@ -67,5 +67,33 @@ func TestHeaderPropertyNeedsHeadersNotStructure(t *testing.T) {
 	}
 	if hp := req.HeaderProperties(); len(hp) != 1 || hp[0].Form != FormURLs {
 		t.Errorf("HeaderProperties = %+v, want the one parsed property", hp)
+	}
+}
+
+func TestHeaderFormAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		form HeaderForm
+		want bool
+	}{
+		{"Subject", FormRaw, true},
+		{"Subject", FormText, true},
+		{"list-id", FormText, true},
+		{"From", FormText, false},
+		{"From", FormAddresses, true},
+		{"Resent-Reply-To", FormGroupedAddresses, true},
+		{"Subject", FormAddresses, false},
+		{"References", FormMessageIDs, true},
+		{"Received", FormMessageIDs, false},
+		{"Resent-Date", FormDate, true},
+		{"Subject", FormDate, false},
+		{"List-Post", FormURLs, true},
+		{"Date", FormURLs, false},
+		{"X-Anything", FormURLs, true},
+		{"User-Agent", FormText, true},
+	} {
+		if got := HeaderFormAllowed(tc.name, tc.form); got != tc.want {
+			t.Errorf("%s %s: %v, want %v", tc.name, tc.form, got, tc.want)
+		}
 	}
 }

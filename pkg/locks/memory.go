@@ -82,7 +82,7 @@ func NewMemoryBackend(opts ...MemoryBackendOption) *MemoryBackend {
 }
 
 // Acquire implements Backend. Fails if the resource has an exclusive
-// holder OR any shared holder — exclusive is exclusive against everyone.
+// holder OR any shared holder - exclusive is exclusive against everyone.
 func (b *MemoryBackend) Acquire(_ context.Context, resource, owner, site, ticket string, ttl time.Duration) (string, Holder, error) {
 	if resource == "" || owner == "" {
 		return "", Holder{}, fmt.Errorf("locks/memory: resource and owner must be non-empty")
@@ -194,6 +194,15 @@ func (b *MemoryBackend) Renew(_ context.Context, lockID string, ttl time.Duratio
 	return nil
 }
 
+// PublishAll implements Backend.
+func (b *MemoryBackend) PublishAll(ctx context.Context, evs []Event) []error {
+	errs := make([]error, len(evs))
+	for i, e := range evs {
+		errs[i] = b.Publish(ctx, e.Resource, e.Type, e.Payload)
+	}
+	return errs
+}
+
 // Publish implements Backend.
 func (b *MemoryBackend) Publish(_ context.Context, resource string, t EventType, payload string) error {
 	b.mu.Lock()
@@ -205,7 +214,7 @@ func (b *MemoryBackend) Publish(_ context.Context, resource string, t EventType,
 	b.mu.Unlock()
 	evt := Event{Resource: resource, Type: t, Payload: payload}
 	for _, ch := range chans {
-		// Non-blocking send — a slow subscriber must not stall publishers.
+		// Non-blocking send - a slow subscriber must not stall publishers.
 		// Dropped events are acceptable for IDLE notifications: the client
 		// re-syncs from index state on the next user command.
 		select {

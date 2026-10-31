@@ -46,7 +46,7 @@ func TestDeleteInboxIsRefusedOnEveryBackend(t *testing.T) {
 				// CANNOT says the server will never perform this, as opposed
 				// to a transient or rights-based refusal.
 				if ie.Code != imap.ResponseCodeCannot {
-					t.Errorf("DELETE %q answered code %q, want CANNOT — a client cannot tell a permanent refusal from a temporary one without it", name, ie.Code)
+					t.Errorf("DELETE %q answered code %q, want CANNOT - a client cannot tell a permanent refusal from a temporary one without it", name, ie.Code)
 				}
 				if !strings.Contains(strings.ToUpper(ie.Text), "INBOX") {
 					t.Errorf("DELETE %q text %q does not say which mailbox was refused", name, ie.Text)
@@ -66,7 +66,7 @@ func TestDeleteInboxIsRefusedOnEveryBackend(t *testing.T) {
 	}
 }
 
-// A folder that is not INBOX must still be deletable — otherwise the test above
+// A folder that is not INBOX must still be deletable - otherwise the test above
 // passes on a server that refuses every DELETE.
 func TestDeleteStillWorksForOrdinaryFolders(t *testing.T) {
 	mb := maildirBackend(t)

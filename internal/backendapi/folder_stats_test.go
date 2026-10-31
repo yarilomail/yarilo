@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // statsServer stores one message in INBOX on the given driver.
@@ -92,7 +92,7 @@ func TestFolderStatsSaysNullWhereItCannotCount(t *testing.T) {
 			// The folder does hold a message either way, which is what makes
 			// a zero here a lie rather than a coincidence.
 			if got := out["messages"]; got != float64(1) {
-				t.Fatalf("messages = %v, want 1 — the fixture stored nothing", got)
+				t.Fatalf("messages = %v, want 1 - the fixture stored nothing", got)
 			}
 			for _, field := range []string{"on_disk_count", "size_bytes"} {
 				value, present := out[field]

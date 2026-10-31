@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 func TestUserKickDelay(t *testing.T) {
@@ -80,7 +80,7 @@ func TestKickSessionsForBackend_BatchesAllLocal(t *testing.T) {
 		s.sessByBE["10.0.0.5"][id] = true
 	}
 	s.sessRecMu.Unlock()
-	// One remote replica on the same backend — must be skipped by the kicker.
+	// One remote replica on the same backend - must be skipped by the kicker.
 	s.applyRemoteSessionOpen([]string{"remote1", "u", "10.0.0.5", "imap"}, "10.0.0.99@run1")
 
 	s.kickSessionsForBackend("10.0.0.5")

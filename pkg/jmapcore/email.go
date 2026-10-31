@@ -110,7 +110,7 @@ func (r EmailGetRequest) WantsBodyValues() bool {
 // headerDerivedProperties are answered from the message's header block alone.
 //
 // Kept apart from the structural ones because they are what a mailbox listing
-// asks for — subject and from on every row — and because answering them does
+// asks for - subject and from on every row - and because answering them does
 // not require descending into the MIME tree. Conflating the two made the most
 // common request in a mail client pay for the rarest.
 var headerDerivedProperties = map[string]bool{
@@ -133,7 +133,7 @@ var headerDerivedProperties = map[string]bool{
 //
 // "references" and "headers" are absent because ENVELOPE does not hold them,
 // and header:* forms can name any field at all. See
-// https://doc.yarilomail.org/JMAP.
+// https://doc.yarilomail.org/latest/protocols/jmap.html.
 var envelopeDerivedProperties = map[string]bool{
 	"messageId": true,
 	"inReplyTo": true,
@@ -183,8 +183,8 @@ var structureDerivedProperties = map[string]bool{
 }
 
 // NeedsMessage reports whether answering this request requires reading the
-// message at all. A client that named only index-backed properties — id,
-// mailboxIds, keywords, size, receivedAt — is answered without opening it.
+// message at all. A client that named only index-backed properties - id,
+// mailboxIds, keywords, size, receivedAt - is answered without opening it.
 // A client that named no properties gets the full default set, which does
 // require the message.
 func (r EmailGetRequest) NeedsMessage() bool {
@@ -240,7 +240,7 @@ func (r EmailGetRequest) NeedsStructure() bool {
 
 // EffectiveBodyBytes resolves the client's cap against the server's ceiling.
 // The smaller wins, and a client that named no cap gets the ceiling rather than
-// everything — the ceiling is the operator's bound on work, not a default a
+// everything - the ceiling is the operator's bound on work, not a default a
 // client can opt out of.
 func EffectiveBodyBytes(clientMax uint32, ceiling uint32) uint32 {
 	switch {

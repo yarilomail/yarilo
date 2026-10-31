@@ -1,9 +1,21 @@
 package mailboxbase
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
-// UpdateFlags applies one delta to one message's record.
+// UpdateFlags applies one delta to one message's record. Where names carry the
+// flags the record is marked dirty with it, so a sync before the rename keeps it.
 func (b *Box) UpdateFlags(folderID uint64, uid uint32, upd mailbox.FlagsUpdate) error {
+	if mailbox.KeepsFlagsInNames(b.store) {
+		tx, err := b.index.Begin(folderID)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		tx.UpdateFlags(uid, upd)
+		tx.MarkDirty(uid, true)
+		_, err = tx.Commit()
+		return err
+	}
 	switch upd.Mode {
 	case mailbox.FlagsAdd:
 		return b.index.AddFlags(folderID, uid, upd.Flags, upd.Keywords)

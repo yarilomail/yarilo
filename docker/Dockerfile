@@ -3,7 +3,7 @@
 ## Pinned to the patch go.mod names: the scan reads go.mod, the image ships the
 ## base, and a floating base makes them disagree silently (#1497). Dependabot
 ## moves it.
-FROM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS builder
+FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS builder
 
 ## A newer go.mod must fail the build, not fetch a toolchain.
 ENV GOTOOLCHAIN=local
@@ -47,17 +47,17 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         yarilo-jmap-login \
         yarilo-jmap \
     ; do \
-        go build -ldflags="-s -w -X github.com/yarilomail/yarilo/pkg/build.Version=${BUILD_VERSION} -X github.com/yarilomail/yarilo/pkg/build.ChartVersion=${BUILD_CHART_VERSION}" \
+        go build -ldflags="-s -w -X github.com/yarilomail/yarilo/v2/pkg/build.Version=${BUILD_VERSION} -X github.com/yarilomail/yarilo/v2/pkg/build.ChartVersion=${BUILD_CHART_VERSION}" \
             -trimpath -o "/out/$cmd" "./app/$cmd"; \
     done
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    go build -ldflags="-s -w -X github.com/yarilomail/yarilo/pkg/build.Version=${BUILD_VERSION} -X github.com/yarilomail/yarilo/pkg/build.ChartVersion=${BUILD_CHART_VERSION}" \
+    go build -ldflags="-s -w -X github.com/yarilomail/yarilo/v2/pkg/build.Version=${BUILD_VERSION} -X github.com/yarilomail/yarilo/v2/pkg/build.ChartVersion=${BUILD_CHART_VERSION}" \
     -trimpath -o /out/yarilo-smoketest ./app/smoketest
 
 ## --- yarilo-fts: the only cgo binary (libxapian). Built in its own stage so
 ## every other binary stays CGO_ENABLED=0 static; ships in the single image.
-FROM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS fts-builder
+FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS fts-builder
 ENV GOTOOLCHAIN=local
 # hadolint ignore=DL3018
 RUN apk add --no-cache build-base xapian-core-dev
@@ -72,11 +72,11 @@ ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     for cmd in yarilo-fts fts-bench; do \
-        go build -tags flatcurve -ldflags="-s -w -X github.com/yarilomail/yarilo/pkg/build.Version=${BUILD_VERSION} -X github.com/yarilomail/yarilo/pkg/build.ChartVersion=${BUILD_CHART_VERSION}" \
+        go build -tags flatcurve -ldflags="-s -w -X github.com/yarilomail/yarilo/v2/pkg/build.Version=${BUILD_VERSION} -X github.com/yarilomail/yarilo/v2/pkg/build.ChartVersion=${BUILD_CHART_VERSION}" \
             -trimpath -o "/out/$cmd" "./app/$cmd"; \
     done
 
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 # tini is PID 1 (see ENTRYPOINT): the components that run external programs --
 # the director's flush hook, sieve pipe/filter/execute, the quota-warning
 # script -- leave orphaned grandchildren behind when one is killed, and Go

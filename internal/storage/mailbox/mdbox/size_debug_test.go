@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // capture collects the records a run logs, with their attributes.

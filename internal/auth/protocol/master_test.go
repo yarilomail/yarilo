@@ -33,7 +33,7 @@ func (s *stubIteratorUserdb) Iterate() ([]string, error) {
 	return s.all, nil
 }
 
-// nonIteratorUserdb implements only Userdb, NOT UserdbIterator —
+// nonIteratorUserdb implements only Userdb, NOT UserdbIterator -
 // drives the LIST-not-supported path.
 type nonIteratorUserdb struct {
 	users map[string]*UserInfo

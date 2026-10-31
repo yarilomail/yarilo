@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // clockFor gives the cache a hand-wound clock and resets everything the rows
@@ -203,3 +204,122 @@ func (f *failingDict) Iterate(context.Context, *dict.OpSettings, string, dict.It
 }
 
 var errBroken = errors.New("acl test: the dict is down")
+
+// gatedDict holds every registry iteration until released and counts them by path.
+type gatedDict struct {
+	dict.Dict
+	release chan struct{}
+	entered chan struct{} // receives each iteration as it starts, when set
+	mu      sync.Mutex
+	calls   map[string]int
+}
+
+func (g *gatedDict) Iterate(ctx context.Context, set *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
+	g.mu.Lock()
+	g.calls[path]++
+	g.mu.Unlock()
+	if g.entered != nil {
+		g.entered <- struct{}{}
+	}
+	<-g.release
+	return g.Dict.Iterate(ctx, set, path, flags)
+}
+
+// Sessions missing the same path at once share one scan: after a pod start
+// every LIST missed anyone/ together and filled the dict pool (#2381).
+func TestConcurrentMissesShareOneScan(t *testing.T) {
+	d := regDict(t)
+	clockFor(t)
+	grant(t, d, "alice", mailbox.Identifier{Type: mailbox.IDAnyone})
+	const sessions = 20
+	joined := make(chan struct{}, sessions)
+	joinedScan = func() { joined <- struct{}{} }
+	t.Cleanup(func() { joinedScan = func() {} })
+	g := &gatedDict{Dict: d, release: make(chan struct{}), calls: map[string]int{}}
+
+	path := fwdPrefix + "anyone/"
+	answers := make([][]string, sessions)
+	errs := make([]error, sessions)
+	var wg sync.WaitGroup
+	for i := 0; i < sessions; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			answers[i], errs[i] = owners.cachedPath(context.Background(), g, path)
+		}(i)
+	}
+	for n := 0; n < sessions-1; n++ {
+		select {
+		case <-joined:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%d of %d misses waited for the scan in flight; the rest scanned on their own", n, sessions-1)
+		}
+	}
+	close(g.release)
+	wg.Wait()
+	if g.calls[path] != 1 {
+		t.Errorf("%d sessions scanned %s %d times, want once", sessions, path, g.calls[path])
+	}
+	for i := range answers {
+		if errs[i] != nil || len(answers[i]) != 1 || answers[i][0] != "alice" {
+			t.Fatalf("session %d answered %v, %v; want [alice]", i, answers[i], errs[i])
+		}
+	}
+}
+
+// The session that started a scan leaving mid-way does not answer for the
+// others: the scan runs on, once, and every waiter gets its owners.
+func TestALeavingSessionDoesNotFailTheScan(t *testing.T) {
+	d := regDict(t)
+	clockFor(t)
+	grant(t, d, "alice", mailbox.Identifier{Type: mailbox.IDAnyone})
+	const waiters = 5
+	joined := make(chan struct{}, waiters)
+	joinedScan = func() { joined <- struct{}{} }
+	t.Cleanup(func() { joinedScan = func() {} })
+	g := &gatedDict{Dict: d, release: make(chan struct{}), entered: make(chan struct{}, 1), calls: map[string]int{}}
+	path := fwdPrefix + "anyone/"
+
+	leaderCtx, leave := context.WithCancel(context.Background())
+	leaderErr := make(chan error, 1)
+	go func() {
+		_, err := owners.cachedPath(leaderCtx, g, path)
+		leaderErr <- err
+	}()
+	select {
+	case <-g.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the leading session's scan never started")
+	}
+	answers := make([][]string, waiters)
+	errs := make([]error, waiters)
+	var wg sync.WaitGroup
+	for i := 0; i < waiters; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			answers[i], errs[i] = owners.cachedPath(context.Background(), g, path)
+		}(i)
+	}
+	for n := 0; n < waiters; n++ {
+		select {
+		case <-joined:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%d of %d waiters joined the scan", n, waiters)
+		}
+	}
+	leave()
+	if err := <-leaderErr; !errors.Is(err, context.Canceled) {
+		t.Errorf("the leaving session answered %v, want its own cancellation", err)
+	}
+	close(g.release)
+	wg.Wait()
+	for i := range answers {
+		if errs[i] != nil || len(answers[i]) != 1 || answers[i][0] != "alice" {
+			t.Errorf("waiter %d answered %v, %v after the leader left; want [alice]", i, answers[i], errs[i])
+		}
+	}
+	if g.calls[path] != 1 {
+		t.Errorf("%s iterated %d times, want once", path, g.calls[path])
+	}
+}

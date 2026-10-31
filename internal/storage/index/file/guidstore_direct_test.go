@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Delivery and APPEND settle the uid outside indexTx: a copy missing here is a

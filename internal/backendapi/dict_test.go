@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	_ "github.com/yarilomail/yarilo/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/memory"
 )
 
 // memTestServer wires a Server with a single in-memory dict named
@@ -36,7 +36,7 @@ func memTestServer(t *testing.T, token string) (*httptest.Server, dict.Dict) {
 
 // doJSON returns (statusCode, body) and closes the response body
 // internally. Returning the raw *http.Response would force callers
-// to remember to Close — and the bodyclose linter would not believe
+// to remember to Close - and the bodyclose linter would not believe
 // our defer here because the call site looks like leaking. The
 // status-and-body shape is everything every test actually needs.
 func doJSON(t *testing.T, ts *httptest.Server, method, path, token string, body any) (int, []byte) {
@@ -189,7 +189,7 @@ func TestDictRoundtripSetLookupUnset(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("unset status %d", status)
 	}
-	// LOOKUP again — should miss
+	// LOOKUP again - should miss
 	_, data = doJSON(t, ts, http.MethodPost, "/api/backend/dict/test/lookup", "", map[string]any{"key": "priv/foo"})
 	_ = json.Unmarshal(data, &lk)
 	if lk.Found {

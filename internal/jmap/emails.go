@@ -14,9 +14,9 @@ import (
 	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/charset"
 
-	"github.com/yarilomail/yarilo/internal/msgcache"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/msgcache"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // previewChars is the length of the preview string (RFC 8621 §4.1.4 leaves it
@@ -268,8 +268,8 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 	// A message that cannot be parsed still exists: Email/query lists it,
 	// download serves its bytes and IMAP shows it. Reporting notFound here
 	// would leave a client unable to reconcile its own view of the account
-	// (#1001), so the object comes back with the half that is trustworthy —
-	// everything the index carries — and the header-derived properties stay
+	// (#1001), so the object comes back with the half that is trustworthy -
+	// everything the index carries - and the header-derived properties stay
 	// empty. Malformed headers are ordinary in real mail; this is not an
 	// exceptional path.
 	//
@@ -292,8 +292,8 @@ func (s *Server) buildEmail(h *userHandle, ref messageRef, req jmapcore.EmailGet
 
 	// A request that named only header properties stops here. Walking the MIME
 	// tree is what pulls the message body off disk and decodes it, so for the
-	// commonest request a client makes — subject and sender for every row of a
-	// mailbox listing — the walk was the entire cost and none of the answer.
+	// commonest request a client makes - subject and sender for every row of a
+	// mailbox listing - the walk was the entire cost and none of the answer.
 	if !req.NeedsStructure() {
 		return email, headerFields, nil
 	}

@@ -7,7 +7,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-message/textproto"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // BoxTx is one command's changes to one folder, written once. A change to a
@@ -18,6 +18,8 @@ type BoxTx interface {
 	UpdateFlags(uid uint32, upd FlagsUpdate)
 	Expunge(uid uint32)
 	Append(m *MessageMeta)
+	// MarkDirty says the record's flags are ahead of storage, or no longer.
+	MarkDirty(uid uint32, dirty bool)
 	// Commit writes what is still true; a change to a record that moved or
 	// went is skipped and named in TxResult.Skipped, the rest is written.
 	Commit() (TxResult, error)
@@ -91,6 +93,6 @@ type VirtualCopies interface {
 	Backing(folderID uint64) (map[uint32]BackingRef, error)
 }
 
-// ErrNoGUIDStore: the account keeps no record of copies by message, so a
+// ErrNoGUIDStore says the account keeps no record of copies by message, so a
 // caller finds them another way.
 var ErrNoGUIDStore = errors.New("mailbox: no record of copies by message")

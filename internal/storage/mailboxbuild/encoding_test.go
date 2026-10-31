@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The on-disk folder name is asserted by reading the directory, not by reading
@@ -72,7 +72,7 @@ func TestDefaultConfigWritesFolderNamesAsUTF8(t *testing.T) {
 	cfg := loadWith(t, "storage:\n  mailbox: maildir\n")
 	got := createFolder(t, cfg.Storage, "Вхідні")
 	if want := ".Вхідні"; got != want {
-		t.Errorf("on disk %q, want %q — the documented default is UTF-8", got, want)
+		t.Errorf("on disk %q, want %q - the documented default is UTF-8", got, want)
 	}
 }
 
@@ -86,7 +86,7 @@ func TestMailboxListUTF8FalseWritesModifiedUTF7(t *testing.T) {
 		t.Errorf("on disk %q, want a modified-UTF-7 name beginning %q", got, ".&")
 	}
 	if got == ".Вхідні" {
-		t.Error("mailbox_list_utf8: false had no effect — the setting is decorative")
+		t.Error("mailbox_list_utf8: false had no effect - the setting is decorative")
 	}
 }
 
@@ -100,7 +100,7 @@ func TestDefaultConfigNormalisesToNFC(t *testing.T) {
 	decomposed := "Café"
 	got := createFolder(t, cfg.Storage, decomposed)
 	if want := ".Caf\u00e9"; got != want {
-		t.Errorf("on disk %q, want %q — decomposed input should be stored NFC", got, want)
+		t.Errorf("on disk %q, want %q - decomposed input should be stored NFC", got, want)
 	}
 }
 
@@ -109,7 +109,7 @@ func TestMailboxListNormalizeToNFCFalseKeepsTheInputForm(t *testing.T) {
 	decomposed := "Café"
 	got := createFolder(t, cfg.Storage, decomposed)
 	if got == ".Caf\u00e9" {
-		t.Error("mailbox_list_normalize_to_nfc: false had no effect — the setting is decorative")
+		t.Error("mailbox_list_normalize_to_nfc: false had no effect - the setting is decorative")
 	}
 	if want := "." + decomposed; got != want {
 		t.Errorf("on disk %q, want %q", got, want)

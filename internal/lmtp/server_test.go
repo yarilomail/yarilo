@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func buildTestServer(t *testing.T) string {
@@ -142,13 +142,13 @@ func TestLMTP_MultipleRecipients(t *testing.T) {
 	if !strings.HasPrefix(sc.Text(), "250") {
 		t.Fatalf("expected 250 for alice RCPT, got: %q", sc.Text())
 	}
-	fmt.Fprintf(conn, "RCPT TO:<bob@example.com>\r\n") // new user — auto-provisioned
+	fmt.Fprintf(conn, "RCPT TO:<bob@example.com>\r\n") // new user - auto-provisioned
 	sc.Scan()
 	if !strings.HasPrefix(sc.Text(), "250") {
 		t.Fatalf("expected 250 for bob RCPT (auto-provision), got: %q", sc.Text())
 	}
 
-	// DATA delivers per-recipient — two 250s expected (LMTP semantics).
+	// DATA delivers per-recipient - two 250s expected (LMTP semantics).
 	fmt.Fprintf(conn, "DATA\r\n")
 	sc.Scan() // 354
 	fmt.Fprintf(conn, "%s\r\n.\r\n", testMsg)

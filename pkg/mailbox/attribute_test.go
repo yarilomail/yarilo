@@ -112,7 +112,7 @@ func TestSharedAttrKeyPrivateIsPerUser(t *testing.T) {
 }
 
 func TestSharedAttrKeySharedIsGlobal(t *testing.T) {
-	// shared/ scope on a shared folder remains visible to everyone —
+	// shared/ scope on a shared folder remains visible to everyone -
 	// the accessing-user dimension is NOT applied.
 	guid := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	aliceKey := SharedAttrKey(AttrShared, guid, "alice@example.com", "admin")

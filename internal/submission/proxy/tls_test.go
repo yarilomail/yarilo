@@ -19,7 +19,7 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // testCA issues a leaf for the given IPs and names; it returns the CA as PEM.

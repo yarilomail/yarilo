@@ -14,7 +14,8 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // sent is one message the fake relay was handed.
@@ -84,7 +85,7 @@ func subCall(t *testing.T, s *Server, method, args string) map[string]any {
 }
 
 func createSubmission(identity, email, extra string) string {
-	return `{"accountId":"` + testUser + `","create":{"c1":{"identityId":"` + identity + `","emailId":"` + email + `"` + extra + `}}}`
+	return `{"accountId":"` + testAccount + `","create":{"c1":{"identityId":"` + identity + `","emailId":"` + email + `"` + extra + `}}}`
 }
 
 func TestIdentities(t *testing.T) {
@@ -102,7 +103,7 @@ func TestIdentities(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var got []string
-			for _, id := range identities(c.user, c.aliases) {
+			for _, id := range derivedIdentities(c.user, c.aliases) {
 				got = append(got, id.Email)
 				if id.ID != identityID(id.Email) || id.MayDelete || id.Name != "" {
 					t.Errorf("identity %+v: want the address's id, mayDelete false, no name", id)
@@ -120,22 +121,18 @@ func TestIdentities(t *testing.T) {
 
 func TestIdentityMethods(t *testing.T) {
 	s, _, _ := submissionServer(t, draftHeaders+"\r\nbody\r\n", &fakeRelay{}, Submission{}, "a@example.com")
-	got := subCall(t, s, "Identity/get", `{"accountId":"`+testUser+`","ids":null}`)
+	got := subCall(t, s, "Identity/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	if list, _ := got["list"].([]any); len(list) != 2 {
 		t.Fatalf("Identity/get = %v, want the login and the alias", got)
 	}
 	state, _ := got["state"].(string)
-	ch := subCall(t, s, "Identity/changes", `{"accountId":"`+testUser+`","sinceState":"`+state+`"}`)
+	ch := subCall(t, s, "Identity/changes", `{"accountId":"`+testAccount+`","sinceState":"`+state+`"}`)
 	if c, _ := ch["created"].([]any); len(c) != 0 {
 		t.Errorf("Identity/changes from the current state = %v, want nothing", ch)
 	}
-	name, out := callAs(t, s, testUser, "Identity/changes", `{"accountId":"`+testUser+`","sinceState":"old"}`)
+	name, out := callAs(t, s, testUser, "Identity/changes", `{"accountId":"`+testAccount+`","sinceState":"old"}`)
 	if name != "error" || out["type"] != "cannotCalculateChanges" {
 		t.Errorf("Identity/changes from another state answered %s %v", name, out)
-	}
-	set := subCall(t, s, "Identity/set", `{"accountId":"`+testUser+`","create":{"c1":{"email":"n@example.com"}},"destroy":["`+identityID(testUser)+`"]}`)
-	if entry(set, "notCreated", "c1")["type"] != "forbidden" {
-		t.Errorf("Identity/set = %v, want each object forbidden", set)
 	}
 }
 
@@ -164,7 +161,7 @@ func TestEmailSubmissionSends(t *testing.T) {
 	if m.login != testUser || m.sid != "deadbeefdeadbeef" || m.ip.String() != "203.0.113.7" {
 		t.Errorf("relay told login %q sid %q ip %v, want the session's", m.login, m.sid, m.ip)
 	}
-	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`)
+	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	if list, _ := get["list"].([]any); len(list) != 1 {
 		t.Errorf("EmailSubmission/get = %v, want the record", get)
 	}
@@ -272,7 +269,7 @@ func TestEmailSubmissionRelayRefusals(t *testing.T) {
 					t.Fatalf("notCreated c1 = %v, want %s with the relay's reply", e, c.wantSetErr)
 				}
 			}
-			get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`)
+			get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testAccount+`","ids":null}`)
 			if list, _ := get["list"].([]any); len(list) != c.wantStored {
 				t.Errorf("records = %v, want %d", list, c.wantStored)
 			}
@@ -288,7 +285,7 @@ func TestEmailSubmissionTemporaryRefusalAfterASend(t *testing.T) {
 	using, _ := json.Marshal(declaredCapabilities(s.opts.Limits))
 	one := fmt.Sprintf(`{"identityId":%q,"emailId":%q}`, identityID(testUser), emailID)
 	body := fmt.Sprintf(`{"using":%s,"methodCalls":[["EmailSubmission/set",{"accountId":%q,"create":{"c1":%s,"c2":%s,"c3":%s},"onSuccessUpdateEmail":{"#c1":{"keywords/$seen":true}}},"0"]]}`,
-		using, testUser, one, one, one)
+		using, testAccount, one, one, one)
 	w := postAPIRaw(t, s, body)
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
@@ -311,7 +308,7 @@ func TestEmailSubmissionTemporaryRefusalAfterASend(t *testing.T) {
 	if n := len(relay.all()); n != 1 {
 		t.Errorf("relay sends = %d, want 1", n)
 	}
-	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`)
+	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	if list, _ := get["list"].([]any); len(list) != 1 {
 		t.Errorf("records = %v, want c1's", list)
 	}
@@ -322,7 +319,7 @@ func TestEmailSubmissionOnSuccessUpdatesTheEmail(t *testing.T) {
 	s, emailID, _ := submissionServer(t, draftHeaders+"\r\nb\r\n", &fakeRelay{}, Submission{})
 	using, _ := json.Marshal(declaredCapabilities(s.opts.Limits))
 	body := fmt.Sprintf(`{"using":%s,"methodCalls":[["EmailSubmission/set",{"accountId":%q,"create":{"c1":{"identityId":%q,"emailId":%q}},"onSuccessUpdateEmail":{"#c1":{"keywords/$draft":null,"keywords/$seen":true}}},"0"]]}`,
-		using, testUser, identityID(testUser), emailID)
+		using, testAccount, identityID(testUser), emailID)
 	w := postAPIRaw(t, s, body)
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
@@ -335,7 +332,7 @@ func TestEmailSubmissionOnSuccessUpdatesTheEmail(t *testing.T) {
 	if second != "Email/set" || !strings.Contains(string(resp.MethodResponses[1][1]), emailID) || string(resp.MethodResponses[1][2]) != `"0"` {
 		t.Errorf("second response = %s", resp.MethodResponses[1])
 	}
-	got := subCall(t, s, "Email/get", `{"accountId":"`+testUser+`","ids":["`+emailID+`"],"properties":["keywords"]}`)
+	got := subCall(t, s, "Email/get", `{"accountId":"`+testAccount+`","ids":["`+emailID+`"],"properties":["keywords"]}`)
 	if !strings.Contains(fmt.Sprint(got["list"]), "$seen:true") {
 		t.Errorf("the email after the implicit Email/set = %v", got["list"])
 	}
@@ -346,11 +343,11 @@ func TestEmailSubmissionRecords(t *testing.T) {
 	out := subCall(t, s, "EmailSubmission/set", createSubmission(identityID(testUser), emailID, ""))
 	id, _ := entry(out, "created", "c1")["id"].(string)
 
-	upd := subCall(t, s, "EmailSubmission/set", `{"accountId":"`+testUser+`","update":{"`+id+`":{"undoStatus":"canceled"}}}`)
+	upd := subCall(t, s, "EmailSubmission/set", `{"accountId":"`+testAccount+`","update":{"`+id+`":{"undoStatus":"canceled"}}}`)
 	if entry(upd, "notUpdated", id)["type"] != "cannotUnsend" {
 		t.Errorf("cancel = %v, want cannotUnsend", upd)
 	}
-	q := subCall(t, s, "EmailSubmission/query", `{"accountId":"`+testUser+`","filter":{"emailIds":["`+emailID+`"],"undoStatus":"final"},"sort":[{"property":"sentAt"}]}`)
+	q := subCall(t, s, "EmailSubmission/query", `{"accountId":"`+testAccount+`","filter":{"emailIds":["`+emailID+`"],"undoStatus":"final"},"sort":[{"property":"sentAt"}]}`)
 	if fmt.Sprint(q["ids"]) != "["+id+"]" {
 		t.Errorf("query = %v, want [%s]", q["ids"], id)
 	}
@@ -366,18 +363,18 @@ func TestEmailSubmissionRecords(t *testing.T) {
 	recs.Records[0].SendAt = time.Now().Add(-2 * time.Hour)
 	b, _ := json.Marshal(recs)
 	_ = os.WriteFile(path, b, 0o600)
-	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`)
+	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	if list, _ := get["list"].([]any); len(list) != 0 {
 		t.Errorf("a record past the TTL is still listed: %v", list)
 	}
 
 	out = subCall(t, s, "EmailSubmission/set", createSubmission(identityID(testUser), emailID, ""))
 	id2, _ := entry(out, "created", "c1")["id"].(string)
-	del := subCall(t, s, "EmailSubmission/set", `{"accountId":"`+testUser+`","destroy":["`+id2+`"]}`)
+	del := subCall(t, s, "EmailSubmission/set", `{"accountId":"`+testAccount+`","destroy":["`+id2+`"]}`)
 	if d, _ := del["destroyed"].([]any); len(d) != 1 {
 		t.Errorf("destroy = %v", del)
 	}
-	after := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":["`+id2+`"]}`)
+	after := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testAccount+`","ids":["`+id2+`"]}`)
 	if list, _ := after["list"].([]any); len(list) != 0 {
 		t.Errorf("a destroyed record is still listed: %v", list)
 	}
@@ -389,7 +386,7 @@ func TestEmailSubmissionWithoutRecords(t *testing.T) {
 	s, emailID, home := submissionServer(t, draftHeaders+"\r\nb\r\n", relay, Submission{})
 	s.opts.Submission.TTL = 0
 	subCall(t, s, "EmailSubmission/set", createSubmission(identityID(testUser), emailID, ""))
-	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testUser+`","ids":null}`)
+	get := subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	if list, _ := get["list"].([]any); len(list) != 0 || len(relay.all()) != 1 {
 		t.Errorf("records %v, sent %d: want none kept and one sent", list, len(relay.all()))
 	}
@@ -417,8 +414,38 @@ func TestSubmissionCapability(t *testing.T) {
 // Without a relay the capability is refused at the door, not method by method.
 func TestSubmissionCapabilityIsRefusedWithoutARelay(t *testing.T) {
 	s, _, _ := storedServerWithMessageAt(t, "Subject: seed\r\n\r\nseed\r\n", 0)
-	body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:submission"],"methodCalls":[["Identity/get",{"accountId":"` + testUser + `"},"c0"]]}`
+	body := `{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:submission"],"methodCalls":[["Identity/get",{"accountId":"` + testAccount + `"},"c0"]]}`
 	if w := postAPIRaw(t, s, body); w.Code != 400 || !strings.Contains(w.Body.String(), "unknownCapability") {
 		t.Errorf("status %d %s, want 400 unknownCapability", w.Code, w.Body)
+	}
+}
+
+// A kept or dropped record emits on the account's submissions; a read that
+// changes nothing does not.
+func TestEmailSubmissionRecordsEmit(t *testing.T) {
+	s, emailID, _ := submissionServer(t, draftHeaders+"\r\nb\r\n", &fakeRelay{}, Submission{})
+	l := s.opts.Storage.Locker.(*testLocker)
+	var id string
+	steps := []struct {
+		name string
+		call func()
+		want int
+	}{
+		{"create", func() {
+			out := subCall(t, s, "EmailSubmission/set", createSubmission(identityID(testUser), emailID, ""))
+			id, _ = entry(out, "created", "c1")["id"].(string)
+		}, 1},
+		{"get", func() { subCall(t, s, "EmailSubmission/get", `{"accountId":"`+testAccount+`","ids":null}`) }, 0},
+		{"destroy", func() {
+			subCall(t, s, "EmailSubmission/set", `{"accountId":"`+testAccount+`","destroy":["`+id+`"]}`)
+		}, 1},
+	}
+	want := locks.SubmissionsKey(testUser) + " " + string(locks.EventSubmission)
+	for _, st := range steps {
+		before := l.emitted(want)
+		st.call()
+		if got := l.emitted(want) - before; got != st.want {
+			t.Errorf("%s emitted %d, want %d", st.name, got, st.want)
+		}
 	}
 }

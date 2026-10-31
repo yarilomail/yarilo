@@ -16,11 +16,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // service is the name this proxy reports to yarilo-auth and yarilo-warden.
@@ -66,6 +67,10 @@ type Options struct {
 	MaxSizeRequest int64
 	// MaxSizeUpload caps an upload body instead, as maxSizeUpload does.
 	MaxSizeUpload int64
+	// WebSocketTicketKey and WebSocketTicketTTL issue WebSocket tickets; an
+	// empty key or a zero TTL issues none.
+	WebSocketTicketKey string
+	WebSocketTicketTTL time.Duration
 }
 
 // ConnAccountant is warden's per-user@IP connection accounting, narrowed to
@@ -109,25 +114,29 @@ type connState struct {
 	// never authenticated, and such a connection is never accounted: brute
 	// force on it is yarilo-auth's penalty to handle, not a connection count.
 	user string
+	// conn is what a kick closes.
+	conn net.Conn
 }
 
 type ctxKey struct{}
 
 // Server is the JMAP login proxy.
 type Server struct {
-	opts  Options
-	mux   *http.ServeMux
-	proxy *backendProxy
-	cors  cors
+	opts    Options
+	mux     *http.ServeMux
+	proxy   *backendProxy
+	cors    cors
+	tickets *tickets
 
-	// conns maps a live connection to its accounting state so the ConnState
-	// hook can release it; ConnContext cannot see the close.
+	// conns maps a live connection to its accounting state so its close can
+	// release it; ConnContext cannot see the close.
 	conns sync.Map // net.Conn -> *connState
 }
 
 // New builds the proxy.
 func New(opts Options) *Server {
-	s := &Server{opts: opts, mux: http.NewServeMux(), cors: newCORS(opts.CORSAllowOrigins)}
+	s := &Server{opts: opts, mux: http.NewServeMux(), cors: newCORS(opts.CORSAllowOrigins),
+		tickets: newTickets(opts.WebSocketTicketKey, opts.WebSocketTicketTTL)}
 	s.proxy = newBackendProxy(opts)
 	s.mux.HandleFunc("/", s.handle)
 	return s
@@ -136,6 +145,9 @@ func New(opts Options) *Server {
 // Handler exposes the routes for tests without binding a port.
 func (s *Server) Handler() http.Handler { return s.mux }
 
+// serverTimeout bounds a request's read and its response's write.
+var serverTimeout = 60 * time.Second
+
 // Serve runs until ctx is cancelled, then drains in-flight requests.
 func (s *Server) Serve(ctx context.Context) error {
 	srv := &http.Server{
@@ -143,25 +155,19 @@ func (s *Server) Serve(ctx context.Context) error {
 		Handler:           s.mux,
 		TLSConfig:         s.opts.ExtTLS,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		ReadTimeout:       serverTimeout,
+		WriteTimeout:      serverTimeout,
 		IdleTimeout:       120 * time.Second,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			st := &connState{ip: hostOnly(c.RemoteAddr().String())}
+			st := &connState{ip: hostOnly(c.RemoteAddr().String()), conn: c}
 			s.conns.Store(c, st)
+			// Released on close, which a hijacked connection (a WebSocket
+			// upgrade) reports only through its trackedConn.
+			if tc := trackedOf(c); tc != nil {
+				f := func() { s.forget(c) }
+				tc.onClose.Store(&f)
+			}
 			return context.WithValue(ctx, ctxKey{}, st)
-		},
-		ConnState: func(c net.Conn, state http.ConnState) {
-			if state != http.StateClosed && state != http.StateHijacked {
-				return
-			}
-			v, loaded := s.conns.LoadAndDelete(c)
-			if !loaded {
-				return
-			}
-			if st, ok := v.(*connState); ok {
-				s.releaseConn(st)
-			}
 		},
 	}
 
@@ -178,6 +184,8 @@ func (s *Server) Serve(ctx context.Context) error {
 			Policy:            proxyPolicy(s.opts.HAProxyTrustedNets),
 		}
 	}
+
+	ln = trackListener{ln}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -218,8 +226,26 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.cors.apply(w, origin)
 	}
+	// A path no route serves is 404 before authentication: a client probing
+	// discovery (webfinger, OIDC) reads 401 as a failure, not as an absence.
+	if !servedPath(r.URL.Path) {
+		jmapcore.WriteProblem(w, http.StatusNotFound, "Not found")
+		return
+	}
 
-	username, err := s.authenticate(r, clientIP, sessionOf(st))
+	if r.URL.Path == jmapcore.WebSocketTicketPath {
+		s.handleTicket(w, r, st, clientIP)
+		return
+	}
+
+	var username string
+	var err error
+	if ticket := s.wsTicket(r); ticket != "" {
+		username, err = s.tickets.check(ticket, clientIP)
+		dropTicket(r)
+	} else {
+		username, err = s.authenticate(r, clientIP, sessionOf(st))
+	}
 	if err != nil {
 		if errors.Is(err, errTemporary) {
 			jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Authentication temporarily unavailable")
@@ -246,6 +272,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("jmap-login: backend lookup failed", "user", username, "err", err)
 		jmapcore.WriteProblem(w, http.StatusBadGateway, "No backend for this user")
 		return
+	}
+	// A push stream outlives the write timeout by design; a kick ends it.
+	if strings.HasPrefix(r.URL.Path, eventSourcePath) {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	}
 	s.proxy.serve(w, r, backend, username, sessionOf(st), clientIP)
 }
@@ -336,6 +366,61 @@ func (s *Server) account(st *connState, username, ip string) error {
 
 // releaseConn drops the connection's warden accounting. A connection that never
 // authenticated holds none.
+// servedPath reports whether the backend serves path: the session resource
+// and everything under /jmap/.
+func servedPath(path string) bool {
+	return path == jmapcore.SessionPath || strings.HasPrefix(path, "/jmap/")
+}
+
+// forget ends c's accounting, once.
+func (s *Server) forget(c net.Conn) {
+	v, loaded := s.conns.LoadAndDelete(c)
+	if !loaded {
+		return
+	}
+	if st, ok := v.(*connState); ok {
+		s.releaseConn(st)
+	}
+}
+
+// trackListener wraps every accepted connection in a trackedConn.
+type trackListener struct{ net.Listener }
+
+func (l trackListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &trackedConn{Conn: c}, nil
+}
+
+// trackedConn runs onClose on its first Close, which the HTTP server no
+// longer reports once a handler has hijacked the connection.
+type trackedConn struct {
+	net.Conn
+	once    sync.Once
+	onClose atomic.Pointer[func()]
+}
+
+func (c *trackedConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() {
+		if f := c.onClose.Load(); f != nil {
+			(*f)()
+		}
+	})
+	return err
+}
+
+// trackedOf finds the trackedConn under c, which TLS wraps.
+func trackedOf(c net.Conn) *trackedConn {
+	if t, ok := c.(*tls.Conn); ok {
+		c = t.NetConn()
+	}
+	tc, _ := c.(*trackedConn)
+	return tc
+}
+
 func (s *Server) releaseConn(st *connState) {
 	if s.opts.Warden == nil {
 		return

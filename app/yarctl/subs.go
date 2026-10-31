@@ -20,7 +20,7 @@ func dispatchSubs(args []string) error {
 	case "migrate":
 		return subsMigrate(args[1:])
 	default:
-		return fmt.Errorf("unknown subscriptions command %q — available: list, add, remove, migrate", args[0])
+		return fmt.Errorf("unknown subscriptions command %q - available: list, add, remove, migrate", args[0])
 	}
 }
 
@@ -28,10 +28,10 @@ func printSubsUsage() {
 	fmt.Println(`yarctl backend subscriptions <command>
 
 Commands:
-  list   <user> [--namespace NS]                — every subscribed folder
-  add    <user> <folder> [--namespace NS]       — record SUBSCRIBE
-  remove <user> <folder> [--namespace NS]  (alias: rm) — drop SUBSCRIBE
-  migrate <user> --namespace NS [--apply]       — fold a namespace's old per-namespace
+  list   <user> [--namespace NS]                - every subscribed folder
+  add    <user> <folder> [--namespace NS]       - record SUBSCRIBE
+  remove <user> <folder> [--namespace NS]  (alias: rm) - drop SUBSCRIBE
+  migrate <user> --namespace NS [--apply]       - fold a namespace's old per-namespace
                                                   subscription file into the user's own
                                                   (subscriptions follow the subscriber);
                                                   dry run unless --apply

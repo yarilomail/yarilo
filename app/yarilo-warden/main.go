@@ -14,13 +14,13 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/internal/warden"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/redisopt"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -97,12 +97,12 @@ func main() {
 		slog.Info("warden: state backend=redis", "addr", cfg.WardenService.RedisAddr, "key_prefix", prefix, "channel_prefix", chanPrefix)
 	} else {
 		// memory state is per-pod: sessions/penalty counters and the kick bus live
-		// in this process only. Running more than one replica would fragment them —
+		// in this process only. Running more than one replica would fragment them -
 		// each pod would see a different subset of sessions, enforce the limit
-		// independently, and miss kicks published to a sibling — so replicas MUST
+		// independently, and miss kicks published to a sibling - so replicas MUST
 		// stay 1. The Helm chart fails closed on replicas>1 with memory; this warn
 		// is the runtime half, self-explaining without grepping the issue.
-		slog.Warn("warden: state backend=memory — replicas MUST stay 1; >1 fragments sessions/penalty/kick. Set state_backend=redis to scale out")
+		slog.Warn("warden: state backend=memory - replicas MUST stay 1; >1 fragments sessions/penalty/kick. Set state_backend=redis to scale out")
 	}
 	if closeState != nil {
 		defer closeState()

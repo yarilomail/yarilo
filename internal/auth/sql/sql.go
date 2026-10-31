@@ -14,10 +14,10 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/auth/scheme"
-	"github.com/yarilomail/yarilo/pkg/sqlpool"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/scheme"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlpool"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (registered as "pgx")
@@ -159,10 +159,10 @@ func New(c Config) (*Passdb, error) {
 //
 // Outcomes:
 //
-//	ResultNext       — row not found here; chain falls through
-//	ResultTempFail   — backend / query error (cause in the error return)
-//	ResultFail       — user found but disabled OR password mismatch
-//	ResultOK         — verified; req.Fields populated with user / home / mail
+//	ResultNext       - row not found here; chain falls through
+//	ResultTempFail   - backend / query error (cause in the error return)
+//	ResultFail       - user found but disabled OR password mismatch
+//	ResultOK         - verified; req.Fields populated with user / home / mail
 //
 // Columns match by name, not position. Only "password" is required;
 // "home", "mail", "enabled" are optional (absent enabled = active). The

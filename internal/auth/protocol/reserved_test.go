@@ -229,7 +229,7 @@ func TestFields_SetValidated_UserdbPrefixUnwraps(t *testing.T) {
 }
 
 func TestFields_SetValidated_ForwardPrefixPassesThrough(t *testing.T) {
-	// forward_* fields are by design opaque to the chain — even
+	// forward_* fields are by design opaque to the chain - even
 	// when they would otherwise look like a reserved key, the
 	// prefix preserves the raw value.
 	f := NewFields()

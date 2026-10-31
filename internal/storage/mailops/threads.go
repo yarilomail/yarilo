@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The account's thread lock: a save would rather be slow than blocked, and a
@@ -33,8 +33,10 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 		defer func(start time.Time) { timer(time.Since(start)) }(time.Now())
 	}
 	user := o.user.Username
-	rec := func(context.Context) error {
-		_, err := o.cfg.Threads.Record(user, path, mailbox.FormatObjectID(guid), raw)
+	owner := locks.Owner(user, o.user.LockID())
+	wrote := false
+	rec := func(context.Context) (err error) {
+		_, wrote, err = o.cfg.Threads.RecordNew(user, path, mailbox.FormatObjectID(guid), raw)
 		return err
 	}
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), o.cfg.Protocol+"-threads"), threadLockTimeout)
@@ -42,12 +44,18 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	var err error
 	if o.cfg.Locker != nil {
 		err = locks.WithLock(ctx, o.cfg.Locker, locks.ThreadsKey(user),
-			locks.Owner(user, o.user.LockID()), threadLockTTL, threadLockRenew, rec)
+			owner, threadLockTTL, threadLockRenew, rec)
 	} else {
 		err = rec(ctx)
 	}
 	if err != nil {
 		slog.Warn(o.cfg.Protocol+": message saved but not threaded", "user", user, "err", err)
+		return
+	}
+	// The sidecar is written after the folder's event went out: a reader
+	// between the two saw the old conversation.
+	if wrote {
+		locks.EmitBest(o.cfg.Locker, locks.ThreadsKey(user), locks.EventThreads, "")
 	}
 }
 

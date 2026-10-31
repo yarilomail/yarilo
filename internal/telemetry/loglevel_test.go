@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
 )
 
 func levelFromBody(t *testing.T, body string) string {
@@ -139,8 +139,8 @@ func TestLogLevelGaugeTracksActiveLevel(t *testing.T) {
 }
 
 // TestLogLevelGaugeIsNotStaleAfterATTLRevert is the regression this collector
-// exists for. The level can change with no HTTP request involved — SetLevelFor
-// reverts it from a timer inside pkg/logging — and a cached gauge kept reporting
+// exists for. The level can change with no HTTP request involved - SetLevelFor
+// reverts it from a timer inside pkg/logging - and a cached gauge kept reporting
 // the raised level after it had already reverted. Verified live on the sandbox
 // before the fix: the endpoint said debug while the metric still said warn.
 func TestLogLevelGaugeIsNotStaleAfterATTLRevert(t *testing.T) {
@@ -164,7 +164,7 @@ func TestLogLevelGaugeIsNotStaleAfterATTLRevert(t *testing.T) {
 	t.Fatalf("metric still reports %q after the TTL reverted the level", scrapeLogLevel(t, srv))
 }
 
-// scrapeLogLevel returns the yarilo_log_level series as name{label} — exactly
+// scrapeLogLevel returns the yarilo_log_level series as name{label} - exactly
 // what a Prometheus scrape would see, which is the point: the value must be
 // derived at collect time, not from something a handler remembered to update.
 func scrapeLogLevel(t *testing.T, srv *Server) string {

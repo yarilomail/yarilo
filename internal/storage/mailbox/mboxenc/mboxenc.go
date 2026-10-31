@@ -105,7 +105,7 @@ func FromModUTF7(s string) (string, error) {
 		for k := 0; k < len(decoded); k += 2 {
 			u := uint16(decoded[k])<<8 | uint16(decoded[k+1])
 			if u >= 0xD800 && u <= 0xDBFF {
-				// High surrogate — expect low surrogate next.
+				// High surrogate - expect low surrogate next.
 				if k+4 > len(decoded) {
 					return "", fmt.Errorf("mboxenc: truncated surrogate pair in %q", s)
 				}

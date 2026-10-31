@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxconv"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxconv"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
 )
 
 // A map that has a base is read from both halves.
@@ -76,7 +76,7 @@ func TestAMapWithABaseIsReadFromBothHalves(t *testing.T) {
 // a bare header.
 //
 // The strongest input for the rule #1587 established, and the one the field hit
-// before any fixture did: reading the log alone returns **nothing at all** —
+// before any fixture did: reading the log alone returns **nothing at all** -
 // three thousand messages, none of them found, and the folder that names one of
 // them cannot be converted.
 //

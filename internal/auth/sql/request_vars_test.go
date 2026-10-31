@@ -8,9 +8,9 @@ import (
 	"github.com/emersion/go-sasl"
 	_ "modernc.org/sqlite"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	authsql "github.com/yarilomail/yarilo/v2/internal/auth/sql"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // The documented rule: a column per protocol, read through CASE on %s, which

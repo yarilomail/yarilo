@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // openSession registers a session for user routed to backendIP, returning the
@@ -48,7 +48,7 @@ func TestUsernameHash_KickMatchByHash(t *testing.T) {
 					c.format, c.loginUser, c.kickUser, kicked, c.wantKicked, got)
 			}
 			// When kicked, the payload must be the SESSION's original case, never the
-			// kicker's lowercased input — that is what the login proxy keys on (#701).
+			// kicker's lowercased input - that is what the login proxy keys on (#701).
 			if c.wantKicked && strings.Contains(got, "USER-KICKED\t"+c.kickUser) && c.kickUser != c.loginUser {
 				t.Errorf("USER-KICKED must echo the session's original-case user %q, not the kicker's input %q", c.loginUser, c.kickUser)
 			}

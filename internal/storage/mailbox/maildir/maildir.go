@@ -22,11 +22,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Backend is the Maildir MailboxBackend factory. Holds only
@@ -684,7 +684,7 @@ type userMailbox struct {
 	separator        string // IMAP hierarchy separator; converted to "." on disk (maildir++)
 	escapeChar       string // storage-name escape char; "" disables escaping
 	username         string
-	owner            string     // <process>/<pid>/<user> — passed to yarilo-locks for BUSY diagnostics
+	owner            string     // <process>/<pid>/<user> - passed to yarilo-locks for BUSY diagnostics
 	listUTF8         bool       // mirrors Backend.listUTF8
 	mu               sync.Mutex // orders this pod's sessions; other processes are excluded at the file
 	cacheMu          sync.Mutex // guards cache; the scan reaches it holding no mailbox lock
@@ -1486,7 +1486,7 @@ func (u *userMailbox) guidFor(folder, filename string) [16]byte {
 	return guidFromBase(filename)
 }
 
-// maildirBase returns everything before the ":" info separator — the stable
+// maildirBase returns everything before the ":" info separator - the stable
 // identity of a maildir filename. A flag change renames only the ":2,<flags>"
 // trailer, so names sharing a base are the same message and keep the same UID.
 func maildirBase(name string) string {
@@ -1704,6 +1704,19 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 				}
 			}
 		}
+		// One transaction for the pass: a write per message was a journal
+		// append per message, five per STORE under concurrent writers (#714).
+		var tx mailbox.IndexTx
+		queue := func() (mailbox.IndexTx, error) {
+			if tx == nil {
+				t, err := idx.Begin(folder.ID)
+				if err != nil {
+					return nil, fmt.Errorf("maildir/sync: begin: %w", err)
+				}
+				tx = t
+			}
+			return tx, nil
+		}
 		for _, m := range existing {
 			if arrivalsOnly {
 				break
@@ -1736,9 +1749,11 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 					continue
 				}
 				// Vanished out of band → expunge (QRESYNC tombstone).
-				if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
-					return fmt.Errorf("maildir/sync: expunge %d: %w", m.UID, err)
+				t, err := queue()
+				if err != nil {
+					return err
 				}
+				t.Expunge(m.UID)
 				// The row goes with the record: left behind, it hands the
 				// tombstoned uid back to the file if it ever returns (#2176).
 				if vanishedBases == nil {
@@ -1752,9 +1767,11 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 				// Another record already owns this message. GetMessages is
 				// UID-ordered, so the lowest UID is the keeper and the rest go:
 				// left in place, expunging one would unlink the shared body.
-				if err := idx.ExpungeMessage(folder.ID, m.UID); err != nil {
-					return fmt.Errorf("maildir/sync: expunge duplicate %d: %w", m.UID, err)
+				t, err := queue()
+				if err != nil {
+					return err
 				}
+				t.Expunge(m.UID)
 				st.Expunged++
 				continue
 			}
@@ -1776,13 +1793,22 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 				if !u.stillOnDisk(folder.Name, rec.Filename) {
 					continue
 				}
-				if err := idx.UpdateFlags(folder.ID, m.UID, rec.Flags, rec.Keywords); err != nil {
-					return fmt.Errorf("maildir/sync: update flags %d: %w", m.UID, err)
+				t, err := queue()
+				if err != nil {
+					return err
 				}
+				t.UpdateFlags(m.UID, mailbox.FlagsUpdate{Flags: rec.Flags, Keywords: rec.Keywords})
 				st.Updated++
 			}
 		}
 
+		if tx != nil {
+			_, err := tx.Commit()
+			tx.Rollback()
+			if err != nil {
+				return fmt.Errorf("maildir/sync: commit: %w", err)
+			}
+		}
 		if len(vanishedBases) > 0 {
 			if err := u.dropRowsHeld(folder.Name, vanishedBases); err != nil {
 				return err

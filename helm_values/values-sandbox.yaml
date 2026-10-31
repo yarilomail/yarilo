@@ -1,10 +1,10 @@
-## yarilo sandbox — mail-sb.seconddns.com
+## yarilo sandbox - mail-sb.seconddns.com
 ##
 ## Pre-reqs:
 ##   1. cert-manager + ClusterIssuer "letsencrypt-prod" in the cluster.
 ##   2. DNS A/AAAA for mail-sb.seconddns.com pointing at the LB IP.
-##   3. MySQL (apply mysql-sandbox.yaml first — namespace: db).
-##   4. Redis (apply redis-sandbox.yaml first — namespace: redis).
+##   3. MySQL (apply mysql-sandbox.yaml first - namespace: db).
+##   4. Redis (apply redis-sandbox.yaml first - namespace: redis).
 ##
 ## Install:
 ##   helm upgrade --install yarilo ./helm \
@@ -21,7 +21,7 @@ acl:
   ## the caller having to already know the name.
   acl_shared_dict: "acl_shared"
 
-## Quota engine — count-authoritative enforcement on every save (IMAP
+## Quota engine - count-authoritative enforcement on every save (IMAP
 ## APPEND/COPY/MOVE, LMTP delivery, quota-status policy service). Limits come
 ## from the userdb quota_rule (see auth.passdb user_query). Independent of the
 ## IMAP QUOTA extension exposure (protocol.imap.imap_quota).
@@ -39,7 +39,7 @@ quota:
 ## Full-text search (FTS-1). The yarilo-fts service (components.fts below) owns
 ## the indexes; sessions dial it at fts_addr. fts_auth_master_addr is required
 ## so the service resolves each user's home + INDEX=~/index from userdb exactly
-## like the session pods do. Engine: flatcurve (Xapian) — runs the -fts image.
+## like the session pods do. Engine: flatcurve (Xapian) - runs the -fts image.
 fts:
   enabled: true
   fts_engine: flatcurve
@@ -72,8 +72,13 @@ namespaces:
     list: "yes"
     subscriptions: true
     inbox: true
-    # One auto mailbox, so every account shows it made and subscribed (#2005).
+    # A block of its own replaces the default set, so the four are listed
+    # with the one extra auto mailbox every account shows made (#2005).
     mailboxes:
+      Sent:     { auto: subscribe, special_use: "\\Sent" }
+      Drafts:   { auto: subscribe, special_use: "\\Drafts" }
+      Trash:    { auto: subscribe, special_use: "\\Trash" }
+      Junk:     { auto: subscribe, special_use: "\\Junk" }
       Receipts: { auto: subscribe }
   # A public namespace is declared as type: shared with a public prefix and
   # location; there is no "public" type. It was silently skipped, so nothing
@@ -145,7 +150,7 @@ general:
 ## The two sampling rates are what make the block and mutex profiles say
 ## anything; at 0 they answer with an empty profile. Set them for a measurement
 ## window (blockProfileRate: 10000, mutexProfileFraction: 100), take the
-## capture, put them back to 0 — every blocking operation pays while they are on.
+## capture, put them back to 0 - every blocking operation pays while they are on.
 telemetry:
   pprof:
     enabled: true
@@ -274,7 +279,7 @@ sieve:
     - vnd.yarilo.environment
 
 dicts:
-  ## Owner-discovery registry for the user/%u namespace. Discovery only —
+  ## Owner-discovery registry for the user/%u namespace. Discovery only -
   ## rights always come from the ACL files; a lost key costs visibility,
   ## never access.
   acl_shared:
@@ -291,7 +296,7 @@ dicts:
     settings:
       path: "%h/yarilo-metadata.json"
       lock_method: ""
-  ## quota_clone mirror targets — fan-out: usage is written to BOTH at once.
+  ## quota_clone mirror targets - fan-out: usage is written to BOTH at once.
   ## Advisory mirror only; enforcement always reads the index.
   quota_clone_redis:
     driver: redis
@@ -319,13 +324,13 @@ dicts:
       db: 0
       prefix: "yarilo-sb:sieve:duplicate:"
 
-## External MySQL — managed by mysql-sandbox.yaml; bundled StatefulSet disabled.
+## External MySQL - managed by mysql-sandbox.yaml; bundled StatefulSet disabled.
 mysql:
   bundled: false
 
 ## initAddr is what makes the wait-db init container render. Without it the chart
 ## silently skips wait-db, so auth and the session pods waited only for Redis and
-## then crash-looped against a database that was not up yet — the init container
+## then crash-looped against a database that was not up yet - the init container
 ## looked like protection it was not providing.
 ##
 ## Only initAddr is set here: the DSN itself arrives through extraEnv from the
@@ -333,7 +338,7 @@ mysql:
 database:
   initAddr: "mysql.db.svc:3306"
 
-## External Redis — managed by redis-sandbox.yaml (namespace: redis); the chart's
+## External Redis - managed by redis-sandbox.yaml (namespace: redis); the chart's
 ## in-namespace Redis StatefulSet is disabled. Consumers (locks state, dicts)
 ## point at redis.redis.svc.cluster.local:6379.
 redis:
@@ -344,7 +349,7 @@ redis:
   passwordSecret:
     name: yarilo-redis-password
 
-## DSN injected from the yarilo-mysql Secret created by mysql-sandbox.yaml.
+## DSN injected from the yarilo-mysql Secret made by hack/sandbox/secrets.sh.
 extraEnv:
   - name: YARILO_DB_DSN
     valueFrom:
@@ -385,14 +390,14 @@ components:
           name: yarilo-internal-ca
     ## 3 is the minimum meaningful ring (min_members: 3). 5 was only ever set to
     ## observe a non-minimal ring; steady state does not need it, and the peer
-    ## mesh grows quadratically — the seed poll opens a fresh mTLS connection to
+    ## mesh grows quadratically - the seed poll opens a fresh mTLS connection to
     ## every other replica on every tick, so 5 replicas is 5x4=20 handshakes per
     ## cycle against 3x2=6. See the issue on making those connections persistent;
     ## this only reduces the symptom.
     replicas: 3
     ## resources (#878): NO cpu limit, same reasoning as the login pods. Every
     ## login blocks on a director LOOKUP, and the chart default of 500m throttled
-    ## it — measured 320 CFS periods / 8s throttled against 76s used (~10%) over
+    ## it - measured 320 CFS periods / 8s throttled against 76s used (~10%) over
     ## one imaptest run. Server-side LOOKUP itself is 0.4ms
     ## (yarilo_director_lookup_seconds), so throttling is pure added latency on a
     ## login-blocking path. requests stay at the chart default 100m: the sandbox
@@ -462,22 +467,22 @@ components:
       key_prefix: "yarilo-sb:locks:"
       channel_prefix: "yarilo-sb:events:"
 
-  ## IMAP login — TLS terminator on :993 (IMAPS) / :143 (STARTTLS).
+  ## IMAP login - TLS terminator on :993 (IMAPS) / :143 (STARTTLS).
   ## Creates yarilo-tls Secret via cert-manager.
   ##
   ## resources (#878): NO cpu limit. Login pods carry all the asymmetric crypto
-  ## in the system — per login they complete three ECDSA handshakes (client TLS
+  ## in the system - per login they complete three ECDSA handshakes (client TLS
   ## on 993/143, mTLS to yarilo-auth, mTLS to yarilo-warden). The chart default
   ## limit of 200m throttled a 500-client burst to a hard 20s CPU ceiling per
   ## 100s: measured 21.2s used vs 152.4s spent throttled, which blew the auth
   ## dial deadline 813 times and surfaced as 1041 NO [UNAVAILABLE] to clients.
-  ## A CFS quota is wrong for a bursty TLS terminator — requests reserve the
+  ## A CFS quota is wrong for a bursty TLS terminator - requests reserve the
   ## floor, the burst is allowed to use idle node capacity.
   imapLogin:
     enabled: true
     resources:
       requests:
-        ## Small floor only — requests reserve scheduling capacity, and the node
+        ## Small floor only - requests reserve scheduling capacity, and the node
         ## budget is shared with the director/backend/session pods. The burst is
         ## served by idle node CPU, which is what removing the limit unlocks.
         cpu: 100m
@@ -510,9 +515,9 @@ components:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
 
-  ## JMAP login — HTTPS terminator on :8443, per-request proxy to the
+  ## JMAP login - HTTPS terminator on :8443, per-request proxy to the
   ## yarilo-jmap backend container (:10443). Until the backend PR lands,
-  ## authenticated requests answer 502 — the login-layer probes still gate.
+  ## authenticated requests answer 502 - the login-layer probes still gate.
   jmapLogin:
     enabled: true
     tls:
@@ -533,14 +538,14 @@ components:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
 
-  ## POP3 login — TLS terminator on :995 (POP3S) / :110 (STLS).
+  ## POP3 login - TLS terminator on :995 (POP3S) / :110 (STLS).
   ## Reuses yarilo-tls Secret from imapLogin.
   pop3Login:
     enabled: true
-    ## Same crypto profile as imapLogin — see the #878 note there.
+    ## Same crypto profile as imapLogin - see the #878 note there.
     resources:
       requests:
-        ## Small floor only — requests reserve scheduling capacity, and the node
+        ## Small floor only - requests reserve scheduling capacity, and the node
         ## budget is shared with the director/backend/session pods. The burst is
         ## served by idle node CPU, which is what removing the limit unlocks.
         cpu: 100m
@@ -586,9 +591,9 @@ components:
       - driver: mysql
         dsn: "${YARILO_DB_DSN}"
         default_pass_scheme: BCRYPT
-        ## PostfixAdmin mailbox table — skip_schema prevents yarilo-auth from
+        ## PostfixAdmin mailbox table - skip_schema prevents yarilo-auth from
         ## creating its own yarilo_users table.
-        ## Columns matched by name — only "password" is required.
+        ## Columns matched by name - only "password" is required.
         ## "enabled" maps to PostfixAdmin's "active"; absent columns default active.
         skip_schema: true
         ## nologin blocks the login and keeps the account (#2229); the seed sets it
@@ -646,8 +651,8 @@ components:
       enabled: true
 
     # Negative auth caching stays ON (default 1800s) on purpose (#950). The
-    # per-password negative-MAC fix (Option A) makes it safe — a wrong-password
-    # storm no longer blocks the user's correct password — and keeping it ON is
+    # per-password negative-MAC fix (Option A) makes it safe - a wrong-password
+    # storm no longer blocks the user's correct password - and keeping it ON is
     # exactly what the #950 acceptance must exercise. Do NOT set
     # negative_ttl_seconds: 0 here: that was the interim mitigation, and with the
     # fix in place it would only mask the fixed path (no negatives = nothing to
@@ -683,17 +688,17 @@ components:
       pop3:
         enabled: true
 
-  ## LMTP backend — receives preamble-wrapped connections from lmtp-login.
+  ## LMTP backend - receives preamble-wrapped connections from lmtp-login.
   lmtp:
     enabled: true
 
-  ## LMTP login proxy — MTA-facing, plain LMTP, no preamble required.
+  ## LMTP login proxy - MTA-facing, plain LMTP, no preamble required.
   lmtpLogin:
     enabled: true
-    ## Same crypto profile as imapLogin — see the #878 note there.
+    ## Same crypto profile as imapLogin - see the #878 note there.
     resources:
       requests:
-        ## Small floor only — requests reserve scheduling capacity, and the node
+        ## Small floor only - requests reserve scheduling capacity, and the node
         ## budget is shared with the director/backend/session pods. The burst is
         ## served by idle node CPU, which is what removing the limit unlocks.
         cpu: 100m
@@ -709,10 +714,10 @@ components:
 
   saslLogin:
     enabled: true
-    ## Same crypto profile as imapLogin — see the #878 note there.
+    ## Same crypto profile as imapLogin - see the #878 note there.
     resources:
       requests:
-        ## Small floor only — requests reserve scheduling capacity, and the node
+        ## Small floor only - requests reserve scheduling capacity, and the node
         ## budget is shared with the director/backend/session pods. The burst is
         ## served by idle node CPU, which is what removing the limit unlocks.
         cpu: 100m
@@ -731,13 +736,13 @@ components:
     service:
       type: ClusterIP
 
-  ## Full-text search service — sole owner of the FTS indexes (queue + worker
+  ## Full-text search service - sole owner of the FTS indexes (queue + worker
   ## + LOOKUP). Runs the -fts image variant (the only cgo/libxapian binary);
   ## Recreate strategy so only one writer ever holds the index files.
   fts:
     enabled: true
 
-  ## ManageSieve backend — internal, not exposed outside cluster.
+  ## ManageSieve backend - internal, not exposed outside cluster.
   manageSieve:
     enabled: true
 
@@ -755,20 +760,27 @@ components:
     backend_port: 10587
     tls:
       secretName: yarilo-tls
+    ## On the shared address with the other login pods, so mail-sb and its
+    ## certificate reach 587 too.
+    service:
+      type: LoadBalancer
+      annotations:
+        metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
+        metallb.universe.tf/allow-shared-ip: "yarilo-mail"
 
-  ## JMAP backend — one more container in the co-located pod, reached only by
+  ## JMAP backend - one more container in the co-located pod, reached only by
   ## jmapLogin. internalTLS is on cluster-wide here, so the peer certificate is
   ## the trust anchor and xclient stays off.
   jmap:
     enabled: true
 
-  ## ManageSieve login pod — client-facing on :4190 STARTTLS.
+  ## ManageSieve login pod - client-facing on :4190 STARTTLS.
   manageSieveLogin:
     enabled: true
-    ## Same crypto profile as imapLogin — see the #878 note there.
+    ## Same crypto profile as imapLogin - see the #878 note there.
     resources:
       requests:
-        ## Small floor only — requests reserve scheduling capacity, and the node
+        ## Small floor only - requests reserve scheduling capacity, and the node
         ## budget is shared with the director/backend/session pods. The burst is
         ## served by idle node CPU, which is what removing the limit unlocks.
         cpu: 100m
@@ -793,7 +805,7 @@ components:
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
 
 ## NOTE (#878): there is deliberately NO top-level `resources:` block here.
-## The chart has no `.Values.resources` — sizing is per-component only
+## The chart has no `.Values.resources` - sizing is per-component only
 ## (`components.<name>.resources`). A top-level block silently does nothing,
 ## and previously made this deployment look like it ran with a 1000m CPU limit
 ## while every login pod was in fact capped at the chart default of 200m.

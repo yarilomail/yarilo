@@ -12,17 +12,18 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/jmaplogin"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/internal/warden"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/jmaplogin"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func main() {
@@ -54,6 +55,12 @@ func main() {
 		cfg.JMAPLoginService.BackendAddr, cfg.JMAPLoginService.DirectorAddr); err != nil {
 		slog.Error("config validation failed", "err", err)
 		os.Exit(1)
+	}
+	if warn, err := checkTicketKey(cfg.JMAPLoginService.WebSocketTicketKey, cfg.Protocol.JMAP.WebSocketTicketTTL); err != nil {
+		slog.Error("config validation failed", "err", err)
+		os.Exit(1)
+	} else if warn != "" {
+		slog.Warn(warn)
 	}
 
 	extTLS, err := clientTLS(cfg, svc)
@@ -110,6 +117,7 @@ func main() {
 	}()
 
 	srv := jmaplogin.New(serverOptions(cfg, svc, addr, extTLS, intTLS, auth, wardenPool))
+	srv.WatchKicks(ctx, kicks(cfg, intTLS))
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {
 		slog.Error("jmap-login server failed", "err", err)
@@ -136,6 +144,17 @@ func router(cfg *config.Config) jmaplogin.Router {
 		LocalIP: os.Getenv("POD_IP"),
 		Port:    backendPort(cfg),
 	}
+}
+
+// kicks names where kicks come from: warden for a session, and the director,
+// when routing through one, for a user.
+func kicks(cfg *config.Config, intTLS *tls.Config) jmaplogin.Kicks {
+	k := jmaplogin.Kicks{WardenAddr: cfg.WardenService.Addr, WardenTLS: intTLS, LocalIP: os.Getenv("POD_IP")}
+	if cfg.JMAPLoginService.BackendAddr == "" {
+		k.DirectorAddr = cfg.JMAPLoginService.DirectorAddr
+		k.DirectorTLS = intTLS
+	}
+	return k
 }
 
 // backendPort is the JMAP container's port, which differs from whatever the
@@ -207,6 +226,8 @@ func serverOptions(cfg *config.Config, svc *config.ServiceConfig, addr string, e
 		CORSAllowOrigins:   cfg.Protocol.JMAP.CORSAllowOrigins,
 		MaxSizeRequest:     cfg.Protocol.JMAP.MaxSizeRequest,
 		MaxSizeUpload:      cfg.Protocol.JMAP.MaxSizeUpload,
+		WebSocketTicketKey: cfg.JMAPLoginService.WebSocketTicketKey,
+		WebSocketTicketTTL: time.Duration(cfg.Protocol.JMAP.WebSocketTicketTTL) * time.Second,
 	}
 }
 
@@ -223,4 +244,17 @@ func parseCIDRs(ss []string) []*net.IPNet {
 		nets = append(nets, n)
 	}
 	return nets
+}
+
+// checkTicketKey refuses a key that is still a placeholder: that is a missing
+// Secret, and the placeholder is public, so signing with it lets anyone write a
+// ticket. An empty key only warns, so a config from before the key starts.
+func checkTicketKey(key string, ttl int) (string, error) {
+	if strings.Contains(key, "${") {
+		return "", fmt.Errorf("jmap_login_service.websocket_ticket_key is an unexpanded placeholder")
+	}
+	if ttl > 0 && key == "" {
+		return "jmap-login: jmap_login_service.websocket_ticket_key is empty, no WebSocket tickets are issued", nil
+	}
+	return "", nil
 }

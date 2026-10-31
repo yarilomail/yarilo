@@ -45,14 +45,14 @@ func firstObject(t *testing.T, out map[string]any) map[string]any {
 
 // A response carries the requested properties and no others (RFC 8620 §5.1).
 //
-// Nothing is saved by this — the counters are computed either way — so it is
+// Nothing is saved by this - the counters are computed either way - so it is
 // correctness rather than speed. What it buys is that the answer stops
 // asserting values the client did not ask about.
 func TestMailboxGetProjects(t *testing.T) {
 	s := storedServer(t)
 
 	_, out := callRaw(t, s, "Mailbox/get",
-		`{"accountId":"u1@example.com","ids":null,"properties":["id","name"]}`)
+		`{"accountId":"`+testAccount+`","ids":null,"properties":["id","name"]}`)
 	obj := firstObject(t, out)
 
 	if _, ok := obj["name"]; !ok {
@@ -72,7 +72,7 @@ func TestMailboxGetProjects(t *testing.T) {
 func TestMailboxGetWithoutPropertiesReturnsEverything(t *testing.T) {
 	s := storedServer(t)
 
-	_, out := callRaw(t, s, "Mailbox/get", `{"accountId":"u1@example.com","ids":null}`)
+	_, out := callRaw(t, s, "Mailbox/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	obj := firstObject(t, out)
 	for _, want := range []string{"id", "name", "role", "myRights", "totalEmails", "isSubscribed"} {
 		if _, present := obj[want]; !present {
@@ -88,7 +88,7 @@ func TestThreadGetProjects(t *testing.T) {
 	s, id := storedServerWithMessage(t, headerRichMessage, 0)
 
 	_, out := callRaw(t, s, "Thread/get",
-		`{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id"]}`)
+		`{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id"]}`)
 	obj := firstObject(t, out)
 
 	if obj["id"] != id {
@@ -110,9 +110,9 @@ func TestUnknownPropertiesAreRefused(t *testing.T) {
 	}{
 		// The misspelling is the input, not a mistake in the test: this is the
 		// case a client hits, and the spell checker has to be told so.
-		{"Mailbox/get", `{"accountId":"u1@example.com","ids":null,"properties":["id","nmae"]}`, "nmae"}, //nolint:misspell
-		{"Mailbox/get", `{"accountId":"u1@example.com","ids":null,"properties":["id","subject"]}`, "subject"},
-		{"Thread/get", `{"accountId":"u1@example.com","ids":["` + id + `"],"properties":["id","emailIDs"]}`, "emailIDs"},
+		{"Mailbox/get", `{"accountId":"` + testAccount + `","ids":null,"properties":["id","nmae"]}`, "nmae"}, //nolint:misspell
+		{"Mailbox/get", `{"accountId":"` + testAccount + `","ids":null,"properties":["id","subject"]}`, "subject"},
+		{"Thread/get", `{"accountId":"` + testAccount + `","ids":["` + id + `"],"properties":["id","emailIDs"]}`, "emailIDs"},
 	} {
 		t.Run(tc.method+" "+tc.named, func(t *testing.T) {
 			name, out := callRaw(t, s, tc.method, tc.args)
@@ -133,10 +133,10 @@ func TestKnownPropertiesAreAcceptedByBothTypes(t *testing.T) {
 	s, id := storedServerWithMessage(t, headerRichMessage, 0)
 
 	for _, tc := range []struct{ method, args string }{
-		{"Mailbox/get", `{"accountId":"u1@example.com","ids":null,"properties":` +
+		{"Mailbox/get", `{"accountId":"` + testAccount + `","ids":null,"properties":` +
 			`["id","name","parentId","role","sortOrder","totalEmails","unreadEmails",` +
 			`"totalThreads","unreadThreads","myRights","isSubscribed"]}`},
-		{"Thread/get", `{"accountId":"u1@example.com","ids":["` + id + `"],"properties":["id","emailIds"]}`},
+		{"Thread/get", `{"accountId":"` + testAccount + `","ids":["` + id + `"],"properties":["id","emailIds"]}`},
 	} {
 		t.Run(tc.method, func(t *testing.T) {
 			if name, out := callRaw(t, s, tc.method, tc.args); name == "error" {

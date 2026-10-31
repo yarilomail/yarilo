@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
 )
 
 // slowService blocks every Lookup on a barrier, so a test can observe how many
@@ -87,7 +87,7 @@ func TestPoolRunsLookupsConcurrently(t *testing.T) {
 	wg.Wait()
 
 	if peak < int32(size) {
-		t.Errorf("peak concurrency = %d, want %d — the pool is not producing parallelism", peak, size)
+		t.Errorf("peak concurrency = %d, want %d - the pool is not producing parallelism", peak, size)
 	}
 }
 

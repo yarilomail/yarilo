@@ -17,13 +17,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
-	"github.com/yarilomail/yarilo/internal/director"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/director"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -75,7 +75,7 @@ func main() {
 		if ringTLSMisconfigured(cfg.InternalTLS.Enabled, cfg.DirectorService.Peers, cfg.DirectorService.RingTLSServerName) {
 			// log + continue (dial stays nil): the ring won't converge,
 			// which the ERROR makes obvious
-			slog.Error("director: internal_tls enabled with peers configured but director_service.ring_tls_server_name is empty — ring dial cannot verify pod-IP peers without it; the ring will not converge. Set director_service.ring_tls_server_name to a name in the director internal-tls cert (chart default: <release>-director-ring)")
+			slog.Error("director: internal_tls enabled with peers configured but director_service.ring_tls_server_name is empty - ring dial cannot verify pod-IP peers without it; the ring will not converge. Set director_service.ring_tls_server_name to a name in the director internal-tls cert (chart default: <release>-director-ring)")
 		} else {
 			ringDialTLSCfg, err = mtls.ClientConfig(
 				cfg.InternalTLS.Cert,
@@ -90,7 +90,7 @@ func main() {
 				os.Exit(1)
 			}
 			if name := cfg.DirectorService.RingTLSServerName; name != "" && !certHasSAN(cfg.InternalTLS.Cert, name) {
-				slog.Warn("director: ring_tls_server_name is not present in this director's internal-tls certificate SANs — peers present the same cert, so ring TLS handshakes will fail; re-issue the cert with this name (chart Certificate handles this)",
+				slog.Warn("director: ring_tls_server_name is not present in this director's internal-tls certificate SANs - peers present the same cert, so ring TLS handshakes will fail; re-issue the cert with this name (chart Certificate handles this)",
 					"ring_tls_server_name", name)
 			}
 		}
@@ -108,7 +108,7 @@ func main() {
 		localPort = p
 	}
 	if cfg.DirectorService.RingSecret == "" && len(cfg.DirectorService.Peers) > 0 {
-		slog.Warn("director: peers (seed) configured but ring_secret is empty — every DIRECTOR-JOIN will be rejected, this node can only run as a singleton ring")
+		slog.Warn("director: peers (seed) configured but ring_secret is empty - every DIRECTOR-JOIN will be rejected, this node can only run as a singleton ring")
 	}
 
 	usernameHashLowercase := cfg.DirectorService.UsernameHashLowercase
@@ -120,7 +120,7 @@ func main() {
 			slog.Error("director: invalid director_service.username_hash", "err", err, "value", raw)
 			os.Exit(1)
 		}
-		slog.Warn("director: username_hash set — it governs case-folding; username_hash_lowercase is ignored",
+		slog.Warn("director: username_hash set - it governs case-folding; username_hash_lowercase is ignored",
 			"username_hash", raw)
 	}
 	srv := director.NewWithOptions(director.Options{

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 // RFC 5464 METADATA entry names start with /private/ or /shared/, then a
@@ -28,6 +28,7 @@ import (
 // AttrScope distinguishes per-user-private from per-resource-shared attributes.
 type AttrScope int
 
+// The two scopes.
 const (
 	AttrPrivate AttrScope = iota
 	AttrShared

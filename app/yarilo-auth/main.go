@@ -14,19 +14,19 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/yarilomail/yarilo/internal/auth/oauth2"
-	"github.com/yarilomail/yarilo/internal/auth/passdbs"
-	"github.com/yarilomail/yarilo/internal/auth/policy"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/internal/warden"
-	"github.com/yarilomail/yarilo/pkg/authtoken"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/redisopt"
-	"github.com/yarilomail/yarilo/pkg/retry"
+	"github.com/yarilomail/yarilo/v2/internal/auth/oauth2"
+	"github.com/yarilomail/yarilo/v2/internal/auth/passdbs"
+	"github.com/yarilomail/yarilo/v2/internal/auth/policy"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
+	"github.com/yarilomail/yarilo/v2/pkg/authtoken"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
+	"github.com/yarilomail/yarilo/v2/pkg/retry"
 )
 
 // version is set via pkg/build; kept for vet compatibility.
@@ -97,7 +97,7 @@ func main() {
 	var combinedUserdb protocol.Userdb
 	switch len(userdbs) {
 	case 0:
-		// No backends — every userdb-side surface returns NOTFOUND;
+		// No backends - every userdb-side surface returns NOTFOUND;
 		// passdb-only auth still works because the enrichment branch
 		// no-ops when userdb is nil.
 	case 1:
@@ -171,16 +171,7 @@ func main() {
 
 	// Policy server: HTTP hook into wforce or equivalent. URL="" disables.
 	if cfg.Auth.Policy.URL != "" {
-		pc, err := policy.New(policy.Config{
-			URL:              cfg.Auth.Policy.URL,
-			APIHeader:        cfg.Auth.Policy.APIHeader,
-			HashMech:         cfg.Auth.Policy.HashMech,
-			HashNonce:        cfg.Auth.Policy.HashNonce,
-			HashTruncateBits: cfg.Auth.Policy.HashTruncateBits,
-			Timeout:          time.Duration(cfg.Auth.Policy.TimeoutMs) * time.Millisecond,
-			RejectOnFail:     cfg.Auth.Policy.RejectOnFail,
-			LogOnly:          cfg.Auth.Policy.LogOnly,
-		})
+		pc, err := policy.New(policyConfig(cfg))
 		if err != nil {
 			slog.Error("policy client init", "err", err)
 			os.Exit(1)
@@ -235,7 +226,7 @@ func main() {
 		}
 	}()
 
-	// Master protocol — userdb-only lookups + LIST. Skipped when
+	// Master protocol - userdb-only lookups + LIST. Skipped when
 	// master_listen is unset, keeping single-binary dev / smoke runs free
 	// of an extra bind nothing consumes.
 	if cfg.AuthService.MasterListen != "" {
@@ -370,4 +361,20 @@ func buildTokenStore(cfg config.AuthTokenConfig, dialRetries int) (protocol.Toke
 	slog.Info("auth: token store backend=memory")
 	s := authtoken.New(ttl)
 	return s, s.Close
+}
+
+// policyConfig is the policy client's configuration from yarilo.yaml.
+func policyConfig(cfg *config.Config) policy.Config {
+	p := cfg.Auth.Policy
+	return policy.Config{
+		URL:               p.URL,
+		APIHeader:         p.APIHeader,
+		HashMech:          p.HashMech,
+		HashNonce:         p.HashNonce,
+		HashTruncateBits:  p.HashTruncateBits,
+		Timeout:           time.Duration(p.TimeoutMs) * time.Millisecond,
+		RejectOnFail:      p.RejectOnFail,
+		LogOnly:           p.LogOnly,
+		RequestAttributes: p.RequestAttributes,
+	}
 }

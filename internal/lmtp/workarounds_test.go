@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func TestLMTPWorkaroundConn_ApplyWorkarounds(t *testing.T) {
@@ -117,7 +117,7 @@ func TestLMTP_WhitespaceBeforePath_Integration(t *testing.T) {
 		}
 	}
 
-	// Send MAIL FROM with a space before < — workaround should fix it
+	// Send MAIL FROM with a space before < - workaround should fix it
 	fmt.Fprintf(conn, "MAIL FROM: <sender@external.com>\r\n")
 	sc.Scan()
 	if !strings.HasPrefix(sc.Text(), "250") {

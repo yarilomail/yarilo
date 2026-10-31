@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // The base index and its log are paired by a lineage extension: wire layout
@@ -43,7 +43,7 @@ func encodeLineageHdr(h lineageHdr) []byte {
 }
 
 // decodeLineageHdr reads the extension. A short or absent header yields the
-// zero value, which means "unknown" — the conservative answer, and the one
+// zero value, which means "unknown" - the conservative answer, and the one
 // every index written before this extension gives.
 func decodeLineageHdr(b []byte) lineageHdr {
 	var h lineageHdr
@@ -123,13 +123,26 @@ func digestRecords(f *mailindex.File) uint64 {
 		}
 	}
 	var scratch [8]byte
+	var zero [1]byte
 	for _, rec := range f.Records {
 		binary.LittleEndian.PutUint32(scratch[0:4], rec.UID)
 		binary.LittleEndian.PutUint32(scratch[4:8], uint32(rec.Flags))
 		write(scratch[:])
+		// Hashed as on disk: an unset extension is its width in zeros, and one
+		// holding no record bytes is not part of a record at all.
 		for _, ext := range f.Extensions {
+			if ext.RecordSize == 0 {
+				continue
+			}
 			write([]byte(ext.Name))
-			write(rec.Ext[ext.Name])
+			b := rec.Ext[ext.Name]
+			if len(b) > int(ext.RecordSize) {
+				b = b[:ext.RecordSize]
+			}
+			write(b)
+			for range int(ext.RecordSize) - len(b) {
+				write(zero[:])
+			}
 		}
 	}
 	return h

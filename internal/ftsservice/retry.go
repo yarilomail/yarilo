@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
-// An index pass that cannot take the mailbox lock has not failed — it has been
+// An index pass that cannot take the mailbox lock has not failed - it has been
 // beaten to the lock by a session write, which is the normal state of a busy
 // mailbox. Dropping it there means the messages it would have indexed stay
 // unindexed until some unrelated event happens to queue that mailbox again,

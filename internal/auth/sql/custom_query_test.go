@@ -8,8 +8,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	authsql "github.com/yarilomail/yarilo/v2/internal/auth/sql"
 )
 
 // buildCustomSchemaDB creates a SQLite DB with a custom-named table to
@@ -212,7 +212,7 @@ func TestSkipSchema_PreventsTableCreation(t *testing.T) {
 
 func TestDefaultPassScheme_BcryptForBareHash(t *testing.T) {
 	// Set up a DB where stored password has no {SCHEME} prefix and no
-	// crypt(3) marker — but default_pass_scheme=BCRYPT so it's treated as one.
+	// crypt(3) marker - but default_pass_scheme=BCRYPT so it's treated as one.
 	dsn := filepath.Join(t.TempDir(), "default.db")
 	db, _ := sql.Open("sqlite", dsn)
 	if _, err := db.Exec(`CREATE TABLE users (email TEXT PRIMARY KEY, pw TEXT, active INTEGER DEFAULT 1)`); err != nil {

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // The session resource is a contract: what it advertises is what a client will
@@ -120,7 +120,7 @@ func TestQueryChangesRefusesInsteadOfBeingAbsent(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
 			_, errType := changesCall(t, s, method,
-				`{"accountId":"`+testUser+`","sinceState":"1-ZQ"}`)
+				`{"accountId":"`+testAccount+`","sinceState":"1-ZQ"}`)
 			if errType != "cannotCalculateChanges" {
 				t.Errorf("%s answered %q, want cannotCalculateChanges", method, errType)
 			}

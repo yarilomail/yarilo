@@ -12,8 +12,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // routedHeader marks a request another backend-api forwarded here: it runs

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The acceptance criterion #711 was written with, translated to the design that
@@ -72,7 +72,7 @@ func TestConcurrentDeliveryAndFlagChangeBothAppear(t *testing.T) {
 			}
 
 			payload, errType := changesCall(t, s, "Email/changes",
-				fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+				fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 			if errType != "" {
 				t.Fatalf("Email/changes refused after two concurrent writes: %s", errType)
 			}

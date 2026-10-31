@@ -2,7 +2,7 @@
 // set via IMAP CREATE (USE ...).
 //
 // Layout: one line per folder, "<folder>\t<attr>". The attr is a
-// single MailboxAttr token like "\Sent" — RFC 6154 §3 forbids more
+// single MailboxAttr token like "\Sent" - RFC 6154 §3 forbids more
 // than one special-use attr per folder.
 //
 // Lookups consult the on-disk overrides first; folders without an
@@ -27,7 +27,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // Store is a per-user special-use override file.
@@ -54,11 +54,22 @@ func New(home, username, owner string, locker locks.Locker, defaults map[string]
 	}
 }
 
+// moved announces a write once the lock is released: a role is a Mailbox
+// property.
+func (s *Store) moved(err error, wrote bool) error {
+	if err != nil || !wrote {
+		return err
+	}
+	locks.EmitBest(s.locker, locks.MailboxListKey(s.username), locks.EventRole, "")
+	return nil
+}
+
 // Set records folder as having the supplied special-use attr.
 // RFC 6154 §3: a folder carries at most one special-use; subsequent
 // Set replaces. Idempotent if (folder, attr) is already on disk.
 func (s *Store) Set(folder string, attr imaplib.MailboxAttr) error {
-	return s.withLock(func() error {
+	wrote := false
+	err := s.withLock(func() error {
 		overrides, err := s.load()
 		if err != nil {
 			return err
@@ -67,14 +78,17 @@ func (s *Store) Set(folder string, attr imaplib.MailboxAttr) error {
 			return nil
 		}
 		overrides[folder] = attr
+		wrote = true
 		return s.writeAtomic(overrides)
 	})
+	return s.moved(err, wrote)
 }
 
 // Delete drops the on-disk override for folder. The default mapping
 // (if any) becomes visible again on the next Get. Idempotent.
 func (s *Store) Delete(folder string) error {
-	return s.withLock(func() error {
+	wrote := false
+	err := s.withLock(func() error {
 		overrides, err := s.load()
 		if err != nil {
 			return err
@@ -83,15 +97,17 @@ func (s *Store) Delete(folder string) error {
 			return nil
 		}
 		delete(overrides, folder)
+		wrote = true
 		return s.writeAtomic(overrides)
 	})
+	return s.moved(err, wrote)
 }
 
 // Attrs returns the special-use attribute of every folder that has one:
 // on-disk overrides laid over the configured defaults, read in a single pass.
 //
 // This is the only way to ask, and deliberately so. The document describes the
-// whole user, so a per-folder call asks the same question once per name — and
+// whole user, so a per-folder call asks the same question once per name - and
 // each ask is an acquire and a release against the lock service, over the
 // network. LIST did exactly that: a user with 35 folders paid 70 round trips
 // for one command, and 85% of the special-use work was coordination rather than
@@ -213,7 +229,7 @@ func (s *Store) writeAtomic(overrides map[string]imaplib.MailboxAttr) error {
 	return nil
 }
 
-// withLock reuses locks.SubscriptionsKey — metadata writes (subs +
+// withLock reuses locks.SubscriptionsKey - metadata writes (subs +
 // special-use) on the same user contend rarely and share a "metadata
 // side-channel" semantic. nil locker = no cross-process guarantee,
 // only tmp+rename atomicity.

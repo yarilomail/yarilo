@@ -63,7 +63,7 @@ func TestPooledEnvCarriesNothingBetweenTokens(t *testing.T) {
 		ref := snowballstem.NewEnv(token)
 		snowballStemmers["en"](ref)
 		if got, _ := f.Apply(token); got != ref.Current() {
-			t.Errorf("%q after the preceding tokens stems to %q, want %q — state leaked between calls",
+			t.Errorf("%q after the preceding tokens stems to %q, want %q - state leaked between calls",
 				token, got, ref.Current())
 		}
 	}
@@ -92,7 +92,7 @@ func TestApplyDoesNotAllocatePerToken(t *testing.T) {
 }
 
 // snowballFilter is shared across index workers and concurrent searches. A
-// single mutable Env would interleave two tokens into each other — a corruption
+// single mutable Env would interleave two tokens into each other - a corruption
 // that produces plausible words, so nothing would report it. This is the test
 // that has to run under -race.
 func TestApplyIsSafeUnderConcurrentUse(t *testing.T) {

@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // fakeLocker is a minimal locks.Locker stand-in that implements
-// just IncrementCounter — the only method checkRecipientRate
+// just IncrementCounter - the only method checkRecipientRate
 // touches. Every other method panics so accidental drift is
 // caught immediately.
 type fakeLocker struct {
@@ -118,6 +118,6 @@ func TestCheckRecipientRate_CounterErrorIsNotRateLimit(t *testing.T) {
 		t.Fatal("expected counter outage to surface as an error")
 	}
 	if errors.Is(err, ErrRateLimited) {
-		t.Error("counter outage must not surface as ErrRateLimited — caller decides to accept")
+		t.Error("counter outage must not surface as ErrRateLimited - caller decides to accept")
 	}
 }

@@ -3,8 +3,8 @@ package sasllogin_test
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/sasllogin"
-	"github.com/yarilomail/yarilo/pkg/lineio/linetest"
+	"github.com/yarilomail/yarilo/v2/internal/sasllogin"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio/linetest"
 )
 
 func TestTheSASLProxyCutsAnEndlessLine(t *testing.T) {

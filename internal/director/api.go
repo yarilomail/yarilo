@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // boolParam reports whether query param name is a truthy flag ("1", "true",
@@ -155,7 +155,7 @@ func (s *Server) resolveUserBackend(user string) (ip string, port int, tag strin
 			}
 		}
 	}
-	// Fresh user: under least_sessions and domain pin here too — the director
+	// Fresh user: under least_sessions and domain pin here too - the director
 	// owns placement, and a hash read would name a pod the login never assigns
 	// (#2193). Under hash the lookup is deterministic and side-effect-free.
 	if p := s.assignmentPolicy(); p == policyLeastSessions || p == policyDomain {
@@ -247,7 +247,7 @@ func (s *Server) apiMap(w http.ResponseWriter, r *http.Request) {
 	if raw != "" {
 		user := s.normalizeUser(proto.TabUnescape(raw))
 
-		// peek: read the stored pin only. No side effects — never pins an
+		// peek: read the stored pin only. No side effects - never pins an
 		// unpinned user, unlike the resolver below.
 		if r.URL.Query().Get("peek") != "" {
 			e := s.userDir.Get(user)
@@ -263,7 +263,7 @@ func (s *Server) apiMap(w http.ResponseWriter, r *http.Request) {
 		// Resolve to the same pod a login LOOKUP would (sticky pin → ring
 		// hash): a per-user backend op must hit the user's pod or it becomes
 		// a second writer of that user's index. yarctl depends on the
-		// resolve+pin behaviour — do not turn this into a pure read (use peek).
+		// resolve+pin behaviour - do not turn this into a pure read (use peek).
 		ip, port, tag, sticky := s.resolveUserBackend(user)
 		if ip == "" {
 			apiError(w, "no backends available", http.StatusServiceUnavailable)

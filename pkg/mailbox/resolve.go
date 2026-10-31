@@ -39,7 +39,7 @@ func MemoizeByDriver(build func(driver string) MailboxBackend) func(string) Mail
 
 // stampLocation parses mailLoc and stamps the per-user driver and the
 // INDEX=/CONTROL=/ALT=/VOLATILEDIR= modifiers onto ui. Separate userdb dir
-// fields already set on ui win — an embedded modifier only fills a blank. A
+// fields already set on ui win - an embedded modifier only fills a blank. A
 // leading "~/" in a modifier expands to the user's home. It returns an error
 // (leaving ui unstamped) only for a genuinely unknown or malformed
 // mail_location, so the caller can warn with its own prefix and keep the user on
@@ -99,8 +99,8 @@ func SelectPersonalBackend(global MailboxBackend, byDriver func(string) MailboxB
 	return global
 }
 
-// stampDriver applies an explicit per-user storage driver — the userdb
-// mail_driver / mailbox_format field — over whatever the mail_location prefix
+// stampDriver applies an explicit per-user storage driver - the userdb
+// mail_driver / mailbox_format field - over whatever the mail_location prefix
 // stamped. Call it after StampLocation: a field the operator wrote out is more
 // specific than a prefix embedded in a location string, and that ordering has
 // to be the same everywhere or moving a userdb from one spelling to the other
@@ -150,7 +150,7 @@ type UserdbOverrides struct {
 // The order is the contract, and it lives here because it used to live in three
 // copies. Two of them applied it correctly and the third stamped the location
 // after the driver, so the same userdb opened a mailbox as mdbox over IMAP and
-// as maildir over POP3 — a difference no test at the level of this package
+// as maildir over POP3 - a difference no test at the level of this package
 // could see, because the order was not in this package.
 //
 // The two errors are returned apart so a caller can say which half went wrong;

@@ -62,7 +62,7 @@ func (fa *flakyAuth) handle(c net.Conn) {
 	}
 	fa.mu.Unlock()
 	if !up {
-		return // drop during handshake — dial() fails, redial retries
+		return // drop during handshake - dial() fails, redial retries
 	}
 	rd := bufio.NewReader(c)
 	fmt.Fprint(c, "VERSION\t1\t0\nSPID\t1\nDONE\n")
@@ -128,7 +128,7 @@ func TestRedialRecoversFromAnOutageLongerThanTheBudget(t *testing.T) {
 		}
 	}
 	if !recovered {
-		t.Fatal("client never recovered after auth returned — redial gave up (zombie)")
+		t.Fatal("client never recovered after auth returned - redial gave up (zombie)")
 	}
 
 	// No busy-spin pileup: goroutine count settles back near the baseline.

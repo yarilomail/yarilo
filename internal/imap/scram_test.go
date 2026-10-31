@@ -12,21 +12,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-sasl"
 	"golang.org/x/crypto/pbkdf2"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // scramAuth implements both protocol.Authenticator (with a stub
-// that never succeeds — SCRAM must not fall through to plain auth)
+// that never succeeds - SCRAM must not fall through to plain auth)
 // AND protocol.SCRAMSha256Lookup.
 type scramAuth struct {
 	user  string
@@ -145,7 +145,7 @@ func rawIMAPSCRAM(t *testing.T, conn net.Conn, user, pass string) (loggedIn bool
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if strings.HasPrefix(line, "+ ") {
-			// server-final v=… — acknowledge with empty.
+			// server-final v=… - acknowledge with empty.
 			fmt.Fprintf(conn, "\r\n")
 			continue
 		}
@@ -207,7 +207,7 @@ func TestIMAP_SCRAMSha256_RawWire(t *testing.T) {
 	}
 }
 
-// TestIMAP_SCRAMSha256_WrongPasswordRejected — SCRAM proof
+// TestIMAP_SCRAMSha256_WrongPasswordRejected - SCRAM proof
 // computed from wrong password fails StoredKey compare.
 func TestIMAP_SCRAMSha256_WrongPasswordRejected(t *testing.T) {
 	creds, _ := sasl.GenerateScramSha256Credentials("hunter2", sasl.MinScramIterations)
@@ -234,7 +234,7 @@ func TestIMAP_SCRAMSha256_WrongPasswordRejected(t *testing.T) {
 	}
 }
 
-// TestIMAP_SCRAMSha256_CapabilityAdvertised — when a SCRAM-capable
+// TestIMAP_SCRAMSha256_CapabilityAdvertised - when a SCRAM-capable
 // passdb is wired, the CAPABILITY reply lists AUTH=SCRAM-SHA-256.
 func TestIMAP_SCRAMSha256_CapabilityAdvertised(t *testing.T) {
 	creds, _ := sasl.GenerateScramSha256Credentials("hunter2", sasl.MinScramIterations)
@@ -258,7 +258,7 @@ func TestIMAP_SCRAMSha256_CapabilityAdvertised(t *testing.T) {
 	}
 }
 
-// TestIMAP_SCRAMSha256_NotAdvertisedWithoutLookup — when the
+// TestIMAP_SCRAMSha256_NotAdvertisedWithoutLookup - when the
 // configured Authenticator does not implement SCRAMSha256Lookup,
 // the mech stays off the wire.
 func TestIMAP_SCRAMSha256_NotAdvertisedWithoutLookup(t *testing.T) {

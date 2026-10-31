@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A second private namespace with a store of its own keeps its own

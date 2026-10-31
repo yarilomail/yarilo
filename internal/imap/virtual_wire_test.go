@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/search"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/search"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // virtualServer gives a user an INBOX and an Archive with the messages named,

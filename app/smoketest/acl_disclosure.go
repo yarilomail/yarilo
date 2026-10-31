@@ -35,7 +35,7 @@ func checkACLDisclosure(ownerUser, ownerPass, peerUser, peerPass, prefix string)
 	// not there -- which is the failure that wasted a day, so it is named.
 	_ = owner.deleteFolder(folder)
 	if _, err := owner.cmd(fmt.Sprintf("CREATE %q", folder)); err != nil {
-		return fmt.Errorf("CREATE %q: %w — is %q a configured namespace on this deployment?", folder, err, prefix)
+		return fmt.Errorf("CREATE %q: %w - is %q a configured namespace on this deployment?", folder, err, prefix)
 	}
 	// Cleanup failure is a failure of the check, not a note in the output.
 	defer func() {
@@ -159,7 +159,7 @@ func aclGrantsAreReachable(owner *imapClient, peer **imapClient, folder, peerUse
 	if _, err := (*peer).cmd(fmt.Sprintf("SELECT %q", folder)); err == nil {
 		return fmt.Errorf("SELECT succeeded for a peer holding only 'l'")
 	} else if !strings.Contains(err.Error(), "NOPERM") {
-		return fmt.Errorf("with 'l' granted, SELECT does not name the missing right: %v — expected NOPERM, "+
+		return fmt.Errorf("with 'l' granted, SELECT does not name the missing right: %v - expected NOPERM, "+
 			"so the grant is applied and the peer lacks only 'r'", err)
 	}
 	if _, err := (*peer).cmd(fmt.Sprintf("MYRIGHTS %q", folder)); err != nil {
@@ -227,7 +227,7 @@ func aclCleanupResult(checkErr, cleanupErr error, folder, prefix string) error {
 		return checkErr
 	}
 	if checkErr == nil {
-		return fmt.Errorf("cleanup %q: %w — the probe is still in %q", folder, cleanupErr, prefix)
+		return fmt.Errorf("cleanup %q: %w - the probe is still in %q", folder, cleanupErr, prefix)
 	}
 	return fmt.Errorf("%w (cleanup %q also failed: %v)", checkErr, folder, cleanupErr)
 }

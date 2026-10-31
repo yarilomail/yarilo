@@ -26,7 +26,7 @@ func dispatchMailbox(args []string) error {
 	case "mime", "raw":
 		return messageGet(rest[0], rest[1:])
 	default:
-		return fmt.Errorf("unknown form %q — available: mime, raw", rest[0])
+		return fmt.Errorf("unknown form %q - available: mime, raw", rest[0])
 	}
 }
 

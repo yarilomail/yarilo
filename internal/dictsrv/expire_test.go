@@ -11,10 +11,10 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/proxy"
-	_ "github.com/yarilomail/yarilo/pkg/dict/redis"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/proxy"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/redis"
 )
 
 // serveRedis runs the service over a redis dict on miniredis and returns a

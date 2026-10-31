@@ -46,7 +46,7 @@ func headerPropPresent(t *testing.T, s *Server, id, property string) (any, bool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+string(raw)+`}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":`+string(raw)+`}`)
 	v, present := firstEmail(t, got)[property]
 	return v, present
 }
@@ -102,7 +102,7 @@ func TestHeaderFieldForms(t *testing.T) {
 	}
 }
 
-// Without :all the answer is the last occurrence — the header added most
+// Without :all the answer is the last occurrence - the header added most
 // recently describes the message as it arrived here. With :all, every one, in
 // the order the message carries them.
 func TestHeaderFieldRepeatedFields(t *testing.T) {
@@ -200,7 +200,7 @@ func TestHeadersPropertyIsAnswered(t *testing.T) {
 	}
 	for i := range want {
 		if names[i] != want[i] {
-			t.Errorf("header %d = %q, want %q — the order is the message's", i, names[i], want[i])
+			t.Errorf("header %d = %q, want %q - the order is the message's", i, names[i], want[i])
 		}
 	}
 
@@ -223,19 +223,19 @@ func TestHeadersPropertyIsAnswered(t *testing.T) {
 // A backslash quotes whatever follows it, inside a quoted string and inside a
 // comment alike (RFC 5322 §3.2.1). Without that, an escaped quote closes the
 // string early and the parser then treats the punctuation after it as group
-// syntax — quietly, which is the same failure flattening would have been.
+// syntax - quietly, which is the same failure flattening would have been.
 //
 // Tested against the parser directly: routed through a whole Email/get, the
 // grouping came out the same either way, so the assertion said nothing.
 // A quoted-pair has to survive the split, not just fail to break it. The four
 // cases above assert where the groups fall, and the split is the same with the
-// backslash and without it — so they cannot see a parser that gets the
+// backslash and without it - so they cannot see a parser that gets the
 // boundaries right and hands the downstream address parser something that is no
 // longer a valid address list.
 func TestGroupedAddressesKeepsTheEscapedValue(t *testing.T) {
 	got := groupedAddresses(`"say \"hi\"" <one@example.com>`)
 	if len(got) != 1 || len(got[0].Addresses) != 1 {
-		t.Fatalf("= %+v, want one address in one group — the escaped display name broke the parse", got)
+		t.Fatalf("= %+v, want one address in one group - the escaped display name broke the parse", got)
 	}
 	addr := got[0].Addresses[0]
 	if addr.Email != "one@example.com" {

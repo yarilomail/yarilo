@@ -4,7 +4,7 @@
   container + yarilo-fts (localhost) + yarilo-backend-api + the
   yarilo-backend-reg registration sidecar, sharing one pod IP and the tag's NFS
   PV. One user hashes to one pod IP that serves every protocol, so the director
-  needs only one ring + one userDir. See https://doc.yarilomail.org/DEPLOYMENT.
+  needs only one ring + one userDir. See https://doc.yarilomail.org/latest/installation/deployment.html.
 */ -}}
 {{- $root := . }}
 {{- $reg := .Values.backend_register }}
@@ -13,7 +13,7 @@
 {{- $itls := .Values.components.backend.internalTLS | default dict }}
 {{- /* Protocol containers. vkey = the components.* values key (managesieve is
        camelCase 'manageSieve'). Only protocols whose components.<vkey>.enabled
-       is true render — config-not-binary: the operator picks the protocol set,
+       is true render - config-not-binary: the operator picks the protocol set,
        and a disabled protocol must not start (it would demand config it lacks
        and, under OrderedReady, wedge the whole StatefulSet). The sidecar's
        readiness_protocols is derived from the SAME enabled set in the configmap,
@@ -70,7 +70,7 @@
 {{- range $c := $claims }}
 {{- $key := printf "%v" $c.port }}
 {{- if hasKey $claimed $key }}
-{{- fail (printf "co-located backend pod: port %v is claimed by both %s and %s — containers share a network namespace, so one would silently answer the other's health checks" $c.port (get $claimed $key) $c.by) }}
+{{- fail (printf "co-located backend pod: port %v is claimed by both %s and %s - containers share a network namespace, so one would silently answer the other's health checks" $c.port (get $claimed $key) $c.by) }}
 {{- end }}
 {{- $_ := set $claimed $key $c.by }}
 {{- end }}
@@ -103,7 +103,7 @@ spec:
       {{- /* No wait-* init containers (#903): each session container carries a
              startupProbe (below) that waits for locks, Redis and (when applicable)
              the DB before that container takes traffic. The fts / backend-api /
-             backend-reg sidecars start ungated — they fail fast on a missing
+             backend-reg sidecars start ungated - they fail fast on a missing
              dependency the same way the session containers do. */}}
       containers:
         {{- range $p := $protocols }}
@@ -156,9 +156,9 @@ spec:
             periodSeconds: 5
             failureThreshold: 2
           {{- if $root.Values.telemetry.livenessWatchdog.enabled }}
-          # Liveness watches /healthz so a tripped watchdog — a wedged request
+          # Liveness watches /healthz so a tripped watchdog - a wedged request
           # path (hung NFS handle, deadlock) the readiness file and startupProbe
-          # cannot see — restarts THIS protocol container while the others keep
+          # cannot see - restarts THIS protocol container while the others keep
           # serving (#904). Gated on the watchdog: with no self-check /healthz
           # never fails, so a liveness here would be inert, and leaving it off
           # preserves the backend's prior no-liveness behaviour by default. The
@@ -205,7 +205,7 @@ spec:
             - name: tel-fts
               containerPort: {{ $ftsTelemetry }}
               protocol: TCP
-          # fts is best-effort — NOT gated (a wedged index degrades SEARCH but
+          # fts is best-effort - NOT gated (a wedged index degrades SEARCH but
           # must not evict the pod's mail traffic). Standard HTTP readiness.
           readinessProbe:
             httpGet:
@@ -228,8 +228,8 @@ spec:
               value: {{ include "yarilo.logLevel" (dict "name" "yarilo-backend-api" "root" $root) | quote }}
             - name: TELEMETRY_LISTEN
               value: {{ printf ":%d" (int $backendAPITelemetry) | quote }}
-            # POD_IP is this co-located pod's IP — the backend IP sessions route
-            # to — so `who` can scope to THIS backend by default (#814).
+            # POD_IP is this co-located pod's IP - the backend IP sessions route
+            # to - so `who` can scope to THIS backend by default (#814).
             - name: POD_IP
               valueFrom:
                 fieldRef:

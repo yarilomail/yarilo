@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 func domainMoveRequest(s *Server, domain, body string) *httptest.ResponseRecorder {

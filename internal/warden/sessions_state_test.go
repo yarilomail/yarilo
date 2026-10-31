@@ -65,7 +65,7 @@ func TestStateBackendSessionContract(t *testing.T) {
 			}
 
 			// Disconnect frees a slot; a duplicate disconnect must NOT free a
-			// second (idempotent) — otherwise the counter drifts negative and the
+			// second (idempotent) - otherwise the counter drifts negative and the
 			// limit is over-permissive.
 			b.SessionDisconnect(sid(1), u, ip)
 			b.SessionDisconnect(sid(1), u, ip)
@@ -83,8 +83,8 @@ func TestStateBackendSessionContract(t *testing.T) {
 
 // TestRedisSessionReconcile is the crash-recovery proof (#908 PR2): a login pod's
 // sessions expire by TTL when it dies, but their INCR was never matched by a
-// DECR, so the counter leaks. Maintain must reconcile it back down — race-safely
-// — so users are not locked out by a phantom count.
+// DECR, so the counter leaks. Maintain must reconcile it back down - race-safely -
+// so users are not locked out by a phantom count.
 func TestRedisSessionReconcile(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -99,7 +99,7 @@ func TestRedisSessionReconcile(t *testing.T) {
 		}
 	}
 	// The pod "crashes": no DISCONNECTs. The session keys expire by TTL, but the
-	// counter is left at the limit — a leak that would lock the user out.
+	// counter is left at the limit - a leak that would lock the user out.
 	mr.FastForward(300 * time.Millisecond)
 	if got := b.SessionCount(); got != 0 {
 		t.Fatalf("sessions after TTL = %d, want 0 (keys expired)", got)
@@ -112,7 +112,7 @@ func TestRedisSessionReconcile(t *testing.T) {
 	b.Maintain(time.Now())
 
 	if ok, err := b.SessionConnect(sid(51), u, ip, "imap"); err != nil || !ok {
-		t.Fatalf("connect after reconcile = (%v,%v), want (true,nil) — leak not cleared", ok, err)
+		t.Fatalf("connect after reconcile = (%v,%v), want (true,nil) - leak not cleared", ok, err)
 	}
 }
 

@@ -16,8 +16,8 @@ import (
 
 	gosieve "github.com/foxcpp/go-sieve"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 type session struct {
@@ -34,7 +34,7 @@ type session struct {
 	closing           bool
 	allowedExtensions sieve.ExtensionSet
 	// sid is the warden session correlation ID from the login-proxy preamble
-	// (loginproto.PreambleConn.SessionID) — included on every command
+	// (loginproto.PreambleConn.SessionID) - included on every command
 	// dispatch and error line so a session's activity greps as one thread.
 	sid string
 }

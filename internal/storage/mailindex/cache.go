@@ -57,7 +57,7 @@ const (
 )
 
 // ErrCacheInvalid marks a cache file that must be treated as absent: wrong
-// pair, wrong generation, wrong implementation. Never fatal — the cache is
+// pair, wrong generation, wrong implementation. Never fatal - the cache is
 // derived data, and the caller rebuilds lazily.
 var ErrCacheInvalid = errors.New("mailindex: cache file invalid")
 
@@ -137,7 +137,7 @@ type CacheFieldValue struct {
 
 // CacheFile is an open yarilo.index.cache. Not goroutine-safe: callers hold
 // the same per-folder lock every index write already holds. Readers open and
-// close within a call — no long-lived descriptors, the NFS rule optimize
+// close within a call - no long-lived descriptors, the NFS rule optimize
 // depends on (#1176).
 type CacheFile struct {
 	f      *os.File
@@ -228,7 +228,7 @@ func CreateCache(path string, indexID, fileSeq uint32) (*CacheFile, error) {
 
 // OpenCache opens and validates an existing cache against its paired index.
 // Every validation failure wraps ErrCacheInvalid: the caller treats the file
-// as absent and rebuilds — never as an error to surface to a client.
+// as absent and rebuilds - never as an error to surface to a client.
 func OpenCache(path string, indexID, expectFileSeq uint32) (*CacheFile, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {
@@ -443,7 +443,7 @@ func (c *CacheFile) FieldID(name string) (uint32, bool) {
 
 /* --- records -------------------------------------------------------------- */
 
-// AppendRecord appends one cache record and returns its offset — the value
+// AppendRecord appends one cache record and returns its offset - the value
 // the caller stores into the index's "cache" extension for the message.
 // prevOffset links an earlier record for the same message (0 for none); a
 // reader merges the chain newest-first, first value per field winning.

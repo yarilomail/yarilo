@@ -40,7 +40,7 @@ func referenceFile(hdrSize int, body string, guid [16]byte) []byte {
 //
 // The 30-byte case did not merely read wrongly before: decodeMessageHeader
 // checked byte 31 for LF, and in a 30-byte header byte 31 is the second byte of
-// the body — so every file the reference wrote was refused outright with
+// the body - so every file the reference wrote was refused outright with
 // "missing trailing newline at offset 31" (#1522). Reading and refusing are
 // different failures, and this row is the one that told them apart.
 func TestFilesAreReadAtTheSizeTheyAnnounce(t *testing.T) {

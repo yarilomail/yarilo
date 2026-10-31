@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/fts/decoder"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/internal/fts/decoder"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 const alternativeTwinMsg = "Subject: dup\r\n" +
@@ -26,7 +26,7 @@ const alternativeTwinMsg = "Subject: dup\r\n" +
 	"--BOUND--\r\n"
 
 // TestDedupSkipsMultipartAlternativeTwin (#669): a text/plain and its
-// multipart/alternative text/html twin carry the same content — with
+// multipart/alternative text/html twin carry the same content - with
 // DedupBodyParts on, the second body part must not be tokenized again.
 func TestDedupSkipsMultipartAlternativeTwin(t *testing.T) {
 	upd := &fakeUpdate{}
@@ -166,7 +166,7 @@ func TestNoDecoderSkipsAttachment(t *testing.T) {
 }
 
 // TestDecoderUnsupportedTypeSkips: a Decoder that declines the content type
-// (ok=false) must be treated exactly like no decoder — no error, no index.
+// (ok=false) must be treated exactly like no decoder - no error, no index.
 func TestDecoderUnsupportedTypeSkips(t *testing.T) {
 	upd := &fakeUpdate{}
 	b := New(Options{
@@ -193,7 +193,7 @@ func (d *errDecoder) Decode(_ context.Context, _, _ string, body io.Reader) ([]b
 
 // TestDecoderDegradedErrorSkipsAttachmentWithoutFailingMessage (#697): an
 // error wrapping decoder.ErrDegraded (retries against a transient condition
-// exhausted) must not fail the whole message — the message indexes
+// exhausted) must not fail the whole message - the message indexes
 // successfully minus this one attachment's text.
 func TestDecoderDegradedErrorSkipsAttachmentWithoutFailingMessage(t *testing.T) {
 	upd := &fakeUpdate{}
@@ -217,8 +217,8 @@ func TestDecoderDegradedErrorSkipsAttachmentWithoutFailingMessage(t *testing.T) 
 }
 
 // TestDecoderHardErrorFailsMessage (#697): any decoder error NOT wrapping
-// ErrDegraded is a hard failure (bad config, permanent 4xx, protocol error)
-// — Build must abort so the caller doesn't commit a silently-incomplete
+// ErrDegraded is a hard failure (bad config, permanent 4xx, protocol error) -
+// Build must abort so the caller doesn't commit a silently-incomplete
 // document, letting autoindex retry the whole message later.
 // A decoder that will not decode an attachment costs that attachment, not the
 // message: the other parts are indexed and the message stays findable. It was
@@ -243,7 +243,7 @@ func TestDecoderHardErrorCostsTheAttachmentNotTheMessage(t *testing.T) {
 var errFakeMidRead = fmt.Errorf("fake mid-read failure")
 
 // producePartialThenError simulates a body read that succeeds for the first
-// chunk, then fails genuinely (not the size-cap sentinel) — the scenario a
+// chunk, then fails genuinely (not the size-cap sentinel) - the scenario a
 // real broken/truncated part reader can hit mid-stream.
 func producePartialThenError(sink func([]byte) error) error {
 	if err := sink([]byte("partial content before failure")); err != nil {
@@ -254,7 +254,7 @@ func producePartialThenError(sink func([]byte) error) error {
 
 // TestBuildBodyTextPartialReadErrorConsistentAcrossDedup (review finding):
 // a genuine mid-part read error must be tolerated identically whether
-// DedupBodyParts is on or off — both must index the partial text collected
+// DedupBodyParts is on or off - both must index the partial text collected
 // before the error, not silently diverge (dedup previously discarded the
 // whole part on any non-cap error, while the non-dedup path always kept
 // whatever had already streamed into the tokenizer).

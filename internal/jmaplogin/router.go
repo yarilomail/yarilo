@@ -6,7 +6,7 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // StaticRouter sends every user to one address. The standalone shape has no

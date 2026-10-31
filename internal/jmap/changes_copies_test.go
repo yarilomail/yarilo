@@ -11,8 +11,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A move, a copy or a removed copy is an update of the one Email; only the last
@@ -20,7 +20,7 @@ import (
 func TestEmailChangesJudgesTheEmailNotTheCopy(t *testing.T) {
 	set := func(t *testing.T, s *Server, args string) {
 		t.Helper()
-		resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,%s}`, testUser, args))
+		resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,%s}`, testAccount, args))
 		if len(resp.NotCreated)+len(resp.NotUpdated)+len(resp.NotDestroyed) > 0 {
 			t.Fatalf("Email/set refused: %+v %+v %+v", resp.NotCreated, resp.NotUpdated, resp.NotDestroyed)
 		}
@@ -50,7 +50,7 @@ func TestEmailChangesJudgesTheEmailNotTheCopy(t *testing.T) {
 			return id
 		}, "destroyed"},
 		{"created and destroyed in the window", nil, func(t *testing.T, s *Server, _ string, mb map[string]string) string {
-			resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"create":{"c1":{"mailboxIds":{%q:true},"subject":"brief","textBody":[{"partId":"t"}],"bodyValues":{"t":{"value":"x"}}}}}`, testUser, mb["INBOX"]))
+			resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"create":{"c1":{"mailboxIds":{%q:true},"subject":"brief","textBody":[{"partId":"t"}],"bodyValues":{"t":{"value":"x"}}}}}`, testAccount, mb["INBOX"]))
 			c1, ok := resp.Created["c1"].(map[string]any)
 			if !ok {
 				t.Fatalf("not created: %+v", resp.NotCreated)
@@ -69,7 +69,7 @@ func TestEmailChangesJudgesTheEmailNotTheCopy(t *testing.T) {
 			}
 			since := emailStateOf(t, s)
 			subject := tc.act(t, s, id, mb)
-			got, errType := changesCall(t, s, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+			got, errType := changesCall(t, s, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 			if errType != "" {
 				t.Fatalf("Email/changes answered %s", errType)
 			}
@@ -124,9 +124,9 @@ func TestEmailChangesWalksOnlyAStoreNotMarkedWhole(t *testing.T) {
 				rebuildGUIDStore(t, s)
 			}
 			since := emailStateOf(t, s)
-			emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"destroy":[%q]}`, testUser, id))
+			emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"destroy":[%q]}`, testAccount, id))
 			before := testutil.ToFloat64(metricIDLookupFolders)
-			got, errType := changesCall(t, s, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+			got, errType := changesCall(t, s, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 			walked := testutil.ToFloat64(metricIDLookupFolders) - before
 			if errType != "" {
 				t.Fatalf("Email/changes answered %s", errType)
@@ -153,7 +153,7 @@ func TestEmailChangesTrustsNoBatchOnAStoreNotWhole(t *testing.T) {
 		t.Fatalf("the fixture holds %d emails, the row needs two", len(ids))
 	}
 	older, newer := ids[0], ids[1]
-	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true}}}`, testUser, older, mb["Work"]))
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true}}}`, testAccount, older, mb["Work"]))
 	// Mail from before the store: neither copy of the older Email is in it.
 	info, err := s.opts.Storage.ResolveUser(testUser)
 	if err != nil {
@@ -171,8 +171,8 @@ func TestEmailChangesTrustsNoBatchOnAStoreNotWhole(t *testing.T) {
 	since := emailStateOf(t, s)
 	// The store comes back with the newer Email's copy only.
 	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true},%q:{"mailboxIds/%s":null}}}`,
-		testUser, newer, mb["Archive"], older, mb["Work"]))
-	got, errType := changesCall(t, s, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testUser, since))
+		testAccount, newer, mb["Archive"], older, mb["Work"]))
+	got, errType := changesCall(t, s, "Email/changes", fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
 	if errType != "" {
 		t.Fatalf("Email/changes answered %s", errType)
 	}

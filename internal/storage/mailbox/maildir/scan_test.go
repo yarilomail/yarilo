@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func TestScanReturnsRecordsForDeliveredMessages(t *testing.T) {
@@ -65,7 +65,7 @@ func TestScanEmptyOnMissingFolder(t *testing.T) {
 	home := t.TempDir()
 	mb := New()
 	box := mb.OpenUser(&mailbox.UserInfo{Username: "alice@example.com", Home: home})
-	// Deliberately skip Init — scan must not blow up on missing dir.
+	// Deliberately skip Init - scan must not blow up on missing dir.
 	records, err := box.Scan("INBOX")
 	if err != nil {
 		t.Fatalf("scan: %v", err)

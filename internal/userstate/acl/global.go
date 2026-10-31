@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Policy carries the operator ACL knobs a Store evaluates beyond the raw
@@ -21,7 +21,7 @@ type Policy struct {
 	Global *Global
 	// CacheTTL bounds how long a parsed per-mailbox ACL is trusted before the
 	// file's mtime+size are re-validated (the acl_cache_ttl knob, default 30s).
-	// Zero disables caching — every read hits the filesystem.
+	// Zero disables caching - every read hits the filesystem.
 	CacheTTL time.Duration
 }
 

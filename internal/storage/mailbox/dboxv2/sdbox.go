@@ -16,12 +16,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/crlf"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxmetrics"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/crlf"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Directory layout constants pinned by the wire spec; changing them breaks the
@@ -62,7 +62,7 @@ func WithFsync(m mailbox.FsyncMode) Option {
 // WithLocker wires a yarilo-locks client into the backend: every
 // folder-mutating call (Save, Rename, Delete, Remove, AssignUID, Copy) takes
 // the cross-process X lock on locks.MailboxKey(user, folder). A nil Locker
-// keeps only the in-process sync.Mutex — never safe in production.
+// keeps only the in-process sync.Mutex - never safe in production.
 func WithLocker(l locks.Locker) Option {
 	return func(b *Backend) { b.locker = l }
 }
@@ -126,7 +126,7 @@ type userMailbox struct {
 }
 
 // HealCorruptFolder is the reactive self-heal: under the mailbox lock it
-// expunges index records whose u.* file has vanished (targeted ExpungeMessage —
+// expunges index records whose u.* file has vanished (targeted ExpungeMessage -
 // QRESYNC tombstone + quota decrement, no ResetFolder, no UID assignment, so it
 // cannot race a delivery), then clears the FSCKD marker in the SAME lock scope
 // so a marker set by another process between scan and clear is not lost.
@@ -344,7 +344,7 @@ const driverName = "sdbox"
 // Save streams r into a fresh .temp.* file then atomically renames it under the
 // mailbox lock. The two-phase write is crash-safe: a partial body never appears
 // under its final name. Returns the final basename for the caller to record via
-// UserIndex.AppendMessage. flags are ignored — sdbox delegates flag storage to
+// UserIndex.AppendMessage. flags are ignored - sdbox delegates flag storage to
 // the index. A zero guid is generated here; a non-zero one is stored verbatim so
 // EMAILID survives COPY/MOVE. The effective GUID is returned.
 func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, size int64, flags, keywords []string, guid [16]byte) (string, uint32, [16]byte, error) {
@@ -622,7 +622,7 @@ func (u *userMailbox) removeLocked(folder, filename string) error {
 }
 
 // Copy hardlinks srcFilename into dstFolder under the destination's u.<dstUID>
-// name — O(1) IMAP COPY: the inode is shared, only the directory entry changes.
+// name - O(1) IMAP COPY: the inode is shared, only the directory entry changes.
 // dstUID must have been allocated via UserIndex.AllocateUID on dstFolder.
 //
 // Optional API used by IMAP COPY when the backend type-asserts for Copyable;
@@ -735,7 +735,7 @@ func (u *userMailbox) ListFolders() ([]mailbox.FolderEntry, error) {
 
 // Scan returns one ScanRecord per u.<UID> file. The UID is parsed from the
 // filename; GUID and InternalDate come from the on-disk metadata block. Used by
-// the admin rebuild flow when the fileindex was lost — state recovers from
+// the admin rebuild flow when the fileindex was lost - state recovers from
 // filenames alone because the UID is in the name.
 func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 	dir := u.folderPath(folder)
@@ -806,7 +806,7 @@ func (u *userMailbox) folderPath(folder string) string {
 	return filepath.Join(u.sdboxRoot(), mailbox.FolderSubpath("sdbox", folder, u.folderDiskName(folder), u.separator))
 }
 
-// folderDir is the mailbox directory (mailboxes/<name>) — folderPath without
+// folderDir is the mailbox directory (mailboxes/<name>) - folderPath without
 // the trailing dbox-Mails leaf. Delete/Rename operate on this so the whole
 // folder tree moves, not just its payload.
 func (u *userMailbox) folderDir(folder string) string {

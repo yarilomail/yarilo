@@ -3,24 +3,31 @@ package lmtp
 import (
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // boxAuto is namespace i's configured mailboxes for a delivery to personal,
 // opened as nsUI: a delivery opens a folder as any server does (#2005).
 func (s *session) boxAuto(personal *mailbox.UserInfo, i int, nsUI *mailbox.UserInfo) mailboxbase.Auto {
 	if i < 0 || i >= len(s.opts.Namespaces) {
-		// No namespaces block: the personal store and its one file.
-		return mailboxbase.Auto{Subscribe: func(rel string) error {
-			owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
-			_, err := subs.New(mailbox.ControlRoot(personal), "subscriptions", personal.Username, owner, s.opts.Locker).AddOwn(rel)
-			return err
-		}}
+		// No namespaces block: the personal store, its one file, the default set.
+		return mailboxbase.Auto{
+			Mailboxes: mailbox.DefaultMailboxes(),
+			Limit:     s.opts.QuotaPolicy.MailboxCount,
+			Created: func(rel string) {
+				mailops.New(s.mailopsConfig(), nil, personal).EmitList(locks.EventMailboxCreate, rel)
+			},
+			Subscribe: func(rel string) error {
+				owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
+				_, err := subs.New(mailbox.ControlRoot(personal), "subscriptions", personal.Username, owner, s.opts.Locker).AddOwn(rel)
+				return err
+			},
+		}
 	}
 	ns := s.opts.Namespaces[i]
 	return mailboxbase.Auto{

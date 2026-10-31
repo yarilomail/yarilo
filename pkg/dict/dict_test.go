@@ -135,7 +135,7 @@ func TestRegisterDuplicatePanics(t *testing.T) {
 	noop := func(_ Config) (Dict, error) { return nil, nil }
 	Register(name, noop)
 	defer func() {
-		// Unregister via internal map mutation — only for this test.
+		// Unregister via internal map mutation - only for this test.
 		driversMu.Lock()
 		delete(drivers, name)
 		driversMu.Unlock()

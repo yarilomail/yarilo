@@ -56,7 +56,7 @@ func deliverConsistencyProbe(user, marker string) error {
 }
 
 // imapReadProbe reads the probe as IMAP describes it. Values are taken as IMAP
-// spells them — NIL stays NIL, the internal date keeps its layout — because
+// spells them - NIL stays NIL, the internal date keeps its layout - because
 // normalising here is how a difference is hidden before the judge sees it.
 func imapReadProbe(user, pass, marker string) (*reading, error) {
 	c, err := imapDial()
@@ -130,7 +130,7 @@ func jmapReadProbe(marker string) (*reading, error) {
 		return nil, err
 	}
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Email/get",{"accountId":"` + *flagJMAPUser + `","ids":["` + id + `"],` +
+		`"methodCalls":[["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + id + `"],` +
 		`"properties":["id","subject","size","receivedAt"]},"c0"]]}`)
 	if err != nil {
 		return nil, fmt.Errorf("Email/get: %w", err)
@@ -164,7 +164,7 @@ func jmapProbeID(marker string) (string, error) {
 	deadline := time.Now().Add(*flagTimeout * 3)
 	for {
 		raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-			`"methodCalls":[["Email/query",{"accountId":"` + *flagJMAPUser + `",` +
+			`"methodCalls":[["Email/query",{"accountId":"` + jmapAccountID() + `",` +
 			`"filter":{"subject":"` + marker + `"}},"c0"]]}`)
 		if err == nil {
 			var resp struct {
@@ -212,7 +212,7 @@ func afterToken(s, token string) string {
 
 // envelopeSubject pulls the subject out of an ENVELOPE. The second field, as
 // RFC 3501 orders them: date first, subject second. Returned exactly as IMAP
-// sent it — encoded-word and all — so the judge, not the reader, decides
+// sent it - encoded-word and all - so the judge, not the reader, decides
 // whether that spells the same subject the other surface reported.
 func envelopeSubject(body string) string {
 	i := strings.Index(body, "ENVELOPE (")

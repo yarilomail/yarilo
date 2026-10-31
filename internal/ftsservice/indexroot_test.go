@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Where FTS data goes was derived and had no way to be stated. The two kinds of
-// data have different requirements — FTS is derived and write-heavy, mail is
-// neither — and a deployment could not place them accordingly (#1053).
+// data have different requirements - FTS is derived and write-heavy, mail is
+// neither - and a deployment could not place them accordingly (#1053).
 func TestIndexRoot(t *testing.T) {
 	info := &mailbox.UserInfo{
 		Username: "alice@example.com",
@@ -34,7 +34,7 @@ func TestIndexRoot(t *testing.T) {
 		{"unset falls back to the home", "",
 			&mailbox.UserInfo{Home: "/home/u"}, "/home/u"},
 
-		// Configured wins over all of it, including an explicit index dir —
+		// Configured wins over all of it, including an explicit index dir -
 		// otherwise a deployment that sets both gets the one it did not choose.
 		{"configured wins", "/var/fts", info, "/var/fts"},
 
@@ -126,7 +126,7 @@ func TestDefaultIndexRootIsOutsideTheMailTree(t *testing.T) {
 		t.Errorf("indexRoot = %q, want the home-relative fts directory", got)
 	}
 	// The point of the default: not under the mail path, and not under the
-	// index dir either — those are the two places it used to land.
+	// index dir either - those are the two places it used to land.
 	if strings.HasPrefix(got, info.MailPath) || strings.HasPrefix(got, info.IndexDir) {
 		t.Errorf("indexRoot %q is still inside the mail tree", got)
 	}
@@ -137,7 +137,7 @@ func TestDefaultIndexRootIsOutsideTheMailTree(t *testing.T) {
 // It did not: the engine built its path with the unescaped FolderSubpath while
 // the drivers escaped, so with mailbox_list_storage_escape_char set, the mail
 // directory for "Invoices.2026" was one escaped name and the FTS directory was
-// two levels — which also means "Invoices.2026" and "Invoices/2026", two
+// two levels - which also means "Invoices.2026" and "Invoices/2026", two
 // distinct mailboxes, share one FTS index (#1053).
 //
 // The engine is behind a build tag, so nothing here compiled it and the
@@ -154,7 +154,7 @@ func TestFTSPathEscapesLikeTheMailTree(t *testing.T) {
 	// And that escaping actually happened, so the assertion above is not two
 	// identical calls to a function that ignores its argument.
 	if unescaped := mailbox.FolderSubpath("maildir", folder, folder, "/"); unescaped == mail {
-		t.Errorf("escaping changed nothing: %q — the test cannot tell the trees apart", mail)
+		t.Errorf("escaping changed nothing: %q - the test cannot tell the trees apart", mail)
 	}
 	if !strings.Contains(mail, "^2e") {
 		t.Errorf("path %q does not carry the escaped separator", mail)
@@ -231,7 +231,7 @@ func TestIndexRootMustDistinguishAccounts(t *testing.T) {
 		{"/var/fts", false, "no variable at all"},
 		// The two a syntactic check gets wrong in opposite directions.
 		//
-		// "%%d" is an escaped percent followed by a literal "d" — not a
+		// "%%d" is an escaped percent followed by a literal "d" - not a
 		// domain, though a substring search sees one. It resolves to one
 		// directory for everyone.
 		{"/var/fts/%%d/%n", false, "%%d is a literal, so only the local part varies"},

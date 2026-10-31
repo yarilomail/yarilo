@@ -1,8 +1,8 @@
 package jmap
 
 import (
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // LimitsFrom renders the advertised bounds from configuration. The mapping

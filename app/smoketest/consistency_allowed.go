@@ -111,7 +111,7 @@ func flagKey(s string) string {
 
 // parseAnyTime reads the spellings the compared surfaces use: IMAP's
 // INTERNALDATE and RFC 3339. A value neither layout accepts is not silently
-// treated as equal to anything — the caller sees "not parsed" as "not equal".
+// treated as equal to anything - the caller sees "not parsed" as "not equal".
 func parseAnyTime(s string) (time.Time, bool) {
 	s = strings.Trim(strings.TrimSpace(s), `"`)
 	for _, layout := range []string{

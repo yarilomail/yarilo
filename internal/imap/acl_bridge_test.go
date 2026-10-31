@@ -5,7 +5,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Whitebox tests for the wire ↔ on-disk bridge helpers
@@ -52,7 +52,7 @@ func TestBridgeIdentifierFromIMAP(t *testing.T) {
 		{"bare user", imaplib.RightsIdentifier("bob@test.com"), mailbox.Identifier{Type: mailbox.IDUser, Name: "bob@test.com"}},
 		{"dollar-prefixed group", imaplib.RightsIdentifier("$staff"), mailbox.Identifier{Type: mailbox.IDGroup, Name: "staff"}},
 		{"group-override passthrough", imaplib.RightsIdentifier("group-override=admins"), mailbox.Identifier{Type: mailbox.IDGroupOverride, Name: "admins"}},
-		// Bare 'user=' on the wire is treated as a literal username —
+		// Bare 'user=' on the wire is treated as a literal username -
 		// the `user=` prefix is disk-only.
 		{"bare looks-like-user", imaplib.RightsIdentifier("user=carol"), mailbox.Identifier{Type: mailbox.IDUser, Name: "user=carol"}},
 	}

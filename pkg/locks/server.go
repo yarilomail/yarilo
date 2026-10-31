@@ -9,11 +9,12 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
-// Server is the wire-level locks server. It is transport-agnostic — call
+// Server is the wire-level locks server. It is transport-agnostic - call
 // Serve with any net.Listener (Unix socket for embedded, TLS-wrapped TCP
 // for remote). All state lives in the supplied Backend.
 type Server struct {
@@ -34,9 +35,9 @@ type Server struct {
 }
 
 // NewServer constructs a Server around a Backend. The Backend's lifecycle is
-// owned by the caller — Server.Close does not call backend.Close.
+// owned by the caller - Server.Close does not call backend.Close.
 //
-// A nil metrics argument means "no metrics" — the Metrics methods are
+// A nil metrics argument means "no metrics" - the Metrics methods are
 // nil-safe. Tests and benchmarks that spin up many servers should pass nil
 // to avoid duplicate-registration panics on prometheus.DefaultRegisterer.
 func NewServer(backend Backend, logger *slog.Logger, metrics *Metrics) *Server {
@@ -389,10 +390,21 @@ func (s *Server) handleEmit(ctx context.Context, w io.Writer, fields []string, p
 		_ = writeFields(w, respError, "bad_emit")
 		return
 	}
-	if err := s.backend.Publish(ctx, fields[1], EventType(fields[2]), fields[3]); err != nil {
-		s.logger.Error("locks: publish failed", "peer", peer, "err", err)
+	evs := []Event{{Resource: fields[1], Type: EventType(fields[2]), Payload: fields[3]}}
+	// The account's channel hears it too, the key in front of the payload: the
+	// writer still sends one EMIT, and both go to the store in one trip.
+	user := accountOf(fields[1])
+	if user != "" {
+		evs = append(evs, Event{Resource: AccountKey(user), Type: EventType(fields[2]), Payload: fields[1] + "\x00" + fields[3]})
+	}
+	errs := s.backend.PublishAll(ctx, evs)
+	if errs[0] != nil {
+		s.logger.Error("locks: publish failed", "peer", peer, "err", errs[0])
 		_ = writeFields(w, respError, "internal")
 		return
+	}
+	if len(errs) > 1 && errs[1] != nil {
+		s.logger.Warn("locks: account publish failed", "peer", peer, "user", user, "err", errs[1])
 	}
 	_ = writeFields(w, respOK)
 }
@@ -426,6 +438,9 @@ func (s *Server) handleSubscribe(ctx context.Context, conn net.Conn, fields []st
 		case evt, ok := <-ch:
 			if !ok {
 				return
+			}
+			if strings.HasPrefix(resource, accountPrefix) {
+				evt.Resource, evt.Payload, _ = strings.Cut(evt.Payload, "\x00")
 			}
 			if err := writeFields(conn, respEvent, evt.Resource, string(evt.Type), evt.Payload); err != nil {
 				return

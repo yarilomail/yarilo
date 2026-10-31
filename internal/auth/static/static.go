@@ -11,10 +11,10 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/auth/scheme"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/scheme"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // userdbFieldPrefix marks a template field as userdb-only (same convention as
@@ -26,7 +26,7 @@ type Config struct {
 	// Password is the shared credential ({SCHEME} prefix or DefaultScheme).
 	// Empty requires Nopassword.
 	Password string
-	// Nopassword accepts any supplied password — for proxy front-ends where the
+	// Nopassword accepts any supplied password - for proxy front-ends where the
 	// upstream authenticates. Mutually exclusive with a non-empty Password.
 	Nopassword bool
 	// DefaultScheme is the assumed scheme when Password carries no {SCHEME}

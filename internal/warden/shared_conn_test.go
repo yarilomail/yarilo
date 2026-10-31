@@ -55,7 +55,7 @@ func startTestServer(t *testing.T, max int, opts ...ServerOption) (*testServer, 
 }
 
 // testConn is a raw client that speaks the warden wire protocol, so a single
-// connection can carry commands for many sessions — the shape the shared-client
+// connection can carry commands for many sessions - the shape the shared-client
 // change introduces.
 type testConn struct {
 	c  net.Conn
@@ -130,7 +130,7 @@ func TestAccountingIsPerUserIPNotPerConnection(t *testing.T) {
 		})
 	}
 
-	// The limit must be enforced across connections too — a second connection
+	// The limit must be enforced across connections too - a second connection
 	// is not a fresh budget.
 	other := dialTestConn(t, addr)
 	if got := other.cmd(t, "CONNECT\ts4\tu@d\t10.0.0.1\timap"); !strings.Contains(got, "too-many-connections") {
@@ -196,7 +196,7 @@ func TestConnectionDropDoesNotReleaseSlots(t *testing.T) {
 
 	fresh := dialTestConn(t, addr)
 	if got := fresh.cmd(t, "CONNECT\ts2\tu@d\t10.0.0.1\timap"); !strings.Contains(got, "too-many-connections") {
-		t.Fatalf("CONNECT after conn drop = %q, want refusal — the slot must still be held", got)
+		t.Fatalf("CONNECT after conn drop = %q, want refusal - the slot must still be held", got)
 	}
 }
 
@@ -223,7 +223,7 @@ func TestHeartbeatOverSharedConnectionKeepsSessionsAlive(t *testing.T) {
 		for _, id := range ids {
 			got := shared.cmd(t, "HEARTBEAT\t%s", id)
 			if strings.Contains(got, "reason=unknown") {
-				t.Fatalf("HEARTBEAT %s = %q — session reaped while heartbeating", id, got)
+				t.Fatalf("HEARTBEAT %s = %q - session reaped while heartbeating", id, got)
 			}
 		}
 		s.state.Maintain(time.Now().UTC())

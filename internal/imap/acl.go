@@ -6,7 +6,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // SessionACL is implemented unconditionally on *session: go-imap detects it via
@@ -63,10 +63,10 @@ func identifierToIMAP(id mailbox.Identifier) imaplib.RightsIdentifier {
 // identifier plus whether it is a negative-rights entry:
 //
 //   - a leading "-" marks a negative-rights identifier (RFC 4314 §3.1)
-//   - "anyone" / "authenticated" / "owner" — special keywords
-//   - "$<name>" — group wire convention → IDGroup
-//   - "group-override=<name>" — disk-style passthrough (no RFC form)
-//   - anything else — bare username → IDUser{Name: <value>}
+//   - "anyone" / "authenticated" / "owner" - special keywords
+//   - "$<name>" - group wire convention → IDGroup
+//   - "group-override=<name>" - disk-style passthrough (no RFC form)
+//   - anything else - bare username → IDUser{Name: <value>}
 func identifierFromIMAP(rid imaplib.RightsIdentifier) (mailbox.Identifier, bool, error) {
 	s := string(rid)
 	negative := false
@@ -383,7 +383,7 @@ func (s *session) SetACL(folder string, identifier imaplib.RightsIdentifier, mod
 	})
 }
 
-// DeleteACL implements imapserver.SessionACL — equivalent to SetACL
+// DeleteACL implements imapserver.SessionACL - equivalent to SetACL
 // with Replace and empty rights (RFC 4314 §3.2).
 func (s *session) DeleteACL(folder string, identifier imaplib.RightsIdentifier) error {
 	if err := s.requireACLEnabled(); err != nil {
@@ -445,7 +445,7 @@ func aclModifyFromIMAP(mod imaplib.RightModification) mailbox.ACLModify {
 	}
 }
 
-// dropIdentifier removes the entry for the given identifier and negativity —
+// dropIdentifier removes the entry for the given identifier and negativity -
 // DELETEACL of `bob` drops bob's positive entry, `-bob` drops his negative one
 // (RFC 4314 §3.2).
 func dropIdentifier(cur mailbox.ACL, id mailbox.Identifier, negative bool) mailbox.ACL {

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // ErrPoolExhausted is returned when no connection became free within the wait
@@ -20,7 +20,7 @@ var ErrPoolExhausted = errors.New("ftsproto: no free connection")
 // that starts N goroutines against one gets N queued calls, not N concurrent
 // ones. The server has always handled each connection on its own goroutine;
 // the client side was the bottleneck. A pool is therefore the thing that makes
-// concurrency exist at all — a limiter over a single connection would only
+// concurrency exist at all - a limiter over a single connection would only
 // have bounded a queue.
 //
 // Connections are opened on demand, not at construction: a pool of eight costs
@@ -97,18 +97,22 @@ func (p *Pool) Close() error {
 	return firstErr
 }
 
+// Index implements Service.
 func (p *Pool) Index(user string, m fts.MailboxRef, maxUID uint32, maxRecent int) error {
 	return p.do(func(c *Lazy) error { return c.Index(user, m, maxUID, maxRecent) })
 }
 
+// Prepend implements Service.
 func (p *Pool) Prepend(user string, m fts.MailboxRef, maxUID uint32) error {
 	return p.do(func(c *Lazy) error { return c.Prepend(user, m, maxUID) })
 }
 
+// Expunge implements Service.
 func (p *Pool) Expunge(user string, m fts.MailboxRef, uid uint32, guid [16]byte) error {
 	return p.do(func(c *Lazy) error { return c.Expunge(user, m, uid, guid) })
 }
 
+// Lookup implements Service.
 func (p *Pool) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, error) {
 	var res fts.Result
 	err := p.do(func(c *Lazy) error {
@@ -119,6 +123,7 @@ func (p *Pool) Lookup(user string, m fts.MailboxRef, q fts.Query) (fts.Result, e
 	return res, err
 }
 
+// Status implements Service.
 func (p *Pool) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	var last, sum uint32
 	err := p.do(func(c *Lazy) error {
@@ -129,6 +134,7 @@ func (p *Pool) Status(user string, m fts.MailboxRef) (uint32, uint32, error) {
 	return last, sum, err
 }
 
+// Counts implements Service.
 func (p *Pool) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	var docs, copies, messages, unrecorded uint64
 	err := p.do(func(c *Lazy) error {
@@ -139,6 +145,7 @@ func (p *Pool) Counts(user string) (uint64, uint64, uint64, uint64, error) {
 	return docs, copies, messages, unrecorded, err
 }
 
+// LookupIn implements Service.
 func (p *Pool) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts.SetResult, error) {
 	var res fts.SetResult
 	err := p.do(func(c *Lazy) error {
@@ -149,14 +156,17 @@ func (p *Pool) LookupIn(user string, folders []fts.MailboxRef, q fts.Query) (fts
 	return res, err
 }
 
+// DropFolder implements Service.
 func (p *Pool) DropFolder(user string, m fts.MailboxRef) error {
 	return p.do(func(c *Lazy) error { return c.DropFolder(user, m) })
 }
 
+// Rescan implements Service.
 func (p *Pool) Rescan(user string, m fts.MailboxRef) error {
 	return p.do(func(c *Lazy) error { return c.Rescan(user, m) })
 }
 
+// RescanUser implements Service.
 func (p *Pool) RescanUser(user string) ([]string, error) {
 	var done []string
 	err := p.do(func(c *Lazy) error {
@@ -167,6 +177,7 @@ func (p *Pool) RescanUser(user string) ([]string, error) {
 	return done, err
 }
 
+// Optimize implements Service.
 func (p *Pool) Optimize(user string) error {
 	return p.do(func(c *Lazy) error { return c.Optimize(user) })
 }

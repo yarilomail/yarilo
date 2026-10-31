@@ -37,11 +37,7 @@ func (c *Clone) Mirror(user string, u Usage) {
 	}
 }
 
-// Acquire and Release count the sessions of one user. The last one to leave
-// flushes what is still pending, which is where the reference flushes too
-// (deinit_pre): a session that closes inside the delay must not lose its
-// number, and an earlier session leaving must not write on behalf of the ones
-// still open.
+// Acquire counts a session of user in; Release counts it out.
 func (c *Clone) Acquire(user string) {
 	if c == nil {
 		return
@@ -51,6 +47,8 @@ func (c *Clone) Acquire(user string) {
 	c.mu.Unlock()
 }
 
+// Release counts a session of user out. The last one to leave flushes what is
+// still pending, so a session closing inside the delay keeps its number (deinit_pre).
 func (c *Clone) Release(user string) {
 	if c == nil {
 		return

@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/mailboxcreate"
-	"github.com/yarilomail/yarilo/internal/storage/search"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/mailboxcreate"
+	"github.com/yarilomail/yarilo/v2/internal/storage/search"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // RenameSeparator joins the old and new names in a rename event's payload.

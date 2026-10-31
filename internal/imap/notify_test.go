@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // startNotifyServer starts a bare IMAP server and returns its listen address for
@@ -108,7 +108,7 @@ func (rc *rawConn) appendMsg(mbox string) {
 func TestNotifySelectedSuppressesNewMessages(t *testing.T) {
 	addr := startNotifyServer(t)
 
-	// Control: default behavior — NOOP after a sibling APPEND shows EXISTS.
+	// Control: default behavior - NOOP after a sibling APPEND shows EXISTS.
 	ctrl := dialRaw(t, addr)
 	ctrl.login()
 	ctrl.cmd(`SELECT INBOX`)
@@ -119,7 +119,7 @@ func TestNotifySelectedSuppressesNewMessages(t *testing.T) {
 		t.Fatal("control (no NOTIFY) should receive EXISTS after sibling APPEND")
 	}
 
-	// NOTIFY SET SELECTED without MessageNew — EXISTS must be suppressed.
+	// NOTIFY SET SELECTED without MessageNew - EXISTS must be suppressed.
 	c := dialRaw(t, addr)
 	c.login()
 	c.cmd(`SELECT INBOX`)
@@ -131,7 +131,7 @@ func TestNotifySelectedSuppressesNewMessages(t *testing.T) {
 		t.Fatalf("NOTIFY without MessageNew should suppress EXISTS, got: %q", resp)
 	}
 
-	// NOTIFY NONE reverts to default — EXISTS delivered again.
+	// NOTIFY NONE reverts to default - EXISTS delivered again.
 	c.cmd(`NOTIFY NONE`)
 	writer.appendMsg("INBOX")
 	if !strings.Contains(c.cmd("NOOP"), "EXISTS") {

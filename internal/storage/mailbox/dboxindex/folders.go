@@ -6,8 +6,8 @@ import (
 	"path"
 	"sort"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mboxenc"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Folder is one mailbox found on disk: Name as a client sees it, Path relative

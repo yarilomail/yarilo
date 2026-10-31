@@ -12,7 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/yarilomail/yarilo/internal/connlimit"
+	"github.com/yarilomail/yarilo/v2/internal/connlimit"
 )
 
 // StateBackend is warden's pluggable shared-state store: in-memory (default,
@@ -31,7 +31,7 @@ type StateBackend interface {
 
 	// SessionConnect registers a session and enforces the per-user@IP limit
 	// atomically. ok=false with err==nil means the limit is reached; err!=nil is
-	// a backend error and the caller fails open — a Redis error is not a limit
+	// a backend error and the caller fails open - a Redis error is not a limit
 	// rejection.
 	SessionConnect(id, user, ip, service string) (ok bool, err error)
 	// SessionDisconnect removes a session and frees its limit slot. Idempotent:
@@ -58,7 +58,7 @@ type StateBackend interface {
 
 	// Emit publishes payload to channel for current subscribers. Best-effort /
 	// at-most-once: events during a subscriber reconnect are lost, a full outbox
-	// is dropped. Not a correctness guarantee — the director's confirmed kill
+	// is dropped. Not a correctness guarantee - the director's confirmed kill
 	// holds LOOKUP until the session count is zero; a kick only speeds teardown.
 	Emit(channel, payload string) error
 	// Subscribe returns payloads for the named channel until ctx is cancelled,
@@ -152,7 +152,7 @@ func (b *memoryBackend) SessionConnect(id, user, ip, service string) (bool, erro
 	}
 	b.mu.Lock()
 	if sess, exists := b.sessions[id]; exists {
-		// Lost a race with a concurrent same-id CONNECT — undo the extra slot.
+		// Lost a race with a concurrent same-id CONNECT - undo the extra slot.
 		sess.lastSeen = now
 		b.mu.Unlock()
 		b.limiter.Release(user, ip)
@@ -500,7 +500,7 @@ return 0
 // reconcileScript corrects a leaked counter race-safely: DECRBY by the leak
 // observed at scan time, NEVER a blind SET. Concurrent CONNECT and DISCONNECT
 // move the counter and the live-session tally EQUALLY, so their difference (the
-// leak) is invariant between the scan and this decrement — it lands on the right
+// leak) is invariant between the scan and this decrement - it lands on the right
 // value whatever raced in between. KEYS[1]=cnt; ARGV[1]=leak(>0)
 var reconcileScript = redis.NewScript(`
 if redis.call('DECRBY', KEYS[1], tonumber(ARGV[1])) <= 0 then redis.call('DEL', KEYS[1]) end
@@ -515,9 +515,9 @@ func (b *redisBackend) PenaltyLookup(ip string) (int, string) {
 	case err == nil:
 		return v, "hit"
 	case errors.Is(err, redis.Nil):
-		return 0, "miss" // key absent or expired — a real "no penalty"
+		return 0, "miss" // key absent or expired - a real "no penalty"
 	default:
-		// A bounded Redis error (down/blackholed). Fail open — a tarpit is an
+		// A bounded Redis error (down/blackholed). Fail open - a tarpit is an
 		// availability control, and failing closed would tarpit everyone during a
 		// Redis blip (self-DoS). The distinct "error" status keeps the outage
 		// visible in the penaltyLookups metric rather than hiding it as a miss.
@@ -675,7 +675,7 @@ func (b *redisBackend) Emit(channel, payload string) error {
 // Subscribe relays go-redis PubSub.Channel for the prefixed channel. Channel()
 // owns reconnection: on a dropped Redis connection it redials and re-subscribes
 // transparently, so a Redis blip does not permanently deafen the subscriber
-// (#908 PR3 requirement — the mirror of #946 on the subscribe side). The relay
+// (#908 PR3 requirement - the mirror of #946 on the subscribe side). The relay
 // goroutine ends, closing out and the PubSub, only when ctx is cancelled.
 func (b *redisBackend) Subscribe(ctx context.Context, channel string) (<-chan string, error) {
 	ps := b.rdb.Subscribe(ctx, b.chanKey(channel))
@@ -703,7 +703,7 @@ func (b *redisBackend) Subscribe(ctx context.Context, channel string) (<-chan st
 				select {
 				case out <- msg.Payload:
 				default:
-					// Slow consumer — drop (best-effort, matches memory).
+					// Slow consumer - drop (best-effort, matches memory).
 				}
 			}
 		}

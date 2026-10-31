@@ -10,8 +10,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 func TestTheProxyTimeoutIsTheUsersElseTheConfiguredOne(t *testing.T) {

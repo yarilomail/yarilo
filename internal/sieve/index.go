@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // ScriptIndex is a user's script state counter and the stable id of each
@@ -48,13 +48,29 @@ type indexIO interface {
 // counter under the index lock, so ManageSieve and JMAP agree on one state.
 type IndexedStore struct {
 	ScriptStore
-	io indexIO
+	io     indexIO
+	locker locks.Locker
+}
+
+// update is io.update that announces a change: a vacation reply is a script,
+// so one event stands for both.
+func (s *IndexedStore) update(ctx context.Context, username, homeDir string, fn func(context.Context, *ScriptIndex) (bool, error)) (ScriptIndex, error) {
+	changed := false
+	ix, err := s.io.update(ctx, username, homeDir, func(ctx context.Context, ix *ScriptIndex) (bool, error) {
+		c, ferr := fn(ctx, ix)
+		changed = c && ferr == nil
+		return c, ferr
+	})
+	if err == nil && changed {
+		locks.EmitBest(s.locker, locks.SieveScriptsKey(username), locks.EventSieve, "")
+	}
+	return ix, err
 }
 
 // Index returns the user's index, giving an id to every stored script that has
 // none and dropping the ids of scripts that are gone.
 func (s *IndexedStore) Index(ctx context.Context, username, homeDir string) (ScriptIndex, error) {
-	return s.io.update(ctx, username, homeDir, func(ctx context.Context, ix *ScriptIndex) (bool, error) {
+	return s.update(ctx, username, homeDir, func(ctx context.Context, ix *ScriptIndex) (bool, error) {
 		names, err := s.ListScripts(ctx, username, homeDir)
 		if err != nil {
 			return false, err
@@ -87,7 +103,7 @@ func reconcile(ix *ScriptIndex, names []string) bool {
 
 // change runs op and then fn on the index, both under the index lock.
 func (s *IndexedStore) change(ctx context.Context, username, homeDir string, op func(context.Context) error, fn func(*ScriptIndex)) error {
-	_, err := s.io.update(ctx, username, homeDir, func(ctx context.Context, ix *ScriptIndex) (bool, error) {
+	_, err := s.update(ctx, username, homeDir, func(ctx context.Context, ix *ScriptIndex) (bool, error) {
 		if err := op(ctx); err != nil {
 			return false, err
 		}

@@ -24,7 +24,7 @@ func TestGateCheckOpen(t *testing.T) {
 }
 
 // TestGateCheckWedgedTimesOut: a wedged gate fails Check on the context deadline
-// rather than blocking forever — the property the watchdog relies on.
+// rather than blocking forever - the property the watchdog relies on.
 func TestGateCheckWedgedTimesOut(t *testing.T) {
 	g := NewGate()
 	if !g.Wedge() {

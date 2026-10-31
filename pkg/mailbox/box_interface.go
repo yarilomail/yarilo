@@ -120,6 +120,9 @@ type Box interface {
 	// RebuildFolder rebuilds a lost index from the store; it answers the
 	// messages the folder holds after.
 	RebuildFolder(f *Folder) (int, error)
+	// ClaimRecent takes the folder's \Recent messages for the caller: UIDs
+	// [from, to); an index without the mark claims nothing.
+	ClaimRecent(f *Folder) (from, to uint32, err error)
 	// BackfillGUIDs gives records without a message GUID the one their body has.
 	BackfillGUIDs(f *Folder, name string) error
 	// EnvelopeCache opens the folder's envelope cache. Never nil: with none

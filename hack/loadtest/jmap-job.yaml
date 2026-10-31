@@ -1,7 +1,7 @@
 # JMAP read load against the sandbox.
 #
 # What a mail client does when it opens: discover the session once, list the
-# mailboxes, then ask for the newest messages in one request — Email/query and
+# mailboxes, then ask for the newest messages in one request - Email/query and
 # Email/get joined by a back-reference, which is the round trip JMAP exists to
 # save.
 #
@@ -26,6 +26,12 @@ spec:
       containers:
       - name: loadtest
         image: ghcr.io/yarilomail/yarilo-loadtest:latest
+        env:
+        - name: SANDBOX_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sandbox-test-account
+              key: password
         args:
         # A base URL, not host:port: the API endpoint is read out of the
         # session resource rather than assembled, so the run follows whatever
@@ -34,7 +40,7 @@ spec:
         - -addr=https://yarilo-jmap-login.yarilo-sb.svc.cluster.local:443
         - -insecure
         - -users=u1@d00001.test:50,u51@d00002.test:50,u101@d00003.test:50
-        - -password=Yarilo!test1
+        - -password=$(SANDBOX_PASSWORD)
         - -concurrency=8
         - -duration=90s
         # The listing window. Bounded for the same reason every fetch here is:

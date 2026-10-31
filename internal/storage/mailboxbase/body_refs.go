@@ -1,6 +1,6 @@
 package mailboxbase
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
 // bodyRefs counts how many records name each file: a damaged mailbox holds
 // several for one file, and the first expunge must not strip the others.

@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // FileName is the on-disk per-folder ACL filename.
@@ -232,7 +232,7 @@ func (s *Store) invalidate(folder string) {
 }
 
 // Set replaces the on-disk ACL with acl in canonical sorted order. Empty acl
-// writes an empty file (not removal — use Remove for that), atomic via
+// writes an empty file (not removal - use Remove for that), atomic via
 // tmp+rename. The yarilo-acl-list namespace-wide index is updated in the same
 // call so LIST optimisations see the change.
 // checkInsideRoot refuses a folder name whose ACL file would land outside the
@@ -366,7 +366,7 @@ func (s *Store) Remove(folder string) error {
 		return err
 	}
 	s.invalidate(folder)
-	return s.ListRemove(folder)
+	return s.moved(s.ListRemove(folder), true)
 }
 
 // Rename moves the per-mailbox yarilo-acl file from oldFolder to newFolder and
@@ -407,7 +407,7 @@ func (s *Store) Rename(oldFolder, newFolder string) error {
 	}
 	s.invalidate(oldFolder)
 	s.invalidate(newFolder)
-	return s.ListRename(oldFolder, newFolder)
+	return s.moved(s.ListRename(oldFolder, newFolder), true)
 }
 
 // Update read-modify-writes the ACL under the folder lock: fn receives the
@@ -423,6 +423,7 @@ func (s *Store) Update(folder string, fn func(mailbox.ACL) (mailbox.ACL, error))
 	if err := s.checkInsideRoot(folder); err != nil {
 		return fmt.Errorf("userstate/acl: refusing folder %q: %w", folder, err)
 	}
+	wrote := false
 	err := s.withLock(folder, func() error {
 		current, err := s.loadLocked(folder)
 		var corruptErr error
@@ -452,6 +453,7 @@ func (s *Store) Update(folder string, fn func(mailbox.ACL) (mailbox.ACL, error))
 		if err := s.writeAtomicLocked(folder, next); err != nil {
 			return err
 		}
+		wrote = true
 		// Same lock as the file: the yarilo-acl-list index (a separate lock of
 		// its own) is updated before this critical section ends, so no reader
 		// sees the file changed and the index not.
@@ -462,7 +464,17 @@ func (s *Store) Update(folder string, fn func(mailbox.ACL) (mailbox.ACL, error))
 	// the pre-write rights on the call that reported the error. A no-op reload is
 	// harmless.
 	s.invalidate(folder)
-	return err
+	return s.moved(err, wrote)
+}
+
+// moved announces a write once the lock is released: rights are a Mailbox
+// property.
+func (s *Store) moved(err error, wrote bool) error {
+	if err != nil || !wrote {
+		return err
+	}
+	locks.EmitBest(s.locker, locks.MailboxListKey(s.username), locks.EventACL, "")
+	return nil
 }
 
 func (s *Store) loadLocked(folder string) (mailbox.ACL, error) {

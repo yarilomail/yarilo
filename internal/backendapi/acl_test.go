@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestACL_SetGetListDeleteRoundTrip exercises the admin ACL
@@ -237,7 +237,7 @@ func TestACL_RequestRejectsMissingUser(t *testing.T) {
 
 // The admin path writes the files the IMAP commands read, so a name IMAP
 // refuses must not be writable through it. "/" and "." were accepted and
-// stored, and on maildir both resolve to <mailroot>/../yarilo-acl — outside the
+// stored, and on maildir both resolve to <mailroot>/../yarilo-acl - outside the
 // namespace, in the directory every user's tree shares, where another
 // namespace's store reads it as its own root default (#1091).
 func TestACL_SetRefusesNamesIMAPWouldRefuse(t *testing.T) {
@@ -297,7 +297,7 @@ func treeSnapshot(t *testing.T, root string) string {
 	return b.String()
 }
 
-// The namespace root is grantable through the admin API — the bootstrap a
+// The namespace root is grantable through the admin API - the bootstrap a
 // shared namespace needs, since nobody can create its first mailbox without
 // the create right and there is nowhere else to put it (#1091).
 //
@@ -445,7 +445,7 @@ func TestACL_RebuildReportsWhatItSkipped(t *testing.T) {
 	decodeJSONBody(t, body, &resp)
 
 	if resp.Folders != 1 || len(resp.Rebuilt) != 1 || resp.Rebuilt[0] != "INBOX" {
-		t.Errorf("rebuilt = %d %v, want 1 [INBOX] — the count must be the work done, not the work asked for", resp.Folders, resp.Rebuilt)
+		t.Errorf("rebuilt = %d %v, want 1 [INBOX] - the count must be the work done, not the work asked for", resp.Folders, resp.Rebuilt)
 	}
 	want := map[string]string{
 		"Sent":         "no ACL",
@@ -486,7 +486,7 @@ func TestACL_MaterialiseIsADryRunUnlessAsked(t *testing.T) {
 	materialiseHome(t, ts, user)
 	doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "", map[string]any{"user": user, "folder": "Sales"})
 
-	// Root grants the administrator; the mailbox names only a peer — the state
+	// Root grants the administrator; the mailbox names only a peer - the state
 	// the old rule left behind.
 	doJSON(t, ts, http.MethodPost, "/api/backend/acl/set", "", map[string]any{
 		"user": user, "root": true,
@@ -553,7 +553,7 @@ func TestACL_MaterialiseIsADryRunUnlessAsked(t *testing.T) {
 // <location>, and every per-mailbox call answered "folder not found" for a
 // mailbox that was there (#1109).
 //
-// The assertion is that create, set and get agree about where the mailbox is —
+// The assertion is that create, set and get agree about where the mailbox is -
 // one path building the folder and another failing to find it is the defect,
 // whatever either answers alone.
 func TestACL_SharedNamespaceMailboxIsReachable(t *testing.T) {

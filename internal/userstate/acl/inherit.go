@@ -3,7 +3,7 @@ package acl
 import (
 	"fmt"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // MaterialiseOnCreate writes the inherited ACL into a newly created mailbox's

@@ -7,7 +7,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
+	authsql "github.com/yarilomail/yarilo/v2/internal/auth/sql"
 )
 
 // openTestUserdb returns a fresh SQLite-backed userdb sharing its

@@ -11,9 +11,9 @@ import (
 // responses. Scope is derived from the key prefix at serialise time,
 // not stored on the entry:
 //
-//	auth_*    → ScopeInternal — never crosses the client wire
-//	userdb_*  → ScopeUserdb   — passed through with the prefix preserved
-//	(other)   → ScopePassdb   — passdb-only field, emitted verbatim
+//	auth_*    → ScopeInternal - never crosses the client wire
+//	userdb_*  → ScopeUserdb   - passed through with the prefix preserved
+//	(other)   → ScopePassdb   - passdb-only field, emitted verbatim
 type Fields struct {
 	keys []string
 	vals []string
@@ -167,14 +167,14 @@ func (f *Fields) Each(fn func(key, value string) bool) {
 type Scope int
 
 const (
-	// ScopePassdb — passdb-side fields (no prefix). Cross the client
+	// ScopePassdb - passdb-side fields (no prefix). Cross the client
 	// wire as `key=value`.
 	ScopePassdb Scope = iota
-	// ScopeUserdb — fields prefetched by passdb for the userdb layer.
+	// ScopeUserdb - fields prefetched by passdb for the userdb layer.
 	// Cross the client wire as `userdb_key=value` so login pods can
 	// split the response into passdb / userdb halves.
 	ScopeUserdb
-	// ScopeInternal — internal-only metadata (e.g. `auth_cache_key`).
+	// ScopeInternal - internal-only metadata (e.g. `auth_cache_key`).
 	// Never crosses the client wire.
 	ScopeInternal
 )
@@ -211,7 +211,7 @@ func (f *Fields) WireForm() []string {
 
 // escapeFieldValue stops TAB / LF / NUL / backslash from breaking the
 // line-oriented framing of the client / master protocols. Matches the
-// escape semantics of master.go's escapeValue — same wire convention on
+// escape semantics of master.go's escapeValue - same wire convention on
 // both sockets.
 func escapeFieldValue(v string) string {
 	if !strings.ContainsAny(v, "\t\n\x00\\") {

@@ -1,7 +1,7 @@
 // Package msgcache reads and writes the per-folder index cache
 // (yarilo.index.cache) that lets a listing answer without opening message
 // files. Shared by the protocol servers: one cache, one set of invalidation
-// rules. Format and invalidation: https://doc.yarilomail.org/BACKEND-API
+// rules. Format and invalidation: https://doc.yarilomail.org/latest/architecture/backend_api.html
 package msgcache
 
 import (
@@ -15,11 +15,11 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Index is the slice of the index surface the cache needs. Asserted at use:

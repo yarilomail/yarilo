@@ -57,13 +57,13 @@ func TestUnknownPropertyIsRefused(t *testing.T) {
 		{"a property of another type", `["id","role"]`, `"role"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			name, got := emailGetRaw(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+tc.properties+`}`)
+			name, got := emailGetRaw(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":`+tc.properties+`}`)
 			if name != "error" || got["type"] != "invalidArguments" {
 				t.Fatalf("answered %s %v, want an invalidArguments error", name, got)
 			}
 			desc, _ := got["description"].(string)
 			if !strings.Contains(desc, tc.named) {
-				t.Errorf("description %q does not name %s — the client would have to bisect its own request", desc, tc.named)
+				t.Errorf("description %q does not name %s - the client would have to bisect its own request", desc, tc.named)
 			}
 			args, _ := got["arguments"].([]any)
 			if len(args) != 1 || args[0] != "properties" {
@@ -92,7 +92,7 @@ func TestKnownPropertiesAreAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, got := emailGetRaw(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":`+string(raw)+`}`)
+	name, got := emailGetRaw(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":`+string(raw)+`}`)
 	if name == "error" {
 		t.Fatalf("a request naming only valid properties was refused: %v", got)
 	}
@@ -107,7 +107,7 @@ func TestAllUnknownPropertiesAreNamed(t *testing.T) {
 	s, id := storedServerWithMessage(t, headerRichMessage, 0)
 
 	_, got := emailGetRaw(t, s,
-		`{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","subjekt","from","prevue"]}`)
+		`{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","subjekt","from","prevue"]}`)
 	desc, _ := got["description"].(string)
 	for _, want := range []string{"subjekt", "prevue"} {
 		if !strings.Contains(desc, want) {
@@ -123,7 +123,7 @@ func TestAllUnknownPropertiesAreNamed(t *testing.T) {
 func TestOmittedPropertiesAreNotValidated(t *testing.T) {
 	s, id := storedServerWithMessage(t, headerRichMessage, 0)
 
-	name, got := emailGetRaw(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"]}`)
+	name, got := emailGetRaw(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]}`)
 	if name == "error" {
 		t.Fatalf("a request naming no properties was refused: %v", got)
 	}
@@ -135,7 +135,7 @@ func TestOmittedPropertiesAreNotValidated(t *testing.T) {
 func TestRefusedRequestReturnsNoList(t *testing.T) {
 	s, id := storedServerWithMessage(t, headerRichMessage, 0)
 
-	_, got := emailGetRaw(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","subjekt"]}`)
+	_, got := emailGetRaw(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","subjekt"]}`)
 	if _, present := got["list"]; present {
 		t.Errorf("a refused call answered with a list: %v", got)
 	}

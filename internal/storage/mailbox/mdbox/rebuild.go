@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // parsedTrailer carries the per-message metadata recovered from a record's
@@ -48,7 +48,7 @@ func scanTrailer(r io.Reader, limit uint32) (uint32, parsedTrailer, error) {
 		line, err := br.ReadString('\n')
 		consumed += uint32(len(line))
 		if line == "\n" {
-			// Blank line — trailer terminator.
+			// Blank line - trailer terminator.
 			return consumed, out, nil
 		}
 		if err == io.EOF {

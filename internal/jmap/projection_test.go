@@ -37,7 +37,7 @@ const messageWithAttachment = "Subject: quarterly report\r\n" +
 func TestResponseCarriesOnlyRequestedProperties(t *testing.T) {
 	s, id := storedServerWithMessage(t, messageWithAttachment, 0)
 
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","subject"]}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","subject"]}`)
 	email := firstEmail(t, got)
 
 	if email["subject"] != "quarterly report" {
@@ -67,11 +67,11 @@ func TestStructuralPropertiesAreTrueWhenRequested(t *testing.T) {
 	s, id := storedServerWithMessage(t, messageWithAttachment, 0)
 
 	got := emailGet(t, s,
-		`{"accountId":"u1@example.com","ids":["`+id+`"],"properties":["id","hasAttachment","preview","attachments"]}`)
+		`{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","hasAttachment","preview","attachments"]}`)
 	email := firstEmail(t, got)
 
 	if email["hasAttachment"] != true {
-		t.Errorf("hasAttachment = %v, want true — the message carries a PDF", email["hasAttachment"])
+		t.Errorf("hasAttachment = %v, want true - the message carries a PDF", email["hasAttachment"])
 	}
 	preview, _ := email["preview"].(string)
 	if !strings.Contains(preview, "numbers are attached") {
@@ -87,7 +87,7 @@ func TestStructuralPropertiesAreTrueWhenRequested(t *testing.T) {
 func TestOmittedPropertiesReturnEverything(t *testing.T) {
 	s, id := storedServerWithMessage(t, messageWithAttachment, 0)
 
-	got := emailGet(t, s, `{"accountId":"u1@example.com","ids":["`+id+`"]}`)
+	got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]}`)
 	email := firstEmail(t, got)
 
 	for _, want := range []string{"id", "subject", "from", "size", "hasAttachment", "preview", "keywords"} {

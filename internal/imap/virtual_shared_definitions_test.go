@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // treeState is every file under root with its size and modification time, for

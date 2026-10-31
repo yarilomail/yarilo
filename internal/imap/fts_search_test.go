@@ -8,20 +8,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // fakeFTS scripts the client side of the FTS service for session tests.
@@ -52,7 +52,7 @@ type fakeFTS struct {
 	// does not complete, as for a folder the indexer has not reached.
 	behind map[string]bool
 	// stuck models a broken FTS backend that never advances its checkpoint, even
-	// after a PREPEND — the #629 failure mode.
+	// after a PREPEND - the #629 failure mode.
 	stuck bool
 }
 
@@ -222,7 +222,7 @@ func searchBody(t *testing.T, c *imapclient.Client, term string) []imap.UID {
 
 // TestSearchStopwordExpansion (#722) proves a Body criterion whose every
 // token is a stopword matches NOTHING (stopwords were never indexed), not
-// the whole mailbox — including when it's ANDed alongside a criterion that
+// the whole mailbox - including when it's ANDed alongside a criterion that
 // DOES expand to real terms, mirroring the reference implementation's
 // per-arg empty-expansion → match-nothing semantics. The fake's canned
 // Lookup result is deliberately "matches everything" so a regression back
@@ -329,7 +329,7 @@ func TestSearchHeaderExpansionNotStemmed(t *testing.T) {
 	for _, w := range term.Words {
 		for _, v := range w.Variants {
 			if v == "run" {
-				t.Fatalf("header query wrongly stemmed %q to a %q variant — would false-positive match e.g. \"runway\": %+v", "running", v, term.Words)
+				t.Fatalf("header query wrongly stemmed %q to a %q variant - would false-positive match e.g. \"runway\": %+v", "running", v, term.Words)
 			}
 			if v == "running" {
 				foundUnstemmed = true
@@ -343,7 +343,7 @@ func TestSearchHeaderExpansionNotStemmed(t *testing.T) {
 
 func TestSearchUsesFTSCandidates(t *testing.T) {
 	// All three messages contain the term, but the (authoritative) FTS
-	// lookup returns only UID 2 — proving the scan was not used.
+	// lookup returns only UID 2 - proving the scan was not used.
 	fake := &fakeFTS{lookup: fts.Result{Definite: []uint32{2}}, lastUID: 100}
 	c := startFTSTestServer(t, fake, false)
 	for i := 0; i < 3; i++ {
@@ -398,7 +398,7 @@ func TestSearchFallbackOnFTSError(t *testing.T) {
 // TestSearchFallsBackWhenFTSStuck: a broken FTS backend that never advances its
 // checkpoint must not make SEARCH hang until the full catch-up timeout (#629).
 // The session detects no index progress and falls back to a sequential scan,
-// which still finds the message — and it happens well before the 3s timeout.
+// which still finds the message - and it happens well before the 3s timeout.
 func TestSearchFallsBackWhenFTSStuck(t *testing.T) {
 	fake := &fakeFTS{stuck: true}
 	// The mailbox has nothing indexed, which since #1379 is the cold case: a
@@ -504,7 +504,7 @@ func TestSearchFlagsIntersect(t *testing.T) {
 
 // TestSearchRelevancy (#668): SEARCH RETURN (RELEVANCY) surfaces the FTS
 // engine's native scores, min-max normalized to 1-100 in ALL's enumeration
-// order — verified against the reference implementation's own formula.
+// order - verified against the reference implementation's own formula.
 func TestSearchRelevancy(t *testing.T) {
 	fake := &fakeFTS{
 		lookup: fts.Result{
@@ -565,8 +565,8 @@ func TestSearchNoRelevancyWithoutScores(t *testing.T) {
 }
 
 // TestSearchDisabledFallsBackToScanWithoutTouchingFTS (#726 item 3) proves
-// fts_search=false degrades SEARCH to the sequential scan — as if FTS
-// weren't configured at all — without ever calling into the FTS client,
+// fts_search=false degrades SEARCH to the sequential scan - as if FTS
+// weren't configured at all - without ever calling into the FTS client,
 // while leaving indexing/autoindex untouched (this test only exercises the
 // SEARCH path; Index/Prepend/Expunge don't check SearchEnabled at all, by
 // inspection of prepareFTSSearch's sole use of enabled()).
@@ -621,7 +621,7 @@ func TestSearchDisabledFallsBackToScanWithoutTouchingFTS(t *testing.T) {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if len(fake.queries) != 0 {
-		t.Fatalf("FTS Lookup called %d times, want 0 — fts_search=false must bypass FTS entirely", len(fake.queries))
+		t.Fatalf("FTS Lookup called %d times, want 0 - fts_search=false must bypass FTS entirely", len(fake.queries))
 	}
 }
 

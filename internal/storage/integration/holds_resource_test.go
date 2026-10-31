@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestHoldsResourceSkipsInnerAcquire is the regression for Phase 2.7's
@@ -56,7 +56,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 		t.Fatalf("append: %v", err)
 	}
 
-	// Take an outer X lock — same Locker, same key.
+	// Take an outer X lock - same Locker, same key.
 	key := locks.MailboxKey("carol@example.com", "INBOX")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -72,7 +72,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 	// Storage call MUST short-circuit through HoldsResource. If it instead
 	// tried to Acquire, it would hit ErrBusy and Acquire's retry loop would
 	// run until the 35-second timeout. HoldsResource is per-goroutine, so
-	// the inner calls run on the SAME goroutine as the outer Lock —
+	// the inner calls run on the SAME goroutine as the outer Lock -
 	// matching POP3 QUIT's shape (outer caller + inner storage methods are
 	// synchronous on one goroutine). We bracket the inner calls with a
 	// wall-clock deadline so a regression (Acquire actually firing and
@@ -86,7 +86,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 		t.Errorf("inner expunge (should skip lock and succeed): %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("inner storage calls took %v — HoldsResource skip not engaging", elapsed)
+		t.Fatalf("inner storage calls took %v - HoldsResource skip not engaging", elapsed)
 	}
 
 	// After releasing the outer lock, HoldsResource flips back to false.
@@ -94,7 +94,7 @@ func TestHoldsResourceSkipsInnerAcquire(t *testing.T) {
 		t.Fatalf("outer unlock: %v", err)
 	}
 	if _, held := lk.HoldsResource(key); held {
-		t.Fatal("HoldsResource still true after Unlock — holds map not pruned")
+		t.Fatal("HoldsResource still true after Unlock - holds map not pruned")
 	}
 }
 

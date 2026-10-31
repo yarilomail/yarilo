@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A JMAP client's first Mailbox/get on a fresh account, with no IMAP session
@@ -33,7 +33,7 @@ func TestAFreshAccountShowsTheConfiguredMailboxesOverJMAP(t *testing.T) {
 		},
 	})
 	got := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Mailbox/get",{"accountId":"u1@example.com"},"c0"]]}`)
+		["Mailbox/get",{"accountId":"`+testAccount+`"},"c0"]]}`)
 	seen := map[string]map[string]any{}
 	for _, item := range got["list"].([]any) {
 		mb := item.(map[string]any)

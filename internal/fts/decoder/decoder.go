@@ -10,7 +10,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // Decoder extracts text from an attachment part. Implementations must be

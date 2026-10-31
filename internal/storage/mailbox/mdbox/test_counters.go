@@ -3,7 +3,7 @@ package mdbox
 import (
 	"sync/atomic"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
 )
 
 // Test seams: reading a message by uid must cost neither a directory listing

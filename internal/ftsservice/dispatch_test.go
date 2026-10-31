@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 func jobFor(user, folder string) job {
@@ -14,7 +14,7 @@ func jobFor(user, folder string) job {
 
 // The engine holds one mutex per user, so a second pass on the same user would
 // occupy a worker to wait inside it. Dispatch hands the next worker a different
-// user instead — which is also what stops one user with many mailboxes taking
+// user instead - which is also what stops one user with many mailboxes taking
 // every worker.
 func TestDispatchSkipsAUserAlreadyRunning(t *testing.T) {
 	q := newQueue()
@@ -31,7 +31,7 @@ func TestDispatchSkipsAUserAlreadyRunning(t *testing.T) {
 		t.Fatal("second pop found nothing, though another user was queued")
 	}
 	if second.user != "u2" {
-		t.Errorf("second pop = %q/%q, want u2 — u1 is already being indexed",
+		t.Errorf("second pop = %q/%q, want u2 - u1 is already being indexed",
 			second.user, second.mbox.Name)
 	}
 }
@@ -63,7 +63,7 @@ func TestDispatchReleasesSkippedWorkAfterDone(t *testing.T) {
 }
 
 // A worker parked because everything queued belonged to busy users must wake
-// when one is released — otherwise it sleeps while work is available.
+// when one is released - otherwise it sleeps while work is available.
 func TestDispatchWakesAParkedWorker(t *testing.T) {
 	q := newQueue()
 	q.push(jobFor("u1", "INBOX"), false)
@@ -108,7 +108,7 @@ func TestDispatchHonoursPriorityAmongEligibleUsers(t *testing.T) {
 		t.Fatal("nothing dispatched")
 	}
 	if next.user != "u3" {
-		t.Errorf("dispatched %q, want u3 — priority among eligible users", next.user)
+		t.Errorf("dispatched %q, want u3 - priority among eligible users", next.user)
 	}
 	q.done(first)
 }

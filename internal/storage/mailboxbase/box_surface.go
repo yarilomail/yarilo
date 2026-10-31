@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/msgcache"
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/msgcache"
+	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // boxTx remembers the modseq each record was read at, so a change applies to
@@ -58,6 +58,7 @@ func (t *boxTx) Expunge(uid uint32) {
 }
 
 func (t *boxTx) Append(m *mailbox.MessageMeta)     { t.tx.Append(m) }
+func (t *boxTx) MarkDirty(uid uint32, dirty bool)  { t.tx.MarkDirty(uid, dirty) }
 func (t *boxTx) Commit() (mailbox.TxResult, error) { return t.tx.Commit() }
 func (t *boxTx) Rollback()                         { t.tx.Rollback() }
 

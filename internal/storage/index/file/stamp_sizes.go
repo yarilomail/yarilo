@@ -1,7 +1,7 @@
 package file
 
 import (
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // StampSizes writes a virtual size into records carrying none and refreshes the

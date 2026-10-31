@@ -7,7 +7,7 @@ import (
 
 	"github.com/foxcpp/go-sieve/interp"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 func newTestEngine(t *testing.T) *Engine {
@@ -295,7 +295,7 @@ func TestFilterReport(t *testing.T) {
 	if r.FeedbackType != "abuse" || r.Target != "abuse@example.com" {
 		t.Fatalf("unexpected report: %+v", r)
 	}
-	// report does not cancel implicit keep — the message still lands in INBOX.
+	// report does not cancel implicit keep - the message still lands in INBOX.
 	var keptInbox bool
 	for _, d := range result.Deliveries {
 		if d.Folder == "INBOX" {

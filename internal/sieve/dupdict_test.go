@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/memory"
 )
 
 func newMemDict(t *testing.T) dict.Dict {

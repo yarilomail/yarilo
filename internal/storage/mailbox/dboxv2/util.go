@@ -29,7 +29,7 @@ func (b *byteReader) ReadByte() (byte, error) { return b.br.ReadByte() }
 func (b *byteReader) ReadUntil(delim byte) ([]byte, error) {
 	line, err := b.br.ReadSlice(delim)
 	if errors.Is(err, bufio.ErrBufferFull) {
-		// Long line — drain the slow path via ReadBytes which
+		// Long line - drain the slow path via ReadBytes which
 		// allocates a fresh slice and never returns ErrBufferFull.
 		out, rerr := b.br.ReadBytes(delim)
 		return out, rerr

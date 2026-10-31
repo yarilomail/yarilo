@@ -54,7 +54,7 @@ func TestParsePrefixRange(t *testing.T) {
 }
 
 // Lengths are counted in runes. A threshold that counted bytes would apply a
-// different rule to every script — a three-letter Cyrillic word is six bytes,
+// different rule to every script - a three-letter Cyrillic word is six bytes,
 // so a minimum of four would expand it while refusing a four-letter Latin one.
 func TestPrefixRangeCountsRunes(t *testing.T) {
 	p := PrefixRange{Enabled: true, Min: 4}
@@ -65,7 +65,7 @@ func TestPrefixRangeCountsRunes(t *testing.T) {
 		{"abc", false}, // 3 runes, 3 bytes
 		{"abcd", true}, // 4 runes, 4 bytes
 		{"мова", true}, // 4 runes, 8 bytes
-		{"дім", false}, // 3 runes, 6 bytes — byte counting would allow it
+		{"дім", false}, // 3 runes, 6 bytes - byte counting would allow it
 		{"日本語", false}, // 3 runes, 9 bytes
 	} {
 		if got := p.Allows(tc.term); got != tc.allow {

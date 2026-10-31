@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A name off the cached listing is a hint until disk answers for it: a moved
@@ -39,6 +39,14 @@ func (u *userMailbox) recordPathOnce(folder string, m *mailbox.MessageMeta) (str
 	base, err := u.baseForUID(folder, m.UID)
 	if err != nil {
 		return "", err
+	}
+	if base == "" {
+		// The window trusts the map a walk loaded; a row another session
+		// appended since, a COPY's, is not in it until the list is read again.
+		u.folderCacheFor(folder).closeWindow("uid-miss")
+		if base, err = u.baseForUID(folder, m.UID); err != nil {
+			return "", err
+		}
 	}
 	if base == "" {
 		return "", fmt.Errorf("maildir/by-uid: %q uid %d is in no list entry: %w",
@@ -144,6 +152,20 @@ func (u *userMailbox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.Read
 	if err != nil {
 		return nil, err
 	}
+	if beforeOpen != nil {
+		beforeOpen()
+	}
+	rc, err := u.Fetch(folder, name, m.AltTier)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return rc, err
+	}
+	// A STORE renamed the file between the lookup and the open: one more
+	// lookup takes the name it wears now.
+	metricListingRetry.WithLabelValues("open").Inc()
+	u.folderCacheFor(folder).invalidateDirEntries("open")
+	if name, err = u.RecordPath(folder, m); err != nil {
+		return nil, err
+	}
 	return u.Fetch(folder, name, m.AltTier)
 }
 
@@ -191,6 +213,23 @@ func ForgetReports() {
 // outside this package that needs a visibly slow storage write.
 func SetTestFlagRenameDelay(d time.Duration) func() {
 	beforeFlagRename = func() { time.Sleep(d) }
+	return func() { beforeFlagRename = nil }
+}
+
+// beforeOpen runs between a record's lookup and its open.
+var beforeOpen func()
+
+// SetTestBeforeOpen runs fn between a record's lookup and its open: a test
+// expunges or renames the message in that gap. Test seam.
+func SetTestBeforeOpen(fn func()) func() {
+	beforeOpen = fn
+	return func() { beforeOpen = nil }
+}
+
+// SetTestBeforeFlagRename runs fn before each flag rename: a test outside this
+// package stops a writer between its index write and the rename.
+func SetTestBeforeFlagRename(fn func()) func() {
+	beforeFlagRename = fn
 	return func() { beforeFlagRename = nil }
 }
 

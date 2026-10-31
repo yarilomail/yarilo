@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Backing is one folder a virtual mailbox draws from, as the caller resolves
@@ -215,6 +215,20 @@ func ruleFor(cfg *Config, folder string) string {
 		}
 	}
 	return ""
+}
+
+// ClearsRecent reports whether the line that names folder starts with "+": a
+// SELECT of the virtual mailbox takes that folder's \Recent messages.
+func (c *Config) ClearsRecent(folder string) bool {
+	for _, b := range c.Boxes {
+		if b.Negative || b.MetadataEntry != "" {
+			continue
+		}
+		if b.Pattern == folder || matchPattern(b.Pattern, folder) {
+			return b.ClearRecent
+		}
+	}
+	return false
 }
 
 // matchPattern is the IMAP LIST match of the reference: "*" spans the

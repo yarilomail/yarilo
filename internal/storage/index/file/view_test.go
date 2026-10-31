@@ -5,11 +5,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Fifty readers under one writer: a reader takes no lock, and what it sees is
-// always a whole transaction — never half of one (#1809).
+// always a whole transaction - never half of one (#1809).
 func TestManyReadersUnderAWriterTakeNoLockAndSeeWholeTransactions(t *testing.T) {
 	dial := raceTestLockServer(t)
 	root := t.TempDir()
@@ -194,7 +194,7 @@ func TestATransactionPastTheLastBoundaryIsNotRead(t *testing.T) {
 	// promises: a crash with only part of the write on disk.
 	commit(6, 10)
 	if full, ferr := ui.GetMessages(f.ID, mailbox.SeqSet{}); ferr != nil || len(full) != 10 {
-		t.Fatalf("before the cut the folder reads as %d records (err %v), want 10 — the trap would prove nothing", len(full), ferr)
+		t.Fatalf("before the cut the folder reads as %d records (err %v), want 10 - the trap would prove nothing", len(full), ferr)
 	}
 	// Four bytes short of the whole: the boundary and all but the last of its
 	// sub-records are on disk, and the boundary promises what is missing.

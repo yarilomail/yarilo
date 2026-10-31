@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func flagsOf(t *testing.T, ui *userIndex, folderID uint64, uid uint32) (flags, keywords []string) {
@@ -24,7 +24,7 @@ func flagsOf(t *testing.T, ui *userIndex, folderID uint64, uid uint32) (flags, k
 
 // The window this closes: a caller reads a message, another session changes its
 // flags, and the first caller writes back the set it read. With an absolute
-// write the second change disappears — the writer is not wrong about \Seen, it
+// write the second change disappears - the writer is not wrong about \Seen, it
 // is wrong about everything else it repeats.
 //
 // The row asserts BOTH survive. Asserting only that \Seen was set would pass on
@@ -72,7 +72,7 @@ func TestAddFlagsKeepsAConcurrentChange(t *testing.T) {
 	}
 	flags, keywords = flagsOf(t, ui, f.ID, 1)
 	if slices.Contains(flags, `\Flagged`) || slices.Contains(keywords, "$Important") {
-		t.Errorf("UpdateFlags kept %v/%v — it is documented as writing an absolute set", flags, keywords)
+		t.Errorf("UpdateFlags kept %v/%v - it is documented as writing an absolute set", flags, keywords)
 	}
 }
 
@@ -113,7 +113,7 @@ func TestRemoveFlagsClearsOnlyWhatItNames(t *testing.T) {
 
 // The same window, through the batch path STORE uses. +FLAGS and -FLAGS are
 // deltas by definition, so a batch that names them must resolve against the
-// record under the write lock — not against the set the command read before it.
+// record under the write lock - not against the set the command read before it.
 func TestBatchDeltasKeepAConcurrentChange(t *testing.T) {
 	root := t.TempDir()
 	ui := openIdx(root, "carol@example.com")
@@ -186,6 +186,6 @@ func TestBatchDeltasKeepAConcurrentChange(t *testing.T) {
 	}
 	flags, keywords = flagsOf(t, ui, f.ID, 1)
 	if slices.Contains(flags, `\Flagged`) || slices.Contains(keywords, "$Important") {
-		t.Errorf("FlagsSet kept %v/%v — it is documented as replacing the set", flags, keywords)
+		t.Errorf("FlagsSet kept %v/%v - it is documented as replacing the set", flags, keywords)
 	}
 }

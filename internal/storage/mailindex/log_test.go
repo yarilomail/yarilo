@@ -52,7 +52,7 @@ func TestFramedSizeMagicAndRoundTrip(t *testing.T) {
 			t.Fatalf("EncodeFramedSize(%d): %v", v, err)
 		}
 		// Every byte of the framed value must have its high bit
-		// set — this is the torn-write defence. Test it
+		// set - this is the torn-write defence. Test it
 		// explicitly so any change to the encoder breaks here.
 		for i := 0; i < 4; i++ {
 			b := byte((framed >> (8 * i)) & 0xff)
@@ -115,7 +115,7 @@ func TestTxTypeFlagsHelpers(t *testing.T) {
 	t1 := TxTypeFlags(TxTypeExpunge) | TxExpungeProt | TxFlagExternal
 	if t1.Kind() != TxTypeExpunge|TxType(TxExpungeProt) {
 		// EXPUNGE_PROT is OR'd into the type byte (within the
-		// low 28 bits), not into the flag bits — so Kind() must
+		// low 28 bits), not into the flag bits - so Kind() must
 		// return TxTypeExpunge | EXPUNGE_PROT bits.
 		t.Errorf("Kind() = %#x, want %#x", t1.Kind(), TxTypeExpunge|TxType(TxExpungeProt))
 	}

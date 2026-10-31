@@ -9,7 +9,7 @@ CN="${1:-mail.example.test}"
 mkdir -p "$DIR"
 
 if [ -f "$DIR/cert.pem" ] && [ -f "$DIR/key.pem" ]; then
-  echo "tls/cert.pem and tls/key.pem already exist — remove them to regenerate."
+  echo "tls/cert.pem and tls/key.pem already exist - remove them to regenerate."
   exit 0
 fi
 

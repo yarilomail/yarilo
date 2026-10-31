@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -12,19 +13,28 @@ import (
 
 	"net"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const testUser = "u1@example.com"
 
+// testAccount is testUser's account id.
+var testAccount = jmapcore.AccountID(testUser)
+
 // storedServer builds a server over a real maildir and index, so the counts and
 // roles come from the same code path IMAP reads rather than a stub.
 func storedServer(t *testing.T) *Server {
+	t.Helper()
+	return storedServerWith(t, "Sent", "Archive", "Work", "Work/Reports")
+}
+
+// storedServerWith is storedServer with the given folders made.
+func storedServerWith(t *testing.T, folders ...string) *Server {
 	t.Helper()
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: testUser, Home: home, Separator: "/"}
@@ -35,7 +45,7 @@ func storedServer(t *testing.T) *Server {
 	if err := box.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	for _, folder := range []string{"Sent", "Archive", "Work", "Work/Reports"} {
+	for _, folder := range folders {
 		if err := box.Create(folder); err != nil {
 			t.Fatalf("create %s: %v", folder, err)
 		}
@@ -122,7 +132,7 @@ func callAPI(t *testing.T, s *Server, body string) map[string]any {
 	return args
 }
 
-// A null ids means every mailbox (RFC 8620 §5.1). An empty array means none —
+// A null ids means every mailbox (RFC 8620 §5.1). An empty array means none -
 // the two must not collapse into one.
 func TestMailboxGetNullIdsMeansAll(t *testing.T) {
 	s := storedServer(t)
@@ -130,9 +140,9 @@ func TestMailboxGetNullIdsMeansAll(t *testing.T) {
 		name, args string
 		wantLen    int
 	}{
-		{"null ids", `{"accountId":"u1@example.com","ids":null}`, 5},
-		{"absent ids", `{"accountId":"u1@example.com"}`, 5},
-		{"empty ids", `{"accountId":"u1@example.com","ids":[]}`, 0},
+		{"null ids", `{"accountId":"` + testAccount + `","ids":null}`, 5},
+		{"absent ids", `{"accountId":"` + testAccount + `"}`, 5},
+		{"empty ids", `{"accountId":"` + testAccount + `","ids":[]}`, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,7 +161,7 @@ func TestMailboxGetNullIdsMeansAll(t *testing.T) {
 func TestMailboxGetReportsNotFound(t *testing.T) {
 	s := storedServer(t)
 	got := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Mailbox/get",{"accountId":"u1@example.com","ids":["nope"]},"c0"]]}`)
+		["Mailbox/get",{"accountId":"`+testAccount+`","ids":["nope"]},"c0"]]}`)
 	notFound, _ := got["notFound"].([]any)
 	if len(notFound) != 1 || notFound[0] != "nope" {
 		t.Errorf("notFound = %v", notFound)
@@ -166,7 +176,7 @@ func TestMailboxGetReportsNotFound(t *testing.T) {
 func TestMailboxRolesComeFromBothSpecialUseLayers(t *testing.T) {
 	s := storedServer(t)
 	got := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Mailbox/get",{"accountId":"u1@example.com"},"c0"]]}`)
+		["Mailbox/get",{"accountId":"`+testAccount+`"},"c0"]]}`)
 	roles := map[string]any{}
 	for _, item := range got["list"].([]any) {
 		mb := item.(map[string]any)
@@ -189,7 +199,7 @@ func TestMailboxRolesComeFromBothSpecialUseLayers(t *testing.T) {
 func TestMailboxCountersComeFromTheIndex(t *testing.T) {
 	s := storedServer(t)
 	got := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Mailbox/get",{"accountId":"u1@example.com"},"c0"]]}`)
+		["Mailbox/get",{"accountId":"`+testAccount+`"},"c0"]]}`)
 	for _, item := range got["list"].([]any) {
 		mb := item.(map[string]any)
 		if mb["name"] != "INBOX" {
@@ -216,7 +226,7 @@ func TestMailboxCountersComeFromTheIndex(t *testing.T) {
 func TestMailboxHierarchyUsesParentID(t *testing.T) {
 	s := storedServer(t)
 	got := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Mailbox/get",{"accountId":"u1@example.com"},"c0"]]}`)
+		["Mailbox/get",{"accountId":"`+testAccount+`"},"c0"]]}`)
 	byName := map[string]map[string]any{}
 	for _, item := range got["list"].([]any) {
 		mb := item.(map[string]any)
@@ -245,11 +255,11 @@ func TestMailboxQuery(t *testing.T) {
 		name, args string
 		wantIDs    int
 	}{
-		{"no filter", `{"accountId":"u1@example.com"}`, 5},
-		{"by role", `{"accountId":"u1@example.com","filter":{"role":"inbox"}}`, 1},
-		{"has any role", `{"accountId":"u1@example.com","filter":{"hasAnyRole":true}}`, 3},
-		{"by name", `{"accountId":"u1@example.com","filter":{"name":"work"}}`, 1},
-		{"limit", `{"accountId":"u1@example.com","limit":2}`, 2},
+		{"no filter", `{"accountId":"` + testAccount + `"}`, 5},
+		{"by role", `{"accountId":"` + testAccount + `","filter":{"role":"inbox"}}`, 1},
+		{"has any role", `{"accountId":"` + testAccount + `","filter":{"hasAnyRole":true}}`, 3},
+		{"by name", `{"accountId":"` + testAccount + `","filter":{"name":"work"}}`, 1},
+		{"limit", `{"accountId":"` + testAccount + `","limit":2}`, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -276,9 +286,9 @@ func TestMailboxQueryRefusesWhatItCannotHonour(t *testing.T) {
 	tests := []struct {
 		name, args, wantErr string
 	}{
-		{"filter operator", `{"accountId":"u1@example.com","filter":{"operator":"AND","conditions":[]}}`,
+		{"filter operator", `{"accountId":"` + testAccount + `","filter":{"operator":"AND","conditions":[]}}`,
 			jmapcore.ErrUnsupportedFilter},
-		{"unknown sort", `{"accountId":"u1@example.com","sort":[{"property":"totalEmails"}]}`,
+		{"unknown sort", `{"accountId":"` + testAccount + `","sort":[{"property":"totalEmails"}]}`,
 			jmapcore.ErrUnsupportedSort},
 		{"other account", `{"accountId":"someone@else"}`, jmapcore.ErrAccountNotFound},
 	}
@@ -317,7 +327,7 @@ func TestMailboxMethodsNeedTheMailCapability(t *testing.T) {
 	s := storedServer(t)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, apiRequest(`{"using":["urn:ietf:params:jmap:core"],"methodCalls":[
-		["Mailbox/get",{"accountId":"u1@example.com"},"c0"]]}`))
+		["Mailbox/get",{"accountId":"`+testAccount+`"},"c0"]]}`))
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
 	}
@@ -403,6 +413,19 @@ func (l *testLocker) Emit(_ context.Context, resource string, t locks.EventType,
 	l.events = append(l.events, resource+" "+string(t))
 	return nil
 }
+
+func (l *testLocker) emitted(event string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, e := range l.events {
+		if e == event {
+			n++
+		}
+	}
+	return n
+}
+
 func (l *testLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -414,3 +437,25 @@ func (l *testLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
 
 func (l *testLocker) IncrementCounter(context.Context, string, int64) (int64, error) { return 0, nil }
 func (l *testLocker) Close() error                                                   { return nil }
+
+// A container's id is an RFC 8620 §1.2 Id whatever its name, reads back to
+// the name, and no folder id (lower-case hex) reads as a container.
+func TestAContainerIDIsAJMAPId(t *testing.T) {
+	for _, name := range []string{"Team", "Team 2026", "a/b.c", "Пошта/Архів", "x:y"} {
+		id := containerID(name)
+		if !validJMAPID(id) {
+			t.Errorf("%q: id %q is not a JMAP Id", name, id)
+		}
+		if back, ok := containerName(id); !ok || back != name {
+			t.Errorf("%q: %q reads back as %q, %v", name, id, back, ok)
+		}
+	}
+	guid := [16]byte{0xc0, 0xff, 0xee}
+	if _, ok := containerName(mailboxID(guid)); ok {
+		t.Errorf("folder id %q reads as a container", mailboxID(guid))
+	}
+}
+
+func validJMAPID(id string) bool {
+	return regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,254}$`).MatchString(id)
+}

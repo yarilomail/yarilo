@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // The two states are separate because the two object types change for different
@@ -22,7 +22,7 @@ func TestStatesMoveForTheirOwnTypeOnly(t *testing.T) {
 		{
 			name: "a keyword change moves the Email state",
 			mutate: func(t *testing.T, s *Server, id string) {
-				emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testUser, id))
+				emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$flagged":true}}}`, testAccount, id))
 			},
 			wantEmail: true,
 			// The counts a Mailbox reports are unread and total; flagging
@@ -32,7 +32,7 @@ func TestStatesMoveForTheirOwnTypeOnly(t *testing.T) {
 		{
 			name: "marking read moves both, because unreadEmails is a Mailbox property",
 			mutate: func(t *testing.T, s *Server, id string) {
-				emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$seen":null}}}`, testUser, id))
+				emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"keywords/$seen":null}}}`, testAccount, id))
 			},
 			wantEmail:   true,
 			wantMailbox: true,

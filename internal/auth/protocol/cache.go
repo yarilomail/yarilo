@@ -35,8 +35,12 @@ type Cache struct {
 // carry the password digest; an empty digest is treated as a miss
 // so an unset entry fails safe.
 type CacheEntry struct {
-	Result   Result
-	Fields   *Fields
+	Result Result
+	Fields *Fields
+	// Unknown is a negative entry for a user no passdb knows.
+	Unknown bool
+	// PassdbID is the place of the passdb that answered.
+	PassdbID int
 	pwdMAC   []byte
 	username string // for selective flush by user mask
 	expires  time.Time
@@ -139,6 +143,23 @@ func (c *Cache) observeSize() {
 // before storage, for negative entries too. fields is stored by
 // reference; the caller must not mutate it after Insert returns.
 func (c *Cache) Insert(key, username, password string, result Result, fields *Fields) {
+	c.insert(key, username, password, result, &Request{Fields: fields})
+}
+
+// InsertFail stores a negative entry, remembering whether no passdb knew the
+// user: the policy server is told which kind of failure it was.
+func (c *Cache) InsertFail(key, username, password string, fields *Fields, unknown bool) {
+	c.insert(key, username, password, ResultFail, &Request{Fields: fields, Unknown: unknown})
+}
+
+// InsertFrom stores what a chain run left in req: its fields, whether no
+// passdb knew the user, and which one answered.
+func (c *Cache) InsertFrom(key, username, password string, result Result, req *Request) {
+	c.insert(key, username, password, result, req)
+}
+
+func (c *Cache) insert(key, username, password string, result Result, req *Request) {
+	fields, unknown := req.Fields, req.Unknown
 	if c == nil {
 		return
 	}
@@ -165,6 +186,8 @@ func (c *Cache) Insert(key, username, password string, result Result, fields *Fi
 	e := &CacheEntry{
 		Result:   result,
 		Fields:   fields,
+		Unknown:  unknown,
+		PassdbID: req.PassdbID,
 		username: username,
 	}
 	// Negative entries remember which password failed, so only that

@@ -17,9 +17,9 @@ func (s *Server) apiPeerList(w http.ResponseWriter, _ *http.Request) {
 // DIRECTOR-REMOVE on detected death. Routes stay registered (rather than 404ing)
 // so `yarctl director ring add/remove` gets a clear explanation, not a bare error.
 func (s *Server) apiPeerAdd(w http.ResponseWriter, _ *http.Request) {
-	apiError(w, "ring membership is self-organizing (#750) — join a node to the ring by pointing its director_service.peers at a seed; there is no manual add", http.StatusGone)
+	apiError(w, "ring membership is self-organizing (#750) - join a node to the ring by pointing its director_service.peers at a seed; there is no manual add", http.StatusGone)
 }
 
 func (s *Server) apiPeerRemove(w http.ResponseWriter, _ *http.Request) {
-	apiError(w, "ring membership is self-organizing (#750) — a member is removed automatically when its right-neighbor dial fails; there is no manual remove", http.StatusGone)
+	apiError(w, "ring membership is self-organizing (#750) - a member is removed automatically when its right-neighbor dial fails; there is no manual remove", http.StatusGone)
 }

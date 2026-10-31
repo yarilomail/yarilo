@@ -10,12 +10,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // openBox is one account through both halves at once.
@@ -306,7 +306,7 @@ func TestAnUnresolvableRecordIsReportedNotEmptied(t *testing.T) {
 }
 
 // The size a client is told is the size of the body it gets, including for a
-// record that carries none — what a recovered folder holds (#1726, #1727).
+// record that carries none - what a recovered folder holds (#1726, #1727).
 func TestTheSizeToldIsTheSizeOfTheBody(t *testing.T) {
 	box, f := openBox(t, "u8@example.com")
 	const body = "From: a@b\r\nSubject: sized\r\n\r\nbody\r\n"

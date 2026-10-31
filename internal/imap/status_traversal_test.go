@@ -8,15 +8,15 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 var statusAll = imap.StatusOptions{NumMessages: true, UIDValidity: true, UIDNext: true}
@@ -66,7 +66,7 @@ func TestStatusRefusesNamesOutsideTheMailbox(t *testing.T) {
 					continue
 				}
 				if ie.Code != imap.ResponseCodeNonExistent {
-					t.Errorf("STATUS %q answered code %q, want NONEXISTENT — the same answer SELECT and DELETE give for these names",
+					t.Errorf("STATUS %q answered code %q, want NONEXISTENT - the same answer SELECT and DELETE give for these names",
 						name, ie.Code)
 				}
 			}
@@ -74,7 +74,7 @@ func TestStatusRefusesNamesOutsideTheMailbox(t *testing.T) {
 	}
 }
 
-// STATUS must still answer for a mailbox that exists — otherwise the test
+// STATUS must still answer for a mailbox that exists - otherwise the test
 // above passes on a server that refuses every STATUS.
 func TestStatusStillAnswersForRealMailboxes(t *testing.T) {
 	c := startServerWith(t, maildirBackend(t))

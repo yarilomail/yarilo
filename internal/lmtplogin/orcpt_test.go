@@ -10,7 +10,7 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
 )
 
 // fakeBackend reads the preamble, speaks enough LMTP for one recipient, and

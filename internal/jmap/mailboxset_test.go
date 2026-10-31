@@ -29,7 +29,7 @@ func TestMailboxSetCreates(t *testing.T) {
 		"taken":{"name":"Archive"},
 		"deep":{"name":"a/b"},
 		"orphan":{"name":"X","parentId":"ffffffffffffffffffffffffffffffff"},
-		"role":{"name":"R","role":"trash"}}}`, testUser, ids["Work"]))
+		"role":{"name":"R","role":"trash"}}}`, testAccount, ids["Work"]))
 	created, _ := out["created"].(map[string]any)
 	if created["top"] == nil || created["child"] == nil {
 		t.Fatalf("not created: %v", out["notCreated"])
@@ -43,7 +43,7 @@ func TestMailboxSetCreates(t *testing.T) {
 	if after["New"] == "" || parentOf(t, s, after["Sub"]) != ids["Work"] {
 		t.Errorf("mailboxes after create: %v", after)
 	}
-	_, got := callAs(t, s, testUser, "Mailbox/get", fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["isSubscribed"]}`, testUser, after["New"]))
+	_, got := callAs(t, s, testUser, "Mailbox/get", fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["isSubscribed"]}`, testAccount, after["New"]))
 	if fmt.Sprint(got["list"]) != fmt.Sprintf("[map[id:%s isSubscribed:true]]", after["New"]) {
 		t.Errorf("New subscribed: %v", got["list"])
 	}
@@ -56,7 +56,7 @@ func TestMailboxSetRenamesAndMoves(t *testing.T) {
 	out := mailboxSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{
 		%q:{"name":"Old"},
 		%q:{"parentId":null},
-		%q:{"name":"Mail"}}}`, testUser, ids["Archive"], ids["Reports"], ids["INBOX"]))
+		%q:{"name":"Mail"}}}`, testAccount, ids["Archive"], ids["Reports"], ids["INBOX"]))
 	after := mailboxIDs(t, s)
 	if after["Old"] != ids["Archive"] || after["Reports"] != ids["Reports"] || parentOf(t, s, ids["Reports"]) != "" {
 		t.Errorf("after rename: %v (was %v)", after, ids)
@@ -70,16 +70,16 @@ func TestMailboxSetDestroys(t *testing.T) {
 	s := storedServer(t)
 	ids := mailboxIDs(t, s)
 	id := inboxEmails(t, s)[0]
-	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true}}}`, testUser, id, ids["Archive"]))
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true}}}`, testAccount, id, ids["Archive"]))
 
 	out := mailboxSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"destroy":[%q,%q,%q,%q]}`,
-		testUser, ids["INBOX"], ids["Work"], ids["Archive"], ids["Sent"]))
+		testAccount, ids["INBOX"], ids["Work"], ids["Archive"], ids["Sent"]))
 	for key, want := range map[string]string{"INBOX": "forbidden", "Work": "mailboxHasChild", "Archive": "mailboxHasEmail"} {
 		if got := setErrType(out, "notDestroyed", ids[key]); got != want {
 			t.Errorf("destroy %s answered %v, want %s", key, got, want)
 		}
 	}
-	out = mailboxSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"destroy":[%q],"onDestroyRemoveEmails":true}`, testUser, ids["Archive"]))
+	out = mailboxSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"destroy":[%q],"onDestroyRemoveEmails":true}`, testAccount, ids["Archive"]))
 	if d, _ := out["destroyed"].([]any); len(d) != 1 {
 		t.Fatalf("Archive with onDestroyRemoveEmails: %v", out)
 	}
@@ -95,7 +95,7 @@ func TestMailboxSetDestroys(t *testing.T) {
 // parentOf is a mailbox's parentId, "" at the top level.
 func parentOf(t *testing.T, s *Server, id string) string {
 	t.Helper()
-	_, out := callAs(t, s, testUser, "Mailbox/get", fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["parentId"]}`, testUser, id))
+	_, out := callAs(t, s, testUser, "Mailbox/get", fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["parentId"]}`, testAccount, id))
 	list, _ := out["list"].([]any)
 	if len(list) != 1 {
 		t.Fatalf("no mailbox %s: %v", id, out)

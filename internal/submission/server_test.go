@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -25,11 +26,11 @@ import (
 	goSmtp "github.com/emersion/go-smtp"
 	"golang.org/x/crypto/pbkdf2"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/submission/proxy"
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // stubAuth accepts only alice@example.com / secret.
@@ -42,7 +43,7 @@ func (stubAuth) AuthPlain(u, p string) error {
 	return goSmtp.ErrAuthFailed
 }
 
-// buildTestServer starts a submission server on a random port.
+// buildTestServer starts a submission server on a random port, with no relay.
 func buildTestServer(t *testing.T) (addr string, cleanup func()) {
 	t.Helper()
 	opts := Options{
@@ -162,20 +163,11 @@ func TestSubmission_AuthOK(t *testing.T) {
 	if err := c.Auth(plainAuth("alice@example.com", "secret")); err != nil {
 		t.Fatalf("AUTH: %v", err)
 	}
-	// No relay configured → DATA must return 451.
-	if err := c.Mail("alice@example.com", nil); err != nil {
-		t.Fatalf("MAIL FROM: %v", err)
-	}
-	if err := c.Rcpt("bob@example.com", nil); err != nil {
-		t.Fatalf("RCPT TO: %v", err)
-	}
-	wc, err := c.Data()
-	if err != nil {
-		t.Fatalf("DATA: %v", err)
-	}
-	io.WriteString(wc, "From: alice@example.com\r\nTo: bob@example.com\r\nSubject: hi\r\n\r\nHello\r\n") //nolint:errcheck
-	if err := wc.Close(); err == nil {
-		t.Fatal("expected 451 relay error when no relay configured")
+	// No relay configured: the transaction cannot open, 451 at MAIL FROM.
+	var se *goSmtp.SMTPError
+	if err := c.Mail("alice@example.com", nil); !errors.As(err, &se) || se.Code != 451 ||
+		se.EnhancedCode != (goSmtp.EnhancedCode{4, 3, 0}) {
+		t.Fatalf("MAIL FROM without a relay: %v, want 451 4.3.0", err)
 	}
 }
 

@@ -13,10 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const foreignUser = "u2@example.com"
@@ -109,7 +111,7 @@ func TestEveryMethodRefusesAForeignAccount(t *testing.T) {
 			continue
 		}
 		t.Run(method, func(t *testing.T) {
-			name, out := callAs(t, s, testUser, method, `{"accountId":"`+foreignUser+`"}`)
+			name, out := callAs(t, s, testUser, method, `{"accountId":"`+jmapcore.AccountID(foreignUser)+`"}`)
 			wantMethodError(t, name, out, "accountNotFound")
 		})
 	}
@@ -145,7 +147,7 @@ var boundaryRows = []struct {
 	method, kind, args string
 	check              func(t *testing.T, s *Server, foreign, name string, out map[string]any)
 }{
-	{"Email/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","update":{"FOREIGN":{"keywords/$flagged":true}}}`,
+	{"Email/set", kindForeignAccount, `{"accountId":"` + jmapcore.AccountID(foreignUser) + `","update":{"FOREIGN":{"keywords/$flagged":true}}}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "accountNotFound")
 		}},
@@ -153,7 +155,7 @@ var boundaryRows = []struct {
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "invalidArguments")
 		}},
-	{"Email/set", kindForeignObject, `{"accountId":"` + testUser + `","update":{"FOREIGN":{"keywords/$flagged":true}}}`,
+	{"Email/set", kindForeignObject, `{"accountId":"` + testAccount + `","update":{"FOREIGN":{"keywords/$flagged":true}}}`,
 		func(t *testing.T, s *Server, foreign, name string, out map[string]any) {
 			notUpdated, _ := out["notUpdated"].(map[string]any)
 			setErr, _ := notUpdated[foreign].(map[string]any)
@@ -161,12 +163,12 @@ var boundaryRows = []struct {
 				t.Errorf("answered %s %v, want notUpdated %s notFound", name, out, foreign)
 			}
 			_, got := callAs(t, s, foreignUser, "Email/get",
-				`{"accountId":"`+foreignUser+`","ids":["`+foreign+`"],"properties":["keywords"]}`)
+				`{"accountId":"`+jmapcore.AccountID(foreignUser)+`","ids":["`+foreign+`"],"properties":["keywords"]}`)
 			if list, _ := got["list"].([]any); len(list) != 1 || strings.Contains(fmt.Sprint(list[0]), "$flagged") {
 				t.Errorf("the foreign message changed: %v", got)
 			}
 		}},
-	{"Email/import", kindForeignAccount, `{"accountId":"` + foreignUser + `","emails":{"c1":{"blobId":"FOREIGN","mailboxIds":{"INBOXID":true}}}}`,
+	{"Email/import", kindForeignAccount, `{"accountId":"` + jmapcore.AccountID(foreignUser) + `","emails":{"c1":{"blobId":"FOREIGN","mailboxIds":{"INBOXID":true}}}}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "accountNotFound")
 		}},
@@ -174,7 +176,7 @@ var boundaryRows = []struct {
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "invalidArguments")
 		}},
-	{"Email/import", kindForeignObject, `{"accountId":"` + testUser + `","emails":{"c1":{"blobId":"FOREIGN","mailboxIds":{"INBOXID":true}}}}`,
+	{"Email/import", kindForeignObject, `{"accountId":"` + testAccount + `","emails":{"c1":{"blobId":"FOREIGN","mailboxIds":{"INBOXID":true}}}}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			notCreated, _ := out["notCreated"].(map[string]any)
 			setErr, _ := notCreated["c1"].(map[string]any)
@@ -182,7 +184,7 @@ var boundaryRows = []struct {
 				t.Errorf("answered %s %v, want notCreated c1 invalidProperties blobId", name, out)
 			}
 		}},
-	{"Mailbox/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["FOREIGNBOX"]}`,
+	{"Mailbox/set", kindForeignAccount, `{"accountId":"` + jmapcore.AccountID(foreignUser) + `","destroy":["FOREIGNBOX"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "accountNotFound")
 		}},
@@ -190,7 +192,7 @@ var boundaryRows = []struct {
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "invalidArguments")
 		}},
-	{"SieveScript/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["S1"]}`,
+	{"SieveScript/set", kindForeignAccount, `{"accountId":"` + jmapcore.AccountID(foreignUser) + `","destroy":["S1"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "accountNotFound")
 		}},
@@ -199,19 +201,19 @@ var boundaryRows = []struct {
 			wantMethodError(t, name, out, "invalidArguments")
 		}},
 	// S1 is the other account's script; ids are per account.
-	{"SieveScript/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["S1"]}`,
+	{"SieveScript/set", kindForeignObject, `{"accountId":"` + testAccount + `","destroy":["S1"]}`,
 		func(t *testing.T, s *Server, _, name string, out map[string]any) {
 			notDestroyed, _ := out["notDestroyed"].(map[string]any)
 			setErr, _ := notDestroyed["S1"].(map[string]any)
 			if name != "SieveScript/set" || setErr["type"] != "notFound" {
 				t.Errorf("answered %s %v, want notDestroyed S1 notFound", name, out)
 			}
-			_, got := callAs(t, s, foreignUser, "SieveScript/get", `{"accountId":"`+foreignUser+`","ids":["S1"]}`)
+			_, got := callAs(t, s, foreignUser, "SieveScript/get", `{"accountId":"`+jmapcore.AccountID(foreignUser)+`","ids":["S1"]}`)
 			if list, _ := got["list"].([]any); len(list) != 1 {
 				t.Errorf("the other account's script is gone: %v", got)
 			}
 		}},
-	{"EmailSubmission/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","create":{"c1":{"identityId":"x","emailId":"FOREIGN"}}}`,
+	{"EmailSubmission/set", kindForeignAccount, `{"accountId":"` + jmapcore.AccountID(foreignUser) + `","create":{"c1":{"identityId":"x","emailId":"FOREIGN"}}}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "accountNotFound")
 		}},
@@ -220,7 +222,7 @@ var boundaryRows = []struct {
 			wantMethodError(t, name, out, "invalidArguments")
 		}},
 	// FOREIGN is the other account's message: not found here, never sent.
-	{"EmailSubmission/set", kindForeignObject, `{"accountId":"` + testUser + `","create":{"c1":{"identityId":"IDENTITY","emailId":"FOREIGN"}}}`,
+	{"EmailSubmission/set", kindForeignObject, `{"accountId":"` + testAccount + `","create":{"c1":{"identityId":"IDENTITY","emailId":"FOREIGN"}}}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			e := entry(out, "notCreated", "c1")
 			if name != "EmailSubmission/set" || e["type"] != "invalidProperties" || !strings.Contains(fmt.Sprint(e["properties"]), "emailId") {
@@ -230,7 +232,7 @@ var boundaryRows = []struct {
 				t.Errorf("the other account's message reached the relay (%d sends)", n)
 			}
 		}},
-	{"VacationResponse/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","update":{"singleton":{"isEnabled":true}}}`,
+	{"VacationResponse/set", kindForeignAccount, `{"accountId":"` + jmapcore.AccountID(foreignUser) + `","update":{"singleton":{"isEnabled":true}}}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "accountNotFound")
 		}},
@@ -239,17 +241,17 @@ var boundaryRows = []struct {
 			wantMethodError(t, name, out, "invalidArguments")
 		}},
 	// "singleton" is each account's own: enabling ours leaves theirs as it was.
-	{"VacationResponse/set", kindForeignObject, `{"accountId":"` + testUser + `","update":{"singleton":{"isEnabled":true}}}`,
+	{"VacationResponse/set", kindForeignObject, `{"accountId":"` + testAccount + `","update":{"singleton":{"isEnabled":true}}}`,
 		func(t *testing.T, s *Server, _, name string, out map[string]any) {
 			if name != "VacationResponse/set" || entry(out, "notUpdated", "singleton") != nil {
 				t.Errorf("answered %s %v, want our singleton updated", name, out)
 			}
-			_, got := callAs(t, s, foreignUser, "SieveScript/get", `{"accountId":"`+foreignUser+`","ids":null,"properties":["name"]}`)
+			_, got := callAs(t, s, foreignUser, "SieveScript/get", `{"accountId":"`+jmapcore.AccountID(foreignUser)+`","ids":null,"properties":["name"]}`)
 			if fmt.Sprint(got["list"]) != "[map[id:S1 name:theirs]]" {
 				t.Errorf("the other account's scripts changed: %v", got["list"])
 			}
 		}},
-	{"Identity/set", kindForeignAccount, `{"accountId":"` + foreignUser + `","destroy":["FOREIGNIDENTITY"]}`,
+	{"Identity/set", kindForeignAccount, `{"accountId":"` + jmapcore.AccountID(foreignUser) + `","destroy":["FOREIGNIDENTITY"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "accountNotFound")
 		}},
@@ -257,14 +259,14 @@ var boundaryRows = []struct {
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			wantMethodError(t, name, out, "invalidArguments")
 		}},
-	{"Identity/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["FOREIGNIDENTITY"]}`,
+	{"Identity/set", kindForeignObject, `{"accountId":"` + testAccount + `","destroy":["FOREIGNIDENTITY"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
-			if name != "Identity/set" || entry(out, "notDestroyed", identityID(foreignUser))["type"] != "forbidden" {
-				t.Errorf("answered %s %v, want notDestroyed forbidden", name, out)
+			if name != "Identity/set" || entry(out, "notDestroyed", identityID(foreignUser))["type"] != "notFound" {
+				t.Errorf("answered %s %v, want notDestroyed notFound", name, out)
 			}
 		}},
 	// Resolved globally, the other INBOX would answer forbidden, not notFound.
-	{"Mailbox/set", kindForeignObject, `{"accountId":"` + testUser + `","destroy":["FOREIGNBOX"]}`,
+	{"Mailbox/set", kindForeignObject, `{"accountId":"` + testAccount + `","destroy":["FOREIGNBOX"]}`,
 		func(t *testing.T, _ *Server, _, name string, out map[string]any) {
 			notDestroyed, _ := out["notDestroyed"].(map[string]any)
 			setErr, _ := notDestroyed[foreignBoxID].(map[string]any)
@@ -284,7 +286,7 @@ var foreignBoxID string
 // inboxIDOf is user's INBOX mailbox id.
 func inboxIDOf(t *testing.T, s *Server, user string) string {
 	t.Helper()
-	_, out := callAs(t, s, user, "Mailbox/get", `{"accountId":"`+user+`"}`)
+	_, out := callAs(t, s, user, "Mailbox/get", `{"accountId":"`+jmapcore.AccountID(user)+`"}`)
 	for _, mb := range out["list"].([]any) {
 		if m := mb.(map[string]any); m["name"] == "INBOX" {
 			return m["id"].(string)
@@ -297,7 +299,7 @@ func inboxIDOf(t *testing.T, s *Server, user string) string {
 // inboxID is the caller's INBOX mailbox id.
 func inboxID(t *testing.T, s *Server) string {
 	t.Helper()
-	_, out := callAs(t, s, testUser, "Mailbox/get", `{"accountId":"`+testUser+`"}`)
+	_, out := callAs(t, s, testUser, "Mailbox/get", `{"accountId":"`+testAccount+`"}`)
 	for _, mb := range out["list"].([]any) {
 		m := mb.(map[string]any)
 		if m["name"] == "INBOX" || m["role"] == "inbox" {

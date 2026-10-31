@@ -1,5 +1,5 @@
 {{- if .Values.components.imapLogin.enabled }}
-## LoadBalancer — IMAP mail client connections (IMAPS:993 / IMAP:143 with STARTTLS).
+## LoadBalancer - IMAP mail client connections (IMAPS:993 / IMAP:143 with STARTTLS).
 apiVersion: v1
 kind: Service
 metadata:
@@ -29,7 +29,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "imap-login") | nindent 4 }}
 ---
-## ClusterIP — telemetry / health
+## ClusterIP - telemetry / health
 apiVersion: v1
 kind: Service
 metadata:

@@ -8,7 +8,7 @@ import (
 
 // The lists shipped before #1022 were hand-edited copies of the Snowball files,
 // and the damage was invisible to anyone who did not speak the language: words
-// simply missing. What was visible was the shape of the damage — one form of a
+// simply missing. What was visible was the shape of the damage - one form of a
 // pair present and the other gone.
 //
 // So the check is on form pairs rather than on content. It needs no judgement
@@ -105,7 +105,7 @@ func TestStopwordListsAreSymmetricAcrossFormPairs(t *testing.T) {
 				// not carry those forms, which is its business; a group split
 				// down the middle is an edit.
 				if len(have) > 0 && len(missing) > 0 {
-					t.Errorf("%v present but %v missing — the list was edited rather than taken from its source",
+					t.Errorf("%v present but %v missing - the list was edited rather than taken from its source",
 						have, missing)
 				}
 			}
@@ -114,7 +114,7 @@ func TestStopwordListsAreSymmetricAcrossFormPairs(t *testing.T) {
 }
 
 // A list that repeats itself was assembled or merged rather than taken whole.
-// Harmless at runtime, since the loader builds a set — which is exactly why it
+// Harmless at runtime, since the loader builds a set - which is exactly why it
 // would never be noticed without being asserted.
 func TestStopwordListsHaveNoRepeatedEntries(t *testing.T) {
 	for lang, raw := range rawStopwordLists() {

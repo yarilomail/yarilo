@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Every field a consumer would otherwise default has to travel, or the
@@ -53,7 +53,7 @@ func TestNamespaceUserInfoCarriesEveryFieldAConsumerWouldDefault(t *testing.T) {
 		t.Errorf("identity = %q/%q, want u1@test/acl-u1", ui.Username, ui.ACLUser)
 	}
 	if len(ui.Groups) != 1 || ui.Groups[0] != "admins" {
-		t.Errorf("Groups = %v — an ACL naming a group would resolve differently here", ui.Groups)
+		t.Errorf("Groups = %v - an ACL naming a group would resolve differently here", ui.Groups)
 	}
 	if len(ui.ACLGroups) != 1 || ui.ACLGroups[0] != "acl-admins" {
 		t.Errorf("ACLGroups = %v", ui.ACLGroups)

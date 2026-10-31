@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The backstop only matters when the validation above it has been bypassed, so
@@ -58,7 +58,7 @@ func TestDriversRefuseToDestroyTheirOwnRoot(t *testing.T) {
 					t.Errorf("Rename(%q, ...) was carried out on an unvalidated driver", name)
 				}
 				if err := u.Rename("Keep", name); err == nil {
-					t.Errorf("Rename(..., %q) was carried out — renaming onto the root buries the mailbox", name)
+					t.Errorf("Rename(..., %q) was carried out - renaming onto the root buries the mailbox", name)
 				}
 			}
 

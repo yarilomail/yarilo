@@ -5,21 +5,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // oauthBearerAuth is a test double that accepts a single
 // (username, token) pair. The OAUTHBEARER session callback calls
-// .Authenticate with token in the password slot — token comparison
+// .Authenticate with token in the password slot - token comparison
 // happens here.
 type oauthBearerAuth struct {
 	user, token string
@@ -63,7 +63,7 @@ func startOAuthServer(t *testing.T, auth protocol.Authenticator, enabled bool) *
 	return c
 }
 
-// TestIMAP_OAuthBearer_Success — real OAUTHBEARER client sends
+// TestIMAP_OAuthBearer_Success - real OAUTHBEARER client sends
 // (username, token); server validates and lets SELECT INBOX
 // succeed.
 func TestIMAP_OAuthBearer_Success(t *testing.T) {
@@ -83,7 +83,7 @@ func TestIMAP_OAuthBearer_Success(t *testing.T) {
 	}
 }
 
-// TestIMAP_OAuthBearer_InvalidToken — bad token surfaces as
+// TestIMAP_OAuthBearer_InvalidToken - bad token surfaces as
 // SASL invalid_token error.
 func TestIMAP_OAuthBearer_InvalidToken(t *testing.T) {
 	auth := &oauthBearerAuth{user: "alice@example.com", token: "valid-token"}
@@ -99,9 +99,9 @@ func TestIMAP_OAuthBearer_InvalidToken(t *testing.T) {
 	}
 }
 
-// TestIMAP_OAuthBearer_DisabledNotAdvertised — when OAuth2Enabled
+// TestIMAP_OAuthBearer_DisabledNotAdvertised - when OAuth2Enabled
 // is false, OAUTHBEARER is rejected even if the client tries it
-// explicitly (defence-in-depth — clients should not see it
+// explicitly (defence-in-depth - clients should not see it
 // advertised in the CAPABILITY reply either).
 func TestIMAP_OAuthBearer_DisabledNotAdvertised(t *testing.T) {
 	auth := &oauthBearerAuth{user: "alice@example.com", token: "valid-token"}
@@ -127,7 +127,7 @@ func TestIMAP_OAuthBearer_DisabledNotAdvertised(t *testing.T) {
 	}
 }
 
-// TestIMAP_OAuthBearer_CapabilityAdvertised — when enabled, the
+// TestIMAP_OAuthBearer_CapabilityAdvertised - when enabled, the
 // AUTH=OAUTHBEARER capability is on the wire so clients can pick
 // it.
 func TestIMAP_OAuthBearer_CapabilityAdvertised(t *testing.T) {

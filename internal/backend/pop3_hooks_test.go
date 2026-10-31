@@ -6,9 +6,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/config"
-	_ "github.com/yarilomail/yarilo/pkg/dict/file"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/file"
 )
 
 // POP3 gets the mutation layer's hooks the process built, as IMAP and LMTP

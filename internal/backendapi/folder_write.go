@@ -10,11 +10,11 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/mailboxcreate"
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/mailboxcreate"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/specialuse"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // folderEventTimeout bounds the fire-and-forget event emission so a sluggish
@@ -117,8 +117,7 @@ func (s *Server) handleFolderCreate(w http.ResponseWriter, r *http.Request) {
 			uc.info.Username,
 			uc.lockOwner(),
 			s.opts.Locker,
-			s.opts.SpecialUseDefaults,
-		)
+			s.opts.SpecialUseDefaults)
 		if err := store.Set(req.Folder, imaplib.MailboxAttr(req.SpecialUse)); err != nil {
 			// Folder is created; rolling back is worse than reporting the
 			// partial state. Surface as 200 with a warning.
@@ -369,8 +368,7 @@ func (s *Server) materialiseFolderACL(bundle *nsBundle, folder string) error {
 		bundle.info.Username,
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
-		s.opts.Locker,
-	)
+		s.opts.Locker)
 	return store.MaterialiseOnCreate(folder)
 }
 
@@ -386,8 +384,7 @@ func (s *Server) dropFolderACL(bundle *nsBundle, folder string) error {
 		bundle.info.Username,
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
-		s.opts.Locker,
-	)
+		s.opts.Locker)
 	return store.Remove(folder)
 }
 
@@ -403,8 +400,7 @@ func (s *Server) renameFolderACL(bundle *nsBundle, oldFolder, newFolder string) 
 		bundle.info.Username,
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
-		s.opts.Locker,
-	)
+		s.opts.Locker)
 	return store.Rename(oldFolder, newFolder)
 }
 

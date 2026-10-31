@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
 )
 
 // A master login in the separator form types "target*master" and authenticates
 // as the TARGET: the auth service answers user=target and issues the token for
 // it. Everything after authentication therefore belongs to the resolved
-// identity — the backend's VERIFY compares against it, the director routes by
-// it, the connection limit counts it — and forwarding the raw login string
+// identity - the backend's VERIFY compares against it, the director routes by
+// it, the connection limit counts it - and forwarding the raw login string
 // refused a session that had authenticated correctly (#1306).
 //
 // The resolution is one expression, so it is asserted as one: what the session
@@ -69,7 +69,7 @@ func TestSessionActsAsTheResolvedIdentity(t *testing.T) {
 
 // The wiring, not the expression: the backend receives the RESOLVED identity in
 // the preamble it verifies against the token. The pure function above passes
-// even when nothing downstream uses it — this row is what fails then, and it is
+// even when nothing downstream uses it - this row is what fails then, and it is
 // the shape #1306 actually had (authentication succeeded, the session was
 // refused).
 func TestBackendPreambleCarriesTheResolvedIdentity(t *testing.T) {
@@ -108,7 +108,7 @@ func TestBackendPreambleCarriesTheResolvedIdentity(t *testing.T) {
 }
 
 // startPreambleCapturingBackend accepts one connection, hands the preamble line
-// to claimed and then goes quiet — the session's fate afterwards is not this
+// to claimed and then goes quiet - the session's fate afterwards is not this
 // row's subject.
 func startPreambleCapturingBackend(t *testing.T, claimed chan<- string) string {
 	t.Helper()
@@ -137,7 +137,7 @@ func startPreambleCapturingBackend(t *testing.T, claimed chan<- string) string {
 
 // The third floor of the same defect: the re-route re-LOOKUPs after a failed
 // dial, and a lookup by the raw login string hashes to a different pod than the
-// user's own — so a master session would land on the wrong backend at its first
+// user's own - so a master session would land on the wrong backend at its first
 // retry. The wire test above cannot see this, because the re-route only runs
 // when a dial fails.
 func TestRerouteLookupUsesTheResolvedIdentity(t *testing.T) {

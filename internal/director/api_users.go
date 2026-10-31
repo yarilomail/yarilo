@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 func (s *Server) apiUserMove(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +45,7 @@ func (s *Server) apiUserMove(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiUserKick(w http.ResponseWriter, r *http.Request) {
 	user := s.normalizeUser(r.PathValue("user"))
 	// Mark the user killing (and replicate it) BEFORE the kick, so the ring-wide
-	// LOOKUP hold is in force for the whole drain — otherwise the operator kick
+	// LOOKUP hold is in force for the whole drain - otherwise the operator kick
 	// (yarctl director users kick → this handler) engages none of the #847
 	// confirmed-kick protection and leaves the split-writer window open (#858).
 	// Mirrors the wire handleUserKick path.

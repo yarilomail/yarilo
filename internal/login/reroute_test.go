@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
 )
 
 // rerouteStubDirector is a director stub whose LOOKUP reply is supplied by
@@ -79,7 +79,7 @@ func deadLoopbackAddr(t *testing.T) string {
 
 // TestReroute_SameBackendDoesNotLoop is the guard from the #782 review: when the
 // re-LOOKUP returns the SAME still-dead pod, the proxy must report once and give
-// up with an error — never spin.
+// up with an error - never spin.
 func TestReroute_SameBackendDoesNotLoop(t *testing.T) {
 	dead := deadLoopbackAddr(t)
 	var reports int32

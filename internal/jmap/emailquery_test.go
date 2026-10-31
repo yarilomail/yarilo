@@ -26,7 +26,7 @@ func idsOf(t *testing.T, got map[string]any) []string {
 // find them, and then read them back with Email/get.
 func TestEmailQueryFindsAndFeedsEmailGet(t *testing.T) {
 	s, id := emailServer(t, 0)
-	got := emailQuery(t, s, `{"accountId":"u1@example.com"}`)
+	got := emailQuery(t, s, `{"accountId":"`+testAccount+`"}`)
 	ids := idsOf(t, got)
 	if len(ids) != 1 || ids[0] != id {
 		t.Fatalf("ids = %v, want [%s]", ids, id)
@@ -40,8 +40,8 @@ func TestEmailQueryFindsAndFeedsEmailGet(t *testing.T) {
 
 	// The whole discovery path, in one batch, through a back-reference.
 	batch := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Email/query",{"accountId":"u1@example.com"},"c0"],
-		["Email/get",{"accountId":"u1@example.com",
+		["Email/query",{"accountId":"`+testAccount+`"},"c0"],
+		["Email/get",{"accountId":"`+testAccount+`",
 			"#ids":{"resultOf":"c0","name":"Email/query","path":"/ids"}},"c1"]]}`)
 	_ = batch
 }
@@ -56,15 +56,15 @@ func TestEmailQueryLimitCeilingIsReported(t *testing.T) {
 		name, args string
 		wantLimit  float64
 	}{
-		{"client names none", `{"accountId":"u1@example.com"}`, 1},
-		{"client over the ceiling", `{"accountId":"u1@example.com","limit":50}`, 1},
-		{"client under the ceiling", `{"accountId":"u1@example.com","limit":1}`, 1},
+		{"client names none", `{"accountId":"` + testAccount + `"}`, 1},
+		{"client over the ceiling", `{"accountId":"` + testAccount + `","limit":50}`, 1},
+		{"client under the ceiling", `{"accountId":"` + testAccount + `","limit":1}`, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := emailQuery(t, s, tt.args)
 			if got["limit"] != tt.wantLimit {
-				t.Errorf("limit = %v, want %v — a client that is not told cannot page", got["limit"], tt.wantLimit)
+				t.Errorf("limit = %v, want %v - a client that is not told cannot page", got["limit"], tt.wantLimit)
 			}
 			if n := len(idsOf(t, got)); uint(n) > uint(tt.wantLimit) {
 				t.Errorf("returned %d ids, over the applied limit", n)
@@ -78,7 +78,7 @@ func TestEmailQueryLimitCeilingIsReported(t *testing.T) {
 func TestEmailQueryNamesTheConditionsItCannotAnswer(t *testing.T) {
 	s, _ := emailServer(t, 0)
 	w := postAPIRaw(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Email/query",{"accountId":"u1@example.com","filter":{"subject":"x","body":"y"}},"c0"]]}`)
+		["Email/query",{"accountId":"`+testAccount+`","filter":{"subject":"x","body":"y"}},"c0"]]}`)
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`
 	}
@@ -117,12 +117,12 @@ func TestEmailQueryAnswersIndexConditions(t *testing.T) {
 		name, args string
 		wantCount  int
 	}{
-		{"has the seen keyword", `{"accountId":"u1@example.com","filter":{"hasKeyword":"$seen"}}`, 1},
-		{"lacks the seen keyword", `{"accountId":"u1@example.com","filter":{"notKeyword":"$seen"}}`, 0},
-		{"minSize over the message", `{"accountId":"u1@example.com","filter":{"minSize":100000}}`, 0},
-		{"minSize under the message", `{"accountId":"u1@example.com","filter":{"minSize":1}}`, 1},
-		{"after the epoch", `{"accountId":"u1@example.com","filter":{"after":"1970-01-01T00:00:00Z"}}`, 1},
-		{"before the epoch", `{"accountId":"u1@example.com","filter":{"before":"1970-01-01T00:00:00Z"}}`, 0},
+		{"has the seen keyword", `{"accountId":"` + testAccount + `","filter":{"hasKeyword":"$seen"}}`, 1},
+		{"lacks the seen keyword", `{"accountId":"` + testAccount + `","filter":{"notKeyword":"$seen"}}`, 0},
+		{"minSize over the message", `{"accountId":"` + testAccount + `","filter":{"minSize":100000}}`, 0},
+		{"minSize under the message", `{"accountId":"` + testAccount + `","filter":{"minSize":1}}`, 1},
+		{"after the epoch", `{"accountId":"` + testAccount + `","filter":{"after":"1970-01-01T00:00:00Z"}}`, 1},
+		{"before the epoch", `{"accountId":"` + testAccount + `","filter":{"before":"1970-01-01T00:00:00Z"}}`, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,9 +139,9 @@ func TestEmailQueryAnswersIndexConditions(t *testing.T) {
 // position sees a message twice or not at all.
 func TestEmailQueryOrderIsDeterministic(t *testing.T) {
 	s, _ := emailServer(t, 0)
-	first := idsOf(t, emailQuery(t, s, `{"accountId":"u1@example.com"}`))
+	first := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`"}`))
 	for i := 0; i < 5; i++ {
-		again := idsOf(t, emailQuery(t, s, `{"accountId":"u1@example.com"}`))
+		again := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`"}`))
 		if len(again) != len(first) {
 			t.Fatalf("run %d returned %d ids, first returned %d", i, len(again), len(first))
 		}
@@ -158,10 +158,10 @@ func TestEmailQueryOrderIsDeterministic(t *testing.T) {
 // client could cache one against the other.
 func TestEmailQueryStateCoversFilterAndSort(t *testing.T) {
 	s, _ := emailServer(t, 0)
-	base := emailQuery(t, s, `{"accountId":"u1@example.com"}`)["queryState"]
+	base := emailQuery(t, s, `{"accountId":"`+testAccount+`"}`)["queryState"]
 	tests := []struct{ name, args string }{
-		{"different filter", `{"accountId":"u1@example.com","filter":{"minSize":1}}`},
-		{"different sort", `{"accountId":"u1@example.com","sort":[{"property":"size"}]}`},
+		{"different filter", `{"accountId":"` + testAccount + `","filter":{"minSize":1}}`},
+		{"different sort", `{"accountId":"` + testAccount + `","sort":[{"property":"size"}]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -176,7 +176,7 @@ func TestEmailQueryStateCoversFilterAndSort(t *testing.T) {
 func TestEmailQueryRefusesUnknownSort(t *testing.T) {
 	s, _ := emailServer(t, 0)
 	w := postAPIRaw(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Email/query",{"accountId":"u1@example.com","sort":[{"property":"subject"}]},"c0"]]}`)
+		["Email/query",{"accountId":"`+testAccount+`","sort":[{"property":"subject"}]},"c0"]]}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}

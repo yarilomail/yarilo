@@ -16,14 +16,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // startRingNode starts a director with ring membership active: secret
 // authenticates JOINs it receives, seeds is who it tries to join via (nil =
 // starts as a founder). Uses the same ctx for the listener and membership so
 // t.Cleanup tears down both. Anti-entropy is disabled so tests that assert
-// on exact propagation paths stay strict — the periodic snapshot would
+// on exact propagation paths stay strict - the periodic snapshot would
 // otherwise eventually paper over a broken direct broadcast; use
 // startRingNodeAE to enable it explicitly.
 func startRingNode(t *testing.T, secret string, seeds []string, minMembers int) (*Server, string) {
@@ -38,7 +38,7 @@ func startRingNodeAE(t *testing.T, secret string, seeds []string, minMembers int
 		RingSecret:          []byte(secret),
 		MinMembers:          minMembers,
 		AntiEntropyInterval: antiEntropy,
-		SeedPollInterval:    -1, // one-shot join — periodic seed re-poll would mask direct-path regressions, same as anti-entropy
+		SeedPollInterval:    -1, // one-shot join - periodic seed re-poll would mask direct-path regressions, same as anti-entropy
 	}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -68,7 +68,7 @@ func startRingNodeAE(t *testing.T, secret string, seeds []string, minMembers int
 // simulates a real pod kill mid-test: cancels this node's own ctx (stopping
 // its dial/accept loops immediately, not just at t.Cleanup) and closes both
 // its listener and every already-established connection (both inbound
-// accepted clients and this node's own outbound ring dial) — closing the
+// accepted clients and this node's own outbound ring dial) - closing the
 // listener alone leaves existing sockets open, unlike a real process kill,
 // which severs everything immediately (#754).
 func startKillableRingNode(t *testing.T, secret string, seeds []string, minMembers int) (srv *Server, addr string, kill func()) {
@@ -77,7 +77,7 @@ func startKillableRingNode(t *testing.T, secret string, seeds []string, minMembe
 		PingInterval:        24 * time.Hour,
 		RingSecret:          []byte(secret),
 		MinMembers:          minMembers,
-		AntiEntropyInterval: -1, // see startRingNode — direct-path tests stay strict
+		AntiEntropyInterval: -1, // see startRingNode - direct-path tests stay strict
 		SeedPollInterval:    -1,
 	}))
 	srv.membership.probeTimeout = 500 * time.Millisecond // fail death-verification probes of killed nodes fast
@@ -156,7 +156,7 @@ func TestMembership_N1_NoPeerMachinery(t *testing.T) {
 		t.Errorf("N=1: no dial/connection should ever be attempted, got dialConn=%v ringConns=%d target=%v", dialConn, ringConns, target)
 	}
 
-	// A singleton must still serve LOOKUP normally — the degradation ladder
+	// A singleton must still serve LOOKUP normally - the degradation ladder
 	// promise: N=1 is today's ordinary single-replica mode, unchanged.
 	srv.ring.AddBackend(&ring.Backend{Vhosts: 100, IP: "10.0.0.1", Port: 993, Tag: "imap", Up: true})
 	if b := srv.ring.LookupBackend("user@example.com"); b == nil || b.IP != "10.0.0.1" {
@@ -180,7 +180,7 @@ func TestMembership_Join_RejectsWithWrongSecret(t *testing.T) {
 	srvB, _ := startRingNode(t, "wrong-secret", []string{addrA}, 3)
 
 	// Give the (doomed) join attempt a real chance, then confirm it never
-	// succeeds — B must stay a singleton forever with a rejected secret.
+	// succeeds - B must stay a singleton forever with a rejected secret.
 	time.Sleep(500 * time.Millisecond)
 	if members := srvB.membership.Members(); len(members) != 1 {
 		t.Fatalf("join with wrong secret must not succeed, got members=%v", members)
@@ -200,7 +200,7 @@ func TestMembership_Join_RejectsWhenNoSecretConfigured(t *testing.T) {
 // TestMembership_Join_RejectsSelfDial reproduces #759's root cause: a
 // load-balanced ClusterIP seed can route a pod's own JOIN dial back to
 // itself. Before handleJoin rejected this, it looked like a normal,
-// immediate success (addMember(self) is a harmless no-op) — but joinLoop
+// immediate success (addMember(self) is a harmless no-op) - but joinLoop
 // then stops retrying the seed forever, leaving the pod stuck as a
 // permanently isolated N=1 that never discovers any real peer.
 func TestMembership_Join_RejectsSelfDial(t *testing.T) {
@@ -227,7 +227,7 @@ func TestMembership_Join_RejectsSelfDial(t *testing.T) {
 // broadcast a directly-connected peer never received (simulated by adding
 // the member out-of-band, with no broadcast at all), the periodic
 // DIRECTOR-LIST snapshot re-broadcast must deliver it within a few
-// intervals — direct broadcasts are the fast path, anti-entropy is the
+// intervals - direct broadcasts are the fast path, anti-entropy is the
 // bounded backstop for exactly the concurrent-formation races that
 // dropped them live.
 func TestMembership_AntiEntropy_HealsMissedMemberBroadcast(t *testing.T) {
@@ -239,7 +239,7 @@ func TestMembership_AntiEntropy_HealsMissedMemberBroadcast(t *testing.T) {
 	})
 	time.Sleep(300 * time.Millisecond) // let the N=2 ring connection settle
 
-	// A real, dialable third node (an unjoined singleton) — using a live
+	// A real, dialable third node (an unjoined singleton) - using a live
 	// address keeps reconcile()'s post-merge dial from declaring it dead
 	// mid-test, which would turn this into a death-path test instead.
 	srvD, _ := startRingNode(t, "shared-secret", nil, 3)
@@ -270,7 +270,7 @@ func startPollingRingNode(t *testing.T, secret string, seeds []string, minMember
 		PingInterval:         24 * time.Hour,
 		RingSecret:           []byte(secret),
 		MinMembers:           minMembers,
-		AntiEntropyInterval:  -1, // isolate the seed-poll path — no anti-entropy backstop
+		AntiEntropyInterval:  -1, // isolate the seed-poll path - no anti-entropy backstop
 		SeedPollInterval:     poll,
 		SeedPollIdleInterval: idle,
 	}))
@@ -302,7 +302,7 @@ func startPollingRingNode(t *testing.T, secret string, seeds []string, minMember
 // node sitting at >= min_members while holding a member that a survivor
 // has since tombstoned must drop it PROMPTLY via the periodic seed poll,
 // not linger for a full idle interval. This is the fresh-replacement-pod
-// case — it learned the dead member as live during the death-detection
+// case - it learned the dead member as live during the death-detection
 // window, so its own view looks stable and "converged" (>= min_members)
 // even though it is wrong. With the shipped default (idle == poll == 2s)
 // eviction happens within a poll cycle; the earlier hardcoded 30s idle
@@ -318,7 +318,7 @@ func TestMembership_FreshJoiner_EvictsRecentlyDeadViaPoll(t *testing.T) {
 		return len(srvA.membership.Members()) == 2 && len(srvD.membership.Members()) == 2
 	})
 
-	// Inject a dead member as LIVE on both, with NO tombstone anywhere —
+	// Inject a dead member as LIVE on both, with NO tombstone anywhere -
 	// mirroring a fresh joiner that learned it during the death window.
 	dead := Member{IP: "10.255.255.254", Port: 9102}
 	srvA.membership.addMember(dead)
@@ -341,7 +341,7 @@ func TestMembership_FreshJoiner_EvictsRecentlyDeadViaPoll(t *testing.T) {
 			}
 		}
 		if !found {
-			return // evicted — pass
+			return // evicted - pass
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -351,7 +351,7 @@ func TestMembership_FreshJoiner_EvictsRecentlyDeadViaPoll(t *testing.T) {
 // TestMembership_NeighborEviction_ClearsPhantomMember is the #765/#768
 // gate for phantom cleanup under the reference's neighbor model: a phantom
 // member (a terminating pod's address merged during rolling-restart churn)
-// must be evicted by whichever node computes it as its RIGHT neighbor —
+// must be evicted by whichever node computes it as its RIGHT neighbor -
 // exactly one node does, once views agree (anti-entropy spreads the
 // phantom before the eviction kills it; O(1) probes per node, no
 // all-probes-all sweep). Both nodes learn the phantom, both reconcile,
@@ -387,14 +387,14 @@ func TestMembership_NeighborEviction_ClearsPhantomMember(t *testing.T) {
 
 	// dialRight against the dead phantom: 3 refused dials at ~1s spacing
 	// on whichever node has it as right neighbor, then DIRECTOR-REMOVE to
-	// the other — well under this deadline. Without neighbor-driven
+	// the other - well under this deadline. Without neighbor-driven
 	// eviction this never converges.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		aClean := len(srvA.membership.Members()) == 2
 		bClean := len(srvB.membership.Members()) == 2
 		if aClean && bClean {
-			return // phantom evicted everywhere — pass
+			return // phantom evicted everywhere - pass
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -404,7 +404,7 @@ func TestMembership_NeighborEviction_ClearsPhantomMember(t *testing.T) {
 
 // TestMembership_LeftNeighborDeath_DetectedByAcceptSide is the #768 core
 // regression: at N=2 only the lower-sorted member dials, so when the LOWER
-// member dies the higher one has no dial of its own to notice the death —
+// member dies the higher one has no dial of its own to notice the death -
 // before left-neighbor monitoring the survivor kept the dead member
 // forever (an accepted connection dropping was documented as "never a
 // death signal"). Now the accept side must treat the loss of the
@@ -430,7 +430,7 @@ func TestMembership_LeftNeighborDeath_DetectedByAcceptSide(t *testing.T) {
 	killLower()
 
 	// Death verification: up to 3 probes at ~1s spacing after the read
-	// error — well inside this window. The old model never detects this
+	// error - well inside this window. The old model never detects this
 	// at all (no dial from the higher member exists to fail).
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -445,7 +445,7 @@ func TestMembership_LeftNeighborDeath_DetectedByAcceptSide(t *testing.T) {
 
 // TestMembership_TombstoneTTL_ExpiresAndReadmits pins the #765 tombstone
 // TTL semantics: an expired tombstone stops being gossiped and no longer
-// blocks re-admission — bounded growth across churn, safe because probe
+// blocks re-admission - bounded growth across churn, safe because probe
 // eviction re-evicts an unreachable resurrectee on its own.
 func TestMembership_TombstoneTTL_ExpiresAndReadmits(t *testing.T) {
 	srv, _ := startRingNode(t, "shared-secret", nil, 1)
@@ -523,7 +523,7 @@ func dialAsLeftNeighbor(t *testing.T, addr string, left Member) net.Conn {
 // A close the LEFT neighbour announced with QUIT is benign and keeps the member,
 // as the reference sends it first; an unannounced close evicts it (#768).
 func TestMembership_QuitClassifiesCloseAsBenign(t *testing.T) {
-	left := Member{IP: "9.0.0.1", Port: 9102} // sorts below 127.0.0.1 — always the server's left
+	left := Member{IP: "9.0.0.1", Port: 9102} // sorts below 127.0.0.1 - always the server's left
 
 	t.Run("quit close keeps the member", func(t *testing.T) {
 		srv, addr, _ := startKillableRingNode(t, "shared-secret", nil, 2)
@@ -536,7 +536,7 @@ func TestMembership_QuitClassifiesCloseAsBenign(t *testing.T) {
 		conn.Close()
 
 		// Long enough for the abrupt-close path to have evicted (~4s at
-		// the helper's 500ms probe timeout) — the member must survive it.
+		// the helper's 500ms probe timeout) - the member must survive it.
 		time.Sleep(6 * time.Second)
 		if members := srv.membership.Members(); len(members) != 2 {
 			t.Fatalf("QUIT-announced close must not evict the left neighbor, got %v", members)
@@ -550,12 +550,12 @@ func TestMembership_QuitClassifiesCloseAsBenign(t *testing.T) {
 			return len(srv.membership.Members()) == 2
 		})
 
-		conn.Close() // no QUIT — indistinguishable from a death
+		conn.Close() // no QUIT - indistinguishable from a death
 
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
 			if len(srv.membership.Members()) == 1 {
-				return // suspected, probed, evicted — correct
+				return // suspected, probed, evicted - correct
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
@@ -565,7 +565,7 @@ func TestMembership_QuitClassifiesCloseAsBenign(t *testing.T) {
 
 // TestReadBoundedLine_RejectsOversizedLine pins the #703 fix: a peer
 // streaming bytes with no newline must cost at most one bufio buffer, not
-// unbounded memory — ReadString kept growing forever; readBoundedLine
+// unbounded memory - ReadString kept growing forever; readBoundedLine
 // errors out at the buffer boundary and the caller drops the connection.
 func TestReadBoundedLine_RejectsOversizedLine(t *testing.T) {
 	rd := bufio.NewReaderSize(strings.NewReader(strings.Repeat("a", 8192)), 4096)
@@ -607,7 +607,7 @@ func TestMembership_N2_OnlyLowerMemberDials(t *testing.T) {
 	// The higher-sorted member must never dial: it has no rightTarget of its
 	// own (rightNeighbor() reports !ok for it), though the connection the
 	// lower member dials in does get registered in ringConns once it
-	// arrives — that's the "one connection serves both directions"
+	// arrives - that's the "one connection serves both directions"
 	// requirement, not a dial from this side.
 	if _, ok := higher.membership.rightNeighbor(); ok {
 		t.Error("N=2: the higher-sorted member must not compute a dial target")
@@ -636,7 +636,7 @@ func TestMembership_N2_OriginAbsorb_RingChangeConverges(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	// USER-MOVED (unlike RING-CHANGE's "up" case, which needs the backend
-	// already known from the initial handshake — see applyRingChangeFields)
+	// already known from the initial handshake - see applyRingChangeFields)
 	// carries everything needed to apply on the other side from nothing,
 	// making it the cleaner probe for pure ring-forwarding behavior.
 	srvA.originateRingEvent("USER-MOVED", "user@example.com\t10.0.0.5\t993", nil)
@@ -719,7 +719,7 @@ func TestMembership_N3_KillMember_ConvergesWithoutCorruption(t *testing.T) {
 	killB()
 
 	// Death detection needs 3 failed dial attempts at ~1s spacing before
-	// declaring dead, plus reconnect+handshake time for the retarget — on
+	// declaring dead, plus reconnect+handshake time for the retarget - on
 	// a loaded/shared CI runner this can run well past what's comfortable
 	// on a dev machine, so the window here is deliberately generous.
 	survivors := []*Server{srvA, srvC}
@@ -749,7 +749,7 @@ func TestMembership_N3_KillMember_ConvergesWithoutCorruption(t *testing.T) {
 		}
 	}
 
-	// Stability: once converged, it must STAY converged — no further
+	// Stability: once converged, it must STAY converged - no further
 	// eviction (the #754 bug specifically mis-declared the live wrap
 	// neighbor dead one detection cycle after the real death).
 	time.Sleep(4 * time.Second)
@@ -790,11 +790,11 @@ func TestMembership_N3_KillMember_ConvergesWithoutCorruption(t *testing.T) {
 // TestMembership_N3_ShrinkToN2_ReusesExistingConnectionForward isolates the
 // exact #754 follow-up scenario, independent of dial/accept timing luck:
 // kill the wrap (highest-sorted) member of a 3-ring, so the surviving
-// low→mid dial edge is completely untouched by the death — low was already
+// low→mid dial edge is completely untouched by the death - low was already
 // dialing mid before the kill and keeps dialing the same target after, no
 // redial involved. mid alone detects the death (its own dial to high fails)
 // and must deliver DIRECTOR-REMOVE to low over that same still-open,
-// pre-existing connection now that mid has become the N=2 passive member —
+// pre-existing connection now that mid has become the N=2 passive member -
 // there is no new connection anywhere in this path for a resync to hide
 // behind. Under the old dialConn/passiveConn model this connection was
 // classified (at accept time, while still N=3) as not the passive path and
@@ -834,7 +834,7 @@ func TestMembership_N3_ShrinkToN2_ReusesExistingConnectionForward(t *testing.T) 
 	// test (death detection ~3 failed attempts at ~1s spacing, then an
 	// immediate broadcastRing), but with no fresh connection anywhere in
 	// this path for a resync to accidentally paper over a still-broken
-	// forward — this window is what makes the test actually isolate the
+	// forward - this window is what makes the test actually isolate the
 	// fix rather than just eventually observe it.
 	for _, s := range []*Server{low, mid} {
 		var last []Member
@@ -866,7 +866,7 @@ func TestMembership_N3_ShrinkToN2_ReusesExistingConnectionForward(t *testing.T) 
 
 // TestMembership_Formation_ViaLoadBalancedSeed is the in-process gate for
 // #759's live failure mode: N members join SIMULTANEOUSLY through one
-// shared seed address that — like a k8s ClusterIP behind kube-proxy —
+// shared seed address that - like a k8s ClusterIP behind kube-proxy -
 // proxies every connection to a RANDOM member, including the dialer
 // itself. Under that formation race the per-node right-neighbor dials are
 // computed from divergent views and are not guaranteed to form one
@@ -917,7 +917,7 @@ func TestMembership_Formation_ViaLoadBalancedSeed(t *testing.T) {
 
 	// Phase 1: bring up every node's listener (registering it with the
 	// seed router) WITHOUT starting membership, so that when membership
-	// does start, all N race their joins concurrently — the divergent
+	// does start, all N race their joins concurrently - the divergent
 	// formation views are the whole point of this test.
 	srvs := make([]*Server, 0, n)
 	starts := make([]func(), 0, n)
@@ -991,7 +991,7 @@ func TestMembership_Formation_ViaLoadBalancedSeed(t *testing.T) {
 // production seed shape (#759): a hostname (in k8s the headless
 // -director-ring Service) whose resolution returns EVERY member address.
 // expandSeed must fan the poll out to all resolved addresses except self
-// each cycle — deterministic convergence within about one poll interval,
+// each cycle - deterministic convergence within about one poll interval,
 // no routing randomness, no self-dials at all. This also pins the
 // self-exclusion behavior that sidesteps Go's RFC 6724 own-IP-first
 // destination ordering.

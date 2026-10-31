@@ -7,7 +7,7 @@ import (
 )
 
 // TestTransientRetriesDefault pins the budget semantics, including the negative
-// opt-out — an operator disabling retries must get fail-on-first-error back
+// opt-out - an operator disabling retries must get fail-on-first-error back
 // rather than the default silently applying.
 func TestTransientRetriesDefault(t *testing.T) {
 	tests := []struct {

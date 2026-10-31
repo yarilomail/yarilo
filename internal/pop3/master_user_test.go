@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // masterMockAuth implements both Authenticator and
@@ -37,7 +37,7 @@ func (m *masterMockAuth) AuthenticateMaster(authzid, authid, password, _, _ stri
 	return &protocol.AuthResponse{Result: protocol.AuthOK, Username: authzid}, nil
 }
 
-// TestSession_AuthPlain_MasterUserImpersonates — SASL PLAIN with
+// TestSession_AuthPlain_MasterUserImpersonates - SASL PLAIN with
 // authzid=alice authid=admin password=admin's-password. POP3 must
 // authenticate the session as alice via the MasterAuthenticator
 // path and land in TRANSACTION state.
@@ -64,7 +64,7 @@ func TestSession_AuthPlain_MasterUserImpersonates(t *testing.T) {
 	}
 }
 
-// TestSession_AuthPlain_MasterWrongPasswordRejected — same authzid
+// TestSession_AuthPlain_MasterWrongPasswordRejected - same authzid
 // but wrong master password.
 func TestSession_AuthPlain_MasterWrongPasswordRejected(t *testing.T) {
 	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
@@ -84,7 +84,7 @@ func TestSession_AuthPlain_MasterWrongPasswordRejected(t *testing.T) {
 	}
 }
 
-// TestSession_AuthPlain_UnregisteredTargetRejected — master
+// TestSession_AuthPlain_UnregisteredTargetRejected - master
 // authenticates but the target is not on the allow-list.
 func TestSession_AuthPlain_UnregisteredTargetRejected(t *testing.T) {
 	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
@@ -104,7 +104,7 @@ func TestSession_AuthPlain_UnregisteredTargetRejected(t *testing.T) {
 	}
 }
 
-// TestSession_AuthPlain_BackendWithoutMasterSupport — when the
+// TestSession_AuthPlain_BackendWithoutMasterSupport - when the
 // configured Authenticator is a plain Authenticator (no master
 // surface), a non-empty distinct authzid is rejected outright.
 func TestSession_AuthPlain_BackendWithoutMasterSupport(t *testing.T) {
@@ -125,7 +125,7 @@ func TestSession_AuthPlain_BackendWithoutMasterSupport(t *testing.T) {
 	}
 }
 
-// TestSession_AuthPlain_AuthzidEqualsAuthidIsRegularLogin — RFC 4616
+// TestSession_AuthPlain_AuthzidEqualsAuthidIsRegularLogin - RFC 4616
 // allows authzid == authid; behaves as a regular login.
 func TestSession_AuthPlain_AuthzidEqualsAuthidIsRegularLogin(t *testing.T) {
 	opts := newTestOpts(t,
@@ -144,7 +144,7 @@ func TestSession_AuthPlain_AuthzidEqualsAuthidIsRegularLogin(t *testing.T) {
 	}
 }
 
-// TestSession_UserPassNeverImpersonates — the USER/PASS legacy
+// TestSession_UserPassNeverImpersonates - the USER/PASS legacy
 // command path has no authzid surface; the session passes "" so
 // the regular Authenticate path always runs.
 func TestSession_UserPassNeverImpersonates(t *testing.T) {
@@ -159,7 +159,7 @@ func TestSession_UserPassNeverImpersonates(t *testing.T) {
 
 	// admin sends USER admin + PASS adminpass. master flow MUST NOT
 	// trigger from this path even though admin is a configured
-	// master — USER/PASS has no authzid surface. So the regular
+	// master - USER/PASS has no authzid surface. So the regular
 	// Authenticate is called with username=admin, which is NOT in
 	// `users` → -ERR.
 	send(t, c, "USER admin@test.com")

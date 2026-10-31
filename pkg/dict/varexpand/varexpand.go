@@ -6,14 +6,14 @@
 //
 //	%u   full username  ("alice@example.com")
 //	%n   local-part     ("alice")
-//	%d   domain         ("example.com")  — empty when username has no '@'
+//	%d   domain         ("example.com")  - empty when username has no '@'
 //	%h   home directory
-//	%i   numeric uid as text — empty when not supplied
+//	%i   numeric uid as text - empty when not supplied
 //	%%   literal '%'
 //
 // Unknown verbs are passed through verbatim with the leading '%' kept,
 // so a key like "abc%X/def" round-trips unchanged when "%X" is not
-// recognised — the expander is permissive by design so future
+// recognised - the expander is permissive by design so future
 // additions don't break old configs.
 package varexpand
 

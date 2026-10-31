@@ -1,5 +1,5 @@
 {{- if and ((.Values.components.manageSieve | default dict).enabled) (not .Values.components.backend.coLocated) }}
-## Headless — ManageSieve backend pods (internal, reached by the login pod).
+## Headless - ManageSieve backend pods (internal, reached by the login pod).
 apiVersion: v1
 kind: Service
 metadata:
@@ -18,7 +18,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "managesieve") | nindent 4 }}
 ---
-## ClusterIP — telemetry / health
+## ClusterIP - telemetry / health
 apiVersion: v1
 kind: Service
 metadata:

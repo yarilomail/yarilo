@@ -44,6 +44,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+            - name: JMAP_WEBSOCKET_TICKET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-jmap-websocket-ticket" (include "yarilo.fullname" $) }}
+                  key: key
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -58,7 +63,7 @@ spec:
               protocol: TCP
           ## startupProbe replaces the wait-auth / wait-warden init containers (#903).
           ## It works here because this pod does NOT dial auth or warden during
-          ## startup — those connections are created lazily on the first request —
+          ## startup - those connections are created lazily on the first request -
           ## so the process comes up regardless and the probe simply withholds
           ## traffic until the dependencies answer.
           ##
@@ -70,7 +75,7 @@ spec:
           ##
           ## yarctl rather than wget: one deadline covers DNS, dial and response,
           ## the failing URL and reason reach `kubectl describe`, and it needs no
-          ## second image — yarctl already ships in this one.
+          ## second image - yarctl already ships in this one.
           {{- if .Values.components.jmapLogin.startupProbe.enabled }}
           startupProbe:
             exec:

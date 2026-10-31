@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
 )
 
 // PurgeStats reports what a single Purge invocation accomplished.
@@ -69,7 +69,7 @@ func (u *userMailbox) purgeFile(p *mdboxmap.Placement, fileID uint32, stats *Pur
 	}
 
 	if len(live) == 0 {
-		// Whole file is dead — drop map records and unlink.
+		// Whole file is dead - drop map records and unlink.
 		if err := p.AppendMove(nil, dead); err != nil {
 			return fmt.Errorf("mdbox/purge: expunge file=%d: %w", fileID, err)
 		}
@@ -124,68 +124,44 @@ var afterRecordsRead func()
 // compactRecords copies each live record from src to dst, keeping the source
 // GUID -- a fresh one would break identity across purge cycles.
 func (u *userMailbox) compactRecords(srcFileID, dstFileID uint32, live []mdboxmap.MapEntry) ([]mdboxmap.MovedRecord, error) {
-	srcPath := u.mfilePath(srcFileID)
-	src, err := os.Open(srcPath)
-	if err != nil {
-		return nil, fmt.Errorf("mdbox/purge: open src m.%d: %w", srcFileID, err)
-	}
-	defer src.Close()
-
-	dstPath := u.mfilePath(dstFileID)
-	dst, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("mdbox/purge: create dst m.%d: %w", dstFileID, err)
-	}
-	defer dst.Close()
-
-	out := make([]mdboxmap.MovedRecord, 0, len(live))
-	for _, e := range live {
-		body, guid, origMbox, received, err := readRecordBodyAndTrailer(src, e.Offset)
-		if err != nil {
-			return nil, fmt.Errorf("mdbox/purge: read uid=%d: %w", e.UID, err)
-		}
-		offset, err := appendRecordToFile(dst, body, guid, origMbox, received)
-		if err != nil {
-			return nil, fmt.Errorf("mdbox/purge: write uid=%d: %w", e.UID, err)
-		}
-		out = append(out, mdboxmap.MovedRecord{
-			UID:    e.UID,
-			FileID: dstFileID,
-			Offset: offset,
-			Size:   e.Size,
-			GUID:   guid,
-		})
-	}
-	if err := dst.Sync(); err != nil {
-		return nil, fmt.Errorf("mdbox/purge: fsync m.%d: %w", dstFileID, err)
-	}
-	return out, nil
+	return u.copyRecords("purge", u.mfilePath(srcFileID), u.mfilePath(dstFileID), dstFileID, live)
 }
 
 // compactRecordsToTier is compactRecords with explicit src and dst paths, for
 // a copy across tiers.
 func (u *userMailbox) compactRecordsToTier(srcPath, dstPath string, dstFileID uint32, live []mdboxmap.MapEntry) ([]mdboxmap.MovedRecord, error) {
+	return u.copyRecords("altmove", srcPath, dstPath, dstFileID, live)
+}
+
+// copyRecords writes live into a new dstPath. On any failure the partial file
+// is removed: no map entry names it, so no purge would ever reclaim its copies.
+func (u *userMailbox) copyRecords(verb, srcPath, dstPath string, dstFileID uint32, live []mdboxmap.MapEntry) (_ []mdboxmap.MovedRecord, err error) {
 	src, err := os.Open(srcPath)
 	if err != nil {
-		return nil, fmt.Errorf("mdbox/altmove: open src %s: %w", srcPath, err)
+		return nil, fmt.Errorf("mdbox/%s: open src %s: %w", verb, srcPath, err)
 	}
 	defer src.Close()
 
 	dst, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("mdbox/altmove: create dst %s: %w", dstPath, err)
+		return nil, fmt.Errorf("mdbox/%s: create dst %s: %w", verb, dstPath, err)
 	}
-	defer dst.Close()
+	defer func() {
+		_ = dst.Close()
+		if err != nil {
+			_ = os.Remove(dstPath)
+		}
+	}()
 
 	out := make([]mdboxmap.MovedRecord, 0, len(live))
 	for _, e := range live {
 		body, guid, origMbox, received, err := readRecordBodyAndTrailer(src, e.Offset)
 		if err != nil {
-			return nil, fmt.Errorf("mdbox/altmove: read uid=%d: %w", e.UID, err)
+			return nil, fmt.Errorf("mdbox/%s: read uid=%d: %w", verb, e.UID, err)
 		}
 		offset, err := appendRecordToFile(dst, body, guid, origMbox, received)
 		if err != nil {
-			return nil, fmt.Errorf("mdbox/altmove: write uid=%d: %w", e.UID, err)
+			return nil, fmt.Errorf("mdbox/%s: write uid=%d: %w", verb, e.UID, err)
 		}
 		out = append(out, mdboxmap.MovedRecord{
 			UID:    e.UID,
@@ -195,8 +171,8 @@ func (u *userMailbox) compactRecordsToTier(srcPath, dstPath string, dstFileID ui
 			GUID:   guid,
 		})
 	}
-	if err := dst.Sync(); err != nil {
-		return nil, fmt.Errorf("mdbox/altmove: fsync %s: %w", dstPath, err)
+	if err := syncFile(dst); err != nil {
+		return nil, fmt.Errorf("mdbox/%s: fsync %s: %w", verb, dstPath, err)
 	}
 	return out, nil
 }

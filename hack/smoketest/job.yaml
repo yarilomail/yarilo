@@ -24,6 +24,11 @@ spec:
           mountPath: /tls
           readOnly: true
         env:
+        - name: SANDBOX_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sandbox-test-account
+              key: password
         # The director row authenticates with this token; without it the row
         # fails with HTTP 401 rather than skipping, because -director-api is set.
         - name: DIRECTOR_API_TOKEN
@@ -71,7 +76,7 @@ spec:
         - -smtp-host=yarilo-submission-login
         - -smtp-sub-port=587
         - -imap-user=u1@d00001.test
-        - -imap-pass=Yarilo!test1
+        - -imap-pass=$(SANDBOX_PASSWORD)
         - -lmtp-login
         # Certificates are verified: client-facing ones against the stand's
         # public name, the admin APIs against the pinned internal name.
@@ -84,17 +89,17 @@ spec:
         # The maildrop cycle: STAT/LIST/RETR/UIDL and a deletion, on a message
         # this run delivers and removes again (#1734).
         - -pop3-user=u1@d00001.test
-        - -pop3-pass=Yarilo!test1
+        - -pop3-pass=$(SANDBOX_PASSWORD)
         - -managesieve
         - -managesieve-port=4190
         - -managesieve-user=u1@d00001.test
-        - -managesieve-pass=Yarilo!test1
+        - -managesieve-pass=$(SANDBOX_PASSWORD)
         - -sieve
         - -delivery-host=yarilo-lmtp-login
         - -delivery-port=24
         - -delivery-proto=lmtp
         - -passwd-file-user=u1@d00001.test
-        - -passwd-file-pass=Yarilo!test1
+        - -passwd-file-pass=$(SANDBOX_PASSWORD)
         # The static passdb matches every username, so this names an account
         # that exists nowhere else; the password reaches the job the same way
         # it reaches the server, from the secret, and works only from inside
@@ -102,7 +107,7 @@ spec:
         - -static-user=static@d00001.test
         - -static-pass=$(YARILO_STATIC_PASSWORD)
         - -quota-user=u1@d00001.test
-        - -quota-pass=Yarilo!test1
+        - -quota-pass=$(SANDBOX_PASSWORD)
         # The MX runs in its own namespace: inbound mail is not this release's
         # submission host, so it carries its own address (#1855).
         - -smtp-mx
@@ -113,23 +118,23 @@ spec:
         - -proxy-protocol
         - -proxy-protocol-port=10025
         - -scram-user=scram@d00001.test
-        - -scram-pass=Yarilo!test1
+        - -scram-pass=$(SANDBOX_PASSWORD)
         - -quota-over-user=over@d00001.test
-        - -quota-over-pass=Yarilo!test1
+        - -quota-over-pass=$(SANDBOX_PASSWORD)
         - -acl-user=u1@d00001.test
-        - -acl-pass=Yarilo!test1
+        - -acl-pass=$(SANDBOX_PASSWORD)
         # The owner-templated namespace, not Public/: the owner creates in its
         # own store and the peer reaches it through user/<owner>/ (#1858).
         - -acl-peer-user=u2@d00001.test
-        - -acl-peer-pass=Yarilo!test1
+        - -acl-peer-pass=$(SANDBOX_PASSWORD)
         - -acl-shared-prefix=user/u1@d00001.test/
         - -envelope-user=u1@d00001.test
-        - -envelope-pass=Yarilo!test1
+        - -envelope-pass=$(SANDBOX_PASSWORD)
         - -fts-user=u1@d00001.test
-        - -fts-pass=Yarilo!test1
+        - -fts-pass=$(SANDBOX_PASSWORD)
         # One account per storage driver, and the drivers are split by domain
         # on this stand: d00001 mdbox, d00002 maildir, d00003 sdbox.
-        - -fts-copy-users=u1@d00001.test:Yarilo!test1,u51@d00002.test:Yarilo!test1,u101@d00003.test:Yarilo!test1
+        - -fts-copy-users=u1@d00001.test:$(SANDBOX_PASSWORD),u51@d00002.test:$(SANDBOX_PASSWORD),u101@d00003.test:$(SANDBOX_PASSWORD)
         - -director-api=https://yarilo-director-api:9103
         # The service is yarilo-backend (not -backend-api) and 9105 is HTTPS.
         - -backend-api=https://yarilo-backend:9105
@@ -140,4 +145,4 @@ spec:
         - -jmap-host=10.50.80.29
         - -jmap-port=443
         - -jmap-user=u1@d00001.test
-        - -jmap-pass=Yarilo!test1
+        - -jmap-pass=$(SANDBOX_PASSWORD)

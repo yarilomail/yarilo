@@ -29,13 +29,19 @@ spec:
         ##
         ## Raise them only against a stand with headroom to spare, and check
         ## container_cpu_cfs_throttled_periods_total afterwards either way; see
-        ## https://doc.yarilomail.org/TESTING.
+        ## https://doc.yarilomail.org/latest/operations/testing.html.
+        env:
+        - name: SANDBOX_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sandbox-test-account
+              key: password
         args:
         - host=yarilo-imap-login.yarilo-sb.svc.cluster.local
         - port=143
         - user=u%d@d00001.test
         - users=1-20
-        - pass=Yarilo!test1
+        - pass=$(SANDBOX_PASSWORD)
         - clients=50
         - msgs=500
         - secs=90

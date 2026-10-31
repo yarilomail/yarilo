@@ -24,7 +24,7 @@ func readyzBody(t *testing.T, s *Server) (int, map[string]any) {
 
 // TestReadyzWithoutChecksIsReady covers the deliberate default: a component with
 // no external dependency is ready once its process is up. This must not depend on
-// SetReady, or a component that never calls it would be stuck not-ready forever —
+// SetReady, or a component that never calls it would be stuck not-ready forever -
 // which is exactly what would have happened to eleven binaries during
 // unification had the flag been the fallback.
 func TestReadyzWithoutChecksIsReady(t *testing.T) {
@@ -181,7 +181,7 @@ func TestChecksRunConcurrently(t *testing.T) {
 		t.Fatalf("got %d results, want 3", len(results))
 	}
 	if elapsed > 2*delay {
-		t.Fatalf("evaluate took %v for 3x%v checks — they ran sequentially", elapsed, delay)
+		t.Fatalf("evaluate took %v for 3x%v checks - they ran sequentially", elapsed, delay)
 	}
 }
 

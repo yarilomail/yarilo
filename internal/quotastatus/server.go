@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Options configures the quota-status policy server.
@@ -205,7 +205,7 @@ func (s *Server) check(attrs map[string]string) string {
 		return s.success()
 	}
 
-	// Open the recipient's storage and sum the authoritative index aggregate —
+	// Open the recipient's storage and sum the authoritative index aggregate -
 	// the count backend, exactly as a delivery agent would.
 	box := s.opts.Mailbox.OpenUser(ui)
 	defer box.Close() //nolint:errcheck
@@ -294,7 +294,7 @@ func extractFolder(addr string, delim byte) string {
 //     without the detail (e.g. "alice+tag@example.com" → "alice@example.com")
 //
 // Catch-all (@domain) and multiple-hop chains are handled by the
-// configured SQL query — the server just iterates until stable.
+// configured SQL query - the server just iterates until stable.
 // Returns addr unchanged when AliasDict is nil or the address is not found.
 func (s *Server) resolveAlias(ctx context.Context, addr string) string {
 	if s.opts.AliasDict == nil {

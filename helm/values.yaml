@@ -12,10 +12,12 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 17
+config_schema_version: 18
 
 image:
-  repository: ghcr.io/yarilomail/yarilo
+  ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
+  ## its `latest` is a develop build.
+  repository: docker.io/0kaba0/yarilo
   tag: ""
   pullPolicy: IfNotPresent
 
@@ -28,15 +30,15 @@ internalTLS:
   enabled: true
   ## Name every internal client (auth/warden/locks/backend-api/... dials) pins
   ## as the server certificate name. Internal services are reached by short
-  ## name / FQDN / pod IP interchangeably, so this stable pinned name — not the
-  ## dialed host — is what gets verified. Empty auto-derives <release>-internal,
+  ## name / FQDN / pod IP interchangeably, so this stable pinned name - not the
+  ## dialed host - is what gets verified. Empty auto-derives <release>-internal,
   ## which the chart also injects into the director cert SANs; the shared
   ## internal-tls cert you provide MUST carry this name as a SAN. The director
   ## RING dial is separate (components.director.internalTLS.ringTlsServerName).
   serverName: ""
   ## TLS 1.3 client session resumption for internal mTLS dials (#856). Repeated
   ## dials to the same peer resume via a cached session ticket instead of a full
-  ## handshake — cuts the delivery→verify handshake CPU that times out heavy
+  ## handshake - cuts the delivery→verify handshake CPU that times out heavy
   ## smoke tests on a single-core node.
   ## sessionCacheSize: cache entries per client config; 0 disables resumption
   ##   (every dial is a full handshake).
@@ -95,7 +97,7 @@ login:
   ## gracefulShutdown.terminationGracePeriodSeconds. 0 closes them at once.
   sessionGracePeriodSeconds: 30
   ## transientRetries (#896): extra attempts a transient failure gets before the
-  ## client is told the service is unavailable — yarilo-auth reporting temp-fail,
+  ## client is told the service is unavailable - yarilo-auth reporting temp-fail,
   ## the first dial to auth, and bringing up the backend session. Answering on the
   ## first error turns a dependency blip (a rolling restart, a reconnect) into a
   ## visible login failure the client can only recover from by opening a new
@@ -112,10 +114,10 @@ login:
   ## transientReloginCap (#896) is the DIFFERENT, second-layer knob. Once the
   ## per-hop transientRetries above are exhausted, the proxy answers a tagged
   ## NO [UNAVAILABLE] but keeps the connection OPEN and returns to the pre-auth
-  ## command loop, so the client can LOGIN again on the SAME connection — no new
+  ## command loop, so the client can LOGIN again on the SAME connection - no new
   ## TCP + TLS handshake, which is the whole cost #896 removes.
   ## The cap is the number of transient failures ONE connection tolerates, each
-  ## answered with a tagged NO, before it is finally closed — so a wedged backend
+  ## answered with a tagged NO, before it is finally closed - so a wedged backend
   ## cannot accumulate sockets that never progress. Counted from the first
   ## attempt, so cap=N permits N tagged NOs, i.e. N-1 actual re-LOGINs between
   ## them. Independent of auth_max_attempts (bad passwords). 0 closes on the
@@ -131,7 +133,7 @@ login:
 ## racing-new client connections.
 gracefulShutdown:
   ## preStop sleep (seconds) before SIGTERM, so kube removes the pod from
-  ## Service endpoints BEFORE the process stops accepting — closes the
+  ## Service endpoints BEFORE the process stops accepting - closes the
   ## endpoint-removal race (new connections routed to a terminating pod).
   ## Should be >= the endpoint-propagation interval (kube-proxy / MetalLB).
   preStopSleepSeconds: 5
@@ -226,7 +228,7 @@ storage:
   ## dbox_reactive_rebuild: true           # sdbox: on a missing/corrupt message read, flag the folder and heal its index (expunge vanished records) on the next open
   ## mail_path: ""                            # mail storage root (empty = same as home); supports ~/ and %u/%d/%n/%h
   ## mail_inbox_path: ""                      # INBOX override path (empty = mail_path); supports ~/ and %u/%d/%n/%h
-  ## (the cold tier is mail_alt_path below — one key for maildir and mdbox alike)
+  ## (the cold tier is mail_alt_path below - one key for maildir and mdbox alike)
   mdbox_rotate_size: "10M"              # max size per m.<N> before rolling (e.g. 10M, 1G, or a raw byte count); must be a size
   ## mdbox_rotate_interval: 0             # roll the append file once older than this (e.g. 30s, 5m, 1h, or raw seconds; 0 = disabled)
   ## mdbox_preallocate_space: false       # fallocate() new m.<N> files up front (Linux only)
@@ -234,16 +236,16 @@ storage:
   ## mail_control_path: "/var/yarilo-control/%d/%n" # redirect yarilo-uidlist and subscriptions files
   ## mail_volatile_path: "/run/yarilo-volatile/%d/%n" # local tmpfs for index tmp files (NFS deployments)
   ## mail_alt_path: "/mnt/cold/%d/%n"              # cold-tier storage root, maildir and mdbox alike
-  ## Log rotation, one policy for both transaction logs — the mdbox map and the per-folder file index.
+  ## Log rotation, one policy for both transaction logs - the mdbox map and the per-folder file index.
   ## Every open replays the tail since the last fold, so the floor bounds what an open costs.
   ## min_size 0 turns rotation off; max_size 0 drops the ceiling; min_age 0 folds at once.
-  mail_index_log_rotate_min_size: "32k"  # 32 KiB — never fold below this (human-readable; quote it)
-  mail_index_log_rotate_min_age: 60      # 60s    — between min and max, fold only once the log is this old.
+  mail_index_log_rotate_min_size: "32k"  # 32 KiB - never fold below this (human-readable; quote it)
+  mail_index_log_rotate_min_age: 60      # 60s    - between min and max, fold only once the log is this old.
   ##                                         #          Measured (#1460): at 300s an actively delivering account
   ##                                         #          carried a log to ~110 KB and paid p99 249ms against 128ms.
   ##                                         #          Raise it for a very large mailbox with sparse delivery,
   ##                                         #          where folds are the rarer cost.
-  mail_index_log_rotate_max_size: "1M"   # 1 MiB  — fold above this whatever the age (human-readable; quote it)
+  mail_index_log_rotate_max_size: "1M"   # 1 MiB  - fold above this whatever the age (human-readable; quote it)
   max_concurrent_writes: 0           # 0 = unlimited; tune to storage type: ~32 HDD, ~256 SSD
   ## mailbox_list_utf8: true            # true = UTF-8 on disk (default); false = modified-UTF-7 for legacy migrations
   ##                                    # UPGRADE NOTE: before 2.3.55 this key was documented but never rendered,
@@ -254,7 +256,7 @@ storage:
   ##                                    # Note that false leaves the two trees naming one mailbox differently:
   ##                                    # the index (and volatile, and FTS) path is built from the logical folder
   ##                                    # name and is therefore always UTF-8, while the mail directory is
-  ##                                    # modified-UTF-7. That is not new — it is what those releases already do —
+  ##                                    # modified-UTF-7. That is not new - it is what those releases already do -
   ##                                    # but it means a later move to UTF-8 renames only the mail directories;
   ##                                    # the index side is already there.
   ## mailbox_list_normalize_names_to_nfc: true # true = NFC-normalise folder names (default)
@@ -292,7 +294,7 @@ storage:
   ##                                      # a dotted "a.b" are the same bytes on disk, so existing names cannot be
   ##                                      # audited by reading the filesystem. Turn on for new deployments.
   ##                                      # NOTE: with this off and no escape char set, such a name is not "kept"
-  ##                                      # on maildir — it is reinterpreted. CREATE "Invoices.2026" is accepted
+  ##                                      # on maildir - it is reinterpreted. CREATE "Invoices.2026" is accepted
   ##                                      # and LIST returns "Invoices/2026": a parent and a child the client
   ##                                      # never asked for. SELECT of the original name still works, so a client
   ##                                      # that does not LIST never learns of the substitution. Set
@@ -302,7 +304,7 @@ storage:
   ##                                      # name is kept literal on disk: the layout separator the client wrote is
   ##                                      # stored as <char><hex>, so "Invoices.2026" stays one mailbox and is
   ##                                      # listed as written, while "a/b" still nests. It also makes the name
-  ##                                      # portable — the same folder is one mailbox on maildir and on dbox, so a
+  ##                                      # portable - the same folder is one mailbox on maildir and on dbox, so a
   ##                                      # format migration preserves it.
   ##                                      # NOT retroactive: a folder already on disk as ".Invoices.2026" keeps
   ##                                      # listing as "Invoices/2026". Only folders created after it is enabled
@@ -338,11 +340,11 @@ storage:
 components:
 
   ## Key-naming boundary within each component:
-  ##   * config-mirror keys — those that render into a yarilo.yaml config section
-  ##     — are snake_case and spelled 1:1 with the config key (e.g. a `service:`
+  ##   * config-mirror keys - those that render into a yarilo.yaml config section -
+  ##     are snake_case and spelled 1:1 with the config key (e.g. a `service:`
   ##     or `token:` sub-block: listen, key_prefix, channel_prefix, redis_addr).
-  ##   * k8s-shape keys — deployment concerns (replicas, startupProbe, resources,
-  ##     internalTLS) — are camelCase.
+  ##   * k8s-shape keys - deployment concerns (replicas, startupProbe, resources,
+  ##     internalTLS) - are camelCase.
   ## Keep the two apart so the same config knob is never spelled two ways. Warden
   ## (#908: service.state_backend / key_prefix / channel_prefix) follows this
   ## from its first PR.
@@ -355,9 +357,9 @@ components:
   ## are correct, and per-user fts is single-writer for free (#675/#676).
   ## Per-container resources come from the components.<proto>/fts/backendAPI
   ## blocks below. quota-status stays a SEPARATE Deployment (global-read, served
-  ## to the external Postfix MTA — it writes no per-user state).
+  ## to the external Postfix MTA - it writes no per-user state).
   backend:
-    ## threading — which delivered messages are recorded as belonging to one
+    ## threading - which delivered messages are recorded as belonging to one
     ## conversation (#1425). Written on the delivery path, into a per-account
     ## sidecar beside the other control files.
     threading:
@@ -407,11 +409,11 @@ components:
         cpu: 10m
         memory: 16Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 100m
         memory: 64Mi
 
-  ## Director — front-end proxy.
+  ## Director - front-end proxy.
   ## Accepts client connections, routes to backend via consistent hash.
   director:
     enabled: false
@@ -432,7 +434,7 @@ components:
     ## dial pins a stable TLS ServerName (ringTlsServerName below) that must be
     ## a SAN in the director's internal-tls cert. The stock shared internal-tls
     ## secret has no such SAN, so enable certificate below to have the chart
-    ## issue a director-specific cert into secretName with the ring SANs — or
+    ## issue a director-specific cert into secretName with the ring SANs - or
     ## provide your own secret via secretName. With internalTLS.enabled=true and
     ## peers configured but no ring name in the cert, the ring cannot verify
     ## peers and never converges (the director logs an ERROR/Warn to say so).
@@ -443,7 +445,7 @@ components:
       certificate:
         enabled: false
         issuerRef:
-          ## Must be a cluster-INTERNAL CA — a public ACME issuer
+          ## Must be a cluster-INTERNAL CA - a public ACME issuer
           ## (letsencrypt) cannot sign these internal names.
           kind: ClusterIssuer
           name: yarilo-internal-ca
@@ -472,7 +474,7 @@ components:
     ## "user@d.test" hash to different values and can land on different
     ## backends, defeating sticky routing. Matches the reference
     ## implementation's default hash template. Migration: flipping this on an
-    ## already-running cluster changes hashes for mixed-case usernames — their
+    ## already-running cluster changes hashes for mixed-case usernames - their
     ## existing sticky entries just expire naturally via user_expire, no
     ## special migration step is needed.
     username_hash_lowercase: true
@@ -480,10 +482,10 @@ components:
     ## user), %n (local part, before first '@'), %d (domain, after first '@'), each
     ## with optional %L lowercase; %% is a literal percent. Examples: "%Lu" (default,
     ## whole username lowercased), "%u" (case-sensitive), "%Ld" (route the whole domain
-    ## to one backend — shared-mailbox/ACL locality), "%Ln" (local part only, for
+    ## to one backend - shared-mailbox/ACL locality), "%Ln" (local part only, for
     ## alias-domain installs). Empty ("") derives the template from
-    ## username_hash_lowercase (%Lu / %u) for byte-identical back-compat. When set, it —
-    ## not the bool — governs case-folding. An invalid template aborts startup.
+    ## username_hash_lowercase (%Lu / %u) for byte-identical back-compat. When set, it -
+    ## not the bool - governs case-folding. An invalid template aborts startup.
     username_hash: ""
     ## Initial (unpinned) user placement: hash | least_sessions | domain.
     ## hash = consistent hash (reference semantics, deterministic). least_sessions
@@ -507,7 +509,7 @@ components:
 
     ## Grace window (seconds) before an admin-initiated kick pushes USER-KICKED
     ## (#740), letting a user's in-flight command on the old backend finish
-    ## after a move. Admin path only — a backend-down/expiry kick fires
+    ## after a move. Admin path only - a backend-down/expiry kick fires
     ## immediately (nothing to grace on a dead backend) and the split-writer
     ## conflict-kick is never delayed. 0 kicks immediately.
     user_kick_delay: 2
@@ -517,13 +519,13 @@ components:
     ## window). user_kill_timeout is the hard fallthrough (seconds): if the kill
     ## is not confirmed complete within it (a stuck session-holder), the hold is
     ## released anyway with a WARN, so a user is never locked out permanently.
-    ## Replicated ring-wide as a DURATION — each director computes its own local
+    ## Replicated ring-wide as a DURATION - each director computes its own local
     ## deadline, never a wall-clock one (pod-clock skew would make it unstable).
     ## The login proxy treats the hold as retryable (bounded re-LOOKUP), so a
     ## kick does not turn concurrent logins into client errors. 0 = 15.
     user_kill_timeout: 15
     ## How long (seconds) the user's ring-wide session count must stay at zero
-    ## before the kill is confirmed complete (#847) — a stable-zero window that
+    ## before the kill is confirmed complete (#847) - a stable-zero window that
     ## absorbs a session opening mid-kill dipping the count to zero momentarily.
     ## 0 = 1.
     user_kill_confirm_grace: 1
@@ -533,7 +535,7 @@ components:
     ## firing every kick at once.
     ## 0 kicks all at once, no batching.
     max_parallel_kicks: 100
-    ## Cap on concurrent user moves during a GRACEFUL backend evacuation (#849) —
+    ## Cap on concurrent user moves during a GRACEFUL backend evacuation (#849) -
     ## the throttled `yarctl director backends flush IP` (no --force). The director
     ## keeps at most this many users draining at once; each user's old sessions
     ## confirm gone before the next is pulled in, so a planned backend drain
@@ -543,7 +545,7 @@ components:
     max_parallel_moves: 5
     ## Optional external per-user cleanup hook (#848). Path to an executable run
     ## once per user AFTER a
-    ## deliberate relocation (admin move or graceful evacuation) confirms ring-wide —
+    ## deliberate relocation (admin move or graceful evacuation) confirms ring-wide -
     ## i.e. after the user's old sessions are gone. Called as:
     ##   flush_program FLUSH <username> <username_hash> <old_backend> <new_backend>
     ## Best-effort + async with a bounded timeout: a slow/failing hook is logged, never
@@ -560,7 +562,7 @@ components:
     ## Static backend list loaded at startup.
     ## Each entry must match a backend service in the backend namespace.
     ## tag: optional pool tag to group backends (empty = default pool).
-    ## vhosts (#740): optional ring weight 1..100 — declare it so a static
+    ## vhosts (#740): optional ring weight 1..100 - declare it so a static
     ## backend is a real candidate under assignment_policy: least_sessions
     ## (there vhosts 0 means DRAIN); also makes weighting reproducible across
     ## director restarts instead of being runtime-API-only. Omit for the default.
@@ -577,9 +579,9 @@ components:
     #   tag: ""
 
     ## Seed address(es) for the self-organizing ring (#750, replaces the old
-    ## static full-mesh peer list — same key, new semantics). Each entry is
+    ## static full-mesh peer list - same key, new semantics). Each entry is
     ## "host:port"; director joins via the first that accepts a
-    ## DIRECTOR-JOIN, then maintains membership automatically from there —
+    ## DIRECTOR-JOIN, then maintains membership automatically from there -
     ## no further entries here needed as replicas scale.
     ##
     ## LEAVE THIS EMPTY in k8s. At replicas > 1 the seed is auto-derived to
@@ -587,29 +589,29 @@ components:
     ## the ONLY correct ring seed: its DNS name resolves to every ready pod
     ## IP directly, so the DNS fan-out (#763) polls each peer and formation
     ## converges deterministically with no self-dials. Do NOT point this at
-    ## the ClusterIP <release>-director Service — that resolves to a single
+    ## the ClusterIP <release>-director Service - that resolves to a single
     ## virtual IP, load-balances every dial randomly (including back to
     ## self), and silently reintroduces the formation partition #759 fought.
     ## -director stays the LOOKUP endpoint for login pods, never the seed.
     ##
     ## Set an explicit host:port list only for non-k8s deployments or a
     ## deliberate manual seed; it overrides the auto-derived default.
-    ## replicas: 1 needs no seed at all — a lone director is a valid N=1 ring.
+    ## replicas: 1 needs no seed at all - a lone director is a valid N=1 ring.
     peers: []
 
     ## HMAC secret authenticating DIRECTOR-JOIN requests (#750). Auto-generated
     ## into Secret <release>-director-ring-secret on first deploy and preserved
     ## on upgrades, same pattern as the API token below. Empty (or a rotated,
-    ## now-mismatched value) means every JOIN is rejected — that replica can
+    ## now-mismatched value) means every JOIN is rejected - that replica can
     ## only ever run as a singleton ring, so keep this in sync across replicas
     ## (which the auto-generated Secret already guarantees within one release).
     ring_secret: "${DIRECTOR_RING_SECRET}"
 
     ## Install-time warning threshold only ("fewer members than this = no
-    ## state redundancy") — never refuses service at any member count.
+    ## state redundancy") - never refuses service at any member count.
     min_members: 3
 
-    ## CIDRs a DIRECTOR-JOIN is accepted from (#773) — same semantics as
+    ## CIDRs a DIRECTOR-JOIN is accepted from (#773) - same semantics as
     ## api.allowed_nets: empty list = allow all (unchanged behaviour),
     ## otherwise the joiner's source IP must fall inside one of these networks
     ## or the JOIN is rejected before the HMAC challenge. A live director is
@@ -637,7 +639,7 @@ components:
     ## evicting a healthy backend; the last backend of a tag is never evicted.
     ## Single-login-replica deployments (e.g. sandbox, where two distinct
     ## reporters for one protocol's failure may never physically exist) should
-    ## set backend_unreachable_reporters=1 — the TTL lease stays the backstop
+    ## set backend_unreachable_reporters=1 - the TTL lease stays the backstop
     ## regardless. 0 never evicts early.
     backend_unreachable_reporters: 2
     ## Sliding window (seconds) over which the distinct reports must arrive.
@@ -645,30 +647,30 @@ components:
     backend_unreachable_window: 5
 
     ## How often (seconds) each ring member re-broadcasts its
-    ## member+tombstone snapshot over every live ring connection (#759) —
+    ## member+tombstone snapshot over every live ring connection (#759) -
     ## a bounded safety net that heals membership splits without waiting
     ## for a possibly-lost ADD/REMOVE broadcast. 0 turns it off.
     anti_entropy_interval: 3
 
     ## How often (seconds) each member re-polls a seed after its initial
     ## join (#759). The seed is the one guaranteed crossing point between
-    ## partitioned member views — broadcast and anti-entropy only travel
+    ## partitioned member views - broadcast and anti-entropy only travel
     ## over connections that already exist, so a formation split with no
     ## crossing connection can ONLY heal through the seed. Runs at full
     ## cadence while the node's view holds fewer than min_members (a
     ## short view is per se proof of work left, no matter how stable it
     ## looks), easing to a lazy 30s backstop once the expected cluster
-    ## size is reached — and snapping back the moment a member is lost.
+    ## size is reached - and snapping back the moment a member is lost.
     ## A hostname seed (the headless -director-ring Service) is resolved
     ## explicitly and every resulting pod address except self is polled
-    ## each cycle — deterministic convergence in one cycle, no
+    ## each cycle - deterministic convergence in one cycle, no
     ## load-balancer routing luck. 0 = one-shot join (join once, never poll
     ## again).
     seed_poll_interval: 2
 
     ## Eased poll cadence (seconds) once the view has reached min_members.
-    ## Defaults to the same 2s as seed_poll_interval — i.e. NO effective
-    ## backoff — because a node cannot tell "converged" from "stable but
+    ## Defaults to the same 2s as seed_poll_interval - i.e. NO effective
+    ## backoff - because a node cannot tell "converged" from "stable but
     ## holding a dead member": a freshly-respawned replacement pod that
     ## learned a since-dead member during the death-detection window would
     ## otherwise keep it for a full idle interval (#765, live-measured 40s+
@@ -678,8 +680,8 @@ components:
     seed_poll_idle_interval: 2
 
     ## How long (seconds) a dead member's tombstone is kept and gossiped
-    ## (#765) — bounds tombstone-set growth across many rollouts. Safe to
-    ## expire: neighbor liveness monitoring (#768 — both immediate
+    ## (#765) - bounds tombstone-set growth across many rollouts. Safe to
+    ## expire: neighbor liveness monitoring (#768 - both immediate
     ## neighbors watch every member, reference model) re-evicts a
     ## resurrected-but-unreachable member within seconds regardless of
     ## tombstone state. 0 never expires one.
@@ -691,7 +693,7 @@ components:
     api:
       port: 9103
       ## CIDRs allowed to reach the API, checked BEFORE the bearer token.
-      ## Empty (default) = no IP restriction — the API is gated on the
+      ## Empty (default) = no IP restriction - the API is gated on the
       ## auto-generated token alone, which is the real security boundary
       ## (random per install, never logged). This is deliberate: service
       ## and pod CIDRs differ per cluster/CNI, so any hardcoded default
@@ -699,7 +701,7 @@ components:
       ## silently 403'd every request on clusters using different ranges,
       ## #759) would either be wrong out of the box or require every
       ## installer to already know their cluster's CIDRs before the chart
-      ## even works. Empty here does NOT mean "no security" — it means
+      ## even works. Empty here does NOT mean "no security" - it means
       ## "security is the token." Set this to your actual service/pod
       ## CIDRs as opt-in defense-in-depth once you know them.
       allowed_nets: []
@@ -713,11 +715,11 @@ components:
         cpu: 100m
         memory: 64Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 500m
         memory: 256Mi
 
-  ## Auth — passdb/userdb chain.
+  ## Auth - passdb/userdb chain.
   auth:
     enabled: true
     replicas: 1
@@ -734,7 +736,7 @@ components:
     ## per-request dials never wait. 0 does not wait at all.
     startup_wait: 30
 
-    ## client — how OTHER components talk to auth's MASTER listener (userdb
+    ## client - how OTHER components talk to auth's MASTER listener (userdb
     ## lookups from the jmap and fts resolvers), as opposed to the login pods
     ## on the client protocol above.
     client:
@@ -742,7 +744,7 @@ components:
       ## The dial costs about seven times the lookup it carries, and arrives at
       ## auth as a connection per lookup with a full handshake on its side too.
       ## 0 = a connection per lookup, i.e. the
-      ## behaviour before pooling — the rollback, by config rather than by a
+      ## behaviour before pooling - the rollback, by config rather than by a
       ## release.
       ## Raising it costs at shutdown: closing waits up to a second per slot
       ## still serving a lookup, so a large pool of stuck lookups delays exit by
@@ -754,13 +756,13 @@ components:
       ## handed out, rather than discovering a dead peer by failing a lookup.
       pool_idle_timeout: 300
 
-    ## listen — client protocol (login pods speak here).
+    ## listen - client protocol (login pods speak here).
     listen: ":9100"
-    ## addr — address login pods dial to reach yarilo-auth.
+    ## addr - address login pods dial to reach yarilo-auth.
     ## Defaults to listen when empty (single-process / dev mode).
     ## In k8s set to the ClusterIP service DNS, e.g. "<release>-auth:9100".
     addr: ""
-    ## masterListen — master protocol for password-less
+    ## masterListen - master protocol for password-less
     ## userdb lookups (USER / LIST) used by yarilo-backend-api admin
     ## endpoints and CLI tooling. Empty disables; the binary then only
     ## opens the client listener.
@@ -768,8 +770,8 @@ components:
 
     ## startupProbe waits for Redis and (when applicable) the SQL database to accept
     ## a TCP connection before this pod takes traffic, replacing the wait-redis /
-    ## wait-db init containers (#903). The auth code is unchanged — it still fails
-    ## fast if a dependency is missing at process start — so the DB must be up first
+    ## wait-db init containers (#903). The auth code is unchanged - it still fails
+    ## fast if a dependency is missing at process start - so the DB must be up first
     ## (the sandbox db-init and managed schemas ensure this); the probe withholds
     ## traffic and does not run liveness until the dependencies answer.
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3m).
@@ -786,7 +788,7 @@ components:
       - driver: mysql
         dsn: "${YARILO_DB_DSN}"
         default_pass_scheme: BCRYPT
-        ## Custom queries (optional — leave empty to use the auto-created yarilo_users schema).
+        ## Custom queries (optional - leave empty to use the auto-created yarilo_users schema).
         ## password_query: |
         ##   SELECT password, '' AS home, '' AS mail, active AS enabled
         ##   FROM users WHERE username = LOWER(%u)
@@ -803,10 +805,10 @@ components:
         ##
         ## Connection-pool limits (#886). Defaults are per driver, because the
         ## cost of a connection is not comparable between them:
-        ##   mysql    25 — a connection is a thread
-        ##   postgres  8 — a connection is a process, and the stock
+        ##   mysql    25 - a connection is a thread
+        ##   postgres  8 - a connection is a process, and the stock
         ##                 max_connections is 100, LOWER than MySQL's 151
-        ##   sqlite    1 — a file, whose writers serialise inside the library;
+        ##   sqlite    1 - a file, whose writers serialise inside the library;
         ##                 extra connections buy SQLITE_BUSY, not throughput
         ## max_idle_conns defaults to max_open_conns: retaining fewer idle
         ## connections than the pool opens means the difference is re-dialled on
@@ -818,7 +820,7 @@ components:
         ## conn_max_lifetime: 300
         ## conn_max_idle_time: 60
 
-      ## passwd-file driver — a flat, colon-separated user file (classic
+      ## passwd-file driver - a flat, colon-separated user file (classic
       ## /etc/passwd layout) that serves both passdb and userdb roles, so a
       ## self-hosted deployment can run without a database. One line per user:
       ##   user:password:uid:gid:gecos:home:shell:extra_fields
@@ -827,14 +829,14 @@ components:
       ## key=value; userdb_-prefixed keys populate the userdb (userdb_mail,
       ## userdb_quota_rule, ...). Passwords carry a {SCHEME} prefix or a crypt(3)
       ## marker; unmarked values assume default_pass_scheme (default CRYPT).
-      ## Mount the file into its OWN dir via extraVolumes/extraVolumeMounts —
+      ## Mount the file into its OWN dir via extraVolumes/extraVolumeMounts -
       ## NOT under /etc/yarilo (the rendered-config mount); a subPath file there
       ## fails with "not a directory" and crash-loops the pod.
       # - driver: passwd-file
       #   passwd_file: /etc/yarilo-passwd/passwd
       #   default_pass_scheme: CRYPT
 
-      ## static driver — one shared credential + templated fields applied to
+      ## static driver - one shared credential + templated fields applied to
       ## every user. For tests, single-mailbox installs, and proxy front-ends
       ## (set nopassword: true to accept any password and let the upstream
       ## authenticate). Matches every username, so place it LAST in the chain.
@@ -847,30 +849,30 @@ components:
       #     userdb_home: "/var/vmail/%d/%n"
       #     userdb_mail: "maildir:/var/vmail/%d/%n/Maildir"
 
-    ## failureDelay — timing-leak mitigation. Every failed auth
+    ## failureDelay - timing-leak mitigation. Every failed auth
     ## reply (wrong password, unknown user, malformed SASL) is
     ## held back this many seconds before surfacing to the client
     ## so unknown-user and wrong-password paths return in the same
     ## wall-clock time. Default 2s. Corresponds to the
-    ## `auth_failure_delay`. Set to 0 to disable (tests only —
+    ## `auth_failure_delay`. Set to 0 to disable (tests only -
     ## production should keep >0).
-    ## persistence — SQLite fallback only; not used when mysql.bundled=true.
+    ## persistence - SQLite fallback only; not used when mysql.bundled=true.
     persistence:
       enabled: false
       storageClass: ""
       size: 1Gi
 
-    ## auth_max_attempts — failed authentications allowed on one connection,
+    ## auth_max_attempts - failed authentications allowed on one connection,
     ## a refused SASL exchange included, before it is closed. Default 3.
     auth_max_attempts: 3
     failure_delay: 2
-    ## internal_failure_delay_ms — separate delay for INTERNAL
+    ## internal_failure_delay_ms - separate delay for INTERNAL
     ## failures (passdb backend down, SQL refused). Typically shorter
     ## than failure_delay so a passdb outage does not amplify
     ## into user-facing latency.
     internal_failure_delay_ms: 2000
 
-    ## cache — in-process auth cache (LRU, bytes-bounded).
+    ## cache - in-process auth cache (LRU, bytes-bounded).
     ## OPT-IN, disabled by default (sizeBytes: 0). Stores
     ## HMAC-ed passwords (never plain) keyed by
     ## `<service>\t<username>`. Positive entries hold the
@@ -879,14 +881,14 @@ components:
     ## selectively via `yarctl auth cache flush
     ## [user-mask...]`.
     cache:
-      ## cache_size — human-readable byte cap (1024-based units: b, k, M, G, T;
+      ## cache_size - human-readable byte cap (1024-based units: b, k, M, G, T;
       ## a bare integer is bytes). "100M" == 104857600. Empty/0 disables caching.
       ## Quote it so a unit suffix stays a string.
       cache_size: "100M"
       ttl_seconds: 1800
       negative_ttl_seconds: 1800
 
-    ## penalty — cross-pod IP-bound auth-fail backoff. OPT-IN.
+    ## penalty - cross-pod IP-bound auth-fail backoff. OPT-IN.
     ## Every failed auth from a given client IP increments the
     ## counter in the warden service; subsequent attempts from that
     ## IP sleep PenaltyToSecs(count) seconds before the chain runs
@@ -897,44 +899,44 @@ components:
     penalty:
       enabled: false
 
-    ## token — one-time session token issued after successful passdb.
+    ## token - one-time session token issued after successful passdb.
     ## The login pod forwards the token to the backend (XCLIENT TOKEN=);
     ## the backend calls yarilo-auth VERIFY to consume it and enter
     ## authenticated state without replaying credentials.
     token:
-      ## ttl_seconds — how long the token is valid for the backend to
+      ## ttl_seconds - how long the token is valid for the backend to
       ## consume. Must be larger than the login→backend roundtrip time.
       ## Default 60 s is generous; lower to 10-15 s in production.
       ttl_seconds: 60
-      ## backend — token store implementation.
+      ## backend - token store implementation.
       ## "memory": in-process (single auth pod only).
       ## "redis": Redis-backed, safe for replicaCount > 1.
       backend: memory
-      ## redis_addr — Redis URL used when backend=redis.
+      ## redis_addr - Redis URL used when backend=redis.
       ## Format: redis://[password@]host:port/db
       redis_addr: ""
-      ## key_prefix — Redis key namespace for tokens (#939). The installation
+      ## key_prefix - Redis key namespace for tokens (#939). The installation
       ## boundary: when several installations share one Redis, give each a
       ## distinct prefix so their token keys do not collide. Keep it consistent
       ## with the other Redis-using components' prefixes (locks, warden) for one
       ## install. Default is service-name based.
       key_prefix: "yarilo:authtoken:"
 
-    ## oauth2 — OAuth 2.0 bearer-token providers. Each entry
+    ## oauth2 - OAuth 2.0 bearer-token providers. Each entry
     ## becomes a passdb that participates in the auth chain (placed
     ## AHEAD of SQL so an OAUTHBEARER login resolves through the
     ## validator before SQL ever sees the bearer token as a
     ## plaintext password). Empty list disables OAUTHBEARER.
     ##
-    ## See https://doc.yarilomail.org/AUTH_OAUTH2 for the wire spec, configuration
+    ## See https://doc.yarilomail.org/latest/auth/oauth2.html for the wire spec, configuration
     ## reference, and worked examples for Google Workspace,
     ## Microsoft 365, and Keycloak / Authelia.
     ##
     ## Four validation modes:
-    ##   - local         — JWT verify against jwks_url (recommended)
-    ##   - introspection — RFC 7662 endpoint
-    ##   - tokeninfo     — Google-style endpoint
-    ##   - discovery     — auto-resolve via OIDC discovery (issuer_url)
+    ##   - local         - JWT verify against jwks_url (recommended)
+    ##   - introspection - RFC 7662 endpoint
+    ##   - tokeninfo     - Google-style endpoint
+    ##   - discovery     - auto-resolve via OIDC discovery (issuer_url)
     oauth2: []
       # - mode: discovery
       #   issuer_url: https://accounts.google.com
@@ -967,13 +969,13 @@ components:
       #       kid: my-key
       #       secret_ref: {name: yarilo-oauth2-keys, key: rs256.pem}  # or file: /path/in/pod
 
-    ## policy — wforce-compatible HTTP policy-server hook. URL=""
+    ## policy - wforce-compatible HTTP policy-server hook. URL=""
     ## disables. When set, every login attempt POSTs JSON to the
     ## policy server which can allow / reject / tarpit the request.
-    ## See https://doc.yarilomail.org/AUTH_POLICY for the wire format and a wforce
+    ## See https://doc.yarilomail.org/latest/auth/policy.html for the wire format and a wforce
     ## configuration example.
     ##
-    ## hashNonce is REQUIRED when url is set — it salts the pwhash
+    ## hashNonce is REQUIRED when url is set - it salts the pwhash
     ## field so two deployments don't share the same hash space.
     ## Default hash is truncated to 12 bits (4096 buckets) so the
     ## policy server can group attempts without seeing real
@@ -996,12 +998,22 @@ components:
       check_before: true
       check_after: true
       report_after: true
+      ## The request body: key to value template, "key/subkey" nested in an
+      ## object; %{name} variables. A map: an entry here adds or replaces one.
+      request_attributes:
+        login: "%{requested_username}"
+        pwhash: "%{hashed_password}"
+        remote: "%{remote_ip}"
+        device_id: "%{client_id}"
+        protocol: "%{protocol}"
+        session_id: "%{session}"
+        fail_type: "%{fail_type}"
 
-    ## masterUsers — master-user impersonation
+    ## masterUsers - master-user impersonation
     ## (SASL PLAIN authzid). OPT-IN, disabled by default. While
     ## `enabled: false` the IMAP / POP3 / Submission / wire
     ## yarilo-auth code paths drop the authzid before consulting
-    ## the chain — distinct authzid produces an opaque auth
+    ## the chain - distinct authzid produces an opaque auth
     ## failure indistinguishable from a wrong password.
     ##
     ## Set `enabled: true` to allow EITHER of these admin paths:
@@ -1011,7 +1023,7 @@ components:
     ##      the regular `passdb`.
     ##   2. A regular `passdb` row that returns the extra field
     ##      `master_user=yes` from its passwordQuery. That row
-    ##      is then allowed to impersonate any target — useful
+    ##      is then allowed to impersonate any target - useful
     ##      when admins and end-users share one user table.
     ##
     ## `separator` enables the legacy `target<sep>master` SASL
@@ -1035,7 +1047,7 @@ components:
       limits:
         memory: 320Mi
 
-  ## Warden — connection rate limiter. Keep replicas: 1.
+  ## Warden - connection rate limiter. Keep replicas: 1.
   warden:
     enabled: true
     replicas: 1
@@ -1045,36 +1057,36 @@ components:
       session_grace_period: 30
       kill_timeout: 5
 
-    ## service — config-mirror subtree: snake_case keys, 1:1 with warden_service.*
+    ## service - config-mirror subtree: snake_case keys, 1:1 with warden_service.*
     ## of yarilo.yaml. k8s-shape keys (replicas / internalTLS / resources) stay at
     ## the level above. See the boundary note at the top of components:.
     service:
       listen: ":9101"
-      ## conns — long-lived connections each login pod keeps to yarilo-warden
+      ## conns - long-lived connections each login pod keeps to yarilo-warden
       ## (#878). Must be positive. Sessions do not own a connection: every
       ## command carries the session id and the server keeps no per-connection
       ## state, so the connection count no longer tracks the login rate. The warden
       ## protocol has no request id, so one connection serves one command at a
-      ## time — each is a sub-ms round trip, so a handful covers any login rate.
+      ## time - each is a sub-ms round trip, so a handful covers any login rate.
       conns: 4
 
-      ## event_queue_size — SELECT events a backend queues for the warden
+      ## event_queue_size - SELECT events a backend queues for the warden
       ## writer. The events are accounting: the warden records the folder so
       ## `who` can render it, answers OK, and can refuse nothing. So a full
       ## queue drops the oldest (counted in yarilo_warden_events_dropped_total)
       ## rather than holding a command on the session's path (#1875).
       event_queue_size: 4096
 
-      ## state_backend (#908) — shared-state store.
+      ## state_backend (#908) - shared-state store.
       ##   "memory": in-process, single replica (replicas MUST stay 1).
       ##   "redis":  survives a restart and is shared across replicas; required
       ##             before raising replicas > 1. In this phase only the per-IP
       ##             penalty counter is Redis-backed; sessions/kick follow.
       state_backend: memory
-      ## redis_addr — Redis URL when state_backend=redis. Empty derives it from
+      ## redis_addr - Redis URL when state_backend=redis. Empty derives it from
       ## the top-level redis: section (bundled or externalUrl), same as locks.
       redis_addr: ""
-      ## key/channel prefixes (#938/#939 practice) — the installation boundary;
+      ## key/channel prefixes (#938/#939 practice) - the installation boundary;
       ## keep consistent with locks/authtoken on a shared Redis. channel_prefix
       ## namespaces the kick bus Pub/Sub (#908). Defaults are service-name based.
       key_prefix: "yarilo:warden:"
@@ -1088,11 +1100,11 @@ components:
         cpu: 50m
         memory: 32Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 128Mi
 
-  ## yarilo-backend-api — storage-plane operator HTTP API.
+  ## yarilo-backend-api - storage-plane operator HTTP API.
   ## Exposes dict / acl (later) / quota (later) / folder / user
   ## operations consumed by yarctl CLI. Mounts the same
   ## storage PVC as the session pods + connects to every
@@ -1132,7 +1144,7 @@ components:
     ##     (uid, gid, groups, quota_rule, allow_nets, ...) plus a
     ##     `userdb_status` field ("ok" / "not_found" / "error")
     ##   - serves /api/backend/user/iterate
-    ## Empty disables both surfaces — handy for dev / smoke runs.
+    ## Empty disables both surfaces - handy for dev / smoke runs.
     ## In a standard Helm release this is the in-cluster service:
     ##   "<release>-auth:9102"
     auth_master_addr: ""
@@ -1142,16 +1154,16 @@ components:
         cpu: 50m
         memory: 64Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 256Mi
 
-  ## yarilo-locks — cross-process write coordinator.
+  ## yarilo-locks - cross-process write coordinator.
   ## Every session pod dials this Service to take X locks on
   ## mbox:<user>:<folder> before mutating maildir / index files.
   ## State lives in Redis (see top-level redis: section).
-  ## Default 2 replicas for HA — set replicas: 1 for single-node dev.
-  ## yarilo-dict — the only process that links a dict engine. Sessions name a
+  ## Default 2 replicas for HA - set replicas: 1 for single-node dev.
+  ## yarilo-dict - the only process that links a dict engine. Sessions name a
   ## dict and speak the dict protocol to this one (#1733).
   dict:
     enabled: true
@@ -1178,7 +1190,7 @@ components:
       session_grace_period: 5
       kill_timeout: 5
 
-    ## service — config-mirror subtree: keys here are snake_case and map 1:1 to
+    ## service - config-mirror subtree: keys here are snake_case and map 1:1 to
     ## the locks_service.* section of yarilo.yaml, unlike the k8s-shape keys
     ## (replicas / startupProbe / resources) at this level. See the boundary note
     ## at the top of components:.
@@ -1194,7 +1206,7 @@ components:
       key_prefix: "yarilo:locks:"
       channel_prefix: "yarilo:events:"
 
-    ## client — the side every other component uses to reach yarilo-locks.
+    ## client - the side every other component uses to reach yarilo-locks.
     client:
       ## Seconds a component waits for the lock service on its first connection
       ## before giving up. Pod start order is not guaranteed and locks is its
@@ -1209,8 +1221,8 @@ components:
 
     ## startupProbe waits for Redis (remote mode) to accept a TCP connection before
     ## this pod takes traffic, replacing the wait-redis init container (#903). Safe
-    ## because the process comes up regardless of Redis — redis.NewClient is lazy
-    ## (connects on first use) — so the probe only withholds traffic until Redis
+    ## because the process comes up regardless of Redis - redis.NewClient is lazy
+    ## (connects on first use) - so the probe only withholds traffic until Redis
     ## answers. periodSeconds x failureThreshold is the startup budget (2s x 90 = 3m).
     startupProbe:
       enabled: true
@@ -1228,7 +1240,7 @@ components:
       limits:
         memory: 128Mi
 
-  ## IMAP backend — handles sessions proxied from director.
+  ## IMAP backend - handles sessions proxied from director.
   ## Director proxies 993→imap:993, 143→imap:143.
   imap:
     startupProbe:
@@ -1257,11 +1269,11 @@ components:
         cpu: 100m
         memory: 128Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 1000m
         memory: 512Mi
 
-  ## POP3 backend — director proxies 995→pop3:995, 110→pop3:110.
+  ## POP3 backend - director proxies 995→pop3:995, 110→pop3:110.
   pop3:
     startupProbe:
       enabled: true
@@ -1289,11 +1301,11 @@ components:
         cpu: 50m
         memory: 64Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 500m
         memory: 256Mi
 
-  ## LMTP backend — receives preamble-wrapped connections from lmtp-login.
+  ## LMTP backend - receives preamble-wrapped connections from lmtp-login.
   lmtp:
     startupProbe:
       enabled: true
@@ -1317,11 +1329,11 @@ components:
         cpu: 50m
         memory: 64Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 500m
         memory: 256Mi
 
-  ## Postfix SASL proxy — delegates smtpd_sasl_type=dovecot authentication to yarilo-auth.
+  ## Postfix SASL proxy - delegates smtpd_sasl_type=dovecot authentication to yarilo-auth.
   ## Postfix config: smtpd_sasl_path = inet:<host>:12345
   ## Postfix has no direct access to yarilo-auth; yarilo-sasl-login proxies each session.
   saslLogin:
@@ -1329,7 +1341,7 @@ components:
 
     ## startupProbe waits for yarilo-auth to report ready before this pod takes
     ## traffic, replacing its wait-* init containers (#903). Safe because a login
-    ## pod does not dial its dependencies during startup — the connections are
+    ## pod does not dial its dependencies during startup - the connections are
     ## created lazily on the first login.
     ##
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3 min).
@@ -1345,7 +1357,7 @@ components:
     containerPort: 12345
 
     ## mTLS for the dial to yarilo-auth (#816). Required when the shared
-    ## internal_tls is enabled — without the mount this pod CrashLoops on the
+    ## internal_tls is enabled - without the mount this pod CrashLoops on the
     ## missing cert. secretName is the shared internal-tls secret.
     internalTLS:
       secretName: ""
@@ -1374,13 +1386,13 @@ components:
         cpu: 10m
         memory: 16Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 100m
         memory: 64Mi
 
-  ## Postfix policy service — quota enforcement before message queuing.
+  ## Postfix policy service - quota enforcement before message queuing.
   ## Postfix config: check_policy_service inet:[<ClusterIP>]:12340
-  ## Full-text search service — sole owner of the FTS indexes (indexing
+  ## Full-text search service - sole owner of the FTS indexes (indexing
   ## queue + worker + LOOKUP endpoint). Runs yarilo-fts, the only cgo
   ## binary (libxapian), from the same single image as every other pod.
   fts:
@@ -1405,8 +1417,8 @@ components:
 
     ## startupProbe waits for Redis (the dict backend) to accept a TCP connection
     ## before this pod takes traffic, replacing the wait-redis init container (#903).
-    ## The code is unchanged — it still fails fast on a missing dependency at process
-    ## start — so the probe only withholds traffic/liveness until Redis answers.
+    ## The code is unchanged - it still fails fast on a missing dependency at process
+    ## start - so the probe only withholds traffic/liveness until Redis answers.
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3m).
     startupProbe:
       enabled: true
@@ -1415,7 +1427,7 @@ components:
       failureThreshold: 90
 
     ## mTLS for the dial to yarilo-auth (#816). Required when the shared
-    ## internal_tls is enabled — without the mount this pod CrashLoops on the
+    ## internal_tls is enabled - without the mount this pod CrashLoops on the
     ## missing cert. secretName is the shared internal-tls secret.
     internalTLS:
       secretName: ""
@@ -1461,11 +1473,11 @@ components:
         cpu: 10m
         memory: 16Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 100m
         memory: 64Mi
 
-  ## Submission backend — accepts mail from submission-login pods, relays to upstream MTA.
+  ## Submission backend - accepts mail from submission-login pods, relays to upstream MTA.
   ## ClusterIP only; mail clients connect to yarilo-submission-login (LoadBalancer).
   submission:
     startupProbe:
@@ -1500,11 +1512,11 @@ components:
         cpu: 50m
         memory: 32Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 128Mi
 
-  ## IMAP login pod — TLS terminator + director LOOKUP + proxy to yarilo-imap backend.
+  ## IMAP login pod - TLS terminator + director LOOKUP + proxy to yarilo-imap backend.
   ## Faces mail clients on 993/143; does NOT store mail.
   imapLogin:
     enabled: false
@@ -1513,8 +1525,8 @@ components:
     ## startupProbe waits for yarilo-auth and yarilo-warden to report ready before
     ## this pod takes traffic, replacing the wait-auth / wait-warden init containers
     ## (#903). Safe here because a login pod does not dial either dependency during
-    ## startup — those connections are created lazily on the first login
-    ## (#885/#891) — so the process comes up regardless and the probe only
+    ## startup - those connections are created lazily on the first login
+    ## (#885/#891) - so the process comes up regardless and the probe only
     ## withholds traffic.
     ##
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3 min).
@@ -1554,12 +1566,12 @@ components:
     ## Set to "<release>-imap:<port>" (plain) or "<release>-imap:<tls-port>" (mTLS).
     backend_addr: ""
     ## Director mode: per-session LOOKUP via yarilo-director (set either this
-    ## or backend_addr). One of the two is required (#735) — an empty
+    ## or backend_addr). One of the two is required (#735) - an empty
     ## director_addr with an empty backend_addr previously dialed localhost
     ## silently, since it fell back to this process's own in-process
     ## director bind address rather than failing at startup.
     ## Precedence when BOTH are set: backend_addr wins (explicit standalone
-    ## override always takes priority over director mode) — matches
+    ## override always takes priority over director mode) - matches
     ## internal/login's existing behavior, unchanged by #735.
     director_addr: ""
     ## backend_port overrides the port in the director LOOKUP result
@@ -1567,13 +1579,13 @@ components:
     ## the director's ring tracks). 0 = use the LOOKUP result port as-is.
     backend_port: 0
     ## director_tag restricts LOOKUP to backends with this tag (#737).
-    ## "" = the untagged pool, not "any tag" — there is no full-ring mode.
+    ## "" = the untagged pool, not "any tag" - there is no full-ring mode.
     ##
     ## This is the STATIC sharding model: a dedicated login fleet per tag
-    ## pool, each with director_tag set to the pool it serves — use this
+    ## pool, each with director_tag set to the pool it serves - use this
     ## when each tag pool has its own login Service/IP. For the SHARED
-    ## model — one login fleet serving users of every tag, tag resolved
-    ## per-user from the passdb response — see #746 (per-user value wins,
+    ## model - one login fleet serving users of every tag, tag resolved
+    ## per-user from the passdb response - see #746 (per-user value wins,
     ## this static value stays as the fallback for users with no passdb tag).
     director_tag: ""
 
@@ -1586,17 +1598,17 @@ components:
         cpu: 50m
         memory: 32Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 128Mi
 
-  ## POP3 login pod — TLS terminator + director LOOKUP + proxy to yarilo-pop3 backend.
+  ## POP3 login pod - TLS terminator + director LOOKUP + proxy to yarilo-pop3 backend.
   pop3Login:
     enabled: false
 
     ## startupProbe waits for yarilo-auth and yarilo-warden to report ready before this pod takes
     ## traffic, replacing its wait-* init containers (#903). Safe because a login
-    ## pod does not dial its dependencies during startup — the connections are
+    ## pod does not dial its dependencies during startup - the connections are
     ## created lazily on the first login.
     ##
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3 min).
@@ -1636,14 +1648,14 @@ components:
     backend_addr: ""
     ## Director mode: per-session LOOKUP via yarilo-director (set either this
     ## or backend_addr). One of the two is required (#735). Precedence when
-    ## BOTH are set: backend_addr wins — see imapLogin's comment for why.
+    ## BOTH are set: backend_addr wins - see imapLogin's comment for why.
     director_addr: ""
     ## backend_port overrides the port in the director LOOKUP result, which
     ## reports the pod, not the JMAP container. Set it to
     ## components.jmap.listeners.jmap.containerPort.
     ## 0 = use the LOOKUP result port as-is.
     backend_port: 10443
-    ## director_tag — see imapLogin's comment for the tag/pool-topology rule.
+    ## director_tag - see imapLogin's comment for the tag/pool-topology rule.
     director_tag: ""
 
     service:
@@ -1655,11 +1667,11 @@ components:
         cpu: 50m
         memory: 32Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 128Mi
 
-  ## Submission login pod — TLS terminator + director LOOKUP + proxy to yarilo-submission backend.
+  ## Submission login pod - TLS terminator + director LOOKUP + proxy to yarilo-submission backend.
   submissionLogin:
     enabled: false
 
@@ -1669,7 +1681,7 @@ components:
     ## auth is included even though the init containers only had wait-warden: this
     ## pod authenticates logins and configures AuthAddr like every other login
     ## proxy, so the missing wait-auth was an oversight rather than a design. Safe because a login
-    ## pod does not dial its dependencies during startup — the connections are
+    ## pod does not dial its dependencies during startup - the connections are
     ## created lazily on the first login.
     ##
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3 min).
@@ -1709,12 +1721,12 @@ components:
     backend_addr: ""
     ## Director mode: per-session LOOKUP via yarilo-director (set either this
     ## or backend_addr). One of the two is required (#735). Precedence when
-    ## BOTH are set: backend_addr wins — see imapLogin's comment for why.
+    ## BOTH are set: backend_addr wins - see imapLogin's comment for why.
     director_addr: ""
     ## backend_port overrides the port in the director LOOKUP result.
     ## 0 = use the LOOKUP result port as-is.
     backend_port: 0
-    ## director_tag — see imapLogin's comment for the tag/pool-topology rule.
+    ## director_tag - see imapLogin's comment for the tag/pool-topology rule.
     director_tag: ""
 
     service:
@@ -1726,11 +1738,11 @@ components:
         cpu: 50m
         memory: 32Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 128Mi
 
-  ## LMTP login pod — MTA-facing LMTP proxy with per-recipient warden CONNECT
+  ## LMTP login pod - MTA-facing LMTP proxy with per-recipient warden CONNECT
   ## and yarilo-auth SESSION token issuance. Fans out one backend connection
   ## per recipient, each with a YARILO preamble.
   lmtpLogin:
@@ -1738,7 +1750,7 @@ components:
 
     ## startupProbe waits for yarilo-auth and yarilo-warden to report ready before this pod takes
     ## traffic, replacing its wait-* init containers (#903). Safe because a login
-    ## pod does not dial its dependencies during startup — the connections are
+    ## pod does not dial its dependencies during startup - the connections are
     ## created lazily on the first login.
     ##
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3 min).
@@ -1766,19 +1778,19 @@ components:
 
     ## Director mode: per-recipient LOOKUP via yarilo-director (set either this
     ## or backend_addr). One of the two is required (#735). Precedence when
-    ## BOTH are set: backend_addr wins — see imapLogin's comment for why.
-    ## (#741 — lmtp-login previously inverted this; a deploy that had both set
+    ## BOTH are set: backend_addr wins - see imapLogin's comment for why.
+    ## (#741 - lmtp-login previously inverted this; a deploy that had both set
     ## must remove backend_addr to keep director routing, or it silently
     ## switches to the static backend.)
     director_addr: ""
     ## director_tag restricts LOOKUP to backends with this tag (#737).
-    ## "" = the untagged pool, not "any tag" — there is no full-ring mode.
+    ## "" = the untagged pool, not "any tag" - there is no full-ring mode.
     ##
     ## This is the STATIC sharding model: a dedicated login fleet per tag
-    ## pool, each with director_tag set to the pool it serves — use this
+    ## pool, each with director_tag set to the pool it serves - use this
     ## when each tag pool has its own login Service/IP. For the SHARED
-    ## model — one login fleet serving users of every tag, tag resolved
-    ## per-user from the passdb response — see #746 (per-user value wins,
+    ## model - one login fleet serving users of every tag, tag resolved
+    ## per-user from the passdb response - see #746 (per-user value wins,
     ## this static value stays as the fallback for users with no passdb tag).
     director_tag: ""
     ## backend_port overrides the port in the director LOOKUP result. 0 = use result as-is.
@@ -1793,11 +1805,11 @@ components:
         cpu: 50m
         memory: 32Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 128Mi
 
-  ## ManageSieve backend — RFC 5804 Sieve script management (internal, port 14190).
+  ## ManageSieve backend - RFC 5804 Sieve script management (internal, port 14190).
   manageSieve:
     startupProbe:
       enabled: true
@@ -1821,17 +1833,17 @@ components:
         cpu: 50m
         memory: 64Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 500m
         memory: 256Mi
 
-  ## ManageSieve login pod — RFC 5804 client-facing proxy (port 4190, STARTTLS).
+  ## ManageSieve login pod - RFC 5804 client-facing proxy (port 4190, STARTTLS).
   manageSieveLogin:
     enabled: false
 
     ## startupProbe waits for yarilo-auth and yarilo-warden to report ready before this pod takes
     ## traffic, replacing its wait-* init containers (#903). Safe because a login
-    ## pod does not dial its dependencies during startup — the connections are
+    ## pod does not dial its dependencies during startup - the connections are
     ## created lazily on the first login.
     ##
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3 min).
@@ -1861,16 +1873,16 @@ components:
     ## Typically "<release>-managesieve:<containerPort>" within the cluster.
     backend_addr: ""
     ## Director mode: per-session LOOKUP via yarilo-director (set either this
-    ## or backend_addr). One of the two is required (#735) — previously
+    ## or backend_addr). One of the two is required (#735) - previously
     ## managesieve-login had NO director_addr wiring at all, so director
     ## mode was silently unavailable (not just misdirected to localhost like
     ## the other three logins). Precedence when BOTH are set: backend_addr
-    ## wins — see imapLogin's comment for why.
+    ## wins - see imapLogin's comment for why.
     director_addr: ""
     ## backend_port overrides the port in the director LOOKUP result.
     ## 0 = use the LOOKUP result port as-is.
     backend_port: 0
-    ## director_tag — see imapLogin's comment for the tag/pool-topology rule.
+    ## director_tag - see imapLogin's comment for the tag/pool-topology rule.
     director_tag: ""
 
     haproxy_protocol: false
@@ -1886,11 +1898,11 @@ components:
         cpu: 50m
         memory: 32Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 128Mi
 
-  ## JMAP backend — the container inside the co-located backend pod that owns
+  ## JMAP backend - the container inside the co-located backend pod that owns
   ## the user's state and answers the JMAP methods. It never terminates the
   ## client's TLS and never runs the passdb chain: yarilo-jmap-login did both
   ## and asserts the user per request, which is why the trust anchor below is
@@ -1918,7 +1930,7 @@ components:
         containerPort: 10443
         ## Trust the login hop by peer address, using general.xclient.trusted_nets.
         ## Only consulted when internalTLS is off: with mTLS the peer certificate
-        ## is the anchor. With neither, every request is refused with 403 — the
+        ## is the anchor. With neither, every request is refused with 403 - the
         ## listener still binds, so the cause is visible rather than looking like
         ## a network fault.
         xclient: false
@@ -1936,7 +1948,7 @@ components:
         cpu: 500m
         memory: 256Mi
 
-  ## JMAP login pod — TLS terminator + director LOOKUP + per-request HTTP proxy
+  ## JMAP login pod - TLS terminator + director LOOKUP + per-request HTTP proxy
   ## to the yarilo-jmap backend container. Internet-facing, like the other
   ## *Login pods; not part of the co-located backend StatefulSet.
   jmapLogin:
@@ -1945,7 +1957,7 @@ components:
 
     ## startupProbe waits for yarilo-auth and yarilo-warden to report ready before this pod takes
     ## traffic, replacing its wait-* init containers (#903). Safe because a login
-    ## pod does not dial its dependencies during startup — the connections are
+    ## pod does not dial its dependencies during startup - the connections are
     ## created lazily on the first request.
     ##
     ## periodSeconds x failureThreshold is the startup budget (2s x 90 = 3 min).
@@ -1989,12 +2001,12 @@ components:
     backend_addr: ""
     ## Director mode: per-request LOOKUP via yarilo-director (set either this
     ## or backend_addr). One of the two is required (#735). Precedence when
-    ## BOTH are set: backend_addr wins — see imapLogin's comment for why.
+    ## BOTH are set: backend_addr wins - see imapLogin's comment for why.
     director_addr: ""
     ## backend_port overrides the port in the director LOOKUP result.
     ## 0 = use the LOOKUP result port as-is.
     backend_port: 0
-    ## director_tag — see imapLogin's comment for the tag/pool-topology rule.
+    ## director_tag - see imapLogin's comment for the tag/pool-topology rule.
     director_tag: ""
 
     service:
@@ -2006,7 +2018,7 @@ components:
         cpu: 50m
         memory: 32Mi
       limits:
-        ## unmeasured — a starting point, not a recommendation (#1040)
+        ## unmeasured - a starting point, not a recommendation (#1040)
         cpu: 200m
         memory: 128Mi
 
@@ -2018,14 +2030,17 @@ protocol:
     imap_idle_notify_interval: 120
     imap_max_line_length: 65536
     imap_id_send: "name *"
+    ## Keep the ID a client sends before login and pass it to the auth policy
+    ## server as device_id.
+    imap_id_retain: false
     login_greeting: ""
     imap_logout_format: ""
     client_workarounds: []
     ## IMAP QUOTA extension (RFC 9208): advertise the QUOTA capability and
-    ## answer GETQUOTA / GETQUOTAROOT. Client-facing query only — enforcement
+    ## answer GETQUOTA / GETQUOTAROOT. Client-facing query only - enforcement
     ## is the separate quota engine (quota.enabled). Default on.
     imap_quota: true
-    ## RFC 6154 SPECIAL-USE — map a folder name to a special-use attribute
+    ## RFC 6154 SPECIAL-USE - map a folder name to a special-use attribute
     ## advertised in LIST replies. Operators can override per deployment;
     ## per-user CREATE (USE ...) takes precedence at runtime via the
     ## on-disk special_use file, per the
@@ -2080,7 +2095,7 @@ protocol:
     # delivery there; past it the MTA gets 451 and retries.
     proxy:
       lmtp_proxy_timeout: 125
-    ## rate_limit — deliveries allowed per (sender IP, recipient mailbox) pair
+    ## rate_limit - deliveries allowed per (sender IP, recipient mailbox) pair
     ## inside one window; beyond it a sender gets 451 4.7.0 and retries later.
     ## Counters live in yarilo-locks, so the limit is cluster-wide rather than
     ## per pod.
@@ -2097,7 +2112,7 @@ protocol:
 
   submission:
     hostname: ""
-    ## max_message_size — human-readable (bytes or K/M/G/T, e.g. "40M"). Quote it.
+    ## max_message_size - human-readable (bytes or K/M/G/T, e.g. "40M"). Quote it.
     max_message_size: "40M"
     max_line_length: 4096
     max_recipients: 0
@@ -2127,7 +2142,7 @@ protocol:
   managesieve:
     ## The script-size limit lives in the sieve section as sieve_max_script_size:
     ## one limit, one key. A values file still carrying max_script_size here
-    ## keeps working — the server folds it onto the sieve key and says so once.
+    ## keeps working - the server folds it onto the sieve key and says so once.
     max_invalid_commands: 3
     # Bytes in one command line or literal, a script's body aside (that is
     # sieve_max_script_size); a larger literal is refused before it is read.
@@ -2171,8 +2186,17 @@ protocol:
     ## jmap_submission_ttl_seconds keeps an EmailSubmission record this long
     ## after sending, for EmailSubmission/get; 0 keeps none.
     jmap_submission_ttl_seconds: 86400
-    ## Idle timeout for a push connection, seconds. Unused until the push phase.
-    jmap_push_timeout: 90
+    ## Seconds between safety recomputes of a push stream's states, for events
+    ## lost while the lock service was out of reach; 0 turns push off.
+    jmap_push_poll: 60
+    ## Seconds a JMAP WebSocket may answer nothing, a ping included, before it
+    ## is closed; 0 turns WebSocket off.
+    jmap_websocket_timeout: 1800
+    ## Seconds a WebSocket ticket is valid. A browser cannot send credentials
+    ## on a WebSocket, so a web client that cannot use EventSource asks
+    ## jmap-login for a ticket and opens the WebSocket with it; 0 issues none
+    ## and leaves the ticket capability out of the session.
+    jmap_websocket_ticket_ttl: 60
     ## Browser origins allowed to call the JMAP endpoint. Empty denies every
     ## cross-origin request, which is the default: an endpoint any page can
     ## call with the user's credentials is an account-takeover surface. Exact
@@ -2207,13 +2231,13 @@ sieve:
   ## sieve_max_actions caps the total actions a single script may apply (fileinto,
   ## redirect, keep, ...). Guards runaway scripts. 0 = unlimited.
   sieve_max_actions: 32
-  ## Max tracking period for the duplicate test, seconds (RFC 7352 §7 — a
+  ## Max tracking period for the duplicate test, seconds (RFC 7352 §7 - a
   ## larger :seconds is silently clamped). 0 = no limit. Default 7 days.
   sieve_duplicate_max_period: 604800
   ## duplicate test (RFC 7352) backend:
-  ##   file   — per-user file in the home dir (default; cross-pod on shared storage)
-  ##   memory — per-process, single-pod only
-  ##   redis  — the `sieve_duplicate` dict in dicts: (cross-pod)
+  ##   file   - per-user file in the home dir (default; cross-pod on shared storage)
+  ##   memory - per-process, single-pod only
+  ##   redis  - the `sieve_duplicate` dict in dicts: (cross-pod)
   sieve_duplicate_driver: "file"
   ## Home-dir file name for sieve_duplicate_driver=file.
   sieve_duplicate_file: ".yarilo.sieve-duplicate"
@@ -2280,33 +2304,9 @@ sieve:
   imapsieve_scripts: {}
   imapsieve_global_before: []
   imapsieve_global_after: []
-  ## sieve_extensions is the whitelist of Sieve extensions users may declare with
-  ## require. Corresponds to the sieve_extensions. Empty list = allow all
-  ## (backwards-compatible). Operators who need enotify/include/extlists must add
-  ## them explicitly.
-  sieve_extensions:
-    - fileinto
-    - reject
-    - ereject
-    - envelope
-    - encoded-character
-    - variables
-    - relational
-    - subaddress
-    - body
-    - date
-    - index
-    - mailbox
-    - duplicate
-    - imap4flags
-    - redirect
-    - copy
-    - vacation
-    - environment
-    - vnd.yarilo.debug
-    - vnd.yarilo.environment
-    - vnd.yarilo.pipe
-    - vnd.yarilo.filter
+  ## Extensions users may require. Empty allows every extension the engine declares,
+  ## as the binary does without the chart; set a list to restrict them.
+  sieve_extensions: []
 
   ## Extensions only the administrator's scripts may use, on top of
   ## sieve_extensions; a user's script never gets them (docs: SIEVE).
@@ -2320,7 +2320,7 @@ sieve:
   ##     org-name: Acme Corp
   sieve_environment: {}
 
-  ## vnd.yarilo.pipe — external program execution via Sieve scripts.
+  ## vnd.yarilo.pipe - external program execution via Sieve scripts.
   ## Corresponds to the sieve_pipe_bin_dir / sieve_pipe_socket_dir /
   ## sieve_pipe_exec_timeout / sieve_pipe_input_eol settings.
   sieve_pipe_bin_dir: "/usr/lib/yarilo/sieve-pipe"
@@ -2328,7 +2328,7 @@ sieve:
   sieve_pipe_exec_timeout: 10
   sieve_pipe_input_eol: "crlf"
 
-  ## vnd.yarilo.filter — message filtering via external programs.
+  ## vnd.yarilo.filter - message filtering via external programs.
   ## Programs receive the message on stdin; non-empty stdout replaces the message.
   ## Empty stdout or non-zero exit = pass-through (message unchanged).
   ## Corresponds to the sieve_filter_bin_dir / sieve_filter_socket_dir /
@@ -2338,7 +2338,7 @@ sieve:
   sieve_filter_exec_timeout: 10
   sieve_filter_input_eol: "crlf"
 
-  ## vnd.yarilo.execute — run programs and capture output into Sieve variables.
+  ## vnd.yarilo.execute - run programs and capture output into Sieve variables.
   ## Corresponds to the sieve_execute_bin_dir / sieve_execute_socket_dir /
   ## sieve_execute_exec_timeout / sieve_execute_input_eol settings.
   sieve_execute_bin_dir: "/usr/lib/yarilo/sieve-execute"
@@ -2350,7 +2350,7 @@ sieve:
 ## General infrastructure
 ## -------------------------------------------------------------------
 general:
-  ## startupDialRetries — number of dial attempts (with exponential backoff)
+  ## startupDialRetries - number of dial attempts (with exponential backoff)
   ## when connecting to external dependencies at startup (warden, Redis).
   ## Prevents permanent loss of functionality on rolling restarts when a
   ## dependency pod is not yet ready. Default 3.
@@ -2367,7 +2367,7 @@ general:
   ## the real client IP after this point.
   ##
   ## haproxy_protocol must also be enabled per-listener (services.imaps.haproxy_protocol etc.)
-  ## in the generated config — the global enabled flag controls all listeners at once.
+  ## in the generated config - the global enabled flag controls all listeners at once.
   ##
   ## trustedNets: CIDRs of load balancers allowed to send PROXY headers.
   ##              Connections from untrusted IPs have the header silently ignored.
@@ -2380,7 +2380,7 @@ general:
     timeout: 3
 
   ## Native inbound client-IP forwarding on the LOGIN pods (#742).
-  ## This is the login_trusted_networks analogue — the third way (besides the
+  ## This is the login_trusted_networks analogue - the third way (besides the
   ## HAProxy PROXY protocol above, and none) for an upstream proxy to hand the
   ## real client IP to yarilo. Per protocol the operator chooses ONE of:
   ##   - haproxy: general.haproxy + <listener>.haproxy_protocol   (PROXY header)
@@ -2397,7 +2397,7 @@ general:
   ##                 can only convey the original SMTP client IP via XCLIENT)
   ##
   ## lmtp-login also gains HAProxy PROXY support here (services.lmtp
-  ## .haproxy_protocol) — pick haproxy or xclient per the same rule.
+  ## .haproxy_protocol) - pick haproxy or xclient per the same rule.
   ##
   ## Precedence when BOTH haproxy and xclient are active on a listener: the
   ## PROXY header rewrites the peer first, the trusted-net check runs against
@@ -2410,7 +2410,7 @@ general:
     trusted_nets: []
 
 ## -------------------------------------------------------------------
-## Redis — state backend for yarilo-locks (and future yarilo-warden).
+## Redis - state backend for yarilo-locks (and future yarilo-warden).
 ## -------------------------------------------------------------------
 ## Bundled (default): a StatefulSet runs in the release, single-replica
 ## for single-node clusters. For prod HA either bump replicas + run
@@ -2428,7 +2428,7 @@ redis:
     name: ""
     key: password
   replicas: 1
-  ## image — pulled from the public Redis library on Docker Hub by default.
+  ## image - pulled from the public Redis library on Docker Hub by default.
   image:
     repository: redis
     tag: "8.10"
@@ -2452,23 +2452,23 @@ redis:
       memory: 256Mi
 
 ## -------------------------------------------------------------------
-## Database — external SQL passdb/userdb backend.
+## Database - external SQL passdb/userdb backend.
 ##
 ## yarilo does NOT bundle a database. Deploy MySQL or PostgreSQL
 ## separately (see hack/db/) and point yarilo at it via one of:
 ##
-##   Option A — reference an existing Kubernetes Secret:
+##   Option A - reference an existing Kubernetes Secret:
 ##     database:
 ##       secretName: yarilo-db-creds   # Secret in the same namespace
 ##       secretKey: dsn                # key holding the DSN string
 ##       initAddr: "yarilo-mysql.db.svc:3306"
 ##
-##   Option B — literal DSN (dev/test only; avoid in production):
+##   Option B - literal DSN (dev/test only; avoid in production):
 ##     database:
 ##       dsn: "user:pass@tcp(host:3306)/dbname?parseTime=true&charset=utf8mb4"
 ##       initAddr: "host:3306"
 ##
-##   Option C — no SQL passdb (SQLite or file-based):
+##   Option C - no SQL passdb (SQLite or file-based):
 ##     Leave all fields empty and configure components.auth.passdb[] directly.
 ##
 ## The DSN is injected as YARILO_DB_DSN into every session component.
@@ -2482,7 +2482,7 @@ database:
   secretName: ""
   ## Key inside the Secret that holds the DSN string.
   secretKey: "dsn"
-  ## Literal DSN — used only when secretName is empty.
+  ## Literal DSN - used only when secretName is empty.
   dsn: ""
   ## TCP probe address for init-containers. Format: "host:port".
   ## Example: "yarilo-mysql.db.svc:3306"
@@ -2495,25 +2495,25 @@ telemetry:
   listen: ":8080"
   # Go runtime profilers on the telemetry port. Disabled by default: this is a
   # switch thrown for the duration of an investigation, and the component logs a
-  # warning at every start while it is on — the failure mode is not enabling it,
+  # warning at every start while it is on - the failure mode is not enabling it,
   # it is enabling it for an afternoon and leaving it on for a year.
   #
   # enabled serves every Go runtime profile: CPU, execution trace, allocations,
   # heap, goroutines, block and mutex. What that exposes is stack traces, counts
-  # and the binary's symbol names — which code paths this process runs and what
+  # and the binary's symbol names - which code paths this process runs and what
   # they cost. Not the contents of anything: the pprof format has no field a
   # message body could appear in. It is off by default because the shape of a
   # workload is still worth something to someone, and an unauthenticated
   # diagnostic port is not where to leave it.
   #
   # There was a second switch here, telemetry.pprof.heapEnabled, on a
-  # distinction that does not exist — heap and allocs are the same profile with
+  # distinction that does not exist - heap and allocs are the same profile with
   # different default sample types (#1488). It is gone from the chart; a config
   # that still carries it is warned about at start (#1493).
   pprof:
     enabled: false
     # Sampling rates for the block and mutex profiles. The routes above answer
-    # 200 with an EMPTY profile while these are 0 — a diagnostic that looks like
+    # 200 with an EMPTY profile while these are 0 - a diagnostic that looks like
     # an answer. Set them for a measurement window and clear them afterwards:
     # every blocking operation and every contended mutex pays while they are on.
     # blockProfileRate: 10000   # nanoseconds of blocked time per sample
@@ -2522,7 +2522,7 @@ telemetry:
     mutexProfileFraction: 0
   # Timer-driven liveness watchdog (#904). Disabled by default: it restarts a
   # pod whose request path is wedged (a deadlock, a hung NFS handle) while the
-  # process and this HTTP server keep answering — so it is only meaningful once a
+  # process and this HTTP server keep answering - so it is only meaningful once a
   # component wires a self-check. Keep timeoutSeconds < intervalSeconds.
   livenessWatchdog:
     enabled: false
@@ -2531,7 +2531,7 @@ telemetry:
     failureThreshold: 3
     # POST /debug/fault/deadlock wedges the self-check so an operator can confirm
     # on a live pod that the watchdog trips and the container restarts. A
-    # deliberate self-destruct switch — leave off outside a verification run.
+    # deliberate self-destruct switch - leave off outside a verification run.
     faultInjectionEnabled: false
   serviceMonitor:
     enabled: false
@@ -2613,7 +2613,7 @@ logLevel: info
 ## very window being investigated.
 logLevelOverrides: {}
 
-## initContainerImage — image used by dependency-wait init containers.
+## initContainerImage - image used by dependency-wait init containers.
 ## Must include busybox-compatible `nc` (netcat). Default: busybox:1.36.
 initContainerImage: "busybox:1.36"
 
@@ -2623,7 +2623,7 @@ extraVolumeMounts: []
 
 # Named dicts (pkg/dict). Yarilo features (metadata, quota counters, ACL state)
 # look these up by name. Each entry picks a driver (file|redis|sql|memory|fail)
-# and configures it via driver-specific `settings`. See https://doc.yarilomail.org/DICT for the
+# and configures it via driver-specific `settings`. See https://doc.yarilomail.org/latest/storage/dict.html for the
 # full reference per driver. The same template renders into yarilo.yaml.
 #
 # Standalone single-pod default uses file driver on the local PVC.
@@ -2631,7 +2631,7 @@ extraVolumeMounts: []
 # state across replicas.
 # IMAP namespaces (RFC 2342 / RFC 9051 §6.3.10).
 #
-# When omitted (default), yarilo runs as personal-only — backwards-
+# When omitted (default), yarilo runs as personal-only - backwards-
 # compatible with pre-v1.20 deployments.
 #
 # When you declare Shared/Public namespaces, yarilo opens an
@@ -2642,15 +2642,15 @@ extraVolumeMounts: []
 # Treat as cooperative-trust until ACL-1 lands.
 #
 # Storage roots referenced by `location:` are the operator's
-# responsibility — mount the PV (NFS/CephFS RWX in multi-pod
+# responsibility - mount the PV (NFS/CephFS RWX in multi-pod
 # deployments) at the chosen path; yarilo creates the per-folder
 # maildir tree on the first CREATE / APPEND. Do NOT point shared
 # locations at per-user storage paths.
 #
-# See https://doc.yarilomail.org/NAMESPACE for full schema, separator semantics,
+# See https://doc.yarilomail.org/latest/storage/namespace.html for full schema, separator semantics,
 # METADATA priv/ per-accessing-user behaviour and the post-NS-1b
 # roadmap (ACL-1, NS-3 cross-pod routing, QUOTA-1 owner-paid).
-## RFC 4314 server-side ACL — GETACL / SETACL / DELETEACL / MYRIGHTS
+## RFC 4314 server-side ACL - GETACL / SETACL / DELETEACL / MYRIGHTS
 ## / LISTRIGHTS plus enforcement on SELECT / APPEND / COPY / MOVE
 ## / STORE / EXPUNGE / CREATE / DELETE / RENAME / STATUS. Storage
 ## is a per-mailbox `yarilo-acl` file alongside each folder's
@@ -2661,11 +2661,11 @@ extraVolumeMounts: []
 ## backend acl <command>`. When disabled, every ACL command
 ## returns NO("ACL extension disabled by operator") and ACL is
 ## absent from the CAPABILITY response.
-## Quota engine — enforcement on every save (IMAP APPEND/COPY/MOVE, LMTP
+## Quota engine - enforcement on every save (IMAP APPEND/COPY/MOVE, LMTP
 ## delivery, quota-status policy service), summed from the index count backend.
 ## Limits come from the userdb quota_rule field / quota_status.default_quota_rules.
 ## Independent of the IMAP QUOTA extension (protocol.imap.imap_quota).
-## Full-text search (https://doc.yarilomail.org/FTS). fts_engine is REQUIRED when enabled —
+## Full-text search (https://doc.yarilomail.org/latest/features/fts.html). fts_engine is REQUIRED when enabled -
 ## startup fails fast on a missing or unknown engine name.
 fts:
   enabled: false
@@ -2683,7 +2683,7 @@ fts:
   ## Email/query in addition to the session backend's.
   fts_max_conns: 4
   ## Mailboxes yarilo-fts indexes at once. The engine holds one mutex per user,
-  ## so this parallelises across users, not across one user's mailboxes — a
+  ## so this parallelises across users, not across one user's mailboxes - a
   ## second worker on the same user would wait inside the engine while other
   ## users' mail stays unindexed, which is why dispatch hands each worker a
   ## different user. Raise only with fts_fetch_seconds / fts_build_seconds in
@@ -2695,13 +2695,13 @@ fts:
   ## Off by default, from measurement rather than caution: reading is ~0.3% of
   ## an index pass and tokenising is the rest, so overlapping them buys almost
   ## nothing while the window costs memory once per worker. Raise it where reads
-  ## are genuinely slow — cold alt-tier storage, or an NFS mount with a cold
-  ## cache — which fts_read_seconds against fts_build_seconds will show.
+  ## are genuinely slow - cold alt-tier storage, or an NFS mount with a cold
+  ## cache - which fts_read_seconds against fts_build_seconds will show.
   fts_prefetch_depth: 1
   fts_prefetch_max_bytes: 32M
   fts_autoindex: false
   fts_autoindex_max_recent_msgs: 0
-  ## fts_message_max_size — human-readable (bytes or K/M/G/T, e.g. "50M"). "0" = unlimited. Quote it.
+  ## fts_message_max_size - human-readable (bytes or K/M/G/T, e.g. "50M"). "0" = unlimited. Quote it.
   fts_message_max_size: "0"
   fts_header_includes: []
   fts_header_excludes: []
@@ -2725,17 +2725,17 @@ fts:
   fts_search_timeout_secs: 30
   fts_search_strict: false
   ## Disables FTS SEARCH only, while indexing/autoindex keep running
-  ## unaffected (#726 item 3) — an incident-response knob: "the FTS
+  ## unaffected (#726 item 3) - an incident-response knob: "the FTS
   ## index/engine is misbehaving, stop querying it, don't let the index go
   ## stale while we investigate." false degrades every SEARCH to the
   ## sequential scan, as if FTS weren't configured at all. Distinct from
   ## fts.enabled (all-or-nothing, including indexing).
   fts_search: true
-  ## Supported: en/fr/de/it/pt/ru/es (stemmed) + uk (Ukrainian — no official
+  ## Supported: en/fr/de/it/pt/ru/es (stemmed) + uk (Ukrainian - no official
   ## Snowball algorithm exists, so it's lowercase + stopwords only, #718).
   languages: [en]
   language_filters: [lowercase, stopwords, snowball]
-  ## Per-language override of language_filters (#726 item 4) — e.g. a
+  ## Per-language override of language_filters (#726 item 4) - e.g. a
   ## mixed uk/ru deployment wants uk without "snowball" (no official
   ## stemmer exists for it, #718) even though the global default has it
   ## for the other languages. A language absent here uses language_filters
@@ -2755,7 +2755,7 @@ fts:
   fts_language_tokenizer_address_token_maxlen: 250
   ## Tokenizer algorithm (#726 item 2): "simple" is the only one
   ## implemented today. "tr29" is a valid reference option but errors
-  ## clearly at startup until it lands (blocked on the Bleve stream) —
+  ## clearly at startup until it lands (blocked on the Bleve stream) -
   ## never silently falls back to "simple". wb5a / explicit_prefix are
   ## TR29-only knobs, also rejected if true for the same reason.
   fts_language_tokenizer_generic_algorithm: simple
@@ -2773,21 +2773,21 @@ fts:
   ## Shortest term worth indexing, in CHARACTERS. It counted bytes until
   ## #1055, which applied a different rule to every script: a one-character
   ## Latin word was dropped while a one-character Cyrillic or CJK one was kept.
-  ## The default still means "drop single characters" — it just now means that
+  ## The default still means "drop single characters" - it just now means that
   ## everywhere. Changing it changes index contents, so it is a re-index.
   fts_flatcurve_min_term_size: 2
   ## Queues a mailbox for automatic background shard compaction once its
   ## sealed-shard count reaches this value (#715), on top of the manual
   ## `yarctl fts optimize` command. 0 disables auto-optimize (manual
-  ## only) — explicit, not just "unset falls back to a default".
+  ## only) - explicit, not just "unset falls back to a default".
   fts_flatcurve_optimize_limit: 10
   fts_flatcurve_rotate_count: 5000
   ## Also rotates a shard if its commit took longer than this many ms
-  ## (#724) — bounds commit latency for mailboxes with large documents
+  ## (#724) - bounds commit latency for mailboxes with large documents
   ## and few messages per shard, which rotate_count alone never catches.
   ## 0 disables the time-based trigger (rotate_count-only, explicit).
   fts_flatcurve_rotate_time: 5000
-  ## Where FTS data lives, written "driver:prefix=<path>" — the fs-api form, so
+  ## Where FTS data lives, written "driver:prefix=<path>" - the fs-api form, so
   ## a value carried over from an equivalent deployment needs no editing. The
   ## path is a template expanded per user with ~/, %h, %u, %n and %d.
   ##
@@ -2797,8 +2797,8 @@ fts:
   ## argument other than prefix=. Two shorter spellings are also read:
   ## posix:<path> (the form namespace locations use) and a bare path.
   ##
-  ## Defaults to posix:prefix=%h/fts/, outside the mail tree. FTS data is derived — deletable
-  ## and rebuildable — while mail is not, and FTS is write-heavy: index writes
+  ## Defaults to posix:prefix=%h/fts/, outside the mail tree. FTS data is derived - deletable
+  ## and rebuildable - while mail is not, and FTS is write-heavy: index writes
   ## are about a third of the pipeline. Those are different durability and I/O
   ## requirements, so they get different places, and a volume can be given to
   ## one without the other.
@@ -2810,32 +2810,32 @@ fts:
   ## repeats across domains; both merge accounts' indexes, and startup fails
   ## rather than letting one user's search return another's mail. Note that
   ## "changing the root is safe, the index rebuilds" applies to moving a root
-  ## and not to sharing one — a rebuild re-merges what merged.
+  ## and not to sharing one - a rebuild re-merges what merged.
   ##
   ## UPGRADE NOTE (2.3.64): the default changed from "" to %h/fts, so an
-  ## upgrade moves the location. Nothing is migrated — existing indexes are
+  ## upgrade moves the location. Nothing is migrated - existing indexes are
   ## orphaned where they are and rebuilt under %h/fts on first search or
   ## autoindex, which is safe because the data is derived but costs a reindex
   ## and leaves the old fts-flatcurve directories occupying space until they
   ## are removed by hand. Set fts_index_root: "" to keep the old placement.
   fts_index_root: "posix:prefix=%h/fts/"
-  ## What the index shards sit on: "local" or "nfs". Declared, not detected
-  ## — an approach that changes with the filesystem has to be a setting.
+  ## What the index shards sit on: "local" or "nfs". Declared, not detected -
+  ## an approach that changes with the filesystem has to be a setting.
   ## It decides where a durability call is real: on a local filesystem the
   ## shard directory is fsynced after a compaction so the rename and the
   ## removals survive a crash, while NFS commits metadata operations before
   ## the reply by protocol and has no commit-a-directory call at all, so the
   ## same fsync is a no-op and is skipped. Unset means "local", the value
-  ## that does the extra work — mis-declaring costs a wasted syscall one way
+  ## that does the extra work - mis-declaring costs a wasted syscall one way
   ## and a rebuilt index after a crash the other. Every k8s backend runs on
   ## the tag's RWX NFS PV and should say so; standalone on a local PV should
-  ## not. NOTE: an NFS export must be `sync` either way (https://doc.yarilomail.org/DEPLOYMENT).
+  ## not. NOTE: an NFS export must be `sync` either way (https://doc.yarilomail.org/latest/installation/deployment.html).
   fts_storage_type: "local"
   ## Mailboxes autoindexing skips: special-use flags written with their
   ## backslash, or names with * and ? wildcards. Empty excludes nothing.
   ##
   ## Junk and trash are why it exists: high volume, attachment-heavy, almost
-  ## never searched, and indexing cost is dominated by tokenisation — that is
+  ## never searched, and indexing cost is dominated by tokenisation - that is
   ## the cost of keeping current an index of content nobody queries.
   ##
   ## Patterns are written in the hierarchy separator the namespace configures:
@@ -2848,7 +2848,7 @@ fts:
   ## than unsearchable.
   ##
   ## A flag is resolved against imap_special_use_defaults, not the per-user
-  ## special-use file — reading that takes the cross-process lock and this runs
+  ## special-use file - reading that takes the cross-process lock and this runs
   ## on every delivery. A user who moved \Junk to a folder of their own naming
   ## is not covered; name patterns are the fallback for that.
   ##
@@ -2863,7 +2863,7 @@ fts:
   ## characters. A prefix search asks the index for every term beginning with
   ## what was typed, so a short one can name a large part of it.
   ##
-  ## unmeasured as a default — it expands everything, which is what the engine
+  ## unmeasured as a default - it expands everything, which is what the engine
   ## did before the setting existed. Measured against a vocabulary sharing
   ## prefixes, a two-character term cost 26x an exact match, six characters
   ## 2.2x, and eight characters nothing; but the useful threshold depends on how
@@ -2873,7 +2873,7 @@ fts:
   ## "no" turns substring search off in effect, since a stored suffix is only
   ## reachable by expansion. That combination is refused at startup.
   fts_flatcurve_prefix_search: "yes"
-  ## Attachment text extraction (#669): no built-in PDF/office parsing —
+  ## Attachment text extraction (#669): no built-in PDF/office parsing -
   ## delegates to an external decoder, opt-in per driver.
   fts_decoder_driver: none           # none | script | tika
   fts_decoder_script_addr: ""        # "unix:///path/to.sock" or "host:port"
@@ -2881,13 +2881,13 @@ fts:
   fts_decoder_max_size: "0"          # attachment bytes to decoder (human-readable, e.g. "10M"); "0"=unlimited. Quote it.
   fts_decoder_timeout_secs: 30
   ## tika driver retry against transient failures (network errors, 5xx)
-  ## before degrading — indexing the message without the attachment's text
+  ## before degrading - indexing the message without the attachment's text
   ## instead of failing it outright (#697). 2 is one retry; must be positive.
   ## Not used by the script driver, which has no retry.
   fts_decoder_max_attempts: 2
   ## Skip re-tokenizing a body part whose normalized text was already
   ## indexed for the SAME message (multipart/alternative text+html twins,
-  ## a repeated quoted block). Opt-in — some operators may not want this.
+  ## a repeated quoted block). Opt-in - some operators may not want this.
   fts_dedup_body_parts: false
 
 quota:
@@ -2910,7 +2910,7 @@ quota:
   ## (human size). Empty / "0" = none.
   quota_storage_extra: ""
   ## Storage overshoot allowed past the limit on inbound delivery (LMTP/LDA)
-  ## ONLY — never interactive IMAP. Lets a nearly-full mailbox still accept one
+  ## ONLY - never interactive IMAP. Lets a nearly-full mailbox still accept one
   ## more delivery. Human size. Default "10M".
   quota_grace: "10M"
   ## Omit the quota root from IMAP GETQUOTA/GETQUOTAROOT for users whose limits
@@ -2928,7 +2928,7 @@ quota:
   ## hides only unlimited users.
   quota_hidden: false
 
-  ## quota_warning — run an action when usage crosses a percentage of the limit.
+  ## quota_warning - run an action when usage crosses a percentage of the limit.
   ## The action is a program located in quota_warning_bin_dir (mirrors
   ## sieve_execute_bin_dir), run best-effort with the crossing context passed
   ## via env: USER, HOME, HOST, QUOTA_WARNING_NAME, QUOTA_RESOURCE,
@@ -2943,7 +2943,7 @@ quota:
   #    quota_warning_percentage: 90         # % of the user's limit; required
   #    quota_warning_execute: "warn-user"   # program in quota_warning_bin_dir
 
-  ## quota_clone — mirror the authoritative usage into external dicts (advisory,
+  ## quota_clone - mirror the authoritative usage into external dicts (advisory,
   ## never the source of truth; enforcement always reads the index). Names refer
   ## to entries in the top-level dicts: map. yarilo fans out to ALL of them at
   ## once (e.g. SQL + Redis simultaneously). Keys written: priv/quota/storage,
@@ -2955,7 +2955,7 @@ quota:
   ## a final flush on session close. Default 10.
   quota_clone_flush_delay: 10
 
-  ## quota_over_status — keep an external "over quota" flag in sync. At login
+  ## quota_over_status - keep an external "over quota" flag in sync. At login
   ## the actual over-quota state is compared to the userdb quota_over_flag; on a
   ## mismatch a program (from quota_warning_bin_dir) updates the external flag so
   ## an MTA can reject mail to over-quota users without querying yarilo.
@@ -2982,14 +2982,14 @@ acl:
   globals_only: false
   ## How long (seconds) a parsed per-mailbox ACL is trusted before its
   ## file's mtime+size are re-validated. The acl_cache_ttl knob
-  ## (default 30). 0 disables caching — every right check reads the file.
+  ## (default 30). 0 disables caching - every right check reads the file.
   acl_cache_ttl: 30
   ## Owner-discovery registry: names a dict (from the top-level dicts:
   ## section) that records who granted what to whom in owner-templated
   ## namespaces, which is what lets LIST user/* enumerate the owners the
   ## caller may see. Key space matches the reference's shared-boxes
   ## layout, so a dict_import migration is mechanical. Unset disables
-  ## discovery — user/* then lists nobody, and grants are reachable only
+  ## discovery - user/* then lists nobody, and grants are reachable only
   ## by naming the owner (corresponds to acl_shared_dict).
   # acl_shared_dict: "acl"
   ## Operator-configured global ACL rules, applied across all users and
@@ -3046,10 +3046,15 @@ namespaces: []
 #     # leave `location:` unset.
 #     mailboxes:                  # made on any open, delivery included; subscribe
 #                                 # once when made. special_use: personal only.
+#                                 # Left out, the namespace owning INBOX (and a
+#                                 # server with no namespaces) takes Sent,
+#                                 # Drafts, Trash and Junk, each subscribe with
+#                                 # its special_use. A block replaces that set;
+#                                 # `mailboxes: {}` makes none.
 #       Sent:   { auto: subscribe, special_use: "\\Sent" }
 #       Drafts: { auto: subscribe, special_use: "\\Drafts" }
 #       Trash:  { auto: subscribe, special_use: "\\Trash" }
-#       Junk:   { auto: create,    special_use: "\\Junk" }
+#       Junk:   { auto: subscribe, special_use: "\\Junk" }
 #   - type: shared
 #     prefix: "Shared/"
 #     separator: "."
@@ -3058,7 +3063,7 @@ namespaces: []
 #                                 # (rights not checked, no lookup-right hiding)
 #     # Absolute path; mount a PV here in multi-pod deployments.
 #     location: "maildir:/var/yarilo/shared"
-#   - type: other                 # Other Users — declared-only until ACL-1 + NS-3
+#   - type: other                 # Other Users - declared-only until ACL-1 + NS-3
 #     prefix: "user/"
 #     separator: "/"
 #     list: "yes"
@@ -3115,7 +3120,7 @@ dicts:
 #   # protocol.lmtp.quota_clone_dicts.
 #   ## The dict drivers take the same pool knobs inside `settings`, since that is
 #   ## where their DSN already lives. quota_clone_mysql is the hottest SQL path in
-#   ## the system — it writes on every mail save — so it benefits most from reuse:
+#   ## the system - it writes on every mail save - so it benefits most from reuse:
 #   ##   settings:
 #   ##     max_open_conns: 25
 #   ##     conn_max_lifetime: 300

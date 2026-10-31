@@ -8,7 +8,7 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
 )
 
 // In a namespace nobody owns, a mailbox could end up with no administrator at

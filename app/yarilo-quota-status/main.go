@@ -18,20 +18,20 @@ import (
 	"os/signal"
 	"syscall"
 
-	_ "github.com/yarilomail/yarilo/pkg/dict/drivers/all"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/drivers/all"
 
-	backendpkg "github.com/yarilomail/yarilo/internal/backend"
-	"github.com/yarilomail/yarilo/internal/quotastatus"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	backendpkg "github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/internal/quotastatus"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -49,17 +49,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Telemetry (/healthz, /readyz, /metrics) — same as every other component,
+	// Telemetry (/healthz, /readyz, /metrics) - same as every other component,
 	// so orchestrators health-check quota-status the standard HTTP way.
 	tel := startTelemetry(cfg.Telemetry)
 
 	// Storage access: quota is enforced by summing the recipient's index
-	// aggregate (the count backend), exactly as a delivery agent would — no
+	// aggregate (the count backend), exactly as a delivery agent would - no
 	// dict. Reads need no locker.
 	resolver := backendpkg.BuildResolver(cfg)
 	mbox := backendpkg.BuildMailbox(cfg.Storage, nil)
 	// WithNoCreate: OpenFolder is a write path for a folder that has no index
-	// yet — it would run createFresh and the legacy migration unguarded, racing
+	// yet - it would run createFresh and the legacy migration unguarded, racing
 	// a session pod's locked create (#993). A policy service observes; it does
 	// not establish state. CountUsage already skips a folder it cannot open, so
 	// a not-yet-indexed folder contributes zero rather than failing the read.

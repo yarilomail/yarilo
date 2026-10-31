@@ -14,17 +14,17 @@ import (
 	"syscall"
 	"time"
 
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
 
-	"github.com/yarilomail/yarilo/internal/readyfile"
-	"github.com/yarilomail/yarilo/internal/stopaccept"
-	submsvr "github.com/yarilomail/yarilo/internal/submission"
-	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/readyfile"
+	"github.com/yarilomail/yarilo/v2/internal/stopaccept"
+	submsvr "github.com/yarilomail/yarilo/v2/internal/submission"
+	submproxy "github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -118,7 +118,7 @@ func main() {
 	go readyfile.Touch(ctx, reg.ReadinessDir, "submission",
 		time.Duration(reg.ReadinessTouchInterval)*time.Second, ready.Load)
 
-	// port 587 — STARTTLS
+	// port 587 - STARTTLS
 	if svcs.Submission.Active() {
 		addr := fmt.Sprintf(":%d", svcs.Submission.Port)
 		ln, err := net.Listen("tcp", addr)
@@ -130,7 +130,7 @@ func main() {
 		slog.Info("submission: listening", "addr", addr, "tls", "starttls")
 	}
 
-	// port 465 — implicit TLS
+	// port 465 - implicit TLS
 	if svcs.Submissions.Active() {
 		addr := fmt.Sprintf(":%d", svcs.Submissions.Port)
 		ln, err := net.Listen("tcp", addr)

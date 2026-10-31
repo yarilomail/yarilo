@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // ErrNotStored says the caller asks a virtual mailbox to hold a message: it

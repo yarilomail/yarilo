@@ -8,7 +8,7 @@ import (
 
 	"github.com/emersion/go-message"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // downloadPrefix is the path the session resource advertises as downloadUrl:
@@ -19,7 +19,7 @@ const downloadPrefix = "/jmap/download/"
 //
 // Two properties matter more than the streaming itself. The blob is resolved
 // against the authenticated user's own mail before anything is opened, so a
-// blobId belonging to somebody else is a 404 that never touched their file —
+// blobId belonging to somebody else is a 404 that never touched their file -
 // ownership is a precondition, not a check applied to an open handle. And the
 // body is copied straight through, so a large attachment is never held whole in
 // this process or in the login proxy in front of it.
@@ -29,7 +29,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request, id ident
 		jmapcore.WriteProblem(w, http.StatusNotFound, "Malformed download URL")
 		return
 	}
-	if accountID != "" && accountID != id.user {
+	if accountID != "" && accountID != jmapcore.AccountID(id.user) {
 		// Another account's blob is indistinguishable from one that does not
 		// exist: answering differently would confirm what the caller guessed.
 		slog.Warn("jmap: download for another account", "user", id.user, "account", accountID)

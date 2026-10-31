@@ -50,7 +50,7 @@ func TestAppendingToAnOldFileUsesTheSizeItAnnounces(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 	if string(got) != second {
-		t.Fatalf("the appended message reads as %q, want %q — "+
+		t.Fatalf("the appended message reads as %q, want %q - "+
 			"it was accepted, it occupies quota, and no client can open it", got, second)
 	}
 
@@ -82,7 +82,7 @@ func TestAppendingToAnOldFileUsesTheSizeItAnnounces(t *testing.T) {
 	secondHdr := raw[line+messageHeaderSizeLegacy+secondHdrOff:]
 	if secondHdr[messageHeaderSizeLegacy-1] != '\n' {
 		t.Errorf("the appended header is not %d bytes, though the file announces M20: "+
-			"byte %d is %q — every reader takes the size from M and would land inside the body",
+			"byte %d is %q - every reader takes the size from M and would land inside the body",
 			messageHeaderSizeLegacy, messageHeaderSizeLegacy-1, secondHdr[messageHeaderSizeLegacy-1])
 	}
 }
@@ -98,8 +98,8 @@ func TestARecordWrittenAtTheOtherSizeIsStillRead(t *testing.T) {
 		name              string
 		announced, actual int
 	}{
-		{"file says M20, record written at 30 — the #1525 case", 32, 30},
-		{"file says M1e, record written at 32 — the same mistake reversed", 30, 32},
+		{"file says M20, record written at 30 - the #1525 case", 32, 30},
+		{"file says M1e, record written at 32 - the same mistake reversed", 30, 32},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const body = "From: a@a.com\r\nSubject: mixed\r\n\r\nrecovered\r\n"

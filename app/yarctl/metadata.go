@@ -24,7 +24,7 @@ func dispatchMetadata(args []string) error {
 	case "delete", "del":
 		return metadataDelete(args[1:])
 	default:
-		return fmt.Errorf("unknown metadata command %q — available: list, get, set, delete", args[0])
+		return fmt.Errorf("unknown metadata command %q - available: list, get, set, delete", args[0])
 	}
 }
 

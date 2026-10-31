@@ -2,7 +2,7 @@
 //
 // It accepts LMTP connections from MTAs (e.g. Postfix), performs
 // per-recipient warden CONNECT and yarilo-auth SESSION token issuance, then
-// at DATA time fans out one backend connection per recipient — each
+// at DATA time fans out one backend connection per recipient - each
 // preceded by a YARILO preamble carrying the recipient's session token.
 package lmtplogin
 
@@ -24,12 +24,12 @@ import (
 	goSmtp "github.com/emersion/go-smtp"
 	proxyproto "github.com/pires/go-proxyproto"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/lmtpreply"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/internal/warden"
-	"github.com/yarilomail/yarilo/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/lmtpreply"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 )
 
 // Options configures the lmtp-login proxy.
@@ -55,7 +55,7 @@ type Options struct {
 	// DirectorTLS is the mTLS config for connecting to yarilo-director.
 	DirectorTLS *tls.Config
 	// DirectorTag restricts LOOKUP to backends with this tag. "" = the untagged
-	// pool, not "any tag" — there is no full-ring mode.
+	// pool, not "any tag" - there is no full-ring mode.
 	DirectorTag string
 	// BackendPort overrides the port in the LOOKUP result. 0 = use as-is.
 	BackendPort int
@@ -485,7 +485,7 @@ func (s *session) issueToken(username, wardenID string) (string, error) {
 const masterCallTimeout = 5 * time.Second
 
 // userFields looks up the recipient's director_tag and proxy_timeout. A failed
-// lookup is 451, a proxy_timeout this proxy cannot read 550; not found is none.
+// lookup is 451, an unknown user 550 5.1.1 before any LOOKUP, a bad proxy_timeout 550.
 func (s *session) userFields(username string) (string, time.Duration, error) {
 	if s.opts.AuthMasterAddr == "" {
 		return "", 0, nil
@@ -496,7 +496,7 @@ func (s *session) userFields(username string) (string, time.Duration, error) {
 	var ui *protocol.UserInfo
 	var err error
 	if s.opts.AuthMasterPool != nil {
-		ui, err = s.opts.AuthMasterPool.Userdb(ctx, username)
+		ui, err = s.opts.AuthMasterPool.UserdbFor(ctx, username, "lmtp")
 	} else {
 		s.authMu.Lock()
 		c, derr := s.ensureAuthClient()
@@ -504,7 +504,7 @@ func (s *session) userFields(username string) (string, time.Duration, error) {
 		if derr != nil {
 			err = derr
 		} else {
-			ui, err = c.Userdb(ctx, username)
+			ui, err = c.UserdbFor(ctx, username, "lmtp")
 		}
 	}
 	if err != nil {
@@ -512,7 +512,7 @@ func (s *session) userFields(username string) (string, time.Duration, error) {
 		return "", 0, &goSmtp.SMTPError{Code: 451, EnhancedCode: goSmtp.EnhancedCode{4, 3, 0}, Message: "Temporary user lookup failure"}
 	}
 	if ui == nil {
-		return "", 0, nil
+		return "", 0, &goSmtp.SMTPError{Code: 550, EnhancedCode: goSmtp.EnhancedCode{5, 1, 1}, Message: "No such user here"}
 	}
 	timeout, err := protocol.ParseProxyTimeout(ui.ProxyTimeout)
 	if err != nil {
@@ -627,7 +627,7 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOption
 	defer stop.Stop()
 
 	// Preamble must be written before go-smtp reads the 220 greeting from the
-	// backend — the backend's PreambleListener consumes it first.
+	// backend - the backend's PreambleListener consumes it first.
 	if _, err := fmt.Fprint(conn, pre.Format()); err != nil {
 		return fmt.Errorf("lmtplogin: write preamble: %w", err)
 	}
@@ -670,18 +670,19 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOption
 
 // ---- helpers ----------------------------------------------------------------
 
-// rcptUsername strips angle brackets, trims spaces, removes plus-detail
-// extension (user+folder@domain → user@domain), and returns the canonical
-// user@domain string that yarilo-auth and the mailbox backend expect.
+// rcptUsername returns the userdb name of an RCPT path without brackets or
+// +detail (user+folder@domain → user@domain); a name without a domain stays so.
 func rcptUsername(to string) string {
 	to = strings.Trim(strings.TrimSpace(to), "<>")
-	at := strings.LastIndex(to, "@")
-	if at < 0 {
-		return ""
+	local, domain, hasDomain := to, "", false
+	if at := strings.LastIndex(to, "@"); at >= 0 {
+		local, domain, hasDomain = to[:at], to[at+1:], true
 	}
-	local, domain := to[:at], to[at+1:]
 	if plus := strings.Index(local, "+"); plus >= 0 {
 		local = local[:plus]
+	}
+	if !hasDomain {
+		return local
 	}
 	return local + "@" + domain
 }

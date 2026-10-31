@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // emailGet implements Email/get (RFC 8621 §4.2).
 // propsOf returns the requested property names, or nil when the client named
-// none — which asks for all of them.
+// none - which asks for all of them.
 func propsOf(req jmapcore.EmailGetRequest) []string { return propsOfGet(req.GetRequest) }
 
 // propsOfGet is the same for the plain /get request every other type uses.

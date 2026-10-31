@@ -31,7 +31,7 @@ func (s *Server) flushProgramTimeout() time.Duration { return s.opts.FlushProgra
 //	flush_program FLUSH <username> <username_hash> <old_backend> <new_backend>
 //
 // new_backend is empty when the user had nowhere left to land (they were kicked, not
-// moved) — the hook can still clean up the old backend.
+// moved) - the hook can still clean up the old backend.
 func (s *Server) runFlushHook(hash uint32, fc flushCtx) {
 	prog := s.opts.FlushProgram
 	if prog == "" {

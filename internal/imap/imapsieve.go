@@ -8,11 +8,11 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const imapSieveScriptAttr = "imapsieve/script"
@@ -129,7 +129,7 @@ func (s *session) runImapSieveScript(scriptName, cause, mailboxName, rel string,
 // applyImapSieveResult applies imapsieve actions to the stored message. The
 // message currently lives in (h, rel) as uid. Per RFC 6785: an implicit/explicit
 // keep leaves it in place, fileinto copies it into the named mailbox (and, when
-// keep is cancelled, the original is expunged — a move), discard expunges it,
+// keep is cancelled, the original is expunged - a move), discard expunges it,
 // and imap4flags updates its flags.
 func (s *session) applyImapSieveResult(res *sieve.FilterResult, h *nsHandle, rel string, folder *mailbox.Folder, uid uint32, filename string, raw []byte) {
 	// discard: the script cancelled keep and filed nowhere.
@@ -146,7 +146,7 @@ func (s *session) applyImapSieveResult(res *sieve.FilterResult, h *nsHandle, rel
 			continue
 		}
 		if d.Folder == rel {
-			// fileinto back into the same mailbox — already there.
+			// fileinto back into the same mailbox - already there.
 			keepInPlace = true
 			keepFlags = d.Flags
 			continue
@@ -191,7 +191,7 @@ func (s *session) imapSieveFileInto(name string, raw []byte, flags []string, cre
 	}
 	nm, newFilename := saved.Meta, saved.Filename
 	// Explicit write confirmation (#625): a sieve fileinto lands a message the same
-	// way LMTP/APPEND do, but previously only logged on error — so a message that
+	// way LMTP/APPEND do, but previously only logged on error - so a message that
 	// "vanished" could not be told apart from one that was never written. Mirrors
 	// the "imap: append saved" line; no message content, only the write coordinates.
 	slog.Debug("imapsieve: fileinto saved",

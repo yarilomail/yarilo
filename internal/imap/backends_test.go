@@ -7,17 +7,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // startServerWith starts an IMAP server backed by the given MailboxBackend
@@ -124,7 +124,7 @@ func TestIMAPBackends(t *testing.T) {
 				t.Fatalf("SELECT NumMessages = %d, want 1", selectData.NumMessages)
 			}
 
-			// FETCH FLAGS — must include \Seen
+			// FETCH FLAGS - must include \Seen
 			flagMsgs, err := c.Fetch(
 				imap.SeqSetNum(1),
 				&imap.FetchOptions{Flags: true},
@@ -139,7 +139,7 @@ func TestIMAPBackends(t *testing.T) {
 				t.Errorf("FETCH FLAGS: \\Seen missing from %v", flagMsgs[0].Flags)
 			}
 
-			// FETCH BODY[] — must return original message
+			// FETCH BODY[] - must return original message
 			bodyFetch, err := c.Fetch(
 				imap.SeqSetNum(1),
 				&imap.FetchOptions{BodySection: []*imap.FetchItemBodySection{{}}},
@@ -269,27 +269,27 @@ func TestIMAPBackends_CreateDelete(t *testing.T) {
 			c := startServerWith(t, mb)
 			defer func() { c.Logout().Wait() }() //nolint:errcheck
 
-			if err := c.Create("Sent", nil).Wait(); err != nil {
-				t.Fatalf("CREATE Sent: %v", err)
+			if err := c.Create("Projects", nil).Wait(); err != nil {
+				t.Fatalf("CREATE Projects: %v", err)
 			}
 
-			// LIST — Sent must appear.
+			// LIST - Projects must appear. Not a default mailbox: those are made again on LIST.
 			listData, err := c.List("", "*", nil).Collect()
 			if err != nil {
 				t.Fatalf("LIST: %v", err)
 			}
 			found := false
 			for _, m := range listData {
-				if m.Mailbox == "Sent" {
+				if m.Mailbox == "Projects" {
 					found = true
 				}
 			}
 			if !found {
-				t.Errorf("Sent not found in LIST after CREATE")
+				t.Errorf("Projects not found in LIST after CREATE")
 			}
 
-			if err := c.Delete("Sent").Wait(); err != nil {
-				t.Fatalf("DELETE Sent: %v", err)
+			if err := c.Delete("Projects").Wait(); err != nil {
+				t.Fatalf("DELETE Projects: %v", err)
 			}
 
 			listData2, err := c.List("", "*", nil).Collect()
@@ -297,8 +297,8 @@ func TestIMAPBackends_CreateDelete(t *testing.T) {
 				t.Fatalf("LIST after DELETE: %v", err)
 			}
 			for _, m := range listData2 {
-				if m.Mailbox == "Sent" {
-					t.Errorf("Sent still in LIST after DELETE")
+				if m.Mailbox == "Projects" {
+					t.Errorf("Projects still in LIST after DELETE")
 				}
 			}
 		})
@@ -306,7 +306,7 @@ func TestIMAPBackends_CreateDelete(t *testing.T) {
 }
 
 // TestIMAPBackends_DeleteReclaimsIndex verifies DELETE removes the folder's
-// fileindex, not just its mailbox data — otherwise the index directory is
+// fileindex, not just its mailbox data - otherwise the index directory is
 // orphaned on shared storage after every folder deletion (issue #485).
 func TestIMAPBackends_DeleteReclaimsIndex(t *testing.T) {
 	for _, bf := range backends {
@@ -355,7 +355,7 @@ func TestIMAPBackends_DeleteReclaimsIndex(t *testing.T) {
 				t.Fatalf("DELETE Sent: %v", err)
 			}
 
-			// Nothing named after the folder may remain — neither a
+			// Nothing named after the folder may remain - neither a
 			// yarilo.index* file nor an empty mailboxes/<name> dir shell.
 			filepath.Walk(root, func(p string, info os.FileInfo, err error) error { //nolint:errcheck
 				if err != nil {
@@ -423,7 +423,7 @@ func TestIMAPBackends_Copy(t *testing.T) {
 }
 
 // TestIMAPBackends_ListNested verifies a nested folder is visible in LIST on
-// every backend — the dbox backends recurse the physical tree instead of
+// every backend - the dbox backends recurse the physical tree instead of
 // reading only the top level (issue #488).
 func TestIMAPBackends_ListNested(t *testing.T) {
 	for _, bf := range backends {
@@ -464,7 +464,7 @@ func TestIMAPBackends_ListNested(t *testing.T) {
 
 // TestDboxListNoSelectContainer verifies that a parent auto-created for a
 // nested child (no dbox-Mails of its own) is listed as a \NoSelect container,
-// while the child is selectable — on both dbox backends, which share the
+// while the child is selectable - on both dbox backends, which share the
 // mailboxes/<name>/dbox-Mails layout.
 func TestDboxListNoSelectContainer(t *testing.T) {
 	dboxBackends := []backendFactory{{"dbox", dboxBackend}, {"mdbox", mdboxBackend}}

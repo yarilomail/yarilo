@@ -59,7 +59,7 @@ func tcpPair(t *testing.T) (server, client net.Conn) {
 }
 
 // TestPreambleListener_TerminatesTLS guards #824: with TLSConfig set, the
-// PreambleListener terminates internal mTLS BEFORE reading the preamble — so a
+// PreambleListener terminates internal mTLS BEFORE reading the preamble - so a
 // plaintext preamble is rejected at the TLS handshake (not misread as "not a
 // YARILO preamble"), and a preamble sent over TLS is read correctly (the
 // handshake then fails only later, at the unreachable auth dial).

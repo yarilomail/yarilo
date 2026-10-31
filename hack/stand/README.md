@@ -22,8 +22,19 @@ KUBECONFIG=~/.kube/sbox.yaml \
 | `YARILO_ARM_REPEATS` | 1 | runs per type; each run gets its own name, counters, log and profile |
 | `YARILO_ARM_KEEP_STORE` | 0 | take the previous arm's mailboxes instead of wiping and filling |
 | `YARILO_ARM_TYPES` | `mdbox maildir sdbox` | which storage types the arm wipes, fills and runs |
-| `YARILO_ARM_OVERLAY` | — | a second values file from `helm_values/values-sandbox-<name>.yaml` |
+| `YARILO_ARM_OVERLAY` | - | a second values file from `helm_values/values-sandbox-<name>.yaml` |
 | `YARILO_ARM_BLOCKPROFILE` | 0 | the profiling overlay; this makes the arm a latency arm, not a throughput one |
+| `YARILO_ARM_CHART` | this checkout | a checkout whose `helm/` and `helm_values/` the arm deploys; checked clean and named in the arm's output as `-- chart:` |
+
+### A release's arm
+
+A release window runs the last release as arm A with its own chart and values,
+under this tooling: a worktree at the release tag beside the runner's checkout.
+
+```
+git -C ~/stand worktree add ~/stand-v2.4.4 v2.4.4
+YARILO_ARM_CHART=~/stand-v2.4.4 bash hack/stand/ab-arm.sh A1 2.4.4 <out-dir>
+```
 
 ### Overlays
 
@@ -51,7 +62,7 @@ issue it verifies.
 
 | Criterion | How |
 |:---|:---|
-| smoketest: `SMOKE_CHECKS` passed, 0 failed, and skipped exactly the oauth2 rows named in `SMOKE_OAUTH2_SKIPS`, on mdbox, maildir, sdbox; the verdict reads `51 passed, 0 failed, 3 skipped (oauth2)`, and any other skip fails however the counts add up | `hack/smoketest/run.sh` per type, without the OAuth2 overlay |
+| smoketest: `SMOKE_CHECKS` passed, 0 failed, and skipped exactly the oauth2 rows named in `SMOKE_OAUTH2_SKIPS`, on mdbox, maildir, sdbox; the verdict reads `56 passed, 0 failed, 3 skipped (oauth2)`, and any other skip fails however the counts add up | `hack/smoketest/run.sh` per type, without the OAuth2 overlay |
 | disk = index on maildir and sdbox | file count against `yarctl backend folder info` |
 | mail between mailboxes reaches the relay as its sender | from the runner with `curl`: u1→u51, u51→u101, u101→u1 over SMTP 587 and over JMAP (`Email/set` and `EmailSubmission/set` with `"emailId":"#d"` in one request, a Bcc to the third user), each with its own password, then u1→u51 over both logged in as `u1@d00001.test*<submission_relay_master_user>`; every copy must reach INBOX without a Bcc header and is expunged, and relay-mta's `sasl_username` lines since the first send must be exactly the senders, never the master user (#2273). The master password is read from Secret `yarilo-submission-relay` and given to `curl` on stdin, never as an argument; sent messages and replies are in `<out-dir>/cross/` |
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
@@ -93,6 +104,57 @@ was. The first-seen count stays the control: 20 accounts log in per run, so a
 `first-seen` outside 20-21 is a different start rather than a different image,
 and the arm marks it as `first_seen_off=1`.
 
+## Two folders, one account
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/store-parallel.sh <label> <out-dir>
+```
+
+Two imaptest halves, one pod, write flags into `PushA` and `PushB` of one
+account at once: the profile that shows a per-account lock serialising writes
+two folders kept apart (#714). Run it right after an arm, against the image
+that arm deployed, and in the same slot as the other arms of the window.
+
+| knob | default | what it changes |
+|:---|:---|:---|
+| `YARILO_STORE_TYPES` | `mdbox maildir sdbox` | which storage types run |
+| `YARILO_STORE_CLIENTS` | 5 | clients per folder |
+| `YARILO_STORE_SECS` | 60 | seconds per type |
+| `YARILO_STORE_MSGS` | 100 | messages copied from INBOX into each folder |
+
+Each type prints `store_parallel` (stores per second, from imaptest's totals)
+and `store_latency` (count, p50 and p99 bounds of `imap_command_seconds` for
+`Store`, and of `yarilo_locks_acquire_wait_seconds` for the `mbox` class, from
+the delta across the run). The server's `Store` count must
+equal the two halves' total; a gap means the page was read from the wrong pods.
+
+## Push across pods
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/push-latency.sh <label> <out-dir>
+```
+
+A JMAP push stream is held open on one backend pod, straight to its JMAP
+container over internal mTLS, while mail for the same account is delivered
+over LMTP to the pod the director pins it to: the time from each delivery's
+`250` to the stream's StateChange naming `Email` is the cross-pod path of push
+events. The account is the first candidate the director places, and the stream goes to
+a backend pod it is not on.
+One run on one image, never alongside a window arm; bash 5, so the runner.
+
+| knob | default | what it changes |
+|:---|:---|:---|
+| `YARILO_PUSH_TRANSPORT` | `eventsource` | `eventsource`: curl through a port-forward; `websocket`: `yarilo-smoketest -push-listen` run in the JMAP login pod with its internal certificate, enabling push and waiting for the answer to a later request before the first delivery |
+| `YARILO_PUSH_PASS` | the sandbox Secret, through `hack/sandbox/creds.sh` | the accounts' password, for the IMAP login that places an account |
+| `YARILO_PUSH_POD` | any backend pod the account is not on | the pod holding the stream |
+| `YARILO_PUSH_USERS` | `u1`, `u51`, `u101`, `u2`, `u52`, `u102` of the three type domains | candidate accounts, first pinned elsewhere wins; an unplaced one is logged in once over IMAP so the director places it |
+| `YARILO_PUSH_COUNT` | 50 | deliveries |
+| `YARILO_PUSH_PAUSE` | 2 | seconds between deliveries |
+| `YARILO_PUSH_WAIT` | 10 | seconds a delivery's event may take before it counts as lost |
+
+It prints `push_latency` (count, lost, p50, p99 and max in milliseconds). A
+lost event fails the run. The stand-runs row takes p99 under 1 s as its bar.
+
 ## The same start
 
 Mailbox fill moves throughput further than most things under test, so every arm
@@ -103,7 +165,7 @@ and the start is printed as a number rather than as a step that ran.
 
 `YARILO_ARM_KEEP_STORE=1` answers one question: **what a first listing over
 state an older version wrote costs.** It is read as run 1 against run 2 of the
-same arm, with `YARILO_ARM_REPEATS=2` — one image, one store, one slot, and only
+same arm, with `YARILO_ARM_REPEATS=2` - one image, one store, one slot, and only
 the cache state differing between the two runs.
 
 It is **not** a throughput comparison with the arm before it. Every arm's own
@@ -137,7 +199,7 @@ another name. What the summary fields are made of:
 | `listing: list_whole` / `list_tail` | `maildir_uidlist_read_total{mode=...}` |
 | `listing: dir_name` / `dir_scan` / `dir_remove` | `maildir_dir_read_total{reason=...}` |
 | `listing: miss_none` / `miss_stale` | `maildir_listing_miss_total{reason=...}` |
-| `listing: retry_path` / `retry_rename` | `maildir_listing_retry_total{at=...}` |
+| `listing: retry_path` / `retry_rename` / `retry_open` | `maildir_listing_retry_total{at=...}` |
 | `listing: stat_dir` / `stat_list` | `maildir_cache_stat_total{what=...}` |
 | `listing: shut_own` / `shut_expunge` / `shut_other` | `maildir_window_closed_total{by=...}` |
 | `listing: stamp_hit` / `stamp_miss` | `maildir_uidlist_stamp_hit_total`, `..._miss_total` |
@@ -163,7 +225,7 @@ from the file on every start, so a realm change is applied by re-applying and
 restarting. Its certificate is a leaf issued in `yarilo-sb` by the stand's
 internal CA; only the leaf Secret is copied to `keycloak`, never the CA key:
 
-```sh
+```
 kubectl apply -f hack/internal-ca-sandbox.yaml   # once, in yarilo-sb
 kubectl apply -f helm_values/keycloak-sandbox.yaml
 kubectl -n yarilo-sb wait certificate/keycloak-tls --for=condition=Ready --timeout=120s
@@ -192,12 +254,12 @@ An overlay is laid on top of `values-sandbox.yaml` only inside an OAuth2
 window. The chain stops at the first temporary failure and the entries run
 before SQL, so with an overlay every PLAIN login of the stand goes to Keycloak
 and Keycloak down stops every login: acceptance runs and A/B arms run without
-any of them, and `ab-arm.sh` knows none. A window goes overlay by overlay —
-deploy it, run that mode's rows, deploy the next — and ends on the base values
+any of them, and `ab-arm.sh` knows none. A window goes overlay by overlay -
+deploy it, run that mode's rows, deploy the next - and ends on the base values
 with the same `helm upgrade`. Each step is its own `stand-runs.md` row naming
 the overlay and the image:
 
-```sh
+```
 helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
   -f helm_values/values-sandbox-oauth2-<mode>.yaml --set image.tag=<tag>   # one mode
 helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
@@ -209,7 +271,7 @@ overlay, once per mailbox type, and all three must pass; that run is its own `st
 the overlay. The token comes from the password grant of `yarilo-test`, over the
 internal CA the Job already mounts:
 
-```sh
+```
 for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
   dir=$(mktemp -d); cp hack/smoketest/run.sh "$dir/"
   awk -v u="$user" '{ gsub(/u1@d00001\.test/, u); print }
@@ -219,3 +281,34 @@ for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
   bash "$dir/run.sh" <tag>
 done
 ```
+
+## The policy server
+
+The auth policy rows of #2317 run against wforce, deployed into namespace
+`wforce` from the `k8s_wforce` chart; its Secret and yarilo's credentials for
+it (`yarilo-auth-policy`: the API header and the hash nonce) are made by
+`hack/sandbox/secrets.sh`. wforce tarpits past 3 different failed passwords
+per IP+login, refuses past 50 per IP with a message for the client, tarpits
+past 20 per login from any IP (k8s_wforce 0.1.2), and logs every field of
+every request it gets.
+
+`values-sandbox-wforce.yaml` turns the policy on in full: checked before and
+after the exchange, reported after it, not log-only, fail-open. Like the OAuth2
+overlays it is laid on only for its own rows, since every login of the stand
+then waits on wforce; acceptance runs and A/B arms run without it, and
+`ab-arm.sh` knows it not:
+
+```
+helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
+  -f helm_values/values-sandbox-wforce.yaml --set image.tag=<tag>   # rows on
+KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml bash hack/stand/policy-wforce.sh -v
+helm upgrade yarilo helm -n yarilo-sb -f helm_values/values-sandbox.yaml \
+  --set image.tag=<tag>                                             # rows off
+```
+
+`policy-wforce.sh` forwards wforce's API, takes the passwords through
+`hack/sandbox/creds.sh` and runs `go test -tags wforce ./internal/auth/policy/`:
+the client's decisions and body fields against wforce, then logins through the
+stand's IMAP (`YARILO_IMAP_ADDR`, else a forward to `yarilo-imap-login`), each row reading
+back from wforce's log what the server sent and checking what it did with the
+answer. Needs go and a route to the stand.

@@ -4,17 +4,17 @@ import (
 	"net"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
 
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // masterAuth is a test double that implements both Authenticator and
@@ -91,7 +91,7 @@ func startMasterServer(t *testing.T, auth protocol.Authenticator) *imapclient.Cl
 	return c
 }
 
-// TestAuthenticatePlain_MasterUserImpersonates — master sends an
+// TestAuthenticatePlain_MasterUserImpersonates - master sends an
 // AUTHENTICATE PLAIN response with authzid=alice, authid=admin,
 // password=admin's password. Expect: session is authenticated AS
 // alice; SELECT INBOX must land in alice's home, not admin's.
@@ -115,7 +115,7 @@ func TestAuthenticatePlain_MasterUserImpersonates(t *testing.T) {
 	}
 }
 
-// TestAuthenticatePlain_MasterWrongPasswordRejected — same authzid
+// TestAuthenticatePlain_MasterWrongPasswordRejected - same authzid
 // but wrong master password. Must fail with an opaque error.
 func TestAuthenticatePlain_MasterWrongPasswordRejected(t *testing.T) {
 	auth := &masterAuth{
@@ -131,7 +131,7 @@ func TestAuthenticatePlain_MasterWrongPasswordRejected(t *testing.T) {
 	}
 }
 
-// TestAuthenticatePlain_UnregisteredTargetRejected — master
+// TestAuthenticatePlain_UnregisteredTargetRejected - master
 // authenticates but the target is not in the allowed list.
 // Reject without leaking which check failed.
 func TestAuthenticatePlain_UnregisteredTargetRejected(t *testing.T) {
@@ -148,7 +148,7 @@ func TestAuthenticatePlain_UnregisteredTargetRejected(t *testing.T) {
 	}
 }
 
-// TestAuthenticatePlain_NoAuthzidIsRegularLogin — authzid empty,
+// TestAuthenticatePlain_NoAuthzidIsRegularLogin - authzid empty,
 // authid=master. Should go through the regular login path (master
 // logs in AS master, not impersonating).
 func TestAuthenticatePlain_NoAuthzidIsRegularLogin(t *testing.T) {
@@ -167,7 +167,7 @@ func TestAuthenticatePlain_NoAuthzidIsRegularLogin(t *testing.T) {
 	}
 }
 
-// TestAuthenticatePlain_BackendWithoutMasterSupport — when opts.Auth
+// TestAuthenticatePlain_BackendWithoutMasterSupport - when opts.Auth
 // does NOT implement MasterAuthenticator, a distinct authzid must
 // be rejected (matches go-imap's default-handler behaviour but
 // applies even on our custom PLAIN handler).
@@ -183,7 +183,7 @@ func TestAuthenticatePlain_BackendWithoutMasterSupport(t *testing.T) {
 	}
 }
 
-// TestAuthenticatePlain_AuthzidEqualsAuthidIsRegularLogin — RFC 4616
+// TestAuthenticatePlain_AuthzidEqualsAuthidIsRegularLogin - RFC 4616
 // permits the client to send authzid even when it equals authid; the
 // server must treat this as a regular login, not impersonation.
 func TestAuthenticatePlain_AuthzidEqualsAuthidIsRegularLogin(t *testing.T) {

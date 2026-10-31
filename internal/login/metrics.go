@@ -8,7 +8,7 @@ import (
 )
 
 // Phase labels for phaseSeconds. One login walks these in order; each is a
-// separate network dependency, which is precisely why the breakdown matters —
+// separate network dependency, which is precisely why the breakdown matters -
 // a stalled login is otherwise indistinguishable from a slow client.
 const (
 	phaseTLSHandshake    = "tls_handshake"

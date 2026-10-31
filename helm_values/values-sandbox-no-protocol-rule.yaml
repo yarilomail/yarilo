@@ -6,9 +6,9 @@ components:
       - driver: mysql
         dsn: "${YARILO_DB_DSN}"
         default_pass_scheme: BCRYPT
-        ## PostfixAdmin mailbox table — skip_schema prevents yarilo-auth from
+        ## PostfixAdmin mailbox table - skip_schema prevents yarilo-auth from
         ## creating its own yarilo_users table.
-        ## Columns matched by name — only "password" is required.
+        ## Columns matched by name - only "password" is required.
         ## "enabled" maps to PostfixAdmin's "active"; absent columns default active.
         skip_schema: true
         ## nologin blocks the login and keeps the account (#2229); the seed sets it

@@ -3,7 +3,7 @@ package file
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A backing folder is remembered by its GUID, so a rename leaves the mapping
@@ -73,9 +73,8 @@ func TestVirtualRecordNamesTheBackingCopy(t *testing.T) {
 	if err := b.SetVirtualHeader(f.ID, h); err != nil {
 		t.Fatal(err)
 	}
-	modseq, _ := b.NextModSeq(f.ID)
 	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{
-		UID: 1, ModSeq: modseq, GUID: [16]byte{7},
+		UID: 1, GUID: [16]byte{7},
 		VirtualBacking: id, VirtualRealUID: 4242,
 	}); err != nil {
 		t.Fatal(err)

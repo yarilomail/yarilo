@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 func vacationServer(t *testing.T, exts ...string) (*Server, string, *sieve.IndexedStore) {
@@ -23,7 +23,7 @@ func vacationServer(t *testing.T, exts ...string) (*Server, string, *sieve.Index
 
 func vacationGetOne(t *testing.T, s *Server) map[string]any {
 	t.Helper()
-	out := sieveCall(t, s, "VacationResponse/get", `{"accountId":"`+testUser+`","ids":null}`)
+	out := sieveCall(t, s, "VacationResponse/get", `{"accountId":"`+testAccount+`","ids":null}`)
 	list, _ := out["list"].([]any)
 	if len(list) != 1 {
 		t.Fatalf("VacationResponse/get list = %v", out)
@@ -33,7 +33,7 @@ func vacationGetOne(t *testing.T, s *Server) map[string]any {
 
 func vacationUpdate(t *testing.T, s *Server, patch string) map[string]any {
 	t.Helper()
-	return sieveCall(t, s, "VacationResponse/set", `{"accountId":"`+testUser+`","update":{"singleton":`+patch+`}}`)
+	return sieveCall(t, s, "VacationResponse/set", `{"accountId":"`+testAccount+`","update":{"singleton":`+patch+`}}`)
 }
 
 func saveActive(t *testing.T, st *sieve.IndexedStore, home, name, src string) {
@@ -62,11 +62,11 @@ func TestVacationGetWithoutAScript(t *testing.T) {
 	if got["id"] != "singleton" || got["isEnabled"] != false || got["textBody"] != nil || got["htmlBody"] != nil || got["subject"] != nil {
 		t.Errorf("default = %v", got)
 	}
-	out := sieveCall(t, s, "VacationResponse/get", `{"accountId":"`+testUser+`","ids":["singleton","other"]}`)
+	out := sieveCall(t, s, "VacationResponse/get", `{"accountId":"`+testAccount+`","ids":["singleton","other"]}`)
 	if fmt.Sprint(out["notFound"]) != "[other]" {
 		t.Errorf("notFound = %v, want [other]", out["notFound"])
 	}
-	name, out := callAs(t, s, testUser, "VacationResponse/get", `{"accountId":"`+testUser+`","properties":["nosuch"]}`)
+	name, out := callAs(t, s, testUser, "VacationResponse/get", `{"accountId":"`+testAccount+`","properties":["nosuch"]}`)
 	if name != "error" || out["type"] != "invalidArguments" {
 		t.Errorf("unknown property answered %s %v", name, out)
 	}
@@ -183,7 +183,7 @@ func TestVacationSetRefusals(t *testing.T) {
 			t.Errorf("%s: %v, want invalidProperties [%s]", c.patch, e, c.prop)
 		}
 	}
-	out := sieveCall(t, s, "VacationResponse/set", `{"accountId":"`+testUser+`","create":{"c":{}},"destroy":["singleton","x"],"update":{"x":{}}}`)
+	out := sieveCall(t, s, "VacationResponse/set", `{"accountId":"`+testAccount+`","create":{"c":{}},"destroy":["singleton","x"],"update":{"x":{}}}`)
 	checks := []struct{ bucket, key, want string }{
 		{"notCreated", "c", "singleton"}, {"notDestroyed", "singleton", "singleton"},
 		{"notDestroyed", "x", "notFound"}, {"notUpdated", "x", "notFound"},
@@ -193,7 +193,7 @@ func TestVacationSetRefusals(t *testing.T) {
 			t.Errorf("%s %s = %v, want %s", c.bucket, c.key, e, c.want)
 		}
 	}
-	name, out := callAs(t, s, testUser, "VacationResponse/set", `{"accountId":"`+testUser+`","ifInState":"nope","update":{"singleton":{"isEnabled":false}}}`)
+	name, out := callAs(t, s, testUser, "VacationResponse/set", `{"accountId":"`+testAccount+`","ifInState":"nope","update":{"singleton":{"isEnabled":false}}}`)
 	if name != "error" || out["type"] != "stateMismatch" {
 		t.Errorf("ifInState answered %s %v", name, out)
 	}

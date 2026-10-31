@@ -1,8 +1,8 @@
 package mailboxbase
 
 import (
-	"github.com/yarilomail/yarilo/internal/mailboxcreate"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/mailboxcreate"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Auto is what a namespace makes for its user on any open, whichever server

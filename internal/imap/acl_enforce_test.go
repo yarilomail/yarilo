@@ -8,24 +8,24 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	mailboxpkg "github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	mailboxpkg "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // enforceServer brings up an IMAP server with ACL enforcement enabled
-// and two users. The owner ("alice") fully owns their personal home
-// — INBOX is auto-granted via the personal-namespace path. The
+// and two users. The owner ("alice") fully owns their personal home -
+// INBOX is auto-granted via the personal-namespace path. The
 // peer ("bob") logs in to their own personal home (so for any folder
 // reached via Shared/, the peer is a non-owner relative to that
 // namespace handle's ownership).
@@ -34,7 +34,7 @@ import (
 //   - aliceDir: alice's storage root, useful when seeding yarilo-acl
 //     files for tests that need to grant bob access to alice's data.
 //   - dial: factory that returns a fresh authenticated client for the
-//     given user — every test gets its own connection so leftover
+//     given user - every test gets its own connection so leftover
 //     state cannot bleed.
 func enforceServer(t *testing.T) (aliceDir string, dial func(user string) *imapclient.Client) {
 	t.Helper()
@@ -102,7 +102,7 @@ func (p *enforcePassdb) Authenticate(username, password, _, _ string) (*protocol
 // alice's mailbox so SELECT / FETCH / etc. cross-namespace cases
 // can be exercised without a SETACL round-trip (which would itself
 // need owner credentials).
-// seedRootACL writes the namespace-root ACL — the file that did not exist
+// seedRootACL writes the namespace-root ACL - the file that did not exist
 // before #1091, and the only place a top-level create right can go.
 func seedRootACL(t *testing.T, aliceHome, body string) {
 	t.Helper()
@@ -268,7 +268,7 @@ func TestACLEnforce_PeerWithoutLookupCannotTellTheMailboxExists(t *testing.T) {
 	if _, err := a.Select("INBOX", nil).Wait(); err != nil {
 		t.Fatalf("alice SELECT INBOX: %v", err)
 	}
-	// No yarilo-acl seeded — bob is a non-owner with zero rights.
+	// No yarilo-acl seeded - bob is a non-owner with zero rights.
 
 	b := dial("bob")
 	_, errPresent := b.Select("Shared/INBOX", nil).Wait()
@@ -376,7 +376,7 @@ func TestACLEnforce_AppendRequiresInsertNotPost(t *testing.T) {
 			b := dial("bob")
 			err := appendErr(b, "Shared/INBOX")
 			if tc.wantOK && err != nil {
-				t.Errorf("APPEND with %q refused: %v — the operation right is 'i'", tc.rights, err)
+				t.Errorf("APPEND with %q refused: %v - the operation right is 'i'", tc.rights, err)
 			}
 			if !tc.wantOK {
 				if err == nil {
@@ -402,7 +402,7 @@ func TestACLEnforce_StoreFlagsRespectCategoryRights(t *testing.T) {
 	if _, err := ac.Wait(); err != nil {
 		t.Fatalf("alice APPEND: %v", err)
 	}
-	// Grant bob l + r + s — bob can mark \Seen but not \Deleted, not \Flagged.
+	// Grant bob l + r + s - bob can mark \Seen but not \Deleted, not \Flagged.
 	seedACL(t, aliceHome, "INBOX", "user=bob lrs\n")
 
 	b := dial("bob")
@@ -410,14 +410,14 @@ func TestACLEnforce_StoreFlagsRespectCategoryRights(t *testing.T) {
 		t.Fatalf("bob SELECT: %v", err)
 	}
 
-	// STORE \Seen — allowed ('s').
+	// STORE \Seen - allowed ('s').
 	uidSet := imaplib.UIDSetNum(1)
 	sCmd := b.Store(uidSet, &imaplib.StoreFlags{Op: imaplib.StoreFlagsAdd, Flags: []imaplib.Flag{imaplib.FlagSeen}}, nil)
 	if err := sCmd.Close(); err != nil {
 		t.Errorf("STORE \\Seen with 's': %v", err)
 	}
 
-	// STORE \Deleted — denied ('t' missing).
+	// STORE \Deleted - denied ('t' missing).
 	tCmd := b.Store(uidSet, &imaplib.StoreFlags{Op: imaplib.StoreFlagsAdd, Flags: []imaplib.Flag{imaplib.FlagDeleted}}, nil)
 	err := tCmd.Close()
 	if err == nil {
@@ -426,7 +426,7 @@ func TestACLEnforce_StoreFlagsRespectCategoryRights(t *testing.T) {
 		t.Errorf("got code %q, want NOPERM: err=%v", code, err)
 	}
 
-	// STORE \Flagged — denied ('w' missing).
+	// STORE \Flagged - denied ('w' missing).
 	wCmd := b.Store(uidSet, &imaplib.StoreFlags{Op: imaplib.StoreFlagsAdd, Flags: []imaplib.Flag{imaplib.FlagFlagged}}, nil)
 	err = wCmd.Close()
 	if err == nil {
@@ -533,7 +533,7 @@ func TestACLEnforce_CreateNeedsKOnParent(t *testing.T) {
 	if _, err := a.Select("INBOX", nil).Wait(); err != nil {
 		t.Fatalf("alice SELECT INBOX: %v", err)
 	}
-	// Bob has lr on alice's INBOX — read but not create.
+	// Bob has lr on alice's INBOX - read but not create.
 	seedACL(t, aliceHome, "INBOX", "user=bob lr\n")
 
 	b := dial("bob")
@@ -569,7 +569,7 @@ func TestACLEnforce_DeleteNeedsX(t *testing.T) {
 	if err := a.Create("INBOX/Temp", nil).Wait(); err != nil {
 		t.Fatalf("alice CREATE INBOX/Temp: %v", err)
 	}
-	// Bob can SELECT (inherits 'lr') but cannot DELETE — needs 'x'.
+	// Bob can SELECT (inherits 'lr') but cannot DELETE - needs 'x'.
 	seedACL(t, aliceHome, "INBOX", "user=bob lr\n")
 
 	b := dial("bob")
@@ -609,7 +609,7 @@ func TestACLEnforce_RenameNeedsXOnSourceAndKOnDestParent(t *testing.T) {
 	if err := a.Create("INBOX/Source", nil).Wait(); err != nil {
 		t.Fatalf("alice CREATE INBOX/Source: %v", err)
 	}
-	// Bob has only 'lr' — RENAME should fail at the 'x' check.
+	// Bob has only 'lr' - RENAME should fail at the 'x' check.
 	seedACL(t, aliceHome, "INBOX", "user=bob lr\n")
 
 	b := dial("bob")
@@ -642,7 +642,7 @@ func TestACLEnforce_RenameAllowedWithBothRights(t *testing.T) {
 }
 
 func TestACLEnforce_TopLevelCreateNeedsRootK(t *testing.T) {
-	// Bob tries CREATE "Shared/NewTop" — the namespace-relative name
+	// Bob tries CREATE "Shared/NewTop" - the namespace-relative name
 	// is "NewTop" with no separator, so the parent is the namespace
 	// root. Without a root ACL grant, the request must NOPERM even
 	// for a non-owner that has rights on other mailboxes.
@@ -668,8 +668,8 @@ func TestACLEnforce_TopLevelCreateNeedsRootK(t *testing.T) {
 // Namespace-root default ACL grants for maildir were tested here previously,
 // but with INBOX now at the maildir root the local namespace-root default
 // collides with INBOX and is disabled. For
-// maildir, root-level defaults come from a global ACL or acl_defaults_from_inbox
-// — deferred features. The root-default mechanism itself is covered on mdbox in
+// maildir, root-level defaults come from a global ACL or acl_defaults_from_inbox -
+// deferred features. The root-default mechanism itself is covered on mdbox in
 // internal/userstate/acl (TestStore_EffectiveForFallsThroughToRoot*).
 
 func TestACLEnforce_StatusNeedsRead(t *testing.T) {
@@ -847,7 +847,7 @@ func TestACLEnforce_GlobalGrant(t *testing.T) {
 	if err := a.Create("Reports", nil).Wait(); err != nil {
 		t.Fatalf("alice CREATE Reports: %v", err)
 	}
-	// No per-mailbox ACL seeded anywhere — rights come solely from the global rule.
+	// No per-mailbox ACL seeded anywhere - rights come solely from the global rule.
 	b := dial("bob")
 	if _, err := b.Select("Shared/Reports", nil).Wait(); err != nil {
 		t.Errorf("peer SELECT with global 'r' should succeed: %v", err)
@@ -914,7 +914,7 @@ func keysOf(m map[string][]imaplib.MailboxAttr) []string {
 }
 
 // TestACLEnforce_MyRightsUsesInheritance verifies MYRIGHTS resolves the full
-// effective rights (ancestor inheritance), matching enforcement — not just the
+// effective rights (ancestor inheritance), matching enforcement - not just the
 // folder's own ACL file. bob has no ACL on the child, only on the parent.
 func TestACLEnforce_MyRightsUsesInheritance(t *testing.T) {
 	aliceHome, dial := sharedServerDial(t, false)
@@ -996,7 +996,7 @@ func TestACLEnforce_MetadataRequiresRights(t *testing.T) {
 
 // TestACLEnforce_IgnoreACLBypasses verifies acl_ignore: a namespace flagged
 // IgnoreACL is fully accessible even when ACL is enabled and the peer has no
-// grant — no NOPERM, no LIST hiding.
+// grant - no NOPERM, no LIST hiding.
 func TestACLEnforce_IgnoreACLBypasses(t *testing.T) {
 	root := t.TempDir()
 	resolver := &mailboxpkg.Resolver{Root: root, HomeTemplate: "%n"}
@@ -1046,7 +1046,7 @@ func TestACLEnforce_IgnoreACLBypasses(t *testing.T) {
 	if _, err := b.Select("Open/Vault", nil).Wait(); err != nil {
 		t.Errorf("acl_ignore namespace should be accessible without grants: %v", err)
 	}
-	// And LIST is not hidden — bob sees Vault under Open/.
+	// And LIST is not hidden - bob sees Vault under Open/.
 	data, err := b.List("", "*", nil).Collect()
 	if err != nil {
 		t.Fatalf("bob LIST: %v", err)
@@ -1241,7 +1241,7 @@ func TestACLEnforce_AMailboxACLStaysExhaustive(t *testing.T) {
 
 	b := dial("bob")
 	if _, err := b.Select("Shared/Private", nil).Wait(); err == nil {
-		t.Error("bob reached a mailbox whose ACL leaves him out — omission stopped restricting")
+		t.Error("bob reached a mailbox whose ACL leaves him out - omission stopped restricting")
 	}
 }
 
@@ -1363,7 +1363,7 @@ func TestACLEnforce_DecomposedNameResolvesToOneFolder(t *testing.T) {
 	// The FS preserves the decomposed bytes, so the dispatch normalisation is
 	// the only thing that can make the composed spelling reach the same folder.
 	if _, err := c.Select(composed, nil).Wait(); err != nil {
-		t.Errorf("SELECT of the composed spelling did not reach the folder: %v — dispatch did not normalise", err)
+		t.Errorf("SELECT of the composed spelling did not reach the folder: %v - dispatch did not normalise", err)
 	}
 	listed, err := c.List("", decomp, nil).Collect()
 	if err != nil {
@@ -1404,5 +1404,46 @@ func TestACLEnforce_GetACLDoesNotInventAnOwnerForTheCaller(t *testing.T) {
 	anyone := imaplib.RightsIdentifier("anyone")
 	if got := string(data.Rights[anyone]); got == "" {
 		t.Errorf("the real anyone entry is missing: %+v", data.Rights)
+	}
+}
+
+// SELECT answers [READ-ONLY] only when none of i, e, w, t, s is held: any one
+// of them is a way to change the mailbox. EXAMINE stays [READ-ONLY].
+func TestACLEnforce_SelectReadOnlyWithoutAChangeRight(t *testing.T) {
+	cases := []struct {
+		name     string
+		rights   string // "" = alice's own INBOX, no ACL file
+		examine  bool
+		readOnly bool
+	}{
+		{"insert", "lri", false, false},
+		{"expunge", "lre", false, false},
+		{"write", "lrw", false, false},
+		{"delete message", "lrt", false, false},
+		{"write seen", "lrs", false, false},
+		{"read only", "lr", false, true},
+		{"examine with insert", "lri", true, true},
+		{"own mailbox without an ACL", "", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			aliceHome, dial := enforceServerWithShared(t)
+			a := dial("alice")
+			if _, err := a.Select("INBOX", nil).Wait(); err != nil {
+				t.Fatalf("alice SELECT INBOX: %v", err)
+			}
+			c, name := a, "INBOX"
+			if tc.rights != "" {
+				seedACL(t, aliceHome, "INBOX", "user=bob "+tc.rights+"\n")
+				c, name = dial("bob"), "Shared/INBOX"
+			}
+			data, err := c.Select(name, &imaplib.SelectOptions{ReadOnly: tc.examine}).Wait()
+			if err != nil {
+				t.Fatalf("SELECT %s with %q: %v", name, tc.rights, err)
+			}
+			if data.ReadOnly != tc.readOnly {
+				t.Errorf("SELECT %s with %q: READ-ONLY is %v, want %v", name, tc.rights, data.ReadOnly, tc.readOnly)
+			}
+		})
 	}
 }

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	indexfile "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A store another implementation left keeps its UID space when this server
@@ -177,7 +177,7 @@ func maildirBaseOf(name string) string {
 //
 // The nested row is the one that has to be right level by level. Splitting the
 // dotted directory name is safe against an encoded one because modified base64
-// is A-Z a-z 0-9 '+' ',' — a '.' cannot appear inside an encoded run, the same
+// is A-Z a-z 0-9 '+' ',' - a '.' cannot appear inside an encoded run, the same
 // argument that holds for '/' in the dbox layout.
 func TestMaildirFolderNamesAreBroughtToTheConfiguredEncoding(t *testing.T) {
 	const (

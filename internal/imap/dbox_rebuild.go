@@ -3,10 +3,11 @@ package imap
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // flagCorruptOnRead persists the folder's FSCKD marker when a read failed on
@@ -169,4 +170,26 @@ func (s *session) dboxRestoreIfIndexLost(h *nsHandle, rel string, f *mailbox.Fol
 		"user", s.username(), "folder", rel,
 		"messages", restored, "uidvalidity", refreshed.UIDValidity)
 	return refreshed
+}
+
+// expungedUnderUs is whether a selected-folder read failed because another
+// session expunged the message after this one's snapshot (#1690).
+func (s *session) expungedUnderUs(m *mailbox.MessageMeta, err error) bool {
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	return errors.Is(err, mailbox.ErrCorruptStorage) && !s.folderMailbox().RecordExists(s.folder.ID, m.UID)
+}
+
+// undoCopies takes back what a COPY saved before it failed. Best-effort: a
+// copy left behind is logged, never answered as the client's error.
+func (s *session) undoCopies(h *nsHandle, rel string, f *mailbox.Folder, saves []*mailbox.MessageMeta) {
+	if len(saves) == 0 {
+		return
+	}
+	removed, failed, err := s.ops.ExpungeMarked(h.mailbox(), f, rel, saves)
+	if err != nil || failed > 0 {
+		slog.Error("imap: a failed COPY left copies behind",
+			"user", s.username(), "folder", rel, "saved", len(saves), "removed", len(removed), "err", err)
+	}
 }

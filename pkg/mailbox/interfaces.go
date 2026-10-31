@@ -18,18 +18,6 @@ var ErrCorruptStorage = errors.New("mailbox: corrupt message storage")
 // reclaimed: gone, not corrupt, so nothing is marked for a rebuild.
 var ErrExpunged = errors.New("mailbox: message expunged")
 
-// CorruptionMarker is an optional capability of an IndexBackend handle that
-// persists a per-folder "needs rebuild" marker so a corrupt message detected on
-// one read triggers a heal on the next open. Kept off the core UserIndex interface;
-// callers type-assert. The marker is exposed read-side as Folder.Fsckd.
-// UIDSpaceAdopter takes a folder's UID space from what a store already records
-// rather than minting a fresh one. Kept off the core UserIndex interface, like
-// CorruptionMarker: callers type-assert.
-//
-// For adopting a store another implementation wrote. A client reconnecting over
-// the same mailbox keeps its cache only if both the UIDVALIDITY and the UIDs are
-// the ones it saw; a fresh UID space makes it refetch everything, which costs
-// what a migration over IMAP costs.
 // FlagWriter records a message's flag state where the storage keeps it, and
 // returns the name the message now has.
 //
@@ -57,6 +45,14 @@ type FlagWriter interface {
 // folder it opens, and most of them are ordinary folders with mail in them.
 var ErrUIDSpaceInUse = errors.New("the folder already holds messages")
 
+// UIDSpaceAdopter takes a folder's UID space from what a store already records
+// rather than minting a fresh one. Kept off the core UserIndex interface, like
+// CorruptionMarker: callers type-assert.
+//
+// For adopting a store another implementation wrote. A client reconnecting over
+// the same mailbox keeps its cache only if both the UIDVALIDITY and the UIDs are
+// the ones it saw; a fresh UID space makes it refetch everything, which costs
+// what a migration over IMAP costs.
 type UIDSpaceAdopter interface {
 	// AdoptUIDSpace sets the folder's UIDVALIDITY and next UID. It must refuse a
 	// folder that already holds messages: rewriting the UID space under a
@@ -298,6 +294,10 @@ type FlagsDirtyMarker interface {
 	SetFlagsDirty(folderID uint64, uid uint32, dirty bool) error
 }
 
+// CorruptionMarker is an optional capability of an IndexBackend handle that
+// persists a per-folder "needs rebuild" marker so a corrupt message detected on
+// one read triggers a heal on the next open. Kept off the core UserIndex interface;
+// callers type-assert. The marker is exposed read-side as Folder.Fsckd.
 type CorruptionMarker interface {
 	// MarkFolderCorrupt sets the marker. Idempotent.
 	MarkFolderCorrupt(folderID uint64) error
@@ -335,8 +335,8 @@ func CanReactiveHeal(box any) bool {
 
 // FolderAgnosticStorage marks a driver whose Scan enumerates storage-wide (not
 // per-folder) records, such as mdbox where messages are shared across folders. A
-// per-folder rebuild is unsafe for such a driver — it would import every stored
-// message into the target folder with fresh UIDs — so it needs a dedicated
+// per-folder rebuild is unsafe for such a driver - it would import every stored
+// message into the target folder with fresh UIDs - so it needs a dedicated
 // storage-wide rebuild and the per-folder endpoint must reject it.
 type FolderAgnosticStorage interface {
 	FolderAgnosticScan() bool
@@ -421,6 +421,11 @@ type Folder struct {
 	Messages      uint32
 	Unseen        uint32
 	HighestModSeq uint64
+	// FirstRecentUID is the lowest UID no session has claimed as \Recent; an
+	// index that never recorded one reads 1 (RFC 3501 §2.3.2).
+	FirstRecentUID uint32
+	// Recent counts the messages at or above FirstRecentUID.
+	Recent uint32
 	// GUID is a stable 16-byte identifier stamped at folder creation time.
 	// Survives RENAME (unlike Name). Used as the key namespace for per-folder
 	// metadata in pkg/dict (RFC 5464 METADATA) and as the rename-stable handle
@@ -432,9 +437,24 @@ type Folder struct {
 	Fsckd bool
 }
 
+// RecentClaimer moves a folder's \Recent mark past its last UID for the session
+// that selects it. Kept off the core UserIndex interface; callers type-assert.
+type RecentClaimer interface {
+	// ClaimRecent returns the UIDs [from, to) the caller now holds as \Recent
+	// and moves the mark to to; it writes nothing when the range is empty.
+	ClaimRecent(folderID uint64) (from, to uint32, err error)
+}
+
+// StoreReconciler brings the index and a driver's own UID records into
+// agreement, writing back a record's row when only the row is missing.
+type StoreReconciler interface {
+	ReconcileIndex(box Box, idx UserIndex, folder *Folder) (SyncStats, error)
+}
+
 // SeqSet is a set of UIDs or sequence numbers (use UID=0 for seq).
 type SeqSet []SeqRange
 
+// SeqRange is one inclusive range of a SeqSet.
 type SeqRange struct {
 	From, To uint32 // inclusive; To==0 means '*'
 }
@@ -455,7 +475,7 @@ type FlagsUpdate struct {
 	// Mode says what Flags and Keywords mean. The zero value replaces the whole
 	// set, which is what STORE FLAGS (...) asks for. FlagsAdd and FlagsRemove
 	// name only what changes, and the index resolves them against the record as
-	// its lock finds it — the difference that keeps a concurrent change from
+	// its lock finds it - the difference that keeps a concurrent change from
 	// being overwritten by a set the caller read earlier (#1250).
 	Mode FlagsMode
 }
@@ -477,7 +497,7 @@ const (
 // FlagsResult is what a message ended up with after a batch update: the flags
 // and keywords the index holds, and the modseq of the change. The resulting set
 // is returned rather than assumed because under FlagsAdd or FlagsRemove the
-// caller does not know it — that is the point of naming only the delta.
+// caller does not know it - that is the point of naming only the delta.
 type FlagsResult struct {
 	ModSeq   uint64
 	Flags    []string
@@ -609,7 +629,7 @@ type IndexBackend interface {
 }
 
 // UserIndex is a per-session, per-user index handle.
-// All folder IDs are local to this handle — they must not be shared across handles.
+// All folder IDs are local to this handle - they must not be shared across handles.
 type UserIndex interface {
 	OpenFolder(folder string, uidValidity uint32) (*Folder, error)
 	// Begin opens a transaction on one folder: changes are queued against a
@@ -621,9 +641,6 @@ type UserIndex interface {
 	// cross-process mailbox lock. If the caller fails between AllocateUID and
 	// AppendMessage the UID is burnt (uid hole), reconciled by a later rebuild.
 	AllocateUID(folderID uint64) (uint32, error)
-	// AllocateUIDWithModSeq atomically reserves the folder's next UID and
-	// pre-allocates the next modseq value in one lock/reload/flush cycle.
-	AllocateUIDWithModSeq(folderID uint64) (uid uint32, modseq uint64, err error)
 	// AllocateAndAppend assigns a UID and records the message in a single
 	// lock/reload/flush cycle: m.UID and m.ModSeq are filled in by the call.
 	AllocateAndAppend(folderID uint64, m *MessageMeta) error
@@ -647,7 +664,6 @@ type UserIndex interface {
 	SetAltTier(folderID uint64, filenames []string, altTier bool) error
 	GetMessages(folderID uint64, uids SeqSet) ([]*MessageMeta, error)
 	ExpungeMessage(folderID uint64, uid uint32) error
-	NextModSeq(folderID uint64) (uint64, error)
 	// Vanished returns UIDs expunged from folderID with modseq strictly
 	// greater than sinceModSeq. Drives QRESYNC (RFC 7162) SELECT and
 	// UID FETCH (CHANGEDSINCE N VANISHED) responses.
@@ -706,7 +722,7 @@ type UserIndex interface {
 	// that already carry a GUID keep it, so a resumed pass is a no-op for them.
 	SetGUIDs(folderID uint64, guids map[uint32][16]byte) error
 	// RecomputeVSize forces a rebuild of the folder's vsize aggregate from
-	// records and persists it — the admin recovery path for a corrupted count.
+	// records and persists it - the admin recovery path for a corrupted count.
 	RecomputeVSize(folderID uint64) error
 	Close() error
 }
@@ -756,6 +772,7 @@ type FolderGoneError struct{ Folder string }
 
 func (e *FolderGoneError) Error() string { return "mailbox: folder " + e.Folder + " was deleted" }
 
+// Is makes errors.Is(err, ErrFolderGone) hold.
 func (e *FolderGoneError) Is(target error) bool { return target == ErrFolderGone }
 
 // ErrNoSpace is wrapped by a write the volume refused for room. The data is

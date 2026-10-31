@@ -20,9 +20,9 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Sender relays one message; *proxy.Submission, the relay SMTP Submission uses.
@@ -97,6 +97,12 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 		return fmt.Errorf("jmap: no control root for %s", h.info.Username)
 	}
 	path := filepath.Join(root, submissionFile)
+	wrote := false
+	defer func() {
+		if wrote {
+			locks.EmitBest(s.opts.Storage.Locker, locks.SubmissionsKey(h.user), locks.EventSubmission, "")
+		}
+	}()
 	run := func(context.Context) error {
 		var recs submissionRecords
 		raw, err := os.ReadFile(path)
@@ -124,13 +130,17 @@ func (s *Server) withRecords(ctx context.Context, h *userHandle, fn func(*submis
 		if err := os.WriteFile(path+".tmp", b, 0o600); err != nil {
 			return fmt.Errorf("jmap: write submissions: %w", err)
 		}
-		return os.Rename(path+".tmp", path)
+		if err := os.Rename(path+".tmp", path); err != nil {
+			return err
+		}
+		wrote = true
+		return nil
 	}
 	locker := s.opts.Storage.Locker
 	if locker == nil {
 		return run(ctx)
 	}
-	return locks.WithLockWaiting(locks.WithSite(ctx, "jmap-submission"), locker, "jmapsubmissions:"+h.info.Username,
+	return locks.WithLockWaiting(locks.WithSite(ctx, "jmap-submission"), locker, locks.SubmissionsKey(h.user),
 		locks.Owner(h.info.Username, h.info.LockID()), submissionLockTTL, submissionLockRenew, submissionLockWait, run)
 }
 
@@ -380,7 +390,7 @@ func (s *Server) submissionSet(ctx context.Context, h *userHandle, lazy *lazySto
 		cids := sortedKeys(req.Create)
 		for i, cid := range cids {
 			raw := resolveProperty(ctx, resolveProperty(ctx, req.Create[cid], "identityId"), "emailId")
-			rec, serr, err := s.submissionCreate(ctx, h, lazy, accountID, raw)
+			rec, serr, err := s.submissionCreate(ctx, h, lazy, raw)
 			if err != nil && len(created) == 0 {
 				temp = &relayFailure{err}
 				break
@@ -513,7 +523,7 @@ type submissionProps struct {
 
 // submissionCreate checks and sends one message. A SetError refuses this
 // object; an error is the relay's temporary refusal, which stops sending.
-func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazyStore, accountID string, raw json.RawMessage) (jmapcore.EmailSubmission, *jmapcore.SetError, error) {
+func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazyStore, raw json.RawMessage) (jmapcore.EmailSubmission, *jmapcore.SetError, error) {
 	var none jmapcore.EmailSubmission
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -536,11 +546,15 @@ func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazySt
 	if p.IdentityID == nil {
 		return none, invalidProp("identityId", "identityId is required"), nil
 	}
-	i := slices.IndexFunc(h.identities(accountID), func(id jmapcore.Identity) bool { return id.ID == *p.IdentityID })
+	all, err := h.identities()
+	if err != nil {
+		return none, nil, err
+	}
+	i := slices.IndexFunc(all, func(id jmapcore.Identity) bool { return id.ID == *p.IdentityID })
 	if i < 0 {
 		return none, invalidProp("identityId", "no such identity"), nil
 	}
-	identity := h.identities(accountID)[i]
+	identity := all[i]
 	if p.EmailID == nil {
 		return none, invalidProp("emailId", "emailId is required"), nil
 	}
@@ -588,16 +602,16 @@ func (s *Server) submissionCreate(_ context.Context, h *userHandle, lazy *lazySt
 	for _, r := range env.RcptTo {
 		rcpts = append(rcpts, r.Email)
 	}
-	if err := s.opts.Submission.Sender.Send(env.MailFrom.Email, rcpts, bytes.NewReader(out), net.ParseIP(lazy.clientIP), accountID, lazy.sessionID); err != nil {
+	if err := s.opts.Submission.Sender.Send(env.MailFrom.Email, rcpts, bytes.NewReader(out), net.ParseIP(lazy.clientIP), lazy.user, lazy.sessionID); err != nil {
 		var se *goSmtp.SMTPError
 		if errors.As(err, &se) && se.Code >= 500 {
-			slog.Info("jmap: EmailSubmission refused by the relay", "user", accountID, "session", lazy.sessionID, "err", err)
+			slog.Info("jmap: EmailSubmission refused by the relay", "user", lazy.user, "session", lazy.sessionID, "err", err)
 			return none, &jmapcore.SetError{Type: jmapcore.SetErrForbiddenToSend,
 				Description: fmt.Sprintf("%d %d.%d.%d %s", se.Code, se.EnhancedCode[0], se.EnhancedCode[1], se.EnhancedCode[2], se.Message)}, nil
 		}
 		return none, nil, err
 	}
-	slog.Info("jmap: EmailSubmission sent", "user", accountID, "session", lazy.sessionID, "email", *p.EmailID, "rcpts", len(rcpts))
+	slog.Info("jmap: EmailSubmission sent", "user", lazy.user, "session", lazy.sessionID, "email", *p.EmailID, "rcpts", len(rcpts))
 	return jmapcore.EmailSubmission{IdentityID: identity.ID, EmailID: *p.EmailID, ThreadID: h.threadOf(*p.EmailID),
 		Envelope: env, SendAt: time.Now().UTC().Truncate(time.Second), UndoStatus: "final",
 		DsnBlobIDs: []string{}, MdnBlobIDs: []string{}}, nil, nil

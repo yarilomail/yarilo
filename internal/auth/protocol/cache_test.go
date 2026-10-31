@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestCache_NilCacheIsNoop — zero-sized cache returns nil and
+// TestCache_NilCacheIsNoop - zero-sized cache returns nil and
 // every helper is safe to call on nil.
 func TestCache_NilCacheIsNoop(t *testing.T) {
 	c := NewCache(0, time.Minute, time.Minute)
@@ -27,7 +27,7 @@ func TestCache_NilCacheIsNoop(t *testing.T) {
 	}
 }
 
-// TestCache_PositiveHitVerifiesPassword — cached OK entry
+// TestCache_PositiveHitVerifiesPassword - cached OK entry
 // returns hit only when the supplied password matches the stored
 // HMAC. Wrong password → miss (so a stale cache cannot
 // authenticate a new password).
@@ -52,7 +52,7 @@ func TestCache_PositiveHitVerifiesPassword(t *testing.T) {
 	}
 }
 
-// TestCache_NegativeHitRequiresSamePassword — a cached Fail entry
+// TestCache_NegativeHitRequiresSamePassword - a cached Fail entry
 // short-circuits ONLY when the same password is presented again
 // (#950). The wrong password that seeded it hits (saves a passdb
 // roundtrip on a repeated bad attempt); a different password falls
@@ -73,7 +73,7 @@ func TestCache_NegativeHitRequiresSamePassword(t *testing.T) {
 	}
 }
 
-// TestCache_PositiveTTLExpiry — expired entries are not returned.
+// TestCache_PositiveTTLExpiry - expired entries are not returned.
 func TestCache_PositiveTTLExpiry(t *testing.T) {
 	c := NewCache(1<<20, 30*time.Millisecond, time.Minute)
 	c.Insert(MakeCacheKey("imap", "alice"), "alice", "secret", ResultOK, NewFields())
@@ -83,7 +83,7 @@ func TestCache_PositiveTTLExpiry(t *testing.T) {
 	}
 }
 
-// TestCache_NegTTLExpiry — separate TTL for negative entries.
+// TestCache_NegTTLExpiry - separate TTL for negative entries.
 func TestCache_NegTTLExpiry(t *testing.T) {
 	c := NewCache(1<<20, time.Minute, 30*time.Millisecond)
 	c.Insert(MakeCacheKey("imap", "ghost"), "ghost", "", ResultFail, nil)
@@ -93,7 +93,7 @@ func TestCache_NegTTLExpiry(t *testing.T) {
 	}
 }
 
-// TestCache_TTLZeroDisablesPositive — ttl=0 should silently drop
+// TestCache_TTLZeroDisablesPositive - ttl=0 should silently drop
 // positive inserts but still permit negative caching.
 func TestCache_TTLZeroDisablesPositive(t *testing.T) {
 	c := NewCache(1<<20, 0, time.Minute)
@@ -107,7 +107,7 @@ func TestCache_TTLZeroDisablesPositive(t *testing.T) {
 	}
 }
 
-// TestCache_LRUEvictionUnderPressure — small cap forces eviction
+// TestCache_LRUEvictionUnderPressure - small cap forces eviction
 // of the LRU when a new entry would overflow.
 func TestCache_LRUEvictionUnderPressure(t *testing.T) {
 	c := NewCache(400, time.Minute, time.Minute)
@@ -124,7 +124,7 @@ func TestCache_LRUEvictionUnderPressure(t *testing.T) {
 	}
 }
 
-// TestCache_ClearByUserMask — selective flush of matching
+// TestCache_ClearByUserMask - selective flush of matching
 // usernames; non-matching entries survive.
 func TestCache_ClearByUserMask(t *testing.T) {
 	c := NewCache(1<<20, time.Minute, time.Minute)
@@ -144,7 +144,7 @@ func TestCache_ClearByUserMask(t *testing.T) {
 	}
 }
 
-// TestCache_ClearAll — empty masks slice is full flush.
+// TestCache_ClearAll - empty masks slice is full flush.
 func TestCache_ClearAll(t *testing.T) {
 	c := NewCache(1<<20, time.Minute, time.Minute)
 	c.Insert(MakeCacheKey("imap", "alice"), "alice", "p", ResultOK, NewFields())
@@ -201,7 +201,7 @@ func TestCache_StatsCount(t *testing.T) {
 	}
 }
 
-// TestCache_WrongPasswordDoesNotPoisonCachedOK — mistyped
+// TestCache_WrongPasswordDoesNotPoisonCachedOK - mistyped
 // password must not downgrade an existing OK entry to Fail; the
 // user must remain authenticatable with the right password
 // immediately after a typo.
@@ -210,18 +210,18 @@ func TestCache_WrongPasswordDoesNotPoisonCachedOK(t *testing.T) {
 	key := MakeCacheKey("imap", "alice")
 	c.Insert(key, "alice", "right", ResultOK, NewFields())
 
-	// Caller mistypes — sees miss (because Lookup mismatches),
+	// Caller mistypes - sees miss (because Lookup mismatches),
 	// then chain rejects → Insert with Fail.
 	c.Insert(key, "alice", "WRONG", ResultFail, nil)
 
-	// Now retry with right password — must still hit OK.
+	// Now retry with right password - must still hit OK.
 	e, ok := c.Lookup(key, "right")
 	if !ok || e == nil || e.Result != ResultOK {
 		t.Errorf("right password got %v after a wrong-password Fail; cache poisoned", e)
 	}
 }
 
-// TestCache_PasswordChangeRefreshesOnSuccess — operator rotates
+// TestCache_PasswordChangeRefreshesOnSuccess - operator rotates
 // the user's password in the backing store. Next successful
 // login (with new password) must overwrite the stale OK entry,
 // not be blocked by the cached old HMAC.
@@ -244,11 +244,11 @@ func TestCache_PasswordChangeRefreshesOnSuccess(t *testing.T) {
 		t.Errorf("new password did not hit after refresh")
 	}
 	if _, ok := c.Lookup(key, "old"); ok {
-		t.Errorf("old password still works after refresh — entry not overwritten")
+		t.Errorf("old password still works after refresh - entry not overwritten")
 	}
 }
 
-// TestCache_UnknownUserNegativeCacheStillWorks — when there's no
+// TestCache_UnknownUserNegativeCacheStillWorks - when there's no
 // prior OK entry, negative caching MUST still kick in so a repeated
 // probe with the SAME password for a non-existent user skips the
 // passdb. Post-#950 the short-circuit is per-password: the same
@@ -290,7 +290,7 @@ func TestCache_WrongPasswordDoesNotPoisonUncachedUser(t *testing.T) {
 	}
 }
 
-// TestCache_PasswordMACDoesNotLeakPlain — sanity-check that the
+// TestCache_PasswordMACDoesNotLeakPlain - sanity-check that the
 // stored payload contains no plain-password substring.
 func TestCache_PasswordMACDoesNotLeakPlain(t *testing.T) {
 	c := NewCache(1<<20, time.Minute, time.Minute)
@@ -308,6 +308,6 @@ func TestCache_PasswordMACDoesNotLeakPlain(t *testing.T) {
 		_ = b // ensure pwdMAC is non-empty
 	}
 	if len(e.pwdMAC) == 0 {
-		t.Errorf("pwdMAC empty on positive entry — Lookup would succeed for any password")
+		t.Errorf("pwdMAC empty on positive entry - Lookup would succeed for any password")
 	}
 }

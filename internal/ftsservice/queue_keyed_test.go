@@ -7,13 +7,13 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Utilisation has to survive the sampling interval. A pass takes tens of
 // milliseconds and Prometheus scrapes every 15-30 seconds, so a gauge of
-// "workers busy now" reads zero whether the service is saturated or idle — the
+// "workers busy now" reads zero whether the service is saturated or idle - the
 // metric looked like an answer to a question it could not reach.
 func TestWorkerBusyTimeAccumulates(t *testing.T) {
 	s := &Service{
@@ -39,7 +39,7 @@ func TestWorkerBusyTimeAccumulates(t *testing.T) {
 		s.runPass(j)
 	}
 	if after := testutil.ToFloat64(metricWorkerBusySeconds); after <= before {
-		t.Errorf("busy time did not move over five passes: %v -> %v — utilisation cannot be derived",
+		t.Errorf("busy time did not move over five passes: %v -> %v - utilisation cannot be derived",
 			before, after)
 	}
 }
@@ -50,7 +50,7 @@ func inbox(user string) job {
 
 // A mailbox is the unit of work: several requests for one mailbox are one pass.
 // Two passes would do the same work twice, and the second would discover this
-// only after taking the lock — which is how duplicates turn into contention.
+// only after taking the lock - which is how duplicates turn into contention.
 func TestQueueCoalescesRequestsForOneMailbox(t *testing.T) {
 	q := newQueue()
 	for i := 0; i < 5; i++ {
@@ -62,7 +62,7 @@ func TestQueueCoalescesRequestsForOneMailbox(t *testing.T) {
 	// Different mailboxes of one user stay distinct.
 	q.push(job{user: "u1", mbox: fts.MailboxRef{Name: "Sent"}}, false)
 	if got := q.depth(); got != 2 {
-		t.Errorf("depth = %d, want 2 — a second mailbox is separate work", got)
+		t.Errorf("depth = %d, want 2 - a second mailbox is separate work", got)
 	}
 }
 
@@ -83,10 +83,33 @@ func TestQueueMergeKeepsTheWidestRange(t *testing.T) {
 		t.Fatal("nothing queued")
 	}
 	if j.maxUID != 250 {
-		t.Errorf("maxUID = %d, want 250 — the merged pass must reach the later request", j.maxUID)
+		t.Errorf("maxUID = %d, want 250 - the merged pass must reach the later request", j.maxUID)
 	}
 	if j.maxRecent != 10 {
-		t.Errorf("maxRecent = %d, want 10 — a limit merges to the stricter bound", j.maxRecent)
+		t.Errorf("maxRecent = %d, want 10 - a limit merges to the stricter bound", j.maxRecent)
+	}
+}
+
+// A request without a limit, a search catch-up, lifts the limit of the pending
+// autoindex request, as the reference merges them: the search is never skipped.
+func TestQueueMergeLetsNoLimitWin(t *testing.T) {
+	for _, order := range []string{"limit first", "no limit first"} {
+		q := newQueue()
+		limited, open := inbox("u1"), inbox("u1")
+		limited.maxRecent = 10
+		first, second := limited, open
+		if order == "no limit first" {
+			first, second = open, limited
+		}
+		q.push(first, false)
+		q.push(second, true)
+		j, ok := q.pop(context.Background())
+		if !ok {
+			t.Fatal("nothing queued")
+		}
+		if j.maxRecent != 0 {
+			t.Errorf("%s: maxRecent = %d, want 0", order, j.maxRecent)
+		}
 	}
 }
 
@@ -120,11 +143,11 @@ func TestQueueRequeuesARequestThatArrivedMidPass(t *testing.T) {
 	// While the pass runs, new mail arrives for the same mailbox.
 	q.push(inbox("u1"), false)
 	if got := q.depth(); got != 0 {
-		t.Errorf("depth = %d while the pass runs, want 0 — it must not be a second entry", got)
+		t.Errorf("depth = %d while the pass runs, want 0 - it must not be a second entry", got)
 	}
 	q.done(j)
 	if got := q.depth(); got != 1 {
-		t.Fatalf("depth = %d after the pass, want 1 — the mid-pass request must come back", got)
+		t.Fatalf("depth = %d after the pass, want 1 - the mid-pass request must come back", got)
 	}
 	if _, ok := q.pop(context.Background()); !ok {
 		t.Error("the re-queued mailbox is not poppable")
@@ -143,7 +166,7 @@ func TestQueueDoneReleasesWhenNothingArrived(t *testing.T) {
 	// And the mailbox can be queued again afterwards.
 	q.push(inbox("u1"), false)
 	if got := q.depth(); got != 1 {
-		t.Errorf("depth = %d, want 1 — a released mailbox must be queueable", got)
+		t.Errorf("depth = %d, want 1 - a released mailbox must be queueable", got)
 	}
 }
 
@@ -165,7 +188,7 @@ func TestQueueDoneSurvivesAPanickingPass(t *testing.T) {
 
 	q.push(inbox("u1"), false)
 	if got := q.depth(); got != 1 {
-		t.Fatalf("depth = %d after a panicking pass, want 1 — the mailbox is claimed forever", got)
+		t.Fatalf("depth = %d after a panicking pass, want 1 - the mailbox is claimed forever", got)
 	}
 }
 
@@ -208,7 +231,7 @@ func TestRunPassReleasesTheMailboxOnPanic(t *testing.T) {
 
 	s.queue.push(inbox("u1"), false)
 	if got := s.queue.depth(); got != 1 {
-		t.Fatalf("depth = %d, want 1 — a panicking pass left the mailbox claimed forever", got)
+		t.Fatalf("depth = %d, want 1 - a panicking pass left the mailbox claimed forever", got)
 	}
 }
 
@@ -229,6 +252,6 @@ func TestRunPassReleasesTheMailboxOnError(t *testing.T) {
 
 	s.queue.push(inbox("u1"), false)
 	if got := s.queue.depth(); got != 1 {
-		t.Errorf("depth = %d, want 1 — a failed pass left the mailbox claimed", got)
+		t.Errorf("depth = %d, want 1 - a failed pass left the mailbox claimed", got)
 	}
 }

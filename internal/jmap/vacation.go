@@ -15,8 +15,8 @@ import (
 	"github.com/foxcpp/go-sieve/lexer"
 	"github.com/foxcpp/go-sieve/parser"
 
-	"github.com/yarilomail/yarilo/internal/fts/buildmail"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/fts/buildmail"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // vacationScript is the managed script's name; the object lives in its header.
@@ -144,7 +144,7 @@ func (s *Server) vacationGet(ctx context.Context, h *userHandle, accountID strin
 	if unknown := jmapcore.UnknownProperties(jmapcore.VacationResponse{}, props); len(unknown) > 0 {
 		return nil, jmapcore.InvalidProperties(unknown)
 	}
-	vv, err := s.vacationRead(ctx, h, accountID)
+	vv, err := s.vacationRead(ctx, h, h.user)
 	if err != nil {
 		return nil, storeFailure("VacationResponse/get", accountID, err)
 	}
@@ -171,7 +171,7 @@ func (s *Server) vacationSet(ctx context.Context, h *userHandle, accountID strin
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
-	vv, err := s.vacationRead(ctx, h, accountID)
+	vv, err := s.vacationRead(ctx, h, h.user)
 	if err != nil {
 		return nil, storeFailure("VacationResponse/set state", accountID, err)
 	}
@@ -196,13 +196,13 @@ func (s *Server) vacationSet(ctx context.Context, h *userHandle, accountID strin
 			resp.NotUpdated[id] = &jmapcore.SetError{Type: jmapcore.SetErrNotFound}
 			continue
 		}
-		if serr := s.vacationUpdate(ctx, h, accountID, &vv, req.Update[id]); serr != nil {
+		if serr := s.vacationUpdate(ctx, h, h.user, &vv, req.Update[id]); serr != nil {
 			resp.NotUpdated[id] = serr
 			continue
 		}
 		resp.Updated[id] = nil
 	}
-	if after, err := s.opts.Sieve.Store.Index(ctx, accountID, h.info.Home); err == nil {
+	if after, err := s.opts.Sieve.Store.Index(ctx, h.user, h.info.Home); err == nil {
 		resp.NewState = fmt.Sprint(after.State)
 	}
 	return resp, nil

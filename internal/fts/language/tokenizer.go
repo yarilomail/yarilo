@@ -1,9 +1,9 @@
 // Package language is the tokenization and filter layer shared by FTS
 // indexing and search. The generic tokenizer reproduces the reference
-// "simple" algorithm — ASCII/Unicode word-break classes, apostrophe
-// continuation, byte-length truncation and base64-run skipping — so indexes
+// "simple" algorithm - ASCII/Unicode word-break classes, apostrophe
+// continuation, byte-length truncation and base64-run skipping - so indexes
 // tokenize identically to ones built by the reference implementation
-// (traceability in https://doc.yarilomail.org/FTS).
+// (traceability in https://doc.yarilomail.org/latest/features/fts.html).
 package language
 
 import (
@@ -21,7 +21,7 @@ const (
 )
 
 // asciiWordBreaks is the reference ASCII break table: true = break. Apostrophe
-// (0x27) is not a break — it gets the special continuation treatment below.
+// (0x27) is not a break - it gets the special continuation treatment below.
 var asciiWordBreaks = [128]bool{}
 
 func init() {
@@ -51,7 +51,7 @@ func isBreakRune(r rune) bool {
 func isApostrophe(r rune) bool {
 	// U+2019 (right single quotation mark) and U+FF07 (fullwidth
 	// apostrophe, #725 item 3) both get the same continuation treatment as
-	// ASCII '\'' — normalized to U+0027 on append.
+	// ASCII '\'' - normalized to U+0027 on append.
 	return r == '\'' || r == 0x2019 || r == 0xFF07
 }
 

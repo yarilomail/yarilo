@@ -35,7 +35,7 @@ func TestACopiedInListIsAdoptedWhenOursIsAbsent(t *testing.T) {
 }
 
 // Once ours exists, a list appearing under the other name is not looked at:
-// adoption is for a store copied in before we wrote, not a running one — the
+// adoption is for a store copied in before we wrote, not a running one - the
 // decision recorded in #1593 and kept here (#1875).
 func TestTheOtherNameIsNotReadOnceOursExists(t *testing.T) {
 	box := batchBox(t)

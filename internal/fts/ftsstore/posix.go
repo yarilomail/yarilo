@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // StorageTypeNFS is the declared medium whose metadata operations are committed
@@ -35,7 +35,7 @@ func NewPosix(layout fts.Layout, storageType string) *Posix {
 
 // dirSyncUseful reports whether fsyncing an index directory buys anything.
 // Local filesystems: yes, it is what makes the rename and the removals survive
-// a crash. NFS: no — the protocol commits metadata operations before the reply,
+// a crash. NFS: no - the protocol commits metadata operations before the reply,
 // and there is no commit-a-directory call to make, so the fsync is a no-op the
 // kernel answers 0 to (#1176).
 func (p *Posix) dirSyncUseful() bool { return p.storageType != StorageTypeNFS }
@@ -52,7 +52,7 @@ func (p *Posix) Locate(user fts.UserRef) string {
 func (p *Posix) Prepare(user fts.UserRef) (string, error) {
 	dir := p.Locate(user)
 	if _, err := os.Stat(dir); err == nil {
-		return dir, nil // target already present — nothing to migrate
+		return dir, nil // target already present - nothing to migrate
 	}
 	if p.layout.Legacy == nil {
 		return dir, nil
@@ -68,7 +68,7 @@ func (p *Posix) Prepare(user fts.UserRef) (string, error) {
 		}
 	}
 	if legacy == "" {
-		return dir, nil // no older index — fresh mailbox
+		return dir, nil // no older index - fresh mailbox
 	}
 	slog.Debug("fts/store: legacy dir migration starting", "from", legacy, "to", dir)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
@@ -93,7 +93,7 @@ func (p *Posix) Create(dir string) error {
 }
 
 // Sync fsyncs the directory so its entries (a freshly created or renamed shard)
-// are durable — needed because the glass DB is opened with DB_NO_SYNC. On a
+// are durable - needed because the glass DB is opened with DB_NO_SYNC. On a
 // medium that commits metadata by protocol the call is skipped, not issued.
 func (p *Posix) Sync(dir string) error {
 	if !p.dirSyncUseful() {
@@ -112,7 +112,7 @@ func (p *Posix) Sync(dir string) error {
 // refuses a non-empty directory, which is the stop: a user whose other
 // mailboxes are not migrated yet keeps the shell until they are.
 //
-// Not for the bytes — for the answer to "did the migration run". Left in place,
+// Not for the bytes - for the answer to "did the migration run". Left in place,
 // <root>/mailboxes/<name> is present for every mailbox whether it moved or not,
 // and the state that tells them apart is one level down (#1195). Best-effort:
 // the data is already where it belongs.

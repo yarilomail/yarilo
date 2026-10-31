@@ -6,8 +6,8 @@ package userdbinfo
 import (
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Apply overlays pui onto ui. Dedicated fields win; a userdb driver that bakes

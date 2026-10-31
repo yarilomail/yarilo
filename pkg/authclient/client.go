@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // defaultDialTimeout caps the initial TCP/TLS handshake so a stalled master
@@ -197,9 +197,9 @@ func (c *Client) Close() error {
 
 // Userdb runs a USER lookup for username. Returns:
 //
-//   - (ui, nil)  — backend hit; ui populated from the wire fields
-//   - (nil, nil) — backend miss (master responded NOTFOUND)
-//   - (nil, err) — wire / parse / backend error
+//   - (ui, nil)  - backend hit; ui populated from the wire fields
+//   - (nil, nil) - backend miss (master responded NOTFOUND)
+//   - (nil, err) - wire / parse / backend error
 //
 // Mirrors the [protocol.Userdb] "not found is nil/nil" contract.
 func (c *Client) Userdb(ctx context.Context, username string) (*protocol.UserInfo, error) {

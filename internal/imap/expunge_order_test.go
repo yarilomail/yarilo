@@ -6,7 +6,7 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
 )
 
 // The client is told in the same order as before: the untagged EXPUNGEs come

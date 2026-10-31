@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // filterEvaluator decides which messages a filter matches. It exists as an
@@ -33,7 +33,7 @@ type filterEvaluator interface {
 type indexEvaluator struct{}
 
 // unsupported names the full-text conditions. A client reading the refusal can
-// tell which part to drop and retry — "unsupported filter" alone would leave it
+// tell which part to drop and retry - "unsupported filter" alone would leave it
 // guessing, and dropping the condition silently would return a confidently
 // wrong result set.
 func (indexEvaluator) unsupported(f *jmapcore.EmailFilter) []string {

@@ -20,7 +20,7 @@ func (c *capConn) out() string                      { return c.b.String() }
 
 // TestWriteProtoErrorTransientKeepsConnectionOpen pins the #928 contract: a
 // transient failure (imapCodeUnavailable) must be answered with the per-command
-// "keep the connection open" form for every protocol — never a close
+// "keep the connection open" form for every protocol - never a close
 // announcement (BYE / 421), which a compliant client treats as "hang up" and
 // which would defeat the #896 re-login.
 func TestWriteProtoErrorTransientKeepsConnectionOpen(t *testing.T) {
@@ -56,7 +56,7 @@ func TestWriteProtoErrorTransientKeepsConnectionOpen(t *testing.T) {
 // consistency): over-limit and bad-password-exhausted, across all four
 // protocols. IMAP and ManageSieve gain a distinct BYE after the NO; POP3 and
 // Submission have no separate close token, so the announcement is a second -ERR
-// / 421 line — a deliberate, documented double, consistent with the cap path.
+// / 421 line - a deliberate, documented double, consistent with the cap path.
 func TestOutcomeCloseSequence(t *testing.T) {
 	tests := []struct {
 		name  string

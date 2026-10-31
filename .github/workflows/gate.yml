@@ -1,4 +1,4 @@
-name: Gate — lint and test
+name: Gate - lint and test
 
 ## The single gate both branch pipelines run. One copy, because two copies of a
 ## gate drift, and the day they differ is the day something merges into one
@@ -25,6 +25,7 @@ jobs:
     runs-on: [self-hosted, linux]
     permissions:
       contents: read
+      actions: read
     outputs:
       code: ${{ steps.check.outputs.code }}
     steps:
@@ -35,10 +36,23 @@ jobs:
 
       - name: Does this change any code
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # A push has already been filtered by the caller's own paths, and a
-          # manual run is asked for deliberately: only a pull request has a
-          # base to compare against.
+          # A push whose tree passed the gate on its pull request is not gated
+          # again; any other push, and a manual run, is.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TREE=$(git rev-parse "${GITHUB_SHA}^{tree}")
+            HIT=$(curl -fsS -H "Authorization: Bearer ${GH_TOKEN}" \
+              "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=gated-tree-${TREE}&per_page=20" |
+              jq -r '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty') || HIT=""
+            if [ -n "${HIT}" ]; then
+              echo "code=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::tree ${TREE} passed the gate in ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${HIT}; lint and test are skipped"
+              exit 0
+            fi
+            echo "tree ${TREE} has no gated-tree artifact; the gate runs in full"
+          fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -47,7 +61,7 @@ jobs:
           CHANGED=$(git diff --name-only "${BASE}...${GITHUB_SHA}")
           echo "changed files:"
           echo "${CHANGED}"
-          if echo "${CHANGED}" | grep -qE '^(app/|helm/|helm_values/|internal/|pkg/|go\.mod$|go\.sum$|docker/Dockerfile$|\.github/workflows/)'; then
+          if echo "${CHANGED}" | grep -qE '^(app/|hack/|helm/|helm_values/|internal/|pkg/|go\.mod$|go\.sum$|docker/Dockerfile$|\.github/workflows/)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -80,7 +94,7 @@ jobs:
 
       ## Pinned, and only rebuilt when the pin changes: `@latest` recompiled the
       ## linter on every run and silently changed the ruleset under us, so a
-      ## green PR could go red on merge without a code change. v1 is required —
+      ## green PR could go red on merge without a code change. v1 is required -
       ## .golangci.yml is v1 format (it enables `gosimple`, which v2 folded into
       ## staticcheck), so bumping to v2 needs a config migration first.
       - name: Install golangci-lint
@@ -124,6 +138,10 @@ jobs:
       # here instead of waiting for the next sweep (#1620).
       - name: Check the comment share
         run: go run ./hack/commentcensus -check
+
+      # A line that tests the character itself is listed in hack/commentcensus/emdash.json.
+      - name: No em dash in the tree
+        run: go run ./hack/commentcensus -dashes
 
       - name: Run govulncheck
         run: |
@@ -212,6 +230,8 @@ jobs:
             sudo apt-get install -y -qq libxapian-dev g++
           fi
           CGO_ENABLED=1 go test -tags flatcurve ./internal/fts/flatcurve/ ./internal/ftsservice/ ./internal/ftsbench/
+          # Only the smoketest rows the tag adds: the untagged run above has the rest.
+          CGO_ENABLED=1 go test -tags flatcurve -run '^TestFTS' ./app/smoketest/
 
       - name: Publish test results
         uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3
@@ -229,3 +249,29 @@ jobs:
           path: /tmp/test-output.log
           retention-days: 14
 
+  ## The tree a pull request's gate passed, so the push that merges it is not
+  ## gated twice; on refs/pull/N/merge it is the tree the merge will produce.
+  record:
+    name: Record the gated tree
+    needs: [lint, test]
+    if: github.event_name == 'pull_request' && needs.lint.result == 'success' && needs.test.result == 'success'
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Name the tree
+        id: tree
+        run: |
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+          : > "${RUNNER_TEMP}/gated"
+
+      - name: Upload the marker
+        uses: actions/upload-artifact@v7
+        with:
+          name: gated-tree-${{ steps.tree.outputs.tree }}
+          path: ${{ runner.temp }}/gated
+          retention-days: 7
+          if-no-files-found: error

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 var (
@@ -108,7 +108,7 @@ func backendAPIStream(path string, body any) (io.ReadCloser, error) {
 // resolveBackendUser extracts the target user from a backend-api request: the
 // `user` query param (GET) or the top-level "user" key of a map body (POST).
 // Returns "" for global ops (dict uses typed struct bodies; iterate/count carry
-// no user) — those keep the fixed backendAPIURL.
+// no user) - those keep the fixed backendAPIURL.
 func resolveBackendUser(path string, body any) string {
 	if u, ok := body.(map[string]any); ok {
 		if s, ok := u["user"].(string); ok && s != "" {

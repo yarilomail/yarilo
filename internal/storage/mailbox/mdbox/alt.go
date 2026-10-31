@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/mdboxmap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
 )
 
 // AltMoveQuery filters which messages get moved to (or from) alt
@@ -125,7 +125,7 @@ func (u *userMailbox) altMoveFile(p *mdboxmap.Placement, srcFileID uint32, eligi
 	srcPath := mfileInTier(srcTier, srcFileID)
 
 	if len(toStay) == 0 {
-		// Whole file moves to dst — compact all records into one
+		// Whole file moves to dst - compact all records into one
 		// new dst file and remove the source.
 		newFileID, err := p.AllocFileID()
 		if err != nil {
@@ -171,6 +171,7 @@ func (u *userMailbox) altMoveFile(p *mdboxmap.Placement, srcFileID uint32, eligi
 	// Rewrite stayers into a fresh src file.
 	stayRecords, err := u.compactRecordsToTier(srcPath, mfileInTier(srcTier, newSrcFileID), newSrcFileID, toStay)
 	if err != nil {
+		_ = os.Remove(mfileInTier(dstTier, newDstFileID))
 		return err
 	}
 

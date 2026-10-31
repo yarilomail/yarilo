@@ -2,10 +2,11 @@ package director
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 func rebalanceServer(t *testing.T, pct int) *Server {
@@ -101,8 +102,20 @@ func TestADomainThatWouldOnlyFlipTheImbalanceStays(t *testing.T) {
 func onHot(s *Server, domain, ip string, n int) { onHost(s, domain, ip, n) }
 
 // reconnect gives a domain sessions on the backend it now belongs to, as its
-// clients do after a move ended the ones they had.
+// clients do after a move ended the ones they had: the login closes the kicked
+// sessions first.
 func reconnect(s *Server, domain, ip string, n int) {
+	s.sessRecMu.RLock()
+	var left []string
+	for id, rec := range s.sessById {
+		if DomainOf(rec.user) == domain && rec.backend != ip {
+			left = append(left, id)
+		}
+	}
+	s.sessRecMu.RUnlock()
+	for _, id := range left {
+		s.handleSessionClose(&client{conn: &captureConn{}}, []string{"SESSION-CLOSE", id})
+	}
 	for i := 0; i < n; i++ {
 		addUserSess(s, fmt.Sprintf("%s-re-%d", domain, i), ip, fmt.Sprintf("u%d@%s", i, domain))
 	}
@@ -145,7 +158,7 @@ func TestAMovedDomainIsNotMovedAgainWithinTheCooldown(t *testing.T) {
 }
 
 // A move ends the sessions the domain left behind, so no client keeps writing
-// to the backend it no longer belongs to.
+// to the backend it no longer belongs to; the record goes with the login's close.
 func TestAMoveKicksTheSessionsItLeftBehind(t *testing.T) {
 	s := rebalanceServer(t, 20)
 	hot := loadDomain(s, "one.test", 30)
@@ -154,10 +167,17 @@ func TestAMoveKicksTheSessionsItLeftBehind(t *testing.T) {
 	s.rebalanceDomains()
 
 	s.sessRecMu.RLock()
+	rec := s.sessById["two.test-0"]
+	s.sessRecMu.RUnlock()
+	if rec == nil || !strings.Contains(string(rec.cl.conn.(*captureConn).written), "USER-KICKED\tu0@two.test") {
+		t.Fatalf("the moved domain's session on the backend it left was not kicked: %+v", rec)
+	}
+	s.handleSessionClose(rec.cl, []string{"SESSION-CLOSE", "two.test-0"})
+	s.sessRecMu.RLock()
 	_, still := s.sessById["two.test-0"]
 	s.sessRecMu.RUnlock()
 	if still {
-		t.Error("a session of the moved domain is still recorded on the backend it left")
+		t.Error("the kicked session is still recorded after the login closed it")
 	}
 }
 

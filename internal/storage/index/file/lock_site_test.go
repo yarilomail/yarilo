@@ -3,7 +3,7 @@ package file
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Each write names the call that made it, and no mutation is left unnamed:
@@ -38,10 +38,6 @@ func TestAWriteIsCountedUnderItsOwnCaller(t *testing.T) {
 		{lockSiteAllocateUid, func() error {
 			_, aerr := ui.AllocateUID(f.ID)
 			return aerr
-		}},
-		{lockSiteNextModseq, func() error {
-			_, merr := ui.NextModSeq(f.ID)
-			return merr
 		}},
 	}
 	for _, tc := range cases {

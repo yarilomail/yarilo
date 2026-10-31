@@ -115,7 +115,7 @@ func TestScopeOf(t *testing.T) {
 		{"auth_cache_key", ScopeInternal},
 		{"auth_", ScopeInternal},
 		// Unprefixed but starting with "auth" / "userdb" without
-		// underscore stays passdb-scope — the underscore is part of
+		// underscore stays passdb-scope - the underscore is part of
 		// the marker.
 		{"authenticated", ScopePassdb},
 		{"userdb", ScopePassdb},
@@ -189,7 +189,7 @@ func TestFields_SnapshotRollback(t *testing.T) {
 	f.Set("home", "/h/alice")
 	snap := f.Snapshot()
 
-	// Mutations after snapshot — Set/Delete a mix.
+	// Mutations after snapshot - Set/Delete a mix.
 	f.Set("home", "/h/alice-modified")
 	f.Set("mail", "maildir:/m/alice")
 	f.Delete("user")
@@ -210,7 +210,7 @@ func TestFields_SnapshotRollback(t *testing.T) {
 }
 
 func TestFields_SnapshotIsIsolated(t *testing.T) {
-	// The snapshot must capture state by VALUE — subsequent
+	// The snapshot must capture state by VALUE - subsequent
 	// mutation on the bag cannot mutate the snapshot's payload.
 	f := NewFields()
 	f.Set("home", "/initial")
@@ -248,7 +248,7 @@ func TestFields_SnapshotNilSafe(t *testing.T) {
 	if snap := f.Snapshot(); snap != nil {
 		t.Errorf("nil bag Snapshot = %v, want nil", snap)
 	}
-	// Rollback on nil bag, nil snap — should not panic.
+	// Rollback on nil bag, nil snap - should not panic.
 	f.Rollback(nil)
 	f2 := NewFields()
 	f2.Rollback(nil) // no-op
@@ -261,7 +261,7 @@ func TestFields_SnapshotNilSafe(t *testing.T) {
 
 func TestFields_RollbackPreservesInsertionOrder(t *testing.T) {
 	// After rollback, Each must yield keys in the SAME order they
-	// were in at snapshot time — even after intervening reorderings
+	// were in at snapshot time - even after intervening reorderings
 	// via Delete + reinsert.
 	f := NewFields()
 	for _, k := range []string{"a", "b", "c", "d"} {

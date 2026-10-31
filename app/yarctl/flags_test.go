@@ -55,7 +55,7 @@ func TestParseFlagsUnknownFlagBeforePositionalErrors(t *testing.T) {
 	fs.SetOutput(discard{})
 	_ = fs.Bool("restore", false, "")
 	// A dash-token before any positional that names no registered flag is an
-	// unknown flag — stdlib errors, and so must we (not silently drop it).
+	// unknown flag - stdlib errors, and so must we (not silently drop it).
 	if err := parseFlags(fs, []string{"--bogus", "u1"}); err == nil {
 		t.Error("an unknown flag before the positional should error")
 	}
@@ -70,9 +70,9 @@ func TestParseFlagsDashPositionals(t *testing.T) {
 		args []string
 		pos  []string
 	}{
-		// dict atomic-inc <dict> <key> <delta> — negative delta is a documented use.
+		// dict atomic-inc <dict> <key> <delta> - negative delta is a documented use.
 		{"negative delta", []string{"mydict", "counter", "-5"}, []string{"mydict", "counter", "-5"}},
-		// acl set <user> <mailbox> <id> <rights> — RFC 4314 revoke uses a leading '-'.
+		// acl set <user> <mailbox> <id> <rights> - RFC 4314 revoke uses a leading '-'.
 		{"acl revoke rights", []string{"alice", "INBOX", "admin", "-lrs"}, []string{"alice", "INBOX", "admin", "-lrs"}},
 		// a registered flag still reorders even alongside a dash-positional.
 		{"flag plus dash-positional", []string{"counter", "-5", "--restore"}, []string{"counter", "-5"}},

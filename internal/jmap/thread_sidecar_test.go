@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // threadedAccount seeds two messages -- a root and its reply -- and the
@@ -97,7 +97,7 @@ func TestThreadGetReturnsTheConversation(t *testing.T) {
 
 	payload := callAPI(t, s, fmt.Sprintf(
 		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
-		  "methodCalls":[["Thread/get",{"accountId":%q,"ids":[%q]},"c0"]]}`, testUser, root))
+		  "methodCalls":[["Thread/get",{"accountId":%q,"ids":[%q]},"c0"]]}`, testAccount, root))
 
 	list, _ := payload["list"].([]any)
 	if len(list) != 1 {
@@ -133,7 +133,7 @@ func TestEmailThreadIdNamesTheConversation(t *testing.T) {
 	payload := callAPI(t, s, fmt.Sprintf(
 		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 		  "methodCalls":[["Email/get",{"accountId":%q,"ids":[%q],"properties":["id","threadId"]},"c0"]]}`,
-		testUser, reply))
+		testAccount, reply))
 
 	list, _ := payload["list"].([]any)
 	if len(list) != 1 {
@@ -158,7 +158,7 @@ func TestWithoutASidecarEveryMessageIsItsOwnThread(t *testing.T) {
 	payload := callAPI(t, s, fmt.Sprintf(
 		`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 		  "methodCalls":[["Email/get",{"accountId":%q,"ids":[%q],"properties":["id","threadId"]},"c0"]]}`,
-		testUser, id))
+		testAccount, id))
 
 	list, _ := payload["list"].([]any)
 	if len(list) != 1 {

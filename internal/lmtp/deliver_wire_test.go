@@ -6,15 +6,16 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A message delivered over the wire is readable from its record afterwards, on
@@ -92,6 +93,76 @@ func TestADeliveryOverTheWireIsReadableFromItsRecord(t *testing.T) {
 			// The wire adds the terminating CRLF of the DATA dot line.
 			if want := body + "\r\n"; string(got) != want {
 				t.Errorf("read back %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// A recipient without a domain, <Postmaster> (RFC 5321 §4.1.1.3) or any name
+// over LMTP: userdb is asked for it as it is, and only its answer decides.
+func TestADomainlessRecipientIsLookedUpAsItIs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rcpt  string
+		known bool
+		want  string
+	}{
+		{"Postmaster known to userdb", "Postmaster", true, "250 "},
+		{"Postmaster unknown to userdb", "Postmaster", false, "550 5.1.1 "},
+		{"any name known to userdb", "abuse", true, "250 "},
+		{"any name unknown to userdb", "abuse", false, "550 5.1.1 "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var asked []string
+			srv := New(testOpts(Options{
+				Hostname: "lmtp.test",
+				Config: config.LMTPProtocolConfig{
+					AddReceivedHeader: false, ReadTimeout: 5, WriteTimeout: 5,
+				},
+				Mailbox:  maildir.New(),
+				Index:    fileindex.New(),
+				Resolver: &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
+				UserdbLookup: func(_ context.Context, user string) (*mailbox.UserInfo, error) {
+					asked = append(asked, user)
+					if !tc.known {
+						return nil, nil
+					}
+					return &mailbox.UserInfo{
+						Username: user, Home: filepath.Join(dir, "admin@example.com"), Driver: "maildir",
+					}, nil
+				},
+			}))
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { ln.Close() }) //nolint:errcheck
+			go func() { _ = srv.Serve(ln) }()
+
+			conn, sc := dialLMTP(t, ln.Addr().String())
+			sendLHLO(t, conn, sc)
+			fmt.Fprintf(conn, "MAIL FROM:<sender@external.com>\r\n") //nolint:errcheck
+			sc.Scan()
+			fmt.Fprintf(conn, "RCPT TO:<%s>\r\n", tc.rcpt) //nolint:errcheck
+			sc.Scan()
+			rcpt := sc.Text()
+			if tc.known {
+				if !strings.HasPrefix(rcpt, "250") {
+					t.Fatalf("RCPT TO:<%s> answered %q", tc.rcpt, rcpt)
+				}
+				fmt.Fprintf(conn, "DATA\r\n") //nolint:errcheck
+				sc.Scan()
+				fmt.Fprintf(conn, "Subject: abuse\r\n\r\nreport\r\n.\r\n") //nolint:errcheck
+				sc.Scan()
+				rcpt = sc.Text()
+			}
+			fmt.Fprintf(conn, "QUIT\r\n") //nolint:errcheck
+			if !strings.HasPrefix(rcpt, tc.want) {
+				t.Errorf("the reply for <%s> is %q, want %q", tc.rcpt, rcpt, tc.want)
+			}
+			if len(asked) != 1 || asked[0] != tc.rcpt {
+				t.Errorf("userdb was asked for %q, want [%q]", asked, tc.rcpt)
 			}
 		})
 	}

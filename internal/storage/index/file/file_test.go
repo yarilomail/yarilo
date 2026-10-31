@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const (
@@ -105,7 +105,7 @@ func TestDeleteFolderRemovesIndexDir(t *testing.T) {
 }
 
 // TestDeleteFolderReclaimsDboxShell locks that DeleteFolder removes the
-// whole folder subtree for dbox drivers, not just the dbox-Mails leaf —
+// whole folder subtree for dbox drivers, not just the dbox-Mails leaf -
 // otherwise an empty mailboxes/<name> index shell is orphaned.
 func TestDeleteFolderReclaimsDboxShell(t *testing.T) {
 	home := t.TempDir()
@@ -136,14 +136,13 @@ func TestLogReplay(t *testing.T) {
 
 	// Append 3 messages, flag-update one, expunge one.
 	for i := uint32(1); i <= 3; i++ {
-		modseq, _ := b.NextModSeq(f.ID)
-		b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: i, Flags: []string{`\Seen`}, ModSeq: modseq}) //nolint:errcheck
+		b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: i, Flags: []string{`\Seen`}}) //nolint:errcheck
 	}
 	b.UpdateFlags(f.ID, 2, []string{`\Seen`, `\Flagged`}, nil) //nolint:errcheck
 	b.ExpungeMessage(f.ID, 3)                                  //nolint:errcheck
 	b.Close()                                                  //nolint:errcheck
 
-	// Reopen — all state must come from replaying .index.log.
+	// Reopen - all state must come from replaying .index.log.
 	b2 := openIdx(dir, testUser)
 	f2, err := b2.OpenFolder("INBOX", 42, "")
 	if err != nil {
@@ -186,12 +185,10 @@ func TestLogReplay_Keywords(t *testing.T) {
 	b := openIdx(dir, testUser)
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
-	modseq, _ := b.NextModSeq(f.ID)
 	b.AppendMessage(f.ID, &mailbox.MessageMeta{ //nolint:errcheck
 		UID:      1,
 		Flags:    []string{`\Seen`},
 		Keywords: []string{"$Forwarded"},
-		ModSeq:   modseq,
 	})
 	b.Close() //nolint:errcheck
 
@@ -229,7 +226,7 @@ func TestOpenFolder_CreateAndReopen(t *testing.T) {
 	}
 	b.Close() //nolint:errcheck
 
-	// Reopen — must restore header from disk.
+	// Reopen - must restore header from disk.
 	b2 := openIdx(dir, testUser2)
 	f2, err := b2.OpenFolder("INBOX", 12345, "")
 	if err != nil {
@@ -246,8 +243,7 @@ func TestAppendAndGetMessages(t *testing.T) {
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
 	for i := uint32(1); i <= 5; i++ {
-		modseq, _ := b.NextModSeq(f.ID)
-		m := &mailbox.MessageMeta{UID: i, Flags: []string{`\Seen`}, ModSeq: modseq}
+		m := &mailbox.MessageMeta{UID: i, Flags: []string{`\Seen`}}
 		if err := b.AppendMessage(f.ID, m); err != nil {
 			t.Fatalf("AppendMessage uid=%d: %v", i, err)
 		}
@@ -267,8 +263,7 @@ func TestUpdateFlags(t *testing.T) {
 	b := openIdx(t.TempDir(), testUser)
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
-	modseq, _ := b.NextModSeq(f.ID)
-	b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Flags: []string{`\Seen`}, ModSeq: modseq}) //nolint:errcheck
+	b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Flags: []string{`\Seen`}}) //nolint:errcheck
 
 	if err := b.UpdateFlags(f.ID, 1, []string{`\Seen`, `\Flagged`}, nil); err != nil {
 		t.Fatal(err)
@@ -339,11 +334,9 @@ func TestKeywordsRoundTrip(t *testing.T) {
 	b := openIdx(dir, testUser)
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
-	modseq, _ := b.NextModSeq(f.ID)
 	err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1,
 		Flags:    []string{`\Seen`},
 		Keywords: []string{"$Forwarded", "$Junk"},
-		ModSeq:   modseq,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -428,81 +421,43 @@ func TestFlagConversion(t *testing.T) {
 	}
 }
 
-// TestNextModSeqIsMonotonic regresses a pre-fix bug where NextModSeq
-// bumped the in-memory modseq but never persisted to the on-disk
-// header. Because AllocateAppend's rereadHeaderLocked reset the
-// in-memory value to the stale disk value, successive NextModSeq
-// calls all returned the same number → modseqs were not unique
-// across messages, which broke CONDSTORE / QRESYNC client caches
-// under load. The fix persists every modseq bump and the reread
-// keeps the higher of (disk, in-memory).
-func TestNextModSeqIsMonotonic(t *testing.T) {
+// Each append takes a modseq above the last, persisted with the record and in
+// the header; a value held only in memory once made them collide.
+func TestAppendedModSeqsClimbAndPersist(t *testing.T) {
 	dir := t.TempDir()
 	b := openIdx(dir, testUser)
 	f, err := b.OpenFolder("INBOX", 1, "")
 	if err != nil {
 		t.Fatalf("open folder: %v", err)
 	}
-
-	// Sequence: NextModSeq → AllocateAppend → NextModSeq → AllocateAppend.
-	// Pre-fix, both messages ended up with rec.modseq == 2 and the on-disk
-	// header.modseq stayed at 1. Post-fix the values must strictly
-	// increase.
-	var modseqs [4]uint64
-	var uids [2]uint32
-	for i := 0; i < 2; i++ {
-		ms, err := b.NextModSeq(f.ID)
-		if err != nil {
-			t.Fatalf("NextModSeq #%d: %v", i, err)
+	var given [2]uint64
+	for i := range given {
+		m := &mailbox.MessageMeta{Flags: []string{}}
+		if err := b.AllocateAndAppend(f.ID, m); err != nil {
+			t.Fatalf("AllocateAndAppend #%d: %v", i, err)
 		}
-		modseqs[i*2] = ms
-		uid, err := b.AllocateUID(f.ID)
-		if err != nil {
-			t.Fatalf("AllocateUID #%d: %v", i, err)
+		given[i] = m.ModSeq
+		msgs, _ := b.GetMessages(f.ID, mailbox.SeqSet{{From: m.UID, To: m.UID}})
+		if len(msgs) != 1 || msgs[0].ModSeq != m.ModSeq {
+			t.Fatalf("append #%d: record %+v, want modseq %d", i, msgs, m.ModSeq)
 		}
-		if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Flags: []string{}}); err != nil {
-			t.Fatalf("AppendMessage #%d: %v", i, err)
-		}
-		uids[i] = uid
-
-		// Re-read the message's persisted modseq via GetMessages so the
-		// test exercises the full write-then-read path.
-		msgs, _ := b.GetMessages(f.ID, mailbox.SeqSet{{From: uid, To: uid}})
-		if len(msgs) != 1 {
-			t.Fatalf("GetMessages returned %d msgs, want 1", len(msgs))
-		}
-		modseqs[i*2+1] = msgs[0].ModSeq
 	}
-
-	// First NextModSeq must return strictly less than second NextModSeq.
-	if modseqs[0] >= modseqs[2] {
-		t.Errorf("NextModSeq not monotonic: first=%d second=%d (should grow)", modseqs[0], modseqs[2])
+	if given[0] >= given[1] {
+		t.Errorf("modseqs %d then %d, want them to climb", given[0], given[1])
 	}
-	// Each message's persisted modseq must equal the NextModSeq value
-	// the caller passed at AllocateAppend time.
-	if modseqs[1] != modseqs[0] {
-		t.Errorf("msg1 persisted modseq %d != allocated %d", modseqs[1], modseqs[0])
-	}
-	if modseqs[3] != modseqs[2] {
-		t.Errorf("msg2 persisted modseq %d != allocated %d", modseqs[3], modseqs[2])
-	}
-
-	// Folder header high-watermark must reflect the latest allocation
-	// (visible across process restarts).
 	reopened, err := b.OpenFolder("INBOX", 1, "")
 	if err != nil {
 		t.Fatalf("re-open folder: %v", err)
 	}
-	if reopened.HighestModSeq < modseqs[2] {
-		t.Errorf("header HighestModSeq %d < last allocation %d (persistence regressed)",
-			reopened.HighestModSeq, modseqs[2])
+	if reopened.HighestModSeq < given[1] {
+		t.Errorf("header HighestModSeq %d < last append %d", reopened.HighestModSeq, given[1])
 	}
 }
 
 // TestAppendAdvancesHighestModSeqForCrossHandleReader verifies that a delivered
 // message advances the folder's header HighestModSeq for a *separate* reader that
 // only observes the append through the .index.log. Pre-fix, flushAppend wrote no
-// TxModseqUpdate, so applyLog left the reader's header modseq stale — a delivering
+// TxModseqUpdate, so applyLog left the reader's header modseq stale - a delivering
 // LMTP process would leave every other selected IMAP session's HIGHESTMODSEQ
 // unchanged, so the poll-based refresh never surfaced the new UID (SEARCH saw it,
 // FETCH did not).
@@ -514,17 +469,11 @@ func TestAppendAdvancesHighestModSeqForCrossHandleReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writer open folder: %v", err)
 	}
-	ms, err := writer.NextModSeq(wf.ID)
-	if err != nil {
-		t.Fatalf("NextModSeq: %v", err)
+	m := &mailbox.MessageMeta{Flags: []string{}}
+	if err := writer.AllocateAndAppend(wf.ID, m); err != nil {
+		t.Fatalf("AllocateAndAppend: %v", err)
 	}
-	uid, err := writer.AllocateUID(wf.ID)
-	if err != nil {
-		t.Fatalf("AllocateUID: %v", err)
-	}
-	if err := writer.AppendMessage(wf.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Flags: []string{}}); err != nil {
-		t.Fatalf("AppendMessage: %v", err)
-	}
+	uid, ms := m.UID, m.ModSeq
 
 	// Fresh backend/handle = another process. It reloads base + log from disk.
 	reader := openIdx(dir, testUser)
@@ -548,8 +497,8 @@ func TestAppendAdvancesHighestModSeqForCrossHandleReader(t *testing.T) {
 // TestExpungeAdvancesHighestModSeqForCrossHandleReader verifies that an expunge
 // advances the header HighestModSeq for a separate reader that only observes it
 // through the .index.log. Pre-fix, applyLog read the expunged UID but ignored the
-// expunge modseq carried in the TxExpungeGUID record, so a sibling process's
-// NextModSeq reused that modseq for the next delivery — breaking modseq
+// expunge modseq carried in the TxExpungeGUID record, so a sibling process
+// reused that modseq for the next delivery - breaking modseq
 // monotonicity and the poll-based new-mail refresh (#526).
 func TestExpungeAdvancesHighestModSeqForCrossHandleReader(t *testing.T) {
 	dir := t.TempDir()
@@ -559,17 +508,11 @@ func TestExpungeAdvancesHighestModSeqForCrossHandleReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writer open folder: %v", err)
 	}
-	ms, err := writer.NextModSeq(wf.ID)
-	if err != nil {
-		t.Fatalf("NextModSeq: %v", err)
+	m := &mailbox.MessageMeta{Flags: []string{}}
+	if err := writer.AllocateAndAppend(wf.ID, m); err != nil {
+		t.Fatalf("AllocateAndAppend: %v", err)
 	}
-	uid, err := writer.AllocateUID(wf.ID)
-	if err != nil {
-		t.Fatalf("AllocateUID: %v", err)
-	}
-	if err := writer.AppendMessage(wf.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Flags: []string{}}); err != nil {
-		t.Fatalf("AppendMessage: %v", err)
-	}
+	uid, ms := m.UID, m.ModSeq
 	// The expunge bumps the modseq strictly past the append's.
 	if err := writer.ExpungeMessage(wf.ID, uid); err != nil {
 		t.Fatalf("ExpungeMessage: %v", err)
@@ -587,7 +530,7 @@ func TestExpungeAdvancesHighestModSeqForCrossHandleReader(t *testing.T) {
 }
 
 // TestUpdateFlagsPersistsModSeqBump verifies the second of the three
-// modseq bump sites — UpdateFlags — also persists. Pre-fix, STORE
+// modseq bump sites - UpdateFlags - also persists. Pre-fix, STORE
 // from one session would bump in-memory only and the next reread by
 // another process would revert.
 func TestUpdateFlagsPersistsModSeqBump(t *testing.T) {
@@ -595,9 +538,9 @@ func TestUpdateFlagsPersistsModSeqBump(t *testing.T) {
 	b := openIdx(dir, testUser)
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
-	ms, _ := b.NextModSeq(f.ID)
-	uid, _ := b.AllocateUID(f.ID)
-	_ = b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Flags: []string{}})
+	m := &mailbox.MessageMeta{Flags: []string{}}
+	_ = b.AllocateAndAppend(f.ID, m)
+	uid, ms := m.UID, m.ModSeq
 
 	if err := b.UpdateFlags(f.ID, uid, []string{`\Seen`}, nil); err != nil {
 		t.Fatalf("UpdateFlags: %v", err)
@@ -612,8 +555,8 @@ func TestUpdateFlagsPersistsModSeqBump(t *testing.T) {
 	}
 }
 
-// TestExpungePersistsModSeqBump verifies the third bump site —
-// ExpungeMessage — persists. Without the fix, QRESYNC VANISHED
+// TestExpungePersistsModSeqBump verifies the third bump site -
+// ExpungeMessage - persists. Without the fix, QRESYNC VANISHED
 // queries from a follower session would not see the expunge with a
 // modseq strictly greater than the last-known watermark.
 func TestExpungePersistsModSeqBump(t *testing.T) {
@@ -621,9 +564,9 @@ func TestExpungePersistsModSeqBump(t *testing.T) {
 	b := openIdx(dir, testUser)
 	f, _ := b.OpenFolder("INBOX", 1, "")
 
-	ms, _ := b.NextModSeq(f.ID)
-	uid, _ := b.AllocateUID(f.ID)
-	_ = b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Flags: []string{}})
+	m := &mailbox.MessageMeta{Flags: []string{}}
+	_ = b.AllocateAndAppend(f.ID, m)
+	uid := m.UID
 	beforeHeader, _ := b.OpenFolder("INBOX", 1, "")
 
 	if err := b.ExpungeMessage(f.ID, uid); err != nil {
@@ -681,8 +624,7 @@ func TestSaveFolderDoesNotCorruptMessagesCount(t *testing.T) {
 
 	// Append 5 messages.
 	for i := uint32(1); i <= 5; i++ {
-		modseq, _ := b.NextModSeq(f.ID)
-		b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: i, ModSeq: modseq}) //nolint:errcheck
+		b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: i}) //nolint:errcheck
 	}
 
 	// Simulate what the IMAP MOVE handler used to do: set the Folder counter
@@ -693,7 +635,7 @@ func TestSaveFolderDoesNotCorruptMessagesCount(t *testing.T) {
 		t.Fatalf("SaveFolder: %v", err)
 	}
 
-	// Reopen from disk — records must all survive (counter must not corrupt data).
+	// Reopen from disk - records must all survive (counter must not corrupt data).
 	b.Close() //nolint:errcheck
 	b2 := openIdx(dir, testUser)
 	f2, _ := b2.OpenFolder("INBOX", 1, "")
@@ -722,8 +664,7 @@ func TestApplyLogRecountsAfterCorruptedHeaderUpdate(t *testing.T) {
 
 	// Append 3 messages and expunge 1.
 	for i := uint32(1); i <= 3; i++ {
-		modseq, _ := b.NextModSeq(f.ID)
-		b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: i, ModSeq: modseq}) //nolint:errcheck
+		b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: i}) //nolint:errcheck
 	}
 	b.ExpungeMessage(f.ID, 2) //nolint:errcheck
 
@@ -734,9 +675,8 @@ func TestApplyLogRecountsAfterCorruptedHeaderUpdate(t *testing.T) {
 	// Re-append to produce a non-empty log.
 	b2 := openIdx(dir, testUser)
 	f2, _ := b2.OpenFolder("INBOX", 1, "")
-	modseq, _ := b2.NextModSeq(f2.ID)
-	b2.AppendMessage(f2.ID, &mailbox.MessageMeta{UID: 4, ModSeq: modseq}) //nolint:errcheck
-	b2.Close()                                                            //nolint:errcheck
+	b2.AppendMessage(f2.ID, &mailbox.MessageMeta{UID: 4}) //nolint:errcheck
+	b2.Close()                                            //nolint:errcheck
 
 	// Third open: MessagesCount must equal actual record count (2 surviving + 1 new = 3).
 	b3 := openIdx(dir, testUser)

@@ -11,8 +11,8 @@ import (
 
 	goSmtp "github.com/emersion/go-smtp"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/loginproto"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
 )
 
 // preambleLn strips the preamble line as the backend's PreambleListener does

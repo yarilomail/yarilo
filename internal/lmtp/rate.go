@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // ErrRateLimited is returned by checkRecipientRate when the (sender IP,

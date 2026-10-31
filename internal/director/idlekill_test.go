@@ -31,7 +31,7 @@ func TestStartKilling_ArmsConfirmForIdleUser(t *testing.T) {
 }
 
 // TestStartKilling_NotArmedWithActiveSession is the guard: a user WITH a live session
-// must NOT arm at kill-start — it still waits for the session to drain (transition to
+// must NOT arm at kill-start - it still waits for the session to drain (transition to
 // zero) before confirming, exactly as before.
 func TestStartKilling_NotArmedWithActiveSession(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{UserKillConfirmGrace: 10 * time.Millisecond, UserKillTimeout: 30 * time.Second}))
@@ -50,7 +50,7 @@ func TestStartKilling_NotArmedWithActiveSession(t *testing.T) {
 }
 
 // TestFlushHook_RunsForIdleUserMove is the end-to-end #870 gate: an admin move of an
-// idle (unconnected) user runs the flush hook after the grace — WITHOUT any SESSION-CLOSE
+// idle (unconnected) user runs the flush hook after the grace - WITHOUT any SESSION-CLOSE
 // to arm the confirm (the sandbox repro), which pre-fix would have skipped the hook and
 // waited out the 15s timeout.
 func TestFlushHook_RunsForIdleUserMove(t *testing.T) {
@@ -73,7 +73,7 @@ func TestFlushHook_RunsForIdleUserMove(t *testing.T) {
 	s.userDir.Set(user, "10.0.0.1:993", false)
 	s.moveUser(user, "10.0.0.2:993", nil)
 
-	// No noteSessionClosed — the user had no sessions. Only sweep past the grace.
+	// No noteSessionClosed - the user had no sessions. Only sweep past the grace.
 	time.Sleep(grace + 20*time.Millisecond)
 	s.sweepKills(grace)
 

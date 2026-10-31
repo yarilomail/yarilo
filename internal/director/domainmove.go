@@ -3,7 +3,7 @@ package director
 import (
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
 )
 
 // kickDomainSessions ends every session of a domain that is still on the

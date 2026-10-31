@@ -23,6 +23,13 @@ var (
 		Help: "Autoindex requests skipped by fts_autoindex_exclude.",
 	})
 
+	// metricAutoindexSkippedRecent counts autoindex passes skipped for holding
+	// more \Recent messages than fts_autoindex_max_recent_msgs.
+	metricAutoindexSkippedRecent = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fts_autoindex_skipped_recent_total",
+		Help: "Autoindex passes skipped because the folder held more \\Recent messages than fts_autoindex_max_recent_msgs.",
+	})
+
 	metricIndexMessages = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fts_index_messages_total",
 		Help: "Messages indexed by the FTS worker.",
@@ -37,7 +44,7 @@ var (
 		Help: "FTS index jobs that returned an error.",
 	})
 	// metricQueueMerged: a request that folded into a pass already queued for
-	// the same mailbox. Growth here is duplicate work that never happened —
+	// the same mailbox. Growth here is duplicate work that never happened -
 	// and, because a duplicate would have taken the lock before discovering it
 	// had nothing to do, contention that never happened either.
 	metricQueueMerged = promauto.NewCounter(prometheus.CounterOpts{
@@ -58,8 +65,8 @@ var (
 	// milliseconds and Prometheus scrapes every 15-30 seconds, so a gauge is
 	// almost always sampled between passes: it reads zero whether the service
 	// is saturated or idle. That is worse than having no metric, because the
-	// question it was added for — telling "idle, nothing queued" from "idle,
-	// every queued mailbox belongs to a busy user" — then looks answered.
+	// question it was added for - telling "idle, nothing queued" from "idle,
+	// every queued mailbox belongs to a busy user" - then looks answered.
 	//
 	// rate() over this divided by fts_index_workers is utilisation, in one
 	// series and independent of scrape timing.
@@ -98,7 +105,7 @@ var (
 		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5},
 	})
 	// metricRead: time actually blocked reading message bytes. metricFetch
-	// times the open only — the body streams into Build — so before this the
+	// times the open only - the body streams into Build - so before this the
 	// whole of storage I/O was being counted as tokenisation, and the fetch
 	// share looked like 7% of a pass when the real figure was unknown.
 	metricRead = promauto.NewHistogram(prometheus.HistogramOpts{
@@ -122,13 +129,13 @@ var (
 		Buckets: []float64{0.001, 0.01, 0.1, 0.5, 1, 5, 30},
 	})
 	// metricMessageBytes: the two histograms above are uninterpretable without
-	// it — 200ms on 30MB and 200ms on 3KB are different diagnoses.
+	// it - 200ms on 30MB and 200ms on 3KB are different diagnoses.
 	metricMessageBytes = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "fts_message_bytes",
 		Help:    "Size of messages fed to the indexer.",
 		Buckets: prometheus.ExponentialBuckets(1024, 4, 8),
 	})
-	// metricLagUIDs / metricLagSeconds: what a user actually feels — "search
+	// metricLagUIDs / metricLagSeconds: what a user actually feels - "search
 	// does not find recent mail". Every other metric here is a proxy for these
 	// two, and the plan succeeds only if they fall.
 	metricLagUIDs = promauto.NewGauge(prometheus.GaugeOpts{
@@ -140,7 +147,7 @@ var (
 		Help: "Age of the oldest message not yet indexed.",
 	})
 	// metricIndexDeferred: a pass that could not take the mailbox lock and was
-	// requeued. Steady growth means write contention, not breakage — it is the
+	// requeued. Steady growth means write contention, not breakage - it is the
 	// signal that indexing is lagging behind delivery rather than failing.
 	metricIndexDeferred = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fts_index_deferred_total",
@@ -199,7 +206,7 @@ var (
 		Name: "fts_recovery_total",
 		Help: "FTS engine recoveries (a broken/closed index handle was evicted for reopen).",
 	}, []string{"reason"})
-	// metricLockWait: per-mailbox FTS write-lock acquire time — the direct
+	// metricLockWait: per-mailbox FTS write-lock acquire time - the direct
 	// signal of cross-pod contention.
 	metricLockWait = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "fts_lock_wait_seconds",

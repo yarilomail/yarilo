@@ -1,0 +1,18 @@
+[
+  {
+    "file": "internal/fts/language/language_test.go",
+    "text": "{\"unicode dash breaks\", \"foo\u2014bar\", []string{\"foo\", \"bar\"}},"
+  },
+  {
+    "file": "internal/msgcache/envelope_test.go",
+    "text": "Subject: \"\u0422\u0435\u043c\u0430 \u0437 UTF-8 \u2014 \u0456 \u0442\u0438\u0440\u0435\","
+  },
+  {
+    "file": "internal/imap/acl_enforce_test.go",
+    "text": "a.Create(f, nil).Wait() //nolint:errcheck \u2014 only Work/* cases need them"
+  },
+  {
+    "file": "pkg/dict/file/file.go",
+    "text": "defer os.Remove(tmpName) //nolint:errcheck \u2014 best-effort cleanup if rename succeeds."
+  }
+]

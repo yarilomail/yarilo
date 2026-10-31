@@ -1,16 +1,17 @@
 package idxrebuild_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/idxrebuild"
-	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
+	fileidx "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func home(root, user string) string {
@@ -222,6 +223,15 @@ func TestARebuildRefilesAFileWhoseRecordWasExpunged(t *testing.T) {
 		t.Errorf("the message came back with its old UID %d; a re-filed orphan gets a "+
 			"fresh one", after[0].UID)
 	}
+	// A session's pass after the rebuild keeps the fresh UID: the old one stays expunged.
+	folder, _ = idx.OpenFolder("INBOX", 0)
+	if _, err := box.(mailbox.StoreReconciler).ReconcileIndex(mailboxbase.Open(box, idx), idx, folder); err != nil {
+		t.Fatal(err)
+	}
+	again, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil || len(again) != 1 || again[0].UID != after[0].UID {
+		t.Errorf("after a session's pass the folder holds %+v (%v), want uid %d alone", again, err, after[0].UID)
+	}
 }
 
 // publish moves a saved body out of tmp/ into the folder, which since #1736 is
@@ -234,5 +244,63 @@ func publish(t *testing.T, box mailbox.UserMailbox, folder, name string, uid uin
 	}
 	if _, err := namer.AssignUID(folder, name, uid); err != nil {
 		t.Fatalf("publish %q: %v", name, err)
+	}
+}
+
+// Every record a rebuild leaves is readable by its UID: a file the index never
+// saw gets a UID the driver can look up, not one the index alone knows (#2392).
+// A session's pass afterwards changes nothing, and no expunged UID comes back.
+func TestARebuiltRecordIsReadableByItsUID(t *testing.T) {
+	root := t.TempDir()
+	const user = "fresh@x.com"
+	info := &mailbox.UserInfo{Username: user, Home: home(root, user)}
+	box := maildir.New().OpenUser(info)
+	if err := box.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := box.Create("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	idx := fileidx.New().OpenUser(info)
+	folder, err := idx.OpenFolder("INBOX", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"1700000001.M1P1.host:2,S", "1700000002.M2P1.host:2,"} {
+		if err := os.WriteFile(filepath.Join(home(root, user), "Maildir", "cur", name), []byte("Subject: "+name+"\r\n\r\nb\r\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := mailboxbase.Open(box, idx, mailboxbase.ReadOnly())
+	if _, err := idxrebuild.RebuildFolder(b, idx, folder); err != nil {
+		t.Fatal(err)
+	}
+	read := func() []uint32 {
+		t.Helper()
+		folder, _ = idx.OpenFolder("INBOX", 0)
+		msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var uids []uint32
+		for _, m := range msgs {
+			rc, err := b.OpenMessage("INBOX", m)
+			if err != nil {
+				t.Fatalf("uid %d is not readable after the rebuild: %v", m.UID, err)
+			}
+			_ = rc.Close()
+			uids = append(uids, m.UID)
+		}
+		return uids
+	}
+	got := read()
+	if len(got) != 2 {
+		t.Fatalf("the rebuild left %v, want two records", got)
+	}
+	if _, err := box.(mailbox.StoreReconciler).ReconcileIndex(b, idx, folder); err != nil {
+		t.Fatal(err)
+	}
+	if again := read(); fmt.Sprint(again) != fmt.Sprint(got) {
+		t.Errorf("a session's pass after the rebuild changed the records: %v, was %v", again, got)
 	}
 }

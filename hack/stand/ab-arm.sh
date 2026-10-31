@@ -8,8 +8,17 @@
 # Usage:
 #   KUBECONFIG=~/.kube/ihorru-sbox-nc.yaml \
 #     bash hack/stand/ab-arm.sh <arm-label> <image-tag> <out-dir>
+#
+# YARILO_ARM_CHART names a checkout whose helm/ and helm_values/ the arm deploys
+# instead of this one's, so a release's own chart runs under this tooling.
 
 set -euo pipefail
+
+# The seed below runs with its output hidden; an unreadable password must stop here.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
+YARILO_PASSWORD="$(sandbox_password)"
+YARILO_DB_PASSWORD="$(sandbox_db_password)"
+export YARILO_PASSWORD YARILO_DB_PASSWORD
 
 # An arm that ends anywhere but its own last line says so: three runs died
 # inside the fill leaving only the line before it (#1875).
@@ -21,6 +30,7 @@ OUT="${3:?output directory}"
 NS="${YARILO_NS:-yarilo-sb}"
 KCFG="${KUBECONFIG:-$HOME/.kube/config}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHART="${YARILO_ARM_CHART:-$REPO}"
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 
@@ -55,6 +65,18 @@ if [ -n "${YARILO_ARM_COMMIT:-}" ] && [ "$head" != "$YARILO_ARM_COMMIT" ]; then
   exit 1
 fi
 echo "-- tooling: $(git -C "$REPO" log --oneline -1 2>/dev/null)"
+if [ "$CHART" != "$REPO" ]; then
+  dirty=$(git -C "$CHART" status --porcelain 2>&1) || {
+    echo "ab-arm: YARILO_ARM_CHART=$CHART is not a checkout: $dirty" >&2
+    exit 1
+  }
+  if [ -n "$dirty" ]; then
+    echo "ab-arm: the chart checkout at $CHART is not clean, so the arm would deploy a chart nobody reviewed:" >&2
+    printf '%s\n' "$dirty" >&2
+    exit 1
+  fi
+fi
+echo "-- chart: $(git -C "$CHART" describe --tags --always 2>/dev/null) ($CHART)"
 
 IMAGE_REPO="${YARILO_IMAGE_REPO:-yarilomail/yarilo}"
 
@@ -165,7 +187,7 @@ if [ -n "$OVERLAY_NAME" ]; then
     echo "ab-arm: no overlay is named $OVERLAY_NAME" >&2
     exit 1
   }
-  OVERLAY="$REPO/helm_values/values-sandbox-$OVERLAY_NAME.yaml"
+  OVERLAY="$CHART/helm_values/values-sandbox-$OVERLAY_NAME.yaml"
   [ -f "$OVERLAY" ] || { echo "ab-arm: $OVERLAY is missing" >&2; exit 1; }
   # Both levels the header promises: a guard that reads only the first lets a
   # sibling key in, and the file then says one thing while the arm does another.
@@ -375,8 +397,8 @@ step "deploy"
 # The knobs beside the tag, so a window says what kind of arm it is: a quick
 # arm's numbers are per-login ratios, not throughput (README.md).
 echo "== arm $ARM: $TAG types=[$TYPES] fill=$FILL"
-helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
-  -f "$REPO/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} \
+helm --kubeconfig="$KCFG" upgrade yarilo "$CHART/helm" -n "$NS" \
+  -f "$CHART/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} \
   --set image.tag="$TAG" --timeout 10m >/dev/null
 
 deadline=$(( $(date +%s) + 600 ))
@@ -744,13 +766,14 @@ for type in $TYPES; do
       $1 == "fileindex_maildir_stamp_unchanged_total" { stampSame += $2 }
       $1 ~ /^maildir_listing_retry_total\{/ && $1 ~ /at="path"/ { retryPath += $2 }
       $1 ~ /^maildir_listing_retry_total\{/ && $1 ~ /at="rename"/ { retryRename += $2 }
+      $1 ~ /^maildir_listing_retry_total\{/ && $1 ~ /at="open"/ { retryOpen += $2 }
       $1 ~ /^maildir_cache_stat_total\{/ && $1 ~ /what="dir"/ { statDir += $2 }
       $1 ~ /^maildir_cache_stat_total\{/ && $1 ~ /what="list"/ { statList += $2 }
       $1 ~ /^maildir_window_closed_total\{/ && $1 ~ /by="own-write"/ { shutOwn += $2 }
       $1 ~ /^maildir_window_closed_total\{/ && $1 ~ /by="expunge"/ { shutExpunge += $2 }
       $1 ~ /^maildir_window_closed_total\{/ && $1 !~ /by="own-write"/ && $1 !~ /by="expunge"/ { shutOther += $2 }
-      END { printf "listing: list_whole=%d list_tail=%d dir_name=%d dir_scan=%d dir_remove=%d miss_none=%d miss_stale=%d retry_path=%d retry_rename=%d stat_dir=%d stat_list=%d",
-              whole, tail, byName, byScan, byRemove, missNone, missStale, retryPath, retryRename, statDir, statList
+      END { printf "listing: list_whole=%d list_tail=%d dir_name=%d dir_scan=%d dir_remove=%d miss_none=%d miss_stale=%d retry_path=%d retry_rename=%d retry_open=%d stat_dir=%d stat_list=%d",
+              whole, tail, byName, byScan, byRemove, missNone, missStale, retryPath, retryRename, retryOpen, statDir, statList
             printf " shut_own=%d shut_expunge=%d shut_other=%d stamp_hit=%d stamp_miss=%d stamp_same=%d",
               shutOwn, shutExpunge, shutOther, stampHit, stampMiss, stampSame
             if (logins + 0 > 0) printf " list_per_login=%.3f dir_per_login=%.3f stat_per_login=%.3f",

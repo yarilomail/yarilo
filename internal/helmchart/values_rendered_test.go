@@ -18,7 +18,7 @@ import (
 //
 // fts_flatcurve_prefix_search shipped that way in #1054 and was found only
 // because a live gate produced identical results with the setting at two
-// different values — which reads as a setting that does not affect search
+// different values - which reads as a setting that does not affect search
 // rather than one that never arrives (#1059).
 //
 // The comparison is textual rather than a chart render: it needs no helm
@@ -65,9 +65,15 @@ type configKey struct {
 // snake_case names carrying their section's prefix, which is the convention
 // this repo uses for everything that reaches yarilo.yaml.
 //
-// Kubernetes plumbing — image, resources, replicas, nodeSelector — is
+// Kubernetes plumbing - image, resources, replicas, nodeSelector - is
 // camelCase or unprefixed and is not config, so the shape of the name is what
 // separates the two.
+// dataMaps are values whose keys are the operator's data, rendered by a range:
+// an entry is not a setting of its own.
+var dataMaps = map[string]bool{
+	"components.auth.policy.request_attributes": true,
+}
+
 func configKeys(values map[string]any) []configKey {
 	var out []configKey
 	snake := regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)+$`)
@@ -84,7 +90,9 @@ func configKeys(values map[string]any) []configKey {
 				path = prefix + "." + name
 			}
 			if sub, ok := child.(map[string]any); ok {
-				walk(path, sub)
+				if !dataMaps[path] {
+					walk(path, sub)
+				}
 				continue
 			}
 			if snake.MatchString(name) {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/foxcpp/go-sieve/interp"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 // DictDuplicateTracker backs the Sieve duplicate test (RFC 7352) with a dict,
@@ -34,7 +34,7 @@ func (t *DictDuplicateTracker) key(handle, id string) string {
 // IsDuplicate reports whether (handle, id) was already recorded within its TTL,
 // recording it (with a `seconds` TTL) when new. On :last it refreshes the TTL of
 // an existing entry. The lookup-then-set is not atomic across pods; a rare
-// concurrent double-delivery of the same message may both observe "new" — an
+// concurrent double-delivery of the same message may both observe "new" - an
 // accepted trade-off matching the vacation dedup path.
 func (t *DictDuplicateTracker) IsDuplicate(ctx context.Context, handle, id string, seconds uint32, last bool) (bool, error) {
 	key := t.key(handle, id)

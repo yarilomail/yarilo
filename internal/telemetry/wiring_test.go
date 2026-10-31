@@ -41,7 +41,7 @@ func (s site) field(name string) (ast.Expr, bool) {
 // The cost of unevenness is not the missing feature. It is somebody diagnosing
 // yarilo-director in six months, reaching for /debug/pprof, getting a 404, and
 // spending the afternoon working out whether the switch is off or the endpoint
-// was never wired — a question this test makes impossible to ask.
+// was never wired - a question this test makes impossible to ask.
 //
 // It reads the tree rather than trusting review because the omission compiles:
 // a telemetry.Options literal without the field is valid Go with a zero value
@@ -52,20 +52,20 @@ func TestEveryComponentWiresPprof(t *testing.T) {
 
 	for _, s := range sites {
 		if _, ok := s.field("Pprof"); !ok {
-			t.Errorf("%s:%d: telemetry.Options without Pprof — this component cannot be profiled, and nothing at the call site says so",
+			t.Errorf("%s:%d: telemetry.Options without Pprof - this component cannot be profiled, and nothing at the call site says so",
 				s.path, s.line)
 		}
 	}
 }
 
 // Every component must resolve its telemetry address through telemetry.Addr,
-// which is what honours TELEMETRY_LISTEN — the mechanism the chart uses to give
+// which is what honours TELEMETRY_LISTEN - the mechanism the chart uses to give
 // each container in the co-located pod a distinct telemetry port, and the one
 // at the centre of #1008.
 //
 // Eight components used to pass the configured value straight through and drop
 // the variable on the floor (#1019). What makes that worth a guard and not only
-// a fix is its shape: the bypass compiles, reads naturally, and is silent — an
+// a fix is its shape: the bypass compiles, reads naturally, and is silent - an
 // operator who sets the port sees it in the manifest and never learns that the
 // binary did not listen.
 func TestEveryComponentResolvesTheTelemetryAddress(t *testing.T) {
@@ -79,7 +79,7 @@ func TestEveryComponentResolvesTheTelemetryAddress(t *testing.T) {
 			continue
 		}
 		if !resolvesThroughAddr(addr, s.addrIdents) {
-			t.Errorf("%s:%d: Addr does not come from telemetry.Addr — TELEMETRY_LISTEN is silently ignored here",
+			t.Errorf("%s:%d: Addr does not come from telemetry.Addr - TELEMETRY_LISTEN is silently ignored here",
 				s.path, s.line)
 		}
 	}
@@ -90,7 +90,7 @@ func TestEveryComponentResolvesTheTelemetryAddress(t *testing.T) {
 //
 // Identifiers are followed rather than trusted. Accepting any identifier would
 // have let `Addr: addr` through, which is exactly the form the eight broken
-// components used — a guard that passes on the defect it exists for is worse
+// components used - a guard that passes on the defect it exists for is worse
 // than no guard, because it is also a claim that the defect cannot recur.
 func resolvesThroughAddr(v ast.Expr, addrIdents map[string]bool) bool {
 	switch e := v.(type) {

@@ -64,7 +64,7 @@ func stillRunning(t *testing.T, pidFile string) bool {
 
 // TestFlushHook_BoundHoldsOverTheTree walks the two measurements that separated
 // the defects in the field: with the SAME 2s bound, a hook holding 5s took
-// 5.0s and one holding 20s took 20.0s — the run scaled with the hook, so the
+// 5.0s and one holding 20s took 20.0s - the run scaled with the hook, so the
 // bound bounded nothing. Both rows must now finish on the bound instead, and
 // neither may leave the grandchild running.
 func TestFlushHook_BoundHoldsOverTheTree(t *testing.T) {
@@ -90,10 +90,10 @@ func TestFlushHook_BoundHoldsOverTheTree(t *testing.T) {
 			// The bound plus the wait-delay backstop is the whole budget; the
 			// hook's own duration must not enter into it.
 			if max := bound + flushWaitDelay + time.Second; elapsed > max {
-				t.Errorf("run took %v, over the %v budget — the wait scaled with the hook, not the bound", elapsed, max)
+				t.Errorf("run took %v, over the %v budget - the wait scaled with the hook, not the bound", elapsed, max)
 			}
 			if stillRunning(t, pidFile) {
-				t.Error("the hook's grandchild outlived the bound — the group kill did not reach it")
+				t.Error("the hook's grandchild outlived the bound - the group kill did not reach it")
 			}
 			if escaped {
 				t.Errorf("this hook stays in its process group, so the group kill must reach it: escaped=%v", escaped)
@@ -105,7 +105,7 @@ func TestFlushHook_BoundHoldsOverTheTree(t *testing.T) {
 // TestFlushHook_LongBoundIsNotMistakenForAnEscape: with a bound LONGER than the
 // wait delay, an ordinary timeout must still read as a clean kill. The escape
 // signal is how long the pipes stayed open AFTER the tree was signalled, not
-// how long the run took — measuring the latter marks every slow hook as an
+// how long the run took - measuring the latter marks every slow hook as an
 // escape and the report stops meaning anything.
 func TestFlushHook_LongBoundIsNotMistakenForAnEscape(t *testing.T) {
 	bound := flushWaitDelay + time.Second
@@ -144,7 +144,7 @@ func TestFlushHook_FastHookIsNotTimedOut(t *testing.T) {
 // helperEscapingHookEnv switches the test binary into hook mode: it stands in
 // for an operator script that puts its work into a NEW SESSION, out of reach of
 // the process-group kill. Built here rather than shelling out to setsid(1),
-// which is not on every platform the tests run on — the case has to be covered
+// which is not on every platform the tests run on - the case has to be covered
 // where it is developed as well as in CI.
 const helperEscapingHookEnv = "YARILO_TEST_ESCAPING_HOOK"
 

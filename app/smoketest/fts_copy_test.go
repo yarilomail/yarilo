@@ -94,7 +94,7 @@ func TestOneEmailIDForCopies(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			copyQueryStub(t, copyFolderIDs, tc.ids)
-			err := assertOneEmailIDForCopies("u1@example.com", "dfts1hit",
+			err := assertOneEmailIDForCopies("dfts1hit",
 				copyFolderName, otherFolderName, 2)
 			if tc.wantErr && err == nil {
 				t.Error("the judgement accepted an arrangement it must refuse")

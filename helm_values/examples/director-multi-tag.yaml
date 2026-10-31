@@ -1,13 +1,13 @@
 # ============================================================================
-# yarilo — PRODUCTION values: DIRECTOR topology, MULTI-TAG (sharded storage)
+# yarilo - PRODUCTION values: DIRECTOR topology, MULTI-TAG (sharded storage)
 # ============================================================================
 #
 # A "tag" = one NFS shard = one co-located backend StatefulSet with its OWN
-# yarilo-locks and PV (https://doc.yarilomail.org/DEPLOYMENT "backend deployment — one per tag").
+# yarilo-locks and PV (https://doc.yarilomail.org/latest/installation/deployment.html "backend deployment - one per tag").
 # The director ring is SHARED; each backend tag self-registers into it and the
 # director routes a user to a pod WITHIN that user's tag (LookupBackendByTag).
 #
-# This is a MULTI-RELEASE install — one Helm release for the control plane +
+# This is a MULTI-RELEASE install - one Helm release for the control plane +
 # one release PER backend tag:
 #
 #   # 1) Control plane (director + login proxies + shared auth/warden/quota):
@@ -30,7 +30,7 @@
 hostname: mail.example.com
 
 image:
-  repository: ghcr.io/yarilomail/yarilo
+  repository: docker.io/0kaba0/yarilo
   tag: ""
   pullPolicy: IfNotPresent
 logLevel: info

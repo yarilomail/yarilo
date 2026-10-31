@@ -269,7 +269,7 @@ func TestManageSieveGreeting_StarttlsAdvertised(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// Minimal TLS config — just needs to be non-nil.
+		// Minimal TLS config - just needs to be non-nil.
 		extTLS := &tls.Config{} //nolint:gosec
 		rd := bufio.NewReader(srv)
 		extractManageSievePreamble(srv, rd, extTLS, testOpts(Options{}), relayContext{}) //nolint:errcheck

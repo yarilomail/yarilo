@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // ftsLockService runs the real service: the site is a wire field, and a fake
@@ -150,7 +150,9 @@ func TestAPassPastTheWaitLimitReportsBusy(t *testing.T) {
 // The hold outlives its TTL because it is renewed: one hold now covers a
 // whole-user walk, and a lapse would admit a writer mid-walk (#1986).
 func TestAHoldIsRenewedWhileThePassRuns(t *testing.T) {
-	defer swapLockTiming(t, 600*time.Millisecond, 150*time.Millisecond)()
+	// A 1.8 s margin between renewals and the TTL: a full run's scheduling
+	// delays must not lapse a renewed hold (#2352).
+	defer swapLockTiming(t, 2*time.Second, 200*time.Millisecond)()
 
 	dial := ftsLockService(t)
 	const user = "u3@example.com"
@@ -167,7 +169,7 @@ func TestAHoldIsRenewedWhileThePassRuns(t *testing.T) {
 
 	<-inside
 	// Past the TTL, and still ours: an unrenewed hold has expired by now.
-	time.Sleep(900 * time.Millisecond)
+	time.Sleep(3 * time.Second)
 	if _, err := dial().Lock(locks.WithSite(context.Background(), "other"),
 		locks.FTSKey(user, ""), locks.Owner(user, "rival"), time.Minute); !errors.Is(err, locks.ErrBusy) {
 		t.Errorf("another writer took the index mid-pass: %v", err)

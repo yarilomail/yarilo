@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,9 +22,9 @@ import (
 
 	"github.com/emersion/go-sasl"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 const (
@@ -45,7 +46,12 @@ const (
 // When Fields is set the OK reply is emitted from the bag; when nil,
 // the legacy typed members drive the wire output.
 type AuthResponse struct {
-	Result   AuthResult
+	Result AuthResult
+	// PassdbID is the 1-based place of the passdb that answered; 0 unknown.
+	PassdbID int
+	// FailType names a refusal for the policy server: credentials, account
+	// or internal; empty on success. Never on the wire.
+	FailType string
 	Username string
 	Home     string
 	MailLoc  string
@@ -128,6 +134,10 @@ type Request struct {
 	// Fields accumulates passdb output. Drivers may assume non-nil;
 	// Chain.Authenticate allocates it.
 	Fields *Fields
+	// Unknown is set when every driver passed: no passdb knows the user.
+	Unknown bool
+	// PassdbID is the 1-based place in the chain of the driver that answered.
+	PassdbID int
 }
 
 // Result classifies a passdb outcome. Separate from AuthResult
@@ -135,13 +145,13 @@ type Request struct {
 type Result int
 
 const (
-	// ResultOK — user verified, chain stops.
+	// ResultOK - user verified, chain stops.
 	ResultOK Result = iota
-	// ResultFail — credentials rejected, chain stops.
+	// ResultFail - credentials rejected, chain stops.
 	ResultFail
-	// ResultNext — user unknown here; roll back and try next driver.
+	// ResultNext - user unknown here; roll back and try next driver.
 	ResultNext
-	// ResultTempFail — backend failure; always with a non-nil error.
+	// ResultTempFail - backend failure; always with a non-nil error.
 	ResultTempFail
 )
 
@@ -171,9 +181,9 @@ type MasterAuthenticator interface {
 // SCRAMSha256Lookup exposes per-user SCRAM-SHA-256 verifiers to the
 // SASL mech; implementing it enables SCRAM-SHA-256(-PLUS)
 // advertisement. Returns (creds, nil) when a verifier exists,
-// (nil, nil) when the user is unknown or has no SCRAM verifier —
+// (nil, nil) when the user is unknown or has no SCRAM verifier -
 // the mech then fabricates a fake verifier so user existence can't
-// be probed — and (nil, err) on transient backend error.
+// be probed - and (nil, err) on transient backend error.
 type SCRAMSha256Lookup interface {
 	LookupSCRAMSha256(username string) (*sasl.ScramCredentials, error)
 }
@@ -258,7 +268,7 @@ type chainAuthenticator struct {
 }
 
 func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP string) (*AuthResponse, error) {
-	// Cache lookup — positive hit verifies the supplied password
+	// Cache lookup - positive hit verifies the supplied password
 	// against the stored HMAC and short-circuits the chain.
 	// Negative hit short-circuits without password check: a
 	// previously-failed lookup is authoritative for the neg-TTL
@@ -278,16 +288,24 @@ func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP 
 	result, err := RunAuth(c.chain, req)
 
 	// Seed the cache on definitive answers. TempFail is not
-	// cached — the next attempt should retry the chain so a
+	// cached - the next attempt should retry the chain so a
 	// transient backend outage does not lock users out for the
 	// neg-TTL window.
-	if err == nil && (result == ResultOK || result == ResultFail) {
+	switch {
+	case err != nil:
+	case result == ResultOK:
 		c.cache.Insert(key, username, password, result, req.Fields)
+	case result == ResultFail:
+		c.cache.InsertFail(key, username, password, req.Fields, req.Unknown)
 	}
 
 	resp := &AuthResponse{
-		Result: authResultFromChain(result),
-		Fields: req.Fields,
+		Result:   authResultFromChain(result),
+		FailType: failType(result, req.Unknown),
+		Fields:   req.Fields,
+	}
+	if err != nil {
+		resp.FailType = "internal"
 	}
 	if v, ok := req.Fields.Get("user"); ok {
 		resp.Username = v
@@ -323,8 +341,10 @@ func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP 
 // byte-identical to a fresh chain run for the same input.
 func responseFromCache(reqUser string, entry *CacheEntry) *AuthResponse {
 	resp := &AuthResponse{
-		Result: authResultFromChain(entry.Result),
-		Fields: entry.Fields,
+		Result:   authResultFromChain(entry.Result),
+		FailType: failType(entry.Result, entry.Unknown),
+		PassdbID: entry.PassdbID,
+		Fields:   entry.Fields,
 	}
 	if entry.Fields != nil {
 		if v, ok := entry.Fields.Get("user"); ok {
@@ -366,13 +386,13 @@ func responseFromCache(reqUser string, entry *CacheEntry) *AuthResponse {
 //
 // LookupSCRAMSha256 walks the passdb chain and returns the first
 // SCRAM-SHA-256 verifier any chain entry exposes. A passdb that
-// does not implement SCRAMSha256Lookup is silently skipped — the
+// does not implement SCRAMSha256Lookup is silently skipped - the
 // chain stays mixed-mode (SQL passdbs with PLAIN columns coexist
 // with SQL passdbs carrying SCRAM verifiers; only the latter
 // contribute to SCRAM authentication).
 //
 // Returns (nil, nil) when no chain entry has a verifier for the
-// user — the session-side SASL server then fabricates a fake
+// user - the session-side SASL server then fabricates a fake
 // verifier so the SCRAM exchange completes with a uniform
 // auth-failed outcome (defence against user-enumeration via
 // timing). Backend errors propagate.
@@ -428,7 +448,7 @@ func (c *chainAuthenticator) lookupSCRAMFor(username string, v sqlvars.Vars, sha
 }
 
 // LookupSCRAMSha1 mirrors LookupSCRAMSha256 for the SHA-1 family.
-// Independent of SHA-256 — a passdb may carry SCRAM-SHA-256 for
+// Independent of SHA-256 - a passdb may carry SCRAM-SHA-256 for
 // one user and SCRAM-SHA-1 for another, and the chain walks both
 // without coupling.
 func (c *chainAuthenticator) LookupSCRAMSha1(username string) (*sasl.ScramCredentials, error) {
@@ -456,7 +476,7 @@ func (c *chainAuthenticator) AuthenticateMaster(authzid, authid, password, servi
 	// NewAuthenticator hands out when master-users are disabled),
 	// honour the toggle here too. Distinct authzid against a
 	// disabled chain is treated as a regular login of the
-	// AUTHID — the safe fallback that never grants impersonation.
+	// AUTHID - the safe fallback that never grants impersonation.
 	if !c.masterUsersEnabled {
 		return c.Authenticate(authid, password, service, remoteIP)
 	}
@@ -475,7 +495,7 @@ func (c *chainAuthenticator) AuthenticateMaster(authzid, authid, password, servi
 	// Master-flow caching: key the cache by (service, master,
 	// target) tuple so each (master impersonating target) pair
 	// caches independently. Cached under the master's name for
-	// selective flush — revoking a master's privileges then
+	// selective flush - revoking a master's privileges then
 	// `auth cache flush <master>` evicts every impersonation
 	// entry in one sweep. Stale-privilege risk is bounded by the
 	// configured TTL plus the audit log.
@@ -495,7 +515,7 @@ func (c *chainAuthenticator) AuthenticateMaster(authzid, authid, password, servi
 
 	if err == nil && (result == ResultOK || result == ResultFail) {
 		// Cache under master's name (not target) for selective
-		// flush — admin revoking a master's privileges flushes
+		// flush - admin revoking a master's privileges flushes
 		// by master, and all their impersonation cache entries
 		// drop in one sweep.
 		c.cache.Insert(mkey, master, password, result, req.Fields)
@@ -537,12 +557,12 @@ func RunAuth(chain Chain, req *Request) (Result, error) {
 }
 
 // hasUserdbFields reports whether the bag already carries at
-// least one userdb_-prefixed key — the marker for a prefetched
+// least one userdb_-prefixed key - the marker for a prefetched
 // userdb result that a downstream userdb.Lookup must not overwrite.
 // RunMasterAuth handles a master-user impersonation request.
 // req.Username MUST be the master when the function is called.
 // On success req.Fields carries master_user/original_user/user.
-// userdb is not consulted here — session processes call it via
+// userdb is not consulted here - session processes call it via
 // the master socket after VERIFY.
 func RunMasterAuth(passdbs, masterdb Chain, target string, req *Request) (Result, error) {
 	if req.Fields == nil {
@@ -644,7 +664,7 @@ func (c Chain) Authenticate(req *Request) (Result, error) {
 	if req.Fields == nil {
 		req.Fields = NewFields()
 	}
-	for _, db := range c {
+	for i, db := range c {
 		snap := req.Fields.Snapshot()
 		start := time.Now()
 		result, err := db.Authenticate(req)
@@ -657,15 +677,31 @@ func (c Chain) Authenticate(req *Request) (Result, error) {
 			req.Fields.Rollback(snap)
 			return result, err
 		}
-		// ResultOK / ResultFail — driver's mutations kept,
+		// ResultOK / ResultFail - driver's mutations kept,
 		// chain stops.
+		req.PassdbID = i + 1
 		return result, err
 	}
+	req.Unknown = true
 	return ResultFail, nil
 }
 
+// failType is the policy server's name for a chain outcome.
+func failType(r Result, unknown bool) string {
+	switch {
+	case r == ResultOK:
+		return ""
+	case r == ResultTempFail:
+		return "internal"
+	case unknown:
+		return "account"
+	default:
+		return "credentials"
+	}
+}
+
 // authResultFromChain maps the chain-internal Result onto the
-// wire-shape AuthResult. ResultNext never reaches this path —
+// wire-shape AuthResult. ResultNext never reaches this path -
 // Chain.Authenticate converts a chain exhaust to ResultFail before
 // returning.
 func authResultFromChain(r Result) AuthResult {
@@ -702,12 +738,14 @@ type Server struct {
 	penaltyToSecs        PenaltyToSecsFunc
 	policy               PolicyChecker
 	policyMode           PolicyMode
-	tokenStore           TokenStore
-	connUID              atomic.Uint64
-	pid                  int
-	cookie               string
-	defaultMailPath      string
-	defaultInboxPath     string
+	// sleep applies a policy tarpit; tests count it instead of waiting.
+	sleep            func(time.Duration)
+	tokenStore       TokenStore
+	connUID          atomic.Uint64
+	pid              int
+	cookie           string
+	defaultMailPath  string
+	defaultInboxPath string
 	// maxConcurrentRequests bounds in-flight commands per connection (#887).
 	// 0 selects DefaultMaxConcurrentRequests.
 	maxConcurrentRequests int
@@ -722,7 +760,7 @@ const DefaultMaxConcurrentRequests = 256
 
 type ServerOption func(*Server)
 
-// WithMaxConcurrentRequests overrides DefaultMaxConcurrentRequests — the number
+// WithMaxConcurrentRequests overrides DefaultMaxConcurrentRequests - the number
 // of commands a single connection may process concurrently. Values <= 0 restore
 // the default.
 func WithMaxConcurrentRequests(n int) ServerOption {
@@ -735,7 +773,7 @@ func WithMaxConcurrentRequests(n int) ServerOption {
 
 // WithUserdb attaches a userdb backend to the Server. When set,
 // every successful passdb result is enriched with userdb fields
-// (with prefetch detection — see RunAuth). The userdb fields land
+// (with prefetch detection - see RunAuth). The userdb fields land
 // in the response with the `userdb_` prefix preserved on the wire,
 // so login pods can use them to set up the mail session without a
 // separate master-protocol round-trip.
@@ -757,7 +795,7 @@ func WithMasterdb(passdbs []Passdb) ServerOption {
 // WithMasterUserSeparator enables the `target<sep>master`
 // workaround for SASL PLAIN clients that cannot supply authzid
 // in the standard third-field position. Typical value is `*`.
-// Empty disables the workaround — only RFC 4616 authzid is
+// Empty disables the workaround - only RFC 4616 authzid is
 // honoured.
 func WithMasterUserSeparator(sep string) ServerOption {
 	return func(s *Server) { s.masterUserSeparator = sep }
@@ -789,7 +827,7 @@ func (s *Server) adoptTarget(target string, req *Request) (Result, error) {
 }
 
 // handleAuth ignores any SASL PLAIN authzid the client sends
-// AND skips the separator workaround — every request routes
+// AND skips the separator workaround - every request routes
 // through the regular passdb chain, indistinguishable from a
 // build without master support. Set to true to expose the
 // master flow at the wire level.
@@ -820,7 +858,7 @@ func WithInternalFailureDelay(d time.Duration) ServerOption {
 // *policy.Client (auth/policy package); tests can plug stubs.
 //
 // Decision shape lives here so protocol does not import the
-// policy package — single-direction dependency keeps the build
+// policy package - single-direction dependency keeps the build
 // graph clean.
 type PolicyChecker interface {
 	CheckBefore(ctx context.Context, req PolicyRequest) (PolicyDecision, error)
@@ -832,14 +870,19 @@ type PolicyChecker interface {
 // shape policy.Client accepts; defined here so the wire Server
 // can call without the policy package import.
 type PolicyRequest struct {
-	Username  string
-	Password  string
-	RemoteIP  string
-	Service   string
-	DeviceID  string
-	SessionID string
-	TLS       bool
-	FailType  string
+	Username string
+	Password string
+	RemoteIP string
+	LocalIP  string
+	// Vars is the variable table a template may name; Passdb and Userdb are
+	// the fields of the passdb: and userdb: providers.
+	Vars           map[string]string
+	Passdb, Userdb map[string]string
+	Service        string
+	DeviceID       string
+	SessionID      string
+	TLS            bool
+	FailType       string
 }
 
 // PolicyDecision is the parsed verdict. Continue=true means
@@ -875,7 +918,7 @@ func WithPolicy(checker PolicyChecker, mode PolicyMode) ServerOption {
 // PenaltyStore is the cross-process auth-fail backoff store the
 // wire Server consults pre-passdb. Implemented by *warden.Conn so
 // every yarilo-auth pod shares the same counters; tests can plug
-// in a stub. Nil-safe at the call sites — Lookup returns 0 and
+// in a stub. Nil-safe at the call sites - Lookup returns 0 and
 // Update is a no-op when the store is not configured.
 type PenaltyStore interface {
 	PenaltyLookup(ip string) (int, error)
@@ -885,7 +928,7 @@ type PenaltyStore interface {
 // PenaltyToSecsFunc maps the penalty counter returned by
 // PenaltyStore.Lookup to the sleep duration applied before the
 // chain runs. Caller-supplied so a deployment can tune the
-// exponential curve without recompiling protocol — typical
+// exponential curve without recompiling protocol - typical
 // implementations: warden.PenaltyToSecs (2/4/8/15 cap),
 // linear, or capped-linear. Nil falls back to no-sleep.
 type PenaltyToSecsFunc func(count int) int
@@ -926,7 +969,7 @@ func WithPenalty(store PenaltyStore, toSecs PenaltyToSecsFunc) ServerOption {
 }
 
 // WithCache attaches an auth cache. handleAuth consults it
-// before running the passdb chain — positive hit verifies the
+// before running the passdb chain - positive hit verifies the
 // supplied password against the stored HMAC, negative hit
 // short-circuits without password check. Misses run the chain
 // and seed the cache with the result.
@@ -978,6 +1021,7 @@ func NewServer(passdbs []Passdb, opts ...ServerOption) *Server {
 		passdbs: passdbs,
 		pid:     os.Getpid(),
 		cookie:  hex.EncodeToString(cookie),
+		sleep:   time.Sleep,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -1054,8 +1098,8 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 // handleConn serves one client connection. Commands are dispatched to their own
 // goroutine (#887): a client multiplexes many requests over a single connection
 // (#878/#885), and handling them one at a time made the connection a queue.
-// Worse, the AUTH path deliberately sleeps — auth-penalty tarpit, policy tarpit,
-// timing-leak failure delay — so a single tarpitted request would stall every
+// Worse, the AUTH path deliberately sleeps - auth-penalty tarpit, policy tarpit,
+// timing-leak failure delay - so a single tarpitted request would stall every
 // unrelated login queued behind it.
 //
 // Out-of-order completion is exactly what the wire protocol expects: every reply
@@ -1086,6 +1130,8 @@ func (s *Server) handleConn(conn net.Conn) {
 	sem := make(chan struct{}, limit)
 	// One conversation spans several commands, so it cannot live in a handler.
 	live := newExchanges()
+	// cpid is the login process's pid, from its handshake.
+	var cpid int
 
 	// Server → Client handshake. Written before any handler exists, so the
 	// plain conn is safe here.
@@ -1123,9 +1169,12 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		switch fields[0] {
 		case "CPID":
-			// client pid — ignore for now
+			if len(fields) > 1 {
+				cpid, _ = strconv.Atoi(fields[1])
+			}
 		case "AUTH", "VERIFY":
 			verb := fields[0]
+			clientPID := cpid
 			// strings.Split allocated a fresh slice for this line, so the
 			// goroutine owns it outright.
 			args := fields
@@ -1138,7 +1187,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				defer func() { <-sem }()
 				start := time.Now()
 				if verb == "AUTH" {
-					observeRequest("AUTH", s.handleAuth(sc, live, args), start)
+					observeRequest("AUTH", s.handleAuth(sc, live, args, clientPID), start)
 					return
 				}
 				observeRequest("VERIFY", s.handleVerify(sc, args), start)
@@ -1196,7 +1245,7 @@ func connRemoteIP(conn net.Conn) string {
 // for it ("ok" | "fail" | "tempfail" | "bad_request"). The label is returned
 // rather than observed here so the caller times the whole verb, including the
 // deliberate delays this function applies.
-func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) string {
+func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string, cpid int) string {
 	if len(fields) < 3 {
 		return "bad_request"
 	}
@@ -1204,7 +1253,11 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 	mech := fields[2]
 
 	var service, resp, ripAttr, lipAttr, sessionID, cbind string
+	cc := clientConn{mechanism: mech, cpid: cpid}
 	for _, f := range fields[3:] {
+		if cc.parseField(f) {
+			continue
+		}
 		switch {
 		case strings.HasPrefix(f, "service="):
 			service = strings.TrimPrefix(f, "service=")
@@ -1225,14 +1278,14 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		return "bad_request"
 	}
 	if isSCRAM(mech) {
-		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, lipAttr, sessionID)
+		return s.beginSCRAM(conn, live, id, mech, service, resp, cbind, ripAttr, lipAttr, sessionID, cc)
 	}
 	if isOAuth(mech) {
 		remoteIP := ripAttr
 		if remoteIP == "" {
 			remoteIP = connRemoteIP(conn)
 		}
-		return s.beginOAuth(conn, live, id, mech, service, resp, remoteIP, lipAttr, sessionID)
+		return s.beginOAuth(conn, live, id, mech, service, resp, remoteIP, lipAttr, sessionID, cc)
 	}
 	_ = service
 	// The initial response is base64 on the wire: raw, a TAB or LF in a
@@ -1258,7 +1311,7 @@ func (s *Server) handleAuth(conn net.Conn, live *exchanges, fields []string) str
 		fmt.Fprintf(conn, "FAIL\t%s\treason=bad-credentials\n", id)
 		return "bad_request"
 	}
-	return s.authenticatePassword(conn, id, service, remoteIP, lipAttr, sessionID, authzid, authid, password, false, plainReject)
+	return s.authenticatePassword(conn, id, service, remoteIP, lipAttr, sessionID, cc, authzid, authid, password, false, plainReject)
 }
 
 // plainReject is a refusal of a password login: nothing to say but no.
@@ -1268,7 +1321,7 @@ func plainReject(conn net.Conn, id string) {
 
 // authenticatePassword runs a credential through the chain; reject writes a
 // refusal, which a mechanism may answer with more than FAIL.
-func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, localIP, sessionID, authzid, authid, password string, bearer bool, reject func(net.Conn, string)) string {
+func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, localIP, sessionID string, cc clientConn, authzid, authid, password string, bearer bool, reject func(net.Conn, string)) string {
 	// Clients that cannot supply authzid encode it as `target<sep>master` in
 	// the authid field; only with master users on and no authzid given.
 	target := ""
@@ -1293,10 +1346,11 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 
 	// Auth-penalty pre-check: look up the client IP's current
 	// fail-counter, sleep the mapped seconds, then run the chain.
-	// Master-user flows are exempt — admin sessions should never
+	// Master-user flows are exempt - admin sessions should never
 	// be tarpitted (matches the policy-server exemption).
 	penaltyCount := 0
-	if s.penalty != nil && remoteIP != "" && target == "" {
+	penalize := s.penalty != nil && remoteIP != "" && target == "" && !cc.noPenalty
+	if penalize {
 		n, perr := s.penalty.PenaltyLookup(remoteIP)
 		if perr != nil {
 			slog.Warn("auth: penalty lookup failed", "ip", remoteIP, "err", perr)
@@ -1316,31 +1370,29 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	// sleep then continue to the chain. Errors honour the
 	// policy client's RejectOnFail setting internally; here we
 	// only see the resulting Decision.
+	vars := policyVars{user: master, original: master, password: password, service: service,
+		rip: remoteIP, lip: localIP, session: sessionID, mechanism: cc.mechanism, cpid: cc.cpid, cc: cc}
 	policyReq := PolicyRequest{
-		Username: master, Password: password, RemoteIP: remoteIP,
-		Service: service,
+		Username: master, Password: password, RemoteIP: remoteIP, LocalIP: localIP,
+		Service: service, SessionID: sessionID, TLS: cc.secured == "tls",
+		DeviceID: cc.clientID, Vars: vars.table(),
 	}
-	if s.policy != nil && s.policyMode.CheckBefore && target == "" {
-		d, perr := s.policy.CheckBefore(context.Background(), policyReq)
-		if perr != nil {
-			slog.Warn("auth: policy CheckBefore error", "err", perr)
-		}
+	var po policyOutcome
+	usePolicy := s.policy != nil && target == ""
+	if usePolicy && s.policyMode.CheckBefore {
+		d := s.policyCheck("before", policyReq, cc.noPenalty, &po)
 		if d.Reject {
 			slog.Info("auth: policy rejected pre-chain",
 				"sid", sessionID, "proto", service, "user", master, "msg", d.Message, "result", "fail")
 			if s.failureDelay > 0 {
 				time.Sleep(s.failureDelay)
 			}
-			reject(conn, id)
-			// Pre-chain reject IS the result — report it so the
+			refuseWith(d.Message, reject)(conn, id)
+			// Pre-chain reject IS the result - report it so the
 			// policy server's telemetry sees its own decision.
-			if s.policy != nil && s.policyMode.ReportAfter {
-				go s.policy.ReportAfter(context.Background(), policyReq, false, true)
-			}
+			policyReq.FailType = "policy"
+			s.policyReport(policyReq, false, true)
 			return "fail"
-		}
-		if d.TarpitSecs > 0 {
-			time.Sleep(time.Duration(d.TarpitSecs) * time.Second)
 		}
 	}
 
@@ -1348,10 +1400,10 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 
 	// Penalty update: success resets to 0; client-visible failure
 	// increments by 1 (capped server-side). Internal failures
-	// (temp_fail) do NOT update the counter — a passdb outage is
+	// (temp_fail) do NOT update the counter - a passdb outage is
 	// not the client's fault and shouldn't lock them out when the
 	// backend comes back. Master flows still don't update.
-	if s.penalty != nil && remoteIP != "" && target == "" {
+	if penalize {
 		switch {
 		case err == nil && res != nil && res.Result == AuthOK:
 			if uerr := s.penalty.PenaltyUpdate(remoteIP, 0); uerr != nil {
@@ -1384,12 +1436,12 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 		} else {
 			reject(conn, id)
 		}
-		// Audit log on failure — kept server-side only; the wire
+		// Audit log on failure - kept server-side only; the wire
 		// reply already stripped any reason text so the attacker
 		// cannot distinguish unknown-user from wrong-password
 		// through the protocol. Logs ARE allowed to be specific
 		// because they don't reach the client.
-		slog.Info("auth: fail",
+		slog.Info("auth: fail", append([]any{
 			"sid", sessionID,
 			"proto", service,
 			"user", master,
@@ -1398,12 +1450,17 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 			"result", "fail",
 			// No row cannot tell an unknown user from a rule on the request (#2227).
 			"request_vars", s.passdbReadsRequest,
-		)
-		// Policy report on fail too — telemetry needs both sides.
+		}, po.logAttrs()...)...)
+		// Policy report on fail too - telemetry needs both sides.
 		// policy_reject=false here: any policy-reject path
 		// early-returns above with its own ReportAfter call.
-		if s.policy != nil && s.policyMode.ReportAfter && target == "" {
-			go s.policy.ReportAfter(context.Background(), policyReq, false, false)
+		if usePolicy {
+			policyReq.FailType = "internal"
+			if res != nil && err == nil {
+				policyReq.FailType = res.FailType
+				s.policyAfterChain(&policyReq, vars, res)
+			}
+			s.policyReport(policyReq, false, false)
 		}
 		if isInternal {
 			return "tempfail"
@@ -1425,33 +1482,27 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	if policyReq.Username == "" {
 		policyReq.Username = res.Username
 	}
+	s.policyAfterChain(&policyReq, vars, res)
 
 	// Policy-server post-chain check (check_after_auth). The
 	// policy server now has the success outcome; it may downgrade
 	// to fail (e.g. account-takeover detection). Master flows
-	// exempt as before. Errors stay non-fatal — CheckAfter's own
+	// exempt as before. Errors stay non-fatal - CheckAfter's own
 	// failover-decision honours RejectOnFail.
-	if s.policy != nil && s.policyMode.CheckAfter && target == "" {
-		d, perr := s.policy.CheckAfter(context.Background(), policyReq, true, false)
-		if perr != nil {
-			slog.Warn("auth: policy CheckAfter error", "err", perr)
-		}
+	if usePolicy && s.policyMode.CheckAfter {
+		d := s.policyCheck("after", policyReq, cc.noPenalty, &po)
 		if d.Reject {
 			slog.Info("auth: policy rejected post-chain",
 				"sid", sessionID, "proto", service, "user", res.Username, "msg", d.Message, "result", "fail")
 			if s.failureDelay > 0 {
 				time.Sleep(s.failureDelay)
 			}
-			reject(conn, id)
+			refuseWith(d.Message, reject)(conn, id)
 			// Report this as a failed login for downstream
 			// analytics even though the chain accepted.
-			if s.policyMode.ReportAfter {
-				go s.policy.ReportAfter(context.Background(), policyReq, false, true)
-			}
+			policyReq.FailType = "policy"
+			s.policyReport(policyReq, false, true)
 			return "fail"
-		}
-		if d.TarpitSecs > 0 {
-			time.Sleep(time.Duration(d.TarpitSecs) * time.Second)
 		}
 	}
 
@@ -1471,20 +1522,20 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	if res.Fields != nil {
 		loggedMaster, _ = res.Fields.Get("master_user")
 	}
-	slog.Info("auth: ok",
+	slog.Info("auth: ok", append([]any{
 		"sid", sessionID,
 		"proto", service,
 		"user", res.Username,
 		"master_user", loggedMaster,
 		"result", "ok",
-	)
+	}, po.logAttrs()...)...)
 
 	// Policy report (fire-and-forget post-decision telemetry).
 	// Goroutine so the wire reply is not blocked on the report
 	// HTTP round-trip. policy_reject=false: any policy-reject
 	// path early-returns above with its own ReportAfter call.
-	if s.policy != nil && s.policyMode.ReportAfter && target == "" {
-		go s.policy.ReportAfter(context.Background(), policyReq, true, false)
+	if usePolicy {
+		s.policyReport(policyReq, true, false)
 	}
 	return "ok"
 }
@@ -1563,7 +1614,7 @@ func (s *Server) handleVerify(conn net.Conn, fields []string) string {
 }
 
 // buildAuthOK renders the OK response. When res.Fields is set, the
-// reply is emitted from the bag with prefix gating — auth_* entries
+// reply is emitted from the bag with prefix gating - auth_* entries
 // are stripped, userdb_* entries are passed through verbatim, the
 // rest land as `key=value` tokens. When Fields is nil, the legacy
 // typed-fields path runs so pre-AUTH-2 SQL passdbs see no wire
@@ -1904,13 +1955,20 @@ func (s *Server) authenticate(target, master, password, service, remoteIP, local
 		result, err = RunAuth(chain, req)
 	}
 
-	if err == nil && (result == ResultOK || result == ResultFail) {
-		s.cache.Insert(key, cacheUser, password, result, req.Fields)
+	switch {
+	case err != nil:
+	case result == ResultOK || result == ResultFail:
+		s.cache.InsertFrom(key, cacheUser, password, result, req)
 	}
 
 	resp := &AuthResponse{
-		Result: authResultFromChain(result),
-		Fields: req.Fields,
+		Result:   authResultFromChain(result),
+		FailType: failType(result, req.Unknown),
+		PassdbID: req.PassdbID,
+		Fields:   req.Fields,
+	}
+	if err != nil {
+		resp.FailType = "internal"
 	}
 	if v, ok := req.Fields.Get("user"); ok {
 		resp.Username = v
@@ -1949,7 +2007,7 @@ func parsePlain(mech, resp string) (authzid, authid, password string, ok bool) {
 // authid that uses the `target<sep>master` workaround for clients
 // that cannot supply authzid in the PLAIN response (older Outlook,
 // some mobile clients). Returns ("", authid) when sep is empty or
-// not found — authid passes through unchanged.
+// not found - authid passes through unchanged.
 //
 // A SASL response of the form `\0target*master\0password` is
 // equivalent to the standards-compliant
@@ -1965,7 +2023,7 @@ func SplitMasterFromAuthid(authid, sep string) (master, target string) {
 	target = authid[:idx]
 	master = authid[idx+len(sep):]
 	if target == "" || master == "" {
-		// Bare separator or empty side — treat as no split.
+		// Bare separator or empty side - treat as no split.
 		return authid, ""
 	}
 	return master, target

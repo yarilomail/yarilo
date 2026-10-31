@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestRotateSizeConfigurable: a configured rotate size smaller than the message
-// rolls the second save into m.2 — where the old hardcoded 2 MiB default would
+// rolls the second save into m.2 - where the old hardcoded 2 MiB default would
 // have kept both in m.1. Guards both the config plumbing and the default fix.
 func TestRotateSizeConfigurable(t *testing.T) {
 	home := t.TempDir()
@@ -31,7 +31,7 @@ func TestRotateSizeConfigurable(t *testing.T) {
 }
 
 // TestRotateSizeDefaultKeepsSmallInOneFile: with the default (10 MiB) rotate
-// size, several small messages all stay in m.1 — the second m file must not
+// size, several small messages all stay in m.1 - the second m file must not
 // appear. This is the counterpart guard: the default must be 10 MiB, not 2 MiB.
 func TestRotateSizeDefaultKeepsSmallInOneFile(t *testing.T) {
 	home := t.TempDir()
@@ -84,7 +84,7 @@ func TestRotateInterval(t *testing.T) {
 }
 
 // TestRotateIntervalDisabledByDefault: with interval 0 (default), an old file is
-// never rolled by age — only size rotates it.
+// never rolled by age - only size rotates it.
 func TestRotateIntervalDisabledByDefault(t *testing.T) {
 	home := t.TempDir()
 	b := New() // interval 0
@@ -109,7 +109,7 @@ func TestRotateIntervalDisabledByDefault(t *testing.T) {
 }
 
 // TestPreallocateNoError: enabling preallocate must not break a save on any
-// platform — the real fallocate on Linux, the no-op elsewhere. Both write and
+// platform - the real fallocate on Linux, the no-op elsewhere. Both write and
 // fetch the message back intact.
 func TestPreallocateNoError(t *testing.T) {
 	home := t.TempDir()

@@ -45,13 +45,13 @@
 //	Server responses:
 //	  HOST\t{id}\t{ip}\t{port}\t{tag}\n
 //	  FAIL\t{id}\treason=no-backends\n
-//	  FAIL\t{id}\treason=killing\n               (user under a confirmed ring-wide kick; retryable — proxy re-LOOKUPs until the kill confirms)
+//	  FAIL\t{id}\treason=killing\n               (user under a confirmed ring-wide kick; retryable - proxy re-LOOKUPs until the kill confirms)
 //	  OK\n
 //	  PONG\n
 //
-//	Server pushes (unsolicited, to local login clients — plain form):
+//	Server pushes (unsolicited, to local login clients - plain form):
 //	  RING-CHANGE\t{ip}\t{event}\t{tag}\n            (event: up | down | flush | vhosts)
-//	    vhosts form: ...\t{ip}\tvhosts\t{tag}\t{count}\n — admin weight change,
+//	    vhosts form: ...\t{ip}\tvhosts\t{tag}\t{count}\n - admin weight change,
 //	    replicated ring-wide; carries NO seq, never turns the backend lease-managed.
 //	  USER-MOVED\t{user}\t{ip}\t{port}\n
 //	  USER-KICKED\t{user}[\treason={r}]\n   (r: admin|move|domain-move|flush|backend-removed)
@@ -68,7 +68,7 @@
 //	  SESSION-OPEN\t{originIP}\t{originPort}\t{seq}\t{id}\t{user}\t{backend}\t{proto}\n  (replicate the load view)
 //	  SESSION-CLOSE\t{originIP}\t{originPort}\t{seq}\t{id}\n
 //	  USER-KILLING\t{originIP}\t{originPort}\t{seq}\t{hash}\t{ttlMillis}\n
-//	    (hold LOOKUP ring-wide. ttlMillis is a DURATION — each director computes
+//	    (hold LOOKUP ring-wide. ttlMillis is a DURATION - each director computes
 //	    its own deadline on receipt; wall-clock deadlines would break under skew)
 //	  USER-KILL-DONE\t{originIP}\t{originPort}\t{seq}\t{hash}\n
 //	    (kill confirmed or timed out; release the hold)
@@ -93,9 +93,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/proto"
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/proto"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 const (
@@ -113,7 +113,7 @@ type Options struct {
 	// can't stall the broadcast fan-out. 0 = 10s; negative = no deadline.
 	WriteTimeout time.Duration
 	// PeerTLS, LocalIP, LocalPort identify and secure this node's ring
-	// connections — see StartMembership.
+	// connections - see StartMembership.
 	PeerTLS   *tls.Config
 	LocalIP   string
 	LocalPort int
@@ -136,7 +136,7 @@ type Options struct {
 	// 0 = 2s; negative = one-shot join.
 	SeedPollInterval time.Duration
 	// SeedPollIdleInterval: poll cadence once the view reached MinMembers.
-	// Defaults to the same 2s — a node can't tell "converged" from "holding a
+	// Defaults to the same 2s - a node can't tell "converged" from "holding a
 	// dead member", so a lazy cadence delays dead-member eviction. Clamped up
 	// to SeedPollInterval; 0 = 2s.
 	SeedPollIdleInterval time.Duration
@@ -150,7 +150,7 @@ type Options struct {
 	// UnreachableWindow is the sliding window for those reports. 0 = 5s.
 	UnreachableWindow time.Duration
 	// TombstoneTTL bounds how long a dead member's tombstone is kept and
-	// gossiped — long enough to outlive propagation, short enough that churn
+	// gossiped - long enough to outlive propagation, short enough that churn
 	// can't grow the set forever. 0 = 10m; negative = never expire.
 	TombstoneTTL time.Duration
 	// UsernameHashLowercase lowercases usernames before hashing, so two
@@ -270,7 +270,7 @@ func (o *Options) writeTimeout() time.Duration {
 
 // client wraps an active connection with a per-connection write lock. The lock
 // makes each written LINE atomic; it does NOT order pushes relative to command
-// replies — proto.Conn.readReply skips interleaved pushes instead.
+// replies - proto.Conn.readReply skips interleaved pushes instead.
 type client struct {
 	// syncIDs accumulates a SESSION-SYNC list between its START and END. Held
 	// per connection and applied only on END: half a list would erase live
@@ -375,7 +375,7 @@ type Server struct {
 
 	// backendTomb records recently-removed backends (down / expiry / unreachable
 	// eviction) and the lease seq at removal (#846), so a resync snapshot from a
-	// peer that has not yet learned of the removal cannot resurrect the ghost —
+	// peer that has not yet learned of the removal cannot resurrect the ghost -
 	// only a strictly-newer seq (a genuine re-registration) re-admits it.
 	backendTombMu sync.Mutex
 	backendTomb   map[string]backendTombstone
@@ -398,14 +398,14 @@ type Server struct {
 	// ring-topology aggregator (#833 PR-B) can fan out to peers' own admin APIs
 	// with the shared per-release token, deriving each peer's API endpoint from
 	// its ring IP + this replica's api.listen port (uniform-api.listen
-	// assumption — see apiRingTopology).
+	// assumption - see apiRingTopology).
 	apiToken string
 	apiAddr  string
 }
 
 // backendLease records the freshest heartbeat seen for a backend and the
 // LOCAL time this director saw it (#776). seq is the backend's own
-// monotonic per-origin counter — compared only within that backend's
+// monotonic per-origin counter - compared only within that backend's
 // origin (the Lamport lesson of #772), never across backends. at is used
 // for time-based expiry.
 type backendLease struct {
@@ -444,19 +444,19 @@ func NewWithOptions(opts Options) *Server {
 // ingress point for every wire/HTTP handler that turns a raw username into a
 // hash or map key (handleLookup, handleUserMove, handleUserWeak,
 // handleUserKick, apiMap, apiUserMove, apiUserKick).
-// Everything downstream of these call sites — s.userDir,
-// s.ring — already operates on normalized usernames, so no other call site
+// Everything downstream of these call sites - s.userDir,
+// s.ring - already operates on normalized usernames, so no other call site
 // needs its own normalize call.
 //
 // Ordering with #701 (LOOKUP field TAB-escaping): the wire senders that escape
 // the username (proto.Conn.Lookup, proto.Conn.SessionOpen) are unescaped at
-// their ingress BEFORE this normalize runs — normalizeUser(proto.TabUnescape(raw))
-// in handleLookup — since escaping is reversible byte-for-byte and lowercasing
+// their ingress BEFORE this normalize runs - normalizeUser(proto.TabUnescape(raw))
+// in handleLookup - since escaping is reversible byte-for-byte and lowercasing
 // is not. Admin/API ingress (apiUserMove/apiUserKick) is NOT tab-escaped and
 // must not be unescaped.
 func (s *Server) normalizeUser(username string) string {
 	// #850: with an explicit username_hash template, all case-folding lives in the
-	// template (%L), applied inside the hash on both the ring and userDir sides — so
+	// template (%L), applied inside the hash on both the ring and userDir sides - so
 	// ingress must NOT pre-lowercase, or a case-sensitive %u would be defeated. Back-compat
 	// (no explicit template) keeps the #738 bool-driven ingress lowercasing, which is
 	// byte-identical to the derived %Lu/%u hashing.
@@ -477,7 +477,7 @@ func (s *Server) StartMembership(ctx context.Context, seeds []string) {
 	s.membership.Start(ctx, seeds)
 }
 
-// GracefulLeave announces this director's exit to the ring (#770) — call
+// GracefulLeave announces this director's exit to the ring (#770) - call
 // on SIGTERM, BEFORE cancelling the server ctx, then allow a brief flush.
 // See Membership.Leave.
 func (s *Server) GracefulLeave() { s.membership.Leave() }
@@ -497,13 +497,13 @@ func (s *Server) Drain() {
 	}
 }
 
-// RingBackendCount reads the ring under its lock — the liveness probe (#904).
+// RingBackendCount reads the ring under its lock - the liveness probe (#904).
 // The ring is the routing hot path every LOOKUP takes; if its mutex is wedged
 // the director can route no one, and this call blocks, tripping the watchdog.
 //
 // The probe takes the read-lock, so it also blocks while a write-lock is held.
 // That is safe only because every ring write section (backend add/remove,
-// SetUp, hash-resync rebuild) is O(ms) — far below the watchdog window. If a
+// SetUp, hash-resync rebuild) is O(ms) - far below the watchdog window. If a
 // long-running write section under r.mu is ever introduced, revisit the
 // watchdog timeout, or the probe would flag a legitimately busy ring as wedged.
 func (s *Server) RingBackendCount() int {
@@ -514,7 +514,7 @@ func (s *Server) RingBackendCount() int {
 }
 
 // ListPeers returns the current ring membership (self included), formatted
-// as "ip:port" strings — kept for API/CLI compatibility (yarctl
+// as "ip:port" strings - kept for API/CLI compatibility (yarctl
 // `director ring status`); semantics changed from "statically configured
 // full-mesh peers" to "current self-organized ring members" (#750).
 func (s *Server) ListPeers() []string {
@@ -651,7 +651,7 @@ func (s *Server) broadcast(line string, exclude *client) {
 
 // broadcastToLogins sends an unsolicited line to login-proxy clients only,
 // never to peer connections (#700). Used to re-broadcast a peer-originated
-// event locally without relaying it back out to other director replicas —
+// event locally without relaying it back out to other director replicas -
 // the origin director's own broadcast already reached every peer directly
 // (full-mesh), so a peer relaying it further is exactly the ping-pong loop
 // this method exists to avoid.
@@ -677,8 +677,8 @@ func (s *Server) writeToLogins(line string, exclude *client) {
 
 // loginKickLine builds the USER-KICKED line for login proxies. A login takes a
 // username and nothing else; the old-backend field a move or evacuation kick
-// carries belongs to the ring, where DeleteIfBackend reads it. Every kick —
-// authored here or arriving from a peer — is built by this one function,
+// carries belongs to the ring, where DeleteIfBackend reads it. Every kick -
+// authored here or arriving from a peer - is built by this one function,
 // because when the originator wrote its ring line straight to its own logins
 // they glued that field onto the username and kicked nobody, silently (#1363).
 func loginKickLine(user, reason string) string {
@@ -689,7 +689,7 @@ func loginKickLine(user, reason string) string {
 }
 
 // originateUserKick authors a kick: logins get the login form, the ring gets
-// the ring form. A non-empty oldBackend makes it conditional — kick the user
+// the ring form. A non-empty oldBackend makes it conditional - kick the user
 // off that backend, and drop the sticky pin only where it still points there.
 func (s *Server) originateUserKick(user, oldBackend, reason string, exclude *client) {
 	s.writeToLogins(loginKickLine(user, reason), exclude)
@@ -702,7 +702,7 @@ func (s *Server) originateUserKick(user, oldBackend, reason string, exclude *cli
 
 // originateRingEvent delivers a RING-CHANGE/USER-MOVED/USER-KICKED event
 // this node just authored: local login clients get the plain historical
-// line (exclude, when non-nil, skips the client that triggered it — e.g.
+// line (exclude, when non-nil, skips the client that triggered it - e.g.
 // the health pod whose own BACKEND-UP doesn't need echoing back), and the
 // ring (#750) gets the (origin, seq)-enveloped form via Membership.originate
 // for propagation to the right neighbor and, eventually, every member.
@@ -738,7 +738,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	_ = c.WriteLine("RING-NONCE\t" + nonce)
 	_ = c.WriteLine("DONE")
 
-	// Read client handshake — consume until DONE.
+	// Read client handshake - consume until DONE.
 	var dialer Member
 	var pendingMembers, pendingRemoved []Member
 	for {
@@ -757,7 +757,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				return
 			}
 			// Sent instead of ME/DONE, on a fresh connection to a seed
-			// (#750) — handleJoin owns the rest of this connection's
+			// (#750) - handleJoin owns the rest of this connection's
 			// lifetime (challenge/response, DIRECTOR-LIST, close).
 			s.membership.handleJoin(conn, fields)
 			return
@@ -777,7 +777,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			s.membership.mergeMembers(pendingMembers, pendingRemoved)
 			// Sent only by another director replica's ring connection
 			// (#700, repurposed for the ring's right-neighbor dial in
-			// #750) — a login proxy's generic cluster/proto dialer never
+			// #750) - a login proxy's generic cluster/proto dialer never
 			// sends this. Distinguishes a ring connection from a login
 			// client so broadcastToLogins can stop a peer-originated
 			// event from being relayed back out to other ring
@@ -794,7 +794,7 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	if c.isPeer {
 		// Ring connections have their own dedicated line-processing loop
-		// (#750) — reuses rd rather than a fresh bufio.Reader so no
+		// (#750) - reuses rd rather than a fresh bufio.Reader so no
 		// already-buffered bytes from the handshake read are lost.
 		s.membership.serveRingConn(conn, rd, dialer)
 		return
@@ -948,7 +948,7 @@ func hostLine(b ring.Backend, seq uint64) string {
 }
 
 // handleLookup processes: LOOKUP\t{id}\t{user}\t{tag}
-// tag is required; "" restricts to the untagged pool — there is no
+// tag is required; "" restricts to the untagged pool - there is no
 // full-ring mode (#737: a login pod belongs to exactly one tag-pool, per
 // DEPLOYMENT.md's tag-based sharding model).
 // One order (#708): sticky userDir pin, then ring lookup restricted to tag.
@@ -969,7 +969,7 @@ func (s *Server) handleLookup(c *client, fields []string) {
 	// Confirmed-kick hold (#847): while this user is being killed ring-wide,
 	// refuse to assign a backend so a concurrent login cannot open on a fresh
 	// pod before the old sessions are gone (the split-writer window). This gates
-	// only fresh LOOKUP assignment — the move's own replicated USER-ASSIGN pin
+	// only fresh LOOKUP assignment - the move's own replicated USER-ASSIGN pin
 	// is applied elsewhere and is unaffected. The reason is retryable: the login
 	// proxy re-LOOKUPs until the kill confirms, rather than erroring the client.
 	if s.isKilling(HashUsername(user, s.hf)) {
@@ -1000,7 +1000,7 @@ func (s *Server) handleLookup(c *client, fields []string) {
 	// Fresh assignment via the configured policy (hash | least_sessions, #797),
 	// restricted to the requested tag ("" = untagged pool). assignAndPin is the
 	// single owner: it picks, records the sticky pin, and propagates USER-ASSIGN
-	// (#772 PR-2) so every director pins the user to the SAME backend — the same
+	// (#772 PR-2) so every director pins the user to the SAME backend - the same
 	// machinery whether the pick was a hash or a least-loaded choice. Sent
 	// director↔director only (by hash), never to login clients.
 	b := s.assignAndPin(user, tag, reqProto)
@@ -1065,7 +1065,7 @@ func (s *Server) handleBackendUp(c *client, fields []string) {
 	})
 	// A fresh (re)admit clears any stale unreachable reports (#782): a backend
 	// that heartbeats again was a transient blip, so it must not be re-evicted
-	// by reports from before it recovered — a new corroboration must build up.
+	// by reports from before it recovered - a new corroboration must build up.
 	s.clearUnreachable(ip)
 	s.clearBackendTomb(ip) // #846: a genuine re-registration drops the resync tombstone
 	slog.Info("director: backend up", "ip", ip, "port", port, "tag", tag, "vhosts", vhosts, "seq", seq)
@@ -1074,7 +1074,7 @@ func (s *Server) handleBackendUp(c *client, fields []string) {
 		// Carry port + vhosts so a director that receives this gossip WITHOUT
 		// a persistent connection from the backend (the ClusterIP registration
 		// lands on exactly one of N directors) can add the backend to its ring
-		// for routing — SetUp alone can't, it has no port. seq stays at field 3
+		// for routing - SetUp alone can't, it has no port. seq stays at field 3
 		// so a legacy seq-only payload keeps parsing.
 		payload = fmt.Sprintf("%s\tup\t%s\t%d\t%d\t%d", ip, tag, seq, port, vhosts)
 	}
@@ -1131,7 +1131,7 @@ func (s *Server) handleBackendFlush(c *client, fields []string) {
 	}
 	// Wire BACKEND-FLUSH is a backend self-reporting overload (#779/#811):
 	// DRAIN, not evacuate. Keep the ring slot and every existing session; only
-	// clear the pins so NEW lookups rehash away. Do NOT kick — the wire-doc
+	// clear the pins so NEW lookups rehash away. Do NOT kick - the wire-doc
 	// contract is "keep sessions, no rehash". (Operator-forced evacuation with a
 	// kick is the admin `backends flush` command, apiBackendFlush.)
 	n := s.userDir.DeleteByBackend(ip)
@@ -1154,11 +1154,11 @@ func (s *Server) handleUserMove(c *client, fields []string) {
 
 // moveUser records an admin-forced move as a normal (TTL'd) userDir pin and
 // kicks the user's sessions on the OLD backend so the next connection lands on
-// the new one (#708) — move = route change + kick, atomically. The kick carries
+// the new one (#708) - move = route change + kick, atomically. The kick carries
 // the old backend IP: the compare-and-delete apply drops the pin only if it
 // still points there, so this move's fresh pin survives the kick it triggers.
 // A plain admin kick (apiUserKick, no old IP) still clears unconditionally
-// (#823). Longevity is not permanent — while the user has a live session the
+// (#823). Longevity is not permanent - while the user has a live session the
 // pin's TTL is kept fresh (#804 registry, PR-B); an idle user falls back to the
 // ring hash after user_expire. exclude is the originating client (nil for API).
 func (s *Server) moveUser(user, addr string, exclude *client) {
@@ -1175,7 +1175,7 @@ func (s *Server) moveUser(user, addr string, exclude *client) {
 	s.writeToLogins(fmt.Sprintf("USER-MOVED\t%s\t%s\t%s", user, host, portStr), exclude)
 	s.membership.originateUserEvent("USER-MOVED", user, host, portStr)
 	if oldIP != "" && oldIP != host {
-		// A genuine relocation kicks the old sessions — same split-writer window
+		// A genuine relocation kicks the old sessions - same split-writer window
 		// as an admin kick, so hold LOOKUP until the old sessions confirm gone
 		// (#847). The new pin above is already set and is NOT gated (the hold is
 		// only on fresh LOOKUP assignment); a held login re-LOOKUPs and lands on
@@ -1281,7 +1281,7 @@ func (s *Server) handleSessionOpen(c *client, fields []string) {
 	rec := &sessionRec{
 		id: fields[1],
 		// SESSION-OPEN escapes the username on the wire (proto.Conn.SessionOpen),
-		// exactly like LOOKUP — unescape so the username echoed back in
+		// exactly like LOOKUP - unescape so the username echoed back in
 		// USER-KICKED matches what the login proxy sent (#701). No normalize:
 		// this field is not a hash key, and lowercasing it would break the
 		// login-side kick match on the original-case username.
@@ -1474,7 +1474,7 @@ const kickBatchPause = 100 * time.Millisecond
 // it refreshes the local last-seen time only on a STRICTLY newer per-origin
 // seq (a gossiped duplicate of a heartbeat already recorded does not extend
 // the lease; a stale/lower seq is ignored). Returns true when the seq was
-// fresh — the caller then gossips it onward so every director's lease for
+// fresh - the caller then gossips it onward so every director's lease for
 // this backend is refreshed by a heartbeat that landed on ANY of them.
 func (s *Server) recordBackendSeen(ip string, seq uint64) bool {
 	s.backendSeenMu.Lock()
@@ -1501,11 +1501,11 @@ func (o *Options) backendExpire() time.Duration { return o.BackendExpire }
 // StartBackendExpiry runs the #776 lease-expiry loop until ctx ends: every
 // backendExpire/3 it removes any lease-managed backend whose heartbeat has
 // not advanced within backendExpire (silent hang / crash), ring-wide via
-// RING-CHANGE down. Never expires the LAST backend of a tag — a
+// RING-CHANGE down. Never expires the LAST backend of a tag - a
 // suspect-but-only backend is kept (logged loudly) over a guaranteed total
 // blackhole. Negative BackendExpire disables the loop.
 // StartSessionRefresh keeps a user's sticky pin alive while they have a live
-// proxied session (#708 PR-B, session-registry-driven — no #707 login refresh).
+// proxied session (#708 PR-B, session-registry-driven - no #707 login refresh).
 // Every user_expire/2 it touches the userDir pin of every user with an active
 // session in the #804 registry, so a moved/assigned user does not TTL-expire
 // mid-session; when their last session closes the touches stop and the pin
@@ -1586,9 +1586,14 @@ func (s *Server) expireStaleBackends(expire time.Duration) {
 			s.forgetBackendLease(ip)
 			continue
 		}
+		// The last of its tag stays registered for its next heartbeat, but out of
+		// routing, so the tag's logins fail at once rather than at login_proxy_timeout.
 		if s.ring.CountBackendsInTag(b.Tag) <= 1 {
-			slog.Warn("director: backend lease expired but it is the LAST in its tag — keeping to avoid total blackhole",
-				"ip", ip, "tag", b.Tag)
+			if b.Up && s.ring.SetUp(ip, false, now.Unix()) {
+				s.updateMetrics()
+				slog.Warn("director: the last backend of its tag stopped heartbeating; kept registered, out of routing until it heartbeats again",
+					"ip", ip, "tag", b.Tag, "expire", expire)
+			}
 			continue
 		}
 		tomb := s.removeBackend(ip, 0)
@@ -1600,7 +1605,7 @@ func (s *Server) expireStaleBackends(expire time.Duration) {
 
 // kickStaleSessions kicks this director's own sessions for user `hash` that
 // are still routed to oldHost after a ring merge moved the user to a
-// different backend (#772 PR-3) — a genuine two-replica conflict (lower id
+// different backend (#772 PR-3) - a genuine two-replica conflict (lower id
 // won, we lost) or any newer reassignment. Leaving them would split-brain
 // the mailbox across two backends. Only sessions whose username hashes to
 // `hash` are touched; other users on the same backend keep running. oldHost
@@ -1610,16 +1615,17 @@ func (s *Server) kickStaleSessions(hash uint32, oldHost, reason string) {
 	if err != nil {
 		ip = oldHost
 	}
-	s.sessRecMu.Lock()
+	// The records stay until the login's SESSION-CLOSE: that close is what
+	// confirms the kill and releases the LOOKUP hold, and a record already
+	// gone made it confirm only at user_kill_timeout.
+	s.sessRecMu.RLock()
 	var victims []*sessionRec
 	for id := range s.sessByBE[ip] {
 		if rec, ok := s.sessById[id]; ok && HashUsername(rec.user, s.hf) == hash {
 			victims = append(victims, rec)
-			delete(s.sessById, id)
-			delete(s.sessByBE[ip], id)
 		}
 	}
-	s.sessRecMu.Unlock()
+	s.sessRecMu.RUnlock()
 
 	for _, rec := range localSessions(victims) {
 		_ = rec.cl.WriteLine(loginKickLine(rec.user, reason))
@@ -1642,7 +1648,7 @@ func localSessions(recs []*sessionRec) []*sessionRec {
 
 // removeClientSessions removes all session records owned by a disconnected
 // client and gossips a SESSION-CLOSE for each so peers drop their remote copies
-// (#804) — a login pod dropping without a clean SESSION-CLOSE must not leave its
+// (#804) - a login pod dropping without a clean SESSION-CLOSE must not leave its
 // sessions counted forever on every replica.
 func (s *Server) removeClientSessions(c *client) {
 	type closed struct{ id, user string }
@@ -1684,7 +1690,7 @@ func (s *Server) applyRemoteSessionOpen(payload []string, origin string) {
 	}
 	s.sessRecMu.Lock()
 	// Never clobber a locally-owned record (ids are per-login-pod unique, so this
-	// is defensive) — keep ours so kick still has the owning conn.
+	// is defensive) - keep ours so kick still has the owning conn.
 	if ex, ok := s.sessById[rec.id]; ok && ex.cl != nil {
 		s.sessRecMu.Unlock()
 		return

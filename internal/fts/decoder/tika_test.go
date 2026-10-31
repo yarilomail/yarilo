@@ -108,7 +108,7 @@ func TestTikaDecoderEmptyBodyIsSkip(t *testing.T) {
 
 // TestTikaDecoderServerErrorExhaustsRetriesAndDegrades (#697): a persistent
 // 5xx is retried up to maxAttempts times, then returns an error wrapping
-// ErrDegraded — the caller indexes the message without this attachment's
+// ErrDegraded - the caller indexes the message without this attachment's
 // text instead of failing it outright.
 func TestTikaDecoderServerErrorExhaustsRetriesAndDegrades(t *testing.T) {
 	var requests atomic.Int32
@@ -135,7 +135,7 @@ func TestTikaDecoderServerErrorExhaustsRetriesAndDegrades(t *testing.T) {
 }
 
 // TestTikaDecoderTransientErrorRecoversOnRetry proves a transient 5xx that
-// clears up on the second attempt succeeds normally — retrying isn't just a
+// clears up on the second attempt succeeds normally - retrying isn't just a
 // slower way to fail, it actually recovers.
 func TestTikaDecoderTransientErrorRecoversOnRetry(t *testing.T) {
 	var requests atomic.Int32
@@ -159,7 +159,7 @@ func TestTikaDecoderTransientErrorRecoversOnRetry(t *testing.T) {
 }
 
 // TestTikaDecoderHardClientErrorNoRetry (#697): a non-retryable 4xx (bad
-// request, auth, ...) is a hard, immediate failure — never retried, never
+// request, auth, ...) is a hard, immediate failure - never retried, never
 // classified as ErrDegraded, so buildmail aborts the message instead of
 // silently indexing it without the attachment.
 func TestTikaDecoderHardClientErrorNoRetry(t *testing.T) {

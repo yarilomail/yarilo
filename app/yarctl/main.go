@@ -152,7 +152,7 @@ func dispatch(args []string) error {
 			case adminType:
 				args = args[1:]
 			case "backend", "director", "auth":
-				return fmt.Errorf("this container serves the %s plane (YARILO_ADMIN_TYPE=%s), so %q addresses a different one — drop it or run yarctl elsewhere",
+				return fmt.Errorf("this container serves the %s plane (YARILO_ADMIN_TYPE=%s), so %q addresses a different one - drop it or run yarctl elsewhere",
 					adminType, adminType, args[0])
 			}
 		}
@@ -164,7 +164,7 @@ func dispatch(args []string) error {
 		case "auth":
 			return dispatchAuth(args)
 		default:
-			return fmt.Errorf("unknown YARILO_ADMIN_TYPE %q — valid values: backend, director, auth", adminType)
+			return fmt.Errorf("unknown YARILO_ADMIN_TYPE %q - valid values: backend, director, auth", adminType)
 		}
 	}
 
@@ -184,7 +184,7 @@ func dispatch(args []string) error {
 		// Shorthand: yarctl warden <cmd> introspects via the backend plane.
 		return dispatchWarden(args[1:])
 	default:
-		return fmt.Errorf("unknown plane %q — available: director, backend, auth, wait\n(tip: set YARILO_ADMIN_TYPE=backend to skip the plane prefix)", args[0])
+		return fmt.Errorf("unknown plane %q - available: director, backend, auth, wait\n(tip: set YARILO_ADMIN_TYPE=backend to skip the plane prefix)", args[0])
 	}
 }
 
@@ -229,16 +229,16 @@ func dispatchBackend(args []string) error {
 		// top-level shorthand.
 		return dispatchWarden(args[1:])
 	default:
-		return fmt.Errorf("unknown backend service %q — available: dict, folder, user, index, mdbox, subscriptions, specialuse, metadata, acl, who, sessions, quota, fts, warden", args[0])
+		return fmt.Errorf("unknown backend service %q - available: dict, folder, user, index, mdbox, subscriptions, specialuse, metadata, acl, who, sessions, quota, fts, warden", args[0])
 	}
 }
 
 func printUsage() {
 	adminType := os.Getenv("YARILO_ADMIN_TYPE")
 	if adminType != "" {
-		fmt.Fprintf(os.Stderr, `yarctl — yarilo operator CLI (plane: %s)
+		fmt.Fprintf(os.Stderr, `yarctl - yarilo operator CLI (plane: %s)
 
-YARILO_ADMIN_TYPE=%s is set — plane prefix is implicit.
+YARILO_ADMIN_TYPE=%s is set - plane prefix is implicit.
 
 Usage:
   yarctl <service> <command> [args...]
@@ -252,7 +252,7 @@ Usage:
 		}
 		return
 	}
-	fmt.Fprintln(os.Stderr, `yarctl — yarilo operator CLI
+	fmt.Fprintln(os.Stderr, `yarctl - yarilo operator CLI
 
 Usage:
   yarctl [global-flags] <plane> <command> [args...]
@@ -270,16 +270,16 @@ Global flags:
   --tls-server-name  ServerName to verify the admin cert against, e.g. yarilo-internal (env: YARILO_ADMIN_TLS_SERVER_NAME)
 
 Planes:
-  director  — manage the yarilo-director cluster (ring, backends, users, peers)
-  backend   — manage a backend's storage state (dict, acl, quota, folder, user, ...)
-  auth      — query yarilo-auth userdb/passdb
+  director  - manage the yarilo-director cluster (ring, backends, users, peers)
+  backend   - manage a backend's storage state (dict, acl, quota, folder, user, ...)
+  auth      - query yarilo-auth userdb/passdb
 
 Shorthand (no plane prefix):
-  user      — alias for 'backend user'
-  subs      — alias for 'backend subscriptions'
-  warden    — connection-accounting introspection (warden dump), via the backend plane
-  fts       — search index status, rescan and optimize, via the backend plane
-  wait      — block until the given URLs answer (init containers, scripts)
+  user      - alias for 'backend user'
+  subs      - alias for 'backend subscriptions'
+  warden    - connection-accounting introspection (warden dump), via the backend plane
+  fts       - search index status, rescan and optimize, via the backend plane
+  wait      - block until the given URLs answer (init containers, scripts)
 
 Tip: set YARILO_ADMIN_TYPE=backend|director|auth to skip the plane prefix entirely.
 
@@ -290,19 +290,19 @@ func printBackendUsage() {
 	fmt.Fprintln(os.Stderr, `yarctl backend <service> <command>
 
 Services:
-  dict          — pkg/dict KV-store ops (lookup, iterate, set, unset, atomic-inc, expire-scan, commit-batch, drivers, exists)
-  acl           — RFC 4314 access control on mailboxes
-  quota         — RFC 9208 quota counters (show, recalc, set)
-  folder        — mailbox listing, GUID lookup, special-use queries
-  user          — userdb queries
-  index         — fileindex ops
-  mdbox         — mdbox map ops
-  subscriptions — IMAP SUBSCRIBE state
-  specialuse    — special-use annotations
-  metadata      — IMAP METADATA (RFC 5464)
-  mailbox       — message retrieval (mailbox message get mime|raw)
-  who           — active session listing
-  sessions      — session management (kick)
+  dict          - pkg/dict KV-store ops (lookup, iterate, set, unset, atomic-inc, expire-scan, commit-batch, drivers, exists)
+  acl           - RFC 4314 access control on mailboxes
+  quota         - RFC 9208 quota counters (show, recalc, set)
+  folder        - mailbox listing, GUID lookup, special-use queries
+  user          - userdb queries
+  index         - fileindex ops
+  mdbox         - mdbox map ops
+  subscriptions - IMAP SUBSCRIBE state
+  specialuse    - special-use annotations
+  metadata      - IMAP METADATA (RFC 5464)
+  mailbox       - message retrieval (mailbox message get mime|raw)
+  who           - active session listing
+  sessions      - session management (kick)
 
 Run 'yarctl backend <service>' with no command for that service's usage.`)
 }

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func newTestUser(t *testing.T) (*Backend, mailbox.UserMailbox, string) {
@@ -132,7 +132,7 @@ func TestCopyHardlinks(t *testing.T) {
 		t.Fatalf("stat dst: %v", err)
 	}
 	if !os.SameFile(srcInfo, dstInfo) {
-		t.Error("Copy did not hardlink — IMAP COPY would not be O(1)")
+		t.Error("Copy did not hardlink - IMAP COPY would not be O(1)")
 	}
 }
 
@@ -200,7 +200,7 @@ func TestListAndFolderOps(t *testing.T) {
 }
 
 // TestDeleteRemovesFolderDir locks that Delete removes the whole folder
-// directory (mailboxes/<name>), not just its dbox-Mails leaf — otherwise
+// directory (mailboxes/<name>), not just its dbox-Mails leaf - otherwise
 // an empty mailbox shell is left behind on shared storage.
 func TestDeleteRemovesFolderDir(t *testing.T) {
 	_, mb, home := newTestUser(t)

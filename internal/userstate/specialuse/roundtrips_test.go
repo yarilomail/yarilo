@@ -13,7 +13,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // countingLocker records how many times the store goes to the lock service.
@@ -42,6 +42,8 @@ func (c *countingLocker) Unlock(_ context.Context, _ string) error {
 	c.released.Add(1)
 	return nil
 }
+
+func (c *countingLocker) Emit(context.Context, string, locks.EventType, string) error { return nil }
 
 func (c *countingLocker) HoldsResource(_ string) (locks.HoldMode, bool) { return locks.HoldNone, false }
 
@@ -114,8 +116,8 @@ func (f failingLocker) LockShared(ctx context.Context, resource, owner string, t
 	return f.Lock(ctx, resource, owner, ttl)
 }
 
-// Falling back to the defaults is the right answer — a presentation hint is not
-// worth failing a LIST over — but it must not be a silent one. A degraded
+// Falling back to the defaults is the right answer - a presentation hint is not
+// worth failing a LIST over - but it must not be a silent one. A degraded
 // answer nobody is told about cannot be told apart from a correct one, which is
 // the failure this whole change is about.
 func TestUnreadableOverridesFallBackLoudly(t *testing.T) {

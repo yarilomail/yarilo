@@ -2,7 +2,7 @@
 // (#788): each protocol container periodically touches a file in a shared
 // directory ONLY while it is actually ready, and the yarilo-backend-reg sidecar
 // gates its director heartbeat on all those files being fresh. mtime-staleness
-// is a passive proof of life — a wedged data path simply stops touching, so the
+// is a passive proof of life - a wedged data path simply stops touching, so the
 // file goes stale and the pod is expired ring-wide, rather than an active HTTP
 // probe that a stalled data path can still answer 200.
 package readyfile
@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Touch periodically updates the mtime of dir/proto — but ONLY while ready()
+// Touch periodically updates the mtime of dir/proto - but ONLY while ready()
 // returns true. The touch MUST be tied to the real readiness condition (the
 // listener accepting and not wedged), never to "the process is alive": an
 // unconditional toucher would reduce mtime-staleness to the same "live

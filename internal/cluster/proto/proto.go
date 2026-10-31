@@ -122,7 +122,7 @@ func replyVerb(line string) string {
 }
 
 // Lookup asks the director for the backend address for username. tag
-// restricts routing to that tag's pool; "" is the untagged pool — there
+// restricts routing to that tag's pool; "" is the untagged pool - there
 // is no full-ring mode, every caller belongs to exactly one tag-pool.
 func (c *Conn) Lookup(id, username, tag, proto string) (LookupResult, error) {
 	// trailing proto field feeds least_sessions placement; optional

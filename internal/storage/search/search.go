@@ -13,11 +13,11 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Options wires the full-text index in; with no Client every search scans.
@@ -301,6 +301,10 @@ func (o Options) folderPlan(user string, f *mailbox.Folder, c *imaplib.SearchCri
 	for _, h := range res.Definite {
 		if h.Folder == mbox.GUID {
 			p.Covered[h.UID] = true
+			// fts_search_strict reads a definite hit too, as Plan does.
+			if o.Strict {
+				p.Verify[h.UID] = true
+			}
 		}
 	}
 	for _, h := range res.Maybe {

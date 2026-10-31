@@ -15,14 +15,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // ErrNoAuthService names the key a session process cannot start without: it
@@ -260,7 +261,7 @@ func (c *Client) Authenticate(username, password, service, remoteIP, localIP, se
 // -- discarded every master login before it left the pod, so the service saw a
 // plain login of the master and refused it (#1305). Whether impersonation is
 // granted stays the service's decision; the client only carries the request.
-func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, localIP, sessionID string) (*AuthResult, error) {
+func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, localIP, sessionID string, opts ...Option) (*AuthResult, error) {
 	if wireUnsafe(authzid, authcid, service, remoteIP, localIP, sessionID) {
 		return nil, ErrAuthFailed
 	}
@@ -291,6 +292,7 @@ func (c *Client) AuthenticateAs(authzid, authcid, password, service, remoteIP, l
 		sb.WriteString("\tsession=")
 		sb.WriteString(sessionID)
 	}
+	writeOrigin(&sb, opts)
 
 	line, err := c.exchange(id, sb.String())
 	if err != nil {
@@ -336,7 +338,7 @@ func (c *Client) LookupUser(username string) (bool, error) {
 
 // Verify sends a VERIFY command and returns the username, session ID, and
 // service bound to the token. username and sessionID are sent as binding
-// claims — the server rejects the token if they don't match what was stored
+// claims - the server rejects the token if they don't match what was stored
 // at issue time. Returns ErrAuthFailed when the token is unknown, expired,
 // or the claims don't match.
 func (c *Client) Verify(token, username, sessionID string) (string, string, string, error) {
@@ -385,7 +387,7 @@ func (c *Client) nextID() string {
 //
 // A write failure is retried on a fresh connection: the server dispatches only
 // on a complete line, so a partial write cannot have been executed. A failure
-// after a successful write returns ErrConnLost instead — the server may have
+// after a successful write returns ErrConnLost instead - the server may have
 // processed it, and a repeated AUTH would double-count the auth penalty.
 func (c *Client) exchange(id, req string) (string, error) {
 	return c.exchangeWithin(id, req, c.opts.RequestTimeout, false)
@@ -622,7 +624,7 @@ func (c *Client) dial() (net.Conn, *bufio.Reader, error) {
 // handshake exchanges VERSION lines. Runs before readLoop starts, so the
 // id-less banner is never seen by the demultiplexer.
 func handshake(conn net.Conn, rd *bufio.Reader) ([]string, error) {
-	if _, err := fmt.Fprintln(conn, "VERSION\t1\t0"); err != nil {
+	if _, err := fmt.Fprintf(conn, "VERSION\t1\t0\nCPID\t%d\n", os.Getpid()); err != nil {
 		return nil, fmt.Errorf("auth/client: handshake write: %w", err)
 	}
 	gotVersion := false
@@ -646,7 +648,7 @@ func handshake(conn net.Conn, rd *bufio.Reader) ([]string, error) {
 			}
 			continue
 		}
-		// SPID, CUID, COOKIE — skip
+		// SPID, CUID, COOKIE - skip
 	}
 	if !gotVersion {
 		return nil, fmt.Errorf("auth/client: handshake: no VERSION received")
@@ -697,10 +699,17 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 		res.DirectorTag = res.Userdb.DirectorTag
 		return res, nil
 	case "FAIL":
+		reason := ""
 		for _, f := range fields[2:] {
 			if f == "code=temp_fail" {
 				return nil, ErrTempFail
 			}
+			if strings.HasPrefix(f, "reason=") {
+				reason = protocol.TabUnescape(f[len("reason="):])
+			}
+		}
+		if reason != "" {
+			return nil, &RefusedError{Reason: reason}
 		}
 		return nil, ErrAuthFailed
 	default:

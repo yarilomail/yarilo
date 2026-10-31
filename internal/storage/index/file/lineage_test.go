@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The pairing is what a lock-free reader will stand on: the log says which base
@@ -45,7 +45,7 @@ func TestBaseAndLogAgreeOnLineage(t *testing.T) {
 }
 
 // A base that absorbed a log records how far into it. Replaying from the start
-// instead would re-apply everything the base already contains — survivable only
+// instead would re-apply everything the base already contains - survivable only
 // while every transaction type happens to be idempotent, which is a property
 // nobody declared.
 func TestFoldedOffsetSurvivesTheCrashBetweenBaseAndTruncation(t *testing.T) {
@@ -125,7 +125,7 @@ func TestReplayStartRefusesToGuess(t *testing.T) {
 // The property has to arrive on folders that already exist, and it has to
 // arrive without anyone writing to them. Otherwise a read-only workload never
 // flushes, the lineage never appears, and every "lock-free" read falls back to
-// the locked path forever — which is exactly what the first sandbox
+// the locked path forever - which is exactly what the first sandbox
 // measurement showed: adopt zero, acquisitions unchanged.
 func TestAnExistingFolderGainsItsLineageOnOpen(t *testing.T) {
 	root := t.TempDir()
@@ -208,8 +208,8 @@ func stripLineage(t *testing.T, fs *folderState) {
 	}
 }
 
-// A folder whose log is nothing but a header — written before the base was
-// stamped, so announcing a lineage that pairs with nothing — must not be left
+// A folder whose log is nothing but a header - written before the base was
+// stamped, so announcing a lineage that pairs with nothing - must not be left
 // unprovable. It would otherwise wait for a compaction, and a folder that is
 // only ever read never compacts: the same trap the stamp exists to escape.
 func TestABareLogStubIsReissuedUnderTheNewLineage(t *testing.T) {
@@ -226,7 +226,7 @@ func TestABareLogStubIsReissuedUnderTheNewLineage(t *testing.T) {
 	stripLineage(t, fs)
 
 	// The log as a stub written while the base had no lineage yet: header only,
-	// announcing nothing. This is the case that pairs with nothing — a stub
+	// announcing nothing. This is the case that pairs with nothing - a stub
 	// carrying the old constant still pairs, through folded.
 	if err := truncateLogLineage(indexPath, fs.file.Header.IndexID, lineageUnknown); err != nil {
 		t.Fatalf("seed stub: %v", err)
@@ -245,7 +245,7 @@ func TestABareLogStubIsReissuedUnderTheNewLineage(t *testing.T) {
 	}
 	defer lg.close()
 	if _, paired := replayStart(fs2.lineage, lg.lineage()); !paired {
-		t.Fatalf("base %d/folded %d and stub log %d are not paired — the folder stays locked forever",
+		t.Fatalf("base %d/folded %d and stub log %d are not paired - the folder stays locked forever",
 			fs2.lineage.Lineage, fs2.lineage.FoldedLineage, lg.lineage())
 	}
 	if !fs2.canReadUnlocked() {

@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // copyInto puts the message into a second folder under its own identity, the
@@ -59,7 +59,7 @@ func TestQueryFoldsTheCopiesOfOneMessage(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, "Subject: x\r\n\r\nbody\r\n", 0)
 	copyInto(t, home, "Archive", id)
 
-	ids := idsOf(t, emailQuery(t, s, `{"accountId":"`+testUser+`"}`))
+	ids := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`"}`))
 	if len(ids) != 1 || ids[0] != id {
 		t.Fatalf("Email/query returned %v for one message in two mailboxes, want [%s]", ids, id)
 	}
@@ -71,7 +71,7 @@ func TestGetReportsEveryMailboxHoldingTheMessage(t *testing.T) {
 	copyInto(t, home, "Archive", id)
 
 	got := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Email/get",{"accountId":"`+testUser+`","ids":["`+id+`"],"properties":["id","mailboxIds","keywords"]},"c0"]]}`)
+		["Email/get",{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","mailboxIds","keywords"]},"c0"]]}`)
 	list, _ := got["list"].([]any)
 	if len(list) != 1 {
 		t.Fatalf("Email/get returned %d objects for one message", len(list))
@@ -90,7 +90,7 @@ func TestSetWritesTheKeywordToEveryCopy(t *testing.T) {
 	copyInto(t, home, "Archive", id)
 
 	callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Email/set",{"accountId":"`+testUser+`","update":{"`+id+`":{"keywords/$flagged":true}}},"c0"]]}`)
+		["Email/set",{"accountId":"`+testAccount+`","update":{"`+id+`":{"keywords/$flagged":true}}},"c0"]]}`)
 
 	info := &mailbox.UserInfo{Username: testUser, Home: home, Separator: "/"}
 	box := maildir.New().OpenUser(info)
@@ -123,12 +123,12 @@ func TestTheAnswersHoldWithoutTheGUIDStore(t *testing.T) {
 		}
 	}
 
-	ids := idsOf(t, emailQuery(t, s, `{"accountId":"`+testUser+`"}`))
+	ids := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`"}`))
 	if len(ids) != 1 {
 		t.Errorf("Email/query returned %v without the store, want one id", ids)
 	}
 	got := callAPI(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
-		["Email/get",{"accountId":"`+testUser+`","ids":["`+id+`"],"properties":["id","mailboxIds"]},"c0"]]}`)
+		["Email/get",{"accountId":"`+testAccount+`","ids":["`+id+`"],"properties":["id","mailboxIds"]},"c0"]]}`)
 	list, _ := got["list"].([]any)
 	if len(list) != 1 {
 		t.Fatalf("Email/get returned %d objects without the store", len(list))

@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"mime/quotedprintable"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,7 +18,7 @@ import (
 	"github.com/emersion/go-message/mail"
 	"github.com/emersion/go-message/textproto"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // createPart is an EmailBodyPart as a client sends it to create an Email.
@@ -33,6 +33,33 @@ type createPart struct {
 	Language    []string     `json:"language"`
 	Location    *string      `json:"location"`
 	SubParts    []createPart `json:"subParts"`
+
+	typeGiven bool
+	headers   map[string]json.RawMessage
+}
+
+// UnmarshalJSON keeps the part's header:* properties, which have no fixed name.
+func (p *createPart) UnmarshalJSON(b []byte) error {
+	type plain createPart
+	if err := json.Unmarshal(b, (*plain)(p)); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return err
+	}
+	for k, v := range fields {
+		switch {
+		case k == "type":
+			p.typeGiven = string(v) != "null"
+		case k == "headers" || jmapcore.IsHeaderProperty(k):
+			if p.headers == nil {
+				p.headers = map[string]json.RawMessage{}
+			}
+			p.headers[k] = v
+		}
+	}
+	return nil
 }
 
 type createEmail struct {
@@ -57,6 +84,8 @@ type createEmail struct {
 	BodyValues    map[string]struct {
 		Value string `json:"value"`
 	} `json:"bodyValues"`
+
+	headers []headerField
 }
 
 // createProps are the Email properties a create may set (RFC 8621 §4.6); the
@@ -83,18 +112,30 @@ func (s *Server) emailCreate(ctx context.Context, h *userHandle, raw json.RawMes
 		return nil, invalidProp("", err.Error())
 	}
 	var bad []string
-	for k := range fields {
-		if !createProps[k] {
+	hdrs := map[string]json.RawMessage{}
+	taken := map[string]string{}
+	for k, v := range fields {
+		switch {
+		case jmapcore.IsHeaderProperty(k):
+			hdrs[k] = v
+		case !createProps[k]:
 			bad = append(bad, k)
+		case emailFieldProps[k] != "" && string(v) != "null":
+			taken[emailFieldProps[k]] = k
 		}
-	}
-	if len(bad) > 0 {
-		sort.Strings(bad)
-		return nil, &jmapcore.SetError{Type: jmapcore.SetErrInvalidProps, Properties: bad}
 	}
 	var e createEmail
 	if err := json.Unmarshal(raw, &e); err != nil {
 		return nil, invalidProp("", err.Error())
+	}
+	var badHeaders []string
+	e.headers, badHeaders = headerProps(hdrs, taken, emailLevel)
+	bad = append(bad, badHeaders...)
+	if e.BodyStructure != nil {
+		bad = append(bad, rootClashes(e.BodyStructure, taken, e.headers)...)
+	}
+	if len(bad) > 0 {
+		return nil, &jmapcore.SetError{Type: jmapcore.SetErrInvalidProps, Properties: dedupSorted(bad)}
 	}
 	targets, serr := h.importTargets(jmapcore.ResolveKeys(ctx, e.MailboxIDs))
 	if serr != nil {
@@ -232,7 +273,26 @@ func leafHeader(ctype string, params map[string]string) message.Header {
 // partNode builds one part: a multipart from its subParts, or a leaf whose
 // body is a bodyValue (by partId) or a blob of the caller's own account.
 func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p *createPart, prop string, miss *[]string) (*mimeNode, *jmapcore.SetError) {
+	fields, bad := headerProps(p.headers, partFieldProps(p), partLevel)
+	if len(bad) > 0 {
+		for i := range bad {
+			bad[i] = prop + "/" + bad[i]
+		}
+		return nil, &jmapcore.SetError{Type: jmapcore.SetErrInvalidProps, Properties: bad}
+	}
 	ctype := strings.ToLower(p.Type)
+	params := map[string]string{}
+	if ct, ok := takeField(&fields, "Content-Type"); ok {
+		mt, ctParams, err := mime.ParseMediaType(ct)
+		if err != nil {
+			return nil, invalidProp(prop, "header:Content-Type: "+err.Error())
+		}
+		if ctype != "" && ctype != mt {
+			return nil, invalidProp(prop, "header:Content-Type is "+mt+", the part is "+ctype)
+		}
+		ctype, params = mt, ctParams
+		delete(params, "boundary")
+	}
 	if ctype == "" {
 		ctype = "text/plain"
 	}
@@ -241,6 +301,10 @@ func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p 
 			return nil, invalidProp(prop, "a multipart part has subParts and no body")
 		}
 		n := multipart(strings.TrimPrefix(ctype, "multipart/"))
+		if len(params) > 0 {
+			n.header.SetContentType(ctype, params)
+		}
+		putFields(&n.header.Header, fields)
 		for i := range p.SubParts {
 			kid, serr := s.partNode(ctx, h, e, &p.SubParts[i], prop, miss)
 			if serr != nil {
@@ -253,7 +317,6 @@ func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p 
 	if (p.PartID == nil) == (p.BlobID == nil) || len(p.SubParts) > 0 {
 		return nil, invalidProp(prop, "a part names exactly one of partId and blobId")
 	}
-	params := map[string]string{}
 	var body []byte
 	encoding := "base64"
 	if p.PartID != nil {
@@ -305,6 +368,7 @@ func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p 
 	if p.Location != nil {
 		hdr.Set("Content-Location", *p.Location)
 	}
+	putFields(&hdr.Header, fields)
 	return &mimeNode{header: hdr, body: body}, nil
 }
 
@@ -312,7 +376,10 @@ func (s *Server) partNode(ctx context.Context, h *userHandle, e *createEmail, p 
 func writeEmail(e *createEmail, root *mimeNode) ([]byte, error) {
 	setBoundaries(root)
 	mh := mail.Header{Header: root.header}
-	mh.Set("MIME-Version", "1.0")
+	given := map[string]bool{}
+	for _, f := range e.headers {
+		given[strings.ToLower(f.name)] = true
+	}
 	for key, list := range map[string][]jmapcore.EmailAddress{
 		"From": e.From, "To": e.To, "Cc": e.Cc, "Bcc": e.Bcc, "Reply-To": e.ReplyTo, "Sender": e.Sender,
 	} {
@@ -323,14 +390,16 @@ func writeEmail(e *createEmail, root *mimeNode) ([]byte, error) {
 	if e.Subject != nil {
 		mh.SetSubject(*e.Subject)
 	}
-	date := time.Now()
-	if e.SentAt != nil {
-		date = *e.SentAt
+	switch {
+	case e.SentAt != nil:
+		mh.SetDate(*e.SentAt)
+	case !given["date"]:
+		mh.SetDate(time.Now())
 	}
-	mh.SetDate(date)
-	if len(e.MessageID) > 0 {
+	switch {
+	case len(e.MessageID) > 0:
 		mh.SetMsgIDList("Message-Id", e.MessageID)
-	} else {
+	case !given["message-id"]:
 		mh.SetMessageID(newMessageID(e.From))
 	}
 	if len(e.InReplyTo) > 0 {
@@ -339,6 +408,8 @@ func writeEmail(e *createEmail, root *mimeNode) ([]byte, error) {
 	if len(e.References) > 0 {
 		mh.SetMsgIDList("References", e.References)
 	}
+	putFields(&mh.Header.Header, e.headers)
+	mh.Set("MIME-Version", "1.0")
 	var out bytes.Buffer
 	if err := textproto.WriteHeader(&out, mh.Header.Header); err != nil {
 		return nil, err
@@ -464,4 +535,23 @@ func newMessageID(from []jmapcore.EmailAddress) string {
 		}
 	}
 	return fmt.Sprintf("%s@%s", hex.EncodeToString(rnd[:]), domain)
+}
+
+// rootClashes names the header:* properties of bodyStructure for fields the
+// Email itself writes (RFC 8621 §4.6).
+func rootClashes(root *createPart, taken map[string]string, fields []headerField) []string {
+	top := map[string]bool{}
+	for n := range taken {
+		top[n] = true
+	}
+	for _, f := range fields {
+		top[strings.ToLower(f.name)] = true
+	}
+	var bad []string
+	for k := range root.headers {
+		if hp, ok := jmapcore.ParseHeaderProperty(k); ok && top[strings.ToLower(hp.Name)] {
+			bad = append(bad, "bodyStructure/"+k)
+		}
+	}
+	return bad
 }

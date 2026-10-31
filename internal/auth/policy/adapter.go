@@ -3,7 +3,7 @@ package policy
 import (
 	"context"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // ProtocolAdapter wraps *Client so it satisfies the
@@ -37,6 +37,10 @@ func toRequest(r protocol.PolicyRequest) Request {
 		Username:  r.Username,
 		Password:  r.Password,
 		RemoteIP:  r.RemoteIP,
+		LocalIP:   r.LocalIP,
+		Vars:      r.Vars,
+		Passdb:    r.Passdb,
+		Userdb:    r.Userdb,
 		Service:   r.Service,
 		DeviceID:  r.DeviceID,
 		SessionID: r.SessionID,

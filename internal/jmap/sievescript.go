@@ -17,8 +17,8 @@ import (
 
 	gosieve "github.com/foxcpp/go-sieve"
 
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // SieveScripts wires RFC 9661 to the script store ManageSieve uses, so a script
@@ -153,7 +153,7 @@ func (s *Server) sieveGet(ctx context.Context, h *userHandle, accountID string, 
 	if unknown := jmapcore.UnknownProperties(jmapcore.SieveScript{}, props); len(unknown) > 0 {
 		return nil, jmapcore.InvalidProperties(unknown)
 	}
-	v, err := s.sieveRead(ctx, h, accountID)
+	v, err := s.sieveRead(ctx, h, h.user)
 	if err != nil {
 		return nil, storeFailure("SieveScript/get failed", accountID, err)
 	}
@@ -306,7 +306,7 @@ func (s *Server) sieveSet(ctx context.Context, h *userHandle, accountID string, 
 	if max := s.opts.Limits.MaxObjectsInSet; max > 0 && len(req.Create)+len(req.Update)+len(req.Destroy) > max {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrRequestTooLarge}
 	}
-	v, err := s.sieveRead(ctx, h, accountID)
+	v, err := s.sieveRead(ctx, h, h.user)
 	if err != nil {
 		return nil, storeFailure("SieveScript/set state", accountID, err)
 	}
@@ -317,7 +317,7 @@ func (s *Server) sieveSet(ctx context.Context, h *userHandle, accountID string, 
 	st, home := s.opts.Sieve.Store, h.info.Home
 
 	for _, cid := range sortedKeys(req.Create) {
-		created, serr := s.sieveCreate(ctx, h, accountID, &v, req.Create[cid])
+		created, serr := s.sieveCreate(ctx, h, h.user, &v, req.Create[cid])
 		if serr != nil {
 			resp.NotCreated[cid] = serr
 			continue
@@ -326,7 +326,7 @@ func (s *Server) sieveSet(ctx context.Context, h *userHandle, accountID string, 
 		noteCreated(ctx, cid, created)
 	}
 	for _, id := range sortedKeys(req.Update) {
-		updated, serr := s.sieveUpdate(ctx, h, accountID, &v, id, req.Update[id])
+		updated, serr := s.sieveUpdate(ctx, h, h.user, &v, id, req.Update[id])
 		if serr != nil {
 			resp.NotUpdated[id] = serr
 			continue
@@ -343,7 +343,7 @@ func (s *Server) sieveSet(ctx context.Context, h *userHandle, accountID string, 
 			resp.NotDestroyed[id] = &jmapcore.SetError{Type: jmapcore.SetErrSieveIsActive}
 			continue
 		}
-		if err := st.DeleteScript(ctx, accountID, home, name); err != nil {
+		if err := st.DeleteScript(ctx, h.user, home, name); err != nil {
 			return nil, storeFailure("SieveScript/set destroy", accountID, err)
 		}
 		delete(v.ix.IDs, name)
@@ -351,11 +351,11 @@ func (s *Server) sieveSet(ctx context.Context, h *userHandle, accountID string, 
 	}
 
 	if len(resp.NotCreated)+len(resp.NotUpdated)+len(resp.NotDestroyed) == 0 {
-		if merr := s.sieveActivation(ctx, accountID, home, &v, &req, resp); merr != nil {
+		if merr := s.sieveActivation(ctx, h.user, home, &v, &req, resp); merr != nil {
 			return nil, merr
 		}
 	}
-	if after, err := st.Index(ctx, accountID, home); err == nil {
+	if after, err := st.Index(ctx, h.user, home); err == nil {
 		resp.NewState = strconv.FormatUint(after.State, 10)
 	}
 	return resp, nil
@@ -529,7 +529,7 @@ func (s *Server) sieveQuery(ctx context.Context, h *userHandle, accountID string
 			return nil, &jmapcore.MethodError{Type: jmapcore.ErrUnsupportedSort, Description: fmt.Sprintf("cannot sort on %q", c.Property)}
 		}
 	}
-	v, err := s.sieveRead(ctx, h, accountID)
+	v, err := s.sieveRead(ctx, h, h.user)
 	if err != nil {
 		return nil, storeFailure("SieveScript/query failed", accountID, err)
 	}
@@ -596,7 +596,7 @@ func (s *Server) sieveValidate(ctx context.Context, h *userHandle, accountID str
 	if merr := checkAccount(req.AccountID, accountID); merr != nil {
 		return nil, merr
 	}
-	src, serr := s.sieveBlob(ctx, h, accountID, req.BlobID)
+	src, serr := s.sieveBlob(ctx, h, h.user, req.BlobID)
 	if serr != nil {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrInvalidArguments, Description: "no such blob: " + req.BlobID}
 	}

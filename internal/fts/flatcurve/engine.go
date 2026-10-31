@@ -19,12 +19,12 @@ import (
 
 	"github.com/0kaba0hub/go-xapian"
 
-	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/fts/ftsstore"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
-// On-disk format constants (see https://doc.yarilomail.org/FTS for the format specification).
+// On-disk format constants (see https://doc.yarilomail.org/latest/features/fts.html for the format specification).
 const (
 	Label         = mailbox.FTSIndexDir
 	dbPrefix      = "index."
@@ -185,7 +185,7 @@ func (e *Engine) OpenUser(_ context.Context, user fts.UserRef) (fts.UserIndex, e
 }
 
 // mboxState holds the open write shard for one mailbox. The service is the
-// sole writer (https://doc.yarilomail.org/FTS §4), so a plain mutex per user index suffices.
+// sole writer (https://doc.yarilomail.org/latest/features/fts.html §4), so a plain mutex per user index suffices.
 type mboxState struct {
 	dir     string
 	eng     *Engine        // gives commitCurrent access to opts.RotateTime without threading it through every call site
@@ -529,7 +529,7 @@ func (up *update) SetBuildKey(k fts.BuildKey) (bool, error) {
 	up.key = k
 	// The header-existence boolean term is NOT set here: header presence is
 	// recorded only together with at least one >=min_term_size token surviving
-	// normTerm, so it's set lazily in BuildMore once that's known — HEADER
+	// normTerm, so it's set lazily in BuildMore once that's known - HEADER
 	// X-Foo "" (a value that tokenizes to nothing) must not match.
 	return true, nil
 }

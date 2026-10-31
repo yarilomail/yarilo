@@ -5,13 +5,13 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
 // mailboxIDs maps folder name to mailbox id for the caller.
 func mailboxIDs(t *testing.T, s *Server) map[string]string {
 	t.Helper()
-	_, out := callAs(t, s, testUser, "Mailbox/get", `{"accountId":"`+testUser+`"}`)
+	_, out := callAs(t, s, testUser, "Mailbox/get", `{"accountId":"`+testAccount+`"}`)
 	ids := map[string]string{}
 	for _, mb := range out["list"].([]any) {
 		m := mb.(map[string]any)
@@ -22,7 +22,7 @@ func mailboxIDs(t *testing.T, s *Server) map[string]string {
 
 func inboxEmails(t *testing.T, s *Server) []string {
 	t.Helper()
-	_, out := callAs(t, s, testUser, "Email/query", fmt.Sprintf(`{"accountId":%q,"filter":{"inMailbox":%q}}`, testUser, mailboxIDs(t, s)["INBOX"]))
+	_, out := callAs(t, s, testUser, "Email/query", fmt.Sprintf(`{"accountId":%q,"filter":{"inMailbox":%q}}`, testAccount, mailboxIDs(t, s)["INBOX"]))
 	var ids []string
 	for _, id := range out["ids"].([]any) {
 		ids = append(ids, id.(string))
@@ -37,7 +37,7 @@ func where(t *testing.T, s *Server, id string) []string {
 	for name, mid := range mailboxIDs(t, s) {
 		byID[mid] = name
 	}
-	got := emailGet(t, s, fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["mailboxIds"]}`, testUser, id))
+	got := emailGet(t, s, fmt.Sprintf(`{"accountId":%q,"ids":[%q],"properties":["mailboxIds"]}`, testAccount, id))
 	list, _ := got["list"].([]any)
 	if len(list) == 0 {
 		return nil
@@ -68,7 +68,7 @@ func TestEmailSetMovesCopiesAndRemoves(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := storedServer(t)
 			id := inboxEmails(t, s)[0]
-			resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:%s}}`, testUser, id, tc.patch(mailboxIDs(t, s))))
+			resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:%s}}`, testAccount, id, tc.patch(mailboxIDs(t, s))))
 			if tc.err != "" {
 				if e := resp.NotUpdated[id]; e == nil || e.Type != tc.err {
 					t.Fatalf("answered %+v, want %s", resp, tc.err)
@@ -87,8 +87,8 @@ func TestEmailSetMovesCopiesAndRemoves(t *testing.T) {
 func TestEmailSetDestroysEveryCopy(t *testing.T) {
 	s := storedServer(t)
 	id := inboxEmails(t, s)[0]
-	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true}}}`, testUser, id, mailboxIDs(t, s)["Work"]))
-	resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"destroy":[%q,"nosuchid"]}`, testUser, id))
+	emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"update":{%q:{"mailboxIds/%s":true}}}`, testAccount, id, mailboxIDs(t, s)["Work"]))
+	resp := emailSetCall(t, s, fmt.Sprintf(`{"accountId":%q,"destroy":[%q,"nosuchid"]}`, testAccount, id))
 	if len(resp.Destroyed) != 1 || resp.Destroyed[0] != id {
 		t.Fatalf("destroyed %v: %+v", resp.Destroyed, resp.NotDestroyed)
 	}
@@ -104,7 +104,7 @@ func TestEmailSetHoldsMaxObjectsInSet(t *testing.T) {
 	s := storedServer(t)
 	s.opts.Limits.MaxObjectsInSet = 1
 	ids := inboxEmails(t, s)
-	name, out := callAs(t, s, testUser, "Email/set", fmt.Sprintf(`{"accountId":%q,"destroy":[%q,%q]}`, testUser, ids[0], ids[1]))
+	name, out := callAs(t, s, testUser, "Email/set", fmt.Sprintf(`{"accountId":%q,"destroy":[%q,%q]}`, testAccount, ids[0], ids[1]))
 	wantMethodError(t, name, out, "requestTooLarge")
 	if len(inboxEmails(t, s)) != 2 {
 		t.Error("a refused call destroyed mail")

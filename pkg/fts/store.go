@@ -3,8 +3,8 @@ package fts
 // IndexStore is where an engine's per-mailbox indexes live. It exists so
 // fts_index_root selects an implementation instead of naming a path the engine
 // joins itself: the engine asks for a mailbox's index and is told where it is,
-// and everything the medium implies — how a directory is created, whether
-// committing its metadata means anything — belongs to the store (#1053).
+// and everything the medium implies - how a directory is created, whether
+// committing its metadata means anything - belongs to the store (#1053).
 //
 // The operations are the ones an engine performs today, no more: a second
 // medium will bring its own additions, and guessing them now would be an
@@ -26,16 +26,16 @@ type IndexStore interface {
 	// Create materialises the index location so the engine can write into it.
 	Create(dir string) error
 
-	// Sync commits the location's own metadata — the entries naming shards,
-	// not their contents — where the medium makes that meaningful. On a medium
+	// Sync commits the location's own metadata - the entries naming shards,
+	// not their contents - where the medium makes that meaningful. On a medium
 	// that commits metadata by protocol this is where the call is skipped
 	// rather than issued as a no-op.
 	Sync(dir string) error
 }
 
 // Layout is an engine's on-disk shape, which a store executes. The engine owns
-// it — where its shards sit under a root, and which shapes earlier versions
-// wrote — while the store owns the medium those paths live on. Keeping the two
+// it - where its shards sit under a root, and which shapes earlier versions
+// wrote - while the store owns the medium those paths live on. Keeping the two
 // apart is what lets a second medium reuse the layout, and a second engine
 // reuse the medium.
 type Layout struct {

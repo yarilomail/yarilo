@@ -1,5 +1,5 @@
 // Package ftsservice is the yarilo-fts core: the sole owner of the FTS
-// indexes (single writer + lookup endpoint, https://doc.yarilomail.org/FTS §4), an indexing
+// indexes (single writer + lookup endpoint, https://doc.yarilomail.org/latest/features/fts.html §4), an indexing
 // queue with priority inserts for on-demand search catch-up, and the worker
 // that streams messages through buildmail into the engine.
 package ftsservice
@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/fts/buildmail"
-	"github.com/yarilomail/yarilo/internal/fts/ftsstore"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/fts/buildmail"
+	"github.com/yarilomail/yarilo/v2/internal/fts/ftsstore"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Options wires the service dependencies.
@@ -63,7 +63,7 @@ type Options struct {
 	// reading the per-user special-use file.
 	//
 	// The per-user overrides are deliberately not consulted: reading them takes
-	// the cross-process lock, and Index runs on every delivery — a network
+	// the cross-process lock, and Index runs on every delivery - a network
 	// round trip to decide something that changes once in a mailbox's life.
 	SpecialUseDefaults map[string]string
 	// IndexRoot is where FTS data lives: a location template expanded per user
@@ -84,7 +84,7 @@ type Options struct {
 	Separator string
 
 	// MailboxByDriver returns the mailbox backend for a per-user storage driver
-	// (mdbox / sdbox / maildir) when it differs from the global Mailbox — the
+	// (mdbox / sdbox / maildir) when it differs from the global Mailbox - the
 	// userdb mail_location driver, resolved as the session pods do. nil, or a
 	// nil result, falls back to Mailbox.
 	MailboxByDriver func(driver string) mailbox.MailboxBackend
@@ -460,7 +460,7 @@ func (s *Service) Index(user string, mbox fts.MailboxRef, maxUID uint32, maxRece
 		return err
 	}
 	// Autoindex only. Rescan and the search catch-up (Prepend) enqueue
-	// directly, so an excluded mailbox stays searchable and stays rebuildable —
+	// directly, so an excluded mailbox stays searchable and stays rebuildable -
 	// it is not pre-indexed, which is a different thing from unsearchable.
 	if s.exclude.Excludes(mbox.Name) {
 		metricAutoindexSkipped.Inc()
@@ -562,7 +562,7 @@ func (s *Service) Lookup(user string, mbox fts.MailboxRef, q fts.Query) (fts.Res
 	} else {
 		metricLookupCandidates.Observe(float64(len(res.Definite) + len(res.Maybe)))
 	}
-	// Term COUNT and result counts only — never the query terms (private content).
+	// Term COUNT and result counts only - never the query terms (private content).
 	slog.Debug("fts: lookup executed", "user", user, "folder", mbox.Name,
 		"terms", len(q.Terms), "and_terms", q.AndTerms,
 		"definite", len(res.Definite), "maybe", len(res.Maybe),
@@ -654,7 +654,7 @@ func (s *Service) Status(user string, mbox fts.MailboxRef) (uint32, uint32, erro
 	defer s.release(h)
 	last, storedUIDV, sum, err := h.ui.Checkpoint(mbox)
 	// A checkpoint recorded under a different UIDVALIDITY belongs to a mailbox
-	// since recreated — report "not indexed" (last=0) so the client's catch-up
+	// since recreated - report "not indexed" (last=0) so the client's catch-up
 	// queues a reindex that resets it, rather than trust a stale
 	// last_indexed_uid that suppresses indexing of the new low UIDs.
 	staleUIDV := last > 0 && mbox.UIDValidity != 0 && storedUIDV != mbox.UIDValidity
@@ -904,7 +904,7 @@ func (s *Service) Optimize(user string) error {
 	return s.sweep(h, user)
 }
 
-// enqueueOptimize implements fts.OptimizeNotifier — the engine's write path
+// enqueueOptimize implements fts.OptimizeNotifier - the engine's write path
 // calls this synchronously when a mailbox crosses its shard threshold. It must
 // stay fast: optimizeQueue.push takes its own small mutex and returns, no
 // compaction happens here.
@@ -924,7 +924,7 @@ func (s *Service) worker(ctx context.Context) {
 		metricQueueDepth.Set(float64(s.queue.depth()))
 		// Deferred immediately: a mailbox stays claimed for the whole pass, so
 		// a return, an error or a panic must all release it. Missing this leaves
-		// that mailbox claimed forever — silently unindexed mail, which is the
+		// that mailbox claimed forever - silently unindexed mail, which is the
 		// worst failure this service has.
 		s.runPass(j)
 	}
@@ -956,7 +956,7 @@ func (s *Service) runPass(j job) {
 		"job_id", j.id, "user", j.user, "folder", j.mbox.Name, "err", err)
 	// Recovery: a broken/closed engine handle stays broken for every subsequent
 	// job unless reopened. Drop the cached user handle so the next job re-opens
-	// a fresh index — the engine also self-heals its write shard, but evicting
+	// a fresh index - the engine also self-heals its write shard, but evicting
 	// here recovers even a wholesale-poisoned UserIndex without an operator
 	// deleting the on-disk index.
 	if reason := brokenEngineReason(err); reason != "" {
@@ -1062,7 +1062,7 @@ func (s *Service) presentCopies(h *userHandle, mbox fts.MailboxRef) (copies []ft
 		return nil, 0, 0, fmt.Errorf("ftsservice: open folder: %w", err)
 	}
 	// Deliberately the locked read. This answer feeds Rescan, which decides
-	// which documents are DROPPED from the search index — and that is not the
+	// which documents are DROPPED from the search index - and that is not the
 	// monotonic kind of write the indexer does. Indexing a message late fixes
 	// itself on the next pass; dropping the document of a message that exists
 	// does not, and search misses it silently until something rescans. The
@@ -1092,12 +1092,12 @@ func (s *Service) runIndex(j job) error {
 	checksum := s.opts.Chain.SettingsChecksum()
 
 	// Snapshot the folder (outside the lock): its UIDVALIDITY is the
-	// authoritative current value — the Index/autoindex path often sends
+	// authoritative current value - the Index/autoindex path often sends
 	// MailboxRef.UIDValidity=0, so the checkpoint compare must use the folder's
 	// own value, not the job's.
 	folder, err := h.mailboxOf().Folder(j.mbox.Name, j.mbox.UIDValidity)
 	if err != nil {
-		// Nothing indexed yet means nothing to index — see presentCopies.
+		// Nothing indexed yet means nothing to index - see presentCopies.
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Debug("ftsservice: folder has no index yet, skipping",
 				"user", j.user, "folder", j.mbox.Name)
@@ -1106,7 +1106,15 @@ func (s *Service) runIndex(j job) error {
 		return fmt.Errorf("ftsservice: open folder: %w", err)
 	}
 	curUIDV := folder.UIDValidity
-	// The indexer's answer moves a checkpoint, which is a write — but a
+	// A folder piling up mail nobody reads is not autoindexed; the same \Recent
+	// mark as IMAP's, read without a sync (fts_autoindex_max_recent_msgs).
+	if j.maxRecent > 0 && folder.Recent > uint32(j.maxRecent) {
+		metricAutoindexSkippedRecent.Inc()
+		slog.Debug("fts: autoindex skipped, too many recent", "user", j.user, "folder", j.mbox.Name,
+			"recent", folder.Recent, "max_recent", j.maxRecent)
+		return nil
+	}
+	// The indexer's answer moves a checkpoint, which is a write - but a
 	// monotonic one: indexing fewer messages than exist means the next pass
 	// catches up, and the checkpoint only ever moves forward. So a snapshot one
 	// delivery behind costs a later index, never a lost document, and the read
@@ -1270,14 +1278,14 @@ func (s *Service) runIndex(j job) error {
 
 // prefetchOptions renders the configured window. Prefetching is advisory: with
 // a depth below two the fetcher reads one message at a time, which is the
-// previous behaviour and the whole of it — there is no second code path for a
+// previous behaviour and the whole of it - there is no second code path for a
 // deployment that turns it off.
 func (s *Service) prefetchOptions() prefetchOptions {
 	return prefetchOptions{Depth: s.opts.PrefetchDepth, MaxBytes: s.opts.PrefetchMaxBytes}
 }
 
 // indexOne feeds one already-read message to the engine. Reading happens in the
-// fetcher, so what is timed here is tokenisation alone — the split the earlier
+// fetcher, so what is timed here is tokenisation alone - the split the earlier
 // metrics could not make, because the body used to be read from inside Build.
 func (s *Service) indexOne(mbox fts.MailboxRef, item fetched, upd fts.Update) error {
 	m := item.meta

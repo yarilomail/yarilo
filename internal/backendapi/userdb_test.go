@@ -8,17 +8,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	_ "github.com/yarilomail/yarilo/pkg/dict/memory"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
-// stubIteratorUserdb mirrors the shape pkg/authclient's tests use —
+// stubIteratorUserdb mirrors the shape pkg/authclient's tests use -
 // the backend-api lookups exercise the master protocol end-to-end,
 // so the same in-process master server hangs off this stub.
 type stubIteratorUserdb struct {
@@ -80,8 +80,8 @@ func spawnAuthMaster(t *testing.T, userdb protocol.Userdb) *authclient.Client {
 	return c
 }
 
-// authTestServer is the parallel of storageTestServer in storage_test.go
-// — backendapi.Server wired with everything storage_test.go expects
+// authTestServer is the parallel of storageTestServer in storage_test.go -
+// backendapi.Server wired with everything storage_test.go expects
 // PLUS an authclient.Client connected to an in-process master
 // listener.
 func authTestServer(t *testing.T, userdb protocol.Userdb) (*httptest.Server, string) {
@@ -214,7 +214,7 @@ func TestUserInfo_UserdbErrorReturns503(t *testing.T) {
 			{Type: "personal", Prefix: "", Separator: "/", List: "yes", Inbox: true},
 		},
 		MetadataDict: d,
-		AuthClient:   cl, // closed — every call returns ErrClosed
+		AuthClient:   cl, // closed - every call returns ErrClosed
 	})
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
@@ -227,7 +227,7 @@ func TestUserInfo_UserdbErrorReturns503(t *testing.T) {
 }
 
 func TestUserInfo_NoAuthClientOmitsUserdbBlock(t *testing.T) {
-	// The legacy storageTestServer wires no AuthClient — the
+	// The legacy storageTestServer wires no AuthClient - the
 	// /user/info response keeps its pre-AUTH-1 shape.
 	ts, _ := storageTestServer(t)
 	const user = "alice@example.com"

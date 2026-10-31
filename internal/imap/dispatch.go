@@ -9,12 +9,12 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // nsHandle is the per-namespace storage state attached to a session.
@@ -48,7 +48,7 @@ type nsHandle struct {
 	// none does. A personal namespace is owned by the session user; a fixed
 	// shared or public namespace is owned by nobody -- there is no principal who
 	// holds rights implicitly, which is what makes a bootstrap grant necessary
-	// (see https://doc.yarilomail.org/OWNER_SHARED_NS 7.2). An owner-templated namespace (B1) will
+	// (see https://doc.yarilomail.org/latest/storage/owner_shared_ns.html 7.2). An owner-templated namespace (B1) will
 	// carry the resolved owner here. isOwner compares this against the session
 	// user, so the definition is by person, not by namespace type.
 	owner string

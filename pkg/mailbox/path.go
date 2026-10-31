@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // LockID is SessionID, or a minted one when nothing upstream supplied it. It
@@ -27,11 +27,11 @@ func (u *UserInfo) LockID() string {
 // MailboxBackend.OpenUser / IndexBackend.OpenUser. Backends MUST use Home
 // directly and never re-derive a path from Username.
 //
-// Only Username and Home are required. Adding a field is backward-compatible —
+// Only Username and Home are required. Adding a field is backward-compatible -
 // callers pass *UserInfo by pointer and OpenUser signatures do not change.
 type UserInfo struct {
 	// Username is the canonical login (typically full email). Used for
-	// per-user concurrency counters, log lines, and Received headers — never
+	// per-user concurrency counters, log lines, and Received headers - never
 	// as a storage path on its own.
 	Username string
 
@@ -131,17 +131,17 @@ type UserInfo struct {
 	// exactly the silent divergence this exists to remove (#1092).
 	SkipNFCNormalize bool
 
-	// Phase 3 — filesystem ownership (yarilo runs as root, drops per-user):
+	// Phase 3 - filesystem ownership (yarilo runs as root, drops per-user):
 	// UID uint32
 	// GID uint32
 
-	// Phase 4 — arbitrary userdb fields forwarded from passdb result:
+	// Phase 4 - arbitrary userdb fields forwarded from passdb result:
 	// Fields map[string]string
 
-	// Phase 5 — per-user quota enforced at storage layer:
+	// Phase 5 - per-user quota enforced at storage layer:
 	// QuotaBytes int64  // -1 = unlimited
 
-	// Phase 5 — master-user impersonation context (nil = normal auth).
+	// Phase 5 - master-user impersonation context (nil = normal auth).
 	// Storage layer must not use MasterUser for path derivation.
 	// MasterUser string
 	// AuthToken  string

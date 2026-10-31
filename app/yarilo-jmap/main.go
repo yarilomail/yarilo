@@ -16,22 +16,22 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/backend"
-	"github.com/yarilomail/yarilo/internal/jmap"
-	"github.com/yarilomail/yarilo/internal/readyfile"
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/internal/jmap"
+	"github.com/yarilomail/yarilo/v2/internal/readyfile"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	submproxy "github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 func main() {
@@ -76,10 +76,10 @@ func main() {
 	// diagnoses itself, where a pod that will not start looks like an image or
 	// scheduling fault.
 	if cfg.JMAPService.AuthMasterAddr == "" {
-		slog.Warn("jmap: jmap_service.auth_master_addr is empty — userdb lookups fall back to the storage templates, which is wrong for any user whose home or mail location is not template-derived")
+		slog.Warn("jmap: jmap_service.auth_master_addr is empty - userdb lookups fall back to the storage templates, which is wrong for any user whose home or mail location is not template-derived")
 	}
 	if cfg.Protocol.JMAP.BaseURL == "" {
-		slog.Warn("jmap: protocol.jmap.jmap_base_url is empty — the session resource will advertise URLs no client can follow; set it to the public origin clients reach this deployment on")
+		slog.Warn("jmap: protocol.jmap.jmap_base_url is empty - the session resource will advertise URLs no client can follow; set it to the public origin clients reach this deployment on")
 	}
 
 	slog.Info("yarilo-jmap starting",
@@ -196,6 +196,9 @@ func main() {
 		QuotaEnabled:      cfg.Quota.Enabled,
 		Sieve:             sieveScripts(cfg, scripts),
 		Submission:        submission(cfg),
+		PushPoll:          time.Duration(cfg.Protocol.JMAP.PushPoll) * time.Second,
+		WebSocketTimeout:  time.Duration(cfg.Protocol.JMAP.WebSocketTimeout) * time.Second,
+		WebSocketTicket:   cfg.Protocol.JMAP.WebSocketTicketTTL > 0,
 	})
 	tel.SetReady(true)
 	if err := srv.Serve(ctx); err != nil && ctx.Err() == nil {

@@ -53,7 +53,7 @@ func newStubPenalty() *stubPenalty {
 	return &stubPenalty{counters: make(map[string]int)}
 }
 
-// TestWire_Penalty_IncrementsOnFail — wrong password bumps the
+// TestWire_Penalty_IncrementsOnFail - wrong password bumps the
 // counter for the client IP.
 func TestWire_Penalty_IncrementsOnFail(t *testing.T) {
 	p := newStubPenalty()
@@ -85,7 +85,7 @@ func TestWire_Penalty_IncrementsOnFail(t *testing.T) {
 	}
 }
 
-// TestWire_Penalty_ResetsOnOK — successful auth resets the IP's
+// TestWire_Penalty_ResetsOnOK - successful auth resets the IP's
 // counter to 0.
 func TestWire_Penalty_ResetsOnOK(t *testing.T) {
 	p := newStubPenalty()
@@ -120,7 +120,7 @@ func TestWire_Penalty_ResetsOnOK(t *testing.T) {
 	}
 }
 
-// TestWire_Penalty_TempFailDoesNotUpdate — a backend outage
+// TestWire_Penalty_TempFailDoesNotUpdate - a backend outage
 // (TempFail) MUST NOT increment the penalty. Reason: passdb
 // outage is not the client's fault; otherwise an outage
 // effectively locks every client out for the decay window.
@@ -155,7 +155,7 @@ func TestWire_Penalty_TempFailDoesNotUpdate(t *testing.T) {
 	}
 }
 
-// TestWire_Penalty_MasterFlowExempt — master-user impersonation
+// TestWire_Penalty_MasterFlowExempt - master-user impersonation
 // MUST NOT consult or update the penalty store. Admin sessions
 // must never be tarpitted regardless of unrelated IP noise.
 func TestWire_Penalty_MasterFlowExempt(t *testing.T) {
@@ -192,7 +192,7 @@ func TestWire_Penalty_MasterFlowExempt(t *testing.T) {
 	}
 }
 
-// TestWire_Penalty_SleepsBeforePassdb — when toSecs returns >0,
+// TestWire_Penalty_SleepsBeforePassdb - when toSecs returns >0,
 // the handler must sleep before consulting the chain (timing-
 // punishes each attempt regardless of correctness).
 func TestWire_Penalty_SleepsBeforePassdb(t *testing.T) {
@@ -209,7 +209,7 @@ func TestWire_Penalty_SleepsBeforePassdb(t *testing.T) {
 		}),
 	)
 	_ = srv
-	// Custom subset that sleeps milliseconds inline — verify
+	// Custom subset that sleeps milliseconds inline - verify
 	// only that PenaltyToSecsFunc is called and the result is
 	// used by checking the lookups slice.
 	if !true { // assert via simpler shape: the func IS called.

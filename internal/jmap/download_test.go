@@ -20,7 +20,7 @@ func downloadRequest(path string) *http.Request {
 func TestDownloadStreamsTheMessage(t *testing.T) {
 	s, id := emailServer(t, 0)
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/u1@example.com/"+id+"/mail.eml"))
+	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+id+"/mail.eml"))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body)
@@ -49,10 +49,10 @@ func TestDownloadRefusesWhatIsNotYours(t *testing.T) {
 		name, path string
 		want       int
 	}{
-		{"own blob", "/jmap/download/u1@example.com/" + id + "/m.eml", http.StatusOK},
+		{"own blob", "/jmap/download/" + testAccount + "/" + id + "/m.eml", http.StatusOK},
 		{"another account", "/jmap/download/someone@else/" + id + "/m.eml", http.StatusNotFound},
-		{"unknown blob", "/jmap/download/u1@example.com/deadbeef/m.eml", http.StatusNotFound},
-		{"no blob id", "/jmap/download/u1@example.com/", http.StatusNotFound},
+		{"unknown blob", "/jmap/download/" + testAccount + "/deadbeef/m.eml", http.StatusNotFound},
+		{"no blob id", "/jmap/download/" + testAccount + "/", http.StatusNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestDownloadRefusesWhatIsNotYours(t *testing.T) {
 // The download route sits behind the same trust gate as everything else.
 func TestDownloadIsBehindTheTrustGate(t *testing.T) {
 	s, id := emailServer(t, 0)
-	r := downloadRequest("/jmap/download/u1@example.com/" + id + "/m.eml")
+	r := downloadRequest("/jmap/download/" + testAccount + "/" + id + "/m.eml")
 	r.RemoteAddr = "203.0.113.9:40000" // outside the trusted CIDR
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
@@ -81,7 +81,7 @@ func TestDownloadIsBehindTheTrustGate(t *testing.T) {
 func TestDownloadFilenameIsSanitised(t *testing.T) {
 	s, id := emailServer(t, 0)
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/u1@example.com/"+id+`/a"b`))
+	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+id+`/a"b`))
 	cd := w.Header().Get("Content-Disposition")
 	if strings.Count(cd, `"`) != 2 {
 		t.Errorf("Content-Disposition = %q, want the quotes balanced", cd)

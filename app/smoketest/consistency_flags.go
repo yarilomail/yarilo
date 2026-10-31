@@ -9,7 +9,7 @@ import (
 
 // Row: IMAP ↔ JMAP, flags. A flag set over IMAP must be visible as the
 // corresponding keyword, and a keyword set over JMAP must be visible as the
-// flag — both directions, because a surface that only reads correctly is half
+// flag - both directions, because a surface that only reads correctly is half
 // a surface.
 //
 // The flag written is deliberately not a system one: a mapping table that
@@ -136,7 +136,7 @@ func jmapReadKeywords(id string) (*reading, error) {
 	deadline := time.Now().Add(*flagTimeout * 3)
 	for {
 		raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-			`"methodCalls":[["Email/get",{"accountId":"` + *flagJMAPUser + `","ids":["` + id + `"],` +
+			`"methodCalls":[["Email/get",{"accountId":"` + jmapAccountID() + `","ids":["` + id + `"],` +
 			`"properties":["keywords"]},"c0"]]}`)
 		if err != nil {
 			return nil, fmt.Errorf("Email/get keywords: %w", err)
@@ -167,7 +167,7 @@ func jmapReadKeywords(id string) (*reading, error) {
 
 func jmapSetKeyword(id, keyword string) error {
 	raw, err := jmapCall(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],` +
-		`"methodCalls":[["Email/set",{"accountId":"` + *flagJMAPUser + `","update":{"` + id + `":` +
+		`"methodCalls":[["Email/set",{"accountId":"` + jmapAccountID() + `","update":{"` + id + `":` +
 		`{"keywords/` + keyword + `":true}}},"c0"]]}`)
 	if err != nil {
 		return err

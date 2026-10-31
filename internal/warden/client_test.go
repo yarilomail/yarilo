@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/warden"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 func TestClient_ConnectOK(t *testing.T) {
@@ -61,7 +61,7 @@ func TestClient_DisconnectReleasesSlot(t *testing.T) {
 	if err := c.Disconnect("1", "alice@example.com", "1.2.3.4", "imap"); err != nil {
 		t.Fatalf("Disconnect: %v", err)
 	}
-	// Slot released — second connect must succeed.
+	// Slot released - second connect must succeed.
 	if err := c.Connect("3", "alice@example.com", "1.2.3.4", "imap"); err != nil {
 		t.Fatalf("Connect after disconnect: %v", err)
 	}

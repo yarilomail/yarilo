@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // renderWith renders the chart defaults plus one values text. Internal TLS off:
@@ -211,6 +211,9 @@ func TestQuotaStatusLooksUpOnTheReleaseAuth(t *testing.T) {
 // own name for the same setting, with that name and where the entry sits.
 var canonicalNames = []struct{ at, yarilo, chart string }{
 	{"components.auth", "auth_failure_delay", "failure_delay"},
+	{"components.auth.cache", "auth_cache_size", "cache_size"},
+	{"components.auth.cache", "auth_cache_ttl", "ttl_seconds"},
+	{"components.auth.cache", "auth_cache_negative_ttl", "negative_ttl_seconds"},
 	{"components.auth.master_users", "auth_master_user_separator", "separator"},
 	{"quota", "quota_storage_grace", "quota_grace"},
 	{"components.auth.policy", "auth_policy_server_url", "url"},
@@ -223,6 +226,7 @@ var canonicalNames = []struct{ at, yarilo, chart string }{
 	{"components.auth.policy", "auth_policy_check_before_auth", "check_before"},
 	{"components.auth.policy", "auth_policy_check_after_auth", "check_after"},
 	{"components.auth.policy", "auth_policy_report_after_auth", "report_after"},
+	{"components.auth.policy", "auth_policy_request_attributes", "request_attributes"},
 	{"components.auth.passdb[0]", "passwd_file_path", "passwd_file"},
 	{"components.auth.passdb[0]", "passdb_sql_query", "password_query"},
 	{"components.auth.passdb[0]", "userdb_sql_query", "user_query"},
@@ -282,13 +286,18 @@ func TestCanonicalNamesAreRefused(t *testing.T) {
 				t.Errorf("the failure does not say %q:\n%s", want, out)
 			}
 			// The chart's own name carries the same value into the config.
-			out, err = renderWith(t, valuesAt(c.at, c.chart, `"v-`+c.chart+`"`))
+			value, wantLine := `"v-`+c.chart+`"`, "v-"+c.chart // a block scalar puts it on the next line
+			switch c.chart {
+			case "prefer_introspection":
+				wantLine = "true"
+			case "ttl_seconds", "negative_ttl_seconds": // rendered through int64
+				value, wantLine = "777", "777"
+			case "request_attributes": // a map, rendered entry by entry
+				value = `{a: "v-request_attributes"}` // sorts before the defaults
+			}
+			out, err = renderWith(t, valuesAt(c.at, c.chart, value))
 			if err != nil {
 				t.Fatalf("helm template with %s: %v\n%s", c.chart, err, out)
-			}
-			wantLine := "v-" + c.chart // a block scalar puts it on the next line
-			if c.chart == "prefer_introspection" {
-				wantLine = "true"
 			}
 			found := false
 			lines := strings.Split(renderedConfig(t, string(out)), "\n")
@@ -322,6 +331,7 @@ components:
   locks: {client: {startup_wait: 0}}
   director: {write_timeout: 0, user_kick_delay: 0, max_parallel_kicks: 0, anti_entropy_interval: 0, tombstone_ttl: 0}
 storage: {storage_lock_stale_timeout: 0, mail_cache_purge_delete_percentage: 0, mail_cache_purge_continued_percentage: 0}
+protocol: {jmap: {jmap_websocket_timeout: 0}}
 `)
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
@@ -348,6 +358,7 @@ storage: {storage_lock_stale_timeout: 0, mail_cache_purge_delete_percentage: 0, 
 		{"max_parallel_kicks", def.DirectorService.MaxParallelKicks, off.DirectorService.MaxParallelKicks, 100},
 		{"anti_entropy_interval", def.DirectorService.AntiEntropyInterval, off.DirectorService.AntiEntropyInterval, 3},
 		{"tombstone_ttl", def.DirectorService.TombstoneTTL, off.DirectorService.TombstoneTTL, 600},
+		{"jmap_websocket_timeout", def.Protocol.JMAP.WebSocketTimeout, off.Protocol.JMAP.WebSocketTimeout, 1800},
 	}
 	for _, r := range rows {
 		if r.def != r.wantDef {

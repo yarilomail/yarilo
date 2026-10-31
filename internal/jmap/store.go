@@ -5,15 +5,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/specialuse"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Storage wires everything a request needs to reach one user's mail. It mirrors
@@ -54,6 +54,8 @@ type Storage struct {
 // handle lives for one request and is closed with it: a cache would need an
 // invalidation story that nothing here can supply.
 type userHandle struct {
+	// user is the login the request carries; the account id only encodes it.
+	user       string
 	info       *mailbox.UserInfo
 	threads    *threads.Cache
 	box        mailbox.UserMailbox
@@ -91,7 +93,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	// failing, so a torn read against a concurrent IMAP SUBSCRIBE or
 	// CREATE (USE ...) would look like a correct answer. Refuse instead.
 	if s.Locker == nil {
-		return nil, fmt.Errorf("jmap: no locks client — subscription and special-use reads would not be consistent against a live IMAP session")
+		return nil, fmt.Errorf("jmap: no locks client - subscription and special-use reads would not be consistent against a live IMAP session")
 	}
 	info, err := s.ResolveUser(username)
 	if err != nil {
@@ -105,6 +107,7 @@ func (s *Storage) open(username, sessionID string) (*userHandle, error) {
 	// (#1670).
 	owner := locks.Owner(username, info.LockID())
 	h := &userHandle{
+		user: username,
 		info: info,
 		box:  s.mailboxFor(info).OpenUser(info),
 	}
@@ -137,7 +140,7 @@ func controlRoot(info *mailbox.UserInfo) string {
 }
 
 // mailboxFor selects the backend matching the user's storage driver, falling
-// back to the global one — the same resolution the other services use.
+// back to the global one - the same resolution the other services use.
 func (s *Storage) mailboxFor(info *mailbox.UserInfo) mailbox.MailboxBackend {
 	if info.Driver != "" && s.MailboxByDriver != nil {
 		if mb := s.MailboxByDriver(info.Driver); mb != nil {
@@ -149,7 +152,7 @@ func (s *Storage) mailboxFor(info *mailbox.UserInfo) mailbox.MailboxBackend {
 
 // lazyStore defers opening the user's mail until a method asks for it. A batch
 // of methods that never touch storage must not fail because storage is down,
-// and Core/echo — whose whole purpose is to answer when other things do not —
+// and Core/echo - whose whole purpose is to answer when other things do not -
 // must never be the first thing a broken dependency takes out.
 type lazyStore struct {
 	// sessionID is the login hop's id for this request, and what its locks

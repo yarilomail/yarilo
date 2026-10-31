@@ -1,7 +1,7 @@
 // Package jmap is the JMAP backend: the pod that owns one user's state and
-// answers the JMAP methods for it. It performs no authentication of its own —
+// answers the JMAP methods for it. It performs no authentication of its own -
 // yarilo-jmap-login has already run the passdb chain and asserts the user in a
-// request header — so everything here rests on the trust gate in trust.go.
+// request header - so everything here rests on the trust gate in trust.go.
 //
 // The protocol layer itself lives in pkg/jmapcore, which knows nothing about
 // yarilo.
@@ -15,11 +15,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Options wires the backend.
@@ -67,6 +69,14 @@ type Options struct {
 	// Submission serves Identity and EmailSubmission; nil, as with no relay,
 	// leaves them unadvertised.
 	Submission *Submission
+	// PushPoll is the safety recompute of a push stream's states, for events
+	// lost while the lock service's channel was down; 0 turns push off.
+	PushPoll time.Duration
+	// WebSocketTimeout closes a WebSocket that answers nothing for this long;
+	// 0 turns WebSocket off.
+	WebSocketTimeout time.Duration
+	// WebSocketTicket advertises the ticket jmap-login issues for a WebSocket.
+	WebSocketTicket bool
 }
 
 // Server serves the JMAP endpoint behind the login proxy.
@@ -77,6 +87,14 @@ type Server struct {
 	// Shared across requests on purpose: the handle is not, which is why the
 	// walk was paid in full on every poll (#1343).
 	states *stateCache
+	// push serves EventSource streams; nil when push is off.
+	push *pushHub
+	// done closes every WebSocket when the server shuts down.
+	done     chan struct{}
+	stopOnce sync.Once
+	// websockets counts the WebSocket handlers still running: a hijacked
+	// connection is outside what http.Server.Shutdown waits for.
+	websockets sync.WaitGroup
 }
 
 // New builds the server and registers its routes.
@@ -100,7 +118,16 @@ func New(opts Options) *Server {
 	if opts.Submission != nil {
 		opts.Limits.Submission = opts.Submission.capability()
 	}
-	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache()}
+	if opts.WebSocketTimeout > 0 {
+		opts.Limits.WebSocket = &jmapcore.WebSocketCapability{SupportsPush: opts.PushPoll > 0}
+		opts.Limits.WebSocketTicket = opts.WebSocketTicket
+	}
+	s := &Server{opts: opts, mux: http.NewServeMux(), states: newStateCache(), done: make(chan struct{})}
+	if opts.PushPoll > 0 {
+		s.push = newPushHub(s, opts.PushPoll)
+	}
+	s.mux.HandleFunc("GET "+eventSourcePath, s.guard(s.handleEventSource))
+	s.mux.HandleFunc("GET "+jmapcore.WebSocketPath, s.guard(s.handleWebSocket))
 	s.mux.HandleFunc("GET "+jmapcore.SessionPath, s.guard(s.handleSession))
 	s.mux.HandleFunc("POST "+apiPath, s.guard(s.handleAPI))
 	s.mux.HandleFunc("GET "+downloadPrefix, s.guard(s.handleDownload))
@@ -116,7 +143,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	// An unanchored backend keeps its port bound and answers 403 with a named
 	// cause. A dead port reads as a network fault and misdirects the operator.
 	if s.opts.Trust.Mode == TrustNone {
-		slog.Error("jmap: no trust anchor for the login hop — set internal_tls or xclient.trusted_nets; every request will be refused")
+		slog.Error("jmap: no trust anchor for the login hop - set internal_tls or xclient.trusted_nets; every request will be refused")
 	}
 	srv := &http.Server{
 		Addr:              s.opts.Addr,
@@ -144,14 +171,32 @@ func (s *Server) Serve(ctx context.Context) error {
 	}()
 	select {
 	case <-ctx.Done():
+		// Streams never finish on their own; Shutdown would wait them out.
+		if s.push != nil {
+			close(s.push.done)
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		err := srv.Shutdown(shutdownCtx)
+		s.stopWebSockets(shutdownCtx)
+		return err
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
+	}
+}
+
+// stopWebSockets closes every WebSocket and waits for their handlers, so none
+// touches a user's store after the server has stopped.
+func (s *Server) stopWebSockets(ctx context.Context) {
+	s.stopOnce.Do(func() { close(s.done) })
+	waited := make(chan struct{})
+	go func() { s.websockets.Wait(); close(waited) }()
+	select {
+	case <-waited:
+	case <-ctx.Done():
 	}
 }
 
@@ -182,7 +227,9 @@ func (s *Server) guard(next handlerFunc) http.HandlerFunc {
 			jmapcore.WriteProblem(w, http.StatusLoopDetected, "Proxy TTL exhausted")
 			return
 		}
-		next(w, r, id)
+		// The lock owner rides the context, as managesieve and delivery set it:
+		// a store below the method has no other way to learn it (#1670).
+		next(w, r.WithContext(locks.WithID(r.Context(), id.sessionID)), id)
 	}
 }
 

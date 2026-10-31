@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // goneUnderOpenState opens Work with two messages here, then deletes it from a

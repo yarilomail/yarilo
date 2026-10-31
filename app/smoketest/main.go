@@ -78,11 +78,13 @@ var (
 	// get the wrong greeting and an error pointing somewhere else.
 	flagDeliveryProto = flag.String("delivery-proto", "smtp", `protocol the delivery endpoint speaks: "smtp" (EHLO) or "lmtp" (LHLO)`)
 
-	flagJMAP           = flag.Bool("jmap", false, "check the JMAP session resource (GET /.well-known/jmap)")
-	flagJMAPHost       = flag.String("jmap-host", "", "JMAP hostname (defaults to -host)")
-	flagJMAPPort       = flag.String("jmap-port", "8443", "JMAP HTTPS port")
-	flagJMAPUser       = flag.String("jmap-user", "", "JMAP Basic auth username")
-	flagJMAPPass       = flag.String("jmap-pass", "", "password for -jmap-user")
+	flagJMAP         = flag.Bool("jmap", false, "check the JMAP session resource (GET /.well-known/jmap)")
+	flagJMAPHost     = flag.String("jmap-host", "", "JMAP hostname (defaults to -host)")
+	flagJMAPPort     = flag.String("jmap-port", "8443", "JMAP HTTPS port")
+	flagJMAPUser     = flag.String("jmap-user", "", "JMAP Basic auth username")
+	flagJMAPPass     = flag.String("jmap-pass", "", "password for -jmap-user")
+	flagJMAPPushPoll = flag.Int("jmap-push-poll", 60,
+		"protocol.jmap.jmap_push_poll of the deployment; the push row waits two of them")
 	flagJMAPMaxRequest = flag.Int("jmap-max-size-request", 10485760,
 		"protocol.jmap.jmap_max_size_request of the deployment; the body-cap check sends one byte more")
 
@@ -229,6 +231,13 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	flag.Parse()
 
+	if *flagPushListen != "" {
+		if err := runPushListen(); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "push-listen:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := validateDeliveryProto(*flagDeliveryProto); err != nil {
 		slog.Error("smoke: bad -delivery-proto", "err", err)
 		os.Exit(2)
@@ -357,7 +366,13 @@ func register() []check {
 	want("jmap", jmap, "jmap round trip through a client library (upload, import, read, move, destroy)", "needs -jmap", checkJMAPRoundTrip)
 	want("jmap", jmap && *flagSMTPSubSend, "jmap EmailSubmission sends a draft through the relay, without its Bcc",
 		"needs -jmap and -smtp-sub-send (a relay)", checkJMAPSubmission)
+	want("jmap", jmap && *flagSMTPSubSend, "jmap Email/set with a header:* property, sent through the relay",
+		"needs -jmap and -smtp-sub-send (a relay)", checkJMAPCreateAndSend)
+	want("jmap", jmap && *flagSMTPSubSend, "jmap Identity/set creates an identity, sends through it, destroys it",
+		"needs -jmap and -smtp-sub-send (a relay)", checkJMAPIdentity)
 	want("jmap", jmap, "jmap download refuses another account's blob", "needs -jmap", checkJMAPDownloadIsolation)
+	want("jmap", jmap && *flagJMAPPushPoll > 0, "jmap WebSocket opened with a ticket alone pushes a StateChange",
+		"needs -jmap and -jmap-push-poll", checkJMAPWebSocketTicket)
 	want("jmap", jmap && *flagJMAPUser != "" && *flagFTSUser != "",
 		"jmap Email/query over full-text search",
 		"needs -jmap, -jmap-user and -fts-user (the latter states that FTS is configured)", func() error {
@@ -599,7 +614,7 @@ func checkDirectorAPI() error {
 	// cannot be decoded at all (#1203).
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("director API rejected the token (HTTP %d) — the #755 plumbing is broken: %s", resp.StatusCode, body)
+		return fmt.Errorf("director API rejected the token (HTTP %d) - the #755 plumbing is broken: %s", resp.StatusCode, body)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
@@ -1104,7 +1119,7 @@ func checkManageSieve() error {
 		return fmt.Errorf("LISTSCRIPTS: %w", err)
 	}
 
-	// PUTSCRIPT — non-synchronising literal ({N+}) so no continuation needed.
+	// PUTSCRIPT - non-synchronising literal ({N+}) so no continuation needed.
 	const scriptName = "smoke-check.sieve"
 	const scriptBody = "keep;\n"
 	fmt.Fprintf(conn, "PUTSCRIPT %q {%d+}\r\n%s", scriptName, len(scriptBody), scriptBody)
@@ -1116,7 +1131,7 @@ func checkManageSieve() error {
 		return fmt.Errorf("PUTSCRIPT failed: %q", line)
 	}
 
-	// GETSCRIPT — server responds with {N}\r\n<data>\r\nOK ...
+	// GETSCRIPT - server responds with {N}\r\n<data>\r\nOK ...
 	fmt.Fprintf(conn, "GETSCRIPT %q\r\n", scriptName)
 	litHdr, err := readLine(conn)
 	if err != nil {
@@ -1142,7 +1157,7 @@ func checkManageSieve() error {
 		return fmt.Errorf("GETSCRIPT trailing: %w", err)
 	}
 
-	// SETACTIVE — activate the script.
+	// SETACTIVE - activate the script.
 	fmt.Fprintf(conn, "SETACTIVE %q\r\n", scriptName)
 	line, err = readLine(conn)
 	if err != nil {
@@ -1152,7 +1167,7 @@ func checkManageSieve() error {
 		return fmt.Errorf("SETACTIVE failed: %q", line)
 	}
 
-	// SETACTIVE "" — deactivate so we can delete.
+	// SETACTIVE "" - deactivate so we can delete.
 	fmt.Fprintf(conn, "SETACTIVE \"\"\r\n")
 	line, err = readLine(conn)
 	if err != nil {

@@ -7,7 +7,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 func TestEventMask(t *testing.T) {
@@ -94,7 +94,7 @@ func TestNotifyWatcherMarkAndTake(t *testing.T) {
 
 	w.mark("Work", locks.EventDelivered)    // matches
 	w.mark("Archive", locks.EventExpunged)  // matches
-	w.mark("Archive", locks.EventDelivered) // Archive does not watch New — ignored
+	w.mark("Archive", locks.EventDelivered) // Archive does not watch New - ignored
 	got := w.take()
 	sort.Strings(got)
 	want := []string{"Archive", "Work"}

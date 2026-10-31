@@ -4,11 +4,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // lagTracker holds, per mailbox, how far behind its index is. It exists because
-// the two numbers a user actually feels — "search does not find recent mail" —
+// the two numbers a user actually feels - "search does not find recent mail" -
 // cannot be labels on a metric: 150 users times their folders would put that
 // cardinality into Prometheus. So the per-mailbox detail stays in process and
 // only the worst case is published.

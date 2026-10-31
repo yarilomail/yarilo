@@ -1,6 +1,6 @@
 // Package submission implements the submission servers (port 587 / 465). AUTH is
 // required; messages are relayed to the configured upstream MTA via
-// protocol.submission.relay. No MX inbound — external MTAs deliver to LMTP (port 24).
+// protocol.submission.relay. No MX inbound - external MTAs deliver to LMTP (port 24).
 package submission
 
 import (
@@ -18,11 +18,11 @@ import (
 	goSmtp "github.com/emersion/go-smtp"
 	proxyproto "github.com/pires/go-proxyproto"
 
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/oauth2"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/internal/submission/proxy"
-	"github.com/yarilomail/yarilo/pkg/config"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/oauth2"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // Authenticator verifies submission AUTH credentials.
@@ -69,6 +69,10 @@ type Options struct {
 	OAuth2Enabled bool
 }
 
+// clientIdleTimeout ends a session silent between commands, and with it the
+// relay transaction it holds open: no relay connection waits longer.
+const clientIdleTimeout = 5 * time.Minute
+
 // Server is the submission server (port 587 / 465).
 type Server struct {
 	opts        Options
@@ -93,7 +97,7 @@ func New(opts Options) *Server {
 	}
 	srv.MaxLineLength = opts.Config.MaxLineLength
 	srv.AllowInsecureAuth = !opts.DisablePlainAuth
-	srv.ReadTimeout = 5 * time.Minute
+	srv.ReadTimeout = clientIdleTimeout
 	srv.WriteTimeout = 5 * time.Minute
 	srv.TLSConfig = opts.TLSConfig
 	s.subSrv = srv
@@ -177,38 +181,39 @@ type session struct {
 	username  string // set from preamble for pre-authenticated sessions
 	sid       string // cross-service correlation ID from login-proxy
 	from      string
-	rcpts     []string
+	rcpts     []string // recipients the relay accepted
+	// relay is the open relay transaction, from MAIL FROM to the end of DATA.
+	relay *proxy.Transaction
 }
 
+// Reset runs on RSET and after every DATA.
 func (s *session) Reset() {
 	slog.Debug("submission: command", "sid", s.sid, "cmd", "RSET")
+	s.abortRelay()
 	s.from = ""
 	s.rcpts = nil
 }
 
+// Logout runs on QUIT, a dropped connection and the idle timeout.
 func (s *session) Logout() error {
 	slog.Debug("submission: command", "sid", s.sid, "cmd", "QUIT")
+	s.abortRelay()
 	s.cancelRelay()
 	return nil
 }
 
+func (s *session) abortRelay() {
+	if s.relay != nil {
+		s.relay.Abort()
+		s.relay = nil
+	}
+}
+
+// Mail opens the relay transaction: each command reaches the relay as the
+// client sends it, and the relay's reply is the client's.
 func (s *session) Mail(from string, _ *goSmtp.MailOptions) error {
 	slog.Debug("submission: command", "sid", s.sid, "cmd", "MAIL", "from", from)
-	s.from = from
-	return nil
-}
-
-func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
-	slog.Debug("submission: command", "sid", s.sid, "cmd", "RCPT", "to", to)
-	s.rcpts = append(s.rcpts, to)
-	return nil
-}
-
-func (s *session) Data(r io.Reader) error {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return fmt.Errorf("submission/data: read: %w", err)
-	}
+	s.abortRelay()
 	p := s.srv.opts.Proxy
 	if p == nil {
 		return &goSmtp.SMTPError{
@@ -217,12 +222,45 @@ func (s *session) Data(r io.Reader) error {
 			Message:      "Upstream MTA not configured",
 		}
 	}
+	t, err := p.Begin(from, s.remoteIP, s.username, s.sid)
+	if err != nil {
+		slog.Info("submission: proxy rejected", "sid", s.sid, "from", from, "cmd", "MAIL", "err", err, "result", "fail")
+		return err
+	}
+	s.from, s.relay = from, t
+	return nil
+}
+
+func (s *session) Rcpt(to string, _ *goSmtp.RcptOptions) error {
+	slog.Debug("submission: command", "sid", s.sid, "cmd", "RCPT", "to", to)
+	if s.relay == nil {
+		return &goSmtp.SMTPError{Code: 503, EnhancedCode: goSmtp.EnhancedCode{5, 5, 1}, Message: "Missing MAIL FROM command."}
+	}
+	if err := s.relay.Rcpt(to); err != nil {
+		slog.Info("submission: proxy rejected", "sid", s.sid, "from", s.from, "cmd", "RCPT", "to", to, "err", err, "result", "fail")
+		return err
+	}
+	s.rcpts = append(s.rcpts, to)
+	return nil
+}
+
+func (s *session) Data(r io.Reader) error {
+	t := s.relay
+	s.relay = nil
+	if t == nil {
+		return &goSmtp.SMTPError{Code: 503, EnhancedCode: goSmtp.EnhancedCode{5, 5, 1}, Message: "Missing MAIL FROM command."}
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Abort()
+		return fmt.Errorf("submission/data: read: %w", err)
+	}
 	body := data
 	if s.srv.opts.Config.AddReceivedHeader {
 		body = append([]byte(s.receivedHeader()), data...)
 	}
-	if err := p.Send(s.from, s.rcpts, bytes.NewReader(body), s.remoteIP, s.username, s.sid); err != nil {
-		slog.Info("submission: proxy rejected", "sid", s.sid, "from", s.from, "err", err, "result", "fail")
+	if err := t.Data(bytes.NewReader(body)); err != nil {
+		slog.Info("submission: proxy rejected", "sid", s.sid, "from", s.from, "cmd", "DATA", "err", err, "result", "fail")
 		return err
 	}
 	slog.Info("submission: proxied", "sid", s.sid, "from", s.from, "rcpts", s.rcpts, "size", len(body), "result", "ok")

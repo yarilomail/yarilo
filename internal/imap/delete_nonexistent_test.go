@@ -12,7 +12,7 @@ import (
 // (RFC 9051 §6.3.5, code from RFC 5530).
 //
 // The client asked for it to be gone and it is gone, so the difference reads as
-// academic — until a cleanup deletes the wrong name and reports success. That
+// academic - until a cleanup deletes the wrong name and reports success. That
 // is how the destruction in #1063 stayed unattributed: ruling out a DELETE of a
 // name that was not there took a manual isolation, because the protocol reply
 // said nothing either way.
@@ -73,7 +73,7 @@ func assertNonexistent(t *testing.T, err error, cmd string) {
 		t.Errorf("%s answered %v, want NO", cmd, imapErr.Type)
 	}
 	if imapErr.Code != imap.ResponseCodeNonExistent {
-		t.Errorf("%s answered code %q, want NONEXISTENT — a client cannot tell absence "+
+		t.Errorf("%s answered code %q, want NONEXISTENT - a client cannot tell absence "+
 			"from any other refusal without it", cmd, imapErr.Code)
 	}
 	if !strings.Contains(strings.ToLower(imapErr.Text), "mailbox") {

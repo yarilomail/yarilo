@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // evacHarness opens n single-session users pinned to backendIP and returns the server
@@ -76,7 +76,7 @@ func confirmInflight(t *testing.T, s *Server, ip string, sessOf map[string]strin
 
 // TestEvacuation_ThrottlesToWindow proves the core #849 invariant: a graceful drain
 // keeps at most max_parallel users in flight at once, draining the rest in self-clocked
-// waves as each kill confirms — never a mass simultaneous kick.
+// waves as each kill confirms - never a mass simultaneous kick.
 func TestEvacuation_ThrottlesToWindow(t *testing.T) {
 	const n, window = 5, 2
 	grace := 10 * time.Millisecond
@@ -97,7 +97,7 @@ func TestEvacuation_ThrottlesToWindow(t *testing.T) {
 		}
 		drained += confirmInflight(t, s, ip, sessOf, grace)
 		if drained > n {
-			t.Fatalf("drained %d exceeds %d — runaway", drained, n)
+			t.Fatalf("drained %d exceeds %d - runaway", drained, n)
 		}
 	}
 	if drained != n {

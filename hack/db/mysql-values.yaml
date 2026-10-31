@@ -24,7 +24,7 @@
 auth:
   database: yarilo
   username: yarilo
-  ## Set via --set auth.password=... — never commit real passwords here.
+  ## Set via --set auth.password=... - never commit real passwords here.
   password: ""
   rootPassword: ""
 

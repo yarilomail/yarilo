@@ -11,11 +11,12 @@ import (
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // autoStand is a server whose personal namespace configures mailboxes, and a
@@ -249,5 +250,43 @@ func TestAnAutoSubscribeLeavesAForeignSubscriptionFileAsItIs(t *testing.T) {
 	}
 	if string(raw) != string(foreign) {
 		t.Fatalf("the foreign file was rewritten: %q", raw)
+	}
+}
+
+// With no namespaces configured, a fresh account's first LIST shows the four
+// special-use folders, made, marked and subscribed.
+func TestAServerWithNoNamespacesMakesTheDefaultMailboxes(t *testing.T) {
+	root := t.TempDir()
+	srv := imapserver.New(imapserver.Options{
+		Mailbox:            maildir.New(),
+		Index:              file.New(),
+		Resolver:           &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
+		AuthRelay:          authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
+		SpecialUseDefaults: config.Defaults().Protocol.IMAP.SpecialUseDefaults,
+	})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln) //nolint:errcheck
+	t.Cleanup(func() { ln.Close() })
+	c := autoStand{addr: ln.Addr().String()}.login(t)
+
+	got := listed(t, c, &imap.ListOptions{ReturnSpecialUse: true})
+	for name, attr := range map[string]imap.MailboxAttr{
+		"Sent": imap.MailboxAttrSent, "Drafts": imap.MailboxAttrDrafts,
+		"Trash": imap.MailboxAttrTrash, "Junk": imap.MailboxAttrJunk,
+	} {
+		it, ok := got[name]
+		if !ok {
+			t.Errorf("%s not listed", name)
+			continue
+		}
+		if !slices.Contains(it.Attrs, attr) {
+			t.Errorf("%s attrs %v, want %s", name, it.Attrs, attr)
+		}
+	}
+	if subs := subscribedNames(t, c); !slices.Equal(subs, []string{"Drafts", "Junk", "Sent", "Trash"}) {
+		t.Errorf("subscribed %v, want the four", subs)
 	}
 }

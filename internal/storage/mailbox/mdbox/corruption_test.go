@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // openTestUserMailboxAlt is openTestUserMailbox with an alt-storage tier rooted
@@ -144,7 +144,7 @@ func TestScanFullyCorruptFileIsEmpty(t *testing.T) {
 }
 
 // TestScanReadErrClassifies verifies a truncated read is structural corruption
-// while any other read failure (EIO/ESTALE) is transient I/O — the split that
+// while any other read failure (EIO/ESTALE) is transient I/O - the split that
 // keeps a flaky disk from being mistaken for vanished mail.
 func TestScanReadErrClassifies(t *testing.T) {
 	if err := scanReadErr(io.ErrUnexpectedEOF, "body"); !errors.Is(err, errScanCorrupt) || errors.Is(err, errScanIO) {
@@ -167,7 +167,7 @@ func TestMdboxIsFolderAgnostic(t *testing.T) {
 }
 
 // TestScanIncludesAltTier verifies scanStorage walks the alt directory, not just
-// primary — an alt-only m.<N> (cold tier) must not be silently dropped.
+// primary - an alt-only m.<N> (cold tier) must not be silently dropped.
 func TestScanIncludesAltTier(t *testing.T) {
 	base := t.TempDir()
 	home := filepath.Join(base, "home")

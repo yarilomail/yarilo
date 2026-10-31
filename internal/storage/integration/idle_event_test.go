@@ -10,16 +10,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // TestEmitArrivesAtSubscriber wires the pkg/locks EVENT channel end-to-end
 // through an embedded yarilo-locks server: one Locker client publishes an
-// `delivered` event, another (on a separate connection — i.e. a separate
+// `delivered` event, another (on a separate connection - i.e. a separate
 // "pod") subscribed to the same mailbox key receives it. Phase 2.4 relies
 // on this contract to wake up IMAP IDLE sessions across pods.
 func TestEmitArrivesAtSubscriber(t *testing.T) {
-	// Embedded server — Unix socket + in-memory backend.
+	// Embedded server - Unix socket + in-memory backend.
 	sock := filepath.Join(mustShortTempDir(t), "l.sock")
 	backend := locks.NewMemoryBackend(locks.WithSweepInterval(5 * time.Millisecond))
 	srv := locks.NewServer(backend, slog.New(slog.NewTextHandler(os.Stderr, nil)), nil)
@@ -45,7 +45,7 @@ func TestEmitArrivesAtSubscriber(t *testing.T) {
 
 	dial := locks.DialUnix(sock)
 
-	// Subscriber ("pod A — IMAP IDLE").
+	// Subscriber ("pod A - IMAP IDLE").
 	subscriber, err := locks.NewClient(context.Background(), dial)
 	if err != nil {
 		t.Fatalf("dial subscriber: %v", err)
@@ -63,7 +63,7 @@ func TestEmitArrivesAtSubscriber(t *testing.T) {
 	// publishing. Without this the event may race the SUBSCRIBE registration.
 	time.Sleep(50 * time.Millisecond)
 
-	// Publisher ("pod B — LMTP delivery").
+	// Publisher ("pod B - LMTP delivery").
 	publisher, err := locks.NewClient(context.Background(), dial)
 	if err != nil {
 		t.Fatalf("dial publisher: %v", err)

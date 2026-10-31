@@ -3,6 +3,7 @@ package lmtplogin
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -10,10 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/internal/warden"
-	"github.com/yarilomail/yarilo/pkg/authtoken"
+	goSmtp "github.com/emersion/go-smtp"
+
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
+	"github.com/yarilomail/yarilo/v2/pkg/authtoken"
 )
 
 // ---- rcptUsername -----------------------------------------------------------
@@ -30,9 +33,12 @@ func TestRcptUsername(t *testing.T) {
 		{"<alice+tag@example.com>", "alice@example.com"},
 		{"<alice+a+b@example.com>", "alice@example.com"},
 		{"alice@sub.example.com", "alice@sub.example.com"},
-		// no @ → empty
-		{"notauser", ""},
+		// no domain: looked up as it is, as <Postmaster> must be (RFC 5321 §4.5.1)
+		{"notauser", "notauser"},
+		{"<Postmaster>", "Postmaster"},
+		{"<postmaster+tag>", "postmaster"},
 		{"", ""},
+		{"<>", ""},
 		// @ but empty local
 		{"@example.com", "@example.com"},
 	}
@@ -67,14 +73,16 @@ func TestResolveDirectorTag(t *testing.T) {
 	if got := userTag(s, "bob@example.com"); got != "" {
 		t.Errorf("bob (no override): resolveDirectorTag = %q, want %q", got, "")
 	}
-	if got := userTag(s, "carol@example.com"); got != "" {
-		t.Errorf("carol (unknown user): resolveDirectorTag = %q, want %q", got, "")
+	var smtpErr *goSmtp.SMTPError
+	if _, _, err := s.userFields("carol@example.com"); !errors.As(err, &smtpErr) ||
+		smtpErr.Code != 550 || smtpErr.EnhancedCode != (goSmtp.EnhancedCode{5, 1, 1}) {
+		t.Errorf("carol (unknown user): userFields error = %v, want 550 5.1.1", err)
 	}
 
-	// AuthMasterAddr unset — must not attempt a dial, just return "".
+	// AuthMasterAddr unset - must not attempt a dial, just return "".
 	s2 := &session{opts: testOpts(Options{})}
-	if got := userTag(s2, "alice@example.com"); got != "" {
-		t.Errorf("no AuthMasterAddr: resolveDirectorTag = %q, want %q", got, "")
+	if tag, _, err := s2.userFields("alice@example.com"); tag != "" || err != nil {
+		t.Errorf("no AuthMasterAddr: userFields = %q, %v, want \"\", nil", tag, err)
 	}
 }
 
@@ -98,11 +106,11 @@ func startTestWarden(t *testing.T) string {
 }
 
 // startTestAuth spins a real yarilo-auth master server backed by an in-memory
-// token store. SESSION commands succeed and return real one-time tokens.
+// token store. Every user exists; SESSION commands return real one-time tokens.
 func startTestAuth(t *testing.T) string {
 	t.Helper()
 	store := authtoken.New(30 * time.Second)
-	srv := protocol.NewMasterServer(nil, protocol.WithMasterTokenStore(store))
+	srv := protocol.NewMasterServer(everyUser{}, protocol.WithMasterTokenStore(store))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("auth listen: %v", err)
@@ -124,9 +132,16 @@ func (f fakeUserdb) Lookup(username string) (*protocol.UserInfo, error) {
 	return f[username], nil
 }
 
-// startTestAuthWithUserdb is startTestAuth with a userdb attached, so USER
+// everyUser is a userdb that knows every name it is asked for.
+type everyUser struct{}
+
+func (everyUser) Lookup(username string) (*protocol.UserInfo, error) {
+	return &protocol.UserInfo{Username: username}, nil
+}
+
+// startTestAuthWithUserdb is startTestAuth with a given userdb, so USER
 // lookups (the master protocol's USER command, used by Client.Userdb) hit
-// real data instead of always returning NOTFOUND.
+// its data: a name it does not hold is NOTFOUND.
 func startTestAuthWithUserdb(t *testing.T, userdb protocol.Userdb) string {
 	t.Helper()
 	store := authtoken.New(30 * time.Second)
@@ -347,7 +362,7 @@ func (c *mtaConn) readCode(t *testing.T, expect int) string {
 			}
 			return line[4:]
 		}
-		// continuation line (e.g. "250-...) — keep reading
+		// continuation line (e.g. "250-...) - keep reading
 	}
 }
 
@@ -595,7 +610,7 @@ func TestServer_WardenConcurrencyLimit(t *testing.T) {
 }
 
 // TestServer_WardenUnavailable verifies that delivery proceeds (no hard 451)
-// when warden is unreachable — the proxy warns and delivers without concurrency
+// when warden is unreachable - the proxy warns and delivers without concurrency
 // tracking.
 func TestServer_WardenUnavailable(t *testing.T) {
 	authAddr := startTestAuth(t)
@@ -675,7 +690,7 @@ func TestServer_Reset(t *testing.T) {
 	mta.mailFrom(t, "sender@example.com")
 	mta.rcpt(t, "frank@example.com")
 
-	// RSET — proxy must fire DISCONNECT
+	// RSET - proxy must fire DISCONNECT
 	fmt.Fprintf(mta.conn, "RSET\r\n")
 	mta.readCode(t, 250)
 	mta.quit(t)
@@ -740,7 +755,7 @@ func startStubDirector(t *testing.T, capturedLine *string) string {
 
 // TestResolveBackend_BackendAddrWinsPrecedence proves #741: when both
 // BackendAddr and DirectorAddr are set, BackendAddr wins and the director is
-// never even dialled (DirectorAddr points at an address nothing listens on —
+// never even dialled (DirectorAddr points at an address nothing listens on -
 // a dial attempt would surface as an error, but resolveBackend must not
 // attempt one). This unifies lmtplogin with internal/login's existing
 // precedence, which lmtplogin previously inverted.
@@ -760,7 +775,7 @@ func TestResolveBackend_BackendAddrWinsPrecedence(t *testing.T) {
 
 // TestDirectorLookup_NonEmptyCorrelationID proves #741: the LOOKUP line sent
 // to the director carries a real, non-empty, monotonically distinct
-// correlation id — previously always "".
+// correlation id - previously always "".
 func TestDirectorLookup_NonEmptyCorrelationID(t *testing.T) {
 	var captured string
 	directorAddr := startStubDirector(t, &captured)

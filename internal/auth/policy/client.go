@@ -20,7 +20,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 )
@@ -66,7 +65,7 @@ type Config struct {
 	HashNonce string
 
 	// HashTruncateBits is how many MSB bits of the digest survive into
-	// pwhash. Default 12 (4096 buckets — enough for rate-limit patterns,
+	// pwhash. Default 12 (4096 buckets - enough for rate-limit patterns,
 	// useless for password recovery). 0 = no truncation (full hash).
 	HashTruncateBits uint
 
@@ -80,13 +79,16 @@ type Config struct {
 	RejectOnFail bool
 
 	// LogOnly: still POST and log decisions, but Check methods return
-	// continue regardless of the server's response. For shadow-mode
-	// rollout before enforcing.
+	// continue with no tarpit, whatever the server answers and when it
+	// fails. For shadow-mode rollout before enforcing.
 	LogOnly bool
 
 	// HTTPClient is the underlying transport. nil → http.DefaultClient
 	// with a Timeout wrapper.
 	HTTPClient *http.Client
+	// RequestAttributes is the request body, key to value template; nil sends
+	// DefaultRequestAttributes.
+	RequestAttributes map[string]string
 }
 
 // Decision is the policy-server result: Continue (status 0), Reject (status <0),
@@ -101,13 +103,18 @@ type Decision struct {
 // Request is the structured input to a policy call. The client hashes
 // (username, password) and POSTs the JSON template wforce expects.
 type Request struct {
-	Username  string // resolved/requested username before chain
-	Password  string // plain — used only to compute pwhash, never stored
-	RemoteIP  string // client IP as a string ("" allowed)
-	Service   string // "imap" / "pop3" / "submission" / "lmtp"; "smtp" is Postfix
-	DeviceID  string // free-form client tag (empty allowed)
-	SessionID string // unique per auth attempt (empty allowed)
-	TLS       bool   // whether the client connection was TLS-secured
+	Username string // resolved/requested username before chain
+	Password string // plain - used only to compute pwhash, never stored
+	RemoteIP string // client IP as a string ("" allowed)
+	LocalIP  string // the address the client connected to
+	// Vars is the variable table templates expand against; Passdb and Userdb
+	// answer the passdb: and userdb: providers.
+	Vars           map[string]string
+	Passdb, Userdb map[string]string
+	Service        string // "imap" / "pop3" / "submission" / "lmtp"; "smtp" is Postfix
+	DeviceID       string // free-form client tag (empty allowed)
+	SessionID      string // unique per auth attempt (empty allowed)
+	TLS            bool   // whether the client connection was TLS-secured
 	// FailType is the post-auth classification. Only used by
 	// CheckAfter and ReportAfter. Empty for CheckBefore.
 	//   "" / "policy" / "internal" / "credentials" / "expired"
@@ -117,8 +124,9 @@ type Request struct {
 
 // Client is the policy-server HTTP client. Safe for concurrent use.
 type Client struct {
-	cfg Config
-	hc  *http.Client
+	cfg   Config
+	hc    *http.Client
+	attrs []attribute
 }
 
 var (
@@ -150,11 +158,15 @@ func New(cfg Config) (*Client, error) {
 	if cfg.HashMech == "" {
 		cfg.HashMech = "sha256"
 	}
+	attrs, err := compileAttributes(cfg.RequestAttributes)
+	if err != nil {
+		return nil, err
+	}
 	hc := cfg.HTTPClient
 	if hc == nil {
 		hc = &http.Client{Timeout: cfg.Timeout}
 	}
-	return &Client{cfg: cfg, hc: hc}, nil
+	return &Client{cfg: cfg, hc: hc, attrs: attrs}, nil
 }
 
 // CheckBefore POSTs ?command=allow with `success` / `policy_reject`
@@ -193,16 +205,29 @@ func (c *Client) do(ctx context.Context, command string, req Request, _ bool) (D
 	return c.doWithStatus(ctx, command, req, false, false, false)
 }
 
-// doWithStatus is the actual HTTP round-trip, shared by both Check
-// variants and ReportAfter. The booleans gate emission of the
-// post-decision fields.
+// doWithStatus is shared by both Check variants and ReportAfter. The
+// booleans gate emission of the post-decision fields.
 func (c *Client) doWithStatus(ctx context.Context, command string, req Request,
 	includeStatus, success, policyReject bool) (Decision, error) {
-
-	body, err := c.buildPayload(req, includeStatus, success, policyReject)
-	if err != nil {
-		return c.failoverDecision(), fmt.Errorf("build payload: %w", err)
+	d, err := c.roundTrip(ctx, command, req, includeStatus, success, policyReject)
+	if c.cfg.LogOnly && (d.Reject || d.TarpitSecs > 0) {
+		slog.Info("auth/policy: log-only mode ignoring the policy's action",
+			"service", req.Service,
+			"user", req.Username,
+			"remote", req.RemoteIP,
+			"reject", d.Reject,
+			"tarpit_secs", d.TarpitSecs,
+			"msg", d.Message,
+		)
+		return Decision{Continue: true}, err
 	}
+	return d, err
+}
+
+func (c *Client) roundTrip(ctx context.Context, command string, req Request,
+	includeStatus, success, policyReject bool) (Decision, error) {
+
+	body := c.body(req, c.hashPassword(req.Username, req.Password), includeStatus, success, policyReject)
 
 	url := joinCommand(c.cfg.URL, command)
 
@@ -256,16 +281,6 @@ func (c *Client) doWithStatus(ctx context.Context, command string, req Request,
 		d.Continue = true
 		d.TarpitSecs = parsed.Status
 	}
-
-	if c.cfg.LogOnly && !d.Continue {
-		slog.Info("auth/policy: log-only mode ignoring reject",
-			"service", req.Service,
-			"user", req.Username,
-			"remote", req.RemoteIP,
-			"msg", d.Message,
-		)
-		return Decision{Continue: true}, nil
-	}
 	return d, nil
 }
 
@@ -276,38 +291,6 @@ func (c *Client) failoverDecision() Decision {
 		return Decision{Reject: true, Message: "policy server unavailable"}
 	}
 	return Decision{Continue: true}
-}
-
-// buildPayload assembles the JSON body. Keys are alphabetic to match
-// the wforce wire format.
-func (c *Client) buildPayload(req Request, includeStatus, success, policyReject bool) ([]byte, error) {
-	type field struct {
-		key   string
-		value interface{}
-	}
-	fields := []field{
-		{"device_id", req.DeviceID},
-		{"fail_type", req.FailType},
-		{"login", req.Username},
-		{"protocol", req.Service},
-		{"pwhash", c.hashPassword(req.Username, req.Password)},
-		{"remote", req.RemoteIP},
-		{"session_id", req.SessionID},
-		{"tls", req.TLS},
-	}
-	if includeStatus {
-		fields = append(fields,
-			field{"policy_reject", policyReject},
-			field{"success", success},
-		)
-	}
-	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })
-
-	m := make(map[string]interface{}, len(fields))
-	for _, f := range fields {
-		m[f.key] = f.value
-	}
-	return json.Marshal(m)
 }
 
 // hashPassword returns the hex-encoded, truncated digest of

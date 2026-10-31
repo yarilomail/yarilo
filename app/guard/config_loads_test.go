@@ -4,12 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // helm template only renders, so each kept values file is also loaded the way
@@ -33,6 +34,7 @@ func TestEveryKeptValuesFileLoads(t *testing.T) {
 	for _, e := range examples {
 		sets = append(sets, []string{e})
 	}
+	placeholders := 0
 	if len(sets) < 4 {
 		t.Fatalf("found only %v: the row would pass by reading nothing", sets)
 	}
@@ -51,14 +53,29 @@ func TestEveryKeptValuesFileLoads(t *testing.T) {
 				t.Fatalf("helm template: %v", err)
 			}
 			text := renderedConfig(t, string(out))
+			for _, m := range placeholder.FindAllStringSubmatch(text, -1) {
+				t.Setenv(m[1], "guard-"+m[1])
+				placeholders++
+			}
 			path := filepath.Join(t.TempDir(), "yarilo.yaml")
 			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := config.Load(path); err != nil {
-				t.Errorf("a pod given this configuration refuses to start: %v", err)
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("a pod given this configuration refuses to start: %v", err)
+			}
+			// Every ${VAR} is a Secret through the environment; one the loader
+			// does not expand keeps the public placeholder as its value.
+			var left []string
+			unexpanded(reflect.ValueOf(cfg), "cfg", &left)
+			for _, p := range left {
+				t.Errorf("%s keeps its ${…} placeholder after load", p)
 			}
 		})
+	}
+	if placeholders == 0 {
+		t.Fatal("no placeholder rendered: the expansion check looks at nothing")
 	}
 }
 

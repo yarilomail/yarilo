@@ -23,27 +23,27 @@ import (
 	"github.com/emersion/go-sasl"
 	proxyproto "github.com/pires/go-proxyproto"
 
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/oauth2"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/connlimit"
-	"github.com/yarilomail/yarilo/internal/imaptext"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/internal/mailboxcreate"
-	"github.com/yarilomail/yarilo/internal/msgcache"
-	"github.com/yarilomail/yarilo/internal/quotawarn"
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/internal/storage/search"
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
-	"github.com/yarilomail/yarilo/internal/userstate/subs"
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/oauth2"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/connlimit"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/internal/mailboxcreate"
+	"github.com/yarilomail/yarilo/v2/internal/msgcache"
+	"github.com/yarilomail/yarilo/v2/internal/quotawarn"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/storage/search"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/specialuse"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Server is the yarilo IMAP server.
@@ -134,7 +134,7 @@ type Options struct {
 	QuotaPolicy quota.Policy
 	// QuotaWarner runs quota_warning actions. Nil = warnings only log.
 	QuotaWarner *quotawarn.Runner
-	// FTS wires full-text search (https://doc.yarilomail.org/FTS §11). Zero value disables it.
+	// FTS wires full-text search (https://doc.yarilomail.org/latest/features/fts.html §11). Zero value disables it.
 	FTS FTSOptions
 	// QuotaClone mirrors usage to external dicts. Nil = disabled.
 	QuotaClone *quota.Clone
@@ -179,7 +179,7 @@ type Options struct {
 	// identity via the yarilo-auth master -- the same lookup LMTP uses for a
 	// recipient. Owner-templated shared namespaces (B1) need it to open the
 	// owner's store: the owner is not the session user, and the owner's driver
-	// comes only from their userdb mail_location (https://doc.yarilomail.org/OWNER_SHARED_NS 3.3).
+	// comes only from their userdb mail_location (https://doc.yarilomail.org/latest/storage/owner_shared_ns.html 3.3).
 	// nil disables owner-templated resolution.
 	UserdbLookup func(ctx context.Context, username string) (*mailbox.UserInfo, error)
 
@@ -291,7 +291,7 @@ func New(opts Options) *Server {
 	// #1132 config error one layer up: without UserdbLookup wired, every
 	// SELECT user/... would fail at runtime with an internals message. Fail at
 	// startup instead, with the reason named -- the pod crashes loudly rather
-	// than serving a namespace it can never open (https://doc.yarilomail.org/OWNER_SHARED_NS 3.3).
+	// than serving a namespace it can never open (https://doc.yarilomail.org/latest/storage/owner_shared_ns.html 3.3).
 	for i, ns := range opts.Namespaces {
 		if mailbox.PrefixIsOwnerTemplated(ns.Prefix) && opts.UserdbLookup == nil {
 			panic(fmt.Sprintf("imap: namespace %q is owner-templated but no userdb lookup is wired; "+
@@ -339,8 +339,8 @@ func New(opts Options) *Server {
 		imaplib.CapListStatus:       {},
 		imaplib.CapSpecialUse:       {},
 		imaplib.CapCreateSpecialUse: {},
-		imaplib.CapObjectID:         {}, // RFC 8474 — MAILBOXID / EMAILID / THREADID
-		imaplib.CapNotify:           {}, // RFC 5465 — event notifications
+		imaplib.CapObjectID:         {}, // RFC 8474 - MAILBOXID / EMAILID / THREADID
+		imaplib.CapNotify:           {}, // RFC 5465 - event notifications
 		imaplib.CapBinary:           {},
 		imaplib.CapQResync:          {},
 		// RFC 5256. Both algorithms are computed per command from headers,
@@ -456,7 +456,7 @@ func proxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
 var testSessionID string
 
 func (s *Server) newSession(c *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
-	sess := &session{srv: s, imapConn: c}
+	sess := &session{srv: s, imapConn: c, enabledCaps: c.EnabledCaps}
 	if pc := unwrapPreambleConn(c.NetConn()); pc != nil {
 		sess.sid = pc.SessionID
 		if sess.sid == "" {
@@ -557,6 +557,15 @@ type session struct {
 	// via subsequent * FLAGS responses; used to detect new keywords during Poll.
 	// Nil when no folder is selected.
 	knownKeywords map[string]struct{}
+	// recent is the UIDs this session holds as \Recent; claimsRecent is set
+	// for a SELECT, which takes new arrivals too, and clear for EXAMINE.
+	recent       imaplib.UIDSet
+	claimsRecent bool
+	// enabledCaps copies the connection's set under its mutex: asked only
+	// for a \Recent message, and a yes is kept since ENABLE is one-way.
+	enabledCaps func() imaplib.CapSet
+	isRev2      bool
+	rev2Asked   bool
 
 	// NOTIFY (RFC 5465) state. notifyActive is set by NOTIFY SET and cleared
 	// by NOTIFY NONE; while set, unsolicited responses for the selected
@@ -585,7 +594,7 @@ type session struct {
 
 	// namespaces holds the per-namespace storage handles keyed by prefix;
 	// the personal namespace has key "". Declared-only namespaces are
-	// absent — dispatch() catches them via the wire-spec list.
+	// absent - dispatch() catches them via the wire-spec list.
 	namespaces map[string]*nsHandle
 	// primary is the personal namespace handle; equals namespaces[""].
 	primary *nsHandle
@@ -1078,8 +1087,7 @@ func (s *session) completeLogin(res *protocol.AuthResponse) error {
 	owner := locks.Owner(userInfo.Username, userInfo.LockID())
 	s.specialUse = specialuse.New(
 		userInfo.Home, userInfo.Username, owner, s.srv.opts.Locker,
-		s.srv.opts.SpecialUseDefaults,
-	)
+		s.srv.opts.SpecialUseDefaults)
 
 	// Audit log. master_user is non-empty only on the impersonation path;
 	// emitted for all logins so SIEM sees one log shape.
@@ -1123,6 +1131,10 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		}
 	}
 	if err := s.requireRight(h, rel, mailbox.RightRead); err != nil {
+		return nil, err
+	}
+	readOnly, err := s.selectReadOnly(h, rel)
+	if err != nil {
 		return nil, err
 	}
 	tOpen := time.Now()
@@ -1172,6 +1184,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	for i, m := range msgs {
 		s.knownMsgs[i] = sessionMsg{uid: m.UID, modseq: m.ModSeq}
 	}
+	s.selectRecent(f, msgs, opts != nil && opts.ReadOnly)
 	s.syncModSeq = f.HighestModSeq
 	s.hasPendingExpunge = false
 	sysFlags := []imaplib.Flag{
@@ -1190,10 +1203,12 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		Flags:          allFlags,
 		PermanentFlags: append(allFlags, imaplib.Flag(`\*`)),
 		NumMessages:    uint32(len(msgs)),
+		NumRecent:      s.numRecent(),
 		UIDValidity:    f.UIDValidity,
 		UIDNext:        imaplib.UID(f.NextUID),
 		HighestModSeq:  f.HighestModSeq,
 		MailboxID:      mailbox.FormatObjectID(f.GUID), // RFC 8474 OBJECTID
+		ReadOnly:       readOnly,
 	}
 	// QRESYNC SELECT (RFC 7162 §3.2): on matching UIDVALIDITY, reply with
 	// VANISHED (EARLIER) listing UIDs expunged since the client's modseq.
@@ -1229,6 +1244,7 @@ func (s *session) Unselect() error {
 	s.syncModSeq = 0
 	s.hasPendingExpunge = false
 	s.knownKeywords = nil
+	s.recent, s.claimsRecent = nil, false
 	s.pushWardenSelect("")
 	return nil
 }
@@ -1712,7 +1728,7 @@ func (s *session) listNamespace(w *imapserver.ListWriter, h *nsHandle, ref strin
 		// SPECIAL-USE (RFC 6154); personal namespace only. Read once per LIST,
 		// for the same reason subscriptions are: the document describes the
 		// whole user, so asking per name asked the same question once per
-		// folder — and each ask was two round trips to the lock service.
+		// folder - and each ask was two round trips to the lock service.
 		if attr := specialUse[name]; attr != "" {
 			attrs = append(attrs, attr)
 		}
@@ -2072,7 +2088,7 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 		d.HighestModSeq = f.HighestModSeq
 	}
 	if opts.NumRecent {
-		var n uint32 // RECENT tracking not implemented; RFC 9051 permits 0
+		n := recentInFolder(f, msgs)
 		d.NumRecent = &n
 	}
 	if opts.MailboxID {
@@ -2084,6 +2100,11 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 func (s *session) Append(name string, r imaplib.LiteralReader, opts *imaplib.AppendOptions) (*imaplib.AppendData, error) {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Append")
 	tAppend := time.Now()
+	if opts != nil {
+		if err := refuseRecent(opts.Flags); err != nil {
+			return nil, err
+		}
+	}
 	if target, redirected, err := s.virtualSaveTarget(name); err != nil {
 		return nil, err
 	} else if redirected {
@@ -2218,13 +2239,13 @@ func (s *session) Notify(w *imapserver.UpdateWriter, options *imaplib.NotifyOpti
 // Poll delivers pending mailbox updates to the client between commands
 // (RFC 3501 §5.2). Three classes of update are handled:
 //
-//   - * N EXPUNGE — UIDs in knownMsgs that are no longer in the index
+//   - * N EXPUNGE - UIDs in knownMsgs that are no longer in the index
 //     (expunged by another session). Emitted in descending sequence order
 //     (RFC 3501 §7.4.1). Withheld when allowExpunge is false; hasPendingExpunge
 //     ensures the next allowExpunge=true call retries them.
-//   - * N FETCH (FLAGS ...) — UIDs still present but with a changed modseq,
+//   - * N FETCH (FLAGS ...) - UIDs still present but with a changed modseq,
 //     meaning flags were altered by another session.
-//   - * N EXISTS — new messages appended to the folder since last poll.
+//   - * N EXISTS - new messages appended to the folder since last poll.
 //
 // Fast-path: OpenFolder reads only the folder header for HighestModSeq;
 // GetMessages (full index scan) runs only when the modseq advanced or
@@ -2244,11 +2265,14 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	if err := s.pollVirtual(w); err != nil {
 		return err
 	}
+	if s.claimsRecent {
+		s.claimPlusFolders()
+	}
 
 	// The reopen settles the folder, so an IDLE / NOOP client sees an
 	// out-of-band delivery (#1779).
 
-	// Cheap modseq check — skip full scan when nothing changed and no
+	// Cheap modseq check - skip full scan when nothing changed and no
 	// pending expunges are waiting for an allowExpunge=true window.
 	refreshed, err := s.reopenSelected()
 	if err != nil {
@@ -2301,7 +2325,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	notifyFlags := !s.notifyActive || s.selFlagChange
 	notifyNew := !s.notifyActive || s.selNew
 
-	// Phase 1: expunges — descending seq so each WriteExpungeUID seq number
+	// Phase 1: expunges - descending seq so each WriteExpungeUID seq number
 	// remains valid as earlier entries are removed from knownMsgs.
 	if notifyExpunge {
 		hadExpunges := false
@@ -2322,7 +2346,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		s.hasPendingExpunge = hadExpunges && !allowExpunge
 	}
 
-	// Phase 2: flag updates — skipped entirely when hasPendingExpunge is true
+	// Phase 2: flag updates - skipped entirely when hasPendingExpunge is true
 	// because the pre-expunge sequence numbers would be wrong on the client side.
 	if !s.hasPendingExpunge {
 		type flagsUpdate struct {
@@ -2381,13 +2405,14 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 				allFlags = append(allFlags, imaplib.Flag(k))
 			}
 			// The writer adds MODSEQ once the client enabled CONDSTORE (RFC 7162 3.2.4).
+			allFlags = s.withRecent(allFlags, p.uid)
 			if err := w.WriteMessageFlagsModSeq(p.seq, imaplib.UID(p.uid), allFlags, p.ci.modseq); err != nil {
 				return err
 			}
 		}
 	}
 
-	// Phase 3: new messages — UIDs in current that are not yet in knownMsgs.
+	// Phase 3: new messages - UIDs in current that are not yet in knownMsgs.
 	// Suppressed (not added to knownMsgs, no EXISTS) when the client turned
 	// MessageNew off for the selected mailbox; it learns of them on re-select.
 	if notifyNew {
@@ -2396,6 +2421,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 			knownSet[km.uid] = struct{}{}
 		}
 		added := 0
+		var arrived []*mailbox.MessageMeta
 		var newKwsFromAppend []string
 		newKwSetFromAppend := make(map[string]struct{})
 		for _, m := range current {
@@ -2403,6 +2429,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 				continue
 			}
 			s.knownMsgs = append(s.knownMsgs, sessionMsg{uid: m.UID, modseq: m.ModSeq})
+			arrived = append(arrived, m)
 			added++
 			for _, kw := range m.Keywords {
 				if _, known := s.knownKeywords[kw]; known {
@@ -2435,6 +2462,10 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		}
 		if added > 0 {
 			if err := w.WriteNumMessages(uint32(len(s.knownMsgs))); err != nil {
+				return err
+			}
+			s.recentArrived(refreshed, arrived)
+			if err := w.WriteNumRecent(s.numRecent()); err != nil {
 				return err
 			}
 		}
@@ -2517,7 +2548,7 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 				}
 			}
 		}
-		// Heartbeat tick — a liveness signal for misbehaving clients, useful
+		// Heartbeat tick - a liveness signal for misbehaving clients, useful
 		// even when the subscription is up.
 		if interval > 0 {
 			ticker := time.NewTicker(interval)
@@ -2527,7 +2558,7 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 	}
 
 	if events == nil && tickC == nil && wake == nil {
-		// Nothing to watch — purely passive IDLE.
+		// Nothing to watch - purely passive IDLE.
 		<-stop
 		return nil
 	}
@@ -2557,7 +2588,7 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 }
 
 // refreshIdleCount re-reads the selected folder's message count from the
-// index and writes EXISTS. Used by IDLE after a cross-pod EVENT — the
+// index and writes EXISTS. Used by IDLE after a cross-pod EVENT - the
 // in-memory s.folder.Messages may be stale if another process appended.
 func (s *session) refreshIdleCount(w *imapserver.UpdateWriter, always bool) error {
 	if s.folder == nil {
@@ -2669,7 +2700,7 @@ func (s *session) matchMessage(seqNum uint32, m *mailbox.MessageMeta, criteria *
 		}
 	}
 
-	return search.Match(seqNum, m, criteria, rawMsg), rawMsg, nil
+	return search.Match(seqNum, s.recentMeta(m), criteria, rawMsg), rawMsg, nil
 }
 
 func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriteria, opts *imaplib.SearchOptions) (*imaplib.SearchData, error) {
@@ -2698,7 +2729,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 	needsBody := search.NeedsBody(criteria)
 
 	// Full-text path: answer Body/Text/Header criteria from the index and
-	// scan only the candidates (https://doc.yarilomail.org/FTS §11). nil = sequential scan.
+	// scan only the candidates (https://doc.yarilomail.org/latest/features/fts.html §11). nil = sequential scan.
 	// A virtual mailbox is answered over the folders it draws from; the
 	// ordinary path would index the mailbox itself, which holds nothing.
 	var (
@@ -2714,7 +2745,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 		return nil, searchError(ftsErr)
 	}
 
-	// Collect both representations — clients may want UID set OR sequence
+	// Collect both representations - clients may want UID set OR sequence
 	// numbers via RETURN ALL, while MIN/MAX/COUNT always operate on the
 	// kind requested.
 	var (
@@ -2726,7 +2757,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 		highestMod uint64 // CONDSTORE MODSEQ across all matched messages
 		// matchedOrder is every hit's UID in the same ascending enumeration
 		// order as uidHits/seqHits (msgs is already scanned seq-ascending),
-		// used only to build the RELEVANCY list — see relevancyScores below.
+		// used only to build the RELEVANCY list - see relevancyScores below.
 		matchedOrder []uint32
 		// unreadable collects the messages whose bytes the scan could not
 		// read. A body criterion cannot match what was never read, so without
@@ -2895,7 +2926,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 						rc.Close()
 					}
 				}
-				if search.Match(uint32(i+1), m, matchCrit, raw) {
+				if search.Match(uint32(i+1), s.recentMeta(m), matchCrit, raw) {
 					saved.AddNum(imaplib.UID(m.UID))
 				}
 			}
@@ -2974,7 +3005,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	if err != nil {
 		return err
 	}
-	// UID FETCH (CHANGEDSINCE N VANISHED) — RFC 7162 §3.2.10. Emit
+	// UID FETCH (CHANGEDSINCE N VANISHED) - RFC 7162 §3.2.10. Emit
 	// VANISHED (EARLIER) for UIDs expunged since the supplied modseq.
 	// VANISHED on a sequence-number FETCH is invalid; the patched lib
 	// rejects that at parse time so we do not need to re-check here.
@@ -3113,7 +3144,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	}
 	for _, fe := range fetchList {
 		m := fe.msg
-		// CHANGEDSINCE filter — skip messages whose modseq has not moved
+		// CHANGEDSINCE filter - skip messages whose modseq has not moved
 		// past the client's last-known value (RFC 4551 §3.3.1).
 		if opts.ChangedSince > 0 && m.ModSeq <= opts.ChangedSince {
 			continue
@@ -3131,10 +3162,15 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		// from a file that is there says more than one lost because the message
 		// had been expunged, and a message that produced both is the first.
 		reason := ""
+		var reasonErr error
 		mark := func(what string, err error) {
 			unreadable = append(unreadable, what)
-			if r := unreadableReason(err); reason == "" || r == reasonUnreadable {
-				reason = r
+			r := unreadableReason(err)
+			if r == reasonUnreadable && err != nil && s.expungedUnderUs(m, err) {
+				r = reasonGone
+			}
+			if reason == "" || r == reasonUnreadable {
+				reason, reasonErr = r, err
 			}
 		}
 		// Implicit \Seen: update index before writing FLAGS so the response
@@ -3161,7 +3197,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			}
 		}
 		if opts.Flags || seenJustSet {
-			mw.WriteFlags(toImapFlags(append(m.Flags, m.Keywords...)))
+			mw.WriteFlags(s.withRecent(toImapFlags(append(m.Flags, m.Keywords...)), m.UID))
 		}
 		if opts.UID {
 			mw.WriteUID(imaplib.UID(m.UID))
@@ -3357,7 +3393,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			slog.Warn("imap: fetch answered without attributes it could not read",
 				"user", s.userInfo.Username, "folder", s.folder.Name,
 				"uid", m.UID, "reason", reason,
-				"missing", strings.Join(unreadable, ","))
+				"missing", strings.Join(unreadable, ","), "err", reasonErr)
 		}
 		mw.Close() //nolint:errcheck
 	}
@@ -3387,6 +3423,9 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
 	if storeFlags != nil {
+		if err := refuseRecent(storeFlags.Flags); err != nil {
+			return err
+		}
 		if err := s.requireAllRightsOnSelected(storeFlagRights(storeFlags.Flags)); err != nil {
 			return err
 		}
@@ -3403,7 +3442,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	}
 	numSet = resolveStar(numSet, msgs, uidToClientSeq)
 
-	// CONDSTORE STORE (UNCHANGEDSINCE N) — RFC 7162 §3.1.3.
+	// CONDSTORE STORE (UNCHANGEDSINCE N) - RFC 7162 §3.1.3.
 	// Any message whose current modseq is greater than the client's
 	// last-known value is *skipped* (no flag update, no FETCH response).
 	// The list of skipped UIDs is returned as the MODIFIED response code
@@ -3534,7 +3573,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 
 	// Pass 3: send FETCH responses using modseqs returned from the batch.
 	// Also update knownMsgs.modseq so the post-command Poll skips these
-	// messages — without this Poll would see modseq changed and emit a
+	// messages - without this Poll would see modseq changed and emit a
 	// second duplicate * FETCH for every STOREd message.
 	for i := range s.knownMsgs {
 		if r, ok := results[s.knownMsgs[i].uid]; ok {
@@ -3558,7 +3597,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 		}
 		for _, p := range pending {
 			mw := w.CreateMessage(p.seqNum)
-			mw.WriteFlags(toImapFlags(append(p.newFlags, p.newKW...)))
+			mw.WriteFlags(s.withRecent(toImapFlags(append(p.newFlags, p.newKW...)), p.uid))
 			mw.WriteUID(imaplib.UID(p.uid))
 			if r := results[p.uid]; r.ModSeq > 0 {
 				mw.WriteModSeq(r.ModSeq)
@@ -3650,6 +3689,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		filename string
 	}
 	var copied []copiedMsg
+	var saves []*mailbox.MessageMeta
 	var selected []*mailbox.MessageMeta
 	var batchBytes, largest int64
 	for _, m := range msgs {
@@ -3670,6 +3710,13 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 	for _, m := range selected {
 		// The selected-message read: a virtual record reads its copy (as the reference does).
 		rc, fetchErr := s.fetchSelected(m)
+		if fetchErr != nil && s.expungedUnderUs(m, fetchErr) {
+			// RFC 2180 §4.4.1: a failed COPY leaves the destination as it was.
+			s.undoCopies(destH, destRel, destFolder, saves)
+			return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeNo,
+				Code: imaplib.ResponseCode("EXPUNGEISSUED"),
+				Text: "Some of the requested messages no longer exist."}
+		}
 		if fetchErr != nil {
 			return nil, fmt.Errorf("imap/copy fetch: %w", fetchErr)
 		}
@@ -3690,6 +3737,7 @@ func (s *session) Copy(numSet imaplib.NumSet, dest string) (*imaplib.CopyData, e
 		srcUIDs.AddNum(imaplib.UID(m.UID))
 		dstUIDs.AddNum(imaplib.UID(saved.Meta.UID))
 		copied = append(copied, copiedMsg{uid: saved.Meta.UID, filename: saved.Filename})
+		saves = append(saves, saved.Meta)
 	}
 	// imapsieve (RFC 6785): COPY cause fires on the destination mailbox for each
 	// copied message, after the copy is recorded (so COPYUID reflects the initial
@@ -3747,7 +3795,7 @@ func (s *session) Namespace() (*imaplib.NamespaceData, error) {
 // Options.Namespaces is empty: a single personal namespace with the
 // "/" separator, matching pre-v1.20 single-namespace behaviour.
 var defaultNamespaces = []NamespaceSpec{
-	{Type: NamespacePersonal, Prefix: "", Separator: '.', List: ListYes},
+	{Type: NamespacePersonal, Prefix: "", Separator: '.', List: ListYes, Mailboxes: mailbox.DefaultMailboxes()},
 }
 
 // GetMetadata implements RFC 5464 GETMETADATA. mailbox == "" requests
@@ -3891,7 +3939,7 @@ func (s *session) SetMetadata(folder string, entries map[string]*[]byte) error {
 
 // metadataResolve returns the namespace handle and folder GUID used
 // for keying the requested folder's attributes. Server-scope ops
-// (folder == "") hash under the personal INBOX's GUID — server-scope
+// (folder == "") hash under the personal INBOX's GUID - server-scope
 // state is per-user, never per-namespace.
 func (s *session) metadataResolve(folder string) (*nsHandle, [16]byte, error) {
 	target := folder
@@ -3944,7 +3992,7 @@ func (s *session) metadataKey(h *nsHandle, folder string, guid [16]byte, scope m
 	if h == nil || h == s.primary {
 		return mailbox.AttrKey(scope, guid, attrName)
 	}
-	// Shared / public namespaces — priv/ keys carry an accessing-user
+	// Shared / public namespaces - priv/ keys carry an accessing-user
 	// dimension so users do not see each other's private annotations
 	// on the same shared folder. shared/ keys are global to the
 	// folder regardless of accessing user.
@@ -4101,7 +4149,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		}
 	}
 	s.folder.Messages -= uint32(expunged)
-	// imapsieve (RFC 6785): a MOVE lands each message in the destination — the
+	// imapsieve (RFC 6785): a MOVE lands each message in the destination - the
 	// COPY cause fires there after the move completes; scripts may refile/discard.
 	if s.srv.opts.SieveEngine != nil {
 		src := s.folder.Name
@@ -4295,7 +4343,7 @@ func toImapFlags(flags []string) []imaplib.Flag {
 }
 
 // virtualSizeFromRaw returns the octet count the message occupies once every
-// bare LF is normalised to CRLF — the RFC822.SIZE a client observes on the
+// bare LF is normalised to CRLF - the RFC822.SIZE a client observes on the
 // wire. It mirrors the counting the storage backends do at Save() time and is
 // the fallback for legacy index records that never recorded a virtual size.
 func virtualSizeFromRaw(raw []byte) uint32 {

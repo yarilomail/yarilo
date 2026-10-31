@@ -6,7 +6,7 @@
 // backend user ..., backend index ..., backend subscriptions ...,
 // backend specialuse ..., backend metadata ...).
 //
-// Wire reference: https://doc.yarilomail.org/BACKEND-API
+// Wire reference: https://doc.yarilomail.org/latest/architecture/backend_api.html
 //
 // Configuration: backend_api section of yarilo.yaml + storage /
 // namespaces / dicts / locks_client / internal_tls sections.
@@ -24,23 +24,23 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/backend"
-	"github.com/yarilomail/yarilo/internal/backendapi"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	_ "github.com/yarilomail/yarilo/pkg/dict/drivers/all"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/internal/backendapi"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	_ "github.com/yarilomail/yarilo/v2/pkg/dict/drivers/all"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -135,7 +135,7 @@ func main() {
 
 	// Dial yarilo-auth's master-protocol listener when configured.
 	// Empty AuthMasterAddr keeps the legacy single-binary / smoke
-	// flow alive — handleUserInfo skips userdb enrichment and
+	// flow alive - handleUserInfo skips userdb enrichment and
 	// /api/backend/user/iterate returns 503.
 	var authcl *authclient.Client
 	if cfg.BackendAPI.AuthMasterAddr != "" {

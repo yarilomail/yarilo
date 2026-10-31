@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // deliverOne saves one message through the mutation layer.
@@ -52,17 +52,22 @@ func stripDetail(addr string) string {
 // user+folder@domain → username=user@domain, folder=folder; otherwise folder=INBOX.
 func resolveMailbox(rcpt string) (username, folder string, err error) {
 	rcpt = strings.TrimSpace(strings.Trim(rcpt, "<>"))
-	at := strings.LastIndex(rcpt, "@")
-	if at < 0 {
-		return "", "", fmt.Errorf("no @ in rcpt %q", rcpt)
+	local, domain, hasDomain := rcpt, "", false
+	if at := strings.LastIndex(rcpt, "@"); at >= 0 {
+		local, domain, hasDomain = rcpt[:at], rcpt[at+1:], true
 	}
-	local := rcpt[:at]
-	domain := rcpt[at+1:]
 
 	folder = "INBOX"
 	if plus := strings.Index(local, "+"); plus >= 0 {
 		folder = local[plus+1:]
 		local = local[:plus]
+	}
+	if local == "" {
+		return "", "", fmt.Errorf("no user in rcpt %q", rcpt)
+	}
+	// A recipient without a domain (<Postmaster>) is looked up as it is.
+	if !hasDomain {
+		return local, folder, nil
 	}
 	return local + "@" + domain, folder, nil
 }

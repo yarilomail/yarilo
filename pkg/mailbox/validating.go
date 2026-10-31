@@ -204,3 +204,13 @@ func CheckName(box UserMailbox, folder string) error {
 	}
 	return nil
 }
+
+// KeepsFlagsInNames says the driver behind box stores flags in file names, so
+// an index record is ahead of storage until its rename lands.
+func KeepsFlagsInNames(box UserMailbox) bool {
+	switch Driver(box).(type) {
+	case FlagWriterMulti, FlagWriter:
+		return true
+	}
+	return false
+}

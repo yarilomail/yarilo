@@ -83,15 +83,14 @@ type Client struct {
 // ClientOption tunes a Client at construction time.
 type ClientOption func(*Client)
 
-// WithPoolSize overrides the number of concurrent control connections.
-// The default is 16. Larger values reduce mutex contention under high
-// concurrency at the cost of more open TCP connections.
 // WithWaitPoolSize overrides the number of connections kept for waiting
 // acquires.
 func WithWaitPoolSize(n int) ClientOption {
 	return func(c *Client) { c.waitPoolSize = n }
 }
 
+// WithPoolSize overrides the number of concurrent control connections, 16 by
+// default; more cut contention under high concurrency at the cost of connections.
 func WithPoolSize(n int) ClientOption {
 	return func(c *Client) {
 		if n > 0 {
@@ -818,7 +817,7 @@ func acquireBlocking(ctx context.Context, resource string, wrapWaitErr func(erro
 // fn while the lock is held, and releases on exit. The renew cadence should
 // be a small fraction of ttl (typically ttl/3).
 //
-// fn receives a context that is cancelled if renewal fails — callers must
+// fn receives a context that is cancelled if renewal fails - callers must
 // honour the context and abort partially-completed writes when it fires.
 //
 // Errors from Lock or Unlock propagate as-is. Errors from fn are returned

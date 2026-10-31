@@ -1,5 +1,5 @@
 # ============================================================================
-# yarilo — PER-TAG BACKEND release (companion to director-multi-tag.yaml)
+# yarilo - PER-TAG BACKEND release (companion to director-multi-tag.yaml)
 # ============================================================================
 #
 # ONE Helm release PER backend tag / NFS shard. Runs ONLY the co-located backend
@@ -24,7 +24,7 @@
 # ============================================================================
 
 image:
-  repository: ghcr.io/yarilomail/yarilo
+  repository: docker.io/0kaba0/yarilo
   tag: ""
   pullPolicy: IfNotPresent
 logLevel: info
@@ -73,7 +73,7 @@ internalTLS:
 
 components:
   director:
-    enabled: false                  # NO director here — it lives in the control plane
+    enabled: false                  # NO director here - it lives in the control plane
 
   backend:
     coLocated: true

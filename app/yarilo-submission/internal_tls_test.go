@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	submsvr "github.com/yarilomail/yarilo/internal/submission"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/mtls/mtlstest"
+	submsvr "github.com/yarilomail/yarilo/v2/internal/submission"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls/mtlstest"
 )
 
 // The login pod dials this backend with internal mTLS; the listener main

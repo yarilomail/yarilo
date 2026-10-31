@@ -1,6 +1,6 @@
 # POP3 session load against the sandbox.
 #
-# A full session per iteration — connect, USER, PASS, STAT, LIST, RETR, QUIT —
+# A full session per iteration - connect, USER, PASS, STAT, LIST, RETR, QUIT -
 # rather than a held connection. That is a protocol difference, not a shortcut:
 # a POP3 server locks the maildrop for the length of a session, so a client that
 # stays connected keeps every other client for that user locked out, and a
@@ -22,11 +22,17 @@ spec:
       containers:
       - name: loadtest
         image: ghcr.io/yarilomail/yarilo-loadtest:latest
+        env:
+        - name: SANDBOX_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sandbox-test-account
+              key: password
         args:
         - -protocol=pop3
         - -addr=yarilo-pop3-login.yarilo-sb.svc.cluster.local:110
         - -users=u1@d00001.test:50,u51@d00002.test:50,u101@d00003.test:50
-        - -password=Yarilo!test1
+        - -password=$(SANDBOX_PASSWORD)
         - -concurrency=16
         - -duration=3m
         # Bounded retrieval: an unbounded RETR loop walks the whole maildrop, so

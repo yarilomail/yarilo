@@ -12,7 +12,7 @@ import (
 )
 
 // dispatchWho is the `backend who` subtree. Default output is a
-// human-readable table — JSON is opt-in via --output json.
+// human-readable table - JSON is opt-in via --output json.
 //
 // Subcommands:
 //
@@ -43,7 +43,7 @@ func whoList(args []string) error {
 		return fmt.Errorf("usage: yarctl backend who [list] [--protocol IMAP] [--user U] [--all] [--output table|json]")
 	}
 	// Server always returns the JSON shape; CLI decides how to render.
-	// Request flat sessions when rendering a table — easier to print.
+	// Request flat sessions when rendering a table - easier to print.
 	groupBy := "user"
 	if *output == "table" {
 		groupBy = "none"
@@ -181,7 +181,7 @@ func renderWhoTable(w io.Writer, body []byte, showBackend bool) error {
 // summary. Wraps the joined result in parentheses when ≥2 distinct
 // values are present so the reader can tell a single-value cell
 // from a list-cell at a glance. Multiplicity (how many sessions
-// share the same value) is intentionally omitted — the per-user
+// share the same value) is intentionally omitted - the per-user
 // COUNT column already carries the totals and the per-value count
 // added too much visual noise.
 //
@@ -219,7 +219,7 @@ func renderCountTable(w io.Writer, body []byte, by string) error {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return fmt.Errorf("parse count response: %w", err)
 	}
-	// Plain `count` — just the number, scriptable with $(...).
+	// Plain `count` - just the number, scriptable with $(...).
 	if by == "" && len(resp.ByProtocol) == 0 && len(resp.ByUser) == 0 {
 		fmt.Fprintln(w, resp.Total)
 		return nil

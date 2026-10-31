@@ -7,7 +7,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
 )
 
 // A MOVE into another namespace takes the source body with the record; a body

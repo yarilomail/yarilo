@@ -49,7 +49,7 @@ func humanBackends(data []byte) error {
 
 // humanRingStatus renders the rich ring-status object (#833) as an aligned
 // per-member table: this replica's computed neighbors, its live edges (link
-// role/state/uptime), and the sparse dedup watermark — plus any tombstones.
+// role/state/uptime), and the sparse dedup watermark - plus any tombstones.
 func humanRingStatus(data []byte) error {
 	var r struct {
 		Self    string `json:"self"`
@@ -247,7 +247,7 @@ func dispatchDirector(args []string) error {
 		parseFlags(fs, args[1:]) //nolint:errcheck
 		path := "/api/director/map"
 		if *user != "" {
-			// peek: pure introspection (#813) — reports the stored pin (or
+			// peek: pure introspection (#813) - reports the stored pin (or
 			// "pinned": false) without resolving/assigning. The unpeeked
 			// ?user= endpoint is the routing resolver used internally by
 			// per-user backend ops and must not be used for inspection.
@@ -280,14 +280,17 @@ func dispatchBackends(args []string) error {
 		fs := flag.NewFlagSet("backends add", flag.ExitOnError)
 		port := fs.Int("port", 0, "backend port (required)")
 		tag := fs.String("tag", "", "backend tag")
-		vhosts := fs.Int("vhosts", 0, "virtual nodes (0 = default 100)")
+		vhosts := fs.Int("vhosts", 0, "virtual nodes (left out: the director's default; 0: no traffic)")
 		parseFlags(fs, args[1:]) //nolint:errcheck
 		if fs.NArg() == 0 || *port == 0 {
 			return fmt.Errorf("usage: director backends add <ip> --port PORT [--tag TAG] [--vhosts N]")
 		}
-		data, err := apiPost("/api/director/backends", map[string]any{
-			"ip": fs.Arg(0), "port": *port, "tag": *tag, "vhosts": *vhosts,
-		})
+		body := map[string]any{"ip": fs.Arg(0), "port": *port, "tag": *tag}
+		// Only a weight the operator named: an explicit 0 is a backend that takes no traffic.
+		if flagGiven(fs, "vhosts") {
+			body["vhosts"] = *vhosts
+		}
+		data, err := apiPost("/api/director/backends", body)
 		return printOutput(data, err, humanStatus)
 	case "remove":
 		if len(args) < 2 {
@@ -430,4 +433,15 @@ Commands:
   ring status                         Ring topology of the queried replica: neighbors, link state, seq
   ring add ADDR                       Add peer (addr = ip:port)
   ring remove ADDR                    Remove peer`)
+}
+
+// flagGiven reports whether the command line set the flag, as against its default.
+func flagGiven(fs *flag.FlagSet, name string) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			given = true
+		}
+	})
+	return given
 }

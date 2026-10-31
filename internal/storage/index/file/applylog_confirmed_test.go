@@ -4,18 +4,18 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestApplyLogConfirmedEndExcludesTornIncrementalTail is a regression test
 // for #667: applyLog's return value is the only thing callers may use to
-// advance fs.logSize — never an external os.Stat taken before or after the
+// advance fs.logSize - never an external os.Stat taken before or after the
 // call, since a concurrent writer's append can land mid-read and desync the
 // two. This pins the incremental (fromOffset>0) path specifically: a torn
 // trailing group past fromOffset (simulating a writer's append that was
 // only partially visible to this reader's read pass) must NOT be counted as
 // confirmed, even though the incremental path never truncates the file (a
-// legitimate in-flight writer may still be appending at that exact spot —
+// legitimate in-flight writer may still be appending at that exact spot -
 // see applyLog's no-truncate rationale). The returned offset must stay at
 // fromOffset so the next reload() naturally retries from a safe point.
 func TestApplyLogConfirmedEndExcludesTornIncrementalTail(t *testing.T) {
@@ -61,13 +61,13 @@ func TestApplyLogConfirmedEndExcludesTornIncrementalTail(t *testing.T) {
 		t.Errorf("confirmedEnd advanced past a torn incremental tail: got %d, want %d (baseline)", confirmedEnd, baseline)
 	}
 
-	// The incremental path must never truncate — a legitimate writer could
+	// The incremental path must never truncate - a legitimate writer could
 	// still be mid-append at that exact position.
 	st, err := os.Stat(logPath)
 	if err != nil {
 		t.Fatalf("stat log: %v", err)
 	}
 	if st.Size() == baseline {
-		t.Error("incremental applyLog truncated the log — it must only skip counting the torn tail as confirmed, never remove bytes")
+		t.Error("incremental applyLog truncated the log - it must only skip counting the torn tail as confirmed, never remove bytes")
 	}
 }

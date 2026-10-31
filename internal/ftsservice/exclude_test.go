@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // The setting has two spellings for two different questions: which role a
@@ -28,7 +28,7 @@ func TestExclusionMatching(t *testing.T) {
 		folder   string
 		excluded bool
 	}{
-		// Nothing configured excludes nothing — the setting must be inert by
+		// Nothing configured excludes nothing - the setting must be inert by
 		// default, since an over-broad default would silently empty an index.
 		{"no patterns", nil, "Junk", false},
 
@@ -110,7 +110,7 @@ func TestExclusionAppliesToAutoindexOnly(t *testing.T) {
 		t.Fatalf("Prepend: %v", err)
 	}
 	if got := s.queue.depth(); got != 1 {
-		t.Errorf("the search catch-up queued %d jobs for an excluded mailbox, want 1 — "+
+		t.Errorf("the search catch-up queued %d jobs for an excluded mailbox, want 1 - "+
 			"an excluded folder is un-pre-indexed, not unsearchable", got)
 	}
 }
@@ -169,7 +169,7 @@ func TestExclusionHonoursTheConfiguredSeparator(t *testing.T) {
 //
 // The log line is the whole of the difference, so the log line is what this
 // asserts. Checking only the behaviour cannot tell "dropped at construction"
-// from "kept and never matching" — both answer false to everything, which is
+// from "kept and never matching" - both answer false to everything, which is
 // how a typo would stay invisible.
 func TestMalformedPatternIsReported(t *testing.T) {
 	var logged bytes.Buffer

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	fileindex "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileindex "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 type featureServer struct {
@@ -178,7 +178,7 @@ func checkFileNoHeader(t *testing.T, path, header string) {
 	for sc.Scan() {
 		line := sc.Text()
 		if strings.TrimRight(line, "\r") == "" {
-			return // end of headers, not found — good
+			return // end of headers, not found - good
 		}
 		if strings.HasPrefix(strings.ToLower(line), prefix) {
 			t.Fatalf("unexpected header %q in %s: %q", header, path, line)

@@ -44,7 +44,7 @@ const (
 	magicPost = "\n\x01\x03\n"
 )
 
-// Message is one decoded v1 message — what the migrator needs to
+// Message is one decoded v1 message - what the migrator needs to
 // re-emit through dboxv2.
 type Message struct {
 	Filename     string    // "u.<16hex>"
@@ -57,7 +57,7 @@ type Message struct {
 
 // ListFolders returns every folder under home in canonical name
 // form (INBOX surfaced as "INBOX"; ".Sent" surfaced as "Sent").
-// Folders without a u.* file are still listed — the migrator
+// Folders without a u.* file are still listed - the migrator
 // will record them as empty.
 func ListFolders(home string) ([]string, error) {
 	entries, err := os.ReadDir(home)
@@ -98,7 +98,7 @@ func FolderPath(home, folder string) string {
 // ListMessages walks the folder directory and returns every
 // "u.<seq>" filename in lexicographic order (which matches v1
 // save order, since seq is a 16-hex monotonic counter). Missing
-// folder is not an error — returns (nil, nil).
+// folder is not an error - returns (nil, nil).
 func ListMessages(home, folder string) ([]string, error) {
 	dir := FolderPath(home, folder)
 	entries, err := os.ReadDir(dir)
@@ -120,7 +120,7 @@ func ListMessages(home, folder string) ([]string, error) {
 		names = append(names, name)
 	}
 	// ReadDir returns lexicographic on most filesystems but the
-	// spec doesn't guarantee it — sort explicitly.
+	// spec doesn't guarantee it - sort explicitly.
 	strSort(names)
 	return names, nil
 }
@@ -172,7 +172,7 @@ func decode(filename string, data []byte) (*Message, error) {
 
 func parseTrailer(trailer []byte, msg *Message) {
 	br := bufio.NewReader(strings.NewReader(string(trailer)))
-	// Skip magic_post if present (we tolerate its absence — some
+	// Skip magic_post if present (we tolerate its absence - some
 	// historical writes may have skipped it).
 	if len(trailer) >= len(magicPost) && string(trailer[:len(magicPost)]) == magicPost {
 		_, _ = br.Discard(len(magicPost))

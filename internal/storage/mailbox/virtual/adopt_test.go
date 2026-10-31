@@ -3,7 +3,7 @@ package virtual
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A header the reference wrote names its folders; the first open gives each

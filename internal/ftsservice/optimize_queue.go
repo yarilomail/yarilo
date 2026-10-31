@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // optimizeJob is one (user, mailbox) pair queued for background
@@ -20,7 +20,7 @@ func optimizeKey(user fts.UserRef, mbox fts.MailboxRef) string {
 
 // optimizeQueue is a FIFO with dedup: a mailbox already queued or in
 // flight is never queued twice. The dedup marker is cleared at done(),
-// not pop() — a rotation during a running compaction must still be able
+// not pop() - a rotation during a running compaction must still be able
 // to queue a fresh pass afterward.
 type optimizeQueue struct {
 	mu      sync.Mutex

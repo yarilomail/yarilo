@@ -9,22 +9,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
-// Wire protocol — TAB-delimited, LF-terminated. Same bytes for embedded
-// (Unix socket) and remote (mTLS TCP). See https://doc.yarilomail.org/DEPLOYMENT §Wire protocol.
+// Wire protocol - TAB-delimited, LF-terminated. Same bytes for embedded
+// (Unix socket) and remote (mTLS TCP). See https://doc.yarilomail.org/latest/installation/deployment.html §Wire protocol.
 //
-//	> VERSION\t1\n                                       — handshake
+//	> VERSION\t1\n                                       - handshake
 //	< VERSION\t1\tOK\n
 //
 //	> LOCK\t<resource>\t<owner>\t<ttl_ms>\n
-//	< OK\t<lock_id>\n                                    — acquired
-//	< BUSY\t<current_owner>\n                            — held by someone else
+//	< OK\t<lock_id>\n                                    - acquired
+//	< BUSY\t<current_owner>\n                            - held by someone else
 //
-//	> LOCK-SHARED\t<resource>\t<owner>\t<ttl_ms>\n       — multiple concurrent holders allowed;
+//	> LOCK-SHARED\t<resource>\t<owner>\t<ttl_ms>\n       - multiple concurrent holders allowed;
 //	< OK\t<lock_id>\n                                      only blocks against a LOCK (exclusive) holder
-//	< BUSY\t<current_owner>\n                            — an exclusive lock is currently held
+//	< BUSY\t<current_owner>\n                            - an exclusive lock is currently held
 //
 //	LOCK-SHARED stays at protocolVersion "1": older servers reply
 //	ERROR\tunknown_command. UNLOCK/RENEW work unchanged for shared lock
@@ -40,11 +40,11 @@ import (
 //	< OK\n
 //
 //	> SUBSCRIBE\t<resource>\n
-//	< OK\n                                               — server then streams EVENT lines
-//	< EVENT\t<resource>\t<event_type>\t<payload>\n       — async, until SUBSCRIBE conn closes
+//	< OK\n                                               - server then streams EVENT lines
+//	< EVENT\t<resource>\t<event_type>\t<payload>\n       - async, until SUBSCRIBE conn closes
 //
 //	> COUNTER-INC\t<key>\t<delta>\n
-//	< OK\t<new_value>\n                                  — atomic increment, returns the post-increment value
+//	< OK\t<new_value>\n                                  - atomic increment, returns the post-increment value
 //
 // COUNTER-INC stays at protocolVersion "1": older servers reply
 // ERROR\tunknown_command, which clients translate into an "unsupported
@@ -115,7 +115,7 @@ func writeFields(w io.Writer, fields ...string) error {
 }
 
 // formatTTL encodes a duration as milliseconds for the wire.
-// Negative or zero durations are rejected — callers must specify a positive TTL.
+// Negative or zero durations are rejected - callers must specify a positive TTL.
 func formatTTL(ttl time.Duration) (string, error) {
 	if ttl <= 0 {
 		return "", fmt.Errorf("locks/proto: ttl must be positive, got %v", ttl)

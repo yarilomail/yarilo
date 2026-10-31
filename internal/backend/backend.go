@@ -13,41 +13,41 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict/proxy"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/proxy"
 
-	authrelay "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/internal/connlimit"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
-	imapsvr "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/lmtp"
-	mssvr "github.com/yarilomail/yarilo/internal/managesieve"
-	pop3svr "github.com/yarilomail/yarilo/internal/pop3"
-	"github.com/yarilomail/yarilo/internal/quotawarn"
-	"github.com/yarilomail/yarilo/internal/readyfile"
-	"github.com/yarilomail/yarilo/internal/sieve"
-	"github.com/yarilomail/yarilo/internal/stopaccept"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/virtual"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbuild"
-	"github.com/yarilomail/yarilo/internal/storage/search"
-	submsvr "github.com/yarilomail/yarilo/internal/submission"
-	submproxy "github.com/yarilomail/yarilo/internal/submission/proxy"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/internal/userstate/acl"
-	"github.com/yarilomail/yarilo/internal/userstate/threads"
-	authclient "github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/dict"
-	filedict "github.com/yarilomail/yarilo/pkg/dict/file"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	authrelay "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/connlimit"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	imapsvr "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/lmtp"
+	mssvr "github.com/yarilomail/yarilo/v2/internal/managesieve"
+	pop3svr "github.com/yarilomail/yarilo/v2/internal/pop3"
+	"github.com/yarilomail/yarilo/v2/internal/quotawarn"
+	"github.com/yarilomail/yarilo/v2/internal/readyfile"
+	"github.com/yarilomail/yarilo/v2/internal/sieve"
+	"github.com/yarilomail/yarilo/v2/internal/stopaccept"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/virtual"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
+	"github.com/yarilomail/yarilo/v2/internal/storage/search"
+	submsvr "github.com/yarilomail/yarilo/v2/internal/submission"
+	submproxy "github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	authclient "github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	filedict "github.com/yarilomail/yarilo/v2/pkg/dict/file"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Server is the yarilo backend (or single-node) server.
@@ -1272,7 +1272,7 @@ func personalBoxes(vd VirtualDeps, sc config.StorageConfig, locker locks.Locker)
 }
 
 // personalSeparator returns the personal namespace's hierarchy separator
-// (default "." — maildir++), used to stamp UserInfo for paths without
+// (default "." - maildir++), used to stamp UserInfo for paths without
 // per-namespace IMAP context (LMTP, backend-api).
 func personalSeparator(cfg []config.NamespaceConfig) string {
 	for _, ns := range cfg {
@@ -1337,7 +1337,7 @@ func buildNamespaces(cfg []config.NamespaceConfig) []imapsvr.NamespaceSpec {
 }
 
 // buildDict opens the named dict from cfg.Dicts, returning nil when the
-// entry is absent. The caller decides whether nil is acceptable —
+// entry is absent. The caller decides whether nil is acceptable -
 // IMAP METADATA tolerates a nil dict (the feature degrades to "Metadata
 // storage not configured"); other consumers may require a non-nil
 // result and error out at startup.
@@ -1405,8 +1405,8 @@ func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 	}
 }
 
-// BuildFTS wires the session-side FTS client (https://doc.yarilomail.org/FTS §11). Sessions
-// only ever talk to the yarilo-fts service over the wire — remote mode; the
+// BuildFTS wires the session-side FTS client (https://doc.yarilomail.org/latest/features/fts.html §11). Sessions
+// only ever talk to the yarilo-fts service over the wire - remote mode; the
 // embedded mode is for the service's own tests/CLI.
 func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error) {
 	fc := cfg.FTS
@@ -1424,7 +1424,7 @@ func BuildFTS(cfg *config.Config) (ftsproto.Client, *language.MultiChain, error)
 	}
 	// The session side must build the IDENTICAL chain set the yarilo-fts
 	// service indexes with (same languages, same per-language filters,
-	// same token/address limits) — otherwise query expansion (#726 item 4:
+	// same token/address limits) - otherwise query expansion (#726 item 4:
 	// per-language filter overrides) would diverge from what was actually
 	// indexed.
 	chain, err := ftsquery.NewChain(fc)

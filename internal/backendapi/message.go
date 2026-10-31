@@ -10,7 +10,7 @@ import (
 
 	"github.com/emersion/go-message"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // registerMessageRoutes registers the message-level read. It is the only route
@@ -58,7 +58,7 @@ func (s *Server) handleMessageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uc, err := s.openUserContextReadOnly(req.User)
+	uc, err := s.openUserContextSettled(req.User)
 	if err != nil {
 		apiError(w, err.Error(), http.StatusBadRequest)
 		return

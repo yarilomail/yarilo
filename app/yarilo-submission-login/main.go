@@ -16,12 +16,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/login"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/login"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // version is set via pkg/build; kept for vet compatibility
@@ -114,7 +114,7 @@ func main() {
 
 	tel := startTelemetry(cfg.Telemetry)
 
-	// Port 465 — implicit TLS (Submissions).
+	// Port 465 - implicit TLS (Submissions).
 	if svcs.Submissions.Active() {
 		addr := fmt.Sprintf(":%d", svcs.Submissions.Port)
 		ln, err := net.Listen("tcp", addr)
@@ -152,6 +152,9 @@ func main() {
 			HAProxyNets:         haproxyNets,
 			XClient:             svcs.Submissions.XClient,
 			XClientNets:         xclientNets,
+
+			SubmissionMaxMessageBytes: cfg.Protocol.Submission.MaxMsgSize,
+			SubmissionMaxRecipients:   cfg.Protocol.Submission.MaxRecipients,
 		})
 		loginServers = append(loginServers, srv)
 		go func(srv *login.Server, ln net.Listener) {
@@ -166,7 +169,7 @@ func main() {
 		slog.Info("submission-login: listening", "addr", addr, "tls", "implicit")
 	}
 
-	// Port 587 — STARTTLS.
+	// Port 587 - STARTTLS.
 	if svcs.Submission.Active() {
 		addr := fmt.Sprintf(":%d", svcs.Submission.Port)
 		ln, err := net.Listen("tcp", addr)
@@ -204,6 +207,9 @@ func main() {
 			TransientRetries:    cfg.Login.TransientRetries,
 			TransientReloginCap: cfg.Login.TransientReloginCap,
 			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
+
+			SubmissionMaxMessageBytes: cfg.Protocol.Submission.MaxMsgSize,
+			SubmissionMaxRecipients:   cfg.Protocol.Submission.MaxRecipients,
 		})
 		loginServers = append(loginServers, srv)
 		go func(srv *login.Server, ln net.Listener) {

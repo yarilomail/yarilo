@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/fail"
-	"github.com/yarilomail/yarilo/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/fail"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/memory"
 )
 
 func newMem(t *testing.T) dict.Dict {

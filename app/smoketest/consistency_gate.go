@@ -8,7 +8,7 @@ import (
 
 // A consistency row enables itself when the deployment configured BOTH surfaces
 // it compares. One side present and the other absent is a visible skip naming
-// what is missing, never a silent omission — the property #1197 established for
+// what is missing, never a silent omission - the property #1197 established for
 // the gate as a whole, applied per row. -require-all and -require-all-except
 // carry the operator's choice about it unchanged, because a skipped row is an
 // ordinary skipped check in the ordinary area machinery.
@@ -97,6 +97,14 @@ func registerConsistency(checks *[]check) {
 	// cost the whole feature exists to avoid.
 	row("consistency jmap Email/changes and Mailbox/changes report one real change",
 		func() error { return checkConsistencyChanges(imapUser, imapPass) },
+		imap, jmap, delivery)
+
+	row("consistency imap flag arrives as a StateChange on the jmap eventsource",
+		func() error { return checkConsistencyPush(imapUser, imapPass) },
+		imap, jmap, delivery)
+
+	row("consistency imap flag arrives as a StateChange on the jmap websocket",
+		func() error { return checkConsistencyWebSocket(imapUser, imapPass) },
 		imap, jmap, delivery)
 
 	row("consistency imap SEARCH <-> jmap Email/query over one term",

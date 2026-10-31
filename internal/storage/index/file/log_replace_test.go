@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestConcurrentCompactionNoUIDRegression reproduces #644: two pods share the
@@ -13,7 +13,7 @@ import (
 // rewrites the base with a higher NextUID. Pod A's cached logFD is now stale
 // (points at the old, unlinked inode). Without the inode-identity check in
 // reload(), pod A would fast-path past the change, keep its low in-memory
-// NextUID, and eventually flush it back — regressing the counter. This test
+// NextUID, and eventually flush it back - regressing the counter. This test
 // pins that reload() drops the stale fd, reconciles the advanced NextUID, and
 // that pod A's next append lands in the live log (visible to a fresh reader).
 func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
@@ -25,8 +25,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("podA OpenFolder: %v", err)
 	}
-	ms, _ := podA.NextModSeq(fa.ID)
-	if err := podA.AppendMessage(fa.ID, &mailbox.MessageMeta{UID: 1, ModSeq: ms, Size: 100}); err != nil {
+	if err := podA.AppendMessage(fa.ID, &mailbox.MessageMeta{UID: 1, Size: 100}); err != nil {
 		t.Fatalf("podA append UID1: %v", err)
 	}
 
@@ -36,7 +35,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 	}
 
 	// Pod B (separate backend, same dir): advance the folder to UID 5, then
-	// compact — flush() rewrites the base with NextUID=6 and truncateLog
+	// compact - flush() rewrites the base with NextUID=6 and truncateLog
 	// replaces the .log with a fresh inode I2.
 	podB := openIdx(dir, testUser)
 	fb, err := podB.OpenFolder("INBOX", 0, "")
@@ -44,8 +43,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 		t.Fatalf("podB OpenFolder: %v", err)
 	}
 	for uid := uint32(2); uid <= 5; uid++ {
-		ms, _ := podB.NextModSeq(fb.ID)
-		if err := podB.AppendMessage(fb.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Size: 100}); err != nil {
+		if err := podB.AppendMessage(fb.ID, &mailbox.MessageMeta{UID: uid, Size: 100}); err != nil {
 			t.Fatalf("podB append UID%d: %v", uid, err)
 		}
 	}
@@ -81,7 +79,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 		t.Fatal("podA kept its stale logFD after the log was replaced")
 	}
 
-	// Pod A's next append must land in the live log — a fresh reader must see
+	// Pod A's next append must land in the live log - a fresh reader must see
 	// all six UIDs (1..5 plus the new one), proving the write did not go into
 	// the dead inode.
 	uid, err := podA.AllocateUID(fa.ID)
@@ -91,8 +89,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 	if uid < 6 {
 		t.Fatalf("allocated UID regressed: got %d, want >= 6", uid)
 	}
-	ms, _ = podA.NextModSeq(fa.ID)
-	if err := podA.AppendMessage(fa.ID, &mailbox.MessageMeta{UID: uid, ModSeq: ms, Size: 100}); err != nil {
+	if err := podA.AppendMessage(fa.ID, &mailbox.MessageMeta{UID: uid, Size: 100}); err != nil {
 		t.Fatalf("podA append new UID: %v", err)
 	}
 

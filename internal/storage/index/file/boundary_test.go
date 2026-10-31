@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // TestBoundaryPartialWriteDiscarded verifies that a partial write appended
@@ -16,8 +16,7 @@ func TestBoundaryPartialWriteDiscarded(t *testing.T) {
 	b := openIdx(dir, testUser)
 	f, _ := b.OpenFolder("INBOX", 0, "")
 
-	modseq, _ := b.NextModSeq(f.ID)
-	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, ModSeq: modseq, Size: 100}); err != nil {
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 100}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	b.Close() //nolint:errcheck
@@ -34,7 +33,7 @@ func TestBoundaryPartialWriteDiscarded(t *testing.T) {
 	_, _ = lf.Write(torn)
 	lf.Close()
 
-	// Reopen — torn record must be discarded; original message must survive.
+	// Reopen - torn record must be discarded; original message must survive.
 	b2 := openIdx(dir, testUser)
 	f2, _ := b2.OpenFolder("INBOX", 0, "")
 	msgs, err := b2.GetMessages(f2.ID, mailbox.SeqSet{})
@@ -51,15 +50,14 @@ func TestBoundaryPartialWriteDiscarded(t *testing.T) {
 
 // TestBoundaryMidTransactionCrashDiscarded verifies that a BOUNDARY record
 // whose declared size extends beyond the actual file end causes the entire
-// transaction to be discarded — no sub-records are applied.
+// transaction to be discarded - no sub-records are applied.
 func TestBoundaryMidTransactionCrashDiscarded(t *testing.T) {
 	dir := t.TempDir()
 	b := openIdx(dir, testUser)
 	f, _ := b.OpenFolder("INBOX", 0, "")
 
 	// Write one good message so we have a baseline.
-	modseq, _ := b.NextModSeq(f.ID)
-	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, ModSeq: modseq, Size: 100}); err != nil {
+	if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 1, Size: 100}); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	b.Close() //nolint:errcheck
@@ -67,14 +65,14 @@ func TestBoundaryMidTransactionCrashDiscarded(t *testing.T) {
 	// Craft a torn transaction: BOUNDARY (12 bytes) + only 4 bytes of a
 	// sub-record that would require at least 8 bytes (header) + payload.
 	// BOUNDARY.Size = 12 + 24 = 36, but we only write 4 bytes after the
-	// BOUNDARY, so logFileSize < committedEnd — transaction must be dropped.
+	// BOUNDARY, so logFileSize < committedEnd - transaction must be dropped.
 	logPath := filepath.Join(dir, testHome("", testUser), IndexLogFileName)
 	lf, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}
 	// BOUNDARY record: size=12 (8 hdr + 4 payload), type=TxTypeBoundary(0x00080000)
-	// payload = uint32(36) — claims 36 bytes total in this transaction group.
+	// payload = uint32(36) - claims 36 bytes total in this transaction group.
 	boundary := make([]byte, 12)
 	binary.LittleEndian.PutUint32(boundary[0:], 12)         // TxHeader.Size
 	binary.LittleEndian.PutUint32(boundary[4:], 0x00080000) // TxTypeBoundary
@@ -90,7 +88,7 @@ func TestBoundaryMidTransactionCrashDiscarded(t *testing.T) {
 	}
 	lf.Close()
 
-	// Reopen — torn transaction must be discarded; only the original message survives.
+	// Reopen - torn transaction must be discarded; only the original message survives.
 	b2 := openIdx(dir, testUser)
 	f2, _ := b2.OpenFolder("INBOX", 0, "")
 	msgs, err := b2.GetMessages(f2.ID, mailbox.SeqSet{})
@@ -113,9 +111,8 @@ func TestBoundaryTwoCompleteGroups(t *testing.T) {
 	f, _ := b.OpenFolder("INBOX", 0, "")
 
 	for i, name := range []string{"a.eml", "b.eml"} {
-		modseq, _ := b.NextModSeq(f.ID)
 		if err := b.AppendMessage(f.ID, &mailbox.MessageMeta{
-			UID: uint32(i + 1), ModSeq: modseq, Size: 100,
+			UID: uint32(i + 1), Size: 100,
 		}); err != nil {
 			t.Fatalf("AppendMessage %s: %v", name, err)
 		}

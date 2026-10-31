@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/warden"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 // registerWhoRoutes registers active-session listing routes.
@@ -185,7 +185,7 @@ func (s *Server) handleWhoCount(w http.ResponseWriter, r *http.Request) {
 		}
 		resp["by_user"] = byUser
 	case "":
-		// total only — already on resp
+		// total only - already on resp
 	default:
 		apiError(w, `by must be "" | "protocol" | "user"`, http.StatusBadRequest)
 		return

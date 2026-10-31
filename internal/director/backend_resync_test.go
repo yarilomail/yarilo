@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 func TestBackendResync_MergeRules(t *testing.T) {
@@ -44,7 +44,7 @@ func TestBackendResync_MergeRules(t *testing.T) {
 		s.forgetBackendLease("10.0.0.1")
 		s.ring.RemoveBackend("10.0.0.1")
 
-		// A snapshot at-or-below the removal seq is a ghost — blocked.
+		// A snapshot at-or-below the removal seq is a ghost - blocked.
 		if s.applyBackendRecord(backendRecord{ip: "10.0.0.1", port: 993, tag: "imap", vhosts: 100, up: true, seq: 5}) {
 			t.Error("a record at the removal seq must not resurrect a tombstoned backend")
 		}
@@ -55,7 +55,7 @@ func TestBackendResync_MergeRules(t *testing.T) {
 		if s.applyBackendRecord(backendRecord{ip: "10.0.0.1", port: 993, tag: "imap", vhosts: 100, up: true, seq: 0}) {
 			t.Error("a static record must not resurrect a tombstoned backend")
 		}
-		// A strictly-newer seq is a genuine re-registration — admitted, tomb cleared.
+		// A strictly-newer seq is a genuine re-registration - admitted, tomb cleared.
 		if !s.applyBackendRecord(backendRecord{ip: "10.0.0.1", port: 993, tag: "imap", vhosts: 100, up: true, seq: 6}) {
 			t.Error("a strictly-newer seq must re-admit the backend")
 		}
@@ -104,7 +104,7 @@ func TestBackendResync_HashDebounce(t *testing.T) {
 }
 
 // TestBackendResync_HealsDivergence is the in-process gate: an N=2 ring where a
-// backend was added to only ONE director (a dropped RING-CHANGE) self-heals —
+// backend was added to only ONE director (a dropped RING-CHANGE) self-heals -
 // the other director pulls a snapshot on the sustained hash mismatch and
 // converges on the same backend set.
 func TestBackendResync_HealsDivergence(t *testing.T) {

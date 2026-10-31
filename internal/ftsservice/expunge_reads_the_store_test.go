@@ -5,7 +5,7 @@ package ftsservice
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Without a per-copy term the store is what says whether a retraction may take

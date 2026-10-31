@@ -7,13 +7,13 @@ import (
 
 	imap "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // countMaildirMessages counts message files under every cur/ and new/ directory
-// below root — the physical footprint of a maildir mailbox.
+// below root - the physical footprint of a maildir mailbox.
 func countMaildirMessages(t *testing.T, root string) int {
 	t.Helper()
 	n := 0

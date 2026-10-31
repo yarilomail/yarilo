@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func newTestUser(t *testing.T) (mailbox.UserMailbox, string) {
@@ -240,5 +240,5 @@ func TestFolderOps(t *testing.T) {
 	}
 }
 
-// Scan implementation lands in Phase 6 — covered by
+// Scan implementation lands in Phase 6 - covered by
 // purge_test.go and rebuild_test.go.

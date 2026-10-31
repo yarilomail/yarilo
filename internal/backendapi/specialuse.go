@@ -6,8 +6,8 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/userstate/specialuse"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/specialuse"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // registerSpecialUseRoutes registers RFC 6154 special-use override
@@ -159,8 +159,7 @@ func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request, 
 		uc.info.Username,
 		uc.lockOwner(),
 		s.opts.Locker,
-		s.opts.SpecialUseDefaults,
-	)
+		s.opts.SpecialUseDefaults)
 	// One owner of NFC for all three special-use handlers, resolved here so
 	// none of them addresses a decomposed spelling of a folder (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)

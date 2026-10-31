@@ -3,7 +3,7 @@ package mailbox_test
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The three evaluator defects of #1117, each with an input that tells the two
@@ -89,7 +89,7 @@ func TestEvaluatorMatrix(t *testing.T) {
 		},
 		{
 			// A global that speaks only about the negative mask leaves the
-			// local positives alone — otherwise a revoke would blank the ACL.
+			// local positives alone - otherwise a revoke would blank the ACL.
 			name:   "a global negative alone does not blank the local grant",
 			local:  "user=bob lrs\n",
 			global: "-anyone s",

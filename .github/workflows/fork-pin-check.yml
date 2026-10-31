@@ -1,4 +1,4 @@
-name: Fork pin check — yarilo
+name: Fork pin check - yarilo
 
 # Four dependencies are replaced by our own forks, each carrying yarilo patches
 # on top of a daily-synced upstream mirror. The forks advance by themselves;
@@ -61,8 +61,9 @@ jobs:
               continue
             fi
             if [ "${head:0:12}" != "$pinned" ]; then
-              gap=$(gh api "repos/${repo}/compare/${pinned}...${head:0:12}" --jq '.ahead_by' 2>/dev/null || echo "?")
-              date=$(gh api "repos/${repo}/branches/${BRANCH}" --jq '.commit.commit.committer.date' 2>/dev/null || echo "?")
+              # gh api prints the error body to stdout, so a failure replaces the value.
+              gap=$(gh api "repos/${repo}/compare/${pinned}...${head:0:12}" --jq '.ahead_by' 2>/dev/null) || gap="?"
+              date=$(gh api "repos/${repo}/branches/${BRANCH}" --jq '.commit.commit.committer.date' 2>/dev/null) || date="?"
               echo "- \`${repo}\`: pinned \`${pinned}\`, ${BRANCH} head \`${head:0:12}\` (${gap} commit(s) ahead, last ${date})" >> behind.md
             else
               echo "::notice::${repo} is pinned at the head of ${BRANCH} (${pinned})"
@@ -75,17 +76,22 @@ jobs:
             fi
 
             # The mirror is whichever branch the fork tracks upstream on: v2
-            # for go-imap, master for the rest. Asked by name rather than
-            # assumed, so a fork that renames it is reported, not skipped.
-            for mirror in v2 master; do
-              if gh api "repos/${repo}/branches/${mirror}" --jq '.name' >/dev/null 2>&1; then
-                bh=$(gh api "repos/${repo}/compare/${BRANCH}...${mirror}" --jq '.ahead_by' 2>/dev/null || echo 0)
-                if [ "${bh:-0}" != "0" ]; then
-                  echo "- \`${repo}\`: \`${BRANCH}\` is ${bh} commit(s) behind \`${mirror}\` -- the nightly rebase is not landing" >> behind.md
-                fi
+            # for go-imap, main for go-jmap, master for the rest. A missing branch
+            # redirects to the default one, so the returned name must match.
+            found=""
+            for mirror in v2 main master; do
+              if [ "$(gh api "repos/${repo}/branches/${mirror}" --jq '.name' 2>/dev/null)" = "$mirror" ]; then
+                found="$mirror"
                 break
               fi
             done
+            if [ -z "$found" ]; then
+              echo "- \`${repo}\`: no upstream mirror branch (v2, main or master)" >> behind.md
+            elif ! bh=$(gh api "repos/${repo}/compare/${BRANCH}...${found}" --jq '.ahead_by' 2>/dev/null); then
+              echo "- \`${repo}\`: \`${BRANCH}\` could not be compared with \`${found}\`" >> behind.md
+            elif [ "$bh" != "0" ]; then
+              echo "- \`${repo}\`: \`${BRANCH}\` is ${bh} commit(s) behind \`${found}\` -- the nightly rebase is not landing" >> behind.md
+            fi
 
             # And whether the fork's own sync still runs. A failing one leaves
             # every commit exactly where it was, which every check above reads

@@ -6,11 +6,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/loginproto"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	proxyproto "github.com/pires/go-proxyproto"
+
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/loginproto"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // relayDialer hands the proxy the auth-service client. It is the Server's own
@@ -22,6 +25,76 @@ type relayDialer func() (*authclient.Client, error)
 type relayContext struct {
 	dial      relayDialer
 	sessionID string
+	// noPenalty is a peer trusted to forward addresses, see handleConn.
+	noPenalty bool
+}
+
+// authOrigin is what the AUTH line says about the client's connection: TLS,
+// the server name and hello fingerprint, the ports and the real peer, the
+// client's ID when kept, and a trusted peer's exemption from penalties.
+// forwardPort is the client port a trusted forwarder named, if any.
+func authOrigin(conn net.Conn, clientID string, noPenalty bool, forwardPort string) []authclient.Option {
+	var opts []authclient.Option
+	raw := conn
+	if tc, ok := conn.(*tls.Conn); ok {
+		opts = append(opts, authclient.TLS())
+		if name := tc.ConnectionState().ServerName; name != "" {
+			opts = append(opts, authclient.LocalName(name))
+		}
+		raw = tc.NetConn()
+		if h, ok := helloHashes.Load(raw); ok {
+			if hash, ok := h.(string); ok {
+				opts = append(opts, authclient.JA3Hash(hash))
+			}
+		}
+	}
+	a := authclient.Addresses{LocalPort: port(raw.LocalAddr()), RemotePort: port(raw.RemoteAddr())}
+	if p, err := strconv.Atoi(forwardPort); err == nil {
+		a.RemotePort = p
+	}
+	peer := realConn(raw)
+	a.RealLocalIP, a.RealLocalPort = hostPort(peer.LocalAddr())
+	a.RealRemoteIP, a.RealRemotePort = hostPort(peer.RemoteAddr())
+	opts = append(opts, authclient.Conn(a))
+	if clientID != "" {
+		opts = append(opts, authclient.ClientID(clientID))
+	}
+	if noPenalty {
+		opts = append(opts, authclient.NoPenalty())
+	}
+	return opts
+}
+
+// realConn is the TCP connection itself, under a PROXY header's rewrite.
+func realConn(c net.Conn) net.Conn {
+	if pc, ok := c.(*proxyproto.Conn); ok {
+		return pc.Raw()
+	}
+	return c
+}
+
+func port(a net.Addr) int {
+	_, p := hostPort(a)
+	return p
+}
+
+func hostPort(a net.Addr) (string, int) {
+	if a == nil {
+		return "", 0
+	}
+	host, ps, err := net.SplitHostPort(a.String())
+	if err != nil {
+		return "", 0
+	}
+	p, _ := strconv.Atoi(ps)
+	return host, p
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // relayMechanisms are what the service announced and the proxy relays: SCRAM,
@@ -97,7 +170,7 @@ type saslRelayOutcome struct {
 func runRelayedSASL(
 	rc relayContext,
 	conn net.Conn,
-	mech, service, clientIP string,
+	mech, service, clientIP, clientID string,
 	initial []byte,
 	writeChallenge func([]byte) error,
 	readResponse func() ([]byte, error),
@@ -115,7 +188,8 @@ func runRelayedSASL(
 			return nil, fmt.Errorf("login: %s needs a channel binding this connection has none of", mech)
 		}
 	}
-	srv := authclient.NewRelayServer(cl, mech, service, clientIP, loginproto.LocalIP(conn), rc.sessionID, cb)
+	srv := authclient.NewRelayServer(cl, mech, service, clientIP, loginproto.LocalIP(conn), rc.sessionID, cb,
+		authOrigin(conn, clientID, rc.noPenalty, "")...)
 	// An exchange the client abandons frees the service's half at once, rather
 	// than waiting out its deadline there (#1733).
 	defer srv.Cancel()

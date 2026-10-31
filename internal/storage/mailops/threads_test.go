@@ -3,6 +3,11 @@ package mailops
 import (
 	"strings"
 	"testing"
+
+	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Threading reads headers only, so a save keeps the header block and nothing
@@ -30,5 +35,31 @@ func TestHeaderCaptureKeepsOnlyTheHeaderBlock(t *testing.T) {
 				t.Errorf("kept %d bytes, want %d", len(h.buf), len(tc.want))
 			}
 		})
+	}
+}
+
+// The sidecar is written after the folder's commit, so recording a new
+// conversation is announced on the account's threads; a copy is not.
+func TestRecordingAThreadEmits(t *testing.T) {
+	rec := &lockstest.Recorder{}
+	user := &mailbox.UserInfo{Username: "u@example.com", Home: t.TempDir()}
+	o := &Ops{cfg: Config{Threads: threads.NewRecorder(nil), Protocol: "test", Locker: rec}, user: user}
+	raw := []byte("Message-ID: <a@x>\r\nSubject: s\r\n\r\n")
+	steps := []struct {
+		name  string
+		guid  byte
+		emits bool
+	}{
+		{"new message", 1, true},
+		{"copy of it", 1, false},
+		{"another message", 2, true},
+	}
+	key := locks.ThreadsKey(user.Username)
+	for _, st := range steps {
+		before := rec.Count(key, locks.EventThreads)
+		o.recordThread([16]byte{st.guid}, raw)
+		if got := rec.Count(key, locks.EventThreads) - before; got != map[bool]int{true: 1}[st.emits] {
+			t.Errorf("%s emitted %d, want emits=%v", st.name, got, st.emits)
+		}
 	}
 }

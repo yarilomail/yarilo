@@ -3,7 +3,7 @@ package file
 import (
 	"log/slog"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // reconcileHeaderLocked re-derives the header from the records it describes,

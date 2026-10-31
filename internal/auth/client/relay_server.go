@@ -12,6 +12,7 @@ type RelayServer struct {
 	localIP  string
 	session  string
 	cbind    []byte
+	opts     []Option
 
 	x    *SASLExchange
 	done bool
@@ -23,15 +24,15 @@ type RelayServer struct {
 
 // NewRelayServer builds the relay for one mechanism. cbind is the channel
 // binding the session holds, which is why -PLUS can only be run from here.
-func NewRelayServer(c *Client, mech, service, remoteIP, localIP, sessionID string, cbind []byte) *RelayServer {
-	return &RelayServer{c: c, mech: mech, service: service, remoteIP: remoteIP, localIP: localIP, session: sessionID, cbind: cbind}
+func NewRelayServer(c *Client, mech, service, remoteIP, localIP, sessionID string, cbind []byte, opts ...Option) *RelayServer {
+	return &RelayServer{c: c, mech: mech, service: service, remoteIP: remoteIP, localIP: localIP, session: sessionID, cbind: cbind, opts: opts}
 }
 
 // Next implements sasl.Server: one round of the relayed conversation.
 func (r *RelayServer) Next(response []byte) (challenge []byte, done bool, err error) {
 	var step *SASLStep
 	if r.x == nil {
-		r.x, step, err = r.c.BeginSASL(r.mech, r.service, r.remoteIP, r.localIP, r.session, r.cbind, response)
+		r.x, step, err = r.c.BeginSASL(r.mech, r.service, r.remoteIP, r.localIP, r.session, r.cbind, response, r.opts...)
 	} else {
 		step, err = r.x.Next(response)
 	}

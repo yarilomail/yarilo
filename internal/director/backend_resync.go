@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // Backend-set auto-resync (#846 PR-2): each anti-entropy tick a director sends
@@ -133,7 +133,7 @@ func (m *Membership) sendBackendSnapshot(conn net.Conn) {
 }
 
 // recvBackendSnapshot reads a BACKEND-HAND block (already past START) and merges
-// it. Reads inline off the ring reader — the block is sent contiguously.
+// it. Reads inline off the ring reader - the block is sent contiguously.
 func (m *Membership) recvBackendSnapshot(rd *bufio.Reader) {
 	var recs []backendRecord
 	for {
@@ -209,7 +209,7 @@ func (s *Server) applyBackendRecord(r backendRecord) bool {
 	return false
 }
 
-// backendLeaseSeq returns the last heartbeat seq recorded for ip (0 if none —
+// backendLeaseSeq returns the last heartbeat seq recorded for ip (0 if none -
 // a static / admin-added backend that never heartbeats).
 func (s *Server) backendLeaseSeq(ip string) uint64 {
 	s.backendSeenMu.Lock()

@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 // jobSeq: per-process monotonic job ID, so one job's log lines can be
@@ -28,7 +28,7 @@ type job struct {
 	attempt int
 }
 
-// jobKey identifies the work, which is a mailbox — not a request. Several
+// jobKey identifies the work, which is a mailbox - not a request. Several
 // requests for one mailbox are one pass over it.
 type jobKey struct {
 	user   string
@@ -58,7 +58,7 @@ type entry struct {
 //
 // Coalescing is a correctness property, not an optimisation. A pass reads the
 // checkpoint and indexes everything above it, so two passes over one mailbox do
-// the same work twice — and the second discovers this only after taking the
+// the same work twice - and the second discovers this only after taking the
 // lock. Under delivery load those duplicates are what turn a busy mailbox into
 // a stream of lock contention.
 //
@@ -67,7 +67,7 @@ type entry struct {
 // new messages. It is recorded on the running entry and re-queued when the pass
 // finishes, so nothing is lost and nothing is duplicated.
 //
-// Ordering is FIFO with a priority front-insert — a search catch-up jumps ahead
+// Ordering is FIFO with a priority front-insert - a search catch-up jumps ahead
 // of background autoindex. A front-insert for a mailbox already queued moves it
 // rather than adding a second entry.
 type queue struct {
@@ -123,16 +123,13 @@ func (q *queue) push(j job, front bool) {
 
 // merge folds a new request into the pending one. The pass must cover the
 // highest UID either request asked for, or the later request's messages would
-// be skipped. max_recent takes the smaller bound: it is a limit, and the
-// stricter of two limits is the one both callers can live with.
+// be skipped. max_recent takes the smaller bound, 0 (none) included: a search
+// catch-up merged into an autoindex request is never skipped, as in the reference.
 func (e *entry) merge(j job) {
 	if j.maxUID > e.job.maxUID {
 		e.job.maxUID = j.maxUID
 	}
-	switch {
-	case e.job.maxRecent == 0:
-		e.job.maxRecent = j.maxRecent
-	case j.maxRecent > 0 && j.maxRecent < e.job.maxRecent:
+	if j.maxRecent < e.job.maxRecent {
 		e.job.maxRecent = j.maxRecent
 	}
 	// A fresh request restarts the backoff: it is new evidence that the mailbox
@@ -152,7 +149,7 @@ func (q *queue) wake() {
 // rather than becoming a second pass.
 //
 // Every popped job must be handed back through done, or that mailbox is never
-// queued again — the caller defers it immediately after popping.
+// queued again - the caller defers it immediately after popping.
 func (q *queue) pop(ctx context.Context) (job, bool) {
 	stop := context.AfterFunc(ctx, func() {
 		q.mu.Lock()
@@ -224,7 +221,7 @@ func (q *queue) done(j job) {
 		q.busy[key.user] = n - 1
 	}
 	// A freed user may unblock a worker parked on an entry it had to skip, and
-	// which worker that is cannot be known here — so every waiter is woken.
+	// which worker that is cannot be known here - so every waiter is woken.
 	defer q.cond.Broadcast()
 	if !e.requeue || q.closed {
 		delete(q.index, key)

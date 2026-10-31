@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
-	imapserver "github.com/yarilomail/yarilo/internal/imap"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
+	imapserver "github.com/yarilomail/yarilo/v2/internal/imap"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // A folder takes messages up to its cap, not one short of it.
@@ -146,6 +146,8 @@ func TestRenameInboxHoldsTheMailboxCount(t *testing.T) {
 		AuthRelay:   authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		QuotaEngine: true,
 		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxCount: 2},
+		// A namespace naming no mailboxes, so the count is the test's own.
+		Namespaces: []imapserver.NamespaceSpec{{Type: imapserver.NamespacePersonal, Separator: '.', List: imapserver.ListYes, Inbox: true}},
 	})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

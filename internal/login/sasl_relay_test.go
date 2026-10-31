@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
 )
 
 // stubToken is what the fake service issues; a login without one is refused
@@ -153,7 +153,7 @@ func TestTheProxyRelaysAScramExchange(t *testing.T) {
 	done := make(chan result, 1)
 	go func() {
 		write, read := saslIO(server, bufio.NewReader(server))
-		out, err := runRelayedSASL(relayContext{dial: dial, sessionID: "s1"}, server, "SCRAM-SHA-256", "imap", "192.0.2.1",
+		out, err := runRelayedSASL(relayContext{dial: dial, sessionID: "s1"}, server, "SCRAM-SHA-256", "imap", "192.0.2.1", "",
 			[]byte("n,,n=alice,r=nonce"), write, read)
 		done <- result{out, err}
 	}()
@@ -212,7 +212,7 @@ func TestACancelledExchangeIsNotALogin(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		write, read := saslIO(server, bufio.NewReader(server))
-		_, err := runRelayedSASL(relayContext{dial: dial, sessionID: "s1"}, server, "SCRAM-SHA-256", "imap", "192.0.2.1",
+		_, err := runRelayedSASL(relayContext{dial: dial, sessionID: "s1"}, server, "SCRAM-SHA-256", "imap", "192.0.2.1", "",
 			[]byte("n,,n=alice,r=nonce"), write, read)
 		done <- err
 	}()
@@ -394,7 +394,7 @@ func TestTheRelayedAuthCarriesTheSessionID(t *testing.T) {
 	go func() {
 		write, read := saslIO(server, bufio.NewReader(server))
 		_, _ = runRelayedSASL(relayContext{dial: dial, sessionID: "s1"}, server,
-			"SCRAM-SHA-256", "imap", "192.0.2.1", []byte("n,,n=alice,r=nonce"), write, read)
+			"SCRAM-SHA-256", "imap", "192.0.2.1", "", []byte("n,,n=alice,r=nonce"), write, read)
 	}()
 
 	rd := bufio.NewReader(client)

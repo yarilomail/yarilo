@@ -10,13 +10,13 @@ import (
 
 // Row: one LMTP delivery, visible to every configured reader. The other rows
 // compare a pair; this one asserts that a single arrival reaches IMAP, POP3 and
-// JMAP at all — the agreement a user notices first, and the one a per-protocol
+// JMAP at all - the agreement a user notices first, and the one a per-protocol
 // check cannot make, because each protocol was asked about a different message.
 //
 // POP3 also reports the message's octet count, which is the one fact it shares
 // with the other surfaces: LIST answers in octets and so does RFC822.SIZE, over
 // the same stored message. That comparison is in this row rather than in a POP3
-// pair of its own — see the note in checkConsistencyReaders on why POP3 gets no
+// pair of its own - see the note in checkConsistencyReaders on why POP3 gets no
 // further rows.
 func checkConsistencyReaders(user, pass string) error {
 	marker := consistencyMarker("readers")
@@ -81,12 +81,12 @@ func sharedFields(anchor, other *reading) *reading {
 //
 // Why POP3 appears here and in no pair of its own: the only identity POP3
 // exposes is UIDL, and RFC 1939 defines it as unique within one maildrop and
-// persistent across sessions — explicitly not related to any other protocol's
+// persistent across sessions - explicitly not related to any other protocol's
 // identifiers. Comparing UIDL to an IMAP UID would pin our own derivation as a
 // cross-surface contract, which is the opposite of what this area is for: it
 // would turn an implementation detail into a promise, and a legitimate change
-// of derivation into a red gate. Size is different — octets of the same stored
-// message are the same fact under both protocols — so that comparison is real
+// of derivation into a red gate. Size is different - octets of the same stored
+// message are the same fact under both protocols - so that comparison is real
 // and is made here.
 func pop3ReadProbe(user, pass, marker string) (*reading, error) {
 	p, err := pop3Login(user, pass)

@@ -11,8 +11,8 @@ import (
 //
 // The folder index is the one layer maildir and sdbox share, which is where the
 // 24-32% gap to the reference has to live: the two drivers have nothing else in
-// common below the session (#1229). None of it was measured — the lock path
-// logged at debug level and nothing else was timed at all — so a per-command
+// common below the session (#1229). None of it was measured - the lock path
+// logged at debug level and nothing else was timed at all - so a per-command
 // number could say a command costs 25ms without saying whether that is the
 // round trip to the lock service, the freshness check, or rebuilding the
 // folder's message list for the tenth time in a row.
@@ -87,6 +87,7 @@ const (
 	lockSiteGUIDAppend      = "guid-append"
 	lockSiteGUIDRebuild     = "guid-rebuild"
 	lockSiteAllocateUid     = "allocate-uid"
+	lockSiteClaimRecent     = "claim-recent"
 	lockSiteAppend          = "append"
 	lockSiteCacheExtension  = "cache-extension"
 	lockSiteCacheGeneration = "cache-generation"
@@ -95,7 +96,6 @@ const (
 	lockSiteExpunge         = "expunge"
 	lockSiteExpungeFloor    = "expunge-floor"
 	lockSiteMarkCorrupt     = "mark-corrupt"
-	lockSiteNextModseq      = "next-modseq"
 	lockSiteOptimize        = "optimize"
 	lockSiteRecomputeVsize  = "recompute-vsize"
 	lockSiteResetFolder     = "reset-folder"
@@ -137,8 +137,8 @@ var metricUIDSpaceReset = promauto.NewCounter(prometheus.CounterOpts{
 })
 
 // metricCompactionRefused counts log compactions that could not write the base.
-// Rotation stopping is invisible from the outside — the folder keeps serving
-// mail while its log grows and every open replays more of it — so the count is
+// Rotation stopping is invisible from the outside - the folder keeps serving
+// mail while its log grows and every open replays more of it - so the count is
 // what says it is happening at all (#1285).
 var metricCompactionRefused = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "fileindex_log_compaction_refused_total",

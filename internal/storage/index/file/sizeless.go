@@ -1,6 +1,6 @@
 package file
 
-import "github.com/yarilomail/yarilo/pkg/mailbox"
+import "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 
 // SizelessUIDs are the records carrying no virtual size. In memory, so the
 // driver can ask on every open and fill them from storage (#1728).

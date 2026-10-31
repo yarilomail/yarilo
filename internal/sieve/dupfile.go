@@ -14,7 +14,7 @@ import (
 
 	"github.com/foxcpp/go-sieve/interp"
 
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // DefaultDuplicateFileName is used when SieveConfig.DuplicateFile is unset.
@@ -48,7 +48,7 @@ func (t *FileDuplicateTracker) path() string {
 }
 
 // withLock runs fn while holding a lock scoped to this user's duplicate file
-// only — independent of the sieve-script / vacation lock, so a duplicate check
+// only - independent of the sieve-script / vacation lock, so a duplicate check
 // does not serialise against unrelated writes in the same home. Nil locker
 // (unit tests) runs fn directly.
 func (t *FileDuplicateTracker) withLock(ctx context.Context, fn func(context.Context) error) error {

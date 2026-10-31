@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/memory"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/memory"
 )
 
 func quotaStores(t *testing.T) map[string]ScriptStore {

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	fileidx "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	fileidx "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func recSetup(t *testing.T) (*userMailbox, mailbox.UserIndex, *mailbox.Folder) {
@@ -54,7 +54,7 @@ func msgByUID(msgs []*mailbox.MessageMeta, uid uint32) *mailbox.MessageMeta {
 }
 
 // F1: a message delivered into new/ must be migrated to cur/ and become
-// readable via Fetch — the whole point of the feature.
+// readable via Fetch - the whole point of the feature.
 func TestReconcile_ImportsFromNewAndIsFetchable(t *testing.T) {
 	box, idx, folder := recSetup(t)
 	deliverToNew(t, box, "1700000000.MDA.host", "hello body\n")
@@ -180,7 +180,7 @@ func TestReconcile_VanishedFileWritesTombstone(t *testing.T) {
 }
 
 // Concern #3: a tracked message whose on-disk name is unchanged keeps its index
-// flags — the reconcile must not revert a client's \Seen back to the flagless
+// flags - the reconcile must not revert a client's \Seen back to the flagless
 func TestReconcile_ImportCarriesGUIDAfterBackfill(t *testing.T) {
 	box, idx, folder := recSetup(t)
 

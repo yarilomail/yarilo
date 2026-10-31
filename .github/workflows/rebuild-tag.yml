@@ -1,7 +1,7 @@
 name: Rebuild a released tag
 
-# A released image can disappear from the registry — retention, a cleanup, a
-# mistake — and when it does, every A/B against that point becomes impossible.
+# A released image can disappear from the registry - retention, a cleanup, a
+# mistake - and when it does, every A/B against that point becomes impossible.
 # That is the cheapest tool there is for "did this regress, and when", so losing
 # it costs more than the storage it saved (#1258 hit exactly this: the bisect
 # against 2.3.134 could not run because the image no longer pulled).
@@ -60,14 +60,14 @@ jobs:
           fi
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: docker.io
           username: 0kaba0

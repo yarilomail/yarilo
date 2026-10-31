@@ -6,7 +6,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/internal/imaptext"
+	"github.com/yarilomail/yarilo/v2/internal/imaptext"
 )
 
 // The head decode must answer exactly what the full decode answers for the
@@ -35,7 +35,7 @@ func TestHeadAgreesWithTheFullDecode(t *testing.T) {
 			},
 		},
 		{
-			name: "several addresses — only the first mailbox is taken",
+			name: "several addresses - only the first mailbox is taken",
 			env: &imaplib.Envelope{
 				From: []imaplib.Address{addr("A", "first", "example.com"), addr("Z", "second", "example.com")},
 				To:   []imaplib.Address{addr("B", "b1", "x"), addr("B2", "b2", "y"), addr("B3", "b3", "z")},
@@ -43,7 +43,7 @@ func TestHeadAgreesWithTheFullDecode(t *testing.T) {
 			},
 		},
 		{
-			name: "the skipped lists are populated — they must not shift the walk",
+			name: "the skipped lists are populated - they must not shift the walk",
 			env: &imaplib.Envelope{
 				Subject: "with sender, reply-to and bcc",
 				Sender:  []imaplib.Address{addr("S", "s", "example.com"), addr("S2", "s2", "example.com")},

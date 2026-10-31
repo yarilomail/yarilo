@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 // registerDictRoutes wires the dict admin surface. Every endpoint is
@@ -159,7 +159,7 @@ func (s *Server) handleDictIterate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := it.Err(); err != nil {
 		// Mid-stream error: write a final {"error": msg} object so
-		// the CLI surfaces it. The HTTP status is already 200 — the
+		// the CLI surfaces it. The HTTP status is already 200 - the
 		// caller MUST check each row for the "error" key.
 		_ = enc.Encode(map[string]string{"error": err.Error()})
 	}

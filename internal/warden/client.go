@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // Conn is a single TCP connection to yarilo-warden for one login session.
@@ -127,7 +127,7 @@ type WhoFilter struct {
 
 // Who streams the active session list from the warden server. The
 // returned slice is empty (not nil) when no sessions match. Errors
-// are transport-level — an empty list with no error means the
+// are transport-level - an empty list with no error means the
 // server returned DONE without any sessions.
 func (c *Conn) Who(f WhoFilter) ([]SessionInfo, error) {
 	args := []string{"WHO"}
@@ -376,7 +376,7 @@ func (c *Conn) Close() { c.conn.Close() }
 // listening on the same channel receive a push asynchronously.
 // Returns nil on the server's OK ack; transport errors propagate.
 //
-// EMIT is fire-and-forget from a delivery standpoint — the server
+// EMIT is fire-and-forget from a delivery standpoint - the server
 // does not block on slow subscribers, so OK means "queued", not
 // "received by every subscriber".
 func (c *Conn) Emit(channel, payload string) error {
@@ -399,7 +399,7 @@ func (c *Conn) Emit(channel, payload string) error {
 // is cancelled or the underlying conn errors out.
 //
 // IMPORTANT: SUBSCRIBE makes the connection unusable for any
-// other command afterwards — open a dedicated conn for each
+// other command afterwards - open a dedicated conn for each
 // subscription. Caller should not call Close() before ctx is
 // cancelled; the subscriber goroutine owns the conn lifecycle.
 func (c *Conn) Subscribe(ctx context.Context, channel string) (<-chan string, error) {
@@ -449,7 +449,7 @@ func (c *Conn) Subscribe(ctx context.Context, channel string) (<-chan string, er
 // session (DefaultSessionTTL / 3 ≈ 30s for the default config).
 //
 // On unknown-session response the loop logs a warning via the
-// provided logger and exits — the caller is responsible for
+// provided logger and exits - the caller is responsible for
 // reconnecting + re-issuing CONNECT if it wants to keep the
 // session registered.
 //

@@ -1,8 +1,8 @@
 // yarilo-fts is the full-text-search service: the sole owner of the FTS
-// indexes — indexing queue + worker and the LOOKUP endpoint — speaking the
+// indexes - indexing queue + worker and the LOOKUP endpoint - speaking the
 // pkg/ftsproto wire protocol. Engine selection is explicit via fts.fts_engine;
 // the flatcurve engine is present only in binaries built with -tags flatcurve
-// (the fts image). See https://doc.yarilomail.org/FTS.
+// (the fts image). See https://doc.yarilomail.org/latest/features/fts.html.
 package main
 
 import (
@@ -17,20 +17,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/backend"
-	"github.com/yarilomail/yarilo/internal/fts/buildmail"
-	"github.com/yarilomail/yarilo/internal/fts/decoder"
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	"github.com/yarilomail/yarilo/internal/ftsservice"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/internal/fts/buildmail"
+	"github.com/yarilomail/yarilo/v2/internal/fts/decoder"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/ftsservice"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 func main() {
@@ -47,7 +47,7 @@ func main() {
 	}
 	fc := cfg.FTS
 	if !fc.Enabled {
-		slog.Error("fts.enabled is false — nothing to serve")
+		slog.Error("fts.enabled is false - nothing to serve")
 		os.Exit(1)
 	}
 
@@ -112,7 +112,7 @@ func main() {
 		// here are already guarded one layer up by ftsservice's LockMailbox, and
 		// adding a backend locker would stack two locks on one resource. What
 		// that guard does not cover is OpenFolder creating an index for a folder
-		// that has none — an indexer has nothing to index there anyway.
+		// that has none - an indexer has nothing to index there anyway.
 		Workers:           fc.IndexWorkers,
 		HandleIdleTimeout: time.Duration(cfg.FTS.HandleIdleTimeoutSecs) * time.Second,
 		PrefetchDepth:     fc.PrefetchDepth,
@@ -286,7 +286,7 @@ func buildLocker(cfg *config.Config) locks.Locker {
 			l, err = locks.NewClientWaiting(ctx, locks.DialTCP(lc.Endpoints[0]), lc.StartupWait())
 		}
 	default:
-		slog.Warn("locks not configured — fts index writes run unguarded")
+		slog.Warn("locks not configured - fts index writes run unguarded")
 		return nil
 	}
 	if err != nil {
@@ -297,7 +297,7 @@ func buildLocker(cfg *config.Config) locks.Locker {
 }
 
 // languagesOr returns xs unchanged when non-empty, or a single-element
-// fallback slice — MultiChain always needs at least one language.
+// fallback slice - MultiChain always needs at least one language.
 func languagesOr(xs []string, def string) []string {
 	if len(xs) > 0 {
 		return xs

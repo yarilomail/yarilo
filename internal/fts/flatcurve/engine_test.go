@@ -17,7 +17,7 @@ import (
 
 	"github.com/0kaba0hub/go-xapian"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 func testEngine(t *testing.T, opts Options) (fts.UserIndex, fts.UserRef) {
@@ -282,7 +282,7 @@ func TestRescanTargeted(t *testing.T) {
 
 // TestRotateTimeTriggersRotationOnSlowCommit (#724) proves commitCurrent
 // rotates when a commit exceeds RotateTime, independent of RotateCount. A
-// tiny RotateTime (1ns) makes ANY real commit exceed it deterministically —
+// tiny RotateTime (1ns) makes ANY real commit exceed it deterministically -
 // no fake clock or artificial sleep needed, no flakiness from actual timing.
 // RotateCount is set far out of reach so only the time-based trigger could
 // possibly cause the rotation seen here.
@@ -383,7 +383,7 @@ func TestOptimizeCallbackFiresAtLimit(t *testing.T) {
 	}
 	t.Cleanup(func() { ui.Close() }) //nolint:errcheck
 
-	// RotateCount=2: 4 docs seal exactly 2 shards — below OptimizeLimit=3.
+	// RotateCount=2: 4 docs seal exactly 2 shards - below OptimizeLimit=3.
 	for uid := uint32(1); uid <= 4; uid++ {
 		indexDoc(t, ui, uid, nil, []string{"x"})
 	}
@@ -394,7 +394,7 @@ func TestOptimizeCallbackFiresAtLimit(t *testing.T) {
 		t.Fatalf("callback fired %d times before reaching OptimizeLimit (2 sealed shards)", n)
 	}
 
-	// 2 more docs seal a 3rd shard — now at OptimizeLimit.
+	// 2 more docs seal a 3rd shard - now at OptimizeLimit.
 	for uid := uint32(5); uid <= 6; uid++ {
 		indexDoc(t, ui, uid, nil, []string{"x"})
 	}
@@ -424,7 +424,7 @@ func TestOptimizeCallbackDisabledWhenLimitZero(t *testing.T) {
 	}
 	t.Cleanup(func() { ui.Close() }) //nolint:errcheck
 
-	// 30 docs / RotateCount=2 seals 15 shards — well past even the old
+	// 30 docs / RotateCount=2 seals 15 shards - well past even the old
 	// (buggy) implicit default of 10, so this decisively catches a
 	// regression back to "0 silently becomes 10" rather than passing by
 	// accident from too few shards.
@@ -438,7 +438,7 @@ func TestOptimizeCallbackDisabledWhenLimitZero(t *testing.T) {
 
 // TestOptimizeMailboxIsolatesOtherMailboxes (#715) proves OptimizeMailbox
 // compacts exactly the requested mailbox, leaving a different mailbox's
-// shards untouched — unlike whole-user Optimize.
+// shards untouched - unlike whole-user Optimize.
 // One index per user: a compaction is the user's, and both folders' documents
 // are in the shards it merges (#1986).
 func TestOptimizeMergesTheUsersShards(t *testing.T) {
@@ -484,7 +484,7 @@ func TestOptimizeMergesTheUsersShards(t *testing.T) {
 
 // TestShardPathsIgnoresOptimizeTmpDir (#715) is the direct safety check
 // behind the lazy-cleanup design: a leftover "optimize" compaction tmp dir
-// must never be mistaken for a shard by shardPaths — otherwise a stale tmp
+// must never be mistaken for a shard by shardPaths - otherwise a stale tmp
 // dir left by a crash would corrupt every subsequent Lookup/Optimize, not
 // just waste disk space until the next lazy cleanup.
 func TestShardPathsIgnoresOptimizeTmpDir(t *testing.T) {
@@ -511,7 +511,7 @@ func TestShardPathsIgnoresOptimizeTmpDir(t *testing.T) {
 
 // TestCleanStaleOptimizeTmpDir (#715) proves a leftover "optimize" tmp dir
 // from a prior crash is swept the first time the mailbox's directory is
-// touched — the "lazy, on first state() open" substitute for a startup
+// touched - the "lazy, on first state() open" substitute for a startup
 // sweep the service has no way to do upfront (no list of every mailbox).
 func TestCleanStaleOptimizeTmpDir(t *testing.T) {
 	user := fts.UserRef{Username: "u@test", IndexRoot: t.TempDir()}
@@ -699,7 +699,7 @@ func TestHeaderExistenceRequiresRealToken(t *testing.T) {
 
 // TestHeaderNameIndexedSeparately (#725 item 5) proves the header NAME
 // itself is searchable via TEXT (the A-pool), and that it does NOT also
-// satisfy a HEADER <name> VALUE search for that same literal name — the
+// satisfy a HEADER <name> VALUE search for that same literal name - the
 // name and the value are indexed under separate build keys.
 func TestHeaderNameIndexedSeparately(t *testing.T) {
 	ui, _ := testEngine(t, testOpts(Options{}))
@@ -730,7 +730,7 @@ func TestHeaderNameIndexedSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// TEXT "list" matches — the header NAME reached the A-pool.
+	// TEXT "list" matches - the header NAME reached the A-pool.
 	res, err := ui.Lookup([]string{inbox.GUID}, fts.Query{
 		Terms:    []fts.Term{{Field: fts.FieldText, Words: []fts.Word{{Variants: []string{"list"}}}}},
 		AndTerms: true,
@@ -742,7 +742,7 @@ func TestHeaderNameIndexedSeparately(t *testing.T) {
 		t.Fatalf("TEXT %q = %v, want [1] (header name must reach the A-pool)", "list", uidsOf(res.DefiniteGUIDs))
 	}
 
-	// HEADER list-id "list" must NOT match — the name's tokens must not
+	// HEADER list-id "list" must NOT match - the name's tokens must not
 	// leak into the per-field H<NAME> pool alongside the value.
 	res, err = ui.Lookup([]string{inbox.GUID}, fts.Query{
 		Terms:    []fts.Term{{Field: fts.FieldHeader, HdrName: "list-id", Words: []fts.Word{{Variants: []string{"list"}}}}},

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // Runner executes warning programs from a bin dir. A nil *Runner is a no-op, so
@@ -87,7 +87,7 @@ func (r *Runner) runProgram(spec, user, home string, extraEnv []string) {
 		return
 	}
 	prog, args := fields[0], fields[1:]
-	// Resolve strictly within the bin dir — reject any path separator so a
+	// Resolve strictly within the bin dir - reject any path separator so a
 	// config cannot escape it.
 	if strings.ContainsAny(prog, `/\`) {
 		slog.Warn("quota execute rejected: program must be a bare name", "program", prog)

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A maildir mailbox is its own root: INBOX is the mail directory and subfolders
@@ -138,7 +138,7 @@ func openTestUser(t *testing.T, home string) mailbox.UserMailbox {
 }
 
 // Reading was the worse half. Destruction stays inside one account; a traversal
-// on the read path crosses accounts, and it did — on a deployment whose IMAP
+// on the read path crosses accounts, and it did - on a deployment whose IMAP
 // separator is ".", `./../victim/Maildir` fetched another user's message.
 //
 // It failed with "/" only because the rewrite to the on-disk separator turned

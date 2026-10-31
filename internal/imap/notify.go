@@ -9,9 +9,9 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // Event masks for the non-selected NOTIFY watcher. A watched folder carries the
@@ -232,7 +232,7 @@ func (n *notifyWatcher) handleListEvent(evt locks.Event) {
 		}
 	case locks.EventMailboxUnsubscribe:
 		// Drop only when the folder was watched purely because it was
-		// subscribed — a static filter (PERSONAL / SUBTREE / …) keeps it.
+		// subscribed - a static filter (PERSONAL / SUBTREE / …) keeps it.
 		if n.subscribedMask() != 0 && n.matchStaticFilters(evt.Payload) == 0 {
 			n.removeWatch(evt.Payload)
 		}
@@ -243,7 +243,7 @@ func (n *notifyWatcher) handleListEvent(evt locks.Event) {
 }
 
 // eventMask folds the requested NOTIFY message events into a mask. Mailbox-level
-// events (MailboxName, SubscriptionChange, …) contribute nothing here — they are
+// events (MailboxName, SubscriptionChange, …) contribute nothing here - they are
 // tracked separately via wantName / wantSub.
 func eventMask(events []imaplib.NotifyEvent) uint8 {
 	var m uint8
@@ -501,7 +501,7 @@ func (s *session) drainNotifyStatus(w *imapserver.UpdateWriter) error {
 	for _, folder := range s.notifyWatch.take() {
 		data, err := s.Status(folder, notifyStatusOpts)
 		if err != nil {
-			// Folder vanished or unreadable — skip; the client re-syncs on
+			// Folder vanished or unreadable - skip; the client re-syncs on
 			// its next explicit STATUS/SELECT.
 			slog.Debug("imap: notify status failed", "folder", folder, "err", err)
 			continue

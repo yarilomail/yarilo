@@ -6,18 +6,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // UserEntry records which backend serves a user plus a conflict-resolution
 // stamp (#772). AssignSeq is a Lamport clock (logical, NOT wall-clock: pod
 // clocks are unsynced), AssignBy is the originating director's id ("ip:port").
 // Total order (AssignSeq, AssignBy): higher seq wins; on a tie the lower id
-// wins — deterministic and reproducible without a fake clock.
+// wins - deterministic and reproducible without a fake clock.
 type UserEntry struct {
 	Hash      uint32
 	Host      string // "ip:port"
-	Weak      bool   // soft assignment — may be overridden by a new LOOKUP
+	Weak      bool   // soft assignment - may be overridden by a new LOOKUP
 	ExpiresAt time.Time
 	AssignSeq uint64
 	AssignBy  string

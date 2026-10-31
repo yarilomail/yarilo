@@ -13,8 +13,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxindex"
-	"github.com/yarilomail/yarilo/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxindex"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
 )
 
 // Map is the handle for one user's map index; every mutation routes through it so
@@ -376,7 +376,7 @@ func (m *Map) writeBaseLocked() error {
 func (m *Map) applyLogTailLocked() error {
 	applied, err := m.replayFromPersistedLocked()
 	if errors.Is(err, errLogIndexMismatch) {
-		// Log left over from a previous map at this path — discard it.
+		// Log left over from a previous map at this path - discard it.
 		_ = os.Remove(m.logPath())
 		m.logSize = 0
 		return nil
@@ -546,13 +546,28 @@ func (m *Map) invalidateLocked() {
 	m.logSize = -1
 }
 
+// removeLog drops a folded log. Test seam: a fold whose base landed but whose
+// log stayed is the failure a caller must not answer by deleting storage.
+var removeLog = os.Remove
+
+// SetTestLogRemoval installs fn as the log removal and returns a restore.
+func SetTestLogRemoval(fn func(string) error) func() {
+	removeLog = fn
+	return func() { removeLog = os.Remove }
+}
+
 // flushLocked rewrites the base and drops the log; caller MUST hold m.mu. Base
 // first, carrying the offset it folded, or a crash between them doubles deltas.
-func (m *Map) flushLocked() error {
+func (m *Map) flushLocked() (err error) {
 	start := time.Now()
 	defer func() {
 		metricMapFlush.Inc()
 		metricMapFlushSeconds.Observe(time.Since(start).Seconds())
+		// The caller changed the records before asking: a refused write leaves
+		// memory ahead of the disk, so the next access reads the disk again.
+		if err != nil {
+			m.invalidateLocked()
+		}
 	}()
 	seq, size, err := m.logIdentityLocked()
 	if err != nil {
@@ -563,7 +578,7 @@ func (m *Map) flushLocked() error {
 	if err := m.writeBaseLocked(); err != nil {
 		return err
 	}
-	if err := os.Remove(m.logPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := removeLog(m.logPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("mdboxmap/flush: remove log: %w", err)
 	}
 	m.logLineage = m.lineage

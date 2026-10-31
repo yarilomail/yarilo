@@ -16,9 +16,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
-	"github.com/yarilomail/yarilo/pkg/filelock"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 var errLogIndexIDMismatch = errors.New("fileindex: log IndexID does not match base index")
@@ -420,7 +420,19 @@ func (fs *folderState) refreshExtStateFromDisk() error {
 	fs.file.Extensions = exts
 	err = fs.refreshExtState()
 	fs.file.Extensions = saved
-	return err
+	if err != nil {
+		return err
+	}
+	// Every header is the disk's: a fold raises the expunge floor and mints a
+	// lineage without touching a record. A header-only one joins the list.
+	for _, d := range exts {
+		if e := findExt(fs.file.Extensions, d.Name); e != nil {
+			e.HdrData, e.HdrSize = d.HdrData, d.HdrSize
+		} else if d.RecordSize == 0 {
+			fs.file.Extensions = append(fs.file.Extensions, d)
+		}
+	}
+	return nil
 }
 
 // refreshExtState re-parses the dbox-hdr and keywords extension headers
@@ -520,17 +532,51 @@ func (fs *folderState) snapshot(id uint64) (*mailbox.Folder, error) {
 	if fs.file.Header.MessagesCount > fs.file.Header.SeenMessagesCount {
 		unseen = fs.file.Header.MessagesCount - fs.file.Header.SeenMessagesCount
 	}
+	first := fs.firstRecentUID()
 	return &mailbox.Folder{
-		ID:            id,
-		Name:          fs.folder,
-		UIDValidity:   fs.file.Header.UIDValidity,
-		NextUID:       fs.file.Header.NextUID,
-		Messages:      fs.file.Header.MessagesCount,
-		Unseen:        unseen,
-		HighestModSeq: highest,
-		GUID:          fs.hdr.MailboxGUID,
-		Fsckd:         fs.file.Header.Flags&mailindex.HdrFlagFsckd != 0,
+		ID:             id,
+		Name:           fs.folder,
+		UIDValidity:    fs.file.Header.UIDValidity,
+		NextUID:        fs.file.Header.NextUID,
+		Messages:       fs.file.Header.MessagesCount,
+		Unseen:         unseen,
+		HighestModSeq:  highest,
+		FirstRecentUID: first,
+		Recent:         fs.countFrom(first),
+		GUID:           fs.hdr.MailboxGUID,
+		Fsckd:          fs.file.Header.Flags&mailindex.HdrFlagFsckd != 0,
 	}, nil
+}
+
+// firstRecentUID reads the \Recent mark; 0, an index that never wrote one,
+// makes every message recent once (RFC 3501 §2.3.2).
+func (fs *folderState) firstRecentUID() uint32 {
+	if fs.file.Header.FirstRecentUID == 0 {
+		return 1
+	}
+	return fs.file.Header.FirstRecentUID
+}
+
+// countFrom counts the records at or above uid; records are in UID order.
+func (fs *folderState) countFrom(uid uint32) uint32 {
+	recs := fs.file.Records
+	i := sort.Search(len(recs), func(i int) bool { return recs[i].UID >= uid })
+	return uint32(len(recs) - i)
+}
+
+// ClaimRecent moves the \Recent mark to the next UID under the folder hold, so
+// of two sessions selecting at once exactly one gets each message.
+func (u *userIndex) ClaimRecent(folderID uint64) (from, to uint32, err error) {
+	err = u.withFolderSite(folderID, lockSiteClaimRecent, func(fs *folderState) error {
+		from, to = fs.firstRecentUID(), fs.file.Header.NextUID
+		if from >= to {
+			from = to
+			return nil
+		}
+		fs.file.Header.FirstRecentUID = to
+		return fs.appendMutLog(encU32Update(48, to))
+	})
+	return from, to, err
 }
 
 // highestModSeq reads the modseq extension header.
@@ -1094,26 +1140,6 @@ func (u *userIndex) AllocateUID(folderID uint64) (uint32, error) {
 	return assigned, err
 }
 
-func (u *userIndex) AllocateUIDWithModSeq(folderID uint64) (uint32, uint64, error) {
-	var uid uint32
-	var modseq uint64
-	err := u.withFolderSite(folderID, lockSiteAllocateUid, func(fs *folderState) error {
-		next := fs.file.Header.NextUID
-		if next == 0 {
-			next = 1
-		}
-		fs.file.Header.NextUID = next + 1
-		uid = next
-		var err error
-		modseq, err = fs.bumpModSeqHeader()
-		if err != nil {
-			return err
-		}
-		return fs.appendMutLog(encU32Update(28, fs.file.Header.NextUID))
-	})
-	return uid, modseq, err
-}
-
 func (u *userIndex) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) error {
 	return u.AllocateAndAppendNamed(folderID, m, nil)
 }
@@ -1635,23 +1661,6 @@ func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbo
 	return out, nil
 }
 
-// NextModSeq bumps highest_modseq and returns the post-bump value. Used
-// by CONDSTORE writers that claim a modseq before writing the change.
-func (u *userIndex) NextModSeq(folderID uint64) (uint64, error) {
-	var out uint64
-	err := u.withFolderSite(folderID, lockSiteNextModseq, func(fs *folderState) error {
-		v, err := fs.bumpModSeqHeader()
-		if err != nil {
-			return err
-		}
-		out = v
-		// No flush needed; the subsequent AppendMessage / UpdateFlags
-		// TxModseqUpdate log record persists the modseq.
-		return nil
-	})
-	return out, err
-}
-
 // Vanished returns every UID expunged with modseq above sinceModSeq, driving
 // the QRESYNC VANISHED response (RFC 7162).
 func (u *userIndex) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
@@ -1659,7 +1668,7 @@ func (u *userIndex) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, err
 }
 
 // VanishedUnlocked is Vanished for a caller whose answer goes to the client and
-// decides nothing on disk — QRESYNC on SELECT, CHANGEDSINCE on FETCH (#1249).
+// decides nothing on disk - QRESYNC on SELECT, CHANGEDSINCE on FETCH (#1249).
 func (u *userIndex) VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
 	return u.vanished(folderID, sinceModSeq)
 }
@@ -2451,7 +2460,7 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 		}
 		txHdr, err := mailindex.DecodeTxHeader(tail[at : at+8])
 		if err != nil {
-			break // torn write — stop here
+			break // torn write - stop here
 		}
 		filePos += 8
 		payloadLen := int(txHdr.Size) - 8
@@ -2589,6 +2598,8 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 						fs.file.Header.SeenMessagesCount = v
 					case 44:
 						fs.file.Header.DeletedMessagesCount = v
+					case 48:
+						fs.file.Header.FirstRecentUID = v
 					}
 				}
 			}
@@ -3172,7 +3183,7 @@ func callingSite() string {
 }
 
 // indexPkgPath is this package, matched as a prefix of a frame's function name.
-const indexPkgPath = "github.com/yarilomail/yarilo/internal/storage/index/file."
+const indexPkgPath = "github.com/yarilomail/yarilo/v2/internal/storage/index/file."
 
 // readableThrough reports whether the file holds every byte up to end, leaving
 // the descriptor where it found it (#1833).

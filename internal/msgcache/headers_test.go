@@ -8,7 +8,7 @@ import (
 	"github.com/emersion/go-message/textproto"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 const craftedHeaderText = "Date: Mon, 21 Sep 2026 14:05:06 +0300\r\n" +

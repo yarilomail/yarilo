@@ -9,7 +9,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	authsql "github.com/yarilomail/yarilo/internal/auth/sql"
+	authsql "github.com/yarilomail/yarilo/v2/internal/auth/sql"
 )
 
 // An absent password query does not mean "no query": it means a query against
@@ -79,7 +79,7 @@ func TestPasswordQuerySourceIsLogged(t *testing.T) {
 // skip_schema and an absent password query contradict each other: one says the
 // tables are the operator's, the other asks for ours. A warning would be a
 // config that declares one thing and does another, so the combination is
-// refused — while every neighbouring combination still starts, which is what
+// refused - while every neighbouring combination still starts, which is what
 // makes the refusal about the contradiction rather than about either setting.
 func TestSkipSchemaWithoutQueryIsRefused(t *testing.T) {
 	dsn := filepath.Join(t.TempDir(), "users.db")

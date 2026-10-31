@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	dboxv1 "github.com/yarilomail/yarilo/internal/storage/mailbox/dbox/v1legacy"
-	mdboxv1 "github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox/v1legacy"
+	dboxv1 "github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dbox/v1legacy"
+	mdboxv1 "github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/v1legacy"
 )
 
 // sourceMessage is one decoded message handed from a source
 // reader to the destination writer. Bodies are materialised in
-// memory — acceptable for migration scale (a few-MB per message,
+// memory - acceptable for migration scale (a few-MB per message,
 // processed one at a time per goroutine).
 type sourceMessage struct {
 	Folder       string

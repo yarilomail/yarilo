@@ -5,7 +5,8 @@ import (
 
 	"github.com/knadh/koanf/v2"
 
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 // intKey names one integer setting by its config path.
@@ -65,6 +66,9 @@ func offKeys(cfg *Config) []intKey {
 		{"protocol.jmap.jmap_max_query_folders", &cfg.Protocol.JMAP.MaxQueryFolders},
 		{"protocol.jmap.jmap_snippet_max_chars", &cfg.Protocol.JMAP.SnippetMaxChars},
 		{"protocol.jmap.jmap_submission_ttl_seconds", &cfg.Protocol.JMAP.SubmissionTTLSeconds},
+		{"protocol.jmap.jmap_push_poll", &cfg.Protocol.JMAP.PushPoll},
+		{"protocol.jmap.jmap_websocket_timeout", &cfg.Protocol.JMAP.WebSocketTimeout},
+		{"protocol.jmap.jmap_websocket_ticket_ttl", &cfg.Protocol.JMAP.WebSocketTicketTTL},
 		{"protocol.lmtp.lmtp_max_recipients", &cfg.Protocol.LMTP.MaxRecipients},
 		{"protocol.submission.submission_max_recipients", &cfg.Protocol.Submission.MaxRecipients},
 		{"protocol.managesieve.max_invalid_commands", &cfg.Protocol.ManageSieve.MaxInvalidCommands},
@@ -251,6 +255,14 @@ func listEntryDefaults(k *koanf.Koanf, cfg *Config) {
 	for i := range cfg.Quota.Warnings {
 		if !has("quota.quota_warnings", i, "quota_warning_percentage") {
 			cfg.Quota.Warnings[i].Percentage = 100
+		}
+	}
+	// The namespace owning INBOX takes the default set; a personal view (a
+	// virtual namespace) is not a store and takes nothing.
+	if i := mailbox.PrimaryPersonalIndex(NamespaceShapes(cfg.Namespaces)); i >= 0 && !has("namespaces", i, "mailboxes") {
+		cfg.Namespaces[i].Mailboxes = map[string]NamespaceMailboxConfig{}
+		for name, mb := range mailbox.DefaultMailboxes() {
+			cfg.Namespaces[i].Mailboxes[name] = NamespaceMailboxConfig{Auto: mb.Auto, SpecialUse: mb.SpecialUse}
 		}
 	}
 	for i := range cfg.DirectorService.MailServers {

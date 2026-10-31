@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/backendreg"
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/backendreg"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // A drained director answers nothing more: an open connection is closed, not

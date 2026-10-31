@@ -5,16 +5,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
 	"github.com/emersion/go-sasl"
 	goSmtp "github.com/emersion/go-smtp"
 
-	"github.com/yarilomail/yarilo/pkg/config"
+	"github.com/yarilomail/yarilo/v2/internal/submission/proxy"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 // oauthBearerAuth implements the submission Authenticator surface
-// (AuthPlain) with token-as-password semantics — that's how the
+// (AuthPlain) with token-as-password semantics - that's how the
 // OAUTHBEARER session-side callback delivers the bearer token.
 type oauthBearerAuth struct {
 	user, token string
@@ -35,6 +36,7 @@ func buildOAuthBearerServer(t *testing.T, auth Authenticator, enabled bool) (str
 			MaxMsgSize: 1 << 20,
 		},
 		AuthRelay:     authtest.RelayTo(t, authtest.PlainOnly(auth)),
+		Proxy:         proxy.New(buildStubRelay(t), "mx.example.com"),
 		OAuth2Enabled: enabled,
 	}
 	srv := New(opts)
@@ -46,7 +48,7 @@ func buildOAuthBearerServer(t *testing.T, auth Authenticator, enabled bool) (str
 	return ln.Addr().String(), func() { ln.Close() }
 }
 
-// TestSubmission_AuthOAuthBearer_Success — real go-smtp client
+// TestSubmission_AuthOAuthBearer_Success - real go-smtp client
 // posts an AUTH OAUTHBEARER, server validates, MAIL FROM works.
 func TestSubmission_AuthOAuthBearer_Success(t *testing.T) {
 	addr, cleanup := buildOAuthBearerServer(t,
@@ -70,7 +72,7 @@ func TestSubmission_AuthOAuthBearer_Success(t *testing.T) {
 	}
 }
 
-// TestSubmission_AuthOAuthBearer_InvalidToken — wrong token →
+// TestSubmission_AuthOAuthBearer_InvalidToken - wrong token →
 // JSON failure surfaces as auth error.
 func TestSubmission_AuthOAuthBearer_InvalidToken(t *testing.T) {
 	addr, cleanup := buildOAuthBearerServer(t,
@@ -91,7 +93,7 @@ func TestSubmission_AuthOAuthBearer_InvalidToken(t *testing.T) {
 	}
 }
 
-// TestSubmission_AuthOAuthBearer_DisabledNotAdvertised — when
+// TestSubmission_AuthOAuthBearer_DisabledNotAdvertised - when
 // OAuth2Enabled is false, the EHLO AUTH extension MUST NOT
 // advertise OAUTHBEARER.
 func TestSubmission_AuthOAuthBearer_DisabledNotAdvertised(t *testing.T) {
@@ -113,7 +115,7 @@ func TestSubmission_AuthOAuthBearer_DisabledNotAdvertised(t *testing.T) {
 	}
 }
 
-// TestSubmission_AuthOAuthBearer_EnabledAdvertised — when on,
+// TestSubmission_AuthOAuthBearer_EnabledAdvertised - when on,
 // EHLO carries it.
 func TestSubmission_AuthOAuthBearer_EnabledAdvertised(t *testing.T) {
 	addr, cleanup := buildOAuthBearerServer(t,

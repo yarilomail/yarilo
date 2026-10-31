@@ -122,7 +122,7 @@ func (s *fastFailXOAuth2Server) Next(response []byte) ([]byte, bool, error) {
 //
 // We accept the spec's lenient ordering: any number of key=value
 // segments separated by 0x01, terminated by two consecutive 0x01.
-// We do not enforce strict ordering — operators have hit clients
+// We do not enforce strict ordering - operators have hit clients
 // in the wild that reorder fields.
 func parseOAuthBearerInitial(resp []byte) (sasl.OAuthBearerOptions, error) {
 	var opts sasl.OAuthBearerOptions

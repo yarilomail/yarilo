@@ -4,13 +4,15 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2/imapclient"
+
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The LIST reference selects what to match; it is not glued onto results.
 //
 // It was: every name from every namespace came back with the reference in
 // front, so LIST "Public/" "*" answered with the user's own folders wearing a
-// prefix of a namespace that does not exist here — names no command would
+// prefix of a namespace that does not exist here - names no command would
 // accept afterwards (#1099).
 func TestListReferenceIsNotPrefixedOntoResults(t *testing.T) {
 	c := startServerWith(t, maildirBackend(t))
@@ -29,7 +31,7 @@ func TestListReferenceIsNotPrefixedOntoResults(t *testing.T) {
 
 	bare := listNames(t, c, "", "*")
 	for _, name := range bare {
-		if name == "INBOX" || name == "Work" || name == "Work.2026" {
+		if name == "INBOX" || name == "Work" || name == "Work.2026" || defaultMailbox(name) {
 			continue
 		}
 		t.Errorf("LIST \"\" \"*\" returned %q, which is not a mailbox of this user", name)
@@ -37,8 +39,8 @@ func TestListReferenceIsNotPrefixedOntoResults(t *testing.T) {
 }
 
 // The wildcards RFC 9051 §6.3.9 defines have to work: only a bare "*" or "%"
-// or an exact name matched before, so a client listing a subtree — the ordinary
-// way to explore — was told it is empty.
+// or an exact name matched before, so a client listing a subtree - the ordinary
+// way to explore - was told it is empty.
 func TestListWildcards(t *testing.T) {
 	c := startServerWith(t, maildirBackend(t))
 	defer func() { c.Logout().Wait() }() //nolint:errcheck
@@ -55,7 +57,7 @@ func TestListWildcards(t *testing.T) {
 		ref, pattern string
 		want         []string
 	}{
-		{"", "*", []string{"INBOX", "Work", "Work.2026", "Wardrobe"}},
+		{"", "*", []string{"INBOX", "Work", "Work.2026", "Wardrobe", "Drafts", "Junk", "Sent", "Trash"}},
 		{"", "W*", []string{"Work", "Work.2026", "Wardrobe"}},
 		{"", "W%", []string{"Work", "Wardrobe"}}, // % stops at the separator
 		{"", "Work.%", []string{"Work.2026"}},    // a subtree
@@ -69,6 +71,12 @@ func TestListWildcards(t *testing.T) {
 			t.Errorf("LIST %q %q = %v, want %v", tc.ref, tc.pattern, got, tc.want)
 		}
 	}
+}
+
+// defaultMailbox is one the server makes when no namespace names its own.
+func defaultMailbox(name string) bool {
+	_, ok := mailbox.DefaultMailboxes()[name]
+	return ok
 }
 
 func sameSet(got, want []string) bool {
@@ -102,7 +110,7 @@ func listNames(t *testing.T, c *imapclient.Client, ref, pattern string) []string
 
 // Mailbox names are case-sensitive; INBOX is the exception RFC 9051 §5.1
 // names. Folding both sides in the matcher would have been a behaviour change
-// riding in with the rewrite — quiet, because every test used matching case.
+// riding in with the rewrite - quiet, because every test used matching case.
 func TestListMatchingIsCaseSensitiveExceptINBOX(t *testing.T) {
 	c := startServerWith(t, maildirBackend(t))
 	defer func() { c.Logout().Wait() }() //nolint:errcheck

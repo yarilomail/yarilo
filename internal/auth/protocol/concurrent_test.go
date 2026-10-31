@@ -69,7 +69,7 @@ func TestConcurrentCommandsOnOneConnection(t *testing.T) {
 	}
 
 	// The fast request (id 2) must answer first, and well before the slow one's
-	// delay elapses — that is the whole point of per-command goroutines.
+	// delay elapses - that is the whole point of per-command goroutines.
 	if got[0].id != "2" {
 		t.Fatalf("first reply id = %q, want \"2\" (fast request blocked behind the slow one)", got[0].id)
 	}

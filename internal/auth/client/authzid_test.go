@@ -12,7 +12,7 @@ import (
 // The impersonation target travels in the SASL PLAIN response, which is where
 // the auth service reads it. This client used to rebuild that response with an
 // empty authzid, so every master login left the pod as an ordinary login of the
-// master and was refused — the chain was never asked (#1305).
+// master and was refused - the chain was never asked (#1305).
 //
 // The request is asserted on the wire, because that is the layer that lost it:
 // a test of the chain (which had them, and passed) proved nothing about what

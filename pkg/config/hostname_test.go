@@ -8,7 +8,7 @@ import (
 // One key names the installation, and it must never resolve to a literal.
 //
 // It did: nothing filled it, so the LHLO banner, the Received header and the
-// synthesised Message-ID all fell back to the string "yarilo" — on every
+// synthesised Message-ID all fell back to the string "yarilo" - on every
 // deployment, not one (#1506).
 func TestHostnameDefaultsToThisHostNotToALiteral(t *testing.T) {
 	cfg, err := loadYAML(t, "mode: single\n")

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
 )
 
 // ftsQueryStub answers Email/query from hits(text) and Email/get from
@@ -81,7 +81,7 @@ func TestJMAPFTSQueryStopsOnAFinalFailure(t *testing.T) {
 			calls := failingStub(t, errType)
 			setFlag(t, flagTimeout, 300*time.Millisecond)
 
-			err := assertFTSQueryFindsOnly("u1@example.com", ftsProbeMarker, ftsProbeAbsent, ftsProbeSubject)
+			err := assertFTSQueryFindsOnly(ftsProbeMarker, ftsProbeAbsent, ftsProbeSubject)
 			if err == nil {
 				t.Fatal("a failing backend passed")
 			}
@@ -103,7 +103,7 @@ func TestJMAPFTSQueryStopsOnAFinalFailure(t *testing.T) {
 		calls := failingStub(t, "serverUnavailable")
 		setFlag(t, flagTimeout, 700*time.Millisecond)
 
-		if err := assertFTSQueryFindsOnly("u1@example.com", ftsProbeMarker, ftsProbeAbsent, ftsProbeSubject); err == nil {
+		if err := assertFTSQueryFindsOnly(ftsProbeMarker, ftsProbeAbsent, ftsProbeSubject); err == nil {
 			t.Fatal("a permanently unavailable backend passed")
 		}
 		if n := atomic.LoadInt32(calls); n < 2 {
@@ -165,7 +165,7 @@ func TestJMAPFTSQueryRefusesTheWrongAnswers(t *testing.T) {
 			_ = ftsQueryStub(t, tc.hits, tc.subjects)
 			setFlag(t, flagTimeout, 200*time.Millisecond)
 
-			err := assertFTSQueryFindsOnly("u1@example.com", ftsProbeMarker, ftsProbeAbsent, ftsProbeSubject)
+			err := assertFTSQueryFindsOnly(ftsProbeMarker, ftsProbeAbsent, ftsProbeSubject)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Errorf("a correct backend was refused: %v", err)

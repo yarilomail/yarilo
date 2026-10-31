@@ -4,12 +4,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/cluster/ring"
+	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 )
 
 // TestUserDir_LookupPropagatesToRing is the #772 PR-2 end-to-end: a fresh
 // sticky assignment made by a normal LOOKUP on one director must reach the
-// other ring members as a USER-ASSIGN event — so every director pins the
+// other ring members as a USER-ASSIGN event - so every director pins the
 // user to the same backend without waiting for a rejoin snapshot.
 func TestUserDir_LookupPropagatesToRing(t *testing.T) {
 	srvA, addrA := startRingNode(t, "shared-secret", nil, 2)

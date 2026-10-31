@@ -7,8 +7,8 @@ import (
 
 // TestUserDir_Conflict_LoserKicksStaleSessions is the #772 PR-3 end-to-end:
 // two directors pin the same user to DIFFERENT backends at the same logical
-// time; the lower-id director wins, and the loser — receiving the winner's
-// USER-ASSIGN — switches its own entry and kicks that user's now-stale
+// time; the lower-id director wins, and the loser - receiving the winner's
+// USER-ASSIGN - switches its own entry and kicks that user's now-stale
 // sessions off the wrong backend, while leaving other users on it running.
 //
 // This server's self id is ":0" (default opts); an incoming assignment by
@@ -47,6 +47,11 @@ func TestUserDir_Conflict_LoserKicksStaleSessions(t *testing.T) {
 	if got := readLine(t, loginSc); got != "USER-KICKED\tu@example.com\treason=move" {
 		t.Fatalf("expected USER-KICKED for u, got %q", got)
 	}
+	// The login closes the kicked session; that close removes the record.
+	loginConn.Write([]byte("SESSION-CLOSE\tsU\n"))
+	if got := readLine(t, loginSc); got != "OK" {
+		t.Fatalf("SESSION-CLOSE u: %q", got)
+	}
 	srv.sessRecMu.RLock()
 	_, uAlive := srv.sessById["sU"]
 	_, vAlive := srv.sessById["sV"]
@@ -63,7 +68,7 @@ func TestUserDir_Conflict_LoserKicksStaleSessions(t *testing.T) {
 // side: the lower-id director (the winner) receiving the loser's assignment
 // keeps its own backend and kicks nothing.
 func TestUserDir_Conflict_WinnerKeepsAndDoesNotKick(t *testing.T) {
-	// self id "10.0.0.1:9102" — lower than the incoming "10.0.0.2:9102".
+	// self id "10.0.0.1:9102" - lower than the incoming "10.0.0.2:9102".
 	srv, addr := startServerOpts(t, Options{LocalIP: "10.0.0.1", LocalPort: 9102})
 
 	loginConn, loginSc := dialTest(t, addr)

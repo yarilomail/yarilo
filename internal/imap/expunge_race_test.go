@@ -2,9 +2,10 @@ package imap
 
 import (
 	"errors"
+	"io/fs"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // markingBox answers RecordExists from a set the test controls and counts the
@@ -44,5 +45,29 @@ func TestARecordWithNoFileStillMarks(t *testing.T) {
 	if idx.marked != 1 {
 		t.Errorf("the folder was marked %d times, want 1: a dangling record is what the "+
 			"reactive heal is for", idx.marked)
+	}
+}
+
+// A read error means "expunged under us" only when the record is gone too:
+// a record the index still holds is damage, and stays counted as such.
+func TestExpungedUnderUsAsksTheIndex(t *testing.T) {
+	corrupt := errors.Join(errors.New("uid 7 is in no list entry"), mailbox.ErrCorruptStorage)
+	for _, tc := range []struct {
+		name    string
+		present bool
+		err     error
+		want    bool
+	}{
+		{"the file is gone", true, fs.ErrNotExist, true},
+		{"corrupt, the record expunged", false, corrupt, true},
+		{"corrupt, the record still there", true, corrupt, false},
+		{"another read error", false, errors.New("i/o error"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &session{mbox: &markingBox{present: map[uint32]bool{7: tc.present}}, folder: &mailbox.Folder{ID: 1}}
+			if got := s.expungedUnderUs(&mailbox.MessageMeta{UID: 7}, tc.err); got != tc.want {
+				t.Errorf("expungedUnderUs = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

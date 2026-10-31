@@ -6,7 +6,7 @@ import (
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	mailboxpkg "github.com/yarilomail/yarilo/pkg/mailbox"
+	mailboxpkg "github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The strong owner grant (§7.6): the owner resolves to FullRights regardless of

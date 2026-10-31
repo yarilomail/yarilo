@@ -7,21 +7,21 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/sqlpool"
-	"github.com/yarilomail/yarilo/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlpool"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
 // Userdb is the SQL-backed implementation of protocol.Userdb. It
 // shares Config + DSN with the existing Passdb (operators typically
 // have one DB serving both roles) but is exposed as a separate type
-// so a deployment can chain heterogeneous backends — e.g. SQL
+// so a deployment can chain heterogeneous backends - e.g. SQL
 // passdb + LDAP userdb.
 //
 // The default lookup query selects the columns shipped in the
 // built-in yarilo_users schema (home, mail). Operators with richer
 // schemas point Config.UserQuery at their own SELECT that returns
-// the column names listed in [defaultUserdbColumns] — see the
+// the column names listed in [defaultUserdbColumns] - see the
 // rowScanner below for the exact mapping from column name →
 // UserInfo field. Any column the row carries that does not match a
 // known typed field lands in UserInfo.Extra so forward-compatibility
@@ -55,7 +55,7 @@ func NewUserdb(c Config) (*Userdb, error) {
 		db.Close()
 		return nil, fmt.Errorf("auth/sql: userdb ping %s: %w", c.Driver, err)
 	}
-	// The userdb does NOT auto-create the schema — Passdb.New is
+	// The userdb does NOT auto-create the schema - Passdb.New is
 	// the canonical schema owner. If callers opt to construct a
 	// userdb without a passdb (e.g. LDAP passdb + SQL userdb),
 	// they must point UserQuery at a query that works against
@@ -75,7 +75,7 @@ func NewUserdb(c Config) (*Userdb, error) {
 
 // defaultUserdbQuery selects every column the built-in yarilo_users
 // schema declares. Operators with richer schemas override via
-// Config.UserQuery — they SELECT any subset of [defaultUserdbColumns]
+// Config.UserQuery - they SELECT any subset of [defaultUserdbColumns]
 // (or new columns landing in Extra). Column order does not matter;
 // the row scanner uses sql.Rows.Columns() metadata to map names →
 // fields.

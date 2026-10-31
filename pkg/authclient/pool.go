@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // Pool keeps a small number of master-protocol connections open for userdb
@@ -81,6 +81,17 @@ func (p *Pool) Userdb(ctx context.Context, username string) (*protocol.UserInfo,
 	err := p.do(ctx, func(c *Client) error {
 		var err error
 		ui, err = c.Userdb(ctx, username)
+		return err
+	})
+	return ui, err
+}
+
+// UserdbFor is Userdb on behalf of a protocol, so a userdb rule on %s applies.
+func (p *Pool) UserdbFor(ctx context.Context, username, service string) (*protocol.UserInfo, error) {
+	var ui *protocol.UserInfo
+	err := p.do(ctx, func(c *Client) error {
+		var err error
+		ui, err = c.UserdbFor(ctx, username, service)
 		return err
 	})
 	return ui, err

@@ -9,12 +9,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 
-	authclient "github.com/yarilomail/yarilo/internal/auth/client"
-	"github.com/yarilomail/yarilo/internal/xclient"
-	"github.com/yarilomail/yarilo/pkg/lineio"
+	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
+	"github.com/yarilomail/yarilo/v2/internal/xclient"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 )
 
 // cleartextDisabledMsg is the refusal of a cleartext login on an open line.
@@ -73,6 +74,8 @@ type preamble struct {
 	// password to re-send, so the caller uses it instead of authenticating.
 	authResult *authclient.AuthResult
 	cmdTag     string // IMAP command tag; empty for POP3/Submission
+	// clientID is the client's ID pairs, kept with imap_id_retain.
+	clientID string
 	// forwardIP/forwardPort record what an upstream claimed, not what is
 	// trusted: handleConn checks the peer against trusted_nets first (#742).
 	forwardIP     string
@@ -98,6 +101,56 @@ func idForwardedClientIP(line string) (ip, port string) {
 		}
 	}
 	return ip, port
+}
+
+// idInternalKeys are the ID keys the login process acts on itself; they are
+// not the client's to describe itself with, so they are not kept.
+var idInternalKeys = []string{"x-originating-ip", "x-originating-port", "x-connected-ip",
+	"x-connected-port", "x-connected-name", "x-proxy-ttl", "x-session-id", "x-session-ext-id",
+	"x-client-transport", "x-multiplex"}
+
+const (
+	maxKeptIDPairs = 30
+	maxClientIDLen = 256
+)
+
+// keepClientID adds an ID command's pairs to the kept client_id: each key and
+// value quoted, NIL bare, pairs space-separated, bounded in count and length.
+func keepClientID(kept string, pairs *int, line string) string {
+	open := strings.IndexByte(line, '(')
+	closeIdx := strings.LastIndexByte(line, ')')
+	if open < 0 || closeIdx < open {
+		return kept
+	}
+	toks := imapIDTokens(line[open+1 : closeIdx])
+	for i := 0; i+1 < len(toks); i += 2 {
+		key := strings.ToLower(toks[i])
+		if slices.Contains(idInternalKeys, key) || strings.HasPrefix(key, "x-forward-") {
+			continue
+		}
+		if *pairs >= maxKeptIDPairs {
+			break
+		}
+		*pairs++
+		pair := imapQuote(toks[i]) + " "
+		if strings.EqualFold(toks[i+1], "NIL") {
+			pair += "NIL"
+		} else {
+			pair += imapQuote(toks[i+1])
+		}
+		if kept != "" {
+			pair = " " + pair
+		}
+		if len(kept)+len(pair) >= maxClientIDLen {
+			continue
+		}
+		kept += pair
+	}
+	return kept
+}
+
+func imapQuote(s string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
 // imapIDTokens splits an IMAP ID parameter list body into ordered tokens,
@@ -180,6 +233,8 @@ func extractIMAPPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, op
 // NOT send the greeting. Returns the (possibly TLS-upgraded) conn and rd.
 func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
 	var fwdIP, fwdPort string
+	var clientID string
+	idPairs := 0
 	// A relayed exchange fails inside this loop, so the attempt limit the
 	// password path applies must be applied here too (#1733).
 	saslFailures := 0
@@ -211,6 +266,9 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				if ip, port := idForwardedClientIP(line); ip != "" {
 					fwdIP, fwdPort = ip, port
 				}
+			}
+			if opts.IMAPIDRetain {
+				clientID = keepClientID(clientID, &idPairs, line)
 			}
 			fmt.Fprintf(conn, "* ID NIL\r\n")      //nolint:errcheck
 			fmt.Fprintf(conn, "%s OK ID\r\n", tag) //nolint:errcheck
@@ -245,6 +303,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				continue
 			}
 			return &preamble{
+				clientID:      clientID,
 				username:      username,
 				password:      password,
 				cmdTag:        tag,
@@ -285,6 +344,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					continue
 				}
 				return &preamble{
+					clientID:      clientID,
 					username:      username,
 					password:      password,
 					authzid:       authzid,
@@ -323,6 +383,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					continue
 				}
 				return &preamble{
+					clientID:      clientID,
 					username:      username,
 					password:      string(passBytes),
 					cmdTag:        tag,
@@ -359,7 +420,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 						initial = decoded
 					}
 					write, read := saslIO(conn, rd)
-					out, serr := runRelayedSASL(rc, conn, mech, "imap", clientIPOf(conn), initial, write, read)
+					out, serr := runRelayedSASL(rc, conn, mech, "imap", clientIPOf(conn), clientID, initial, write, read)
 					if serr != nil {
 						saslFailures++
 						if saslFailures >= authAttemptLimit(opts) {
@@ -370,6 +431,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 						continue
 					}
 					return &preamble{
+						clientID:      clientID,
 						username:      out.username,
 						authResult:    out.result,
 						cmdTag:        tag,
@@ -513,7 +575,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 					initial = decoded
 				}
 				write, read := saslIO(conn, rd)
-				out, serr := runRelayedSASL(rc, conn, mech, "pop3", clientIPOf(conn), initial, write, read)
+				out, serr := runRelayedSASL(rc, conn, mech, "pop3", clientIPOf(conn), "", initial, write, read)
 				if serr != nil {
 					saslFailures++
 					if saslFailures >= authAttemptLimit(opts) {
@@ -649,7 +711,17 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			if opts.XClient && ipInNets(remoteHost(conn), opts.XClientNets) {
 				caps += "250-XCLIENT ADDR PORT\r\n"
 			}
-			caps += "250 8BITMIME\r\n"
+			// The client keeps this reply for the session, so it lists what
+			// yarilo-submission serves behind it, with the same limits.
+			caps += "250-PIPELINING\r\n250-8BITMIME\r\n250-ENHANCEDSTATUSCODES\r\n250-CHUNKING\r\n"
+			if opts.SubmissionMaxRecipients > 0 {
+				caps += fmt.Sprintf("250-LIMITS RCPTMAX=%d\r\n", opts.SubmissionMaxRecipients)
+			}
+			if opts.SubmissionMaxMessageBytes > 0 {
+				caps += fmt.Sprintf("250 SIZE %d\r\n", opts.SubmissionMaxMessageBytes)
+			} else {
+				caps += "250 SIZE\r\n"
+			}
 			if _, err := io.WriteString(conn, caps); err != nil {
 				return nil, conn, rd, fmt.Errorf("smtp: send ehlo resp: %w", err)
 			}
@@ -802,7 +874,7 @@ func handleSMTPAuth(conn net.Conn, rd *bufio.Reader, line, ehloLine string, rc r
 			}
 			initial = first
 		}
-		out, err := runRelayedSASL(rc, conn, mech, "submission", clientIPOf(conn), initial, write, read)
+		out, err := runRelayedSASL(rc, conn, mech, "submission", clientIPOf(conn), "", initial, write, read)
 		if err != nil {
 			relayedFailure(conn, ProtocolSubmission, "", err)
 			return nil, nil
@@ -818,11 +890,12 @@ func relayedFailure(conn net.Conn, p Protocol, tag string, err error) {
 		writeProtoError(conn, p, tag, imapCodeUnavailable, "service temporarily unavailable")
 		return
 	}
+	reason := authclient.RefusalReason(err)
 	if p == ProtocolSubmission {
-		fmt.Fprintf(conn, "535 5.7.8 Authentication credentials invalid\r\n") //nolint:errcheck
+		fmt.Fprintf(conn, "535 5.7.8 %s\r\n", orDefault(reason, "Authentication credentials invalid")) //nolint:errcheck
 		return
 	}
-	writeProtoError(conn, p, tag, imapCodeAuthenticationFail, "Authentication failed.")
+	writeProtoError(conn, p, tag, imapCodeAuthenticationFail, orDefault(reason, "Authentication failed."))
 }
 
 // decodePlainCreds splits [authzid] NUL authcid NUL passwd. Dropping the
@@ -870,7 +943,7 @@ func parseIMAPLoginArgs(line string, rd *bufio.Reader, conn net.Conn) (username,
 	}
 	s = strings.TrimLeft(s, " ")
 	if s == "" {
-		// username was a literal — password follows on the next read
+		// username was a literal - password follows on the next read
 		var next string
 		next, err = lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {

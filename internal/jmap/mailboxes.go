@@ -1,14 +1,15 @@
 package jmap
 
 import (
+	"encoding/base64"
 	"fmt"
 	"sort"
 	"strings"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // specialUseRoles maps the IMAP special-use attribute (RFC 6154) to the JMAP
@@ -128,7 +129,26 @@ func mailboxID(guid [16]byte) string {
 
 // containerID names a \NoSelect node, which has no index entry and therefore no
 // GUID. The prefix keeps it from ever colliding with a hex GUID.
-func containerID(name string) string { return "container:" + name }
+func containerID(name string) string {
+	return containerPrefix + base64.RawURLEncoding.EncodeToString([]byte(name))
+}
+
+// containerPrefix marks a container's id, which encodes its name (RFC 8620 §1.2);
+// a GUID is lower-case hex and never starts with it.
+const containerPrefix = "N"
+
+// containerName reads a container id back to its name.
+func containerName(id string) (string, bool) {
+	rest, ok := strings.CutPrefix(id, containerPrefix)
+	if !ok {
+		return "", false
+	}
+	b, err := base64.RawURLEncoding.DecodeString(rest)
+	if err != nil || len(b) == 0 {
+		return "", false
+	}
+	return string(b), true
+}
 
 func separator(info *mailbox.UserInfo) string {
 	if info != nil && info.Separator != "" {

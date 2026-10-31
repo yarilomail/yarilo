@@ -81,7 +81,7 @@ func skipCRLF(r *bufio.Reader) {
 	}
 }
 
-// readString reads a ManageSieve string argument — either a quoted string
+// readString reads a ManageSieve string argument - either a quoted string
 // ("...") or a literal ({N} or {N+}).  For synchronizing literals {N},
 // contFn is called (and flushed) before reading the literal body so the
 // caller can send the required continuation OK first.
@@ -244,7 +244,7 @@ func writeCapabilities(w *bufio.Writer, exts []string) error {
 
 // readLastArg reads the final string argument of a command.
 // For quoted strings the trailing CRLF (rest of command line) is consumed.
-// For literals the CRLF was already consumed by the literal framing — no
+// For literals the CRLF was already consumed by the literal framing - no
 // additional skipLine is needed.
 func readLastArg(r *bufio.Reader, contFn func() error, lim literalLimit) ([]byte, error) {
 	skipWS(r)

@@ -5,16 +5,16 @@ package ftsbench
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // indexRatioCap bounds on-disk index size as a multiple of the corpus
-// (https://doc.yarilomail.org/FTS §12); catches e.g. accidental substring indexing.
+// (https://doc.yarilomail.org/latest/features/fts.html §12); catches e.g. accidental substring indexing.
 const indexRatioCap = 3.0
 
 // TestAcceptance fails when indexed SEARCH is slower than a brute-force
-// scan or the index grows past indexRatioCap (https://doc.yarilomail.org/FTS §12).
+// scan or the index grows past indexRatioCap (https://doc.yarilomail.org/latest/features/fts.html §12).
 func TestAcceptance(t *testing.T) {
 	rep, err := Run(Config{
 		Root:       t.TempDir(),
@@ -28,14 +28,14 @@ func TestAcceptance(t *testing.T) {
 	t.Logf("\n%s", rep.String())
 
 	if rep.IndexedP95Millis > rep.ScanP95Millis {
-		t.Errorf("indexed SEARCH p95 %.2f ms is slower than scan p95 %.2f ms — index buys nothing",
+		t.Errorf("indexed SEARCH p95 %.2f ms is slower than scan p95 %.2f ms - index buys nothing",
 			rep.IndexedP95Millis, rep.ScanP95Millis)
 	}
 	if rep.IndexRatio > indexRatioCap {
 		t.Errorf("index is %.2fx the corpus, over the %.1fx cap", rep.IndexRatio, indexRatioCap)
 	}
 	if rep.Hits == 0 {
-		t.Fatal("corpus produced no hits — benchmark is not exercising SEARCH")
+		t.Fatal("corpus produced no hits - benchmark is not exercising SEARCH")
 	}
 }
 

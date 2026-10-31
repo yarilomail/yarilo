@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 )
 
 // writeInternalCerts generates a self-signed internal CA and one shared leaf
-// (SAN "yarilo-internal", both server+client ExtKeyUsage) — exactly the sandbox
-// internal-tls setup — and returns the cert/key/ca file paths.
+// (SAN "yarilo-internal", both server+client ExtKeyUsage) - exactly the sandbox
+// internal-tls setup - and returns the cert/key/ca file paths.
 func writeInternalCerts(t *testing.T) (certFile, keyFile, caFile string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -90,7 +90,7 @@ func TestWrapProxy_InternalMTLSHandshake(t *testing.T) {
 	t.Cleanup(func() { rawLn.Close() })
 
 	// The chain that broke #826: MaxLineLength active + internal-mTLS preamble.
-	// AuthAddr points nowhere — the TLS handshake must still complete (the
+	// AuthAddr points nowhere - the TLS handshake must still complete (the
 	// preamble/auth step fails afterwards, which is fine for this assertion).
 	s := &Server{opts: Options{MaxLineLength: 512, AuthAddr: "127.0.0.1:1", PreambleTLS: serverCfg}}
 	wrapped := s.wrapProxy(rawLn)

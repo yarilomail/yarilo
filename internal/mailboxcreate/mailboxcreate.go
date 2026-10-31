@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // ErrLimit is quota_mailbox_count reached.

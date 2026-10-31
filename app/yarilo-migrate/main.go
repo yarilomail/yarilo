@@ -1,14 +1,14 @@
 // yarilo-migrate converts a per-user mailbox tree from one
 // storage shape to another. Supported source shapes:
 //
-//	maildir   — Maildir++ with cur/, yarilo-uidlist, etc.
-//	dbox-v1   — pre-Phase-5 yarilo single-message dbox
-//	mdbox-v1  — pre-Phase-5 yarilo multi-message dbox (TSV dbox.map)
+//	maildir   - Maildir++ with cur/, yarilo-uidlist, etc.
+//	dbox-v1   - pre-Phase-5 yarilo single-message dbox
+//	mdbox-v1  - pre-Phase-5 yarilo multi-message dbox (TSV dbox.map)
 //
 // Supported destination shapes (Phase 6+):
 //
-//	sdbox     — single-message dbox driver
-//	mdbox     — multi-message dbox driver
+//	sdbox     - single-message dbox driver
+//	mdbox     - multi-message dbox driver
 //
 // It also pre-stamps per-message GUIDs (RFC 8474 EMAILID) on an existing store,
 // so a folder does not pay that one-off pass on a user's first SELECT.
@@ -28,11 +28,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	indexfile "github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/dboxv2"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/mdbox"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	indexfile "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 var (

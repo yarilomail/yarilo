@@ -1,13 +1,14 @@
 // Package locks is the single cross-process write-coordination abstraction
 // for yarilo. One Locker API, one TAB-delimited wire protocol, two backends
 // behind it: embedded (in-memory, Unix socket) for standalone; remote
-// (mTLS TCP, Redis-backed) for backend deployments. See https://doc.yarilomail.org/DEPLOYMENT
+// (mTLS TCP, Redis-backed) for backend deployments. See https://doc.yarilomail.org/latest/installation/deployment.html
 // §yarilo-locks for the design.
 package locks
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -47,6 +48,15 @@ const (
 	EventMailboxRename      EventType = "mbox-rename"      // payload: old\x00new
 	EventMailboxSubscribe   EventType = "mbox-subscribe"   // payload: name
 	EventMailboxUnsubscribe EventType = "mbox-unsubscribe" // payload: name
+
+	// Per-user state writes, published on the account's own keys for push.
+	EventSubscriptions EventType = "subs"       // on SubscriptionsKey
+	EventRole          EventType = "role"       // on MailboxListKey: a special-use role
+	EventACL           EventType = "acl"        // on MailboxListKey: a folder's rights
+	EventSieve         EventType = "sieve"      // on SieveScriptsKey
+	EventThreads       EventType = "threads"    // on ThreadsKey
+	EventSubmission    EventType = "submission" // on SubmissionsKey
+	EventIdentities    EventType = "identities" // on IdentitiesKey
 )
 
 // Event is a server-emitted notification published on a resource channel.
@@ -72,7 +82,7 @@ type Locker interface {
 	// LockShared acquires a shared (read) lock on resource for owner (#671).
 	// Multiple owners may hold a shared lock on the same resource at once;
 	// it only blocks against a concurrent exclusive Lock holder, and vice
-	// versa — an exclusive Lock call blocks while any shared lock is held.
+	// versa - an exclusive Lock call blocks while any shared lock is held.
 	//
 	// Returns ErrBusy with the current exclusive owner if one is held.
 	// Unlock/Renew work unchanged for a shared lock's ID.
@@ -102,7 +112,7 @@ type Locker interface {
 	// IncrementCounter atomically adds delta to the persistent counter
 	// at key and returns the post-increment value. Used for shared
 	// monotonic counters that must survive process restart and stay
-	// race-free across pods — e.g. mdbox next_file_id allocation.
+	// race-free across pods - e.g. mdbox next_file_id allocation.
 	//
 	// Counters are independent of lock state: they share no key space
 	// with Lock resources and are not affected by TTL sweeping.
@@ -144,7 +154,7 @@ var (
 
 // Backend is the server-side state interface. MemoryBackend (in-memory map)
 // and RedisBackend (Redis Lua SET NX EX) implement it. Server is wire+I/O
-// only — all state lives here.
+// only - all state lives here.
 type Backend interface {
 	// Acquire attempts to take the exclusive lock. Returns the new lock ID on
 	// success. On contention (an exclusive OR a shared holder already present),
@@ -156,7 +166,7 @@ type Backend interface {
 	// AcquireShared attempts to take a shared (read) lock (#671). Multiple
 	// shared holders may coexist on the same resource; it fails with ErrBusy
 	// only when an exclusive lock is currently held. Release/Renew use the
-	// same lock-ID space as Acquire — implementations must track each lock
+	// same lock-ID space as Acquire - implementations must track each lock
 	// ID's kind (exclusive/shared) internally so those calls stay symmetric.
 	AcquireShared(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration) (lockID string, current Holder, err error)
 
@@ -170,6 +180,10 @@ type Backend interface {
 	// Publish broadcasts an event to all subscribers of resource.
 	Publish(ctx context.Context, resource string, t EventType, payload string) error
 
+	// PublishAll broadcasts evs in order, in one round trip where the store
+	// allows; the error of each event is at its index.
+	PublishAll(ctx context.Context, evs []Event) []error
+
 	// Subscribe returns a channel for all events on resource. The returned
 	// cancel function must be called to release backend resources.
 	Subscribe(ctx context.Context, resource string) (<-chan Event, func(), error)
@@ -180,6 +194,19 @@ type Backend interface {
 	// lock state: same backend, separate key namespace, no TTL.
 	IncrementCounter(ctx context.Context, key string, delta int64) (int64, error)
 
-	// Close shuts the backend down — closes Redis pool, stops sweepers, etc.
+	// Close shuts the backend down - closes Redis pool, stops sweepers, etc.
 	Close() error
+}
+
+// EmitBest publishes an event after a write, best effort: a lost one costs a
+// push client at most one recompute interval.
+func EmitBest(l Locker, resource string, t EventType, payload string) {
+	if l == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := l.Emit(ctx, resource, t, payload); err != nil {
+		slog.Debug("locks: event not emitted", "resource", resource, "type", string(t), "err", err)
+	}
 }

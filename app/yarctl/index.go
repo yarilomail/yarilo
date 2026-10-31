@@ -26,7 +26,7 @@ func dispatchIndex(args []string) error {
 	case "optimize":
 		return indexOptimize(args[1:])
 	default:
-		return fmt.Errorf("unknown index command %q — available: dump, check, rebuild, rebuild-storage, rebuild-guid-store, optimize, cache-purge", args[0])
+		return fmt.Errorf("unknown index command %q - available: dump, check, rebuild, rebuild-storage, rebuild-guid-store, optimize, cache-purge", args[0])
 	}
 }
 
@@ -47,7 +47,7 @@ Commands:
   rebuild  <user> <folder> [--namespace NS]
         Scan the on-disk storage and regenerate ONE folder's fileindex,
         preserving UIDs for filenames already known to the index.
-        For maildir / sdbox. Returns 501 for mdbox — its storage is
+        For maildir / sdbox. Returns 501 for mdbox - its storage is
         folder-agnostic, so use rebuild-storage instead.
 
   rebuild-storage <user> [--namespace NS] [--restore-orphans]
@@ -72,7 +72,7 @@ Commands:
   optimize <user> --all [--namespace NS]      fold every folder of the account,
                                               and the per-user map where the driver keeps one (mdbox)
   cache-purge <user> <folder> [--namespace NS]
-                             — rewrite yarilo.index.cache as a new generation
+                             - rewrite yarilo.index.cache as a new generation
                                holding only what live messages point at, and
                                reclaim the rest. The cache is append-only and
                                never shrinks on its own; there is no automatic

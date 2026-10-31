@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/dict"
-	"github.com/yarilomail/yarilo/pkg/dict/dicttest"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/dict/dicttest"
 )
 
 func TestContractSuite(t *testing.T) {
@@ -30,7 +30,7 @@ func TestTTLExpiry(t *testing.T) {
 	}
 
 	// Force the clock past the TTL by waiting just over a second; this
-	// is the only test that needs wall-clock sleep — the suite covers
+	// is the only test that needs wall-clock sleep - the suite covers
 	// non-TTL semantics.
 	time.Sleep(1100 * time.Millisecond)
 

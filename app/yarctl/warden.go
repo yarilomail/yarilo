@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 )
 
-// dispatchWarden is the `warden` subtree — introspection of the shared
+// dispatchWarden is the `warden` subtree - introspection of the shared
 // connection-accounting service. Routed via the backend plane (backend-api ->
 // warden), like `backend who`.
 //
@@ -22,7 +22,7 @@ func dispatchWarden(args []string) error {
 	case "dump":
 		return wardenDump(args[1:])
 	default:
-		return fmt.Errorf("unknown warden command %q — available: dump", args[0])
+		return fmt.Errorf("unknown warden command %q - available: dump", args[0])
 	}
 }
 

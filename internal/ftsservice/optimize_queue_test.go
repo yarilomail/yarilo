@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
 )
 
 func TestOptimizeQueueDedupsWhilePending(t *testing.T) {
@@ -21,7 +21,7 @@ func TestOptimizeQueueDedupsWhilePending(t *testing.T) {
 		t.Fatalf("pop = %+v/%v, want u1/g1", j, ok)
 	}
 
-	// The queue must now be empty — the duplicates were never enqueued.
+	// The queue must now be empty - the duplicates were never enqueued.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, ok := q.pop(ctx); ok {
@@ -41,7 +41,7 @@ func TestOptimizeQueueDoneReleasesDedupMarkerForRequeue(t *testing.T) {
 	}
 
 	// While the job is "in flight" (popped, not yet done), a fresh rotation
-	// pushing the same mailbox must still be dropped — it's covered by the
+	// pushing the same mailbox must still be dropped - it's covered by the
 	// run already underway.
 	q.push(user, mbox)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -51,7 +51,7 @@ func TestOptimizeQueueDoneReleasesDedupMarkerForRequeue(t *testing.T) {
 	}
 
 	// Once the run completes, a NEW rotation must be able to queue a fresh
-	// pass — the whole point of clearing the marker at done(), not at pop().
+	// pass - the whole point of clearing the marker at done(), not at pop().
 	q.done(j.user, j.mbox)
 	q.push(user, mbox)
 	j2, ok := q.pop(context.Background())

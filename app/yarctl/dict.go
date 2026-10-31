@@ -49,13 +49,13 @@ func dispatchDict(args []string) error {
 	case "commit-batch":
 		return cmdDictCommitBatch(args[1:])
 	default:
-		return fmt.Errorf("unknown dict command %q — run 'yarctl dict' for usage", args[0])
+		return fmt.Errorf("unknown dict command %q - run 'yarctl dict' for usage", args[0])
 	}
 }
 
 // opSettingsFlags wires the standard per-op identity flags onto fs.
 // Returned closure assembles the wire-shape OpSettings struct after
-// fs.Parse runs. All three fields are optional — the admin-api
+// fs.Parse runs. All three fields are optional - the admin-api
 // treats a zero-value OpSettings as "use defaults".
 type opSettingsWire struct {
 	Username   string `json:"username,omitempty"`
@@ -182,7 +182,7 @@ func cmdDictIterate(args []string) error {
 	}
 	defer stream.Close() //nolint:errcheck
 
-	// NDJSON decode — one row per line. Server emits a final
+	// NDJSON decode - one row per line. Server emits a final
 	// {"error": ...} row on mid-stream failure (HTTP status is
 	// already 200, so we check each row).
 	sc := bufio.NewScanner(stream)

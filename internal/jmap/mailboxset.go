@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yarilomail/yarilo/internal/mailboxcreate"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/mailboxcreate"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 type mailboxSetRequest struct {
@@ -173,8 +173,8 @@ func (h *userHandle) parentName(id *string) (string, bool) {
 	if id == nil {
 		return "", true
 	}
-	if name, ok := strings.CutPrefix(*id, "container:"); ok {
-		return name, name != ""
+	if name, ok := containerName(*id); ok {
+		return name, true
 	}
 	t, ok := h.targetFolder(*id)
 	return t.name, ok

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/internal/auth/authtest"
+	"github.com/yarilomail/yarilo/v2/internal/auth/authtest"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 )
 
 // oauthBearerAuth is a test double that accepts a single
@@ -30,7 +30,7 @@ func oauthBearerPayload(username, token string) string {
 	return base64.StdEncoding.EncodeToString([]byte(raw))
 }
 
-// TestSession_AuthOAuthBearer_Success — real OAUTHBEARER session
+// TestSession_AuthOAuthBearer_Success - real OAUTHBEARER session
 // reaches TRANSACTION state, STAT works.
 func TestSession_AuthOAuthBearer_Success(t *testing.T) {
 	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
@@ -50,7 +50,7 @@ func TestSession_AuthOAuthBearer_Success(t *testing.T) {
 	}
 }
 
-// TestSession_AuthOAuthBearer_InvalidToken — wrong token surfaces
+// TestSession_AuthOAuthBearer_InvalidToken - wrong token surfaces
 // as -ERR (no detail to attacker).
 func TestSession_AuthOAuthBearer_InvalidToken(t *testing.T) {
 	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
@@ -66,7 +66,7 @@ func TestSession_AuthOAuthBearer_InvalidToken(t *testing.T) {
 	}
 }
 
-// TestSession_AuthOAuthBearer_DisabledRejects — OAuth2Enabled=false
+// TestSession_AuthOAuthBearer_DisabledRejects - OAuth2Enabled=false
 // rejects the mechanism outright.
 func TestSession_AuthOAuthBearer_DisabledRejects(t *testing.T) {
 	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
@@ -82,7 +82,7 @@ func TestSession_AuthOAuthBearer_DisabledRejects(t *testing.T) {
 	}
 }
 
-// TestSession_AuthOAuthBearer_InvalidBase64 — malformed payload
+// TestSession_AuthOAuthBearer_InvalidBase64 - malformed payload
 // gets the base64-error path.
 func TestSession_AuthOAuthBearer_InvalidBase64(t *testing.T) {
 	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})

@@ -65,7 +65,7 @@ func TestChainAuthenticator_LookupSCRAMSha1_PropagatesError(t *testing.T) {
 	}
 }
 
-// TestChainAuthenticator_MixedSCRAMFamilies — a chain may carry
+// TestChainAuthenticator_MixedSCRAMFamilies - a chain may carry
 // both SHA-256 and SHA-1 verifiers in distinct passdbs (one
 // passdb per digest family). Each lookup must walk only the
 // matching family.

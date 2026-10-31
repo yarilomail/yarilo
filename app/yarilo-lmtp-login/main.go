@@ -1,7 +1,7 @@
 // yarilo-lmtp-login is the LMTP login proxy for the yarilo mail server.
 // It accepts MTA connections (e.g. from Postfix), performs per-recipient
 // warden CONNECT and yarilo-auth SESSION token issuance, then fans out one
-// backend LMTP connection per recipient — each preceded by a YARILO preamble.
+// backend LMTP connection per recipient - each preceded by a YARILO preamble.
 package main
 
 import (
@@ -15,14 +15,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/lmtplogin"
-	"github.com/yarilomail/yarilo/internal/telemetry"
-	"github.com/yarilomail/yarilo/pkg/authclient"
-	"github.com/yarilomail/yarilo/pkg/build"
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/logging"
-	"github.com/yarilomail/yarilo/pkg/mtls"
-	"github.com/yarilomail/yarilo/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/internal/lmtplogin"
+	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/pkg/build"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/logging"
+	"github.com/yarilomail/yarilo/v2/pkg/mtls"
+	"github.com/yarilomail/yarilo/v2/pkg/quota"
 )
 
 func main() {
@@ -50,11 +50,11 @@ func main() {
 	}
 
 	// #741: backend_addr wins when both are set, unifying with the other
-	// four login components' existing precedence (internal/login) — lmtp-login
+	// four login components' existing precedence (internal/login) - lmtp-login
 	// previously inverted this (director_addr won). Warn loudly since flipping
 	// the winner is a silent behavior change for any deploy that set both.
 	if lmtpCfg.BackendAddr != "" && lmtpCfg.DirectorAddr != "" {
-		slog.Warn("lmtp_login_service: both backend_addr and director_addr set; backend_addr wins per unified precedence (#741) — remove backend_addr to keep director routing")
+		slog.Warn("lmtp_login_service: both backend_addr and director_addr set; backend_addr wins per unified precedence (#741) - remove backend_addr to keep director routing")
 	}
 	mode := lmtpCfg.BackendAddr
 	if mode == "" && lmtpCfg.DirectorAddr != "" {

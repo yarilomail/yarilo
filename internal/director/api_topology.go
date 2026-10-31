@@ -135,7 +135,7 @@ func computeTopology(selfAddr string, views map[string]RingStatus, unreachable [
 		issues = append(issues, RingIssue{Severity: sev, Type: typ, Detail: detail})
 	}
 
-	// (1) peer-unreachable — a member whose own view was not collected. An
+	// (1) peer-unreachable - a member whose own view was not collected. An
 	// error: never report healthy with a silently missing peer.
 	for _, addr := range unreachable {
 		add("error", "peer-unreachable", fmt.Sprintf("%s is in membership but its view could not be collected", addr))
@@ -161,7 +161,7 @@ func computeTopology(selfAddr string, views map[string]RingStatus, unreachable [
 		}
 	}
 
-	// (2b) backend-set-divergence (#846) — reachable replicas hashing their
+	// (2b) backend-set-divergence (#846) - reachable replicas hashing their
 	// routing backend set differently have diverged (a dropped RING-CHANGE).
 	// The reference is this replica's own hash; anything different is flagged.
 	if self, ok := views[selfAddr]; ok && self.BackendSetHash != "" {
@@ -173,7 +173,7 @@ func computeTopology(selfAddr string, views map[string]RingStatus, unreachable [
 		}
 	}
 
-	// (3) asymmetric-edge — A's self-row says right=B but B's self-row does not
+	// (3) asymmetric-edge - A's self-row says right=B but B's self-row does not
 	// say left=A (or the mirror). Deduped by unordered pair.
 	selfRowOf := func(v RingStatus) *RingMemberStatus {
 		for i := range v.Members {
@@ -217,7 +217,7 @@ func computeTopology(selfAddr string, views map[string]RingStatus, unreachable [
 		}
 	}
 
-	// (4) tombstone-divergence — an addr live in some views but tombstoned in
+	// (4) tombstone-divergence - an addr live in some views but tombstoned in
 	// others (propagation lag or a resurrected phantom).
 	liveIn := map[string]bool{}
 	deadIn := map[string]bool{}
@@ -241,7 +241,7 @@ func computeTopology(selfAddr string, views map[string]RingStatus, unreachable [
 		add("error", "tombstone-divergence", fmt.Sprintf("%s is a live member on some replicas but tombstoned on others", addr))
 	}
 
-	// (5) seq-lag — per origin, a replica trailing the max watermark. Warn only:
+	// (5) seq-lag - per origin, a replica trailing the max watermark. Warn only:
 	// watermarks legitimately differ during activity.
 	maxSeq := map[string]uint64{}
 	for _, a := range reachAddrs {
@@ -309,7 +309,7 @@ func computeTopology(selfAddr string, views map[string]RingStatus, unreachable [
 		Issues:        issues,
 		Replicas:      rows,
 		Assumptions: []string{
-			fmt.Sprintf("peer API endpoints derived as <ring-ip>:%d — assumes uniform api.listen across replicas", apiPort),
+			fmt.Sprintf("peer API endpoints derived as <ring-ip>:%d - assumes uniform api.listen across replicas", apiPort),
 			"admin API is plain HTTP guarded by Bearer token + api.allowed_nets; fan-out source is a director pod IP",
 		},
 	}

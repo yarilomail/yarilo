@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/auth/protocol"
-	"github.com/yarilomail/yarilo/pkg/authclient"
+	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 )
 
 // stubIteratorUserdb is the same shape as the master-protocol tests
@@ -164,7 +164,7 @@ func TestClient_UserdbBackendErrorSurfacesReason(t *testing.T) {
 func TestClient_UserdbInternalFieldsNeverArriveOverWire(t *testing.T) {
 	// Server-side guarantee: Password / CertName / PolicyResponse
 	// are stripped by marshalUserInfo. This test confirms the
-	// guarantee end-to-end — even when the backend stuffs them,
+	// guarantee end-to-end - even when the backend stuffs them,
 	// the client must observe nothing.
 	udb := &stubIteratorUserdb{users: map[string]*protocol.UserInfo{
 		"alice": {
@@ -286,7 +286,7 @@ func TestClient_CloseIsIdempotent(t *testing.T) {
 }
 
 func TestClient_ContextDeadlinePropagates(t *testing.T) {
-	// Cancel the context before the call — the client must
+	// Cancel the context before the call - the client must
 	// surface the ctx error without writing to the conn.
 	udb := &stubIteratorUserdb{users: map[string]*protocol.UserInfo{
 		"alice": {Username: "alice"},
@@ -302,7 +302,7 @@ func TestClient_ContextDeadlinePropagates(t *testing.T) {
 }
 
 func TestClient_DialRejectsBadAddress(t *testing.T) {
-	_, err := authclient.Dial("127.0.0.1:1", nil) // port 1 — refused
+	_, err := authclient.Dial("127.0.0.1:1", nil) // port 1 - refused
 	if err == nil {
 		t.Fatal("expected Dial to fail against a port that refuses connections")
 	}

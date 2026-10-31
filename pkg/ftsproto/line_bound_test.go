@@ -3,7 +3,7 @@ package ftsproto_test
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/lineio/linetest"
+	"github.com/yarilomail/yarilo/v2/pkg/lineio/linetest"
 )
 
 func TestTheFTSServerCutsAnEndlessLine(t *testing.T) {

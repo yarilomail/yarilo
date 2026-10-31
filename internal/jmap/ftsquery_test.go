@@ -15,16 +15,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/fts/language"
-	ftsquery "github.com/yarilomail/yarilo/internal/fts/query"
-	"github.com/yarilomail/yarilo/internal/storage/index/file"
-	"github.com/yarilomail/yarilo/internal/storage/mailbox/maildir"
-	"github.com/yarilomail/yarilo/internal/storage/mailboxbase"
-	"github.com/yarilomail/yarilo/pkg/fts"
-	"github.com/yarilomail/yarilo/pkg/ftsproto"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // stubFTS answers lookups from a script, and records what it was asked and how
@@ -192,7 +192,7 @@ func TestEmailQueryFolderCeiling(t *testing.T) {
 	t.Run("at the limit the query runs", func(t *testing.T) {
 		stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{}}
 		s := searchServer(t, stub, 4, n, folderSet(n, "hello"))
-		got := emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"}}`)
+		got := emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"hello"}}`)
 		if got["queryState"] == nil {
 			t.Errorf("query at the limit did not run: %v", got)
 		}
@@ -201,7 +201,7 @@ func TestEmailQueryFolderCeiling(t *testing.T) {
 	t.Run("one folder over the limit is refused", func(t *testing.T) {
 		stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{}}
 		s := searchServer(t, stub, 4, n-1, folderSet(n, "hello"))
-		err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"}}`)
+		err := emailQueryError(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"hello"}}`)
 		if err["type"] != "invalidArguments" {
 			t.Errorf("type = %v, want invalidArguments (the client can narrow inMailbox)", err["type"])
 		}
@@ -219,7 +219,7 @@ func TestEmailQueryFolderCeiling(t *testing.T) {
 	t.Run("a query with no text condition ignores the ceiling", func(t *testing.T) {
 		stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{}}
 		s := searchServer(t, stub, 4, 1, folderSet(n, "hello"))
-		got := emailQuery(t, s, `{"accountId":"u1@example.com"}`)
+		got := emailQuery(t, s, `{"accountId":"`+testAccount+`"}`)
 		if got["queryState"] == nil {
 			t.Errorf("a non-text query was refused by the full-text ceiling: %v", got)
 		}
@@ -241,7 +241,7 @@ func TestEmailQueryVerifiesMaybeResults(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{"INBOX": {Maybe: []uint32{1}}}}
 			s := searchServer(t, stub, 4, 8, map[string]string{"INBOX": tc.body})
-			got := emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`)
+			got := emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"needle"}}`)
 			ids := idsOf(t, got)
 			if tc.wantHit && len(ids) != 1 {
 				t.Errorf("ids = %v, want the verified message", ids)
@@ -275,7 +275,7 @@ func TestEmailQueryVerifiesTextConditionsBeyondTheBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{"INBOX": {Maybe: []uint32{1}}}}
 			s := rawMessageServer(t, stub, tc.headers+"\r\n"+tc.body+"\r\n")
-			got := emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"`+tc.want+`"}}`)
+			got := emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"`+tc.want+`"}}`)
 			ids := idsOf(t, got)
 			if tc.wantHit && len(ids) != 1 {
 				t.Errorf("ids = %v, want the candidate confirmed", ids)
@@ -293,7 +293,7 @@ func TestEmailQueryVerifiesTextConditionsBeyondTheBody(t *testing.T) {
 func TestEmailQueryTrustsDefiniteResults(t *testing.T) {
 	stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{"INBOX": {Definite: []uint32{1}}}}
 	s := searchServer(t, stub, 4, 8, map[string]string{"INBOX": "no such word"})
-	got := emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`)
+	got := emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"needle"}}`)
 	if ids := idsOf(t, got); len(ids) != 1 {
 		t.Errorf("ids = %v, want the definite hit", ids)
 	}
@@ -321,7 +321,7 @@ func TestEmailQueryFanOutIsBounded(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"}}`)
+		emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"hello"}}`)
 	}()
 	// Wait for the wave rather than sleeping for it: the work before a lookup
 	// is not fixed, and a margin that fits today measures the machine.
@@ -351,10 +351,10 @@ func TestEmailQueryOrderIndependentOfAnswerOrder(t *testing.T) {
 	}
 	s := searchServer(t, stub, 4, 8, bodies)
 
-	first := idsOf(t, emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"},
+	first := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"hello"},
 		"sort":[{"property":"size"},{"property":"receivedAt"}]}`))
 	stub.delay = map[string]time.Duration{"F01": 40 * time.Millisecond}
-	second := idsOf(t, emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"},
+	second := idsOf(t, emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"hello"},
 		"sort":[{"property":"size"},{"property":"receivedAt"}]}`))
 
 	if strings.Join(first, ",") != strings.Join(second, ",") {
@@ -368,7 +368,7 @@ func TestEmailQueryFailureTypes(t *testing.T) {
 	t.Run("a lookup failure is final", func(t *testing.T) {
 		stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{}, err: errors.New("engine down")}
 		s := searchServer(t, stub, 4, 8, map[string]string{"INBOX": "hello"})
-		err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"}}`)
+		err := emailQueryError(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"hello"}}`)
 		if err["type"] != "serverFail" {
 			t.Errorf("type = %v, want serverFail", err["type"])
 		}
@@ -379,7 +379,7 @@ func TestEmailQueryFailureTypes(t *testing.T) {
 	t.Run("an exhausted pool is transient", func(t *testing.T) {
 		stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{}, err: ftsproto.ErrPoolExhausted}
 		s := searchServer(t, stub, 4, 8, map[string]string{"INBOX": "hello"})
-		err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"}}`)
+		err := emailQueryError(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"hello"}}`)
 		if err["type"] != "serverUnavailable" {
 			t.Errorf("type = %v, want serverUnavailable", err["type"])
 		}
@@ -390,7 +390,7 @@ func TestEmailQueryFailureTypes(t *testing.T) {
 // answered from the index alone, which would return a confidently wrong set.
 func TestEmailQueryWithoutFTSRefusesTextConditions(t *testing.T) {
 	s := storedServer(t)
-	err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"hello"}}`)
+	err := emailQueryError(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"hello"}}`)
 	if err["type"] != "unsupportedFilter" {
 		t.Errorf("type = %v, want unsupportedFilter", err["type"])
 	}
@@ -448,7 +448,7 @@ func TestEmailQueryWaitsForALaggingIndexThenAsksForARetry(t *testing.T) {
 		s.opts.FTS.AddMissing = "priority"
 		s.opts.FTS.Timeout = 300 * time.Millisecond
 
-		err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`)
+		err := emailQueryError(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"needle"}}`)
 		if err["type"] != "serverUnavailable" {
 			t.Errorf("type = %v, want serverUnavailable so the client retries", err["type"])
 		}
@@ -465,7 +465,7 @@ func TestEmailQueryWaitsForALaggingIndexThenAsksForARetry(t *testing.T) {
 		s := searchServer(t, stub, 4, 8, map[string]string{"INBOX": "needle here"})
 		s.opts.FTS.AddMissing = ""
 
-		err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`)
+		err := emailQueryError(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"needle"}}`)
 		if err["type"] != "serverUnavailable" {
 			t.Errorf("type = %v, want serverUnavailable", err["type"])
 		}
@@ -482,7 +482,7 @@ func TestEmailQueryWaitsForALaggingIndexThenAsksForARetry(t *testing.T) {
 		s.opts.FTS.AddMissing = "priority"
 		s.opts.FTS.Timeout = 300 * time.Millisecond
 
-		got := emailQuery(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`)
+		got := emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"needle"}}`)
 		if ids := idsOf(t, got); len(ids) != 1 {
 			t.Errorf("ids = %v, want the hit from a caught-up index", ids)
 		}
@@ -655,7 +655,7 @@ func TestFanOutStopsAtTheFirstRefusal(t *testing.T) {
 	}
 	s := searchServer(t, stub, 4, folders, folderSet(folders, "needle"))
 
-	if err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`); err["type"] != "serverFail" {
+	if err := emailQueryError(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"needle"}}`); err["type"] != "serverFail" {
 		t.Errorf("type = %v, want serverFail", err["type"])
 	}
 
@@ -676,7 +676,7 @@ func TestCatchUpGivesUpWhenTheIndexIsNotAdvancing(t *testing.T) {
 	s.opts.FTS.Timeout = 30 * time.Second // the budget a deployment actually runs with
 
 	start := time.Now()
-	err := emailQueryError(t, s, `{"accountId":"u1@example.com","filter":{"text":"needle"}}`)
+	err := emailQueryError(t, s, `{"accountId":"`+testAccount+`","filter":{"text":"needle"}}`)
 	elapsed := time.Since(start)
 
 	if err["type"] != "serverUnavailable" {
@@ -740,7 +740,7 @@ func TestEmailQueryAsksWhatSearchAsks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := &stubFTS{statusUID: 1, byFolder: map[string]fts.Result{}}
 			s := searchServer(t, stub, 4, 8, map[string]string{"INBOX": "hello"})
-			emailQuery(t, s, `{"accountId":"u1@example.com","filter":`+tc.filter+`}`)
+			emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":`+tc.filter+`}`)
 			want, _ := ftsquery.Build(chain, tc.want)
 			stub.mu.Lock()
 			defer stub.mu.Unlock()

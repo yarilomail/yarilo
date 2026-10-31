@@ -12,12 +12,12 @@ import (
 //
 // Substitutions (%L prefix lowercases):
 //
-//   - %u / %{user}    — full username verbatim
-//   - %Lu             — full username lowercased
-//   - %n              — local part (before @)
-//   - %Ln             — local part lowercased
-//   - %d              — domain (after @); empty when no @
-//   - %Ld             — domain lowercased
+//   - %u / %{user}    - full username verbatim
+//   - %Lu             - full username lowercased
+//   - %n              - local part (before @)
+//   - %Ln             - local part lowercased
+//   - %d              - domain (after @); empty when no @
+//   - %Ld             - domain lowercased
 func UsernameTemplate(template, user string) (string, error) {
 	if template == "" || template == "%{user}" || template == "%u" {
 		return user, nil

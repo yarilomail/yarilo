@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/logrotate"
+	"github.com/yarilomail/yarilo/v2/internal/storage/logrotate"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // The map keeps an append-only log beside the base: a delivery appends instead of
@@ -330,7 +330,7 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 		}
 		payload := make([]byte, payloadLen)
 		if _, rerr := io.ReadFull(f, payload); rerr != nil {
-			break // torn tail — do not advance pos past the partial record
+			break // torn tail - do not advance pos past the partial record
 		}
 		pos += int64(8 + payloadLen)
 		if txHdr.Type.Kind() == mailindex.TxTypeExtAtomicInc {

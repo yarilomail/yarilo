@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // readTimer counts the time actually spent blocked reading message bytes.
 //
 // It exists because the obvious split was wrong: metricFetch times box.Fetch,
-// which is the open, while the body streams into Build through this reader —
+// which is the open, while the body streams into Build through this reader -
 // so every byte of storage I/O was being counted as tokenisation. Without this
 // there is no way to say what overlapping reads recovered, only that something
 // changed.
@@ -50,7 +50,7 @@ type prefetchOptions struct {
 
 // enabled reports whether prefetching does anything. Depth below two means the
 // next message is only read once the current one is done, which is the
-// sequential path — kept as one code path rather than two.
+// sequential path - kept as one code path rather than two.
 func (o prefetchOptions) enabled() bool { return o.Depth >= 2 && o.MaxBytes > 0 }
 
 // fetcher reads messages ahead of the consumer, in order.

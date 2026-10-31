@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // apiRequest is a batch arriving from the login layer.
@@ -176,11 +176,11 @@ func TestBrokenStoreLeavesStorelessMethodsWorking(t *testing.T) {
 	s.Handler().ServeHTTP(w, apiRequest(`{"using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
 		"methodCalls":[
 			["Core/echo",{"alive":true},"c0"],
-			["Mailbox/get",{"accountId":"u1@example.com"},"c1"],
+			["Mailbox/get",{"accountId":"`+testAccount+`"},"c1"],
 			["Core/echo",{"still":true},"c2"]]}`))
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — a broken store must not fail the request: %s", w.Code, w.Body)
+		t.Fatalf("status = %d, want 200 - a broken store must not fail the request: %s", w.Code, w.Body)
 	}
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func testHome(root, user string) string {
@@ -387,7 +387,7 @@ func TestSave_VSize_PureCRLF(t *testing.T) {
 		t.Errorf("phys=%d, want %d", phys, len(body))
 	}
 	if virt != phys {
-		t.Errorf("virt=%d, phys=%d — pure CRLF input should have virt==phys", virt, phys)
+		t.Errorf("virt=%d, phys=%d - pure CRLF input should have virt==phys", virt, phys)
 	}
 }
 
@@ -727,7 +727,7 @@ func TestList_ReadDirCacheStopsNamingARemovedFile(t *testing.T) {
 }
 
 // ageFolder backdates the cur/ and new/ mtimes so SyncToken is out of its
-// same-second dirty window — makes the token deterministic regardless of the
+// same-second dirty window - makes the token deterministic regardless of the
 // host filesystem's mtime granularity or the test's wall-clock timing.
 func ageFolder(t *testing.T, box *userMailbox, folder string, mt time.Time) {
 	t.Helper()

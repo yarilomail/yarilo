@@ -1,4 +1,4 @@
-name: CI — yarilo
+name: CI - yarilo
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "app/**"
+      - "hack/**"
       - "helm/**"
       - "helm_values/**"
       - "internal/**"
@@ -40,11 +41,12 @@ jobs:
   ## run the same gate rather than two copies of it.
   gate:
     uses: ./.github/workflows/gate.yml
-    ## A called workflow cannot ask for more than its caller grants,
-    ## and the test job publishes a check run.
+    ## A called workflow cannot ask for more than its caller grants: the test
+    ## job publishes a check run, and Changes reads the gated-tree artifacts.
     permissions:
       contents: read
       checks: write
+      actions: read
 
   ## main takes merges from develop only; a required check, since branch
   ## protection cannot name the source branch.
@@ -135,14 +137,14 @@ jobs:
           driver: docker
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: docker.io
           username: 0kaba0
@@ -258,15 +260,78 @@ jobs:
           helm package helm --destination "${RUNNER_TEMP}/chart"
           helm push "${RUNNER_TEMP}/chart/yarilo-${VERSION}.tgz" "${CHART_REPO}"
 
+      ## Artifact Hub reads an OCI repository's metadata from its
+      ## `artifacthub.io` tag; the repositoryID in it earns the Verified
+      ## Publisher label. Metadata only, so re-pushing it on every release is
+      ## harmless.
+      - name: Set up ORAS
+        if: steps.version.outputs.is_release == 'true'
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+
+      - name: Push Artifact Hub repository metadata
+        if: steps.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${GH_TOKEN}" | oras login ghcr.io --username "${{ github.actor }}" --password-stdin
+          oras push "ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts/yarilo:artifacthub.io" \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+
+      - name: Set up Go
+        if: steps.version.outputs.is_release == 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      ## The release's settings export, which the docs check its settings data against.
+      - name: Attach the settings export
+        if: steps.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          go run ./hack/settingsexport > "${RUNNER_TEMP}/settings.json"
+          gh release upload "${{ steps.version.outputs.tag }}" "${RUNNER_TEMP}/settings.json" --clobber
+
       ## GHCR is the working set and is pruned; Docker Hub is the durable
       ## archive and is never cleaned. That split is what makes "roll back
       ## after a bad upgrade" available to an operator several releases
       ## behind, rather than only to one who upgraded yesterday (#1217).
+      ## Keeps the 16 newest tagged images with their child manifests;
+      ## releases and latest are excluded, so chart-pinned images stay.
       - name: Cleanup old GHCR versions
-        uses: actions/delete-package-versions@v5
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
-          package-name: yarilo
-          package-type: container
-          min-versions-to-keep: 16
-          ignore-versions: '^\d+\.\d+\.\d+$'
+          package: yarilo
+          use-regex: true
+          keep-n-tagged: 16
+          exclude-tags: '^(latest|\d+\.\d+\.\d+)$'
+          delete-untagged: true
+          delete-ghost-images: true
+          delete-partial-images: true
+          ## First run reads only; turned off once its log shows the plan.
+          dry-run: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      ## The same tag on the docs repo's main publishes that version of the
+      ## docs. A tag already there is never moved.
+      - name: Tag the documentation
+        if: steps.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_TAG_TOKEN }}
+          DOCS_REPO: yarilomail/documentation
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          # Without it, gh would fall back to the runner's own login.
+          [ -n "${GH_TOKEN}" ] || { echo "::error::secret DOCS_TAG_TOKEN is not set"; exit 1; }
+          CODE=$(gh api "repos/${DOCS_REPO}/git/ref/tags/${TAG}" \
+            --silent --include 2>/dev/null | head -1 | grep -oE '[0-9]{3}' | head -1 || true)
+          case "${CODE}" in
+            200) echo "::notice::${DOCS_REPO} already has ${TAG}; leaving it"; exit 0 ;;
+            404) ;;
+            *)   echo "::error::asking ${DOCS_REPO} about ${TAG} answered ${CODE:-nothing}"; exit 1 ;;
+          esac
+          SHA=$(gh api "repos/${DOCS_REPO}/git/ref/heads/main" -q .object.sha)
+          gh api "repos/${DOCS_REPO}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${SHA}" --silent
+          echo "Tagged ${DOCS_REPO}@${SHA::7} as ${TAG}"

@@ -3,8 +3,8 @@ package mailboxbuild
 import (
 	"testing"
 
-	"github.com/yarilomail/yarilo/pkg/config"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The property the feature exists for: the name the client wrote is the name
@@ -103,7 +103,7 @@ func TestADottedNameIsOneMailboxOnEveryDriver(t *testing.T) {
 			case "Invoices.2026":
 				found++
 			case "Invoices", "Invoices/2026":
-				t.Errorf("%s: listed %q — the name was reinterpreted as nesting", driver, f.Name)
+				t.Errorf("%s: listed %q - the name was reinterpreted as nesting", driver, f.Name)
 			}
 		}
 		if found != 1 {

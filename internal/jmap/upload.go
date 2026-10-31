@@ -18,10 +18,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yarilomail/yarilo/internal/storage/mailops"
-	"github.com/yarilomail/yarilo/pkg/jmapcore"
-	"github.com/yarilomail/yarilo/pkg/locks"
-	"github.com/yarilomail/yarilo/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/locks"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // The upload store's lock, as the thread recorder's: a request would rather
@@ -196,7 +196,7 @@ var errTooLarge = errors.New("jmap: upload over maxSizeUpload")
 // handleUpload stores one blob for the caller (RFC 8620 §6.1).
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, id identity) {
 	accountID := strings.Trim(strings.TrimPrefix(r.URL.Path, jmapcore.UploadPath), "/")
-	if accountID != id.user {
+	if accountID != jmapcore.AccountID(id.user) {
 		jmapcore.WriteProblem(w, http.StatusNotFound, "No such account")
 		return
 	}
@@ -252,7 +252,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, id identit
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"accountId": id.user, "blobId": blob.String(), "type": ctype, "size": blob.size,
+		"accountId": jmapcore.AccountID(id.user), "blobId": blob.String(), "type": ctype, "size": blob.size,
 	})
 }
 
