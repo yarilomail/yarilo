@@ -421,11 +421,11 @@ func roundUp(r float64) float64 {
 
 const emDash = "\u2014"
 
-// dashAllowance is a line that keeps its em dash: a test input about the
-// character, or a lint directive the sweep does not touch.
+// dashAllowance is a line that keeps its em dash. Without Text it is the whole
+// file, or every file under a File ending in "/": data such as a word list.
 type dashAllowance struct {
 	File string `json:"file"`
-	Text string `json:"text"`
+	Text string `json:"text,omitempty"`
 }
 
 // emDashes lists the tracked lines that hold an em dash and are not allowed to.
@@ -461,7 +461,7 @@ func emDashes(root, allowPath string) ([]string, error) {
 }
 
 func dashLines(name string, src []byte, allowed map[dashAllowance]bool) []string {
-	if !bytes.Contains(src, []byte(emDash)) {
+	if !bytes.Contains(src, []byte(emDash)) || pathAllowed(name, allowed) {
 		return nil
 	}
 	var found []string
@@ -472,6 +472,15 @@ func dashLines(name string, src []byte, allowed map[dashAllowance]bool) []string
 		}
 	}
 	return found
+}
+
+func pathAllowed(name string, allowed map[dashAllowance]bool) bool {
+	for a := range allowed {
+		if a.Text == "" && (a.File == name || strings.HasSuffix(a.File, "/") && strings.HasPrefix(name, a.File)) {
+			return true
+		}
+	}
+	return false
 }
 
 func readDashAllowance(path string) (map[dashAllowance]bool, error) {
