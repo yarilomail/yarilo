@@ -168,8 +168,8 @@ func (b *Box) Restore(srcFolder, orig, dstFolder, moved string, m *mailbox.Messa
 
 var errNoRestore = errors.New("mailbox: the driver cannot put a moved body back")
 
-// RecordSaved records a body already written into a folder — an APPEND, a
-// fileinto, a copy — settling its name before its record (#1745).
+// RecordSaved records a body already written into a folder - an APPEND, a
+// fileinto, a copy - settling its name before its record (#1745).
 func (b *Box) RecordSaved(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) error {
 	return RecordSaved(b.index, b.store, f.ID, folder, saved, m)
 }

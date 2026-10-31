@@ -12,7 +12,7 @@ import (
 //
 // It was: every name from every namespace came back with the reference in
 // front, so LIST "Public/" "*" answered with the user's own folders wearing a
-// prefix of a namespace that does not exist here — names no command would
+// prefix of a namespace that does not exist here - names no command would
 // accept afterwards (#1099).
 func TestListReferenceIsNotPrefixedOntoResults(t *testing.T) {
 	c := startServerWith(t, maildirBackend(t))
@@ -39,8 +39,8 @@ func TestListReferenceIsNotPrefixedOntoResults(t *testing.T) {
 }
 
 // The wildcards RFC 9051 §6.3.9 defines have to work: only a bare "*" or "%"
-// or an exact name matched before, so a client listing a subtree — the ordinary
-// way to explore — was told it is empty.
+// or an exact name matched before, so a client listing a subtree - the ordinary
+// way to explore - was told it is empty.
 func TestListWildcards(t *testing.T) {
 	c := startServerWith(t, maildirBackend(t))
 	defer func() { c.Logout().Wait() }() //nolint:errcheck
@@ -110,7 +110,7 @@ func listNames(t *testing.T, c *imapclient.Client, ref, pattern string) []string
 
 // Mailbox names are case-sensitive; INBOX is the exception RFC 9051 §5.1
 // names. Folding both sides in the matcher would have been a behaviour change
-// riding in with the rewrite — quiet, because every test used matching case.
+// riding in with the rewrite - quiet, because every test used matching case.
 func TestListMatchingIsCaseSensitiveExceptINBOX(t *testing.T) {
 	c := startServerWith(t, maildirBackend(t))
 	defer func() { c.Logout().Wait() }() //nolint:errcheck

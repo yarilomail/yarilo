@@ -49,17 +49,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Telemetry (/healthz, /readyz, /metrics) — same as every other component,
+	// Telemetry (/healthz, /readyz, /metrics) - same as every other component,
 	// so orchestrators health-check quota-status the standard HTTP way.
 	tel := startTelemetry(cfg.Telemetry)
 
 	// Storage access: quota is enforced by summing the recipient's index
-	// aggregate (the count backend), exactly as a delivery agent would — no
+	// aggregate (the count backend), exactly as a delivery agent would - no
 	// dict. Reads need no locker.
 	resolver := backendpkg.BuildResolver(cfg)
 	mbox := backendpkg.BuildMailbox(cfg.Storage, nil)
 	// WithNoCreate: OpenFolder is a write path for a folder that has no index
-	// yet — it would run createFresh and the legacy migration unguarded, racing
+	// yet - it would run createFresh and the legacy migration unguarded, racing
 	// a session pod's locked create (#993). A policy service observes; it does
 	// not establish state. CountUsage already skips a folder it cannot open, so
 	// a not-yet-indexed folder contributes zero rather than failing the read.

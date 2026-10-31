@@ -6,7 +6,7 @@ import (
 
 // The permitted-difference list is exercised in BOTH directions: a difference
 // on the list is tolerated, and the same difference with its entry removed is
-// refused. Only the pair pins anything — a one-directional test passes just as
+// refused. Only the pair pins anything - a one-directional test passes just as
 // well against a judge that tolerates everything.
 func TestAllowedDifferencesAreToleratedAndOtherwiseRefused(t *testing.T) {
 	tests := []struct {
@@ -46,7 +46,7 @@ func TestAllowedDifferencesAreToleratedAndOtherwiseRefused(t *testing.T) {
 				t.Errorf("a permitted difference was refused: %v", err)
 			}
 			if err := judgeRow("row", left, right, without(tc.allowance)); err == nil {
-				t.Errorf("with %q removed from the list, the difference was still tolerated — "+
+				t.Errorf("with %q removed from the list, the difference was still tolerated - "+
 					"something else is making this pass and the entry pins nothing", tc.allowance)
 			}
 		})
@@ -113,7 +113,7 @@ func TestSetsUseTheSameAllowances(t *testing.T) {
 }
 
 // without returns the list minus one entry, which is how each row proves that
-// the entry — and not some other leniency — is what tolerates its difference.
+// the entry - and not some other leniency - is what tolerates its difference.
 func without(name string) []allowance {
 	var out []allowance
 	for _, a := range defaultAllowances() {

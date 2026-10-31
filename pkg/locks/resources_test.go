@@ -9,7 +9,7 @@ import (
 // The full-text index and the mail index are different resources with
 // different writers. Sharing a key made every FTS pass contend with every
 // session mail-index write for a guarantee that concerns neither of them
-// (#1004), so the keys must not collide for any mailbox — including the ones a
+// (#1004), so the keys must not collide for any mailbox - including the ones a
 // naive prefix scheme would alias.
 func TestFTSKeyNeverCollidesWithMailboxKey(t *testing.T) {
 	tests := []struct{ user, folder string }{

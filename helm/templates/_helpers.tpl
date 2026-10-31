@@ -280,7 +280,7 @@ Database port for init-container TCP probe.
 {{- end }}
 
 {{/*
-YARILO_DB_DSN env block — injects DSN from Secret or literal value.
+YARILO_DB_DSN env block - injects DSN from Secret or literal value.
 Include in any component that reads passdb/userdb from SQL.
 */}}
 {{- define "yarilo.dbEnv" -}}
@@ -303,7 +303,7 @@ Include in any component that reads passdb/userdb from SQL.
 {{- if eq $tokenSecret "" }}
 {{- $tokenSecret = printf "%s-backend-api-token" (include "yarilo.fullname" .) }}
 {{- end }}
-{{- /* Key on the GLOBAL internal-TLS condition, not components.backendAPI.* —
+{{- /* Key on the GLOBAL internal-TLS condition, not components.backendAPI.* -
        backend-api serves HTTPS whenever internal_tls.enabled (any component TLS)
        is on, which the co-located install sets without a backendAPI block (#954). */}}
 {{- $btls := eq (include "yarilo.internalTLSEnabled" .) "true" }}
@@ -343,7 +343,7 @@ Include in any component that reads passdb/userdb from SQL.
 {{/*
 YARILO_ADMIN_URL / YARILO_ADMIN_TOKEN env block for the director admin API.
 Read directly by yarilo-admin's director subcommands regardless of
-YARILO_ADMIN_TYPE (#755) — distinct from yarilo.adminBackendEnv's
+YARILO_ADMIN_TYPE (#755) - distinct from yarilo.adminBackendEnv's
 YARILO_API_URL/YARILO_API_TOKEN pair, which is claimed by the backend plane.
 */}}
 {{- define "yarilo.adminDirectorEnv" -}}
@@ -358,7 +358,7 @@ YARILO_API_URL/YARILO_API_TOKEN pair, which is claimed by the backend plane.
 {{- end }}
 
 {{/*
-yarilo.backendVolumeMounts — the volume mounts shared by every co-located
+yarilo.backendVolumeMounts - the volume mounts shared by every co-located
 backend protocol/fts/backend-api container (#788): config, tmp, the shared
 readiness emptyDir, the mail PV, and the optional internal-mTLS secret.
 Args: dict "root" $ "itls" <internalTLS config>.
@@ -433,8 +433,8 @@ Call: (dict "name" "yarilo-auth" "root" $)
 {{/*
 startupProbe for a login pod, replacing its wait-* init containers (#903).
 
-Safe for login pods specifically: none of them dials auth or warden during startup
-— those connections are created lazily on the first login (#885/#891) — so the
+Safe for login pods specifically: none of them dials auth or warden during startup -
+those connections are created lazily on the first login (#885/#891) - so the
 process comes up regardless and the probe only withholds traffic until the
 dependencies answer.
 
@@ -504,7 +504,7 @@ startupProbe:
 {{- end -}}
 
 {{/*
-yarilo.dictPort — the port yarilo-dict listens on, taken from the listener
+yarilo.dictPort - the port yarilo-dict listens on, taken from the listener
 value so the container port, the Service and dict_addr cannot disagree.
 */}}
 {{- define "yarilo.dictPort" -}}

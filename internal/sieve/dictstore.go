@@ -13,9 +13,9 @@ import (
 // DictScriptStore stores Sieve scripts and vacation dedup state in a dict
 // backend (Redis). Keys are scoped per user:
 //
-//	priv/<username>/sieve/active           — name of the active script ("" = none)
-//	priv/<username>/sieve/script/<name>    — script source bytes
-//	priv/<username>/sieve/vacation/<handle>/<sender> — sent marker (TTL-based)
+//	priv/<username>/sieve/active           - name of the active script ("" = none)
+//	priv/<username>/sieve/script/<name>    - script source bytes
+//	priv/<username>/sieve/vacation/<handle>/<sender> - sent marker (TTL-based)
 type DictScriptStore struct {
 	defaultName string
 	locker      locks.Locker

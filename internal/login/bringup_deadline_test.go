@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// startSilentBackend accepts connections and then sends NOTHING — modelling a
+// startSilentBackend accepts connections and then sends NOTHING - modelling a
 // backend that is up at the TCP layer but never greets (storage hang, a wedged
 // token Verify). The preamble write buffers; readBackendGreeting blocks until
 // the bring-up deadline fires.
@@ -35,8 +35,8 @@ func startSilentBackend(t *testing.T) string {
 // TestBackendBringupDeadlineDoesNotHang is the #927 regression: a backend that
 // accepts but never greets must not pin the login handler in readBackendGreeting
 // forever. The bring-up times out, becomes a transient failure, and the client
-// gets a keep-open NO [UNAVAILABLE] on the same connection — the warden slot
-// released — instead of hanging until the client's own deadline.
+// gets a keep-open NO [UNAVAILABLE] on the same connection - the warden slot
+// released - instead of hanging until the client's own deadline.
 func TestBackendBringupDeadlineDoesNotHang(t *testing.T) {
 	wardenAddr, wardenSrv := startWardenWithHandle(t)
 	authAddr := startOKAuth(t)
@@ -72,7 +72,7 @@ func TestBackendBringupDeadlineDoesNotHang(t *testing.T) {
 	start := time.Now()
 	resp1 := readTagged(t, crd, "a1")
 	if d := time.Since(start); d > 3*time.Second {
-		t.Fatalf("a1 took %v — the bring-up deadline did not bound readBackendGreeting", d)
+		t.Fatalf("a1 took %v - the bring-up deadline did not bound readBackendGreeting", d)
 	}
 	if !strings.Contains(resp1, "NO") || !strings.Contains(resp1, "UNAVAILABLE") {
 		t.Fatalf("a1 = %q, want tagged NO [UNAVAILABLE]", resp1)

@@ -45,7 +45,7 @@ func firstObject(t *testing.T, out map[string]any) map[string]any {
 
 // A response carries the requested properties and no others (RFC 8620 §5.1).
 //
-// Nothing is saved by this — the counters are computed either way — so it is
+// Nothing is saved by this - the counters are computed either way - so it is
 // correctness rather than speed. What it buys is that the answer stops
 // asserting values the client did not ask about.
 func TestMailboxGetProjects(t *testing.T) {

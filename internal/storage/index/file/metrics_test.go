@@ -85,7 +85,7 @@ func TestReadPartsFitInsideTheWhole(t *testing.T) {
 }
 
 // Every read leaves the process to take a shared lock, which is the one thing
-// the reference does not do here — it takes a local fcntl. The count is what
+// the reference does not do here - it takes a local fcntl. The count is what
 // turns "the lock is suspected" into a number, so a read must be counted as a
 // round trip and not, say, as a re-entrant hit.
 func TestReadsCountTheirLockRoundTrips(t *testing.T) {

@@ -132,7 +132,7 @@ func TestCopyHardlinks(t *testing.T) {
 		t.Fatalf("stat dst: %v", err)
 	}
 	if !os.SameFile(srcInfo, dstInfo) {
-		t.Error("Copy did not hardlink — IMAP COPY would not be O(1)")
+		t.Error("Copy did not hardlink - IMAP COPY would not be O(1)")
 	}
 }
 
@@ -200,7 +200,7 @@ func TestListAndFolderOps(t *testing.T) {
 }
 
 // TestDeleteRemovesFolderDir locks that Delete removes the whole folder
-// directory (mailboxes/<name>), not just its dbox-Mails leaf — otherwise
+// directory (mailboxes/<name>), not just its dbox-Mails leaf - otherwise
 // an empty mailbox shell is left behind on shared storage.
 func TestDeleteRemovesFolderDir(t *testing.T) {
 	_, mb, home := newTestUser(t)

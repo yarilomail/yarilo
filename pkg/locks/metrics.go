@@ -82,7 +82,7 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 			ConstLabels: prometheus.Labels{"mode": mode},
 		}),
 	}
-	// MustRegister is fine here — duplicate registration in tests is caught
+	// MustRegister is fine here - duplicate registration in tests is caught
 	// loud, and parameters above guarantee non-conflicting metric identity.
 	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed, m.queueDepth, m.waitBackstop, m.grantUndeliv, m.callerGone, m.expiredUnrel)
 	return m

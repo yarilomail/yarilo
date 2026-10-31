@@ -338,7 +338,7 @@ func (c *Client) LookupUser(username string) (bool, error) {
 
 // Verify sends a VERIFY command and returns the username, session ID, and
 // service bound to the token. username and sessionID are sent as binding
-// claims — the server rejects the token if they don't match what was stored
+// claims - the server rejects the token if they don't match what was stored
 // at issue time. Returns ErrAuthFailed when the token is unknown, expired,
 // or the claims don't match.
 func (c *Client) Verify(token, username, sessionID string) (string, string, string, error) {
@@ -387,7 +387,7 @@ func (c *Client) nextID() string {
 //
 // A write failure is retried on a fresh connection: the server dispatches only
 // on a complete line, so a partial write cannot have been executed. A failure
-// after a successful write returns ErrConnLost instead — the server may have
+// after a successful write returns ErrConnLost instead - the server may have
 // processed it, and a repeated AUTH would double-count the auth penalty.
 func (c *Client) exchange(id, req string) (string, error) {
 	return c.exchangeWithin(id, req, c.opts.RequestTimeout, false)
@@ -648,7 +648,7 @@ func handshake(conn net.Conn, rd *bufio.Reader) ([]string, error) {
 			}
 			continue
 		}
-		// SPID, CUID, COOKIE — skip
+		// SPID, CUID, COOKIE - skip
 	}
 	if !gotVersion {
 		return nil, fmt.Errorf("auth/client: handshake: no VERSION received")

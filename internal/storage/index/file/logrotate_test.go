@@ -63,7 +63,7 @@ func TestShouldRotateWithoutACeiling(t *testing.T) {
 // over a base someone folded a moment ago must not fold again on its first
 // write past the floor. Age comes from the base's mtime, which a fresh
 // descriptor reads correctly, where a handle-local "last flush" is zero and
-// reads as "old enough" — knocking the age arm out for exactly the
+// reads as "old enough" - knocking the age arm out for exactly the
 // reconnect-per-cycle profile it was added for.
 func TestFreshDescriptorOverAFreshlyFoldedBaseDoesNotFold(t *testing.T) {
 	const (

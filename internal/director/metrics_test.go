@@ -9,7 +9,7 @@ import (
 
 // TestObserveLookupOutcomes pins the LOOKUP result taxonomy. `killing` and
 // `no_backends` both make a login proxy retry, but only one of them is a
-// healthy state — a single latency series cannot express that.
+// healthy state - a single latency series cannot express that.
 func TestObserveLookupOutcomes(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -32,7 +32,7 @@ func dispatchFolder(args []string) error {
 	case "expunge":
 		return folderExpunge(args[1:])
 	default:
-		return fmt.Errorf("unknown folder command %q — available: list, info, guid, stats, repair, create, delete, rename, expunge", args[0])
+		return fmt.Errorf("unknown folder command %q - available: list, info, guid, stats, repair, create, delete, rename, expunge", args[0])
 	}
 }
 
@@ -40,20 +40,20 @@ func printFolderUsage() {
 	fmt.Println(`yarctl backend folder <command>
 
 Commands:
-  list    <user> [--namespace NS]                              — list folder names in a namespace
-  info    <user> <folder> [--namespace NS]                     — folder metadata (GUID, msg count, modseq, ...)
-  guid    <user> <folder> [--namespace NS]                     — print the rename-stable GUID hex
-  stats   <user> <folder> [--namespace NS]                     — info plus on-disk size totals
-  repair  <user> <folder> [--namespace NS]                     — rebuild fileindex from disk + compact log
+  list    <user> [--namespace NS]                              - list folder names in a namespace
+  info    <user> <folder> [--namespace NS]                     - folder metadata (GUID, msg count, modseq, ...)
+  guid    <user> <folder> [--namespace NS]                     - print the rename-stable GUID hex
+  stats   <user> <folder> [--namespace NS]                     - info plus on-disk size totals
+  repair  <user> <folder> [--namespace NS]                     - rebuild fileindex from disk + compact log
   create  <user> <folder> [--namespace NS] [--special-use ATTR]
-                                                                — create folder (RFC 6154 special-use attr is personal-only)
-  delete  <user> <folder> [--namespace NS]        (alias: rm) — delete folder + ACL state
-  rename  <user> <old> <new> [--namespace NS]     (alias: mv) — rename folder (INBOX not supported)
-  expunge <user> <folder> [--namespace NS] [--uids 1,2,3]      — drop \Deleted-flagged messages
+                                                                - create folder (RFC 6154 special-use attr is personal-only)
+  delete  <user> <folder> [--namespace NS]        (alias: rm) - delete folder + ACL state
+  rename  <user> <old> <new> [--namespace NS]     (alias: mv) - rename folder (INBOX not supported)
+  expunge <user> <folder> [--namespace NS] [--uids 1,2,3]      - drop \Deleted-flagged messages
                                                                   (entire mailbox when --uids omitted)
 
 Namespace defaults to "personal". Mutating ops (create/delete/
-rename/expunge) bypass ACL — backend-api is the operator surface,
+rename/expunge) bypass ACL - backend-api is the operator surface,
 authorised by Token + AllowedNets + mTLS.`)
 }
 
@@ -91,7 +91,7 @@ func folderStats(args []string) error {
 func folderCreate(args []string) error {
 	fs := flag.NewFlagSet("folder create", flag.ContinueOnError)
 	ns := fs.String("namespace", "personal", "namespace slug")
-	specialUse := fs.String("special-use", "", "RFC 6154 special-use attr (e.g. \\Sent, \\Drafts) — personal namespace only")
+	specialUse := fs.String("special-use", "", "RFC 6154 special-use attr (e.g. \\Sent, \\Drafts) - personal namespace only")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}

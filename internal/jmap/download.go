@@ -19,7 +19,7 @@ const downloadPrefix = "/jmap/download/"
 //
 // Two properties matter more than the streaming itself. The blob is resolved
 // against the authenticated user's own mail before anything is opened, so a
-// blobId belonging to somebody else is a 404 that never touched their file —
+// blobId belonging to somebody else is a 404 that never touched their file -
 // ownership is a precondition, not a check applied to an open handle. And the
 // body is copied straight through, so a large attachment is never held whole in
 // this process or in the login proxy in front of it.

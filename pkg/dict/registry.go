@@ -24,7 +24,7 @@ var ErrUnknownDriver = errors.New("dict: unknown driver")
 //
 // Keeping all driver-specific knobs under a single map[string]any
 // (rather than a typed sub-struct per driver) lets pkg/config stay
-// driver-agnostic — adding a new driver does not require editing
+// driver-agnostic - adding a new driver does not require editing
 // config.go. Driver authors define the schema in their own package
 // and decode at Open time.
 type Config struct {

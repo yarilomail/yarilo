@@ -9,9 +9,9 @@ import (
 // yariloEnv implements interp.Env for the vnd.yarilo.environment extension.
 //
 // Exposed items:
-//   - vnd.yarilo.username        — full login name (user@domain)
-//   - vnd.yarilo.default-mailbox — always "INBOX"
-//   - vnd.yarilo.config.<key>    — operator-defined key-value pairs from
+//   - vnd.yarilo.username        - full login name (user@domain)
+//   - vnd.yarilo.default-mailbox - always "INBOX"
+//   - vnd.yarilo.config.<key>    - operator-defined key-value pairs from
 //     yarilo.yaml sieve.sieve_environment
 type yariloEnv struct {
 	username    string

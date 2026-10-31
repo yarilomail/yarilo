@@ -149,7 +149,7 @@ func (b *nsBundle) materialise() error {
 
 // openUserContextReadOnly is like openUserContext but skips Init so no
 // directories are created. When the user's home directory does not exist
-// the personal namespace bundle is nil — callers must handle that case.
+// the personal namespace bundle is nil - callers must handle that case.
 func (s *Server) openUserContextReadOnly(username string) (*userContext, error) {
 	return s.openUserContextInner(username, openRead)
 }

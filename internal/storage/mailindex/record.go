@@ -21,7 +21,7 @@ const (
 	FlagDeleted  MailFlag = 0x04
 	FlagSeen     MailFlag = 0x08
 	FlagDraft    MailFlag = 0x10
-	// FlagUnused (0x20) is reserved and always zero on write —
+	// FlagUnused (0x20) is reserved and always zero on write -
 	// pre-format-7 used it for MAIL_RECENT.
 	FlagUnused MailFlag = 0x20
 	// FlagBackend (0x40) is a per-driver scratch bit. The
@@ -34,17 +34,17 @@ const (
 
 // FlagsMask is the set of flags the mail-index treats as
 // IMAP-visible (matches MAIL_INDEX_FLAGS_MASK). Backend/dirty
-// bits are NOT in this mask — they're per-driver internal state.
+// bits are NOT in this mask - they're per-driver internal state.
 const FlagsMask MailFlag = FlagAnswered | FlagFlagged | FlagDeleted | FlagSeen | FlagDraft
 
 // Record is one logical row in the index. Base fields are
 // always present; extension bytes appear in the on-disk record
 // according to the per-extension (record_offset, record_size)
-// pinned at EXT_INTRO time — see Extension and RecordLayout.
+// pinned at EXT_INTRO time - see Extension and RecordLayout.
 //
 // Ext is keyed by extension name; each value is exactly
 // extension.RecordSize bytes (or nil to mean "extension
-// registered but no per-record bytes for this record yet" — the
+// registered but no per-record bytes for this record yet" - the
 // reader fills missing entries with zero-byte slices of the
 // right length).
 type Record struct {
@@ -60,7 +60,7 @@ type Record struct {
 // records, then slice into chunks for each Record).
 //
 // Missing extension bytes (Ext[name] == nil) are written as
-// zeros — matches the canonical behaviour where a record
+// zeros - matches the canonical behaviour where a record
 // predates the extension's introduction.
 func EncodeRecord(buf []byte, layout RecordLayout, rec *Record) error {
 	if uint32(len(buf)) != layout.RecordSize {
@@ -93,7 +93,7 @@ func EncodeRecord(buf []byte, layout RecordLayout, rec *Record) error {
 //
 // The returned Record's Ext is populated for every extension
 // declared in the layout, with each value being a fresh
-// extension.RecordSize-byte slice (not a sub-slice of buf — the
+// extension.RecordSize-byte slice (not a sub-slice of buf - the
 // caller can mutate either independently).
 func DecodeRecord(buf []byte, layout RecordLayout) (Record, error) {
 	if uint32(len(buf)) != layout.RecordSize {

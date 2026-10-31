@@ -33,7 +33,7 @@ type filterEvaluator interface {
 type indexEvaluator struct{}
 
 // unsupported names the full-text conditions. A client reading the refusal can
-// tell which part to drop and retry — "unsupported filter" alone would leave it
+// tell which part to drop and retry - "unsupported filter" alone would leave it
 // guessing, and dropping the condition silently would return a confidently
 // wrong result set.
 func (indexEvaluator) unsupported(f *jmapcore.EmailFilter) []string {

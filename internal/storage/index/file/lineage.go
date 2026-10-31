@@ -43,7 +43,7 @@ func encodeLineageHdr(h lineageHdr) []byte {
 }
 
 // decodeLineageHdr reads the extension. A short or absent header yields the
-// zero value, which means "unknown" — the conservative answer, and the one
+// zero value, which means "unknown" - the conservative answer, and the one
 // every index written before this extension gives.
 func decodeLineageHdr(b []byte) lineageHdr {
 	var h lineageHdr

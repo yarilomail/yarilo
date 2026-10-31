@@ -97,7 +97,7 @@ func main() {
 	var combinedUserdb protocol.Userdb
 	switch len(userdbs) {
 	case 0:
-		// No backends — every userdb-side surface returns NOTFOUND;
+		// No backends - every userdb-side surface returns NOTFOUND;
 		// passdb-only auth still works because the enrichment branch
 		// no-ops when userdb is nil.
 	case 1:
@@ -226,7 +226,7 @@ func main() {
 		}
 	}()
 
-	// Master protocol — userdb-only lookups + LIST. Skipped when
+	// Master protocol - userdb-only lookups + LIST. Skipped when
 	// master_listen is unset, keeping single-binary dev / smoke runs free
 	// of an extra bind nothing consumes.
 	if cfg.AuthService.MasterListen != "" {

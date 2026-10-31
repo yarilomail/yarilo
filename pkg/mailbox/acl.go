@@ -11,8 +11,8 @@ import (
 
 // RFC 4314 §2.1 single-letter ACL rights. The 11 codes below are
 // the canonical set used in this package. Obsolete codes 'c' / 'd'
-// are accepted only on input by ParseRights and immediately expanded
-// — they never appear in canonical output.
+// are accepted only on input by ParseRights and immediately expanded -
+// they never appear in canonical output.
 //
 // Letter map for the canonical ACL right codes.
 const (
@@ -22,14 +22,14 @@ const (
 	RightWrite         = 'w' // STORE of other flags except \Seen, \Deleted
 	RightInsert        = 'i' // APPEND, COPY destination (private namespaces)
 	RightPost          = 'p' // delivery via MTA (public / shared namespaces)
-	RightCreate        = 'k' // CREATE / RENAME of children — was obsolete 'c'
+	RightCreate        = 'k' // CREATE / RENAME of children - was obsolete 'c'
 	RightDeleteMailbox = 'x' // DELETE / RENAME of the mailbox itself
-	RightDeleteMessage = 't' // STORE \Deleted on a message — was part of 'd'
-	RightExpunge       = 'e' // EXPUNGE — was part of 'd'
+	RightDeleteMessage = 't' // STORE \Deleted on a message - was part of 'd'
+	RightExpunge       = 'e' // EXPUNGE - was part of 'd'
 	RightAdminister    = 'a' // SETACL / DELETEACL / GETACL / LISTRIGHTS
 )
 
-// allRights is the canonical sort order — every constructor in this
+// allRights is the canonical sort order - every constructor in this
 // file produces Rights in this order so == comparison and String()
 // round-trip stay byte-stable.
 var allRights = [...]rune{
@@ -55,7 +55,7 @@ var rightOrder = func() map[rune]int {
 }()
 
 // IsValidRight reports whether r is one of the 11 RFC 4314 rights.
-// The obsolete 'c' / 'd' codes are NOT valid Right runes — they are
+// The obsolete 'c' / 'd' codes are NOT valid Right runes - they are
 // only tolerated on input and expanded by ParseRights.
 func IsValidRight(r rune) bool {
 	_, ok := rightOrder[r]
@@ -149,7 +149,7 @@ func (rs Rights) String() string { return string(rs) }
 
 // IdentifierType enumerates the six identifier kinds RFC 4314 defines.
 // Name is meaningful only for IDUser / IDGroup / IDGroupOverride.
-// The zero value IDInvalid is never produced by ParseIdentifier —
+// The zero value IDInvalid is never produced by ParseIdentifier -
 // callers can use it as a sentinel.
 type IdentifierType int
 
@@ -164,7 +164,7 @@ const (
 	IDGroupOverride
 )
 
-// Identifier is a parsed ACL identifier — the left side of a
+// Identifier is a parsed ACL identifier - the left side of a
 // yarilo-acl line, without the optional '-' negativity marker.
 type Identifier struct {
 	Type IdentifierType
@@ -251,7 +251,7 @@ func (id Identifier) String() string {
 
 // Entry is one parsed line of a yarilo-acl file. Negative=true
 // entries strip Rights at evaluation time rather than granting them
-// (RFC 4314 §3.5). Negatives are kept as separate entries — fold-in
+// (RFC 4314 §3.5). Negatives are kept as separate entries - fold-in
 // happens in the evaluator, not here.
 type Entry struct {
 	Identifier Identifier
@@ -263,8 +263,8 @@ type Entry struct {
 //
 //	[-]<identifier><WS><letters>
 //
-// Whitespace-only and '#'-prefixed lines return (Entry{}, false, nil)
-// — the caller skips them. Trailing comments are not supported.
+// Whitespace-only and '#'-prefixed lines return (Entry{}, false, nil) -
+// the caller skips them. Trailing comments are not supported.
 func ParseEntry(line string) (Entry, bool, error) {
 	if t := strings.TrimSpace(line); t == "" || strings.HasPrefix(t, "#") {
 		return Entry{}, false, nil
@@ -344,7 +344,7 @@ func unquoteACL(s string) (content, rest string, err error) {
 
 // String returns the canonical wire/disk encoding of one entry
 // without trailing newline. Empty Rights still serialises with a
-// trailing space so `<id> ` round-trips — the format treats that as
+// trailing space so `<id> ` round-trips - the format treats that as
 // "grant nothing explicitly", which differs from "no entry".
 func (e Entry) String() string {
 	prefix := ""
@@ -361,7 +361,7 @@ func (e Entry) String() string {
 }
 
 // ACL is the ordered set of entries from a yarilo-acl file. Order is
-// preserved on read but is semantically insignificant — Negative=true
+// preserved on read but is semantically insignificant - Negative=true
 // entries subtract from any matching positive regardless of position.
 // Sorted() returns a deterministic ordering for stable on-disk writes.
 type ACL []Entry
@@ -445,7 +445,7 @@ func ParseACLString(s string) (ACL, error) {
 	return ParseACL(strings.NewReader(s))
 }
 
-// String returns the full yarilo-acl file encoding — one entry per
+// String returns the full yarilo-acl file encoding - one entry per
 // line, each line LF-terminated. Empty ACL serialises to "" (no
 // trailing newline) so an empty file is distinguishable from a
 // single-empty-entry file.

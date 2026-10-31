@@ -37,7 +37,7 @@ func UnknownProperties(value any, props []string) []string {
 // The whole call is refused rather than the names ignored. Ignoring them is
 // what this replaces, and it fails in the worst way available: the client
 // receives a successful response with the property absent, and cannot tell a
-// typo from a property the server has not implemented — which is exactly the
+// typo from a property the server has not implemented - which is exactly the
 // pair it needs to tell apart.
 func InvalidProperties(unknown []string) *MethodError {
 	quoted := make([]string, 0, len(unknown))

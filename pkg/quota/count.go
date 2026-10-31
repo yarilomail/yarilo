@@ -11,7 +11,7 @@ type FolderVSizer interface {
 }
 
 // CountUsage sums the index-derived aggregate virtual size and message count
-// across the given folders — the authoritative quota usage (the count backend).
+// across the given folders - the authoritative quota usage (the count backend).
 // Folders configured as "ignore" by limits are skipped so their messages do not
 // count toward quota. Unreadable or absent folders are skipped rather than
 // failing the whole read, mirroring how the aggregate self-heals: a transient

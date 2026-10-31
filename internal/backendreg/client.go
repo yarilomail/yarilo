@@ -141,7 +141,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 		c.wrMu.Unlock()
 	}()
 
-	// reply PONG to the director's PING keepalive — the director closes
+	// reply PONG to the director's PING keepalive - the director closes
 	// clients that don't PONG within PingTimeout. everything else is
 	// ignored; a closed connection surfaces as a read error.
 	readErr := make(chan error, 1)
@@ -175,7 +175,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 }
 
 // heartbeat sends one seq'd BACKEND-UP if healthy. An unhealthy backend
-// simply goes silent — the director expires its lease.
+// simply goes silent - the director expires its lease.
 func (c *Client) heartbeat() {
 	if !c.opts.Healthy() {
 		slog.Warn("backendreg: unhealthy, skipping heartbeat (director will expire the lease)")

@@ -379,8 +379,8 @@ func TestLookupManyPreservesOrder(t *testing.T) {
 
 // TestIncrementalLookupPicksUpSiblingAppend is the map-level guard for the #526
 // mdbox symptom: a handle that has already cached the map must see a message a
-// sibling process delivered — which lands in the append log, not a base rewrite
-// — via refresh-on-miss (mirrors the reference's mdbox_map_get_seq).
+// sibling process delivered - which lands in the append log, not a base rewrite -
+// via refresh-on-miss (mirrors the reference's mdbox_map_get_seq).
 func TestIncrementalLookupPicksUpSiblingAppend(t *testing.T) {
 	reader, dir := openTestMap(t)
 
@@ -402,7 +402,7 @@ func TestIncrementalLookupPicksUpSiblingAppend(t *testing.T) {
 	}
 	_ = writer.Close()
 
-	// The base index must be untouched — the append is log-only.
+	// The base index must be untouched - the append is log-only.
 	if _, serr := os.Stat(dir + "/" + string(MapIndexFileName) + ".log"); serr != nil {
 		t.Fatalf("expected append log to exist: %v", serr)
 	}

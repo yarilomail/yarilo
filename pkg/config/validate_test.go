@@ -6,7 +6,7 @@ import (
 )
 
 // TestValidateBackendOrDirector (#735) proves a login/proxy component must
-// have at least one of backend_addr/director_addr set — the guard that
+// have at least one of backend_addr/director_addr set - the guard that
 // replaced the old silent fall-back to this process's own in-process
 // director bind address (dialing localhost where no director runs).
 func TestValidateBackendOrDirector(t *testing.T) {

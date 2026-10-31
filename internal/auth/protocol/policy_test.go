@@ -67,7 +67,7 @@ func newStubPolicy(beforeAllow bool) *stubPolicy {
 	}
 }
 
-// TestWire_Policy_CheckBeforeContinues — Continue decision lets
+// TestWire_Policy_CheckBeforeContinues - Continue decision lets
 // the chain run normally.
 func TestWire_Policy_CheckBeforeContinues(t *testing.T) {
 	p := newStubPolicy(true)
@@ -92,7 +92,7 @@ func TestWire_Policy_CheckBeforeContinues(t *testing.T) {
 	}
 }
 
-// TestWire_Policy_CheckBeforeRejectsPreChain — Reject pre-chain
+// TestWire_Policy_CheckBeforeRejectsPreChain - Reject pre-chain
 // carries its message as the reason and the passdb MUST NOT run.
 func TestWire_Policy_CheckBeforeRejectsPreChain(t *testing.T) {
 	p := &stubPolicy{
@@ -124,7 +124,7 @@ func TestWire_Policy_CheckBeforeRejectsPreChain(t *testing.T) {
 	}
 }
 
-// TestWire_Policy_CheckAfterDowngradesSuccess — passdb says OK
+// TestWire_Policy_CheckAfterDowngradesSuccess - passdb says OK
 // but CheckAfter rejects → wire returns FAIL.
 func TestWire_Policy_CheckAfterDowngradesSuccess(t *testing.T) {
 	p := &stubPolicy{
@@ -155,7 +155,7 @@ func TestWire_Policy_CheckAfterDowngradesSuccess(t *testing.T) {
 	}
 }
 
-// TestWire_Policy_ReportAfter_FiresOnOK — successful auth fires
+// TestWire_Policy_ReportAfter_FiresOnOK - successful auth fires
 // the report telemetry.
 func TestWire_Policy_ReportAfter_FiresOnOK(t *testing.T) {
 	p := newStubPolicy(true)
@@ -179,7 +179,7 @@ func TestWire_Policy_ReportAfter_FiresOnOK(t *testing.T) {
 	}
 }
 
-// TestWire_Policy_ReportAfter_FiresOnFail — failed auth also
+// TestWire_Policy_ReportAfter_FiresOnFail - failed auth also
 // reports (telemetry needs both sides).
 func TestWire_Policy_ReportAfter_FiresOnFail(t *testing.T) {
 	p := newStubPolicy(true)
@@ -203,7 +203,7 @@ func TestWire_Policy_ReportAfter_FiresOnFail(t *testing.T) {
 	}
 }
 
-// TestWire_Policy_MasterFlowExempt — master-user impersonation
+// TestWire_Policy_MasterFlowExempt - master-user impersonation
 // MUST bypass policy entirely (admin sessions are not subject to
 // abuse policy).
 func TestWire_Policy_MasterFlowExempt(t *testing.T) {
@@ -232,7 +232,7 @@ func TestWire_Policy_MasterFlowExempt(t *testing.T) {
 	}
 }
 
-// TestWire_Policy_TarpitDelaysPreChain — TarpitSecs>0 from
+// TestWire_Policy_TarpitDelaysPreChain - TarpitSecs>0 from
 // CheckBefore inserts a sleep before the chain runs.
 func TestWire_Policy_TarpitDelaysPreChain(t *testing.T) {
 	p := &stubPolicy{

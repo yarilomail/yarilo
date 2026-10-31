@@ -63,7 +63,7 @@ func TestUnknownPropertyIsRefused(t *testing.T) {
 			}
 			desc, _ := got["description"].(string)
 			if !strings.Contains(desc, tc.named) {
-				t.Errorf("description %q does not name %s — the client would have to bisect its own request", desc, tc.named)
+				t.Errorf("description %q does not name %s - the client would have to bisect its own request", desc, tc.named)
 			}
 			args, _ := got["arguments"].([]any)
 			if len(args) != 1 || args[0] != "properties" {

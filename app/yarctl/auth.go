@@ -35,14 +35,14 @@ func dispatchAuth(args []string) error {
 	case "scram-verifier":
 		return cmdAuthSCRAMVerifier(args[1:])
 	default:
-		return fmt.Errorf("unknown auth command %q — available: cache, scram-verifier", args[0])
+		return fmt.Errorf("unknown auth command %q - available: cache, scram-verifier", args[0])
 	}
 }
 
 // cmdAuthSCRAMVerifier reads a plain password (from --password or
 // stdin) and prints a {SCRAM-SHA-<mech>} verifier blob suitable
 // for dropping into the SQL `password` column. The plain password
-// never crosses any network boundary — derivation runs locally.
+// never crosses any network boundary - derivation runs locally.
 //
 // Usage:
 //
@@ -104,7 +104,7 @@ func dispatchAuthCache(args []string) error {
 	case "flush":
 		return cmdAuthCacheFlush(args[1:])
 	default:
-		return fmt.Errorf("unknown auth cache command %q — available: flush", args[0])
+		return fmt.Errorf("unknown auth cache command %q - available: flush", args[0])
 	}
 }
 

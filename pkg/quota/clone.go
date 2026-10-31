@@ -12,7 +12,7 @@ import (
 )
 
 // Clone mirrors the authoritative count usage into one or more external dicts
-// (the quota_clone mirror). It is NEVER the source of truth — enforcement always
+// (the quota_clone mirror). It is NEVER the source of truth - enforcement always
 // reads the index. The mirror exists only for external consumers (dashboards,
 // tooling, a policy service that cannot open the mailbox). yarilo fans out to
 // SEVERAL targets at once (e.g. SQL + Redis), which the single-dict reference

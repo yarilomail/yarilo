@@ -70,7 +70,7 @@ func extractGlobalFlags(argv []string) (globals, rest []string) {
 
 // registeredFlag returns the flag arg refers to (handling -name / --name /
 // -name=value), or nil if arg is not a dash-prefixed token naming a registered
-// flag — in which case the caller treats it as a positional.
+// flag - in which case the caller treats it as a positional.
 func registeredFlag(fs *flag.FlagSet, arg string) *flag.Flag {
 	if len(arg) < 2 || arg[0] != '-' {
 		return nil

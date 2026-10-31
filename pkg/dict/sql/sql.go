@@ -2,9 +2,9 @@
 //
 // Three drivers, selected via Config.Settings, all statically compiled in:
 //
-//	driver: "sqlite"   — modernc.org/sqlite (pure Go, no CGO)
-//	driver: "postgres" — github.com/jackc/pgx/v5/stdlib (pure Go)
-//	driver: "mysql"    — github.com/go-sql-driver/mysql
+//	driver: "sqlite"   - modernc.org/sqlite (pure Go, no CGO)
+//	driver: "postgres" - github.com/jackc/pgx/v5/stdlib (pure Go)
+//	driver: "mysql"    - github.com/go-sql-driver/mysql
 //
 // Generic KV schema:
 //
@@ -48,11 +48,11 @@ func init() {
 
 // New constructs an sql dict. Recognised settings:
 //
-//	"driver"     string — "sqlite" | "postgres" | "mysql" (required)
-//	"dsn"        string — go-database/sql DSN (required)
-//	"table"      string — table name; default "dict_kv"
-//	"namespace"  string — per-Dict prefix; default ""
-//	"maps"       list   — enables mapped mode (see below); optional
+//	"driver"     string - "sqlite" | "postgres" | "mysql" (required)
+//	"dsn"        string - go-database/sql DSN (required)
+//	"table"      string - table name; default "dict_kv"
+//	"namespace"  string - per-Dict prefix; default ""
+//	"maps"       list   - enables mapped mode (see below); optional
 //
 // Generic KV mode auto-creates the table on Open (IF NOT EXISTS, idempotent).
 //

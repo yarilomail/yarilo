@@ -267,7 +267,7 @@ func TestQuota_IgnoreFolder_SkipsCounter(t *testing.T) {
 		t.Errorf("after INBOX append: storage = %d, want 1000", u.StorageBytes)
 	}
 
-	// Spam append would be skipped — counter stays at 1000.
+	// Spam append would be skipped - counter stays at 1000.
 	u, _ = ctr.Get(context.Background())
 	if u.StorageBytes != 1000 {
 		t.Errorf("after Spam skip: storage = %d, want 1000", u.StorageBytes)

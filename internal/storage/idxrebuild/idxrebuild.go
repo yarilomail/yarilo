@@ -33,11 +33,11 @@ type Stats struct {
 // ExpungeMessage each (which writes a QRESYNC tombstone and decrements the quota
 // aggregate). It never assigns UIDs and never does a full ResetFolder, so it
 // cannot race a concurrent delivery into duplicate UIDs the way a full rebuild
-// can — a message the index does not yet know about is simply left alone rather
+// can - a message the index does not yet know about is simply left alone rather
 // than imported. Returns the number of records expunged.
 //
 // The caller holds the folder's mailbox lock. Orphan files on disk that the
-// index has never seen are NOT imported here — that is corruption repair, not
+// index has never seen are NOT imported here - that is corruption repair, not
 // orphan adoption, which belongs to the operator rebuild.
 func ExpungeMissing(b mailbox.Box, idx mailbox.UserIndex, folder *mailbox.Folder) ([]mailbox.ExpungedCopy, error) {
 	scanned, err := b.Store().Scan(folder.Name)

@@ -214,7 +214,7 @@ func TestProxy_TrustedNets_Reject(t *testing.T) {
 		TrustedNets: []*net.IPNet{reject},
 	})
 
-	// 127.0.0.1 is not in 192.168.0.0/24 — connection should be closed immediately.
+	// 127.0.0.1 is not in 192.168.0.0/24 - connection should be closed immediately.
 	conn, err := net.DialTimeout("tcp", addr, time.Second)
 	if err != nil {
 		t.Fatalf("dial: %v", err)

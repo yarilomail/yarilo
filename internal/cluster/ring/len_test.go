@@ -30,7 +30,7 @@ func TestLenBlocksUnderWriteHold(t *testing.T) {
 	select {
 	case <-done:
 		r.mu.Unlock()
-		t.Fatal("Len returned while the write-lock was held — the probe cannot detect a wedged ring")
+		t.Fatal("Len returned while the write-lock was held - the probe cannot detect a wedged ring")
 	case <-time.After(50 * time.Millisecond):
 		// expected: the probe is blocked on the mutex
 	}

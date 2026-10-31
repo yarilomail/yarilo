@@ -30,7 +30,7 @@ func TestDeleteFolderRefusesTheMailboxRoot(t *testing.T) {
 	for _, folder := range []string{"INBOX", "inbox", "InBoX", ""} {
 		err := c.deleteFolder(folder)
 		if err == nil {
-			t.Errorf("deleteFolder(%q) was carried out — on maildir that is the account", folder)
+			t.Errorf("deleteFolder(%q) was carried out - on maildir that is the account", folder)
 			continue
 		}
 		if !strings.Contains(err.Error(), "refusing") {

@@ -1,5 +1,5 @@
 # ============================================================================
-# yarilo — PRODUCTION values: DIRECTOR topology, single backend tag, full mTLS
+# yarilo - PRODUCTION values: DIRECTOR topology, single backend tag, full mTLS
 # ============================================================================
 #
 # Topology (docs/yarilo_director.svg + docs/yarilo_backend.svg):
@@ -16,7 +16,7 @@
 #
 # Install:
 #   1. Provision external MySQL + Redis (see redis:/mysql: below).
-#   2. Apply the internal-CA (cert-manager) — see hack/internal-ca-sandbox.yaml
+#   2. Apply the internal-CA (cert-manager) - see hack/internal-ca-sandbox.yaml
 #      for the shape; the chart requests the per-component certificates.
 #   3. helm upgrade --install yarilo ./helm -n yarilo -f this-file.yaml \
 #        --set image.tag=<version>
@@ -38,11 +38,11 @@ storage:
   mail_volatile_path: "/tmp/yarilo-volatile/%2.256Nu/%u"
   persistence:
     enabled: true
-    accessMode: ReadWriteMany       # RWX — every co-located pod mounts the shard
+    accessMode: ReadWriteMany       # RWX - every co-located pod mounts the shard
     size: 500Gi                     # size to the tag's mailbox footprint
     storageClass: "<nfs-storage-class>"
 
-# ---- External state stores (REQUIRED in prod — never bundle) ---------------
+# ---- External state stores (REQUIRED in prod - never bundle) ---------------
 redis:
   bundled: false                    # use a managed/HA Redis, not the chart's STS
   externalUrl: "redis://<redis-host>:6379/0"

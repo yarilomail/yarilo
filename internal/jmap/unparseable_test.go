@@ -7,8 +7,8 @@ import (
 )
 
 // brokenMessage carries the doubled CR that made the live gate fail (#1001).
-// Malformed headers are ordinary in real mail — spam, broken MUAs, truncated
-// delivery — so this is not an exotic input.
+// Malformed headers are ordinary in real mail - spam, broken MUAs, truncated
+// delivery - so this is not an exotic input.
 const brokenMessage = "From: Alice <alice@example.com>\r\n" +
 	"\r\rSubject: broken\r\n" +
 	"\r\n" +
@@ -36,7 +36,7 @@ func TestUnparseableMessageIsNotReportedAsMissing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := emailGet(t, s, `{"accountId":"`+testAccount+`","ids":["`+id+`"]`+tt.properties+`}`)
 			if notFound, _ := got["notFound"].([]any); len(notFound) != 0 {
-				t.Fatalf("notFound = %v — the message exists, it just cannot be parsed", notFound)
+				t.Fatalf("notFound = %v - the message exists, it just cannot be parsed", notFound)
 			}
 			email := firstEmail(t, got)
 			if email["id"] != id {
@@ -67,12 +67,12 @@ func TestUnparseableMessageIsConsistentAcrossMethods(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+id+"/m.eml"))
 	if w.Code != http.StatusOK {
-		t.Fatalf("download status = %d, want 200 — it serves the bytes the other two describe", w.Code)
+		t.Fatalf("download status = %d, want 200 - it serves the bytes the other two describe", w.Code)
 	}
 }
 
 // A message whose file is gone is the other condition and keeps its own answer:
-// the store cannot produce it, download 404s too, so the methods still agree —
+// the store cannot produce it, download 404s too, so the methods still agree -
 // this time that it is absent.
 func TestUnreadableFileStaysNotFound(t *testing.T) {
 	s, id, home := storedServerWithMessageAt(t, richMessage, 0)
@@ -87,6 +87,6 @@ func TestUnreadableFileStaysNotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, downloadRequest("/jmap/download/"+testAccount+"/"+id+"/m.eml"))
 	if w.Code != http.StatusNotFound {
-		t.Errorf("download status = %d, want 404 — it must agree with Email/get", w.Code)
+		t.Errorf("download status = %d, want 404 - it must agree with Email/get", w.Code)
 	}
 }

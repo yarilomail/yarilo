@@ -15,7 +15,7 @@ import (
 
 // sourceMessage is one decoded message handed from a source
 // reader to the destination writer. Bodies are materialised in
-// memory — acceptable for migration scale (a few-MB per message,
+// memory - acceptable for migration scale (a few-MB per message,
 // processed one at a time per goroutine).
 type sourceMessage struct {
 	Folder       string

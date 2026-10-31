@@ -400,7 +400,7 @@ func TestConcurrentSessions(t *testing.T) {
 				return
 			}
 
-			// Authenticate as the shared user — each goroutine uses a unique folder.
+			// Authenticate as the shared user - each goroutine uses a unique folder.
 			if loginErr := c.Login("user@test.com", "testpass").Wait(); loginErr != nil {
 				errCh <- fmt.Errorf("goroutine %d login: %w", g, loginErr)
 				return
@@ -475,7 +475,7 @@ func TestKeywords(t *testing.T) {
 		t.Fatalf("SELECT: %v", err)
 	}
 
-	// FETCH FLAGS — must include $Forwarded.
+	// FETCH FLAGS - must include $Forwarded.
 	msgs, err := c.Fetch(
 		imap.SeqSetNum(1),
 		&imap.FetchOptions{Flags: true},
@@ -496,7 +496,7 @@ func TestKeywords(t *testing.T) {
 		t.Fatalf("$Forwarded not in FLAGS after APPEND: %v", msgs[0].Flags)
 	}
 
-	// STORE +FLAGS ($NotJunk) — add keyword via STORE.
+	// STORE +FLAGS ($NotJunk) - add keyword via STORE.
 	storeCmd := c.Store(
 		imap.SeqSetNum(1),
 		&imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{"$NotJunk"}},
@@ -747,7 +747,7 @@ func TestSubscribePersistsAndAffectsListSelectSubscribed(t *testing.T) {
 		t.Fatalf("SUBSCRIBE Sent: %v", err)
 	}
 
-	// LIST with SELECT SUBSCRIBED filter — only the two subscribed folders.
+	// LIST with SELECT SUBSCRIBED filter - only the two subscribed folders.
 	mailboxes, err := c.List("", "*", &imap.ListOptions{SelectSubscribed: true}).Collect()
 	if err != nil {
 		t.Fatalf("LIST SUBSCRIBED: %v", err)
@@ -844,7 +844,7 @@ func TestSpecialUseDefaultsAndCreateOverride(t *testing.T) {
 		}
 	}
 
-	// CREATE with explicit USE — folder name does NOT match a default.
+	// CREATE with explicit USE - folder name does NOT match a default.
 	if err := c.Create("CustomArchive", &imap.CreateOptions{
 		SpecialUse: []imap.MailboxAttr{imap.MailboxAttrArchive},
 	}).Wait(); err != nil {
@@ -1020,7 +1020,7 @@ func TestSelectQResyncReturnsVanished(t *testing.T) {
 	uidValidity := selData.UIDValidity
 	baselineModSeq := selData.HighestModSeq
 
-	// Expunge UID 2 — mark deleted, EXPUNGE bumps the folder modseq and
+	// Expunge UID 2 - mark deleted, EXPUNGE bumps the folder modseq and
 	// stamps the vanish event.
 	uids := imap.UIDSet{}
 	uids.AddNum(imap.UID(2))
@@ -1128,7 +1128,7 @@ func TestStoreUnchangedSinceConflictSkipsMessages(t *testing.T) {
 
 	// Second STORE with UNCHANGEDSINCE 1 must skip both messages
 	// (their modseq is now > 1). The MODIFIED response code is sent on
-	// the OK tag — go-imap's client does not surface response codes on
+	// the OK tag - go-imap's client does not surface response codes on
 	// success, so we verify the behavioural outcome (flag not applied)
 	// rather than parsing the code.
 	cond := c.Store(uids, &imap.StoreFlags{
@@ -1151,7 +1151,7 @@ func TestStoreUnchangedSinceConflictSkipsMessages(t *testing.T) {
 		}
 		for _, f := range buf.Flags {
 			if f == imap.FlagFlagged {
-				t.Errorf("UID %d unexpectedly has \\Flagged — UNCHANGEDSINCE did not skip it", buf.UID)
+				t.Errorf("UID %d unexpectedly has \\Flagged - UNCHANGEDSINCE did not skip it", buf.UID)
 			}
 		}
 	}
@@ -1187,7 +1187,7 @@ func TestSearchModSeqInResponse(t *testing.T) {
 	// SEARCH MODSEQ N pushes ReturnModSeq=true server-side per RFC 7162
 	// §3.1.5; without a MODSEQ criterion the lib omits the response
 	// data item even when SearchData.ModSeq is populated. SearchOptions
-	// (with any Return*) forces the server into ESEARCH mode — without
+	// (with any Return*) forces the server into ESEARCH mode - without
 	// it the legacy SEARCH response shape has no MODSEQ slot at all.
 	criteria := &imap.SearchCriteria{ModSeq: &imap.SearchCriteriaModSeq{ModSeq: 1}}
 	data, err := c.UIDSearch(criteria, &imap.SearchOptions{ReturnAll: true}).Wait()
@@ -1241,7 +1241,7 @@ func TestSetMetadataThenGetMetadataRoundtrip(t *testing.T) {
 		t.Errorf("value mismatch: got=%q want=%q", *got.Entries["/private/comment"], "first comment")
 	}
 
-	// Server-scope SETMETADATA/GETMETADATA — mailbox name is "".
+	// Server-scope SETMETADATA/GETMETADATA - mailbox name is "".
 	sv := []byte("vendor server data")
 	if err := c.SetMetadata("", map[string]*[]byte{
 		"/private/vendor/yarilo/abc": &sv,
@@ -1711,7 +1711,7 @@ func TestSharedNamespaceSubscriptionsAreSeparateFile(t *testing.T) {
 		t.Fatalf("SUBSCRIBE: %v", err)
 	}
 	// LIST SUBSCRIBED should return Shared/team; personal subscription
-	// state is unaffected (verified indirectly — INBOX not in list).
+	// state is unaffected (verified indirectly - INBOX not in list).
 	items, err := c.List("", "*", &imap.ListOptions{SelectSubscribed: true}).Collect()
 	if err != nil {
 		t.Fatalf("LIST SUBSCRIBED: %v", err)
@@ -1996,7 +1996,7 @@ func TestFetchBodyNonPeekSetsSeen(t *testing.T) {
 		t.Fatalf("SELECT: %v", err)
 	}
 
-	// FETCH BODY[] (not BODY.PEEK[]) — must implicitly set \Seen.
+	// FETCH BODY[] (not BODY.PEEK[]) - must implicitly set \Seen.
 	seq := imap.SeqSet{}
 	seq.AddNum(1)
 	msgs, err := c.Fetch(seq, &imap.FetchOptions{
@@ -2020,7 +2020,7 @@ func TestFetchBodyNonPeekSetsSeen(t *testing.T) {
 		t.Errorf("\\Seen not set after BODY[] fetch; flags: %v", msgs[0].Flags)
 	}
 
-	// Second FETCH — \Seen must persist in the index.
+	// Second FETCH - \Seen must persist in the index.
 	msgs2, err := c.Fetch(seq, &imap.FetchOptions{Flags: true}).Collect()
 	if err != nil {
 		t.Fatalf("second FETCH FLAGS: %v", err)

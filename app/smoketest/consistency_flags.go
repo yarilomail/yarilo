@@ -9,7 +9,7 @@ import (
 
 // Row: IMAP ↔ JMAP, flags. A flag set over IMAP must be visible as the
 // corresponding keyword, and a keyword set over JMAP must be visible as the
-// flag — both directions, because a surface that only reads correctly is half
+// flag - both directions, because a surface that only reads correctly is half
 // a surface.
 //
 // The flag written is deliberately not a system one: a mapping table that

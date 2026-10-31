@@ -6,7 +6,7 @@ import (
 )
 
 // TestRingStatus_N1 verifies a singleton reports itself with no neighbors and
-// no link — the smallest ring the JSON contract must render (left/right null).
+// no link - the smallest ring the JSON contract must render (left/right null).
 func TestRingStatus_N1(t *testing.T) {
 	srv, _ := startRingNode(t, "shared-secret", nil, 1)
 
@@ -31,7 +31,7 @@ func TestRingStatus_N1(t *testing.T) {
 
 // TestRingStatus_N2_LinkBoth verifies that on a formed N=2 ring each replica
 // sees the OTHER member as a single connected edge serving both directions
-// ("both"), while its own row carries no link — and neighbors point across.
+// ("both"), while its own row carries no link - and neighbors point across.
 func TestRingStatus_N2_LinkBoth(t *testing.T) {
 	srvA, addrA := startRingNode(t, "shared-secret", nil, 2)
 	srvB, addrB := startRingNode(t, "shared-secret", []string{addrA}, 2)

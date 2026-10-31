@@ -65,7 +65,7 @@ type Config struct {
 	HashNonce string
 
 	// HashTruncateBits is how many MSB bits of the digest survive into
-	// pwhash. Default 12 (4096 buckets — enough for rate-limit patterns,
+	// pwhash. Default 12 (4096 buckets - enough for rate-limit patterns,
 	// useless for password recovery). 0 = no truncation (full hash).
 	HashTruncateBits uint
 
@@ -104,7 +104,7 @@ type Decision struct {
 // (username, password) and POSTs the JSON template wforce expects.
 type Request struct {
 	Username string // resolved/requested username before chain
-	Password string // plain — used only to compute pwhash, never stored
+	Password string // plain - used only to compute pwhash, never stored
 	RemoteIP string // client IP as a string ("" allowed)
 	LocalIP  string // the address the client connected to
 	// Vars is the variable table templates expand against; Passdb and Userdb

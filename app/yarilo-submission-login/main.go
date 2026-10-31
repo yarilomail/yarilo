@@ -114,7 +114,7 @@ func main() {
 
 	tel := startTelemetry(cfg.Telemetry)
 
-	// Port 465 — implicit TLS (Submissions).
+	// Port 465 - implicit TLS (Submissions).
 	if svcs.Submissions.Active() {
 		addr := fmt.Sprintf(":%d", svcs.Submissions.Port)
 		ln, err := net.Listen("tcp", addr)
@@ -169,7 +169,7 @@ func main() {
 		slog.Info("submission-login: listening", "addr", addr, "tls", "implicit")
 	}
 
-	// Port 587 — STARTTLS.
+	// Port 587 - STARTTLS.
 	if svcs.Submission.Active() {
 		addr := fmt.Sprintf(":%d", svcs.Submission.Port)
 		ln, err := net.Listen("tcp", addr)

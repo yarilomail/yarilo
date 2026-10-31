@@ -2,7 +2,7 @@
 
 // fts-bench generates a synthetic mail corpus under --root, indexes it through
 // the embedded yarilo-fts service (flatcurve engine), and reports the two
-// acceptance axes — SEARCH latency indexed-vs-scan and index size — plus
+// acceptance axes - SEARCH latency indexed-vs-scan and index size - plus
 // indexing throughput. Point --root at the NFS volume in the sandbox to
 // measure real-storage behaviour. See https://doc.yarilomail.org/latest/features/fts.html §15.
 package main

@@ -37,7 +37,7 @@ type RecreateInput struct {
 	// TmpDir, when non-empty, redirects the tmp file to a separate directory
 	// (e.g. local tmpfs) so the fsync cost lands on local storage, not NFS.
 	// The closed tmp is then copied to a staging path next to the target and
-	// renamed into place — no cross-device rename occurs.
+	// renamed into place - no cross-device rename occurs.
 	TmpDir string
 }
 
@@ -45,7 +45,7 @@ type RecreateInput struct {
 // header + extended header + records to a tmp, optionally fsync, optionally
 // hardlink old to .backup, then rename tmp into place.
 //
-// Caller MUST hold the cross-process write lock — Recreate takes none of its
+// Caller MUST hold the cross-process write lock - Recreate takes none of its
 // own. Returns the .backup hardlink path when
 // KeepBackup is true. On any error the tmp is removed and the .index unchanged.
 func Recreate(in RecreateInput) (backupPath string, err error) {

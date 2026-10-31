@@ -38,8 +38,8 @@ const russianMsg = "Subject: privet\r\n" +
 
 // TestBuildSelectsLanguagePerMessage (#668 point 3, #696) proves detection
 // actually drives indexing: the German message's "Fuchs" (fox) survives
-// German stemming/stopwords, and its English translation "fox" — which
-// WOULD have been stemmed under the English chain — must NOT appear, since
+// German stemming/stopwords, and its English translation "fox" - which
+// WOULD have been stemmed under the English chain - must NOT appear, since
 // this message's one body part was indexed under German, not English.
 func TestBuildSelectsLanguagePerMessage(t *testing.T) {
 	chain := mustMultiChain(t, "en", "de")
@@ -61,7 +61,7 @@ func TestBuildSelectsLanguagePerMessage(t *testing.T) {
 // TestBuildSingleLanguageConfigUnchanged is the control: with only "en"
 // configured, detection never runs (MultiChain degenerates to the old
 // single-Chain behaviour) and German text is indexed under English's
-// filter chain regardless of its actual language — unchanged from before
+// filter chain regardless of its actual language - unchanged from before
 // #668 point 3.
 func TestBuildSingleLanguageConfigUnchanged(t *testing.T) {
 	chain := mustMultiChain(t, "en")
@@ -71,7 +71,7 @@ func TestBuildSingleLanguageConfigUnchanged(t *testing.T) {
 	if _, err := b.Build(1, strings.NewReader(germanMsg), upd); err != nil {
 		t.Fatal(err)
 	}
-	// No assertion on the exact stem — just confirm indexing succeeded and
+	// No assertion on the exact stem - just confirm indexing succeeded and
 	// produced tokens (proving no crash/empty-result regression when only
 	// one language is configured).
 	if len(upd.bodyTokens()) == 0 {
@@ -98,8 +98,8 @@ func TestBuildBothLanguagesIndexCorrectly(t *testing.T) {
 // TestBuildMultiLanguageDoesNotBufferWholeMessage (#695, generalized to
 // per-part by #696): even when detection is needed (multiple configured
 // languages), the body part's own detection must only buffer a bounded
-// prefix (defaultDetectionSampleBytes, plus one retry growth step) — never
-// the whole part — and must still correctly select the language from that
+// prefix (defaultDetectionSampleBytes, plus one retry growth step) - never
+// the whole part - and must still correctly select the language from that
 // bounded prefix and index the rest via streaming.
 func TestBuildMultiLanguageDoesNotBufferWholeMessage(t *testing.T) {
 	hugePadding := strings.Repeat("x", 2_000_000) // ~2MB, far past the sample cap
@@ -108,7 +108,7 @@ func TestBuildMultiLanguageDoesNotBufferWholeMessage(t *testing.T) {
 	chain := mustMultiChain(t, "en", "de")
 	// A small MaxSize makes the indexing pass itself stop early too (same
 	// cap mechanism TestBuildDoesNotBufferWholeMessageForSingleLanguage
-	// relies on) — isolating this test to what it actually checks: that
+	// relies on) - isolating this test to what it actually checks: that
 	// DETECTION doesn't buffer the whole part, not just that indexing
 	// eventually stops reading once its own size cap is hit.
 	b := New(Options{MaxSize: 100}, chain)
@@ -125,7 +125,7 @@ func TestBuildMultiLanguageDoesNotBufferWholeMessage(t *testing.T) {
 
 // TestBuildUkrainianIndexedUnstemmed (#718) is the acceptance scenario: in a
 // mixed uk/ru mailbox, a Ukrainian message is detected as uk and indexed
-// WITHOUT stemming ("книги" stays "книги", its exact lowercase form — no
+// WITHOUT stemming ("книги" stays "книги", its exact lowercase form - no
 // Snowball algorithm exists for Ukrainian), never mis-routed to the ru
 // chain, which WOULD have stemmed the same word down to "книг".
 func TestBuildUkrainianIndexedUnstemmed(t *testing.T) {
@@ -147,7 +147,7 @@ func TestBuildUkrainianIndexedUnstemmed(t *testing.T) {
 
 // TestBuildRussianStillStemsInMixedUkRuConfig (#718) is the symmetric
 // check: a Russian message in the same uk/ru config still stems normally
-// ("книги" -> "книг") — adding a stemmer-less language must not degrade an
+// ("книги" -> "книг") - adding a stemmer-less language must not degrade an
 // already-working stemmed one.
 func TestBuildRussianStillStemsInMixedUkRuConfig(t *testing.T) {
 	chain := mustMultiChain(t, "uk", "ru")
@@ -181,7 +181,7 @@ func TestBuildLanguageFiltersOverride(t *testing.T) {
 	b := New(Options{}, chain)
 
 	// German message: "Fuchs" must survive UNSTEMMED (override drops
-	// snowball) — not the stemmed "fuch" #718's own test expects when
+	// snowball) - not the stemmed "fuch" #718's own test expects when
 	// snowball IS in play.
 	upd := &fakeUpdate{}
 	if _, err := b.Build(1, strings.NewReader(germanMsg), upd); err != nil {

@@ -64,7 +64,7 @@ func TestEmailQueryLimitCeilingIsReported(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := emailQuery(t, s, tt.args)
 			if got["limit"] != tt.wantLimit {
-				t.Errorf("limit = %v, want %v — a client that is not told cannot page", got["limit"], tt.wantLimit)
+				t.Errorf("limit = %v, want %v - a client that is not told cannot page", got["limit"], tt.wantLimit)
 			}
 			if n := len(idsOf(t, got)); uint(n) > uint(tt.wantLimit) {
 				t.Errorf("returned %d ids, over the applied limit", n)

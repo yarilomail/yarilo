@@ -10,7 +10,7 @@ import (
 //
 // Its own folder rather than INBOX: the smoke test runs on every rollout, and a
 // message left behind changes the mailbox every other measurement is taken
-// against — the same harm that keeps -delete off by default in the load
+// against - the same harm that keeps -delete off by default in the load
 // generator, arriving more slowly. It also means a failed cleanup leaves one
 // named trace instead of messages scattered through a real mailbox.
 const smokeFolder = "YariloSmoke"
@@ -93,7 +93,7 @@ func checkJMAPHeaderForms() error {
 // day more than once through openssl's -crlf, which rewrites the bytes after
 // the count was taken. Go does not rewrite anything, which is exactly why the
 // next person to edit the message above with a Go raw string would reintroduce
-// it — so it is asserted rather than assumed.
+// it - so it is asserted rather than assumed.
 func assertCRLF(msg string) error {
 	for i := 0; i < len(msg); i++ {
 		if msg[i] == '\n' && (i == 0 || msg[i-1] != '\r') {
@@ -257,7 +257,7 @@ func verifyHeaderForms(emailID string) error {
 	}
 	// The response must carry what was asked for and nothing else. An
 	// unprojected answer states hasAttachment as false and preview as empty for
-	// a message that has both — present, and wrong.
+	// a message that has both - present, and wrong.
 	for _, unwanted := range []string{"subject", "from", "hasAttachment", "preview", "textBody", "size"} {
 		if _, present := email[unwanted]; present {
 			return fmt.Errorf("%q is in the answer and was not requested; "+
@@ -287,7 +287,7 @@ func verifyHeaderForms(emailID string) error {
 // verifyHeadersList checks the headers property: every field of the message, in
 // the order it carries them.
 //
-// The order is the answer, not incidental — Received lines read as a route, and
+// The order is the answer, not incidental - Received lines read as a route, and
 // a sorted or deduplicated list is a different message.
 func verifyHeadersList(email map[string]json.RawMessage) error {
 	raw, present := email["headers"]
@@ -311,7 +311,7 @@ func verifyHeadersList(email map[string]json.RawMessage) error {
 	}
 	for i, name := range want {
 		if list[i].Name != name {
-			return fmt.Errorf("headers[%d] is %q, want %q — the order is the message's",
+			return fmt.Errorf("headers[%d] is %q, want %q - the order is the message's",
 				i, list[i].Name, name)
 		}
 	}

@@ -116,7 +116,7 @@ func TestBuildNamespaceMailboxes(t *testing.T) {
 			wantPrefixes: nil,
 		},
 		{
-			name:         "all match global driver — no overrides built",
+			name:         "all match global driver - no overrides built",
 			globalDriver: "maildir",
 			namespaces: []config.NamespaceConfig{
 				{Type: "personal", Prefix: "", Separator: "/", List: "yes"},

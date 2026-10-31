@@ -295,7 +295,7 @@ func TestFilterReport(t *testing.T) {
 	if r.FeedbackType != "abuse" || r.Target != "abuse@example.com" {
 		t.Fatalf("unexpected report: %+v", r)
 	}
-	// report does not cancel implicit keep — the message still lands in INBOX.
+	// report does not cancel implicit keep - the message still lands in INBOX.
 	var keptInbox bool
 	for _, d := range result.Deliveries {
 		if d.Folder == "INBOX" {

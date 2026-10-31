@@ -7,7 +7,7 @@ import (
 )
 
 // TestResolveUserBackend_Sticky guards #792: the admin resolver must return the
-// SAME pod a login LOOKUP would — override → sticky userDir pin → ring hash — so
+// SAME pod a login LOOKUP would - override → sticky userDir pin → ring hash - so
 // a per-user backend-api op hits the user's pinned pod (single-writer).
 func TestResolveUserBackend_Sticky(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{}))
@@ -32,7 +32,7 @@ func TestResolveUserBackend_Sticky(t *testing.T) {
 		t.Fatalf("pinned user: want %s (sticky), got ip=%q sticky=%v", other, ip, sticky)
 	}
 
-	// A move (now a normal userDir pin, #708 — no overrides map) re-routes the
+	// A move (now a normal userDir pin, #708 - no overrides map) re-routes the
 	// user to the moved backend.
 	s.userDir.Set("fresh@d.test", "10.0.0.1:10143", false)
 	ip, _, _, sticky = s.resolveUserBackend("fresh@d.test")

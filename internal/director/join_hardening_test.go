@@ -66,7 +66,7 @@ func TestMembership_Join_DialBackRejectsSpoofedME(t *testing.T) {
 
 	// Forge B's ME to a loopback port nothing listens on. joinVia sends this
 	// as the JOIN's claimed address AND computes the proof over it, so the
-	// HMAC still verifies — only the dial-back can catch the lie.
+	// HMAC still verifies - only the dial-back can catch the lie.
 	spoofed := Member{IP: "127.0.0.1", Port: closedLoopbackPort(t)}
 	srvB.membership.self = spoofed
 
@@ -85,7 +85,7 @@ func TestMembership_Join_DialBackRejectsSpoofedME(t *testing.T) {
 	}
 }
 
-// closedLoopbackPort returns a loopback TCP port with nothing listening — a
+// closedLoopbackPort returns a loopback TCP port with nothing listening - a
 // dial to it fails fast (connection refused), well within dialBackTimeout.
 func closedLoopbackPort(t *testing.T) int {
 	t.Helper()
@@ -94,7 +94,7 @@ func closedLoopbackPort(t *testing.T) int {
 		t.Fatalf("listen: %v", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close() // free it — subsequent dials get refused
+	ln.Close() // free it - subsequent dials get refused
 	return port
 }
 

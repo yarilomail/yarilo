@@ -122,7 +122,7 @@ func TestComputeTopology_AsymmetricEdge(t *testing.T) {
 		c: mkView(c, order, nil),
 	}
 	// Break b's self-row left so it no longer points back at a (a.right=b but
-	// b.left=c) — a half-open edge.
+	// b.left=c) - a half-open edge.
 	vb := views[b]
 	for i := range vb.Members {
 		if vb.Members[i].Self {

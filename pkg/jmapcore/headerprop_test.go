@@ -44,7 +44,7 @@ func TestParseHeaderProperty(t *testing.T) {
 				t.Errorf("= %+v, want name=%s form=%s all=%v", got, tc.name, tc.form, tc.all)
 			}
 			if got.Property != tc.property {
-				t.Errorf("Property = %q, want the name as written — it is the response key", got.Property)
+				t.Errorf("Property = %q, want the name as written - it is the response key", got.Property)
 			}
 		})
 	}

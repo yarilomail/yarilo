@@ -130,7 +130,7 @@ func checkJMAPBatch() error {
 		return fmt.Errorf("response carries no sessionState: %s", raw)
 	}
 	// The second response must be the echo, not an error, and must carry the
-	// ids the first call produced — that is the back-reference having resolved.
+	// ids the first call produced - that is the back-reference having resolved.
 	var name string
 	if err := json.Unmarshal(out.MethodResponses[1][0], &name); err != nil {
 		return fmt.Errorf("second response name: %w", err)
@@ -485,7 +485,7 @@ func checkJMAPEmailDiscovery() error {
 		return fmt.Errorf("decode Email/query: %w", err)
 	}
 	if len(query.IDs) == 0 {
-		return fmt.Errorf("Email/query found no messages — the mailbox must not be empty for this check: %s", raw)
+		return fmt.Errorf("Email/query found no messages - the mailbox must not be empty for this check: %s", raw)
 	}
 	if query.QueryState == "" {
 		return fmt.Errorf("Email/query carries no queryState")
@@ -549,7 +549,7 @@ func checkJMAPEmailDiscovery() error {
 }
 
 // checkJMAPDownloadIsolation proves a blob is refused for another account
-// rather than served — ownership is the precondition the endpoint rests on.
+// rather than served - ownership is the precondition the endpoint rests on.
 func checkJMAPDownloadIsolation() error {
 	dl := "https://" + net.JoinHostPort(jmapHost(), *flagJMAPPort) +
 		"/jmap/download/somebody-else@example.invalid/deadbeef/message.eml"

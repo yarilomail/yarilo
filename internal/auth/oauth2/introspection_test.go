@@ -50,7 +50,7 @@ func newIntrospectionServer(t *testing.T, status int, body string) *introspectio
 	return srv
 }
 
-// TestIntrospection_PostFormDefault — default mode is RFC 7662
+// TestIntrospection_PostFormDefault - default mode is RFC 7662
 // POST form. Token in body, content-type set correctly.
 func TestIntrospection_PostFormDefault(t *testing.T) {
 	srv := newIntrospectionServer(t, 200, `{"active":true,"email":"alice@example.com"}`)
@@ -73,7 +73,7 @@ func TestIntrospection_PostFormDefault(t *testing.T) {
 	}
 }
 
-// TestIntrospection_AuthBearer — mode=auth sends Authorization
+// TestIntrospection_AuthBearer - mode=auth sends Authorization
 // header instead of form body.
 func TestIntrospection_AuthBearer(t *testing.T) {
 	srv := newIntrospectionServer(t, 200, `{"active":true,"email":"x"}`)
@@ -91,7 +91,7 @@ func TestIntrospection_AuthBearer(t *testing.T) {
 	}
 }
 
-// TestIntrospection_Get — mode=get carries token in query string.
+// TestIntrospection_Get - mode=get carries token in query string.
 func TestIntrospection_Get(t *testing.T) {
 	srv := newIntrospectionServer(t, 200, `{"active":true,"email":"x"}`)
 	v, _ := NewIntrospectionValidator(IntrospectionConfig{
@@ -108,7 +108,7 @@ func TestIntrospection_Get(t *testing.T) {
 	}
 }
 
-// TestIntrospection_ClientCreds — when ClientID is set, Basic auth
+// TestIntrospection_ClientCreds - when ClientID is set, Basic auth
 // header carries the introspection-endpoint credentials.
 func TestIntrospection_ClientCreds(t *testing.T) {
 	srv := newIntrospectionServer(t, 200, `{"active":true,"email":"x"}`)
@@ -123,7 +123,7 @@ func TestIntrospection_ClientCreds(t *testing.T) {
 	}
 }
 
-// TestIntrospection_InactiveRejected — active=false maps to
+// TestIntrospection_InactiveRejected - active=false maps to
 // ErrTokenInactive.
 func TestIntrospection_InactiveRejected(t *testing.T) {
 	srv := newIntrospectionServer(t, 200, `{"active":false}`)
@@ -134,7 +134,7 @@ func TestIntrospection_InactiveRejected(t *testing.T) {
 	}
 }
 
-// TestIntrospection_MissingActiveTreatedAsInactive — defensive:
+// TestIntrospection_MissingActiveTreatedAsInactive - defensive:
 // a misbehaving IdP that omits "active" should not accidentally
 // grant access.
 func TestIntrospection_MissingActiveTreatedAsInactive(t *testing.T) {
@@ -146,7 +146,7 @@ func TestIntrospection_MissingActiveTreatedAsInactive(t *testing.T) {
 	}
 }
 
-// TestIntrospection_ExpiredRejected — exp in past beyond grace.
+// TestIntrospection_ExpiredRejected - exp in past beyond grace.
 func TestIntrospection_ExpiredRejected(t *testing.T) {
 	resp := map[string]interface{}{
 		"active": true,
@@ -184,7 +184,7 @@ func TestIntrospection_BadJSON(t *testing.T) {
 	}
 }
 
-// TestNewIntrospectionValidator_Validation — invalid configs
+// TestNewIntrospectionValidator_Validation - invalid configs
 // rejected at construction.
 func TestNewIntrospectionValidator_Validation(t *testing.T) {
 	if _, err := NewIntrospectionValidator(IntrospectionConfig{}); err == nil {
@@ -195,7 +195,7 @@ func TestNewIntrospectionValidator_Validation(t *testing.T) {
 	}
 }
 
-// TestTokeninfo_HappyPath — Google-style ?access_token= query
+// TestTokeninfo_HappyPath - Google-style ?access_token= query
 // with active=200-implied response.
 func TestTokeninfo_HappyPath(t *testing.T) {
 	srv := newIntrospectionServer(t, 200, `{"email":"alice@example.com","scope":"openid email"}`)
@@ -215,7 +215,7 @@ func TestTokeninfo_HappyPath(t *testing.T) {
 	}
 }
 
-// TestTokeninfo_4xxInactive — 400 / 401 = token revoked/unknown.
+// TestTokeninfo_4xxInactive - 400 / 401 = token revoked/unknown.
 func TestTokeninfo_4xxInactive(t *testing.T) {
 	srv := newIntrospectionServer(t, 401, "bad token")
 	v, _ := NewTokeninfoValidator(TokeninfoConfig{URL: srv.URL})
@@ -225,7 +225,7 @@ func TestTokeninfo_4xxInactive(t *testing.T) {
 	}
 }
 
-// TestTokeninfo_5xxUpstream — 5xx = transient.
+// TestTokeninfo_5xxUpstream - 5xx = transient.
 func TestTokeninfo_5xxUpstream(t *testing.T) {
 	srv := newIntrospectionServer(t, 503, "")
 	v, _ := NewTokeninfoValidator(TokeninfoConfig{URL: srv.URL})

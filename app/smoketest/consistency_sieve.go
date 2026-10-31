@@ -8,7 +8,7 @@ import (
 
 // Row: a script stored over ManageSieve takes effect on the next delivery. The
 // two surfaces are the script store and the delivery path, and the agreement is
-// that what one accepted is what the other applies — a ManageSieve check that
+// that what one accepted is what the other applies - a ManageSieve check that
 // only stores and reads back proves the store, not the effect, and the delivery
 // checks never learn where the rules came from.
 //
@@ -94,7 +94,7 @@ func assertFiledInto(user, pass, folder, marker string) error {
 		if time.Now().After(deadline) {
 			where := "nowhere this row can see"
 			if inbox, err := inboxHolds(c, marker); err == nil && inbox {
-				where = "INBOX — the script was stored but did not apply"
+				where = "INBOX - the script was stored but did not apply"
 			}
 			return fmt.Errorf("the delivery is not in %s (%s)", folder, where)
 		}
@@ -112,7 +112,7 @@ func inboxHolds(c *imapClient, marker string) (bool, error) {
 
 // cleanupConsistencySieve leaves the account as it was found: the script is
 // deactivated and removed, and the folder this row created goes with it.
-// Best-effort — a failure here must not turn a passing row red.
+// Best-effort - a failure here must not turn a passing row red.
 func cleanupConsistencySieve(user, pass, folder string) {
 	if conn, err := msieveDial(); err == nil {
 		defer conn.Close()

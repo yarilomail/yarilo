@@ -135,7 +135,7 @@ func main() {
 
 	// Dial yarilo-auth's master-protocol listener when configured.
 	// Empty AuthMasterAddr keeps the legacy single-binary / smoke
-	// flow alive — handleUserInfo skips userdb enrichment and
+	// flow alive - handleUserInfo skips userdb enrichment and
 	// /api/backend/user/iterate returns 503.
 	var authcl *authclient.Client
 	if cfg.BackendAPI.AuthMasterAddr != "" {

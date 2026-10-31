@@ -115,7 +115,7 @@ func TestFetchDiscovery_BadJSON(t *testing.T) {
 	}
 }
 
-// TestNewDiscoveryValidator_DefaultPrefersLocalJWT — happy path
+// TestNewDiscoveryValidator_DefaultPrefersLocalJWT - happy path
 // with default config returns a LocalJWTValidator able to verify
 // a signed token.
 func TestNewDiscoveryValidator_DefaultPrefersLocalJWT(t *testing.T) {
@@ -148,7 +148,7 @@ func TestNewDiscoveryValidator_DefaultPrefersLocalJWT(t *testing.T) {
 	}
 }
 
-// TestNewDiscoveryValidator_PreferIntrospection — flips preference;
+// TestNewDiscoveryValidator_PreferIntrospection - flips preference;
 // the introspection endpoint is used instead.
 func TestNewDiscoveryValidator_PreferIntrospection(t *testing.T) {
 	h := newDiscoveryHarness(t)
@@ -171,7 +171,7 @@ func TestNewDiscoveryValidator_PreferIntrospection(t *testing.T) {
 	}
 }
 
-// TestNewDiscoveryValidator_FallbackToOther — preferred endpoint
+// TestNewDiscoveryValidator_FallbackToOther - preferred endpoint
 // absent → fall through.
 func TestNewDiscoveryValidator_FallbackToOther(t *testing.T) {
 	h := newDiscoveryHarness(t)
@@ -201,7 +201,7 @@ func TestNewDiscoveryValidator_BothMissing(t *testing.T) {
 	}
 }
 
-// TestNewDiscoveryValidator_AutoAddIssuer — document's iss is
+// TestNewDiscoveryValidator_AutoAddIssuer - document's iss is
 // added to Issuers automatically so unforged tokens from the
 // configured IdP pass without explicit operator config.
 func TestNewDiscoveryValidator_AutoAddIssuer(t *testing.T) {

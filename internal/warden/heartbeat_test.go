@@ -50,13 +50,13 @@ func TestSweepStaleSessions(t *testing.T) {
 	if _, ok := mb.sessions["sess-fresh"]; !ok {
 		t.Error("fresh session reaped prematurely")
 	}
-	// Alice's slot should be released — a fresh acquire passes.
+	// Alice's slot should be released - a fresh acquire passes.
 	if !mb.limiter.Acquire("alice@example.com", "10.0.0.1") {
 		t.Error("alice slot not released by sweep")
 	}
-	// Bob's slot is still held — a second acquire fails.
+	// Bob's slot is still held - a second acquire fails.
 	if mb.limiter.Acquire("bob@example.com", "10.0.0.2") {
-		t.Error("bob slot leaked into pool — fresh session reaped")
+		t.Error("bob slot leaked into pool - fresh session reaped")
 	}
 }
 
@@ -90,7 +90,7 @@ func TestHandleHeartbeat_KnownSession(t *testing.T) {
 	}
 }
 
-// TestHandleHeartbeat_UnknownReturnsReason — the protocol
+// TestHandleHeartbeat_UnknownReturnsReason - the protocol
 // contract for callers that need to re-CONNECT after a reap.
 func TestHandleHeartbeat_UnknownReturnsReason(t *testing.T) {
 	s := NewServer(0)

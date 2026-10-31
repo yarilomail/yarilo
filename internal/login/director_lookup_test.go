@@ -22,7 +22,7 @@ func TestWatchConnLookupRoutesByID(t *testing.T) {
 		chans[id] = wc.awaitReply(id)
 	}
 
-	// Deliver in reverse order — arrival order must not matter.
+	// Deliver in reverse order - arrival order must not matter.
 	for i := len(ids) - 1; i >= 0; i-- {
 		id := ids[i]
 		if !wc.deliver(id, "HOST\t"+id+"\t10.0.0."+id+"\t993\tssd") {
@@ -155,7 +155,7 @@ func TestApplyBackendPort(t *testing.T) {
 func TestLookupRequestLineEscapesUser(t *testing.T) {
 	line := proto.LookupRequestLine("5", "user\twith\ttabs@d", "ssd", "imap")
 	fields := strings.Split(line, "\t")
-	// Verb, id, username, tag, protocol — the username must not have split into
+	// Verb, id, username, tag, protocol - the username must not have split into
 	// extra fields, or the director would parse the wrong tag.
 	if len(fields) != 5 {
 		t.Fatalf("got %d fields, want 5: %q", len(fields), line)

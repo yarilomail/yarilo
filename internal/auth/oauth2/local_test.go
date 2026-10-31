@@ -66,7 +66,7 @@ func (h *jwksHarness) sign(t *testing.T, claims jwt.MapClaims) string {
 	return signed
 }
 
-// TestLocalJWT_HappyPath — well-formed token from a known JWKS
+// TestLocalJWT_HappyPath - well-formed token from a known JWKS
 // passes all default checks.
 func TestLocalJWT_HappyPath(t *testing.T) {
 	h := newJWKSHarness(t)
@@ -99,7 +99,7 @@ func TestLocalJWT_HappyPath(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_ExpiredRejected — token whose exp is in the past
+// TestLocalJWT_ExpiredRejected - token whose exp is in the past
 // returns ErrTokenExpired.
 func TestLocalJWT_ExpiredRejected(t *testing.T) {
 	h := newJWKSHarness(t)
@@ -117,7 +117,7 @@ func TestLocalJWT_ExpiredRejected(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_GraceWindowAllowsRecentlyExpired — token expired
+// TestLocalJWT_GraceWindowAllowsRecentlyExpired - token expired
 // within ExpireGrace still passes (clock-skew tolerance).
 func TestLocalJWT_GraceWindowAllowsRecentlyExpired(t *testing.T) {
 	h := newJWKSHarness(t)
@@ -135,7 +135,7 @@ func TestLocalJWT_GraceWindowAllowsRecentlyExpired(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_IssuerCheck — issuer not in allowed list rejects.
+// TestLocalJWT_IssuerCheck - issuer not in allowed list rejects.
 func TestLocalJWT_IssuerCheck(t *testing.T) {
 	h := newJWKSHarness(t)
 	v, _ := NewLocalJWTValidator(context.Background(), LocalJWTConfig{
@@ -153,7 +153,7 @@ func TestLocalJWT_IssuerCheck(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_AudienceCheck — audience mismatch rejects, match passes.
+// TestLocalJWT_AudienceCheck - audience mismatch rejects, match passes.
 func TestLocalJWT_AudienceCheck(t *testing.T) {
 	h := newJWKSHarness(t)
 	v, _ := NewLocalJWTValidator(context.Background(), LocalJWTConfig{
@@ -174,7 +174,7 @@ func TestLocalJWT_AudienceCheck(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_AudienceArray — JWT spec allows aud to be a string
+// TestLocalJWT_AudienceArray - JWT spec allows aud to be a string
 // array. Match against any entry passes.
 func TestLocalJWT_AudienceArray(t *testing.T) {
 	h := newJWKSHarness(t)
@@ -191,7 +191,7 @@ func TestLocalJWT_AudienceArray(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_RequiredScopes — every required scope must be
+// TestLocalJWT_RequiredScopes - every required scope must be
 // present in the space-separated scope claim.
 func TestLocalJWT_RequiredScopes(t *testing.T) {
 	h := newJWKSHarness(t)
@@ -217,7 +217,7 @@ func TestLocalJWT_RequiredScopes(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_BadSignature — token signed with a different key
+// TestLocalJWT_BadSignature - token signed with a different key
 // fails signature verification.
 func TestLocalJWT_BadSignature(t *testing.T) {
 	h := newJWKSHarness(t)
@@ -236,7 +236,7 @@ func TestLocalJWT_BadSignature(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_CustomUsernameAttribute — username_attribute knob
+// TestLocalJWT_CustomUsernameAttribute - username_attribute knob
 // resolves a non-default claim name (e.g. preferred_username).
 func TestLocalJWT_CustomUsernameAttribute(t *testing.T) {
 	h := newJWKSHarness(t)
@@ -258,7 +258,7 @@ func TestLocalJWT_CustomUsernameAttribute(t *testing.T) {
 	}
 }
 
-// TestLocalJWT_ExtraClaims — any non-mandatory claim lands in
+// TestLocalJWT_ExtraClaims - any non-mandatory claim lands in
 // Claims.Extra so the passdb can surface it downstream.
 func TestLocalJWT_ExtraClaims(t *testing.T) {
 	h := newJWKSHarness(t)
@@ -284,7 +284,7 @@ func TestLocalJWT_ExtraClaims(t *testing.T) {
 	}
 }
 
-// TestNewLocalJWTValidator_RequiresURL — empty JWKSURL returns
+// TestNewLocalJWTValidator_RequiresURL - empty JWKSURL returns
 // error at construction.
 func TestNewLocalJWTValidator_RequiresURL(t *testing.T) {
 	_, err := NewLocalJWTValidator(context.Background(), LocalJWTConfig{})
@@ -293,7 +293,7 @@ func TestNewLocalJWTValidator_RequiresURL(t *testing.T) {
 	}
 }
 
-// TestNewLocalJWTValidator_UpstreamUnreachable — JWKSURL pointing
+// TestNewLocalJWTValidator_UpstreamUnreachable - JWKSURL pointing
 // at a closed port wraps ErrUpstream so the operator can
 // distinguish config typo from value error.
 func TestNewLocalJWTValidator_UpstreamUnreachable(t *testing.T) {

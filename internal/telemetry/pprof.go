@@ -16,7 +16,7 @@ import (
 // mail, and #1008 is recent evidence that which port a container serves on is
 // an assumption worth asserting rather than trusting.
 type PprofOptions struct {
-	// Enabled registers the profilers that describe execution — CPU, execution
+	// Enabled registers the profilers that describe execution - CPU, execution
 	// trace, and the allocation, goroutine, block and mutex profiles.
 	Enabled bool
 	// BlockRate sets runtime.SetBlockProfileRate: one blocking event in this
@@ -25,7 +25,7 @@ type PprofOptions struct {
 	//
 	// It is separate from Enabled because registering the route and collecting
 	// the samples are different costs. Without a rate, /debug/pprof/block
-	// answers 200 with an empty profile — the worst shape a diagnostic can
+	// answers 200 with an empty profile - the worst shape a diagnostic can
 	// take, since it looks like an answer. With one, every blocking operation
 	// in the process pays for the sampling.
 	BlockRate int
@@ -40,7 +40,7 @@ type PprofOptions struct {
 // The routes are registered one by one rather than by handing the whole
 // /debug/pprof/ prefix to pprof.Index. Index dispatches any unrouted suffix to
 // the runtime profile of that name, so the set of routes would be whatever any
-// package in the binary happened to register with runtime/pprof — decided by
+// package in the binary happened to register with runtime/pprof - decided by
 // an import, not by this list. There is no index page for the same reason; the
 // URLs are in the docs.
 func registerPprof(mux *http.ServeMux, opts PprofOptions) {
@@ -62,9 +62,9 @@ func registerPprof(mux *http.ServeMux, opts PprofOptions) {
 	}
 
 	// Warned at every start, not only in the config an operator read once. The
-	// failure this guards against is not enabling it — it is enabling it for an
+	// failure this guards against is not enabling it - it is enabling it for an
 	// afternoon's investigation and leaving it on for a year.
-	slog.Warn("telemetry: pprof endpoints are ENABLED — this is a diagnostic switch, turn it off when the investigation ends",
+	slog.Warn("telemetry: pprof endpoints are ENABLED - this is a diagnostic switch, turn it off when the investigation ends",
 		"exposure", pprofExposure())
 }
 
@@ -75,12 +75,12 @@ func registerPprof(mux *http.ServeMux, opts PprofOptions) {
 func applyProfileRates(opts PprofOptions) {
 	if opts.BlockRate > 0 {
 		runtime.SetBlockProfileRate(opts.BlockRate)
-		slog.Warn("telemetry: block profiling is ON — every blocking operation is now sampled; turn it off when the measurement ends",
+		slog.Warn("telemetry: block profiling is ON - every blocking operation is now sampled; turn it off when the measurement ends",
 			"rate_ns", opts.BlockRate)
 	}
 	if opts.MutexFraction > 0 {
 		runtime.SetMutexProfileFraction(opts.MutexFraction)
-		slog.Warn("telemetry: mutex profiling is ON — contention events are now sampled; turn it off when the measurement ends",
+		slog.Warn("telemetry: mutex profiling is ON - contention events are now sampled; turn it off when the measurement ends",
 			"fraction", opts.MutexFraction)
 	}
 }
@@ -91,5 +91,5 @@ func applyProfileRates(opts PprofOptions) {
 // give away is the shape of the process -- which code paths run, how often,
 // and how much they allocate -- and the symbol names of the binary.
 func pprofExposure() string {
-	return "stacks, counts and symbol names — the code paths this process runs and how much they cost, not the contents of anything"
+	return "stacks, counts and symbol names - the code paths this process runs and how much they cost, not the contents of anything"
 }

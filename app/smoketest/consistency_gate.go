@@ -8,7 +8,7 @@ import (
 
 // A consistency row enables itself when the deployment configured BOTH surfaces
 // it compares. One side present and the other absent is a visible skip naming
-// what is missing, never a silent omission — the property #1197 established for
+// what is missing, never a silent omission - the property #1197 established for
 // the gate as a whole, applied per row. -require-all and -require-all-except
 // carry the operator's choice about it unchanged, because a skipped row is an
 // ordinary skipped check in the ordinary area machinery.

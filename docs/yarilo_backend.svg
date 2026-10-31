@@ -18,7 +18,7 @@
   </defs>
 
   <rect width="1160" height="560" fill="#f8fafc"/>
-  <text x="510" y="22" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="bold">yarilo — backend deployment (behind director · co-located pod, one IP owns a user's per-user state)</text>
+  <text x="510" y="22" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="bold">yarilo - backend deployment (behind director · co-located pod, one IP owns a user's per-user state)</text>
 
   <!-- ══════════════════════════════════════════════════
        External top row: shared services + director
@@ -37,7 +37,7 @@
 
   <!-- Director deployment (login pods live here, not in backend) -->
   <rect x="270" y="46" width="870" height="80" rx="5" fill="#eff6ff" stroke="#1d4ed8" stroke-width="2"/>
-  <text x="705" y="66" text-anchor="middle" fill="#1d4ed8" font-size="13" font-weight="bold">director deployment  (login proxies live here — see yarilo_director.svg)</text>
+  <text x="705" y="66" text-anchor="middle" fill="#1d4ed8" font-size="13" font-weight="bold">director deployment  (login proxies live here - see yarilo_director.svg)</text>
   <text x="705" y="80" text-anchor="middle" fill="#1d4ed8" font-size="9">k8s: StatefulSet × 3 · ONE ring · ONE userDir (one pod IP per user)</text>
   <text x="705" y="95" text-anchor="middle" fill="#475569" font-size="10">ring · userDir · TLS terminate · passdb · preamble parse</text>
   <text x="705" y="110" text-anchor="middle" fill="#475569" font-size="9">plain TCP → pod-IP:{protocol port} · yarilo-jmap-login: HTTPS → pod-IP:10443 over internal mTLS</text>

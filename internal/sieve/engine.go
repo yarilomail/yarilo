@@ -131,7 +131,7 @@ type FilterOptions struct {
 }
 
 // Filter executes global-before scripts, then the user's active Sieve script,
-// then global-after scripts. Returns nil when no scripts are configured —
+// then global-after scripts. Returns nil when no scripts are configured -
 // the caller applies implicit keep (deliver to INBOX).
 // A Reject in any script stops the chain immediately.
 func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult, error) {
@@ -413,14 +413,14 @@ func (p *policy) checkedInclude(name string, src []byte, x ExtensionSet) (io.Rea
 
 // SpamScore implements interp.SpamVirusChecker: it reads the configured spam
 // header and normalises the raw value against spamMax. A tested message maps
-// onto the graded 1..10 scale (RFC 5235 §2.1 — "0" is reserved for "not
+// onto the graded 1..10 scale (RFC 5235 §2.1 - "0" is reserved for "not
 // tested"); with :percent (spamtestplus) it maps onto 0..100 instead.
 func (p *policy) SpamScore(_ context.Context, percent bool) (string, bool) {
 	return normalizeScore(p.hdr, p.spamHeader, p.spamMax, percent, 10)
 }
 
 // VirusScore implements interp.SpamVirusChecker: it reads the configured virus
-// header and normalises onto the graded 1..5 scale (RFC 5235 §3.1 — "0" is
+// header and normalises onto the graded 1..5 scale (RFC 5235 §3.1 - "0" is
 // reserved for "not tested", 1 = clean, 5 = definitely a virus).
 func (p *policy) VirusScore(_ context.Context) (string, bool) {
 	return normalizeScore(p.hdr, p.virusHeader, p.virusMax, false, 5)
@@ -431,7 +431,7 @@ func (p *policy) VirusScore(_ context.Context) (string, bool) {
 // onto 1..maxGrade (1 = clean, maxGrade = certain), matching the reference's
 // `1 + rint(norm*(maxGrade-1))`; with percent it maps onto 0..100. "0" is
 // reserved for "not tested", so an untested / unconfigured / unparsable header
-// returns ("0", false) — never a tested value of 0.
+// returns ("0", false) - never a tested value of 0.
 func normalizeScore(hdr textproto.MIMEHeader, header string, max float64, percent bool, maxGrade int) (string, bool) {
 	if header == "" || hdr == nil {
 		return "0", false

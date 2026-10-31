@@ -23,11 +23,11 @@ func Verify(stored, input string) bool {
 // defaultScheme falls back to PLAIN.
 //
 // Recognised schemes (case-insensitive prefix):
-//   - {PLAIN} / {CLEARTEXT} — literal comparison (dev only)
-//   - {BCRYPT} / {BLF-CRYPT} — golang.org/x/crypto/bcrypt
-//   - {SHA512-CRYPT} — crypt(3) SHA-512 ($6$salt$hash)
-//   - {CRYPT} — crypt(3) autodetection by hash marker ($2*→bcrypt, $6$→sha512)
-//   - {SCRAM-SHA-256} / {SCRAM-SHA-1} — re-derive StoredKey from input and the
+//   - {PLAIN} / {CLEARTEXT} - literal comparison (dev only)
+//   - {BCRYPT} / {BLF-CRYPT} - golang.org/x/crypto/bcrypt
+//   - {SHA512-CRYPT} - crypt(3) SHA-512 ($6$salt$hash)
+//   - {CRYPT} - crypt(3) autodetection by hash marker ($2*→bcrypt, $6$→sha512)
+//   - {SCRAM-SHA-256} / {SCRAM-SHA-1} - re-derive StoredKey from input and the
 //     stored iter/salt, then constant-time compare; the same verifier blob
 //     also drives the SCRAM SASL exchange.
 //

@@ -233,7 +233,7 @@ func TestServiceWireRoundTrip(t *testing.T) {
 // mailbox that was recreated (different UIDVALIDITY) sits with a last_indexed_uid
 // above the new low UIDs. Without the reset the indexer would skip every new
 // message ("already current") and search would silently return nothing. The fix
-// must detect the UIDVALIDITY mismatch, drop the stale index, and reindex — so a
+// must detect the UIDVALIDITY mismatch, drop the stale index, and reindex - so a
 // new low-UID message is searchable again.
 func TestUIDValidityResetRebuild(t *testing.T) {
 	svc, box, uidx := newTestService(t)
@@ -244,7 +244,7 @@ func TestUIDValidityResetRebuild(t *testing.T) {
 	waitIndexed(t, svc, 1)
 
 	// Forge a stale checkpoint from a DIFFERENT UIDVALIDITY, its last_uid above the
-	// mailbox's current UIDs — the exact post-recreation state that wedges search.
+	// mailbox's current UIDs - the exact post-recreation state that wedges search.
 	h, err := svc.handle(testUser)
 	if err != nil {
 		t.Fatal(err)
@@ -337,8 +337,8 @@ func countFlatcurveShards(t *testing.T, dir string) (sealed, current int) {
 
 // TestServiceAutoOptimize (#715) is the acceptance scenario from the issue:
 // index past the rotate threshold enough times to cross OptimizeLimit, and
-// observe the shard count return to 1 automatically — no yarctl fts
-// optimize call — while SEARCH results stay correct across the transition.
+// observe the shard count return to 1 automatically - no yarctl fts
+// optimize call - while SEARCH results stay correct across the transition.
 func TestServiceAutoOptimize(t *testing.T) {
 	root := t.TempDir()
 	resolver := &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"}
@@ -386,7 +386,7 @@ func TestServiceAutoOptimize(t *testing.T) {
 	dir := filepath.Join(svc.indexRoot(info), flatcurve.Label)
 
 	// The background optimizer runs asynchronously, on its own worker
-	// goroutine — it may well have already collapsed the shards back to 1
+	// goroutine - it may well have already collapsed the shards back to 1
 	// by the time waitIndexed returns (indexing and optimizing are
 	// separate queues/workers, so there's no guaranteed ordering between
 	// "checkpoint caught up" and "background optimize finished"). Poll for
@@ -413,7 +413,7 @@ func TestServiceAutoOptimize(t *testing.T) {
 }
 
 // hardFailDecoder always returns a genuine (non-degraded) error for a
-// configured content type — simulating a permanent 4xx or a decoder
+// configured content type - simulating a permanent 4xx or a decoder
 // protocol error (#697's ErrDegraded classification never applies here, so
 // this is exactly the class of failure #721 is about).
 type hardFailDecoder struct{ forContentType string }
@@ -428,7 +428,7 @@ func (d *hardFailDecoder) Decode(_ context.Context, contentType, _ string, body 
 
 // brokenAttachmentMsg puts the failing attachment BEFORE the text/plain
 // part: walkEntity aborts the whole multipart walk on the first part
-// error, so only the headers ever reach up.doc before Build() fails —
+// error, so only the headers ever reach up.doc before Build() fails -
 // exactly the issue's "headers searchable, body absent" illustration.
 const brokenAttachmentMsg = "From: a@test.com\r\n" +
 	"Subject: gizmoxyzzy\r\n" +

@@ -61,7 +61,7 @@ func TestEveryDriverRefusesNamesOutsideTheMailbox(t *testing.T) {
 				}
 				msg := "From: a@b\r\n\r\nplanted\r\n"
 				if _, _, _, err := u.Save(name, strings.NewReader(msg), 1, int64(len(msg)), nil, nil, [16]byte{}); err == nil {
-					t.Errorf("Save(%q) was accepted — this is the Sieve fileinto path", name)
+					t.Errorf("Save(%q) was accepted - this is the Sieve fileinto path", name)
 				}
 				if err := u.Delete(name); err == nil {
 					t.Errorf("Delete(%q) was accepted", name)
@@ -75,7 +75,7 @@ func TestEveryDriverRefusesNamesOutsideTheMailbox(t *testing.T) {
 	}
 }
 
-// An ordinary folder still works on every driver — otherwise the test above
+// An ordinary folder still works on every driver - otherwise the test above
 // passes on a backend that refuses everything.
 func TestOrdinaryFolderStillWorksOnEveryDriver(t *testing.T) {
 	sc := config.StorageConfig{
@@ -142,11 +142,11 @@ func TestDottedFolderNamesSurviveTheDefaultRules(t *testing.T) {
 			}
 			for _, name := range []string{"example.com", "Invoices.2026", "lists.golang-nuts"} {
 				if err := u.Create(name); err != nil {
-					t.Errorf("Create(%q): %v — an existing folder would become unselectable", name, err)
+					t.Errorf("Create(%q): %v - an existing folder would become unselectable", name, err)
 				}
 				ok, err := u.FolderExists(name)
 				if err != nil || !ok {
-					t.Errorf("FolderExists(%q) = %v, %v — visible in LIST but not selectable", name, ok, err)
+					t.Errorf("FolderExists(%q) = %v, %v - visible in LIST but not selectable", name, ok, err)
 				}
 			}
 		})
@@ -174,6 +174,6 @@ func TestDottedFolderNamesAreRefusedWhenTheRuleIsOn(t *testing.T) {
 		t.Error("with the separator rule on, Create(\"example.com\") was accepted")
 	}
 	if err := u.Create("Work/2026"); err != nil {
-		t.Errorf("Create(\"Work/2026\"): %v — ordinary nesting must still work", err)
+		t.Errorf("Create(\"Work/2026\"): %v - ordinary nesting must still work", err)
 	}
 }

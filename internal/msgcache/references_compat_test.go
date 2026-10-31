@@ -258,7 +258,7 @@ func TestCombinedReadAgreesWithThePair(t *testing.T) {
 //
 // Preload reads the file as it stands; the same handle then keeps appending,
 // because a scan writes back what it had to parse. Anything appended lives
-// past the snapshot's end and has to come from the file — otherwise a message
+// past the snapshot's end and has to come from the file - otherwise a message
 // cached during the scan would read as a miss for the rest of it, or worse,
 // resolve to whatever occupied that offset earlier.
 func TestAPreloadedHandleStillSeesWhatItAppends(t *testing.T) {

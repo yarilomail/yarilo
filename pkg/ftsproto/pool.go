@@ -20,7 +20,7 @@ var ErrPoolExhausted = errors.New("ftsproto: no free connection")
 // that starts N goroutines against one gets N queued calls, not N concurrent
 // ones. The server has always handled each connection on its own goroutine;
 // the client side was the bottleneck. A pool is therefore the thing that makes
-// concurrency exist at all — a limiter over a single connection would only
+// concurrency exist at all - a limiter over a single connection would only
 // have bounded a queue.
 //
 // Connections are opened on demand, not at construction: a pool of eight costs

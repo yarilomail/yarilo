@@ -16,7 +16,7 @@ import (
 // it behind.
 //
 // The keyword registry is the extension that grows at runtime, and the sandbox
-// hit it at 101 bytes — a length that is not a multiple of its own alignment.
+// hit it at 101 bytes - a length that is not a multiple of its own alignment.
 // Both parities are rows here: a header length that is a multiple of 4 worked
 // before this change and must keep working, and one that is not is the input
 // that distinguishes.
@@ -123,8 +123,8 @@ func TestFlushRepairsAStaleHeaderSize(t *testing.T) {
 	}
 }
 
-// A compaction that cannot write the base is deliberately non-fatal — the
-// folder keeps serving mail — but it must not be silent: rotation stopping
+// A compaction that cannot write the base is deliberately non-fatal - the
+// folder keeps serving mail - but it must not be silent: rotation stopping
 // looks exactly like rotation having nothing to do (#1285).
 func TestRefusedCompactionIsCounted(t *testing.T) {
 	root := t.TempDir()

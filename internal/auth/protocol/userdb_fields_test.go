@@ -32,7 +32,7 @@ func TestAssignField_ControlDirPriority_ExplicitFirst(t *testing.T) {
 	if err := AssignField(&info, "control_dir", "/explicit/ctrl"); err != nil {
 		t.Fatalf("AssignField control_dir: %v", err)
 	}
-	// mail= carries a CONTROL= modifier — must be ignored
+	// mail= carries a CONTROL= modifier - must be ignored
 	if err := AssignField(&info, "mail", "maildir:~/Maildir:CONTROL=/from-mail/ctrl"); err != nil {
 		t.Fatalf("AssignField mail: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestAssignField_AltDirPriority(t *testing.T) {
 	if err := AssignField(&info, "alt_dir", "/explicit/cold"); err != nil {
 		t.Fatalf("AssignField alt_dir: %v", err)
 	}
-	// mail= with ALT= modifier — must be ignored
+	// mail= with ALT= modifier - must be ignored
 	if err := AssignField(&info, "mail", "maildir:~/Maildir:ALT=/from-mail/cold"); err != nil {
 		t.Fatalf("AssignField mail: %v", err)
 	}

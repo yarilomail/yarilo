@@ -115,7 +115,7 @@ func TestFlushHook_DisabledByDefault(t *testing.T) {
 }
 
 // TestFlushHook_SkippedWithoutOldHost: a move that creates a fresh pin (no prior host)
-// attaches no context, so no hook runs — mirroring the reference's old_host_ip guard.
+// attaches no context, so no hook runs - mirroring the reference's old_host_ip guard.
 func TestFlushHook_SkippedWithoutOldHost(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "hook.log")
 	script := writeHookScript(t, out)

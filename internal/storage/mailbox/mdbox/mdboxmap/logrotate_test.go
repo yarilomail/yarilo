@@ -9,7 +9,7 @@ import (
 // rotateTestMap opens a map with an explicit triple and backdates the base so
 // the log reads as `age` old. The base's mtime is where the age comes from
 // (see shouldRotateLocked), so this is the whole of the time control the tests
-// need — no sleeping, and no clock injection.
+// need - no sleeping, and no clock injection.
 func rotateTestMap(t *testing.T, minSize, maxSize int64, minAge, age time.Duration) *Map {
 	t.Helper()
 	m, err := Open(t.TempDir(), "alice@example.com", WithLogRotation(minSize, maxSize, minAge))
@@ -81,7 +81,7 @@ func TestShouldRotateDisabledByZeroFloor(t *testing.T) {
 	}
 }
 
-// An unset triple leaves the package defaults rather than reading as zeros —
+// An unset triple leaves the package defaults rather than reading as zeros -
 // which, with a zero floor meaning "disabled", would silently turn rotation off
 // for every caller that does not configure it.
 func TestUnsetTripleKeepsDefaults(t *testing.T) {
@@ -98,7 +98,7 @@ func TestUnsetTripleKeepsDefaults(t *testing.T) {
 }
 
 // The hysteresis the age arm exists for: a burst of appends that keeps the log
-// between floor and ceiling folds once, at the ceiling — not once per crossing
+// between floor and ceiling folds once, at the ceiling - not once per crossing
 // of the floor. Under a plain size threshold this is one fold per append past
 // the floor, which is what made a busy account rewrite its base repeatedly.
 func TestBurstInsideTheAgeWindowFoldsOnceAtTheCeiling(t *testing.T) {
@@ -140,7 +140,7 @@ func TestBurstInsideTheAgeWindowFoldsOnceAtTheCeiling(t *testing.T) {
 // The refcount journal is the map's second write path into the same log, and
 // it decides on its own line of code. A triple honoured on the append path
 // only would leave a refcount-heavy account folding on every delta past the
-// floor — the very shape the age arm was added for.
+// floor - the very shape the age arm was added for.
 func TestRefcountPathObeysTheSameTriple(t *testing.T) {
 	m := rotateTestMap(t, 1<<10, 1<<20, time.Hour, 0)
 
@@ -176,7 +176,7 @@ func TestRefcountPathObeysTheSameTriple(t *testing.T) {
 	}
 }
 
-// The same burst with the age window open folds repeatedly — the row that
+// The same burst with the age window open folds repeatedly - the row that
 // proves the previous test measured the age arm and not some incidental cap.
 func TestBurstPastTheAgeWindowFoldsRepeatedly(t *testing.T) {
 	m := rotateTestMap(t, 1<<10, 8<<10, time.Hour, 24*time.Hour)

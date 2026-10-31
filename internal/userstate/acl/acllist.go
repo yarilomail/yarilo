@@ -20,7 +20,7 @@ import (
 // at <home>/<ListFileName>; LIST in shared / public namespaces reads
 // this index once instead of stat-ing every mailbox dir.
 //
-// Format — one entry per (mailbox, identifier) tuple, tab-delimited
+// Format - one entry per (mailbox, identifier) tuple, tab-delimited
 // fields, LF terminator:
 //
 //	<mailbox>\t[-]<identifier>\t<rights>\n
@@ -46,7 +46,7 @@ type ListEntry struct {
 func (s *Store) ListPath() string { return filepath.Join(s.mailboxesRoot(), ListFileName) }
 
 // ListSnapshot returns every entry in the on-disk index. Missing file
-// returns (nil, nil) — "no mailbox in this namespace has an explicit
+// returns (nil, nil) - "no mailbox in this namespace has an explicit
 // ACL yet" is the normal initial state.
 func (s *Store) ListSnapshot() ([]ListEntry, error) {
 	var (

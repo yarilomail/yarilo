@@ -65,7 +65,7 @@ func TestADeferredHealIsNotTreatedAsAFailure(t *testing.T) {
 
 // TestDboxHealStaleMarkClearing verifies that opening a folder which is no
 // longer FSCKD (another session healed it) drops this session's stale per-session
-// mark — but only when reactive rebuild is enabled. The mark is keyed by folder
+// mark - but only when reactive rebuild is enabled. The mark is keyed by folder
 // ID so the clear site matches the FETCH mark site regardless of folder name.
 func TestDboxHealStaleMarkClearing(t *testing.T) {
 	const folderID = uint64(7)

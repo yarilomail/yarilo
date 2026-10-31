@@ -34,7 +34,7 @@ func TestStopwordListsIncludeDiacriticForms(t *testing.T) {
 				t.Fatalf("no stopword list for %q", tc.lang)
 			}
 			if _, stop := words[tc.word]; !stop {
-				t.Errorf("%q not recognized as a stopword in %q — only its ASCII transliteration may be listed", tc.word, tc.lang)
+				t.Errorf("%q not recognized as a stopword in %q - only its ASCII transliteration may be listed", tc.word, tc.lang)
 			}
 		})
 	}

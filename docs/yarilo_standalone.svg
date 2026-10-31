@@ -25,7 +25,7 @@
 
   <rect width="1325" height="880" fill="#f8fafc"/>
 
-  <text x="560" y="22" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="bold">yarilo — standalone Helm release · single-node k8s · independent Deployments per component</text>
+  <text x="560" y="22" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="bold">yarilo - standalone Helm release · single-node k8s · independent Deployments per component</text>
   <text x="560" y="38" text-anchor="middle" fill="#475569" font-size="10">no director · each component has its own replicaCount · all coordination via ClusterIP Services + mTLS</text>
 
   <!-- ══════════════════════════════════════════════════
@@ -144,7 +144,7 @@
   <line x1="737" y1="280" x2="737" y2="342" stroke="#1d4ed8" stroke-width="2" marker-end="url(#ad)"/>
   <line x1="942" y1="280" x2="942" y2="342" stroke="#0d9488" stroke-width="2" marker-end="url(#aq)"/>
   <text x="952" y="315" fill="#0d9488" font-size="9" font-weight="bold">preamble</text>
-  <text x="532" y="303" text-anchor="middle" fill="#1d4ed8" font-size="10" font-weight="bold">mTLS TCP · auth preamble · plain-byte proxy (ClusterIP Service DNS — separate pods, no fd-pass)</text>
+  <text x="532" y="303" text-anchor="middle" fill="#1d4ed8" font-size="10" font-weight="bold">mTLS TCP · auth preamble · plain-byte proxy (ClusterIP Service DNS - separate pods, no fd-pass)</text>
 
   <!-- ══════════════════════════════════════════════════
        Session processes row
@@ -248,15 +248,15 @@
   ══════════════════════════════════════════════════ -->
   <rect x="30" y="620" width="1265" height="230" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
   <text x="40" y="638" fill="#0f172a" font-size="11" font-weight="bold">Scaling model</text>
-  <text x="40" y="654" fill="#475569" font-size="10">• Every box is its own k8s Deployment (or StatefulSet for redis). Bump replicaCount per component — no rewiring.</text>
-  <text x="40" y="668" fill="#475569" font-size="10">• login pods and session pods are SEPARATE Deployments. Connect via mTLS TCP + auth preamble through ClusterIP Service DNS — not Unix-socket fd-pass.</text>
+  <text x="40" y="654" fill="#475569" font-size="10">• Every box is its own k8s Deployment (or StatefulSet for redis). Bump replicaCount per component - no rewiring.</text>
+  <text x="40" y="668" fill="#475569" font-size="10">• login pods and session pods are SEPARATE Deployments. Connect via mTLS TCP + auth preamble through ClusterIP Service DNS - not Unix-socket fd-pass.</text>
   <text x="40" y="682" fill="#475569" font-size="10">• yarilo-locks scales independently (default 2 for HA). State in Redis means N session pods see one consistent view.</text>
-  <text x="40" y="696" fill="#475569" font-size="10">• PVC must be ReadWriteMany — even on a single node, multiple session pods mount the same volume. hostPath / NFS / CephFS all valid; storageClass in values.yaml.</text>
+  <text x="40" y="696" fill="#475569" font-size="10">• PVC must be ReadWriteMany - even on a single node, multiple session pods mount the same volume. hostPath / NFS / CephFS all valid; storageClass in values.yaml.</text>
   <text x="40" y="710" fill="#475569" font-size="10">• Redis is bundled by default (StatefulSet subchart). For HA point at external managed Redis (Sentinel / Cluster) by overriding the connection URL.</text>
   <text x="40" y="724" fill="#475569" font-size="10">• No director, no per-tag sharding. Cross-pod write contention handled by yarilo-locks. Upgrade path to backend deployment (with director) does not touch session binaries.</text>
   <text x="40" y="742" fill="#0f172a" font-size="11" font-weight="bold">Postfix integration</text>
-  <text x="40" y="758" fill="#475569" font-size="10">• SASL AUTH: smtpd_sasl_type=dovecot · smtpd_sasl_path=inet:[yarilo-sasl-login.svc]:12345 — yarilo-sasl-login relays each exchange to yarilo-auth.</text>
-  <text x="40" y="772" fill="#475569" font-size="10">• Quota policy: check_policy_service inet:[yarilo-quota-status.svc]:12340 — rejects delivery to over-quota recipients before Postfix queues the message.</text>
-  <text x="40" y="786" fill="#475569" font-size="10">• Virtual alias resolution: configure alias_dict in quota_status.yaml pointing at the same SQL DB — yarilo-quota-status resolves aliases before quota check.</text>
-  <text x="40" y="800" fill="#475569" font-size="10">• LMTP: mailbox_transport = lmtp:inet:[yarilo-lmtp-login.svc]:24 — Postfix delivers to yarilo-lmtp-login; per-recipient warden tracking + SESSION tokens; fan-out preamble to yarilo-lmtp. Enable: components.lmtpLogin.enabled: true in values.yaml.</text>
+  <text x="40" y="758" fill="#475569" font-size="10">• SASL AUTH: smtpd_sasl_type=dovecot · smtpd_sasl_path=inet:[yarilo-sasl-login.svc]:12345 - yarilo-sasl-login relays each exchange to yarilo-auth.</text>
+  <text x="40" y="772" fill="#475569" font-size="10">• Quota policy: check_policy_service inet:[yarilo-quota-status.svc]:12340 - rejects delivery to over-quota recipients before Postfix queues the message.</text>
+  <text x="40" y="786" fill="#475569" font-size="10">• Virtual alias resolution: configure alias_dict in quota_status.yaml pointing at the same SQL DB - yarilo-quota-status resolves aliases before quota check.</text>
+  <text x="40" y="800" fill="#475569" font-size="10">• LMTP: mailbox_transport = lmtp:inet:[yarilo-lmtp-login.svc]:24 - Postfix delivers to yarilo-lmtp-login; per-recipient warden tracking + SESSION tokens; fan-out preamble to yarilo-lmtp. Enable: components.lmtpLogin.enabled: true in values.yaml.</text>
 </svg>

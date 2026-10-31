@@ -86,7 +86,7 @@ func TestFetcherPreservesUIDOrder(t *testing.T) {
 	}
 	for i, uid := range got {
 		if uid != uint32(i+1) {
-			t.Fatalf("message %d has uid %d — the pipeline reordered", i, uid)
+			t.Fatalf("message %d has uid %d - the pipeline reordered", i, uid)
 		}
 	}
 }
@@ -105,7 +105,7 @@ func TestFetcherAttributesAReadFailureToItsMessage(t *testing.T) {
 		f.release(int64(item.meta.Size))
 	}
 	if len(seen) != 5 {
-		t.Fatalf("got %d messages, want all 5 — a failure must not truncate the pass", len(seen))
+		t.Fatalf("got %d messages, want all 5 - a failure must not truncate the pass", len(seen))
 	}
 	if seen[3] == nil {
 		t.Error("uid 3 failed to read but arrived without an error")
@@ -118,7 +118,7 @@ func TestFetcherAttributesAReadFailureToItsMessage(t *testing.T) {
 }
 
 // The byte ceiling is what stops a few large attachments sitting in memory
-// together — depth alone does not bound anything.
+// together - depth alone does not bound anything.
 func TestFetcherRespectsTheByteCeiling(t *testing.T) {
 	const size = 1 << 20 // 1 MiB each
 	box := &fakeBox{bodies: bodies(8, size)}
@@ -130,7 +130,7 @@ func TestFetcherRespectsTheByteCeiling(t *testing.T) {
 	// Let the producer run ahead as far as it can before consuming anything.
 	time.Sleep(150 * time.Millisecond)
 	if opened := box.opened.Load(); opened > 3 {
-		t.Errorf("opened %d messages with a 2-message ceiling — the window is not bounding anything", opened)
+		t.Errorf("opened %d messages with a 2-message ceiling - the window is not bounding anything", opened)
 	}
 	for item := range src {
 		f.release(int64(item.meta.Size))

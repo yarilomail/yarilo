@@ -4,25 +4,25 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 
 ## How to compare
 
-- **stalled >3s / block** — number of commands stalled >3 s per 10-second window. Lower is better.
-- **ms/cmd avg** — average command latency across all command types. Lower is better.
-- **16s stall messages** — "stalled for 16 secs in command: N STORE/APPEND/EXPUNGE". Should be 0.
-- **errors** — "X errors" line at the end. Should be 0.
+- **stalled >3s / block** - number of commands stalled >3 s per 10-second window. Lower is better.
+- **ms/cmd avg** - average command latency across all command types. Lower is better.
+- **16s stall messages** - "stalled for 16 secs in command: N STORE/APPEND/EXPUNGE". Should be 0.
+- **errors** - "X errors" line at the end. Should be 0.
 
 ---
 
-## v1.96.0 — baseline before #340
+## v1.96.0 - baseline before #340
 
 **Date:** ~2026-06-18  
 **Changes:** RWMutex for withFolderRO (#338), separate userIndex per session  
 **Summary:**
 - stalled >3s: **constant**, every block
-- 16s stall messages: **yes** — `stalled for 16 secs in command: N STORE`, `N APPEND`, `N EXPUNGE`
+- 16s stall messages: **yes** - `stalled for 16 secs in command: N STORE`, `N APPEND`, `N EXPUNGE`
 - Cause: 5 sessions × 20 users = 100 separate locks.Client instances competing for the same Redis key `mbox:u1@…:INBOX`
 
 ---
 
-## v1.97.0 — shared userIndex per user (#341)
+## v1.97.0 - shared userIndex per user (#341)
 
 **Date:** 2026-06-20  
 **Changes:** Backend caches one *userIndex per username, ref-counted; all sessions of the same user serialize on fs.mu, Redis lock no longer contended within the pod.
@@ -60,11 +60,11 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 
 **16s stall messages:** none ✅  
 **errors:** 0 ✅  
-**Conclusion:** In-pod Redis contention eliminated (16s stalls gone). Residual >3s stalls remain — not NFS (disk is local). Likely fs.mu queue: 5 sessions per user now serialize on a Go mutex; each mutation = full .index recreate. Next: log-append (Phase 2.5).
+**Conclusion:** In-pod Redis contention eliminated (16s stalls gone). Residual >3s stalls remain - not NFS (disk is local). Likely fs.mu queue: 5 sessions per user now serialize on a Go mutex; each mutation = full .index recreate. Next: log-append (Phase 2.5).
 
 ---
 
-## v1.98.0 — log-append write path, Phase 2.5 (#343)
+## v1.98.0 - log-append write path, Phase 2.5 (#343)
 
 **Date:** 2026-06-20  
 **Changes:** All write mutations (UpdateFlags, ExpungeMessage, AppendMessage, AllocateUID, NextModSeq) switched from `flush()` → `mailindex.Recreate()` to a ~50-100 byte O_WRONLY|O_APPEND to `.index.log`. `reload()` has a two-stage fast path: stat-only → log-only growth → full base reload.
@@ -92,11 +92,11 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 
 **16s stall messages:** none ✅  
 **errors:** 0 ✅  
-**Conclusion:** Phase 2.5 effective — stalled >3s down to 3–18/block (vs 12–36 in v1.97.0), avg 21–39 ms (vs 25–42 ms). LIST deadlock in run 1 was a one-off on first fill after deploy (not reproducible). Residual stalls: suspected fs.mu queue at 5 sessions × 20 users.
+**Conclusion:** Phase 2.5 effective - stalled >3s down to 3–18/block (vs 12–36 in v1.97.0), avg 21–39 ms (vs 25–42 ms). LIST deadlock in run 1 was a one-off on first fill after deploy (not reproducible). Residual stalls: suspected fs.mu queue at 5 sessions × 20 users.
 
 ---
 
-## v2.0.1 — revert lock-ordering experiments (#345)
+## v2.0.1 - revert lock-ordering experiments (#345)
 
 **Date:** 2026-06-20  
 **Changes:** Reverted v1.99.0 (#344) and v2.0.0 (direct push); restored original `withFolderLock` from v1.98.0 (fs.mu first, no writeMu). appVersion 2.0.1.
@@ -116,11 +116,11 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 
 **16s stall messages:** none ✅  
 **errors:** 0 ✅  
-**Conclusion:** Within v1.98.0 baseline (3–18 stalled >3s, 21–39 ms). Minor spike to 21 in one block — sandbox noise, not a regression. Lock ordering correctly restored.
+**Conclusion:** Within v1.98.0 baseline (3–18 stalled >3s, 21–39 ms). Minor spike to 21 in one block - sandbox noise, not a regression. Lock ordering correctly restored.
 
 ---
 
-## v2.0.2 — emit * FLAGS before * EXISTS for APPENDed keywords (#347)
+## v2.0.2 - emit * FLAGS before * EXISTS for APPENDed keywords (#347)
 
 **Date:** 2026-06-20  
 **Changes:** Poll Phase 3 now scans keywords of new messages and emits `* FLAGS` before `* EXISTS`. Eliminates "Keyword used without being in FLAGS" warnings (RFC 3501 §7.3.2).
@@ -144,7 +144,7 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 
 ---
 
-## v2.0.4 — external MySQL + DSN in all session deployments (#356)
+## v2.0.4 - external MySQL + DSN in all session deployments (#356)
 
 **Date:** 2026-06-30  
 **Changes:** MySQL moved out of the yarilo chart into a separate `db` namespace; `YARILO_DB_DSN` injected into all 6 session deployments (imap, pop3, submission, lmtp, managesieve, backend-api); PVC protected with `helm.sh/resource-policy: keep`; `accessMode` corrected to `ReadWriteOnce`.
@@ -172,7 +172,7 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 
 ---
 
-## v2.0.5 — LITERAL+ in pre-auth greeting (#358)
+## v2.0.5 - LITERAL+ in pre-auth greeting (#358)
 
 **Date:** 2026-06-30  
 **Changes:** `LITERAL-` → `LITERAL+` in pre-auth IMAP capability string (`imapPreAuthCaps`). imaptest now sees `LITERAL+` from the greeting and sends `{N+}` non-synchronizing literals without waiting for `+ continue`.
@@ -198,10 +198,10 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 
 ---
 
-## v2.0.5 — 100 users, SHA512-CRYPT (imaptest config change, no code change)
+## v2.0.5 - 100 users, SHA512-CRYPT (imaptest config change, no code change)
 
 **Date:** 2026-06-30  
-**Changes:** imaptest scaled to `users=1-100` (was 1-20); all 100 users seeded with `{SHA512-CRYPT}`. Result: 1 session/user instead of 5 — per-mailbox lock contention essentially eliminated.
+**Changes:** imaptest scaled to `users=1-100` (was 1-20); all 100 users seeded with `{SHA512-CRYPT}`. Result: 1 session/user instead of 5 - per-mailbox lock contention essentially eliminated.
 
 | Block | stalled >3s | ms/cmd avg |
 |-------|-------------|------------|
@@ -212,11 +212,11 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 **16s stall messages:** none ✅  
 **errors:** 0 ✅  
 **Totals:** Logi 100% / List 50% / Stat 50% / Sele 100% / Fetc 100% / Fet2 100% / Stor 50% / Dele 100% / Expu 100% / Appe 100% / Logo 100%  
-**Conclusion:** Stalls dropped to 0 for blocks 2–10. Block 1 spike (42 stalled, 1583 ms avg) is the initial login burst — 100 SHA512-CRYPT verifications in parallel. Block 11 spike (25) is end-of-test logout burst. The dominant stall source was fs.mu lock contention from 5 sessions sharing one mailbox; with 1 session/user it disappears. Residual: List/Stat/Stor at 50% is a separate issue (concurrent flag modification).
+**Conclusion:** Stalls dropped to 0 for blocks 2–10. Block 1 spike (42 stalled, 1583 ms avg) is the initial login burst - 100 SHA512-CRYPT verifications in parallel. Block 11 spike (25) is end-of-test logout burst. The dominant stall source was fs.mu lock contention from 5 sessions sharing one mailbox; with 1 session/user it disappears. Residual: List/Stat/Stor at 50% is a separate issue (concurrent flag modification).
 
 ---
 
-## v2.0.170 — unify per-user mail_location resolution (#602/#605)
+## v2.0.170 - unify per-user mail_location resolution (#602/#605)
 
 **Date:** 2026-07-17  
 **Changes:** StampLocation / SelectPersonalBackend resolver unification across IMAP/POP3/LMTP + LMTP cache-miss Driver stamp (#606). Post-deploy regression check on sandbox.
@@ -228,32 +228,32 @@ Setup: 100 clients, 20 users (u1–u20@d00001.test), port 143, ~90 sec each run.
 | 1–8    | 0           | 0 ms       |
 | tail   | 1           | 0 ms       |
 
-**16s stall messages:** one — client 1051 stalled 59 s on `FETCH … (INTERNALDATE FLAGS)`  
+**16s stall messages:** one - client 1051 stalled 59 s on `FETCH … (INTERNALDATE FLAGS)`  
 **errors:** 0  
 **Totals:** Logi 1427 (100%) / List 50% / Stat 50% / Sele 100% / Fetc 100% / Fet2 100% / Stor 50% / Dele 100% / Expu 100% / Appe 100% / Logo 100%  
-**Conclusion:** No functional regression from the resolver unification — smoketest is green twice back-to-back with no concurrent load (24/24 sieve + all checks). Under load the single 59 s FETCH stall is the known 5-sessions-per-mailbox `fs.mu` contention (config-induced, matches the v1.97/v2.0.5 analysis), not a new regression. Concurrent smoke failures during the imaptest window were LMTP delivery-latency timeouts that vanish once the load is removed.
+**Conclusion:** No functional regression from the resolver unification - smoketest is green twice back-to-back with no concurrent load (24/24 sieve + all checks). Under load the single 59 s FETCH stall is the known 5-sessions-per-mailbox `fs.mu` contention (config-induced, matches the v1.97/v2.0.5 analysis), not a new regression. Concurrent smoke failures during the imaptest window were LMTP delivery-latency timeouts that vanish once the load is removed.
 
 ---
 
-## v2.2.14 — login pods CPU-throttled by chart default (#878)
+## v2.2.14 - login pods CPU-throttled by chart default (#878)
 
 **Date:** 2026-07-29
 **Changes:** none in code. Removed the CPU limit from all five login pods in
 `helm_values/values-sandbox.yaml` (`components.*Login.resources.limits.cpu: null`,
-requests 100m). Same image tag both runs — `2.2.14` — so the CPU limit is the only variable.
+requests 100m). Same image tag both runs - `2.2.14` - so the CPU limit is the only variable.
 
 **Root cause:** #878 attributes the `NO [UNAVAILABLE]` storm to a hot-path design
 defect (no login→auth connection pooling) and explicitly rules out capacity,
 citing auth at ~87m CPU. Measurement contradicts that: `yarilo-auth` has **no CPU
-limit at all** and recorded `nr_throttled 0` — it was never the bottleneck. The
+limit at all** and recorded `nr_throttled 0` - it was never the bottleneck. The
 throttled pod was `yarilo-imap-login`, capped at the chart default `limits.cpu: 200m`
 (helm/values.yaml:1135). Login pods carry all the asymmetric crypto in the system:
 three ECDSA handshakes per login (client TLS on 993/143, mTLS to yarilo-auth,
 mTLS to yarilo-warden). Averaged CPU metrics hid this because the burst is seconds
 long while the scrape window is a minute.
 
-The 1000m top-level `resources:` block in values-sandbox.yaml was **dead** — the
-chart has no `.Values.resources`, only per-component — so the deployment looked
+The 1000m top-level `resources:` block in values-sandbox.yaml was **dead** - the
+chart has no `.Values.resources`, only per-component - so the deployment looked
 sized at 1000m while every login pod ran at 200m.
 
 | metric (same job, `clients=500 users=1-100 secs=90`) | baseline (200m limit) | no CPU limit |
@@ -266,7 +266,7 @@ sized at 1000m while every login pod ran at 200m.
 | imap-login CPU used during run | 21.2 s (= the entire 200m×100s quota) | 28.1 s |
 | successful logins | 633 | **1342** (2.1×) |
 
-**16s stall messages:** yes — 483 (LOGIN 242, APPEND 187), 20–27 s each
+**16s stall messages:** yes - 483 (LOGIN 242, APPEND 187), 20–27 s each
 **errors:** 24 residual `UNAVAILABLE`
 **Conclusion:** The CPU limit was the root cause; throttling went to zero and
 login throughput doubled with no code change. Residual stalls are a *different*
@@ -274,8 +274,8 @@ bottleneck now that 2.1× more work reaches the backend: the documented
 5-sessions-per-user `fs.mu` contention this exact config re-introduces (see the
 v2.0.170 note above), plus mild director throttling (181 periods / 4.8 s per pod
 at `limits.cpu: 500m`, ~11% of CPU used). Node had headroom throughout (35%).
-Connection reuse from #878 remains worth doing as a CPU-efficiency measure — it
-removes two of the three handshakes per login, which matters at 1M+ connections —
+Connection reuse from #878 remains worth doing as a CPU-efficiency measure - it
+removes two of the three handshakes per login, which matters at 1M+ connections -
 but it is an optimisation, not the fix for this failure.
 
 **Follow-ups:** raise/remove the director CPU limit; raise the chart's own 200m
@@ -287,7 +287,7 @@ default for TLS-terminating login pods; dead keys still in values-sandbox.yaml
 ## Template for next run
 
 ```
-## vX.Y.Z — <change title> (#PR)
+## vX.Y.Z - <change title> (#PR)
 
 **Date:** YYYY-MM-DD
 **Changes:** ...

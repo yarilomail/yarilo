@@ -274,7 +274,7 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserIndex {
 	ref.refs++
 	b.usersMu.Unlock()
 	// u.SessionID is the IMAP/POP3 login-proxy correlation ID (empty for LMTP
-	// and other non-session contexts) — see folderState.traceID.
+	// and other non-session contexts) - see folderState.traceID.
 	return &userHandle{
 		ui: ref.ui, b: b, cacheKey: key,
 		traceID: u.SessionID,

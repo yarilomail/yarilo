@@ -175,7 +175,7 @@ func dispatch(line string, svc Service) string {
 				slog.Debug("fts: lookup failed", "user", user, "folder", mbox.Name, "err", err)
 				return noFor(err)
 			}
-			// Result counts only — never the query terms (private mail content).
+			// Result counts only - never the query terms (private mail content).
 			slog.Debug("fts: lookup", "user", user, "folder", mbox.Name,
 				"definite", len(res.Definite), "maybe", len(res.Maybe))
 			payload, err := EncodeResult(res)

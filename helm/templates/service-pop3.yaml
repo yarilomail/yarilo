@@ -1,5 +1,5 @@
 {{- if and .Values.components.pop3.enabled (not .Values.components.backend.coLocated) }}
-## Headless — POP3 backend pods (director resolves A-records → individual pod IPs)
+## Headless - POP3 backend pods (director resolves A-records → individual pod IPs)
 apiVersion: v1
 kind: Service
 metadata:
@@ -26,7 +26,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "pop3") | nindent 4 }}
 ---
-## ClusterIP — telemetry / health
+## ClusterIP - telemetry / health
 apiVersion: v1
 kind: Service
 metadata:

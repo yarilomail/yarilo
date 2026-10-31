@@ -31,8 +31,8 @@ var _ gosieve.PipeExecutor = (*pipeExecutor)(nil)
 
 func (e *pipeExecutor) Pipe(ctx context.Context, programName string, args []string, msg io.Reader) error {
 	// Breadcrumb (#625): confirm the pipe action fired and for which program, so a
-	// vnd.yarilo.pipe path is traceable from the log. Program name + arg count only
-	// — never the arg values (script-controlled) or the message body.
+	// vnd.yarilo.pipe path is traceable from the log. Program name + arg count only -
+	// never the arg values (script-controlled) or the message body.
 	slog.Debug("sieve/pipe: invoked", "user", e.username, "program", programName, "args", len(args))
 	// socket-first, then binary
 	if e.socketDir != "" {
@@ -137,7 +137,7 @@ func (e *pipeExecutor) pipeSocket(ctx context.Context, socketPath string, msg io
 		_ = tc.CloseWrite()
 	}
 
-	// Drain any response (discard — pipe action has no output).
+	// Drain any response (discard - pipe action has no output).
 	_, _ = io.Copy(io.Discard, conn)
 	return nil
 }

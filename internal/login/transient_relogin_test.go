@@ -13,7 +13,7 @@ import (
 )
 
 // TestTransientReloginCap pins the budget semantics of the client-side re-LOGIN
-// cap, including the negative opt-out — an operator disabling it must get the
+// cap, including the negative opt-out - an operator disabling it must get the
 // pre-#896 close-on-first-transient back, not the default silently applying.
 func TestTransientReloginCap(t *testing.T) {
 	tests := []struct {
@@ -37,7 +37,7 @@ func TestTransientReloginCap(t *testing.T) {
 
 // TestTransientReloginKeepsConnectionOpen is the #896 acceptance shape: a
 // transient failure answers a tagged NO [UNAVAILABLE] but does NOT close the
-// connection — the client can LOGIN again on the SAME socket. An unreachable
+// connection - the client can LOGIN again on the SAME socket. An unreachable
 // yarilo-auth makes every attempt transient (auth_dial), so the connection
 // survives the first NO, answers a second, and is closed only at the cap.
 func TestTransientReloginKeepsConnectionOpen(t *testing.T) {
@@ -119,7 +119,7 @@ func TestTransientReloginReleasesWardenSlot(t *testing.T) {
 	// Close the shared warden pool before the embedded warden server is torn down,
 	// or warden's graceful Serve would block on wg.Wait for handlers reading on
 	// the still-open pool connections. LIFO ordering runs this before the warden
-	// helper's own cleanup. A test artifact only — a real login pod's pool lives
+	// helper's own cleanup. A test artifact only - a real login pod's pool lives
 	// for the pod's lifetime.
 	t.Cleanup(func() {
 		if s.wardenPool != nil {
@@ -170,7 +170,7 @@ func readTagged(t *testing.T, rd *bufio.Reader, tag string) string {
 	return ""
 }
 
-// reservedDeadAddr binds a port, closes it, and returns the address — almost
+// reservedDeadAddr binds a port, closes it, and returns the address - almost
 // certainly free, so a dial to it is refused.
 func reservedDeadAddr(t *testing.T) string {
 	t.Helper()

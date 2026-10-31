@@ -24,8 +24,8 @@ func (s *store) find(uid uint32) (int, bool) {
 	return i, false
 }
 
-// insert places e in map_uid order. Appends are the norm — map_uids are
-// allocated monotonically under the map lock — so the tail case is the fast
+// insert places e in map_uid order. Appends are the norm - map_uids are
+// allocated monotonically under the map lock - so the tail case is the fast
 // one, but the ordered insert is what the binary search actually depends on.
 func (s *store) insert(e MapEntry) {
 	buf := make([]byte, baseRecordLen)

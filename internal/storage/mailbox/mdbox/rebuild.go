@@ -48,7 +48,7 @@ func scanTrailer(r io.Reader, limit uint32) (uint32, parsedTrailer, error) {
 		line, err := br.ReadString('\n')
 		consumed += uint32(len(line))
 		if line == "\n" {
-			// Blank line — trailer terminator.
+			// Blank line - trailer terminator.
 			return consumed, out, nil
 		}
 		if err == io.EOF {

@@ -2,7 +2,7 @@
 // (#788). It owns the pod's SINGLE director registration: one BACKEND-UP for
 // the pod IP, heartbeated while every protocol container in the pod is ready,
 // and a graceful BACKEND-DOWN (LEAVE) on SIGTERM. It never touches mail bytes,
-// session routing, auth, or storage — it is only the pod's voice in the
+// session routing, auth, or storage - it is only the pod's voice in the
 // director ring. Readiness is read passively from the shared readiness
 // directory (readyfile): a protocol container that stops touching its file
 // (wedged / not ready) makes the sidecar withhold the heartbeat, and the
@@ -79,7 +79,7 @@ func main() {
 }
 
 // buildClient constructs the registration client, or nil (registration
-// disabled) when director_addr or POD_IP is unset — the sidecar then just idles
+// disabled) when director_addr or POD_IP is unset - the sidecar then just idles
 // on its telemetry endpoint (no crash loop) until the pod is torn down.
 func buildClient(cfg *config.Config) *backendreg.Client {
 	reg := cfg.BackendRegister
@@ -101,7 +101,7 @@ func buildClient(cfg *config.Config) *backendreg.Client {
 
 	// Gate the heartbeat on every expected protocol's readiness file being
 	// fresh. An empty ReadinessProtocols set means no gate (heartbeat
-	// unconditionally) — Helm sets the pod's protocol list.
+	// unconditionally) - Helm sets the pod's protocol list.
 	dir := reg.ReadinessDir
 	protos := reg.ReadinessProtocols
 	staleAfter := time.Duration(reg.ReadinessStaleAfter) * time.Second
@@ -122,7 +122,7 @@ func buildClient(cfg *config.Config) *backendreg.Client {
 		DirectorAddr: reg.DirectorAddr,
 		SelfIP:       ip,
 		// Port is nominal: the ring entry identifies the POD, and each login
-		// proxy overrides it with its own protocol port (#788). 0 is fine —
+		// proxy overrides it with its own protocol port (#788). 0 is fine -
 		// the ring keys backends by IP.
 		Port:     0,
 		Tag:      reg.Tag,

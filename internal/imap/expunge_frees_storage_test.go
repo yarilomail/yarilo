@@ -13,7 +13,7 @@ import (
 )
 
 // countMaildirMessages counts message files under every cur/ and new/ directory
-// below root — the physical footprint of a maildir mailbox.
+// below root - the physical footprint of a maildir mailbox.
 func countMaildirMessages(t *testing.T, root string) int {
 	t.Helper()
 	n := 0

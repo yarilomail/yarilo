@@ -37,7 +37,7 @@ func TestLookup_SkipsInterleavedPushes(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Lookup blocked — interleaved push not skipped")
+		t.Fatal("Lookup blocked - interleaved push not skipped")
 	}
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)

@@ -90,7 +90,7 @@ type Options struct {
 	// which is what promauto-based components register into.
 	Registry prometheus.Gatherer
 	// Checks are the component's readiness conditions: /readyz passes when every
-	// one passes. An empty list means the process being up IS the condition — a
+	// one passes. An empty list means the process being up IS the condition - a
 	// legitimate answer for a component with no external dependency, but leave it
 	// empty on purpose, not by accident.
 	//
@@ -107,7 +107,7 @@ type Options struct {
 	// Watchdog opts into timer-driven liveness: when the Check fails
 	// FailureThreshold times in a row, /healthz starts failing so the kubelet
 	// restarts a wedged-but-alive process. Left zero, /healthz stays
-	// unconditional — this covers only deadlock / hung-storage states.
+	// unconditional - this covers only deadlock / hung-storage states.
 	Watchdog WatchdogOptions
 	// Fault, when non-nil, registers POST /debug/fault/deadlock to wedge this
 	// gate so a live pod can be driven into the tripped state to confirm the

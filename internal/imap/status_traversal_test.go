@@ -66,7 +66,7 @@ func TestStatusRefusesNamesOutsideTheMailbox(t *testing.T) {
 					continue
 				}
 				if ie.Code != imap.ResponseCodeNonExistent {
-					t.Errorf("STATUS %q answered code %q, want NONEXISTENT — the same answer SELECT and DELETE give for these names",
+					t.Errorf("STATUS %q answered code %q, want NONEXISTENT - the same answer SELECT and DELETE give for these names",
 						name, ie.Code)
 				}
 			}
@@ -74,7 +74,7 @@ func TestStatusRefusesNamesOutsideTheMailbox(t *testing.T) {
 	}
 }
 
-// STATUS must still answer for a mailbox that exists — otherwise the test
+// STATUS must still answer for a mailbox that exists - otherwise the test
 // above passes on a server that refuses every STATUS.
 func TestStatusStillAnswersForRealMailboxes(t *testing.T) {
 	c := startServerWith(t, maildirBackend(t))

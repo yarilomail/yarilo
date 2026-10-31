@@ -8,7 +8,7 @@ import (
 
 // TestMembership_GracefulLeave_EvictsImmediately verifies #770: a director
 // calling Leave() originates DIRECTOR-REMOVE for itself so peers drop it
-// at once — no death-detection window — and stops answering JOINs.
+// at once - no death-detection window - and stops answering JOINs.
 func TestMembership_GracefulLeave_EvictsImmediately(t *testing.T) {
 	srvA, addrA := startRingNode(t, "shared-secret", nil, 3)
 	srvB, _ := startRingNode(t, "shared-secret", []string{addrA}, 3)
@@ -19,7 +19,7 @@ func TestMembership_GracefulLeave_EvictsImmediately(t *testing.T) {
 			len(srvC.membership.Members()) == 3
 	})
 	// Member-COUNT convergence does not imply the ring DIALS are all
-	// established — reconcile may still be connecting right after formation.
+	// established - reconcile may still be connecting right after formation.
 	// Leave() broadcasts DIRECTOR-REMOVE over the CURRENT ring connections,
 	// so firing it before B's own dial completes routes the removal the
 	// long way and was the source of the occasional >2s flake. Wait for the

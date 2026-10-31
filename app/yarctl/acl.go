@@ -29,7 +29,7 @@ func dispatchACL(args []string) error {
 	case "registry":
 		return aclRegistry(args[1:])
 	default:
-		return fmt.Errorf("unknown acl command %q — available: list, get, set, delete, rebuild, materialise, registry", args[0])
+		return fmt.Errorf("unknown acl command %q - available: list, get, set, delete, rebuild, materialise, registry", args[0])
 	}
 }
 
@@ -37,31 +37,31 @@ func printACLUsage() {
 	fmt.Println(`yarctl backend acl <command>
 
 Commands:
-  list    <user>                              — every (mailbox, identifier, rights) in
+  list    <user>                              - every (mailbox, identifier, rights) in
                                                 the namespace-wide yarilo-acl-list index
-  get     <user> <mailbox>                    — parsed ACL of one mailbox
-  get     --root <user>                       — parsed ACL of the namespace root
+  get     <user> <mailbox>                    - parsed ACL of one mailbox
+  get     --root <user>                       - parsed ACL of the namespace root
   set     <user> <mailbox> <identifier> <rights>
-                                              — upsert ONE entry (replaces matching
+                                              - upsert ONE entry (replaces matching
                                                 identifier; '-' prefix marks negative)
-  set     --root <user> <identifier> <rights> — same, on the namespace root
-  delete  <user> <mailbox> [<identifier>]     (alias: rm) — without identifier: drop entire file;
+  set     --root <user> <identifier> <rights> - same, on the namespace root
+  delete  <user> <mailbox> [<identifier>]     (alias: rm) - without identifier: drop entire file;
                                                 with identifier: drop just that entry
-  delete  --root <user> [<identifier>]        — same, on the namespace root
-  rebuild <user> <folder> [<folder> ...]      — reseed those folders in the namespace-wide
+  delete  --root <user> [<identifier>]        - same, on the namespace root
+  rebuild <user> <folder> [<folder> ...]      - reseed those folders in the namespace-wide
                                                 index from per-mailbox files (merges:
                                                 other folders are left alone)
-  rebuild <user> --all                        — reseed every folder, replacing the index
+  rebuild <user> --all                        - reseed every folder, replacing the index
                                                 (drops rows for folders that are gone)
-  rebuild ... --dry-run                       — report the drift the rebuild would
+  rebuild ... --dry-run                       - report the drift the rebuild would
                                                 repair (missing / stale / mismatched
                                                 rows), without writing
-  registry list <user>                        — owners this user may discover through
+  registry list <user>                        - owners this user may discover through
                                                 the shared dict (user + anyone grants;
                                                 group grants resolve per session)
-  registry rebuild <user> --namespace NS      — reproject the owner's registry rows
+  registry rebuild <user> --namespace NS      - reproject the owner's registry rows
                                                 from the namespace acl index
-  materialise <user> <folder> [<folder> ...]  (alias: materialize) — write what each mailbox inherits into
+  materialise <user> <folder> [<folder> ...]  (alias: materialize) - write what each mailbox inherits into
                                                 its own ACL; repairs mailboxes created
                                                 before inheritance was materialised at
                                                 creation. Dry run unless --apply.
@@ -332,5 +332,5 @@ func aclRegistry(args []string) error {
 			"namespace": *ns,
 		}))
 	}
-	return fmt.Errorf("unknown acl registry command %q — available: list, rebuild", args[0])
+	return fmt.Errorf("unknown acl registry command %q - available: list, rebuild", args[0])
 }

@@ -99,7 +99,7 @@ func TestRenameDestinationIsNotReportedAsAServerBug(t *testing.T) {
 			continue
 		}
 		if ie.Code == "SERVERBUG" {
-			t.Errorf("RENAME INBOX %q answered SERVERBUG: %q — both arguments are mailbox names and both should answer alike", dest, ie.Text)
+			t.Errorf("RENAME INBOX %q answered SERVERBUG: %q - both arguments are mailbox names and both should answer alike", dest, ie.Text)
 		}
 	}
 }
@@ -120,7 +120,7 @@ func TestSubscribeRefusesNamesNoCommandWouldAccept(t *testing.T) {
 
 	// The permitted case: a mailbox that simply is not there yet.
 	if err := c.Subscribe("NotYetCreated").Wait(); err != nil {
-		t.Errorf("SUBSCRIBE of an absent but valid name was refused: %v — RFC 9051 §6.3.7 allows it", err)
+		t.Errorf("SUBSCRIBE of an absent but valid name was refused: %v - RFC 9051 §6.3.7 allows it", err)
 	}
 }
 
@@ -178,7 +178,7 @@ func TestACLCommandsDoNotDiscloseExistenceToAPeerWithoutLookup(t *testing.T) {
 }
 
 // A peer that may see the mailbox still gets the precise answer, and the
-// administrative commands still require 'a' — otherwise the fix above would be
+// administrative commands still require 'a' - otherwise the fix above would be
 // indistinguishable from disabling the commands.
 func TestACLCommandsAnswerAPeerThatMaySeeTheMailbox(t *testing.T) {
 	aliceHome, dial := enforceServerWithShared(t)
@@ -194,7 +194,7 @@ func TestACLCommandsAnswerAPeerThatMaySeeTheMailbox(t *testing.T) {
 		t.Errorf("MYRIGHTS is about the caller and needs no admin right: %v", err)
 	}
 	if _, e := b.GetACL("Shared/INBOX").Wait(); e == nil {
-		t.Error("GETACL without the 'a' right was answered — RFC 4314 §4 reserves it")
+		t.Error("GETACL without the 'a' right was answered - RFC 4314 §4 reserves it")
 	} else if code := aclErrCode(e); code != imap.ResponseCodeNoPerm {
 		t.Errorf("GETACL without 'a': got %q, want NOPERM: %v", code, e)
 	}
@@ -229,6 +229,6 @@ func TestSharedNamespaceCanBeBootstrappedByGrantingOnTheRoot(t *testing.T) {
 	seedRootACL(t, aliceHome, "user=bob lk\n")
 
 	if err := b.Create("Shared/Sales", nil).Wait(); err != nil {
-		t.Errorf("with 'k' on the namespace root, CREATE still fails: %v — the root grant is unreachable", err)
+		t.Errorf("with 'k' on the namespace root, CREATE still fails: %v - the root grant is unreachable", err)
 	}
 }

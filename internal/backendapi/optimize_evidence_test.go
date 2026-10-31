@@ -79,7 +79,7 @@ func TestOptimizeAllReportsTheBytesItMoved(t *testing.T) {
 
 // The row the reporting exists for: a second fold has nothing to fold, and must
 // say so in numbers rather than by returning the same cheerful 200. This is the
-// shape #1272 was reported as — a successful call over an account nothing
+// shape #1272 was reported as - a successful call over an account nothing
 // happened to.
 func TestSecondOptimizeReportsThatNothingMoved(t *testing.T) {
 	ts, root := storageTestServer(t)
@@ -109,7 +109,7 @@ func TestSecondOptimizeReportsThatNothingMoved(t *testing.T) {
 
 // The map is the other half of an mdbox fold, and it is the half that was
 // silently skipped once already (#1267). Its sizes are reported on the driver
-// that has a map — and, on a driver that has none, are absent rather than zero,
+// that has a map - and, on a driver that has none, are absent rather than zero,
 // because zeros would read as "measured, and empty".
 func TestMapSizesReportedOnMdboxAndAbsentElsewhere(t *testing.T) {
 	t.Run("mdbox reports the map it folded", func(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 )
 
 // joinAndVanish takes a place in the line over a raw connection and drops the
-// connection without ever leaving it — a session whose client is gone.
+// connection without ever leaving it - a session whose client is gone.
 func joinAndVanish(t *testing.T, addr, resource string) {
 	t.Helper()
 	conn, err := net.Dial("tcp", addr)
@@ -95,7 +95,7 @@ func TestAVanishedContenderDoesNotHoldTheLine(t *testing.T) {
 	t.Logf("longest wait behind a vanished contender: %v", longest)
 	ceiling := time.Duration(contenders)*hold + 2*time.Second
 	if longest > ceiling {
-		t.Errorf("the longest wait was %v, want at most %v — the line waited for the ticket to age out", longest, ceiling)
+		t.Errorf("the longest wait was %v, want at most %v - the line waited for the ticket to age out", longest, ceiling)
 	}
 }
 

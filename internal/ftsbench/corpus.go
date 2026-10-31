@@ -27,7 +27,7 @@ var vocab = []string{
 }
 
 // Needle is the rare term the acceptance query searches for. Injected into a
-// controlled fraction of messages so the index is highly selective — the case
+// controlled fraction of messages so the index is highly selective - the case
 // where an index must beat a scan.
 const Needle = "xylophonic"
 
@@ -43,7 +43,7 @@ type Message struct {
 type Corpus struct {
 	Messages   []Message
 	Hits       []uint32 // UIDs containing Needle, ascending
-	TotalBytes int64    // sum of Raw sizes — the "corpus size" axis
+	TotalBytes int64    // sum of Raw sizes - the "corpus size" axis
 }
 
 // Generate builds n messages with a deterministic PRNG (fixed seed, so a run
@@ -96,7 +96,7 @@ func buildMessage(rng *rand.Rand, uid uint32, hasHit bool) []byte {
 	return []byte(b.String())
 }
 
-// Report is the outcome of one measured run — printed by the binary and
+// Report is the outcome of one measured run - printed by the binary and
 // asserted by the acceptance test.
 type Report struct {
 	Corpus           int     `json:"corpus"`

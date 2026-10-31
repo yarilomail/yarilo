@@ -1,7 +1,7 @@
 # LMTP delivery of a non-English corpus.
 #
 # The generated corpus is English, and the English stopword list was the one
-# already correct — unchanged by #1021 and #1025. So the ordinary lmtp-job
+# already correct - unchanged by #1021 and #1025. So the ordinary lmtp-job
 # measures none of the code those changed, by construction (#1046). This one
 # replays a corpus in a language whose list did change.
 #
@@ -15,7 +15,7 @@
 #   kubectl apply -f hack/loadtest/lmtp-mbox-job.yaml
 #   kubectl -n yarilo-sb logs -f job/yarilo-loadtest-mbox
 #
-# A ConfigMap holds about 1 MiB, which bounds the corpus — 250 messages of the
+# A ConfigMap holds about 1 MiB, which bounds the corpus - 250 messages of the
 # default shape is roughly 4 MB, so scale the count down or the message down.
 # The generator prints its size; check it before creating the ConfigMap rather
 # than discovering the limit from kubectl.

@@ -170,7 +170,7 @@ func TestStorageRebuildEndpointRejectsNonMdbox(t *testing.T) {
 	}
 }
 
-// TestOptimizeIsNoopOnEmptyLog walks the empty-log fast-path —
+// TestOptimizeIsNoopOnEmptyLog walks the empty-log fast-path -
 // optimize on a fresh folder must return 200 with a duration
 // stat, no error.
 func TestOptimizeIsNoopOnEmptyLog(t *testing.T) {
@@ -378,7 +378,7 @@ func TestOptimizeAllFoldsEveryFolder(t *testing.T) {
 
 // The per-user map is the other structure an mdbox account replays when a
 // session opens, and folding the folder indexes leaves it alone. An operator
-// asking to fold this account's indexes means everything that gets replayed —
+// asking to fold this account's indexes means everything that gets replayed -
 // otherwise the folders come back clean and opening is still slow, which is a
 // worse answer than not offering the command.
 func TestOptimizeAllReportsWhetherTheMapWasFolded(t *testing.T) {
@@ -412,7 +412,7 @@ func TestOptimizeAllReportsWhetherTheMapWasFolded(t *testing.T) {
 
 // The map is the expensive half of folding an mdbox account, and the call that
 // claims to fold the account has to actually do it. Asserted on the map log's
-// size through the same wrapper the server builds — a test that reached past
+// size through the same wrapper the server builds - a test that reached past
 // the wrapper would pass while the deployed path folded nothing, which is
 // exactly what happened (#1267).
 func TestOptimizeAllFoldsTheMdboxMap(t *testing.T) {
@@ -474,7 +474,7 @@ func TestOptimizeAllFoldsTheMdboxMap(t *testing.T) {
 		t.Fatalf("decode: %v (%s)", err, body)
 	}
 	if resp.MapFolded == nil {
-		t.Fatal("map_folded absent on an mdbox account — the driver's capability was not seen")
+		t.Fatal("map_folded absent on an mdbox account - the driver's capability was not seen")
 	}
 	if !*resp.MapFolded {
 		t.Fatal("map_folded reported false")
@@ -483,6 +483,6 @@ func TestOptimizeAllFoldsTheMdboxMap(t *testing.T) {
 	// The claim has to be true on disk, not only in the response: reporting a
 	// fold is the part that was already working.
 	if after, serr := os.Stat(mapLog); serr == nil && after.Size() >= before.Size() {
-		t.Errorf("map log is %d bytes, was %d — it was not folded", after.Size(), before.Size())
+		t.Errorf("map log is %d bytes, was %d - it was not folded", after.Size(), before.Size())
 	}
 }

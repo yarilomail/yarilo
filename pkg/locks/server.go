@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Server is the wire-level locks server. It is transport-agnostic — call
+// Server is the wire-level locks server. It is transport-agnostic - call
 // Serve with any net.Listener (Unix socket for embedded, TLS-wrapped TCP
 // for remote). All state lives in the supplied Backend.
 type Server struct {
@@ -35,9 +35,9 @@ type Server struct {
 }
 
 // NewServer constructs a Server around a Backend. The Backend's lifecycle is
-// owned by the caller — Server.Close does not call backend.Close.
+// owned by the caller - Server.Close does not call backend.Close.
 //
-// A nil metrics argument means "no metrics" — the Metrics methods are
+// A nil metrics argument means "no metrics" - the Metrics methods are
 // nil-safe. Tests and benchmarks that spin up many servers should pass nil
 // to avoid duplicate-registration panics on prometheus.DefaultRegisterer.
 func NewServer(backend Backend, logger *slog.Logger, metrics *Metrics) *Server {

@@ -14,8 +14,8 @@ import (
 // registerMetadataRoutes wires the RFC 5464 METADATA admin surface.
 //
 // Backend-api keeps the same dict layout the IMAP server already
-// uses (pkg/mailbox/attribute.go) — keys are GUID-namespaced under
-// priv/box/<guid>/... or shared/box/<guid>/... — so admin writes are
+// uses (pkg/mailbox/attribute.go) - keys are GUID-namespaced under
+// priv/box/<guid>/... or shared/box/<guid>/... - so admin writes are
 // visible to the next IMAP GETMETADATA round-trip. Empty folder name
 // targets server-scope (vendor-prefixed under INBOX's GUID).
 //

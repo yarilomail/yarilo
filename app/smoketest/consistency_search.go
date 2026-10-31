@@ -7,7 +7,7 @@ import (
 )
 
 // Row: IMAP SEARCH ↔ JMAP Email/query over one term. The agreement is the SET
-// of messages, not the ranking and not the ids — the two surfaces name messages
+// of messages, not the ranking and not the ids - the two surfaces name messages
 // differently, so each side's hits are read back as the per-message marker that
 // identifies them across protocols.
 //
@@ -18,7 +18,7 @@ import (
 //
 // The corpus is chosen to distinguish, not to pass:
 //
-//   - one message carries the term in the SUBJECT only — the input that catches
+//   - one message carries the term in the SUBJECT only - the input that catches
 //     a query implemented over the body alone, which is the defect this area
 //     was opened for (#1209);
 //   - one carries it in the BODY only;
@@ -30,7 +30,7 @@ func checkConsistencySearch(user, pass string) error {
 	// there says nothing about the surfaces it compares (#1279).
 	//
 	// Twelve digits, not six: the term also has to be unique across runs, and
-	// a six-digit tail repeats within seconds on a busy sandbox — a row that
+	// a six-digit tail repeats within seconds on a busy sandbox - a row that
 	// finds a previous run's message is a false pass. 17 bytes total, still
 	// far inside the cap.
 	term := fmt.Sprintf("xterm%d", time.Now().UnixNano()%1_000_000_000_000)

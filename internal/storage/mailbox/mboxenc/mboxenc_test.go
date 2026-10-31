@@ -97,11 +97,11 @@ func TestNFC(t *testing.T) {
 	if got := mboxenc.NFC(nfd); got != nfc {
 		t.Errorf("NFC(%q) = %q, want %q", nfd, got, nfc)
 	}
-	// Already NFC — no change
+	// Already NFC - no change
 	if got := mboxenc.NFC(nfc); got != nfc {
 		t.Errorf("NFC(already-NFC) = %q, want %q", got, nfc)
 	}
-	// ASCII — unchanged
+	// ASCII - unchanged
 	if got := mboxenc.NFC("INBOX"); got != "INBOX" {
 		t.Errorf("NFC(ASCII) = %q", got)
 	}

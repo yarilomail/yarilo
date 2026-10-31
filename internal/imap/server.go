@@ -339,8 +339,8 @@ func New(opts Options) *Server {
 		imaplib.CapListStatus:       {},
 		imaplib.CapSpecialUse:       {},
 		imaplib.CapCreateSpecialUse: {},
-		imaplib.CapObjectID:         {}, // RFC 8474 — MAILBOXID / EMAILID / THREADID
-		imaplib.CapNotify:           {}, // RFC 5465 — event notifications
+		imaplib.CapObjectID:         {}, // RFC 8474 - MAILBOXID / EMAILID / THREADID
+		imaplib.CapNotify:           {}, // RFC 5465 - event notifications
 		imaplib.CapBinary:           {},
 		imaplib.CapQResync:          {},
 		// RFC 5256. Both algorithms are computed per command from headers,
@@ -594,7 +594,7 @@ type session struct {
 
 	// namespaces holds the per-namespace storage handles keyed by prefix;
 	// the personal namespace has key "". Declared-only namespaces are
-	// absent — dispatch() catches them via the wire-spec list.
+	// absent - dispatch() catches them via the wire-spec list.
 	namespaces map[string]*nsHandle
 	// primary is the personal namespace handle; equals namespaces[""].
 	primary *nsHandle
@@ -1728,7 +1728,7 @@ func (s *session) listNamespace(w *imapserver.ListWriter, h *nsHandle, ref strin
 		// SPECIAL-USE (RFC 6154); personal namespace only. Read once per LIST,
 		// for the same reason subscriptions are: the document describes the
 		// whole user, so asking per name asked the same question once per
-		// folder — and each ask was two round trips to the lock service.
+		// folder - and each ask was two round trips to the lock service.
 		if attr := specialUse[name]; attr != "" {
 			attrs = append(attrs, attr)
 		}
@@ -2239,13 +2239,13 @@ func (s *session) Notify(w *imapserver.UpdateWriter, options *imaplib.NotifyOpti
 // Poll delivers pending mailbox updates to the client between commands
 // (RFC 3501 §5.2). Three classes of update are handled:
 //
-//   - * N EXPUNGE — UIDs in knownMsgs that are no longer in the index
+//   - * N EXPUNGE - UIDs in knownMsgs that are no longer in the index
 //     (expunged by another session). Emitted in descending sequence order
 //     (RFC 3501 §7.4.1). Withheld when allowExpunge is false; hasPendingExpunge
 //     ensures the next allowExpunge=true call retries them.
-//   - * N FETCH (FLAGS ...) — UIDs still present but with a changed modseq,
+//   - * N FETCH (FLAGS ...) - UIDs still present but with a changed modseq,
 //     meaning flags were altered by another session.
-//   - * N EXISTS — new messages appended to the folder since last poll.
+//   - * N EXISTS - new messages appended to the folder since last poll.
 //
 // Fast-path: OpenFolder reads only the folder header for HighestModSeq;
 // GetMessages (full index scan) runs only when the modseq advanced or
@@ -2272,7 +2272,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	// The reopen settles the folder, so an IDLE / NOOP client sees an
 	// out-of-band delivery (#1779).
 
-	// Cheap modseq check — skip full scan when nothing changed and no
+	// Cheap modseq check - skip full scan when nothing changed and no
 	// pending expunges are waiting for an allowExpunge=true window.
 	refreshed, err := s.reopenSelected()
 	if err != nil {
@@ -2325,7 +2325,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 	notifyFlags := !s.notifyActive || s.selFlagChange
 	notifyNew := !s.notifyActive || s.selNew
 
-	// Phase 1: expunges — descending seq so each WriteExpungeUID seq number
+	// Phase 1: expunges - descending seq so each WriteExpungeUID seq number
 	// remains valid as earlier entries are removed from knownMsgs.
 	if notifyExpunge {
 		hadExpunges := false
@@ -2346,7 +2346,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		s.hasPendingExpunge = hadExpunges && !allowExpunge
 	}
 
-	// Phase 2: flag updates — skipped entirely when hasPendingExpunge is true
+	// Phase 2: flag updates - skipped entirely when hasPendingExpunge is true
 	// because the pre-expunge sequence numbers would be wrong on the client side.
 	if !s.hasPendingExpunge {
 		type flagsUpdate struct {
@@ -2412,7 +2412,7 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		}
 	}
 
-	// Phase 3: new messages — UIDs in current that are not yet in knownMsgs.
+	// Phase 3: new messages - UIDs in current that are not yet in knownMsgs.
 	// Suppressed (not added to knownMsgs, no EXISTS) when the client turned
 	// MessageNew off for the selected mailbox; it learns of them on re-select.
 	if notifyNew {
@@ -2548,7 +2548,7 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 				}
 			}
 		}
-		// Heartbeat tick — a liveness signal for misbehaving clients, useful
+		// Heartbeat tick - a liveness signal for misbehaving clients, useful
 		// even when the subscription is up.
 		if interval > 0 {
 			ticker := time.NewTicker(interval)
@@ -2558,7 +2558,7 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 	}
 
 	if events == nil && tickC == nil && wake == nil {
-		// Nothing to watch — purely passive IDLE.
+		// Nothing to watch - purely passive IDLE.
 		<-stop
 		return nil
 	}
@@ -2588,7 +2588,7 @@ func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
 }
 
 // refreshIdleCount re-reads the selected folder's message count from the
-// index and writes EXISTS. Used by IDLE after a cross-pod EVENT — the
+// index and writes EXISTS. Used by IDLE after a cross-pod EVENT - the
 // in-memory s.folder.Messages may be stale if another process appended.
 func (s *session) refreshIdleCount(w *imapserver.UpdateWriter, always bool) error {
 	if s.folder == nil {
@@ -2745,7 +2745,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 		return nil, searchError(ftsErr)
 	}
 
-	// Collect both representations — clients may want UID set OR sequence
+	// Collect both representations - clients may want UID set OR sequence
 	// numbers via RETURN ALL, while MIN/MAX/COUNT always operate on the
 	// kind requested.
 	var (
@@ -2757,7 +2757,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 		highestMod uint64 // CONDSTORE MODSEQ across all matched messages
 		// matchedOrder is every hit's UID in the same ascending enumeration
 		// order as uidHits/seqHits (msgs is already scanned seq-ascending),
-		// used only to build the RELEVANCY list — see relevancyScores below.
+		// used only to build the RELEVANCY list - see relevancyScores below.
 		matchedOrder []uint32
 		// unreadable collects the messages whose bytes the scan could not
 		// read. A body criterion cannot match what was never read, so without
@@ -3005,7 +3005,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	if err != nil {
 		return err
 	}
-	// UID FETCH (CHANGEDSINCE N VANISHED) — RFC 7162 §3.2.10. Emit
+	// UID FETCH (CHANGEDSINCE N VANISHED) - RFC 7162 §3.2.10. Emit
 	// VANISHED (EARLIER) for UIDs expunged since the supplied modseq.
 	// VANISHED on a sequence-number FETCH is invalid; the patched lib
 	// rejects that at parse time so we do not need to re-check here.
@@ -3144,7 +3144,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	}
 	for _, fe := range fetchList {
 		m := fe.msg
-		// CHANGEDSINCE filter — skip messages whose modseq has not moved
+		// CHANGEDSINCE filter - skip messages whose modseq has not moved
 		// past the client's last-known value (RFC 4551 §3.3.1).
 		if opts.ChangedSince > 0 && m.ModSeq <= opts.ChangedSince {
 			continue
@@ -3442,7 +3442,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	}
 	numSet = resolveStar(numSet, msgs, uidToClientSeq)
 
-	// CONDSTORE STORE (UNCHANGEDSINCE N) — RFC 7162 §3.1.3.
+	// CONDSTORE STORE (UNCHANGEDSINCE N) - RFC 7162 §3.1.3.
 	// Any message whose current modseq is greater than the client's
 	// last-known value is *skipped* (no flag update, no FETCH response).
 	// The list of skipped UIDs is returned as the MODIFIED response code
@@ -3573,7 +3573,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 
 	// Pass 3: send FETCH responses using modseqs returned from the batch.
 	// Also update knownMsgs.modseq so the post-command Poll skips these
-	// messages — without this Poll would see modseq changed and emit a
+	// messages - without this Poll would see modseq changed and emit a
 	// second duplicate * FETCH for every STOREd message.
 	for i := range s.knownMsgs {
 		if r, ok := results[s.knownMsgs[i].uid]; ok {
@@ -3939,7 +3939,7 @@ func (s *session) SetMetadata(folder string, entries map[string]*[]byte) error {
 
 // metadataResolve returns the namespace handle and folder GUID used
 // for keying the requested folder's attributes. Server-scope ops
-// (folder == "") hash under the personal INBOX's GUID — server-scope
+// (folder == "") hash under the personal INBOX's GUID - server-scope
 // state is per-user, never per-namespace.
 func (s *session) metadataResolve(folder string) (*nsHandle, [16]byte, error) {
 	target := folder
@@ -3992,7 +3992,7 @@ func (s *session) metadataKey(h *nsHandle, folder string, guid [16]byte, scope m
 	if h == nil || h == s.primary {
 		return mailbox.AttrKey(scope, guid, attrName)
 	}
-	// Shared / public namespaces — priv/ keys carry an accessing-user
+	// Shared / public namespaces - priv/ keys carry an accessing-user
 	// dimension so users do not see each other's private annotations
 	// on the same shared folder. shared/ keys are global to the
 	// folder regardless of accessing user.
@@ -4149,7 +4149,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 		}
 	}
 	s.folder.Messages -= uint32(expunged)
-	// imapsieve (RFC 6785): a MOVE lands each message in the destination — the
+	// imapsieve (RFC 6785): a MOVE lands each message in the destination - the
 	// COPY cause fires there after the move completes; scripts may refile/discard.
 	if s.srv.opts.SieveEngine != nil {
 		src := s.folder.Name
@@ -4343,7 +4343,7 @@ func toImapFlags(flags []string) []imaplib.Flag {
 }
 
 // virtualSizeFromRaw returns the octet count the message occupies once every
-// bare LF is normalised to CRLF — the RFC822.SIZE a client observes on the
+// bare LF is normalised to CRLF - the RFC822.SIZE a client observes on the
 // wire. It mirrors the counting the storage backends do at Save() time and is
 // the fallback for legacy index records that never recorded a virtual size.
 func virtualSizeFromRaw(raw []byte) uint32 {

@@ -102,7 +102,7 @@ func TestTouch_OnlyWhenReady(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatal("file never went stale after ready flipped to false — touch is not gated on readiness")
+	t.Fatal("file never went stale after ready flipped to false - touch is not gated on readiness")
 }
 
 // TestTouch_EmptyDirIsNoop: dir=="" returns immediately (standalone runs).

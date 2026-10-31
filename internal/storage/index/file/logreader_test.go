@@ -15,7 +15,7 @@ import (
 // close it by construction.
 //
 // The row replaces the log after the reader has it open. What the reader holds
-// must keep describing the file it will read — not the one now at the path.
+// must keep describing the file it will read - not the one now at the path.
 func TestLogReaderDescribesTheFileItWillRead(t *testing.T) {
 	dir := t.TempDir()
 	indexPath := dir + "/yarilo.index"
@@ -57,7 +57,7 @@ func TestLogReaderDescribesTheFileItWillRead(t *testing.T) {
 	writeLog(7, 4, 4096)
 
 	if got := lg.lineage(); got != 3 {
-		t.Errorf("the reader now reports lineage %d — it is describing a file it will not read", got)
+		t.Errorf("the reader now reports lineage %d - it is describing a file it will not read", got)
 	}
 	if lg.size != sizeBefore {
 		t.Errorf("the reader now reports size %d, was %d", lg.size, sizeBefore)
@@ -76,8 +76,8 @@ func TestLogReaderDescribesTheFileItWillRead(t *testing.T) {
 	}
 }
 
-// An absent log is a normal state — a folder whose base was just written has
-// none until the next append — and must not be an error or a torn read.
+// An absent log is a normal state - a folder whose base was just written has
+// none until the next append - and must not be an error or a torn read.
 func TestLogReaderOnAnAbsentLog(t *testing.T) {
 	lg, err := openLogRead(t.TempDir() + "/yarilo.index")
 	if err != nil {

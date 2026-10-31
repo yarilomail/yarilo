@@ -817,7 +817,7 @@ func acquireBlocking(ctx context.Context, resource string, wrapWaitErr func(erro
 // fn while the lock is held, and releases on exit. The renew cadence should
 // be a small fraction of ttl (typically ttl/3).
 //
-// fn receives a context that is cancelled if renewal fails — callers must
+// fn receives a context that is cancelled if renewal fails - callers must
 // honour the context and abort partially-completed writes when it fires.
 //
 // Errors from Lock or Unlock propagate as-is. Errors from fn are returned

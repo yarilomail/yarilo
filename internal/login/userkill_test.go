@@ -12,7 +12,7 @@ import (
 )
 
 // holdThenHostDirector replies FAIL reason=killing for the first `holds` LOOKUPs
-// and HOST afterwards — modelling a confirmed kick that clears mid-retry.
+// and HOST afterwards - modelling a confirmed kick that clears mid-retry.
 func holdThenHostDirector(t *testing.T, backendAddr string, holds int32) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -59,11 +59,11 @@ func drainMasterHandshake(t *testing.T, rd *bufio.Reader) {
 	}
 }
 
-// TestMaster_CacheFlush_NoCacheConfigured — CACHE-FLUSH on a
+// TestMaster_CacheFlush_NoCacheConfigured - CACHE-FLUSH on a
 // MasterServer constructed without WithMasterCache must reject
 // with a descriptive FAIL (not a silent OK 0).
 func TestMaster_CacheFlush_NoCacheConfigured(t *testing.T) {
-	dial := startMaster(t, nil) // helper from master_test.go — no cache
+	dial := startMaster(t, nil) // helper from master_test.go - no cache
 	conn, rd := dial()
 	drainMasterHandshake(t, rd)
 
@@ -77,7 +77,7 @@ func TestMaster_CacheFlush_NoCacheConfigured(t *testing.T) {
 	}
 }
 
-// TestMaster_CacheFlush_FullFlush — CACHE-FLUSH without masks
+// TestMaster_CacheFlush_FullFlush - CACHE-FLUSH without masks
 // empties the entire cache.
 func TestMaster_CacheFlush_FullFlush(t *testing.T) {
 	cache := NewCache(1<<20, time.Minute, time.Minute)
@@ -102,7 +102,7 @@ func TestMaster_CacheFlush_FullFlush(t *testing.T) {
 	}
 }
 
-// TestMaster_CacheFlush_ByMask — CACHE-FLUSH with masks evicts
+// TestMaster_CacheFlush_ByMask - CACHE-FLUSH with masks evicts
 // only matching entries.
 func TestMaster_CacheFlush_ByMask(t *testing.T) {
 	cache := NewCache(1<<20, time.Minute, time.Minute)
@@ -130,7 +130,7 @@ func TestMaster_CacheFlush_ByMask(t *testing.T) {
 	}
 }
 
-// TestServer_Cache_HitAvoidsChain — wire Server's handleAuth
+// TestServer_Cache_HitAvoidsChain - wire Server's handleAuth
 // honours the attached cache: a primed entry short-circuits the
 // passdb chain entirely.
 func TestServer_Cache_HitAvoidsChain(t *testing.T) {
@@ -141,7 +141,7 @@ func TestServer_Cache_HitAvoidsChain(t *testing.T) {
 	primed.Set("home", "/mail/alice")
 	cache.Insert(MakeCacheKey("imap", "alice"), "alice", "secret", ResultOK, primed)
 
-	// Sentinel passdb — if the chain runs, the test fails. The
+	// Sentinel passdb - if the chain runs, the test fails. The
 	// cache hit must short-circuit before reaching it.
 	sentinel := &stubPassdb{
 		result: ResultFail,
@@ -168,7 +168,7 @@ func TestServer_Cache_HitAvoidsChain(t *testing.T) {
 	}
 }
 
-// TestServer_Cache_WrongPasswordSkipsCache — a primed positive
+// TestServer_Cache_WrongPasswordSkipsCache - a primed positive
 // entry with the right password is irrelevant when the wire
 // caller sends a different password: cache rejects (mismatch),
 // chain runs and rejects, attempted-password path takes
@@ -190,7 +190,7 @@ func TestServer_Cache_WrongPasswordSkipsCache(t *testing.T) {
 	conn, sc := dialAndHandshake(t, addr)
 	defer conn.Close()
 
-	// Send WRONG password — cache must NOT pass it just because
+	// Send WRONG password - cache must NOT pass it just because
 	// the (key, OK) entry exists; instead the chain runs (and
 	// rejects, since credPassdb knows only "right").
 	fmt.Fprintf(conn, "AUTH\t81\tPLAIN\tservice=imap\tresp=AGFsaWNlAFdST05H\n")
@@ -202,7 +202,7 @@ func TestServer_Cache_WrongPasswordSkipsCache(t *testing.T) {
 	}
 }
 
-// TestServer_Cache_SeedsOnSuccess — first auth misses, runs the
+// TestServer_Cache_SeedsOnSuccess - first auth misses, runs the
 // chain, then the second identical auth hits the cache (passdb
 // is replaced with a sentinel that fails if invoked).
 func TestServer_Cache_SeedsOnSuccess(t *testing.T) {
@@ -226,7 +226,7 @@ func TestServer_Cache_SeedsOnSuccess(t *testing.T) {
 		t.Fatalf("first auth: %q (err %v)", sc.Text(), sc.Err())
 	}
 
-	// Same conn, second auth — cache should answer without
+	// Same conn, second auth - cache should answer without
 	// touching the chain. Verify via cache hit-counter.
 	hitsBefore, _, _, _ := cache.Stats()
 	fmt.Fprintf(conn, "AUTH\t91\tPLAIN\tservice=imap\tresp=AGFsaWNlAHNlY3JldA==\n")

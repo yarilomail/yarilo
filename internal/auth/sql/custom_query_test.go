@@ -212,7 +212,7 @@ func TestSkipSchema_PreventsTableCreation(t *testing.T) {
 
 func TestDefaultPassScheme_BcryptForBareHash(t *testing.T) {
 	// Set up a DB where stored password has no {SCHEME} prefix and no
-	// crypt(3) marker — but default_pass_scheme=BCRYPT so it's treated as one.
+	// crypt(3) marker - but default_pass_scheme=BCRYPT so it's treated as one.
 	dsn := filepath.Join(t.TempDir(), "default.db")
 	db, _ := sql.Open("sqlite", dsn)
 	if _, err := db.Exec(`CREATE TABLE users (email TEXT PRIMARY KEY, pw TEXT, active INTEGER DEFAULT 1)`); err != nil {

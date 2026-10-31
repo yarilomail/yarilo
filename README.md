@@ -5,7 +5,7 @@
 <td>
 
 Production-grade IMAP / POP3 / LMTP / ManageSieve / Submission mail server with built-in full-text search, written in Go.
-Multi-binary architecture — each protocol component is a separate process. Kubernetes-native via Helm.
+Multi-binary architecture - each protocol component is a separate process. Kubernetes-native via Helm.
 
 **Website:** [yarilomail.org](https://yarilomail.org) · **Docs:** [doc.yarilomail.org](https://doc.yarilomail.org)
 
@@ -22,17 +22,17 @@ Multi-binary architecture — each protocol component is a separate process. Kub
 
 ## Architecture
 
-Yarilo is a **multi-binary** server. Each protocol and infrastructure role is a separate compiled binary — no mode flags, no combined processes. Deployment topology is configured purely through Helm values; the same binaries serve standalone and clustered installations.
+Yarilo is a **multi-binary** server. Each protocol and infrastructure role is a separate compiled binary - no mode flags, no combined processes. Deployment topology is configured purely through Helm values; the same binaries serve standalone and clustered installations.
 
-**Login pods** — terminate TLS (SNI per-domain), authenticate via passdb, enforce per-user connection limits (warden), pass the raw fd to session pods via SCM_RIGHTS. Stateless; scale independently.
+**Login pods** - terminate TLS (SNI per-domain), authenticate via passdb, enforce per-user connection limits (warden), pass the raw fd to session pods via SCM_RIGHTS. Stateless; scale independently.
 
-**Session pods** — full mail processing: IMAP / POP3 / LMTP / Sieve / Submission / ManageSieve. Each protocol scales as a separate StatefulSet so IMAP can scale independently of LMTP.
+**Session pods** - full mail processing: IMAP / POP3 / LMTP / Sieve / Submission / ManageSieve. Each protocol scales as a separate StatefulSet so IMAP can scale independently of LMTP.
 
-**yarilo-auth** — shared passdb chain (MySQL / Postgres / SQLite / passwd-file / static), auth-token cache, SASL dispatch, master protocol for userdb lookups.
+**yarilo-auth** - shared passdb chain (MySQL / Postgres / SQLite / passwd-file / static), auth-token cache, SASL dispatch, master protocol for userdb lookups.
 
-**yarilo-locks** — cross-process write coordination. TCP mTLS `:9104`, Redis-backed state. All Kubernetes deployments (standalone and backend) use remote mode — embedded Unix-socket mode is reserved for unit tests and single-process CLI runs.
+**yarilo-locks** - cross-process write coordination. TCP mTLS `:9104`, Redis-backed state. All Kubernetes deployments (standalone and backend) use remote mode - embedded Unix-socket mode is reserved for unit tests and single-process CLI runs.
 
-**yarilo-warden** — connection rate limiting and penalty tracking. Shared across all login pods.
+**yarilo-warden** - connection rate limiting and penalty tracking. Shared across all login pods.
 
 ---
 
@@ -46,7 +46,7 @@ Yarilo is a **multi-binary** server. Each protocol and infrastructure role is a 
 | ManageSieve | RFC 5804 | full script management | ✅ |
 | Sieve | RFC 5228 | fileinto, reject, ereject, envelope, encoded-character, variables, relational, copy, subaddress, environment, body, vacation, vacation-seconds, regex, date, index, editheader, mailbox, mailboxid, duplicate, ihave, special-use, imap4flags, fcc, include, enotify, spamtest, spamtestplus, virustest, foreverypart, mime, extracttext, replace, enclose, mboxmetadata, servermetadata, imapsieve, vnd.yarilo.debug, vnd.yarilo.environment, vnd.yarilo.pipe, vnd.yarilo.filter, vnd.yarilo.report, vnd.yarilo.execute | ✅ |
 | Submission | RFC 6409 | STARTTLS, SASL PLAIN, SIZE, PIPELINING, relay to upstream MTA | ✅ |
-| SASL | — | PLAIN, LOGIN, SCRAM-SHA-256, XOAUTH2, OAUTHBEARER | ✅ |
+| SASL | - | PLAIN, LOGIN, SCRAM-SHA-256, XOAUTH2, OAUTHBEARER | ✅ |
 | JMAP | RFC 8620/8621 | session, `Mailbox/{get,query,changes}`, `Email/{get,query,set,changes}`, `Thread/{get,changes}`, `SearchSnippet/get`, blob download, back-references | partial |
 
 ---
@@ -61,7 +61,7 @@ Yarilo is a **multi-binary** server. Each protocol and infrastructure role is a 
 | Mailbox | obox (S3-compatible object storage) | planned |
 | Index | FileIndex (binary mail-index v7.3 wire format, `.index` / `.index.log` / `.index.names`) | ✅ |
 
-All index mutations go through the cross-process mailbox lock (`yarilo-locks`). Sessions sharing a pod serialise on an in-process `sync.RWMutex` — the Redis lock is only ever contested across pods, not within a single pod.
+All index mutations go through the cross-process mailbox lock (`yarilo-locks`). Sessions sharing a pod serialise on an in-process `sync.RWMutex` - the Redis lock is only ever contested across pods, not within a single pod.
 
 Self-healing (Maildir sync-on-open, dbox/mdbox reactive heal), the operator rebuild path, and mdbox rotation/tuning knobs: see **[STORAGE](https://doc.yarilomail.org/latest/storage/)**.
 
@@ -69,7 +69,7 @@ Self-healing (Maildir sync-on-open, dbox/mdbox reactive heal), the operator rebu
 
 ## Full-text search
 
-`SEARCH BODY`, `SEARCH TEXT` and `SEARCH HEADER` are backed by a per-user full-text index instead of a linear message scan. `SEARCH RETURN (RELEVANCY)` (RFC 4731/6203) surfaces the engine's ranking as scores 1-100, min-max normalized per result set — requires a [`yarilo-patches`](https://github.com/0kaba0hub/go-imap/tree/yarilo-patches) go-imap fork, since upstream has no RELEVANCY support.
+`SEARCH BODY`, `SEARCH TEXT` and `SEARCH HEADER` are backed by a per-user full-text index instead of a linear message scan. `SEARCH RETURN (RELEVANCY)` (RFC 4731/6203) surfaces the engine's ranking as scores 1-100, min-max normalized per result set - requires a [`yarilo-patches`](https://github.com/0kaba0hub/go-imap/tree/yarilo-patches) go-imap fork, since upstream has no RELEVANCY support.
 
 | Component | Backend | Status |
 |:---|:---|:---|
@@ -95,26 +95,26 @@ Search stays sub-millisecond as the mailbox grows; the linear scan it replaces g
 | Binary | Role | Status |
 |:---|:---|:---|
 | yarilo-imap | IMAP4rev2 session server | ✅ |
-| yarilo-imap-login | IMAPS / IMAP login proxy — TLS termination, passdb, fd-passing | ✅ |
+| yarilo-imap-login | IMAPS / IMAP login proxy - TLS termination, passdb, fd-passing | ✅ |
 | yarilo-pop3 | POP3 session server | ✅ |
 | yarilo-pop3-login | POP3S / POP3 login proxy | ✅ |
 | yarilo-lmtp | LMTP delivery server (Sieve, quota) | ✅ |
-| yarilo-lmtp-login | LMTP login proxy — HAProxy, XCLIENT, preamble strip | ✅ |
+| yarilo-lmtp-login | LMTP login proxy - HAProxy, XCLIENT, preamble strip | ✅ |
 | yarilo-managesieve | ManageSieve script management server | ✅ |
-| yarilo-managesieve-login | ManageSieve login proxy — STARTTLS, HAProxy | ✅ |
+| yarilo-managesieve-login | ManageSieve login proxy - STARTTLS, HAProxy | ✅ |
 | yarilo-submission | Submission relay server | ✅ |
 | yarilo-submission-login | Submission login proxy | ✅ |
-| yarilo-jmap-login | JMAP login proxy — TLS termination, auth, warden, HTTP proxy | ✅ |
-| yarilo-jmap | JMAP backend — session resource, RFC 8620/8621 methods | ✅ |
+| yarilo-jmap-login | JMAP login proxy - TLS termination, auth, warden, HTTP proxy | ✅ |
+| yarilo-jmap | JMAP backend - session resource, RFC 8620/8621 methods | ✅ |
 | yarilo-sasl-login | SASL auth socket for Postfix / Exim relay | ✅ |
 | yarilo-auth | Passdb chain, auth cache, SASL dispatch, master userdb | ✅ |
 | yarilo-warden | Connection rate limiting + penalty | ✅ |
-| yarilo-locks | Cross-process write coordination — Redis-backed, TCP mTLS | ✅ |
+| yarilo-locks | Cross-process write coordination - Redis-backed, TCP mTLS | ✅ |
 | yarilo-quota-status | Quota policy socket (Postfix quota check) | ✅ |
 | yarilo-fts | Full-text search indexer + lookup service (flatcurve/Xapian; sole cgo/libxapian process) | ✅ |
 | yarilo-backend-api | HTTP admin API (dict, ACL, folder, quota, rebuild) | ✅ |
-| yarilo-backend-reg | Co-located backend registration sidecar — one BACKEND-UP per pod IP, readiness-gated heartbeat, graceful LEAVE on SIGTERM (#776/#788) | ✅ |
-| yarctl | CLI control tool — `director` and `backend` planes (backward-compat alias: `yarilo-admin`) | ✅ |
+| yarilo-backend-reg | Co-located backend registration sidecar - one BACKEND-UP per pod IP, readiness-gated heartbeat, graceful LEAVE on SIGTERM (#776/#788) | ✅ |
+| yarctl | CLI control tool - `director` and `backend` planes (backward-compat alias: `yarilo-admin`) | ✅ |
 | yarilo-migrate | Offline mailbox FORMAT converter (Maildir → sdbox/mdbox); not cross-server dsync/imapc | ✅ |
 | yarilo-director | Consistent-hashing ring, sticky sessions, throttled evacuation, failover | ✅ |
 
@@ -158,7 +158,7 @@ locks:
 LOG_LEVEL=debug yarilo-imap -config yarilo.yaml
 ```
 
-`LOG_LEVEL=debug` is **per-service** — set it on the process whose code path you are tracing (a delivery breadcrumb lives in `yarilo-lmtp`, a search one in `yarilo-imap`). At debug level every write path emits an explicit "wrote UID=N file=Q" line (`lmtp: delivered`, `imap: append saved`, `imapsieve: fileinto saved`, `sieve/pipe: invoked`, `sieve/sender: notification sent`), and the read side logs what it actually scanned when a lookup comes back empty (`imap: search matched no messages` with the folder's record count and UID range, `imap: fetch skipped uid absent from client view`, `fileindex: reload applied` / `reset folder` with record counts before/after) — so a delivery→visibility mismatch is diagnosable from the log alone. The **full-text search** pipeline is instrumented the same way: `yarilo-fts` logs every request it handles (`fts: indexed` / `expunged` / `lookup` / `rescanned` / `status`) and the indexing worker reports each run (`fts: index run start` / `done` with checkpoint, indexed/skipped counts and duration, plus per-message `fts: message indexed`), while the `yarilo-imap`/`yarilo-lmtp` sides log the handoff (`imap: fts notify sent`, `lmtp: fts autoindex queued`) and how many candidates a search got back (`imap: fts search candidates`). FTS lines log **result and term COUNTS, never the query terms** (private mail content).
+`LOG_LEVEL=debug` is **per-service** - set it on the process whose code path you are tracing (a delivery breadcrumb lives in `yarilo-lmtp`, a search one in `yarilo-imap`). At debug level every write path emits an explicit "wrote UID=N file=Q" line (`lmtp: delivered`, `imap: append saved`, `imapsieve: fileinto saved`, `sieve/pipe: invoked`, `sieve/sender: notification sent`), and the read side logs what it actually scanned when a lookup comes back empty (`imap: search matched no messages` with the folder's record count and UID range, `imap: fetch skipped uid absent from client view`, `fileindex: reload applied` / `reset folder` with record counts before/after) - so a delivery→visibility mismatch is diagnosable from the log alone. The **full-text search** pipeline is instrumented the same way: `yarilo-fts` logs every request it handles (`fts: indexed` / `expunged` / `lookup` / `rescanned` / `status`) and the indexing worker reports each run (`fts: index run start` / `done` with checkpoint, indexed/skipped counts and duration, plus per-message `fts: message indexed`), while the `yarilo-imap`/`yarilo-lmtp` sides log the handoff (`imap: fts notify sent`, `lmtp: fts autoindex queued`) and how many candidates a search got back (`imap: fts search candidates`). FTS lines log **result and term COUNTS, never the query terms** (private mail content).
 
 These lines carry only metadata (user, folder, UID, filename, counts); **passwords, tokens, SASL response data, and search query terms are never logged**.
 
@@ -166,7 +166,7 @@ These lines carry only metadata (user, folder, UID, filename, counts); **passwor
 
 ## Quick start (Docker Compose)
 
-Single-host, no Kubernetes — the standalone topology (login proxies + session
+Single-host, no Kubernetes - the standalone topology (login proxies + session
 backends + auth/warden/locks + Redis) on one host, SQLite userdb, one image:
 
 ```sh
@@ -176,14 +176,14 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Full walkthrough — creating users, TLS, MTA (Postfix) integration, verifying,
-backups — in [DOCKER-COMPOSE](https://doc.yarilomail.org/latest/installation/docker_compose.html).
+Full walkthrough - creating users, TLS, MTA (Postfix) integration, verifying,
+backups - in [DOCKER-COMPOSE](https://doc.yarilomail.org/latest/installation/docker_compose.html).
 
 ---
 
 ## Mailbox format migration (offline)
 
-`yarilo-migrate` is an **offline, on-disk format converter** for a per-user mailbox tree — sources `maildir` / `dbox-v1` / `mdbox-v1`, destinations `sdbox` / `mdbox`. It is **not** a cross-server (dsync/imapc) migration that pulls mail over IMAP from another server.
+`yarilo-migrate` is an **offline, on-disk format converter** for a per-user mailbox tree - sources `maildir` / `dbox-v1` / `mdbox-v1`, destinations `sdbox` / `mdbox`. It is **not** a cross-server (dsync/imapc) migration that pulls mail over IMAP from another server.
 
 ```sh
 yarilo-migrate \
@@ -284,4 +284,4 @@ Full documentation lives at **[doc.yarilomail.org](https://doc.yarilomail.org/)*
 
 ## License
 
-GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
+GNU Affero General Public License v3.0 - see [LICENSE](LICENSE).

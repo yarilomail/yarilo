@@ -87,7 +87,7 @@ func TestPoolRunsLookupsConcurrently(t *testing.T) {
 	wg.Wait()
 
 	if peak < int32(size) {
-		t.Errorf("peak concurrency = %d, want %d — the pool is not producing parallelism", peak, size)
+		t.Errorf("peak concurrency = %d, want %d - the pool is not producing parallelism", peak, size)
 	}
 }
 

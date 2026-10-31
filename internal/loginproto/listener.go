@@ -201,7 +201,7 @@ func (l *PreambleListener) doHandshake(c net.Conn) {
 }
 
 // Accept returns the next successfully handshaked connection. It never blocks
-// on network I/O — handshakes proceed in parallel goroutines.
+// on network I/O - handshakes proceed in parallel goroutines.
 func (l *PreambleListener) Accept() (net.Conn, error) {
 	l.startOnce.Do(l.init)
 	select {
@@ -227,7 +227,7 @@ func (l *PreambleListener) Close() error {
 }
 
 // authClient returns the shared VERIFY client, dialling it on first use. A dial
-// failure leaves the field nil so the next session retries — the backend does
+// failure leaves the field nil so the next session retries - the backend does
 // not need yarilo-auth reachable at start.
 func (l *PreambleListener) authClient() (*authclient.Client, error) {
 	l.authMu.Lock()

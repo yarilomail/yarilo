@@ -49,7 +49,7 @@ func humanBackends(data []byte) error {
 
 // humanRingStatus renders the rich ring-status object (#833) as an aligned
 // per-member table: this replica's computed neighbors, its live edges (link
-// role/state/uptime), and the sparse dedup watermark — plus any tombstones.
+// role/state/uptime), and the sparse dedup watermark - plus any tombstones.
 func humanRingStatus(data []byte) error {
 	var r struct {
 		Self    string `json:"self"`
@@ -247,7 +247,7 @@ func dispatchDirector(args []string) error {
 		parseFlags(fs, args[1:]) //nolint:errcheck
 		path := "/api/director/map"
 		if *user != "" {
-			// peek: pure introspection (#813) — reports the stored pin (or
+			// peek: pure introspection (#813) - reports the stored pin (or
 			// "pinned": false) without resolving/assigning. The unpeeked
 			// ?user= endpoint is the routing resolver used internally by
 			// per-user backend ops and must not be used for inspection.

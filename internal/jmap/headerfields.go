@@ -25,7 +25,7 @@ func headerFieldValues(h message.Header, props []jmapcore.HeaderProperty) map[st
 	for _, p := range props {
 		raw := rawHeaderValues(h, p.Name)
 		if p.All {
-			// An array, empty when the field is absent — "all of them" is a
+			// An array, empty when the field is absent - "all of them" is a
 			// complete answer even when there are none, unlike a single value
 			// which has to be null to say the field was not there.
 			values := make([]any, 0, len(raw))
@@ -181,7 +181,7 @@ func urlsOf(raw string) []string {
 //
 // Addresses outside any group are returned under a null name, which is what
 // §4.1.3 asks for, and a field with no groups at all therefore answers as one
-// unnamed group. The split is on the top-level ':' and ';' only — a colon
+// unnamed group. The split is on the top-level ':' and ';' only - a colon
 // inside a quoted display name does not start a group.
 func groupedAddresses(v string) []jmapcore.EmailAddressGroup {
 	v = strings.TrimSpace(v)
@@ -218,7 +218,7 @@ func groupedAddresses(v string) []jmapcore.EmailAddressGroup {
 			// Both bytes are kept, not just the quoted one: what leaves here is
 			// handed to an address parser, and "say "hi"" is no longer an
 			// address list. Dropping the backslash moved the failure rather
-			// than removing it — the split became right and the value became
+			// than removing it - the split became right and the value became
 			// unparseable.
 			escaped = false
 			if quoted {
@@ -242,8 +242,8 @@ func groupedAddresses(v string) []jmapcore.EmailAddressGroup {
 		case c == ':':
 			// Only the last token before the colon is the group's name;
 			// anything before that belongs to the ungrouped addresses that
-			// preceded it. A list may mix the two — "a@x, Team:b@x;, c@x" is
-			// three groups, not one — and taking the whole segment as the name
+			// preceded it. A list may mix the two - "a@x, Team:b@x;, c@x" is
+			// three groups, not one - and taking the whole segment as the name
 			// swallowed the addresses in front of it.
 			pending := segment.String()
 			segment.Reset()

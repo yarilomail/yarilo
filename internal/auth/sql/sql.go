@@ -159,10 +159,10 @@ func New(c Config) (*Passdb, error) {
 //
 // Outcomes:
 //
-//	ResultNext       — row not found here; chain falls through
-//	ResultTempFail   — backend / query error (cause in the error return)
-//	ResultFail       — user found but disabled OR password mismatch
-//	ResultOK         — verified; req.Fields populated with user / home / mail
+//	ResultNext       - row not found here; chain falls through
+//	ResultTempFail   - backend / query error (cause in the error return)
+//	ResultFail       - user found but disabled OR password mismatch
+//	ResultOK         - verified; req.Fields populated with user / home / mail
 //
 // Columns match by name, not position. Only "password" is required;
 // "home", "mail", "enabled" are optional (absent enabled = active). The

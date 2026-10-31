@@ -59,7 +59,7 @@ func TestLookup_Distribution(t *testing.T) {
 	// each backend should serve at least 5% of users (loose bound)
 	for _, ip := range backends {
 		if counts[ip] < 50 {
-			t.Errorf("backend %s got only %d/3000 users — distribution looks wrong", ip, counts[ip])
+			t.Errorf("backend %s got only %d/3000 users - distribution looks wrong", ip, counts[ip])
 		}
 	}
 }
@@ -252,7 +252,7 @@ func TestLookup_CaseInsensitiveHash(t *testing.T) {
 			}
 		}
 		if !diverged {
-			t.Skip("chosen spellings happened to collide on this backend set — not a failure, just an uninformative run")
+			t.Skip("chosen spellings happened to collide on this backend set - not a failure, just an uninformative run")
 		}
 	})
 }

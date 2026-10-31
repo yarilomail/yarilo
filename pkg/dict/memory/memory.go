@@ -5,7 +5,7 @@
 // exit. NOT suitable for production: gives no durability guarantees,
 // no cross-process visibility (use file/redis/sql for that).
 //
-// Configuration: no settings — instantiating with Driver:"memory" is
+// Configuration: no settings - instantiating with Driver:"memory" is
 // enough. TTL is honoured at lookup/iterate time (lazy expiration);
 // ExpireScan walks the map and purges anything past its deadline.
 package memory
@@ -27,7 +27,7 @@ func init() {
 	dict.Register("memory", New)
 }
 
-// New constructs a memory dict. The Config is ignored — there is
+// New constructs a memory dict. The Config is ignored - there is
 // nothing to configure for an in-process map.
 func New(_ dict.Config) (dict.Dict, error) {
 	return &Dict{}, nil

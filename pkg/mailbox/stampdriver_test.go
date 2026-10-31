@@ -60,7 +60,7 @@ func TestApplyUserdbOrdersLocationThenDriver(t *testing.T) {
 }
 
 // A separate path field beats the modifier embedded in the location, and the
-// templates in both are expanded — the same contract for every protocol,
+// templates in both are expanded - the same contract for every protocol,
 // because there is now one place that implements it.
 func TestApplyUserdbExpandsAndPrefersTheSeparateFields(t *testing.T) {
 	ui := UserInfo{Username: "alice@example.org", Home: "/home/alice"}

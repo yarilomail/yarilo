@@ -28,7 +28,7 @@ func TestDefaultMaxOpenConnsPerDriver(t *testing.T) {
 	}
 	// postgres connections are processes, so its default must stay below mysql's
 	if DefaultMaxOpenConns("postgres") >= DefaultMaxOpenConns("mysql") {
-		t.Fatal("the postgres default must stay below the mysql one — its connections are processes")
+		t.Fatal("the postgres default must stay below the mysql one - its connections are processes")
 	}
 }
 
@@ -56,7 +56,7 @@ func TestApplyIdleMatchesOpen(t *testing.T) {
 		t.Fatalf("ping: %v", err)
 	}
 	if idle := db.Stats().Idle; idle == 0 {
-		t.Fatal("no idle connection retained after use — idle capacity did not follow the open limit")
+		t.Fatal("no idle connection retained after use - idle capacity did not follow the open limit")
 	}
 }
 

@@ -35,7 +35,7 @@ type quotaCloneGetResponse struct {
 	Messages      int64  `json:"messages"`
 	MessagesFound bool   `json:"messages_found"`
 	// Malformed lists any key present in the dict whose value was not a valid
-	// integer — the exact "divergent target" symptom this endpoint exists to
+	// integer - the exact "divergent target" symptom this endpoint exists to
 	// surface, so it must never be silently reported as a legitimate 0.
 	Malformed []string `json:"malformed,omitempty"`
 }
@@ -43,7 +43,7 @@ type quotaCloneGetResponse struct {
 // handleQuotaCloneGet reads a mailbox's mirrored usage from one clone backend.
 // GET /api/backend/quota/clone/get?backend=<name>&user=<user>
 //
-// backend is restricted to the configured clone list — this is a focused
+// backend is restricted to the configured clone list - this is a focused
 // inspection of the quota_clone fan-out, not an arbitrary dict reader (that is
 // `dict get`). The value is an advisory mirror; authoritative usage is
 // /quota/show, summed from the index. Storage and messages are reported

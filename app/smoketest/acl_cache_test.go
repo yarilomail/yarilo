@@ -29,7 +29,7 @@ func (s *cachingACLServer) accept(t *testing.T) *imapClient {
 	t.Cleanup(func() { clientSide.Close(); serverSide.Close() })
 
 	s.mu.Lock()
-	view := s.granted // snapshot at connect time — this is the "cache"
+	view := s.granted // snapshot at connect time - this is the "cache"
 	s.dials++
 	s.mu.Unlock()
 

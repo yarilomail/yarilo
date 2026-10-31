@@ -155,28 +155,28 @@ func TestSplitMasterFromAuthid(t *testing.T) {
 			wantTarget: "",
 		},
 		{
-			name:       "separator absent — authid passes through unchanged",
+			name:       "separator absent - authid passes through unchanged",
 			authid:     "alice",
 			sep:        "*",
 			wantMaster: "alice",
 			wantTarget: "",
 		},
 		{
-			name:       "bare separator with empty target — no split",
+			name:       "bare separator with empty target - no split",
 			authid:     "*admin",
 			sep:        "*",
 			wantMaster: "*admin",
 			wantTarget: "",
 		},
 		{
-			name:       "bare separator with empty master — no split",
+			name:       "bare separator with empty master - no split",
 			authid:     "alice*",
 			sep:        "*",
 			wantMaster: "alice*",
 			wantTarget: "",
 		},
 		{
-			name:       "multiple separators — first wins",
+			name:       "multiple separators - first wins",
 			authid:     "alice*ad*min",
 			sep:        "*",
 			wantMaster: "ad*min",
@@ -200,7 +200,7 @@ func TestRunMasterAuth_MasterdbHitGrantsImpersonation(t *testing.T) {
 	masterdb := Chain{&stubPassdb{
 		result: ResultOK,
 		setBag: func(f *Fields) {
-			// masterdb may carry its own metadata — e.g. an
+			// masterdb may carry its own metadata - e.g. an
 			// administrative group; this MUST be visible on the
 			// final response so callers can audit the master.
 			f.Set("master_admin_group", "ops")
@@ -238,7 +238,7 @@ func TestRunMasterAuth_MasterdbHitGrantsImpersonation(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_MasterdbFailRejectsImpersonation — when the
+// TestRunMasterAuth_MasterdbFailRejectsImpersonation - when the
 // masterdb authoritatively rejects the password it MUST NOT fall
 // through to the passdb master_user flag. Allowing fall-through
 // would let any user impersonate by guessing the per-user
@@ -267,7 +267,7 @@ func TestRunMasterAuth_MasterdbFailRejectsImpersonation(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_MasterdbNextFallsThroughToPassdbFlag — when
+// TestRunMasterAuth_MasterdbNextFallsThroughToPassdbFlag - when
 // the masterdb does not know the user, the main passdb is
 // consulted; impersonation is granted only when its result carries
 // master_user=yes.
@@ -298,7 +298,7 @@ func TestRunMasterAuth_MasterdbNextFallsThroughToPassdbFlag(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_NoMasterdbConfigured — when masterdb is empty
+// TestRunMasterAuth_NoMasterdbConfigured - when masterdb is empty
 // the master_user=yes flag in the main passdb is the sole gate.
 func TestRunMasterAuth_NoMasterdbConfigured(t *testing.T) {
 	passdb := Chain{&stubPassdb{
@@ -317,7 +317,7 @@ func TestRunMasterAuth_NoMasterdbConfigured(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_PassdbFlagFalseRejects — without master_user=yes
+// TestRunMasterAuth_PassdbFlagFalseRejects - without master_user=yes
 // the user is just a regular user, not a master.
 func TestRunMasterAuth_PassdbFlagFalseRejects(t *testing.T) {
 	passdb := Chain{&stubPassdb{
@@ -341,7 +341,7 @@ func TestRunMasterAuth_PassdbFlagFalseRejects(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_PassdbFlagAbsentRejects — passdb authenticates
+// TestRunMasterAuth_PassdbFlagAbsentRejects - passdb authenticates
 // the user but does not declare them a master. Same outcome as
 // master_user=no.
 func TestRunMasterAuth_PassdbFlagAbsentRejects(t *testing.T) {
@@ -359,7 +359,7 @@ func TestRunMasterAuth_PassdbFlagAbsentRejects(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_PassdbNextRejects — master is unknown in both
+// TestRunMasterAuth_PassdbNextRejects - master is unknown in both
 // the masterdb chain and the main passdb chain.
 func TestRunMasterAuth_PassdbNextRejects(t *testing.T) {
 	passdb := Chain{&stubPassdb{result: ResultNext}}
@@ -373,7 +373,7 @@ func TestRunMasterAuth_PassdbNextRejects(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_MasterdbErrorPropagatesAsTempFail — backend
+// TestRunMasterAuth_MasterdbErrorPropagatesAsTempFail - backend
 // errors during the masterdb pass must surface as ResultTempFail
 // (not Fail) so warden / penalty / cache can distinguish a real
 // outage from a credential mismatch.
@@ -395,7 +395,7 @@ func TestRunMasterAuth_MasterdbErrorPropagatesAsTempFail(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_PassdbErrorPropagatesAsTempFail — same for the
+// TestRunMasterAuth_PassdbErrorPropagatesAsTempFail - same for the
 // fall-through passdb chain.
 func TestRunMasterAuth_PassdbErrorPropagatesAsTempFail(t *testing.T) {
 	wantErr := errors.New("sql connect refused")
@@ -412,7 +412,7 @@ func TestRunMasterAuth_PassdbErrorPropagatesAsTempFail(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_UserdbMissDoesNotDowngrade — userdb hole for
+// TestRunMasterAuth_UserdbMissDoesNotDowngrade - userdb hole for
 // the TARGET must not flip a successful master auth to fail. The
 // caller (login pod) decides what to do with a master-authenticated
 // but unknown target.
@@ -433,7 +433,7 @@ func TestRunMasterAuth_UserdbMissDoesNotDowngrade(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_UserdbErrorDoesNotDowngrade — same for userdb
+// TestRunMasterAuth_UserdbErrorDoesNotDowngrade - same for userdb
 // backend errors.
 func TestRunMasterAuth_UserdbErrorDoesNotDowngrade(t *testing.T) {
 	masterdb := Chain{&stubPassdb{result: ResultOK}}
@@ -446,7 +446,7 @@ func TestRunMasterAuth_UserdbErrorDoesNotDowngrade(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_PrefetchSkipsUserdbLookup — masterdb that
+// TestRunMasterAuth_PrefetchSkipsUserdbLookup - masterdb that
 // pre-loads userdb_* fields for the target should suppress the
 // userdb call entirely. Matches userdb-prefetch semantics from
 // the regular auth path.
@@ -468,7 +468,7 @@ func TestRunMasterAuth_PrefetchSkipsUserdbLookup(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_PassdbFailIsAuthoritative — when the dedicated
+// TestRunMasterAuth_PassdbFailIsAuthoritative - when the dedicated
 // masterdb is empty and the passdb chain returns ResultFail (master
 // is known, password is wrong), the call MUST reject without
 // falling further. There is nowhere left to fall to anyway, but
@@ -485,7 +485,7 @@ func TestRunMasterAuth_PassdbFailIsAuthoritative(t *testing.T) {
 	}
 }
 
-// TestRunMasterAuth_MasterFieldsNeverLeakOnFail — the spec requires
+// TestRunMasterAuth_MasterFieldsNeverLeakOnFail - the spec requires
 // that a failed impersonation produces a response indistinguishable
 // from a regular failed login at the wire level. The bag is the
 // thing that drives the wire reply, so it must be empty.
@@ -514,7 +514,7 @@ func TestRunMasterAuth_MasterFieldsNeverLeakOnFail(t *testing.T) {
 // --- wire-level tests ---------------------------------------------------
 
 // masterCredPassdb mirrors credPassdb but sets `master_user=yes`
-// on its bag — i.e. this user is annotated as a master in the
+// on its bag - i.e. this user is annotated as a master in the
 // passdb. Used for the wire-level master flow without a separate
 // masterdb chain.
 type masterCredPassdb struct{ user, pass string }
@@ -618,7 +618,7 @@ func TestWire_MasterUser_Separator(t *testing.T) {
 	}
 }
 
-// TestWire_MasterUser_PassdbFlagPath — no dedicated masterdb;
+// TestWire_MasterUser_PassdbFlagPath - no dedicated masterdb;
 // the master is authenticated by the main passdb which annotates
 // the row with `master_user=yes`. RunMasterAuth recognises the
 // flag and grants impersonation.
@@ -681,7 +681,7 @@ func TestWire_MasterUser_FailIsOpaque(t *testing.T) {
 	}
 }
 
-// TestWire_NoImpersonation_AuthzidEqualsAuthid — RFC 4616 says
+// TestWire_NoImpersonation_AuthzidEqualsAuthid - RFC 4616 says
 // authzid may be supplied even when it equals authid (it's a
 // no-op in that case). The server must treat this as a regular
 // login, not a master flow.
@@ -711,17 +711,17 @@ func TestWire_NoImpersonation_AuthzidEqualsAuthid(t *testing.T) {
 	}
 }
 
-// TestWire_MasterUser_DisabledByDefault — opt-in security check.
+// TestWire_MasterUser_DisabledByDefault - opt-in security check.
 // Server is constructed WITHOUT WithMasterUsers(true) but with
 // a fully-populated masterdb + separator. A SASL PLAIN response
 // carrying a distinct authzid MUST be ignored: the server routes
 // the request as a plain login of AUTHID. The masterdb password
-// is admin's, but the regular passdb expects alice's — so the
+// is admin's, but the regular passdb expects alice's - so the
 // auth fails (admin is unknown to the regular passdb).
 func TestWire_MasterUser_DisabledByDefault(t *testing.T) {
 	srv := NewServer(
 		[]Passdb{&credPassdb{"alice", "alicepass"}},
-		// Note: NO WithMasterUsers(true) — default is disabled.
+		// Note: NO WithMasterUsers(true) - default is disabled.
 		WithMasterdb([]Passdb{&credPassdb{"admin", "masterpass"}}),
 		WithMasterUserSeparator("*"),
 		WithUserdb(targetUserdbForWire{}),
@@ -746,7 +746,7 @@ func TestWire_MasterUser_DisabledByDefault(t *testing.T) {
 	}
 }
 
-// TestAuthenticator_MasterUsersDisabledByDefault — NewAuthenticator
+// TestAuthenticator_MasterUsersDisabledByDefault - NewAuthenticator
 // without WithAuthenticatorMasterUsers(true) must NOT implement
 // MasterAuthenticator. Type assertion at every session boundary
 // (IMAP, POP3, Submission) relies on this for opt-in.
@@ -754,7 +754,7 @@ func TestAuthenticator_MasterUsersDisabledByDefault(t *testing.T) {
 	auth := NewAuthenticator(
 		[]Passdb{&credPassdb{"alice", "secret"}},
 		// WithAuthenticatorMasterdb + Separator are set even though
-		// the toggle is off — they MUST be inert.
+		// the toggle is off - they MUST be inert.
 		WithAuthenticatorMasterdb([]Passdb{&credPassdb{"admin", "masterpass"}}),
 		WithAuthenticatorMasterUserSeparator("*"),
 	)
@@ -771,7 +771,7 @@ func TestAuthenticator_MasterUsersDisabledByDefault(t *testing.T) {
 	}
 }
 
-// TestAuthenticator_MasterUsersEnabledSurfaces — flipping the
+// TestAuthenticator_MasterUsersEnabledSurfaces - flipping the
 // toggle exposes MasterAuthenticator.
 func TestAuthenticator_MasterUsersEnabledSurfaces(t *testing.T) {
 	auth := NewAuthenticator(
@@ -795,7 +795,7 @@ func TestAuthenticator_MasterUsersEnabledSurfaces(t *testing.T) {
 	}
 }
 
-// TestWire_MasterUser_DisabledIgnoresSeparator — the
+// TestWire_MasterUser_DisabledIgnoresSeparator - the
 // `target<sep>master` workaround MUST be inert while master-users
 // are disabled. authid `alice*admin` is treated literally as the
 // username `alice*admin`, not split into target+master.

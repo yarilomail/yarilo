@@ -52,7 +52,7 @@ func TestFolderNamesAreNormalisedAtEveryDecodeBoundary(t *testing.T) {
 					if id, ok := e.Fun.(*ast.Ident); ok && id.Name == "decodeJSON" {
 						decodes = true
 					}
-					// NormalizeName(req.Field, ...) — any expression, not only
+					// NormalizeName(req.Field, ...) - any expression, not only
 					// an assignment, so the return-value form counts too.
 					if sel, ok := e.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "NormalizeName" {
 						for _, a := range e.Args {
@@ -74,7 +74,7 @@ func TestFolderNamesAreNormalisedAtEveryDecodeBoundary(t *testing.T) {
 			for field := range reads {
 				checked++
 				if !normalised[field] {
-					t.Errorf("%s decodes a request and reads req.%s but never passes it through mailbox.NormalizeName — a decomposed name would build a divergent tree (#1113)",
+					t.Errorf("%s decodes a request and reads req.%s but never passes it through mailbox.NormalizeName - a decomposed name would build a divergent tree (#1113)",
 						fn.Name.Name, field)
 				}
 			}

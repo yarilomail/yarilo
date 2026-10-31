@@ -56,7 +56,7 @@ func deliverConsistencyProbe(user, marker string) error {
 }
 
 // imapReadProbe reads the probe as IMAP describes it. Values are taken as IMAP
-// spells them — NIL stays NIL, the internal date keeps its layout — because
+// spells them - NIL stays NIL, the internal date keeps its layout - because
 // normalising here is how a difference is hidden before the judge sees it.
 func imapReadProbe(user, pass, marker string) (*reading, error) {
 	c, err := imapDial()
@@ -212,7 +212,7 @@ func afterToken(s, token string) string {
 
 // envelopeSubject pulls the subject out of an ENVELOPE. The second field, as
 // RFC 3501 orders them: date first, subject second. Returned exactly as IMAP
-// sent it — encoded-word and all — so the judge, not the reader, decides
+// sent it - encoded-word and all - so the judge, not the reader, decides
 // whether that spells the same subject the other surface reported.
 func envelopeSubject(body string) string {
 	i := strings.Index(body, "ENVELOPE (")

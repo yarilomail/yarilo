@@ -144,8 +144,8 @@ func TestDisconnect_ReleasesSlot(t *testing.T) {
 	}
 
 	// disconnect the connected session (id 1) frees the slot. A login pod always
-	// sends DISCONNECT with the same id it CONNECTed, so release is by session id
-	// — consistent with the Redis backend's idempotent, id-keyed decrement.
+	// sends DISCONNECT with the same id it CONNECTed, so release is by session id -
+	// consistent with the Redis backend's idempotent, id-keyed decrement.
 	send(t, conn, sc, "DISCONNECT\t1\talice@example.com\t1.2.3.4\timap")
 
 	// now connect must succeed
@@ -164,7 +164,7 @@ func TestConnect_DifferentIPs_IndependentLimits(t *testing.T) {
 
 	send(t, conn, sc, "CONNECT\t1\talice@example.com\t1.2.3.4\timap")
 
-	// same user, different IP — should be allowed
+	// same user, different IP - should be allowed
 	resp := send(t, conn, sc, "CONNECT\t2\talice@example.com\t5.6.7.8\timap")
 	if !strings.HasPrefix(resp, "OK\t2") {
 		t.Errorf("different IP should be allowed, got: %q", resp)

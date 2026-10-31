@@ -10,13 +10,13 @@ import (
 // Confirmed ring-wide kick (#847). When a user is kicked or moved, the director
 // marks the user "killing" and holds LOOKUP for it, so a concurrent login cannot
 // be assigned a fresh backend while the old sessions are still being torn down
-// elsewhere — closing the split-writer window (#788). The kill is confirmed
+// elsewhere - closing the split-writer window (#788). The kill is confirmed
 // complete when the user's RING-WIDE session count (the #804 replicated registry)
 // has stayed at zero for the confirm grace, or the hard timeout elapses
 // (fallthrough, so a stuck holder never locks a user out).
 //
 // killReason=killing is returned to the login proxy as a RETRYABLE lookup
-// failure — the proxy re-LOOKUPs (bounded) rather than erroring the client.
+// failure - the proxy re-LOOKUPs (bounded) rather than erroring the client.
 
 // killState is one user's kill-in-progress record. deadline is computed LOCALLY
 // from a replicated DURATION, never a wall-clock deadline on the wire (pod-clock
@@ -67,8 +67,8 @@ const killReason = "killing"
 func (s *Server) startKilling(hash uint32) {
 	ttl := s.opts.userKillTimeout()
 	// #870: arm the confirm immediately when the user is ALREADY quiesced (no
-	// sessions ring-wide at kill-start). Otherwise zeroSince — only set on a
-	// transition to zero via SESSION-CLOSE — would never arm for a user with
+	// sessions ring-wide at kill-start). Otherwise zeroSince - only set on a
+	// transition to zero via SESSION-CLOSE - would never arm for a user with
 	// nothing to close, so the kill could exit only via the hard timeout (skipping
 	// the #848 flush and lingering the LOOKUP hold the full user_kill_timeout). A
 	// session opening before the grace disarms it again via noteSessionOpened.
@@ -146,7 +146,7 @@ func (s *Server) applyKillDone(hash uint32) {
 }
 
 // isKilling reports whether LOOKUP for hash must be held. A record past its
-// deadline is treated as cleared (lazy fallthrough — the sweep also clears it).
+// deadline is treated as cleared (lazy fallthrough - the sweep also clears it).
 func (s *Server) isKilling(hash uint32) bool {
 	s.killMu.Lock()
 	defer s.killMu.Unlock()
@@ -285,7 +285,7 @@ func (s *Server) sweepKills(grace time.Duration) {
 		}
 		s.evacKillDone(ck.hash) // #849: confirmed move frees its slot; pull the next user
 		if ck.flush != nil {
-			// #848: old sessions are now gone — run the operator cleanup hook.
+			// #848: old sessions are now gone - run the operator cleanup hook.
 			// Async + best-effort; never gates the ring.
 			s.runFlushHook(ck.hash, *ck.flush)
 		}

@@ -1,4 +1,4 @@
-name: Smoke test — yarilo
+name: Smoke test - yarilo
 
 on:
   workflow_dispatch:
@@ -81,7 +81,7 @@ jobs:
           if [ -n "${{ inputs.pop3s_port }}" ]; then
             POP3S_FLAGS="-pop3s -pop3s-port ${{ inputs.pop3s_port }}"
           fi
-          # Director admin API check (#755): only when a URL is provided —
+          # Director admin API check (#755): only when a URL is provided -
           # the API is a ClusterIP, reachable only from an in-cluster or
           # port-forwarded runner. Token comes from the secret env above.
           DIRECTOR_FLAGS=""

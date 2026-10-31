@@ -10,7 +10,7 @@ import (
 var (
 	// requestSeconds is per-verb server-side latency. yarilo-warden is a single
 	// Deployment and its wire protocol is strict request/response per
-	// connection, so a slow verb here serialises every login that needs it —
+	// connection, so a slow verb here serialises every login that needs it -
 	// which makes this the metric that distinguishes "warden is the queue" from
 	// "warden is fine" during a login stall.
 	requestSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
@@ -29,8 +29,8 @@ var (
 	})
 
 	// sessionsReaped counts TTL evictions. A rising rate means sessions are
-	// losing their heartbeat — either the login pod is starved or the TTL is
-	// tighter than the heartbeat interval — and each reap makes the next
+	// losing their heartbeat - either the login pod is starved or the TTL is
+	// tighter than the heartbeat interval - and each reap makes the next
 	// HEARTBEAT return reason=unknown to a session that is in fact alive.
 	sessionsReaped = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "yarilo",
@@ -109,7 +109,7 @@ var (
 		Help:      "Redis operation errors by op (fail-open is applied, but counted here).",
 	}, []string{"op"})
 
-	// reconcileAdjustments counts counter leaks corrected by Maintain — drift
+	// reconcileAdjustments counts counter leaks corrected by Maintain - drift
 	// that was previously invisible.
 	reconcileAdjustments = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "yarilo",

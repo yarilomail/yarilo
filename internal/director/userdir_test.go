@@ -183,7 +183,7 @@ func TestUserDir_SetByHash_MonotonicUnderConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 	// After n concurrent Sets on the same hash the persisted seq must be the
-	// highest ticked value — never regressed by a later-locking, earlier-
+	// highest ticked value - never regressed by a later-locking, earlier-
 	// ticked writer.
 	if e := d.GetByHash(h); e == nil || e.AssignSeq != uint64(n) {
 		t.Fatalf("persisted seq = %v, want %d (monotonic per hash)", e, n)

@@ -12,13 +12,13 @@ var (
 
 	// ErrMajorMismatch is returned when an on-disk index has a
 	// different major version than this package targets. Major
-	// version is a hard reject — readers must drop the file and
+	// version is a hard reject - readers must drop the file and
 	// (typically) trigger a rebuild from the underlying storage.
 	ErrMajorMismatch = errors.New("mailindex: major version mismatch")
 
 	// ErrEndian is returned when the on-disk compat_flags omits
 	// the LITTLE_ENDIAN bit. This package writes little-endian
-	// only and rejects big-endian files at read time — there is
+	// only and rejects big-endian files at read time - there is
 	// no in-place conversion.
 	ErrEndian = errors.New("mailindex: non-little-endian index not supported")
 

@@ -321,18 +321,18 @@ func TestExpandVarsHashVar(t *testing.T) {
 		template, user string
 		want           string
 	}{
-		// %2.256Nu — BE uint32(MD5("u1@d00001.test")[:4]) mod 256, hex-padded to width 2
+		// %2.256Nu - BE uint32(MD5("u1@d00001.test")[:4]) mod 256, hex-padded to width 2
 		// MD5("u1@d00001.test") = 7c70a897… → 0x7c70a897 mod 256 = 0x97
 		{"2.256Nu known", "%2.256Nu", "u1@d00001.test", "97"},
-		// %1.30Nu — 0x7c70a897 mod 30 = 15 = 0xf
+		// %1.30Nu - 0x7c70a897 mod 30 = 15 = 0xf
 		{"1.30Nu", "%1.30Nu", "u1@d00001.test", "f"},
-		// unknown var after N — pass through
+		// unknown var after N - pass through
 		{"unknown N var", "%2.256Nz", "u@x", "%2.256Nz"},
-		// no dot — not a hash var, pass through
+		// no dot - not a hash var, pass through
 		{"no dot", "%2256Nu", "u@x", "%2256Nu"},
 		// %u still works after hash var
 		{"mixed hash and %u", "%2.256Nu/%u", "u1@d00001.test", "97/u1@d00001.test"},
-		// modulo=0 — invalid, pass through
+		// modulo=0 - invalid, pass through
 		{"zero modulo", "%2.0Nu", "u@x", "%2.0Nu"},
 	}
 	for _, tc := range cases {

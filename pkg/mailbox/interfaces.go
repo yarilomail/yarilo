@@ -335,8 +335,8 @@ func CanReactiveHeal(box any) bool {
 
 // FolderAgnosticStorage marks a driver whose Scan enumerates storage-wide (not
 // per-folder) records, such as mdbox where messages are shared across folders. A
-// per-folder rebuild is unsafe for such a driver — it would import every stored
-// message into the target folder with fresh UIDs — so it needs a dedicated
+// per-folder rebuild is unsafe for such a driver - it would import every stored
+// message into the target folder with fresh UIDs - so it needs a dedicated
 // storage-wide rebuild and the per-folder endpoint must reject it.
 type FolderAgnosticStorage interface {
 	FolderAgnosticScan() bool
@@ -475,7 +475,7 @@ type FlagsUpdate struct {
 	// Mode says what Flags and Keywords mean. The zero value replaces the whole
 	// set, which is what STORE FLAGS (...) asks for. FlagsAdd and FlagsRemove
 	// name only what changes, and the index resolves them against the record as
-	// its lock finds it — the difference that keeps a concurrent change from
+	// its lock finds it - the difference that keeps a concurrent change from
 	// being overwritten by a set the caller read earlier (#1250).
 	Mode FlagsMode
 }
@@ -497,7 +497,7 @@ const (
 // FlagsResult is what a message ended up with after a batch update: the flags
 // and keywords the index holds, and the modseq of the change. The resulting set
 // is returned rather than assumed because under FlagsAdd or FlagsRemove the
-// caller does not know it — that is the point of naming only the delta.
+// caller does not know it - that is the point of naming only the delta.
 type FlagsResult struct {
 	ModSeq   uint64
 	Flags    []string
@@ -629,7 +629,7 @@ type IndexBackend interface {
 }
 
 // UserIndex is a per-session, per-user index handle.
-// All folder IDs are local to this handle — they must not be shared across handles.
+// All folder IDs are local to this handle - they must not be shared across handles.
 type UserIndex interface {
 	OpenFolder(folder string, uidValidity uint32) (*Folder, error)
 	// Begin opens a transaction on one folder: changes are queued against a
@@ -722,7 +722,7 @@ type UserIndex interface {
 	// that already carry a GUID keep it, so a resumed pass is a no-op for them.
 	SetGUIDs(folderID uint64, guids map[uint32][16]byte) error
 	// RecomputeVSize forces a rebuild of the folder's vsize aggregate from
-	// records and persists it — the admin recovery path for a corrupted count.
+	// records and persists it - the admin recovery path for a corrupted count.
 	RecomputeVSize(folderID uint64) error
 	Close() error
 }

@@ -24,7 +24,7 @@ type Exclusion struct {
 	roleOf map[string]string
 	// separator is the hierarchy delimiter the deployment uses. Both the
 	// pattern and the folder are rewritten to "/" before matching, because
-	// path.Match hard-codes that as the boundary `*` may not cross — so a
+	// path.Match hard-codes that as the boundary `*` may not cross - so a
 	// deployment with "." would have had `*` crossing the separator while
 	// every comment promised it did not.
 	separator string
@@ -88,7 +88,7 @@ func (e *Exclusion) Excludes(folder string) bool {
 	name := e.normalise(folder)
 	for _, p := range e.patterns {
 		// `*` does not cross the separator, so `EXPUNGED<sep>*` names the
-		// children and `EXPUNGED` names the folder itself — which is why the
+		// children and `EXPUNGED` names the folder itself - which is why the
 		// example in #1051 lists both. Patterns were checked and normalised at
 		// construction, so an error here is impossible rather than ignored.
 		if ok, _ := path.Match(p, name); ok {

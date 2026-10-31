@@ -8,7 +8,7 @@ import (
 
 // proxiedPair wires a session the way a live one is wired: two connections
 // bridged by biProxy. The client end is held open and SILENT, which is the
-// field shape — a kick has to end the session on its own, not wait for the
+// field shape - a kick has to end the session on its own, not wait for the
 // client to do something. Returns the session and a channel closed when the
 // proxy returns (the moment the session record is dropped and SESSION-CLOSE is
 // sent in the real path).

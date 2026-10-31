@@ -71,7 +71,7 @@ func TestStructuralPropertiesAreTrueWhenRequested(t *testing.T) {
 	email := firstEmail(t, got)
 
 	if email["hasAttachment"] != true {
-		t.Errorf("hasAttachment = %v, want true — the message carries a PDF", email["hasAttachment"])
+		t.Errorf("hasAttachment = %v, want true - the message carries a PDF", email["hasAttachment"])
 	}
 	preview, _ := email["preview"].(string)
 	if !strings.Contains(preview, "numbers are attached") {

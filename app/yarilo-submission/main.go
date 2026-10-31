@@ -118,7 +118,7 @@ func main() {
 	go readyfile.Touch(ctx, reg.ReadinessDir, "submission",
 		time.Duration(reg.ReadinessTouchInterval)*time.Second, ready.Load)
 
-	// port 587 — STARTTLS
+	// port 587 - STARTTLS
 	if svcs.Submission.Active() {
 		addr := fmt.Sprintf(":%d", svcs.Submission.Port)
 		ln, err := net.Listen("tcp", addr)
@@ -130,7 +130,7 @@ func main() {
 		slog.Info("submission: listening", "addr", addr, "tls", "starttls")
 	}
 
-	// port 465 — implicit TLS
+	// port 465 - implicit TLS
 	if svcs.Submissions.Active() {
 		addr := fmt.Sprintf(":%d", svcs.Submissions.Port)
 		ln, err := net.Listen("tcp", addr)

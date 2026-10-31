@@ -54,7 +54,7 @@ func TestChain_FirstWinsKeepsMutations(t *testing.T) {
 }
 
 func TestChain_SkipNextRollsBackPartialMutation(t *testing.T) {
-	// First driver writes some fields then returns ResultNext —
+	// First driver writes some fields then returns ResultNext -
 	// Chain must Rollback those mutations so the second driver
 	// (and any caller) sees a clean bag.
 	noisy := &stubPassdb{
@@ -127,7 +127,7 @@ func TestChain_TempFailStopsChainAndRollsBack(t *testing.T) {
 
 func TestChain_FailStopsChainKeepsMutations(t *testing.T) {
 	// Distinct from TempFail: Fail means "credentials wrong /
-	// disabled" — the driver KNOWS the user, just rejects the
+	// disabled" - the driver KNOWS the user, just rejects the
 	// password. Mutations stay (e.g. for audit logs) and the
 	// chain stops.
 	fail := &stubPassdb{
@@ -188,7 +188,7 @@ func TestChain_AllocatesFieldsWhenNil(t *testing.T) {
 
 func TestNewAuthenticator_WrapsChainIntoLegacyShape(t *testing.T) {
 	// The Authenticator wrapper is what session-side callers
-	// (IMAP/POP3/Submission) use — projects the chain-internal
+	// (IMAP/POP3/Submission) use - projects the chain-internal
 	// (Result, error) onto the wire-shaped (*AuthResponse, error).
 	a := NewAuthenticator([]Passdb{&stubPassdb{
 		result: ResultOK,

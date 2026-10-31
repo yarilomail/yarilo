@@ -62,7 +62,7 @@ const (
 
 // Metadata key bytes that the canonical reader recognises.
 //
-// Uppercase only — lowercase reserved for future use per
+// Uppercase only - lowercase reserved for future use per
 // the spec. Each value byte is followed by its ASCII value
 // (typically hex digits or, for G, a 32-char lowercase GUID).
 const (
@@ -93,7 +93,7 @@ type messageHeader struct {
 
 // encodeMessageHeader returns the on-disk image of h, at the size we write.
 //
-// The oldv1_uid_hex slot is filled with spaces — per the v2 spec.
+// The oldv1_uid_hex slot is filled with spaces - per the v2 spec.
 // Padding bytes after msg_size_hex are spaces; the trailing byte is
 // '\n' so a quick `head -c 32` on a saved file is human-readable.
 func encodeMessageHeader(h messageHeader) []byte {
@@ -105,7 +105,7 @@ func encodeMessageHeader(h messageHeader) []byte {
 	buf[1] = magicPre[1]
 	buf[2] = messageType
 	// buf[3]  = ' '
-	// buf[4..11] = "        " (v2 oldv1_uid_hex slot — always spaces)
+	// buf[4..11] = "        " (v2 oldv1_uid_hex slot - always spaces)
 	// buf[12] = ' '
 	hexSize := fmt.Sprintf("%016x", h.Size)
 	copy(buf[13:29], hexSize)
@@ -209,7 +209,7 @@ func decodeMetadataBlock(r io.Reader) ([]metadataEntry, error) {
 }
 
 // guidHex returns a 32-character lowercase hex encoding of a
-// 16-byte GUID — the format the canonical reader expects in the
+// 16-byte GUID - the format the canonical reader expects in the
 // G metadata entry.
 func guidHex(g [16]byte) string { return hex.EncodeToString(g[:]) }
 

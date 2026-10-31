@@ -15,7 +15,7 @@ import (
 // endpoint is a Google-specific OAuth 2.0 server interface
 // (https://oauth2.googleapis.com/tokeninfo) that returns claims
 // JSON for a supplied access token. Unlike RFC 7662 introspection
-// it has no spec — every IdP that exposes a tokeninfo endpoint
+// it has no spec - every IdP that exposes a tokeninfo endpoint
 // has a slightly different response shape, but the call shape
 // (GET ?access_token=...) is consistent enough to share code.
 type TokeninfoConfig struct {
@@ -30,7 +30,7 @@ type TokeninfoConfig struct {
 	UsernameAttribute string
 
 	// Issuers / Audience / RequiredScopes / ExpireGrace mirror
-	// LocalJWTConfig — operator constraints applied to the
+	// LocalJWTConfig - operator constraints applied to the
 	// tokeninfo response claims.
 	Issuers        []string
 	Audience       string

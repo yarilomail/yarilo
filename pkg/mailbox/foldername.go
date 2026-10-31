@@ -20,7 +20,7 @@ var ErrInvalidFolderName = errors.New("mailbox: invalid folder name")
 // The maildir layout is what makes this load-bearing: INBOX *is* the mail root
 // and subfolders are `.name` siblings inside it, so a name that contributes
 // nothing to the path lands on the mailbox itself. An empty name resolved to
-// the root, and Delete on it removed every message and the index with it — the
+// the root, and Delete on it removed every message and the index with it - the
 // mailbox was not emptied, it was recreated, with a new UIDVALIDITY telling
 // every client to discard what it knew. A single "." resolved one level higher
 // still and removed the user's home directory (#1063).

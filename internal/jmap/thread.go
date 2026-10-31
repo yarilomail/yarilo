@@ -10,7 +10,7 @@ import (
 
 // threadGet implements Thread/get (RFC 8621 §3). Threading is not computed yet,
 // so every message is its own thread and a thread id is the id of its only
-// message — the same model Mailbox's thread counts and Email.threadId already
+// message - the same model Mailbox's thread counts and Email.threadId already
 // report. Answering with that is consistent; answering notFound would make a
 // client believe the message has no thread at all.
 func (s *Server) threadGet(ctx context.Context, h *userHandle, accountID string, args json.RawMessage) (any, *jmapcore.MethodError) {

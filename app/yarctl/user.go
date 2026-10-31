@@ -23,7 +23,7 @@ func dispatchUser(args []string) error {
 		if looksLikeUser(args[0]) {
 			return userInfo(args)
 		}
-		return fmt.Errorf("unknown user command %q — available: info, usage, iterate", args[0])
+		return fmt.Errorf("unknown user command %q - available: info, usage, iterate", args[0])
 	}
 }
 
@@ -41,12 +41,12 @@ func printUserUsage() {
 	fmt.Println(`yarctl backend user <command>
 
 Commands:
-  info     <user>  — username, resolved home, configured namespaces,
+  info     <user>  - username, resolved home, configured namespaces,
                      and (when yarilo-auth is wired into
                      backend_api.auth_master_addr) the userdb block
                      plus userdb_status ("ok" / "not_found" / "error").
-  usage    <user>  — per-folder message + byte totals across every namespace.
-  iterate  (alias: list) — every username yarilo-auth's userdb backend can
+  usage    <user>  - per-folder message + byte totals across every namespace.
+  iterate  (alias: list) - every username yarilo-auth's userdb backend can
                      enumerate. Requires backend_api.auth_master_addr
                      to be configured; 503 otherwise.`)
 }

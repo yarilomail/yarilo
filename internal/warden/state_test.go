@@ -71,7 +71,7 @@ func TestMemoryPenaltySweep(t *testing.T) {
 }
 
 // TestRedisPenaltyLookupErrorStatus: a real Redis error (server gone) fails open
-// to count 0 but reports "error" — distinct from "miss" — so the outage is
+// to count 0 but reports "error" - distinct from "miss" - so the outage is
 // visible in the penaltyLookups metric rather than hidden as a normal miss.
 func TestRedisPenaltyLookupErrorStatus(t *testing.T) {
 	mr := miniredis.RunT(t)
@@ -86,7 +86,7 @@ func TestRedisPenaltyLookupErrorStatus(t *testing.T) {
 }
 
 // TestRedisPenaltyTTL proves the Redis backend sets a key TTL (= decay), so a
-// stale penalty expires without a sweeper — the property PR1's gate checks.
+// stale penalty expires without a sweeper - the property PR1's gate checks.
 func TestRedisPenaltyTTL(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -99,6 +99,6 @@ func TestRedisPenaltyTTL(t *testing.T) {
 	}
 	mr.FastForward(200 * time.Millisecond)
 	if c, s := b.PenaltyLookup("1.2.3.4"); c != 0 || s != "miss" {
-		t.Fatalf("after TTL = (%d,%q), want (0,miss) — key should have expired", c, s)
+		t.Fatalf("after TTL = (%d,%q), want (0,miss) - key should have expired", c, s)
 	}
 }

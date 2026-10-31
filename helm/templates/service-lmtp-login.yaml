@@ -1,5 +1,5 @@
 {{- if .Values.components.lmtpLogin.enabled }}
-## ClusterIP — LMTP connections from MTA (Postfix → lmtp-login → lmtp backend).
+## ClusterIP - LMTP connections from MTA (Postfix → lmtp-login → lmtp backend).
 apiVersion: v1
 kind: Service
 metadata:
@@ -23,7 +23,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "lmtp-login") | nindent 4 }}
 ---
-## ClusterIP — telemetry / health
+## ClusterIP - telemetry / health
 apiVersion: v1
 kind: Service
 metadata:

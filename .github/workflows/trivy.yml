@@ -1,4 +1,4 @@
-name: Trivy — vulnerability & malware scan
+name: Trivy - vulnerability & malware scan
 
 ## A clock and a button. NOT on every merge: we live on patch versions, so a
 ## push trigger fired on essentially every merge, and a scan's findings change
@@ -41,7 +41,7 @@ jobs:
           platforms: linux/amd64
           tags: yarilo:scan
 
-      - name: Run Trivy — image scan
+      - name: Run Trivy - image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: yarilo:scan
@@ -58,7 +58,7 @@ jobs:
           sarif_file: trivy-image.sarif
           category: trivy-image
 
-      - name: Run Trivy — filesystem scan (deps + config)
+      - name: Run Trivy - filesystem scan (deps + config)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         if: always()
         with:

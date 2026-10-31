@@ -8,8 +8,8 @@ import (
 
 // Package 1 of the key review (#1286): seven storage keys take their reference
 // spelling, and the pre-beta names keep working as aliases. Every pair is
-// exercised in the four states a key can be in — canonical alone, alias alone,
-// both agreeing, both disagreeing — because a rename that resolves a
+// exercised in the four states a key can be in - canonical alone, alias alone,
+// both agreeing, both disagreeing - because a rename that resolves a
 // disagreement by picking a winner changes behaviour on a config nobody edited.
 func TestStorageRenamesPackageOne(t *testing.T) {
 	tests := []struct {
@@ -89,7 +89,7 @@ func TestNFCAliasCarriesFalse(t *testing.T) {
 }
 
 // alt_dir and mdbox_alt_storage_path are two pre-beta names for ONE path. Set
-// to different values they must be refused — and this is the row that fails if
+// to different values they must be refused - and this is the row that fails if
 // the second alias is judged against the file instead of against what the first
 // one already adopted, which is how a later alias silently overwrites an
 // earlier one.
@@ -103,8 +103,8 @@ func TestTwoAliasesOfOneKeyCannotDisagree(t *testing.T) {
 	}
 }
 
-// The namespace location has a split spelling in 2.4 — mail_driver + mail_path
-// — and both forms are accepted. Both given at once is a conflict, and half the
+// The namespace location has a split spelling in 2.4 - mail_driver + mail_path -
+// and both forms are accepted. Both given at once is a conflict, and half the
 // pair is a configuration error rather than a default.
 func TestNamespaceLocationSplitForm(t *testing.T) {
 	tests := []struct {
@@ -173,7 +173,7 @@ func mustLoadStorage(t *testing.T, body string) *Config {
 
 // A refusal has to name the key the operator wrote. Before the rename the
 // template check reported the pre-beta spelling whatever the config said, so
-// someone who wrote mail_index_path was sent looking for index_dir — a key not
+// someone who wrote mail_index_path was sent looking for index_dir - a key not
 // in their file. The value below is a template naming a variable that does not
 // exist, which is what ValidatePathTemplates refuses.
 func TestTemplateRefusalNamesTheCanonicalKey(t *testing.T) {
@@ -205,7 +205,7 @@ func TestTemplateRefusalNamesTheCanonicalKey(t *testing.T) {
 
 // Package 2a of the key review (#1286): the infrastructure sections take the
 // flat prefixed spellings the reference uses. Same four states per pair as
-// package 1 — the alias must carry the value, and a disagreement must refuse.
+// package 1 - the alias must carry the value, and a disagreement must refuse.
 func TestInfraRenamesPackageTwoA(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -288,7 +288,7 @@ func TestListValuedAliasComparesAsAValue(t *testing.T) {
 }
 
 // A per-service ssl override is the same block type as general.ssl, so it
-// carries the same pre-beta spellings — and the fixed general.ssl paths do not
+// carries the same pre-beta spellings - and the fixed general.ssl paths do not
 // reach it. An override written the old way used to fill a field nobody
 // adopted, and the service lost its certificate: set, and doing nothing.
 func TestPerServiceSSLOverrideAcceptsBothSpellings(t *testing.T) {
@@ -318,7 +318,7 @@ func TestPerServiceSSLOverrideAcceptsBothSpellings(t *testing.T) {
 	}
 }
 
-// auth.token is ours — the reference has no token store — so package 2 must not
+// auth.token is ours - the reference has no token store - so package 2 must not
 // have touched it. The row reads the value back rather than the tag, because
 // the defect was a key that parsed into a field nobody adopted and silently
 // fell back to the default.
@@ -333,7 +333,7 @@ func TestOursOnlyKeysAreUntouched(t *testing.T) {
 }
 
 // Package 2b: the protocol and provider sections. The rows below are the ones
-// whose shape differs from a plain scalar rename — the repeated key name, the
+// whose shape differs from a plain scalar rename - the repeated key name, the
 // list entry, the size-valued knob and the one the reference spells against the
 // pattern. The rest are covered mechanically by the alias-coverage check.
 func TestProtocolRenamesPackageTwoB(t *testing.T) {
@@ -409,7 +409,7 @@ func TestProtocolRenamesPackageTwoB(t *testing.T) {
 // Where the reference has a key the reference spelling is used; where it has
 // none the prefixed name is ours, said so in the struct. Half the section
 // prefixed and half bare was the alternative, and it is the inconsistency the
-// package exists to end — so the rows cover both kinds.
+// package exists to end - so the rows cover both kinds.
 func TestOAuth2SectionIsPrefixedThroughout(t *testing.T) {
 	tests := []struct {
 		name string

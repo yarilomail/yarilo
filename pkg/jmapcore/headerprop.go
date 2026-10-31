@@ -7,7 +7,7 @@ import "strings"
 //
 // These matter beyond conformance: they are the only way a client reaches a
 // header the data type does not model. List-Unsubscribe, X-Spam-*, DKIM
-// results — all present in the message and, without this, unreachable over
+// results - all present in the message and, without this, unreachable over
 // JMAP.
 type HeaderProperty struct {
 	// Property is the name as the client wrote it, which is the key the answer
@@ -55,7 +55,7 @@ func IsHeaderProperty(p string) bool {
 
 // ParseHeaderProperty splits a header property into its parts.
 //
-// ok=false means the property is malformed — an empty field name, an unknown
+// ok=false means the property is malformed - an empty field name, an unknown
 // form, or suffixes in the wrong order. It is deliberately not "assume Raw and
 // carry on": a client asking for asURLs and silently receiving a raw string
 // gets a type it did not ask for, and would have no way to notice.
@@ -73,7 +73,7 @@ func ParseHeaderProperty(p string) (HeaderProperty, bool) {
 	}
 	// A form suffix, if any, follows the first colon. RFC 5322 field names are
 	// printable ASCII excluding the colon, so the first colon is the only place
-	// a suffix can begin and everything after it must be the form — which is
+	// a suffix can begin and everything after it must be the form - which is
 	// why "header:To:asText:asRaw" is refused rather than read as a field named
 	// "To:asText".
 	if name, form, found := strings.Cut(rest, ":"); found {

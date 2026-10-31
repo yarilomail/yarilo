@@ -12,7 +12,7 @@ import (
 // exercised them: `Email/changes` and `Mailbox/changes` were served by a
 // released build and never called in the field. A client that cannot trust
 // /changes resynchronises the whole account instead, which is the cost the
-// feature exists to avoid — and it would do that silently, so the report has to
+// feature exists to avoid - and it would do that silently, so the report has to
 // ask.
 //
 // The input that distinguishes is the SECOND call: asking again from the state

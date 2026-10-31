@@ -505,7 +505,7 @@ func checkFolder(user, pass, folder string, seeded ...string) error {
 		switch {
 		case selErr != nil:
 			// delivery is async; a SELECT before fileinto :create runs
-			// returns NONEXISTENT — keep polling
+			// returns NONEXISTENT - keep polling
 			lastErr = selErr
 		case exists >= 1:
 			err := c.cleanupAfterCheck(folder, seeded)

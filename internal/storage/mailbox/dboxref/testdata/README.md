@@ -37,7 +37,7 @@ RECORD: seq=2 ... offset = 168   size = 4522
 RECORD: seq=3 ... offset = 4690  size = 159
 ```
 
-(The sizes there are whole records — header, body and trailer. The body sizes
+(The sizes there are whole records - header, body and trailer. The body sizes
 the tests assert come from each record's own size field, which the reference
 also wrote.)
 
@@ -50,7 +50,7 @@ the only legitimate place to get the replacements.
 
 ## What each one covers
 
-**`mdbox-m.1` — records that are not preceded by a file header.** Only the
+**`mdbox-m.1` - records that are not preceded by a file header.** Only the
 first record follows the `2 M1e C…` line. Reading the second and third is the
 path that must take the message-header size from the file header, because
 there is none in front of them; a reader carrying a constant instead gets a
@@ -79,7 +79,7 @@ them is plain ASCII and mdbox:
 
 Two things the reference settled that we had guessed at:
 
-- the trailer keys come in the order `R`, `V`, `G`, `B` — our hand-built
+- the trailer keys come in the order `R`, `V`, `G`, `B` - our hand-built
   fixtures used `G`, `R`, `V`;
 - `B` is written for INBOX too, not only for other folders. A record *without*
   `B` is therefore not something this implementation produces, and the row for
@@ -88,7 +88,7 @@ Two things the reference settled that we had guessed at:
 ## Direction two: our bytes against these
 
 There is no reference process reading our files in these tests. What is
-checked instead is that a record we write agrees with one of these — but not
+checked instead is that a record we write agrees with one of these - but not
 uniformly, because only part of a record is positional.
 
 The file-header line and the message header are compared **byte for byte**,
@@ -96,14 +96,14 @@ apart from the create stamp: every byte of them has a fixed place, and they are
 what the other implementation reads before it appends.
 
 The trailer is compared as **the same set of keys and the same values**, not as
-bytes. It is keyed lines, and the two do not write them in the same order —
+bytes. It is keyed lines, and the two do not write them in the same order -
 `R`, `V`, `G`, `B` there against `G`, `R`, `V`, `B` here. Comparing the bytes
 would assert an order the format does not require and that our writer does not
 produce.
 
 That is a proxy, and it is worth naming as one. It says the reference will
 parse our record by construction, because our record *is* its record; it does
-not say the reference accepted our **store** — the map file, the refcounts, the
+not say the reference accepted our **store** - the map file, the refcounts, the
 indexes. That is a different question and it is #1524.
 
 ## What the reference read for real, once
@@ -427,7 +427,7 @@ INBOX messages=3020 uidnext=3021
 
 ## What it establishes
 
-Reading the log alone returns **nothing at all** — not a short map, an empty
+Reading the log alone returns **nothing at all** - not a short map, an empty
 one. Every folder naming a map uid then fails to convert, and the mailbox is
 unavailable in full. That is what the field hit before any fixture could show
 it, and it is the strongest input for the rule that a map is its base plus its
@@ -470,7 +470,7 @@ logs rotate under the size knobs and the map's does not.
 
 `sdbox-inbox.log`, `sdbox-cyrillic.log` and `sdbox-inbox-u.1` … `u.4` were taken
 from a store the reference wrote, on 2.4.5, with `mail_driver = sdbox` and a
-`mail_index_path` of its own — so the index sits under its own root and the
+`mail_index_path` of its own - so the index sits under its own root and the
 messages stay with the mail, which is the shape a deployment with `INDEX=` set
 produces.
 
@@ -499,7 +499,7 @@ after a conversion.
 **Their sdbox folder index has no `guid` extension.** Its extensions are
 `dbox-hdr`, `hdr-pop3-uidl`, `cache`, `vsize` and `hdr-vsize`. The guid is in
 each message file's trailer, which is where their own server reads it, and a
-conversion that expected it in the index would write four zero guids — a fresh
+conversion that expected it in the index would write four zero guids - a fresh
 index of ours is marked guid-complete, so nothing would ever come back to fill
 them.
 

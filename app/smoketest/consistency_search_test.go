@@ -8,7 +8,7 @@ import (
 
 // The search row against a stub. The corpus is the point: one message carries
 // the term in the subject only, one in the body only, one in neither. A backend
-// that searches bodies only agrees with itself and disagrees with IMAP — which
+// that searches bodies only agrees with itself and disagrees with IMAP - which
 // is the shape that shipped green before this area existed (#1209).
 func TestSearchRowJudgement(t *testing.T) {
 	const (
@@ -24,7 +24,7 @@ func TestSearchRowJudgement(t *testing.T) {
 		wantIn string // "" = must agree with the seeded set
 	}{
 		{"both halves found, in either order", []string{body, subj}, ""},
-		{"body only — the header half was never searched", []string{body}, subj},
+		{"body only - the header half was never searched", []string{body}, subj},
 		{"subject only", []string{subj}, body},
 		{"a message carrying the term nowhere", []string{subj, body, none}, none},
 		{"nothing found at all", nil, subj},
@@ -86,7 +86,7 @@ func TestMarkerSurvivesBothSubjectSpellings(t *testing.T) {
 
 // The row failed while both surfaces answered correctly, because the IMAP side
 // read its hits back by scraping ENVELOPE and the server returned the subject
-// as a literal — which the scraper did not understand (#1279). Two guards
+// as a literal - which the scraper did not understand (#1279). Two guards
 // against that class now: the search row maps hits to markers by UID and parses
 // nothing, and the envelope reader understands literals where it is still used.
 func TestEnvelopeSubjectReadsLiteralsAndQuotedStrings(t *testing.T) {

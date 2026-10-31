@@ -35,7 +35,7 @@ var benchMbox = fts.MailboxRef{Name: "INBOX", UIDValidity: 1}
 // benchCopies is the second folder, used only when Config.CopyEvery is set.
 var benchCopies = fts.MailboxRef{Name: "Copies", UIDValidity: 1}
 
-// Config parameterises a run. Root is the mail root — point it at an NFS
+// Config parameterises a run. Root is the mail root - point it at an NFS
 // volume in the sandbox to measure real-storage behaviour.
 type Config struct {
 	Root       string

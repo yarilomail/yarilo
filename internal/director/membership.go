@@ -1,4 +1,4 @@
-// Package director — Membership implements the self-organizing director
+// Package director - Membership implements the self-organizing director
 // ring: members ordered by (ip, port), each node dialing its right
 // neighbor, joined via an HMAC-authenticated JOIN against a seed. Routing
 // truth stays the deterministic ring hash (pkg/cluster/ring); membership
@@ -6,8 +6,8 @@
 //
 // Degradation ladder (must hold at every member count):
 //
-//	N=1: no neighbors, no peer connections — single-replica mode.
-//	N=2: left == right; only the lower (ip,port) member dials — one
+//	N=1: no neighbors, no peer connections - single-replica mode.
+//	N=2: left == right; only the lower (ip,port) member dials - one
 //	     connection serves both directions.
 //	N=3+: every member dials its right neighbor; N directed edges.
 //
@@ -39,7 +39,7 @@ import (
 )
 
 // Member identifies one director replica by its ring-protocol address.
-// Ordered by (IP, Port); no separate node id — a restarted pod gets a new
+// Ordered by (IP, Port); no separate node id - a restarted pod gets a new
 // IP and rejoins as a fresh member.
 type Member struct {
 	IP   string
@@ -52,7 +52,7 @@ func (m Member) isZero() bool { return m.IP == "" && m.Port == 0 }
 
 func (m Member) equal(o Member) bool { return m.IP == o.IP && m.Port == o.Port }
 
-// less orders members by parsed IP bytes, then port — string comparison
+// less orders members by parsed IP bytes, then port - string comparison
 // would sort "10.0.0.17" before "10.0.0.6". Deterministic on every node
 // with zero coordination; unparseable IPs fall back to string comparison
 // so ordering stays total.
@@ -118,7 +118,7 @@ type Membership struct {
 	tombstoneTTL time.Duration
 	// probeTimeout bounds one death-verification probe's whole exchange
 	// (dial + handshake) when a neighbor connection is lost (#768); 0 =
-	// default (2s). Unexported knob — tests shorten it; production stays
+	// default (2s). Unexported knob - tests shorten it; production stays
 	// on the default.
 	probeTimeout time.Duration
 
@@ -133,13 +133,13 @@ type Membership struct {
 	seq     atomic.Uint64 // this node's own outgoing seq counter
 	leaving atomic.Bool   // graceful shutdown in progress (#770): reject new JOINs
 	// removed is the set of members known to be dead (#754), mapped to
-	// when THIS node first learned of the death — a tombstone, not just a
+	// when THIS node first learned of the death - a tombstone, not just a
 	// transient absence from the current member list. Required because
 	// DIRECTOR-LIST resync (mergeMembers) unions snapshots from
 	// potentially-stale peers: without a tombstone, a peer who hasn't yet
 	// learned of a death would silently resurrect the removed member on
-	// every reconnect. addMember clears the tombstone for that (ip,port)
-	// — a legitimate fresh authenticated JOIN (or a relayed DIRECTOR-ADD
+	// every reconnect. addMember clears the tombstone for that (ip,port) -
+	// a legitimate fresh authenticated JOIN (or a relayed DIRECTOR-ADD
 	// vouching for one) is trusted to mean exactly that: this address is
 	// alive again, whether it's a rejoin or the address was reassigned to
 	// a genuinely new pod. Entries expire after tombstoneTTL (#765, lazy
@@ -150,7 +150,7 @@ type Membership struct {
 	// propagation delay rather than being kept alive forever by the
 	// periodic anti-entropy re-broadcast. Expiry is safe even if a stale
 	// snapshot then resurrects the member: neighbor liveness monitoring
-	// (#768 — dialRight on the right, onLeftConnLost on the left)
+	// (#768 - dialRight on the right, onLeftConnLost on the left)
 	// re-evicts an unreachable member within seconds regardless of
 	// tombstone state.
 	removed map[Member]time.Time
@@ -158,24 +158,24 @@ type Membership struct {
 	rightMu     sync.Mutex
 	rightTarget Member // zero Member{} = no active dial target
 	// dialConn is the connection WE dial out (set by connectRight, managed
-	// by reconcile's dial lifecycle) — reconcile tears it down and redials
+	// by reconcile's dial lifecycle) - reconcile tears it down and redials
 	// when the computed right-neighbor target changes.
 	//
-	// ringConns tracks EVERY currently live ring connection — dialConn plus
-	// every connection accepted from a neighbor that dialed us — for the
+	// ringConns tracks EVERY currently live ring connection - dialConn plus
+	// every connection accepted from a neighbor that dialed us - for the
 	// life of each connection, independent of dial/accept role. Broadcasting
 	// ring events (broadcastRing) sends to all of ringConns except whichever
 	// one the event just arrived on, matching the reference's director_update_send
 	// (skip only the arrival connection; (origin, seq) dedup in
 	// handleEnvelope is what actually stops the flood once it loops back to
-	// its author — see the internal docs). Earlier this repo instead kept a
+	// its author - see the internal docs). Earlier this repo instead kept a
 	// single "the" forward path (dialConn, falling back to a passiveConn set
-	// only for the N=2 tie-break's passive member) — that role was decided
+	// only for the N=2 tie-break's passive member) - that role was decided
 	// once, when a connection was accepted, and never revisited as topology
 	// changed on that same still-open connection: a 3→2 shrink could leave a
 	// connection accepted under N=3 rules silently unable to forward
 	// anything at all once its node became the N=2 passive side (#754
-	// follow-up). ringConns has no such role to get stale — connections are
+	// follow-up). ringConns has no such role to get stale - connections are
 	// registered/deregistered purely by their own lifetime.
 	// backendHashMiss counts CONSECUTIVE anti-entropy ticks a ring connection's
 	// backend-set hash has disagreed with ours (#846); backendSyncAt rate-limits
@@ -187,7 +187,7 @@ type Membership struct {
 	dialConn net.Conn
 	// ringConns tracks every live ring connection (see the long comment above);
 	// the value records who is on the other end and since when (#833) so admin
-	// ring-status can name each edge and its uptime. Metadata only — broadcast
+	// ring-status can name each edge and its uptime. Metadata only - broadcast
 	// still just iterates the keys, and nothing on the wire changed.
 	ringConns   map[net.Conn]ringConnMeta
 	rightCancel context.CancelFunc
@@ -197,7 +197,7 @@ type Membership struct {
 
 // NewMembership creates a Membership for self, not yet started. secret
 // authenticates incoming JOINs (empty = ring auth disabled, every JOIN
-// rejected — #750 phase 2 adds dial-back + CIDR filtering on top of this
+// rejected - #750 phase 2 adds dial-back + CIDR filtering on top of this
 // HMAC core). tlsCfg wraps outgoing right-neighbor dials when non-nil.
 // minMembers is an install-time warning threshold only; it never refuses
 // service.
@@ -224,7 +224,7 @@ func NewMembership(srv *Server, self Member, secret []byte, tlsCfg *tls.Config, 
 // ringConnMeta records who is on the other end of a live ring connection and
 // since when (#833). Populated at register time on both the dial-out and the
 // accept side so admin ring-status can name each edge and report its uptime;
-// it is pure local bookkeeping — no wire change, and broadcast still only
+// it is pure local bookkeeping - no wire change, and broadcast still only
 // iterates ringConns' keys.
 type ringConnMeta struct {
 	peer  Member
@@ -234,7 +234,7 @@ type ringConnMeta struct {
 
 // Start initializes the member list to [self] and, if seeds are given,
 // begins trying to join the ring in the background. With no seeds (or
-// until a join succeeds), the node runs as a valid N=1 ring — it never
+// until a join succeeds), the node runs as a valid N=1 ring - it never
 // refuses service while waiting.
 func (m *Membership) Start(ctx context.Context, seeds []string) {
 	m.ctx = ctx
@@ -243,7 +243,7 @@ func (m *Membership) Start(ctx context.Context, seeds []string) {
 	m.mu.Unlock()
 
 	if m.minMembers > 1 && len(seeds) == 0 {
-		slog.Warn("director: min_members configured above 1 but no seeds given — running as a permanent singleton ring (no state redundancy)",
+		slog.Warn("director: min_members configured above 1 but no seeds given - running as a permanent singleton ring (no state redundancy)",
 			"min_members", m.minMembers)
 	}
 	// Anti-entropy runs regardless of seeds: a founder node has no seeds
@@ -262,12 +262,12 @@ func (m *Membership) Start(ctx context.Context, seeds []string) {
 // antiEntropyLoop periodically re-broadcasts this node's member+tombstone
 // snapshot (the same DIRECTOR-LIST line every connection already exchanges
 // once at connect time) over every live ring connection (#759). Receivers
-// union it via mergeMembers, which is idempotent — so this is a bounded,
+// union it via mergeMembers, which is idempotent - so this is a bounded,
 // no-coordination safety net: any membership split where at least one
 // connection crosses the two views heals within one interval, instead of
 // depending on every individual ADD/REMOVE broadcast having survived every
 // concurrent-formation race. A split with NO crossing connection (fully
-// disjoint subrings) is out of this loop's reach — that needs #750 phase
+// disjoint subrings) is out of this loop's reach - that needs #750 phase
 // 4's seed re-poll. Cost: one line per connection per interval, only sent
 // when at least one connection exists.
 func (m *Membership) antiEntropyLoop(ctx context.Context) {
@@ -282,7 +282,7 @@ func (m *Membership) antiEntropyLoop(ctx context.Context) {
 		}
 		m.broadcastRing(nil, fmt.Sprintf("DIRECTOR-LIST\t%s\t%s",
 			formatMemberList(m.Members()), formatMemberList(m.removedList())))
-		// Piggyback the backend-set hash on the same tick (#846) — a separate
+		// Piggyback the backend-set hash on the same tick (#846) - a separate
 		// line keeps the members plane and the backends plane cleanly apart.
 		m.broadcastBackendHash()
 	}
@@ -302,7 +302,7 @@ func (m *Membership) Members() []Member {
 // errJoinSelfDial marks a JOIN rejected because the load-balanced seed
 // routed the dial back to this node itself (#759): with a ClusterIP seed
 // in front of N pods this is an expected, instant outcome roughly 1/N of
-// the time, not evidence the seed is unhealthy — joinLoop retries it on a
+// the time, not evidence the seed is unhealthy - joinLoop retries it on a
 // short fixed interval instead of feeding it into the exponential backoff
 // reserved for a genuinely unreachable seed. Live 3-pod evidence for why
 // this distinction matters: treating self-dials as ordinary failures
@@ -318,31 +318,31 @@ var errJoinSelfDial = errors.New("director/join: self-dial via load-balanced see
 var errLeaving = errors.New("director/join: this member is leaving the ring")
 
 // joinLoop joins the ring via the seeds, then keeps polling a seed
-// periodically forever (#759 Fix A) — it never returns while ctx lives
+// periodically forever (#759 Fix A) - it never returns while ctx lives
 // (unless seed polling is explicitly disabled, which restores the old
 // one-shot join). The periodic re-poll exists because every OTHER
 // convergence mechanism (DIRECTOR-ADD/REMOVE broadcast, the anti-entropy
 // snapshot) only travels over ring connections that already exist, and
 // every mechanism that CREATES connections is a single right-neighbor
-// dial computed from this node's own — possibly divergent — member view.
+// dial computed from this node's own - possibly divergent - member view.
 // Under concurrent formation those single dials are not guaranteed to
 // form one connected graph (live-reproduced: two nodes closing a private
 // 2-cycle while a third, better-informed node's knowledge never crossed
 // into it), at which point no amount of flooding over existing
-// connections can heal the split. The seed — one shared ClusterIP every
-// pod can always reach — is the one guaranteed crossing point, so
+// connections can heal the split. The seed - one shared ClusterIP every
+// pod can always reach - is the one guaranteed crossing point, so
 // re-polling it bounds every partition's lifetime by the poll interval
 // regardless of what the dial graph looks like.
 //
 // Pacing: seedPollInterval (default 2s) while this node's view holds
 // FEWER than min_members; once it reaches the expected cluster size the
 // cadence eases to seedPollIdleInterval. That idle interval defaults to
-// the SAME 2s — i.e. constant polling by default — because a node cannot
+// the SAME 2s - i.e. constant polling by default - because a node cannot
 // locally tell "converged" from "stable but holding a dead member": a
 // freshly-respawned replacement pod that learned a since-dead member
 // during the death-detection window sits at min_members-or-more with a
 // stale entry, and a lazy idle cadence there leaves the dead member in
-// place for a full idle interval (#765 — live-measured 40s+ with a 30s
+// place for a full idle interval (#765 - live-measured 40s+ with a 30s
 // idle). Operators who want to trade steady-state polling for slower
 // dead-member eviction on fresh joiners can raise seed_poll_idle_interval
 // explicitly. Gating on min_members (not on own-view stability) is still
@@ -350,7 +350,7 @@ var errLeaving = errors.New("director/join: this member is leaving the ring")
 // off, since its view is perfectly stable yet wrong (#759). A self-dial
 // rejection retries fast (see errJoinSelfDial); a genuinely unreachable
 // seed walks the exponential backoff. Re-polls are cheap on the seed
-// side too — handleJoin treats a known joiner as a read-only snapshot
+// side too - handleJoin treats a known joiner as a read-only snapshot
 // request (no DIRECTOR-ADD, no reconcile).
 func (m *Membership) joinLoop(ctx context.Context, seeds []string) {
 	pollInterval := m.seedPollInterval
@@ -405,7 +405,7 @@ func (m *Membership) joinLoop(ctx context.Context, seeds []string) {
 				wait = idleInterval
 			}
 		case selfDial:
-			// The seed answered (with ourselves) — it is reachable and
+			// The seed answered (with ourselves) - it is reachable and
 			// serving; kube-proxy just needs another roll of the dice.
 			wait = 500 * time.Millisecond
 		default:
@@ -424,13 +424,13 @@ func (m *Membership) joinLoop(ctx context.Context, seeds []string) {
 
 // pollSeed polls one configured seed once, expanding a hostname seed into
 // per-member candidates first (#759): a literal-IP seed is dialed as-is,
-// but a hostname — in k8s the headless -director-ring Service, whose DNS
-// answer is the complete list of ready pod IPs — is resolved explicitly
+// but a hostname - in k8s the headless -director-ring Service, whose DNS
+// answer is the complete list of ready pod IPs - is resolved explicitly
 // and EVERY resulting address except this node's own is polled this
 // cycle. Resolving ourselves matters twice over: it turns one poll into a
 // deterministic sweep of every peer (convergence in one cycle, no routing
 // luck), and it sidesteps Go's RFC 6724 destination ordering, which sorts
-// the address sharing the longest prefix with the source first — i.e. the
+// the address sharing the longest prefix with the source first - i.e. the
 // pod's OWN IP, which a naive sequential dial would then pick every
 // single time. Returns polled=false only when every candidate was self
 // (single-member DNS answer while alone), with err carrying the self-dial
@@ -483,7 +483,7 @@ func (m *Membership) expandSeed(ctx context.Context, addr string) []string {
 	out := make([]string, 0, len(ips))
 	for _, ip := range ips {
 		// The stdlib resolver returns bare IPs (the seed's port applies
-		// to all of them — every director pod listens on the same port);
+		// to all of them - every director pod listens on the same port);
 		// a test resolver may return full host:port entries instead,
 		// since in-process test members share one IP and differ by port.
 		if h, p, sErr := net.SplitHostPort(ip); sErr == nil {
@@ -501,7 +501,7 @@ func (m *Membership) expandSeed(ctx context.Context, addr string) []string {
 	return out
 }
 
-// resolveSeed resolves a seed hostname to IPs — swappable in tests (the
+// resolveSeed resolves a seed hostname to IPs - swappable in tests (the
 // production default is the stdlib resolver).
 func (m *Membership) resolveSeed(ctx context.Context, host string) ([]string, error) {
 	if m.resolveHost != nil {
@@ -525,7 +525,7 @@ func atoiOr(s string, def int) int {
 // joinVia dials addr, consumes its normal server handshake, then performs
 // the DIRECTOR-JOIN / JOIN-CHALLENGE / JOIN-PROOF / JOIN-OK+DIRECTOR-LIST
 // exchange. On success it merges the returned member list (plus self) into
-// m.members and returns nil. This connection is bootstrap-only — it is
+// m.members and returns nil. This connection is bootstrap-only - it is
 // closed after DIRECTOR-LIST regardless of outcome; the actual ring data
 // connection is a separate dial to the computed right neighbor.
 func (m *Membership) joinVia(ctx context.Context, addr string) error {
@@ -533,8 +533,8 @@ func (m *Membership) joinVia(ctx context.Context, addr string) error {
 	var conn net.Conn
 	var err error
 	if m.tlsCfg != nil {
-		// tls.Dialer (not DialWithDialer) so a ctx deadline — the liveness
-		// probes run with a short one (#765) — bounds the TLS dial too.
+		// tls.Dialer (not DialWithDialer) so a ctx deadline - the liveness
+		// probes run with a short one (#765) - bounds the TLS dial too.
 		td := &tls.Dialer{NetDialer: dialer, Config: m.tlsCfg}
 		conn, err = td.DialContext(ctx, "tcp", addr)
 	} else {
@@ -546,7 +546,7 @@ func (m *Membership) joinVia(ctx context.Context, addr string) error {
 	defer conn.Close()
 	// A ctx deadline must bound the whole exchange, not just the dial: a
 	// half-dead peer that accepts but never answers would otherwise hang
-	// the handshake reads indefinitely (#765 — liveness probes must fail
+	// the handshake reads indefinitely (#765 - liveness probes must fail
 	// fast, and a failed probe IS the signal).
 	if dl, hasDeadline := ctx.Deadline(); hasDeadline {
 		_ = conn.SetDeadline(dl)
@@ -614,8 +614,8 @@ func (m *Membership) joinVia(ctx context.Context, addr string) error {
 		removed = parseMemberList(fields[2])
 	}
 
-	// After DIRECTOR-LIST the acceptor streams a userDir snapshot (#772) —
-	// zero or more USER lines — terminated by DONE. Merge each so a
+	// After DIRECTOR-LIST the acceptor streams a userDir snapshot (#772) -
+	// zero or more USER lines - terminated by DONE. Merge each so a
 	// freshly-joined/restarted director inherits current sticky routing
 	// state immediately instead of starting empty.
 	for {
@@ -633,7 +633,7 @@ func (m *Membership) joinVia(ctx context.Context, addr string) error {
 	}
 
 	// Union, never replace (#759 Fix A): on a periodic re-poll the seed
-	// answering may itself be the stale one — a replace would regress this
+	// answering may itself be the stale one - a replace would regress this
 	// node's view to the seed's. mergeMembers adds self, applies both
 	// tombstone sets, and reconciles only when something actually changed,
 	// which also makes the steady-state poll a complete no-op locally.
@@ -648,15 +648,15 @@ func (m *Membership) joinVia(ctx context.Context, addr string) error {
 const dialBackTimeout = 3 * time.Second
 
 // verifyDialBack independently dials the address the joiner CLAIMED (its ME
-// ip:port) and confirms a live director answers there (#773) — proof the joiner
+// ip:port) and confirms a live director answers there (#773) - proof the joiner
 // really controls that address rather than feeding a forged ME. It is a plain
 // client connection: it reads the server handshake (VERSION..DONE) and closes,
 // sending NO DIRECTOR-JOIN / ME / PEER, so the acceptor side treats it as an
-// anonymous probe and never mutates its membership or triggers a reverse join —
+// anonymous probe and never mutates its membership or triggers a reverse join -
 // which is what keeps simultaneous N-pod formation from cascading into a storm
 // of cross dial-backs (every side's probe is independent, short, and inert).
 //
-// Must only be called after a valid HMAC proof — see the invariant note in
+// Must only be called after a valid HMAC proof - see the invariant note in
 // handleJoin.
 func (m *Membership) verifyDialBack(joiner Member) error {
 	ctx, cancel := context.WithTimeout(m.ctx, dialBackTimeout)
@@ -706,7 +706,7 @@ func ipInNets(addr net.Addr, nets []*net.IPNet) bool {
 }
 
 // consumeServerHandshake reads and discards VERSION..HOST-HAND-*..DONE. The
-// join connection doesn't need the backend list — the real ring/PEER
+// join connection doesn't need the backend list - the real ring/PEER
 // connection (dialRight) already learns it the same way client connections
 // always have.
 func consumeServerHandshake(rd *bufio.Reader) error {
@@ -832,11 +832,11 @@ func (m *Membership) tombstonedLocked(mem Member) bool {
 // mergeMembers unions incoming members and tombstones with this node's own
 // (self always present in the result, never tombstoned) and, if that
 // changes anything, applies it and reconciles. Used for the DIRECTOR-LIST
-// resync exchanged on every ring connection — a plain union rather than a
+// resync exchanged on every ring connection - a plain union rather than a
 // replace, so a snapshot that's simply stale (missing a member or a
 // removal we already know about from elsewhere) can't regress us. The
 // tombstone side of the union is what makes this safe against resurrecting
-// a member some OTHER path already declared dead (#754) — without it, any
+// a member some OTHER path already declared dead (#754) - without it, any
 // peer whose own view hadn't caught up yet would silently undo a correct
 // removal on every reconnect.
 func (m *Membership) mergeMembers(incomingMembers, incomingRemoved []Member) {
@@ -874,7 +874,7 @@ func (m *Membership) mergeMembers(incomingMembers, incomingRemoved []Member) {
 // sendUserSnapshot streams this director's userDir as USER lines over conn,
 // sent right after DIRECTOR-LIST on every ring (re)connect so a fresh or
 // restarted director inherits current sticky routing state immediately
-// (#772 — the reference's U-line handshake). Wire form, one per entry:
+// (#772 - the reference's U-line handshake). Wire form, one per entry:
 //
 //	USER\t<hash>\t<host>\t<assign_seq>\t<assign_by>\t<weak>\n
 //
@@ -917,7 +917,7 @@ func (m *Membership) applyUserLine(fields []string) {
 }
 
 // removedList returns a snapshot of the live (non-expired) tombstone set,
-// for exchange in a DIRECTOR-LIST resync — expired entries are dropped
+// for exchange in a DIRECTOR-LIST resync - expired entries are dropped
 // here too so they stop being gossiped (#765).
 func (m *Membership) removedList() []Member {
 	m.mu.Lock()
@@ -932,7 +932,7 @@ func (m *Membership) removedList() []Member {
 }
 
 // addMember admits mem as live: adds it to the member set (no-op if
-// already present) and clears any tombstone for it — a fresh authenticated
+// already present) and clears any tombstone for it - a fresh authenticated
 // JOIN (or a relayed DIRECTOR-ADD vouching for one) is trusted to mean
 // this address is alive now, whether that's a genuine rejoin or the
 // address was reassigned to a new pod (#754).
@@ -971,7 +971,7 @@ func (m *Membership) removeMember(mem Member) {
 
 // handleJoin runs the HMAC challenge/response for a DIRECTOR-JOIN request
 // already read as fields (DIRECTOR-JOIN, ip, port) and owns the rest of the
-// connection's lifetime — it always closes conn before returning. Called
+// connection's lifetime - it always closes conn before returning. Called
 // from handleConn in place of the normal client handshake loop.
 func (m *Membership) handleJoin(conn net.Conn, fields []string) {
 	if len(fields) < 3 {
@@ -992,7 +992,7 @@ func (m *Membership) handleJoin(conn net.Conn, fields []string) {
 	}
 	joiner.Port = port
 
-	// CIDR allow-list (#773) — the cheapest filter, run first and before the
+	// CIDR allow-list (#773) - the cheapest filter, run first and before the
 	// HMAC challenge: keep the ring-join surface off untrusted networks without
 	// spending a nonce/HMAC round on packets that will never be admitted. The
 	// source of truth is the ACTUAL peer address (conn.RemoteAddr), never the
@@ -1010,7 +1010,7 @@ func (m *Membership) handleJoin(conn net.Conn, fields []string) {
 		// back to itself (#759): kube-proxy has no reason to avoid it.
 		// Accepting it looks like a normal join (the "joiner" is already
 		// self, so addMember is a no-op) but never actually discovers any
-		// other member — and joinLoop stops retrying the seed the moment
+		// other member - and joinLoop stops retrying the seed the moment
 		// it believes it has joined, leaving the pod stuck as a permanent,
 		// silent N=1. Reject explicitly instead, so joinVia returns an
 		// error and joinLoop's existing generic retry keeps dialing the
@@ -1063,7 +1063,7 @@ func (m *Membership) handleJoin(conn net.Conn, fields []string) {
 		return
 	}
 
-	// Dial-back verification (#773) — MUST run only AFTER a valid HMAC proof,
+	// Dial-back verification (#773) - MUST run only AFTER a valid HMAC proof,
 	// and this ordering is an anti-amplification invariant, not an optimisation:
 	// the dial-back makes THIS director connect to the joiner's CLAIMED ME
 	// address. Were it reachable before the proof, any host in join_allowed_nets
@@ -1081,11 +1081,11 @@ func (m *Membership) handleJoin(conn net.Conn, fields []string) {
 		return
 	}
 
-	// Snapshot the member list BEFORE adding the joiner — DIRECTOR-LIST
+	// Snapshot the member list BEFORE adding the joiner - DIRECTOR-LIST
 	// tells the joiner who else is here; it adds itself locally. A joiner
 	// we already know is a periodic seed re-poll (#759 Fix A), not a new
 	// member: it still gets the full list+tombstone snapshot (that
-	// exchange IS the poll's purpose — the seed is the one guaranteed
+	// exchange IS the poll's purpose - the seed is the one guaranteed
 	// crossing point every pod can always reach), but no DIRECTOR-ADD is
 	// broadcast and no reconcile runs, so a 2s poll cadence across the
 	// fleet costs nothing beyond this one reply.
@@ -1120,13 +1120,13 @@ func (m *Membership) handleJoin(conn net.Conn, fields []string) {
 	// rebuild edges (#759 problem 2). reconcile() may tear down this
 	// node's dial-out to its previous right neighbor (the joiner sorts
 	// between them), and under concurrent formation the replacement dial
-	// races the broadcast — live 3-pod evidence: an acceptor that learned
+	// races the broadcast - live 3-pod evidence: an acceptor that learned
 	// of a third member never told its still-directly-connected earlier
 	// neighbor, leaving it permanently stuck at 2 members. Every current
 	// member is reachable over the pre-reconcile connection set by
 	// definition, so originate-first cannot lose the event; the reverse
-	// order can. (The historical reason for reconcile-first — originate
-	// used to send only via dialConn, nil right after a death — died with
+	// order can. (The historical reason for reconcile-first - originate
+	// used to send only via dialConn, nil right after a death - died with
 	// broadcastRing, which uses every live connection.)
 	m.originate("DIRECTOR-ADD", fmt.Sprintf("%s\t%d", joiner.IP, joiner.Port))
 	m.reconcile()
@@ -1138,8 +1138,8 @@ func writeLine(conn net.Conn, s string) error {
 }
 
 // readBoundedLine reads one LF-terminated line, hard-capped at rd's buffer size.
-// ReadSlice — unlike ReadString, which keeps appending without bound
-// (#703) — fails with ErrBufferFull once the buffer fills with no
+// ReadSlice - unlike ReadString, which keeps appending without bound
+// (#703) - fails with ErrBufferFull once the buffer fills with no
 // newline, so a misbehaving or malicious peer streaming bytes without LF
 // costs at most one buffer per connection, not unbounded memory; callers
 // treat the error like any other read failure and drop the connection.
@@ -1171,7 +1171,7 @@ func (m *Membership) rightNeighbor() (Member, bool) {
 	case 2:
 		a, b := members[0], members[1]
 		if !m.self.equal(a) {
-			// We're the higher-sorted member of the pair — we only accept.
+			// We're the higher-sorted member of the pair - we only accept.
 			return Member{}, false
 		}
 		return b, true
@@ -1191,7 +1191,7 @@ func (m *Membership) rightNeighbor() (Member, bool) {
 }
 
 // rightNeighborOf returns who `of` should be dialing, using the same rule
-// as rightNeighbor but for an arbitrary member — used by the accept side to
+// as rightNeighbor but for an arbitrary member - used by the accept side to
 // decide whether an incoming dialer picked the correct target (#750's
 // CONNECT-redirect trick).
 func (m *Membership) rightNeighborOf(of Member) (Member, bool) {
@@ -1221,7 +1221,7 @@ func (m *Membership) rightNeighborOf(of Member) (Member, bool) {
 }
 
 // leftNeighbor returns the member whose right-neighbor dial should be
-// arriving at this node — the predecessor in sorted order, wrapping — i.e.
+// arriving at this node - the predecessor in sorted order, wrapping - i.e.
 // the reference's dir->left (#768). N=1 has none. N=2: only the
 // lexicographically lower member dials, so only the HIGHER member has a
 // left (the lower one; the lower member's own guard is its dial-out,
@@ -1255,7 +1255,7 @@ func (m *Membership) leftNeighbor() (Member, bool) {
 // reconcile recomputes this node's right-neighbor DIAL target and adjusts
 // it to match: tears down a stale dial and starts a new one when the
 // target changed, including down to "no target" at N=1 or the N=2 passive
-// case. Deliberately never touches ringConns — an accepted connection's
+// case. Deliberately never touches ringConns - an accepted connection's
 // membership there is tied to its own lifetime, not to this node's current
 // dial target; see the field comment.
 func (m *Membership) reconcile() {
@@ -1273,10 +1273,10 @@ func (m *Membership) reconcile() {
 		m.rightCancel = nil
 	}
 	if m.dialConn != nil {
-		// QUIT before the deliberate close (#768, reference parity — a QUIT
+		// QUIT before the deliberate close (#768, reference parity - a QUIT
 		// with a reason goes out on every intentional disconnect): the peer
 		// we're abandoning is usually OUR old right
-		// neighbor, i.e. we are ITS left — without this line our close
+		// neighbor, i.e. we are ITS left - without this line our close
 		// looks identical to a silent death and forces it through the
 		// verification-probe path for what is just a re-target.
 		_ = m.dialConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
@@ -1299,7 +1299,7 @@ func (m *Membership) reconcile() {
 // dialRight maintains the persistent connection to target: the standard
 // VERSION/ME/PEER/DONE ring handshake (unchanged from #700), reading the
 // HOST snapshot the same way client connections always have, then
-// forwarding ring-envelope pushes until the connection fails — at which
+// forwarding ring-envelope pushes until the connection fails - at which
 // point target is declared dead: removed locally, announced via
 // DIRECTOR-REMOVE, and reconcile() picks the next right neighbor
 // ("skip-dead"). A CONNECT redirect (stale target after a membership
@@ -1307,11 +1307,11 @@ func (m *Membership) reconcile() {
 // instead of going through the dead-declaration path.
 func (m *Membership) dialRight(ctx context.Context, target Member) {
 	const maxAttempts = 3
-	// current tracks who we're ACTUALLY trying to reach right now — starts
+	// current tracks who we're ACTUALLY trying to reach right now - starts
 	// as target, but a CONNECT redirect can point us elsewhere (#754).
 	// Every decision keyed on "who failed" (the still-alive short-circuit,
 	// and the final death declaration) must use current, never the
-	// original target — conflating the two previously meant that
+	// original target - conflating the two previously meant that
 	// following a redirect toward an already-dead member, then exhausting
 	// retries against IT, would wrongly declare the ORIGINAL (perfectly
 	// alive) target dead instead.
@@ -1339,7 +1339,7 @@ func (m *Membership) dialRight(ctx context.Context, target Member) {
 		}
 		slog.Debug("director: ring dial attempt failed", "self", m.self, "target", addr, "attempt", attempt, "err", err)
 		// Someone else already reported (and propagated) this member's
-		// death — most likely via DIRECTOR-LIST tombstone resync (#754).
+		// death - most likely via DIRECTOR-LIST tombstone resync (#754).
 		// Stop retrying a corpse instead of burning the remaining attempts.
 		still := false
 		for _, mem := range m.Members() {
@@ -1363,7 +1363,7 @@ func (m *Membership) dialRight(ctx context.Context, target Member) {
 	slog.Warn("director: ring neighbor unreachable, declaring dead", "self", m.self, "target", current)
 	m.removeMember(current)
 	// Announce over the surviving pre-reconcile connections first, then
-	// rebuild edges — same broadcast-before-reconcile rule as handleJoin
+	// rebuild edges - same broadcast-before-reconcile rule as handleJoin
 	// (#759 problem 2): reconcile() may tear down a live connection the
 	// announcement still needs, while the announcement can never need a
 	// connection reconcile() has yet to create (the dead dial is already
@@ -1421,12 +1421,12 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 		fmt.Sprintf("ME\t%s\t%d\t%d", m.self.IP, m.self.Port, ts),
 		// MEMBERS, sent before PEER (#754): the acceptor's CONNECT-redirect
 		// decision (triggered by the PEER line, in handleConn) uses its
-		// OWN membership view — without this, a still-3-member acceptor
+		// OWN membership view - without this, a still-3-member acceptor
 		// can redirect the dialer BACK toward a member the dialer already
 		// knows is dead (it's dialing elsewhere precisely because it
 		// detected that death), and the redirect path never reaches the
 		// DIRECTOR-LIST resync that would otherwise fix the acceptor's
-		// stale view — merging the dialer's tombstones first closes that
+		// stale view - merging the dialer's tombstones first closes that
 		// gap regardless of which way the connection ends up being used.
 		fmt.Sprintf("MEMBERS\t%s\t%s", formatMemberList(m.Members()), formatMemberList(m.removedList())),
 		"PEER\t1\t" + hex.EncodeToString(peerProof(m.secret, nonce, m.self)),
@@ -1458,7 +1458,7 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 	// DIRECTOR-ADD fired between a join being accepted and that acceptor's
 	// own dial to its (possibly just-changed) right neighbor completing
 	// would otherwise race broadcastRing's best-effort delivery and vanish
-	// silently — this connection is brand new either way, so unconditional
+	// silently - this connection is brand new either way, so unconditional
 	// resync on connect closes that window regardless of timing, without
 	// needing the full user/backend state snapshot (#750 phase 3).
 	if _, wErr := fmt.Fprintf(conn, "DIRECTOR-LIST\t%s\t%s\n", formatMemberList(m.Members()), formatMemberList(m.removedList())); wErr != nil {
@@ -1469,7 +1469,7 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 	// Keepalive both ways (#768): we PING our right neighbor over this
 	// dial, it PINGs us back over it too (plus over whatever it dials);
 	// the read deadline turns a silently-hung peer into a read error,
-	// which dialRight's caller treats as one failed attempt — the same
+	// which dialRight's caller treats as one failed attempt - the same
 	// death path an outright refused dial takes.
 	go m.ringPinger(ctx, conn)
 	readWindow := m.ringPingInterval() + m.ringPingTimeout()
@@ -1492,9 +1492,9 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 		case fields[0] == "PING":
 			_, _ = fmt.Fprintf(conn, "PONG\n")
 		case fields[0] == "PONG":
-			// keepalive traffic — arrival already refreshed the deadline
+			// keepalive traffic - arrival already refreshed the deadline
 		case fields[0] == "QUIT":
-			// The peer is closing deliberately (#768) — e.g. shutting
+			// The peer is closing deliberately (#768) - e.g. shutting
 			// down. Surface it as an ordinary attempt failure with the
 			// announced reason; dialRight's retry/death policy applies
 			// unchanged (a deliberately-exiting right neighbor SHOULD
@@ -1529,7 +1529,7 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 // is not the right neighbor dialer's topology says it should be dialing.
 // Returns the corrected target and true when a CONNECT should be sent.
 // Deliberately lenient when dialer isn't a recognized member yet (a fresh
-// joiner's DIRECTOR-ADD may not have propagated to us yet) — accept rather
+// joiner's DIRECTOR-ADD may not have propagated to us yet) - accept rather
 // than reject, matching the no-quorum/AP model.
 func (m *Membership) checkRedirect(dialer Member) (Member, bool) {
 	known := false
@@ -1553,7 +1553,7 @@ func (m *Membership) checkRedirect(dialer Member) (Member, bool) {
 
 // originate sends kind+payload around the ring as a fresh event authored by
 // this node: self is the origin, seq is this node's next counter value.
-// Only reaches the ring — local login clients are notified separately by
+// Only reaches the ring - local login clients are notified separately by
 // the caller (Server.originateRingEvent) with the plain, non-enveloped line
 // they've always received.
 func (m *Membership) originate(kind, payload string) {
@@ -1624,14 +1624,14 @@ var plainToEscapedUserEvent = map[string]string{
 
 // Leave performs a graceful ring exit (#770), called on SIGTERM BEFORE the
 // process's ctx is cancelled (while ring connections are still open). It
-// (1) stops answering JOINs so no fresh joiner can learn this dying member
-// — the #765 phantom-injection source; (2) originates DIRECTOR-REMOVE for
+// (1) stops answering JOINs so no fresh joiner can learn this dying member -
+// the #765 phantom-injection source; (2) originates DIRECTOR-REMOVE for
 // itself so peers evict it immediately via the existing seq-dedup +
 // tombstone path, with zero death-detection window and no verification
 // probes fired for a planned exit; and (3) sends QUIT on every live ring
 // connection so each neighbor classifies the imminent close as deliberate
-// (benign), not a silent death. Unlike the reference — whose members are
-// static config and simply reconnect around a stopped director — our
+// (benign), not a silent death. Unlike the reference - whose members are
+// static config and simply reconnect around a stopped director - our
 // members are ephemeral pods whose IPs never return, so announcing the
 // exit is the correct adaptation. Hard kills (SIGKILL) still converge via
 // the #768 neighbor-monitoring path; this only removes the latency on the
@@ -1658,8 +1658,8 @@ func (m *Membership) Leave() {
 // handleRingLine dispatches one line read from a ring connection: every
 // envelope command (DIRECTOR-ADD/REMOVE, RING-CHANGE, USER-MOVED,
 // USER-KICKED) goes through the shared (origin, seq) dedup + apply +
-// forward path. arrivalConn is the connection this line was just read from
-// — handleEnvelope needs it to skip re-sending the event back the way it
+// forward path. arrivalConn is the connection this line was just read from -
+// handleEnvelope needs it to skip re-sending the event back the way it
 // came. PING/PONG keepalive lines are handled directly in the two ring
 // read loops (serveRingConn / connectRight) before reaching here (#768);
 // #750 phase 4 may later piggyback anti-entropy metadata on them.
@@ -1746,14 +1746,14 @@ func plausibleEventKind(kind string) bool {
 // handleEnvelope implements the propagation rule that makes the ring
 // self-limiting with zero coordination: if the event's origin is this node
 // itself, the event has travelled all the way around and is absorbed
-// (applied once already, at origination — never re-applied, never
-// forwarded again). Otherwise, apply locally (unless already seen — a
+// (applied once already, at origination - never re-applied, never
+// forwarded again). Otherwise, apply locally (unless already seen - a
 // safety net against out-of-order duplicates) and broadcast to every ring
-// connection except the one it just arrived on (broadcastRing) — matching
+// connection except the one it just arrived on (broadcastRing) - matching
 // the reference's director_update_send skip-arrival rule rather than a fixed
 // "the" forward path. At N=2 the only ring connection IS the arrival
 // connection, so broadcasting sends nowhere and the event simply stops
-// there without needing to bounce back to origin for absorb to apply —
+// there without needing to bounce back to origin for absorb to apply -
 // origin-absorb only matters once N>=3 gives an event somewhere to travel
 // on beyond whoever it arrived from.
 func (m *Membership) handleEnvelope(fields []string, arrivalConn net.Conn) {
@@ -1803,7 +1803,7 @@ func (m *Membership) handleEnvelope(fields []string, arrivalConn net.Conn) {
 	m.mu.Unlock()
 
 	// Forward BEFORE applying: applyEnvelope reconciles on ADD/REMOVE,
-	// which can tear down exactly the connection this relay still needs —
+	// which can tear down exactly the connection this relay still needs -
 	// the same broadcast-before-reconcile rule as handleJoin/dialRight
 	// (#759 problem 2). The forwarded line is the untouched original, so
 	// nothing about the local apply feeds into it; dedup was already
@@ -2011,8 +2011,8 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 		user := payload[0]
 		// Drop the sticky pin on every replica (#706). A move-kick carries the
 		// old backend IP (#708): the pin is dropped only if it STILL points
-		// there (compare-and-delete), so the move's fresh pin — set by the
-		// USER-MOVED that flew with this kick — survives. A plain admin kick
+		// there (compare-and-delete), so the move's fresh pin - set by the
+		// USER-MOVED that flew with this kick - survives. A plain admin kick
 		// (no old IP) clears unconditionally.
 		oldBackend, reason := kickTrailing(payload[1:])
 		if oldBackend != "" {
@@ -2022,7 +2022,7 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 		}
 		m.srv.broadcastToLogins(loginKickLine(user, reason))
 	case "SESSION-OPEN":
-		// payload: <id> <user> <backend> <proto> (#804) — a remote replica of a
+		// payload: <id> <user> <backend> <proto> (#804) - a remote replica of a
 		// session another director owns; feeds the least_sessions load view.
 		if m.srv != nil {
 			m.srv.applyRemoteSessionOpen(payload, origin)
@@ -2050,7 +2050,7 @@ func (m *Membership) applyEnvelope(kind string, payload []string, origin string,
 			}
 		}
 	case "USER-KILL-DONE":
-		// payload: <hash> (#847) — kill confirmed or timed out; release the hold.
+		// payload: <hash> (#847) - kill confirmed or timed out; release the hold.
 		if m.srv != nil && len(payload) >= 1 {
 			if hash, err := strconv.ParseUint(payload[0], 10, 32); err == nil {
 				m.srv.applyKillDone(uint32(hash))
@@ -2096,13 +2096,13 @@ func kickTrailing(fields []string) (oldBackend, reason string) {
 
 // broadcastRing writes line to every currently live ring connection except
 // arrivalConn (nil for a locally-originated event, meaning skip nothing).
-// This is the entire forward path — there is no per-role "the" connection
+// This is the entire forward path - there is no per-role "the" connection
 // to pick, so a connection's dial/accept origin and any topology change
 // during its lifetime are irrelevant to whether it gets this event; see the
 // ringConns field comment for why that replaced the old dialConn/passiveConn
 // split. Best-effort: at N=1, or if ringConns is momentarily empty between a
 // neighbor's death and a new connection completing, there's nowhere to send
-// it — the gap is closed by the DIRECTOR-LIST snapshot exchanged on every
+// it - the gap is closed by the DIRECTOR-LIST snapshot exchanged on every
 // (re)connect, not by queuing here. Snapshots the connection set under
 // rightMu and writes outside the lock, with a bounded per-write deadline, so
 // one slow/stuck peer can't stall delivery to the others.
@@ -2132,7 +2132,7 @@ func (m *Membership) ringPingInterval() time.Duration { return m.srv.opts.pingIn
 func (m *Membership) ringPingTimeout() time.Duration  { return m.srv.opts.pingTimeout() }
 
 // ringPinger writes a PING line on conn every ring ping interval until the
-// connection dies or ctx ends — the reference PINGs BOTH its neighbor
+// connection dies or ctx ends - the reference PINGs BOTH its neighbor
 // connections, left and right, and both our read loops enforce a read deadline of
 // interval+timeout, so a silently-hung peer (no RST, no FIN) is detected
 // within one interval+timeout on whichever side notices first, instead of
@@ -2149,14 +2149,14 @@ func (m *Membership) ringPinger(ctx context.Context, conn net.Conn) {
 		}
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if _, err := fmt.Fprintf(conn, "PING\n"); err != nil {
-			return // connection gone — its read loop handles the fallout
+			return // connection gone - its read loop handles the fallout
 		}
 		_ = conn.SetWriteDeadline(time.Time{})
 	}
 }
 
 // onLeftConnLost handles the loss of the accepted connection from this
-// node's LEFT neighbor (#768) — the reference monitors both dir->left and
+// node's LEFT neighbor (#768) - the reference monitors both dir->left and
 // dir->right, so a death is always detected by the dead node's immediate
 // neighbors (O(1) probes per node, regardless of ring size) rather than by
 // an all-probes-all sweep. dialRight already owns right-side deaths; this
@@ -2165,8 +2165,8 @@ func (m *Membership) ringPinger(ctx context.Context, conn net.Conn) {
 // re-targeted its dial after a membership change and closed the old one),
 // so the dialer identity is checked against the CURRENT computed left
 // neighbor, and death is declared only after a few failed verification
-// probes. In the reference a lost connection alone never removes a host —
-// its host list is static config, so it just reconnects around the hole —
+// probes. In the reference a lost connection alone never removes a host -
+// its host list is static config, so it just reconnects around the hole -
 // but our membership is dynamic k8s pods whose IPs never come back, so the
 // correct adaptation is eviction (with the reference's own delayed-purge
 // "removed" trick, our tombstones, preventing gossip re-adds); a live
@@ -2186,7 +2186,7 @@ func (m *Membership) onLeftConnLost(ctx context.Context, dialer Member) {
 	}
 	left, ok := m.leftNeighbor()
 	if !ok || !left.equal(dialer) {
-		return // not our left (anymore) — a benign re-target or an old conn
+		return // not our left (anymore) - a benign re-target or an old conn
 	}
 
 	const maxAttempts = 3
@@ -2202,7 +2202,7 @@ func (m *Membership) onLeftConnLost(ctx context.Context, dialer Member) {
 		err := m.joinVia(pctx, dialer.String())
 		cancel()
 		if err == nil {
-			return // alive — it will re-dial us on its own
+			return // alive - it will re-dial us on its own
 		}
 		// Someone else may have already declared (and propagated) this
 		// death while we were probing.
@@ -2233,14 +2233,14 @@ func (m *Membership) onLeftConnLost(ctx context.Context, dialer Member) {
 // ---- accept side: serving an already-accepted ring/PEER connection --------
 
 // serveRingConn processes an accepted ring connection until it closes. rd
-// is the SAME reader handleConn used for the handshake — reusing it (rather
+// is the SAME reader handleConn used for the handshake - reusing it (rather
 // than wrapping conn in a fresh bufio.Reader) is required to not drop any
 // bytes the handshake read already buffered ahead. The connection is
 // registered in ringConns for its whole lifetime, regardless of dial/accept
-// role or N=2/N=3+ topology — see the field comment.
+// role or N=2/N=3+ topology - see the field comment.
 //
 // Loss of this connection is a death SIGNAL when its dialer is this node's
-// current left neighbor (#768) — see onLeftConnLost; verification probes
+// current left neighbor (#768) - see onLeftConnLost; verification probes
 // keep a benign re-target or reconnect from being mistaken for a death.
 func (m *Membership) serveRingConn(conn net.Conn, rd *bufio.Reader, dialer Member) {
 	m.rightMu.Lock()
@@ -2262,7 +2262,7 @@ func (m *Membership) serveRingConn(conn net.Conn, rd *bufio.Reader, dialer Membe
 
 	// Mirror connectRight's snapshot exchange from this side too, so
 	// convergence after a race doesn't depend on which end happened to
-	// dial — see the comment there for why this resync exists.
+	// dial - see the comment there for why this resync exists.
 	_, _ = fmt.Fprintf(conn, "DIRECTOR-LIST\t%s\t%s\n", formatMemberList(m.Members()), formatMemberList(m.removedList()))
 	m.sendUserSnapshot(conn) // #772: userDir snapshot on connect
 
@@ -2283,11 +2283,11 @@ func (m *Membership) serveRingConn(conn net.Conn, rd *bufio.Reader, dialer Membe
 		case fields[0] == "PING":
 			_, _ = fmt.Fprintf(conn, "PONG\n")
 		case fields[0] == "PONG":
-			// keepalive traffic — its arrival already refreshed the
+			// keepalive traffic - its arrival already refreshed the
 			// read deadline, nothing else to do
 		case fields[0] == "QUIT":
 			// Deliberate close announced by the peer (#768, reference
-			// parity) — typically our left neighbor re-targeting its
+			// parity) - typically our left neighbor re-targeting its
 			// dial after a membership change. Explicitly NOT a death
 			// signal: return without onLeftConnLost, skipping the
 			// verification probes an unannounced drop would trigger.
@@ -2316,7 +2316,7 @@ func (m *Membership) serveRingConn(conn net.Conn, rd *bufio.Reader, dialer Membe
 // ---- admin ring status (#833) ----------------------------------------------
 
 // RingStatus is one replica's view of the ring, built from its own membership
-// state — the per-replica nature is deliberate: comparing several replicas'
+// state - the per-replica nature is deliberate: comparing several replicas'
 // RingStatus is how divergence (the #750-era failure mode) is spotted.
 type RingStatus struct {
 	SchemaVersion int                 `json:"schemaVersion"`
@@ -2334,7 +2334,7 @@ type RingStatus struct {
 
 // RingMemberStatus describes one member as this replica sees it. Left/Right are
 // the member's computed neighbors in (ip,port) order (nil at N=1). Link is set
-// only when the member is a direct ring-neighbor of THIS replica — it carries
+// only when the member is a direct ring-neighbor of THIS replica - it carries
 // the live edge's state and uptime.
 type RingMemberStatus struct {
 	Addr  string    `json:"addr"`

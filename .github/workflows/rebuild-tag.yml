@@ -1,7 +1,7 @@
 name: Rebuild a released tag
 
-# A released image can disappear from the registry — retention, a cleanup, a
-# mistake — and when it does, every A/B against that point becomes impossible.
+# A released image can disappear from the registry - retention, a cleanup, a
+# mistake - and when it does, every A/B against that point becomes impossible.
 # That is the cheapest tool there is for "did this regress, and when", so losing
 # it costs more than the storage it saved (#1258 hit exactly this: the bisect
 # against 2.3.134 could not run because the image no longer pulled).

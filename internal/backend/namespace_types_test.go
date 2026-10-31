@@ -9,7 +9,7 @@ import (
 // The validator and the builder must accept exactly the same types.
 //
 // They disagreed on one value: an absent type passed validation and was then
-// dropped by the builder with a log warning — which is the failure #1086 is
+// dropped by the builder with a log warning - which is the failure #1086 is
 // about, kept alive for the field that is easiest to forget. Testing each side
 // on its own would not have found it; only asking whether they agree does.
 func TestValidatorAndBuilderAgreeOnNamespaceTypes(t *testing.T) {
@@ -26,7 +26,7 @@ func TestValidatorAndBuilderAgreeOnNamespaceTypes(t *testing.T) {
 		builderAccepts := len(buildNamespaces(cfg)) == 1
 
 		if validatorAccepts != builderAccepts {
-			t.Errorf("type %q: validator accepts=%v, builder accepts=%v — a type that "+
+			t.Errorf("type %q: validator accepts=%v, builder accepts=%v - a type that "+
 				"passes startup and is then dropped is exactly the defect this guards",
 				typ, validatorAccepts, builderAccepts)
 		}

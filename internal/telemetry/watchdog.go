@@ -90,7 +90,7 @@ func (w *watchdog) tick(ctx context.Context) {
 	}
 	n := w.fails.Add(1)
 	if int(n) >= w.threshold && !w.tripped.Swap(true) {
-		slog.Error("telemetry: liveness watchdog tripped — /healthz will fail so the container restarts",
+		slog.Error("telemetry: liveness watchdog tripped - /healthz will fail so the container restarts",
 			"consecutive_failures", n, "err", err)
 	}
 }

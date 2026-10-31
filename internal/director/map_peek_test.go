@@ -9,7 +9,7 @@ import (
 // TestMapPeekVsResolver guards the #813 split: introspection (peek =
 // userDir.Get) must NOT create a pin, while the routing resolver
 // (resolveUserBackend) still pins an unpinned user under least_sessions
-// (#792/#797 — admin per-user ops depend on it).
+// (#792/#797 - admin per-user ops depend on it).
 func TestMapPeekVsResolver(t *testing.T) {
 	s := leastSessionsServer(t)
 	// Untagged pool: the admin resolve path uses tag "" (strict match).

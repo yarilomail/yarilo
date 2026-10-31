@@ -132,7 +132,7 @@ func callAPI(t *testing.T, s *Server, body string) map[string]any {
 	return args
 }
 
-// A null ids means every mailbox (RFC 8620 §5.1). An empty array means none —
+// A null ids means every mailbox (RFC 8620 §5.1). An empty array means none -
 // the two must not collapse into one.
 func TestMailboxGetNullIdsMeansAll(t *testing.T) {
 	s := storedServer(t)

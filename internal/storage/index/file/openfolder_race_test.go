@@ -16,7 +16,7 @@ import (
 )
 
 // raceTestLockServer spins up a real embedded locks.Server on a Unix socket
-// and returns a factory for independent locks.Client connections — standing
+// and returns a factory for independent locks.Client connections - standing
 // in for the distributed cross-process lock every production OpenFolder call
 // goes through. Without a real locker, withDistLock runs its fn unguarded
 // (documented "no locker wired = tests" fast path), which would silently
@@ -78,7 +78,7 @@ func raceTestLockServer(t *testing.T) func() locks.Locker {
 // OpenFolder's dedup map only protects repeat calls on the SAME *userIndex;
 // it does nothing across instances. Two instances can both reach loadOrInit's
 // os.Stat before either has created the base index file, both see
-// ErrNotExist, and both call createFresh — the later flush() silently
+// ErrNotExist, and both call createFresh - the later flush() silently
 // resets NextUID to 1, discarding every UID the other side already
 // allocated. This test drives that pattern directly (mdbox driver, matching
 // the live reproduction) and asserts NextUID never regresses below any UID
@@ -137,7 +137,7 @@ func TestOpenFolderConcurrentFirstOpenNoUIDRegression(t *testing.T) {
 
 	// Each short-lived connection mimics smoke-test's reconnect-per-command
 	// pattern: a fresh *userIndex opens INBOX (no dedup history at all) and
-	// does a read-only pass, then discards the instance — exactly what
+	// does a read-only pass, then discards the instance - exactly what
 	// session.idx / OpenUser does per TCP connection in production.
 	for i := 0; i < shortLivedConns; i++ {
 		wg.Add(1)
@@ -165,6 +165,6 @@ func TestOpenFolderConcurrentFirstOpenNoUIDRegression(t *testing.T) {
 			got, want, maxCommittedUID.Load())
 	}
 	if regressed.Load() {
-		t.Fatal("lmtp observed a UID regression mid-run — see errors above")
+		t.Fatal("lmtp observed a UID regression mid-run - see errors above")
 	}
 }

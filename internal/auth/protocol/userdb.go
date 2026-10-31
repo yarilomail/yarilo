@@ -120,7 +120,7 @@ type UserInfo struct {
 	NoLogin        bool // reject login outright
 	NoDelay        bool // bypass auth-penalty backoff
 	NoAuthenticate bool // auth disabled for this user
-	PassExpired    bool // password expired — client must re-set
+	PassExpired    bool // password expired - client must re-set
 	NoPassword     bool // passdb without a password (e.g. OAuth)
 
 	// ---- Proxy ------------------------------------------------
@@ -178,9 +178,9 @@ type UserInfo struct {
 // Userdb answers "who is this user?" without a password, for admin
 // tooling, master-protocol clients, and the passdb prefetch shortcut.
 // Return semantics:
-//   - (ui != nil, nil)  — user found, ui populated
-//   - (nil, nil)        — user unknown here; UserdbChain tries the next entry
-//   - (nil, err != nil) — backend failure; UserdbChain stops and surfaces err
+//   - (ui != nil, nil)  - user found, ui populated
+//   - (nil, nil)        - user unknown here; UserdbChain tries the next entry
+//   - (nil, err != nil) - backend failure; UserdbChain stops and surfaces err
 type Userdb interface {
 	Lookup(username string) (*UserInfo, error)
 }
@@ -203,7 +203,7 @@ func (c UserdbChain) Lookup(username string) (*UserInfo, error) {
 }
 
 // UserdbIterator lists every known user, for `yarctl backend user
-// iterate` and the master-protocol `LIST` command. Optional — a backend
+// iterate` and the master-protocol `LIST` command. Optional - a backend
 // that cannot enumerate simply does not implement it.
 type UserdbIterator interface {
 	Iterate() ([]string, error)

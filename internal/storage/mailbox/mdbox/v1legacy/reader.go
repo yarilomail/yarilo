@@ -35,7 +35,7 @@ const (
 	magicPost = "\n\x01\x03\n"
 )
 
-// Message is one decoded v1 mdbox message — what the migrator
+// Message is one decoded v1 mdbox message - what the migrator
 // needs to re-emit through the new driver.
 type Message struct {
 	FileID       uint32
@@ -48,7 +48,7 @@ type Message struct {
 
 // ListFolders returns every folder under home in canonical name
 // form (INBOX surfaced as "INBOX"; ".Sent" surfaced as "Sent").
-// Folders without a dbox.map are still listed — the migrator
+// Folders without a dbox.map are still listed - the migrator
 // records them as empty.
 func ListFolders(home string) ([]string, error) {
 	entries, err := os.ReadDir(home)
@@ -102,7 +102,7 @@ type MapEntry struct {
 }
 
 // ReadMap returns every entry from a folder's dbox.map sidecar.
-// Missing folder is not an error — returns (nil, nil).
+// Missing folder is not an error - returns (nil, nil).
 func ReadMap(home, folder string) ([]MapEntry, error) {
 	f, err := os.Open(MapPath(home, folder))
 	if errors.Is(err, os.ErrNotExist) {
@@ -170,7 +170,7 @@ func ReadMessage(home string, entry MapEntry) (*Message, error) {
 	// Consume magic_post if present.
 	post := make([]byte, len(magicPost))
 	if _, err := io.ReadFull(br, post); err == nil && string(post) != magicPost {
-		// Not magic_post — bail out, trailer absent.
+		// Not magic_post - bail out, trailer absent.
 		return msg, nil
 	}
 	for {

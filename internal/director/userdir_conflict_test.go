@@ -7,8 +7,8 @@ import (
 
 // TestUserDir_Conflict_LoserKicksStaleSessions is the #772 PR-3 end-to-end:
 // two directors pin the same user to DIFFERENT backends at the same logical
-// time; the lower-id director wins, and the loser — receiving the winner's
-// USER-ASSIGN — switches its own entry and kicks that user's now-stale
+// time; the lower-id director wins, and the loser - receiving the winner's
+// USER-ASSIGN - switches its own entry and kicks that user's now-stale
 // sessions off the wrong backend, while leaving other users on it running.
 //
 // This server's self id is ":0" (default opts); an incoming assignment by
@@ -68,7 +68,7 @@ func TestUserDir_Conflict_LoserKicksStaleSessions(t *testing.T) {
 // side: the lower-id director (the winner) receiving the loser's assignment
 // keeps its own backend and kicks nothing.
 func TestUserDir_Conflict_WinnerKeepsAndDoesNotKick(t *testing.T) {
-	// self id "10.0.0.1:9102" — lower than the incoming "10.0.0.2:9102".
+	// self id "10.0.0.1:9102" - lower than the incoming "10.0.0.2:9102".
 	srv, addr := startServerOpts(t, Options{LocalIP: "10.0.0.1", LocalPort: 9102})
 
 	loginConn, loginSc := dialTest(t, addr)

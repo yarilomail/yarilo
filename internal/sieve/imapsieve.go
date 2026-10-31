@@ -112,13 +112,13 @@ func (e *Engine) HasImapGlobals() bool {
 }
 
 // loadImapScript compiles the named admin script from imapsieve_script_dir
-// (<dir>/<name>.sieve). A missing dir or file returns (nil, nil) — the event
+// (<dir>/<name>.sieve). A missing dir or file returns (nil, nil) - the event
 // proceeds with only the global scripts.
 func (e *Engine) loadImapScript(name string) (*gosieve.Script, error) {
 	if e.cfg.ImapSieveScriptDir == "" || name == "" {
 		return nil, nil
 	}
-	// The name comes from client-set METADATA — reject path traversal.
+	// The name comes from client-set METADATA - reject path traversal.
 	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." {
 		return nil, fmt.Errorf("imapsieve: invalid script name %q", name)
 	}

@@ -59,7 +59,7 @@ func New(hf HashFormat) *Ring {
 
 // AddBackend inserts or updates a backend and rebuilds the ring.
 // Zero-valued LastUp/LastDown/Hostname on the incoming struct don't
-// clobber an existing entry — heartbeats carry only LastUp, and the
+// clobber an existing entry - heartbeats carry only LastUp, and the
 // timestamp-based up/down merge between peers depends on LastDown
 // surviving them.
 func (r *Ring) AddBackend(b *Backend) {

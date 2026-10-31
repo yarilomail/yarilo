@@ -2,7 +2,7 @@
 // set via IMAP CREATE (USE ...).
 //
 // Layout: one line per folder, "<folder>\t<attr>". The attr is a
-// single MailboxAttr token like "\Sent" — RFC 6154 §3 forbids more
+// single MailboxAttr token like "\Sent" - RFC 6154 §3 forbids more
 // than one special-use attr per folder.
 //
 // Lookups consult the on-disk overrides first; folders without an
@@ -107,7 +107,7 @@ func (s *Store) Delete(folder string) error {
 // on-disk overrides laid over the configured defaults, read in a single pass.
 //
 // This is the only way to ask, and deliberately so. The document describes the
-// whole user, so a per-folder call asks the same question once per name — and
+// whole user, so a per-folder call asks the same question once per name - and
 // each ask is an acquire and a release against the lock service, over the
 // network. LIST did exactly that: a user with 35 folders paid 70 round trips
 // for one command, and 85% of the special-use work was coordination rather than
@@ -229,7 +229,7 @@ func (s *Store) writeAtomic(overrides map[string]imaplib.MailboxAttr) error {
 	return nil
 }
 
-// withLock reuses locks.SubscriptionsKey — metadata writes (subs +
+// withLock reuses locks.SubscriptionsKey - metadata writes (subs +
 // special-use) on the same user contend rarely and share a "metadata
 // side-channel" semantic. nil locker = no cross-process guarantee,
 // only tmp+rename atomicity.

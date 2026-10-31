@@ -42,7 +42,7 @@ func TestPropertyClassification(t *testing.T) {
 			props := []string{tc.property}
 			req := EmailGetRequest{GetRequest: GetRequest{Properties: &props}}
 			if got := req.NeedsStructure(); got != tc.structure {
-				t.Errorf("NeedsStructure = %v, want %v — %s would be answered %s",
+				t.Errorf("NeedsStructure = %v, want %v - %s would be answered %s",
 					got, tc.structure, tc.property,
 					map[bool]string{true: "with wasted work", false: "empty, with no error"}[got])
 			}
