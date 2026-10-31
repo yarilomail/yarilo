@@ -16,7 +16,7 @@ import (
 //
 // The test is written against the configured default chain rather than against
 // the order directly, because the order is a means. What must hold is that a
-// stopword does not reach the index — whatever arrangement of filters is
+// stopword does not reach the index - whatever arrangement of filters is
 // configured to achieve it.
 func TestEveryStopwordIsDroppedByTheDefaultChain(t *testing.T) {
 	langs := make([]string, 0, len(stopwordLists))

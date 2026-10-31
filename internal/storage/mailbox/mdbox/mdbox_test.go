@@ -240,5 +240,5 @@ func TestFolderOps(t *testing.T) {
 	}
 }
 
-// Scan implementation lands in Phase 6 — covered by
+// Scan implementation lands in Phase 6 - covered by
 // purge_test.go and rebuild_test.go.

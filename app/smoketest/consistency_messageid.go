@@ -45,7 +45,7 @@ func checkConsistencyMessageID(user, pass string) error {
 // be exercised without a server.
 func messageIDVerdict(left *reading) error {
 	if id := left.fields["messageId"]; isAbsent(id) || id == "" {
-		return fmt.Errorf("delivered without a Message-ID and stored without one: imap says %q — "+
+		return fmt.Errorf("delivered without a Message-ID and stored without one: imap says %q - "+
 			"the message can never be replied to or threaded, and the header cannot be added afterwards", id)
 	}
 	return nil

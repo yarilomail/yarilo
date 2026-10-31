@@ -10,7 +10,7 @@ import "time"
 // the read inside somebody else's total.
 //
 // Only leaf operations are timed. Reading a text part is interleaved with
-// tokenising it — the reader feeds the tokeniser through a callback — so timing
+// tokenising it - the reader feeds the tokeniser through a callback - so timing
 // it separately would need every layer to subtract its children. Tokenise is
 // therefore the remainder: the pass time that is not parsing, decoding or
 // writing. Said plainly here because a derived number that looks measured is

@@ -13,7 +13,7 @@ import (
 // rewrites the base with a higher NextUID. Pod A's cached logFD is now stale
 // (points at the old, unlinked inode). Without the inode-identity check in
 // reload(), pod A would fast-path past the change, keep its low in-memory
-// NextUID, and eventually flush it back — regressing the counter. This test
+// NextUID, and eventually flush it back - regressing the counter. This test
 // pins that reload() drops the stale fd, reconciles the advanced NextUID, and
 // that pod A's next append lands in the live log (visible to a fresh reader).
 func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
@@ -35,7 +35,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 	}
 
 	// Pod B (separate backend, same dir): advance the folder to UID 5, then
-	// compact — flush() rewrites the base with NextUID=6 and truncateLog
+	// compact - flush() rewrites the base with NextUID=6 and truncateLog
 	// replaces the .log with a fresh inode I2.
 	podB := openIdx(dir, testUser)
 	fb, err := podB.OpenFolder("INBOX", 0, "")
@@ -79,7 +79,7 @@ func TestConcurrentCompactionNoUIDRegression(t *testing.T) {
 		t.Fatal("podA kept its stale logFD after the log was replaced")
 	}
 
-	// Pod A's next append must land in the live log — a fresh reader must see
+	// Pod A's next append must land in the live log - a fresh reader must see
 	// all six UIDs (1..5 plus the new one), proving the write did not go into
 	// the dead inode.
 	uid, err := podA.AllocateUID(fa.ID)

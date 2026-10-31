@@ -20,7 +20,7 @@ type Settings struct {
 	AddressMaxLen int
 }
 
-// DefaultSettings mirrors https://doc.yarilomail.org/latest/features/fts.html: stemming and stopwords on by default —
+// DefaultSettings mirrors https://doc.yarilomail.org/latest/features/fts.html: stemming and stopwords on by default -
 // deliberately stronger than the reference's empty default filter chain.
 func DefaultSettings() Settings {
 	return Settings{
@@ -51,10 +51,10 @@ func NewChain(set Settings) (*Chain, error) {
 }
 
 // NewDataChain returns the "data" chain: normalization only (lowercase), no
-// stemming, no stopwords — for header-like text that is not natural-
+// stemming, no stopwords - for header-like text that is not natural-
 // language content (addresses, message-ids, arbitrary-language subjects).
 // Both indexing (buildmail, #696) and search-side header query expansion
-// (internal/imap, #723) must use exactly this chain — a header token
+// (internal/imap, #723) must use exactly this chain - a header token
 // stemmed on the query side but not on the index side produces a wildcard
 // query variant (e.g. "running" -> "run*") that can false-positive match
 // an unrelated indexed word ("runway") sharing the same stem prefix.

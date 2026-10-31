@@ -1,4 +1,4 @@
-## yarilo — single-host standalone deployment (Docker Compose).
+## yarilo - single-host standalone deployment (Docker Compose).
 ## Full split topology: login proxies (TLS terminators) in front of session
 ## backends, with shared auth / warden / locks and Redis. One image, one config;
 ## each service selects its component via YARILO_COMPONENT. See DOCKER-COMPOSE.md.
@@ -188,7 +188,7 @@ services:
     depends_on:
       yarilo-lmtp:
         condition: service_started
-    # LMTP is unauthenticated — loopback only by default (LMTP_BIND=0.0.0.0 to expose).
+    # LMTP is unauthenticated - loopback only by default (LMTP_BIND=0.0.0.0 to expose).
     ports:
       - "${LMTP_BIND:-127.0.0.1}:${LMTP_PORT:-24}:10024"
 

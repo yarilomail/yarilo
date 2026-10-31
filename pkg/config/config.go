@@ -99,9 +99,9 @@ type SieveConfig struct {
 	// a larger :seconds is clamped (RFC 7352 §7). 0 = no limit. Default: 604800 (7 days).
 	DuplicateMaxPeriod int `koanf:"sieve_duplicate_max_period"`
 	// DuplicateDriver selects the backend for the duplicate test (RFC 7352):
-	//   file   — per-user file in the home dir (default; cross-pod on shared storage)
-	//   memory — per-process, single-pod only
-	//   redis  — the sieve_duplicate dict (cross-pod)
+	//   file   - per-user file in the home dir (default; cross-pod on shared storage)
+	//   memory - per-process, single-pod only
+	//   redis  - the sieve_duplicate dict (cross-pod)
 	DuplicateDriver string `koanf:"sieve_duplicate_driver"`
 	// DuplicateFile is the name of the home-dir file for DuplicateDriver "file".
 	// Default: ".yarilo.sieve-duplicate".
@@ -271,9 +271,9 @@ type DictServiceConfig struct {
 //
 // Driver-agnostic siblings of "driver"/"settings":
 //
-//	expire_secs — default TTL for writes; per-op OpSettings overrides
-//	username    — passed as OpSettings.Username when callers omit it
-//	home_dir    — passed as OpSettings.HomeDir when callers omit it
+//	expire_secs - default TTL for writes; per-op OpSettings overrides
+//	username    - passed as OpSettings.Username when callers omit it
+//	home_dir    - passed as OpSettings.HomeDir when callers omit it
 type DictConfig struct {
 	Driver     string         `koanf:"driver"`
 	Settings   map[string]any `koanf:"settings"`
@@ -287,7 +287,7 @@ type DictConfig struct {
 // Empty cfg.Namespaces defaults to
 // [{ Type: "personal", Prefix: "", Separator: "/", List: true }].
 type NamespaceConfig struct {
-	// Type is "personal", "other" or "shared" — the NAMESPACE response slot.
+	// Type is "personal", "other" or "shared" - the NAMESPACE response slot.
 	Type string `koanf:"type"`
 	// Prefix is the client-visible entry point ("", "Shared/", "Public/", ...).
 	// Empty string is reserved for the personal namespace.
@@ -324,7 +324,7 @@ type NamespaceConfig struct {
 	// is read-only, so its indexes go under the user instead.
 	MailIndexPath string `koanf:"mail_index_path"`
 	// IgnoreACL bypasses ACL enforcement for this namespace even when
-	// acl.enabled is true — for trusted admin/public roots.
+	// acl.enabled is true - for trusted admin/public roots.
 	IgnoreACL bool `koanf:"acl_ignore"`
 	// Mailboxes are created, or created and subscribed, for the user, keyed by
 	// the name inside the namespace (#2005).
@@ -625,7 +625,7 @@ type LMTPProtocolConfig struct {
 	VerboseReplies bool `koanf:"lmtp_verbose_replies"`
 	// UserConcurrencyLimit is the max concurrent deliveries per user enforced
 	// cluster-wide via yarilo-warden at RCPT TO. Default: 10.
-	// Value 0 is a hard configuration error — operators that genuinely want
+	// Value 0 is a hard configuration error - operators that genuinely want
 	// no limit MUST set -1 ("unlimited"), so a missing or zeroed config can
 	// never silently turn off the DoS guard.
 	UserConcurrencyLimit int `koanf:"lmtp_user_concurrency_limit"`
@@ -801,7 +801,7 @@ type RelayConfig struct {
 }
 
 // InternalTLSConfig controls mTLS for all inter-component connections.
-// When Enabled is false every component listens on plain TCP — use this
+// When Enabled is false every component listens on plain TCP - use this
 // when a service mesh (Istio, Linkerd) handles transport security instead.
 type InternalTLSConfig struct {
 	Enabled bool   `koanf:"enabled"`
@@ -848,7 +848,7 @@ type QuotaConfig struct {
 	// percentage scaling (human size). Empty / "0" = none.
 	StorageExtra string `koanf:"quota_storage_extra"`
 	// Grace is the storage overshoot allowed past the limit on inbound delivery
-	// (LMTP/LDA) only — never interactive IMAP (human size). Default "10M".
+	// (LMTP/LDA) only - never interactive IMAP (human size). Default "10M".
 	// Canonical spelling; "quota_grace" is the pre-beta alias. The value is a
 	// size, so both spellings must reach the same resolve() branch -- an alias
 	// adopted after the sizes were resolved would leave the canonical field
@@ -1135,7 +1135,7 @@ func (c AuthClientConfig) PoolIdleTimeout() time.Duration {
 
 // LocksClientConfig configures how session processes (yarilo-imap,
 // yarilo-pop3, yarilo-submission, yarilo-lmtp) connect to a yarilo-locks
-// service. Empty Mode disables cross-process locking — single-process tests
+// service. Empty Mode disables cross-process locking - single-process tests
 // and CLI dev runs. Production k8s sets Mode=remote with one or more
 // Endpoints pointing at the yarilo-locks ClusterIP Service.
 type LocksClientConfig struct {
@@ -1164,7 +1164,7 @@ func (c LocksClientConfig) StartupWait() time.Duration {
 
 // FTSConfig configures full-text search: the engine selection, the
 // yarilo-fts service topology and the indexing/search behaviour. The engine
-// is required when enabled — startup fails fast on a missing or unknown name
+// is required when enabled - startup fails fast on a missing or unknown name
 // so the active engine is always stated in config. See https://doc.yarilomail.org/latest/features/fts.html.
 type FTSConfig struct {
 	Enabled bool `koanf:"enabled"`
@@ -1195,7 +1195,7 @@ type FTSConfig struct {
 	StorageType string `koanf:"fts_storage_type"`
 	// MaxConns is how many connections a session process keeps to yarilo-fts.
 	// One connection serialises request/response pairs, so this is what decides
-	// how many lookups actually run at once — a search fan-out over several
+	// how many lookups actually run at once - a search fan-out over several
 	// folders is queued, not parallel, until this is above one. Connections are
 	// opened on demand. Default 4.
 	MaxConns int `koanf:"fts_max_conns"`
@@ -1212,8 +1212,8 @@ type FTSConfig struct {
 	// Default 1, i.e. off. Measured on local-ish storage, reading is 0.3% of a
 	// pass and tokenising is the rest, so overlapping them buys almost nothing
 	// while the read-ahead window costs memory once per worker. Raise it where
-	// reads are actually slow — cold alt-tier storage, or an NFS mount whose
-	// cache is not warm — where fts_read_seconds is a real share of
+	// reads are actually slow - cold alt-tier storage, or an NFS mount whose
+	// cache is not warm - where fts_read_seconds is a real share of
 	// fts_build_seconds.
 	PrefetchDepth int `koanf:"fts_prefetch_depth"`
 	// PrefetchMaxBytes caps what those messages may hold in memory at once.
@@ -1253,7 +1253,7 @@ type FTSConfig struct {
 	SearchTimeoutSecsAlias    int  `koanf:"fts_search_timeout_secs"`
 	SearchStrict              bool `koanf:"fts_search_strict"`
 	// Search disables FTS SEARCH while indexing keeps running (#726 item
-	// 3) — incident degradation (bad query results, engine misbehaving)
+	// 3) - incident degradation (bad query results, engine misbehaving)
 	// without losing index freshness. Sessions treat Search=false as "no
 	// FTS filter" (sequential scan); autoindex/write-through indexing is
 	// unaffected, since it never checks this flag.
@@ -1262,18 +1262,18 @@ type FTSConfig struct {
 	Languages       []string `koanf:"languages"`
 	LanguageFilters []string `koanf:"language_filters"`
 	// LanguageFiltersOverride replaces LanguageFilters for specific
-	// languages (#726 item 4) — e.g. a language with no Snowball stemmer
+	// languages (#726 item 4) - e.g. a language with no Snowball stemmer
 	// (uk) shouldn't carry "snowball" in its chain even though other
 	// configured languages do. A language absent from this map uses
 	// LanguageFilters unchanged; a present language's list is a full
-	// replacement, not a merge. Every key must also appear in Languages —
+	// replacement, not a merge. Every key must also appear in Languages -
 	// validated at chain construction (catches typos like "ukr").
 	LanguageFiltersOverride map[string][]string `koanf:"fts_language_filters_override"`
 	// Generic/address tokenizer byte caps (#726). Must be positive.
 	LanguageTokenMaxLen   int `koanf:"language_tokenizer_generic_token_maxlen"`
 	LanguageAddressMaxLen int `koanf:"language_tokenizer_address_token_maxlen"`
 	// LanguageTokenizerAlgorithm (#726 item 2): "simple" (default, the only
-	// one implemented) or "tr29" — accepted but rejected at startup with a
+	// one implemented) or "tr29" - accepted but rejected at startup with a
 	// clear error until the TR29 tokenizer lands (blocked on the Bleve
 	// stream). LanguageTokenizerWB5A / LanguageTokenizerExplicitPrefix are
 	// TR29-only knobs, also accepted-but-rejected-if-true for the same
@@ -1291,12 +1291,12 @@ type FTSConfig struct {
 	// leaves room for a store that is not one without changing what already
 	// works. posix:<path> and a bare path are also read.
 	//
-	// Defaults to posix:prefix=%h/fts/ — outside the mail tree, which is the
+	// Defaults to posix:prefix=%h/fts/ - outside the mail tree, which is the
 	// placement the two data kinds want. Empty restores the historical behaviour of
 	// keeping it inside the mail index tree (INDEX= override → mail path →
 	// home).
 	//
-	// FTS data is derived — it can be deleted and rebuilt; mail cannot — and
+	// FTS data is derived - it can be deleted and rebuilt; mail cannot - and
 	// it is write-heavy. Those are different durability and I/O requirements
 	// with, until now, no way to place them accordingly.
 	//
@@ -1338,13 +1338,13 @@ type FTSConfig struct {
 	// It counted bytes until #1055, which made it a different rule per script:
 	// a one-character Latin word was dropped while a one-character Cyrillic or
 	// CJK one was kept, because their bytes outnumbered their characters. The
-	// default of 2 now means what it was always meant to mean — drop single
-	// characters — in every script rather than only in Latin.
+	// default of 2 now means what it was always meant to mean - drop single
+	// characters - in every script rather than only in Latin.
 	FlatcurveMinTermSize int `koanf:"fts_flatcurve_min_term_size"`
 	// FlatcurveOptimizeLimit queues a mailbox for automatic background
 	// shard compaction once its sealed-shard count reaches this value
 	// (#715), in addition to the manual `yarctl fts optimize`
-	// command. 0 explicitly disables auto-optimize (manual only) — this is
+	// command. 0 explicitly disables auto-optimize (manual only) - this is
 	// NOT defaulted at the flatcurve.Options layer, only here, so an
 	// operator's explicit 0 is respected rather than silently coerced back
 	// to the default.
@@ -1376,13 +1376,13 @@ type FTSConfig struct {
 	FlatcurvePrefixSearch string `koanf:"fts_flatcurve_prefix_search"`
 
 	// DecoderDriver selects the external attachment-text-extraction backend:
-	// "none" (default — attachments stay unindexed beyond HTML/text parts),
+	// "none" (default - attachments stay unindexed beyond HTML/text parts),
 	// "script" (a yarilo-owned line protocol over DecoderScriptAddr), or
 	// "tika" (HTTP to an Apache Tika server at DecoderTikaURL). See #669.
 	DecoderDriver string `koanf:"fts_decoder_driver"`
 	// DecoderScriptAddr accepts "unix:///path/to.sock" (standalone/embedded,
 	// a co-located decoder process) or "host:port" (k8s/backend, the decoder
-	// runs as its own Deployment/Service) — mirrors pkg/locks' embedded-vs-
+	// runs as its own Deployment/Service) - mirrors pkg/locks' embedded-vs-
 	// remote Dialer split, since a bare socket path doesn't fit a topology
 	// where the decoder isn't co-located with yarilo-fts.
 	DecoderScriptAddr string `koanf:"fts_decoder_script_addr"`
@@ -1400,7 +1400,7 @@ type FTSConfig struct {
 	// transient failures (network errors, 5xx) before degrading (#697).
 	// 0/unset = 2 (one retry), matching the reference implementation's own
 	// Tika plugin default. Not used by the script driver, which has no
-	// retry — a script error is always a hard failure.
+	// retry - a script error is always a hard failure.
 	DecoderMaxAttempts int `koanf:"fts_decoder_max_attempts"`
 
 	// DedupBodyParts skips re-tokenizing a body part whose normalized text
@@ -1408,7 +1408,7 @@ type FTSConfig struct {
 	// text+html twins, a quoted block repeated within one body). Opt-in:
 	// default false, since the reference implementation has no equivalent and
 	// some operators may not want the extra per-part hashing. Cross-message
-	// dedup is out of scope — it cannot be done without breaking per-message
+	// dedup is out of scope - it cannot be done without breaking per-message
 	// search correctness (a term's posting list must include every message
 	// that actually contains it). See #669.
 	DedupBodyParts bool `koanf:"fts_dedup_body_parts"`
@@ -1477,7 +1477,7 @@ func (c DirectorAPIConfig) Gate() (string, []*net.IPNet, error) {
 // touchers. Empty DirectorAddr disables registration (non-cluster / standalone).
 type BackendRegisterConfig struct {
 	// DirectorAddr is the director ClusterIP Service "host:port" to
-	// register against — any replica; the registration gossips ring-wide.
+	// register against - any replica; the registration gossips ring-wide.
 	DirectorAddr string `koanf:"director_addr"`
 	// RegisterInterval paces the sidecar heartbeat (seconds). Must be positive.
 	RegisterInterval int `koanf:"register_interval"`
@@ -1514,7 +1514,7 @@ type DirectorServiceConfig struct {
 	PingTimeout  int                `koanf:"ping_timeout"`  // seconds to wait for PONG before closing; must be positive
 	WriteTimeout int                `koanf:"write_timeout"` // seconds to bound a single client push/reply write (#704); 0 = no bound
 	MailServers  []MailServerConfig `koanf:"mail_servers"`  // static backend list, loaded at startup
-	// Peers is the seed list for joining the self-organizing ring (#750) —
+	// Peers is the seed list for joining the self-organizing ring (#750) -
 	// "host:port" addresses tried in order until one accepts a DIRECTOR-JOIN.
 	// Once joined, membership is maintained automatically via DIRECTOR-ADD/
 	// REMOVE propagation, not further seed polling. In k8s this is normally
@@ -1524,7 +1524,7 @@ type DirectorServiceConfig struct {
 	Peers []string          `koanf:"peers"`
 	API   DirectorAPIConfig `koanf:"api"`
 	// RingSecret authenticates incoming DIRECTOR-JOIN requests via
-	// HMAC-SHA256 (#750). Supports ${ENV_VAR} — generate one Secret per
+	// HMAC-SHA256 (#750). Supports ${ENV_VAR} - generate one Secret per
 	// release the same way director_service.api.token is (see
 	// helm/templates/secret-director-ring.yaml). Empty disables ring auth:
 	// every JOIN is rejected and this node can only run as a singleton.
@@ -1533,13 +1533,13 @@ type DirectorServiceConfig struct {
 	// (JOIN + right-neighbor + seed polls) under internal_tls (#753). Ring
 	// peers are dialled by ephemeral pod IP, so without a stable name Go would
 	// verify the peer cert against the pod IP and fail (no pod-IP SAN). Set it
-	// to a name present in every director's internal-tls cert — the chart
+	// to a name present in every director's internal-tls cert - the chart
 	// defaults it to the headless <release>-director-ring Service. Empty with
 	// internal_tls enabled and peers configured is a misconfiguration (the ring
 	// cannot verify pod-IP peers): the director logs an ERROR at startup.
 	RingTLSServerName string `koanf:"ring_tls_server_name"`
 	// JoinAllowedNets restricts which source CIDRs a DIRECTOR-JOIN is accepted
-	// from (#773) — the exact pattern of api.allowed_nets: empty = allow all
+	// from (#773) - the exact pattern of api.allowed_nets: empty = allow all
 	// (unchanged behaviour), otherwise the joiner's source IP must fall inside
 	// one of the listed networks or the JOIN is rejected before the HMAC
 	// challenge even begins. A cheap first-line filter that keeps the ring-join
@@ -1547,7 +1547,7 @@ type DirectorServiceConfig struct {
 	// per-peer identity controls layered behind it.
 	JoinAllowedNets []string `koanf:"join_allowed_nets"`
 	// MinMembers is an install-time warning threshold only ("fewer members
-	// than this = no state redundancy") — it never refuses service at any
+	// than this = no state redundancy") - it never refuses service at any
 	// member count. Default 3 (matches the reference's recommended minimum
 	// for the degradation ladder to have real redundancy at rest).
 	MinMembers int `koanf:"min_members"`
@@ -1573,12 +1573,12 @@ type DirectorServiceConfig struct {
 	TombstoneTTL int `koanf:"tombstone_ttl"`
 	// UsernameHashLowercase lowercases usernames before hashing/keying them
 	// for ring routing, sticky assignments and admin overrides (#738).
-	// Matches the reference implementation's default hash template — two
+	// Matches the reference implementation's default hash template - two
 	// spellings of the same account ("User@d.test" / "user@d.test")
 	// otherwise land on different backends. Default: true. Migration note:
 	// enabling this on an already-running cluster changes hashes for any
 	// mixed-case usernames; their existing sticky entries just expire
-	// naturally via TTL (director_service.user_expire) — no special
+	// naturally via TTL (director_service.user_expire) - no special
 	// migration step is needed.
 	UsernameHashLowercase bool `koanf:"username_hash_lowercase"`
 	// UsernameHash is the username→hash-key template (#850), mirroring the reference
@@ -1586,10 +1586,10 @@ type DirectorServiceConfig struct {
 	// %u (whole user), %n (local part, before first '@'), %d (domain, after first '@'),
 	// each with an optional %L lowercase modifier, plus %% for a literal percent.
 	// Examples: "%Lu" (default, whole username lowercased), "%u" (case-sensitive),
-	// "%Ld" (route the whole domain to one backend — shared-mailbox/ACL locality),
+	// "%Ld" (route the whole domain to one backend - shared-mailbox/ACL locality),
 	// "%Ln" (local part only, for alias-domain installs). Empty derives the template
 	// from username_hash_lowercase (%Lu / %u) for byte-identical back-compat. When set,
-	// it — not the bool — governs case-folding. Invalid templates fail loudly at startup.
+	// it - not the bool - governs case-folding. Invalid templates fail loudly at startup.
 	UsernameHash     string `koanf:"username_hash"`
 	AssignmentPolicy string `koanf:"assignment_policy"` // hash | least_sessions (#797) | domain (#1943); default hash
 	// DomainExpire is how long (seconds) a domain keeps its backend with no
@@ -1621,10 +1621,10 @@ type DirectorServiceConfig struct {
 	MaxParallelMoves int `koanf:"max_parallel_moves"`
 	// FlushProgram is an optional external executable run once per user AFTER a
 	// deliberate relocation (an admin USER-MOVE or a graceful evacuation) has been
-	// confirmed ring-wide — i.e. after the user's old sessions are gone (#848).
+	// confirmed ring-wide - i.e. after the user's old sessions are gone (#848).
 	// Operators hook mailbox-cache flush, external session cleanup, metrics, etc.
 	// It is invoked as: flush_program FLUSH <username> <username_hash> <old_backend>
-	// <new_backend>, best-effort and asynchronous with a bounded timeout — a slow or
+	// <new_backend>, best-effort and asynchronous with a bounded timeout - a slow or
 	// failing hook is logged, never blocks the ring/LOOKUP, and never fails the move.
 	// Only the director that originated the move runs it (mirrors the reference's
 	// self-initiated semantics); mass/reactive paths (backend-down, --force flush) do
@@ -1637,9 +1637,9 @@ type DirectorServiceConfig struct {
 // IMAPLoginServiceConfig configures the yarilo-imap-login proxy.
 // BackendAddr, when set, bypasses director LOOKUP and routes every
 // session directly to this address (standalone k8s deployments).
-// Leave empty in director deployments — set DirectorAddr instead.
+// Leave empty in director deployments - set DirectorAddr instead.
 //
-// Precedence (#735): BackendAddr wins when both are set — an explicit
+// Precedence (#735): BackendAddr wins when both are set - an explicit
 // standalone override always takes priority over director mode. This is
 // login.Options' existing behavior (internal/login/server.go), kept
 // unchanged; matches the direction #741 settles on for lmtp-login too.
@@ -1648,7 +1648,7 @@ type IMAPLoginServiceConfig struct {
 	// DirectorAddr enables director mode: per-session LOOKUP via
 	// yarilo-director (e.g. "yarilo-director:9102"). Ignored when
 	// BackendAddr is set. At least one of BackendAddr/DirectorAddr must be
-	// set (#735 — an empty DirectorAddr previously silently fell back to
+	// set (#735 - an empty DirectorAddr previously silently fell back to
 	// this process's own DirectorService.Listen, dialing localhost where
 	// no director runs).
 	DirectorAddr string `koanf:"director_addr"`
@@ -1706,7 +1706,7 @@ type SubmissionLoginServiceConfig struct {
 type ManageSieveLoginServiceConfig struct {
 	// BackendAddr is the fixed address of the yarilo-managesieve backend.
 	BackendAddr string `koanf:"backend_addr"`
-	// DirectorAddr / BackendPort — see IMAPLoginServiceConfig.
+	// DirectorAddr / BackendPort - see IMAPLoginServiceConfig.
 	DirectorAddr string `koanf:"director_addr"`
 	BackendPort  int    `koanf:"backend_port"`
 	DirectorTag  string `koanf:"director_tag"`
@@ -1720,7 +1720,7 @@ type ManageSieveLoginServiceConfig struct {
 
 // ValidateBackendOrDirector requires at least one of a login/proxy
 // component's BackendAddr (standalone) or DirectorAddr (director mode) to
-// be set (#735) — an empty DirectorAddr previously let these components
+// be set (#735) - an empty DirectorAddr previously let these components
 // silently fall back to this process's own in-process director bind
 // address (DirectorService.Listen), dialing localhost where no director
 // runs, rather than failing loudly at startup. component names the config
@@ -1761,13 +1761,13 @@ type LMTPLoginServiceConfig struct {
 	// When set, BackendAddr is ignored and each RCPT TO triggers a LOOKUP request.
 	DirectorAddr string `koanf:"director_addr"`
 	// DirectorTag restricts LOOKUP to backends carrying this tag (#737).
-	// "" = the untagged pool, not "any tag" — there is no full-ring mode.
+	// "" = the untagged pool, not "any tag" - there is no full-ring mode.
 	DirectorTag string `koanf:"director_tag"`
 	// BackendPort overrides the port returned by a director LOOKUP. 0 = use as-is.
 	BackendPort int `koanf:"backend_port"`
 }
 
-// BackendAPIConfig configures the yarilo-backend-api process —
+// BackendAPIConfig configures the yarilo-backend-api process -
 // the backend-plane HTTP admin surface (dict / acl / quota /
 // folder / user / mailbox / ...). One instance runs per backend
 // tag (or one per standalone deployment, where it serves the
@@ -1790,7 +1790,7 @@ type BackendAPIConfig struct {
 	// yarilo-backend-api dials it at startup via pkg/authclient and
 	// enriches `/api/backend/user/info` with userdb fields plus
 	// serves `/api/backend/user/iterate`. Empty disables both
-	// surfaces — useful for dev / smoke runs that have no
+	// surfaces - useful for dev / smoke runs that have no
 	// yarilo-auth instance to talk to.
 	AuthMasterAddr string `koanf:"auth_master_addr"`
 }
@@ -1806,7 +1806,7 @@ type AuthConfig struct {
 	Passdb []PassdbEntry `koanf:"passdb"`
 
 	// MasterUsers groups master-user impersonation
-	// settings. Disabled by default — distinct SASL PLAIN authzid
+	// settings. Disabled by default - distinct SASL PLAIN authzid
 	// is rejected by every protocol entry point (IMAP, POP3,
 	// Submission, wire yarilo-auth) until Enabled is flipped to
 	// true. When disabled, all other fields in this group are
@@ -1831,12 +1831,12 @@ type AuthConfig struct {
 	// "user exists, wrong password" from "user does not exist".
 	//
 	// Default 2 (seconds). Set to 0 to disable (mainly for test
-	// speed — production should always have it >0).
+	// speed - production should always have it >0).
 	FailureDelaySeconds      int `koanf:"auth_failure_delay"`
 	FailureDelaySecondsAlias int `koanf:"failure_delay"`
 
 	// InternalFailureDelayMs is the matching delay for INTERNAL
-	// failures — passdb backend down, SQL connection refused, etc.
+	// failures - passdb backend down, SQL connection refused, etc.
 	// Separate knob because internal failures often retry and the
 	// operator may want a shorter back-off than the user-facing
 	// FailureDelay. Default 2000ms.
@@ -1918,17 +1918,17 @@ type OAuth2Entry struct {
 	// Mode picks the validation transport. REQUIRED.
 	Mode OAuth2Mode `koanf:"oauth2_mode"`
 
-	// Endpoints — one of these must be set, per Mode.
+	// Endpoints - one of these must be set, per Mode.
 	JWKSURL          string `koanf:"oauth2_jwks_url"`
 	IntrospectionURL string `koanf:"oauth2_introspection_url"`
 	TokeninfoURL     string `koanf:"oauth2_tokeninfo_url"`
 	IssuerURL        string `koanf:"oauth2_issuer_url"`
 
 	// IntrospectionMode controls the introspection request shape.
-	// One of "post" (default — RFC 7662), "auth", "get".
+	// One of "post" (default - RFC 7662), "auth", "get".
 	IntrospectionMode string `koanf:"oauth2_introspection_mode"`
 
-	// PreferIntrospection (discovery mode only) — when true,
+	// PreferIntrospection (discovery mode only) - when true,
 	// prefers the introspection endpoint over JWKS when both are
 	// advertised in the discovery document.
 	PreferIntrospection bool `koanf:"oauth2_prefer_introspection"`
@@ -1960,7 +1960,7 @@ type OAuth2Entry struct {
 	// %n, %Ln, %d, %Ld.
 	UsernameValidationFormat string `koanf:"oauth2_username_validation_format"`
 
-	// ActiveAttribute / ActiveValue — optional check. The claim
+	// ActiveAttribute / ActiveValue - optional check. The claim
 	// named by ActiveAttribute must be present (and equal
 	// ActiveValue if non-empty) for the login to succeed.
 	ActiveAttribute string `koanf:"oauth2_active_attribute"`
@@ -2042,7 +2042,7 @@ type AuthPenaltyConfig struct {
 // to enter authenticated state without replaying credentials.
 type AuthTokenConfig struct {
 	// TTLSeconds is how long the token remains valid for the backend to
-	// consume. Default 60 s — enough for the login pod to forward it and
+	// consume. Default 60 s - enough for the login pod to forward it and
 	// the backend to call VERIFY within the same connection setup.
 	// auth.token is ours: the reference has no token store, so this key keeps
 	// its own name and is not part of the package-2 renames.
@@ -2083,7 +2083,7 @@ type AuthPolicyConfig struct {
 	HashNonce string `koanf:"auth_policy_hash_nonce"`
 
 	// HashTruncateBits caps the MSB bits of the digest. Default
-	// 12 (4096 buckets — useful for rate-limit patterns, useless
+	// 12 (4096 buckets - useful for rate-limit patterns, useless
 	// for password recovery). 0 means no truncation.
 	HashTruncateBits uint `koanf:"auth_policy_hash_truncate"`
 
@@ -2096,7 +2096,7 @@ type AuthPolicyConfig struct {
 	RejectOnFail bool `koanf:"auth_policy_reject_on_fail"`
 
 	// LogOnly: when true, the client still calls the server and
-	// logs decisions, but the decision is NOT enforced — used
+	// logs decisions, but the decision is NOT enforced - used
 	// for shadow-mode rollout before flipping the switch.
 	LogOnly bool `koanf:"auth_policy_log_only"`
 
@@ -2133,7 +2133,7 @@ type AuthPolicyConfig struct {
 // entries hold failed lookups (unknown user, wrong password).
 // Set cache_size>0 to enable.
 type AuthCacheConfig struct {
-	// CacheSize caps total payload weight (approximate — includes key + bag +
+	// CacheSize caps total payload weight (approximate - includes key + bag +
 	// per-entry overhead). Human-readable: a bare integer (bytes) or a 1024-based
 	// K/M/G/T suffix (e.g. "100M", "512k") via quota.ParseSize. Empty/0 disables
 	// caching. Resolved to bytes at load into cacheSizeBytes; read via
@@ -2170,7 +2170,7 @@ func (a AuthCacheConfig) CacheSizeBytes() int64 { return a.cacheSizeBytes }
 // model.
 type MasterUsersConfig struct {
 	// Enabled is the top-level opt-in. While false, distinct
-	// SASL PLAIN authzid is rejected unconditionally — the wire
+	// SASL PLAIN authzid is rejected unconditionally - the wire
 	// reply is indistinguishable from a wrong-password rejection.
 	// Default: false.
 	Enabled bool `koanf:"enabled"`
@@ -2178,7 +2178,7 @@ type MasterUsersConfig struct {
 	// Masterdb is the dedicated master-user chain. Entries share
 	// the PassdbEntry shape (same SQL drivers, same query syntax)
 	// but are only consulted when a SASL PLAIN client sends a
-	// distinct authzid — i.e. requests to impersonate another user.
+	// distinct authzid - i.e. requests to impersonate another user.
 	// A masterdb hit (correct master password) grants impersonation;
 	// the regular Passdb chain then runs against the TARGET to
 	// fetch their profile.
@@ -2193,8 +2193,8 @@ type MasterUsersConfig struct {
 	// (older Outlook, some mobile MUAs). The SASL response
 	// authid `alice*admin` then routes as if authzid had been
 	// `alice` and authid had been `admin`. Empty disables the
-	// workaround entirely — only RFC 4616 authzid is honoured.
-	// Default `*` — only takes effect when Enabled is true.
+	// workaround entirely - only RFC 4616 authzid is honoured.
+	// Default `*` - only takes effect when Enabled is true.
 	Separator      string `koanf:"auth_master_user_separator"`
 	SeparatorAlias string `koanf:"separator"`
 }
@@ -2333,7 +2333,7 @@ type StorageConfig struct {
 	VolatileDirAlias string `koanf:"volatile_dir"`
 
 	// The log-rotation triple governs BOTH transaction logs that share the
-	// mailindex mechanics — the per-folder file index and the mdbox map — as
+	// mailindex mechanics - the per-folder file index and the mdbox map - as
 	// one policy, the way the reference covers both from its index layer.
 	//
 	//	below min          never rotate
@@ -2460,7 +2460,7 @@ type TelemetryConfig struct {
 	LivenessWatchdog LivenessWatchdogConfig `koanf:"liveness_watchdog"`
 	// PprofEnabled serves the Go runtime profilers on the telemetry port:
 	// CPU, execution trace, and the allocation, goroutine, block and mutex
-	// profiles. Off by default — it is a switch thrown for the duration of an
+	// profiles. Off by default - it is a switch thrown for the duration of an
 	// investigation, and the process logs a warning at every start while it is
 	// on, because the failure mode is leaving it enabled and forgetting.
 	//
@@ -2477,7 +2477,7 @@ type TelemetryConfig struct {
 	//
 	// It is its own key rather than part of telemetry_pprof_enabled because the
 	// route and the sampling are different costs. With the route on and no rate,
-	// /debug/pprof/block answers 200 with an empty profile — an answer-shaped
+	// /debug/pprof/block answers 200 with an empty profile - an answer-shaped
 	// silence. With a rate, every blocking operation in the process pays. Turn
 	// it on for a measurement window and off afterwards.
 	PprofBlockProfileRate int `koanf:"telemetry_block_profile_rate"`
@@ -2490,8 +2490,8 @@ type TelemetryConfig struct {
 // LivenessWatchdogConfig tunes the timer-driven liveness self-check (#904). It
 // is disabled by default: a component only opts in once it has a self-check
 // worth restarting on, so a fleet without one keeps today's unconditional
-// /healthz. The knobs match the guard-rails — a timeout shorter than the
-// interval and a consecutive-failure threshold — so a single slow storage call
+// /healthz. The knobs match the guard-rails - a timeout shorter than the
+// interval and a consecutive-failure threshold - so a single slow storage call
 // cannot restart a busy pod.
 type LivenessWatchdogConfig struct {
 	Enabled bool `koanf:"liveness_watchdog_enabled"`
@@ -2610,7 +2610,7 @@ func Defaults() *Config {
 				Separator: "*",
 			},
 			// 2s for client-visible failures, 2000ms for internal.
-			// Cache off by default — operators opt in by setting
+			// Cache off by default - operators opt in by setting
 			// auth.cache.cache_size>0. TTLs are 30m to keep
 			// password-change / user-delete staleness windows
 			// tight in environments without explicit cache
@@ -2642,7 +2642,7 @@ func Defaults() *Config {
 			AssignmentPolicy:      "hash",
 			API: DirectorAPIConfig{
 				Listen: ":9103",
-				// No default IP restriction — service/pod CIDRs differ per
+				// No default IP restriction - service/pod CIDRs differ per
 				// cluster/CNI, so a hardcoded guess here (kubeadm's
 				// 10.96.0.0/12 + 10.244.0.0/16 was tried and silently
 				// 403'd every request on clusters using different ranges,
@@ -3003,7 +3003,7 @@ func (cfg *Config) validate() error {
 	// Resolve every human-readable size field to bytes once (quota.ParseSize is
 	// the shared K/M/G/T parser, same as mdbox_rotate_size / quota_mail_size), so
 	// consumers read a plain int64. A non-empty value that parses to 0 is a
-	// malformed size — fail startup loudly rather than silently disabling it.
+	// malformed size - fail startup loudly rather than silently disabling it.
 	var serr error
 	resolve := func(name, raw string, dst *int64) {
 		if serr != nil {

@@ -745,7 +745,7 @@ data:
 
     {{- $storage := .Values.storage }}
     {{- if and $storage $storage.volatileDir }}
-    {{- fail "storage.volatileDir is not read by this chart; the key is storage.volatile_dir. Rename it — as written, the index tmp file keeps its fsync on the mail volume." }}
+    {{- fail "storage.volatileDir is not read by this chart; the key is storage.volatile_dir. Rename it - as written, the index tmp file keeps its fsync on the mail volume." }}
     {{- end }}
     {{- if $storage }}
     storage:
@@ -864,7 +864,7 @@ data:
 
     {{- include "yarilo.internalTLSNoComponentFlags" . }}
     internal_tls:
-      {{- /* Single source for "internal mTLS on anywhere" — the same helper yarctl's
+      {{- /* Single source for "internal mTLS on anywhere" - the same helper yarctl's
              backend client keys on (#954), so the server-HTTPS decision and the
              admin-client decision can never drift. */}}
       {{- $anyTLS := eq (include "yarilo.internalTLSEnabled" .) "true" }}
@@ -1042,7 +1042,7 @@ data:
 
     {{- end }}
     {{- if hasKey .Values.components.auth "wait_pool_size" }}
-    {{- fail "components.auth.wait_pool_size is not read by this chart; the key is components.locks.client.wait_pool_size. Move it — as written, the lock client keeps the default." }}
+    {{- fail "components.auth.wait_pool_size is not read by this chart; the key is components.locks.client.wait_pool_size. Move it - as written, the lock client keeps the default." }}
     {{- end }}
     ## Every session binary (yarilo-imap / pop3 / submission / lmtp) dials this.
     locks_client:
@@ -1149,7 +1149,7 @@ data:
       ## (#763) can poll each peer directly. The ClusterIP -director
       ## resolves to a single virtual IP, which load-balances every dial
       ## randomly (including back to self) and silently reintroduces the
-      ## formation partition #759 fought — that Service stays the LOOKUP
+      ## formation partition #759 fought - that Service stays the LOOKUP
       ## endpoint for login pods, not the ring seed. A lone replica
       ## (N=1) needs no seed at all.
       {{- $peers := .Values.components.director.peers }}
@@ -1174,7 +1174,7 @@ data:
     ## yarilo-backend-reg sidecar (one BACKEND-UP for the pod IP) and by the
     ## protocol containers' readiness touchers. An empty director_addr disables
     ## registration (standalone / non-cluster runs). director_addr auto-derives
-    ## to the ClusterIP -director Service — the same LOOKUP endpoint — when
+    ## to the ClusterIP -director Service - the same LOOKUP endpoint - when
     ## register is enabled and no explicit override is set; any replica answers,
     ## the registration gossips ring-wide.
     {{- $reg := .Values.backend_register }}
@@ -1192,7 +1192,7 @@ data:
       readiness_stale_after: {{ $reg.readiness_stale_after }}
       {{- /* The sidecar gate must wait on exactly the protocols that actually
              run in the pod. Under co-located, derive the list from the same
-             components.<proto>.enabled flags the StatefulSet filters on — a
+             components.<proto>.enabled flags the StatefulSet filters on - a
              disabled protocol has no ready-file and would otherwise silence the
              heartbeat forever. Otherwise fall back to the explicit values list. */}}
       {{- if .Values.components.backend.coLocated }}

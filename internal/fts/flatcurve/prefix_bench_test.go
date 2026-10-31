@@ -11,7 +11,7 @@ import (
 )
 
 // benchIndex builds an index of docs messages over a vocabulary wide enough
-// that a short prefix matches a large part of it — which is the condition the
+// that a short prefix matches a large part of it - which is the condition the
 // setting exists for.
 func benchIndex(b *testing.B, prefix string) (fts.UserIndex, []string) {
 	b.Helper()

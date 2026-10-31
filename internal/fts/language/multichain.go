@@ -22,14 +22,14 @@ const detectionAlgoVersion = 3
 //     auto-detected from that part's own text, falling back to the first
 //     configured language when the sample is short/ambiguous (buildmail owns
 //     the per-part sampling). Headers are not language text and never go
-//     through detection — see buildmail's dedicated data chain.
+//     through detection - see buildmail's dedicated data chain.
 //   - Search expands each query token through EVERY configured language's
 //     filter chain, OR-ing the results, so a query matches content indexed
 //     under any configured language without knowing which one a part detected
 //     as.
 //
 // A single configured language degenerates to the plain single-Chain behaviour
-// (chains[0] always selected, no detector call) — one code path serves both.
+// (chains[0] always selected, no detector call) - one code path serves both.
 type MultiChain struct {
 	chains        []*Chain
 	languages     []string // parallel to chains; chains[0]/languages[0] is the fallback
@@ -88,14 +88,14 @@ func NewMultiChain(languages []string, filters []string, filtersOverride map[str
 }
 
 // NeedsDetection reports whether TryDetect/SelectForIndex would use their
-// sample argument — false with one language configured, so callers can skip
+// sample argument - false with one language configured, so callers can skip
 // collecting a sample entirely.
 func (m *MultiChain) NeedsDetection() bool {
 	return len(m.chains) > 1
 }
 
 // TryDetect attempts detection only, without falling back to the default
-// language on failure — callers that can cheaply grow their sample use this to
+// language on failure - callers that can cheaply grow their sample use this to
 // decide whether a retry is worthwhile before calling SelectForIndex.
 // ok=false means the sample was too short/ambiguous to trust.
 func (m *MultiChain) TryDetect(sample string) (chain *Chain, lang string, ok bool) {
@@ -183,7 +183,7 @@ func (m *MultiChain) SettingsChecksum() uint32 {
 		if m.overridden[m.languages[i]] {
 			// The override's mere presence in config is part of the
 			// configuration, even when its resolved filter list matches the
-			// global default — mixed in independent of the per-chain checksum
+			// global default - mixed in independent of the per-chain checksum
 			// above (which covers only the resolved Filters/Language/limits,
 			// not where they came from).
 			mix(0x726)

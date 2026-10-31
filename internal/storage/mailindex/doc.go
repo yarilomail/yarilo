@@ -4,13 +4,13 @@
 // Three on-disk files use this format and are all encoded by this
 // package:
 //
-//   - yarilo.index            — base index (header + records)
-//   - yarilo.index.log       — transaction log
-//   - yarilo.map.index       — mdbox global map (same format,
+//   - yarilo.index            - base index (header + records)
+//   - yarilo.index.log       - transaction log
+//   - yarilo.map.index       - mdbox global map (same format,
 //     different registered extensions)
 //
 // The package is intentionally low-level: it knows about bytes,
-// records, extensions, and transaction types — nothing about
+// records, extensions, and transaction types - nothing about
 // mailboxes, IMAP, or storage drivers. Higher layers
 // (internal/storage/index/file for per-folder index;
 // internal/storage/mailbox/mdbox/mdboxmap for mdbox map) build

@@ -23,7 +23,7 @@ func dispatchFTS(args []string) error {
 	case "lookup":
 		return ftsLookup(args[1:])
 	default:
-		return fmt.Errorf("unknown fts command %q — available: status, rescan, optimize, lookup", args[0])
+		return fmt.Errorf("unknown fts command %q - available: status, rescan, optimize, lookup", args[0])
 	}
 }
 
@@ -53,15 +53,15 @@ func printFTSUsage() {
 	fmt.Println(`yarctl fts <command>
 
 Commands:
-  status   <user> --folder NAME     — per-mailbox indexing checkpoint
-  rescan   <user> [--folder NAME]   — reconcile the index against the mailbox;
+  status   <user> --folder NAME     - per-mailbox indexing checkpoint
+  rescan   <user> [--folder NAME]   - reconcile the index against the mailbox;
                                        without --folder every folder is rescanned
-  optimize <user>                   — compact every index owned by the user
+  optimize <user>                   - compact every index owned by the user
                                        (mailboxes past fts_flatcurve_optimize_limit
                                        are also auto-compacted in the background;
                                        this forces it immediately, whole-user)
   lookup   <user> [--folder NAME] [--header NAME:VALUE] [--body TEXT] [--text TEXT]
-                                    — ask the index what SEARCH would, with the
+                                    - ask the index what SEARCH would, with the
                                        query built as SEARCH builds it; flags repeat
                                        and are ANDed
 

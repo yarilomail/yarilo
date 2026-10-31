@@ -76,7 +76,7 @@ func TestBackendLease_RefreshedHeartbeatSurvives(t *testing.T) {
 }
 
 // TestBackendLease_NeverExpiresLastOfTag: the last backend of a tag is kept
-// even when its lease is stale — a suspect-but-only backend beats a total
+// even when its lease is stale - a suspect-but-only backend beats a total
 // blackhole.
 func TestBackendLease_NeverExpiresLastOfTag(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{BackendExpire: 50 * time.Millisecond}))
@@ -139,7 +139,7 @@ func TestBackendLease_StaticNeverManaged(t *testing.T) {
 
 // TestBackendLease_GossipedHeartbeatRefreshes: a heartbeat that lands on ANY
 // director (here applied as the gossiped RING-CHANGE up with a seq) refreshes
-// this director's lease — the property that makes a load-balanced heartbeat
+// this director's lease - the property that makes a load-balanced heartbeat
 // correct (#776).
 func TestBackendLease_GossipedHeartbeatRefreshes(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{}))
@@ -159,7 +159,7 @@ func TestBackendLease_GossipedHeartbeatRefreshes(t *testing.T) {
 // TestBackendLease_GossipedUpAddsUnknownBackend: a lease-managed "up" gossip
 // carries port + vhosts, so a director that has NEVER seen this backend (the
 // registration is a persistent connection to only 1 of N directors via the
-// ClusterIP) adds it to its ring for routing — closing the "routed on 1 of N
+// ClusterIP) adds it to its ring for routing - closing the "routed on 1 of N
 // directors" gap (#776 PR-2). Without the port, SetUp alone could not.
 func TestBackendLease_GossipedUpAddsUnknownBackend(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{}))

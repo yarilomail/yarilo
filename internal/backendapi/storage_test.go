@@ -187,7 +187,7 @@ func TestUserInfoExposesNamespacesAndHome(t *testing.T) {
 		t.Fatalf("namespaces=%+v want 1 personal", resp.Namespaces)
 	}
 	if !resp.Namespaces[0].Exists {
-		// user/info does NOT auto-init — exists reflects the actual
+		// user/info does NOT auto-init - exists reflects the actual
 		// home dir state. Trigger init via a folder call first.
 		materialiseHome(t, ts, user)
 		_, body = doJSON(t, ts, http.MethodPost, "/api/backend/user/info", "", map[string]any{"user": user})
@@ -214,7 +214,7 @@ func TestSubscriptionsRoundTrip(t *testing.T) {
 		t.Fatalf("add status=%d body=%s", status, body)
 	}
 
-	// list — must be sorted
+	// list - must be sorted
 	status, body = doJSON(t, ts, http.MethodPost, "/api/backend/subscriptions/list", "",
 		map[string]any{"user": user})
 	if status != 200 {
@@ -405,7 +405,7 @@ func TestIndexDumpEmptyAfterInit(t *testing.T) {
 }
 
 // openIfExists is a small wrapper so the test does not depend on
-// os.Stat semantics — returns nil err when path resolves.
+// os.Stat semantics - returns nil err when path resolves.
 func openIfExists(path string) (any, error) {
 	return dirExists(path), nil
 }

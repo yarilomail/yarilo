@@ -114,7 +114,7 @@ func TestUserKill_TimeoutFallthrough(t *testing.T) {
 // TestApiUserKick_StartsKilling is the #858 Defect 2 guard: the operator-facing
 // admin kick (POST /users/{user}/kick → apiUserKick, i.e. yarctl director users
 // kick) must engage the confirmed-kick killing state like the wire handleUserKick
-// does — otherwise it leaves the split-writer window fully open.
+// does - otherwise it leaves the split-writer window fully open.
 func TestApiUserKick_StartsKilling(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{}))
 	const user = "u@example.com"

@@ -1,7 +1,7 @@
 // Package jmap is the JMAP backend: the pod that owns one user's state and
-// answers the JMAP methods for it. It performs no authentication of its own —
+// answers the JMAP methods for it. It performs no authentication of its own -
 // yarilo-jmap-login has already run the passdb chain and asserts the user in a
-// request header — so everything here rests on the trust gate in trust.go.
+// request header - so everything here rests on the trust gate in trust.go.
 //
 // The protocol layer itself lives in pkg/jmapcore, which knows nothing about
 // yarilo.
@@ -143,7 +143,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	// An unanchored backend keeps its port bound and answers 403 with a named
 	// cause. A dead port reads as a network fault and misdirects the operator.
 	if s.opts.Trust.Mode == TrustNone {
-		slog.Error("jmap: no trust anchor for the login hop — set internal_tls or xclient.trusted_nets; every request will be refused")
+		slog.Error("jmap: no trust anchor for the login hop - set internal_tls or xclient.trusted_nets; every request will be refused")
 	}
 	srv := &http.Server{
 		Addr:              s.opts.Addr,

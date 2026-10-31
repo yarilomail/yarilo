@@ -116,8 +116,8 @@ func (f failingLocker) LockShared(ctx context.Context, resource, owner string, t
 	return f.Lock(ctx, resource, owner, ttl)
 }
 
-// Falling back to the defaults is the right answer — a presentation hint is not
-// worth failing a LIST over — but it must not be a silent one. A degraded
+// Falling back to the defaults is the right answer - a presentation hint is not
+// worth failing a LIST over - but it must not be a silent one. A degraded
 // answer nobody is told about cannot be told apart from a correct one, which is
 // the failure this whole change is about.
 func TestUnreadableOverridesFallBackLoudly(t *testing.T) {

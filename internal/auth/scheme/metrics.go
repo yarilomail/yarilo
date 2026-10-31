@@ -12,7 +12,7 @@ import (
 // login slowdown caused by a raised cost factor is indistinguishable from a slow
 // passdb query without this split.
 //
-// The metric is emitted by whichever process performs the verification — that is
+// The metric is emitted by whichever process performs the verification - that is
 // yarilo-auth for wire logins, and the session binaries for in-process auth.
 var verifySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Namespace: "yarilo",

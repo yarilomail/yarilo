@@ -10,7 +10,7 @@ import (
 )
 
 // TestDirectorLivenessCheckHappy: a live server and an open (or absent) gate
-// pass — the ring mutex is acquirable. (That Len actually blocks under a real
+// pass - the ring mutex is acquirable. (That Len actually blocks under a real
 // write-hold is covered white-box in internal/cluster/ring.)
 func TestDirectorLivenessCheckHappy(t *testing.T) {
 	srv := director.NewWithOptions(director.Options{})
@@ -30,7 +30,7 @@ func TestDirectorLivenessCheckNilServer(t *testing.T) {
 }
 
 // TestDirectorLivenessCheckGateWedged: a wedged gate fails on the deadline even
-// though the ring is fine — the injected-deadlock path.
+// though the ring is fine - the injected-deadlock path.
 func TestDirectorLivenessCheckGateWedged(t *testing.T) {
 	srv := director.NewWithOptions(director.Options{})
 	gate := telemetry.NewGate()

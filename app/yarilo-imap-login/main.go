@@ -99,8 +99,8 @@ func main() {
 	xclientNets := parseCIDRs(cfg.General.XClient.TrustedNets)
 	localIP := os.Getenv("POD_IP")
 	// dirAddr must be the REMOTE yarilo-director service address
-	// (imap_login_service.director_addr), never cfg.DirectorService.Listen
-	// — that's this process's own in-process director bind address, used
+	// (imap_login_service.director_addr), never cfg.DirectorService.Listen -
+	// that's this process's own in-process director bind address, used
 	// only by standalone deployments that embed the director locally; a
 	// k8s director deployment has no director running in THIS pod at all,
 	// so falling back to it silently dialed localhost where nothing
@@ -120,7 +120,7 @@ func main() {
 
 	tel := startTelemetry(cfg.Telemetry)
 
-	// Port 993 — implicit TLS (IMAPS).
+	// Port 993 - implicit TLS (IMAPS).
 	if svcs.IMAPS.Active() {
 		addr := fmt.Sprintf(":%d", svcs.IMAPS.Port)
 		ln, err := net.Listen("tcp", addr)
@@ -173,7 +173,7 @@ func main() {
 		slog.Info("imap-login: listening", "addr", addr, "tls", "implicit")
 	}
 
-	// Port 143 — STARTTLS.
+	// Port 143 - STARTTLS.
 	if svcs.IMAP.Active() {
 		addr := fmt.Sprintf(":%d", svcs.IMAP.Port)
 		ln, err := net.Listen("tcp", addr)

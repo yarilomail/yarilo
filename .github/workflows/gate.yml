@@ -1,4 +1,4 @@
-name: Gate — lint and test
+name: Gate - lint and test
 
 ## The single gate both branch pipelines run. One copy, because two copies of a
 ## gate drift, and the day they differ is the day something merges into one
@@ -94,7 +94,7 @@ jobs:
 
       ## Pinned, and only rebuilt when the pin changes: `@latest` recompiled the
       ## linter on every run and silently changed the ruleset under us, so a
-      ## green PR could go red on merge without a code change. v1 is required —
+      ## green PR could go red on merge without a code change. v1 is required -
       ## .golangci.yml is v1 format (it enables `gosimple`, which v2 folded into
       ## staticcheck), so bumping to v2 needs a config migration first.
       - name: Install golangci-lint
@@ -138,6 +138,10 @@ jobs:
       # here instead of waiting for the next sweep (#1620).
       - name: Check the comment share
         run: go run ./hack/commentcensus -check
+
+      # A line that tests the character itself is listed in hack/commentcensus/emdash.json.
+      - name: No em dash in the tree
+        run: go run ./hack/commentcensus -dashes
 
       - name: Run govulncheck
         run: |

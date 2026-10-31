@@ -103,7 +103,7 @@ func TestADottedNameIsOneMailboxOnEveryDriver(t *testing.T) {
 			case "Invoices.2026":
 				found++
 			case "Invoices", "Invoices/2026":
-				t.Errorf("%s: listed %q — the name was reinterpreted as nesting", driver, f.Name)
+				t.Errorf("%s: listed %q - the name was reinterpreted as nesting", driver, f.Name)
 			}
 		}
 		if found != 1 {

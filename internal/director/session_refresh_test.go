@@ -6,7 +6,7 @@ import (
 )
 
 // TestTouch_ExtendsTTLPreservesStamp: Touch bumps ExpiresAt without changing the
-// assignment stamp or host (#708 PR-B) — a refresh, not a re-assignment.
+// assignment stamp or host (#708 PR-B) - a refresh, not a re-assignment.
 func TestTouch_ExtendsTTLPreservesStamp(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))
 	h := s.userDir.Set("u@d.test", "10.0.0.1:10143", false)

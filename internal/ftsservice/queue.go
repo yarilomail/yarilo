@@ -28,7 +28,7 @@ type job struct {
 	attempt int
 }
 
-// jobKey identifies the work, which is a mailbox — not a request. Several
+// jobKey identifies the work, which is a mailbox - not a request. Several
 // requests for one mailbox are one pass over it.
 type jobKey struct {
 	user   string
@@ -58,7 +58,7 @@ type entry struct {
 //
 // Coalescing is a correctness property, not an optimisation. A pass reads the
 // checkpoint and indexes everything above it, so two passes over one mailbox do
-// the same work twice — and the second discovers this only after taking the
+// the same work twice - and the second discovers this only after taking the
 // lock. Under delivery load those duplicates are what turn a busy mailbox into
 // a stream of lock contention.
 //
@@ -67,7 +67,7 @@ type entry struct {
 // new messages. It is recorded on the running entry and re-queued when the pass
 // finishes, so nothing is lost and nothing is duplicated.
 //
-// Ordering is FIFO with a priority front-insert — a search catch-up jumps ahead
+// Ordering is FIFO with a priority front-insert - a search catch-up jumps ahead
 // of background autoindex. A front-insert for a mailbox already queued moves it
 // rather than adding a second entry.
 type queue struct {
@@ -149,7 +149,7 @@ func (q *queue) wake() {
 // rather than becoming a second pass.
 //
 // Every popped job must be handed back through done, or that mailbox is never
-// queued again — the caller defers it immediately after popping.
+// queued again - the caller defers it immediately after popping.
 func (q *queue) pop(ctx context.Context) (job, bool) {
 	stop := context.AfterFunc(ctx, func() {
 		q.mu.Lock()
@@ -221,7 +221,7 @@ func (q *queue) done(j job) {
 		q.busy[key.user] = n - 1
 	}
 	// A freed user may unblock a worker parked on an entry it had to skip, and
-	// which worker that is cannot be known here — so every waiter is woken.
+	// which worker that is cannot be known here - so every waiter is woken.
 	defer q.cond.Broadcast()
 	if !e.requeue || q.closed {
 		delete(q.index, key)

@@ -18,13 +18,13 @@
   </defs>
 
   <rect width="1240" height="840" fill="#f8fafc"/>
-  <text x="510" y="22" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="bold">yarilo — director deployment · shared services · backend pool</text>
+  <text x="510" y="22" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="bold">yarilo - director deployment · shared services · backend pool</text>
 
   <!-- ══════════════════════════════════════════════════
        External top row: shared services + MUA + MTA
   ══════════════════════════════════════════════════ -->
 
-  <!-- Shared services (auth + warden only — no locks here) -->
+  <!-- Shared services (auth + warden only - no locks here) -->
   <rect x="20" y="50" width="230" height="80" rx="6" fill="#fffbeb" stroke="#a16207" stroke-width="2"/>
   <text x="135" y="65" text-anchor="middle" fill="#a16207" font-size="11" font-weight="bold">shared services · mTLS</text>
   <text x="135" y="74" text-anchor="middle" fill="#a16207" font-size="8">k8s: Deployments × 2</text>

@@ -21,7 +21,7 @@ var (
 	// backendSessions is the current number of active proxied sessions per
 	// backend IP (summed across all protocols), sourced from the SESSION-OPEN/
 	// SESSION-CLOSE registry (sessByBE). Each director exposes the sessions of
-	// the login pods connected to IT — a session is reported to exactly one
+	// the login pods connected to IT - a session is reported to exactly one
 	// director, so sum across directors (sum by (ip)) for the cluster total.
 	backendSessions = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "yarilo",
@@ -54,7 +54,7 @@ var (
 
 	// joinAccepted / joinRejected count ring DIRECTOR-JOIN outcomes (#750).
 	// Rejected includes: no ring secret configured, malformed proof, and
-	// HMAC mismatch — the counter alone doesn't distinguish which; the
+	// HMAC mismatch - the counter alone doesn't distinguish which; the
 	// accompanying slog.Warn does.
 	joinAccepted = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "yarilo",
@@ -71,7 +71,7 @@ var (
 
 	// lookupSeconds is the login-blocking path: a login proxy cannot route
 	// until LOOKUP answers. The result label separates a healthy assignment
-	// from the two states that make a login retry — `killing` (confirmed-kick
+	// from the two states that make a login retry - `killing` (confirmed-kick
 	// hold, retryable by design) and `no_backends`.
 	lookupSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "yarilo",

@@ -12,24 +12,24 @@ import (
 )
 
 // registerACLRoutes wires the RFC 4314 ACL admin surface. Reuses
-// internal/userstate/acl.Store — same on-disk format (yarilo-acl
+// internal/userstate/acl.Store - same on-disk format (yarilo-acl
 // per-mailbox + yarilo-acl-list namespace-wide index) and the same
 // locks as the IMAP SETACL / DELETEACL paths, so concurrent IMAP
 // sessions see admin writes immediately.
 //
 // Endpoints:
 //
-//	POST /api/backend/acl/list    — every mailbox with an explicit ACL
-//	POST /api/backend/acl/get     — parsed ACL for one mailbox
-//	POST /api/backend/acl/set     — replace ACL for one mailbox
-//	POST /api/backend/acl/apply   — add/remove/replace ONE identifier, atomic
-//	POST /api/backend/acl/delete  — drop ACL for one mailbox
-//	POST /api/backend/acl/materialise — write inherited entries into the ACL
+//	POST /api/backend/acl/list    - every mailbox with an explicit ACL
+//	POST /api/backend/acl/get     - parsed ACL for one mailbox
+//	POST /api/backend/acl/set     - replace ACL for one mailbox
+//	POST /api/backend/acl/apply   - add/remove/replace ONE identifier, atomic
+//	POST /api/backend/acl/delete  - drop ACL for one mailbox
+//	POST /api/backend/acl/materialise - write inherited entries into the ACL
 //	                                of each mailbox that lacks them (repair for
 //	                                mailboxes created before inheritance was
 //	                                materialised at creation); dry_run unless
 //	                                asked otherwise
-//	POST /api/backend/acl/rebuild — reseed namespace-wide index from
+//	POST /api/backend/acl/rebuild - reseed namespace-wide index from
 //	                                per-mailbox files (folders arg
 //	                                supplied by caller)
 func (s *Server) registerACLRoutes() {

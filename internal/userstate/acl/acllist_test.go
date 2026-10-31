@@ -167,10 +167,10 @@ func TestList_RenameMissingFileIsNoop(t *testing.T) {
 func TestList_LookupAppliesEffectiveSemantics(t *testing.T) {
 	home := t.TempDir()
 	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
-	// Box A: bob has 'lr' — visible to lookup.
-	// Box B: bob has only 's' (no 'l') — NOT visible.
-	// Box C: anyone has 'l', bob has '-l' negative — masked.
-	// Box D: bob has nothing — NOT visible.
+	// Box A: bob has 'lr' - visible to lookup.
+	// Box B: bob has only 's' (no 'l') - NOT visible.
+	// Box C: anyone has 'l', bob has '-l' negative - masked.
+	// Box D: bob has nothing - NOT visible.
 	if err := s.Set("A", mailbox.ACL{
 		{Identifier: mailbox.Identifier{Type: mailbox.IDUser, Name: "bob"}, Rights: "lr"},
 	}); err != nil {

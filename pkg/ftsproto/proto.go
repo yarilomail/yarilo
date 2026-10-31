@@ -2,7 +2,7 @@
 // session processes and the yarilo-fts service, plus the client. One
 // protocol for both modes (embedded and remote), the pkg/locks pattern.
 //
-//	> VERSION\t1\n                                  — handshake
+//	> VERSION\t1\n                                  - handshake
 //	< VERSION\t1\tOK\n
 //	> INDEX\t<user>\t<folder>\t<guid>\t<uidvalidity>\t<maxuid>\t<maxrecent>\n
 //	> PREPEND\t<user>\t<folder>\t<guid>\t<uidvalidity>\t<maxuid>\n

@@ -117,7 +117,7 @@ func TestLMTP_WhitespaceBeforePath_Integration(t *testing.T) {
 		}
 	}
 
-	// Send MAIL FROM with a space before < — workaround should fix it
+	// Send MAIL FROM with a space before < - workaround should fix it
 	fmt.Fprintf(conn, "MAIL FROM: <sender@external.com>\r\n")
 	sc.Scan()
 	if !strings.HasPrefix(sc.Text(), "250") {

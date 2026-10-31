@@ -32,7 +32,7 @@ var indexOnlyProperties = map[string]bool{
 
 // The classification decides what a request must do; validation decides what it
 // may name. Both read the struct, so the two can only disagree if a name is
-// classified without a field behind it — which is what "headers" was until
+// classified without a field behind it - which is what "headers" was until
 // #1034: requested, therefore the message was read, and answered with nothing.
 //
 // After #1035 that shape is worse than wasteful. A property classified with no
@@ -51,7 +51,7 @@ func TestEveryClassifiedPropertyHasAField(t *testing.T) {
 }
 
 // The other direction: a field nobody classified is answered from the index,
-// and if that is not true it comes back as a zero value with no error — the
+// and if that is not true it comes back as a zero value with no error - the
 // failure #1031 exists to prevent.
 func TestEveryFieldIsClassifiedOrIndexOnly(t *testing.T) {
 	for name := range jsonFields(reflect.TypeOf(Email{})) {
@@ -75,7 +75,7 @@ func TestEveryFieldIsClassifiedOrIndexOnly(t *testing.T) {
 //
 // Expressed through the same helper as Mailbox and Thread, deliberately. It was
 // four bespoke tests here and one shared helper there, and the difference was
-// enough for a reviewer to conclude Email had no coverage at all — which is the
+// enough for a reviewer to conclude Email had no coverage at all - which is the
 // cost of a guard nobody can find, and how one comes to be written twice.
 func TestEmailMatchesTheSpecification(t *testing.T) {
 	assertPropertySet(t, "Email", reflect.TypeOf(Email{}), specEmailProperties)

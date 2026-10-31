@@ -78,7 +78,7 @@ func buildMasterTestServer(t *testing.T, auth Authenticator) (string, func()) {
 	return ln.Addr().String(), func() { ln.Close() }
 }
 
-// TestSubmission_AuthPlain_MasterUserImpersonates — SASL PLAIN
+// TestSubmission_AuthPlain_MasterUserImpersonates - SASL PLAIN
 // with authzid=alice authid=admin password=adminpass. The master
 // flow accepts and the SMTP session continues as alice (verified
 // indirectly: AUTH succeeds and MAIL FROM goes through).
@@ -102,7 +102,7 @@ func TestSubmission_AuthPlain_MasterUserImpersonates(t *testing.T) {
 	}
 }
 
-// TestSubmission_AuthPlain_MasterWrongPasswordRejected — wrong
+// TestSubmission_AuthPlain_MasterWrongPasswordRejected - wrong
 // master password reaches the master flow and is rejected
 // opaquely.
 func TestSubmission_AuthPlain_MasterWrongPasswordRejected(t *testing.T) {
@@ -122,7 +122,7 @@ func TestSubmission_AuthPlain_MasterWrongPasswordRejected(t *testing.T) {
 	}
 }
 
-// TestSubmission_AuthPlain_UnregisteredTargetRejected — master
+// TestSubmission_AuthPlain_UnregisteredTargetRejected - master
 // authenticates but the target is not in the allow-list.
 func TestSubmission_AuthPlain_UnregisteredTargetRejected(t *testing.T) {
 	auth := stubMasterAuth{
@@ -141,7 +141,7 @@ func TestSubmission_AuthPlain_UnregisteredTargetRejected(t *testing.T) {
 	}
 }
 
-// TestSubmission_AuthPlain_NoAuthzidIsRegularLogin — empty
+// TestSubmission_AuthPlain_NoAuthzidIsRegularLogin - empty
 // authzid goes through the plain Authenticator path.
 func TestSubmission_AuthPlain_NoAuthzidIsRegularLogin(t *testing.T) {
 	auth := stubMasterAuth{
@@ -159,7 +159,7 @@ func TestSubmission_AuthPlain_NoAuthzidIsRegularLogin(t *testing.T) {
 	}
 }
 
-// TestSubmission_AuthPlain_AuthzidEqualsAuthidIsRegularLogin —
+// TestSubmission_AuthPlain_AuthzidEqualsAuthidIsRegularLogin -
 // RFC 4616 permits authzid == authid; treat as regular login.
 func TestSubmission_AuthPlain_AuthzidEqualsAuthidIsRegularLogin(t *testing.T) {
 	auth := stubMasterAuth{
@@ -177,7 +177,7 @@ func TestSubmission_AuthPlain_AuthzidEqualsAuthidIsRegularLogin(t *testing.T) {
 	}
 }
 
-// TestSubmission_AuthPlain_BackendWithoutMasterSupport — stubAuth
+// TestSubmission_AuthPlain_BackendWithoutMasterSupport - stubAuth
 // only implements Authenticator; a distinct authzid must be
 // rejected opaquely.
 func TestSubmission_AuthPlain_BackendWithoutMasterSupport(t *testing.T) {

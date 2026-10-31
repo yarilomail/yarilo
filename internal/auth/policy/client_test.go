@@ -41,7 +41,7 @@ func newPolicyServer(t *testing.T, status int, respBody string) (*httptest.Serve
 	return srv, cap
 }
 
-// TestNew_DisabledURL — empty URL returns (nil, nil) so callers
+// TestNew_DisabledURL - empty URL returns (nil, nil) so callers
 // can skip without nil-checking everywhere.
 func TestNew_DisabledURL(t *testing.T) {
 	c, err := New(Config{})
@@ -58,7 +58,7 @@ func TestNew_DisabledURL(t *testing.T) {
 	}
 }
 
-// TestNew_RequiresNonce — set URL, no nonce → error.
+// TestNew_RequiresNonce - set URL, no nonce → error.
 func TestNew_RequiresNonce(t *testing.T) {
 	_, err := New(Config{URL: "http://x"})
 	if err == nil {
@@ -66,7 +66,7 @@ func TestNew_RequiresNonce(t *testing.T) {
 	}
 }
 
-// TestCheckBefore_AllowsOnZeroStatus — status==0 → Continue.
+// TestCheckBefore_AllowsOnZeroStatus - status==0 → Continue.
 func TestCheckBefore_AllowsOnZeroStatus(t *testing.T) {
 	srv, cap := newPolicyServer(t, 200, `{"status":0}`)
 	c, err := New(Config{URL: srv.URL, HashNonce: "salt"})
@@ -105,7 +105,7 @@ func TestCheckBefore_AllowsOnZeroStatus(t *testing.T) {
 	}
 }
 
-// TestCheckBefore_RejectsOnNegativeStatus — status<0 → Reject.
+// TestCheckBefore_RejectsOnNegativeStatus - status<0 → Reject.
 func TestCheckBefore_RejectsOnNegativeStatus(t *testing.T) {
 	srv, _ := newPolicyServer(t, 200, `{"status":-1,"msg":"too noisy"}`)
 	c, _ := New(Config{URL: srv.URL, HashNonce: "salt"})
@@ -121,7 +121,7 @@ func TestCheckBefore_RejectsOnNegativeStatus(t *testing.T) {
 	}
 }
 
-// TestCheckBefore_TarpitsOnPositiveStatus — status>0 → Continue
+// TestCheckBefore_TarpitsOnPositiveStatus - status>0 → Continue
 // with TarpitSecs set.
 func TestCheckBefore_TarpitsOnPositiveStatus(t *testing.T) {
 	srv, _ := newPolicyServer(t, 200, `{"status":5}`)
@@ -135,7 +135,7 @@ func TestCheckBefore_TarpitsOnPositiveStatus(t *testing.T) {
 	}
 }
 
-// TestCheckAfter_IncludesSuccessFields — CheckAfter payload has
+// TestCheckAfter_IncludesSuccessFields - CheckAfter payload has
 // success + policy_reject keys; CheckBefore does not.
 func TestCheckAfter_IncludesSuccessFields(t *testing.T) {
 	srv, cap := newPolicyServer(t, 200, `{"status":0}`)
@@ -149,7 +149,7 @@ func TestCheckAfter_IncludesSuccessFields(t *testing.T) {
 	}
 }
 
-// TestFailoverDecision_DefaultAllow — server unreachable AND
+// TestFailoverDecision_DefaultAllow - server unreachable AND
 // RejectOnFail=false → Continue.
 func TestFailoverDecision_DefaultAllow(t *testing.T) {
 	c, _ := New(Config{URL: "http://127.0.0.1:1", HashNonce: "salt", Timeout: 50 * time.Millisecond})
@@ -162,7 +162,7 @@ func TestFailoverDecision_DefaultAllow(t *testing.T) {
 	}
 }
 
-// TestFailoverDecision_RejectOnFail — opposite stance.
+// TestFailoverDecision_RejectOnFail - opposite stance.
 func TestFailoverDecision_RejectOnFail(t *testing.T) {
 	c, _ := New(Config{
 		URL: "http://127.0.0.1:1", HashNonce: "salt",
@@ -174,7 +174,7 @@ func TestFailoverDecision_RejectOnFail(t *testing.T) {
 	}
 }
 
-// TestLogOnly_IgnoresReject — log-only mode treats Reject as
+// TestLogOnly_IgnoresReject - log-only mode treats Reject as
 // continue (but caller's log surfaces the would-have-rejected).
 // Log-only ignores every action the server asks for, a tarpit as well as a
 // refusal, and a refusal on failure.
@@ -204,7 +204,7 @@ func TestLogOnlyActsOnNothing(t *testing.T) {
 	}
 }
 
-// TestAPIHeader_FormatKeyValue — "Key: value" → custom header.
+// TestAPIHeader_FormatKeyValue - "Key: value" → custom header.
 func TestAPIHeader_FormatKeyValue(t *testing.T) {
 	srv, cap := newPolicyServer(t, 200, `{"status":0}`)
 	c, _ := New(Config{URL: srv.URL, HashNonce: "salt", APIHeader: "X-Wforce: secret"})
@@ -214,7 +214,7 @@ func TestAPIHeader_FormatKeyValue(t *testing.T) {
 	}
 }
 
-// TestAPIHeader_FormatBare — bare value → X-API-Key.
+// TestAPIHeader_FormatBare - bare value → X-API-Key.
 func TestAPIHeader_FormatBare(t *testing.T) {
 	srv, cap := newPolicyServer(t, 200, `{"status":0}`)
 	c, _ := New(Config{URL: srv.URL, HashNonce: "salt", APIHeader: "secret"})
@@ -224,7 +224,7 @@ func TestAPIHeader_FormatBare(t *testing.T) {
 	}
 }
 
-// TestHash_DifferentNonceProducesDifferentHash — two nonces
+// TestHash_DifferentNonceProducesDifferentHash - two nonces
 // produce different pwhashes for the same user+password.
 func TestHash_DifferentNonceProducesDifferentHash(t *testing.T) {
 	c1, _ := New(Config{URL: "http://x", HashNonce: "n1"})
@@ -236,7 +236,7 @@ func TestHash_DifferentNonceProducesDifferentHash(t *testing.T) {
 	}
 }
 
-// TestHash_Truncate12Bits — 12 bits → 3 hex chars after the
+// TestHash_Truncate12Bits - 12 bits → 3 hex chars after the
 // non-significant nibble is masked off. Verify length is correct
 // (2 bytes hex = 4 chars, top 12 bits keep all 4).
 func TestHash_Truncate12Bits(t *testing.T) {
@@ -248,7 +248,7 @@ func TestHash_Truncate12Bits(t *testing.T) {
 	}
 }
 
-// TestHash_TruncateFull — 0 → no truncation, full sha256 = 64 hex.
+// TestHash_TruncateFull - 0 → no truncation, full sha256 = 64 hex.
 func TestHash_TruncateFull(t *testing.T) {
 	// 0 in Config goes through New's default to 12; pass explicit
 	// large value to disable.
@@ -259,7 +259,7 @@ func TestHash_TruncateFull(t *testing.T) {
 	}
 }
 
-// TestReportAfter_FireAndForget — report mode swallows non-OK
+// TestReportAfter_FireAndForget - report mode swallows non-OK
 // responses without surfacing errors.
 func TestReportAfter_FireAndForget(t *testing.T) {
 	srv, cap := newPolicyServer(t, 500, "broken")
@@ -270,7 +270,7 @@ func TestReportAfter_FireAndForget(t *testing.T) {
 	}
 }
 
-// TestURLAmpersandPreserved — URL ending in `&` extends the
+// TestURLAmpersandPreserved - URL ending in `&` extends the
 // query-string instead of starting one.
 func TestURLAmpersandPreserved(t *testing.T) {
 	if got := joinCommand("http://x?tenant=42&", "allow"); got != "http://x?tenant=42&command=allow" {
@@ -281,7 +281,7 @@ func TestURLAmpersandPreserved(t *testing.T) {
 	}
 }
 
-// TestConcurrency_NoDataRace — hammer the client from many
+// TestConcurrency_NoDataRace - hammer the client from many
 // goroutines to flush out shared-state bugs.
 func TestConcurrency_NoDataRace(t *testing.T) {
 	var count int64

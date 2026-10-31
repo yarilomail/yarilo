@@ -21,8 +21,8 @@ func TestRelevancyScoresNormalization(t *testing.T) {
 		},
 		{
 			// A single-message result set has no spread to rank against
-			// (lo == hi), so diff defaults to 1.0 and the score floors to 1
-			// — same as the uniform-scores case below.
+			// (lo == hi), so diff defaults to 1.0 and the score floors to 1 -
+			// same as the uniform-scores case below.
 			name:  "single UID floors to 1 (no spread to normalize against)",
 			raw:   map[uint32]float64{1: 4.2},
 			order: []uint32{1},
@@ -55,8 +55,8 @@ func TestRelevancyScoresNormalization(t *testing.T) {
 		{
 			// Review finding: UID 2 has no engine score at all (e.g. matched
 			// only via a stripped non-FTS criterion). A plain map lookup
-			// defaults it to 0.0, which — if it were allowed into the range
-			// calculation — would drag lo down to 0 and compress every real
+			// defaults it to 0.0, which - if it were allowed into the range
+			// calculation - would drag lo down to 0 and compress every real
 			// score toward 100. It must be excluded from lo/hi and floored
 			// to 1 in the output, without altering UID 1/3's genuine scores.
 			name:  "score-less UID excluded from range, floored to 1",
@@ -65,7 +65,7 @@ func TestRelevancyScoresNormalization(t *testing.T) {
 			want:  []uint32{1, 1, 100},
 		},
 		{
-			// If EVERY UID lacks a score, there is no range at all — every
+			// If EVERY UID lacks a score, there is no range at all - every
 			// output floors to 1 rather than panicking or dividing by zero.
 			name:  "every UID score-less",
 			raw:   map[uint32]float64{},

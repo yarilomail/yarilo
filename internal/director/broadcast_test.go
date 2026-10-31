@@ -7,7 +7,7 @@ import (
 )
 
 // TestBroadcast_SlowClientDoesNotStall guards #704: a client whose socket never
-// drains must not block the broadcast fan-out — the per-write deadline bounds it.
+// drains must not block the broadcast fan-out - the per-write deadline bounds it.
 func TestBroadcast_SlowClientDoesNotStall(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{WriteTimeout: 100 * time.Millisecond}))
 
@@ -24,7 +24,7 @@ func TestBroadcast_SlowClientDoesNotStall(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("broadcast stalled on a slow client — write deadline not applied")
+		t.Fatal("broadcast stalled on a slow client - write deadline not applied")
 	}
 }
 

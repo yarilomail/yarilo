@@ -8,7 +8,7 @@ import (
 	"github.com/emersion/go-sasl"
 )
 
-// TestSASLServer_HappyPath — well-formed initial response gives
+// TestSASLServer_HappyPath - well-formed initial response gives
 // the callback the parsed (Username, Token, Host, Port) and
 // finishes with done=true.
 func TestSASLServer_HappyPath(t *testing.T) {
@@ -39,7 +39,7 @@ func TestSASLServer_HappyPath(t *testing.T) {
 	}
 }
 
-// TestSASLServer_FastFailFinishesImmediately — the whole reason
+// TestSASLServer_FastFailFinishesImmediately - the whole reason
 // this wrapper exists. Callback rejection must terminate the SASL
 // exchange on the first call (done=true) rather than entering the
 // dummy-0x01 acknowledgement dance.
@@ -62,7 +62,7 @@ func TestSASLServer_FastFailFinishesImmediately(t *testing.T) {
 	}
 }
 
-// TestSASLServer_NilInitialResponse — SASL framework signals
+// TestSASLServer_NilInitialResponse - SASL framework signals
 // "expecting initial response" by passing nil; server replies
 // with an empty challenge and done=false.
 func TestSASLServer_NilInitialResponse(t *testing.T) {
@@ -82,7 +82,7 @@ func TestSASLServer_NilInitialResponse(t *testing.T) {
 	}
 }
 
-// TestSASLServer_MalformedRejected — broken wire format
+// TestSASLServer_MalformedRejected - broken wire format
 // (no gs2 prefix) fast-fails with invalid_request JSON.
 func TestSASLServer_MalformedRejected(t *testing.T) {
 	srv := NewOAuthBearerSASLServer(func(_ sasl.OAuthBearerOptions) *sasl.OAuthBearerError {
@@ -98,7 +98,7 @@ func TestSASLServer_MalformedRejected(t *testing.T) {
 	}
 }
 
-// TestParseInitial_GS2WithChannelBindingRejected — RFC 7628
+// TestParseInitial_GS2WithChannelBindingRejected - RFC 7628
 // forbids OAUTHBEARER channel binding for now. Anything other
 // than "n" in the gs2-cb-flag is rejected.
 func TestParseInitial_GS2WithChannelBindingRejected(t *testing.T) {
@@ -108,7 +108,7 @@ func TestParseInitial_GS2WithChannelBindingRejected(t *testing.T) {
 	}
 }
 
-// TestParseInitial_AcceptsReorderedFields — operator-side reports
+// TestParseInitial_AcceptsReorderedFields - operator-side reports
 // of clients that reorder host/port/auth. The wrapper accepts any
 // order, just extracts what it knows.
 func TestParseInitial_AcceptsReorderedFields(t *testing.T) {
@@ -122,7 +122,7 @@ func TestParseInitial_AcceptsReorderedFields(t *testing.T) {
 	}
 }
 
-// TestParseInitial_EmptyAuthzid — RFC 7628 allows the authzid
+// TestParseInitial_EmptyAuthzid - RFC 7628 allows the authzid
 // field to be empty (token's claim resolves the identity).
 func TestParseInitial_EmptyAuthzid(t *testing.T) {
 	opts, err := parseOAuthBearerInitial([]byte("n,,\x01auth=Bearer t\x01\x01"))
@@ -137,7 +137,7 @@ func TestParseInitial_EmptyAuthzid(t *testing.T) {
 	}
 }
 
-// TestParseInitial_TokenTypeMustBeBearer — RFC 7628 §3.1 — only
+// TestParseInitial_TokenTypeMustBeBearer - RFC 7628 §3.1 - only
 // Bearer tokens. Other token types (MAC, etc.) rejected.
 func TestParseInitial_TokenTypeMustBeBearer(t *testing.T) {
 	_, err := parseOAuthBearerInitial([]byte("n,a=x,\x01auth=MAC sometoken\x01\x01"))
@@ -146,7 +146,7 @@ func TestParseInitial_TokenTypeMustBeBearer(t *testing.T) {
 	}
 }
 
-// TestSASLServer_DoubleNextErrors — Next called twice (after
+// TestSASLServer_DoubleNextErrors - Next called twice (after
 // done=true) returns an error so a buggy protocol loop fails
 // loudly instead of looping silently.
 func TestSASLServer_DoubleNextErrors(t *testing.T) {

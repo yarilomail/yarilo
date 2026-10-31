@@ -53,7 +53,7 @@ func TestMembership_LeavingMemberNeverRejoins(t *testing.T) {
 
 // TestMembership_LeavingMemberDeclaresNobodyDead: the same handler's other
 // half. A member on its way out must not spend its last moments declaring a
-// neighbour dead — it will not be there to correct the verdict, and the
+// neighbour dead - it will not be there to correct the verdict, and the
 // neighbour is usually alive.
 func TestMembership_LeavingMemberDeclaresNobodyDead(t *testing.T) {
 	srvA, addrA := startRingNode(t, "shared-secret", nil, 2)

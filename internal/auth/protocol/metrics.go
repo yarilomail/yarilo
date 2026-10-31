@@ -8,8 +8,8 @@ import (
 )
 
 // Metric buckets reach into the tens of seconds on purpose. The AUTH path
-// deliberately sleeps — auth-penalty tarpit, policy tarpit, and the
-// timing-leak failure delay — so a client-observed AUTH can legitimately take
+// deliberately sleeps - auth-penalty tarpit, policy tarpit, and the
+// timing-leak failure delay - so a client-observed AUTH can legitimately take
 // seconds. A 400ms ceiling (as used for lock acquisition) would clip exactly
 // the observations that matter when diagnosing a login stall.
 var authLatencyBuckets = prometheus.ExponentialBuckets(0.001, 2, 16) // 1ms … ~65s
@@ -63,7 +63,7 @@ var (
 		Help:      "Configured byte cap of the auth cache (0 = caching disabled).",
 	})
 
-	// passdbSeconds isolates one chain driver's cost — the SQL round-trip and
+	// passdbSeconds isolates one chain driver's cost - the SQL round-trip and
 	// the password-scheme verification it performs internally. Labelled by
 	// driver so a slow MySQL is distinguishable from a slow bcrypt.
 	passdbSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
@@ -117,7 +117,7 @@ var (
 )
 
 // DriverName is the optional interface a Passdb implements to label its own
-// metrics. Drivers that do not implement it are reported as "unknown" — the
+// metrics. Drivers that do not implement it are reported as "unknown" - the
 // Passdb contract stays a single Authenticate method so external and test
 // implementations keep compiling.
 type DriverName interface {

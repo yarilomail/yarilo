@@ -232,7 +232,7 @@ func (s *Store) invalidate(folder string) {
 }
 
 // Set replaces the on-disk ACL with acl in canonical sorted order. Empty acl
-// writes an empty file (not removal — use Remove for that), atomic via
+// writes an empty file (not removal - use Remove for that), atomic via
 // tmp+rename. The yarilo-acl-list namespace-wide index is updated in the same
 // call so LIST optimisations see the change.
 // checkInsideRoot refuses a folder name whose ACL file would land outside the

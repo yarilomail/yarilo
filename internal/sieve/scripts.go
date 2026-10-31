@@ -30,9 +30,9 @@ const (
 //
 // Layout:
 //
-//	%h/.<DefaultName>.sieve   — active-script pointer (symlink → .<name>.sieve, or regular file with DefaultScriptBody)
-//	%h/.<name>.sieve          — named user scripts
-//	%h/.yarilo.sieve-vacation — vacation dedup state
+//	%h/.<DefaultName>.sieve   - active-script pointer (symlink → .<name>.sieve, or regular file with DefaultScriptBody)
+//	%h/.<name>.sieve          - named user scripts
+//	%h/.yarilo.sieve-vacation - vacation dedup state
 type FsScriptStore struct {
 	// DefaultName is the reserved script name (configured via sieve.default_name).
 	// Cannot be used in PUTSCRIPT/DELETESCRIPT/RENAMESCRIPT/SETACTIVE.
@@ -56,7 +56,7 @@ func (ss *FsScriptStore) namedPath(homeDir, name string) string {
 }
 
 // withLock serialises this user's script-file operations (named scripts + the
-// active-script pointer are interrelated, so they share one per-home key) —
+// active-script pointer are interrelated, so they share one per-home key) -
 // scoped to scripts only, independent of vacation / duplicate.
 func (ss *FsScriptStore) withLock(ctx context.Context, username, homeDir string, fn func(context.Context) error) error {
 	return withSieveLock(ctx, ss.Locker, username, "sieve-scripts:"+homeDir, fn)

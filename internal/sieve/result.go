@@ -16,7 +16,7 @@ type Delivery struct {
 // Redirect is a forward-to-address action produced by a Sieve script.
 type Redirect struct {
 	Address string
-	Copy    bool // :copy — message also delivered to primary folder
+	Copy    bool // :copy - message also delivered to primary folder
 }
 
 // RejectErr signals that the Sieve script rejected the message.

@@ -105,7 +105,7 @@ func TestDeleteFolderRemovesIndexDir(t *testing.T) {
 }
 
 // TestDeleteFolderReclaimsDboxShell locks that DeleteFolder removes the
-// whole folder subtree for dbox drivers, not just the dbox-Mails leaf —
+// whole folder subtree for dbox drivers, not just the dbox-Mails leaf -
 // otherwise an empty mailboxes/<name> index shell is orphaned.
 func TestDeleteFolderReclaimsDboxShell(t *testing.T) {
 	home := t.TempDir()
@@ -142,7 +142,7 @@ func TestLogReplay(t *testing.T) {
 	b.ExpungeMessage(f.ID, 3)                                  //nolint:errcheck
 	b.Close()                                                  //nolint:errcheck
 
-	// Reopen — all state must come from replaying .index.log.
+	// Reopen - all state must come from replaying .index.log.
 	b2 := openIdx(dir, testUser)
 	f2, err := b2.OpenFolder("INBOX", 42, "")
 	if err != nil {
@@ -226,7 +226,7 @@ func TestOpenFolder_CreateAndReopen(t *testing.T) {
 	}
 	b.Close() //nolint:errcheck
 
-	// Reopen — must restore header from disk.
+	// Reopen - must restore header from disk.
 	b2 := openIdx(dir, testUser2)
 	f2, err := b2.OpenFolder("INBOX", 12345, "")
 	if err != nil {
@@ -457,7 +457,7 @@ func TestAppendedModSeqsClimbAndPersist(t *testing.T) {
 // TestAppendAdvancesHighestModSeqForCrossHandleReader verifies that a delivered
 // message advances the folder's header HighestModSeq for a *separate* reader that
 // only observes the append through the .index.log. Pre-fix, flushAppend wrote no
-// TxModseqUpdate, so applyLog left the reader's header modseq stale — a delivering
+// TxModseqUpdate, so applyLog left the reader's header modseq stale - a delivering
 // LMTP process would leave every other selected IMAP session's HIGHESTMODSEQ
 // unchanged, so the poll-based refresh never surfaced the new UID (SEARCH saw it,
 // FETCH did not).
@@ -498,7 +498,7 @@ func TestAppendAdvancesHighestModSeqForCrossHandleReader(t *testing.T) {
 // advances the header HighestModSeq for a separate reader that only observes it
 // through the .index.log. Pre-fix, applyLog read the expunged UID but ignored the
 // expunge modseq carried in the TxExpungeGUID record, so a sibling process
-// reused that modseq for the next delivery — breaking modseq
+// reused that modseq for the next delivery - breaking modseq
 // monotonicity and the poll-based new-mail refresh (#526).
 func TestExpungeAdvancesHighestModSeqForCrossHandleReader(t *testing.T) {
 	dir := t.TempDir()
@@ -530,7 +530,7 @@ func TestExpungeAdvancesHighestModSeqForCrossHandleReader(t *testing.T) {
 }
 
 // TestUpdateFlagsPersistsModSeqBump verifies the second of the three
-// modseq bump sites — UpdateFlags — also persists. Pre-fix, STORE
+// modseq bump sites - UpdateFlags - also persists. Pre-fix, STORE
 // from one session would bump in-memory only and the next reread by
 // another process would revert.
 func TestUpdateFlagsPersistsModSeqBump(t *testing.T) {
@@ -555,8 +555,8 @@ func TestUpdateFlagsPersistsModSeqBump(t *testing.T) {
 	}
 }
 
-// TestExpungePersistsModSeqBump verifies the third bump site —
-// ExpungeMessage — persists. Without the fix, QRESYNC VANISHED
+// TestExpungePersistsModSeqBump verifies the third bump site -
+// ExpungeMessage - persists. Without the fix, QRESYNC VANISHED
 // queries from a follower session would not see the expunge with a
 // modseq strictly greater than the last-known watermark.
 func TestExpungePersistsModSeqBump(t *testing.T) {
@@ -635,7 +635,7 @@ func TestSaveFolderDoesNotCorruptMessagesCount(t *testing.T) {
 		t.Fatalf("SaveFolder: %v", err)
 	}
 
-	// Reopen from disk — records must all survive (counter must not corrupt data).
+	// Reopen from disk - records must all survive (counter must not corrupt data).
 	b.Close() //nolint:errcheck
 	b2 := openIdx(dir, testUser)
 	f2, _ := b2.OpenFolder("INBOX", 1, "")

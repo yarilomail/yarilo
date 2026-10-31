@@ -614,7 +614,7 @@ func checkDirectorAPI() error {
 	// cannot be decoded at all (#1203).
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("director API rejected the token (HTTP %d) — the #755 plumbing is broken: %s", resp.StatusCode, body)
+		return fmt.Errorf("director API rejected the token (HTTP %d) - the #755 plumbing is broken: %s", resp.StatusCode, body)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
@@ -1119,7 +1119,7 @@ func checkManageSieve() error {
 		return fmt.Errorf("LISTSCRIPTS: %w", err)
 	}
 
-	// PUTSCRIPT — non-synchronising literal ({N+}) so no continuation needed.
+	// PUTSCRIPT - non-synchronising literal ({N+}) so no continuation needed.
 	const scriptName = "smoke-check.sieve"
 	const scriptBody = "keep;\n"
 	fmt.Fprintf(conn, "PUTSCRIPT %q {%d+}\r\n%s", scriptName, len(scriptBody), scriptBody)
@@ -1131,7 +1131,7 @@ func checkManageSieve() error {
 		return fmt.Errorf("PUTSCRIPT failed: %q", line)
 	}
 
-	// GETSCRIPT — server responds with {N}\r\n<data>\r\nOK ...
+	// GETSCRIPT - server responds with {N}\r\n<data>\r\nOK ...
 	fmt.Fprintf(conn, "GETSCRIPT %q\r\n", scriptName)
 	litHdr, err := readLine(conn)
 	if err != nil {
@@ -1157,7 +1157,7 @@ func checkManageSieve() error {
 		return fmt.Errorf("GETSCRIPT trailing: %w", err)
 	}
 
-	// SETACTIVE — activate the script.
+	// SETACTIVE - activate the script.
 	fmt.Fprintf(conn, "SETACTIVE %q\r\n", scriptName)
 	line, err = readLine(conn)
 	if err != nil {
@@ -1167,7 +1167,7 @@ func checkManageSieve() error {
 		return fmt.Errorf("SETACTIVE failed: %q", line)
 	}
 
-	// SETACTIVE "" — deactivate so we can delete.
+	// SETACTIVE "" - deactivate so we can delete.
 	fmt.Fprintf(conn, "SETACTIVE \"\"\r\n")
 	line, err = readLine(conn)
 	if err != nil {

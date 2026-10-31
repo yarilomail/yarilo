@@ -179,7 +179,7 @@ func TestRebuildRestoresTaggedOrphanOptIn(t *testing.T) {
 	if got := folderCount(t, idx, "INBOX"); got != 1 {
 		t.Errorf("INBOX count = %d, want 1 (nothing dumped into INBOX)", got)
 	}
-	// The untagged orphan is NOT restored — it is zero-ref for purge.
+	// The untagged orphan is NOT restored - it is zero-ref for purge.
 	zeroRef := map[uint32]bool{}
 	m, _ := box.openMap()
 	for _, uid := range m.CompactGarbage() {
@@ -191,7 +191,7 @@ func TestRebuildRestoresTaggedOrphanOptIn(t *testing.T) {
 }
 
 // TestRebuildDefaultDoesNotRestore: with restore_orphans=false (default) even a
-// tagged orphan is left zero-ref — the default run is identical to before.
+// tagged orphan is left zero-ref - the default run is identical to before.
 func TestRebuildDefaultDoesNotRestore(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	box, idx := newBoxAndIndex(t, home)
@@ -228,7 +228,7 @@ func TestRebuildDefaultDoesNotRestore(t *testing.T) {
 }
 
 // TestRebuildZeroRefsUnreferenced: a message saved to storage but referenced by
-// no folder index is NOT resurrected into INBOX — it is reported and its refcount
+// no folder index is NOT resurrected into INBOX - it is reported and its refcount
 // is recomputed to 0 so the next purge reclaims it. The referenced message keeps
 // a non-zero refcount.
 func TestRebuildZeroRefsUnreferenced(t *testing.T) {
@@ -250,7 +250,7 @@ func TestRebuildZeroRefsUnreferenced(t *testing.T) {
 	if stats.UnreferencedZeroref != 1 {
 		t.Errorf("unreferenced zeroref = %d, want 1", stats.UnreferencedZeroref)
 	}
-	// INBOX is NOT grown — no resurrection.
+	// INBOX is NOT grown - no resurrection.
 	if got := folderCount(t, idx, "INBOX"); got != 1 {
 		t.Errorf("INBOX count = %d, want 1 (unreferenced message must not be adopted)", got)
 	}

@@ -8,11 +8,11 @@
 // keys are then filtered locally, since SCAN cannot stop at the first "/".
 //
 // Transactions: MULTI/EXEC. AtomicInc uses INCRBY; CommitNotFound is emulated
-// by an EXISTS check before the MULTI (the race window is acceptable —
+// by an EXISTS check before the MULTI (the race window is acceptable -
 // concurrent unset on a counter is not a supported pattern).
 //
 // TTL: OpSettings.ExpireSecs becomes an EXPIRE in the same MULTI as the SET.
-// ExpireScan is a no-op — Redis expires keys server-side.
+// ExpireScan is a no-op - Redis expires keys server-side.
 package redis
 
 import (
@@ -36,11 +36,11 @@ func init() {
 
 // New constructs a redis dict. Recognised settings:
 //
-//	"addr"     string         — "host:port" of the Redis server (required)
-//	"password" string         — AUTH password; empty for no auth
-//	"db"       int            — logical database number; default 0
-//	"prefix"   string         — prepended to every dict key on the wire
-//	"dial_timeout" string     — Go duration; default 5s
+//	"addr"     string         - "host:port" of the Redis server (required)
+//	"password" string         - AUTH password; empty for no auth
+//	"db"       int            - logical database number; default 0
+//	"prefix"   string         - prepended to every dict key on the wire
+//	"dial_timeout" string     - Go duration; default 5s
 //
 // "prefix" lets multiple dict configurations share one Redis instance without
 // colliding (e.g. "yarilo:metadata:%u:", "yarilo:quota:"). The caller must have
@@ -437,7 +437,7 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 
 	// Pre-check that every atomic-inc target exists: a missing key →
 	// CommitNotFound, no ops applied. The EXISTS/MULTI race window is
-	// acceptable — concurrent unset on a counter is not a supported pattern.
+	// acceptable - concurrent unset on a counter is not a supported pattern.
 	set := &dict.OpSettings{Username: t.username}
 	for _, op := range t.buf.Ops {
 		if op.Kind != dict.OpAtomicInc {

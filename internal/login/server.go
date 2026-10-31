@@ -480,7 +480,7 @@ func (s *Server) Serve(ln net.Listener) error {
 			draining := s.draining
 			s.drainMu.Unlock()
 			if draining {
-				return nil // listener closed by Shutdown — clean stop
+				return nil // listener closed by Shutdown - clean stop
 			}
 			return fmt.Errorf("login: accept: %w", err)
 		}
@@ -613,7 +613,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			s.incResult("unavailable")
 			return outcomeClose, nil
 		}
-		// Shared multiplexed client — no per-login handshake. The phase metric
+		// Shared multiplexed client - no per-login handshake. The phase metric
 		// reads ~0 except on the first login after a pod start or auth reconnect.
 		authDialStart := time.Now()
 		var authCl *authclient.Client
@@ -950,7 +950,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	log.Info("login: session routed", "user", pre.username, "backend", backendAddr, "result", "ok")
 	s.incResult("ok")
 
-	// Auth is confirmed — tell the client before entering proxy mode.
+	// Auth is confirmed - tell the client before entering proxy mode.
 	writeProtoAuthOK(authConn, s.opts.Protocol, pre.cmdTag, backendCaps)
 
 	authConn.SetDeadline(time.Time{})    //nolint:errcheck
@@ -1179,7 +1179,7 @@ func (s *Server) dialBackendWithReroute(username, tag, addr string, deadline tim
 		return nil, addr, err
 	}
 	for attempt := 0; attempt < maxBackendReroutes; attempt++ {
-		log.Warn("login: backend dial failed — reporting unreachable and re-looking-up", "addr", addr, "err", err)
+		log.Warn("login: backend dial failed - reporting unreachable and re-looking-up", "addr", addr, "err", err)
 		s.reportUnreachable(addr)
 		newAddr, lerr := s.directorLookup(username, tag)
 		if lerr != nil {

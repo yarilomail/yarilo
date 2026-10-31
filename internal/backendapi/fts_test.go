@@ -75,7 +75,7 @@ func (f *fakeFTS) Optimize(string) error {
 func (f *fakeFTS) Close() error { return nil }
 
 // TestFtsExpungeInvalidatesDroppedUIDs: the session-less operator FTS-notify
-// helper invalidates one document per dropped UID, keyed to the folder — the
+// helper invalidates one document per dropped UID, keyed to the folder - the
 // path the operator index rebuild uses so dropped records do not linger as ghost
 // documents until the next rescan.
 func TestFtsExpungeInvalidatesDroppedUIDs(t *testing.T) {

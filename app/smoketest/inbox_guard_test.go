@@ -12,12 +12,12 @@ import (
 
 // The smoke test runs against a live deployment, from inside the cluster, with
 // the image that was just rolled out. Nothing in its flags or its documentation
-// says the account must be disposable — so it must not empty a mailbox it did
+// says the account must be disposable - so it must not empty a mailbox it did
 // not fill.
 //
 // It did: clearInbox selected INBOX, searched for everything, and expunged it,
 // twenty-five times per run. Three messages seeded into u51 for an unrelated
-// measurement were gone after one run, and the loss was silent — the delete was
+// measurement were gone after one run, and the loss was silent - the delete was
 // //nolint:errcheck and the function returned nothing on any failure path
 // (#1056).
 //
@@ -62,7 +62,7 @@ func TestNothingEmptiesTheInbox(t *testing.T) {
 						// An unbounded search: everything in the mailbox,
 						// whoever put it there. A search for the check's own
 						// subject or marker is the correct shape and stays
-						// allowed — the fault is the breadth, not the delete.
+						// allowed - the fault is the breadth, not the delete.
 						if len(v.Args) == 1 {
 							if lit, ok := v.Args[0].(*ast.BasicLit); ok &&
 								lit.Kind == token.STRING && strings.Contains(lit.Value, "ALL") {
@@ -74,7 +74,7 @@ func TestNothingEmptiesTheInbox(t *testing.T) {
 				return true
 			})
 			if namesInbox && searchesEverything && deletes {
-				t.Errorf("%s: %s selects INBOX, searches ALL and deletes what it finds — the "+
+				t.Errorf("%s: %s selects INBOX, searches ALL and deletes what it finds - the "+
 					"smoke test must not empty a mailbox it did not fill. Identify its own "+
 					"message by the unique subject or marker it already sends.",
 					fset.Position(fn.Pos()), fn.Name.Name)

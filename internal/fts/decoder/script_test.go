@@ -15,7 +15,7 @@ import (
 )
 
 // shortSocketPath returns a Unix-socket path short enough to satisfy
-// sockaddr_un.sun_path on macOS/BSD (104 bytes) — t.TempDir() under
+// sockaddr_un.sun_path on macOS/BSD (104 bytes) - t.TempDir() under
 // /var/folders on macOS is too long once combined with a descriptive test
 // name.
 func shortSocketPath(t *testing.T) string {
@@ -43,7 +43,7 @@ func readFull(r *bufio.Reader, buf []byte) (int, error) {
 // scriptServer is a minimal test double for the wire protocol, handling the
 // mandatory VERSION handshake plus either a TYPES query or a DECODE request
 // per connection (#697's TYPES prefilter is fetched on its own dedicated
-// connection, separate from any DECODE connection — a real script decoder,
+// connection, separate from any DECODE connection - a real script decoder,
 // and this double, must handle both).
 type scriptServer struct {
 	// typesMode controls the TYPES response: "list" sends types (possibly
@@ -244,7 +244,7 @@ func TestScriptDecoderTypesPrefilterSkipsUnsupported(t *testing.T) {
 		t.Fatal("expected ok=false for a type outside the TYPES list")
 	}
 	if n := srv.decodeCalls.Load(); n != 0 {
-		t.Fatalf("DECODE dialed %d times, want 0 — prefilter should skip locally", n)
+		t.Fatalf("DECODE dialed %d times, want 0 - prefilter should skip locally", n)
 	}
 }
 
@@ -270,7 +270,7 @@ func TestScriptDecoderTypesPrefilterDialsSupportedAndCaches(t *testing.T) {
 		t.Fatalf("text=%q ok=%v, want a supported-extension match to dial DECODE", text, ok)
 	}
 
-	// A second call — regardless of type — must not re-negotiate TYPES.
+	// A second call - regardless of type - must not re-negotiate TYPES.
 	_, _, err = d.Decode(context.Background(), "application/x-nonexistent", "", strings.NewReader("bytes"))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -281,7 +281,7 @@ func TestScriptDecoderTypesPrefilterDialsSupportedAndCaches(t *testing.T) {
 }
 
 // TestScriptDecoderTypesFallbackOnErrorResponse (#697): an explicit ERROR
-// reply to TYPES means the prefilter is unavailable — Decode must fall back
+// reply to TYPES means the prefilter is unavailable - Decode must fall back
 // to asking every part via DECODE, same as pre-#697.
 func TestScriptDecoderTypesFallbackOnErrorResponse(t *testing.T) {
 	sock := shortSocketPath(t)
@@ -301,7 +301,7 @@ func TestScriptDecoderTypesFallbackOnErrorResponse(t *testing.T) {
 
 // TestScriptDecoderTypesFallbackOnConnectionClose (#697): a v1 script that
 // has never heard of TYPES and just closes the connection (no response at
-// all) must be treated the same as an explicit ERROR — fall back to asking.
+// all) must be treated the same as an explicit ERROR - fall back to asking.
 func TestScriptDecoderTypesFallbackOnConnectionClose(t *testing.T) {
 	sock := shortSocketPath(t)
 	srv := &scriptServer{typesMode: "close", decode: okDecodeFn("asked anyway")}
@@ -320,7 +320,7 @@ func TestScriptDecoderTypesFallbackOnConnectionClose(t *testing.T) {
 
 // TestScriptDecoderTypesFallbackOnTimeout (#697): a v1 script that accepts
 // the TYPES connection but never writes anything back must not block Decode
-// forever — the dedicated fetch times out and falls back to asking.
+// forever - the dedicated fetch times out and falls back to asking.
 func TestScriptDecoderTypesFallbackOnTimeout(t *testing.T) {
 	sock := shortSocketPath(t)
 	srv := &scriptServer{typesMode: "hang", hangFor: time.Second, decode: okDecodeFn("asked anyway")}

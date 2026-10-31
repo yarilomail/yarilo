@@ -91,7 +91,7 @@ func TestPurgeCompactsLiveRecords(t *testing.T) {
 		t.Errorf("m.2 should exist after compact: %v", err)
 	}
 
-	// Surviving filenames still Fetch to the original bodies —
+	// Surviving filenames still Fetch to the original bodies -
 	// map_uid is preserved across the move.
 	rc, err := mb.Fetch("INBOX", names[0], false)
 	if err != nil {

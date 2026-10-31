@@ -180,7 +180,7 @@ func TestParseEntry(t *testing.T) {
 			wantLine: "user=carol lrsw",
 		},
 		{
-			name: "identifier only — explicit no rights", in: "user=dan", wantOK: true,
+			name: "identifier only - explicit no rights", in: "user=dan", wantOK: true,
 			want:     Entry{Identifier: Identifier{Type: IDUser, Name: "dan"}, Rights: ""},
 			wantLine: "user=dan ",
 		},
@@ -386,7 +386,7 @@ func TestACL_Effective(t *testing.T) {
 			want: owner,
 		},
 		{
-			// anyone (tier 0) is below the owner default (tier 3) — owner keeps full.
+			// anyone (tier 0) is below the owner default (tier 3) - owner keeps full.
 			name: "owner: anyone entry does not lower the owner default",
 			acl:  ACL{{Identifier: Identifier{Type: IDAnyone}, Rights: "l"}},
 			user: "alice", isOwner: true,

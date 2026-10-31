@@ -27,7 +27,7 @@ func TestPenaltyToSecs(t *testing.T) {
 	}
 }
 
-// TestServer_PenaltyLookup_DefaultZero — fresh IP returns 0.
+// TestServer_PenaltyLookup_DefaultZero - fresh IP returns 0.
 func TestServer_PenaltyLookup_DefaultZero(t *testing.T) {
 	srv := NewServer(0)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -48,7 +48,7 @@ func TestServer_PenaltyLookup_DefaultZero(t *testing.T) {
 	}
 }
 
-// TestServer_PenaltyUpdate_RoundTrip — Update then Lookup returns
+// TestServer_PenaltyUpdate_RoundTrip - Update then Lookup returns
 // the stored value.
 func TestServer_PenaltyUpdate_RoundTrip(t *testing.T) {
 	srv := NewServer(0)
@@ -73,7 +73,7 @@ func TestServer_PenaltyUpdate_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestServer_PenaltyUpdate_ZeroClearsEntry — Update with count=0
+// TestServer_PenaltyUpdate_ZeroClearsEntry - Update with count=0
 // deletes the entry (auth-success reset semantics).
 func TestServer_PenaltyUpdate_ZeroClearsEntry(t *testing.T) {
 	srv := NewServer(0)
@@ -98,7 +98,7 @@ func TestServer_PenaltyUpdate_ZeroClearsEntry(t *testing.T) {
 	}
 }
 
-// TestServer_PenaltyUpdate_Clamps — out-of-range values clamp to
+// TestServer_PenaltyUpdate_Clamps - out-of-range values clamp to
 // [0, MaxPenalty].
 func TestServer_PenaltyUpdate_Clamps(t *testing.T) {
 	srv := NewServer(0)
@@ -124,7 +124,7 @@ func TestServer_PenaltyUpdate_Clamps(t *testing.T) {
 	}
 }
 
-// TestServer_PenaltyDecay — entries older than penaltyDecay are
+// TestServer_PenaltyDecay - entries older than penaltyDecay are
 // swept out by the background sweeper.
 func TestServer_PenaltyDecay(t *testing.T) {
 	srv := NewServer(0,
@@ -149,7 +149,7 @@ func TestServer_PenaltyDecay(t *testing.T) {
 	}
 }
 
-// TestServer_PenaltyIPIsolation — penalty store keys by IP; one
+// TestServer_PenaltyIPIsolation - penalty store keys by IP; one
 // attacker IP doesn't affect another.
 func TestServer_PenaltyIPIsolation(t *testing.T) {
 	srv := NewServer(0)

@@ -13,7 +13,7 @@ import (
 // The oracle half of the deploy check had never been executed: it is off
 // without flags, so CI ran the file and not the code. Written as it was, it
 // reported a leak on a perfectly behaved server, because the reply it compared
-// included the command tag and the tag increments — the present probe was
+// included the command tag and the tag increments - the present probe was
 // S0007 and the absent one S0008.
 //
 // That is the same trap the check exists to prevent, reproduced inside the

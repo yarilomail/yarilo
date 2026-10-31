@@ -119,10 +119,10 @@ func TestRefuseLayoutSeparatorIsIndependent(t *testing.T) {
 	// A plain nested name, since anything with ".." also contains the layout
 	// separator and would be refused by this rule for its own reason.
 	if err := ValidateName("Work/2026", "/", ".", sepOnly); err != nil {
-		t.Errorf("the separator rule alone refused %q: %v — it must not imply the path checks", "Work/2026", err)
+		t.Errorf("the separator rule alone refused %q: %v - it must not imply the path checks", "Work/2026", err)
 	}
 	if err := ValidateName("/etc/passwd", "/", "/", sepOnly); err != nil {
-		t.Errorf("the separator rule alone refused %q: %v — the leading-slash check belongs to ValidateFSNames", "/etc/passwd", err)
+		t.Errorf("the separator rule alone refused %q: %v - the leading-slash check belongs to ValidateFSNames", "/etc/passwd", err)
 	}
 
 	fsOnly := NameRules{ValidateFSNames: true}
@@ -130,13 +130,13 @@ func TestRefuseLayoutSeparatorIsIndependent(t *testing.T) {
 		t.Errorf("with the separator rule off, ValidateName(\"example.com\") = %v; an existing mailbox would become unselectable", err)
 	}
 	if err := ValidateName("../victim/Maildir", "/", ".", fsOnly); err == nil {
-		t.Error("keeping dotted names cost the traversal check — that is the trade this key exists to avoid")
+		t.Error("keeping dotted names cost the traversal check - that is the trade this key exists to avoid")
 	}
 }
 
 // The reserved-segment rule applies only where a folder directory sits beside
-// the layout's own. On maildir++ every folder carries a leading "." — ".new"
-// cannot collide with the "new" the layout owns — so refusing the name there
+// the layout's own. On maildir++ every folder carries a leading "." - ".new"
+// cannot collide with the "new" the layout owns - so refusing the name there
 // protected nothing and cost ordinary ones: "New" is a folder people make, and
 // it was refused (#1091, found by an unrelated test that renamed to "New").
 func TestReservedSegmentsApplyOnlyWhereTheyCanCollide(t *testing.T) {
@@ -167,7 +167,7 @@ func TestReservedSegmentsApplyOnlyWhereTheyCanCollide(t *testing.T) {
 }
 
 // The validator and the escaper must reserve the same names, or one refuses a
-// folder the other would have stored safely — the same "two sets, one set"
+// folder the other would have stored safely - the same "two sets, one set"
 // requirement as the config validator and the namespace builder (#1087).
 func TestValidatorAndEscaperReserveTheSameNames(t *testing.T) {
 	rules := DefaultNameRules()
@@ -179,7 +179,7 @@ func TestValidatorAndEscaperReserveTheSameNames(t *testing.T) {
 			escaped := EscapeStorageName(name, layoutSep, "^") != name
 
 			if refused != escaped {
-				t.Errorf("layout %q, name %q: validator refuses=%v, escaper escapes=%v — "+
+				t.Errorf("layout %q, name %q: validator refuses=%v, escaper escapes=%v - "+
 					"one of them is protecting against a collision the other does not believe in",
 					layoutSep, name, refused, escaped)
 			}

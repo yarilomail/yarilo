@@ -41,7 +41,7 @@ func TestFsckIndexIDMismatch(t *testing.T) {
 	}
 	lf.Close()
 
-	// Reopen — OpenFolder must detect the mismatch and recover without error.
+	// Reopen - OpenFolder must detect the mismatch and recover without error.
 	b2 := openIdx(dir, testUser)
 	f2, err := b2.OpenFolder("INBOX", 0, "")
 	if err != nil {
@@ -72,7 +72,7 @@ func TestFsckIndexIDMismatch(t *testing.T) {
 		t.Fatalf("log IndexID still wrong after recovery: got %d", recoveredHdr.IndexID)
 	}
 
-	// Log must be truncated to the stub header only — no records.
+	// Log must be truncated to the stub header only - no records.
 	st, _ := lf2.Stat()
 	if st.Size() != mailindex.LogHeaderSize {
 		t.Fatalf("expected log stub size %d, got %d", mailindex.LogHeaderSize, st.Size())
@@ -94,13 +94,13 @@ func TestFsckCorruptedLogBeforeBoundary(t *testing.T) {
 	b.Close() //nolint:errcheck
 
 	// Append a raw corrupted record (not a valid framed size) directly
-	// after the log header — no BOUNDARY precedes it.
+	// after the log header - no BOUNDARY precedes it.
 	logPath := filepath.Join(dir, testHome("", testUser), IndexLogFileName)
 	lf, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}
-	// Write 8 bytes with a raw (non-framed) size field — DecodeFramedSize will
+	// Write 8 bytes with a raw (non-framed) size field - DecodeFramedSize will
 	// return 0, DecodeTxHeader will return ErrCorrupted, loop will break.
 	garbage := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
 	if _, err := lf.Write(garbage); err != nil {
@@ -113,7 +113,7 @@ func TestFsckCorruptedLogBeforeBoundary(t *testing.T) {
 		t.Fatal("garbage was not appended")
 	}
 
-	// Reopen — the corrupted tail must be truncated back to the stub.
+	// Reopen - the corrupted tail must be truncated back to the stub.
 	b2 := openIdx(dir, testUser)
 	if _, err := b2.OpenFolder("INBOX", 0, ""); err != nil {
 		t.Fatalf("reopen after corrupted record: %v", err)

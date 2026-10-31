@@ -17,7 +17,7 @@ const ExtNameMaxLength = 64
 // optional header-data blob.
 //
 // RecordSize is how many bytes this extension adds to every
-// Record. Zero is legal — for header-only extensions like the
+// Record. Zero is legal - for header-only extensions like the
 // per-folder "modseq" header that carry no per-record data.
 //
 // HdrSize is the size of the data[] block in this extension's
@@ -28,7 +28,7 @@ const ExtNameMaxLength = 64
 // two ≤ 8 (the 8-byte ceiling matches the canonical reader).
 //
 // ResetID is bumped whenever the meaning of every per-record
-// byte for this extension changes — e.g. when a cache file is
+// byte for this extension changes - e.g. when a cache file is
 // rotated so old offsets are invalid. Readers must drop stale
 // per-record data when the on-disk ResetID is higher than what
 // they cached.
@@ -188,7 +188,7 @@ func EncodeExtHeaders(exts []Extension) ([]byte, error) {
 		pos += uint32(len(ext.Name))
 		// pad to 8-byte boundary relative to entryStart so the
 		// data[] block begins at an 8-aligned offset within the
-		// entry — matches HeaderSizeAlign of (16 + name_size).
+		// entry - matches HeaderSizeAlign of (16 + name_size).
 		afterName := HeaderSizeAlign(pos - entryStart)
 		pos = entryStart + afterName
 		if ext.HdrSize > 0 {

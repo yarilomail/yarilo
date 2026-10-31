@@ -10,7 +10,7 @@ import (
 )
 
 // TestAuthLivenessCheckHappy: with a live cache and an open (or absent) gate the
-// check passes — the cache mutex is acquirable.
+// check passes - the cache mutex is acquirable.
 func TestAuthLivenessCheckHappy(t *testing.T) {
 	cache := protocol.NewCache(1<<20, time.Minute, time.Minute)
 	if err := authLivenessCheck(cache, nil)(context.Background()); err != nil {
@@ -22,7 +22,7 @@ func TestAuthLivenessCheckHappy(t *testing.T) {
 }
 
 // TestAuthLivenessCheckNilCache: no cache configured means the gate alone
-// governs — an open gate still passes.
+// governs - an open gate still passes.
 func TestAuthLivenessCheckNilCache(t *testing.T) {
 	if err := authLivenessCheck(nil, nil)(context.Background()); err != nil {
 		t.Fatalf("nil cache should pass: %v", err)
@@ -30,7 +30,7 @@ func TestAuthLivenessCheckNilCache(t *testing.T) {
 }
 
 // TestAuthLivenessCheckGateWedged: a wedged gate fails the check on the context
-// deadline even though the cache is fine — the injected-deadlock path.
+// deadline even though the cache is fine - the injected-deadlock path.
 func TestAuthLivenessCheckGateWedged(t *testing.T) {
 	cache := protocol.NewCache(1<<20, time.Minute, time.Minute)
 	gate := telemetry.NewGate()

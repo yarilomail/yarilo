@@ -13,7 +13,7 @@ const (
 	LogMajorVersion = 1
 	LogMinorVersion = 3
 
-	// LogHeaderMinSize is the minimum valid hdr_size on disk —
+	// LogHeaderMinSize is the minimum valid hdr_size on disk -
 	// anything smaller is treated as corruption. Matches the
 	// canonical MAIL_TRANSACTION_LOG_HEADER_MIN_SIZE.
 	LogHeaderMinSize = 24
@@ -32,20 +32,20 @@ const (
 //
 //	uint8  major_version              offset 0
 //	uint8  minor_version              offset 1
-//	uint16 hdr_size                   offset 2  — must be ≥ LogHeaderMinSize
-//	uint32 indexid                    offset 4  — must match base index IndexID
-//	uint32 file_seq                   offset 8  — bumped on rotation
-//	uint32 prev_file_seq              offset 12 — chains to .log.2; 0 if reset
+//	uint16 hdr_size                   offset 2  - must be ≥ LogHeaderMinSize
+//	uint32 indexid                    offset 4  - must match base index IndexID
+//	uint32 file_seq                   offset 8  - bumped on rotation
+//	uint32 prev_file_seq              offset 12 - chains to .log.2; 0 if reset
 //	uint32 prev_file_offset           offset 16
-//	uint32 create_stamp               offset 20 — UNIX timestamp of file creation
-//	uint64 initial_modseq             offset 24 — present since 1.1; lo at 24, hi at 28
-//	uint8  compat_flags               offset 32 — present since 1.2 (mirrors index compat)
+//	uint32 create_stamp               offset 20 - UNIX timestamp of file creation
+//	uint64 initial_modseq             offset 24 - present since 1.1; lo at 24, hi at 28
+//	uint8  compat_flags               offset 32 - present since 1.2 (mirrors index compat)
 //	uint8  unused[3]                  offset 33
 //	uint32 unused2                    offset 36
 //
 // Parsing rule: hdr_size larger than this struct means ignore the
 // unknown tail; smaller means assume the missing fields are 0.
-// DecodeLogHeader does both — older writers' missing tail is
+// DecodeLogHeader does both - older writers' missing tail is
 // zero-padded, newer writers' extra tail is preserved via HdrSize
 // so the next Recreate keeps the on-disk size unchanged.
 type LogHeader struct {
@@ -249,7 +249,7 @@ const (
 	// External and sync are the only standard flag bits in the
 	// upper byte. EXPUNGE_PROT (0xcd90) is OR'd into expunge
 	// records' type for corruption defence but lives in the
-	// type enum bits — not a flag.
+	// type enum bits - not a flag.
 	TxFlagExternal TxTypeFlags = 0x10000000
 	TxFlagSync     TxTypeFlags = 0x20000000
 

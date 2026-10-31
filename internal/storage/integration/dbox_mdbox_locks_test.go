@@ -92,7 +92,7 @@ func TestDboxConcurrentSaveAndDelete(t *testing.T) {
 	wg.Add(2)
 	// A writes UID 1..iterations into the sdbox tree; B periodically
 	// drops the whole folder. The contestants never deadlock and the
-	// locks server returns every Lock/Unlock cleanly — the test
+	// locks server returns every Lock/Unlock cleanly - the test
 	// passes if no panic / stale-fd error surfaces.
 	go func() {
 		defer wg.Done()
@@ -170,7 +170,7 @@ func TestMdboxConcurrentSaveTwoProcesses(t *testing.T) {
 	}
 	// Every token is a stringified map_uid; uniqueness across
 	// both processes means the map allocator did not double-hand
-	// the same UID — that is the real correctness gate. A
+	// the same UID - that is the real correctness gate. A
 	// per-folder count check is meaningless for the new mdbox
 	// because per-folder state lives in the external fileindex,
 	// which this test does not exercise.

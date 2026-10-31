@@ -72,7 +72,7 @@ func TestProbeURLTimeoutCoversASlowResponse(t *testing.T) {
 		t.Fatal("a response slower than the timeout must fail the probe")
 	}
 	if elapsed > time.Second {
-		t.Fatalf("probe took %v — the timeout did not bound the request", elapsed)
+		t.Fatalf("probe took %v - the timeout did not bound the request", elapsed)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestProbeURLUnreachable(t *testing.T) {
 }
 
 // TestProbeTCPReachable: a dependency with no HTTP endpoint (a database or Redis)
-// is probed by opening a TCP connection — a live listener passes (#903).
+// is probed by opening a TCP connection - a live listener passes (#903).
 func TestProbeTCPReachable(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

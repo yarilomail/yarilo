@@ -1,6 +1,6 @@
 // Package submission implements the submission servers (port 587 / 465). AUTH is
 // required; messages are relayed to the configured upstream MTA via
-// protocol.submission.relay. No MX inbound — external MTAs deliver to LMTP (port 24).
+// protocol.submission.relay. No MX inbound - external MTAs deliver to LMTP (port 24).
 package submission
 
 import (

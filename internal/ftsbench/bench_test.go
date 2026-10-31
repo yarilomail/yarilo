@@ -28,14 +28,14 @@ func TestAcceptance(t *testing.T) {
 	t.Logf("\n%s", rep.String())
 
 	if rep.IndexedP95Millis > rep.ScanP95Millis {
-		t.Errorf("indexed SEARCH p95 %.2f ms is slower than scan p95 %.2f ms — index buys nothing",
+		t.Errorf("indexed SEARCH p95 %.2f ms is slower than scan p95 %.2f ms - index buys nothing",
 			rep.IndexedP95Millis, rep.ScanP95Millis)
 	}
 	if rep.IndexRatio > indexRatioCap {
 		t.Errorf("index is %.2fx the corpus, over the %.1fx cap", rep.IndexRatio, indexRatioCap)
 	}
 	if rep.Hits == 0 {
-		t.Fatal("corpus produced no hits — benchmark is not exercising SEARCH")
+		t.Fatal("corpus produced no hits - benchmark is not exercising SEARCH")
 	}
 }
 

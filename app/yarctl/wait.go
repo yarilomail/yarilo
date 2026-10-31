@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// dispatchWait implements `yarctl wait` — a dependency probe for use as a
+// dispatchWait implements `yarctl wait` - a dependency probe for use as a
 // Kubernetes startupProbe, replacing the wait-* init containers.
 //
 // Why this instead of busybox wget in an exec probe:
@@ -31,8 +31,8 @@ import (
 //
 // Two target schemes are supported:
 //
-//   - http(s)://…  — a GET that must answer 2xx (a telemetry /readyz endpoint).
-//   - tcp://host:port — a TCP connect, for a dependency with no HTTP endpoint
+//   - http(s)://…  - a GET that must answer 2xx (a telemetry /readyz endpoint).
+//   - tcp://host:port - a TCP connect, for a dependency with no HTTP endpoint
 //     (a database or Redis), replacing the wait-* init containers' TCP wait.
 //
 // Usage:

@@ -42,7 +42,7 @@ data:
     --   allow_nets, director_tag,
     --   display_name, last_login_at      → forward-compat, not yet read by
     --                                       yarilo (quota engine, director,
-    --                                       login ACL — future phases)
+    --                                       login ACL - future phases)
     CREATE TABLE IF NOT EXISTS users (
         username       VARCHAR(254) PRIMARY KEY,          -- RFC 5321 envelope max (full email)
         password       VARCHAR(255) NOT NULL,             -- enough for {BCRYPT}/{SHA512-CRYPT} + headroom

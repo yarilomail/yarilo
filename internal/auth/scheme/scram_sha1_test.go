@@ -6,7 +6,7 @@ import (
 	"github.com/emersion/go-sasl"
 )
 
-// TestSchemes_ScramSha1_PlainPathReDerives — PLAIN/LOGIN auth
+// TestSchemes_ScramSha1_PlainPathReDerives - PLAIN/LOGIN auth
 // against a {SCRAM-SHA-1} stored column works by re-deriving
 // StoredKey from the input password using the stored iter+salt.
 func TestSchemes_ScramSha1_PlainPathReDerives(t *testing.T) {
@@ -53,7 +53,7 @@ func TestParseSCRAMSha1Credentials_Roundtrip(t *testing.T) {
 	}
 }
 
-// TestParseSCRAMSha1_AndSha256_DoNotCrossTalk — the SHA-1 column
+// TestParseSCRAMSha1_AndSha256_DoNotCrossTalk - the SHA-1 column
 // must not parse as a SHA-256 verifier and vice versa, even though
 // the inner blob shape is identical. Scheme prefix is the gate.
 func TestParseSCRAMSha1_AndSha256_DoNotCrossTalk(t *testing.T) {

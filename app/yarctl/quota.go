@@ -20,7 +20,7 @@ func dispatchQuota(args []string) error {
 	case "clone":
 		return dispatchQuotaClone(args[1:])
 	default:
-		return fmt.Errorf("unknown quota command %q — available: show, recalc, clone", args[0])
+		return fmt.Errorf("unknown quota command %q - available: show, recalc, clone", args[0])
 	}
 }
 
@@ -34,7 +34,7 @@ func dispatchQuotaClone(args []string) error {
 	case "get":
 		return quotaCloneGet(args[1:])
 	default:
-		return fmt.Errorf("unknown quota clone command %q — available: list, get", args[0])
+		return fmt.Errorf("unknown quota clone command %q - available: list, get", args[0])
 	}
 }
 
@@ -106,7 +106,7 @@ func humanQuotaCloneGet(data []byte) error {
 	for _, k := range r.Malformed {
 		fmt.Printf("! %s holds a non-numeric value in this backend (divergent target)\n", k)
 	}
-	fmt.Println("(mirror value — authoritative usage is `quota show`, summed from the index)")
+	fmt.Println("(mirror value - authoritative usage is `quota show`, summed from the index)")
 	return nil
 }
 
@@ -114,16 +114,16 @@ func printQuotaUsage() {
 	fmt.Println(`yarctl backend quota <command>
 
 Commands:
-  show   <user>                     — current usage and configured limits
-  recalc <user>                     — rescan all folders and rewrite counters (yarctl quota recalc)
-  clone  list                       — configured quota_clone backends
-  clone  get <backend> <user>       — mirrored usage a clone backend holds
+  show   <user>                     - current usage and configured limits
+  recalc <user>                     - rescan all folders and rewrite counters (yarctl quota recalc)
+  clone  list                       - configured quota_clone backends
+  clone  get <backend> <user>       - mirrored usage a clone backend holds
                                       (advisory mirror; 'quota show' is authoritative)
 
 Common flags:
   --namespace NS    namespace slug for recalc; default "personal"
 
-Limits shown by 'show' are always 0 (unlimited) from this endpoint —
+Limits shown by 'show' are always 0 (unlimited) from this endpoint -
 quota_rules live in the auth/userdb layer. Use 'yarctl auth passdb
 show <user>' to inspect per-user rules.`)
 }

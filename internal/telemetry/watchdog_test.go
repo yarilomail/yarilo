@@ -31,7 +31,7 @@ func TestHealthzUnconditionalWithoutWatchdog(t *testing.T) {
 }
 
 // TestWatchdogTripsOnlyAfterConsecutiveFailures is the core guard-rail: a single
-// failure must not fail /healthz — only FailureThreshold in a row may.
+// failure must not fail /healthz - only FailureThreshold in a row may.
 func TestWatchdogTripsOnlyAfterConsecutiveFailures(t *testing.T) {
 	failing := func(context.Context) error { return errors.New("wedged") }
 	s := NewWithOptions(Options{Addr: ":0", Watchdog: WatchdogOptions{
@@ -75,7 +75,7 @@ func TestWatchdogResetsOnSuccess(t *testing.T) {
 	s.wd.tick(ctx)
 	s.wd.tick(ctx) // only 2 in a row again
 	if code := hit(t, s, "/healthz"); code != http.StatusOK {
-		t.Fatalf("/healthz = %d, want 200 — a reset streak must not trip", code)
+		t.Fatalf("/healthz = %d, want 200 - a reset streak must not trip", code)
 	}
 }
 
@@ -107,8 +107,8 @@ func TestWatchdogRecovers(t *testing.T) {
 }
 
 // TestWatchdogCountsAHungCheckAsFailure is the property that makes the watchdog
-// worth having: a self-check that ignores cancellation and blocks forever — the
-// deadlock shape — must be observed as a failure via the timeout, not stall the
+// worth having: a self-check that ignores cancellation and blocks forever - the
+// deadlock shape - must be observed as a failure via the timeout, not stall the
 // loop and silently keep /healthz green.
 func TestWatchdogCountsAHungCheckAsFailure(t *testing.T) {
 	block := make(chan struct{})
@@ -122,7 +122,7 @@ func TestWatchdogCountsAHungCheckAsFailure(t *testing.T) {
 	s.wd.tick(ctx)
 	s.wd.tick(ctx)
 	if code := hit(t, s, "/healthz"); code != http.StatusServiceUnavailable {
-		t.Fatalf("/healthz = %d, want 503 — a hung check must count as a failure", code)
+		t.Fatalf("/healthz = %d, want 503 - a hung check must count as a failure", code)
 	}
 }
 

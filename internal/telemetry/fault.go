@@ -68,7 +68,7 @@ func (s *Server) faultHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("already wedged\n")) //nolint:errcheck
 		return
 	}
-	slog.Warn("telemetry: fault injected — liveness gate wedged; the watchdog will trip and the container will restart")
+	slog.Warn("telemetry: fault injected - liveness gate wedged; the watchdog will trip and the container will restart")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("wedged\n")) //nolint:errcheck
 }

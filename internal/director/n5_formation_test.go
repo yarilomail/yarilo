@@ -13,7 +13,7 @@ import (
 
 // n5Cluster spins up n in-process directors behind a mock load-balanced
 // seed (each seed connection is proxied to a RANDOM member, exactly like a
-// ClusterIP behind kube-proxy — harder than the headless fan-out), starts
+// ClusterIP behind kube-proxy - harder than the headless fan-out), starts
 // them simultaneously, and returns the servers plus a kill(addr) that
 // removes a member from the seed's routing set and force-closes all of its
 // connections (a real pod-kill, not just a listener close). Used by the
@@ -121,7 +121,7 @@ func n5Cluster(t *testing.T, n int) (srvs []*Server, addrsOf []string, kill func
 		mu.Unlock()
 		// A real pod-kill: stop the node's accept/dial loops (cancel) and
 		// close its listener, so survivors' dials to it FAIL rather than
-		// being served by a still-running process — then force-close its
+		// being served by a still-running process - then force-close its
 		// existing connections too.
 		if cancel != nil {
 			cancel()
@@ -182,7 +182,7 @@ func waitAllSee(t *testing.T, srvs []*Server, want int, absent string, timeout t
 // TestMembership_N5_FormationConverges locks in that a clean simultaneous
 // N=5 start converges to exactly 5 on every node (#768 comment retraction:
 // the reported "5/4/4/5/5" was a log-scraping / scale-churn artifact, not a
-// propagation bug — the ring really does converge at N>3).
+// propagation bug - the ring really does converge at N>3).
 func TestMembership_N5_FormationConverges(t *testing.T) {
 	srvs, _, _ := n5Cluster(t, 5)
 	if !waitAllSee(t, srvs, 5, "", 20*time.Second) {
@@ -196,7 +196,7 @@ func TestMembership_N5_FormationConverges(t *testing.T) {
 
 // TestMembership_N5_KillConverges kills one member of a converged 5-ring and
 // requires every survivor to converge to exactly 4 with the dead member
-// gone — no lingering non-neighbor phantom (the other reported-then-retracted
+// gone - no lingering non-neighbor phantom (the other reported-then-retracted
 // defect).
 func TestMembership_N5_KillConverges(t *testing.T) {
 	srvs, addrs, kill := n5Cluster(t, 5)

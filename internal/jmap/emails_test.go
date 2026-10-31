@@ -133,7 +133,7 @@ func TestEmailGetFetchesOnlyTheRequestedBodyKind(t *testing.T) {
 	}
 }
 
-// The ceiling truncates, marks isTruncated, and never splits a rune — the three
+// The ceiling truncates, marks isTruncated, and never splits a rune - the three
 // things that make a server-side cap RFC-conformant.
 func TestEmailGetCeilingTruncatesAndSaysSo(t *testing.T) {
 	// 5 bytes lands inside the two-byte runes of "Привіт".
@@ -163,7 +163,7 @@ func TestEmailGetCeilingTruncatesAndSaysSo(t *testing.T) {
 // ceiling rather than the whole body.
 func TestEmailGetClientCapInteractsWithTheCeiling(t *testing.T) {
 	// The text part is ~41 bytes, so a ceiling of 20 truncates and a client cap
-	// of 4 truncates further — both directions are visible.
+	// of 4 truncates further - both directions are visible.
 	s, id := emailServer(t, 20)
 	tests := []struct {
 		name, args    string

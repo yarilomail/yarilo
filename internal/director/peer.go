@@ -1,4 +1,4 @@
-// Package director — shared helpers for applying state received from a
+// Package director - shared helpers for applying state received from a
 // ring/right-neighbor connection (membership.go owns the connection
 // lifecycle itself; #750 phase 1 replaced the old full-mesh PeerDialer with
 // the self-organizing ring).
@@ -109,8 +109,8 @@ func applyRingChangeFields(srv *Server, payload []string) {
 		}
 		// When port is present, add the backend outright: the registration is
 		// a persistent connection to exactly ONE of N directors (ClusterIP),
-		// so the other directors only ever learn this backend via this gossip
-		// — SetUp can't help them, it has no port. Full AddBackend closes the
+		// so the other directors only ever learn this backend via this gossip -
+		// SetUp can't help them, it has no port. Full AddBackend closes the
 		// "routed on 1 of 3 directors" gap.
 		if len(payload) >= 6 {
 			port, pErr := strconv.Atoi(payload[4])
@@ -135,7 +135,7 @@ func applyRingChangeFields(srv *Server, payload []string) {
 		}
 	case "vhosts":
 		// Admin vhost-weight change (#706), replicated ring-wide. Deliberately
-		// carries NO seq and never calls recordBackendSeen — an operator
+		// carries NO seq and never calls recordBackendSeen - an operator
 		// reweighting a static backend must not turn it lease-managed (which
 		// would make it expirable). Update the weight in place, preserving the
 		// backend's up/down state.
@@ -162,7 +162,7 @@ func applyRingChangeFields(srv *Server, payload []string) {
 	case "flush":
 		srv.ring.SetUp(ip, false, ts)
 		// Clear the flushed backend's pins on every replica (#706) so new
-		// LOOKUPs rehash away from it. Sessions are untouched (drain) — the
+		// LOOKUPs rehash away from it. Sessions are untouched (drain) - the
 		// origin decided whether to kick (admin evacuate) or not (wire drain).
 		n := srv.userDir.DeleteByBackend(ip)
 		slog.Info("director: ring change flush", "ip", ip, "pins_cleared", n)

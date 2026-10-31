@@ -2,7 +2,7 @@
 # Build an mbox of non-English mail for the load generator.
 #
 # Why this exists: the corpus generator in yarilo-loadtest emits English, and
-# the English stopword list was the one already correct — 174 words, matching
+# the English stopword list was the one already correct - 174 words, matching
 # its source exactly, unchanged by #1021 and #1025. So a sandbox run measures
 # none of the code those changed, by construction (#1046).
 #
@@ -11,7 +11,7 @@
 # before stemming rather than after. Taking them from the same files the server
 # uses means the corpus and the server cannot disagree about what a stopword is.
 #
-# The content words are pairs of function words run together — deterministic,
+# The content words are pairs of function words run together - deterministic,
 # valid UTF-8, and not themselves in the list. That is deliberate rather than a
 # shortcut: the measurement is about how many tokens survive filtering and what
 # they cost to stem, not about meaning, and inventing prose would put an
@@ -40,7 +40,7 @@ list="$root/internal/fts/language/data/stopwords_$lang.txt"
 
 # Lines are wrapped well under the limit. SMTP carries at most 1000 octets per
 # line including the CRLF, and a server given a longer one rejects the WHOLE
-# transaction — one unwrapped line fails every delivery in the run, which is
+# transaction - one unwrapped line fails every delivery in the run, which is
 # how this cost a day before the loader learned to refuse such a file.
 awk -v lang="$lang" -v count="$count" -v ratio="$ratio" \
     -v perline="$words_per_line" -v lines="$lines_per_message" '

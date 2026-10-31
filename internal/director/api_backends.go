@@ -127,9 +127,9 @@ func (s *Server) apiBackendDown(w http.ResponseWriter, r *http.Request) {
 // originated flush event, so every replica rehashes away too.
 // apiBackendFlush evacuates a backend (or "all"). Query params (#849):
 //
-//	force=true            immediate mass evacuate — kick every session at once
+//	force=true            immediate mass evacuate - kick every session at once
 //	                      (the pre-#849 behaviour).
-//	(default, no force)   graceful throttled drain — kick users in a self-clocked
+//	(default, no force)   graceful throttled drain - kick users in a self-clocked
 //	                      window of max_parallel confirmed-kills, spreading the
 //	                      re-login across surviving pods instead of stampeding them.
 //	max_parallel=N        graceful window size; defaults to director_service.max_parallel_moves.

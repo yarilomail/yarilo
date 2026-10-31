@@ -1,4 +1,4 @@
-# Build outputs — root-level dev builds. `go build ./app/<name>/` (no -o) drops
+# Build outputs - root-level dev builds. `go build ./app/<name>/` (no -o) drops
 # the compiled binary in the repo root; ignore every such artifact by pattern so
 # no new binary can slip in (imap/pop3/submission/managesieve-login, fts, etc.).
 /yarilo

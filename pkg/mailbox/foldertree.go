@@ -16,7 +16,7 @@ type FolderEntry struct {
 	Selectable bool
 }
 
-// SelectableNames returns just the names of the selectable entries — the
+// SelectableNames returns just the names of the selectable entries - the
 // subset that admin and index operations act on.
 func SelectableNames(entries []FolderEntry) []string {
 	out := make([]string, 0, len(entries))
@@ -36,8 +36,8 @@ func SelectableNames(entries []FolderEntry) []string {
 //
 //   - decode maps an on-disk name component to its logical form (modUTF7/NFC);
 //     an entry is skipped when decode reports ok=false.
-//   - isMarkerDir reports directories that are not hierarchy children — the
-//     dbox-Mails message store leaf for sdbox — so the walk neither descends
+//   - isMarkerDir reports directories that are not hierarchy children - the
+//     dbox-Mails message store leaf for sdbox - so the walk neither descends
 //     into them nor treats them as folders.
 //   - selectable receives the slash-joined disk path relative to root and
 //     reports whether that directory is a real (selectable) mailbox.
@@ -45,7 +45,7 @@ func SelectableNames(entries []FolderEntry) []string {
 // Only selectable folders and the \NoSelect containers on the path to one are
 // returned; the containers are derived from the selectable folders' name
 // hierarchy, so an empty stray directory (not selectable, no selectable
-// descendant) is ignored — the walk still recurses through it to reach any
+// descendant) is ignored - the walk still recurses through it to reach any
 // selectable child. Parents precede their children in the result.
 //
 // A missing root yields no entries (not an error): a user with no folders.

@@ -306,7 +306,7 @@ func TestAnUnresolvableRecordIsReportedNotEmptied(t *testing.T) {
 }
 
 // The size a client is told is the size of the body it gets, including for a
-// record that carries none — what a recovered folder holds (#1726, #1727).
+// record that carries none - what a recovered folder holds (#1726, #1727).
 func TestTheSizeToldIsTheSizeOfTheBody(t *testing.T) {
 	box, f := openBox(t, "u8@example.com")
 	const body = "From: a@b\r\nSubject: sized\r\n\r\nbody\r\n"

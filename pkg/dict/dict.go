@@ -1,6 +1,6 @@
 // Package dict is yarilo's pluggable key-value store abstraction.
 //
-// It provides a single contract — Dict + Tx + Iterator — that every
+// It provides a single contract - Dict + Tx + Iterator - that every
 // feature needing durable per-user or per-mailbox state speaks:
 // METADATA (RFC 5464), quota counters, ACL state, sieve script
 // indices, future replication cursors. Concrete storage choices
@@ -40,7 +40,7 @@ const (
 	// IterSortByValue returns rows in ascending value order.
 	// Drivers that cannot sort by value MAY fall back to insertion order.
 	IterSortByValue
-	// IterNoValue skips loading values — useful for cheap key listings.
+	// IterNoValue skips loading values - useful for cheap key listings.
 	IterNoValue
 	// IterExactKey returns every value bound to the exact key (multi-value
 	// dicts). Equivalent to Lookup but iterator-shaped.
@@ -116,7 +116,7 @@ func ReleaseUser(d Dict, set *OpSettings) {
 // All read methods (Lookup, Iterate) honour context cancellation;
 // drivers that block on I/O MUST return ctx.Err() promptly. Mutations
 // flow through Begin → Tx; there is no direct Set/Unset on Dict by
-// design — the transaction-only mutation surface keeps drivers'
+// design - the transaction-only mutation surface keeps drivers'
 // write paths consistent. Close releases all driver resources;
 // subsequent calls on a closed Dict return ErrClosed.
 type Dict interface {

@@ -21,7 +21,7 @@ type PassdbConfig struct {
 	// against the token's username claim. Default "%{user}" (identity).
 	UsernameTemplate string
 
-	// ActiveAttribute / ActiveValue — optional account-active check on a
+	// ActiveAttribute / ActiveValue - optional account-active check on a
 	// claim other than the validator's UsernameAttribute. When set, the
 	// claim must be present (and equal ActiveValue if non-empty).
 	ActiveAttribute string
@@ -56,10 +56,10 @@ type PassdbConfig struct {
 // Contract: the SASL OAUTHBEARER handler puts the bearer token in
 // req.Password and the GS2 authzid in req.Username. The passdb then:
 //
-//  1. Validator.Validate(token) — signature / iss / aud / scope / exp.
-//  2. CompareUsername(claim, req.Username, template) — the SASL-claimed
+//  1. Validator.Validate(token) - signature / iss / aud / scope / exp.
+//  2. CompareUsername(claim, req.Username, template) - the SASL-claimed
 //     user must match the token's username claim.
-//  3. CheckActive(claims, ActiveAttribute, ActiveValue) — optional.
+//  3. CheckActive(claims, ActiveAttribute, ActiveValue) - optional.
 //  4. Writes user + userdb_* fields onto req.Fields, returns ResultOK.
 //
 // Error mapping:
@@ -89,7 +89,7 @@ func NewPassdb(cfg PassdbConfig) (*Passdb, error) {
 func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
 	token := req.Password
 	if token == "" {
-		// No bearer token — let the next passdb try.
+		// No bearer token - let the next passdb try.
 		return protocol.ResultNext, nil
 	}
 
@@ -102,7 +102,7 @@ func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
 		if errors.Is(err, ErrUpstream) {
 			return protocol.ResultTempFail, err
 		}
-		// Validation failure — let the chain try another passdb.
+		// Validation failure - let the chain try another passdb.
 		return protocol.ResultNext, nil
 	}
 
@@ -112,7 +112,7 @@ func (p *Passdb) Authenticate(req *protocol.Request) (protocol.Result, error) {
 		return protocol.ResultNext, nil
 	}
 	if claims.Username == "" {
-		// No username claim at all — clear miss.
+		// No username claim at all - clear miss.
 		return protocol.ResultNext, fmt.Errorf("%w: validator returned no Username", ErrUsernameMissing)
 	}
 

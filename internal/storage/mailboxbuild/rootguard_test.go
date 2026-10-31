@@ -58,7 +58,7 @@ func TestDriversRefuseToDestroyTheirOwnRoot(t *testing.T) {
 					t.Errorf("Rename(%q, ...) was carried out on an unvalidated driver", name)
 				}
 				if err := u.Rename("Keep", name); err == nil {
-					t.Errorf("Rename(..., %q) was carried out — renaming onto the root buries the mailbox", name)
+					t.Errorf("Rename(..., %q) was carried out - renaming onto the root buries the mailbox", name)
 				}
 			}
 

@@ -178,7 +178,7 @@ func checkFileNoHeader(t *testing.T, path, header string) {
 	for sc.Scan() {
 		line := sc.Text()
 		if strings.TrimRight(line, "\r") == "" {
-			return // end of headers, not found — good
+			return // end of headers, not found - good
 		}
 		if strings.HasPrefix(strings.ToLower(line), prefix) {
 			t.Fatalf("unexpected header %q in %s: %q", header, path, line)

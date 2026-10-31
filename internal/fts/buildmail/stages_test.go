@@ -42,7 +42,7 @@ func TestTrackAccumulates(t *testing.T) {
 		}
 	}
 	if d < 5*time.Millisecond {
-		t.Errorf("three 2ms calls accumulated to %v — track is replacing, not adding", d)
+		t.Errorf("three 2ms calls accumulated to %v - track is replacing, not adding", d)
 	}
 }
 

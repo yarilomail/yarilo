@@ -10,8 +10,8 @@ func TestValidateFolderName(t *testing.T) {
 		ok   bool
 		why  string
 	}{
-		{"", "/", false, "resolves to the mailbox root — Delete removed every message and the index"},
-		{".", "/", false, "resolves above the root — Delete removed the user's home directory"},
+		{"", "/", false, "resolves to the mailbox root - Delete removed every message and the index"},
+		{".", "/", false, "resolves above the root - Delete removed the user's home directory"},
 		{"..", "/", false, "climbs out of the mail tree"},
 		{"a/..", "/", false, "climbs back out after descending"},
 		{"../x", "/", false, "names a sibling account's tree"},
@@ -29,7 +29,7 @@ func TestValidateFolderName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateFolderName(tc.name, tc.sep)
 			if ok := err == nil; ok != tc.ok {
-				t.Errorf("ValidateFolderName(%q, %q) error = %v, want ok=%v — %s",
+				t.Errorf("ValidateFolderName(%q, %q) error = %v, want ok=%v - %s",
 					tc.name, tc.sep, err, tc.ok, tc.why)
 			}
 		})
@@ -45,6 +45,6 @@ func TestValidateFolderNameChecksBothSeparators(t *testing.T) {
 		t.Error(`"a/../b" accepted with a "." separator; "/" is still a path separator on disk`)
 	}
 	if err := ValidateFolderName("a.../b", "/"); err != nil {
-		t.Errorf(`"a.../b" refused with a "/" separator: %v — "..." is not a traversal segment`, err)
+		t.Errorf(`"a.../b" refused with a "/" separator: %v - "..." is not a traversal segment`, err)
 	}
 }

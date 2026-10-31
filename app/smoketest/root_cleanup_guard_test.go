@@ -13,7 +13,7 @@ import (
 // The guard in inbox_guard_test.go reads one function at a time, and the defect
 // in #1070 was assembled from two: checkFolder searched ALL and expunged, while
 // the name "INBOX" was supplied by its caller. Neither function carried all
-// three signals, so nothing fired — and the smoke run emptied a live mailbox on
+// three signals, so nothing fired - and the smoke run emptied a live mailbox on
 // every pass for as long as that arrangement stood.
 //
 // These read the call, not the function body: what a caller hands to a
@@ -79,7 +79,7 @@ func TestChecksAgainstTheRootNameWhatTheySeeded(t *testing.T) {
 			return
 		}
 		if len(args) < 4 {
-			t.Errorf("%s: checkFolder names the mailbox root with nothing to scope its cleanup by — "+
+			t.Errorf("%s: checkFolder names the mailbox root with nothing to scope its cleanup by - "+
 				"pass the Message-ID this check injected, or the cleanup empties the account", pos)
 		}
 	})
@@ -94,7 +94,7 @@ func TestNothingAsksToDeleteTheMailboxRoot(t *testing.T) {
 			return
 		}
 		if rootLiteral(args[0]) {
-			t.Errorf("%s: deleteFolder names the mailbox root — on maildir that is the account, not a folder in it", pos)
+			t.Errorf("%s: deleteFolder names the mailbox root - on maildir that is the account, not a folder in it", pos)
 		}
 	})
 }

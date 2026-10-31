@@ -54,7 +54,7 @@ func TestHealExpungesVanishedAndClearsMarker(t *testing.T) {
 // is about: an m.<N> is still listed by os.ReadDir but os.Open returns ENOENT
 // (the old file was unlinked after the snapshot). A dangling symlink stands in
 // for that timing. scanStorage classifies it as errScanIO → ErrScanIncomplete,
-// so the heal must ABORT — never mistaking a just-compacted message for vanished.
+// so the heal must ABORT - never mistaking a just-compacted message for vanished.
 // This is the errScanIO abort path, distinct from the errScanCorrupt one below.
 func TestHealAbortsOnVanishedFileMidScan(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
@@ -80,7 +80,7 @@ func TestHealAbortsOnVanishedFileMidScan(t *testing.T) {
 
 // TestHealAbortsOnIncompleteScan: a structurally corrupt m.<N> (the same signal
 // a concurrent purge/altmove race produces) makes the scan incomplete, so the
-// heal ABORTS and expunges nothing — never mistaking an unreadable-right-now
+// heal ABORTS and expunges nothing - never mistaking an unreadable-right-now
 // message for a vanished one.
 func TestHealAbortsOnIncompleteScan(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
@@ -99,7 +99,7 @@ func TestHealAbortsOnIncompleteScan(t *testing.T) {
 	if err == nil {
 		t.Fatal("heal should abort (return error) on an incomplete scan")
 	}
-	// Nothing expunged — the good record survives.
+	// Nothing expunged - the good record survives.
 	if got := folderCount(t, idx, "INBOX"); got != 1 {
 		t.Errorf("INBOX count = %d, want 1 (nothing dropped on abort)", got)
 	}

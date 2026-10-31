@@ -11,7 +11,7 @@ import (
 // Asserted on the wire the login actually reads, because both the builder and
 // the write path were part of the defect.
 //
-// The ring form is unchanged and still carries the old backend — the two are
+// The ring form is unchanged and still carries the old backend - the two are
 // different protocols and this test pins the difference.
 func TestMoveKick_LoginLineCarriesTheUsernameOnly(t *testing.T) {
 	srv, addr := startServer(t)
@@ -36,7 +36,7 @@ func TestMoveKick_LoginLineCarriesTheUsernameOnly(t *testing.T) {
 		t.Fatal("the moving director never pushed USER-KICKED to its own login client")
 	}
 	if want := "USER-KICKED\tu@example.com\treason=move"; kick != want {
-		t.Errorf("login kick line = %q, want %q — the ring's old-backend field must not reach a login, the reason must (#2263)", kick, want)
+		t.Errorf("login kick line = %q, want %q - the ring's old-backend field must not reach a login, the reason must (#2263)", kick, want)
 	}
 }
 

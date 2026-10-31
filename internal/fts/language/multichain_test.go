@@ -12,7 +12,7 @@ func TestMultiChainSelectForIndex_SingleLanguageSkipsDetector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// German text, but only "en" is configured — must still select "en"
+	// German text, but only "en" is configured - must still select "en"
 	// without even attempting detection (degenerates to the old single-Chain
 	// behaviour, per the config-not-binary "one code path" design).
 	_, lang := m.SelectForIndex(germanSample)
@@ -39,7 +39,7 @@ func TestMultiChainSelectForIndex_FallsBackOnShortText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Too short to classify reliably — must fall back to the FIRST
+	// Too short to classify reliably - must fall back to the FIRST
 	// configured language (en), not guess.
 	_, lang := m.SelectForIndex("hi")
 	if lang != "en" {
@@ -95,7 +95,7 @@ func TestMultiChainExpandSearch_DropsStopwordInEveryLanguage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// "so" is a stopword in BOTH the English and German lists — dropped in
+	// "so" is a stopword in BOTH the English and German lists - dropped in
 	// every configured language, so it must never survive as a query
 	// constraint (it was never indexed under any of them).
 	words := m.ExpandSearch("so")
@@ -110,11 +110,11 @@ func TestMultiChainExpandSearch_KeptWhenStopwordInOnlySomeLanguages(t *testing.T
 		t.Fatal(err)
 	}
 	// "the" is an English stopword but not a German one (German's list has
-	// no ASCII "the") — it must survive, since a message auto-detected as
+	// no ASCII "the") - it must survive, since a message auto-detected as
 	// German would still have indexed it.
 	words := m.ExpandSearch("the")
 	if len(words) != 1 {
-		t.Fatalf(`ExpandSearch("the") = %d words, want 1 (kept — not a stopword in every configured language)`, len(words))
+		t.Fatalf(`ExpandSearch("the") = %d words, want 1 (kept - not a stopword in every configured language)`, len(words))
 	}
 }
 
@@ -154,7 +154,7 @@ func TestMultiChainNeedsDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if single.NeedsDetection() {
-		t.Error("a single configured language must not need detection — callers should skip sampling entirely")
+		t.Error("a single configured language must not need detection - callers should skip sampling entirely")
 	}
 	multi, err := NewMultiChain([]string{"en", "de"}, []string{"lowercase", "stopwords", "snowball"}, nil, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {
@@ -205,7 +205,7 @@ func TestMultiChainFiltersOverrideUnknownLanguageErrors(t *testing.T) {
 
 // TestMultiChainFiltersOverrideChecksum (#726 item 4) proves the aggregate
 // checksum already distinguishes an override from the un-overridden
-// default — no additional mixing needed, since MultiChain.SettingsChecksum
+// default - no additional mixing needed, since MultiChain.SettingsChecksum
 // already aggregates every configured chain's own checksum, and a chain's
 // checksum already covers its Filters.
 func TestMultiChainFiltersOverrideChecksum(t *testing.T) {
@@ -235,7 +235,7 @@ func TestMultiChainFiltersOverrideChecksum(t *testing.T) {
 
 	// An override identical in content to the global default still counts
 	// as configuration and still changes the checksum vs. no override at
-	// all — acceptable, documented in values.yaml (the override key's mere
+	// all - acceptable, documented in values.yaml (the override key's mere
 	// presence is part of the configuration, not just its resolved value).
 	redundant, err := NewMultiChain(languages, filters, map[string][]string{"uk": filters}, DefaultTokenMaxLen, DefaultAddressMaxLen, 10)
 	if err != nil {

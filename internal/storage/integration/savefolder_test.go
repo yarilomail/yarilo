@@ -29,7 +29,7 @@ import (
 //     the next AllocateAppend to hand out a duplicate UID.
 //
 // After the fix, SaveFolder re-reads the header under the X lock and only
-// persists fields the caller owns (Messages) — NextUID stays at N+K.
+// persists fields the caller owns (Messages) - NextUID stays at N+K.
 func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 	dialLocker := embeddedLocksForSaveTest(t)
 
@@ -63,7 +63,7 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 		t.Fatalf("initial NextUID: want 1/1, got %d/%d", folderA.NextUID, folderB.NextUID)
 	}
 
-	// Process A appends 3 messages — disk NextUID is now 4.
+	// Process A appends 3 messages - disk NextUID is now 4.
 	for i := 0; i < 3; i++ {
 		uid, err := ixA.AllocateUID(folderA.ID)
 		if err != nil {
@@ -90,7 +90,7 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 		t.Fatalf("save folder B: %v", err)
 	}
 
-	// Process A appends one more — must get UID 4, not 1.
+	// Process A appends one more - must get UID 4, not 1.
 	uid, err := ixA.AllocateUID(folderA.ID)
 	if err != nil {
 		t.Fatalf("allocate A post: %v", err)
@@ -108,7 +108,7 @@ func TestSaveFolderDoesNotOverwriteFreshNextUID(t *testing.T) {
 }
 
 // embeddedLocksForSaveTest is a local twin of the helper in
-// locks_integration_test.go — kept here so this file is self-contained.
+// locks_integration_test.go - kept here so this file is self-contained.
 func embeddedLocksForSaveTest(t *testing.T) func() locks.Locker {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "yl-sf")

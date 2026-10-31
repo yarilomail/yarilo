@@ -21,7 +21,7 @@ const (
 )
 
 // BuildKey scopes the BuildMore stream that follows it: which message (UID),
-// which part type, and — for headers — the lowercased field name.
+// which part type, and - for headers - the lowercased field name.
 type BuildKey struct {
 	UID uint32
 	// GUID is the message's own identity. One index per user holds every
@@ -134,7 +134,7 @@ type UserIndex interface {
 	// excludes none of the per-mailbox writers, so the two ways to compact
 	// would not exclude each other across processes (#1176).
 	Mailboxes() []MailboxRef
-	// OptimizeMailbox compacts sealed shards for one mailbox — the single
+	// OptimizeMailbox compacts sealed shards for one mailbox - the single
 	// compaction entry point, used by the background auto-optimize queue and
 	// by whole-user optimize alike.
 	OptimizeMailbox(mbox MailboxRef) error

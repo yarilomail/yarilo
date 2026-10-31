@@ -57,7 +57,7 @@ type legacyTestRec struct {
 
 func TestAutoMigratesLegacyOnOpen(t *testing.T) {
 	dir := t.TempDir()
-	// Seed under the legacy filename — Open() must first rename
+	// Seed under the legacy filename - Open() must first rename
 	// the legacy index name → yarilo.index, then notice the pre-Phase-2
 	// yarilo wire format inside and migrate to current format.
 	indexPath := filepath.Join(dir, "dovecot.index")
@@ -136,7 +136,7 @@ func TestAutoMigratesLegacyOnOpen(t *testing.T) {
 	}
 
 	// And the .index file on disk should now be canonical-format.
-	// Detect by re-running detector — it must say "not legacy".
+	// Detect by re-running detector - it must say "not legacy".
 	if _, isLegacy, _ := detectAndDecodeLegacy(yariloPath); isLegacy {
 		t.Error("post-migration file still detected as legacy")
 	}
@@ -160,7 +160,7 @@ func TestOpenMigratesLegacyIndexFilename(t *testing.T) {
 		t.Fatalf("seed index missing: %v", err)
 	}
 
-	// 2. Move the yarilo files back to legacy names — as if the
+	// 2. Move the yarilo files back to legacy names - as if the
 	//    folder was inherited from a canonical install.
 	legacyPath := filepath.Join(dir, LegacyIndexFileName)
 	legacyLog := filepath.Join(dir, LegacyIndexLogFileName)

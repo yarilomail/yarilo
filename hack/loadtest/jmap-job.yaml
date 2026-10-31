@@ -1,7 +1,7 @@
 # JMAP read load against the sandbox.
 #
 # What a mail client does when it opens: discover the session once, list the
-# mailboxes, then ask for the newest messages in one request — Email/query and
+# mailboxes, then ask for the newest messages in one request - Email/query and
 # Email/get joined by a back-reference, which is the round trip JMAP exists to
 # save.
 #

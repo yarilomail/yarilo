@@ -49,7 +49,7 @@ var commandBuckets = []float64{
 // It is the one thing maildir does on SELECT that the index-authoritative
 // drivers do not: walk cur/ and new/ so a message delivered by an MDA or moved
 // by a second MUA appears without an operator rebuild. That is a correctness
-// property, not waste — but it is also the named suspect for maildir's SELECT
+// property, not waste - but it is also the named suspect for maildir's SELECT
 // being the most expensive of the three drivers (#1265), and a suspect without
 // a number is an opinion.
 //

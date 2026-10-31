@@ -8,7 +8,7 @@ import (
 
 // TestApplyRingChangeVhosts_UpdatesWeightWithoutLease guards #706 item 1 and its
 // trap: a replicated vhost change updates the weight and preserves up/down
-// state, but must NOT record a lease (no seq) — reweighting a static backend
+// state, but must NOT record a lease (no seq) - reweighting a static backend
 // must not make it expirable.
 func TestApplyRingChangeVhosts_UpdatesWeightWithoutLease(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{AntiEntropyInterval: -1}))

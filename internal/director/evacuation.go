@@ -23,13 +23,13 @@ type evacuation struct {
 
 // startEvacuation begins (or refuses to duplicate) a graceful drain of backendIP:
 // it marks the host down ring-wide and clears its pins via the existing flush event
-// (down + DeleteByBackend on every replica, NO kick — the kicks are what we throttle),
+// (down + DeleteByBackend on every replica, NO kick - the kicks are what we throttle),
 // then drains the users that hold active sessions on it in a self-clocked window of
 // maxParallel confirmed-kills. Returns the number of users queued.
 //
 // The re-login is deterministic without a proactive pin move: the host is now excluded
 // from the ring, so a kicked user's re-LOOKUP rehashes to the same surviving backend it
-// would have been moved to — and the confirmed-kill hold (#847) makes that re-LOOKUP
+// would have been moved to - and the confirmed-kill hold (#847) makes that re-LOOKUP
 // wait until the old session is gone, closing the split-writer window. So a graceful
 // drain is exactly a throttled, hold-gated version of the mass kick that --force does.
 func (s *Server) startEvacuation(backendIP string, maxParallel int) int {
@@ -39,7 +39,7 @@ func (s *Server) startEvacuation(backendIP string, maxParallel int) int {
 	s.userDir.DeleteByBackend(backendIP)
 	s.originateRingEvent("RING-CHANGE", fmt.Sprintf("%s\tflush\t%s", backendIP, tag), nil)
 
-	// One username per distinct routing hash — two sessions of the same user, or two
+	// One username per distinct routing hash - two sessions of the same user, or two
 	// spellings that fold to one hash, drain as a single move.
 	s.sessRecMu.RLock()
 	byHash := make(map[uint32]string)
@@ -91,7 +91,7 @@ func (s *Server) evacPumpLocked(e *evacuation) {
 		e.inflight[hash] = true
 		e.moved++
 		// Hold LOOKUP for this hash and kick its sessions off the evacuating host
-		// only (conditional USER-KICKED with the old-backend field) — the same
+		// only (conditional USER-KICKED with the old-backend field) - the same
 		// primitives moveUser uses, so re-login lands on the rehash target once the
 		// kill confirms.
 		s.startKilling(hash)

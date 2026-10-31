@@ -69,7 +69,7 @@ func (u *userMailbox) purgeFile(p *mdboxmap.Placement, fileID uint32, stats *Pur
 	}
 
 	if len(live) == 0 {
-		// Whole file is dead — drop map records and unlink.
+		// Whole file is dead - drop map records and unlink.
 		if err := p.AppendMove(nil, dead); err != nil {
 			return fmt.Errorf("mdbox/purge: expunge file=%d: %w", fileID, err)
 		}

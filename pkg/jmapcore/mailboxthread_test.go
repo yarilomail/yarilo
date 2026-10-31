@@ -12,7 +12,7 @@ import (
 // Written out rather than derived for the reason the Email list is: a list
 // built from the struct agrees with the struct by construction and can say
 // nothing about a property that was never modelled. That is the failure mode
-// strict validation turns from quiet into loud — a request the specification
+// strict validation turns from quiet into loud - a request the specification
 // requires us to serve, refused as a typo.
 var (
 	specMailboxProperties = []string{
@@ -58,7 +58,7 @@ func assertPropertySet(t *testing.T, name string, typ reflect.Type, spec []strin
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Errorf("%s: specified properties with no field: %v — each is now refused as unknown", name, missing)
+		t.Errorf("%s: specified properties with no field: %v - each is now refused as unknown", name, missing)
 	}
 
 	var extra []string

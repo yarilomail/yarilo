@@ -12,7 +12,7 @@ import (
 )
 
 // FTSOptions wires full-text search into IMAP sessions. Nil Client disables
-// FTS entirely — SEARCH keeps the sequential scan.
+// FTS entirely - SEARCH keeps the sequential scan.
 type FTSOptions struct {
 	Client ftsproto.Client
 	// Chain must match the yarilo-fts service's configured language SET
@@ -22,7 +22,7 @@ type FTSOptions struct {
 	// together, since a query doesn't know which single language a given
 	// message was auto-detected as.
 	Chain *language.MultiChain
-	// AddMissing / ReadFallback / Timeout / Strict — see https://doc.yarilomail.org/latest/features/fts.html §11.
+	// AddMissing / ReadFallback / Timeout / Strict - see https://doc.yarilomail.org/latest/features/fts.html §11.
 	AddMissing   string
 	ReadFallback bool
 	Timeout      time.Duration
@@ -67,12 +67,12 @@ func searchError(err error) *imaplib.Error {
 // relevancyScores normalizes raw per-UID engine weights to the RFC 4731/6203
 // wire range, in order's enumeration order (one score per matched message,
 // same order as the ESEARCH ALL data item). A per-result-set linear min-max
-// scale to integers 1-100 — never 0, floored at 1 — with diff defaulting to
+// scale to integers 1-100 - never 0, floored at 1 - with diff defaulting to
 // 1.0 when every score is equal (avoids divide-by-zero; a uniform set maps to
 // the floor value 1 for every message).
 //
 // order can include UIDs the engine returned no score for (matched only via a
-// stripped, non-FTS criterion ANDed onto the search) — a plain map lookup
+// stripped, non-FTS criterion ANDed onto the search) - a plain map lookup
 // would default those to 0.0 and corrupt the set's min-max range, dragging lo
 // down to a fabricated zero and compressing everything else. Score-less UIDs
 // are excluded from the lo/hi computation and floored to 1: "no ranking

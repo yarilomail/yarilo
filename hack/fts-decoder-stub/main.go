@@ -1,6 +1,6 @@
 // fts-decoder-stub is a minimal server implementing the fts_decoder_driver=script
 // wire protocol (see internal/fts/decoder/script.go), for live sandbox
-// verification of the attachment-decoder code path — not for production use.
+// verification of the attachment-decoder code path - not for production use.
 // It ignores the actual attachment bytes and always returns a fixed,
 // greppable text so a live SEARCH BODY / kubectl logs check can confirm the
 // decoder was actually invoked end-to-end.

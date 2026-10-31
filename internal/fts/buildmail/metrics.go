@@ -9,7 +9,7 @@ import (
 //
 // fts_build_seconds says indexing is CPU-bound; this says which CPU work.
 // Decoding an attachment that yields no useful terms and tokenising a message
-// body cost the same in the total and call for opposite fixes — one is a
+// body cost the same in the total and call for opposite fixes - one is a
 // config question about what is worth indexing, the other is a question about
 // the tokeniser.
 //

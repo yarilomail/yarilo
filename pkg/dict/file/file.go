@@ -47,7 +47,7 @@ func init() {
 }
 
 // New constructs a file dict. Required setting: "path" (string). The file need
-// not exist yet — the first commit creates it and any missing parent
+// not exist yet - the first commit creates it and any missing parent
 // directories (0700).
 func New(cfg dict.Config) (dict.Dict, error) {
 	pathAny, ok := cfg.Settings["path"]
@@ -586,7 +586,7 @@ func (t *tx) Commit() (dict.CommitResult, error) {
 // applyLocked applies the buffered ops to a snapshot and writes it. s.mu and
 // the file lock are held, and st.rows has just been re-read from disk.
 func (t *tx) applyLocked(st *store) (dict.CommitResult, error) {
-	// Apply ops to a snapshot — only commit to st.rows after every op
+	// Apply ops to a snapshot - only commit to st.rows after every op
 	// succeeds, so a failing atomic-inc does not leave a half-applied
 	// transaction in memory.
 	snap := make(map[string]row, len(st.rows))

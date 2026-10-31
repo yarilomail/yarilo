@@ -376,7 +376,7 @@ func (m *Map) writeBaseLocked() error {
 func (m *Map) applyLogTailLocked() error {
 	applied, err := m.replayFromPersistedLocked()
 	if errors.Is(err, errLogIndexMismatch) {
-		// Log left over from a previous map at this path — discard it.
+		// Log left over from a previous map at this path - discard it.
 		_ = os.Remove(m.logPath())
 		m.logSize = 0
 		return nil

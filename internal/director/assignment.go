@@ -11,7 +11,7 @@ import (
 )
 
 // Assignment policies for the INITIAL (unpinned) user→backend placement (#797).
-// Sticky pins and USER-MOVE are unaffected — only a fresh
+// Sticky pins and USER-MOVE are unaffected - only a fresh
 // assignment consults the policy.
 const (
 	policyHash          = "hash"           // consistent hash (default; reference semantics)
@@ -141,11 +141,11 @@ func (s *Server) leastLoadedInTag(tag string) *ring.Backend {
 //     capacity-normalized load. Level 1 = the requested protocol's sessions;
 //     level 2 = total sessions, deciding among level-1 ties. Each load is
 //     normalized as count*100/vhosts (vhosts 1..100; 0 = drain → excluded).
-//     Tie-break: lower (IP, port). When reqProto is "" (admin path — no protocol)
+//     Tie-break: lower (IP, port). When reqProto is "" (admin path - no protocol)
 //     level 1 is skipped and total load decides.
 //
 // Strict tag match: candidates are only Up backends whose Tag == tag ("" is a
-// real tag, the untagged pool) with vhosts > 0. No full-ring fallback — an empty
+// real tag, the untagged pool) with vhosts > 0. No full-ring fallback - an empty
 // candidate set returns nil and the caller FAILs.
 func (s *Server) pickBackend(user, tag, reqProto string) *ring.Backend {
 	switch s.assignmentPolicy() {
@@ -221,7 +221,7 @@ func (s *Server) recordDomain(user, addr string) {
 }
 
 // assignAndPin resolves an UNPINNED user via the policy, records the pin, and
-// propagates USER-ASSIGN — the SINGLE owner of initial placement (#797). Every
+// propagates USER-ASSIGN - the SINGLE owner of initial placement (#797). Every
 // fresh-assignment caller (login LOOKUP, admin apiMap under least_sessions
 // or domain) funnels through here so none can independently pick a
 // different pod and split a user's per-user writer (#788). Returns nil when no

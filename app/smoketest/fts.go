@@ -8,7 +8,7 @@ import (
 // checkFTS proves the full-text search pipeline end-to-end: delivers a
 // message with a unique marker via LMTP, waits for the yarilo-fts autoindex
 // worker to pick it up, then verifies SEARCH finds it by body content,
-// header (subject), and envelope sender — the three query shapes FTS backs.
+// header (subject), and envelope sender - the three query shapes FTS backs.
 // A message that never becomes searchable, or is only findable through the
 // sequential-scan fallback while fts_search_read_fallback is false, surfaces
 // as a hard SEARCH error rather than a silent miss.
@@ -71,7 +71,7 @@ func checkFTS(user, pass string) error {
 		return fmt.Errorf("SEARCH FROM %q: no match", from)
 	}
 
-	// Negative control: a token that was never delivered must not match —
+	// Negative control: a token that was never delivered must not match -
 	// catches a stuck/stale index silently returning everything.
 	if uids, err := c.uidSearch(fmt.Sprintf("BODY %q", marker+"-absent")); err != nil {
 		return fmt.Errorf("SEARCH BODY (negative control): %w", err)

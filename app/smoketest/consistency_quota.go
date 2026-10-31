@@ -16,12 +16,12 @@ import (
 
 // Row: quota numbers agree between IMAP and the admin API. Both report the same
 // account's usage, computed by the same index, and a divergence means one of
-// them is reading a stale or differently-scoped total — which a per-surface
+// them is reading a stale or differently-scoped total - which a per-surface
 // check cannot see, because each is self-consistent.
 //
 // The units differ by protocol and are converted at read time, deliberately and
 // visibly: IMAP QUOTA counts kibibytes (RFC 9208), and the admin API reports
-// both bytes and KiB. Converting is not normalising away a difference — the
+// both bytes and KiB. Converting is not normalising away a difference - the
 // number of kibibytes is the same fact in both, and only its rendering differs.
 func checkConsistencyQuota(user string) error {
 	left, err := imapReadQuota(user)
@@ -132,13 +132,13 @@ func explainBackendAPITransport(err error) error {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "certificate required"):
-		return fmt.Errorf("%w — the admin API asks for a client certificate: set -backend-api-cert and -backend-api-key", err)
+		return fmt.Errorf("%w - the admin API asks for a client certificate: set -backend-api-cert and -backend-api-key", err)
 	case strings.Contains(msg, "HTTP request to an HTTPS server"):
-		return fmt.Errorf("%w — the endpoint speaks TLS: use an https:// URL in -backend-api", err)
+		return fmt.Errorf("%w - the endpoint speaks TLS: use an https:// URL in -backend-api", err)
 	case strings.Contains(msg, "certificate signed by unknown authority"):
-		return fmt.Errorf("%w — the endpoint's certificate is not trusted here: set -backend-api-ca (or -insecure to skip verification)", err)
+		return fmt.Errorf("%w - the endpoint's certificate is not trusted here: set -backend-api-ca (or -insecure to skip verification)", err)
 	case strings.Contains(msg, "no such host"):
-		return fmt.Errorf("%w — in the reference deployment the admin API answers on the backend service itself (yarilo-backend:9105, HTTPS), not on a yarilo-backend-api name", err)
+		return fmt.Errorf("%w - in the reference deployment the admin API answers on the backend service itself (yarilo-backend:9105, HTTPS), not on a yarilo-backend-api name", err)
 	}
 	return err
 }

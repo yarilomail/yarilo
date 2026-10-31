@@ -37,7 +37,7 @@ func TestMoveUser_CompareAndDeleteKick(t *testing.T) {
 	// User starts pinned to .1.
 	s.userDir.Set("u@d.test", "10.0.0.1:10143", false)
 
-	// Move to .2 — sets the new pin and originates USER-MOVED + a conditional
+	// Move to .2 - sets the new pin and originates USER-MOVED + a conditional
 	// USER-KICKED carrying the OLD backend (.1).
 	s.moveUser("u@d.test", "10.0.0.2:10143", nil)
 	if e := s.userDir.Get("u@d.test"); e == nil || e.Host != "10.0.0.2:10143" {

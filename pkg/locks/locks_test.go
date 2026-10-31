@@ -275,7 +275,7 @@ func testCounter(t *testing.T, factory lockerFactory) {
 }
 
 // testSharedConcurrentReaders (#671) proves multiple shared holders on the
-// same resource coexist — LockShared must not block against another
+// same resource coexist - LockShared must not block against another
 // LockShared, only against an exclusive Lock.
 func testSharedConcurrentReaders(t *testing.T, factory lockerFactory) {
 	l, cleanup := factory(t)
@@ -334,7 +334,7 @@ func testExclusiveBlocksShared(t *testing.T, factory lockerFactory) {
 }
 
 // testSharedReleaseUnblocksExclusive proves that once every shared holder
-// on a resource releases, a pending exclusive Lock succeeds — the shared
+// on a resource releases, a pending exclusive Lock succeeds - the shared
 // index must not leak a stale entry after Unlock.
 func testSharedReleaseUnblocksExclusive(t *testing.T, factory lockerFactory) {
 	l, cleanup := factory(t)

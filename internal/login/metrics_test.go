@@ -67,7 +67,7 @@ func TestObservePhaseRecordsUnderProtocolLabel(t *testing.T) {
 }
 
 func TestIncResultRecordsEveryOutcome(t *testing.T) {
-	// Every result the login path can produce must be a distinct series —
+	// Every result the login path can produce must be a distinct series -
 	// collapsing unavailable into auth_failed was what made #878 hard to read.
 	tests := []struct {
 		name   string

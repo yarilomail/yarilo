@@ -12,7 +12,7 @@ docs/icon.png (SVG is not accepted). Category: Networking (+ Security).
 
 # yarilo
 
-**Production-grade IMAP / POP3 / LMTP / ManageSieve / Submission mail server written in Go, with built-in full-text search.** Multi-binary architecture — each protocol component is a separate process — Kubernetes-native via a Helm chart.
+**Production-grade IMAP / POP3 / LMTP / ManageSieve / Submission mail server written in Go, with built-in full-text search.** Multi-binary architecture - each protocol component is a separate process - Kubernetes-native via a Helm chart.
 
 **Website:** https://yarilomail.org · **Docs:** https://doc.yarilomail.org
 
@@ -24,7 +24,7 @@ docs/icon.png (SVG is not accepted). Category: Networking (+ Security).
 
 ## Architecture
 
-Each protocol and infrastructure role is a **separate compiled binary** — no monolith, no mode flags. Login proxies terminate TLS and pass the authenticated connection to session backends; a director ring provides consistent-hash routing with sticky per-user sessions; shared `yarilo-auth` and `yarilo-locks` services back authentication and cross-process write coordination. The same binaries serve a single-node standalone install and a sharded clustered deployment — topology is configuration, not code. See [ARCHITECTURE](https://doc.yarilomail.org/latest/architecture/) and [DEPLOYMENT](https://doc.yarilomail.org/latest/installation/deployment.html).
+Each protocol and infrastructure role is a **separate compiled binary** - no monolith, no mode flags. Login proxies terminate TLS and pass the authenticated connection to session backends; a director ring provides consistent-hash routing with sticky per-user sessions; shared `yarilo-auth` and `yarilo-locks` services back authentication and cross-process write coordination. The same binaries serve a single-node standalone install and a sharded clustered deployment - topology is configuration, not code. See [ARCHITECTURE](https://doc.yarilomail.org/latest/architecture/) and [DEPLOYMENT](https://doc.yarilomail.org/latest/installation/deployment.html).
 
 ## One image, many components
 
@@ -68,10 +68,10 @@ HTTP on **`8080`** exposes health (`/healthz`, `/readyz`) and Prometheus **`/met
 
 | Variable | Default | Description |
 |:---|:---|:---|
-| `YARILO_COMPONENT` | — | **Required.** Selects which binary runs (see table above). |
+| `YARILO_COMPONENT` | - | **Required.** Selects which binary runs (see table above). |
 | `CONFIG` | `/etc/yarilo/yarilo.yaml` | Path to the YAML config, for components that read one. |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` (JSON `slog` output). |
-| `POD_IP` | — | The pod's own IP; used by login proxies for session bookkeeping. |
+| `POD_IP` | - | The pod's own IP; used by login proxies for session bookkeeping. |
 | `TELEMETRY_LISTEN` | `:8080` | Address for the health/metrics HTTP server. |
 
 Admin/API tokens (`YARILO_ADMIN_TOKEN`, `DIRECTOR_API_TOKEN`, …) gate the control-plane endpoints in clustered mode; the Helm chart wires these automatically.
@@ -80,7 +80,7 @@ Admin/API tokens (`YARILO_ADMIN_TOKEN`, `DIRECTOR_API_TOKEN`, …) gate the cont
 
 ### Kubernetes (recommended)
 
-yarilo is designed for Kubernetes via its Helm chart — login proxies, an optional director ring, co-located backend StatefulSets per storage tag, and shared services. See [DEPLOYMENT](https://doc.yarilomail.org/latest/installation/deployment.html).
+yarilo is designed for Kubernetes via its Helm chart - login proxies, an optional director ring, co-located backend StatefulSets per storage tag, and shared services. See [DEPLOYMENT](https://doc.yarilomail.org/latest/installation/deployment.html).
 
 ### Local (standalone)
 

@@ -125,7 +125,7 @@ func TestLookup_NoBackends(t *testing.T) {
 // TestLookup_UnescapesUsername guards #701: the director must TabUnescape the
 // LOOKUP username before hashing, so a username containing a TAB (escaped
 // byte-for-byte on the wire by proto.Conn.Lookup) resolves to the same backend
-// the ring picks for the raw username — not to a different backend keyed on the
+// the ring picks for the raw username - not to a different backend keyed on the
 // escaped string.
 func TestLookup_UnescapesUsername(t *testing.T) {
 	srv, addr := startServer(t)
@@ -139,7 +139,7 @@ func TestLookup_UnescapesUsername(t *testing.T) {
 	// test actually exercises the unescape (skip the rare hash collision).
 	escaped := proto.TabEscape(rawUser)
 	if got := srv.ring.LookupBackendByTag(escaped, "imap"); got != nil && got.IP == wantIP {
-		t.Skip("escaped and unescaped forms collided on this backend set — uninformative run")
+		t.Skip("escaped and unescaped forms collided on this backend set - uninformative run")
 	}
 
 	conn, sc := dialTest(t, addr)
@@ -321,7 +321,7 @@ func TestRingChange_DownIncludesTag(t *testing.T) {
 
 // TestUserMove_PinsToBackend (#708): USER-MOVE writes a TTL'd userDir pin, so a
 // subsequent LOOKUP routes to the moved backend instead of the ring-hash one.
-// Both backends must be Up in the requested tag — the pin is a normal sticky
+// Both backends must be Up in the requested tag - the pin is a normal sticky
 // entry now, not an unconditional override.
 func TestUserMove_PinsToBackend(t *testing.T) {
 	_, addr := startServer(t)
@@ -349,7 +349,7 @@ func TestUserMove_PinsToBackend(t *testing.T) {
 
 // TestUserMove_CaseInsensitive proves #738 under the #708 model: a move set
 // under one spelling routes under any other spelling, since USER-MOVE writes
-// the userDir pin via the lowercase-normalized hash. (USER-RELEASE is gone —
+// the userDir pin via the lowercase-normalized hash. (USER-RELEASE is gone -
 // #708 drops the overrides map; a move just TTL-expires.)
 func TestUserMove_CaseInsensitive(t *testing.T) {
 	_, addr := startServer(t)
@@ -405,7 +405,7 @@ func TestUserWeak_MarksEntryWeak(t *testing.T) {
 }
 
 // TestLookup_TagIsolation proves #737: a LOOKUP restricted to tag "a" never
-// sees a backend tagged "b" and vice versa — the wire tag field is
+// sees a backend tagged "b" and vice versa - the wire tag field is
 // mandatory and there is no full-ring fallback.
 func TestLookup_TagIsolation(t *testing.T) {
 	_, addr := startServer(t)
@@ -432,7 +432,7 @@ func TestLookup_TagIsolation(t *testing.T) {
 		t.Fatalf("LOOKUP tag=b: expected HOST on 10.0.0.31/b, got %q", line)
 	}
 
-	// Untagged pool ("") sees neither — there is no full-ring mode.
+	// Untagged pool ("") sees neither - there is no full-ring mode.
 	conn.Write([]byte("LOOKUP\t3\tuser@example.com\t\n"))
 	line = readLine(t, sc)
 	if !strings.HasPrefix(line, "FAIL\t3\t") {
@@ -520,7 +520,7 @@ func TestPingPong(t *testing.T) {
 	}
 	conn.Write([]byte("PONG\n"))
 
-	// After PONG server should stay alive — send a LOOKUP to confirm.
+	// After PONG server should stay alive - send a LOOKUP to confirm.
 	conn.Write([]byte("LOOKUP\t1\tuser@example.com\t\n"))
 	got := readLine(t, sc)
 	if !strings.HasPrefix(got, "FAIL\t1\t") {
@@ -705,7 +705,7 @@ func TestBackendDown_KicksActiveSessions(t *testing.T) {
 	// Register backend and session from loginConn.
 	loginConn.Write([]byte("BACKEND-UP\t10.0.0.10\t993\timap\t100\n"))
 	readLine(t, loginSc) // OK (loginConn)
-	// monConn gets RING-CHANGE push — drain it.
+	// monConn gets RING-CHANGE push - drain it.
 	readLine(t, monSc)
 
 	loginConn.Write([]byte("SESSION-OPEN\tsessZ\tdave@example.com\t10.0.0.10\n"))
@@ -735,7 +735,7 @@ func TestBackendDown_KicksActiveSessions(t *testing.T) {
 }
 
 // TestBackendFlush_DrainsWithoutKick: the WIRE BACKEND-FLUSH (a backend
-// self-reporting overload, #779/#811) drains — it must NOT kick sessions
+// self-reporting overload, #779/#811) drains - it must NOT kick sessions
 // (#706). The login pod gets the RING-CHANGE flush push (so new lookups stop),
 // but the active session is left running. Operator-forced evacuation with a
 // kick is the admin `backends flush` command, not this.
@@ -762,7 +762,7 @@ func TestBackendFlush_DrainsWithoutKick(t *testing.T) {
 		t.Fatalf("BACKEND-FLUSH: got %q", got)
 	}
 
-	// The only push is the RING-CHANGE flush — never a USER-KICKED.
+	// The only push is the RING-CHANGE flush - never a USER-KICKED.
 	got := readLine(t, loginSc)
 	if strings.HasPrefix(got, "USER-KICKED") {
 		t.Fatalf("wire BACKEND-FLUSH must DRAIN, not kick, got %q", got)
@@ -821,7 +821,7 @@ func TestLookup_StickyRouting(t *testing.T) {
 	}
 	firstBackend := firstParts[2]
 
-	// Add a third backend — ring would remap some users.
+	// Add a third backend - ring would remap some users.
 	conn.Write([]byte("BACKEND-UP\t10.0.0.3\t993\timap\t100\n"))
 	readLine(t, sc) // OK
 
@@ -834,7 +834,7 @@ func TestLookup_StickyRouting(t *testing.T) {
 			t.Fatalf("iter %d: expected HOST, got %q", i, line)
 		}
 		if parts[2] != firstBackend {
-			t.Errorf("iter %d: sticky routing broken — got %q, want %q", i, parts[2], firstBackend)
+			t.Errorf("iter %d: sticky routing broken - got %q, want %q", i, parts[2], firstBackend)
 		}
 	}
 }
@@ -866,7 +866,7 @@ func TestLookup_StickyRouting_FallsBackWhenBackendDown(t *testing.T) {
 	conn.Write([]byte("BACKEND-DOWN\t10.0.0.4\n"))
 	readLine(t, sc) // OK
 
-	// Sticky entry points to 10.0.0.4 which is now Down — must fall back to ring.
+	// Sticky entry points to 10.0.0.4 which is now Down - must fall back to ring.
 	conn.Write([]byte("LOOKUP\t2\tbob@example.com\timap\n"))
 	line = readLine(t, sc)
 	parts = strings.Split(line, "\t")
@@ -894,7 +894,7 @@ func TestLookup_StickyRouting_WeakEntryUsesRing(t *testing.T) {
 	conn.Write([]byte("BACKEND-UP\t10.0.0.7\t993\timap\t100\n"))
 	readLine(t, sc) // OK
 
-	// Weak entry must not pin the user — ring decides.
+	// Weak entry must not pin the user - ring decides.
 	// Just verify we get a HOST response (not FAIL) and no panic.
 	conn.Write([]byte("LOOKUP\t2\tcarol@example.com\timap\n"))
 	line := readLine(t, sc)

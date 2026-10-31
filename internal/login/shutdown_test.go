@@ -36,7 +36,7 @@ func TestServer_ShutdownStopsAccepting(t *testing.T) {
 	}
 	if c, err := net.DialTimeout("tcp", addr, 500*time.Millisecond); err == nil {
 		c.Close()
-		t.Fatal("listener must be closed after Shutdown — new connections refused")
+		t.Fatal("listener must be closed after Shutdown - new connections refused")
 	}
 	// Second Shutdown is a no-op.
 	if err := s.Shutdown(context.Background()); err != nil {

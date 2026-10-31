@@ -241,7 +241,7 @@ func TestChainFilters(t *testing.T) {
 func TestChainUnknownConfig(t *testing.T) {
 	// #718: "snowball" on a language with no Snowball algorithm at all
 	// (Ukrainian's whole reason for existing here) is a no-op passthrough,
-	// not an error — chain construction must succeed.
+	// not an error - chain construction must succeed.
 	if _, err := NewChain(Settings{Language: "xx", Filters: []string{"snowball"}, TokenMaxLen: DefaultTokenMaxLen, AddressMaxLen: DefaultAddressMaxLen}); err != nil {
 		t.Fatalf("unexpected error building a stemmer-less chain: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestStemmerlessLanguagePassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, ok := c.filter("Книги") // "books" — would be stemmed under a real snowball chain
+	got, ok := c.filter("Книги") // "books" - would be stemmed under a real snowball chain
 	if !ok || got != "книги" {
 		t.Fatalf("filter(%q) = %q/%v, want unstemmed lowercase %q", "Книги", got, ok, "книги")
 	}
@@ -269,8 +269,8 @@ func TestStemmerlessLanguagePassthrough(t *testing.T) {
 }
 
 // TestSettingsChecksumDistinguishesStemmerlessLanguages (#718) proves a uk
-// chain (passthrough) and a ru chain (real Snowball stemming) — same
-// configured Filters, different Language — get different checksums, so a
+// chain (passthrough) and a ru chain (real Snowball stemming) - same
+// configured Filters, different Language - get different checksums, so a
 // languages config change is never silently treated as a no-op by the
 // settings-drift rebuild path.
 func TestSettingsChecksumDistinguishesStemmerlessLanguages(t *testing.T) {

@@ -17,15 +17,15 @@ import (
 type IntrospectionMode string
 
 const (
-	// IntrospectionAuthBearer — GET with an Authorization: Bearer <token>
+	// IntrospectionAuthBearer - GET with an Authorization: Bearer <token>
 	// header and no token in the URL or body, as the reference does.
 	IntrospectionAuthBearer IntrospectionMode = "auth"
 
-	// IntrospectionGet — GET <url>?token=<token>. Simplest mode
+	// IntrospectionGet - GET <url>?token=<token>. Simplest mode
 	// but exposes the token in URLs / access logs.
 	IntrospectionGet IntrospectionMode = "get"
 
-	// IntrospectionPostForm — RFC 7662 standard. POST with
+	// IntrospectionPostForm - RFC 7662 standard. POST with
 	// Content-Type: application/x-www-form-urlencoded and
 	// `token=<token>` in the body.
 	IntrospectionPostForm IntrospectionMode = "post"
@@ -52,7 +52,7 @@ type IntrospectionConfig struct {
 	UsernameAttribute string
 
 	// Issuers / Audience / RequiredScopes: same semantics as
-	// LocalJWTConfig — operator-side constraints applied to the
+	// LocalJWTConfig - operator-side constraints applied to the
 	// claims the introspection endpoint returns.
 	Issuers        []string
 	Audience       string

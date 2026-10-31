@@ -79,7 +79,7 @@ func TestResolveDirectorTag(t *testing.T) {
 		t.Errorf("carol (unknown user): userFields error = %v, want 550 5.1.1", err)
 	}
 
-	// AuthMasterAddr unset — must not attempt a dial, just return "".
+	// AuthMasterAddr unset - must not attempt a dial, just return "".
 	s2 := &session{opts: testOpts(Options{})}
 	if tag, _, err := s2.userFields("alice@example.com"); tag != "" || err != nil {
 		t.Errorf("no AuthMasterAddr: userFields = %q, %v, want \"\", nil", tag, err)
@@ -362,7 +362,7 @@ func (c *mtaConn) readCode(t *testing.T, expect int) string {
 			}
 			return line[4:]
 		}
-		// continuation line (e.g. "250-...) — keep reading
+		// continuation line (e.g. "250-...) - keep reading
 	}
 }
 
@@ -610,7 +610,7 @@ func TestServer_WardenConcurrencyLimit(t *testing.T) {
 }
 
 // TestServer_WardenUnavailable verifies that delivery proceeds (no hard 451)
-// when warden is unreachable — the proxy warns and delivers without concurrency
+// when warden is unreachable - the proxy warns and delivers without concurrency
 // tracking.
 func TestServer_WardenUnavailable(t *testing.T) {
 	authAddr := startTestAuth(t)
@@ -690,7 +690,7 @@ func TestServer_Reset(t *testing.T) {
 	mta.mailFrom(t, "sender@example.com")
 	mta.rcpt(t, "frank@example.com")
 
-	// RSET — proxy must fire DISCONNECT
+	// RSET - proxy must fire DISCONNECT
 	fmt.Fprintf(mta.conn, "RSET\r\n")
 	mta.readCode(t, 250)
 	mta.quit(t)
@@ -755,7 +755,7 @@ func startStubDirector(t *testing.T, capturedLine *string) string {
 
 // TestResolveBackend_BackendAddrWinsPrecedence proves #741: when both
 // BackendAddr and DirectorAddr are set, BackendAddr wins and the director is
-// never even dialled (DirectorAddr points at an address nothing listens on —
+// never even dialled (DirectorAddr points at an address nothing listens on -
 // a dial attempt would surface as an error, but resolveBackend must not
 // attempt one). This unifies lmtplogin with internal/login's existing
 // precedence, which lmtplogin previously inverted.
@@ -775,7 +775,7 @@ func TestResolveBackend_BackendAddrWinsPrecedence(t *testing.T) {
 
 // TestDirectorLookup_NonEmptyCorrelationID proves #741: the LOOKUP line sent
 // to the director carries a real, non-empty, monotonically distinct
-// correlation id — previously always "".
+// correlation id - previously always "".
 func TestDirectorLookup_NonEmptyCorrelationID(t *testing.T) {
 	var captured string
 	directorAddr := startStubDirector(t, &captured)

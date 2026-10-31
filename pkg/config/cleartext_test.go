@@ -64,7 +64,7 @@ func TestBothSpellingsProduceTheSamePolicy(t *testing.T) {
 	}
 }
 
-// Both spellings at once is refused even when they agree — the property that
+// Both spellings at once is refused even when they agree - the property that
 // separates this pair from an ordinary alias, where agreement is accepted.
 // An operator carrying both is one edit away from meaning the opposite of what
 // they wrote.

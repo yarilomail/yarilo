@@ -1668,7 +1668,7 @@ func (u *userIndex) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, err
 }
 
 // VanishedUnlocked is Vanished for a caller whose answer goes to the client and
-// decides nothing on disk — QRESYNC on SELECT, CHANGEDSINCE on FETCH (#1249).
+// decides nothing on disk - QRESYNC on SELECT, CHANGEDSINCE on FETCH (#1249).
 func (u *userIndex) VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
 	return u.vanished(folderID, sinceModSeq)
 }
@@ -2460,7 +2460,7 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 		}
 		txHdr, err := mailindex.DecodeTxHeader(tail[at : at+8])
 		if err != nil {
-			break // torn write — stop here
+			break // torn write - stop here
 		}
 		filePos += 8
 		payloadLen := int(txHdr.Size) - 8

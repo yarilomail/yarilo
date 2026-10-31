@@ -6,7 +6,7 @@ import "testing"
 // mail_volatile_path, and the values it puts there are the ones INDEX= and
 // VOLATILEDIR= carry in a mail_location. Both spellings have to land in the
 // same place: accepting only ours means such a query looks answered while the
-// redirection it asked for silently does not happen — the index keeps its fsync
+// redirection it asked for silently does not happen - the index keeps its fsync
 // on the mail volume and nobody is told.
 func TestUserdbAcceptsBothSpellingsOfThePathFields(t *testing.T) {
 	tests := []struct {
@@ -73,7 +73,7 @@ func TestMailLocationModifiersMatchTheFields(t *testing.T) {
 }
 
 // An explicit field wins over a modifier in the location string, whichever
-// spelling the field uses — otherwise moving a userdb query to the 2.4 names
+// spelling the field uses - otherwise moving a userdb query to the 2.4 names
 // would quietly change which of the two sources wins.
 func TestExplicitFieldWinsOverTheModifierInBothSpellings(t *testing.T) {
 	for _, key := range []string{"index_dir", "mail_index_path"} {

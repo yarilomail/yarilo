@@ -1,4 +1,4 @@
-name: Fork pin check — yarilo
+name: Fork pin check - yarilo
 
 # Four dependencies are replaced by our own forks, each carrying yarilo patches
 # on top of a daily-synced upstream mirror. The forks advance by themselves;

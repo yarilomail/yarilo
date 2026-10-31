@@ -22,7 +22,7 @@ KUBECONFIG=~/.kube/sbox.yaml \
 | `YARILO_ARM_REPEATS` | 1 | runs per type; each run gets its own name, counters, log and profile |
 | `YARILO_ARM_KEEP_STORE` | 0 | take the previous arm's mailboxes instead of wiping and filling |
 | `YARILO_ARM_TYPES` | `mdbox maildir sdbox` | which storage types the arm wipes, fills and runs |
-| `YARILO_ARM_OVERLAY` | — | a second values file from `helm_values/values-sandbox-<name>.yaml` |
+| `YARILO_ARM_OVERLAY` | - | a second values file from `helm_values/values-sandbox-<name>.yaml` |
 | `YARILO_ARM_BLOCKPROFILE` | 0 | the profiling overlay; this makes the arm a latency arm, not a throughput one |
 | `YARILO_ARM_CHART` | this checkout | a checkout whose `helm/` and `helm_values/` the arm deploys; checked clean and named in the arm's output as `-- chart:` |
 
@@ -165,7 +165,7 @@ and the start is printed as a number rather than as a step that ran.
 
 `YARILO_ARM_KEEP_STORE=1` answers one question: **what a first listing over
 state an older version wrote costs.** It is read as run 1 against run 2 of the
-same arm, with `YARILO_ARM_REPEATS=2` — one image, one store, one slot, and only
+same arm, with `YARILO_ARM_REPEATS=2` - one image, one store, one slot, and only
 the cache state differing between the two runs.
 
 It is **not** a throughput comparison with the arm before it. Every arm's own
@@ -254,8 +254,8 @@ An overlay is laid on top of `values-sandbox.yaml` only inside an OAuth2
 window. The chain stops at the first temporary failure and the entries run
 before SQL, so with an overlay every PLAIN login of the stand goes to Keycloak
 and Keycloak down stops every login: acceptance runs and A/B arms run without
-any of them, and `ab-arm.sh` knows none. A window goes overlay by overlay —
-deploy it, run that mode's rows, deploy the next — and ends on the base values
+any of them, and `ab-arm.sh` knows none. A window goes overlay by overlay -
+deploy it, run that mode's rows, deploy the next - and ends on the base values
 with the same `helm upgrade`. Each step is its own `stand-runs.md` row naming
 the overlay and the image:
 

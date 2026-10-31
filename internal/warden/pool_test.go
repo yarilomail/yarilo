@@ -160,7 +160,7 @@ func TestNewPoolSizeDefaults(t *testing.T) {
 // TestPoolPenaltyRedialsAfterConnectionLoss is the #946 regression: yarilo-auth's
 // penalty ops must survive an warden restart. Over the pool, a dead connection is
 // redialed and the op retried, where a raw single Conn failed every penalty op
-// forever (broken pipe) until auth itself was restarted — silently disabling the
+// forever (broken pipe) until auth itself was restarted - silently disabling the
 // tarpit.
 func TestPoolPenaltyRedialsAfterConnectionLoss(t *testing.T) {
 	srv, addr := startTestServer(t, 0)

@@ -1,4 +1,4 @@
-name: Deps check — yarilo
+name: Deps check - yarilo
 
 on:
   schedule:

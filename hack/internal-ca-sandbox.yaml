@@ -3,21 +3,21 @@
 # Provisions a self-signed internal CA and the SHARED internal-tls cert that
 # auth / warden / locks / backend / backend-api / fts / login pods present.
 # The director issues its OWN cert via the chart
-# (components.director.internalTLS.certificate.enabled, #753) — point its
+# (components.director.internalTLS.certificate.enabled, #753) - point its
 # issuerRef at the SAME namespaced Issuer created here (see note below).
 #
-# Trust model (#816): every internal client dial pins ONE name —
-# internal_tls.server_name, default <release>-internal — so the shared cert
+# Trust model (#816): every internal client dial pins ONE name -
+# internal_tls.server_name, default <release>-internal - so the shared cert
 # needs exactly that SAN, NOT every service FQDN.
 #
 # Names below assume Helm release "yarilo" in namespace "yarilo-sb", so
 # yarilo.fullname == "yarilo" and server_name renders "yarilo-internal"
 # (verified: helm template). Adjust if your release differs.
 #
-# IMPORTANT — namespaced Issuer, not ClusterIssuer:
+# IMPORTANT - namespaced Issuer, not ClusterIssuer:
 #   cert-manager here runs with --cluster-resource-namespace=cert-manager, so a
 #   ClusterIssuer resolves its ca.secretName in the cert-manager namespace, not
-#   yarilo-sb — it would never find the CA secret we create in yarilo-sb. A
+#   yarilo-sb - it would never find the CA secret we create in yarilo-sb. A
 #   namespaced Issuer resolves the secret in its OWN namespace, so everything
 #   stays in yarilo-sb. The chart's director Certificate must therefore also
 #   reference a namespaced Issuer:
@@ -58,7 +58,7 @@ spec:
     name: yarilo-selfsigned-bootstrap
     kind: Issuer
 ---
-# Namespaced CA Issuer — resolves ca.secretName in yarilo-sb (see note above).
+# Namespaced CA Issuer - resolves ca.secretName in yarilo-sb (see note above).
 # The chart's director Certificate points here with issuerRef.kind: Issuer.
 apiVersion: cert-manager.io/v1
 kind: Issuer
@@ -70,7 +70,7 @@ spec:
     secretName: yarilo-internal-ca
 ---
 # Shared internal-tls cert for every NON-director internal component.
-# One SAN — the pinned server_name (yarilo-internal) — is all that is required
+# One SAN - the pinned server_name (yarilo-internal) - is all that is required
 # now that clients pin ServerName (#816).
 apiVersion: cert-manager.io/v1
 kind: Certificate

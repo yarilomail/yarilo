@@ -17,7 +17,7 @@ func dispatchSpecialUse(args []string) error {
 	case "delete", "del":
 		return specialUseDelete(args[1:])
 	default:
-		return fmt.Errorf("unknown specialuse command %q — available: list, get, set, delete", args[0])
+		return fmt.Errorf("unknown specialuse command %q - available: list, get, set, delete", args[0])
 	}
 }
 
@@ -25,12 +25,12 @@ func printSpecialUseUsage() {
 	fmt.Println(`yarctl backend specialuse <command>
 
 Commands:
-  list   <user>                       — overrides + configured defaults
-  get    <user> <folder>              — resolved attr + source (override/default/none)
-  set    <user> <folder> <attr>       — record special-use attr (e.g. "\Sent")
-  delete <user> <folder>  (alias: del) — drop override; default (if any) re-applies
+  list   <user>                       - overrides + configured defaults
+  get    <user> <folder>              - resolved attr + source (override/default/none)
+  set    <user> <folder> <attr>       - record special-use attr (e.g. "\Sent")
+  delete <user> <folder>  (alias: del) - drop override; default (if any) re-applies
 
-Only the personal namespace carries special-use overrides — RFC 6154
+Only the personal namespace carries special-use overrides - RFC 6154
 \Sent / \Drafts / etc. semantics do not extend to shared or public.`)
 }
 

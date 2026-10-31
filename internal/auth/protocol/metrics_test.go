@@ -16,7 +16,7 @@ type namedPassdb struct {
 func (p namedPassdb) Authenticate(*Request) (Result, error) { return p.result, nil }
 func (p namedPassdb) DriverName() string                    { return p.name }
 
-// anonPassdb deliberately omits DriverName — the interface must stay optional
+// anonPassdb deliberately omits DriverName - the interface must stay optional
 // so external and test implementations keep compiling.
 type anonPassdb struct{ result Result }
 

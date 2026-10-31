@@ -11,7 +11,7 @@ import (
 // unless some alias set adopts it. Two defects in package 2a were exactly that
 // shape: a field renamed by accident with no adopter, and a per-service ssl
 // override whose aliases the fixed general.ssl paths never reached. In both
-// cases the value looked set and did nothing — the class this whole mechanism
+// cases the value looked set and did nothing - the class this whole mechanism
 // exists to prevent.
 //
 // So the coverage is asserted mechanically rather than by review: collect every
@@ -65,7 +65,7 @@ func TestEveryAliasFieldHasAnAdopter(t *testing.T) {
 		}
 	})
 	if len(orphans) > 0 {
-		t.Errorf("alias fields nobody adopts — a value written under these keys is read into a field and then ignored:\n  %s",
+		t.Errorf("alias fields nobody adopts - a value written under these keys is read into a field and then ignored:\n  %s",
 			strings.Join(orphans, "\n  "))
 	}
 }
@@ -130,7 +130,7 @@ func normaliseServicePath(path string) string {
 }
 
 // walkAliasPaths visits every field whose name ends in "Alias", anywhere in the
-// config tree, and reports its Go path and its full koanf path — the section
+// config tree, and reports its Go path and its full koanf path - the section
 // chain the loader reads it under, which is what makes two same-named keys in
 // different sections distinguishable.
 func walkAliasPaths(t reflect.Type, goPath, koanfPath string, visit func(goPath, koanfPath string)) {
@@ -171,7 +171,7 @@ func walkAliasPaths(t reflect.Type, goPath, koanfPath string, visit func(goPath,
 
 // The reason the match is by full path: the same key name lives in several
 // sections. If coverage were judged by the last segment, one adopted
-// client_workarounds would vouch for the two that nobody adopts — and package
+// client_workarounds would vouch for the two that nobody adopts - and package
 // 2b introduces exactly that shape in imap, lmtp and submission at once.
 func TestCoverageIsJudgedByPathNotByKeyName(t *testing.T) {
 	type inner struct {

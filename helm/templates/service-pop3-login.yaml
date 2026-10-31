@@ -1,5 +1,5 @@
 {{- if .Values.components.pop3Login.enabled }}
-## LoadBalancer — POP3 mail client connections (POP3S:995 / POP3:110 with STARTTLS).
+## LoadBalancer - POP3 mail client connections (POP3S:995 / POP3:110 with STARTTLS).
 apiVersion: v1
 kind: Service
 metadata:
@@ -29,7 +29,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "pop3-login") | nindent 4 }}
 ---
-## ClusterIP — telemetry / health
+## ClusterIP - telemetry / health
 apiVersion: v1
 kind: Service
 metadata:

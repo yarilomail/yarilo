@@ -11,7 +11,7 @@ import "testing"
 // characters (#1055).
 //
 // Asserted per script rather than as one case, because the defect is invisible
-// in any single alphabet — every ASCII example behaves identically under both
+// in any single alphabet - every ASCII example behaves identically under both
 // readings.
 func TestMinTermSizeCountsCharacters(t *testing.T) {
 	for _, tc := range []struct {
@@ -85,8 +85,8 @@ func TestSubstringSuffixesStopAtTheCharacterThreshold(t *testing.T) {
 		found    bool
 	}{
 		{"мова", true}, // the term
-		{"ова", true},  // 3 characters — at the threshold
-		{"ва", false},  // 2 characters — below it, 4 bytes
+		{"ова", true},  // 3 characters - at the threshold
+		{"ва", false},  // 2 characters - below it, 4 bytes
 	} {
 		res, err := ui.Lookup([]string{inbox.GUID}, bodyQuery(tc.fragment))
 		if err != nil {

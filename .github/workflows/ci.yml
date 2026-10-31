@@ -1,4 +1,4 @@
-name: CI — yarilo
+name: CI - yarilo
 
 on:
   push:

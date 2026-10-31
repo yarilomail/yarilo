@@ -119,6 +119,6 @@ func TestVarIsTheLevelUsedByLevel(t *testing.T) {
 
 	Var().Set(slog.LevelWarn)
 	if got := Level(); got != slog.LevelWarn {
-		t.Fatalf("Level() = %v, want warn — Var must expose the same LevelVar", got)
+		t.Fatalf("Level() = %v, want warn - Var must expose the same LevelVar", got)
 	}
 }

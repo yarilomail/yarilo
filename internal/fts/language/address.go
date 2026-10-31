@@ -63,7 +63,7 @@ func (a *Address) emitAddress(emit EmitFunc) error {
 	a.state = addrNone
 	at := strings.IndexByte(addr, '@')
 	// at < 0: no '@' at all. at == len(addr)-1: '@' is the last byte, i.e.
-	// an empty domain after trimming (e.g. "user@", "user@-") — the
+	// an empty domain after trimming (e.g. "user@", "user@-") - the
 	// reference drops these as phantom tokens, not real addresses.
 	if at < 0 || at == len(addr)-1 || len(addr) > a.maxLen {
 		return nil

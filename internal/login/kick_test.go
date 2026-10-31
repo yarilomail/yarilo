@@ -115,7 +115,7 @@ func TestKickSession_ClosesBackendConn(t *testing.T) {
 	cliEnd.SetReadDeadline(time.Now().Add(time.Second))
 	buf := make([]byte, 1)
 	if _, err := cliEnd.Read(buf); err == nil {
-		t.Error("backendConn read returned no error after kick — conn still open")
+		t.Error("backendConn read returned no error after kick - conn still open")
 	}
 }
 
@@ -162,7 +162,7 @@ func TestKickSubscriberDispatchesEvent(t *testing.T) {
 	cliEnd.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 1)
 	if _, err := cliEnd.Read(buf); err == nil {
-		t.Error("backendConn read returned no error after kick — subscriber did not fire")
+		t.Error("backendConn read returned no error after kick - subscriber did not fire")
 	}
 }
 
@@ -225,6 +225,6 @@ func assertConnClosed(t *testing.T, c net.Conn, what string) {
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 1)
 	if _, err := c.Read(buf); err == nil {
-		t.Errorf("%s: backendConn still open — kick not delivered", what)
+		t.Errorf("%s: backendConn still open - kick not delivered", what)
 	}
 }

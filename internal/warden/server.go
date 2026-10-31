@@ -488,8 +488,8 @@ func (s *Server) handlePenaltyUpdate(conn net.Conn, fields []string) {
 
 // handleEmit processes: EMIT\t{channel}\t{payload}\n
 // Best-effort at-most-once publish; OK means "published", not "received".
-// Kick correctness never depends on delivery — the director's confirmed
-// kill is the backstop — so publish errors are logged and still answered OK.
+// Kick correctness never depends on delivery - the director's confirmed
+// kill is the backstop - so publish errors are logged and still answered OK.
 func (s *Server) handleEmit(conn net.Conn, fields []string) {
 	if len(fields) < 3 {
 		return

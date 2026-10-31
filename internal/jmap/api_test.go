@@ -180,7 +180,7 @@ func TestBrokenStoreLeavesStorelessMethodsWorking(t *testing.T) {
 			["Core/echo",{"still":true},"c2"]]}`))
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — a broken store must not fail the request: %s", w.Code, w.Body)
+		t.Fatalf("status = %d, want 200 - a broken store must not fail the request: %s", w.Code, w.Body)
 	}
 	var resp struct {
 		MethodResponses [][]json.RawMessage `json:"methodResponses"`

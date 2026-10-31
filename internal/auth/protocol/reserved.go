@@ -20,13 +20,13 @@ type Validator func(value string) (string, error)
 // unvalidated: they are opaque to the chain and must survive verbatim
 // through the proxy hop.
 var reservedValidators = map[string]Validator{
-	// Numeric — uint32.
+	// Numeric - uint32.
 	"uid":      validateUint32,
 	"gid":      validateUint32,
 	"mail_uid": validateUint32,
 	"mail_gid": validateUint32,
 
-	// Numeric — int.
+	// Numeric - int.
 	"port":                        validateInt,
 	"mail_max_userip_connections": validateInt,
 	"mail_max_user_connections":   validateInt,
@@ -44,7 +44,7 @@ var reservedValidators = map[string]Validator{
 	"starttls":              validateBool,
 	"client_cert_present":   validateBool,
 
-	// Lists — non-empty, comma-separated. Each entry validated.
+	// Lists - non-empty, comma-separated. Each entry validated.
 	"allow_nets": validateCIDRList,
 	"groups":     validateNonEmptyCSV,
 	"quota_rule": validateNonEmptyCSV,

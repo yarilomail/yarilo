@@ -1,6 +1,6 @@
 # POP3 session load against the sandbox.
 #
-# A full session per iteration — connect, USER, PASS, STAT, LIST, RETR, QUIT —
+# A full session per iteration - connect, USER, PASS, STAT, LIST, RETR, QUIT -
 # rather than a held connection. That is a protocol difference, not a shortcut:
 # a POP3 server locks the maildrop for the length of a session, so a client that
 # stays connected keeps every other client for that user locked out, and a

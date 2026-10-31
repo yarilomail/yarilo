@@ -12,13 +12,13 @@ import (
 // PrefixRange decides which search terms are treated as prefixes.
 //
 // A prefix search asks the index for every term beginning with what the user
-// typed, which is what makes "corp" find "corporate" — and what makes "co"
+// typed, which is what makes "corp" find "corporate" - and what makes "co"
 // enumerate a large part of the index. The setting exists because those are the
 // same operation at different costs, and only the caller knows which it wants.
 //
 // Min and Max are in runes, not bytes: a two-character Cyrillic word is four
 // bytes, and a threshold that counted bytes would apply a different rule to
-// every script. The indexing gate still counts bytes — #1055.
+// every script. The indexing gate still counts bytes - #1055.
 type PrefixRange struct {
 	// Enabled false means no term is ever expanded.
 	Enabled bool
@@ -26,7 +26,7 @@ type PrefixRange struct {
 	// which is what the setting spells "yes".
 	Min int
 	// Max is the longest term expanded; zero means no upper bound. A long term
-	// is a poor candidate for expansion — the user has already been specific —
+	// is a poor candidate for expansion - the user has already been specific -
 	// and the bound exists so a run of very long tokens cannot each open a
 	// wildcard.
 	Max int
@@ -49,7 +49,7 @@ func (p PrefixRange) Allows(term string) bool {
 
 // ParsePrefixRange reads the setting: "yes", "no", "N" or "N-M".
 //
-// "N" is the useful form — treat terms of at least N characters as prefixes —
+// "N" is the useful form - treat terms of at least N characters as prefixes -
 // and the range is accepted because the syntax costs nothing and an upper bound
 // is occasionally what an operator wants.
 func ParsePrefixRange(s string) (PrefixRange, error) {

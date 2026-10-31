@@ -21,7 +21,7 @@ type Policy struct {
 	Global *Global
 	// CacheTTL bounds how long a parsed per-mailbox ACL is trusted before the
 	// file's mtime+size are re-validated (the acl_cache_ttl knob, default 30s).
-	// Zero disables caching — every read hits the filesystem.
+	// Zero disables caching - every read hits the filesystem.
 	CacheTTL time.Duration
 }
 

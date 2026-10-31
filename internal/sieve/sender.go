@@ -64,7 +64,7 @@ func (s *Sender) submit(ctx context.Context, from string, to []string, body *byt
 func (s *Sender) dial(ctx context.Context) (*goSmtp.Client, error) {
 	host, port, err := net.SplitHostPort(s.cfg.SubmissionHost)
 	if err != nil {
-		// No port — use default 25.
+		// No port - use default 25.
 		host = s.cfg.SubmissionHost
 		port = "25"
 	}
@@ -167,7 +167,7 @@ func (s *Sender) sendNotify(ctx context.Context, opts FilterOptions, hdr textpro
 		return fmt.Errorf("sieve/sender: notify send to %s: %w", recipient, err)
 	}
 	// Breadcrumb (#625): confirm the enotify fired. Only the destination address
-	// and user — never the notify method's options (may carry credentials) or body.
+	// and user - never the notify method's options (may carry credentials) or body.
 	slog.Debug("sieve/sender: notification sent", "user", opts.Username, "recipient", recipient)
 	return nil
 }

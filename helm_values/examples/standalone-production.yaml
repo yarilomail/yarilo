@@ -1,5 +1,5 @@
 # ============================================================================
-# yarilo — PRODUCTION STANDALONE (no director) — hardened single deployment
+# yarilo - PRODUCTION STANDALONE (no director) - hardened single deployment
 # ============================================================================
 #
 # No director ring / no sharding, but production-grade: external Redis + MySQL,
@@ -8,7 +8,7 @@
 # across NFS tags) but you want a hardened, HA-capable install.
 #
 # Login proxies dial FIXED backend Services (no LOOKUP). To scale the backend,
-# raise the per-protocol session replicas below — they share the RWX PV, and
+# raise the per-protocol session replicas below - they share the RWX PV, and
 # cross-pod writes are coordinated by yarilo-locks (that is what makes standalone
 # multi-replica safe without a director).
 #
@@ -52,7 +52,7 @@ fts:
   enabled: true
   fts_engine: flatcurve
   fts_mode: remote
-  # Standalone (no co-located pod): FTS is its OWN service — keep replicas: 1
+  # Standalone (no co-located pod): FTS is its OWN service - keep replicas: 1
   # (components.fts.replicas > 1 is a footgun without the co-located single-writer
   # model, #676). Sessions dial it at the ClusterIP below.
   fts_addr: "yarilo-fts:9106"
@@ -74,7 +74,7 @@ components:
   backend:
     coLocated: false                # per-protocol session Deployments
 
-  # Per-protocol session pods — scale these for backend capacity (shared RWX PV,
+  # Per-protocol session pods - scale these for backend capacity (shared RWX PV,
   # coordinated by yarilo-locks):
   imap:
     enabled: true

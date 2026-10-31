@@ -29,7 +29,7 @@ func TestARetiredKeyIsAnsweredOnPresenceNotValue(t *testing.T) {
 			warn: true,
 		},
 		{
-			name: "set to false — the ordinary value, and the one that used to say nothing",
+			name: "set to false - the ordinary value, and the one that used to say nothing",
 			body: "telemetry:\n  telemetry_pprof_heap_enabled: false\n",
 			warn: true,
 		},
@@ -105,7 +105,7 @@ func readChartText(t *testing.T) string {
 //
 // "Unknown key" is something an operator can already see; the value of the
 // warning is the sentence after it. A list entry with an empty or bare note
-// would still log, and the log would say nothing worth reading — which is the
+// would still log, and the log would say nothing worth reading - which is the
 // same failure as the silence this list was written to end (#1493).
 //
 // Asserted because the release notes promise it: a retired key is answered,

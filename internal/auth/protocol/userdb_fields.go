@@ -198,7 +198,7 @@ func AssignField(info *UserInfo, key, value string) error {
 		// populate it.
 		info.Password = value
 	case "enabled":
-		// Filter column from the default SQL userdb query — the
+		// Filter column from the default SQL userdb query - the
 		// semantic is `WHERE enabled = 1` clause, not a UserInfo
 		// field. Drop silently.
 	default:
@@ -239,7 +239,7 @@ func SplitCSV(s string) []string {
 
 // IsTruthy reports whether s is one of the canonical truthy values
 // auth-fields columns / wire pairs use (`1`, `yes`, `y`, `true`,
-// `t`, `on`, case-insensitive). Anything else returns false —
+// `t`, `on`, case-insensitive). Anything else returns false -
 // callers do not need to special-case empty strings or unknown
 // values.
 func IsTruthy(s string) bool {
@@ -264,7 +264,7 @@ func ParseFieldPair(token string) (key, value string) {
 }
 
 // unescapeValue reverses escapeValue. Stops at the first invalid
-// escape and returns what was parsed so far — defensive, in case
+// escape and returns what was parsed so far - defensive, in case
 // the peer ships malformed bytes.
 func unescapeValue(v string) string {
 	if !strings.ContainsRune(v, '\\') {
@@ -288,7 +288,7 @@ func unescapeValue(v string) string {
 		case '\\':
 			b.WriteByte('\\')
 		default:
-			// Unknown escape — preserve verbatim so the consumer
+			// Unknown escape - preserve verbatim so the consumer
 			// sees something rather than silently dropping data.
 			b.WriteByte('\\')
 			b.WriteByte(v[i])

@@ -6,7 +6,7 @@ import (
 	"github.com/emersion/go-sasl"
 )
 
-// TestSchemes_ScramSha256_PlainPathReDerives — PLAIN/LOGIN auth
+// TestSchemes_ScramSha256_PlainPathReDerives - PLAIN/LOGIN auth
 // against a {SCRAM-SHA-256} stored column works by re-deriving
 // StoredKey from the input password using the stored iter+salt.
 func TestSchemes_ScramSha256_PlainPathReDerives(t *testing.T) {
@@ -24,7 +24,7 @@ func TestSchemes_ScramSha256_PlainPathReDerives(t *testing.T) {
 	}
 }
 
-// TestSchemes_ScramSha256_MalformedBlobRejects — corrupted blob
+// TestSchemes_ScramSha256_MalformedBlobRejects - corrupted blob
 // in the password column does not panic; it just fails verify.
 func TestSchemes_ScramSha256_MalformedBlobRejects(t *testing.T) {
 	cases := []string{
@@ -40,7 +40,7 @@ func TestSchemes_ScramSha256_MalformedBlobRejects(t *testing.T) {
 	}
 }
 
-// TestParseSCRAMSha256Credentials_Roundtrip — the helper used
+// TestParseSCRAMSha256Credentials_Roundtrip - the helper used
 // by the SQL passdb's LookupSCRAMSha256 path extracts a usable
 // verifier from a stored column carrying the scheme prefix.
 func TestParseSCRAMSha256Credentials_Roundtrip(t *testing.T) {
@@ -58,7 +58,7 @@ func TestParseSCRAMSha256Credentials_Roundtrip(t *testing.T) {
 	}
 }
 
-// TestParseSCRAMSha256Credentials_OtherSchemesIgnored — only the
+// TestParseSCRAMSha256Credentials_OtherSchemesIgnored - only the
 // {SCRAM-SHA-256} prefix triggers extraction. PLAIN/BCRYPT
 // columns return ok=false so a chain with mixed schemes does not
 // surface bogus verifiers.

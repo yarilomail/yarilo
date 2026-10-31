@@ -9,7 +9,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
-// TestWardenLivenessCheckHappy: a live server and an open (or absent) gate pass —
+// TestWardenLivenessCheckHappy: a live server and an open (or absent) gate pass -
 // the session mutex is acquirable.
 func TestWardenLivenessCheckHappy(t *testing.T) {
 	srv := warden.NewServer(10)
@@ -29,7 +29,7 @@ func TestWardenLivenessCheckNilServer(t *testing.T) {
 }
 
 // TestWardenLivenessCheckGateWedged: a wedged gate fails on the deadline even
-// though the server is fine — the injected-deadlock path.
+// though the server is fine - the injected-deadlock path.
 func TestWardenLivenessCheckGateWedged(t *testing.T) {
 	srv := warden.NewServer(10)
 	gate := telemetry.NewGate()

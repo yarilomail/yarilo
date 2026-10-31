@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// A row whose second surface is absent is a skip that NAMES it — not a pass,
+// A row whose second surface is absent is a skip that NAMES it - not a pass,
 // and not a silent omission. A pair that quietly disappears when a surface is
 // undeployed is exactly the coverage hole this area exists to close (#1197,
 // #1209).

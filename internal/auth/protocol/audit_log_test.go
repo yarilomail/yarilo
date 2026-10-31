@@ -15,7 +15,7 @@ import (
 // duration of the test and returns the buffer + a restore func.
 // syncBuffer is a bytes.Buffer safe for concurrent Write and String. The server
 // logs from its own goroutines (and, since #887, from one goroutine per command),
-// while the test reads the buffer from the test goroutine — a bare bytes.Buffer
+// while the test reads the buffer from the test goroutine - a bare bytes.Buffer
 // races there.
 type syncBuffer struct {
 	mu  sync.Mutex
@@ -42,7 +42,7 @@ func captureSlog(t *testing.T) (*syncBuffer, func()) {
 	return buf, func() { slog.SetDefault(prev) }
 }
 
-// TestWire_Audit_RegularLoginLogsEmptyMaster — every successful
+// TestWire_Audit_RegularLoginLogsEmptyMaster - every successful
 // login produces `auth: ok` with master_user="".
 func TestWire_Audit_RegularLoginLogsEmptyMaster(t *testing.T) {
 	buf, restore := captureSlog(t)
@@ -77,7 +77,7 @@ func TestWire_Audit_RegularLoginLogsEmptyMaster(t *testing.T) {
 	}
 }
 
-// TestWire_Audit_MasterFlowLogsMaster — master-user impersonation
+// TestWire_Audit_MasterFlowLogsMaster - master-user impersonation
 // logs `auth: ok` with master_user=<admin>.
 func TestWire_Audit_MasterFlowLogsMaster(t *testing.T) {
 	buf, restore := captureSlog(t)
@@ -113,7 +113,7 @@ func TestWire_Audit_MasterFlowLogsMaster(t *testing.T) {
 	}
 }
 
-// TestWire_Audit_FailLogs — failed credentials produce
+// TestWire_Audit_FailLogs - failed credentials produce
 // `auth: fail` log with the attempted username so SIEM can
 // correlate failures by user.
 func TestWire_Audit_FailLogs(t *testing.T) {

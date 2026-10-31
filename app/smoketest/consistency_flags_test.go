@@ -75,7 +75,7 @@ func TestFlagRowJudgement(t *testing.T) {
 
 // The two directions are two rows, and the one that cannot run yet has to be
 // visible as a skip naming why. A single row covering both would pass on the
-// half that works and say nothing about the half that does not exist — the
+// half that works and say nothing about the half that does not exist - the
 // softer form of the missing pair this area exists to prevent.
 func TestFlagDirectionsAreSeparateRows(t *testing.T) {
 	// With the surfaces configured, or the rows are all skipped and every
@@ -116,7 +116,7 @@ func TestFlagDirectionsAreSeparateRows(t *testing.T) {
 		t.Errorf("the imap->jmap direction is skipped with every surface configured: %q", forward.skip)
 	}
 	if back.skip != "" {
-		t.Errorf("the jmap->imap direction is skipped with every surface configured: %q — "+
+		t.Errorf("the jmap->imap direction is skipped with every surface configured: %q - "+
 			"Email/set is implemented, so this direction goes unchecked while the report shows a skip", back.skip)
 	}
 }

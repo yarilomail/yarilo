@@ -26,7 +26,7 @@ var profileRoutes = []string{
 // registered reports whether the mux routes path to anything.
 //
 // Asked of the mux rather than by issuing a request: GET /debug/pprof/profile
-// runs a CPU profile, and its default sample window is thirty seconds — a suite
+// runs a CPU profile, and its default sample window is thirty seconds - a suite
 // that tests these endpoints by calling them tests nothing for half a minute
 // each. ServeMux.Handler returns the matched pattern, or "" when nothing
 // matches, which is the question these tests are actually asking.
@@ -49,7 +49,7 @@ func status(t *testing.T, h http.Handler, path string) int {
 }
 
 // The one that matters. A diagnostic endpoint that is on when the config says
-// off is not a missing feature, it is an open door nobody knows about — and it
+// off is not a missing feature, it is an open door nobody knows about - and it
 // fails silently, which is why this is asserted rather than assumed.
 func TestPprofIsAbsentUnlessEnabled(t *testing.T) {
 	h := NewWithOptions(Options{Addr: ":0"}).Handler()
@@ -82,7 +82,7 @@ func TestPprofIsPresentWhenEnabled(t *testing.T) {
 	// profile of that name, so the served set would be decided by whatever any
 	// package in the binary registered rather than by the list above.
 	if registered(t, h, "/debug/pprof/") {
-		t.Error("/debug/pprof/ is routed — the index dispatches to every registered runtime profile, not to this list")
+		t.Error("/debug/pprof/ is routed - the index dispatches to every registered runtime profile, not to this list")
 	}
 }
 
@@ -102,13 +102,13 @@ func TestAnInventedProfilePathIsNotRouted(t *testing.T) {
 
 	for _, p := range []string{"/debug/pprof/zzz", "/debug/pprof/heap/extra", "/debug/pprof/allocsx"} {
 		if registered(t, h, p) {
-			t.Errorf("%s is routed — the profilers are mounted as a prefix, not as a list", p)
+			t.Errorf("%s is routed - the profilers are mounted as a prefix, not as a list", p)
 		}
 	}
 }
 
 // pprof shares the telemetry port with /metrics and the health endpoints, and
-// #1008 was two containers assigned the same telemetry port — so "it is on the
+// #1008 was two containers assigned the same telemetry port - so "it is on the
 // internal port" is an assumption worth asserting rather than trusting. The
 // public listeners are separate servers; what this pins is that enabling the
 // profilers does not disturb what the telemetry port already serves.
@@ -131,7 +131,7 @@ func TestPprofDoesNotDisturbTheExistingEndpoints(t *testing.T) {
 	}
 }
 
-// The routing tests ask the mux, which is how they stay fast — but a handler
+// The routing tests ask the mux, which is how they stay fast - but a handler
 // wired correctly and a handler that produces anything are different claims. A
 // CPU profile that returns an empty body, or a body that is not a profile,
 // answers 200 either way.
@@ -204,7 +204,7 @@ func restoreProfileRates(t *testing.T) {
 }
 
 // A block profile route with no sampling rate answers 200 with a profile that
-// has no samples — an answer-shaped silence. The rate is what makes it speak,
+// has no samples - an answer-shaped silence. The rate is what makes it speak,
 // so the two must be wired together.
 func TestBlockProfileNeedsItsRate(t *testing.T) {
 	restoreProfileRates(t)

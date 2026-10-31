@@ -56,7 +56,7 @@ func TestChainAuthenticator_LookupSCRAMSha256(t *testing.T) {
 	}
 }
 
-// TestChainAuthenticator_LookupSCRAMSha256_PropagatesError —
+// TestChainAuthenticator_LookupSCRAMSha256_PropagatesError -
 // transient backend error from a chain entry must propagate so
 // the session surfaces temp_fail.
 func TestChainAuthenticator_LookupSCRAMSha256_PropagatesError(t *testing.T) {
@@ -70,8 +70,8 @@ func TestChainAuthenticator_LookupSCRAMSha256_PropagatesError(t *testing.T) {
 	}
 }
 
-// TestChainAuthenticator_LookupSCRAMSha256_NoSCRAMPassdbs — chain
-// with no SCRAM-capable entries returns (nil, nil) — the session
+// TestChainAuthenticator_LookupSCRAMSha256_NoSCRAMPassdbs - chain
+// with no SCRAM-capable entries returns (nil, nil) - the session
 // uses this to decide whether to advertise SCRAM mechs.
 func TestChainAuthenticator_LookupSCRAMSha256_NoSCRAMPassdbs(t *testing.T) {
 	a := NewAuthenticator([]Passdb{
@@ -88,7 +88,7 @@ func TestChainAuthenticator_LookupSCRAMSha256_NoSCRAMPassdbs(t *testing.T) {
 	}
 }
 
-// TestPlainOnlyAuthenticator_ForwardsSCRAMLookup — even when
+// TestPlainOnlyAuthenticator_ForwardsSCRAMLookup - even when
 // master-users are disabled (and the wrapper hides
 // MasterAuthenticator), SCRAM lookup remains accessible.
 // SCRAM is orthogonal to master-user impersonation.

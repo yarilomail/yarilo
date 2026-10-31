@@ -1,5 +1,5 @@
 {{- if .Values.components.director.enabled }}
-## Stable ClusterIP — director LOOKUP endpoint for login pods (#748 item 3).
+## Stable ClusterIP - director LOOKUP endpoint for login pods (#748 item 3).
 ## This is the address components.*.director_addr should use:
 ##   <release>-director:{{ .Values.components.director.directorPort }}
 apiVersion: v1
@@ -19,7 +19,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "director") | nindent 4 }}
 ---
-## Headless — StatefulSet per-pod DNS for peer ring-sync (#748 item 2):
+## Headless - StatefulSet per-pod DNS for peer ring-sync (#748 item 2):
 ## <sts-pod>.<release>-director-ring.<ns>.svc resolves only through a
 ## headless governing Service.
 apiVersion: v1
@@ -40,7 +40,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "director") | nindent 4 }}
 ---
-## ClusterIP — admin API (yarctl CLI)
+## ClusterIP - admin API (yarctl CLI)
 apiVersion: v1
 kind: Service
 metadata:
@@ -58,7 +58,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "director") | nindent 4 }}
 ---
-## ClusterIP — telemetry / health
+## ClusterIP - telemetry / health
 apiVersion: v1
 kind: Service
 metadata:

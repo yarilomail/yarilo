@@ -42,7 +42,7 @@ func TestFolderCreate_DuplicateReturnsConflict(t *testing.T) {
 	doJSON(t, ts, http.MethodPost, "/api/backend/folder/list", "",
 		map[string]any{"user": user})
 
-	// INBOX is created by maildir Init — second create should 409.
+	// INBOX is created by maildir Init - second create should 409.
 	status, _ := doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "",
 		map[string]any{"user": user, "folder": "INBOX"})
 	if status != http.StatusConflict {

@@ -1,6 +1,6 @@
 // Package proxy implements the outbound submission proxy.
 // Accepts an authenticated session from an MUA and forwards it to
-// the configured upstream MTA — one TCP connection per transaction, fail-closed.
+// the configured upstream MTA - one TCP connection per transaction, fail-closed.
 package proxy
 
 import (

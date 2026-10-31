@@ -529,7 +529,7 @@ func (up *update) SetBuildKey(k fts.BuildKey) (bool, error) {
 	up.key = k
 	// The header-existence boolean term is NOT set here: header presence is
 	// recorded only together with at least one >=min_term_size token surviving
-	// normTerm, so it's set lazily in BuildMore once that's known — HEADER
+	// normTerm, so it's set lazily in BuildMore once that's known - HEADER
 	// X-Foo "" (a value that tokenizes to nothing) must not match.
 	return true, nil
 }

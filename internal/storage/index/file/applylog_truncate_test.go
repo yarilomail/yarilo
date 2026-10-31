@@ -73,11 +73,11 @@ func TestApplyLogTruncatesGenuineTornTail(t *testing.T) {
 // TestConcurrentReadersDoNotTruncateLiveAppends reproduces the applyLog
 // TOCTOU this test file's sibling fix addresses: applyLog(0) runs unlocked
 // via readBase on every OpenFolder of an already-existing folder (the common
-// case — a new IMAP connection SELECTing an established mailbox). Before the
+// case - a new IMAP connection SELECTing an established mailbox). Before the
 // fix, applyLog's tail cleanup compared its own read against a SEPARATE,
 // later os.Stat; a concurrent writer's fully-valid, already-committed append
 // landing in the gap between the read finishing and that stat would be
-// mistaken for a crash-torn tail and truncated away — silently destroying
+// mistaken for a crash-torn tail and truncated away - silently destroying
 // the writer's data. This drives a long-lived writer appending many messages
 // against a flood of short-lived readers repeatedly opening the same folder
 // throughout, and asserts every appended message survives.

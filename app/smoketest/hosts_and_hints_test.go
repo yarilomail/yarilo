@@ -31,7 +31,7 @@ func TestPerProtocolHostsFallBackToHost(t *testing.T) {
 	}
 	restore()
 
-	// And each overrides independently — the case a single flag could not
+	// And each overrides independently - the case a single flag could not
 	// express: three protocols, three addresses.
 	restore = setFlags(map[*string]string{
 		flagHost:            "shared.example",
@@ -122,7 +122,7 @@ func TestDirectorRowSkipsWithoutAToken(t *testing.T) {
 }
 
 // The three transport failures this row produces each have a flag that fixes
-// them, and the error text never said so — three QA runs, one per error.
+// them, and the error text never said so - three QA runs, one per error.
 func TestBackendAPITransportErrorsNameTheirFlag(t *testing.T) {
 	tests := []struct {
 		name string

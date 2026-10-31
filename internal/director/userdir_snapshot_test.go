@@ -7,7 +7,7 @@ import (
 
 // TestUserDir_JoinSnapshot_InheritedOnJoin verifies #772 PR-1 end-to-end: a
 // director that pins a user, then a second director joins the ring, must
-// inherit that sticky assignment from the join-time userDir snapshot —
+// inherit that sticky assignment from the join-time userDir snapshot -
 // instead of starting empty and only converging via the deterministic hash.
 func TestUserDir_JoinSnapshot_InheritedOnJoin(t *testing.T) {
 	srvA, addrA := startRingNode(t, "shared-secret", nil, 2)
@@ -40,7 +40,7 @@ func TestUserDir_JoinSnapshot_NewerLocalNotClobbered(t *testing.T) {
 
 	srvB, _ := startRingNode(t, "shared-secret", []string{addrA}, 2)
 	// B makes its own, causally-later assignment for the same user BEFORE
-	// merging A's snapshot would matter — give B a high Lamport seq.
+	// merging A's snapshot would matter - give B a high Lamport seq.
 	srvB.userDir.observe(1000)
 	srvB.userDir.Set("u@example.com", "10.0.0.2:993", false) // B: seq 1001
 

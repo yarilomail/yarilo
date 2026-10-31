@@ -1,9 +1,9 @@
 // yarilo-locks is the cross-process write-coordination service, selected by
 // locks_service.mode in yarilo.yaml:
 //
-//	remote   — TCP+mTLS listener backed by Redis; the k8s production default.
+//	remote   - TCP+mTLS listener backed by Redis; the k8s production default.
 //	           Replicas share state via Redis, so it scales 1 → N without rework.
-//	embedded — Unix-socket listener backed by an in-memory map; dev/CI/unit tests
+//	embedded - Unix-socket listener backed by an in-memory map; dev/CI/unit tests
 //	           only. State is ephemeral and pod-local, so it cannot cross pods.
 //
 // Both modes speak the same TAB-delimited wire protocol behind pkg/locks.Locker.

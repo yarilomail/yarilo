@@ -2,7 +2,7 @@
 //
 // It accepts LMTP connections from MTAs (e.g. Postfix), performs
 // per-recipient warden CONNECT and yarilo-auth SESSION token issuance, then
-// at DATA time fans out one backend connection per recipient — each
+// at DATA time fans out one backend connection per recipient - each
 // preceded by a YARILO preamble carrying the recipient's session token.
 package lmtplogin
 
@@ -55,7 +55,7 @@ type Options struct {
 	// DirectorTLS is the mTLS config for connecting to yarilo-director.
 	DirectorTLS *tls.Config
 	// DirectorTag restricts LOOKUP to backends with this tag. "" = the untagged
-	// pool, not "any tag" — there is no full-ring mode.
+	// pool, not "any tag" - there is no full-ring mode.
 	DirectorTag string
 	// BackendPort overrides the port in the LOOKUP result. 0 = use as-is.
 	BackendPort int
@@ -627,7 +627,7 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOption
 	defer stop.Stop()
 
 	// Preamble must be written before go-smtp reads the 220 greeting from the
-	// backend — the backend's PreambleListener consumes it first.
+	// backend - the backend's PreambleListener consumes it first.
 	if _, err := fmt.Fprint(conn, pre.Format()); err != nil {
 		return fmt.Errorf("lmtplogin: write preamble: %w", err)
 	}

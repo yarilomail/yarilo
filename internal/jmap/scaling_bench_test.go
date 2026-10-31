@@ -18,7 +18,7 @@ import (
 
 // The claim under test (#1026): JMAP read latency is driven by how many folders
 // an account has rather than by how much the client asked for. Every request is
-// said to walk the whole folder set — Email/query building its scope, Email/get
+// said to walk the whole folder set - Email/query building its scope, Email/get
 // resolving ids, Mailbox/get reading counters.
 //
 // That claim came from reading the code, and reading the code produced a lever
@@ -111,7 +111,7 @@ func mustCIDRB(b *testing.B, s string) *net.IPNet {
 }
 
 // post issues one API batch and fails the benchmark if the server did not
-// answer it — a benchmark timing an error path measures nothing.
+// answer it - a benchmark timing an error path measures nothing.
 func post(b *testing.B, s *Server, body string) {
 	b.Helper()
 	w := httptest.NewRecorder()
@@ -170,7 +170,7 @@ func BenchmarkFolderScalingEmailQueryGet(b *testing.B) {
 // the filter narrows the answer without narrowing the work.
 //
 // It cannot simply be reordered. The JMAP mailbox id is the folder's GUID, and
-// the GUID lives inside the folder's own index — so "which folder is mailbox X"
+// the GUID lives inside the folder's own index - so "which folder is mailbox X"
 // is a question that can only be answered by opening folders. That is the thing
 // missing at the account level, and this benchmark is what would show it fixed.
 func BenchmarkFolderScalingEmailQueryInOneMailbox(b *testing.B) {

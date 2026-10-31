@@ -1,5 +1,5 @@
 {{- if ((.Values.components.manageSieveLogin | default dict).enabled) }}
-## ClusterIP — ManageSieve connections from mail clients (port 4190, STARTTLS).
+## ClusterIP - ManageSieve connections from mail clients (port 4190, STARTTLS).
 apiVersion: v1
 kind: Service
 metadata:
@@ -23,7 +23,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "managesieve-login") | nindent 4 }}
 ---
-## ClusterIP — telemetry / health
+## ClusterIP - telemetry / health
 apiVersion: v1
 kind: Service
 metadata:

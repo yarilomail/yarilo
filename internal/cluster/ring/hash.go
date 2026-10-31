@@ -23,9 +23,9 @@ type hashField int
 
 const (
 	fieldLiteral hashField = iota // seg.lit is emitted verbatim (covers %% → %)
-	fieldUser                     // %u — whole username
-	fieldLocal                    // %n — local part (before first '@'; whole username if none)
-	fieldDomain                   // %d — domain (after first '@'; empty if none)
+	fieldUser                     // %u - whole username
+	fieldLocal                    // %n - local part (before first '@'; whole username if none)
+	fieldDomain                   // %d - domain (after first '@'; empty if none)
 )
 
 type hashSeg struct {
@@ -83,7 +83,7 @@ func ParseHashFormat(format string) (HashFormat, error) {
 			flushLit()
 			segs = append(segs, hashSeg{field: fieldDomain, lower: lower})
 		default:
-			return HashFormat{}, fmt.Errorf("ring: username hash format %q: unsupported variable %%%c — only %%u, %%n, %%d (with optional %%L) and %%%% are allowed", format, format[i])
+			return HashFormat{}, fmt.Errorf("ring: username hash format %q: unsupported variable %%%c - only %%u, %%n, %%d (with optional %%L) and %%%% are allowed", format, format[i])
 		}
 	}
 	flushLit()
@@ -110,11 +110,11 @@ func MustParseHashFormat(format string) HashFormat {
 }
 
 // Key expands the template into the string that gets hashed. For a
-// username with no '@': %n is the whole username, %d is empty — so a %d
+// username with no '@': %n is the whole username, %d is empty - so a %d
 // template routes every domain-less user to the same backend.
 // Intentional and deterministic.
 func (f HashFormat) Key(username string) string {
-	// fast path: a lone %u / %Lu / %n / ... — the common case
+	// fast path: a lone %u / %Lu / %n / ... - the common case
 	if len(f.segs) == 1 && f.segs[0].field != fieldLiteral {
 		return fieldValue(username, f.segs[0])
 	}

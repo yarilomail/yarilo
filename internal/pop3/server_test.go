@@ -440,7 +440,7 @@ func TestSession_AuthPlain_InitialResponse(t *testing.T) {
 	if !strings.HasPrefix(resp, "+OK") {
 		t.Fatalf("AUTH PLAIN with IR: expected +OK, got %q", resp)
 	}
-	// In TRANSACTION state — STAT must work.
+	// In TRANSACTION state - STAT must work.
 	send(t, c, "STAT")
 	if r2 := readline(t, r); !strings.HasPrefix(r2, "+OK") {
 		t.Fatalf("STAT after AUTH PLAIN: expected +OK, got %q", r2)

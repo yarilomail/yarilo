@@ -99,7 +99,7 @@ func TestBackendBaseForUser(t *testing.T) {
 
 // TestBackendDispatchRoutesWarden is the #953 regression: in the backend-api
 // container (YARILO_ADMIN_TYPE=backend) `yarctl warden dump` routes through
-// dispatchBackend, so `warden` must resolve there — not fail as an unknown
+// dispatchBackend, so `warden` must resolve there - not fail as an unknown
 // backend service.
 func TestBackendDispatchRoutesWarden(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

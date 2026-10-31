@@ -103,7 +103,7 @@ func methodsOn(t *testing.T, receiver string, keep func(body string) bool) map[s
 		}
 	}
 	if len(out) == 0 {
-		t.Fatalf("found no methods on *%s — the reader is broken, not the code", receiver)
+		t.Fatalf("found no methods on *%s - the reader is broken, not the code", receiver)
 	}
 	return out
 }

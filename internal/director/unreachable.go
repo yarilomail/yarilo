@@ -53,7 +53,7 @@ func (s *Server) recordUnreachable(backendIP, reporterID string, now time.Time) 
 	return len(reporters) >= threshold
 }
 
-// clearUnreachable drops all reports for backendIP — called after an eviction
+// clearUnreachable drops all reports for backendIP - called after an eviction
 // and after a fresh BACKEND-UP re-admits the backend, so a revived pod starts
 // with a clean slate instead of being re-evicted by stale reports.
 func (s *Server) clearUnreachable(backendIP string) {
@@ -101,7 +101,7 @@ func (s *Server) evictUnreachable(ip string, from *client) {
 		return
 	}
 	if s.ring.CountBackendsInTag(b.Tag) <= 1 {
-		slog.Warn("director: backend reported unreachable but it is the LAST in its tag — keeping to avoid total blackhole",
+		slog.Warn("director: backend reported unreachable but it is the LAST in its tag - keeping to avoid total blackhole",
 			"ip", ip, "tag", b.Tag)
 		return
 	}
@@ -127,7 +127,7 @@ func (s *Server) handleBackendUnreachable(c *client, fields []string) {
 	_ = c.WriteLine("OK")
 }
 
-// clientReporterID identifies the reporting login proxy by its source IP —
+// clientReporterID identifies the reporting login proxy by its source IP -
 // distinct per pod and stable for the connection. In-cluster ClusterIP traffic
 // preserves the source IP, so two proxies reporting the same backend count as two.
 func clientReporterID(c *client) string {

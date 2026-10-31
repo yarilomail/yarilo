@@ -3,7 +3,7 @@
 // One folder name per line, lexicographically sorted on write so two
 // processes writing the same set produce byte-identical files.
 //
-// Cross-process correctness comes from locks.SubscriptionsKey — every
+// Cross-process correctness comes from locks.SubscriptionsKey - every
 // read-modify-write goes through the locker. When no Locker is wired
 // (dev CLI), the file is still consistent because each write uses
 // tmp+rename (atomic at the OS layer).
@@ -28,7 +28,7 @@ import (
 )
 
 // Store is a per-user subscription file. Construct one per (home,
-// filename) pair — NS-1b assigns each namespace its own subscription
+// filename) pair - NS-1b assigns each namespace its own subscription
 // file: personal keeps the pre-v1.21 "subscriptions" filename so
 // upgrades preserve existing state, shared/public use
 // "subscriptions-<ns>" siblings in the same home.
@@ -127,7 +127,7 @@ func (s *Store) Remove(folder string) error {
 
 // Snapshot returns the current set. No distributed lock is acquired:
 // writeAtomic uses tmp+rename so any read sees either the complete old
-// or the complete new file — never a torn write.
+// or the complete new file - never a torn write.
 // Callers MUST NOT mutate the returned map.
 func (s *Store) Snapshot() (map[string]struct{}, error) {
 	return s.load()

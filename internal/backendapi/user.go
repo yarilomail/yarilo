@@ -163,7 +163,7 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 
 // userInfoToJSON renders a protocol.UserInfo as the wire-friendly
 // snake_case JSON object /user/info exposes. Zero-valued fields are
-// omitted so the response stays compact — clients iterate over the
+// omitted so the response stays compact - clients iterate over the
 // keys that are present rather than special-casing the zero default.
 // Sensitive fields (Password, CertName, PolicyResponse) are already
 // stripped by the master-protocol wire serialiser before they cross
@@ -257,7 +257,7 @@ func userInfoToJSON(info *protocol.UserInfo) map[string]any {
 
 // handleUserIterate streams every userdb-known username back as a
 // sorted JSON array. 503 when AuthClient is not configured (no
-// fallback enumeration source on backend-api alone — the caller is
+// fallback enumeration source on backend-api alone - the caller is
 // asked to point a yarilo-auth at AuthMasterAddr).
 func (s *Server) handleUserIterate(w http.ResponseWriter, r *http.Request) {
 	if s.opts.AuthClient == nil {

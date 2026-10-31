@@ -1,5 +1,5 @@
 {{- if .Values.components.submissionLogin.enabled }}
-## LoadBalancer — SMTP Submission client connections (Submissions:465 / Submission:587 with STARTTLS).
+## LoadBalancer - SMTP Submission client connections (Submissions:465 / Submission:587 with STARTTLS).
 apiVersion: v1
 kind: Service
 metadata:
@@ -29,7 +29,7 @@ spec:
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "submission-login") | nindent 4 }}
 ---
-## ClusterIP — telemetry / health
+## ClusterIP - telemetry / health
 apiVersion: v1
 kind: Service
 metadata:

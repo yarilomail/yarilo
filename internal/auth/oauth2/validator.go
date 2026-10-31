@@ -4,11 +4,11 @@
 //
 // Three validation modes:
 //
-//   - LocalJWTValidator — JWT signature check against a cached, auto-refreshed
+//   - LocalJWTValidator - JWT signature check against a cached, auto-refreshed
 //     JWKS; no HTTP call per login.
-//   - TokeninfoValidator — direct endpoint (tokeninfo_url + ?access_token=…)
+//   - TokeninfoValidator - direct endpoint (tokeninfo_url + ?access_token=…)
 //     returning claims JSON.
-//   - IntrospectionValidator — RFC 7662 introspection (bearer header, query
+//   - IntrospectionValidator - RFC 7662 introspection (bearer header, query
 //     param, or form body transport).
 //
 // OIDCDiscovery wraps any of the three, resolving endpoints from
@@ -16,8 +16,8 @@
 //
 // Username mapping is config-driven:
 //
-//   - username_attribute (default "email") — claim name to extract
-//   - username_validation_format (default "%{user}") — template applied to the
+//   - username_attribute (default "email") - claim name to extract
+//   - username_validation_format (default "%{user}") - template applied to the
 //     SASL authzid; the extracted claim must equal it (case-insensitive
 //     with "%Lu")
 //
@@ -39,29 +39,29 @@ type Claims struct {
 	// username_validation_format. Source: Config.UsernameAttribute.
 	Username string
 
-	// Issuer (iss) — empty when the source token omits it.
+	// Issuer (iss) - empty when the source token omits it.
 	Issuer string
 
-	// Subject (sub) — opaque user identifier, distinct from Username.
+	// Subject (sub) - opaque user identifier, distinct from Username.
 	Subject string
 
-	// ExpiresAt (exp) — zero when the token carries no expiry.
+	// ExpiresAt (exp) - zero when the token carries no expiry.
 	ExpiresAt int64
 
-	// IssuedAt (iat) — zero when absent.
+	// IssuedAt (iat) - zero when absent.
 	IssuedAt int64
 
-	// Scope — space-separated scope string, from `scope` (RFC 6749) or
+	// Scope - space-separated scope string, from `scope` (RFC 6749) or
 	// `scp` (Microsoft variant).
 	Scope string
 
-	// Audience (aud) — a single value; an array is flattened to its first entry.
+	// Audience (aud) - a single value; an array is flattened to its first entry.
 	Audience string
 
 	// Active is the per-token authoritativeness flag: RFC 7662 sets
 	// "active": false for a revoked/expired token; JWT validators infer it
 	// from signature + exp + nbf. Validators MUST NOT return (Claims, nil)
-	// when Active is false — they return ErrTokenInactive.
+	// when Active is false - they return ErrTokenInactive.
 	Active bool
 
 	// Extra holds every other claim, keys in their source case, values as

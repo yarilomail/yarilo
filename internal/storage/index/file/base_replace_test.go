@@ -11,7 +11,7 @@ import (
 // staleness check for the base .index compared mtime only. Two different
 // files (the pre- and post-OptimizeIndex base, rewritten via Recreate's
 // tmp+rename) can share an mtime tick on filesystems with coarse mtime
-// resolution — the exact same anti-pattern already fixed for the .log file
+// resolution - the exact same anti-pattern already fixed for the .log file
 // via inode identity (#645). This pins that reload() now also detects a
 // same-mtime base replacement via os.SameFile and does a full reload instead
 // of trusting a stale in-memory NextUID.
@@ -45,7 +45,7 @@ func TestReloadDetectsBaseReplacedUnderSameMtime(t *testing.T) {
 	// Simulate the stat coincidence the bug depends on: pod A's cached base
 	// identity is the PRE-optimize file, but its cached mtime and log-size are
 	// forced to match the POST-optimize disk state (coarse mtime resolution /
-	// NFS attr cache) — and its logFD is dropped so the .log identity check
+	// NFS attr cache) - and its logFD is dropped so the .log identity check
 	// cannot itself catch the change. Only the base inode-identity check can
 	// now reveal that the base file was replaced.
 	baseStat, err := os.Stat(fsA.indexPath)

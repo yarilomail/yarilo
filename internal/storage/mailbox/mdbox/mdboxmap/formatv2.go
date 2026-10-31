@@ -132,7 +132,7 @@ func getRecord(b []byte) MapEntry {
 	return e
 }
 
-// recordUID reads only the map_uid of the record at b — the single field the
+// recordUID reads only the map_uid of the record at b - the single field the
 // binary search compares, so the search never materialises a record.
 func recordUID(b []byte) uint32 { return binary.LittleEndian.Uint32(b[0:4]) }
 

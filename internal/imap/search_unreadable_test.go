@@ -52,7 +52,7 @@ func TestSearchCountsMessagesItCouldNotRead(t *testing.T) {
 		t.Fatalf("SEARCH matched %v over messages whose bytes cannot be read", uids)
 	}
 	if got := counterValue(t) - before; got != float64(removed) {
-		t.Errorf("unreadable counter rose by %v, want %d — the answer excluded them silently",
+		t.Errorf("unreadable counter rose by %v, want %d - the answer excluded them silently",
 			got, removed)
 	}
 }
@@ -137,7 +137,7 @@ func appendBodyTo(t *testing.T, c *imapclient.Client, body string) {
 // The reason the fix cannot be "hand MatchMessage what we have": given no
 // message it answers TRUE for a body criterion, so an unreadable message would
 // match every body search. Pinned as a property of the matcher this code
-// depends on — if it ever changes, the exclusion above stops being required and
+// depends on - if it ever changes, the exclusion above stops being required and
 // this row says so.
 func TestMatcherTreatsAMissingMessageAsAMatch(t *testing.T) {
 	crit := &imap.SearchCriteria{Text: []string{"needle"}}

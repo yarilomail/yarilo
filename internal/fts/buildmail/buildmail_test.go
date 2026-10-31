@@ -109,7 +109,7 @@ func TestBuildMultipart(t *testing.T) {
 		t.Fatalf("missing subject header key: %+v", upd.keys)
 	}
 	// Headers go through dataChain (#696 point 2): lowercase only, never
-	// stemmed — "Quarterly Planning" indexes as-is, not the snowball stems
+	// stemmed - "Quarterly Planning" indexes as-is, not the snowball stems
 	// "quarter"/"plan" the body's own text gets.
 	if !hasToken(subj.tokens, "quarterly") || !hasToken(subj.tokens, "planning") {
 		t.Fatalf("subject tokens = %q, want unstemmed quarterly/planning", subj.tokens)
@@ -148,7 +148,7 @@ func TestAddressHeaderStructuredParsing(t *testing.T) {
 		wantTokens []string // every one of these must be present
 	}{
 		{
-			// The encoded-word decodes to "Support (Team)" — parentheses
+			// The encoded-word decodes to "Support (Team)" - parentheses
 			// that would be misread as RFC 5322 comment delimiters if
 			// decoding happened BEFORE address-list parsing, corrupting or
 			// dropping the address entirely. Parsing the raw (still-
@@ -161,7 +161,7 @@ func TestAddressHeaderStructuredParsing(t *testing.T) {
 		},
 		{
 			// A header that doesn't parse as a valid address list falls
-			// back to tokenizing the decoded text as-is — imperfect
+			// back to tokenizing the decoded text as-is - imperfect
 			// tokenization beats dropping the header.
 			name: "unparseable address header falls back to decoded text",
 			msg: "From: @@@ garbage @@@\r\n" +
@@ -247,7 +247,7 @@ func TestBodySizeCap(t *testing.T) {
 }
 
 // boundedReader fails the test if more than max bytes are ever read from
-// it — used to prove Build() does not buffer the whole message up front for
+// it - used to prove Build() does not buffer the whole message up front for
 // a single-language config (review finding: an unconditional io.ReadAll
 // would silently defeat MaxSize's memory-bounding purpose for a large
 // message).
@@ -264,7 +264,7 @@ func (b *boundedReader) Read(p []byte) (int, error) {
 	b.total += int64(n)
 	if b.total > b.max && !b.failed {
 		b.failed = true
-		b.t.Errorf("read %d bytes, want at most %d — message body was buffered beyond the size cap", b.total, b.max)
+		b.t.Errorf("read %d bytes, want at most %d - message body was buffered beyond the size cap", b.total, b.max)
 	}
 	return n, err
 }
@@ -278,7 +278,7 @@ func TestBuildDoesNotBufferWholeMessageForSingleLanguage(t *testing.T) {
 	// take the streaming path, never reading much past the size cap.
 	b := New(Options{MaxSize: sizeCap}, mustChain(t))
 	// Slack accounts for header bytes plus a few internal buffered-reader
-	// chunks (go-message's parser + copyChunks' own 8KiB buffer) — nowhere
+	// chunks (go-message's parser + copyChunks' own 8KiB buffer) - nowhere
 	// near the full ~1.1MB body, which is exactly what this test guards.
 	br := &boundedReader{t: t, r: strings.NewReader(msg), max: 64 * 1024}
 	if _, err := b.Build(1, br, upd); err != nil {

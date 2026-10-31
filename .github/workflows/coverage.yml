@@ -1,4 +1,4 @@
-name: Coverage — yarilo
+name: Coverage - yarilo
 
 ## Released code only, on each cut; a batch of tests on develop is measured by
 ## a manual run there. Not in gate.yml: a merge push skips the gate.

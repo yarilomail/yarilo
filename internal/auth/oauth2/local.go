@@ -26,13 +26,13 @@ type LocalJWTConfig struct {
 	Keys []LocalKey
 
 	// Issuers lists allowed `iss` claim values. Empty = no check
-	// (any signed token from a key in the JWKS is accepted —
+	// (any signed token from a key in the JWKS is accepted -
 	// useful for single-tenant IdPs where the JWKS is the only
 	// trust root).
 	Issuers []string
 
 	// Audience constrains the `aud` claim. Empty = no check.
-	// Single string — JWT spec allows an array of audiences, the
+	// Single string - JWT spec allows an array of audiences, the
 	// validator accepts either provided one entry matches.
 	Audience string
 
@@ -63,7 +63,7 @@ type LocalJWTConfig struct {
 }
 
 // LocalJWTValidator verifies JWT bearer tokens locally against a
-// cached JWKS. No HTTP call per login — JWKS refresh happens on a
+// cached JWKS. No HTTP call per login - JWKS refresh happens on a
 // timer or after a signature-verify miss (unknown kid).
 type LocalJWTValidator struct {
 	cfg  LocalJWTConfig

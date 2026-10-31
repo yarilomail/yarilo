@@ -38,7 +38,7 @@ func TestDispatchNormalisesTheName(t *testing.T) {
 		return false
 	})
 	if !found {
-		t.Fatal("dispatch resolver not found — the guard must move with it")
+		t.Fatal("dispatch resolver not found - the guard must move with it")
 	}
 	if !normalises {
 		t.Error("dispatch no longer normalises the folder name (#1113)")

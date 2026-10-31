@@ -13,8 +13,8 @@ import (
 // migrateLegacyFilenames runs unlocked on OpenFolder's first-open path, so
 // two concurrent openers of the same not-yet-migrated folder can both pass
 // the "native doesn't exist yet / legacy does exist" pre-checks before
-// either has renamed anything. os.Rename is atomic — only one racer's
-// rename actually succeeds — but before the fix the loser saw a hard ENOENT
+// either has renamed anything. os.Rename is atomic - only one racer's
+// rename actually succeeds - but before the fix the loser saw a hard ENOENT
 // error instead of recognizing "someone else already migrated this." This
 // drives many goroutines at the same legacy→native migration concurrently
 // and asserts none of them ever return an error, with the migration

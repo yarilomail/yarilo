@@ -88,7 +88,7 @@ func TestStore_SetGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	// Stored order is canonical (Sorted) — owner first, then user= alphabetically,
+	// Stored order is canonical (Sorted) - owner first, then user= alphabetically,
 	// with positive entries before negative for the same identifier.
 	want := in.Sorted()
 	if !reflect.DeepEqual(got, want) {
@@ -262,7 +262,7 @@ func TestStore_ConcurrentUpdatesWithoutLockerDoNotPanic(t *testing.T) {
 	// No locker = single-process test; sync.Mutex inside the Store is
 	// not enforced, so concurrent writers race on file writes. The
 	// test asserts only that no panic occurs and the final file is
-	// parseable — verifying the lock-acquired path is the locks-
+	// parseable - verifying the lock-acquired path is the locks-
 	// integration suite, not this unit test.
 	home := t.TempDir()
 	s := New(home, "", "", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
@@ -298,7 +298,7 @@ func TestStore_FilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	// 0o600: ACL contains identifiers / rights of other users — keep it
+	// 0o600: ACL contains identifiers / rights of other users - keep it
 	// to the mail-owner uid only.
 	if mode := st.Mode().Perm(); mode != 0o600 {
 		t.Errorf("file perm = %o, want 0o600", mode)
@@ -492,11 +492,11 @@ func TestStore_EffectiveForFallsThroughToRoot(t *testing.T) {
 }
 
 // TestStore_MaildirRootDefaultDisabled asserts that for maildir the local
-// namespace-root default ACL is unavailable — its path is INBOX's own, so
+// namespace-root default ACL is unavailable - its path is INBOX's own, so
 // Set("") is refused and inheritance never falls through to it; a global ACL is the intended default source in that case.
 // The namespace root is grantable on maildir too. It was not: its ACL shared
 // INBOX's file, so the root default was disabled to keep one from being read as
-// the other — which left a shared maildir namespace with nowhere to grant the
+// the other - which left a shared maildir namespace with nowhere to grant the
 // create right, and therefore unable to hold its first mailbox (#1091).
 func TestStore_MaildirRootIsGrantable(t *testing.T) {
 	home := t.TempDir()
@@ -569,7 +569,7 @@ func TestStore_EffectiveForLeafBeatsRoot(t *testing.T) {
 
 func TestStore_EffectiveForZeroSepStillTriesRoot(t *testing.T) {
 	// With sep=0 the walk is disabled, so the namespace-root fall-
-	// through must NOT fire either — only the explicit folder is
+	// through must NOT fire either - only the explicit folder is
 	// consulted. Mirrors the "no inheritance" opt-out.
 	home := t.TempDir()
 	s := New(home, "", "mdbox", "/", "", "alice", "test.bin/1/alice@example.com/sess1", Policy{}, nil)
@@ -814,7 +814,7 @@ func TestStore_DuplicateEntriesResolveToTheLastStatement(t *testing.T) {
 		t.Fatalf("EffectiveFor: %v", err)
 	}
 	if got != "lr" {
-		t.Errorf("effective = %q, want lr — the reduction did not take effect", got)
+		t.Errorf("effective = %q, want lr - the reduction did not take effect", got)
 	}
 
 	// And the file is normalised by the next write rather than growing.

@@ -43,7 +43,7 @@ func stripHdrVsizeExt(t *testing.T, path string) {
 
 // TestHdrVsizeBackfillRoundTrip is the real regression for #586: a legacy folder
 // whose base index lacks the hdr-vsize extension must, after a flush/recalc,
-// persist the aggregate to disk — with Recreate accepting the file (HeaderSize
+// persist the aggregate to disk - with Recreate accepting the file (HeaderSize
 // fixed up). The earlier fix appended the extension without updating HeaderSize,
 // so Recreate rejected the file ("header.HeaderSize mismatch"), the base was
 // never rewritten (a compaction regression) and the aggregate never persisted.
@@ -70,7 +70,7 @@ func TestHdrVsizeBackfillRoundTrip(t *testing.T) {
 		t.Fatal("precondition: hdr-vsize should be absent after strip")
 	}
 
-	// Reopen and force a flush via recalc — must succeed and persist the ext.
+	// Reopen and force a flush via recalc - must succeed and persist the ext.
 	b := openIdx(dir, testUser)
 	fb, err := b.OpenFolder("INBOX", 0, "")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestHdrVsizeBackfillRoundTrip(t *testing.T) {
 
 // TestPersistVsizeBackfillsMissingExt covers #586: a folder whose index predates
 // the hdr-vsize extension must still get the aggregate persisted. persistVsizeLocked
-// used to no-op when the extension was absent, so the aggregate was never written —
+// used to no-op when the extension was absent, so the aggregate was never written -
 // every quota read full-rescanned and recalc did nothing. It must now backfill the
 // extension so the next flush persists it.
 func TestPersistVsizeBackfillsMissingExt(t *testing.T) {
@@ -132,7 +132,7 @@ func TestPersistVsizeBackfillsMissingExt(t *testing.T) {
 		t.Errorf("persisted aggregate = %+v, want {Vsize:4096 HighestUID:3 MessageCount:2}", got)
 	}
 
-	// A second persist updates in place — no duplicate extension.
+	// A second persist updates in place - no duplicate extension.
 	fs.vsize.Vsize = 8192
 	fs.persistVsizeLocked()
 	n := 0

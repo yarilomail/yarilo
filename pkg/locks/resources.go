@@ -7,9 +7,9 @@ import "strings"
 // compiler instead of grep. Naming follows the convention in
 // https://doc.yarilomail.org/latest/installation/deployment.html §Deadlock prevention:
 //
-//	idx:<user>                  — per-user index lock (taken first)
-//	mbox:<user>:<folder>        — per-mailbox lock (taken second)
-//	deliver:<user>:<folder>     — per-mailbox delivery serialisation (last)
+//	idx:<user>                  - per-user index lock (taken first)
+//	mbox:<user>:<folder>        - per-mailbox lock (taken second)
+//	deliver:<user>:<folder>     - per-mailbox delivery serialisation (last)
 //
 // Callers must always acquire in this order to avoid deadlocks.
 
@@ -30,7 +30,7 @@ func MailboxKey(user, folder string) string { return "mbox:" + user + ":" + fold
 // FTSKey returns the lock key serialising full-text index writes for one
 // mailbox. It is deliberately NOT MailboxKey: the mail index and the full-text
 // index are different resources with different writers. The FTS index has a
-// single writer — yarilo-fts — and this key exists only so two of its own
+// single writer - yarilo-fts - and this key exists only so two of its own
 // passes (after a ring move, say) cannot race the checkpoint's
 // read-modify-write. Sharing MailboxKey would make every full-text pass
 // contend with every session's mail-index write for a guarantee that concerns
@@ -51,7 +51,7 @@ func MailboxListKey(user string) string { return "mlist:" + user }
 func DeliverKey(user, folder string) string { return "deliver:" + user + ":" + folder }
 
 // SieveScriptsKey returns the lock key for a user's Sieve script directory.
-// Independent of mailbox keys — Sieve updates do not interleave with mail
+// Independent of mailbox keys - Sieve updates do not interleave with mail
 // writes.
 func SieveScriptsKey(user string) string { return "sieve:" + user }
 
@@ -66,7 +66,7 @@ func ThreadsKey(user string) string { return "threads:" + user }
 
 // SubscriptionsKey returns the lock key for a user's mailbox-subscription
 // file (LIST-EXTENDED §SELECT SUBSCRIBED / RETURN SUBSCRIBED). Independent
-// of mailbox keys — subscribe is metadata, never racing with mail writes.
+// of mailbox keys - subscribe is metadata, never racing with mail writes.
 func SubscriptionsKey(user string) string { return "subs:" + user }
 
 // SubmissionsKey guards one user's EmailSubmission records.
@@ -100,7 +100,7 @@ func accountOf(resource string) string {
 }
 
 // ACLListKey returns the lock key for the per-namespace yarilo-acl-list
-// global index — one file per namespace-root that mirrors which
+// global index - one file per namespace-root that mirrors which
 // mailboxes have explicit ACLs. Scoped by home directory rather than
 // username so two users accessing the same shared-namespace root
 // serialise their index updates against each other. Independent of

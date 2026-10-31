@@ -22,7 +22,7 @@ type user struct {
 // Only user (col 0) is required. password is col 1; home is col 5; every
 // column from 7 onward is rejoined with ":" as the extra-fields blob and split
 // on spaces into key=value pairs. uid/gid/gecos/shell are parsed positionally
-// for layout compatibility but not retained — yarilo derives system identity
+// for layout compatibility but not retained - yarilo derives system identity
 // from config and storage paths from the home template, not per-user uid/gid.
 //
 // Lines that are empty or begin with '#' or ':' are skipped. A later duplicate

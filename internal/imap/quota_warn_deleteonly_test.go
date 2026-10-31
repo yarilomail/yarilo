@@ -100,7 +100,7 @@ func TestQuotaWarnUnderDeleteOnly(t *testing.T) {
 func runDeleteOnlyUnder(t *testing.T, newMB func() mailbox.MailboxBackend) {
 	dir := t.TempDir()
 
-	// Server A — deliver a message well over the 1000-byte limit (as LMTP would).
+	// Server A - deliver a message well over the 1000-byte limit (as LMTP would).
 	a := startQuotaWarnServer(t, dir, newMB(), false)
 	big := "From: s@x\r\nTo: user@test.com\r\nSubject: big\r\n\r\n" + strings.Repeat("X", 4000) + "\r\n"
 	ac := a.Append("INBOX", int64(len(big)), nil)
@@ -121,7 +121,7 @@ func runDeleteOnlyUnder(t *testing.T, newMB func() mailbox.MailboxBackend) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(old)
 
-	// Server B — fresh session (separate index instance), delete-only expunge.
+	// Server B - fresh session (separate index instance), delete-only expunge.
 	b := startQuotaWarnServer(t, dir, newMB(), true)
 	if _, err := b.Select("INBOX", nil).Wait(); err != nil {
 		t.Fatal(err)

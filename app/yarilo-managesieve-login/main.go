@@ -91,7 +91,7 @@ func main() {
 	haproxyTimeout := time.Duration(cfg.ManageSieveLoginService.HAProxyTimeout) * time.Second
 	localIP := os.Getenv("POD_IP")
 	// #735: managesieve-login never wired DirectorAddr at all (BackendAddr
-	// was the only option) — director mode was silently unavailable, not
+	// was the only option) - director mode was silently unavailable, not
 	// just misdirected to localhost like the other three logins.
 	if err := config.ValidateBackendOrDirector("managesieve_login_service", cfg.ManageSieveLoginService.BackendAddr, cfg.ManageSieveLoginService.DirectorAddr); err != nil {
 		slog.Error("config validation failed", "err", err)
@@ -100,7 +100,7 @@ func main() {
 
 	tel := startTelemetry(cfg.Telemetry)
 
-	// Port 4190 — STARTTLS (ManageSieve does not have an implicit-TLS variant).
+	// Port 4190 - STARTTLS (ManageSieve does not have an implicit-TLS variant).
 	addr := fmt.Sprintf(":%d", svcs.ManageSieve.Port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {

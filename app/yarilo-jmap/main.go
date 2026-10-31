@@ -76,10 +76,10 @@ func main() {
 	// diagnoses itself, where a pod that will not start looks like an image or
 	// scheduling fault.
 	if cfg.JMAPService.AuthMasterAddr == "" {
-		slog.Warn("jmap: jmap_service.auth_master_addr is empty — userdb lookups fall back to the storage templates, which is wrong for any user whose home or mail location is not template-derived")
+		slog.Warn("jmap: jmap_service.auth_master_addr is empty - userdb lookups fall back to the storage templates, which is wrong for any user whose home or mail location is not template-derived")
 	}
 	if cfg.Protocol.JMAP.BaseURL == "" {
-		slog.Warn("jmap: protocol.jmap.jmap_base_url is empty — the session resource will advertise URLs no client can follow; set it to the public origin clients reach this deployment on")
+		slog.Warn("jmap: protocol.jmap.jmap_base_url is empty - the session resource will advertise URLs no client can follow; set it to the public origin clients reach this deployment on")
 	}
 
 	slog.Info("yarilo-jmap starting",

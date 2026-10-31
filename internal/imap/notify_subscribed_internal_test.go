@@ -13,7 +13,7 @@ import (
 // The SUBSCRIBED watch set is compared against personal-relative folder names,
 // while the store's keys are client-visible names: user/alice/Sent and
 // Public/Foo live in the same file as INBOX. The expansion must keep only the
-// names the personal namespace can actually match — and must not drop personal
+// names the personal namespace can actually match - and must not drop personal
 // folders that merely share a head with another namespace's prefix.
 func TestExpandNotifySpec_SubscribedKeepsOnlyPersonalNames(t *testing.T) {
 	store := subs.New(t.TempDir(), "subscriptions", "alice", "test", nil)

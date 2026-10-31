@@ -24,7 +24,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
-// scramSha1Auth mirrors scramAuth (SHA-256) — implements both
+// scramSha1Auth mirrors scramAuth (SHA-256) - implements both
 // Authenticator (stub that never succeeds) AND SCRAMSha1Lookup.
 type scramSha1Auth struct {
 	user  string

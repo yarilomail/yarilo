@@ -133,7 +133,7 @@ func TestClientConfig_SessionResumption(t *testing.T) {
 		t.Fatal("first dial must be a full handshake, not resumed")
 	}
 	if !dialResumed() {
-		t.Fatal("second dial must resume via the cached session ticket — ClientSessionCache not effective")
+		t.Fatal("second dial must resume via the cached session ticket - ClientSessionCache not effective")
 	}
 }
 

@@ -7,7 +7,7 @@ foreign cache rests on bytes another implementation produced.
 | file | what it is |
 |---|---|
 | `dovecot.index.log` | the folder's index; there is no `dovecot.index` beside it, because the base lives in the list index on that deployment |
-| `dovecot.index.cache` | the folder's cache: `flags`, `date.sent`, `date.received`, `size.physical`, `imap.bodystructure`, `guid`, `mime.parts` and ten `hdr.*` fields — and **no** `imap.envelope`, which that server builds from the headers on demand |
+| `dovecot.index.cache` | the folder's cache: `flags`, `date.sent`, `date.received`, `size.physical`, `imap.bodystructure`, `guid`, `mime.parts` and ten `hdr.*` fields - and **no** `imap.envelope`, which that server builds from the headers on demand |
 | `dovecot.map.index`, `dovecot.map.index.log` | the store's map |
 | `m.1` | the storage file the map addresses |
 

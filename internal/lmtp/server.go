@@ -207,7 +207,7 @@ func (b *backend) NewSession(c *goSmtp.Conn) (goSmtp.Session, error) {
 
 // connIDSeq is a per-process monotonic counter identifying one LMTP
 // connection (one upstream MTA session, potentially many MAIL/RCPT/DATA
-// cycles) — distinct from deliverOne's per-delivery call_id, so a
+// cycles) - distinct from deliverOne's per-delivery call_id, so a
 // connection's full command sequence greps as one thread.
 var connIDSeq atomic.Uint64
 
@@ -357,7 +357,7 @@ func (s *session) rcptLocal(to string) error {
 	defer box.Close() //nolint:errcheck
 
 	// Quota is enforced at delivery time from the index (see LMTPData), the
-	// authoritative source — no RCPT-time dict pre-check.
+	// authoritative source - no RCPT-time dict pre-check.
 
 	exists, err := box.FolderExists("INBOX")
 	if err != nil {
@@ -373,7 +373,7 @@ func (s *session) rcptLocal(to string) error {
 	}
 
 	// Per-(IP, mailbox) rate limit (cluster-wide via
-	// pkg/locks COUNTER-INC). Counter unavailable is non-fatal —
+	// pkg/locks COUNTER-INC). Counter unavailable is non-fatal -
 	// log + accept so a locks outage cannot block delivery.
 	if rl := s.opts.Config.RateLimit; rl.Enabled && s.opts.Locker != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -395,7 +395,7 @@ func (s *session) rcptLocal(to string) error {
 	return nil
 }
 
-// Data is never called in LMTP mode — LMTPData handles DATA instead.
+// Data is never called in LMTP mode - LMTPData handles DATA instead.
 func (s *session) Data(_ io.Reader) error { return nil }
 
 // prependHeaders prepends Received and Delivered-To headers to data.
@@ -608,7 +608,7 @@ func (s *session) postAllowed(ui *mailbox.UserInfo, ns *config.NamespaceConfig, 
 // resolveRcptUserInfo returns the UserInfo for a recipient at delivery time.
 // The RCPT-time lookup normally caches it (with UserInfo.Driver stamped via the
 // userdb); on a cache miss it re-runs the userdb lookup so Driver is still set,
-// because the personal-backend selection hangs entirely on that field — a dbox
+// because the personal-backend selection hangs entirely on that field - a dbox
 // recipient must not fall through to the global (maildir) store. Only when there
 // is no userdb to consult does it fall back to the bare resolver (no per-user
 // driver, so the global backend is correct).

@@ -4,20 +4,20 @@
 
 Find defects the author cannot see, in this order of priority:
 
-1. **Correctness** — wrong results, data loss, races, unhandled errors.
-2. **Failure behaviour** — what happens when a dependency is slow, down, or
+1. **Correctness** - wrong results, data loss, races, unhandled errors.
+2. **Failure behaviour** - what happens when a dependency is slow, down, or
    returns something unexpected.
-3. **Interface and contract** — public API, wire format, config keys, anything a
+3. **Interface and contract** - public API, wire format, config keys, anything a
    caller or operator depends on and cannot change unilaterally.
-4. **Tests** — does the change prove what it claims.
-5. **Clarity** — naming, structure, comments that explain WHY.
+4. **Tests** - does the change prove what it claims.
+5. **Clarity** - naming, structure, comments that explain WHY.
 
 Formatting and lint-enforced style are not review topics. If a machine can
 decide it, let the machine decide it.
 
 ### Verify before asserting
 
-Every finding must be traceable to code, output, or a measurement — not to
+Every finding must be traceable to code, output, or a measurement - not to
 plausibility.
 
 - Read the code path before judging it. An objection built on an assumed
@@ -31,7 +31,7 @@ plausibility.
 ### Write findings that can be acted on
 
 For each finding state: what breaks, the concrete input or state that triggers
-it, and where. A claim without a failure scenario is an opinion — label it a
+it, and where. A claim without a failure scenario is an opinion - label it a
 suggestion and move on.
 
 Rank by consequence, not by how easy the problem was to spot. A missing error
@@ -72,7 +72,7 @@ say so plainly rather than padding the review to look thorough.
 
 - Cover the failure the change fixes. A fix without a test that would have
   caught it is incomplete.
-- A regression test must fail on the pre-change code by construction — not
+- A regression test must fail on the pre-change code by construction - not
   incidentally.
 - Assert the exact property. A weaker assertion that also passes for the broken
   behaviour is worse than no test, because it looks like coverage.
@@ -100,14 +100,14 @@ say so plainly rather than padding the review to look thorough.
 
 - A new failure mode needs a way to see it. If the change can fail invisibly,
   that is a finding.
-- Metric and log semantics must be documented where they are surprising — a
+- Metric and log semantics must be documented where they are surprising - a
   latency measurement that includes deliberate delays will be misread otherwise.
 - Distinguish outcomes that call for different responses. Collapsing them into
   one counter loses exactly the information an incident needs.
 
 ### Security and data handling
 
-- Never print or log credentials, tokens, or personal data — and never ask the
+- Never print or log credentials, tokens, or personal data - and never ask the
   author to paste them into the review. Assert on presence and shape instead.
 - Untrusted input validated at the boundary, before it reaches anything that
   trusts it.
@@ -119,15 +119,15 @@ say so plainly rather than padding the review to look thorough.
 - Comments explain WHY: a constraint, an invariant, a compatibility quirk, a
   decision that looks wrong without context. A comment restating the code is
   noise; ask for its removal.
-- A non-obvious decision with no recorded reason is a finding — the next reader
+- A non-obvious decision with no recorded reason is a finding - the next reader
   will otherwise "fix" it.
 - Documentation that the change makes wrong must be updated in the same change.
 - Comment size: 1–2 lines is the norm. A block of 3+ lines in a diff is a
-  finding — the explanation belongs in the documentation repo (or docs-internal
+  finding - the explanation belongs in the documentation repo (or docs-internal
   for wire formats), with at most a one-line pointer left in code.
 - No history or meta-narrative in comments ("previously…", "changed because…");
   history lives in issues, referenced as `(#NNNN)`.
-- Removing a comment is a finding only if an invariant vanished with it — check
+- Removing a comment is a finding only if an invariant vanished with it - check
   what the comment protected, not that a line disappeared.
 - Comment volume: a package trending toward the 10% ceiling (comment lines vs Go
   lines, see the comment-count tool and #1620) is worth flagging before the gate

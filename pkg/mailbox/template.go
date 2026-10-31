@@ -16,14 +16,14 @@ import (
 //	%{user | username}                 alice
 //	%{user | domain}                   example.com
 //	%{home}                            the user's home directory
-//	%{user | sha1 % 256 | hex(2)}      "3f" — a hash bucket
+//	%{user | sha1 % 256 | hex(2)}      "3f" - a hash bucket
 //
 // The short form (%u, %n, %d, %h, %2.256Nu) predates it and stays accepted:
 // it is in every values file, every example and in configs written before this.
 //
 // A sequence that belongs to neither is an error. It used to pass through
 // verbatim, which meant a template copied from a newer reference config
-// produced a directory literally named "%{user | sha1 % 256 | hex(2)}" —
+// produced a directory literally named "%{user | sha1 % 256 | hex(2)}" -
 // created, used, and never complained about. A path we cannot expand is a
 // misconfiguration, and it has to say so.
 

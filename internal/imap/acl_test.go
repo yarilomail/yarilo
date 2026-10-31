@@ -199,7 +199,7 @@ func TestACL_DeleteRemovesIdentifier(t *testing.T) {
 func TestACL_MyRightsOwnerGetsFullRights(t *testing.T) {
 	c := startACLServer(t, true)
 	// Owner (alice) always gets FullRights from Effective() regardless of
-	// explicit entries — RFC 4314 §4 implicit owner grant.
+	// explicit entries - RFC 4314 §4 implicit owner grant.
 	data, err := c.MyRights("INBOX").Wait()
 	if err != nil {
 		t.Fatalf("MYRIGHTS: %v", err)
@@ -212,7 +212,7 @@ func TestACL_MyRightsOwnerGetsFullRights(t *testing.T) {
 func TestACL_ListRights(t *testing.T) {
 	c := startACLServer(t, true)
 
-	// RFC 4314 §3.7: no right is implied for any identifier — required set is
+	// RFC 4314 §3.7: no right is implied for any identifier - required set is
 	// always empty, every right (incl. the obsolete c/d compounds) is
 	// individually grantable. Matches the reference implementation's uniform
 	// LISTRIGHTS output for every identifier.
@@ -228,7 +228,7 @@ func TestACL_ListRights(t *testing.T) {
 		t.Errorf("bob optional rights = %v, want 13 elements (l r w s t p i e k x a c d)", data.OptionalRights)
 	}
 
-	// The owner keyword gets the same uniform list — no required rights.
+	// The owner keyword gets the same uniform list - no required rights.
 	owner := imaplib.RightsIdentifier("owner")
 	od, err := c.ListRights("INBOX", owner).Wait()
 	if err != nil {

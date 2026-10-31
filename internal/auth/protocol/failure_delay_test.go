@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// errPassdb returns a TempFail with a non-nil error — exercises
+// errPassdb returns a TempFail with a non-nil error - exercises
 // the internal-failure-delay branch in handleAuth.
 type errPassdb struct{ err error }
 
@@ -17,7 +17,7 @@ func (p *errPassdb) Authenticate(req *Request) (Result, error) {
 	return ResultTempFail, p.err
 }
 
-// TestWire_FailureDelay_HoldsAuthFail — wrong password held back
+// TestWire_FailureDelay_HoldsAuthFail - wrong password held back
 // by configured FailureDelay before the FAIL reply lands.
 func TestWire_FailureDelay_HoldsAuthFail(t *testing.T) {
 	srv := NewServer(
@@ -47,7 +47,7 @@ func TestWire_FailureDelay_HoldsAuthFail(t *testing.T) {
 	}
 }
 
-// TestWire_FailureDelay_OK_NotDelayed — successful auth must not
+// TestWire_FailureDelay_OK_NotDelayed - successful auth must not
 // pay the failure-delay penalty.
 func TestWire_FailureDelay_OK_NotDelayed(t *testing.T) {
 	srv := NewServer(
@@ -77,7 +77,7 @@ func TestWire_FailureDelay_OK_NotDelayed(t *testing.T) {
 	}
 }
 
-// TestWire_InternalFailureDelay_AppliesOnTempFail — backend
+// TestWire_InternalFailureDelay_AppliesOnTempFail - backend
 // errors use a separate (typically shorter) delay knob.
 func TestWire_InternalFailureDelay_AppliesOnTempFail(t *testing.T) {
 	srv := NewServer(
@@ -111,12 +111,12 @@ func TestWire_InternalFailureDelay_AppliesOnTempFail(t *testing.T) {
 	}
 }
 
-// TestWire_FailureDelay_Zero_NoSleep — explicit disable for the
+// TestWire_FailureDelay_Zero_NoSleep - explicit disable for the
 // test-fast path.
 func TestWire_FailureDelay_Zero_NoSleep(t *testing.T) {
 	srv := NewServer(
 		[]Passdb{&credPassdb{"alice", "secret"}},
-		// No WithFailureDelay — defaults to 0.
+		// No WithFailureDelay - defaults to 0.
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -141,7 +141,7 @@ func TestWire_FailureDelay_Zero_NoSleep(t *testing.T) {
 	}
 }
 
-// TestWire_FailureDelay_HandshakeNotDelayed — the VERSION/MECH/
+// TestWire_FailureDelay_HandshakeNotDelayed - the VERSION/MECH/
 // DONE handshake must arrive immediately on connect; the delay
 // only applies to the FAIL line itself.
 func TestWire_FailureDelay_HandshakeNotDelayed(t *testing.T) {

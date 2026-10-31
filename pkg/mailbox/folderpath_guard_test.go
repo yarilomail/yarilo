@@ -33,7 +33,7 @@ func TestFolderSubpathBuildersTakeNoNormalisationFlag(t *testing.T) {
 				continue
 			}
 			for _, name := range p.Names {
-				t.Errorf("%s takes a bool %q — a path builder must not decide the name form (#1113)", fn.Name.Name, name.Name)
+				t.Errorf("%s takes a bool %q - a path builder must not decide the name form (#1113)", fn.Name.Name, name.Name)
 			}
 		}
 		return true

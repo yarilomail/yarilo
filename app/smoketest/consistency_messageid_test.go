@@ -8,7 +8,7 @@ import (
 
 // The reading is where this row can lie, so it is exercised against real FETCH
 // responses rather than only against a cluster. A comparison that runs only in
-// the sandbox hides its own reading errors until a rollout — which is the
+// the sandbox hides its own reading errors until a rollout - which is the
 // mistake this area was opened for (#1043, #1206).
 //
 // The response shapes are the ones a server actually sends: the message id is
@@ -31,7 +31,7 @@ func TestEnvelopeMessageIDReadsTheLastField(t *testing.T) {
 			want: "<abc123@mx.example.test>",
 		},
 		{
-			name: "no id at all — the state this row exists to catch",
+			name: "no id at all - the state this row exists to catch",
 			in:   `* 1 FETCH (ENVELOPE ("Mon, 1 Jan 2029 00:00:00 +0000" "hello" ` + addrs + ` NIL NIL))`,
 			want: "NIL",
 		},
@@ -114,7 +114,7 @@ func TestMessageIDBracketsAllowance(t *testing.T) {
 // The reading of the JMAP side takes what jmapCall returns: the first method's
 // ARGUMENTS. Unwrapping the envelope a second time found no methodResponses,
 // so the list was always empty and the row failed with one message whatever the
-// server had done — on 2.3.266, which stores no id, and on the build that does.
+// server had done - on 2.3.266, which stores no id, and on the build that does.
 // A check that cannot tell two states of the world apart measures nothing.
 func TestJMAPMessageIDsReadsMethodArguments(t *testing.T) {
 	tests := []struct {
@@ -134,7 +134,7 @@ func TestJMAPMessageIDsReadsMethodArguments(t *testing.T) {
 			want: []string{"e100d63a4e272736be00cd48042dc54e@yarilo"},
 		},
 		{
-			name: "messageId is null — the message has no identity",
+			name: "messageId is null - the message has no identity",
 			args: `{"accountId":"u1","state":"s1","list":[{"id":"M1","messageId":null}],"notFound":[]}`,
 			want: nil,
 		},
@@ -202,7 +202,7 @@ func TestTheMessageIDVerdictIsTheRowsOwn(t *testing.T) {
 // The row's own verdict must be asked BEFORE the second surface is read.
 //
 // It was not, and the cost was precise: on a server that stores no id, the row
-// reported a JMAP parse failure — the same text it reported on a server that
+// reported a JMAP parse failure - the same text it reported on a server that
 // does store one. Two states of the world, one message; the check measured
 // nothing.
 //

@@ -8,7 +8,7 @@ import (
 // FolderSubpath returns the per-folder directory for a driver's on-disk
 // layout, relative to a storage root. Rooting the result at the mail root
 // yields the mailbox path; rooting it at the index root yields the index
-// path — the same sub-layout under either root. This is the single builder
+// path - the same sub-layout under either root. This is the single builder
 // shared by the mailbox backends, the fileindex and the ACL store, so those
 // trees share their folder layout by construction instead of drifting between
 // independent implementations.
@@ -24,7 +24,7 @@ import (
 // For the dbox drivers the per-folder dbox-Mails directory is the mailbox
 // marker: its presence makes a directory selectable, its absence marks a
 // \NoSelect parent container. mdbox and sdbox share the layout; they differ
-// only in what the marker dir holds (sdbox: message files; mdbox: nothing —
+// only in what the marker dir holds (sdbox: message files; mdbox: nothing -
 // payloads live in the shared storage/, the index is external).
 //
 // For maildir, INBOX IS the maildir root (no INBOX/ subdir). An empty sep
@@ -55,7 +55,7 @@ func FolderSubpathEscaped(driver, folder, diskName, sep, escape string) string {
 	switch driver {
 	case "mdbox", "sdbox", "dbox":
 		return filepath.Join(mailboxesSubdir, toDiskSep(diskName, sep, "/", escape), dboxMailsSubdir)
-	default: // maildir — maildir++ flat layout, "." separates hierarchy
+	default: // maildir - maildir++ flat layout, "." separates hierarchy
 		if folder == "INBOX" {
 			return ""
 		}

@@ -27,7 +27,7 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- /* No wait-redis init container (#903): the process comes up without Redis
              (lazy client) and the startupProbe below withholds traffic until Redis
-             answers. No wait-db either — yarilo-locks never touches SQL. */}}
+             answers. No wait-db either - yarilo-locks never touches SQL. */}}
       containers:
         - name: yarilo-locks
           image: {{ include "yarilo.image" . }}

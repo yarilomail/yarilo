@@ -7,7 +7,7 @@ import (
 )
 
 func TestComputeRecordLayoutAlignment(t *testing.T) {
-	// Mix alignments — widest first wins lowest offset.
+	// Mix alignments - widest first wins lowest offset.
 	exts := []Extension{
 		{Name: "kw", RecordSize: 4, RecordAlign: 4},
 		{Name: "ref", RecordSize: 2, RecordAlign: 2},

@@ -1,7 +1,7 @@
 # IMAP session load against the sandbox.
 #
 # Persistent clients, not a connection per command: IMAP spends its resources
-# per session — the index handle, the cached mailbox view, hibernation — and a
+# per session - the index handle, the cached mailbox view, hibernation - and a
 # generator that reconnects measures the login path instead of any of it.
 #
 #   kubectl apply -f hack/loadtest/imap-job.yaml

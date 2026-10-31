@@ -36,7 +36,7 @@ const (
 type HeaderFlag uint32
 
 const (
-	// HdrFlagCorrupted is a transient in-memory marker — never
+	// HdrFlagCorrupted is a transient in-memory marker - never
 	// written to disk (the file is recreated instead). Surfaced
 	// from readers; never set on write.
 	HdrFlagCorrupted HeaderFlag = 0x0001
@@ -57,34 +57,34 @@ const (
 type Header struct {
 	MajorVersion   uint8      // offset 0
 	MinorVersion   uint8      // offset 1
-	BaseHeaderSize uint16     // offset 2 — base header size at create time
-	HeaderSize     uint32     // offset 4 — base + extended header bytes
-	RecordSize     uint32     // offset 8 — base 5 + sum(extension record bytes)
-	CompatFlags    CompatFlag // offset 12 — bit 0 = little-endian
+	BaseHeaderSize uint16     // offset 2 - base header size at create time
+	HeaderSize     uint32     // offset 4 - base + extended header bytes
+	RecordSize     uint32     // offset 8 - base 5 + sum(extension record bytes)
+	CompatFlags    CompatFlag // offset 12 - bit 0 = little-endian
 	// 3 bytes unused at offset 13
 
-	IndexID     uint32     // offset 16 — UNIX timestamp; ties .index/.log/.cache together
-	Flags       HeaderFlag // offset 20 — HAVE_DIRTY | FSCKD (CORRUPTED is transient)
-	UIDValidity uint32     // offset 24 — IMAP UIDVALIDITY (non-zero after first sync)
-	NextUID     uint32     // offset 28 — monotonic next-save UID
+	IndexID     uint32     // offset 16 - UNIX timestamp; ties .index/.log/.cache together
+	Flags       HeaderFlag // offset 20 - HAVE_DIRTY | FSCKD (CORRUPTED is transient)
+	UIDValidity uint32     // offset 24 - IMAP UIDVALIDITY (non-zero after first sync)
+	NextUID     uint32     // offset 28 - monotonic next-save UID
 
 	MessagesCount                uint32 // offset 32
-	UnusedOldRecentMessagesCount uint32 // offset 36 — always 0 on write (legacy field)
+	UnusedOldRecentMessagesCount uint32 // offset 36 - always 0 on write (legacy field)
 	SeenMessagesCount            uint32 // offset 40
 	DeletedMessagesCount         uint32 // offset 44
 
-	FirstRecentUID          uint32 // offset 48 — first UID with MAIL_RECENT
-	FirstUnseenUIDLowwater  uint32 // offset 52 — optimisation hint, never lies high
-	FirstDeletedUIDLowwater uint32 // offset 56 — same convention for \Deleted
+	FirstRecentUID          uint32 // offset 48 - first UID with MAIL_RECENT
+	FirstUnseenUIDLowwater  uint32 // offset 52 - optimisation hint, never lies high
+	FirstDeletedUIDLowwater uint32 // offset 56 - same convention for \Deleted
 
 	LogFileSeq        uint32 // offset 60
-	LogFileTailOffset uint32 // offset 64 — non-external txs tail..head still pending
+	LogFileTailOffset uint32 // offset 64 - non-external txs tail..head still pending
 	LogFileHeadOffset uint32 // offset 68
 
-	UnusedOldSyncSizePart1 uint32 // offset 72 — always 0 on write (legacy)
-	Log2RotateTime         uint32 // offset 76 — when .log → .log.2 happened; -1 = no .log.2
-	LastTempFileScan       uint32 // offset 80 — last orphan-tmpfile sweep timestamp
-	DayStamp               uint32 // offset 84 — start-of-day stamp for day_first_uid window
+	UnusedOldSyncSizePart1 uint32 // offset 72 - always 0 on write (legacy)
+	Log2RotateTime         uint32 // offset 76 - when .log → .log.2 happened; -1 = no .log.2
+	LastTempFileScan       uint32 // offset 80 - last orphan-tmpfile sweep timestamp
+	DayStamp               uint32 // offset 84 - start-of-day stamp for day_first_uid window
 
 	// DayFirstUID is a rolling 8-day window of the first UID
 	// appended on each day. Used by cache-purge to drop
@@ -114,7 +114,7 @@ func NewHeader(indexID uint32) Header {
 }
 
 // Encode writes h to w in the canonical 120-byte on-disk layout.
-// Returns ErrEndian when CompatFlags omits CompatLittleEndian —
+// Returns ErrEndian when CompatFlags omits CompatLittleEndian -
 // this package writes little-endian only.
 func (h *Header) Encode(w io.Writer) error {
 	if h.CompatFlags&CompatLittleEndian == 0 {

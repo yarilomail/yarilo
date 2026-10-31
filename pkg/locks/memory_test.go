@@ -102,7 +102,7 @@ func TestMemoryBackendSubscribeDropsSlowReceiver(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 	defer cancel()
-	// Don't read from the channel — fill it up with many publishes.
+	// Don't read from the channel - fill it up with many publishes.
 	for i := 0; i < 1000; i++ {
 		if err := b.Publish(ctx, "r", EventChanged, ""); err != nil {
 			t.Fatalf("publish #%d: %v", i, err)

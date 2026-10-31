@@ -125,7 +125,7 @@ func (u *userMailbox) altMoveFile(p *mdboxmap.Placement, srcFileID uint32, eligi
 	srcPath := mfileInTier(srcTier, srcFileID)
 
 	if len(toStay) == 0 {
-		// Whole file moves to dst — compact all records into one
+		// Whole file moves to dst - compact all records into one
 		// new dst file and remove the source.
 		newFileID, err := p.AllocFileID()
 		if err != nil {

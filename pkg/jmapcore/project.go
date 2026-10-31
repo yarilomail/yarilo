@@ -20,7 +20,7 @@ import (
 //
 // A map of values rather than a json.Marshaler returning bytes: encoding/json
 // validates and compacts whatever a Marshaler hands back, so a projection built
-// that way re-parses everything it just encoded — on a message whose body the
+// that way re-parses everything it just encoded - on a message whose body the
 // client did ask for, that is a second pass over the body. Selecting the fields
 // and letting the encoder run once avoids both that and encoding the fields
 // nobody asked for.
@@ -54,7 +54,7 @@ func Project(value any, props []string, extra map[string]any) any {
 			// and is empty.
 			//
 			// Nothing validates property names anywhere in the request path
-			// today, so this is also where a client's typo lands — subjekt
+			// today, so this is also where a client's typo lands - subjekt
 			// returns an object without a subject and without an error (#1032).
 			return
 		}
@@ -66,8 +66,8 @@ func Project(value any, props []string, extra map[string]any) any {
 	for _, name := range props {
 		add(name)
 	}
-	// Computed properties are not fields of the object — header:* is named by
-	// the client and answered per request — so they are merged after.
+	// Computed properties are not fields of the object - header:* is named by
+	// the client and answered per request - so they are merged after.
 	for name, v := range extra {
 		out[name] = v
 	}
@@ -115,7 +115,7 @@ var fieldCache sync.Map // reflect.Type → map[string]int
 //
 // Embedded structs are not flattened: their fields are not reachable by the
 // name the encoder would give them. No JMAP object embeds one today, so this is
-// a constraint on future ones rather than a defect — an embedded field would be
+// a constraint on future ones rather than a defect - an embedded field would be
 // silently unprojectable.
 func jsonFields(t reflect.Type) map[string]int {
 	if t == nil {

@@ -133,7 +133,7 @@ func TestVerifyPropertyValidationRejectsAcceptance(t *testing.T) {
 	}
 }
 
-// The forms themselves, against an answer that is right — so the reader of the
+// The forms themselves, against an answer that is right - so the reader of the
 // canned envelope is exercised, not only the parts that reject.
 func TestVerifyHeaderFormsReadsAGoodAnswer(t *testing.T) {
 	stubJMAP(t, func(w http.ResponseWriter, _ *http.Request) {

@@ -4,7 +4,7 @@ import "testing"
 
 // The message this check appends must be what the wire carries. An APPEND
 // literal declares a byte count, so a bare LF makes the message shorter on one
-// side of the connection than the other — and the failure is not an error, it
+// side of the connection than the other - and the failure is not an error, it
 // is an empty answer further along.
 //
 // Go does not rewrite line endings, which is exactly why this is asserted: the
@@ -41,7 +41,7 @@ func TestAssertCRLFRejectsABareLF(t *testing.T) {
 }
 
 // The expectations are compared as JSON documents, so key order does not decide
-// whether a rollout passes — but the type must, since asURLs answering with the
+// whether a rollout passes - but the type must, since asURLs answering with the
 // raw string instead of an array is the failure the form exists to catch.
 func TestSameJSON(t *testing.T) {
 	for _, tc := range []struct {

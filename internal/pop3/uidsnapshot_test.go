@@ -32,8 +32,8 @@ func (batchLocker) Emit(_ context.Context, _ string, _ locks.EventType, _ string
 // that snapshot. What makes the read safe to serve without the cross-process
 // lock is not the read but what deletion addresses: a UID taken from the
 // snapshot, never a position in a freshly read index. A snapshot one delivery
-// behind then narrows the session's view — legal under RFC 1939, which requires
-// a constant maildrop for the session — instead of misdirecting a DELE onto a
+// behind then narrows the session's view - legal under RFC 1939, which requires
+// a constant maildrop for the session - instead of misdirecting a DELE onto a
 // message the client never saw.
 //
 // Asserted through the real expungeDeleted, not a copy of its loop: a rewrite

@@ -76,7 +76,7 @@ var parseCases = []struct {
 		Attrs{Proto: "ESMTP", Addr: "1.2.3.4", Port: "12345", Helo: "mail.example.com", Login: "user", Session: "abc", TTL: "5"},
 	},
 	{
-		"partial — only ADDR and PORT",
+		"partial - only ADDR and PORT",
 		"XCLIENT ADDR=10+2E0+2E0+2E1 PORT=25",
 		Attrs{Addr: "10.0.0.1", Port: "25"},
 	},

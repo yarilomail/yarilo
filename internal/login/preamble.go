@@ -943,7 +943,7 @@ func parseIMAPLoginArgs(line string, rd *bufio.Reader, conn net.Conn) (username,
 	}
 	s = strings.TrimLeft(s, " ")
 	if s == "" {
-		// username was a literal — password follows on the next read
+		// username was a literal - password follows on the next read
 		var next string
 		next, err = lineio.ReadLine(rd, lineio.MaxClient)
 		if err != nil {

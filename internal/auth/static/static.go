@@ -26,7 +26,7 @@ type Config struct {
 	// Password is the shared credential ({SCHEME} prefix or DefaultScheme).
 	// Empty requires Nopassword.
 	Password string
-	// Nopassword accepts any supplied password — for proxy front-ends where the
+	// Nopassword accepts any supplied password - for proxy front-ends where the
 	// upstream authenticates. Mutually exclusive with a non-empty Password.
 	Nopassword bool
 	// DefaultScheme is the assumed scheme when Password carries no {SCHEME}

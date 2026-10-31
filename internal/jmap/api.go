@@ -99,7 +99,7 @@ func (s *Server) runRequest(ctx context.Context, path string, body []byte, id id
 	slog.Debug("jmap: request", "user", id.user, "session", id.sessionID, "path", path, "request", requestOutline(body))
 	// The store opens lazily, on the first method that actually needs it, and
 	// closes with the request. Opening up front would fail a whole batch on a
-	// dependency the batch may not use — and Core/echo, which exists to
+	// dependency the batch may not use - and Core/echo, which exists to
 	// diagnose exactly that, would be the first casualty.
 	lazy := &lazyStore{storage: s.opts.Storage, user: id.user, sessionID: id.sessionID, clientIP: id.clientIP}
 	defer lazy.close()

@@ -14,7 +14,7 @@ func dispatchSessions(args []string) error {
 	case "kick":
 		return sessionsKick(args[1:])
 	default:
-		return fmt.Errorf("unknown sessions command %q — available: kick", args[0])
+		return fmt.Errorf("unknown sessions command %q - available: kick", args[0])
 	}
 }
 
@@ -26,7 +26,7 @@ Commands:
         Close the session whose id matches <sess-id>. The kick
         event is broadcast across every login + LMTP pod via
         yarilo-locks Emit; only the owner reacts. Listing the
-        id is enough — find it with` + " `yarctl backend who`" + `.
+        id is enough - find it with` + " `yarctl backend who`" + `.
         --protocols narrows the broadcast (default: all four
         channels). --user is recorded for the audit log only.`)
 }
@@ -51,7 +51,7 @@ func sessionsKick(args []string) error {
 	return printJSON(backendAPIPost("/api/backend/sessions/kick", body))
 }
 
-// splitCSV is a tiny helper — flag.StringVar gives us one string,
+// splitCSV is a tiny helper - flag.StringVar gives us one string,
 // the wire wants a JSON array. Empty entries (trailing commas) are
 // dropped silently so `--protocols imap,` does the right thing.
 func splitCSV(s string) []string {

@@ -684,7 +684,7 @@ type userMailbox struct {
 	separator        string // IMAP hierarchy separator; converted to "." on disk (maildir++)
 	escapeChar       string // storage-name escape char; "" disables escaping
 	username         string
-	owner            string     // <process>/<pid>/<user> — passed to yarilo-locks for BUSY diagnostics
+	owner            string     // <process>/<pid>/<user> - passed to yarilo-locks for BUSY diagnostics
 	listUTF8         bool       // mirrors Backend.listUTF8
 	mu               sync.Mutex // orders this pod's sessions; other processes are excluded at the file
 	cacheMu          sync.Mutex // guards cache; the scan reaches it holding no mailbox lock
@@ -1486,7 +1486,7 @@ func (u *userMailbox) guidFor(folder, filename string) [16]byte {
 	return guidFromBase(filename)
 }
 
-// maildirBase returns everything before the ":" info separator — the stable
+// maildirBase returns everything before the ":" info separator - the stable
 // identity of a maildir filename. A flag change renames only the ":2,<flags>"
 // trailer, so names sharing a base are the same message and keep the same UID.
 func maildirBase(name string) string {
