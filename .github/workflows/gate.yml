@@ -139,6 +139,10 @@ jobs:
       - name: Check the comment share
         run: go run ./hack/commentcensus -check
 
+      # A line that tests the character itself is listed in hack/commentcensus/emdash.json.
+      - name: No em dash in the tree
+        run: go run ./hack/commentcensus -dashes
+
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest

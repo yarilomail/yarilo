@@ -17,9 +17,11 @@
 //	go run ./hack/commentcensus -blocks      # the work list, every block of 3+
 //	go run ./hack/commentcensus -json        # the same numbers for a gate check
 //	go run ./hack/commentcensus -pkg internal/storage/...
+//	go run ./hack/commentcensus -dashes      # tracked lines holding an em dash
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -28,6 +30,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -63,8 +66,26 @@ func main() {
 		update    = flag.Bool("update-baseline", false, "write the baseline from the tree as it stands")
 		maxRatio  = flag.Float64("max", 0.08, "the share a swept package may not exceed")
 		baseline  = flag.String("baseline", "hack/commentcensus/baseline.json", "packages not swept yet, and what they hold today")
+		dashes    = flag.Bool("dashes", false, "fail when a tracked line holds an em dash it is not allowed")
+		dashAllow = flag.String("dash-allow", "hack/commentcensus/emdash.json", "lines that keep their em dash on purpose")
 	)
 	flag.Parse()
+
+	if *dashes {
+		found, err := emDashes(*root, *dashAllow)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "commentcensus:", err)
+			os.Exit(1)
+		}
+		for _, f := range found {
+			fmt.Println(f)
+		}
+		if len(found) > 0 {
+			fmt.Println("\nUse a colon, a period or a hyphen. A line that tests the character itself goes in", *dashAllow)
+			os.Exit(1)
+		}
+		return
+	}
 
 	census, blocks, err := walk(*root, *pkgGlob, *minLines)
 	if err != nil {
@@ -396,4 +417,75 @@ func writeBaseline(path string, census []PackageCensus, maxRatio float64) error 
 // one-line change to a small package is not a gate failure by itself.
 func roundUp(r float64) float64 {
 	return float64(int(r*1000)+1) / 1000
+}
+
+const emDash = "\u2014"
+
+// dashAllowance is a line that keeps its em dash: a test input about the
+// character, or a lint directive the sweep does not touch.
+type dashAllowance struct {
+	File string `json:"file"`
+	Text string `json:"text"`
+}
+
+// emDashes lists the tracked lines that hold an em dash and are not allowed to.
+func emDashes(root, allowPath string) ([]string, error) {
+	allowed, err := readDashAllowance(allowPath)
+	if err != nil {
+		return nil, err
+	}
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files: %w", err)
+	}
+	var found []string
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name == "" {
+			continue
+		}
+		path := filepath.Join(root, name)
+		st, err := os.Lstat(path)
+		if os.IsNotExist(err) || (err == nil && !st.Mode().IsRegular()) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		found = append(found, dashLines(name, src, allowed)...)
+	}
+	return found, nil
+}
+
+func dashLines(name string, src []byte, allowed map[dashAllowance]bool) []string {
+	if !bytes.Contains(src, []byte(emDash)) {
+		return nil
+	}
+	var found []string
+	for i, line := range strings.Split(string(src), "\n") {
+		text := strings.TrimSpace(line)
+		if strings.Contains(text, emDash) && !allowed[dashAllowance{File: name, Text: text}] {
+			found = append(found, fmt.Sprintf("%s:%d: %s", name, i+1, text))
+		}
+	}
+	return found
+}
+
+func readDashAllowance(path string) (map[dashAllowance]bool, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("dash allowance %s: %w", path, err)
+	}
+	var list []dashAllowance
+	if err := json.Unmarshal(body, &list); err != nil {
+		return nil, fmt.Errorf("dash allowance %s: %w", path, err)
+	}
+	out := make(map[dashAllowance]bool, len(list))
+	for _, a := range list {
+		out[a] = true
+	}
+	return out, nil
 }
