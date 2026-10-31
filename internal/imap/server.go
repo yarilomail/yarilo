@@ -565,6 +565,7 @@ type session struct {
 	// for a \Recent message, and a yes is kept since ENABLE is one-way.
 	enabledCaps func() imaplib.CapSet
 	isRev2      bool
+	rev2Asked   bool
 
 	// NOTIFY (RFC 5465) state. notifyActive is set by NOTIFY SET and cleared
 	// by NOTIFY NONE; while set, unsolicited responses for the selected
