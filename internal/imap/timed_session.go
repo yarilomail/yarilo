@@ -40,6 +40,8 @@ func (t *timedSession) observe(command string, start time.Time) {
 		driver = t.s.userInfo.Driver
 	}
 	metricCommandSeconds.WithLabelValues(command, driver).Observe(time.Since(start).Seconds())
+	// A cached IMAP4rev1 answer ends with its command: ENABLE may come next.
+	t.s.rev2Asked = false
 }
 
 // classify turns a store failure into the answer a client can act on, and says

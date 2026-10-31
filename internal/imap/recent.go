@@ -97,9 +97,11 @@ func (s *session) numRecent() uint32 {
 }
 
 // rev2 reports whether the client enabled IMAP4rev2, which has no \Recent.
+// A no holds until the command ends: ENABLE comes between commands, even after SELECT.
 func (s *session) rev2() bool {
-	if !s.isRev2 && s.enabledCaps != nil {
+	if !s.isRev2 && !s.rev2Asked && s.enabledCaps != nil {
 		s.isRev2 = s.enabledCaps().Has(imaplib.CapIMAP4rev2)
+		s.rev2Asked = true
 	}
 	return s.isRev2
 }
