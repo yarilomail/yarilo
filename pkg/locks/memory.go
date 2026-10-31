@@ -194,6 +194,15 @@ func (b *MemoryBackend) Renew(_ context.Context, lockID string, ttl time.Duratio
 	return nil
 }
 
+// PublishAll implements Backend.
+func (b *MemoryBackend) PublishAll(ctx context.Context, evs []Event) []error {
+	errs := make([]error, len(evs))
+	for i, e := range evs {
+		errs[i] = b.Publish(ctx, e.Resource, e.Type, e.Payload)
+	}
+	return errs
+}
+
 // Publish implements Backend.
 func (b *MemoryBackend) Publish(_ context.Context, resource string, t EventType, payload string) error {
 	b.mu.Lock()
