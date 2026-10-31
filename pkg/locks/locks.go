@@ -180,6 +180,10 @@ type Backend interface {
 	// Publish broadcasts an event to all subscribers of resource.
 	Publish(ctx context.Context, resource string, t EventType, payload string) error
 
+	// PublishAll broadcasts evs in order, in one round trip where the store
+	// allows; the error of each event is at its index.
+	PublishAll(ctx context.Context, evs []Event) []error
+
 	// Subscribe returns a channel for all events on resource. The returned
 	// cancel function must be called to release backend resources.
 	Subscribe(ctx context.Context, resource string) (<-chan Event, func(), error)

@@ -359,6 +359,23 @@ func (b *RedisBackend) Publish(ctx context.Context, resource string, t EventType
 	return nil
 }
 
+// PublishAll implements Backend: one pipeline, which Redis runs in order.
+func (b *RedisBackend) PublishAll(ctx context.Context, evs []Event) []error {
+	pipe := b.rdb.Pipeline()
+	cmds := make([]*redis.IntCmd, len(evs))
+	for i, e := range evs {
+		cmds[i] = pipe.Publish(ctx, b.channel(e.Resource), string(e.Type)+"\t"+e.Payload)
+	}
+	_, _ = pipe.Exec(ctx)
+	errs := make([]error, len(evs))
+	for i, c := range cmds {
+		if err := c.Err(); err != nil {
+			errs[i] = fmt.Errorf("locks/redis: publish: %w", err)
+		}
+	}
+	return errs
+}
+
 // Subscribe implements Backend. The cancel function must be called to release
 // the underlying Redis subscription goroutine.
 func (b *RedisBackend) Subscribe(ctx context.Context, resource string) (<-chan Event, func(), error) {

@@ -390,17 +390,21 @@ func (s *Server) handleEmit(ctx context.Context, w io.Writer, fields []string, p
 		_ = writeFields(w, respError, "bad_emit")
 		return
 	}
-	if err := s.backend.Publish(ctx, fields[1], EventType(fields[2]), fields[3]); err != nil {
-		s.logger.Error("locks: publish failed", "peer", peer, "err", err)
+	evs := []Event{{Resource: fields[1], Type: EventType(fields[2]), Payload: fields[3]}}
+	// The account's channel hears it too, the key in front of the payload: the
+	// writer still sends one EMIT, and both go to the store in one trip.
+	user := accountOf(fields[1])
+	if user != "" {
+		evs = append(evs, Event{Resource: AccountKey(user), Type: EventType(fields[2]), Payload: fields[1] + "\x00" + fields[3]})
+	}
+	errs := s.backend.PublishAll(ctx, evs)
+	if errs[0] != nil {
+		s.logger.Error("locks: publish failed", "peer", peer, "err", errs[0])
 		_ = writeFields(w, respError, "internal")
 		return
 	}
-	// The account's channel hears it too, the key in front of the payload: the
-	// writer still sends one EMIT.
-	if user := accountOf(fields[1]); user != "" {
-		if err := s.backend.Publish(ctx, AccountKey(user), EventType(fields[2]), fields[1]+"\x00"+fields[3]); err != nil {
-			s.logger.Warn("locks: account publish failed", "peer", peer, "user", user, "err", err)
-		}
+	if len(errs) > 1 && errs[1] != nil {
+		s.logger.Warn("locks: account publish failed", "peer", peer, "user", user, "err", errs[1])
 	}
 	_ = writeFields(w, respOK)
 }
