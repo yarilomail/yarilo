@@ -246,9 +246,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		start := time.Now()
 		switch fields[0] {
 		case "CONNECT":
-			res := s.handleConnect(conn, fields)
-			connectTotal.WithLabelValues(res).Inc()
-			observeRequest("CONNECT", res, start)
+			observeRequest("CONNECT", s.handleConnect(conn, fields), start)
 		case "DISCONNECT":
 			s.handleDisconnect(conn, fields)
 			observeRequest("DISCONNECT", "ok", start)
@@ -287,12 +285,20 @@ func (s *Server) handleConn(conn net.Conn) {
 }
 
 // handleConnect processes: CONNECT\t{id}\t{user}\t{ip}\t{service}
-// Returns the metric result label.
+// Returns the metric result label, counted before the reply is written so a
+// client that has read the reply also sees the count.
 func (s *Server) handleConnect(conn net.Conn, fields []string) string {
+	reply := func(res, line string) string {
+		connectTotal.WithLabelValues(res).Inc()
+		if line != "" {
+			fmt.Fprint(conn, line)
+		}
+		return res
+	}
 	if len(fields) < 5 {
 		// tolerate the legacy v1.0 4-field form (no service)
 		if len(fields) < 4 {
-			return "bad_request"
+			return reply("bad_request", "")
 		}
 		fields = append(fields, "")
 	}
@@ -302,18 +308,15 @@ func (s *Server) handleConnect(conn net.Conn, fields []string) string {
 		// fail open: a Redis blip must not block logins; the limit is
 		// unenforced until the backend recovers
 		slog.Warn("warden: connect state error, failing open", "pod", podID, "sid", id, "user", user, "ip", ip, "err", err)
-		fmt.Fprintf(conn, "OK\t%s\n", id)
-		return "state_error"
+		return reply("state_error", fmt.Sprintf("OK\t%s\n", id))
 	}
 	if !ok {
 		slog.Warn("warden: too many connections", "pod", podID, "sid", id, "user", user, "ip", ip, "service", service)
-		fmt.Fprintf(conn, "FAIL\t%s\treason=too-many-connections\n", id)
-		return "too_many_connections"
+		return reply("too_many_connections", fmt.Sprintf("FAIL\t%s\treason=too-many-connections\n", id))
 	}
 	// no cnt= here: SessionLookupCount is a Redis SCAN, too costly on the hot path
 	slog.Info("warden: session connect", "pod", podID, "sid", id, "user", user, "ip", ip, "service", service)
-	fmt.Fprintf(conn, "OK\t%s\n", id)
-	return "ok"
+	return reply("ok", fmt.Sprintf("OK\t%s\n", id))
 }
 
 // handleDisconnect processes: DISCONNECT\t{id}\t{user}\t{ip}\t{service}
