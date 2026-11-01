@@ -517,20 +517,64 @@ func (s *ServiceConfig) ListenAddr(roleHost string) (addr, from string) {
 	return net.JoinHostPort(host, strconv.Itoa(s.Port)), from
 }
 
-// ServicesConfig holds per-listener configuration.
-// Nil pointer = listener not started.
+// ServicesConfig holds per-listener configuration. Each entry is named after
+// the process that reads it: the *_login entries are the login proxies', which
+// alone terminate client TLS, and the bare names are the session backends',
+// one plain listener each (#2415). Nil pointer = listener not started.
 type ServicesConfig struct {
-	IMAP          *ServiceConfig `koanf:"imap"`           // port 143, STARTTLS
-	IMAPS         *ServiceConfig `koanf:"imaps"`          // port 993, SSL
-	Submission    *ServiceConfig `koanf:"submission"`     // port 587, STARTTLS outbound
-	Submissions   *ServiceConfig `koanf:"submissions"`    // port 465, SSL outbound
-	POP3          *ServiceConfig `koanf:"pop3"`           // port 110, STARTTLS
-	POP3S         *ServiceConfig `koanf:"pop3s"`          // port 995, SSL
-	LMTP          *ServiceConfig `koanf:"lmtp"`           // port 24, local delivery (no auth, loopback only)
-	ManageSieve   *ServiceConfig `koanf:"managesieve"`    // port 4190, STARTTLS (login pod)
-	ManageSieveBE *ServiceConfig `koanf:"managesieve_be"` // ManageSieve backend (internal)
-	JMAP          *ServiceConfig `koanf:"jmap"`           // port 8443, HTTPS (yarilo-jmap-login)
-	JMAPBE        *ServiceConfig `koanf:"jmap_be"`        // port 10443, JMAP backend (internal, behind login)
+	IMAPLogin        *ServiceConfig `koanf:"imap_login"`        // yarilo-imap-login, 143 STARTTLS
+	IMAPSLogin       *ServiceConfig `koanf:"imaps_login"`       // yarilo-imap-login, 993 implicit TLS
+	POP3Login        *ServiceConfig `koanf:"pop3_login"`        // yarilo-pop3-login, 110 STARTTLS
+	POP3SLogin       *ServiceConfig `koanf:"pop3s_login"`       // yarilo-pop3-login, 995 implicit TLS
+	SubmissionLogin  *ServiceConfig `koanf:"submission_login"`  // yarilo-submission-login, 587 STARTTLS
+	SubmissionsLogin *ServiceConfig `koanf:"submissions_login"` // yarilo-submission-login, 465 implicit TLS
+	LMTPLogin        *ServiceConfig `koanf:"lmtp_login"`        // yarilo-lmtp-login, 24
+	ManageSieveLogin *ServiceConfig `koanf:"managesieve_login"` // yarilo-managesieve-login, 4190 STARTTLS
+	JMAPLogin        *ServiceConfig `koanf:"jmap_login"`        // yarilo-jmap-login, 8443 HTTPS
+
+	IMAP        *ServiceConfig `koanf:"imap"`        // yarilo-imap
+	POP3        *ServiceConfig `koanf:"pop3"`        // yarilo-pop3
+	Submission  *ServiceConfig `koanf:"submission"`  // yarilo-submission
+	LMTP        *ServiceConfig `koanf:"lmtp"`        // yarilo-lmtp
+	ManageSieve *ServiceConfig `koanf:"managesieve"` // yarilo-managesieve
+	JMAP        *ServiceConfig `koanf:"jmap"`        // yarilo-jmap
+}
+
+// ServiceEntry is one services entry with its key.
+type ServiceEntry struct {
+	Name string
+	Svc  **ServiceConfig
+}
+
+// Entries lists every services entry by key.
+func (s *ServicesConfig) Entries() []ServiceEntry {
+	return []ServiceEntry{
+		{"imap_login", &s.IMAPLogin}, {"imaps_login", &s.IMAPSLogin},
+		{"pop3_login", &s.POP3Login}, {"pop3s_login", &s.POP3SLogin},
+		{"submission_login", &s.SubmissionLogin}, {"submissions_login", &s.SubmissionsLogin},
+		{"lmtp_login", &s.LMTPLogin}, {"managesieve_login", &s.ManageSieveLogin}, {"jmap_login", &s.JMAPLogin},
+		{"imap", &s.IMAP}, {"pop3", &s.POP3}, {"submission", &s.Submission},
+		{"lmtp", &s.LMTP}, {"managesieve", &s.ManageSieve}, {"jmap", &s.JMAP},
+	}
+}
+
+// RequireListeners refuses a start whose config lacks one of the entries this
+// process reads: it reads its own keys only, never a neighbour's port.
+func RequireListeners(cfg *Config, names ...string) error {
+	present := map[string]bool{}
+	for _, e := range cfg.Services.Entries() {
+		present[e.Name] = *e.Svc != nil
+	}
+	var missing []string
+	for _, n := range names {
+		if !present[n] {
+			missing = append(missing, "services."+n)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("config: %s missing; this process listens only on its own entries", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // ProtocolConfig holds protocol-level behaviour settings, independent of listener.
@@ -3187,12 +3231,9 @@ func expandEnv(cfg *Config) {
 	cfg.InternalTLS.Cert = expand(cfg.InternalTLS.Cert)
 	cfg.InternalTLS.Key = expand(cfg.InternalTLS.Key)
 	cfg.InternalTLS.CA = expand(cfg.InternalTLS.CA)
-	expandSvcSSL(cfg.Services.IMAP)
-	expandSvcSSL(cfg.Services.IMAPS)
-	expandSvcSSL(cfg.Services.Submission)
-	expandSvcSSL(cfg.Services.Submissions)
-	expandSvcSSL(cfg.Services.POP3)
-	expandSvcSSL(cfg.Services.POP3S)
+	for _, e := range cfg.Services.Entries() {
+		expandSvcSSL(*e.Svc)
+	}
 	cfg.DirectorService.API.Token = expand(cfg.DirectorService.API.Token)
 	cfg.DirectorService.RingSecret = expand(cfg.DirectorService.RingSecret)
 	cfg.JMAPLoginService.WebSocketTicketKey = expand(cfg.JMAPLoginService.WebSocketTicketKey)
@@ -3740,7 +3781,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 19
+const minConfigSchema = 20
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3772,6 +3813,8 @@ var schemaAdditions = map[int][]string{
 	17: {"sieve_global_extensions"},
 	18: {"submission_client_workarounds"},
 	19: {"address", "socket_mode", "socket_group", "master_socket_mode", "master_socket_group"},
+	20: {"imap_login", "imaps_login", "pop3_login", "pop3s_login", "submission_login", "submissions_login",
+		"lmtp_login", "managesieve_login", "jmap_login"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
@@ -3789,18 +3832,10 @@ func warnXClientUntrusted(cfg *Config) {
 	if len(cfg.General.XClient.TrustedNets) > 0 {
 		return
 	}
-	s := cfg.Services
-	for _, l := range []struct {
-		name string
-		svc  *ServiceConfig
-	}{
-		{"imap", s.IMAP}, {"imaps", s.IMAPS}, {"pop3", s.POP3}, {"pop3s", s.POP3S},
-		{"submission", s.Submission}, {"submissions", s.Submissions}, {"lmtp", s.LMTP},
-		{"jmap", s.JMAP}, {"jmap_be", s.JMAPBE},
-	} {
-		if l.svc != nil && l.svc.XClient {
+	for _, e := range cfg.Services.Entries() {
+		if svc := *e.Svc; svc != nil && svc.XClient {
 			slog.Warn("config: xclient_protocol is on but general.xclient.trusted_nets is empty: no forwarded client address is trusted",
-				"listener", l.name)
+				"listener", e.Name)
 		}
 	}
 }

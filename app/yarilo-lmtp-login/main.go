@@ -37,8 +37,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if !cfg.Services.LMTP.Active() {
-		slog.Error("no LMTP listener configured (services.lmtp must be enabled)")
+	if !cfg.Services.LMTPLogin.Active() {
+		slog.Error("no LMTP listener configured (services.lmtp_login must be enabled)")
 		os.Exit(1)
 	}
 
@@ -97,7 +97,7 @@ func main() {
 
 	opts := options(cfg, hostname, intTLS, authMasterPool)
 
-	addr, from := cfg.Services.LMTP.ListenAddr(config.PublicHost)
+	addr, from := cfg.Services.LMTPLogin.ListenAddr(config.PublicHost)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("lmtp-login: listen failed", "addr", addr, "err", err)
@@ -146,10 +146,10 @@ func options(cfg *config.Config, hostname string, intTLS *tls.Config, authMaster
 		ConcurrencyLimit: cfg.Protocol.LMTP.UserConcurrencyLimit,
 		// Inbound client-IP forwarding (#742): a Postfix relay in front conveys
 		// the original SMTP client's IP via PROXY protocol and/or XCLIENT.
-		HAProxy:         cfg.Services.LMTP.HAProxy,
+		HAProxy:         cfg.Services.LMTPLogin.HAProxy,
 		HAProxyTimeout:  time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
 		HAProxyNets:     parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
-		XClient:         cfg.Services.LMTP.XClient,
+		XClient:         cfg.Services.LMTPLogin.XClient,
 		XClientNets:     parseCIDRs(cfg.General.XClient.TrustedNets),
 		MaxMessageBytes: quota.ParseSize(cfg.Quota.MailSize),
 		MaxRecipients:   cfg.Protocol.LMTP.MaxRecipients,

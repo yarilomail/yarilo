@@ -125,7 +125,7 @@ func TestEveryRetiredKeySaysWhatReplacedIt(t *testing.T) {
 // connection_limit was parsed for every listener and read by nothing; one left
 // in a config says so at start instead of promising a limit (#2112).
 func TestAListenerConnectionLimitIsRetired(t *testing.T) {
-	for _, l := range []string{"jmap", "imaps", "lmtp"} {
+	for _, l := range []string{"jmap", "imaps_login", "lmtp"} {
 		t.Run(l, func(t *testing.T) {
 			var buf bytes.Buffer
 			prev := slog.Default()

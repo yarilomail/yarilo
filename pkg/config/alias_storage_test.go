@@ -292,16 +292,16 @@ func TestListValuedAliasComparesAsAValue(t *testing.T) {
 // reach it. An override written the old way used to fill a field nobody
 // adopted, and the service lost its certificate: set, and doing nothing.
 func TestPerServiceSSLOverrideAcceptsBothSpellings(t *testing.T) {
-	const svc = "services:\n  imaps:\n    listen: \":993\"\n    ssl:\n"
+	const svc = "services:\n  imaps_login:\n    listen: \":993\"\n    ssl:\n"
 
 	cfg, err := loadYAML(t, svc+"      tls_cert: /svc.pem\n      tls_key: /svc.key\n")
 	if err != nil {
 		t.Fatalf("old spelling: %v", err)
 	}
-	if got := cfg.Services.IMAPS.SSL.SSLServerCert; got != "/svc.pem" {
+	if got := cfg.Services.IMAPSLogin.SSL.SSLServerCert; got != "/svc.pem" {
 		t.Errorf("certificate from the pre-beta spelling = %q, want /svc.pem", got)
 	}
-	if got := cfg.Services.IMAPS.SSL.SSLServerKey; got != "/svc.key" {
+	if got := cfg.Services.IMAPSLogin.SSL.SSLServerKey; got != "/svc.key" {
 		t.Errorf("key from the pre-beta spelling = %q, want /svc.key", got)
 	}
 
@@ -309,7 +309,7 @@ func TestPerServiceSSLOverrideAcceptsBothSpellings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonical spelling: %v", err)
 	}
-	if got := cfg.Services.IMAPS.SSL.SSLServerCert; got != "/svc.pem" {
+	if got := cfg.Services.IMAPSLogin.SSL.SSLServerCert; got != "/svc.pem" {
 		t.Errorf("certificate from the canonical spelling = %q", got)
 	}
 

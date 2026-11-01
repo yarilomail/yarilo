@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 19
+config_schema_version: 20
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -1265,13 +1265,11 @@ components:
     enabled: true
     replicas: 1
 
+    ## The backend's one plain listener (services.imap), which the login
+    ## proxies dial; client TLS ends at yarilo-imap-login.
     listeners:
-      imaps:
-        enabled: true
-        servicePort: 993
-        containerPort: 10993
       imap:
-        enabled: false
+        enabled: true
         servicePort: 143
         containerPort: 10143
 
@@ -1297,13 +1295,11 @@ components:
     enabled: false
     replicas: 1
 
+    ## The backend's one plain listener (services.pop3), which the login
+    ## proxies dial; client TLS ends at yarilo-pop3-login.
     listeners:
-      pop3s:
-        enabled: true
-        servicePort: 995
-        containerPort: 10995
       pop3:
-        enabled: false
+        enabled: true
         servicePort: 110
         containerPort: 10110
 
@@ -1502,15 +1498,13 @@ components:
     enabled: false
     replicas: 1
 
+    ## The backend's one plain listener (services.submission); implicit TLS
+    ## ends at yarilo-submission-login.
     listeners:
       submission:
         enabled: true
         servicePort: 587
         containerPort: 10587
-      submissions:
-        enabled: false
-        servicePort: 465
-        containerPort: 10465
 
     internalTLS:
       secretName: ""
@@ -1937,7 +1931,7 @@ components:
     auth_master_addr: ""
 
     listeners:
-      ## Internal listener the login proxy dials (services.jmap_be). Deliberately
+      ## Internal listener the login proxy dials (services.jmap). Deliberately
       ## clear of 8080, which is the telemetry port on every component pod.
       jmap:
         enabled: true
@@ -2380,7 +2374,7 @@ general:
   ## The director reads the header before TLS handshake; conn.RemoteAddr() always reflects
   ## the real client IP after this point.
   ##
-  ## haproxy_protocol must also be enabled per-listener (services.imaps.haproxy_protocol etc.)
+  ## haproxy_protocol must also be enabled per-listener (services.imaps_login.haproxy_protocol etc.)
   ## in the generated config - the global enabled flag controls all listeners at once.
   ##
   ## trustedNets: CIDRs of load balancers allowed to send PROXY headers.

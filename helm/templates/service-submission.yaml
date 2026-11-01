@@ -16,12 +16,6 @@ spec:
       targetPort: submission
       protocol: TCP
     {{- end }}
-    {{- if .Values.components.submission.listeners.submissions.enabled }}
-    - name: submissions
-      port: {{ .Values.components.submission.listeners.submissions.servicePort }}
-      targetPort: submissions
-      protocol: TCP
-    {{- end }}
   selector:
     {{- include "yarilo.componentSelectorLabels" (dict "root" . "component" "submission") | nindent 4 }}
 ---

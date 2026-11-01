@@ -1,64 +1,81 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// A session binary keeps the listener it serves and drops the rest: the
-// certificate lives in the login pod, not here (#1863).
-func TestASessionBinaryKeepsOnlyItsOwnListener(t *testing.T) {
-	on := func() *ServiceConfig { return &ServiceConfig{Enabled: true} }
-	full := func() *Config {
-		c := &Config{}
-		c.Services = ServicesConfig{
-			IMAP: on(), IMAPS: on(), POP3: on(), POP3S: on(), LMTP: on(),
-			Submission: on(), Submissions: on(), ManageSieve: on(),
-			ManageSieveBE: on(), JMAP: on(), JMAPBE: on(),
+func everyEntry() *Config {
+	c := &Config{}
+	for _, e := range c.Services.Entries() {
+		*e.Svc = &ServiceConfig{Enabled: true}
+	}
+	return c
+}
+
+func activeEntries(c *Config) []string {
+	var on []string
+	for _, e := range c.Services.Entries() {
+		if (*e.Svc).Active() {
+			on = append(on, e.Name)
 		}
-		return c
 	}
-	tests := []struct {
-		role SessionRole
-		kept []string
-	}{
-		{RoleIMAP, []string{"imap"}},
-		{RolePOP3, []string{"pop3"}},
-		{RoleLMTP, []string{"lmtp"}},
-		{RoleManageSieve, []string{"managesieve", "managesieve_be"}},
-		{RoleSubmission, []string{"submission", "submissions"}},
-	}
-	for _, tc := range tests {
-		t.Run(string(tc.role), func(t *testing.T) {
-			cfg := full()
-			KeepOnlySessionListener(cfg, tc.role)
-			active := map[string]bool{
-				"imap": cfg.Services.IMAP.Active(), "imaps": cfg.Services.IMAPS.Active(),
-				"pop3": cfg.Services.POP3.Active(), "pop3s": cfg.Services.POP3S.Active(),
-				"lmtp": cfg.Services.LMTP.Active(), "submission": cfg.Services.Submission.Active(),
-				"submissions": cfg.Services.Submissions.Active(), "managesieve": cfg.Services.ManageSieve.Active(),
-				"managesieve_be": cfg.Services.ManageSieveBE.Active(), "jmap": cfg.Services.JMAP.Active(),
-				"jmap_be": cfg.Services.JMAPBE.Active(),
-			}
-			want := map[string]bool{}
-			for _, k := range tc.kept {
-				want[k] = true
-			}
-			for name, isOn := range active {
-				if isOn != want[name] {
-					t.Errorf("%s: %s active=%v, want %v", tc.role, name, isOn, want[name])
-				}
-			}
-		})
+	return on
+}
+
+// A session backend keeps the one entry named after it and drops the rest:
+// the login proxy's entries, with the certificate, are not its own (#1863, #2415).
+func TestASessionBinaryKeepsOnlyItsOwnEntry(t *testing.T) {
+	for _, role := range []SessionRole{RoleIMAP, RolePOP3, RoleLMTP, RoleManageSieve, RoleSubmission, RoleJMAP} {
+		cfg := everyEntry()
+		if err := KeepOnlySessionListener(cfg, role); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(activeEntries(cfg), ","); got != string(role) {
+			t.Errorf("%s keeps %q, want only its own entry", role, got)
+		}
 	}
 }
 
-// The one that started this: no TLS-terminating listener survives for a binary
-// whose certificate is held by the proxy in front of it (#1863).
-func TestNoSessionBinaryKeepsATLSTerminatingListener(t *testing.T) {
-	for _, role := range []SessionRole{RoleIMAP, RolePOP3, RoleLMTP, RoleManageSieve} {
-		cfg := &Config{}
-		cfg.Services = ServicesConfig{IMAPS: &ServiceConfig{Enabled: true}, POP3S: &ServiceConfig{Enabled: true}}
-		KeepOnlySessionListener(cfg, role)
-		if cfg.Services.IMAPS.Active() || cfg.Services.POP3S.Active() {
-			t.Errorf("%s kept an implicit-TLS listener", role)
+// Without its own entry a backend does not start, and says which key it lacks;
+// it never takes a neighbour's port (#2415).
+func TestASessionBinaryWithoutItsEntryRefusesToStart(t *testing.T) {
+	cfg := everyEntry()
+	cfg.Services.IMAP = nil
+	err := KeepOnlySessionListener(cfg, RoleIMAP)
+	if err == nil || !strings.Contains(err.Error(), "services.imap missing") {
+		t.Fatalf("err = %v, want a refusal naming services.imap", err)
+	}
+}
+
+// The single binary keeps the backend entries and none of the login proxies'.
+func TestTheSingleBinaryKeepsTheBackendEntries(t *testing.T) {
+	cfg := everyEntry()
+	if err := KeepBackendListeners(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(activeEntries(cfg), ","); got != "imap,pop3,submission,lmtp,managesieve,jmap" {
+		t.Errorf("the single binary keeps %q", got)
+	}
+	cfg = everyEntry()
+	for _, e := range cfg.Services.Entries() {
+		if !strings.HasSuffix(e.Name, "_login") {
+			*e.Svc = nil
 		}
+	}
+	if err := KeepBackendListeners(cfg); err == nil {
+		t.Error("the single binary started with login entries only")
+	}
+}
+
+func TestRequireListenersNamesEveryMissingKey(t *testing.T) {
+	cfg := everyEntry()
+	cfg.Services.IMAPLogin, cfg.Services.IMAPSLogin = nil, nil
+	err := RequireListeners(cfg, "imap_login", "imaps_login", "imap")
+	if err == nil || !strings.Contains(err.Error(), "services.imap_login, services.imaps_login missing") {
+		t.Fatalf("err = %v, want both login keys named", err)
+	}
+	if err := RequireListeners(cfg, "imap"); err != nil {
+		t.Errorf("a present key refused: %v", err)
 	}
 }

@@ -38,8 +38,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := config.RequireListeners(cfg, "pop3_login", "pop3s_login"); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
 	svcs := cfg.Services
-	if !svcs.POP3S.Active() && !svcs.POP3.Active() {
+	if !svcs.POP3SLogin.Active() && !svcs.POP3Login.Active() {
 		slog.Error("no POP3 listener configured (pop3 or pop3s must be enabled)")
 		os.Exit(1)
 	}
@@ -52,13 +56,13 @@ func main() {
 	)
 
 	// A listener that declares TLS without a certificate must not bind silently.
-	if warn, err := config.CheckListenerTLS("services.pop3s", svcs.POP3S, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.pop3s_login", svcs.POP3SLogin, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
 		slog.Warn(warn)
 	}
-	if warn, err := config.CheckListenerTLS("services.pop3", svcs.POP3, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.pop3_login", svcs.POP3Login, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
@@ -114,8 +118,8 @@ func main() {
 	tel := startTelemetry(cfg.Telemetry)
 
 	// Port 995 - implicit TLS (POP3S).
-	if svcs.POP3S.Active() {
-		addr, from := svcs.POP3S.ListenAddr(config.PublicHost)
+	if svcs.POP3SLogin.Active() {
+		addr, from := svcs.POP3SLogin.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("pop3s-login: listen failed", "addr", addr, "err", err)
@@ -134,7 +138,7 @@ func main() {
 			AuthAddr:            cfg.AuthService.ClientAddr(),
 			AuthTLS:             intTLS,
 			AuthMaxAttempts:     cfg.Auth.MaxAttempts,
-			DisablePlainAuth:    svcs.POP3S.PlainAuthDisabled(),
+			DisablePlainAuth:    svcs.POP3SLogin.PlainAuthDisabled(),
 			WardenAddr:          cfg.WardenService.ClientAddr(),
 			WardenTLS:           intTLS,
 			WardenFailOpen:      cfg.WardenService.FailOpen,
@@ -146,10 +150,10 @@ func main() {
 			TransientReloginCap: cfg.Login.TransientReloginCap,
 			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 			LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
-			HAProxy:             svcs.POP3S.HAProxy,
+			HAProxy:             svcs.POP3SLogin.HAProxy,
 			HAProxyTimeout:      haproxyTimeout,
 			HAProxyNets:         haproxyNets,
-			XClient:             svcs.POP3S.XClient,
+			XClient:             svcs.POP3SLogin.XClient,
 			XClientNets:         xclientNets,
 		})
 		loginServers = append(loginServers, srv)
@@ -166,8 +170,8 @@ func main() {
 	}
 
 	// Port 110 - STARTTLS.
-	if svcs.POP3.Active() {
-		addr, from := svcs.POP3.ListenAddr(config.PublicHost)
+	if svcs.POP3Login.Active() {
+		addr, from := svcs.POP3Login.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("pop3-login: listen failed", "addr", addr, "err", err)
@@ -186,7 +190,7 @@ func main() {
 			AuthAddr:            cfg.AuthService.ClientAddr(),
 			AuthTLS:             intTLS,
 			AuthMaxAttempts:     cfg.Auth.MaxAttempts,
-			DisablePlainAuth:    svcs.POP3.PlainAuthDisabled(),
+			DisablePlainAuth:    svcs.POP3Login.PlainAuthDisabled(),
 			WardenAddr:          cfg.WardenService.ClientAddr(),
 			WardenTLS:           intTLS,
 			WardenFailOpen:      cfg.WardenService.FailOpen,
@@ -195,10 +199,10 @@ func main() {
 			LookupHoldMax:       cfg.Login.LookupHoldMax,
 			SessionSyncInterval: time.Duration(cfg.Login.SessionSyncInterval) * time.Second,
 			LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
-			HAProxy:             svcs.POP3.HAProxy,
+			HAProxy:             svcs.POP3Login.HAProxy,
 			HAProxyTimeout:      haproxyTimeout,
 			HAProxyNets:         haproxyNets,
-			XClient:             svcs.POP3.XClient,
+			XClient:             svcs.POP3Login.XClient,
 			XClientNets:         xclientNets,
 			TransientRetries:    cfg.Login.TransientRetries,
 			TransientReloginCap: cfg.Login.TransientReloginCap,

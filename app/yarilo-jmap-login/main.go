@@ -39,13 +39,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	svc := cfg.Services.JMAP
+	if err := config.RequireListeners(cfg, "jmap_login"); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
+	svc := cfg.Services.JMAPLogin
 	if !svc.Active() {
-		slog.Error("services.jmap is not enabled")
+		slog.Error("services.jmap_login is not enabled")
 		os.Exit(1)
 	}
 	// A listener that declares TLS without a certificate must not bind silently.
-	if warn, err := config.CheckListenerTLS("services.jmap", svc, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.jmap_login", svc, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
@@ -159,15 +163,10 @@ func kicks(cfg *config.Config, intTLS *tls.Config) jmaplogin.Kicks {
 }
 
 // backendPort is the JMAP container's port, which differs from whatever the
-// ring reports for the pod.
+// ring reports for the pod. It is jmap_login_service.backend_port alone: this
+// process does not read the backend's services entry (#2415).
 func backendPort(cfg *config.Config) int {
-	if p := cfg.JMAPLoginService.BackendPort; p != 0 {
-		return p
-	}
-	if be := cfg.Services.JMAPBE; be != nil && be.Port != 0 {
-		return be.Port
-	}
-	return 0
+	return cfg.JMAPLoginService.BackendPort
 }
 
 // clientTLS builds the client-facing config. A per-service ssl block wins over

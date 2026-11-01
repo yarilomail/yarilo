@@ -55,9 +55,11 @@ spec:
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:
+            {{- if .Values.components.jmapLogin.listeners.jmap.enabled }}
             - name: jmap
               containerPort: {{ .Values.components.jmapLogin.listeners.jmap.containerPort }}
               protocol: TCP
+            {{- end }}
             - name: telemetry
               containerPort: 8087
               protocol: TCP

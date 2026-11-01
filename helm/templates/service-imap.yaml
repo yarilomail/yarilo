@@ -11,12 +11,6 @@ spec:
   type: ClusterIP
   clusterIP: None
   ports:
-    {{- if .Values.components.imap.listeners.imaps.enabled }}
-    - name: imaps
-      port: {{ .Values.components.imap.listeners.imaps.servicePort }}
-      targetPort: imaps
-      protocol: TCP
-    {{- end }}
     {{- if .Values.components.imap.listeners.imap.enabled }}
     - name: imap
       port: {{ .Values.components.imap.listeners.imap.servicePort }}

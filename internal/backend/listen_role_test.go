@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"crypto/tls"
 	"net"
 	"testing"
 
@@ -31,17 +30,5 @@ func TestASessionListenerTakesTheBackendHost(t *testing.T) {
 		if ip.IsLoopback() != tc.loopback {
 			t.Errorf("address %q bound %s, loopback = %v, want %v", tc.address, ip, ip.IsLoopback(), tc.loopback)
 		}
-	}
-}
-
-func TestBindTLSTakesTheBackendHost(t *testing.T) {
-	cfg := &tls.Config{GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return nil, nil }}
-	ln, err := bindTLS("imaps", &config.ServiceConfig{Enabled: true}, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	if ip := ln.Addr().(*net.TCPAddr).IP; !ip.IsLoopback() {
-		t.Errorf("TLS session listener bound %s, want loopback", ip)
 	}
 }

@@ -106,7 +106,7 @@ func TestXClientTrustsNobodyByDefault(t *testing.T) {
 		{"xclient on, nobody trusted", "services:\n  submission:\n    xclient_protocol: true\n", true},
 		{"xclient on, a network trusted", "general:\n  xclient:\n    trusted_nets: [\"10.0.0.0/8\"]\nservices:\n  submission:\n    xclient_protocol: true\n", false},
 		{"xclient off", "services:\n  submission:\n    xclient_protocol: false\n", false},
-		{"the JMAP backend's trust mode 2, nobody trusted", "services:\n  jmap_be:\n    xclient_protocol: true\n", true},
+		{"the JMAP backend's trust mode 2, nobody trusted", "services:\n  jmap:\n    xclient_protocol: true\n", true},
 	}
 	for _, c := range cases {
 		var buf bytes.Buffer
