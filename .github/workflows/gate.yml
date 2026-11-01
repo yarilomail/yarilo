@@ -131,9 +131,12 @@ jobs:
           fi
           CGO_ENABLED=1 go vet -tags flatcurve ./...
 
-      ## Pure Go only: the cgo flatcurve set needs a FreeBSD host to build.
-      - name: Run go vet for FreeBSD
-        run: CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go vet ./...
+      ## Pure Go only: the cgo flatcurve set needs a BSD host to build.
+      - name: Run go vet for the BSDs
+        run: |
+          for goos in freebsd netbsd openbsd; do
+            CGO_ENABLED=0 GOOS=$goos GOARCH=amd64 go vet ./...
+          done
 
       # Lines in blocks of three or more, against the package's Go lines --
       # exactly what the sweep removes, and not godoc, which it keeps. The
