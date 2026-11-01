@@ -613,11 +613,9 @@ func bindTCP(proto string, svc *config.ServiceConfig) (net.Listener, error) {
 
 // RunIMAP starts the IMAP/IMAPS listeners and telemetry, then blocks until ctx is cancelled.
 func (s *Server) RunIMAP(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 
 	svcs := s.cfg.Services
 	if s.imap == nil {
@@ -646,11 +644,9 @@ func (s *Server) RunIMAP(ctx context.Context) error {
 
 // RunPOP3 starts the POP3/POP3S listeners and telemetry, then blocks until ctx is cancelled.
 func (s *Server) RunPOP3(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 	svcs := s.cfg.Services
 	if s.pop3 == nil {
 		slog.Warn("pop3: no listeners configured")
@@ -675,11 +671,9 @@ func (s *Server) RunPOP3(ctx context.Context) error {
 
 // RunLMTP starts the LMTP listener and telemetry, then blocks until ctx is cancelled.
 func (s *Server) RunLMTP(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 	svcs := s.cfg.Services
 	if s.lmtp == nil || !svcs.LMTP.Active() {
 		slog.Warn("lmtp: no listener configured")
@@ -715,11 +709,9 @@ func (s *Server) RunLMTP(ctx context.Context) error {
 // RunManageSieve starts the ManageSieve backend listener and telemetry,
 // then blocks until ctx is cancelled.
 func (s *Server) RunManageSieve(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 	svcs := s.cfg.Services
 	if s.managesieve == nil || !svcs.ManageSieve.Active() {
 		slog.Warn("managesieve: no listener configured")
@@ -744,11 +736,9 @@ func (s *Server) RunManageSieve(ctx context.Context) error {
 
 // Run starts all configured servers and blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 
 	svcs := s.cfg.Services
 

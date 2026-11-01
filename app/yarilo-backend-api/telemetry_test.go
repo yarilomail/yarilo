@@ -24,7 +24,7 @@ func TestTheAdminAPIServesItsOwnMetrics(t *testing.T) {
 	_ = ln.Close()
 
 	t.Setenv("TELEMETRY_LISTEN", addr)
-	go runTelemetry(config.TelemetryConfig{})
+	runTelemetry(config.TelemetryConfig{})
 
 	var body string
 	deadline := time.Now().Add(5 * time.Second)
@@ -64,7 +64,7 @@ func TestMainStartsTheTelemetryServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), "go runTelemetry(cfg.Telemetry)") {
+	if !strings.Contains(string(src), "\trunTelemetry(cfg.Telemetry)") {
 		t.Error("main does not start the telemetry server, so the admin API's counters are unreachable")
 	}
 }

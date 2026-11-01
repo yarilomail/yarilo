@@ -97,7 +97,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	go runTelemetry(cfg.Telemetry)
+	runTelemetry(cfg.Telemetry)
 
 	// The sidecar gates the pod's director heartbeat on this file (#788); a
 	// relay proxy is ready once its listeners are bound.
@@ -184,7 +184,8 @@ func runTelemetry(cfg config.TelemetryConfig) {
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	if err := tel.ListenAndServe(context.Background()); err != nil {
-		slog.Error("telemetry server failed", "err", err)
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
 	}
 }
