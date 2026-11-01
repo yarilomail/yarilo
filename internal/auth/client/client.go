@@ -404,7 +404,7 @@ func (c *Client) exchange(id, req string) (string, error) {
 // that let the budget pass in silence, so the next request does not wait too.
 func (c *Client) exchangeWithin(id, req string, budget time.Duration, redial bool) (string, error) {
 	deadline := time.Now().Add(budget)
-	ch := make(chan string, 1)
+	var ch chan string
 	var gen uint64
 
 	for {
@@ -421,6 +421,9 @@ func (c *Client) exchangeWithin(id, req string, budget time.Duration, redial boo
 			c.mu.Unlock()
 			continue // lost the race with a reconnect; wait again
 		}
+		// A fresh channel per attempt: a reconnect another caller started may
+		// already have closed the last one with the rest in flight.
+		ch = make(chan string, 1)
 		c.pending[id] = ch
 		gen = c.gen
 		// Bound the write so a blackholed peer cannot block forever while
