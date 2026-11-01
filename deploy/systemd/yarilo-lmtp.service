@@ -9,7 +9,7 @@ Wants=yarilo-locks.service yarilo-auth.service yarilo-warden.service
 Type=simple
 User=yarilo
 Group=yarilo
-SupplementaryGroups=yarilo-auth
+SupplementaryGroups=yarilo-auth yarilo-master
 Environment=TELEMETRY_LISTEN=127.0.0.1:18087
 ExecStart=/usr/libexec/yarilo/yarilo-lmtp
 Restart=on-failure
