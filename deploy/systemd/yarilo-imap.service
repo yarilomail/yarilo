@@ -2,8 +2,8 @@
 Description=yarilo IMAP session backend
 Documentation=https://doc.yarilomail.org/
 PartOf=yarilo.target
-After=network.target yarilo-locks.service yarilo-auth.service yarilo-warden.service
-Wants=yarilo-locks.service yarilo-auth.service yarilo-warden.service
+After=network.target yarilo-locks.service yarilo-auth.service yarilo-warden.service yarilo-dict.service
+Wants=yarilo-locks.service yarilo-auth.service yarilo-warden.service yarilo-dict.service
 
 [Service]
 Type=simple

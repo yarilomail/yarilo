@@ -134,10 +134,23 @@ locks_client:
   mode: embedded
   socket: /run/yarilo/locks/locks.sock
 
+## yarilo-dict opens the dict databases; the sessions reach it over this socket.
+dict_service:
+  dict_listen: unix:/run/yarilo/dict/dict.sock
+  dict_addr: unix:/run/yarilo/dict/dict.sock
+  socket_group: yarilo
+
+## The users database: SQLite here, or MySQL or PostgreSQL on this host or
+## another. Only yarilo-auth opens it; a password goes in /etc/yarilo/auth.env
+## (YARILO_AUTH_DB_PASSWORD=..., mode 0600), which no other unit reads.
 auth:
   passdb:
     - driver: sqlite
       dsn: /var/lib/yarilo/auth/users.db
+    # - driver: mysql
+    #   dsn: "yarilo:${YARILO_AUTH_DB_PASSWORD}@tcp(127.0.0.1:3306)/yarilo"
+    # - driver: postgres
+    #   dsn: "postgres://yarilo:${YARILO_AUTH_DB_PASSWORD}@127.0.0.1:5432/yarilo?sslmode=disable"
 
 storage:
   mail_driver: maildir
@@ -203,12 +216,21 @@ sieve:
   sieve_pipe_bin_dir: /usr/libexec/yarilo/sieve-pipe
   sieve_filter_bin_dir: /usr/libexec/yarilo/sieve-filter
 
-## IMAP METADATA and the Sieve mboxmetadata/servermetadata extensions.
+## IMAP METADATA and the Sieve mboxmetadata/servermetadata extensions, kept by
+## yarilo-dict: SQLite here, or MySQL or PostgreSQL. A password goes in
+## /etc/yarilo/dict.env (YARILO_DICT_DB_PASSWORD=..., mode 0600), read by
+## yarilo-dict alone.
 dicts:
   metadata:
-    driver: file
+    driver: sql
     settings:
-      path: /var/lib/yarilo/state/metadata.dict
+      driver: sqlite
+      dsn: /var/lib/yarilo/state/metadata.db
+      namespace: metadata
+      # driver: mysql
+      # dsn: "yarilo:${YARILO_DICT_DB_PASSWORD}@tcp(127.0.0.1:3306)/yarilo"
+      # driver: postgres
+      # dsn: "postgres://yarilo:${YARILO_DICT_DB_PASSWORD}@127.0.0.1:5432/yarilo?sslmode=disable"
 
 log:
   level: info

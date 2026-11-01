@@ -2,22 +2,24 @@
 Description=yarilo dict service
 Documentation=https://doc.yarilomail.org/
 PartOf=yarilo.target
-After=network.target yarilo-locks.service yarilo-auth.service yarilo-warden.service
-Wants=yarilo-locks.service yarilo-auth.service yarilo-warden.service
+After=network.target yarilo-locks.service
+Wants=yarilo-locks.service
 
 [Service]
 Type=simple
 User=yarilo
 Group=yarilo
-SupplementaryGroups=yarilo-auth yarilo-master
 Environment=TELEMETRY_LISTEN=127.0.0.1:18083
+# The dict database password, readable by this unit alone: /etc/yarilo/dict.env.
+EnvironmentFile=-/etc/yarilo/dict.env
 ExecStart=/usr/libexec/yarilo/yarilo-dict
+ExecStartPost=/bin/sh -c 'i=0; until [ -S /run/yarilo/dict/dict.sock ]; do i=$$((i+1)); [ $$i -gt 50 ] && exit 1; sleep 0.2; done'
 Restart=on-failure
 RestartSec=2s
 KillMode=mixed
 TimeoutStopSec=60s
 CapabilityBoundingSet=
-ReadWritePaths=/var/mail/vhosts /var/lib/yarilo/state
+ReadWritePaths=/run/yarilo/dict /var/lib/yarilo/state
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

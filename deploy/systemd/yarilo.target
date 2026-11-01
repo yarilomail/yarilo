@@ -1,7 +1,7 @@
 [Unit]
 Description=yarilo mail server
 Documentation=https://doc.yarilomail.org/
-Wants=yarilo-locks.service yarilo-auth.service yarilo-warden.service yarilo-imap.service yarilo-pop3.service yarilo-lmtp.service yarilo-submission.service yarilo-managesieve.service yarilo-imap-login.service yarilo-pop3-login.service yarilo-lmtp-login.service yarilo-submission-login.service yarilo-managesieve-login.service
+Wants=yarilo-locks.service yarilo-auth.service yarilo-warden.service yarilo-dict.service yarilo-imap.service yarilo-pop3.service yarilo-lmtp.service yarilo-submission.service yarilo-managesieve.service yarilo-imap-login.service yarilo-pop3-login.service yarilo-lmtp-login.service yarilo-submission-login.service yarilo-managesieve-login.service
 
 [Install]
 WantedBy=multi-user.target
