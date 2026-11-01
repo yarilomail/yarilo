@@ -116,7 +116,7 @@ func main() {
 	errCh := make(chan error, 1)
 	// Bind before readiness: ListenAndServe would bind inside the goroutine, so the
 	// pod would announce itself ready without knowing the port came up.
-	ln, err := srv.Listen(cfg.WardenService.Listen, tlsCfg)
+	ln, err := srv.Listen(cfg.WardenService.Listen, cfg.WardenService.Socket(), tlsCfg)
 	if err != nil {
 		slog.Error("warden: listen failed", "addr", cfg.WardenService.Listen, "err", err)
 		os.Exit(1)

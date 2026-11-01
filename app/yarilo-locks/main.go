@@ -30,6 +30,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/logging"
 	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // version is set via pkg/build.
@@ -151,19 +152,15 @@ func buildBackend(lcfg config.LocksServiceConfig) (locks.Backend, func() bool, e
 	}
 }
 
-// buildListener returns the net.Listener for the mode: embedded a Unix socket
-// (a stale one is removed first), remote a TCP listener wrapped in cfg.InternalTLS mTLS.
+// buildListener returns the mode's listener: embedded a Unix socket by the
+// pkg/sockaddr rules, remote a TCP listener wrapped in cfg.InternalTLS mTLS.
 func buildListener(cfg *config.Config, lcfg config.LocksServiceConfig) (net.Listener, error) {
 	switch lcfg.Mode {
 	case "embedded":
 		if lcfg.Socket == "" {
 			return nil, fmt.Errorf("locks_service.socket is required for embedded mode")
 		}
-		// Remove a stale socket from a previous run; ignore not-exists.
-		if err := os.Remove(lcfg.Socket); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("remove stale socket %q: %w", lcfg.Socket, err)
-		}
-		return locks.ListenUnix(lcfg.Socket)
+		return sockaddr.Listen("unix:"+lcfg.Socket, lcfg.SocketPerm())
 	case "remote":
 		if lcfg.Listen == "" {
 			return nil, fmt.Errorf("locks_service.listen is required for remote mode")

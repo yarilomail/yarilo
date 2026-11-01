@@ -18,6 +18,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // defaultDialTimeout caps the initial TCP/TLS handshake so a stalled master
@@ -122,11 +123,12 @@ func DialWaiting(ctx context.Context, addr string, tlsCfg *tls.Config, wait time
 // After the handshake the context no longer affects the returned Client.
 func DialContext(ctx context.Context, addr string, tlsCfg *tls.Config) (*Client, error) {
 	d := net.Dialer{Timeout: defaultDialTimeout}
-	conn, err := d.DialContext(ctx, "tcp", addr)
+	network, address := sockaddr.Network(addr)
+	conn, err := d.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, fmt.Errorf("authclient: dial %s: %w: %w", addr, ErrUnavailable, err)
 	}
-	if tlsCfg != nil {
+	if tlsCfg := sockaddr.ForAddr(addr, tlsCfg); tlsCfg != nil {
 		tc := tls.Client(conn, tlsCfg)
 		if dl, ok := ctx.Deadline(); ok {
 			_ = tc.SetDeadline(dl)

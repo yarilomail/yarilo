@@ -11,7 +11,7 @@ import (
 // Once bind returns, the port is accepting. Readiness is reported after
 // bind, so early clients must not get connection refused.
 func TestBindTCPHoldsThePortBeforeReturning(t *testing.T) {
-	ln, err := bindTCP("test", &config.ServiceConfig{}, config.BackendHost)
+	ln, err := bindTCP("test", &config.ServiceConfig{})
 	if err != nil {
 		t.Fatalf("bindTCP: %v", err)
 	}
@@ -34,14 +34,14 @@ func TestBindTCPFailsLoudlyOnAPortInUse(t *testing.T) {
 	defer first.Close()
 
 	port := first.Addr().(*net.TCPAddr).Port
-	if _, err := bindTCP("test", &config.ServiceConfig{Port: port}, config.BackendHost); err == nil {
+	if _, err := bindTCP("test", &config.ServiceConfig{Port: port}); err == nil {
 		t.Fatal("binding an occupied port must fail")
 	}
 }
 
 func TestBindTLSRequiresAConfig(t *testing.T) {
 	// a nil TLS config would produce a listener that fails every handshake
-	ln, err := bindTLS("test", &config.ServiceConfig{}, config.BackendHost, nil)
+	ln, err := bindTLS("test", &config.ServiceConfig{}, nil)
 	if err == nil {
 		ln.Close()
 		t.Fatal("bindTLS with a nil config must fail")
@@ -50,7 +50,7 @@ func TestBindTLSRequiresAConfig(t *testing.T) {
 
 func TestBindTCPErrorNamesProtocolAndAddress(t *testing.T) {
 	// the error ends up in startup logs; both fields make it diagnosable
-	_, err := bindTCP("imap", &config.ServiceConfig{Address: "256.256.256.256", Port: 99999}, config.BackendHost)
+	_, err := bindTCP("imap", &config.ServiceConfig{Address: "256.256.256.256", Port: 99999})
 	if err == nil {
 		t.Fatal("expected an error for an invalid address")
 	}

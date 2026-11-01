@@ -911,6 +911,10 @@ data:
       master_addr: {{ printf "%s-auth.%s.svc.cluster.local:%s" (include "yarilo.fullname" .) .Release.Namespace (trimPrefix ":" .Values.components.auth.masterListen) | quote }}
       auth_startup_wait: {{ .Values.components.auth.startup_wait | int64 }}
       {{- end }}
+      socket_mode: {{ .Values.components.auth.socket_mode | quote }}
+      socket_group: {{ .Values.components.auth.socket_group | quote }}
+      master_socket_mode: {{ .Values.components.auth.master_socket_mode | quote }}
+      master_socket_group: {{ .Values.components.auth.master_socket_group | quote }}
       shutdown:
         session_grace_period: {{ .Values.components.auth.shutdown.session_grace_period | int64 }}
         kill_timeout: {{ .Values.components.auth.shutdown.kill_timeout | int64 }}
@@ -920,6 +924,8 @@ data:
     warden_service:
       listen: {{ $wardenListen | quote }}
       addr: {{ printf "%s-warden%s" (include "yarilo.fullname" .) $wardenListen | quote }}
+      socket_mode: {{ $wardenSvc.socket_mode | quote }}
+      socket_group: {{ $wardenSvc.socket_group | quote }}
       conns: {{ $wardenSvc.conns }}
       ## SELECT events a backend queues for the warden. They are accounting --
       ## the warden records the folder for `who` and can refuse nothing -- so a
@@ -1039,6 +1045,8 @@ data:
     locks_service:
       mode: remote
       listen: {{ .Values.components.locks.service.listen | default ":9104" | quote }}
+      socket_mode: {{ .Values.components.locks.service.socket_mode | quote }}
+      socket_group: {{ .Values.components.locks.service.socket_group | quote }}
       key_prefix: {{ .Values.components.locks.service.key_prefix | default "yarilo:locks:" | quote }}
       channel_prefix: {{ .Values.components.locks.service.channel_prefix | default "yarilo:events:" | quote }}
       {{- if .Values.redis.bundled }}

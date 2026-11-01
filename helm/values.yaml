@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 18
+config_schema_version: 19
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -767,6 +767,12 @@ components:
     ## endpoints and CLI tooling. Empty disables; the binary then only
     ## opens the client listener.
     masterListen: ":9102"
+    ## socket_mode / socket_group (and the master_ pair) - octal mode and group
+    ## name of a unix:/path listener on a host install; pods listen on TCP.
+    socket_mode: "0660"
+    socket_group: ""
+    master_socket_mode: "0660"
+    master_socket_group: ""
 
     ## startupProbe waits for Redis and (when applicable) the SQL database to accept
     ## a TCP connection before this pod takes traffic, replacing the wait-redis /
@@ -1062,6 +1068,10 @@ components:
     ## the level above. See the boundary note at the top of components:.
     service:
       listen: ":9101"
+      ## socket_mode / socket_group - octal mode and group name of a unix:/path
+      ## listener on a host install; pods listen on TCP.
+      socket_mode: "0660"
+      socket_group: ""
       ## conns - long-lived connections each login pod keeps to yarilo-warden
       ## (#878). Must be positive. Sessions do not own a connection: every
       ## command carries the session id and the server keeps no per-connection
@@ -1196,6 +1206,10 @@ components:
     ## at the top of components:.
     service:
       listen: ":9104"
+      ## socket_mode / socket_group - octal mode and group name of the embedded
+      ## mode's socket on a host install; pods run remote mode on TCP.
+      socket_mode: "0660"
+      socket_group: ""
       ## Redis key/channel prefixes (#938). The prefix is the installation
       ## boundary: when several installations share one Redis, give each a
       ## DISTINCT prefix so their lock keys and event channels do not collide.

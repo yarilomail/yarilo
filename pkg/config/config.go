@@ -20,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 	"github.com/yarilomail/yarilo/v2/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
@@ -1058,8 +1059,12 @@ type WardenServiceConfig struct {
 	// Addr is the address login pods use to dial yarilo-warden.
 	// Defaults to Listen when empty (single-process / dev mode).
 	// In k8s set to the ClusterIP service DNS, e.g. "yarilo-warden:9101".
-	Addr     string         `koanf:"addr"`
-	Shutdown ShutdownConfig `koanf:"shutdown"`
+	Addr string `koanf:"addr"`
+	// SocketMode and SocketGroup are the octal mode and the group name a
+	// unix:/path listen address gets; empty group keeps the process's.
+	SocketMode  string         `koanf:"socket_mode"`
+	SocketGroup string         `koanf:"socket_group"`
+	Shutdown    ShutdownConfig `koanf:"shutdown"`
 	// FailOpen controls login-pod behaviour when yarilo-warden is unreachable.
 	// true = allow the session; false (default) = reject the session.
 	FailOpen bool `koanf:"fail_open"`
@@ -1081,6 +1086,9 @@ type WardenServiceConfig struct {
 	KeyPrefix     string `koanf:"key_prefix"`
 	ChannelPrefix string `koanf:"channel_prefix"`
 }
+
+// Socket is the permission a unix:/path listen address gets.
+func (c WardenServiceConfig) Socket() sockaddr.Perm { return socketPerm(c.SocketMode, c.SocketGroup) }
 
 // ClientAddr returns the address login pods use to dial yarilo-warden.
 func (c WardenServiceConfig) ClientAddr() string {
@@ -1105,10 +1113,31 @@ type AuthServiceConfig struct {
 	// yarilo-auth master protocol for userdb lookups (USER command).
 	// Defaults to empty (userdb checks disabled) when not set.
 	MasterAddr string `koanf:"master_addr"`
+	// SocketMode and SocketGroup are the octal mode and the group name a
+	// unix:/path listen gets; empty group keeps the process's. The master
+	// listener answers without a password, so it has its own pair.
+	SocketMode        string `koanf:"socket_mode"`
+	SocketGroup       string `koanf:"socket_group"`
+	MasterSocketMode  string `koanf:"master_socket_mode"`
+	MasterSocketGroup string `koanf:"master_socket_group"`
 	// StartupWaitSeconds bounds the wait for auth at startup only (#1369).
 	// Unset 30; 0 does not wait.
 	StartupWaitSeconds int            `koanf:"auth_startup_wait"`
 	Shutdown           ShutdownConfig `koanf:"shutdown"`
+}
+
+// Socket is the permission a unix:/path client listen address gets.
+func (c AuthServiceConfig) Socket() sockaddr.Perm { return socketPerm(c.SocketMode, c.SocketGroup) }
+
+// MasterSocket is the permission a unix:/path master listen address gets.
+func (c AuthServiceConfig) MasterSocket() sockaddr.Perm {
+	return socketPerm(c.MasterSocketMode, c.MasterSocketGroup)
+}
+
+// socketPerm reads a mode validate has already accepted.
+func socketPerm(mode, group string) sockaddr.Perm {
+	m, _ := sockaddr.ParseMode(mode)
+	return sockaddr.Perm{Mode: m, Group: group}
 }
 
 // ClientAddr returns the address login pods use to dial yarilo-auth.
@@ -1462,11 +1491,18 @@ type LocksServiceConfig struct {
 	Mode          string         `koanf:"mode"`           // embedded | remote | ""
 	Socket        string         `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
 	Listen        string         `koanf:"listen"`         // remote: ":9104"
+	SocketMode    string         `koanf:"socket_mode"`    // embedded: octal mode of the socket
+	SocketGroup   string         `koanf:"socket_group"`   // embedded: group name; empty keeps the process's
 	Redis         string         `koanf:"redis"`          // remote: "redis://host:6379/0"
 	RedisPassword string         `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
 	KeyPrefix     string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
 	ChannelPrefix string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
 	Shutdown      ShutdownConfig `koanf:"shutdown"`
+}
+
+// SocketPerm is the permission the embedded mode's socket gets.
+func (c LocksServiceConfig) SocketPerm() sockaddr.Perm {
+	return socketPerm(c.SocketMode, c.SocketGroup)
 }
 
 // MailServerConfig describes one backend mail server the director routes sessions to.
@@ -2620,12 +2656,15 @@ func Defaults() *Config {
 			CA:      "/etc/yarilo/tls/ca.crt",
 		},
 		WardenService: WardenServiceConfig{
-			Listen:   "127.0.0.1:9101",
-			Shutdown: ShutdownConfig{},
+			Listen:     "127.0.0.1:9101",
+			SocketMode: "0660",
+			Shutdown:   ShutdownConfig{},
 		},
 		AuthService: AuthServiceConfig{
-			Listen:   "127.0.0.1:9100",
-			Shutdown: ShutdownConfig{},
+			Listen:           "127.0.0.1:9100",
+			SocketMode:       "0660",
+			MasterSocketMode: "0660",
+			Shutdown:         ShutdownConfig{},
 		},
 		Auth: AuthConfig{
 			// MasterUsers is opt-in (Enabled defaults to false).
@@ -2710,6 +2749,9 @@ func Defaults() *Config {
 		},
 		BackendAPI: BackendAPIConfig{
 			Listen: "127.0.0.1:9105",
+		},
+		LocksService: LocksServiceConfig{
+			SocketMode: "0660",
 		},
 		Telemetry: TelemetryConfig{
 			Listen:       ":8080",
@@ -3015,6 +3057,16 @@ func (cfg *Config) validate() error {
 	}
 	if err := validateDictPrefixes(cfg.Dicts); err != nil {
 		return err
+	}
+	for key, mode := range map[string]string{
+		"auth_service.socket_mode":        cfg.AuthService.SocketMode,
+		"auth_service.master_socket_mode": cfg.AuthService.MasterSocketMode,
+		"warden_service.socket_mode":      cfg.WardenService.SocketMode,
+		"locks_service.socket_mode":       cfg.LocksService.SocketMode,
+	} {
+		if _, err := sockaddr.ParseMode(mode); err != nil {
+			return fmt.Errorf("config: %s: %w", key, err)
+		}
 	}
 	if cfg.InternalTLS.Enabled {
 		if cfg.InternalTLS.Cert == "" || cfg.InternalTLS.Key == "" || cfg.InternalTLS.CA == "" {
@@ -3688,7 +3740,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 18
+const minConfigSchema = 19
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3719,6 +3771,7 @@ var schemaAdditions = map[int][]string{
 	16: {"sieve_global"},
 	17: {"sieve_global_extensions"},
 	18: {"submission_client_workarounds"},
+	19: {"address", "socket_mode", "socket_group", "master_socket_mode", "master_socket_group"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

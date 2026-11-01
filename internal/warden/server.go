@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 const (
@@ -170,26 +171,21 @@ func (s *Server) SessionCount() int {
 	return s.state.SessionCount()
 }
 
-// Listen binds addr (mTLS when tlsCfg is non-nil) and returns the
-// listener, so callers can report readiness only after the bind succeeds.
-func (s *Server) Listen(addr string, tlsCfg *tls.Config) (net.Listener, error) {
-	if tlsCfg != nil {
-		ln, err := tls.Listen("tcp", addr, tlsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("warden: listen %s (tls): %w", addr, err)
-		}
-		return ln, nil
-	}
-	ln, err := net.Listen("tcp", addr)
+// Listen binds addr (mTLS over TCP when tlsCfg is non-nil; a unix:/path addr
+// gets perm and no TLS) and returns the listener, so callers can report
+// readiness only after the bind succeeds.
+func (s *Server) Listen(addr string, perm sockaddr.Perm, tlsCfg *tls.Config) (net.Listener, error) {
+	ln, err := sockaddr.ListenTLS(addr, perm, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("warden: listen %s: %w", addr, err)
 	}
 	return ln, nil
 }
 
-// ListenAndServe binds addr and serves it.
+// ListenAndServe binds addr and serves it; a Unix socket it binds is the
+// owner's only.
 func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error {
-	ln, err := s.Listen(addr, tlsCfg)
+	ln, err := s.Listen(addr, sockaddr.Perm{Mode: 0o600}, tlsCfg)
 	if err != nil {
 		return err
 	}
