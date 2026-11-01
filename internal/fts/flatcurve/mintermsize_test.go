@@ -2,7 +2,12 @@
 
 package flatcurve
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+
+	"github.com/yarilomail/yarilo/v2/pkg/fts"
+)
 
 // The minimum term size is a judgement about what is worth indexing, and that
 // judgement is the same in every script. Counting bytes made it a different
@@ -96,5 +101,41 @@ func TestSubstringSuffixesStopAtTheCharacterThreshold(t *testing.T) {
 			t.Errorf("fragment %q found=%v, want %v (%d characters, %d bytes)",
 				tc.fragment, found, tc.found, len([]rune(tc.fragment)), len(tc.fragment))
 		}
+	}
+}
+
+// A word whose token is below the minimum never reaches the index, so it
+// leaves the query and the answer is a maybe the scan proves; under NOT the
+// complement of that superset would be a subset, so it is everything (#2454).
+func TestAShortWordLeavesTheQueryAsAMaybe(t *testing.T) {
+	ui, _ := testEngine(t, testOpts(Options{MinTermSize: 2, PrefixSearch: "yes"}))
+	indexDoc(t, ui, 1, []string{"xtok", "1793573171", "7"}, nil)
+	indexDoc(t, ui, 2, []string{"xtok", "1793573171", "1"}, nil)
+	indexDoc(t, ui, 3, []string{"xtok", "1793573171", "77"}, nil)
+
+	subject := func(last string, not bool) fts.Query {
+		whole := "xtok-1793573171-" + last
+		return fts.Query{AndTerms: true, Terms: []fts.Term{{Field: fts.FieldHeader, HdrName: "subject", Not: not,
+			Words: []fts.Word{{Variants: []string{whole, "xtok"}}, {Variants: []string{whole, "1793573171"}}, {Variants: []string{whole, last}}}}}}
+	}
+	for _, tc := range []struct {
+		name            string
+		q               fts.Query
+		definite, maybe []uint32
+	}{
+		{"a one-character word is dropped, not required", subject("7", false), nil, []uint32{1, 2, 3}},
+		{"a one-character word is no prefix of another term", subject("1", false), nil, []uint32{1, 2, 3}},
+		{"NOT over a dropped word is everything, verified", subject("7", true), nil, []uint32{1, 2, 3}},
+		{"a two-character word stays definite", subject("77", false), []uint32{3}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := ui.Lookup([]string{inbox.GUID}, tc.q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d, m := uidsOf(res.DefiniteGUIDs), uidsOf(res.MaybeGUIDs); !reflect.DeepEqual(d, tc.definite) || !reflect.DeepEqual(m, tc.maybe) {
+				t.Errorf("definite %v maybe %v, want definite %v maybe %v", d, m, tc.definite, tc.maybe)
+			}
+		})
 	}
 }
