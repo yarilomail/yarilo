@@ -3,6 +3,7 @@ package guard_test
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -41,13 +42,13 @@ func TestEveryChartComponentIsBuiltAndDispatched(t *testing.T) {
 	}
 }
 
-// builtIn accepts either build loop: the static one and the cgo stage that
-// builds yarilo-fts list their binaries differently.
+// builtIn accepts the static build loop, which lists binaries by name, and a
+// go build of the binary's package, as the cgo stage builds yarilo-fts.
 func builtIn(dockerfile, cmd string) bool {
 	for _, line := range strings.Split(dockerfile, "\n") {
 		f := strings.Fields(strings.TrimSuffix(strings.TrimSpace(line), "\\"))
 		for _, w := range f {
-			if w == cmd {
+			if w == cmd || (w == "./app/"+cmd && slices.Contains(f, "-o")) {
 				return true
 			}
 		}

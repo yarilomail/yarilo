@@ -76,7 +76,16 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 # fts-bench is a stand tool, not a service, so the production image does not
 # carry it (#2431): docker build --target fts-bench builds it alone.
-FROM fts-builder AS fts-bench-builder
+FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS fts-bench-builder
+ENV GOTOOLCHAIN=local
+# hadolint ignore=DL3018
+RUN apk add --no-cache build-base xapian-core-dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+COPY . .
+ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     go build -tags flatcurve -trimpath -o /out/fts-bench ./app/fts-bench
