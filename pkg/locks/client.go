@@ -923,7 +923,9 @@ func withLock(ctx context.Context, l Locker, resource, owner string, ttl, renewE
 	}
 	renewErr := make(chan error, 1)
 	stop := make(chan struct{})
+	renewDone := make(chan struct{})
 	go func() {
+		defer close(renewDone)
 		t := time.NewTicker(renewEvery)
 		defer t.Stop()
 		for {
@@ -949,6 +951,9 @@ func withLock(ctx context.Context, l Locker, resource, owner string, ttl, renewE
 	}()
 	fnErr := fn(workCtx)
 	close(stop)
+	// A renew in flight lands before the release, or the server answers it
+	// expired and a finished pass reads as a lost hold (#2445).
+	<-renewDone
 	// Try to release; ignore NotFound (TTL already reclaimed).
 	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	_ = l.Unlock(releaseCtx, lock.ID)
