@@ -20,13 +20,16 @@ func TestGoModAndDockerfileNameTheSameToolchain(t *testing.T) {
 		t.Fatal("go.mod has no `go X.Y.Z` line; an unpinned patch version is what this guards against")
 	}
 	want := m[1]
+	if tc := regexp.MustCompile(`(?m)^toolchain go(\S+)$`).FindStringSubmatch(gomod); tc != nil && tc[1] != want {
+		t.Errorf("go.mod: toolchain go%s, go %s", tc[1], want)
+	}
 
 	stages := golangStages(t, readFile(t, filepath.Join(root, "docker", "Dockerfile")))
 	if len(stages) == 0 {
 		t.Fatal("no golang base image found in docker/Dockerfile; this guard is watching a file that moved")
 	}
 	for _, st := range stages {
-		if version := strings.TrimSuffix(st.tag, "-alpine"); version != want {
+		if version, _, _ := strings.Cut(st.tag, "-alpine"); version != want {
 			t.Errorf("stage %q builds on golang:%s, go.mod says %s", st.name, st.tag, want)
 		}
 		// Per stage, because ENV does not cross a FROM: without this the fts
@@ -81,6 +84,60 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(body)
+}
+
+// Every setup-go step takes its release from go.mod: a go-version of its own
+// lets the gate test another compiler than the image ships.
+func TestEverySetupGoReadsGoMod(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no workflows found: %v", err)
+	}
+	steps := 0
+	for _, f := range files {
+		lines := strings.Split(readFile(t, f), "\n")
+		for i, line := range lines {
+			if !strings.Contains(line, "uses: actions/setup-go@") {
+				continue
+			}
+			steps++
+			indent := len(line) - len(strings.TrimLeft(line, " -"))
+			var fromMod, own bool
+			for _, l := range lines[i+1:] {
+				body := strings.TrimLeft(l, " ")
+				if body == "" || strings.HasPrefix(body, "#") {
+					continue
+				}
+				if len(l)-len(body) < indent {
+					break
+				}
+				fromMod = fromMod || strings.TrimSpace(body) == "go-version-file: go.mod"
+				own = own || strings.HasPrefix(body, "go-version:")
+			}
+			if !fromMod || own {
+				t.Errorf("%s:%d: setup-go must take go-version-file: go.mod and no go-version", filepath.Base(f), i+1)
+			}
+		}
+	}
+	if steps == 0 {
+		t.Fatal("no setup-go step found; this guard is watching files that moved")
+	}
+}
+
+// The README badge names the minor release go.mod builds with.
+func TestTheReadmeBadgeIsTheGoModMinor(t *testing.T) {
+	root := filepath.Join("..", "..")
+	m := regexp.MustCompile(`(?m)^go (\d+\.\d+)\.\d+$`).FindStringSubmatch(readFile(t, filepath.Join(root, "go.mod")))
+	if m == nil {
+		t.Fatal("go.mod has no `go X.Y.Z` line")
+	}
+	badge := regexp.MustCompile(`badge/Go-(\d+\.\d+)-`).FindStringSubmatch(readFile(t, filepath.Join(root, "README.md")))
+	if badge == nil {
+		t.Fatal("README.md has no Go badge")
+	}
+	if badge[1] != m[1] {
+		t.Errorf("README.md: Go badge %s, go.mod %s", badge[1], m[1])
+	}
 }
 
 // Every base image is pinned by digest: a tag can be moved under the build.
