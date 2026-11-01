@@ -517,3 +517,73 @@ func heldMode(held bool) (locks.HoldMode, bool) {
 	}
 	return locks.HoldNone, false
 }
+
+// saveInto stores one more message in an account the way a save does, without
+// touching its sidecar: what a save whose thread lock timed out leaves behind.
+func saveInto(t *testing.T, info *mailbox.UserInfo, folder string, uid uint32, raw string) [16]byte {
+	t.Helper()
+	box := maildir.New().OpenUser(info)
+	defer box.Close() //nolint:errcheck
+	ui := fileindex.New().OpenUser(info)
+	defer ui.Close() //nolint:errcheck
+	name, vsize, guid, err := box.Save(folder, strings.NewReader(raw), uid, int64(len(raw)), nil, nil, [16]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := ui.OpenFolder(folder, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := &mailbox.MessageMeta{UID: uid, Size: uint32(len(raw)), VSize: vsize, GUID: guid, InternalDate: time.Now()}
+	if err := mailboxbase.NameSaved(box, folder, name, meta); err != nil {
+		t.Fatal(err)
+	}
+	meta.GUID = guid
+	if err := ui.AppendMessage(f.ID, meta); err != nil {
+		t.Fatal(err)
+	}
+	return guid
+}
+
+// Without --force a rerun adds what the sidecar lacks, in the conversation it
+// belongs to, and leaves every record the deliveries made as they are (#2420).
+func TestARerunAddsWhatTheSidecarLacks(t *testing.T) {
+	root := t.TempDir()
+	info := seedAccount(t, root, "alice@example.com")
+	path := threads.PathFor(info)
+	if err := runThreadBackfill(backfillOpts(root, false)); err != nil {
+		t.Fatal(err)
+	}
+	st, err := threads.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A placement only a delivery made: a full rebuild would drop it.
+	if err := threads.Append(path, st, threads.Placement{GUID: "later", MessageID: "later@x", ThreadID: "later"}); err != nil {
+		t.Fatal(err)
+	}
+	rootThread := func(st *threads.State) string {
+		id, _ := st.ThreadOfMessage("root@x")
+		return id
+	}(st)
+	missed := mailbox.FormatObjectID(saveInto(t, info, "INBOX", 4,
+		"Message-ID: <missed@x>\r\nIn-Reply-To: <root@x>\r\nSubject: Re: Plan\r\n\r\nbody\r\n"))
+
+	var stats threadStats
+	if err := runThreadBackfillInto(backfillOpts(root, false), &stats); err != nil {
+		t.Fatal(err)
+	}
+	after, err := threads.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := after.ThreadOfGUID(missed); !ok || got != rootThread {
+		t.Errorf("the missed message is in %q (%v), want the conversation %q", got, ok, rootThread)
+	}
+	if _, ok := after.ThreadOfGUID("later"); !ok {
+		t.Error("the rerun dropped a placement the deliveries made")
+	}
+	if stats.Added != 1 {
+		t.Errorf("added %d, want 1: only the missed message", stats.Added)
+	}
+}

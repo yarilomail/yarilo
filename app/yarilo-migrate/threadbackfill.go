@@ -39,6 +39,7 @@ type threadOpts struct {
 type threadStats struct {
 	Users      int
 	Skipped    int
+	Added      int // messages an existing sidecar lacked, added without --force (#2420)
 	Folders    int
 	Messages   int
 	Threads    int
@@ -109,7 +110,7 @@ func runThreadBackfillInto(o threadOpts, st *threadStats) error {
 			return fmt.Errorf("thread backfill %s: %w", user, err)
 		}
 	}
-	slog.Info("thread backfill complete", "users", st.Users, "skipped", st.Skipped,
+	slog.Info("thread backfill complete", "users", st.Users, "skipped", st.Skipped, "added", st.Added,
 		"folders", st.Folders, "messages", st.Messages, "threads", st.Threads,
 		"unreadable", st.Unreadable, "driver", driver, "dry_run", o.DryRun)
 	return nil
@@ -166,17 +167,8 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 	if path == "" {
 		return fmt.Errorf("no control root for %s", user)
 	}
-	if !o.Force {
-		if _, serr := os.Stat(path); serr == nil {
-			// Already built. Rebuilding is a whole-file replacement, so it is
-			// asked for rather than assumed: a rerun of the tool over a live
-			// deployment should not rewrite state the deliveries have been
-			// extending.
-			st.Skipped++
-			slog.Debug("thread backfill: already built, skipping", "user", user, "path", path)
-			return nil
-		}
-	}
+	_, serr := os.Stat(path)
+	supplement := !o.Force && serr == nil
 
 	userBox := box.OpenUser(info)
 	defer userBox.Close() //nolint:errcheck
@@ -197,6 +189,22 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 		if e.Selectable {
 			names = append(names, e.Name)
 		}
+	}
+
+	if supplement {
+		// Already built. Rebuilding is a whole-file replacement, so it is
+		// asked for rather than assumed: a rerun over a live deployment adds
+		// what the sidecar lacks and leaves the rest as the deliveries made it.
+		added, err := supplementSidecar(userBox, idx, names, path, user, o.DryRun, st)
+		if err != nil {
+			return err
+		}
+		st.Skipped++
+		if added > 0 {
+			slog.Info("thread backfill: added what the sidecar lacked", "user", user,
+				"messages", added, "dry_run", o.DryRun)
+		}
+		return nil
 	}
 
 	before := st.Messages
@@ -286,6 +294,56 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 		}
 	}
 	return state, nil
+}
+
+// supplementSidecar adds to an existing sidecar the messages it has no record
+// of, a save's timed-out lock among them (#2420), in the rebuild's order. A
+// dry run counts them and writes nothing.
+func supplementSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string, path, user string, dryRun bool, st *threadStats) (int, error) {
+	state, err := threads.Load(path)
+	if err != nil {
+		return 0, err
+	}
+	mbox := mailboxbase.Open(box, idx)
+	ordered := append([]string(nil), names...)
+	sort.Strings(ordered)
+	added := 0
+	for _, name := range ordered {
+		folder, ferr := mbox.Folder(name, 0)
+		if ferr != nil {
+			return added, fmt.Errorf("open %s: %w", name, ferr)
+		}
+		metas, merr := mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+		if merr != nil {
+			return added, fmt.Errorf("read %s: %w", name, merr)
+		}
+		sort.Slice(metas, func(i, j int) bool { return metas[i].UID < metas[j].UID })
+		for _, m := range metas {
+			guid := mailbox.FormatObjectID(m.GUID)
+			if m.GUID == ([16]byte{}) {
+				continue
+			}
+			if _, ok := state.ThreadOfGUID(guid); ok {
+				continue
+			}
+			head, herr := readHeaders(mbox, name, m)
+			if herr != nil {
+				st.Unreadable++
+				slog.Warn("thread backfill: message unreadable, left unthreaded",
+					"user", user, "folder", name, "uid", m.UID, "err", herr)
+				continue
+			}
+			added++
+			st.Added++
+			if dryRun {
+				continue
+			}
+			if aerr := threads.Append(path, state, threads.PlacementFor(state, guid, head)); aerr != nil {
+				return added, fmt.Errorf("append %s: %w", name, aerr)
+			}
+		}
+	}
+	return added, nil
 }
 
 // readHeaders reads a message up to the end of its headers.

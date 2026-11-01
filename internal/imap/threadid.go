@@ -43,6 +43,7 @@ func (s *session) threadIDs(msgs []*mailbox.MessageMeta) map[uint32]string {
 		return nil
 	}
 	out := make(map[uint32]string, len(msgs))
+	var missing []*mailbox.MessageMeta
 	state.Read(func(v threads.View) {
 		for _, m := range msgs {
 			if m == nil || m.GUID == ([16]byte{}) {
@@ -53,8 +54,21 @@ func (s *session) threadIDs(msgs []*mailbox.MessageMeta) map[uint32]string {
 			}
 			if id, ok := v.ThreadOf(mailbox.FormatObjectID(m.GUID)); ok {
 				out[m.UID] = id
+			} else {
+				missing = append(missing, m)
 			}
 		}
 	})
+	// A message its save left out is recorded now, outside the read (#2420);
+	// only a personal folder's, whose bodies the session's ops can open.
+	if len(missing) > 0 && s.ops != nil && s.folder != nil && !s.isVirtualSelected() &&
+		(s.folderNS == nil || s.folderNS == s.primary) {
+		late, _ := s.ops.ThreadLate(s.folder.Name, missing)
+		for _, m := range missing {
+			if id, ok := late[mailbox.FormatObjectID(m.GUID)]; ok {
+				out[m.UID] = id
+			}
+		}
+	}
 	return out
 }
