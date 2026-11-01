@@ -21,6 +21,7 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
@@ -76,7 +77,7 @@ type Options struct {
 // ConnAccountant is warden's per-user@IP connection accounting, narrowed to
 // what this proxy calls. Satisfied by *warden.Pool.
 type ConnAccountant interface {
-	ConnectLimit(id, user, ip, service string, limit *int) error
+	ConnectLimits(id, user, ip, service string, l warden.UserLimits) error
 	Disconnect(id, user, ip, service string) error
 }
 
@@ -94,10 +95,10 @@ type PasswordAuthenticator interface {
 }
 
 // Login is who a request authenticated as, and the user's own connection
-// limit from the userdb, nil when it set none (#2460).
+// limits from the userdb (#2460).
 type Login struct {
-	User                 string
-	MaxUserIPConnections *int
+	User   string
+	Limits warden.UserLimits
 }
 
 // TokenAuthenticator verifies a Bearer token in the auth service, returning the
@@ -359,7 +360,7 @@ func (s *Server) account(st *connState, login Login, ip string) error {
 		}
 		st.user = ""
 	}
-	if err := s.opts.Warden.ConnectLimit(st.id, username, ip, service, login.MaxUserIPConnections); err != nil {
+	if err := s.opts.Warden.ConnectLimits(st.id, username, ip, service, login.Limits); err != nil {
 		if !s.opts.WardenFailOpen {
 			slog.Warn("jmap-login: warden connect refused", "user", username, "ip", ip, "err", err)
 			return err

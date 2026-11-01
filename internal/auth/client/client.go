@@ -82,9 +82,11 @@ type AuthResult struct {
 	// chain set one. Empty means the static director_tag config applies.
 	DirectorTag string
 
-	// MaxUserIPConnections is the user's own connection limit from the userdb,
-	// nil when it set none; 0 is unlimited (#2460).
+	// MaxUserIPConnections and MaxUserConnections are the user's own
+	// connection limits from the userdb, per address and across addresses; nil
+	// when it set none, 0 is unlimited (#2460).
 	MaxUserIPConnections *int
+	MaxUserConnections   *int
 
 	// Userdb is the service's answer in full: a session resolves storage and
 	// ACL identity from it, so nothing it sent may be dropped here (#1890).
@@ -698,7 +700,8 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 		}
 		res.Userdb.Username = res.Username
 		res.DirectorTag = res.Userdb.DirectorTag
-		res.MaxUserIPConnections = userIPLimit(res.Userdb.MailMaxUserIPConnections)
+		res.MaxUserIPConnections = userLimit("mail_max_userip_connections", res.Userdb.MailMaxUserIPConnections)
+		res.MaxUserConnections = userLimit("mail_max_user_connections", res.Userdb.MailMaxUserConnections)
 		return res, nil
 	case "FAIL":
 		reason := ""
@@ -742,15 +745,15 @@ func parseVerifyResponse(line string) (string, string, string, error) {
 	}
 }
 
-// userIPLimit reads a userdb mail_max_userip_connections; a value that is not
-// a non-negative number is left to the configured limit, with a line saying so.
-func userIPLimit(raw string) *int {
+// userLimit reads a userdb connection limit; a value that is not a
+// non-negative number is left out, with a line saying so.
+func userLimit(key, raw string) *int {
 	if raw == "" {
 		return nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
-		slog.Warn("auth/client: userdb mail_max_userip_connections is not a non-negative number; the configured limit applies", "value", raw)
+		slog.Warn("auth/client: a userdb connection limit is not a non-negative number; it is not applied", "field", key, "value", raw)
 		return nil
 	}
 	return &n

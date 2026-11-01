@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
@@ -57,12 +58,14 @@ func TestATicketNamesItsLoginOnlyWhereItWasIssued(t *testing.T) {
 // the user's own connection limit included (#2460).
 func TestATicketCarriesTheUsersOwnLimit(t *testing.T) {
 	tk := newTickets("key-one", time.Minute)
-	three := 3
+	three, five := 3, 5
 	for _, tc := range []struct {
 		name  string
 		login Login
 	}{
-		{"a limit of its own", Login{User: "u1@example.com", MaxUserIPConnections: &three}},
+		{"both limits of its own", Login{User: "u1@example.com", Limits: warden.UserLimits{UserIP: &three, User: &five}}},
+		{"per address only", Login{User: "u1@example.com", Limits: warden.UserLimits{UserIP: &three}}},
+		{"across addresses only", Login{User: "u1@example.com", Limits: warden.UserLimits{User: &five}}},
 		{"none", Login{User: "u1@example.com"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

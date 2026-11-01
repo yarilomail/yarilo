@@ -8,6 +8,7 @@ import (
 
 	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 // AuthService is the auth service seen by this proxy: Basic as a password
@@ -65,7 +66,7 @@ func accepted(res *authclient.AuthResult) (Login, error) {
 	if res.Nologin {
 		return Login{}, fmt.Errorf("%w: login disabled for %s", errUnauthorized, res.Username)
 	}
-	return Login{User: res.Username, MaxUserIPConnections: res.MaxUserIPConnections}, nil
+	return Login{User: res.Username, Limits: warden.UserLimits{UserIP: res.MaxUserIPConnections, User: res.MaxUserConnections}}, nil
 }
 
 // classify keeps a passdb outage apart from a refusal: the client should retry

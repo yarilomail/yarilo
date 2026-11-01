@@ -34,9 +34,9 @@ type StateBackend interface {
 	// a backend error and the caller fails open - a Redis error is not a limit
 	// rejection.
 	SessionConnect(id, user, ip, service string) (ok bool, err error)
-	// SessionConnectLimit is SessionConnect against limit, the user's own from
-	// the userdb, instead of the protocol's configured one (#2460).
-	SessionConnectLimit(id, user, ip, service string, limit int) (ok bool, err error)
+	// SessionConnectLimits is SessionConnect against the user's own limits from
+	// the userdb (#2460).
+	SessionConnectLimits(id, user, ip, service string, l UserLimits) (ok bool, err error)
 	// SessionDisconnect removes a session and frees its limit slot. Idempotent:
 	// a duplicate call must not drive the counter negative.
 	SessionDisconnect(id, user, ip string)
@@ -119,7 +119,8 @@ type memoryBackend struct {
 	limits     ConnLimits
 
 	mu        sync.Mutex
-	limiters  map[string]*connlimit.Limiter // by protocol
+	limiters  map[string]*connlimit.Limiter // by protocol, per user and IP
+	userLims  map[string]*connlimit.Limiter // by protocol, per user from every IP
 	penalties map[string]*penaltyEntry
 	sessions  map[string]*SessionInfo
 
@@ -144,6 +145,29 @@ func (l ConnLimits) For(service string) int {
 	return l.Default
 }
 
+// UserLimits are a user's own connection limits from the userdb, nil where it
+// set none: UserIP replaces the protocol's per-address limit, User caps the
+// user's connections of the protocol from every address. 0 is unlimited.
+type UserLimits struct {
+	UserIP, User *int
+}
+
+// userIP is the per-address limit for this user.
+func (l UserLimits) userIP(configured int) int {
+	if l.UserIP != nil {
+		return *l.UserIP
+	}
+	return configured
+}
+
+// user is the across-addresses limit; none is unlimited.
+func (l UserLimits) user() int {
+	if l.User != nil {
+		return *l.User
+	}
+	return 0
+}
+
 // protocolKey is the spelling a protocol is counted and stored under.
 func protocolKey(service string) string { return strings.ToLower(service) }
 
@@ -153,6 +177,7 @@ func newMemoryBackend(decay, sessionTTL time.Duration, limits ConnLimits) *memor
 		sessionTTL: sessionTTL,
 		limits:     limits,
 		limiters:   make(map[string]*connlimit.Limiter),
+		userLims:   make(map[string]*connlimit.Limiter),
 		penalties:  make(map[string]*penaltyEntry),
 		sessions:   make(map[string]*SessionInfo),
 		subs:       make(map[string][]chan string),
@@ -170,11 +195,23 @@ func (b *memoryBackend) limiter(service string) *connlimit.Limiter {
 	return l
 }
 
-func (b *memoryBackend) SessionConnect(id, user, ip, service string) (bool, error) {
-	return b.SessionConnectLimit(id, user, ip, service, b.limits.For(service))
+// userLimiter counts a user's connections of one protocol from every address;
+// the caller holds b.mu.
+func (b *memoryBackend) userLimiter(service string) *connlimit.Limiter {
+	key := protocolKey(service)
+	l, ok := b.userLims[key]
+	if !ok {
+		l = connlimit.New(0)
+		b.userLims[key] = l
+	}
+	return l
 }
 
-func (b *memoryBackend) SessionConnectLimit(id, user, ip, service string, limit int) (bool, error) {
+func (b *memoryBackend) SessionConnect(id, user, ip, service string) (bool, error) {
+	return b.SessionConnectLimits(id, user, ip, service, UserLimits{})
+}
+
+func (b *memoryBackend) SessionConnectLimits(id, user, ip, service string, l UserLimits) (bool, error) {
 	now := time.Now().UTC()
 	// A retried CONNECT for an already-registered id refreshes without taking a
 	// second limiter slot.
@@ -184,18 +221,23 @@ func (b *memoryBackend) SessionConnectLimit(id, user, ip, service string, limit 
 		b.mu.Unlock()
 		return true, nil
 	}
-	lim := b.limiter(service)
+	lim, all := b.limiter(service), b.userLimiter(service)
 	b.mu.Unlock()
 
-	if !lim.AcquireMax(user, ip, limit) {
+	if !lim.AcquireMax(user, ip, l.userIP(b.limits.For(service))) {
+		return false, nil
+	}
+	if !all.AcquireMax(user, "", l.user()) {
+		lim.Release(user, ip)
 		return false, nil
 	}
 	b.mu.Lock()
 	if sess, exists := b.sessions[id]; exists {
-		// Lost a race with a concurrent same-id CONNECT - undo the extra slot.
+		// Lost a race with a concurrent same-id CONNECT - undo the extra slots.
 		sess.lastSeen = now
 		b.mu.Unlock()
 		lim.Release(user, ip)
+		all.Release(user, "")
 		return true, nil
 	}
 	b.sessions[id] = &SessionInfo{ID: id, User: user, IP: ip, Service: service, ConnectedAt: now, lastSeen: now}
@@ -209,15 +251,16 @@ func (b *memoryBackend) SessionDisconnect(id, user, ip string) {
 	sess, existed := b.sessions[id]
 	delete(b.sessions, id)
 	sessions.Set(float64(len(b.sessions)))
-	var lim *connlimit.Limiter
+	var lim, all *connlimit.Limiter
 	if existed {
-		lim = b.limiter(sess.Service)
+		lim, all = b.limiter(sess.Service), b.userLimiter(sess.Service)
 	}
 	b.mu.Unlock()
 	// Release only if the session existed, so a duplicate DISCONNECT cannot free
 	// a slot twice.
 	if existed {
 		lim.Release(user, ip)
+		all.Release(user, "")
 	}
 }
 
@@ -289,13 +332,13 @@ func (b *memoryBackend) Maintain(now time.Time) {
 	cutoff := now.Add(-b.sessionTTL)
 	type reap struct {
 		user, ip string
-		lim      *connlimit.Limiter
+		lim, all *connlimit.Limiter
 	}
 	var dropped []reap
 	b.mu.Lock()
 	for id, sess := range b.sessions {
 		if sess.lastSeen.Before(cutoff) {
-			dropped = append(dropped, reap{user: sess.User, ip: sess.IP, lim: b.limiter(sess.Service)})
+			dropped = append(dropped, reap{user: sess.User, ip: sess.IP, lim: b.limiter(sess.Service), all: b.userLimiter(sess.Service)})
 			delete(b.sessions, id)
 		}
 	}
@@ -304,6 +347,7 @@ func (b *memoryBackend) Maintain(now time.Time) {
 	sessionsReaped.Add(float64(len(dropped)))
 	for _, r := range dropped {
 		r.lim.Release(r.user, r.ip)
+		r.all.Release(r.user, "")
 	}
 	b.PenaltySweep(now)
 }
@@ -460,6 +504,13 @@ func (b *redisBackend) cntKey(service, user, ip string) string {
 
 const cntPrefix = "ucnt:"
 
+// userCntKey counts one protocol's connections of user from every address.
+func (b *redisBackend) userCntKey(service, user string) string {
+	return b.keyPrefix + userCntPrefix + protocolKey(service) + "/" + user
+}
+
+const userCntPrefix = "uacnt:"
+
 // counterID names one counter: protocol, then user@ip; a protocol has no "/".
 func counterID(service, userIP string) string { return protocolKey(service) + "/" + userIP }
 
@@ -477,7 +528,8 @@ func (b *redisBackend) chanKey(channel string) string { return b.channelPrefix +
 // so concurrent CONNECTs cannot both slip past the limit.
 var connectScript = redis.NewScript(`
 -- KEYS[1]=cnt KEYS[2]=sess KEYS[3]=usess (service<TAB>id by expiry, #2149)
--- ARGV: 1=limit 2=ttlMs 3=user 4=ip 5=service 6=connectedAt 7=id
+-- KEYS[4]=the user's counter from every address
+-- ARGV: 1=limit 2=ttlMs 3=user 4=ip 5=service 6=connectedAt 7=id 8=user limit
 local t = redis.call('TIME')
 local expires = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) + tonumber(ARGV[2])
 local function index()
@@ -500,9 +552,14 @@ local limit = tonumber(ARGV[1])
 if limit > 0 and tonumber(redis.call('GET', KEYS[1]) or '0') >= limit then
   return 0
 end
+local ulimit = tonumber(ARGV[8])
+if ulimit > 0 and tonumber(redis.call('GET', KEYS[4]) or '0') >= ulimit then
+  return 0
+end
 redis.call('HSET', KEYS[2], 'user', ARGV[3], 'ip', ARGV[4], 'service', ARGV[5], 'connected_at', ARGV[6])
 redis.call('PEXPIRE', KEYS[2], ARGV[2])
 redis.call('INCR', KEYS[1])
+redis.call('INCR', KEYS[4])
 index()
 return 1
 `)
@@ -512,13 +569,15 @@ return 1
 // drive the counter negative. The counter is the session's own protocol's, read
 // from the session hash. KEYS[1]=sess KEYS[2]=usess
 var disconnectScript = redis.NewScript(`
--- ARGV: 1=id 2=counter key prefix (keyPrefix .. 'ucnt:')
+-- ARGV: 1=id 2=counter key prefix (keyPrefix .. 'ucnt:') 3=the user's (.. 'uacnt:')
 local f = redis.call('HMGET', KEYS[1], 'user', 'ip', 'service')
 local service = f[3] or ''
 if f[3] then redis.call('ZREM', KEYS[2], string.lower(service) .. '\t' .. ARGV[1]) end
 if redis.call('DEL', KEYS[1]) == 1 and f[1] and f[2] then
   local cnt = ARGV[2] .. string.lower(service) .. '/' .. f[1] .. '@' .. f[2]
   if redis.call('DECR', cnt) <= 0 then redis.call('DEL', cnt) end
+  local ucnt = ARGV[3] .. string.lower(service) .. '/' .. f[1]
+  if redis.call('DECR', ucnt) <= 0 then redis.call('DEL', ucnt) end
 end
 return 1
 `)
@@ -612,15 +671,16 @@ func (b *redisBackend) PenaltyUpdate(ip string, count int) {
 func (b *redisBackend) PenaltySweep(time.Time) {}
 
 func (b *redisBackend) SessionConnect(id, user, ip, service string) (bool, error) {
-	return b.SessionConnectLimit(id, user, ip, service, b.limits.For(service))
+	return b.SessionConnectLimits(id, user, ip, service, UserLimits{})
 }
 
-func (b *redisBackend) SessionConnectLimit(id, user, ip, service string, limit int) (bool, error) {
+func (b *redisBackend) SessionConnectLimits(id, user, ip, service string, l UserLimits) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
 	res, err := connectScript.Run(ctx, b.rdb,
-		[]string{b.cntKey(service, user, ip), b.sessKey(id), b.userKey(user)},
-		limit, b.sessionTTL.Milliseconds(), user, ip, service, strconv.FormatInt(time.Now().UTC().Unix(), 10), id,
+		[]string{b.cntKey(service, user, ip), b.sessKey(id), b.userKey(user), b.userCntKey(service, user)},
+		l.userIP(b.limits.For(service)), b.sessionTTL.Milliseconds(), user, ip, service, strconv.FormatInt(time.Now().UTC().Unix(), 10), id,
+		l.user(),
 	).Int()
 	if err != nil {
 		return false, redisErr("connect", err) // bounded backend error → caller applies WardenFailOpen
@@ -631,7 +691,7 @@ func (b *redisBackend) SessionConnectLimit(id, user, ip, service string, limit i
 func (b *redisBackend) SessionDisconnect(id, user, ip string) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
-	if err := disconnectScript.Run(ctx, b.rdb, []string{b.sessKey(id), b.userKey(user)}, id, b.keyPrefix+cntPrefix).Err(); err != nil {
+	if err := disconnectScript.Run(ctx, b.rdb, []string{b.sessKey(id), b.userKey(user)}, id, b.keyPrefix+cntPrefix, b.keyPrefix+userCntPrefix).Err(); err != nil {
 		redisErrors.WithLabelValues("disconnect").Inc()
 	}
 }
@@ -717,25 +777,29 @@ func (b *redisBackend) Maintain(time.Time) {
 		}
 	}
 
-	// Live tally per user@IP from the session hashes.
-	live := b.liveTally(ctx)
+	// Compare each counter to the live sessions; decrement any leak.
+	live, users := b.liveTally(ctx)
+	b.reconcile(ctx, cntPrefix, live)
+	b.reconcile(ctx, userCntPrefix, users)
+}
 
-	// Compare each counter to the tally; decrement any leak.
-	cit := b.rdb.Scan(ctx, 0, b.keyPrefix+cntPrefix+"*", scanCount).Iterator()
-	for cit.Next(ctx) {
-		key := cit.Val()
+// reconcile decrements each counter under prefix by its leak against live.
+func (b *redisBackend) reconcile(ctx context.Context, prefix string, live map[string]int) {
+	it := b.rdb.Scan(ctx, 0, b.keyPrefix+prefix+"*", scanCount).Iterator()
+	for it.Next(ctx) {
+		key := it.Val()
 		cur, err := b.rdb.Get(ctx, key).Int()
 		if err != nil {
 			continue
 		}
-		userip := strings.TrimPrefix(key, b.keyPrefix+cntPrefix)
-		if leak := cur - live[userip]; leak > 0 {
+		id := strings.TrimPrefix(key, b.keyPrefix+prefix)
+		if leak := cur - live[id]; leak > 0 {
 			if err := reconcileScript.Run(ctx, b.rdb, []string{key}, leak).Err(); err != nil {
 				redisErrors.WithLabelValues("reconcile").Inc()
 				continue
 			}
 			reconcileAdjustments.Inc()
-			slog.Info("warden: reconciled counter leak", "pod", podID, "key", userip, "leak", leak)
+			slog.Info("warden: reconciled counter leak", "pod", podID, "key", id, "leak", leak)
 		}
 	}
 }
@@ -790,11 +854,11 @@ func (b *redisBackend) Subscribe(ctx context.Context, channel string) (<-chan st
 	return out, nil
 }
 
-// liveTally returns the live session count per counter (protocol and user@IP),
-// scanned from the session hashes. Shared by Maintain (reconcile) and Dump so
-// both see the same view.
-func (b *redisBackend) liveTally(ctx context.Context) map[string]int {
-	live := map[string]int{}
+// liveTally returns the live session count per counter, protocol and user@IP,
+// and per user of a protocol from every IP, scanned from the session hashes.
+// Shared by Maintain (reconcile) and Dump so both see the same view.
+func (b *redisBackend) liveTally(ctx context.Context) (perIP, perUser map[string]int) {
+	live, users := map[string]int{}, map[string]int{}
 	sit := b.rdb.Scan(ctx, 0, b.keyPrefix+"sess:*", scanCount).Iterator()
 	for sit.Next(ctx) {
 		h, err := b.rdb.HMGet(ctx, sit.Val(), "user", "ip", "service").Result()
@@ -808,15 +872,16 @@ func (b *redisBackend) liveTally(ctx context.Context) map[string]int {
 		}
 		svc, _ := h[2].(string)
 		live[counterID(svc, u+"@"+ipv)]++
+		users[counterID(svc, u)]++
 	}
-	return live
+	return live, users
 }
 
 func (b *redisBackend) Dump() (*StateDump, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*redisOpTimeout)
 	defer cancel()
 
-	live := b.liveTally(ctx)
+	live, _ := b.liveTally(ctx)
 	seen := map[string]bool{}
 	counters := []CounterStat{}
 	cit := b.rdb.Scan(ctx, 0, b.keyPrefix+cntPrefix+"*", scanCount).Iterator()

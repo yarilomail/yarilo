@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 // wardenCall records one accounting call so a test can assert the sequence.
@@ -27,11 +29,11 @@ type fakeWarden struct {
 	calls []wardenCall
 	// refuse makes Connect fail, standing in for a reached limit.
 	refuse bool
-	// limits are the user's own limits each connect carried, nil for none.
-	limits []*int
+	// limits are the user's own limits each connect carried.
+	limits []warden.UserLimits
 }
 
-func (f *fakeWarden) ConnectLimit(id, user, ip, _ string, limit *int) error {
+func (f *fakeWarden) ConnectLimits(id, user, ip, _ string, limit warden.UserLimits) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, wardenCall{"connect", id, user, ip})
@@ -67,15 +69,19 @@ func (f *fakeWarden) countOp(op string) int {
 
 type fakeAuth struct {
 	users map[string]string
-	// limits are the users' own userdb limits.
-	limits map[string]int
+	// limits and userLimits are the users' own userdb limits, per address
+	// and across addresses.
+	limits, userLimits map[string]int
 }
 
 func (f fakeAuth) Authenticate(username, password, _, _, _, _ string) (Login, error) {
 	if pw, ok := f.users[username]; ok && pw == password {
 		l := Login{User: username}
 		if n, ok := f.limits[username]; ok {
-			l.MaxUserIPConnections = &n
+			l.Limits.UserIP = &n
+		}
+		if n, ok := f.userLimits[username]; ok {
+			l.Limits.User = &n
 		}
 		return l, nil
 	}
@@ -295,8 +301,9 @@ func TestWardenRefusalCanFailOpen(t *testing.T) {
 func TestWardenIsGivenTheUsersOwnLimit(t *testing.T) {
 	wd := &fakeWarden{}
 	base := startProxy(t, Options{Warden: wd, Auth: fakeAuth{
-		users:  map[string]string{"u1": "pw", "u2": "pw"},
-		limits: map[string]int{"u1": 3},
+		users:      map[string]string{"u1": "pw", "u2": "pw"},
+		limits:     map[string]int{"u1": 3},
+		userLimits: map[string]int{"u1": 5},
 	}})
 	for _, u := range []string{"u1", "u2"} {
 		resp := get(t, keepAliveClient(), base, basic(u, "pw"))
@@ -304,7 +311,11 @@ func TestWardenIsGivenTheUsersOwnLimit(t *testing.T) {
 	}
 	wd.mu.Lock()
 	defer wd.mu.Unlock()
-	if len(wd.limits) != 2 || wd.limits[0] == nil || *wd.limits[0] != 3 || wd.limits[1] != nil {
-		t.Fatalf("limits sent = %v, want [3 nil]", wd.limits)
+	if len(wd.limits) != 2 {
+		t.Fatalf("%d connects, want 2", len(wd.limits))
+	}
+	if u1, u2 := wd.limits[0], wd.limits[1]; u1.UserIP == nil || *u1.UserIP != 3 || u1.User == nil || *u1.User != 5 ||
+		u2.UserIP != nil || u2.User != nil {
+		t.Fatalf("limits sent = %+v, %+v; want u1 3 and 5, u2 none", u1, u2)
 	}
 }

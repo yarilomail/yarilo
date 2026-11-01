@@ -22,6 +22,7 @@ var authOKFields = []authOKField{
 	{"director_tag", func(r *AuthResponse) string { return r.DirectorTag }, func(r *AuthResponse, v string) { r.DirectorTag = v }},
 	{"proxy_timeout", func(r *AuthResponse) string { return r.ProxyTimeout }, func(r *AuthResponse, v string) { r.ProxyTimeout = v }},
 	{"mail_max_userip_connections", func(r *AuthResponse) string { return r.MailMaxUserIPConnections }, func(r *AuthResponse, v string) { r.MailMaxUserIPConnections = v }},
+	{"mail_max_user_connections", func(r *AuthResponse) string { return r.MailMaxUserConnections }, func(r *AuthResponse, v string) { r.MailMaxUserConnections = v }},
 	{"volatile_dir", func(r *AuthResponse) string { return r.VolatileDir }, func(r *AuthResponse, v string) { r.VolatileDir = v }},
 	{"index_dir", func(r *AuthResponse) string { return r.IndexDir }, func(r *AuthResponse, v string) { r.IndexDir = v }},
 	{"control_dir", func(r *AuthResponse) string { return r.ControlDir }, func(r *AuthResponse, v string) { r.ControlDir = v }},

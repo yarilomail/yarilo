@@ -24,8 +24,8 @@ func TestTheUsersOwnLimitCrossesTheWire(t *testing.T) {
 			for _, kv := range tc.fields {
 				f.Set(kv[0], kv[1])
 			}
-			if got := extractUserIPLimit(f); got != tc.want {
-				t.Fatalf("extractUserIPLimit = %q, want %q", got, tc.want)
+			if got := extractUserdbValue(f, "mail_max_userip_connections"); got != tc.want {
+				t.Fatalf("extractUserdbValue = %q, want %q", got, tc.want)
 			}
 			res := &AuthResponse{}
 			for _, tok := range strings.Split(buildAuthOK("id1", &AuthResponse{Username: "u@x", Fields: f}), "\t")[3:] {

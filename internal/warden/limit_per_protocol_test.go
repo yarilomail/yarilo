@@ -180,15 +180,84 @@ func TestAUsersOwnLimitReplacesTheProtocols(t *testing.T) {
 				b := mk(t, ConnLimits{Default: tc.protocol})
 				defer b.Close()
 				for i := 1; i <= tc.pass; i++ {
-					if ok, err := b.SessionConnectLimit(fmt.Sprintf("s%d", i), u, ip, "imap", tc.own); !ok || err != nil {
+					if ok, err := b.SessionConnectLimits(fmt.Sprintf("s%d", i), u, ip, "imap", UserLimits{UserIP: &tc.own}); !ok || err != nil {
 						t.Fatalf("connect %d = (%v, %v), want a pass", i, ok, err)
 					}
 				}
-				ok, err := b.SessionConnectLimit("over", u, ip, "imap", tc.own)
+				ok, err := b.SessionConnectLimits("over", u, ip, "imap", UserLimits{UserIP: &tc.own})
 				if err != nil || ok != tc.unlimit {
 					t.Fatalf("connect %d = (%v, %v), want %v", tc.pass+1, ok, err, tc.unlimit)
 				}
 			})
 		}
+	}
+}
+
+// A userdb mail_max_user_connections caps the user's connections of one
+// protocol from every address together, apart from the per-address limit
+// (#2460).
+func TestAUsersLimitAcrossAddresses(t *testing.T) {
+	const u = "alice@example.com"
+	two := 2
+	backends := map[string]func(t *testing.T) StateBackend{
+		"memory": func(*testing.T) StateBackend {
+			return newMemoryBackend(time.Minute, time.Minute, ConnLimits{Default: 10})
+		},
+		"redis": func(t *testing.T) StateBackend {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() { rdb.Close() })
+			return NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, ConnLimits{Default: 10})
+		},
+	}
+	for name, mk := range backends {
+		t.Run(name, func(t *testing.T) {
+			b := mk(t)
+			defer b.Close()
+			l := UserLimits{User: &two}
+			for _, c := range []struct {
+				id, ip, service string
+				want            bool
+			}{
+				{"a", "192.0.2.1", "imap", true},
+				{"b", "192.0.2.2", "imap", true},
+				{"c", "192.0.2.3", "imap", false}, // a third address over the user's 2
+				{"j", "192.0.2.3", "jmap", true},  // another protocol counts apart
+			} {
+				if ok, err := b.SessionConnectLimits(c.id, u, c.ip, c.service, l); err != nil || ok != c.want {
+					t.Fatalf("connect %s = (%v, %v), want %v", c.id, ok, err, c.want)
+				}
+			}
+			b.SessionDisconnect("a", u, "192.0.2.1")
+			if ok, _ := b.SessionConnectLimits("d", u, "192.0.2.3", "imap", l); !ok {
+				t.Fatal("a disconnect did not free the user's slot")
+			}
+			// A user without a limit of their own is not capped across addresses.
+			for i := 1; i <= 3; i++ {
+				if ok, _ := b.SessionConnect(fmt.Sprintf("bob%d", i), "bob@example.com", fmt.Sprintf("192.0.2.%d", i), "imap"); !ok {
+					t.Fatalf("bob's connect %d was refused", i)
+				}
+			}
+		})
+	}
+}
+
+// Maintain brings a leaked across-addresses counter down to the live sessions.
+func TestMaintainReconcilesTheUsersCounter(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	b := NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, ConnLimits{Default: 10})
+	defer b.Close()
+	if ok, err := b.SessionConnect("s1", "alice@example.com", "192.0.2.7", "imap"); !ok || err != nil {
+		t.Fatalf("connect = (%v, %v)", ok, err)
+	}
+	const key = "test:warden:uacnt:imap/alice@example.com"
+	if err := mr.Set(key, "4"); err != nil {
+		t.Fatal(err)
+	}
+	b.Maintain(time.Now())
+	if v, err := mr.Get(key); err != nil || v != "1" {
+		t.Fatalf("%s = %q, %v after Maintain; want 1", key, v, err)
 	}
 }

@@ -80,15 +80,18 @@ func (c *Conn) readHandshake() error {
 // Connect sends CONNECT and returns nil on OK, ErrTooManyConns on FAIL, or a
 // transport error. id must be unique per request (e.g. session sequence number).
 func (c *Conn) Connect(id, user, ip, service string) error {
-	return c.ConnectLimit(id, user, ip, service, nil)
+	return c.ConnectLimits(id, user, ip, service, UserLimits{})
 }
 
-// ConnectLimit is Connect for a user whose userdb names a limit of its own;
-// nil leaves the protocol's configured limit (#2460).
-func (c *Conn) ConnectLimit(id, user, ip, service string, limit *int) error {
+// ConnectLimits is Connect for a user whose userdb names limits of its own
+// (#2460).
+func (c *Conn) ConnectLimits(id, user, ip, service string, l UserLimits) error {
 	line := "CONNECT\t" + id + "\t" + user + "\t" + ip + "\t" + service
-	if limit != nil {
-		line += "\tlimit=" + strconv.Itoa(*limit)
+	if l.UserIP != nil {
+		line += "\tlimit=" + strconv.Itoa(*l.UserIP)
+	}
+	if l.User != nil {
+		line += "\tuser_limit=" + strconv.Itoa(*l.User)
 	}
 	if _, err := fmt.Fprint(c.conn, line+"\n"); err != nil {
 		return fmt.Errorf("warden/client: write CONNECT: %w", err)

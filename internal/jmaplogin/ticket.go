@@ -40,15 +40,12 @@ func (t *tickets) sign(payload string) []byte {
 	return m.Sum(nil)
 }
 
-// issue signs the login, the user's own connection limit included, so the
+// issue signs the login, the user's own connection limits included, so the
 // WebSocket it opens is counted as the login was (#2460).
 func (t *tickets) issue(login Login, ip string) (string, time.Time) {
 	until := t.now().Add(t.ttl).Truncate(time.Second)
-	limit := ""
-	if login.MaxUserIPConnections != nil {
-		limit = strconv.Itoa(*login.MaxUserIPConnections)
-	}
-	payload := login.User + "\n" + ip + "\n" + strconv.FormatInt(until.Unix(), 10) + "\n" + limit
+	payload := login.User + "\n" + ip + "\n" + strconv.FormatInt(until.Unix(), 10) +
+		"\n" + optInt(login.Limits.UserIP) + "\n" + optInt(login.Limits.User)
 	enc := base64.RawURLEncoding
 	return enc.EncodeToString([]byte(payload)) + "." + enc.EncodeToString(t.sign(payload)), until
 }
@@ -67,10 +64,10 @@ func (t *tickets) check(ticket, ip string) (Login, error) {
 		return Login{}, errBadTicket
 	}
 	parts := strings.Split(string(payload), "\n")
-	if len(parts) == 3 {
-		parts = append(parts, "") // issued before a ticket carried the limit
+	for len(parts) < 5 && len(parts) >= 3 {
+		parts = append(parts, "") // issued before a ticket carried the limits
 	}
-	if len(parts) != 4 {
+	if len(parts) != 5 {
 		return Login{}, errBadTicket
 	}
 	until, err := strconv.ParseInt(parts[2], 10, 64)
@@ -78,14 +75,31 @@ func (t *tickets) check(ticket, ip string) (Login, error) {
 		return Login{}, errBadTicket
 	}
 	login := Login{User: parts[0]}
-	if parts[3] != "" {
-		n, err := strconv.Atoi(parts[3])
-		if err != nil {
-			return Login{}, errBadTicket
-		}
-		login.MaxUserIPConnections = &n
+	if login.Limits.UserIP, err = parseOptInt(parts[3]); err != nil {
+		return Login{}, errBadTicket
+	}
+	if login.Limits.User, err = parseOptInt(parts[4]); err != nil {
+		return Login{}, errBadTicket
 	}
 	return login, nil
+}
+
+func optInt(n *int) string {
+	if n == nil {
+		return ""
+	}
+	return strconv.Itoa(*n)
+}
+
+func parseOptInt(s string) (*int, error) {
+	if s == "" {
+		return nil, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
 }
 
 // wsTicket is the ticket a WebSocket request presents instead of credentials.

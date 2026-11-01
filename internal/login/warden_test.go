@@ -294,6 +294,7 @@ func TestLogin_Warden_AppliesTheUsersOwnLimit(t *testing.T) {
 		{"own limit 1, one session open", "\tmail_max_userip_connections=1", 10, false},
 		{"own limit 0 lifts the protocol's 1", "\tmail_max_userip_connections=0", 1, true},
 		{"userdb_ spelling", "\tuserdb_mail_max_userip_connections=1", 10, false},
+		{"own limit 1 across addresses", "\tmail_max_user_connections=1", 10, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wardenAddr := startWarden(t, tc.protocol)

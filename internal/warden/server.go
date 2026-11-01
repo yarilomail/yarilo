@@ -313,8 +313,8 @@ func (s *Server) handleConnect(conn net.Conn, fields []string) string {
 	id, user, ip, service := fields[1], fields[2], fields[3], fields[4]
 	var ok bool
 	var err error
-	if limit, given := userLimit(fields[5:]); given {
-		ok, err = s.state.SessionConnectLimit(id, user, ip, service, limit)
+	if l, given := userLimits(fields[5:]); given {
+		ok, err = s.state.SessionConnectLimits(id, user, ip, service, l)
 	} else {
 		ok, err = s.state.SessionConnect(id, user, ip, service)
 	}
@@ -333,17 +333,24 @@ func (s *Server) handleConnect(conn net.Conn, fields []string) string {
 	return reply("ok", fmt.Sprintf("OK\t%s\n", id))
 }
 
-// userLimit reads the optional limit=N a login proxy sends for a user whose
-// userdb names a limit of its own (#2460); without one the protocol's applies.
-func userLimit(extra []string) (int, bool) {
+// userLimits reads the optional limit=N and user_limit=N a login proxy sends
+// for a user whose userdb names limits of its own (#2460).
+func userLimits(extra []string) (UserLimits, bool) {
+	var l UserLimits
 	for _, f := range extra {
-		if v, ok := strings.CutPrefix(f, "limit="); ok {
-			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-				return n, true
-			}
+		key, v, _ := strings.Cut(f, "=")
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			continue
+		}
+		switch key {
+		case "limit":
+			l.UserIP = &n
+		case "user_limit":
+			l.User = &n
 		}
 	}
-	return 0, false
+	return l, l.UserIP != nil || l.User != nil
 }
 
 // handleDisconnect processes: DISCONNECT\t{id}\t{user}\t{ip}\t{service}
