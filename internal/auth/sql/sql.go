@@ -9,17 +9,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net"
-	"net/url"
-	"os"
-	"strings"
 
 	"github.com/emersion/go-sasl"
 
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/v2/internal/auth/scheme"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlitefile"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlpool"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 
@@ -102,7 +99,7 @@ func New(c Config) (*Passdb, error) {
 		return nil, fmt.Errorf("auth/sql: unsupported driver %q (want sqlite|mysql|postgres)", c.Driver)
 	}
 	if drv == "sqlite" {
-		if err := createSQLiteFile(c.DSN); err != nil {
+		if err := sqlitefile.Create(c.DSN); err != nil {
 			return nil, fmt.Errorf("auth/sql: create sqlite file: %w", err)
 		}
 	}
@@ -442,63 +439,6 @@ func sqlDriverName(driver string) (string, bool) {
 		return "pgx", true
 	}
 	return "", false
-}
-
-// createSQLiteFile creates a missing database file 0600 before the driver
-// opens it. The driver would create it with the process umask, which leaves
-// the password hashes readable by every local user (#2417). An existing file
-// keeps its mode, and SQLite gives its journal and WAL files the database
-// file's mode.
-func createSQLiteFile(dsn string) error {
-	path := sqliteFilePath(dsn)
-	if path == "" {
-		return nil
-	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	// The umask can only take bits away; Chmod sets 0600 whatever it is.
-	if err := f.Chmod(0o600); err != nil {
-		f.Close() //nolint:errcheck,gosec // the Chmod error is the answer
-		return err
-	}
-	return f.Close()
-}
-
-// sqliteFilePath returns the file a DSN would make SQLite create, or "" when
-// it creates none: an in-memory database, or a mode other than rwc.
-func sqliteFilePath(dsn string) string {
-	path, query, _ := strings.Cut(dsn, "?")
-	if rest, ok := strings.CutPrefix(path, "file:"); ok {
-		if after, ok := strings.CutPrefix(rest, "//"); ok {
-			i := strings.IndexByte(after, '/')
-			if i < 0 {
-				return ""
-			}
-			rest = after[i:]
-		}
-		p, err := url.PathUnescape(rest)
-		if err != nil {
-			return ""
-		}
-		path = p
-	}
-	if path == "" || path == ":memory:" {
-		return ""
-	}
-	if v, err := url.ParseQuery(query); err == nil {
-		if mode := v.Get("mode"); mode != "" && mode != "rwc" {
-			return ""
-		}
-		if v.Get("vfs") == "memdb" {
-			return ""
-		}
-	}
-	return path
 }
 
 func schemaFor(driver string) (string, bool) {

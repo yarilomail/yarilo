@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlitefile"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlpool"
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
@@ -100,6 +101,11 @@ func New(cfg dict.Config) (dict.Dict, error) {
 		}
 	}
 
+	if driver == "sqlite" {
+		if err := sqlitefile.Create(dsn); err != nil {
+			return nil, fmt.Errorf("create sqlite file: %w", err)
+		}
+	}
 	db, err := stdsql.Open(driverName(driver), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", driver, err)
