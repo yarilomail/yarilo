@@ -62,7 +62,8 @@ func main() {
 
 	listen := sl.Listen
 	if listen == "" {
-		listen = ":12345"
+		slog.Error("sasl_login.listen is required")
+		os.Exit(1)
 	}
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {

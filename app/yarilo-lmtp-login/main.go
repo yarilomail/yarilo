@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -98,7 +97,7 @@ func main() {
 
 	opts := options(cfg, hostname, intTLS, authMasterPool)
 
-	addr := fmt.Sprintf(":%d", cfg.Services.LMTP.Port)
+	addr, from := cfg.Services.LMTP.ListenAddr(config.PublicHost)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("lmtp-login: listen failed", "addr", addr, "err", err)
@@ -110,7 +109,7 @@ func main() {
 		slog.Error("lmtp-login: server error", "err", srv.Serve(ln))
 		os.Exit(1)
 	}()
-	slog.Info("lmtp-login: listening", "addr", addr)
+	slog.Info("lmtp-login: listening", "addr", ln.Addr().String(), "from", from)
 
 	tel := startTelemetry(cfg.Telemetry)
 

@@ -1,6 +1,6 @@
 // yarctl is the yarilo operator CLI. Each subsystem lives under a top-level
 // plane: director (yarilo-director admin API, default :9103) and backend
-// (yarilo-backend-api admin API, default :9105). Global flags --url/--token
+// (yarilo-backend-api admin API, default 127.0.0.1:9105). Global flags --url/--token
 // select the director plane; --backend-url/--backend-token select the backend
 // plane. When YARILO_ADMIN_TYPE is set the plane is implicit and the first
 // argument is the service/command directly (no plane prefix).

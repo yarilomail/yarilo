@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -120,26 +119,26 @@ func main() {
 
 	// port 587 - STARTTLS
 	if svcs.Submission.Active() {
-		addr := fmt.Sprintf(":%d", svcs.Submission.Port)
+		addr, from := svcs.Submission.ListenAddr(config.BackendHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("submission: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
 		}
 		stopaccept.Serve(ctx, "submission:", ln, func(l net.Listener) error { return srv.Serve(l, nil) })
-		slog.Info("submission: listening", "addr", addr, "tls", "starttls")
+		slog.Info("submission: listening", "addr", ln.Addr().String(), "from", from, "tls", "starttls")
 	}
 
 	// port 465 - implicit TLS
 	if svcs.Submissions.Active() {
-		addr := fmt.Sprintf(":%d", svcs.Submissions.Port)
+		addr, from := svcs.Submissions.ListenAddr(config.BackendHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("submissions: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
 		}
 		stopaccept.Serve(ctx, "submissions:", ln, func(l net.Listener) error { return srv.Serve(l, extTLS) })
-		slog.Info("submission: listening", "addr", addr, "tls", "implicit")
+		slog.Info("submission: listening", "addr", ln.Addr().String(), "from", from, "tls", "implicit")
 	}
 
 	ready.Store(true) // listeners bound → the readiness toucher may start signalling

@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -101,7 +100,7 @@ func main() {
 	tel := startTelemetry(cfg.Telemetry)
 
 	// Port 4190 - STARTTLS (ManageSieve does not have an implicit-TLS variant).
-	addr := fmt.Sprintf(":%d", svcs.ManageSieve.Port)
+	addr, from := svcs.ManageSieve.ListenAddr(config.PublicHost)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("managesieve-login: listen failed", "addr", addr, "err", err)
@@ -153,7 +152,7 @@ func main() {
 	if cfg.ManageSieveLoginService.DirectorAddr != "" {
 		go srv.Watch(ctx)
 	}
-	slog.Info("managesieve-login: listening", "addr", addr, "tls", "starttls")
+	slog.Info("managesieve-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "starttls")
 
 	// Every configured port is bound and serving now, so the pod can accept
 	// clients. Reporting earlier would let Kubernetes route to a port that is not

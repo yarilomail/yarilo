@@ -21,61 +21,74 @@ general:
     mail_max_userip_connections: 0
   startup_dial_retries: 3
 
+## Each service runs in its own container and is reached over the compose
+## network, so listeners bind every interface here. Only the ports the
+## docker-compose.yml publishes reach the host's network.
 services:
   imaps:
     enabled: true
     port: 10993
+    address: "0.0.0.0"
     ssl_mode: ssl
     haproxy_protocol: false
     xclient_protocol: true
   imap:
     enabled: true
     port: 10143
+    address: "0.0.0.0"
     ssl_mode: starttls
     haproxy_protocol: false
     xclient_protocol: true
   pop3s:
     enabled: true
     port: 10995
+    address: "0.0.0.0"
     ssl_mode: ssl
     haproxy_protocol: false
     xclient_protocol: true
   pop3:
     enabled: true
     port: 10110
+    address: "0.0.0.0"
     ssl_mode: starttls
     haproxy_protocol: false
     xclient_protocol: true
   lmtp:
     enabled: true
     port: 10024
+    address: "0.0.0.0"
     ssl_mode: "no"
     haproxy_protocol: false
     xclient_protocol: true
   submission:
     enabled: true
     port: 10587
+    address: "0.0.0.0"
     ssl_mode: starttls
     disable_plaintext_auth: true
   submissions:
     enabled: false
     port: 10465
+    address: "0.0.0.0"
     ssl_mode: ssl
     disable_plaintext_auth: true
   managesieve:
     enabled: true
     port: 14190
+    address: "0.0.0.0"
     ssl_mode: starttls
     disable_plaintext_auth: false
     haproxy_protocol: false
   managesieve_be:
     enabled: true
     port: 14190
+    address: "0.0.0.0"
     ssl_mode: "no"
   ## JMAP client listener on yarilo-jmap-login.
   jmap:
     enabled: true
     port: 8443
+    address: "0.0.0.0"
     ssl_mode: ssl
     haproxy_protocol: false
     disable_plaintext_auth: true
@@ -86,6 +99,7 @@ services:
   jmap_be:
     enabled: true
     port: 10443
+    address: "0.0.0.0"
     ssl_mode: "no"
     xclient_protocol: true
 

@@ -60,7 +60,8 @@ func main() {
 
 	listen := cfg.BackendAPI.Listen
 	if listen == "" {
-		listen = ":9105"
+		slog.Error("backend_api.listen is required")
+		os.Exit(1)
 	}
 	slog.Info("yarilo-backend-api starting",
 		"version", build.Version,

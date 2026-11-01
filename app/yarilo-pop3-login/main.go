@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -116,7 +115,7 @@ func main() {
 
 	// Port 995 - implicit TLS (POP3S).
 	if svcs.POP3S.Active() {
-		addr := fmt.Sprintf(":%d", svcs.POP3S.Port)
+		addr, from := svcs.POP3S.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("pop3s-login: listen failed", "addr", addr, "err", err)
@@ -163,12 +162,12 @@ func main() {
 		if dirAddr != "" {
 			go srv.Watch(ctx)
 		}
-		slog.Info("pop3-login: listening", "addr", addr, "tls", "implicit")
+		slog.Info("pop3-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "implicit")
 	}
 
 	// Port 110 - STARTTLS.
 	if svcs.POP3.Active() {
-		addr := fmt.Sprintf(":%d", svcs.POP3.Port)
+		addr, from := svcs.POP3.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("pop3-login: listen failed", "addr", addr, "err", err)
@@ -215,7 +214,7 @@ func main() {
 		if dirAddr != "" {
 			go srv.Watch(ctx)
 		}
-		slog.Info("pop3-login: listening", "addr", addr, "tls", "starttls")
+		slog.Info("pop3-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "starttls")
 	}
 
 	// Every configured port is bound and serving now, so the pod can accept

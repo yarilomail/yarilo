@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -116,7 +115,7 @@ func main() {
 
 	// Port 465 - implicit TLS (Submissions).
 	if svcs.Submissions.Active() {
-		addr := fmt.Sprintf(":%d", svcs.Submissions.Port)
+		addr, from := svcs.Submissions.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("submissions-login: listen failed", "addr", addr, "err", err)
@@ -166,12 +165,12 @@ func main() {
 		if dirAddr != "" {
 			go srv.Watch(ctx)
 		}
-		slog.Info("submission-login: listening", "addr", addr, "tls", "implicit")
+		slog.Info("submission-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "implicit")
 	}
 
 	// Port 587 - STARTTLS.
 	if svcs.Submission.Active() {
-		addr := fmt.Sprintf(":%d", svcs.Submission.Port)
+		addr, from := svcs.Submission.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("submission-login: listen failed", "addr", addr, "err", err)
@@ -221,7 +220,7 @@ func main() {
 		if dirAddr != "" {
 			go srv.Watch(ctx)
 		}
-		slog.Info("submission-login: listening", "addr", addr, "tls", "starttls")
+		slog.Info("submission-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "starttls")
 	}
 
 	// Every configured port is bound and serving now, so the pod can accept

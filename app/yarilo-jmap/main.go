@@ -52,7 +52,7 @@ func main() {
 		slog.Error("services.jmap_be is not enabled")
 		os.Exit(1)
 	}
-	addr := fmt.Sprintf(":%d", svc.Port)
+	addr, from := svc.ListenAddr(config.BackendHost)
 
 	// Internal mTLS, not the client certificate: the client's TLS ended at the
 	// login pod and this hop is between components.
@@ -85,6 +85,7 @@ func main() {
 	slog.Info("yarilo-jmap starting",
 		"version", build.Version,
 		"listen", addr,
+		"from", from,
 		"mtls", tlsCfg != nil,
 		"trust", trust.Mode.String(),
 		"base_url", cfg.Protocol.JMAP.BaseURL,

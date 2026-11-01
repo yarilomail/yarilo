@@ -130,7 +130,8 @@ func main() {
 
 	listen := qs.Listen
 	if listen == "" {
-		listen = ":12340"
+		slog.Error("quota_status.listen is required")
+		os.Exit(1)
 	}
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
