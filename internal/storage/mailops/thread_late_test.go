@@ -3,6 +3,7 @@ package mailops
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -23,13 +24,34 @@ import (
 type gate struct {
 	lockstest.Recorder
 	refuse bool
+	held   bool
 }
 
 func (g *gate) Lock(ctx context.Context, resource, owner string, ttl time.Duration) (locks.Lock, error) {
 	if g.refuse {
 		return locks.Lock{}, errors.New("locks: resource is busy")
 	}
+	g.held = true
 	return g.Recorder.Lock(ctx, resource, owner, ttl)
+}
+
+func (g *gate) Unlock(ctx context.Context, token string) error {
+	g.held = false
+	return g.Recorder.Unlock(ctx, token)
+}
+
+// openWatch counts the message opens made while the thread lock is held.
+type openWatch struct {
+	mailbox.Box
+	lock      *gate
+	underLock int
+}
+
+func (w *openWatch) OpenMessage(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
+	if w.lock.held {
+		w.underLock++
+	}
+	return w.Box.OpenMessage(folder, m)
 }
 
 type threadAccount struct {
@@ -149,5 +171,27 @@ func TestAReadDoesNotStartASidecar(t *testing.T) {
 		if _, ok := a.threadOf(t, m); ok {
 			t.Error("a read started the sidecar")
 		}
+	}
+}
+
+// The headers are read before the lock: under it a read only appends, so the
+// disk never sits in the queue that left the messages out (#2420).
+func TestALateRecordReadsNoMessageUnderTheLock(t *testing.T) {
+	a := newThreadAccount(t)
+	a.save(t, "Message-ID: <a@x>\r\nSubject: s")
+	a.lock.refuse = true
+	var missed []*mailbox.MessageMeta
+	for _, id := range []string{"b", "c", "d"} {
+		missed = append(missed, a.save(t, "Message-ID: <"+id+"@x>\r\nIn-Reply-To: <a@x>\r\nSubject: Re: s"))
+	}
+	a.lock.refuse = false
+	w := &openWatch{Box: a.box, lock: a.lock}
+	o := New(a.o.cfg, w, a.o.user)
+	late, err := o.ThreadLate("INBOX", missed)
+	if err != nil || len(late) != len(missed) {
+		t.Fatalf("recorded %d of %d, err %v", len(late), len(missed), err)
+	}
+	if w.underLock != 0 {
+		t.Errorf("%d messages were opened while the thread lock was held", w.underLock)
 	}
 }

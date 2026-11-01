@@ -90,16 +90,29 @@ func (o *Ops) ThreadLate(folder string, msgs []*mailbox.MessageMeta) (map[string
 		msgs = msgs[:lateThreadMax]
 	}
 	user := o.user.Username
-	out := make(map[string]string, len(msgs))
+	// Headers are read before the lock, as a save captures its own: only the
+	// append waits on the account's lock, never the disk.
+	type late struct {
+		guid string
+		raw  []byte
+	}
+	todo := make([]late, 0, len(msgs))
+	for _, m := range msgs {
+		raw, err := o.readHeader(folder, m)
+		if err != nil {
+			slog.Debug(o.cfg.Protocol+": late thread: header unreadable", "user", user, "err", err)
+			continue
+		}
+		todo = append(todo, late{mailbox.FormatObjectID(m.GUID), raw})
+	}
+	if len(todo) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(todo))
 	wrote := false
 	rec := func(context.Context) error {
-		for _, m := range msgs {
-			raw, err := o.readHeader(folder, m)
-			if err != nil {
-				slog.Debug(o.cfg.Protocol+": late thread: header unreadable", "user", user, "err", err)
-				continue
-			}
-			guid := mailbox.FormatObjectID(m.GUID)
+		for _, l := range todo {
+			guid, raw := l.guid, l.raw
 			id, w, err := o.cfg.Threads.RecordNew(user, path, guid, raw)
 			if err != nil {
 				return err
