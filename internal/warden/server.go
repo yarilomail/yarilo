@@ -311,7 +311,13 @@ func (s *Server) handleConnect(conn net.Conn, fields []string) string {
 		fields = append(fields, "")
 	}
 	id, user, ip, service := fields[1], fields[2], fields[3], fields[4]
-	ok, err := s.state.SessionConnect(id, user, ip, service)
+	var ok bool
+	var err error
+	if limit, given := userLimit(fields[5:]); given {
+		ok, err = s.state.SessionConnectLimit(id, user, ip, service, limit)
+	} else {
+		ok, err = s.state.SessionConnect(id, user, ip, service)
+	}
 	if err != nil {
 		// fail open: a Redis blip must not block logins; the limit is
 		// unenforced until the backend recovers
@@ -325,6 +331,19 @@ func (s *Server) handleConnect(conn net.Conn, fields []string) string {
 	// no cnt= here: SessionLookupCount is a Redis SCAN, too costly on the hot path
 	slog.Info("warden: session connect", "pod", podID, "sid", id, "user", user, "ip", ip, "service", service)
 	return reply("ok", fmt.Sprintf("OK\t%s\n", id))
+}
+
+// userLimit reads the optional limit=N a login proxy sends for a user whose
+// userdb names a limit of its own (#2460); without one the protocol's applies.
+func userLimit(extra []string) (int, bool) {
+	for _, f := range extra {
+		if v, ok := strings.CutPrefix(f, "limit="); ok {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				return n, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // handleDisconnect processes: DISCONNECT\t{id}\t{user}\t{ip}\t{service}

@@ -82,6 +82,10 @@ type AuthResult struct {
 	// chain set one. Empty means the static director_tag config applies.
 	DirectorTag string
 
+	// MaxUserIPConnections is the user's own connection limit from the userdb,
+	// nil when it set none; 0 is unlimited (#2460).
+	MaxUserIPConnections *int
+
 	// Userdb is the service's answer in full: a session resolves storage and
 	// ACL identity from it, so nothing it sent may be dropped here (#1890).
 	Userdb *protocol.AuthResponse
@@ -694,6 +698,7 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 		}
 		res.Userdb.Username = res.Username
 		res.DirectorTag = res.Userdb.DirectorTag
+		res.MaxUserIPConnections = userIPLimit(res.Userdb.MailMaxUserIPConnections)
 		return res, nil
 	case "FAIL":
 		reason := ""
@@ -735,4 +740,18 @@ func parseVerifyResponse(line string) (string, string, string, error) {
 	default:
 		return "", "", "", fmt.Errorf("auth/client: unknown verify verb %q", fields[0])
 	}
+}
+
+// userIPLimit reads a userdb mail_max_userip_connections; a value that is not
+// a non-negative number is left to the configured limit, with a line saying so.
+func userIPLimit(raw string) *int {
+	if raw == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		slog.Warn("auth/client: userdb mail_max_userip_connections is not a non-negative number; the configured limit applies", "value", raw)
+		return nil
+	}
+	return &n
 }

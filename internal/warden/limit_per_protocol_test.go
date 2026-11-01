@@ -2,6 +2,7 @@ package warden
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,5 +120,75 @@ func TestADisconnectFreesItsOwnProtocolsSlot(t *testing.T) {
 				t.Fatalf("DUMP counters by protocol = %v, want imap 1 and jmap 1", got)
 			}
 		})
+	}
+}
+
+// The cnt:<user>@<ip> counters from before the per-protocol keys have no TTL;
+// one Maintain removes them and leaves the live ucnt: counters alone.
+func TestMaintainRemovesTheOldSharedCounters(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	b := NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, ConnLimits{Default: 10})
+	defer b.Close()
+	for _, k := range []string{"test:warden:cnt:alice@example.com@192.0.2.7", "test:warden:cnt:bob@example.com@192.0.2.8"} {
+		if err := mr.Set(k, "3"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ok, err := b.SessionConnect("s1", "alice@example.com", "192.0.2.7", "imap"); !ok || err != nil {
+		t.Fatalf("connect = (%v, %v)", ok, err)
+	}
+	b.Maintain(time.Now())
+	for _, k := range mr.Keys() {
+		if strings.HasPrefix(k, "test:warden:cnt:") {
+			t.Errorf("%s survived Maintain", k)
+		}
+	}
+	if v, err := mr.Get("test:warden:ucnt:imap/alice@example.com@192.0.2.7"); err != nil || v != "1" {
+		t.Errorf("the live counter = %q, %v; want 1", v, err)
+	}
+}
+
+// A user's own limit from the userdb replaces the protocol's for that user, on
+// the same counter, 0 lifting it (#2460).
+func TestAUsersOwnLimitReplacesTheProtocols(t *testing.T) {
+	const u, ip = "alice@example.com", "192.0.2.7"
+	tests := []struct {
+		name     string
+		protocol int
+		own      int
+		pass     int // connects that pass; the next is refused, unless unlimited
+		unlimit  bool
+	}{
+		{"own 2 under the protocol's 10", 10, 2, 2, false},
+		{"own 5 over the protocol's 1", 1, 5, 5, false},
+		{"own 0 lifts the protocol's 1", 1, 0, 6, true},
+	}
+	backends := map[string]func(t *testing.T, l ConnLimits) StateBackend{
+		"memory": func(_ *testing.T, l ConnLimits) StateBackend { return newMemoryBackend(time.Minute, time.Minute, l) },
+		"redis": func(t *testing.T, l ConnLimits) StateBackend {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() { rdb.Close() })
+			return NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, l)
+		},
+	}
+	for bname, mk := range backends {
+		for _, tc := range tests {
+			t.Run(bname+"/"+tc.name, func(t *testing.T) {
+				b := mk(t, ConnLimits{Default: tc.protocol})
+				defer b.Close()
+				for i := 1; i <= tc.pass; i++ {
+					if ok, err := b.SessionConnectLimit(fmt.Sprintf("s%d", i), u, ip, "imap", tc.own); !ok || err != nil {
+						t.Fatalf("connect %d = (%v, %v), want a pass", i, ok, err)
+					}
+				}
+				ok, err := b.SessionConnectLimit("over", u, ip, "imap", tc.own)
+				if err != nil || ok != tc.unlimit {
+					t.Fatalf("connect %d = (%v, %v), want %v", tc.pass+1, ok, err, tc.unlimit)
+				}
+			})
+		}
 	}
 }

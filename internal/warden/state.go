@@ -34,6 +34,9 @@ type StateBackend interface {
 	// a backend error and the caller fails open - a Redis error is not a limit
 	// rejection.
 	SessionConnect(id, user, ip, service string) (ok bool, err error)
+	// SessionConnectLimit is SessionConnect against limit, the user's own from
+	// the userdb, instead of the protocol's configured one (#2460).
+	SessionConnectLimit(id, user, ip, service string, limit int) (ok bool, err error)
 	// SessionDisconnect removes a session and frees its limit slot. Idempotent:
 	// a duplicate call must not drive the counter negative.
 	SessionDisconnect(id, user, ip string)
@@ -168,6 +171,10 @@ func (b *memoryBackend) limiter(service string) *connlimit.Limiter {
 }
 
 func (b *memoryBackend) SessionConnect(id, user, ip, service string) (bool, error) {
+	return b.SessionConnectLimit(id, user, ip, service, b.limits.For(service))
+}
+
+func (b *memoryBackend) SessionConnectLimit(id, user, ip, service string, limit int) (bool, error) {
 	now := time.Now().UTC()
 	// A retried CONNECT for an already-registered id refreshes without taking a
 	// second limiter slot.
@@ -180,7 +187,7 @@ func (b *memoryBackend) SessionConnect(id, user, ip, service string) (bool, erro
 	lim := b.limiter(service)
 	b.mu.Unlock()
 
-	if !lim.Acquire(user, ip) {
+	if !lim.AcquireMax(user, ip, limit) {
 		return false, nil
 	}
 	b.mu.Lock()
@@ -605,11 +612,15 @@ func (b *redisBackend) PenaltyUpdate(ip string, count int) {
 func (b *redisBackend) PenaltySweep(time.Time) {}
 
 func (b *redisBackend) SessionConnect(id, user, ip, service string) (bool, error) {
+	return b.SessionConnectLimit(id, user, ip, service, b.limits.For(service))
+}
+
+func (b *redisBackend) SessionConnectLimit(id, user, ip, service string, limit int) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisOpTimeout)
 	defer cancel()
 	res, err := connectScript.Run(ctx, b.rdb,
 		[]string{b.cntKey(service, user, ip), b.sessKey(id), b.userKey(user)},
-		b.limits.For(service), b.sessionTTL.Milliseconds(), user, ip, service, strconv.FormatInt(time.Now().UTC().Unix(), 10), id,
+		limit, b.sessionTTL.Milliseconds(), user, ip, service, strconv.FormatInt(time.Now().UTC().Unix(), 10), id,
 	).Int()
 	if err != nil {
 		return false, redisErr("connect", err) // bounded backend error → caller applies WardenFailOpen
@@ -697,6 +708,14 @@ func (b *redisBackend) SessionCount() int { return len(b.SessionList()) }
 func (b *redisBackend) Maintain(time.Time) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*redisOpTimeout)
 	defer cancel()
+
+	// The cnt: counters from before #2457 have no TTL and nothing reads them.
+	oit := b.rdb.Scan(ctx, 0, b.keyPrefix+"cnt:*", scanCount).Iterator()
+	for oit.Next(ctx) {
+		if err := b.rdb.Del(ctx, oit.Val()).Err(); err != nil {
+			redisErrors.WithLabelValues("reconcile").Inc()
+		}
+	}
 
 	// Live tally per user@IP from the session hashes.
 	live := b.liveTally(ctx)

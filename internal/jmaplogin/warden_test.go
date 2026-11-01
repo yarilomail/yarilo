@@ -27,12 +27,15 @@ type fakeWarden struct {
 	calls []wardenCall
 	// refuse makes Connect fail, standing in for a reached limit.
 	refuse bool
+	// limits are the user's own limits each connect carried, nil for none.
+	limits []*int
 }
 
-func (f *fakeWarden) Connect(id, user, ip, _ string) error {
+func (f *fakeWarden) ConnectLimit(id, user, ip, _ string, limit *int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, wardenCall{"connect", id, user, ip})
+	f.limits = append(f.limits, limit)
 	if f.refuse {
 		return errors.New("limit reached")
 	}
@@ -62,13 +65,21 @@ func (f *fakeWarden) countOp(op string) int {
 	return n
 }
 
-type fakeAuth struct{ users map[string]string }
+type fakeAuth struct {
+	users map[string]string
+	// limits are the users' own userdb limits.
+	limits map[string]int
+}
 
-func (f fakeAuth) Authenticate(username, password, _, _, _, _ string) (string, error) {
+func (f fakeAuth) Authenticate(username, password, _, _, _, _ string) (Login, error) {
 	if pw, ok := f.users[username]; ok && pw == password {
-		return username, nil
+		l := Login{User: username}
+		if n, ok := f.limits[username]; ok {
+			l.MaxUserIPConnections = &n
+		}
+		return l, nil
 	}
-	return "", errors.New("bad credentials")
+	return Login{}, errors.New("bad credentials")
 }
 
 func basic(user, pass string) string {
@@ -276,5 +287,24 @@ func TestWardenRefusalCanFailOpen(t *testing.T) {
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// A user's own limit from the userdb travels with the connect, so warden holds
+// that user to it rather than to JMAP's (#2460).
+func TestWardenIsGivenTheUsersOwnLimit(t *testing.T) {
+	wd := &fakeWarden{}
+	base := startProxy(t, Options{Warden: wd, Auth: fakeAuth{
+		users:  map[string]string{"u1": "pw", "u2": "pw"},
+		limits: map[string]int{"u1": 3},
+	}})
+	for _, u := range []string{"u1", "u2"} {
+		resp := get(t, keepAliveClient(), base, basic(u, "pw"))
+		resp.Body.Close() //nolint:errcheck
+	}
+	wd.mu.Lock()
+	defer wd.mu.Unlock()
+	if len(wd.limits) != 2 || wd.limits[0] == nil || *wd.limits[0] != 3 || wd.limits[1] != nil {
+		t.Fatalf("limits sent = %v, want [3 nil]", wd.limits)
 	}
 }

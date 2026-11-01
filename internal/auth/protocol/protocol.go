@@ -79,6 +79,10 @@ type AuthResponse struct {
 	// ProxyTimeout is the per-user proxy_timeout, raw; the login proxy parses it.
 	ProxyTimeout string
 
+	// MailMaxUserIPConnections is the per-user connection limit, raw; the
+	// login proxy hands it to yarilo-warden with CONNECT (#2460).
+	MailMaxUserIPConnections string
+
 	// MailboxFormat is the per-user storage driver (mail_driver /
 	// mailbox_format userdb field). Empty falls back to the driver named by
 	// MailLoc, then to the global one.
@@ -326,6 +330,7 @@ func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP 
 	resp.QuotaOverFlag = extractQuotaOverFlag(req.Fields)
 	resp.DirectorTag = extractDirectorTag(req.Fields)
 	resp.ProxyTimeout = extractProxyTimeout(req.Fields)
+	resp.MailMaxUserIPConnections = extractUserIPLimit(req.Fields)
 	resp.VolatileDir = extractVolatileDir(req.Fields)
 	resp.MailboxFormat = extractMailboxFormat(req.Fields)
 	resp.IndexDir = extractIndexDir(req.Fields)
@@ -364,6 +369,7 @@ func responseFromCache(reqUser string, entry *CacheEntry) *AuthResponse {
 		resp.QuotaOverFlag = extractQuotaOverFlag(entry.Fields)
 		resp.DirectorTag = extractDirectorTag(entry.Fields)
 		resp.ProxyTimeout = extractProxyTimeout(entry.Fields)
+		resp.MailMaxUserIPConnections = extractUserIPLimit(entry.Fields)
 		resp.VolatileDir = extractVolatileDir(entry.Fields)
 		resp.MailboxFormat = extractMailboxFormat(entry.Fields)
 		resp.IndexDir = extractIndexDir(entry.Fields)
@@ -1741,6 +1747,20 @@ func extractProxyTimeout(f *Fields) string {
 			if _, err := ParseProxyTimeout(v); err != nil {
 				slog.Warn("auth: invalid proxy_timeout value", "value", v, "err", err)
 			}
+			return v
+		}
+	}
+	return ""
+}
+
+// extractUserIPLimit returns mail_max_userip_connections as it came, the
+// userdb-scoped one first.
+func extractUserIPLimit(f *Fields) string {
+	if f == nil {
+		return ""
+	}
+	for _, k := range []string{"userdb_mail_max_userip_connections", "mail_max_userip_connections"} {
+		if v, ok := f.Get(k); ok && v != "" {
 			return v
 		}
 	}

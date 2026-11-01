@@ -789,7 +789,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			wardenStart := time.Now()
 			ap := s.wardenClient()
 			svc := wardenService(s.opts.Protocol)
-			cerr := ap.Connect(sessID, authUser, clientIP, svc)
+			cerr := ap.ConnectLimit(sessID, authUser, clientIP, svc, authResult.MaxUserIPConnections)
 			s.observePhase(phaseWardenConnect, wardenStart)
 			switch {
 			case errors.Is(cerr, warden.ErrTooManyConns):
