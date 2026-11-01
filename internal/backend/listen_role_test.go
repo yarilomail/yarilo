@@ -8,36 +8,40 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
-// A session backend with no address binds loopback only; the single binary,
-// which clients reach directly, binds every interface (#2416).
-func TestBindTakesTheRoleHost(t *testing.T) {
+// Every session listener here binds loopback when its address is empty, the
+// single binary's included: logins reach it only through a login proxy's
+// preamble (#2416). A set address is the operator's.
+func TestASessionListenerTakesTheBackendHost(t *testing.T) {
+	if sessionHost != config.BackendHost {
+		t.Fatalf("sessionHost = %q, want the backend host %q", sessionHost, config.BackendHost)
+	}
 	for _, tc := range []struct {
-		role string
-		want bool // loopback
+		address  string
+		loopback bool
 	}{
-		{config.BackendHost, true},
-		{config.PublicHost, false},
+		{"", true},
+		{"0.0.0.0", false},
 	} {
-		ln, err := bindTCP("imap", &config.ServiceConfig{Enabled: true}, tc.role)
+		ln, err := bindTCP("imap", &config.ServiceConfig{Enabled: true, Address: tc.address})
 		if err != nil {
 			t.Fatal(err)
 		}
 		ip := ln.Addr().(*net.TCPAddr).IP
 		ln.Close()
-		if ip.IsLoopback() != tc.want {
-			t.Errorf("role %q bound %s, loopback = %v, want %v", tc.role, ip, ip.IsLoopback(), tc.want)
+		if ip.IsLoopback() != tc.loopback {
+			t.Errorf("address %q bound %s, loopback = %v, want %v", tc.address, ip, ip.IsLoopback(), tc.loopback)
 		}
 	}
 }
 
-func TestBindTLSTakesTheRoleHost(t *testing.T) {
+func TestBindTLSTakesTheBackendHost(t *testing.T) {
 	cfg := &tls.Config{GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return nil, nil }}
-	ln, err := bindTLS("imaps", &config.ServiceConfig{Enabled: true}, config.BackendHost, cfg)
+	ln, err := bindTLS("imaps", &config.ServiceConfig{Enabled: true}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 	if ip := ln.Addr().(*net.TCPAddr).IP; !ip.IsLoopback() {
-		t.Errorf("backend TLS listener bound %s, want loopback", ip)
+		t.Errorf("TLS session listener bound %s, want loopback", ip)
 	}
 }

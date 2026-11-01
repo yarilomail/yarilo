@@ -621,9 +621,9 @@ func storeLivenessCheck(storePath string, gate *telemetry.Gate) telemetry.Livene
 
 // bindTCP binds svc's listener and returns it, so callers can hold every port
 // before reporting readiness; binding after SetReady leaves a window where a
-// client gets connection refused. roleHost is what an empty address binds.
-func bindTCP(proto string, svc *config.ServiceConfig, roleHost string) (net.Listener, error) {
-	addr, from := svc.ListenAddr(roleHost)
+// client gets connection refused. An empty address binds sessionHost.
+func bindTCP(proto string, svc *config.ServiceConfig) (net.Listener, error) {
+	addr, from := svc.ListenAddr(sessionHost)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s: bind %s: %w", proto, addr, err)
@@ -633,8 +633,8 @@ func bindTCP(proto string, svc *config.ServiceConfig, roleHost string) (net.List
 }
 
 // bindTLS is bindTCP for a TLS listener.
-func bindTLS(proto string, svc *config.ServiceConfig, roleHost string, cfg *tls.Config) (net.Listener, error) {
-	addr, from := svc.ListenAddr(roleHost)
+func bindTLS(proto string, svc *config.ServiceConfig, cfg *tls.Config) (net.Listener, error) {
+	addr, from := svc.ListenAddr(sessionHost)
 	ln, err := tls.Listen("tcp", addr, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("%s: bind %s (tls): %w", proto, addr, err)
@@ -664,14 +664,14 @@ func (s *Server) RunIMAP(ctx context.Context) error {
 	// would report ready with a port unbound.
 	var tlsLn, plainLn net.Listener
 	if svcs.IMAPS.Active() {
-		ln, err := bindTLS("imap", svcs.IMAPS, config.BackendHost, s.imapTLS)
+		ln, err := bindTLS("imap", svcs.IMAPS, s.imapTLS)
 		if err != nil {
 			return err
 		}
 		tlsLn = ln
 	}
 	if svcs.IMAP.Active() {
-		ln, err := bindTCP("imap", svcs.IMAP, config.BackendHost)
+		ln, err := bindTCP("imap", svcs.IMAP)
 		if err != nil {
 			return err
 		}
@@ -710,14 +710,14 @@ func (s *Server) RunPOP3(ctx context.Context) error {
 	// bind before reporting ready
 	var tlsLn, plainLn net.Listener
 	if svcs.POP3S.Active() {
-		ln, err := bindTLS("pop3", svcs.POP3S, config.BackendHost, s.pop3TLS)
+		ln, err := bindTLS("pop3", svcs.POP3S, s.pop3TLS)
 		if err != nil {
 			return err
 		}
 		tlsLn = ln
 	}
 	if svcs.POP3.Active() {
-		ln, err := bindTCP("pop3", svcs.POP3, config.BackendHost)
+		ln, err := bindTCP("pop3", svcs.POP3)
 		if err != nil {
 			return err
 		}
@@ -753,7 +753,7 @@ func (s *Server) RunLMTP(ctx context.Context) error {
 	}
 
 	// bind before reporting ready; a TLS error is fatal at startup
-	ln, err := bindTCP("lmtp", svcs.LMTP, config.BackendHost)
+	ln, err := bindTCP("lmtp", svcs.LMTP)
 	if err != nil {
 		return err
 	}
@@ -793,7 +793,7 @@ func (s *Server) RunManageSieve(ctx context.Context) error {
 	}
 
 	// bind before reporting ready
-	ln, err := bindTCP("managesieve", svcs.ManageSieveBE, config.BackendHost)
+	ln, err := bindTCP("managesieve", svcs.ManageSieveBE)
 	if err != nil {
 		return err
 	}
@@ -833,7 +833,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.imap != nil {
 		if svcs.IMAPS.Active() {
-			ln, err := bindTLS("imap", svcs.IMAPS, config.PublicHost, s.imapTLS)
+			ln, err := bindTLS("imap", svcs.IMAPS, s.imapTLS)
 			if err != nil {
 				closeAll()
 				return err
@@ -841,7 +841,7 @@ func (s *Server) Run(ctx context.Context) error {
 			listeners = append(listeners, listener{"imap/tls", ln, s.imap.Serve})
 		}
 		if svcs.IMAP.Active() {
-			ln, err := bindTCP("imap", svcs.IMAP, config.PublicHost)
+			ln, err := bindTCP("imap", svcs.IMAP)
 			if err != nil {
 				closeAll()
 				return err
@@ -852,7 +852,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.pop3 != nil {
 		if svcs.POP3S.Active() {
-			ln, err := bindTLS("pop3", svcs.POP3S, config.PublicHost, s.pop3TLS)
+			ln, err := bindTLS("pop3", svcs.POP3S, s.pop3TLS)
 			if err != nil {
 				closeAll()
 				return err
@@ -860,7 +860,7 @@ func (s *Server) Run(ctx context.Context) error {
 			listeners = append(listeners, listener{"pop3/tls", ln, s.pop3.Serve})
 		}
 		if svcs.POP3.Active() {
-			ln, err := bindTCP("pop3", svcs.POP3, config.PublicHost)
+			ln, err := bindTCP("pop3", svcs.POP3)
 			if err != nil {
 				closeAll()
 				return err
@@ -872,7 +872,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Submission STARTTLS: TLS config is handed to Serve, not wrapped around
 	// the listener, since the upgrade happens mid-session.
 	if s.submission != nil && svcs.Submission.Active() {
-		ln, err := bindTCP("submission", svcs.Submission, config.PublicHost)
+		ln, err := bindTCP("submission", svcs.Submission)
 		if err != nil {
 			closeAll()
 			return err
@@ -893,7 +893,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	if s.lmtp != nil && svcs.LMTP.Active() {
-		ln, err := bindTCP("lmtp", svcs.LMTP, config.PublicHost)
+		ln, err := bindTCP("lmtp", svcs.LMTP)
 		if err != nil {
 			closeAll()
 			return err
@@ -914,7 +914,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Submissions (implicit TLS on 465).
 	if s.submission != nil && svcs.Submissions.Active() {
-		ln, err := bindTCP("submissions", svcs.Submissions, config.PublicHost)
+		ln, err := bindTCP("submissions", svcs.Submissions)
 		if err != nil {
 			closeAll()
 			return err
@@ -959,10 +959,15 @@ func firstActive(svcs ...*config.ServiceConfig) *config.ServiceConfig {
 	return nil
 }
 
+// sessionHost is what a session listener here binds when its address is
+// empty. The single binary is no exception: it too takes logins only through
+// a login proxy's preamble, so every listener is a backend's (#2416).
+const sessionHost = config.BackendHost
+
 // listenAddr fills the protocol servers' own Addr options, which only their
 // ListenAndServe reads; the backend binds through bindTCP and bindTLS.
 func listenAddr(svc *config.ServiceConfig) string {
-	addr, _ := svc.ListenAddr(config.PublicHost)
+	addr, _ := svc.ListenAddr(sessionHost)
 	return addr
 }
 
