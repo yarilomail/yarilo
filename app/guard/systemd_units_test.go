@@ -194,3 +194,29 @@ func TestOnlyTheDeliveryProxyAndBackendsReachTheMasterSocket(t *testing.T) {
 		}
 	}
 }
+
+// A unit whose binary has a services entry finds it enabled in the sample: a
+// unit started on a file that leaves its listener out exits at once.
+func TestEveryUnitListenerIsInTheSample(t *testing.T) {
+	cfg, err := config.Load(filepath.Join(systemdDir, "yarilo.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]*config.ServiceConfig{}
+	for _, e := range cfg.Services.Entries() {
+		entries[e.Name] = *e.Svc
+	}
+	known := map[string]bool{}
+	for _, e := range (&config.ServicesConfig{}).Entries() {
+		known[e.Name] = true
+	}
+	for _, f := range serviceFiles(t) {
+		name := strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "yarilo-"), ".service"), "-", "_")
+		if !known[name] {
+			continue
+		}
+		if svc := entries[name]; svc == nil || !svc.Enabled {
+			t.Errorf("%s: services.%s is not enabled in deploy/systemd/yarilo.yaml", filepath.Base(f), name)
+		}
+	}
+}
