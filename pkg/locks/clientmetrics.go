@@ -19,6 +19,24 @@ var clientBusyRetries = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Blocking lock acquisitions that found the resource held and backed off before retrying, by resource class.",
 }, []string{"resource"})
 
+// clientHoldsLost counts holds the client ended early, by resource class and
+// why: a renew the service refused, or a handshake naming a new generation. The
+// client counts it because the service that lost the state lost its counters
+// with it (#2425).
+var clientHoldsLost = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "yarilo_locks_client_holds_lost_total",
+	Help: "Holds ended before their work did, by resource class and reason (renew, generation).",
+}, []string{"resource", "reason"})
+
+// HoldsLost reads the counter, for tests that assert a hold was ended.
+func HoldsLost(resource, reason string) float64 {
+	m := &dto.Metric{}
+	if err := clientHoldsLost.WithLabelValues(resourceClass(resource), reason).Write(m); err != nil {
+		return 0
+	}
+	return m.GetCounter().GetValue()
+}
+
 // resourceClasses is every prefix the constructors in resources.go produce.
 //
 // A closed set on purpose: the label comes from a key that also carries a
