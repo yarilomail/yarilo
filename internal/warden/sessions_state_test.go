@@ -15,12 +15,14 @@ import (
 func TestStateBackendSessionContract(t *testing.T) {
 	const limit = 2
 	backends := map[string]func(t *testing.T) StateBackend{
-		"memory": func(*testing.T) StateBackend { return newMemoryBackend(time.Minute, time.Minute, limit) },
+		"memory": func(*testing.T) StateBackend {
+			return newMemoryBackend(time.Minute, time.Minute, ConnLimits{Default: limit})
+		},
 		"redis": func(t *testing.T) StateBackend {
 			mr := miniredis.RunT(t)
 			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			t.Cleanup(func() { rdb.Close() })
-			return NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, limit)
+			return NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, ConnLimits{Default: limit})
 		},
 	}
 	for name, mk := range backends {
@@ -90,7 +92,7 @@ func TestRedisSessionReconcile(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
 	const limit = 3
-	b := NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, 200*time.Millisecond, limit)
+	b := NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, 200*time.Millisecond, ConnLimits{Default: limit})
 	const u, ip = "alice@example.com", "1.2.3.4"
 
 	for i := 1; i <= limit; i++ {

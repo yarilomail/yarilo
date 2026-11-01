@@ -163,6 +163,9 @@ data:
         xclient_protocol: {{ $jmapBE.xclient | default false }}
     protocol:
       imap:
+        {{- with include "yarilo.userIPLimit" .Values.protocol.imap }}
+        {{ . }}
+        {{- end }}
         imap_idle_notify_interval: {{ .Values.protocol.imap.imap_idle_notify_interval }}
         imap_quota: {{ .Values.protocol.imap.imap_quota }}
         imap_max_line_length: {{ .Values.protocol.imap.imap_max_line_length | int64 }}
@@ -183,6 +186,9 @@ data:
           {{- end }}
         {{- end }}
       pop3:
+        {{- with include "yarilo.userIPLimit" .Values.protocol.pop3 }}
+        {{ . }}
+        {{- end }}
         pop3_lock_session: {{ .Values.protocol.pop3.pop3_lock_session }}
         pop3_save_uidl: {{ .Values.protocol.pop3.pop3_save_uidl }}
         pop3_no_flag_updates: {{ .Values.protocol.pop3.pop3_no_flag_updates }}
@@ -193,6 +199,9 @@ data:
         pop3_delete_type: {{ .Values.protocol.pop3.pop3_delete_type | quote }}
         pop3_deleted_flag: {{ .Values.protocol.pop3.pop3_deleted_flag | quote }}
       lmtp:
+        {{- with include "yarilo.userIPLimit" .Values.protocol.lmtp }}
+        {{ . }}
+        {{- end }}
         login_greeting: {{ .Values.protocol.lmtp.login_greeting | quote }}
         lmtp_add_received_header: {{ .Values.protocol.lmtp.add_received_header }}
         lmtp_add_message_id: {{ .Values.protocol.lmtp.add_message_id }}
@@ -222,6 +231,9 @@ data:
           rate_limit_per_recipient_burst: {{ .Values.protocol.lmtp.rate_limit.per_recipient_burst | int64 }}
           rate_limit_per_recipient_window_seconds: {{ .Values.protocol.lmtp.rate_limit.per_recipient_window_seconds | int64 }}
       submission:
+        {{- with include "yarilo.userIPLimit" .Values.protocol.submission }}
+        {{ . }}
+        {{- end }}
         hostname: {{ .Values.protocol.submission.hostname | quote }}
         submission_max_mail_size: {{ .Values.protocol.submission.max_message_size | quote }}
         max_line_length: {{ int .Values.protocol.submission.max_line_length }}
@@ -251,6 +263,9 @@ data:
           submission_relay_connect_timeout: {{ .Values.protocol.submission.relay.connect_timeout }}
           submission_relay_command_timeout: {{ .Values.protocol.submission.relay.command_timeout }}
       managesieve:
+        {{- with include "yarilo.userIPLimit" (.Values.protocol.managesieve | default dict) }}
+        {{ . }}
+        {{- end }}
         max_invalid_commands: {{ (.Values.protocol.managesieve | default dict).max_invalid_commands }}
         managesieve_max_line_length: {{ (.Values.protocol.managesieve | default dict).managesieve_max_line_length | int64 }}
         {{- /* The duplicate limit: rendered only when the operator set it, so a
@@ -262,6 +277,9 @@ data:
         {{- end }}
       jmap:
         {{- $jmapP := (.Values.protocol.jmap | default dict) }}
+        {{- with include "yarilo.userIPLimit" $jmapP }}
+        {{ . }}
+        {{- end }}
         jmap_base_url: {{ $jmapP.jmap_base_url | default "" | quote }}
         jmap_max_concurrent_requests: {{ $jmapP.jmap_max_concurrent_requests }}
         jmap_max_calls_in_request: {{ $jmapP.jmap_max_calls_in_request }}

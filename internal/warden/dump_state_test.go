@@ -12,12 +12,14 @@ import (
 // session shows counter==live (no drift), and a penalty shows its count.
 func TestStateBackendDumpContract(t *testing.T) {
 	backends := map[string]func(t *testing.T) StateBackend{
-		"memory": func(*testing.T) StateBackend { return newMemoryBackend(time.Minute, time.Minute, 5) },
+		"memory": func(*testing.T) StateBackend {
+			return newMemoryBackend(time.Minute, time.Minute, ConnLimits{Default: 5})
+		},
 		"redis": func(t *testing.T) StateBackend {
 			mr := miniredis.RunT(t)
 			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			t.Cleanup(func() { rdb.Close() })
-			return NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, 5)
+			return NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, ConnLimits{Default: 5})
 		},
 	}
 	for name, mk := range backends {
@@ -70,7 +72,7 @@ func TestRedisDumpShowsDrift(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
-	b := NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, 200*time.Millisecond, 5)
+	b := NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, 200*time.Millisecond, ConnLimits{Default: 5})
 	const u, ip = "bob@example.com", "5.6.7.8"
 
 	for _, id := range []string{"a", "b"} {

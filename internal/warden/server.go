@@ -117,6 +117,7 @@ type Server struct {
 	sessionTTL    time.Duration
 	sweepInterval time.Duration
 	penaltyDecay  time.Duration
+	limits        ConnLimits
 
 	// state holds sessions, penalties and the kick bus, in memory or
 	// Redis; the Redis backend fans kicks out cross-replica via Pub/Sub.
@@ -141,20 +142,27 @@ func WithPenaltyDecay(d time.Duration) ServerOption {
 	return func(s *Server) { s.penaltyDecay = d }
 }
 
-// NewServer creates an warden server with the given per-user@IP connection limit.
-// max ≤ 0 means unlimited (server still runs but always returns OK).
+// WithConnLimits gives each protocol its own per-user@IP limit (#2457).
+func WithConnLimits(l ConnLimits) ServerOption {
+	return func(s *Server) { s.limits = l }
+}
+
+// NewServer creates an warden server with the given per-user@IP connection limit,
+// counted apart per protocol. max ≤ 0 means unlimited (server still runs but
+// always returns OK).
 func NewServer(max int, opts ...ServerOption) *Server {
 	s := &Server{
 		sessionTTL:    DefaultSessionTTL,
 		sweepInterval: DefaultSweepInterval,
 		penaltyDecay:  DefaultPenaltyDecay,
+		limits:        ConnLimits{Default: max},
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	// build after options so decay/TTL/limit reflect them
 	if s.state == nil {
-		s.state = newMemoryBackend(s.penaltyDecay, s.sessionTTL, max)
+		s.state = newMemoryBackend(s.penaltyDecay, s.sessionTTL, s.limits)
 	}
 	return s
 }
@@ -303,7 +311,13 @@ func (s *Server) handleConnect(conn net.Conn, fields []string) string {
 		fields = append(fields, "")
 	}
 	id, user, ip, service := fields[1], fields[2], fields[3], fields[4]
-	ok, err := s.state.SessionConnect(id, user, ip, service)
+	var ok bool
+	var err error
+	if l, given := userLimits(fields[5:]); given {
+		ok, err = s.state.SessionConnectLimits(id, user, ip, service, l)
+	} else {
+		ok, err = s.state.SessionConnect(id, user, ip, service)
+	}
 	if err != nil {
 		// fail open: a Redis blip must not block logins; the limit is
 		// unenforced until the backend recovers
@@ -317,6 +331,26 @@ func (s *Server) handleConnect(conn net.Conn, fields []string) string {
 	// no cnt= here: SessionLookupCount is a Redis SCAN, too costly on the hot path
 	slog.Info("warden: session connect", "pod", podID, "sid", id, "user", user, "ip", ip, "service", service)
 	return reply("ok", fmt.Sprintf("OK\t%s\n", id))
+}
+
+// userLimits reads the optional limit=N and user_limit=N a login proxy sends
+// for a user whose userdb names limits of its own (#2460).
+func userLimits(extra []string) (UserLimits, bool) {
+	var l UserLimits
+	for _, f := range extra {
+		key, v, _ := strings.Cut(f, "=")
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			continue
+		}
+		switch key {
+		case "limit":
+			l.UserIP = &n
+		case "user_limit":
+			l.User = &n
+		}
+	}
+	return l, l.UserIP != nil || l.User != nil
 }
 
 // handleDisconnect processes: DISCONNECT\t{id}\t{user}\t{ip}\t{service}
@@ -364,7 +398,7 @@ func (s *Server) handleDump(conn net.Conn) {
 		return
 	}
 	for _, c := range d.Counters {
-		fmt.Fprintf(conn, "CNT\t%s\t%d\t%d\n", c.UserIP, c.Counter, c.Live)
+		fmt.Fprintf(conn, "CNT\t%s\t%d\t%d\t%s\n", c.UserIP, c.Counter, c.Live, c.Service)
 	}
 	for _, p := range d.Penalties {
 		fmt.Fprintf(conn, "PEN\t%s\t%d\t%d\n", p.IP, p.Count, p.TTLSecs)

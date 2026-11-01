@@ -79,6 +79,12 @@ type AuthResponse struct {
 	// ProxyTimeout is the per-user proxy_timeout, raw; the login proxy parses it.
 	ProxyTimeout string
 
+	// MailMaxUserIPConnections and MailMaxUserConnections are the user's own
+	// connection limits, per address and across addresses, raw; the login
+	// proxy hands them to yarilo-warden with CONNECT (#2460).
+	MailMaxUserIPConnections string
+	MailMaxUserConnections   string
+
 	// MailboxFormat is the per-user storage driver (mail_driver /
 	// mailbox_format userdb field). Empty falls back to the driver named by
 	// MailLoc, then to the global one.
@@ -326,6 +332,8 @@ func (c *chainAuthenticator) Authenticate(username, password, service, remoteIP 
 	resp.QuotaOverFlag = extractQuotaOverFlag(req.Fields)
 	resp.DirectorTag = extractDirectorTag(req.Fields)
 	resp.ProxyTimeout = extractProxyTimeout(req.Fields)
+	resp.MailMaxUserIPConnections = extractUserdbValue(req.Fields, "mail_max_userip_connections")
+	resp.MailMaxUserConnections = extractUserdbValue(req.Fields, "mail_max_user_connections")
 	resp.VolatileDir = extractVolatileDir(req.Fields)
 	resp.MailboxFormat = extractMailboxFormat(req.Fields)
 	resp.IndexDir = extractIndexDir(req.Fields)
@@ -364,6 +372,8 @@ func responseFromCache(reqUser string, entry *CacheEntry) *AuthResponse {
 		resp.QuotaOverFlag = extractQuotaOverFlag(entry.Fields)
 		resp.DirectorTag = extractDirectorTag(entry.Fields)
 		resp.ProxyTimeout = extractProxyTimeout(entry.Fields)
+		resp.MailMaxUserIPConnections = extractUserdbValue(entry.Fields, "mail_max_userip_connections")
+		resp.MailMaxUserConnections = extractUserdbValue(entry.Fields, "mail_max_user_connections")
 		resp.VolatileDir = extractVolatileDir(entry.Fields)
 		resp.MailboxFormat = extractMailboxFormat(entry.Fields)
 		resp.IndexDir = extractIndexDir(entry.Fields)
@@ -1741,6 +1751,19 @@ func extractProxyTimeout(f *Fields) string {
 			if _, err := ParseProxyTimeout(v); err != nil {
 				slog.Warn("auth: invalid proxy_timeout value", "value", v, "err", err)
 			}
+			return v
+		}
+	}
+	return ""
+}
+
+// extractUserdbValue returns a field as it came, the userdb-scoped one first.
+func extractUserdbValue(f *Fields, key string) string {
+	if f == nil {
+		return ""
+	}
+	for _, k := range []string{"userdb_" + key, key} {
+		if v, ok := f.Get(k); ok && v != "" {
 			return v
 		}
 	}

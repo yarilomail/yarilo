@@ -21,6 +21,7 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
@@ -76,7 +77,7 @@ type Options struct {
 // ConnAccountant is warden's per-user@IP connection accounting, narrowed to
 // what this proxy calls. Satisfied by *warden.Pool.
 type ConnAccountant interface {
-	Connect(id, user, ip, service string) error
+	ConnectLimits(id, user, ip, service string, l warden.UserLimits) error
 	Disconnect(id, user, ip, service string) error
 }
 
@@ -90,13 +91,20 @@ type Router interface {
 // PasswordAuthenticator verifies a username and password, returning the
 // resolved username. Satisfied by the yarilo-auth client.
 type PasswordAuthenticator interface {
-	Authenticate(username, password, service, remoteIP, localIP, sessionID string) (string, error)
+	Authenticate(username, password, service, remoteIP, localIP, sessionID string) (Login, error)
+}
+
+// Login is who a request authenticated as, and the user's own connection
+// limits from the userdb (#2460).
+type Login struct {
+	User   string
+	Limits warden.UserLimits
 }
 
 // TokenAuthenticator verifies a Bearer token in the auth service, returning the
 // user it names. Satisfied by AuthService.
 type TokenAuthenticator interface {
-	AuthenticateToken(token, service, remoteIP, localIP, sessionID string) (string, error)
+	AuthenticateToken(token, service, remoteIP, localIP, sessionID string) (Login, error)
 	// OffersTokens reports whether Bearer can succeed now, so it is offered
 	// only then.
 	OffersTokens() bool
@@ -150,6 +158,7 @@ var serverTimeout = 60 * time.Second
 
 // Serve runs until ctx is cancelled, then drains in-flight requests.
 func (s *Server) Serve(ctx context.Context) error {
+	var fresh sync.Map // connections that have sent no request yet
 	srv := &http.Server{
 		Addr:              s.opts.Addr,
 		Handler:           s.mux,
@@ -158,6 +167,13 @@ func (s *Server) Serve(ctx context.Context) error {
 		ReadTimeout:       serverTimeout,
 		WriteTimeout:      serverTimeout,
 		IdleTimeout:       120 * time.Second,
+		ConnState: func(c net.Conn, st http.ConnState) {
+			if st == http.StateNew {
+				fresh.Store(c, struct{}{})
+			} else {
+				fresh.Delete(c)
+			}
+		},
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			st := &connState{ip: hostOnly(c.RemoteAddr().String()), conn: c}
 			s.conns.Store(c, st)
@@ -199,7 +215,21 @@ func (s *Server) Serve(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		done := make(chan error, 1)
+		go func() { done <- srv.Shutdown(shutdownCtx) }()
+		// net/http waits 5 s on a connection that has sent no request, such as
+		// the spare one a client's pool dials; it has nothing in flight (#2462).
+		for {
+			fresh.Range(func(c, _ any) bool {
+				c.(net.Conn).Close() //nolint:errcheck
+				return true
+			})
+			select {
+			case err := <-done:
+				return err
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -238,14 +268,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var username string
+	var login Login
 	var err error
 	if ticket := s.wsTicket(r); ticket != "" {
-		username, err = s.tickets.check(ticket, clientIP)
+		login, err = s.tickets.check(ticket, clientIP)
 		dropTicket(r)
 	} else {
-		username, err = s.authenticate(r, clientIP, sessionOf(st))
+		login, err = s.authenticate(r, clientIP, sessionOf(st))
 	}
+	username := login.User
 	if err != nil {
 		if errors.Is(err, errTemporary) {
 			jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Authentication temporarily unavailable")
@@ -258,7 +289,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.account(st, username, clientIP); err != nil {
+	if err := s.account(st, login, clientIP); err != nil {
 		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Connection limit reached")
 		return
 	}
@@ -332,7 +363,8 @@ func writeLimitProblem(w http.ResponseWriter, limit string) {
 // account keeps warden's per-user@IP view in step with this connection. A
 // connection that authenticates as a different user, which HTTP permits on a
 // keep-alive, is re-accounted rather than refused or counted twice.
-func (s *Server) account(st *connState, username, ip string) error {
+func (s *Server) account(st *connState, login Login, ip string) error {
+	username := login.User
 	if s.opts.Warden == nil || st == nil {
 		return nil
 	}
@@ -350,7 +382,7 @@ func (s *Server) account(st *connState, username, ip string) error {
 		}
 		st.user = ""
 	}
-	if err := s.opts.Warden.Connect(st.id, username, ip, service); err != nil {
+	if err := s.opts.Warden.ConnectLimits(st.id, username, ip, service, login.Limits); err != nil {
 		if !s.opts.WardenFailOpen {
 			slog.Warn("jmap-login: warden connect refused", "user", username, "ip", ip, "err", err)
 			return err

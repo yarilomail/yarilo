@@ -771,3 +771,14 @@ ROOT and the container's role.
     name: {{ include "yarilo.fullname" . }}-imapsieve-scripts
 {{- end }}
 {{- end -}}
+
+{{/*
+A protocol's own mail_max_userip_connections, rendered only when the operator
+set it: left out, the protocol takes general.limits (#2457). 0 is rendered.
+Call with the protocol's values map.
+*/}}
+{{- define "yarilo.userIPLimit" -}}
+{{- if and (hasKey . "mail_max_userip_connections") (not (kindIs "invalid" (index . "mail_max_userip_connections"))) -}}
+mail_max_userip_connections: {{ index . "mail_max_userip_connections" | int64 }}
+{{- end -}}
+{{- end }}

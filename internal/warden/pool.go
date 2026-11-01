@@ -101,7 +101,12 @@ func (p *Pool) do(fn func(*Conn) error) error {
 // Connect registers a session. Returns ErrTooManyConns when the server refuses
 // it because the (user, ip) pair is at its limit.
 func (p *Pool) Connect(id, user, ip, service string) error {
-	return p.do(func(c *Conn) error { return c.Connect(id, user, ip, service) })
+	return p.ConnectLimits(id, user, ip, service, UserLimits{})
+}
+
+// ConnectLimits registers a session against the user's own limits.
+func (p *Pool) ConnectLimits(id, user, ip, service string, l UserLimits) error {
+	return p.do(func(c *Conn) error { return c.ConnectLimits(id, user, ip, service, l) })
 }
 
 // Disconnect deregisters a session and releases its accounting slot.

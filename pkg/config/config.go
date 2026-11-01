@@ -442,6 +442,37 @@ type LimitsConfig struct {
 	MaxUserIPConnections int `koanf:"mail_max_userip_connections"` // 0 = unlimited
 }
 
+// MaxUserIPConnections is the per-user-and-IP connection limit of one
+// protocol, as yarilo-warden names it: the protocol's own setting, else
+// general.limits. 0 is unlimited.
+func (cfg *Config) MaxUserIPConnections(protocol string) int {
+	if v := cfg.Protocol.userIPOverride(protocol); v != nil {
+		return *v
+	}
+	return cfg.General.Limits.MaxUserIPConnections
+}
+
+// UserIPProtocols are the protocols with their own connection limit.
+var UserIPProtocols = []string{"imap", "pop3", "submission", "lmtp", "managesieve", "jmap"}
+
+func (p *ProtocolConfig) userIPOverride(protocol string) *int {
+	switch strings.ToLower(protocol) {
+	case "imap":
+		return p.IMAP.MailMaxUserIPConnections
+	case "pop3":
+		return p.POP3.MailMaxUserIPConnections
+	case "submission":
+		return p.Submission.MailMaxUserIPConnections
+	case "lmtp":
+		return p.LMTP.MailMaxUserIPConnections
+	case "managesieve":
+		return p.ManageSieve.MailMaxUserIPConnections
+	case "jmap":
+		return p.JMAP.MailMaxUserIPConnections
+	}
+	return nil
+}
+
 // ServiceConfig is per-listener configuration.
 // A nil pointer in ServicesConfig means the listener is not started.
 type ServiceConfig struct {
@@ -596,6 +627,9 @@ type ProtocolConfig struct {
 // limits are published in the session resource as well as enforced, since
 // clients batch against them (RFC 8620 §2).
 type JMAPProtocolConfig struct {
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int `koanf:"mail_max_userip_connections"`
 	// CORSAllowOrigins lists the browser origins allowed to call the endpoint.
 	// Empty denies every cross-origin request: an endpoint any page can call
 	// with the user's credentials is an account-takeover surface. Exact match;
@@ -663,6 +697,9 @@ type JMAPProtocolConfig struct {
 
 // LMTPProtocolConfig is protocol.lmtp.
 type LMTPProtocolConfig struct {
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int `koanf:"mail_max_userip_connections"`
 	// Greeting shown in the 220 banner. Default: "Yarilo ready."
 	LoginGreeting string `koanf:"login_greeting"`
 	// AddReceivedHeader prepends a Received: header to delivered messages. Default: true.
@@ -755,9 +792,12 @@ type LMTPProxyConfig struct {
 
 // IMAPProtocolConfig is protocol.imap.
 type IMAPProtocolConfig struct {
-	IdleNotifyInterval int    `koanf:"imap_idle_notify_interval"` // seconds; 0 = disabled
-	MaxLineLength      int    `koanf:"imap_max_line_length"`      // bytes; 0 = unlimited
-	IDSend             string `koanf:"imap_id_send"`              // ID pairs; * = default; empty = disabled
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int   `koanf:"mail_max_userip_connections"`
+	IdleNotifyInterval       int    `koanf:"imap_idle_notify_interval"` // seconds; 0 = disabled
+	MaxLineLength            int    `koanf:"imap_max_line_length"`      // bytes; 0 = unlimited
+	IDSend                   string `koanf:"imap_id_send"`              // ID pairs; * = default; empty = disabled
 	// IDRetain keeps what a client says in ID before login and hands it to the
 	// auth service as client_id, which the policy server sees as device_id.
 	IDRetain          bool     `koanf:"imap_id_retain"`
@@ -819,28 +859,34 @@ type GlobalACLEntry struct {
 
 // POP3ProtocolConfig is protocol.pop3.
 type POP3ProtocolConfig struct {
-	NoFlagUpdates  bool   `koanf:"pop3_no_flag_updates"`
-	ReuseXUIDL     bool   `koanf:"pop3_reuse_xuidl"`
-	UIDLFormat     string `koanf:"pop3_uidl_format"`
-	UIDLDuplicates string `koanf:"pop3_uidl_duplicates"` // allow | rename
-	EnableLast     bool   `koanf:"pop3_enable_last"`
-	DeleteType     string `koanf:"pop3_delete_type"` // expunge | flag
-	DeletedFlag    string `koanf:"pop3_deleted_flag"`
-	SaveUIDL       bool   `koanf:"pop3_save_uidl"`    // persist computed UIDLs to index
-	LockSession    bool   `koanf:"pop3_lock_session"` // dotlock file to prevent IMAP+POP3 conflicts
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int   `koanf:"mail_max_userip_connections"`
+	NoFlagUpdates            bool   `koanf:"pop3_no_flag_updates"`
+	ReuseXUIDL               bool   `koanf:"pop3_reuse_xuidl"`
+	UIDLFormat               string `koanf:"pop3_uidl_format"`
+	UIDLDuplicates           string `koanf:"pop3_uidl_duplicates"` // allow | rename
+	EnableLast               bool   `koanf:"pop3_enable_last"`
+	DeleteType               string `koanf:"pop3_delete_type"` // expunge | flag
+	DeletedFlag              string `koanf:"pop3_deleted_flag"`
+	SaveUIDL                 bool   `koanf:"pop3_save_uidl"`    // persist computed UIDLs to index
+	LockSession              bool   `koanf:"pop3_lock_session"` // dotlock file to prevent IMAP+POP3 conflicts
 }
 
 // SubmissionProtocolConfig is protocol.submission.
 type SubmissionProtocolConfig struct {
-	Hostname           string      `koanf:"hostname"`
-	MaxMsgSize         int64       `koanf:"-"` // resolved from MaxMsgSizeRaw at load
-	MaxMsgSizeRaw      string      `koanf:"submission_max_mail_size"`
-	MaxLineLength      int         `koanf:"max_line_length"`
-	MaxRecipients      int         `koanf:"submission_max_recipients"` // 0 = unlimited
-	RecipientDelimiter string      `koanf:"recipient_delimiter"`
-	Workarounds        []string    `koanf:"submission_client_workarounds"` // whitespace-before-path | mailbox-for-path
-	AddReceivedHeader  bool        `koanf:"submission_add_received_header"`
-	Relay              RelayConfig `koanf:"relay"`
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int        `koanf:"mail_max_userip_connections"`
+	Hostname                 string      `koanf:"hostname"`
+	MaxMsgSize               int64       `koanf:"-"` // resolved from MaxMsgSizeRaw at load
+	MaxMsgSizeRaw            string      `koanf:"submission_max_mail_size"`
+	MaxLineLength            int         `koanf:"max_line_length"`
+	MaxRecipients            int         `koanf:"submission_max_recipients"` // 0 = unlimited
+	RecipientDelimiter       string      `koanf:"recipient_delimiter"`
+	Workarounds              []string    `koanf:"submission_client_workarounds"` // whitespace-before-path | mailbox-for-path
+	AddReceivedHeader        bool        `koanf:"submission_add_received_header"`
+	Relay                    RelayConfig `koanf:"relay"`
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	MaxMsgSizeRawAlias string   `koanf:"max_message_size"`
 	MaxRecipientsAlias int      `koanf:"max_recipients"`
@@ -1847,6 +1893,9 @@ func ValidateBackendOrDirector(component, backendAddr, directorAddr string) erro
 
 // ManageSieveProtocolConfig holds ManageSieve protocol-level behaviour settings.
 type ManageSieveProtocolConfig struct {
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int `koanf:"mail_max_userip_connections"`
 	// MaxScriptSizeAlias is the pre-beta duplicate of sieve.sieve_max_script_size:
 	// two keys for one limit, in two sections. The sieve key is the one that
 	// stays (#1286); this spelling is accepted and folded onto it, and the two
@@ -3791,7 +3840,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 22
+const minConfigSchema = 23
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3827,6 +3876,9 @@ var schemaAdditions = map[int][]string{
 		"lmtp_login", "managesieve_login", "jmap_login"},
 	21: {"master_session_users"},
 	22: {"dict_service.socket_mode", "dict_service.socket_group"},
+	23: {"protocol.imap.mail_max_userip_connections", "protocol.pop3.mail_max_userip_connections",
+		"protocol.submission.mail_max_userip_connections", "protocol.lmtp.mail_max_userip_connections",
+		"protocol.managesieve.mail_max_userip_connections", "protocol.jmap.mail_max_userip_connections"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

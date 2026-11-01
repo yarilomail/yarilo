@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 // wardenCall records one accounting call so a test can assert the sequence.
@@ -27,12 +29,15 @@ type fakeWarden struct {
 	calls []wardenCall
 	// refuse makes Connect fail, standing in for a reached limit.
 	refuse bool
+	// limits are the user's own limits each connect carried.
+	limits []warden.UserLimits
 }
 
-func (f *fakeWarden) Connect(id, user, ip, _ string) error {
+func (f *fakeWarden) ConnectLimits(id, user, ip, _ string, limit warden.UserLimits) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, wardenCall{"connect", id, user, ip})
+	f.limits = append(f.limits, limit)
 	if f.refuse {
 		return errors.New("limit reached")
 	}
@@ -62,13 +67,25 @@ func (f *fakeWarden) countOp(op string) int {
 	return n
 }
 
-type fakeAuth struct{ users map[string]string }
+type fakeAuth struct {
+	users map[string]string
+	// limits and userLimits are the users' own userdb limits, per address
+	// and across addresses.
+	limits, userLimits map[string]int
+}
 
-func (f fakeAuth) Authenticate(username, password, _, _, _, _ string) (string, error) {
+func (f fakeAuth) Authenticate(username, password, _, _, _, _ string) (Login, error) {
 	if pw, ok := f.users[username]; ok && pw == password {
-		return username, nil
+		l := Login{User: username}
+		if n, ok := f.limits[username]; ok {
+			l.Limits.UserIP = &n
+		}
+		if n, ok := f.userLimits[username]; ok {
+			l.Limits.User = &n
+		}
+		return l, nil
 	}
-	return "", errors.New("bad credentials")
+	return Login{}, errors.New("bad credentials")
 }
 
 func basic(user, pass string) string {
@@ -276,5 +293,29 @@ func TestWardenRefusalCanFailOpen(t *testing.T) {
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// A user's own limit from the userdb travels with the connect, so warden holds
+// that user to it rather than to JMAP's (#2460).
+func TestWardenIsGivenTheUsersOwnLimit(t *testing.T) {
+	wd := &fakeWarden{}
+	base := startProxy(t, Options{Warden: wd, Auth: fakeAuth{
+		users:      map[string]string{"u1": "pw", "u2": "pw"},
+		limits:     map[string]int{"u1": 3},
+		userLimits: map[string]int{"u1": 5},
+	}})
+	for _, u := range []string{"u1", "u2"} {
+		resp := get(t, keepAliveClient(), base, basic(u, "pw"))
+		resp.Body.Close() //nolint:errcheck
+	}
+	wd.mu.Lock()
+	defer wd.mu.Unlock()
+	if len(wd.limits) != 2 {
+		t.Fatalf("%d connects, want 2", len(wd.limits))
+	}
+	if u1, u2 := wd.limits[0], wd.limits[1]; u1.UserIP == nil || *u1.UserIP != 3 || u1.User == nil || *u1.User != 5 ||
+		u2.UserIP != nil || u2.User != nil {
+		t.Fatalf("limits sent = %+v, %+v; want u1 3 and 5, u2 none", u1, u2)
 	}
 }

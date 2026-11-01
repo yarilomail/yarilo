@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
@@ -19,11 +21,11 @@ func TestATicketNamesItsLoginOnlyWhereItWasIssued(t *testing.T) {
 	now := time.Date(2026, 10, 24, 23, 59, 30, 0, time.UTC)
 	tk := newTickets("key-one", time.Minute)
 	tk.now = func() time.Time { return now }
-	good, _ := tk.issue("u1@example.com", "192.0.2.7")
+	good, _ := tk.issue(Login{User: "u1@example.com"}, "192.0.2.7")
 	payload, sig, _ := strings.Cut(good, ".")
 	other := newTickets("key-two", time.Minute)
 	other.now = tk.now
-	foreign, _ := other.issue("u1@example.com", "192.0.2.7")
+	foreign, _ := other.issue(Login{User: "u1@example.com"}, "192.0.2.7")
 	forged := base64.RawURLEncoding.EncodeToString([]byte("u2@example.com\n192.0.2.7\n9999999999")) + "." + sig
 	cases := []struct {
 		name, ticket, ip string
@@ -45,8 +47,32 @@ func TestATicketNamesItsLoginOnlyWhereItWasIssued(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tk.now = func() time.Time { return now.Add(tc.later) }
 			got, err := tk.check(tc.ticket, tc.ip)
-			if got != tc.want || (tc.want == "") != errors.Is(err, errBadTicket) {
-				t.Errorf("check = %q, %v; want %q", got, err, tc.want)
+			if got.User != tc.want || (tc.want == "") != errors.Is(err, errBadTicket) {
+				t.Errorf("check = %q, %v; want %q", got.User, err, tc.want)
+			}
+		})
+	}
+}
+
+// A WebSocket opened with a ticket is counted as the login that asked for it,
+// the user's own connection limit included (#2460).
+func TestATicketCarriesTheUsersOwnLimit(t *testing.T) {
+	tk := newTickets("key-one", time.Minute)
+	three, five := 3, 5
+	for _, tc := range []struct {
+		name  string
+		login Login
+	}{
+		{"both limits of its own", Login{User: "u1@example.com", Limits: warden.UserLimits{UserIP: &three, User: &five}}},
+		{"per address only", Login{User: "u1@example.com", Limits: warden.UserLimits{UserIP: &three}}},
+		{"across addresses only", Login{User: "u1@example.com", Limits: warden.UserLimits{User: &five}}},
+		{"none", Login{User: "u1@example.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, _ := tk.issue(tc.login, "192.0.2.7")
+			got, err := tk.check(v, "192.0.2.7")
+			if err != nil || !reflect.DeepEqual(got, tc.login) {
+				t.Fatalf("check = %+v, %v; want %+v", got, err, tc.login)
 			}
 		})
 	}

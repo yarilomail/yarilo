@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 22
+config_schema_version: 23
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -2042,6 +2042,10 @@ components:
 ## -------------------------------------------------------------------
 protocol:
   imap:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     imap_idle_notify_interval: 120
     imap_max_line_length: 65536
     imap_id_send: "name *"
@@ -2067,6 +2071,10 @@ protocol:
       Junk: "\\Junk"
       Archive: "\\Archive"
   pop3:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     pop3_no_flag_updates: false
     pop3_reuse_xuidl: false
     pop3_uidl_format: "%u.%v"
@@ -2078,6 +2086,10 @@ protocol:
     pop3_lock_session: false  # dotlock file in user home to prevent simultaneous IMAP+POP3 access
 
   lmtp:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     login_greeting: "Yarilo ready."
     add_received_header: true
     # Synthesise a Message-ID when a message arrives without one. A message
@@ -2126,6 +2138,10 @@ protocol:
       per_recipient_window_seconds: 60
 
   submission:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     hostname: ""
     ## max_message_size - human-readable (bytes or K/M/G/T, e.g. "40M"). Quote it.
     max_message_size: "40M"
@@ -2155,6 +2171,10 @@ protocol:
       command_timeout: 300
 
   managesieve:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     ## The script-size limit lives in the sieve section as sieve_max_script_size:
     ## one limit, one key. A values file still carrying max_script_size here
     ## keeps working - the server folds it onto the sieve key and says so once.
@@ -2164,6 +2184,10 @@ protocol:
     managesieve_max_line_length: 65536
 
   jmap:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     ## Public origin clients reach this deployment on. It prefixes every URL in
     ## the session resource, so it must be the externally visible name, not a
     ## pod address. Empty renders relative-looking URLs no client can follow.

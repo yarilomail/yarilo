@@ -20,15 +20,20 @@ func New(max int) *Limiter {
 
 // Acquire increments the counter for (user, ip).
 // Returns false (and does not increment) if the limit is already reached.
-func (l *Limiter) Acquire(user, ip string) bool {
-	if l.max <= 0 {
-		return true
-	}
+func (l *Limiter) Acquire(user, ip string) bool { return l.AcquireMax(user, ip, l.max) }
+
+// AcquireMax is Acquire against max instead of the limiter's own: a user's
+// own limit counts on the same counter as everyone's (#2460). max ≤ 0 always
+// passes, and is still counted.
+func (l *Limiter) AcquireMax(user, ip string, max int) bool {
 	key := user + "\x00" + ip
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.count[key] >= l.max {
+	if max > 0 && l.count[key] >= max {
 		return false
+	}
+	if l.count == nil {
+		l.count = make(map[string]int)
 	}
 	l.count[key]++
 	return true
@@ -37,9 +42,6 @@ func (l *Limiter) Acquire(user, ip string) bool {
 // Release decrements the counter for (user, ip).
 // Safe to call even if Acquire was never called.
 func (l *Limiter) Release(user, ip string) {
-	if l.max <= 0 {
-		return
-	}
 	key := user + "\x00" + ip
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -53,9 +55,6 @@ func (l *Limiter) Release(user, ip string) {
 
 // Count returns the current connection count for (user, ip).
 func (l *Limiter) Count(user, ip string) int {
-	if l.max <= 0 {
-		return 0
-	}
 	key := user + "\x00" + ip
 	l.mu.Lock()
 	defer l.mu.Unlock()

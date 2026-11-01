@@ -40,11 +40,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	limits := connLimits(cfg)
 	slog.Info("yarilo-warden starting",
 		"version", build.Version,
 		"listen", cfg.WardenService.Listen,
 		"telemetry", cfg.Telemetry.Listen,
-		"max_userip_connections", cfg.General.Limits.MaxUserIPConnections,
+		"max_userip_connections", limits.Default,
+		"max_userip_connections_by_protocol", limits.Protocols,
 		"internal_tls", cfg.InternalTLS.Enabled,
 	)
 
@@ -88,7 +90,7 @@ func main() {
 		if chanPrefix == "" {
 			chanPrefix = "yarilo:warden:events:"
 		}
-		backend := warden.NewRedisBackend(rdb, prefix, chanPrefix, warden.DefaultPenaltyDecay, warden.DefaultSessionTTL, cfg.General.Limits.MaxUserIPConnections)
+		backend := warden.NewRedisBackend(rdb, prefix, chanPrefix, warden.DefaultPenaltyDecay, warden.DefaultSessionTTL, limits)
 		stateOpts = append(stateOpts, warden.WithStateBackend(backend))
 		closeState = func() { _ = backend.Close() }
 		stateChecks = append(stateChecks, telemetry.FuncCheck("state-redis", func() bool {
@@ -110,7 +112,7 @@ func main() {
 		defer closeState()
 	}
 
-	srv := warden.NewServer(cfg.General.Limits.MaxUserIPConnections, stateOpts...)
+	srv := warden.NewServer(limits.Default, append(stateOpts, warden.WithConnLimits(limits))...)
 
 	// Telemetry starts after the server exists so the liveness watchdog can probe
 	// its session-tracking mutex (#904).
@@ -208,4 +210,15 @@ func wardenLivenessCheck(srv *warden.Server, gate *telemetry.Gate) telemetry.Liv
 		}
 		return nil
 	}
+}
+
+// connLimits reads each protocol's limit from the config here, in the one
+// process that enforces it: the login proxies send only the protocol, so the
+// limit has no second copy to disagree with (#2457).
+func connLimits(cfg *config.Config) warden.ConnLimits {
+	l := warden.ConnLimits{Default: cfg.General.Limits.MaxUserIPConnections, Protocols: map[string]int{}}
+	for _, p := range config.UserIPProtocols {
+		l.Protocols[p] = cfg.MaxUserIPConnections(p)
+	}
+	return l
 }
