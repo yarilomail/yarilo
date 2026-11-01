@@ -262,10 +262,17 @@ type DictServiceConfig struct {
 	DictAddr string `koanf:"dict_addr"`
 	// DictListen is the address yarilo-dict serves on.
 	DictListen string `koanf:"dict_listen"`
+	// SocketMode and SocketGroup are the octal mode and the group name a
+	// unix:/path listen address gets; empty group keeps the process's.
+	SocketMode  string `koanf:"socket_mode"`
+	SocketGroup string `koanf:"socket_group"`
 	// DictMaxConns bounds the connections one process keeps to one named dict.
 	// An iteration holds its connection to the end, so one is a queue (#1902).
 	DictMaxConns int `koanf:"dict_max_conns"`
 }
+
+// Socket is the permission a unix:/path listen address gets.
+func (c DictServiceConfig) Socket() sockaddr.Perm { return socketPerm(c.SocketMode, c.SocketGroup) }
 
 // DictConfig declares one named dict instance. The Config.Dicts map key is
 // the logical name features reference; Driver selects the pkg/dict driver
@@ -2926,6 +2933,7 @@ func Defaults() *Config {
 	c.DirectorService.DomainRebalanceInterval = 60
 	c.DirectorService.FlushProgramTimeoutSeconds = 10
 	c.DictService.DictMaxConns = 8
+	c.DictService.SocketMode = "0660"
 	c.LocksClient.WaitPoolSize = 64
 	c.WardenService.Conns = 4
 	c.WardenService.EventQueueSize = 4096
@@ -3109,6 +3117,7 @@ func (cfg *Config) validate() error {
 		"auth_service.master_socket_mode": cfg.AuthService.MasterSocketMode,
 		"warden_service.socket_mode":      cfg.WardenService.SocketMode,
 		"locks_service.socket_mode":       cfg.LocksService.SocketMode,
+		"dict_service.socket_mode":        cfg.DictService.SocketMode,
 	} {
 		if _, err := sockaddr.ParseMode(mode); err != nil {
 			return fmt.Errorf("config: %s: %w", key, err)
@@ -3782,7 +3791,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 21
+const minConfigSchema = 22
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3817,6 +3826,7 @@ var schemaAdditions = map[int][]string{
 	20: {"imap_login", "imaps_login", "pop3_login", "pop3s_login", "submission_login", "submissions_login",
 		"lmtp_login", "managesieve_login", "jmap_login"},
 	21: {"master_session_users"},
+	22: {"dict_service.socket_mode", "dict_service.socket_group"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

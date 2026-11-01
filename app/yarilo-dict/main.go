@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -126,13 +125,14 @@ func runTelemetry(cfg config.TelemetryConfig, reg *prometheus.Registry, ready fu
 // buildListener serves plain TCP only where a mesh secures the transport; with
 // internal TLS on, the dict service is behind mTLS like every other service.
 func buildListener(cfg *config.Config, addr string) (net.Listener, error) {
+	perm := cfg.DictService.Socket()
 	if !cfg.InternalTLS.Enabled {
 		mtls.WarnRolesUnchecked(mtls.ListenerDict)
-		return new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
+		return dictsrv.Listen(addr, perm, nil)
 	}
 	tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerDict)
 	if err != nil {
 		return nil, fmt.Errorf("mtls config: %w", err)
 	}
-	return tls.Listen("tcp", addr, tlsCfg)
+	return dictsrv.Listen(addr, perm, tlsCfg)
 }
