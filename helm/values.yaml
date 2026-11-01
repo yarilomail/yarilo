@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 20
+config_schema_version: 21
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -773,6 +773,9 @@ components:
     socket_group: ""
     master_socket_mode: "0660"
     master_socket_group: ""
+    ## master_session_users - users, by name or uid, whose processes may issue a
+    ## session on a unix:/path master listener; pods listen on TCP, where mTLS roles decide.
+    master_session_users: ["yarilo-delivery"]
 
     ## startupProbe waits for Redis and (when applicable) the SQL database to accept
     ## a TCP connection before this pod takes traffic, replacing the wait-redis /

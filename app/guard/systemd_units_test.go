@@ -5,9 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 )
 
 const systemdDir = "../../deploy/systemd"
@@ -149,5 +152,45 @@ func TestEveryUnitAccountIsCreatedBySysusers(t *testing.T) {
 	sort.Strings(missing)
 	for _, m := range missing {
 		t.Errorf("%s: not created by sysusers.d/yarilo.conf", m)
+	}
+}
+
+// A login proxy that reaches the master socket can issue itself a session for
+// any user: only the backends and the delivery proxy hold its group.
+func TestOnlyTheDeliveryProxyAndBackendsReachTheMasterSocket(t *testing.T) {
+	cfg, err := config.Load(filepath.Join(systemdDir, "yarilo.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	master := cfg.AuthService.MasterSocketGroup
+	if master == "" {
+		t.Fatal("deploy/systemd/yarilo.yaml sets no master_socket_group")
+	}
+	sessionUsers := map[string]bool{}
+	for _, u := range cfg.AuthService.MasterSessionUsers {
+		sessionUsers[u] = true
+	}
+	for _, f := range serviceFiles(t) {
+		users := unitKeys(t, f, "User")
+		if len(users) == 0 {
+			continue
+		}
+		groups := unitKeys(t, f, "SupplementaryGroups")
+		if users[0] == "yarilo-login" && slices.Contains(groups, master) {
+			t.Errorf("%s runs as yarilo-login with %s, the master socket's group", filepath.Base(f), master)
+		}
+		if filepath.Base(f) == "yarilo-lmtp-login.service" && !sessionUsers[users[0]] {
+			t.Errorf("yarilo-lmtp-login runs as %s, which master_session_users %v does not let issue sessions",
+				users[0], cfg.AuthService.MasterSessionUsers)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(systemdDir, "sysusers.d", "yarilo.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(line); len(f) == 3 && f[0] == "m" && f[1] == "yarilo-login" && f[2] == master {
+			t.Errorf("sysusers.d puts yarilo-login in %s, the master socket's group", master)
+		}
 	}
 }

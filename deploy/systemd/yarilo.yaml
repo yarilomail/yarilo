@@ -99,7 +99,10 @@ auth_service:
   master_listen: unix:/run/yarilo/auth/auth-master.sock
   master_addr: unix:/run/yarilo/auth/auth-master.sock
   socket_group: yarilo-auth
-  master_socket_group: yarilo-auth
+  ## Userdb lookups and delivery sessions without a password: the backends and
+  ## yarilo-delivery reach it, and only yarilo-delivery may issue a session.
+  master_socket_group: yarilo-master
+  master_session_users: [yarilo-delivery]
 
 warden_service:
   listen: unix:/run/yarilo/auth/warden.sock

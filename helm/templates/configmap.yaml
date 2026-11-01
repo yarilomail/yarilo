@@ -942,6 +942,7 @@ data:
       socket_group: {{ .Values.components.auth.socket_group | quote }}
       master_socket_mode: {{ .Values.components.auth.master_socket_mode | quote }}
       master_socket_group: {{ .Values.components.auth.master_socket_group | quote }}
+      master_session_users: {{ toJson .Values.components.auth.master_session_users }}
       shutdown:
         session_grace_period: {{ .Values.components.auth.shutdown.session_grace_period | int64 }}
         kill_timeout: {{ .Values.components.auth.shutdown.kill_timeout | int64 }}

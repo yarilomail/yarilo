@@ -245,6 +245,15 @@ func main() {
 		if cfg.Storage.MailInboxPath != "" {
 			masterOpts = append(masterOpts, protocol.WithMasterDefaultInboxPath(cfg.Storage.MailInboxPath))
 		}
+		peers, perr := masterSessionPeers(cfg.AuthService)
+		if perr != nil {
+			slog.Error("auth/master: session peers", "err", perr)
+			os.Exit(1)
+		}
+		if peers != nil {
+			masterOpts = append(masterOpts, protocol.WithMasterSessionPeers(peers))
+			slog.Info("yarilo-auth master SESSION limited to peers", "users", cfg.AuthService.MasterSessionUsers)
+		}
 		master := protocol.NewMasterServer(combinedUserdb, masterOpts...)
 		slog.Info("yarilo-auth master listener", "addr", cfg.AuthService.MasterListen)
 		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, cfg.AuthService.MasterSocket(), masterTLSCfg)
