@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/yarilomail/yarilo/v2/internal/drain"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
@@ -114,6 +116,7 @@ func main() {
 	// its session-tracking mutex (#904).
 	tel := startTelemetry(cfg.Telemetry, srv, stateChecks)
 	errCh := make(chan error, 1)
+	var serving sync.WaitGroup
 	// Bind before readiness: ListenAndServe would bind inside the goroutine, so the
 	// pod would announce itself ready without knowing the port came up.
 	ln, err := srv.Listen(cfg.WardenService.Listen, cfg.WardenService.Socket(), tlsCfg)
@@ -121,7 +124,9 @@ func main() {
 		slog.Error("warden: listen failed", "addr", cfg.WardenService.Listen, "err", err)
 		os.Exit(1)
 	}
+	serving.Add(1)
 	go func() {
+		defer serving.Done()
 		if err := srv.Serve(ctx, ln); err != nil {
 			errCh <- err
 		}
@@ -139,8 +144,8 @@ func main() {
 		slog.Info("received signal, shutting down", "signal", sig.String())
 		cancel()
 		grace := time.Duration(cfg.WardenService.Shutdown.SessionGracePeriod) * time.Second
-		if grace > 0 {
-			time.Sleep(grace)
+		if !drain.Wait(&serving, grace) {
+			slog.Warn("warden: connections still open when the grace period ran out", "grace", grace)
 		}
 	case err := <-errCh:
 		if err != nil {

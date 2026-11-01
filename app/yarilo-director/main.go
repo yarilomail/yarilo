@@ -14,11 +14,13 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 	"github.com/yarilomail/yarilo/v2/internal/director"
+	"github.com/yarilomail/yarilo/v2/internal/drain"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
@@ -190,7 +192,10 @@ func main() {
 		os.Exit(1)
 	}
 	errCh := make(chan error, 1)
+	var serving sync.WaitGroup
+	serving.Add(1)
 	go func() {
+		defer serving.Done()
 		if err := srv.Serve(ctx, ringLn); err != nil {
 			errCh <- err
 		}
@@ -234,8 +239,8 @@ func main() {
 		srv.Drain()
 		cancel()
 		grace := time.Duration(cfg.DirectorService.Shutdown.SessionGracePeriod) * time.Second
-		if grace > 0 {
-			time.Sleep(grace)
+		if !drain.Wait(&serving, grace) {
+			slog.Warn("director: connections still open when the grace period ran out", "grace", grace)
 		}
 	case err := <-errCh:
 		if err != nil {

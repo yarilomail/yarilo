@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/auth/passdbs"
 	"github.com/yarilomail/yarilo/v2/internal/auth/policy"
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/drain"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/authtoken"
@@ -213,6 +215,7 @@ func main() {
 	}
 	srv := protocol.NewServer(dbs, srvOpts...)
 	errCh := make(chan error, 3)
+	var serving sync.WaitGroup
 	// Bind before readiness: ListenAndServe would bind inside the
 	// goroutine, so the pod would announce ready before the port came up.
 	clientLn, err := srv.Listen(cfg.AuthService.Listen, cfg.AuthService.Socket(), tlsCfg)
@@ -220,7 +223,9 @@ func main() {
 		slog.Error("auth: listen failed", "addr", cfg.AuthService.Listen, "err", err)
 		os.Exit(1)
 	}
+	serving.Add(1)
 	go func() {
+		defer serving.Done()
 		if err := srv.Serve(ctx, clientLn); err != nil {
 			errCh <- err
 		}
@@ -247,7 +252,9 @@ func main() {
 			slog.Error("auth/master: listen failed", "addr", cfg.AuthService.MasterListen, "err", merr)
 			os.Exit(1)
 		}
+		serving.Add(1)
 		go func() {
+			defer serving.Done()
 			if err := master.Serve(ctx, masterLn); err != nil {
 				errCh <- err
 			}
@@ -265,8 +272,8 @@ func main() {
 		slog.Info("received signal, shutting down", "signal", sig.String())
 		cancel()
 		grace := time.Duration(cfg.AuthService.Shutdown.SessionGracePeriod) * time.Second
-		if grace > 0 {
-			time.Sleep(grace)
+		if !drain.Wait(&serving, grace) {
+			slog.Warn("auth: connections still open when the grace period ran out", "grace", grace)
 		}
 	case err := <-errCh:
 		if err != nil {
