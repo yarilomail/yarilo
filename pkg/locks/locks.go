@@ -22,6 +22,9 @@ type Lock struct {
 	// Site is what the holder was doing, on a BUSY answer. Reading it off the
 	// refusal is the point: three questions in a row had to infer it (#1676).
 	Site string
+	// Generation is the lock state that granted it, as the service named it at
+	// handshake; empty from a service that names none (#2425).
+	Generation string
 }
 
 // Holder is who holds a lock and what they are doing with it. The two travel
@@ -137,6 +140,10 @@ var (
 	// ErrExpired is returned by Renew when the lock has been reclaimed by
 	// the TTL sweeper before the renewal arrived.
 	ErrExpired = errors.New("locks: lock expired")
+
+	// ErrLost is a hold whose lock state is gone: the service the client now
+	// reaches has another generation, and grants the resource afresh (#2425).
+	ErrLost = errors.New("locks: hold lost to a lock service restart")
 
 	// ErrClosed is returned when the client is used after Close.
 	ErrClosed = errors.New("locks: client closed")

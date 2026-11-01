@@ -39,6 +39,8 @@ type connSlot struct {
 	// idleSince is when this slot was last returned; a slot idle past
 	// waitIdleTimeout is closed rather than reused.
 	idleSince time.Time
+	// gen is the generation the server named at this connection's handshake.
+	gen string
 }
 
 // Client is the Locker implementation talking the TAB-delimited wire protocol.
@@ -75,6 +77,13 @@ type Client struct {
 	// normal Acquire (ErrBusy + retry until release).
 	holdsMu sync.RWMutex
 	holds   map[uint64]map[string]hold // goID → resource → hold
+
+	// gen is the lock service generation last seen at a handshake; genDone
+	// closes when a handshake names another, which ends every hold granted
+	// under the old one (#2425).
+	genMu   sync.Mutex
+	gen     string
+	genDone chan struct{}
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -186,7 +195,48 @@ func (c *Client) handshakeSlot(slot *connSlot) error {
 	if len(fields) < 3 || fields[0] != cmdVersion || fields[1] != protocolVersion || fields[2] != respOK {
 		return fmt.Errorf("locks/client: handshake mismatch %v: %w", fields, ErrProtocol)
 	}
+	slot.gen = ""
+	if len(fields) > 3 {
+		slot.gen = fields[3]
+	}
+	c.observeGeneration(slot.gen)
 	return nil
+}
+
+// observeGeneration notes the generation a handshake named. Another one than
+// before means the service restarted with fresh state: every hold granted under
+// the old one ends now, not at its next renew (#2425).
+func (c *Client) observeGeneration(gen string) {
+	if gen == "" {
+		return
+	}
+	c.genMu.Lock()
+	defer c.genMu.Unlock()
+	switch {
+	case c.gen == "":
+		c.gen, c.genDone = gen, make(chan struct{})
+	case c.gen != gen:
+		slog.Warn("locks/client: the lock service restarted with fresh state; holds granted before end now",
+			"from", c.gen, "to", gen)
+		close(c.genDone)
+		c.gen, c.genDone = gen, make(chan struct{})
+	}
+}
+
+// lostSince is closed once the service names a generation other than gen: at
+// once when it already has, never for a grant from a service that names none.
+func (c *Client) lostSince(gen string) <-chan struct{} {
+	if gen == "" {
+		return nil
+	}
+	c.genMu.Lock()
+	defer c.genMu.Unlock()
+	if c.gen != gen {
+		lost := make(chan struct{})
+		close(lost)
+		return lost
+	}
+	return c.genDone
 }
 
 // ensureConnected opens (or reopens) the connection for a pool slot.
@@ -310,9 +360,16 @@ func (c *Client) reconnectSlot(ctx context.Context, slot *connSlot) error {
 // the only mutating call and lock IDs are generated client-side, so a retry the
 // server already saw cannot collide.
 func (c *Client) roundtrip(ctx context.Context, cmd ...string) ([]string, error) {
+	fields, _, err := c.roundtripGen(ctx, cmd...)
+	return fields, err
+}
+
+// roundtripGen is roundtrip that also names the generation of the connection
+// the answer came on.
+func (c *Client) roundtripGen(ctx context.Context, cmd ...string) ([]string, string, error) {
 	select {
 	case <-c.closed:
-		return nil, ErrClosed
+		return nil, "", ErrClosed
 	default:
 	}
 
@@ -322,9 +379,9 @@ func (c *Client) roundtrip(ctx context.Context, cmd ...string) ([]string, error)
 	var slot *connSlot
 	select {
 	case <-c.closed:
-		return nil, ErrClosed
+		return nil, "", ErrClosed
 	case <-ctx.Done():
-		return nil, waitFailure(ctx.Err())
+		return nil, "", waitFailure(ctx.Err())
 	case slot = <-c.idle:
 	}
 	clientPart.WithLabelValues("slot").Observe(time.Since(waited).Seconds())
@@ -335,7 +392,7 @@ func (c *Client) roundtrip(ctx context.Context, cmd ...string) ([]string, error)
 	}()
 
 	if err := c.ensureConnected(ctx, slot); err != nil {
-		return nil, fmt.Errorf("locks/client: connect: %w: %w", ErrUnavailable, err)
+		return nil, "", fmt.Errorf("locks/client: connect: %w: %w", ErrUnavailable, err)
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		// The connection is captured, not re-read at return: a failed
@@ -351,24 +408,26 @@ func (c *Client) roundtrip(ctx context.Context, cmd ...string) ([]string, error)
 		if isTransport(err) {
 			if rerr := c.reconnectSlot(ctx, slot); rerr == nil {
 				if err = writeFields(slot.conn, cmd...); err == nil {
-					return slot.reader.readFields()
+					f, rerr := slot.reader.readFields()
+					return f, slot.gen, rerr
 				}
 			}
 		}
-		return nil, fmt.Errorf("locks/client: write: %w: %w", ErrUnavailable, err)
+		return nil, "", fmt.Errorf("locks/client: write: %w: %w", ErrUnavailable, err)
 	}
 	fields, err := slot.reader.readFields()
 	if err != nil {
 		if isTransport(err) {
 			if rerr := c.reconnectSlot(ctx, slot); rerr == nil {
 				if err = writeFields(slot.conn, cmd...); err == nil {
-					return slot.reader.readFields()
+					f, rerr := slot.reader.readFields()
+					return f, slot.gen, rerr
 				}
 			}
 		}
-		return nil, fmt.Errorf("locks/client: read: %w: %w", ErrUnavailable, err)
+		return nil, "", fmt.Errorf("locks/client: read: %w: %w", ErrUnavailable, err)
 	}
-	return fields, nil
+	return fields, slot.gen, nil
 }
 
 // waitFailure marks a deadline that elapsed while waiting on the lock service
@@ -405,7 +464,7 @@ func (c *Client) Lock(ctx context.Context, resource, owner string, ttl time.Dura
 		return Lock{}, err
 	}
 	expires := time.Now().Add(ttl)
-	resp, err := c.roundtrip(ctx, cmdLock, resource, owner, ttlStr, CheckSite(ctx))
+	resp, gen, err := c.roundtripGen(ctx, cmdLock, resource, owner, ttlStr, CheckSite(ctx))
 	if err != nil {
 		return Lock{}, err
 	}
@@ -418,7 +477,7 @@ func (c *Client) Lock(ctx context.Context, resource, owner string, ttl time.Dura
 			return Lock{}, fmt.Errorf("locks/client: malformed OK response: %w", ErrProtocol)
 		}
 		c.recordHold(resource, resp[1], HoldExclusive)
-		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires}, nil
+		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires, Generation: gen}, nil
 	case respBusy:
 		current, site := "", SiteUnknown
 		if len(resp) > 1 {
@@ -442,7 +501,7 @@ func (c *Client) LockShared(ctx context.Context, resource, owner string, ttl tim
 		return Lock{}, err
 	}
 	expires := time.Now().Add(ttl)
-	resp, err := c.roundtrip(ctx, cmdLockShared, resource, owner, ttlStr, CheckSite(ctx))
+	resp, gen, err := c.roundtripGen(ctx, cmdLockShared, resource, owner, ttlStr, CheckSite(ctx))
 	if err != nil {
 		return Lock{}, err
 	}
@@ -455,7 +514,7 @@ func (c *Client) LockShared(ctx context.Context, resource, owner string, ttl tim
 			return Lock{}, fmt.Errorf("locks/client: malformed OK response: %w", ErrProtocol)
 		}
 		c.recordHold(resource, resp[1], HoldShared)
-		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires}, nil
+		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires, Generation: gen}, nil
 	case respBusy:
 		current, site := "", SiteUnknown
 		if len(resp) > 1 {
@@ -636,6 +695,9 @@ func (c *Client) Subscribe(ctx context.Context, resource string) (<-chan Event, 
 	if err != nil || len(hs) < 3 || hs[2] != respOK {
 		_ = conn.Close()
 		return nil, fmt.Errorf("locks/client: subscribe handshake failed: %w", ErrProtocol)
+	}
+	if len(hs) > 3 {
+		c.observeGeneration(hs[3])
 	}
 	if err := writeFields(conn, cmdSubscribe, resource); err != nil {
 		_ = conn.Close()
@@ -853,6 +915,12 @@ func withLock(ctx context.Context, l Locker, resource, owner string, ttl, renewE
 	}
 	workCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// A service that restarted with fresh state grants the resource again at
+	// once; the hold ends when the client learns it, not at the next renew.
+	var lost <-chan struct{}
+	if c, ok := l.(*Client); ok {
+		lost = c.lostSince(lock.Generation)
+	}
 	renewErr := make(chan error, 1)
 	stop := make(chan struct{})
 	go func() {
@@ -860,8 +928,14 @@ func withLock(ctx context.Context, l Locker, resource, owner string, ttl, renewE
 		defer t.Stop()
 		for {
 			select {
+			case <-lost:
+				clientHoldsLost.WithLabelValues(resourceClass(resource), "generation").Inc()
+				renewErr <- ErrLost
+				cancel()
+				return
 			case <-t.C:
 				if err := l.Renew(ctx, lock.ID, ttl); err != nil {
+					clientHoldsLost.WithLabelValues(resourceClass(resource), "renew").Inc()
 					renewErr <- err
 					cancel()
 					return

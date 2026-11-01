@@ -26,7 +26,7 @@ func (c *Client) LockWaiting(ctx context.Context, resource, owner string, ttl, l
 	expires := time.Now().Add(ttl)
 
 	started := time.Now()
-	resp, addr, err := c.soloExchange(ctx, limit, cmd, resource, owner, ttlStr, CheckSite(ctx), waitStr)
+	resp, addr, gen, err := c.soloExchange(ctx, limit, cmd, resource, owner, ttlStr, CheckSite(ctx), waitStr)
 	if err != nil {
 		// One shape for one event: a read timeout and a cut connection are
 		// both "the limit ran out", and callers classify on this.
@@ -44,7 +44,7 @@ func (c *Client) LockWaiting(ctx context.Context, resource, owner string, ttl, l
 			return Lock{}, fmt.Errorf("locks/client: malformed OK response: %w", ErrProtocol)
 		}
 		c.recordHold(resource, resp[1], holdKind(shared))
-		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires}, nil
+		return Lock{ID: resp[1], Resource: resource, Owner: owner, ExpiresAt: expires, Generation: gen}, nil
 	case respBusy:
 		current, site := "", SiteUnknown
 		if len(resp) > 1 {
@@ -80,16 +80,16 @@ func holdKind(shared bool) HoldMode {
 // ordinary round trip. It does not need a new connection either -- opening one
 // per call meant resolving the service name per call, which was 376 s of a
 // 928 s waiting profile (#1875). So: its own pool, kept connected.
-func (c *Client) soloExchange(ctx context.Context, limit time.Duration, cmd ...string) ([]string, string, error) {
+func (c *Client) soloExchange(ctx context.Context, limit time.Duration, cmd ...string) ([]string, string, string, error) {
 	slot, err := c.takeWaitSlot(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	ok := false
 	defer func() { c.putWaitSlot(slot, ok) }()
 
 	if cerr := c.ensureConnectedIn(ctx, slot, "wait"); cerr != nil {
-		return nil, "", fmt.Errorf("locks/client: connect: %w: %w", ErrUnavailable, cerr)
+		return nil, "", "", fmt.Errorf("locks/client: connect: %w: %w", ErrUnavailable, cerr)
 	}
 	conn := slot.conn
 	addr := conn.RemoteAddr().String()
@@ -104,13 +104,13 @@ func (c *Client) soloExchange(ctx context.Context, limit time.Duration, cmd ...s
 	defer stop()
 
 	if err := writeFields(conn, cmd...); err != nil {
-		return nil, addr, fmt.Errorf("locks/client: send: %w", err)
+		return nil, addr, "", fmt.Errorf("locks/client: send: %w", err)
 	}
 	resp, err := slot.reader.readFields()
 	if err != nil {
-		return nil, addr, fmt.Errorf("locks/client: read: %w", err)
+		return nil, addr, "", fmt.Errorf("locks/client: read: %w", err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	ok = true
-	return resp, addr, nil
+	return resp, addr, slot.gen, nil
 }
