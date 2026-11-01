@@ -25,7 +25,7 @@ func TestTheAdminAPIsStartThroughTheirGate(t *testing.T) {
 
 // A compiled test binary never belongs in the tree.
 func TestNoTestBinaryIsTracked(t *testing.T) {
-	out, err := exec.Command("git", "ls-files", "--", ":(top,glob)**/*.test").Output()
+	out, err := exec.CommandContext(t.Context(), "git", "ls-files", "--", ":(top,glob)**/*.test").Output()
 	if err != nil {
 		t.Skipf("git ls-files: %v", err)
 	}

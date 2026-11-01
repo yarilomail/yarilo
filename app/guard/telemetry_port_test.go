@@ -12,7 +12,7 @@ import (
 // Containers share one network namespace, so one without a port of its own is
 // read off a neighbour's page (#1999); names are the pod's, not one container's (#2068).
 func TestEveryBackendContainerHasItsOwnTelemetryPort(t *testing.T) {
-	out, err := exec.Command("helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

@@ -33,7 +33,7 @@ func ruleAuth(t *testing.T, off map[string]bool) string {
 		`CREATE TABLE users (username TEXT, password TEXT, imap INTEGER, pop3 INTEGER, submission INTEGER)`,
 		`INSERT INTO users VALUES ('alice', '{PLAIN}secret', ?, ?, ?)`,
 	} {
-		if _, err := db.Exec(q, flag("imap"), flag("pop3"), flag("submission")); err != nil {
+		if _, err := db.ExecContext(t.Context(), q, flag("imap"), flag("pop3"), flag("submission")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -44,7 +44,7 @@ func ruleAuth(t *testing.T, off map[string]bool) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

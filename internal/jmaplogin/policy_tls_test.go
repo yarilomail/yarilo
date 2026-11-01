@@ -25,7 +25,7 @@ func (tlsPolicy) ReportAfter(context.Context, protocol.PolicyRequest, bool, bool
 // JMAP is served over HTTPS only, so the policy hears every JMAP login as TLS.
 func TestAJMAPLoginIsTLSToThePolicy(t *testing.T) {
 	p := tlsPolicy{tls: make(chan bool, 1)}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

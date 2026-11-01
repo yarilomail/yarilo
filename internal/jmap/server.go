@@ -154,7 +154,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	ln, err := net.Listen("tcp", s.opts.Addr)
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", s.opts.Addr)
 	if err != nil {
 		return fmt.Errorf("jmap: listen %s: %w", s.opts.Addr, err)
 	}

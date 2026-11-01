@@ -25,7 +25,7 @@ func TestSubmissionBackendTerminatesInternalTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestSubmissionBackendTerminatesInternalTLS(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", ln.Addr().String(), clientCfg)
+		conn, err := (&tls.Dialer{NetDialer: &net.Dialer{Timeout: 5 * time.Second}, Config: clientCfg}).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err == nil {
 			// TLS 1.3 reports a refused client certificate on the first read.
 			_ = conn.SetReadDeadline(time.Now().Add(time.Second))

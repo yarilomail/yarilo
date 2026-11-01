@@ -120,7 +120,7 @@ func main() {
 	// Port 995 - implicit TLS (POP3S).
 	if svcs.POP3SLogin.Active() {
 		addr, from := svcs.POP3SLogin.ListenAddr(config.PublicHost)
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			slog.Error("pop3s-login: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
@@ -172,7 +172,7 @@ func main() {
 	// Port 110 - STARTTLS.
 	if svcs.POP3Login.Active() {
 		addr, from := svcs.POP3Login.ListenAddr(config.PublicHost)
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			slog.Error("pop3-login: listen failed", "addr", addr, "err", err)
 			os.Exit(1)

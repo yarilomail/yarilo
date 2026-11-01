@@ -128,7 +128,7 @@ func runTelemetry(cfg config.TelemetryConfig, reg *prometheus.Registry, ready fu
 func buildListener(cfg *config.Config, addr string) (net.Listener, error) {
 	if !cfg.InternalTLS.Enabled {
 		mtls.WarnRolesUnchecked(mtls.ListenerDict)
-		return net.Listen("tcp", addr)
+		return new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	}
 	tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerDict)
 	if err != nil {

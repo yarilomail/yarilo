@@ -35,10 +35,7 @@ func insertUser(t *testing.T, dsn, username, password string, enabled int) {
 		t.Fatalf("insertUser open: %v", err)
 	}
 	defer db.Close()
-	_, err = db.Exec(
-		`INSERT INTO yarilo_users (username, password, home, mail, enabled) VALUES (?, ?, '', '', ?)`,
-		username, password, enabled,
-	)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO yarilo_users (username, password, home, mail, enabled) VALUES (?, ?, '', '', ?)`, username, password, enabled)
 	if err != nil {
 		t.Fatalf("insertUser exec: %v", err)
 	}
@@ -121,9 +118,7 @@ func TestAuthenticate_PopulatesFieldsBag(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	_, err = db.Exec(
-		`UPDATE yarilo_users SET home = ?, mail = ? WHERE username = ?`,
-		"/h/alice", "maildir:/m/alice", "alice")
+	_, err = db.ExecContext(t.Context(), `UPDATE yarilo_users SET home = ?, mail = ? WHERE username = ?`, "/h/alice", "maildir:/m/alice", "alice")
 	if err != nil {
 		t.Fatalf("update mail/home: %v", err)
 	}
@@ -194,7 +189,7 @@ func runDriverSmoke(t *testing.T, driver, dsn, insertParam string) {
 	defer db.Close()
 
 	// fresh slate
-	if _, err := db.Exec(`DELETE FROM yarilo_users WHERE username = 'smoketest@example.com'`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `DELETE FROM yarilo_users WHERE username = 'smoketest@example.com'`); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 
@@ -206,11 +201,11 @@ func runDriverSmoke(t *testing.T, driver, dsn, insertParam string) {
 
 	stmt := `INSERT INTO yarilo_users (username, password, home, mail, enabled) VALUES (` +
 		insertParam + `, ` + insertParam + `, '', '', 1)`
-	if _, err := db.Exec(stmt, "smoketest@example.com", stored); err != nil {
+	if _, err := db.ExecContext(t.Context(), stmt, "smoketest@example.com", stored); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM yarilo_users WHERE username = 'smoketest@example.com'`)
+		_, _ = db.ExecContext(t.Context(), `DELETE FROM yarilo_users WHERE username = 'smoketest@example.com'`)
 	})
 
 	req := &protocol.Request{

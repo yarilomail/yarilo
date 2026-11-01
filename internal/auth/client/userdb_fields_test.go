@@ -85,7 +85,7 @@ func relayedLogin(c *Client, verb string) (*AuthResult, error) {
 // substituted, so one fake serves both the password and the SASL answer.
 func answerOnce(t *testing.T, verb, line string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

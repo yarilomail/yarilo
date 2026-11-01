@@ -39,7 +39,7 @@ func testServerTLS(t *testing.T) *tls.Config {
 
 func tcpPair(t *testing.T) (server, client net.Conn) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func tcpPair(t *testing.T) (server, client net.Conn) {
 		c, _ := ln.Accept()
 		ch <- c
 	}()
-	client, err = net.Dial("tcp", ln.Addr().String())
+	client, err = new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPreambleListener_TerminatesTLS(t *testing.T) {
 	srv2, cli2 := tcpPair(t)
 	go func() {
 		tc := tls.Client(cli2, &tls.Config{InsecureSkipVerify: true})
-		if err := tc.Handshake(); err != nil {
+		if err := tc.HandshakeContext(t.Context()); err != nil {
 			return
 		}
 		_, _ = tc.Write([]byte("YARILO\tADDR=1.2.3.4\tUSER=u\tTOKEN=t\n"))

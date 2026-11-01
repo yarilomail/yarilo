@@ -27,7 +27,7 @@ func TestFetchSharesTheKeyOnlyWhenItWritesNothing(t *testing.T) {
 		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=1000000"}),
 	}
 	srv := imapserver.New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestFetchSharesTheKeyOnlyWhenItWritesNothing(t *testing.T) {
 		mu.Unlock()
 	})()
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,7 +35,7 @@ func buildFeatureServer(t *testing.T, cfg config.LMTPProtocolConfig) featureServ
 	box.Close() //nolint:errcheck
 
 	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: idx, Resolver: resolver}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestLMTP_QuotaEnforcement(t *testing.T) {
 			DefaultQuotaRules: []string{"*:storage=10"},
 		},
 	}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

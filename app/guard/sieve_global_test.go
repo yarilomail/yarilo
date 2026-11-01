@@ -72,7 +72,7 @@ func scriptsShape(t *testing.T, out []byte, vol string) (keys []string, mounts m
 // The stand's values: the global scripts are a ConfigMap mounted at
 // sieve_global where Sieve runs, lmtp and imap, and nowhere else (#2283).
 func TestSieveGlobalScriptsReachLMTPAndIMAP(t *testing.T) {
-	out, err := exec.Command("helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

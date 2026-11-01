@@ -1,6 +1,7 @@
 package director
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func domainMoveRequest(s *Server, domain, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest("POST", "/api/director/domains/"+domain+"/move", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/director/domains/"+domain+"/move", strings.NewReader(body))
 	req.SetPathValue("domain", domain)
 	rec := httptest.NewRecorder()
 	s.apiDomainMove(rec, req)

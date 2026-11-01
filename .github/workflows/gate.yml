@@ -94,15 +94,14 @@ jobs:
 
       ## Pinned, and only rebuilt when the pin changes: `@latest` recompiled the
       ## linter on every run and silently changed the ruleset under us, so a
-      ## green PR could go red on merge without a code change. v1 is required -
-      ## .golangci.yml is v1 format (it enables `gosimple`, which v2 folded into
-      ## staticcheck), so bumping to v2 needs a config migration first.
+      ## green PR could go red on merge without a code change. .golangci.yml is
+      ## v2 format and names staticcheck's checks, so the v1 ruleset carries over.
       - name: Install golangci-lint
         run: |
-          want=v1.64.8
+          want=v2.15.0
           have=$(golangci-lint version 2>/dev/null | grep -oE 'version v?[0-9.]+' | grep -oE '[0-9.]+' || true)
           if [ "v${have}" != "$want" ]; then
-            go install github.com/golangci/golangci-lint/cmd/golangci-lint@$want
+            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$want
           fi
 
       - name: Run golangci-lint

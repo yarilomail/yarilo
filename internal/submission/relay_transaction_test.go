@@ -75,7 +75,7 @@ func (s *recordingSession) Logout() error { s.relay.open.Add(-1); return nil }
 func startRelayedSubmission(t *testing.T) (*recordingRelay, string) {
 	t.Helper()
 	relay := &recordingRelay{}
-	rln, err := net.Listen("tcp", "127.0.0.1:0")
+	rln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func startSubmissionWithRelay(t *testing.T, cfg config.RelayConfig) string {
 		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
 		Proxy:     proxy.New(cfg, "mx.example.com"),
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestADroppedClientClosesTheRelayConnection(t *testing.T) {
 
 // A relay that cannot be reached fails MAIL with 451, holding nothing open.
 func TestAnUnreachableRelayFailsMail(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

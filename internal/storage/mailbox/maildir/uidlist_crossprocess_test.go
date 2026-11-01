@@ -56,7 +56,7 @@ func TestTwoProcessesWritingTheListLoseNoRow(t *testing.T) {
 	}
 	box.Close() //nolint:errcheck
 
-	child := exec.Command(os.Args[0], "-test.run=^TestTwoProcessesWritingTheListLoseNoRow$", "-test.count=1")
+	child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestTwoProcessesWritingTheListLoseNoRow$", "-test.count=1")
 	child.Env = append(os.Environ(), uidListChildHome+"="+home)
 	out := make(chan []byte, 1)
 	cerr := make(chan error, 1)

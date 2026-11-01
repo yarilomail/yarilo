@@ -27,7 +27,7 @@ func TestLogLevelGet(t *testing.T) {
 
 	srv := diagServer()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/loglevel", nil))
+	srv.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/loglevel", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -45,7 +45,7 @@ func TestLogLevelPostChanges(t *testing.T) {
 
 	srv := diagServer()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug"}`))
 	srv.Handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -65,7 +65,7 @@ func TestLogLevelPostWithTTL(t *testing.T) {
 
 	srv := diagServer()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug","ttl":"50ms"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug","ttl":"50ms"}`))
 	srv.Handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -96,7 +96,7 @@ func TestLogLevelRejectsBadInput(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := diagServer()
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(tc.body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/debug/loglevel", strings.NewReader(tc.body))
 			srv.Handler().ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusBadRequest {
@@ -112,7 +112,7 @@ func TestLogLevelRejectsBadInput(t *testing.T) {
 func TestLogLevelMethodNotAllowed(t *testing.T) {
 	srv := diagServer()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/debug/loglevel", nil))
+	srv.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/debug/loglevel", nil))
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
@@ -130,7 +130,7 @@ func TestLogLevelGaugeTracksActiveLevel(t *testing.T) {
 
 	srv := diagServer()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"error"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"error"}`))
 	srv.Handler().ServeHTTP(rec, req)
 
 	if got := scrapeLogLevel(t, srv); got != `yarilo_log_level{level="error"}` {
@@ -170,7 +170,7 @@ func TestLogLevelGaugeIsNotStaleAfterATTLRevert(t *testing.T) {
 func scrapeLogLevel(t *testing.T, srv *Server) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	srv.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", nil))
 	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
 		if strings.HasPrefix(line, "yarilo_log_level{") {
 			if i := strings.LastIndex(line, " "); i > 0 {
@@ -199,8 +199,8 @@ func TestLogLevelIsOffWithoutTheSwitch(t *testing.T) {
 		{"switch on", diagServer(), http.StatusOK},
 	} {
 		for _, req := range []*http.Request{
-			httptest.NewRequest(http.MethodGet, "/debug/loglevel", nil),
-			httptest.NewRequest(http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug"}`)),
+			httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/loglevel", nil),
+			httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/debug/loglevel", strings.NewReader(`{"level":"debug"}`)),
 		} {
 			rec := httptest.NewRecorder()
 			tc.srv.Handler().ServeHTTP(rec, req)

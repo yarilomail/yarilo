@@ -403,14 +403,12 @@ type SSLConfig struct {
 	SSLServerAltCert string `koanf:"ssl_server_alt_cert_file"`
 	SSLServerAltKey  string `koanf:"ssl_server_alt_key_file"`
 	SSLMinProtocol   string `koanf:"ssl_min_protocol"`
-	SSLPreferCiphers bool   `koanf:"ssl_prefer_server_ciphers"`
 
 	TLSCertAlias       string `koanf:"tls_cert"`
 	TLSKeyAlias        string `koanf:"tls_key"`
 	TLSAltCertAlias    string `koanf:"tls_alt_cert"`
 	TLSAltKeyAlias     string `koanf:"tls_alt_key"`
 	TLSMinVersionAlias string `koanf:"tls_min_version"`
-	PreferServerAlias  bool   `koanf:"prefer_server_ciphers"`
 }
 
 // HAProxyConfig is general.haproxy: who may send a PROXY header, and how long to wait for it.
@@ -3217,9 +3215,8 @@ func BuildTLSConfig(ssl SSLConfig) (*tls.Config, error) {
 		certs = append(certs, alt)
 	}
 	tlsCfg := &tls.Config{
-		Certificates:             certs,
-		PreferServerCipherSuites: ssl.SSLPreferCiphers,
-		MinVersion:               tls.VersionTLS12,
+		Certificates: certs,
+		MinVersion:   tls.VersionTLS12,
 	}
 	if ssl.SSLMinProtocol == "TLS1.3" {
 		tlsCfg.MinVersion = tls.VersionTLS13

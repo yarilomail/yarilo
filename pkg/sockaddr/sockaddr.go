@@ -56,7 +56,7 @@ func ParseMode(s string) (os.FileMode, error) {
 func Listen(addr string, perm Perm) (net.Listener, error) {
 	network, path := Network(addr)
 	if network != "unix" {
-		return net.Listen(network, path)
+		return new(net.ListenConfig).Listen(context.Background(), network, path)
 	}
 	gid := -1
 	if perm.Group != "" {
@@ -68,12 +68,12 @@ func Listen(addr string, perm Perm) (net.Listener, error) {
 			return nil, fmt.Errorf("socket %s: group %q has gid %q: %w", path, perm.Group, g.Gid, err)
 		}
 	}
-	ln, err := net.Listen("unix", path)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "unix", path)
 	if errors.Is(err, syscall.EADDRINUSE) {
 		if err := removeStale(path); err != nil {
 			return nil, err
 		}
-		ln, err = net.Listen("unix", path)
+		ln, err = new(net.ListenConfig).Listen(context.Background(), "unix", path)
 	}
 	if err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func Listen(addr string, perm Perm) (net.Listener, error) {
 // removeStale removes the socket at path when a dial to it is refused, which
 // is what a socket left by a dead process answers.
 func removeStale(path string) error {
-	c, err := net.DialTimeout("unix", path, time.Second)
+	c, err := (&net.Dialer{Timeout: time.Second}).DialContext(context.Background(), "unix", path)
 	if err == nil {
 		c.Close() //nolint:errcheck,gosec // only the answer mattered
 		return fmt.Errorf("socket %s: a running process listens on it", path)

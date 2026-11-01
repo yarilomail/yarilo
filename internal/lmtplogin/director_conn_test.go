@@ -13,7 +13,7 @@ import (
 // connections; dropAfterReply closes each connection after its first answer.
 func startCountingDirector(t *testing.T, dropAfterReply bool) (string, *atomic.Int32) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("director listen: %v", err)
 	}

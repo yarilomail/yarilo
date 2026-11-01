@@ -32,7 +32,7 @@ func siteTestServer(t *testing.T) func() *Client {
 	go func() { _ = srv.Serve(ctx, ln); close(done) }()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if c, derr := net.DialTimeout("unix", sock, 50*time.Millisecond); derr == nil {
+		if c, derr := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(ctx, "unix", sock); derr == nil {
 			_ = c.Close()
 			break
 		}

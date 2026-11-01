@@ -23,7 +23,7 @@ type cuttableProxy struct {
 
 func newCuttableProxy(t *testing.T, backend string) *cuttableProxy {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("proxy listen: %v", err)
 	}
@@ -41,7 +41,7 @@ func (p *cuttableProxy) accept() {
 		if err != nil {
 			return
 		}
-		up, err := net.Dial("tcp", p.backend)
+		up, err := new(net.Dialer).DialContext(context.Background(), "tcp", p.backend)
 		if err != nil {
 			down.Close()
 			continue
@@ -69,7 +69,7 @@ func (p *cuttableProxy) cut() {
 // when the test finishes.
 func startEmbeddedWarden(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -85,7 +85,7 @@ func startEmbeddedWarden(t *testing.T) string {
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 		if err == nil {
 			_ = c.Close()
 			break

@@ -32,7 +32,7 @@ func TestGUIDStoreWriterHelper(t *testing.T) {
 // appendFromAnotherProcess runs the helper and fails the row on its output.
 func appendFromAnotherProcess(t *testing.T, home string, second bool) {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestGUIDStoreWriterHelper$", "-test.v")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestGUIDStoreWriterHelper$", "-test.v")
 	cmd.Env = append(os.Environ(), "YARILO_TEST_GUID_HOME="+home)
 	if second {
 		cmd.Env = append(cmd.Env, "YARILO_TEST_GUID_SECOND=1")

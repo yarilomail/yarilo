@@ -99,7 +99,7 @@ func TestTwoProcessesWritingKeepEveryAnnotation(t *testing.T) {
 	home := t.TempDir()
 	done := make(chan error, 2)
 	for _, who := range []string{"a", "b"} {
-		cmd := exec.Command(os.Args[0], "-test.run", "TestTwoProcessesWritingKeepEveryAnnotation")
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run", "TestTwoProcessesWritingKeepEveryAnnotation")
 		cmd.Env = append(os.Environ(), "YARILO_DICT_WRITER="+who, "YARILO_DICT_HOME="+home)
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)

@@ -118,7 +118,7 @@ func TestUserKill_TimeoutFallthrough(t *testing.T) {
 func TestApiUserKick_StartsKilling(t *testing.T) {
 	s := NewWithOptions(testOptions(Options{}))
 	const user = "u@example.com"
-	req := httptest.NewRequest("POST", "/users/"+user+"/kick", nil)
+	req := httptest.NewRequestWithContext(t.Context(), "POST", "/users/"+user+"/kick", nil)
 	req.SetPathValue("user", user)
 	rec := httptest.NewRecorder()
 	s.apiUserKick(rec, req)

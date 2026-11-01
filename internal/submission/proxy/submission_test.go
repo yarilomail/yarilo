@@ -73,7 +73,7 @@ func (s *authRelaySession) Logout() error                          { return nil 
 
 // The relay is told the master and, as authzid, the session's user.
 func TestSendLogsInAsTheMasterForTheUser(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestSendWithoutAUserIsRefusedWhenTheRelayNamesTheSender(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +157,7 @@ func TestSendWithoutAUserIsRefusedWhenTheRelayNamesTheSender(t *testing.T) {
 // A relay that refuses the login is a temporary failure for the client; the
 // reason, with the session, is in the log.
 func TestARefusedRelayLoginIsATemporaryAuthFailure(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

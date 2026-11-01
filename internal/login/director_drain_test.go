@@ -22,7 +22,7 @@ func TestLookupAfterDirectorDrain(t *testing.T) {
 		go func() { _ = srv.Serve(ctx, ln) }()
 		return srv, cancel
 	}
-	lnA, err := net.Listen("tcp", "127.0.0.1:0")
+	lnA, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestLookupAfterDirectorDrain(t *testing.T) {
 	lnA.Close()
 	var lnB net.Listener
 	for deadline = time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-		if lnB, err = net.Listen("tcp", addr); err == nil {
+		if lnB, err = new(net.ListenConfig).Listen(ctx, "tcp", addr); err == nil {
 			break
 		}
 	}
@@ -73,7 +73,7 @@ func TestLookupAfterDirectorDrain(t *testing.T) {
 // A lookup that starts after the watch connection died is not left waiting for
 // a reply that cannot come: it falls back at once (#2152).
 func TestLookupOnAClosedWatchFallsBackAtOnce(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

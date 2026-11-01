@@ -42,7 +42,7 @@ func TestDrainStopsServing(t *testing.T) {
 // A backend registered on a director that drains reconnects within its
 // backoff and reaches the next one, not when the old process exits.
 func TestDrainedDirectorBackendReconnects(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestDrainedDirectorBackendReconnects(t *testing.T) {
 	ln.Close()
 	var lnB net.Listener
 	waitFor(t, 2*time.Second, func() bool {
-		lnB, err = net.Listen("tcp", addr)
+		lnB, err = new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		return err == nil
 	})
 	srvB, stopB := serve(lnB)

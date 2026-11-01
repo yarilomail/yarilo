@@ -106,7 +106,7 @@ func handshake(t *testing.T, ca *mtlstest.CA, srvCert, srvKey string, l mtls.Lis
 	done := make(chan error, 1)
 	go func() {
 		srv := tls.Server(a, srvCfg)
-		err := srv.Handshake()
+		err := srv.HandshakeContext(t.Context())
 		if err == nil {
 			// The client learns of a refusal only on its first read in TLS 1.3.
 			_, err = srv.Write([]byte{0})
@@ -115,7 +115,7 @@ func handshake(t *testing.T, ca *mtlstest.CA, srvCert, srvKey string, l mtls.Lis
 		a.Close()
 	}()
 	cli := tls.Client(b, cliCfg)
-	if err := cli.Handshake(); err == nil {
+	if err := cli.HandshakeContext(t.Context()); err == nil {
 		_, _ = cli.Read(make([]byte, 1))
 	}
 	return <-done == nil

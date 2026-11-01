@@ -98,7 +98,7 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 		opts.Threads = cache
 	}
 	srv := imapserver.New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func threadIDServerIdle(t *testing.T, withSidecar bool, idle time.Duration) (net
 	// Raw wire, not the library client: its FetchMessageBuffer does not carry
 	// the OBJECTID fields, and the claim here is precisely about the bytes we
 	// emit for THREADID.
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,13 +277,13 @@ func TestAppendRecordsTheConversation(t *testing.T) {
 		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Threads:   threads.NewCache(time.Minute),
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -109,7 +109,7 @@ func main() {
 		time.Duration(reg.ReadinessTouchInterval)*time.Second, ready.Load)
 
 	addr, from := svc.ListenAddr(config.BackendHost)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 	if err != nil {
 		slog.Error("submission: listen failed", "addr", addr, "err", err)
 		os.Exit(1)

@@ -110,13 +110,13 @@ func New(c Config) (*Passdb, error) {
 	pool := c.Pool
 	pool.Driver = c.Driver
 	sqlpool.Apply(db, pool)
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("auth/sql: ping %s: %w", c.Driver, err)
 	}
 	if !c.SkipSchema {
 		if schema, ok := schemaFor(c.Driver); ok {
-			if _, err := db.Exec(schema); err != nil {
+			if _, err := db.ExecContext(context.Background(), schema); err != nil {
 				db.Close()
 				return nil, fmt.Errorf("auth/sql: schema %s: %w", c.Driver, err)
 			}

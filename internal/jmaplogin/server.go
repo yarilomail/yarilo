@@ -171,7 +171,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		},
 	}
 
-	ln, err := net.Listen("tcp", s.opts.Addr)
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", s.opts.Addr)
 	if err != nil {
 		return fmt.Errorf("jmap-login: listen %s: %w", s.opts.Addr, err)
 	}
@@ -181,7 +181,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			ReadHeaderTimeout: timeout,
-			Policy:            proxyPolicy(s.opts.HAProxyTrustedNets),
+			ConnPolicy:        proxyPolicy(s.opts.HAProxyTrustedNets),
 		}
 	}
 
@@ -479,8 +479,9 @@ func hostOnly(addr string) string {
 
 // proxyPolicy trusts a PROXY header only from a configured upstream. An empty
 // list trusts nobody rather than everybody.
-func proxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
-	return func(upstream net.Addr) (proxyproto.Policy, error) {
+func proxyPolicy(nets []*net.IPNet) proxyproto.ConnPolicyFunc {
+	return func(o proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		upstream := o.Upstream
 		if len(nets) == 0 {
 			return proxyproto.IGNORE, nil
 		}

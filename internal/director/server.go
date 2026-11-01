@@ -540,7 +540,7 @@ func (s *Server) Listen(addr string, tlsCfg *tls.Config) (net.Listener, error) {
 		}
 		return ln, nil
 	}
-	ln, err := net.Listen("tcp", addr)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("director: listen %s: %w", addr, err)
 	}
@@ -891,7 +891,7 @@ func (s *Server) commandGate(conn net.Conn) func(cmd string) bool {
 	if !ok {
 		return func(string) bool { return true }
 	}
-	_ = tc.Handshake()
+	_ = tc.HandshakeContext(context.Background())
 	role, ok := mtls.PeerRole(tc.ConnectionState())
 	if !ok {
 		return func(string) bool { return true }

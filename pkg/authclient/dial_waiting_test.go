@@ -15,7 +15,7 @@ import (
 func TestDialWaitingConnectsOnceTheServiceAppears(t *testing.T) {
 	// A port nobody is listening on yet: the address is reserved by binding
 	// and closing, so the dial fails until the listener is re-opened on it.
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestDialWaitingConnectsOnceTheServiceAppears(t *testing.T) {
 
 	go func() {
 		time.Sleep(400 * time.Millisecond)
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", addr)
 		if err != nil {
 			return
 		}
@@ -56,7 +56,7 @@ func TestDialWaitingConnectsOnceTheServiceAppears(t *testing.T) {
 // The wait is bounded and says what it waited for. A process that gives up
 // after waiting must not report the same dial error as one that never tried.
 func TestDialWaitingGivesUpLoudly(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestDialWaitingGivesUpLoudly(t *testing.T) {
 // A zero wait is the historical behaviour, so turning the waiting off needs no
 // second code path.
 func TestDialWaitingWithoutWaitFailsImmediately(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

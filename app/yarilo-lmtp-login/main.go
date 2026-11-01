@@ -98,7 +98,7 @@ func main() {
 	opts := options(cfg, hostname, intTLS, authMasterPool)
 
 	addr, from := cfg.Services.LMTPLogin.ListenAddr(config.PublicHost)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		slog.Error("lmtp-login: listen failed", "addr", addr, "err", err)
 		os.Exit(1)

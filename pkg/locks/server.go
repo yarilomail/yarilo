@@ -483,7 +483,7 @@ func (s *Server) handleSubscribe(ctx context.Context, conn net.Conn, fields []st
 // ListenUnix opens a Unix socket listener. Caller is responsible for removing
 // any stale socket at path before calling.
 func ListenUnix(path string) (net.Listener, error) {
-	ln, err := net.Listen("unix", path)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("locks/server: listen unix %q: %w", path, err)
 	}

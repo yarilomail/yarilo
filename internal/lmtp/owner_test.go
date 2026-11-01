@@ -85,7 +85,7 @@ func TestADeliveryNamesItself(t *testing.T) {
 			return &mailbox.UserInfo{Username: user, Home: home, Driver: "maildir"}, nil
 		},
 	}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -120,7 +120,7 @@ func main() {
 	// Port 465 - implicit TLS (Submissions).
 	if svcs.SubmissionsLogin.Active() {
 		addr, from := svcs.SubmissionsLogin.ListenAddr(config.PublicHost)
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			slog.Error("submissions-login: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
@@ -175,7 +175,7 @@ func main() {
 	// Port 587 - STARTTLS.
 	if svcs.SubmissionLogin.Active() {
 		addr, from := svcs.SubmissionLogin.ListenAddr(config.PublicHost)
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			slog.Error("submission-login: listen failed", "addr", addr, "err", err)
 			os.Exit(1)

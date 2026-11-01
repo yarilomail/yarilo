@@ -28,7 +28,7 @@ func TestAPassdbNologinReachesTheClient(t *testing.T) {
 		want  bool
 	}{{"yes", true}, {"no", false}} {
 		t.Run(tc.value, func(t *testing.T) {
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}

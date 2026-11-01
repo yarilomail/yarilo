@@ -3,6 +3,7 @@ package jmapcore
 import (
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,20 +18,22 @@ const modulePath = "github.com/yarilomail/yarilo/v2"
 // the rule is a test and not a convention.
 func TestNoYariloImports(t *testing.T) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", nil, parser.ImportsOnly)
+	names, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("glob: %v", err)
 	}
-	for _, pkg := range pkgs {
-		for name, f := range pkg.Files {
-			for _, imp := range f.Imports {
-				path, err := strconv.Unquote(imp.Path.Value)
-				if err != nil {
-					t.Fatalf("%s: bad import %s", name, imp.Path.Value)
-				}
-				if path == modulePath || strings.HasPrefix(path, modulePath+"/") {
-					t.Errorf("%s imports %s; jmapcore must stay free of yarilo", name, path)
-				}
+	for _, name := range names {
+		f, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		for _, imp := range f.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				t.Fatalf("%s: bad import %s", name, imp.Path.Value)
+			}
+			if path == modulePath || strings.HasPrefix(path, modulePath+"/") {
+				t.Errorf("%s imports %s; jmapcore must stay free of yarilo", name, path)
 			}
 		}
 	}

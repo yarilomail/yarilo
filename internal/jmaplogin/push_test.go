@@ -39,7 +39,7 @@ func streamBackend(t *testing.T, interval time.Duration) string {
 // startServer runs the proxy on a real socket and returns it with its URL.
 func startServer(t *testing.T, opts Options) (*Server, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func startServer(t *testing.T, opts Options) (*Server, string) {
 	go func() { done <- s.Serve(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
 	for i := 0; i < 300; i++ {
-		if c, err := net.Dial("tcp", opts.Addr); err == nil {
+		if c, err := new(net.Dialer).DialContext(ctx, "tcp", opts.Addr); err == nil {
 			_ = c.Close()
 			return s, "http://" + opts.Addr
 		}
@@ -203,7 +203,7 @@ func TestDirectorKickOfAnotherUserKeepsTheStream(t *testing.T) {
 // fakeDirector completes the handshake, pushes lines and holds the connection.
 func fakeDirector(t *testing.T, lines ...string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

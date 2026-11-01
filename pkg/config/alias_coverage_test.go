@@ -129,7 +129,7 @@ func normaliseServicePath(path string) string {
 // chain the loader reads it under, which is what makes two same-named keys in
 // different sections distinguishable.
 func walkAliasPaths(t reflect.Type, goPath, koanfPath string, visit func(goPath, koanfPath string)) {
-	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {

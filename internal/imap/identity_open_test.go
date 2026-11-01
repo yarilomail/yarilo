@@ -43,7 +43,7 @@ func startIdentityServer(t *testing.T) (root, addr string) {
 		QuotaEngine: true,
 		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxMessageCount: 1000},
 	})
-	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
+	ln, lerr := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if lerr != nil {
 		t.Fatal(lerr)
 	}

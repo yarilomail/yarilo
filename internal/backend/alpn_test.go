@@ -117,16 +117,17 @@ func TestBuildTLS_ALPNMismatchRejected(t *testing.T) {
 
 	// Wrong ALPN should fail
 	clientCfg := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"pop3"}} //nolint:gosec
-	if _, err := tls.Dial("tcp", ln.Addr().String(), clientCfg); err == nil {
+	if _, err := (&tls.Dialer{Config: clientCfg}).DialContext(t.Context(), "tcp", ln.Addr().String()); err == nil {
 		t.Fatal("expected handshake failure with mismatched ALPN, got nil")
 	}
 
 	// Matching ALPN should succeed
 	clientCfg.NextProtos = []string{"imap"}
-	conn, err := tls.Dial("tcp", ln.Addr().String(), clientCfg)
+	nc, err := (&tls.Dialer{Config: clientCfg}).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("expected handshake to succeed with imap ALPN, got %v", err)
 	}
+	conn := nc.(*tls.Conn)
 	if conn.ConnectionState().NegotiatedProtocol != "imap" {
 		t.Errorf("NegotiatedProtocol = %q, want imap", conn.ConnectionState().NegotiatedProtocol)
 	}
@@ -134,11 +135,11 @@ func TestBuildTLS_ALPNMismatchRejected(t *testing.T) {
 
 	// No ALPN at all should succeed (missing ALPN is accepted)
 	clientCfg.NextProtos = nil
-	conn, err = tls.Dial("tcp", ln.Addr().String(), clientCfg)
+	nc, err = (&tls.Dialer{Config: clientCfg}).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("expected handshake to succeed without ALPN, got %v", err)
 	}
-	conn.Close() //nolint:errcheck
+	nc.Close() //nolint:errcheck
 }
 
 func equalStrings(a, b []string) bool {

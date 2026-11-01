@@ -116,14 +116,14 @@ func TestSubscriptions_NoStoringNamespaceRefuses(t *testing.T) {
 				Location: "maildir:" + filepath.Join(root, "team"), Subscriptions: boolPtr(false)},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go srv.Serve(ln) //nolint:errcheck
 
-	conn, derr := net.Dial("tcp", ln.Addr().String())
+	conn, derr := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if derr != nil {
 		t.Fatal(derr)
 	}

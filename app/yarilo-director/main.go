@@ -379,7 +379,7 @@ func startAPI(ctx context.Context, srv *director.Server, api config.DirectorAPIC
 	if err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp", api.Listen)
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", api.Listen)
 	if err != nil {
 		return fmt.Errorf("director API: %w", err)
 	}

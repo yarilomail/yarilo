@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -19,29 +18,37 @@ import (
 func dictDialers(t *testing.T) map[string]bool {
 	t.Helper()
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, "../../internal/backend", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	dir := "../../internal/backend"
+	names, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	var files []*ast.File
+	for _, n := range names {
+		if strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, n, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, f)
+	}
 	calls := map[string][]string{}
-	for _, p := range pkgs {
-		for _, f := range p.Files {
-			for _, d := range f.Decls {
-				fn, ok := d.(*ast.FuncDecl)
-				if !ok || fn.Recv != nil || fn.Body == nil {
-					continue
-				}
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if c, ok := n.(*ast.CallExpr); ok {
-						if id, ok := c.Fun.(*ast.Ident); ok {
-							calls[fn.Name.Name] = append(calls[fn.Name.Name], id.Name)
-						}
-					}
-					return true
-				})
+	for _, f := range files {
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || fn.Body == nil {
+				continue
 			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok {
+					if id, ok := c.Fun.(*ast.Ident); ok {
+						calls[fn.Name.Name] = append(calls[fn.Name.Name], id.Name)
+					}
+				}
+				return true
+			})
 		}
 	}
 	reaches := map[string]bool{"buildDict": true}

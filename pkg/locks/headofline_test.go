@@ -16,7 +16,7 @@ import (
 // connection without ever leaving it - a session whose client is gone.
 func joinAndVanish(t *testing.T, addr, resource string) {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestAVanishedContenderDoesNotHoldTheLine(t *testing.T) {
 // standAddr is one server over backend, returning its address and a client.
 func standAddr(t *testing.T, backend Backend) (string, *Client) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

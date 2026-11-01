@@ -10,7 +10,7 @@ import (
 
 // The line limit is held while reading, not checked once the line is in.
 func TestTheIMAPLineLimitCutsAnEndlessLine(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

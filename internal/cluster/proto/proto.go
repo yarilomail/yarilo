@@ -4,6 +4,7 @@ package proto
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -35,7 +36,7 @@ type Conn struct {
 
 // Dial connects to a director over plain TCP and performs the client handshake.
 func Dial(addr, localIP string, localPort int) (*Conn, error) {
-	nc, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	nc, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +45,7 @@ func Dial(addr, localIP string, localPort int) (*Conn, error) {
 
 // DialTLS connects to a director over mTLS and performs the client handshake.
 func DialTLS(addr, localIP string, localPort int, tlsCfg *tls.Config) (*Conn, error) {
-	nc, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, tlsCfg)
+	nc, err := (&tls.Dialer{NetDialer: &net.Dialer{Timeout: 10 * time.Second}, Config: tlsCfg}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, err
 	}

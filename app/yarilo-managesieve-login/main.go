@@ -105,7 +105,7 @@ func main() {
 
 	// Port 4190 - STARTTLS (ManageSieve does not have an implicit-TLS variant).
 	addr, from := svcs.ManageSieveLogin.ListenAddr(config.PublicHost)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		slog.Error("managesieve-login: listen failed", "addr", addr, "err", err)
 		os.Exit(1)

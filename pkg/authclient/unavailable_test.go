@@ -16,7 +16,7 @@ import (
 
 func TestDialFailureIsUnavailable(t *testing.T) {
 	// An address nobody listens on: reserved by binding and closing.
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestDialFailureIsUnavailable(t *testing.T) {
 // otherwise, a client would retry a version mismatch forever -- the failure it
 // must not retry.
 func TestRefusedHandshakeIsNotUnavailable(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestRefusedHandshakeIsNotUnavailable(t *testing.T) {
 // A handshake cut mid-line is a transport failure: the service did not answer,
 // it went away while answering.
 func TestTruncatedHandshakeIsUnavailable(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestTruncatedHandshakeIsUnavailable(t *testing.T) {
 // cancelled context is our own caller walking away. Reporting the second as an
 // outage would blame yarilo-auth for clients that disconnected.
 func TestDeadlineIsUnavailableButCancellationIsNot(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

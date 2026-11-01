@@ -11,7 +11,7 @@ import (
 // A key that slid one level in during an edit still renders, and the chart only
 // fails at apply time: the director carried volumes inside its container (#1906).
 func TestEveryWorkloadCarriesItsVolumesOnThePodSpec(t *testing.T) {
-	out, err := exec.Command("helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

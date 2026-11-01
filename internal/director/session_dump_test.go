@@ -29,7 +29,7 @@ func TestDumpDistinguishesOwnedSessionsFromReplicas(t *testing.T) {
 	waitFor(t, 3*time.Second, func() bool { return len(sessionIDs(srv)) == 2 })
 
 	rec := httptest.NewRecorder()
-	srv.apiDump(rec, httptest.NewRequest("GET", "/api/director/dump", nil))
+	srv.apiDump(rec, httptest.NewRequestWithContext(t.Context(), "GET", "/api/director/dump", nil))
 
 	var body struct {
 		Sessions []struct {

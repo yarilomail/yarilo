@@ -11,7 +11,7 @@ import (
 func post(t *testing.T, s *Server, path string) int {
 	t.Helper()
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, path, nil))
+	s.Handler().ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, nil))
 	return rr.Code
 }
 
@@ -62,7 +62,7 @@ func TestFaultEndpointAbsentWithoutOptIn(t *testing.T) {
 func TestFaultEndpointRejectsGET(t *testing.T) {
 	s := NewWithOptions(Options{Addr: ":0", Fault: NewGate()})
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/debug/fault/deadlock", nil))
+	s.Handler().ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/fault/deadlock", nil))
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET = %d, want 405", rr.Code)
 	}

@@ -12,7 +12,7 @@ import (
 // It accepts AUTH commands and responds according to the supplied responder.
 func stubAuthServer(t *testing.T, handle func(conn net.Conn, rd *bufio.Reader)) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -37,7 +37,7 @@ func stubAuthServer(t *testing.T, handle func(conn net.Conn, rd *bufio.Reader)) 
 }
 
 func TestDial_HandshakeFail(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

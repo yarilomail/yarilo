@@ -11,7 +11,7 @@ import (
 
 func newMaxLineLenTestConn(t *testing.T, limit int) (client net.Conn, server *maxLineLenConn) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func newMaxLineLenTestConn(t *testing.T, limit int) (client net.Conn, server *ma
 		}
 		ch <- result{&maxLineLenConn{Conn: c, br: bufio.NewReader(c), limit: limit}, nil}
 	}()
-	c, err := net.Dial("tcp", ln.Addr().String())
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestMaxLineLenConn_PendingBuffer(t *testing.T) {
 }
 
 func TestMaxLineLenListener_AcceptsAndWraps(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestMaxLineLenListener_AcceptsAndWraps(t *testing.T) {
 		ch <- ok
 	}()
 
-	c, err := net.Dial("tcp", ln.Addr().String())
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

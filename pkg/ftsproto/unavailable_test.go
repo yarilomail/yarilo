@@ -37,7 +37,7 @@ func (f failingService) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 
 func serveFailing(t *testing.T, err error) *Remote {
 	t.Helper()
-	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
+	ln, lerr := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if lerr != nil {
 		t.Fatal(lerr)
 	}

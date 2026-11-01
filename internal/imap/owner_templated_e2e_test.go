@@ -55,7 +55,7 @@ func ownerTemplatedServer(t *testing.T) (root string, dial func(user string) *im
 			{Type: imapserver.NamespaceShared, Prefix: "user/%u/", Separator: '/', List: imapserver.ListChildren, Location: "maildir:%h/Maildir"},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -64,7 +64,7 @@ func ownerTemplatedServer(t *testing.T) (root string, dial func(user string) *im
 
 	dial = func(user string) *imapclient.Client {
 		t.Helper()
-		conn, err := net.Dial("tcp", ln.Addr().String())
+		conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}

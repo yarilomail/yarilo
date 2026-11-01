@@ -50,7 +50,7 @@ func (s *slowService) Optimize(string) error                                  { 
 func serveSlow(t *testing.T) (addr string, svc *slowService) {
 	t.Helper()
 	svc = &slowService{release: make(chan struct{})}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

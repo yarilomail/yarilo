@@ -57,7 +57,7 @@ func enforceServer(t *testing.T) (aliceDir string, dial func(user string) *imapc
 		ACLEnabled: true,
 	})
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -66,7 +66,7 @@ func enforceServer(t *testing.T) (aliceDir string, dial func(user string) *imapc
 
 	dial = func(user string) *imapclient.Client {
 		t.Helper()
-		conn, err := net.Dial("tcp", ln.Addr().String())
+		conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
@@ -170,14 +170,14 @@ func TestACLEnforce_DisabledLetsEverythingThrough(t *testing.T) {
 		}}),
 		ACLEnabled: false,
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go srv.Serve(ln) //nolint:errcheck
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -230,7 +230,7 @@ func enforceServerWithSharedGroups(t *testing.T, groups map[string][]string) (al
 		},
 	})
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -239,7 +239,7 @@ func enforceServerWithSharedGroups(t *testing.T, groups map[string][]string) (al
 
 	dial = func(user string) *imapclient.Client {
 		t.Helper()
-		conn, err := net.Dial("tcp", ln.Addr().String())
+		conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
@@ -718,7 +718,7 @@ func sharedServerDial(t *testing.T, defaultsFromInbox bool) (aliceHome string, d
 			{Type: imapserver.NamespaceShared, Prefix: "Shared/", Separator: '/', Location: "maildir:" + filepath.Join(root, "alice", "Maildir"), List: imapserver.ListYes},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -726,7 +726,7 @@ func sharedServerDial(t *testing.T, defaultsFromInbox bool) (aliceHome string, d
 	go srv.Serve(ln) //nolint:errcheck
 	dial = func(user string) *imapclient.Client {
 		t.Helper()
-		conn, err := net.Dial("tcp", ln.Addr().String())
+		conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
@@ -818,14 +818,14 @@ func TestACLEnforce_GlobalGrant(t *testing.T) {
 			{Type: imapserver.NamespaceShared, Prefix: "Shared/", Separator: '/', Location: "maildir:" + filepath.Join(root, "alice", "Maildir"), List: imapserver.ListYes},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go srv.Serve(ln) //nolint:errcheck
 	dial := func(user string) *imapclient.Client {
-		conn, err := net.Dial("tcp", ln.Addr().String())
+		conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
@@ -1012,14 +1012,14 @@ func TestACLEnforce_IgnoreACLBypasses(t *testing.T) {
 			{Type: imapserver.NamespaceShared, Prefix: "Open/", Separator: '/', Location: "maildir:" + filepath.Join(root, "alice", "Maildir"), List: imapserver.ListYes, IgnoreACL: true},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go srv.Serve(ln) //nolint:errcheck
 	dial := func(user string) *imapclient.Client {
-		conn, err := net.Dial("tcp", ln.Addr().String())
+		conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}

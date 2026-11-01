@@ -55,7 +55,7 @@ func orcptServer(t *testing.T) (string, *replyRelay) {
 	relay := &replyRelay{}
 	rs := goSmtp.NewServer(relay)
 	rs.Domain = "relay.test"
-	rl, err := net.Listen("tcp", "127.0.0.1:0")
+	rl, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func orcptServer(t *testing.T) (string, *replyRelay) {
 
 	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
 		Mailbox: maildir.New(), Index: fileindex.New(), Resolver: resolver, SieveEngine: sieve.New(scfg, nil, nil, nil)}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

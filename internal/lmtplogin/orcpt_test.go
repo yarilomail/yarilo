@@ -17,7 +17,7 @@ import (
 // reports the RCPT line it got.
 func fakeBackend(t *testing.T) (string, <-chan string) {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,13 +90,13 @@ func TestORCPTGoesOnToTheBackend(t *testing.T) {
 // lmtp-login takes ORCPT from the relay without offering DSN.
 func TestLMTPLoginTakesORCPT(t *testing.T) {
 	s := New(testOpts(Options{Hostname: "lmtp.test"}))
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go s.srv.Serve(l) //nolint:errcheck
 	defer s.srv.Close()
-	c, err := net.Dial("tcp", l.Addr().String())
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", l.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

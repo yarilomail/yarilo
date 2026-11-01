@@ -12,7 +12,7 @@ import (
 // The admin API is bound before startAPI returns: a taken port or a refused
 // config is an error the caller exits on, not a log line after ready.
 func TestTheDirectorAPIIsBoundBeforeReady(t *testing.T) {
-	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	taken, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestTheDirectorAPIIsBoundBeforeReady(t *testing.T) {
 		t.Error("an empty token started the API")
 	}
 
-	free, err := net.Listen("tcp", "127.0.0.1:0")
+	free, err := new(net.ListenConfig).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestTheDirectorAPIIsBoundBeforeReady(t *testing.T) {
 	if err := startAPI(ctx, director.NewWithOptions(director.Options{}), config.DirectorAPIConfig{Listen: addr, Token: "t"}, nil, noFail); err != nil {
 		t.Fatalf("a free port: %v", err)
 	}
-	c, err := net.Dial("tcp", addr)
+	c, err := new(net.Dialer).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		t.Fatalf("the API is not listening when startAPI returns: %v", err)
 	}

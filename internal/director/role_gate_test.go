@@ -86,7 +86,7 @@ func TestDirectorJoinNeedsTheDirectorRole(t *testing.T) {
 func startTLSDirector(t *testing.T, cfg *tls.Config) string {
 	t.Helper()
 	srv := NewWithOptions(testOptions(Options{PingInterval: 24 * time.Hour}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func dialRole(t *testing.T, ca *mtlstest.CA, addr string, r mtls.Role) (net.Conn
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, err := tls.Dial("tcp", addr, cliCfg)
+	conn, err := (&tls.Dialer{Config: cliCfg}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

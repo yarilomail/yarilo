@@ -23,7 +23,7 @@ func RelayTo(t *testing.T, auth protocol.Authenticator) *authrelay.Client {
 // relayServing serves the chain and dials it.
 func relayServing(t *testing.T, chain []protocol.Passdb, opts ...protocol.ServerOption) *authrelay.Client {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("authtest: listen: %v", err)
 	}

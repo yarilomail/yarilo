@@ -30,7 +30,7 @@ func buildCustomSchemaDB(t *testing.T) string {
 		mail_path  TEXT NOT NULL DEFAULT '',
 		active     INTEGER NOT NULL DEFAULT 1
 	);`
-	if _, err := db.Exec(ddl); err != nil {
+	if _, err := db.ExecContext(t.Context(), ddl); err != nil {
 		t.Fatal(err)
 	}
 	insert := `INSERT INTO mailbox_users (email, pw_hash, maildir, mail_path, active) VALUES (?, ?, ?, ?, ?)`
@@ -43,7 +43,7 @@ func buildCustomSchemaDB(t *testing.T) string {
 		{"disabled@example.com", "{PLAIN}any", "", "", 0},
 	}
 	for _, r := range rows {
-		if _, err := db.Exec(insert, r.email, r.pw, r.home, r.mail, r.active); err != nil {
+		if _, err := db.ExecContext(t.Context(), insert, r.email, r.pw, r.home, r.mail, r.active); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -204,7 +204,7 @@ func TestSkipSchema_PreventsTableCreation(t *testing.T) {
 	db, _ := sql.Open("sqlite", dsn)
 	defer db.Close()
 	var name string
-	err = db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='yarilo_users'`).Scan(&name)
+	err = db.QueryRowContext(t.Context(), `SELECT name FROM sqlite_master WHERE type='table' AND name='yarilo_users'`).Scan(&name)
 	if err == nil {
 		t.Errorf("expected no yarilo_users table when skip_schema=true, found %q", name)
 	}
@@ -215,12 +215,12 @@ func TestDefaultPassScheme_BcryptForBareHash(t *testing.T) {
 	// crypt(3) marker - but default_pass_scheme=BCRYPT so it's treated as one.
 	dsn := filepath.Join(t.TempDir(), "default.db")
 	db, _ := sql.Open("sqlite", dsn)
-	if _, err := db.Exec(`CREATE TABLE users (email TEXT PRIMARY KEY, pw TEXT, active INTEGER DEFAULT 1)`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE users (email TEXT PRIMARY KEY, pw TEXT, active INTEGER DEFAULT 1)`); err != nil {
 		t.Fatal(err)
 	}
 	// Plain-prefixed because we want a sanity baseline. The default_scheme
 	// only matters when no prefix is detected.
-	if _, err := db.Exec(`INSERT INTO users VALUES ('carol@example.com', 'literalpass', 1)`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO users VALUES ('carol@example.com', 'literalpass', 1)`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -252,9 +252,9 @@ func TestDefaultPassScheme_BcryptForBareHash(t *testing.T) {
 func TestAllowNets_Enforcement(t *testing.T) {
 	dsn := filepath.Join(t.TempDir(), "nets.db")
 	db, _ := sql.Open("sqlite", dsn)
-	db.Exec(`CREATE TABLE users (email TEXT PRIMARY KEY, pw TEXT, nets TEXT, active INTEGER DEFAULT 1)`)
-	db.Exec(`INSERT INTO users VALUES ('alice@example.com', '{PLAIN}secret', '10.0.0.0/8,192.168.1.0/24', 1)`)
-	db.Exec(`INSERT INTO users VALUES ('bob@example.com',   '{PLAIN}secret', '', 1)`)
+	db.ExecContext(t.Context(), `CREATE TABLE users (email TEXT PRIMARY KEY, pw TEXT, nets TEXT, active INTEGER DEFAULT 1)`)
+	db.ExecContext(t.Context(), `INSERT INTO users VALUES ('alice@example.com', '{PLAIN}secret', '10.0.0.0/8,192.168.1.0/24', 1)`)
+	db.ExecContext(t.Context(), `INSERT INTO users VALUES ('bob@example.com',   '{PLAIN}secret', '', 1)`)
 	db.Close()
 
 	p, err := authsql.New(authsql.Config{

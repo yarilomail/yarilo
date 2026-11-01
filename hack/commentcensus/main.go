@@ -22,6 +22,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -434,7 +435,7 @@ func emDashes(root, allowPath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output()
+	out, err := exec.CommandContext(context.Background(), "git", "-C", root, "ls-files", "-z").Output()
 	if err != nil {
 		return nil, fmt.Errorf("git ls-files: %w", err)
 	}

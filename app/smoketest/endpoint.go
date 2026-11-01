@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -60,7 +61,7 @@ func (e endpoint) dial() (net.Conn, *bufio.Reader, error) {
 	dialer := &net.Dialer{Timeout: *flagTimeout}
 	switch e.mode {
 	case tlsSSL:
-		conn, err := tls.DialWithDialer(dialer, "tcp", e.addr(), e.tlsConfig())
+		conn, err := (&tls.Dialer{NetDialer: dialer, Config: e.tlsConfig()}).DialContext(context.Background(), "tcp", e.addr())
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: connect %s: %w", e.name, e.addr(), err)
 		}
@@ -85,7 +86,7 @@ func (e endpoint) dial() (net.Conn, *bufio.Reader, error) {
 			return nil, nil, fmt.Errorf("%s: starttls: %w", e.name, err)
 		}
 		tconn := tls.Client(conn, e.tlsConfig())
-		if err := tconn.Handshake(); err != nil {
+		if err := tconn.HandshakeContext(context.Background()); err != nil {
 			conn.Close() //nolint:errcheck
 			return nil, nil, fmt.Errorf("%s: starttls handshake: %w", e.name, err)
 		}

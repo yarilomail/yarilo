@@ -141,7 +141,7 @@ func main() {
 		slog.Error("fts.fts_listen is required")
 		os.Exit(1)
 	}
-	ln, err := net.Listen("tcp", listen)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", listen)
 	if err != nil {
 		slog.Error("listen failed", "addr", listen, "err", err)
 		os.Exit(1)

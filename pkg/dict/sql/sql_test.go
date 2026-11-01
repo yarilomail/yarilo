@@ -70,7 +70,7 @@ func TestExpireScanPersists(t *testing.T) {
 	_, _ = tx.Commit()
 
 	// Hand-rotate the row's expiry to a past unix time so ExpireScan deletes it.
-	_, err := d.(*Dict).db.Exec(`UPDATE dict_kv SET expires = 1 WHERE k = ?`, "ephemeral")
+	_, err := d.(*Dict).db.ExecContext(t.Context(), `UPDATE dict_kv SET expires = 1 WHERE k = ?`, "ephemeral")
 	if err != nil {
 		t.Fatalf("force expiry: %v", err)
 	}
@@ -191,7 +191,7 @@ func mappedDict(t *testing.T) *Dict {
 	if err != nil {
 		t.Fatalf("seed open: %v", err)
 	}
-	if _, err := seed.Exec(`CREATE TABLE quota (username TEXT PRIMARY KEY, bytes BIGINT, messages BIGINT)`); err != nil {
+	if _, err := seed.ExecContext(t.Context(), `CREATE TABLE quota (username TEXT PRIMARY KEY, bytes BIGINT, messages BIGINT)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 	seed.Close() //nolint:errcheck
@@ -235,7 +235,7 @@ func TestMappedModeColumns(t *testing.T) {
 
 	// Both keys land in the same physical row.
 	var rows int
-	if err := d.db.QueryRow(`SELECT COUNT(*) FROM quota WHERE username = ?`, "u1@x").Scan(&rows); err != nil {
+	if err := d.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM quota WHERE username = ?`, "u1@x").Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 1 {
@@ -291,7 +291,7 @@ func TestMappedUnsetNullsColumn(t *testing.T) {
 	}
 	// The row is not deleted, just the column nulled.
 	var rows int
-	if err := d.db.QueryRow(`SELECT COUNT(*) FROM quota WHERE username = ?`, "u1@x").Scan(&rows); err != nil {
+	if err := d.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM quota WHERE username = ?`, "u1@x").Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 1 {

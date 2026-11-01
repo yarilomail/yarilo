@@ -19,8 +19,7 @@ func renderWith(t *testing.T, extra string) ([]byte, error) {
 	if err := os.WriteFile(f, []byte(extra), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return exec.Command("helm", "template", "yarilo", "../../helm",
-		"--set", "internalTLS.enabled=false", "-f", f).CombinedOutput()
+	return exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "--set", "internalTLS.enabled=false", "-f", f).CombinedOutput()
 }
 
 // loadRendered loads the rendered ConfigMap the way a pod does.

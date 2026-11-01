@@ -368,7 +368,7 @@ func (l *PreambleListener) handshake(c net.Conn) (*PreambleConn, error) {
 	// bounds the handshake.
 	if l.TLSConfig != nil {
 		tconn := tls.Server(c, l.TLSConfig)
-		if err := tconn.Handshake(); err != nil {
+		if err := tconn.HandshakeContext(context.Background()); err != nil {
 			return nil, fmt.Errorf("internal mtls handshake: %w", err)
 		}
 		c = tconn

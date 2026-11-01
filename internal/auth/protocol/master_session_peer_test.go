@@ -58,7 +58,7 @@ func TestMasterSessionOnlyForAllowedPeers(t *testing.T) {
 			t.Cleanup(cancel)
 			go srv.Serve(ctx, ln) //nolint:errcheck
 
-			conn, err := net.Dial("unix", path)
+			conn, err := new(net.Dialer).DialContext(ctx, "unix", path)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -68,7 +68,7 @@ func windowFolder(t *testing.T) (string, *userMailbox, mailbox.UserIndex, *mailb
 // holds its window, then releases it. It returns how long the reconcile took.
 func reconcileWhileChildPauses(t *testing.T, test, home string, box *userMailbox, idx mailbox.UserIndex, folder *mailbox.Folder) (mailbox.SyncStats, time.Duration) {
 	t.Helper()
-	child := exec.Command(os.Args[0], "-test.run=^"+test+"$", "-test.count=1")
+	child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^"+test+"$", "-test.count=1")
 	child.Env = append(os.Environ(), windowChildHome+"="+home, windowChildTest+"="+test)
 	childErr := make(chan error, 1)
 	childOut := make(chan []byte, 1)

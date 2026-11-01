@@ -94,14 +94,14 @@ func TestLMTP_WhitespaceBeforePath_Integration(t *testing.T) {
 		Index:    idx,
 		Resolver: resolver,
 	}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go func() { _ = srv.Serve(ln) }()
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

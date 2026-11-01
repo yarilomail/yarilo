@@ -26,7 +26,7 @@ func startNotifyServer(t *testing.T) string {
 		Resolver:  &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
 		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ type rawConn struct {
 
 func dialRaw(t *testing.T, addr string) *rawConn {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,7 @@ func mustCIDR(t testing.TB, s string) *net.IPNet {
 
 // identityRequest is what the login layer sends, minus the transport.
 func identityRequest(user, peer string) *http.Request {
-	r := httptest.NewRequest(http.MethodGet, jmapcore.SessionPath, nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, jmapcore.SessionPath, nil)
 	r.RemoteAddr = peer
 	r.Header.Set(hdrUser, user)
 	r.Header.Set(hdrSessionID, "deadbeefdeadbeef")
@@ -182,7 +182,7 @@ func TestTrustMTLSRejectsForeignCertificate(t *testing.T) {
 // serveOn starts the server on an ephemeral port and returns its address.
 func serveOn(t *testing.T, opts Options) string {
 	t.Helper()
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe listen: %v", err)
 	}
@@ -207,7 +207,7 @@ func serveOn(t *testing.T, opts Options) string {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 		if err == nil {
 			c.Close() //nolint:errcheck
 			return addr

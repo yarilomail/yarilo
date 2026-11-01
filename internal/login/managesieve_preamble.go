@@ -2,6 +2,7 @@ package login
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -93,7 +94,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 			}
 			fmt.Fprintf(conn, "OK \"Begin TLS negotiation.\"\r\n") //nolint:errcheck
 			tlsConn := tls.Server(conn, extTLS)
-			if err := tlsConn.Handshake(); err != nil {
+			if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 				return nil, conn, rd, fmt.Errorf("managesieve: STARTTLS handshake: %w", err)
 			}
 			conn = tlsConn

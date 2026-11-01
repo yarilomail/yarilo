@@ -15,12 +15,12 @@ func acceptOne(t *testing.T, network string) net.Conn {
 	if network == "unix" {
 		addr = sockPath(t)
 	}
-	ln, err := net.Listen(network, addr)
+	ln, err := new(net.ListenConfig).Listen(t.Context(), network, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	client, err := net.Dial(network, ln.Addr().String())
+	client, err := new(net.Dialer).DialContext(t.Context(), network, ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

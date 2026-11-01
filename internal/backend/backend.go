@@ -603,7 +603,7 @@ func storeLivenessCheck(storePath string, gate *telemetry.Gate) telemetry.Livene
 // client gets connection refused. An empty address binds sessionHost.
 func bindTCP(proto string, svc *config.ServiceConfig) (net.Listener, error) {
 	addr, from := svc.ListenAddr(sessionHost)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s: bind %s: %w", proto, addr, err)
 	}

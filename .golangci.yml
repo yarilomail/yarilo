@@ -1,54 +1,64 @@
+version: "2"
 linters:
   enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - gofmt
-    - goimports
-    - misspell
-    - unconvert
-    - unparam
     - bodyclose
+    - misspell
     - noctx
     - revive
-
-linters-settings:
-  revive:
+    - unconvert
+    - unparam
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    ## v1's staticcheck and gosimple, without the stylecheck and quickfix sets v2 folds in.
+    staticcheck:
+      checks:
+        - SA*
+        - S1*
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: package-comments
+  exclusions:
+    generated: lax
+    ## No `comments` preset: revive's missing-comment reports stay.
+    presets:
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: exported
-        arguments:
-          - disableStutteringCheck
-      - name: package-comments
-  goimports:
-    local-prefixes: github.com/yarilomail/yarilo/v2
-  errcheck:
-    check-type-assertions: true
-    check-blank: false
-
+      - linters:
+          - errcheck
+          - unparam
+        path: _test\.go
+      ## pkg/ is the importable API: its exported identifiers carry godoc (#2316).
+      - linters:
+          - revive
+        path-except: ^pkg/
+      - linters:
+          - revive
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  ## The default exclusions drop revive's missing-comment reports.
-  include:
-    - EXC0012
-    - EXC0013
-    - EXC0014
-    - EXC0015
-  exclude-rules:
-    - path: "_test\\.go"
-      linters:
-        - errcheck
-        - unparam
-    ## pkg/ is the importable API: its exported identifiers carry godoc (#2316).
-    - path-except: "^pkg/"
-      linters:
-        - revive
-    - path: "_test\\.go"
-      linters:
-        - revive
   max-issues-per-linter: 0
   max-same-issues: 0
-
-run:
-  timeout: 5m
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/yarilomail/yarilo/v2
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

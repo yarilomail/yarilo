@@ -1,6 +1,7 @@
 package jmap
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,7 +9,7 @@ import (
 )
 
 func downloadRequest(path string) *http.Request {
-	r := httptest.NewRequest(http.MethodGet, path, nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 	r.RemoteAddr = trustedPeer
 	r.Header.Set(hdrUser, "u1@example.com")
 	r.Header.Set(hdrSessionID, "deadbeefdeadbeef")

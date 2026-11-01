@@ -442,7 +442,7 @@ func TestAnotherPodsWriteArrives(t *testing.T) {
 	}
 	f := pushServer(t, time.Hour, 0)
 	st := f.open(t, "types=Email,Mailbox,Thread,Quota", "")
-	child := exec.Command(os.Args[0], "-test.run=^TestAnotherPodsWriteArrives$", "-test.count=1")
+	child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAnotherPodsWriteArrives$", "-test.count=1")
 	child.Env = append(os.Environ(), pushChildSocket+"="+f.socket, pushChildHome+"="+f.info.Home)
 	if out, err := child.CombinedOutput(); err != nil {
 		t.Fatalf("the other pod failed: %v\n%s", err, out)
@@ -524,7 +524,7 @@ func TestPushOffAnswersNoContent(t *testing.T) {
 // A pod shutting down ends its streams, or Shutdown waits them out.
 func TestShutdownEndsTheStreams(t *testing.T) {
 	f := pushServer(t, testPoll, 0)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +535,7 @@ func TestShutdownEndsTheStreams(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- f.s.Serve(ctx) }()
 	for i := 0; i < 300; i++ {
-		if c, err := net.Dial("tcp", addr); err == nil {
+		if c, err := new(net.Dialer).DialContext(ctx, "tcp", addr); err == nil {
 			_ = c.Close()
 			break
 		}
