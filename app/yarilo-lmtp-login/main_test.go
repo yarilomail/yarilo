@@ -10,7 +10,7 @@ import (
 )
 
 // main refuses to start without the listener, so every row has it.
-const services = "services:\n  lmtp:\n    enabled: true\n    port: 24\n"
+const services = "services:\n  lmtp_login:\n    enabled: true\n    port: 24\n"
 
 func TestTheConfiguredProxyTimeoutReachesTheProxy(t *testing.T) {
 	for _, tc := range []struct {

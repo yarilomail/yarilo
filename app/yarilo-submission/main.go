@@ -41,12 +41,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	svcs := cfg.Services
-	if !svcs.Submission.Active() && !svcs.Submissions.Active() {
-		slog.Error("no submission listener configured (submission or submissions must be enabled)")
-		os.Exit(1)
-	}
-
 	slog.Info("yarilo-submission starting",
 		"version", build.Version,
 		"telemetry", telemetry.Addr(cfg.Telemetry.Listen), // resolved (honours TELEMETRY_LISTEN)
@@ -54,21 +48,20 @@ func main() {
 
 	// One listener per session binary; the login proxy holds the client
 	// certificate this process must not read (#1863).
-	config.KeepOnlySessionListener(cfg, config.RoleSubmission)
+	if err := config.KeepOnlySessionListener(cfg, config.RoleSubmission); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
+	svc := cfg.Services.Submission
+	if !svc.Active() {
+		slog.Error("services.submission is not enabled")
+		os.Exit(1)
+	}
 
 	// ---- relay proxy ----
 	var relay *submproxy.Submission
 	if cfg.Protocol.Submission.Relay.Host != "" {
 		relay = submproxy.New(cfg.Protocol.Submission.Relay, cfg.SubmissionHostname())
-	}
-
-	// ---- TLS ----
-	// Only for the listener that terminates it: behind submission-login the
-	// certificate lives in the login pod and this path does not exist (#1863).
-	extTLS, err := config.ListenerTLS(cfg, cfg.Services.Submissions, "smtp")
-	if err != nil {
-		slog.Error("TLS config failed", "err", err)
-		os.Exit(1)
 	}
 
 	haproxyNets := parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks)
@@ -86,16 +79,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	primary := firstActive(svcs.Submission, svcs.Submissions)
 	srv, err := newServer(cfg, submsvr.Options{
-		HAProxy:          primary.HAProxy,
+		HAProxy:          svc.HAProxy,
 		HAProxyTimeout:   haproxyTimeout,
 		HAProxyNets:      haproxyNets,
 		AuthAddr:         authAddr,
 		AuthRelay:        authRelay,
 		AuthTLS:          authTLS,
-		DisablePlainAuth: primary.PlainAuthDisabled(),
-		TLSConfig:        extTLS,
+		DisablePlainAuth: svc.PlainAuthDisabled(),
 		Config:           cfg.Protocol.Submission,
 		Proxy:            relay,
 		FailureDelay:     time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
@@ -117,29 +108,14 @@ func main() {
 	go readyfile.Touch(ctx, reg.ReadinessDir, "submission",
 		time.Duration(reg.ReadinessTouchInterval)*time.Second, ready.Load)
 
-	// port 587 - STARTTLS
-	if svcs.Submission.Active() {
-		addr, from := svcs.Submission.ListenAddr(config.BackendHost)
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			slog.Error("submission: listen failed", "addr", addr, "err", err)
-			os.Exit(1)
-		}
-		stopaccept.Serve(ctx, "submission:", ln, func(l net.Listener) error { return srv.Serve(l, nil) })
-		slog.Info("submission: listening", "addr", ln.Addr().String(), "from", from, "tls", "starttls")
+	addr, from := svc.ListenAddr(config.BackendHost)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		slog.Error("submission: listen failed", "addr", addr, "err", err)
+		os.Exit(1)
 	}
-
-	// port 465 - implicit TLS
-	if svcs.Submissions.Active() {
-		addr, from := svcs.Submissions.ListenAddr(config.BackendHost)
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			slog.Error("submissions: listen failed", "addr", addr, "err", err)
-			os.Exit(1)
-		}
-		stopaccept.Serve(ctx, "submissions:", ln, func(l net.Listener) error { return srv.Serve(l, extTLS) })
-		slog.Info("submission: listening", "addr", ln.Addr().String(), "from", from, "tls", "implicit")
-	}
+	stopaccept.Serve(ctx, "submission:", ln, func(l net.Listener) error { return srv.Serve(l, nil) })
+	slog.Info("submission: listening", "addr", ln.Addr().String(), "from", from)
 
 	ready.Store(true) // listeners bound → the readiness toucher may start signalling
 
@@ -195,15 +171,6 @@ func parseCIDRs(ss []string) []*net.IPNet {
 		nets = append(nets, n)
 	}
 	return nets
-}
-
-func firstActive(svcs ...*config.ServiceConfig) *config.ServiceConfig {
-	for _, s := range svcs {
-		if s != nil && s.Enabled {
-			return s
-		}
-	}
-	return &config.ServiceConfig{}
 }
 
 func runTelemetry(cfg config.TelemetryConfig) {

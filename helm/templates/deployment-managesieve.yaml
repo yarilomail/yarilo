@@ -45,9 +45,11 @@ spec:
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:
+            {{- if .Values.components.manageSieve.listeners.managesieve.enabled }}
             - name: managesieve
               containerPort: {{ .Values.components.manageSieve.listeners.managesieve.containerPort }}
               protocol: TCP
+            {{- end }}
             - name: telemetry
               containerPort: 8080
               protocol: TCP

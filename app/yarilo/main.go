@@ -24,7 +24,9 @@ func debugf(msg string, args ...any) {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", "yarilo"))
 
-	cfgPath := flag.String("config", "config/yarilo.yaml", "path to config file")
+	// CONFIG and its default as in every other binary (#2428); -config, which
+	// the image's entrypoint passes, still wins.
+	cfgPath := flag.String("config", configPath(), "path to config file")
 	flag.Parse()
 
 	debug = strings.ToLower(os.Getenv("LOG_LEVEL")) == "debug"
@@ -38,7 +40,11 @@ func main() {
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		slog.Error("failed to load config", "err", err)
+		slog.Error("failed to load config", "err", err, "path", *cfgPath)
+		os.Exit(1)
+	}
+	if err := config.KeepBackendListeners(cfg); err != nil {
+		slog.Error("listener config", "err", err)
 		os.Exit(1)
 	}
 
@@ -57,4 +63,11 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("yarilo stopped")
+}
+
+func configPath() string {
+	if p := os.Getenv("CONFIG"); p != "" {
+		return p
+	}
+	return "/etc/yarilo/yarilo.yaml"
 }

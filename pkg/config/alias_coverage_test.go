@@ -21,13 +21,8 @@ func TestEveryAliasFieldHasAnAdopter(t *testing.T) {
 	// A config with every optional block present, so per-block alias sets
 	// (services.*.ssl) are built rather than skipped.
 	cfg := &Config{}
-	cfg.Services = ServicesConfig{
-		IMAP: &ServiceConfig{SSL: &SSLConfig{}}, IMAPS: &ServiceConfig{SSL: &SSLConfig{}},
-		Submission: &ServiceConfig{SSL: &SSLConfig{}}, Submissions: &ServiceConfig{SSL: &SSLConfig{}},
-		POP3: &ServiceConfig{SSL: &SSLConfig{}}, POP3S: &ServiceConfig{SSL: &SSLConfig{}},
-		LMTP: &ServiceConfig{SSL: &SSLConfig{}}, ManageSieve: &ServiceConfig{SSL: &SSLConfig{}},
-		ManageSieveBE: &ServiceConfig{SSL: &SSLConfig{}}, JMAP: &ServiceConfig{SSL: &SSLConfig{}},
-		JMAPBE: &ServiceConfig{SSL: &SSLConfig{}},
+	for _, e := range cfg.Services.Entries() {
+		*e.Svc = &ServiceConfig{SSL: &SSLConfig{}}
 	}
 	// One entry in each list-shaped section, so the per-entry alias sets are
 	// built rather than skipped: a chain nobody declared covers nothing.

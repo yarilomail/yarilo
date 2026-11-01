@@ -47,9 +47,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	svc := cfg.Services.JMAPBE
+	if err := config.RequireListeners(cfg, "jmap"); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
+	svc := cfg.Services.JMAP
 	if !svc.Active() {
-		slog.Error("services.jmap_be is not enabled")
+		slog.Error("services.jmap is not enabled")
 		os.Exit(1)
 	}
 	addr, from := svc.ListenAddr(config.BackendHost)

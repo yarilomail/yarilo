@@ -1,6 +1,11 @@
 package config
 
-import "crypto/tls"
+import (
+	"crypto/tls"
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // SessionRole names the one listener a session binary serves. Everything else
 // belongs to a sibling process or to the login proxy in front of it.
@@ -13,38 +18,41 @@ const (
 	RoleLMTP        SessionRole = "lmtp"
 	RoleManageSieve SessionRole = "managesieve"
 	RoleSubmission  SessionRole = "submission"
+	RoleJMAP        SessionRole = "jmap"
 )
 
-// KeepOnlySessionListener leaves the listener this binary serves and drops the
-// rest: the login proxy in front holds the client certificate (#1863).
-func KeepOnlySessionListener(cfg *Config, role SessionRole) {
-	s := &cfg.Services
-	all := []**ServiceConfig{&s.IMAP, &s.IMAPS, &s.POP3, &s.POP3S, &s.LMTP,
-		&s.Submission, &s.Submissions, &s.ManageSieve, &s.ManageSieveBE, &s.JMAP, &s.JMAPBE}
-	var kept []**ServiceConfig
-	switch role {
-	case RoleIMAP:
-		kept = []**ServiceConfig{&s.IMAP}
-	case RolePOP3:
-		kept = []**ServiceConfig{&s.POP3}
-	case RoleLMTP:
-		kept = []**ServiceConfig{&s.LMTP}
-	case RoleManageSieve:
-		kept = []**ServiceConfig{&s.ManageSieve, &s.ManageSieveBE}
-	case RoleSubmission:
-		// Both: submissions is the chart's own knob for implicit TLS on the
-		// backend, and a deployment that turns it on mounts the certificate.
-		kept = []**ServiceConfig{&s.Submission, &s.Submissions}
+// KeepOnlySessionListener leaves the one entry this backend reads and drops
+// the rest; it refuses a config without that entry (#2415).
+func KeepOnlySessionListener(cfg *Config, role SessionRole) error {
+	if err := RequireListeners(cfg, string(role)); err != nil {
+		return err
 	}
-	keeping := map[**ServiceConfig]bool{}
-	for _, k := range kept {
-		keeping[k] = true
-	}
-	for _, p := range all {
-		if !keeping[p] {
-			*p = nil
+	for _, e := range cfg.Services.Entries() {
+		if e.Name != string(role) {
+			*e.Svc = nil
 		}
 	}
+	return nil
+}
+
+// KeepBackendListeners leaves the single binary the backend entries the config
+// has and drops the login proxies'; it refuses a config with none of them.
+func KeepBackendListeners(cfg *Config) error {
+	backends := []string{string(RoleIMAP), string(RolePOP3), string(RoleLMTP),
+		string(RoleManageSieve), string(RoleSubmission), string(RoleJMAP)}
+	kept := 0
+	for _, e := range cfg.Services.Entries() {
+		if !slices.Contains(backends, e.Name) {
+			*e.Svc = nil
+		} else if *e.Svc != nil {
+			kept++
+		}
+	}
+	if kept == 0 {
+		return fmt.Errorf("config: none of services.%s is set; the yarilo binary listens only on backend entries",
+			strings.Join(backends, ", services."))
+	}
+	return nil
 }
 
 // ListenerTLS builds server TLS for a listener that terminates it, and nothing

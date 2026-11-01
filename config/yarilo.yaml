@@ -14,44 +14,23 @@ general:
     mail_max_userip_connections: 10
 
 services:
-  imaps:
-    enabled: true
-    port: 993
-    ssl_mode: ssl
+  ## The single binary serves the session backends only; the login proxies
+  ## (services.*_login) take the client ports and dial these.
   imap:
     enabled: true
-    port: 143
-    ssl_mode: starttls
-    disable_plaintext_auth: false
+    port: 10143
+    ssl_mode: "no"
   submission:
     enabled: true
-    port: 587
-    ssl_mode: starttls
-    disable_plaintext_auth: false
-  submissions:
-    enabled: true
-    port: 465
-    ssl_mode: ssl
+    port: 10587
+    ssl_mode: "no"
   pop3:
     enabled: true
-    port: 110
-    ssl_mode: starttls
-    disable_plaintext_auth: false
-  pop3s:
-    enabled: true
-    port: 995
-    ssl_mode: ssl
+    port: 10110
+    ssl_mode: "no"
   lmtp:
     enabled: true
-    port: 24
-    ssl_mode: "no"
-  managesieve:
-    enabled: true
-    port: 4190
-    ssl_mode: starttls
-  managesieve_be:
-    enabled: false
-    port: 14190
+    port: 10024
     ssl_mode: "no"
 
 sieve:

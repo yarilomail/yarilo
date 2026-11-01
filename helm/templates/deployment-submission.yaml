@@ -55,11 +55,6 @@ spec:
               containerPort: {{ .Values.components.submission.listeners.submission.containerPort }}
               protocol: TCP
             {{- end }}
-            {{- if .Values.components.submission.listeners.submissions.enabled }}
-            - name: submissions
-              containerPort: {{ .Values.components.submission.listeners.submissions.containerPort }}
-              protocol: TCP
-            {{- end }}
             - name: telemetry
               containerPort: 8080
               protocol: TCP

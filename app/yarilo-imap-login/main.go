@@ -38,8 +38,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := config.RequireListeners(cfg, "imap_login", "imaps_login"); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
 	svcs := cfg.Services
-	if !svcs.IMAPS.Active() && !svcs.IMAP.Active() {
+	if !svcs.IMAPSLogin.Active() && !svcs.IMAPLogin.Active() {
 		slog.Error("no IMAP listener configured (imap or imaps must be enabled)")
 		os.Exit(1)
 	}
@@ -52,13 +56,13 @@ func main() {
 	)
 
 	// A listener that declares TLS without a certificate must not bind silently.
-	if warn, err := config.CheckListenerTLS("services.imaps", svcs.IMAPS, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.imaps_login", svcs.IMAPSLogin, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
 		slog.Warn(warn)
 	}
-	if warn, err := config.CheckListenerTLS("services.imap", svcs.IMAP, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.imap_login", svcs.IMAPLogin, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
@@ -120,8 +124,8 @@ func main() {
 	tel := startTelemetry(cfg.Telemetry)
 
 	// Port 993 - implicit TLS (IMAPS).
-	if svcs.IMAPS.Active() {
-		addr, from := svcs.IMAPS.ListenAddr(config.PublicHost)
+	if svcs.IMAPSLogin.Active() {
+		addr, from := svcs.IMAPSLogin.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("imaps-login: listen failed", "addr", addr, "err", err)
@@ -140,7 +144,7 @@ func main() {
 			AuthAddr:            cfg.AuthService.ClientAddr(),
 			AuthTLS:             intTLS,
 			AuthMaxAttempts:     cfg.Auth.MaxAttempts,
-			DisablePlainAuth:    svcs.IMAPS.PlainAuthDisabled(),
+			DisablePlainAuth:    svcs.IMAPSLogin.PlainAuthDisabled(),
 			IMAPIDRetain:        cfg.Protocol.IMAP.IDRetain,
 			WardenAddr:          cfg.WardenService.ClientAddr(),
 			WardenTLS:           intTLS,
@@ -153,10 +157,10 @@ func main() {
 			TransientReloginCap: cfg.Login.TransientReloginCap,
 			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 			LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
-			HAProxy:             svcs.IMAPS.HAProxy,
+			HAProxy:             svcs.IMAPSLogin.HAProxy,
 			HAProxyTimeout:      haproxyTimeout,
 			HAProxyNets:         haproxyNets,
-			XClient:             svcs.IMAPS.XClient,
+			XClient:             svcs.IMAPSLogin.XClient,
 			XClientNets:         xclientNets,
 		})
 		loginServers = append(loginServers, srv)
@@ -173,8 +177,8 @@ func main() {
 	}
 
 	// Port 143 - STARTTLS.
-	if svcs.IMAP.Active() {
-		addr, from := svcs.IMAP.ListenAddr(config.PublicHost)
+	if svcs.IMAPLogin.Active() {
+		addr, from := svcs.IMAPLogin.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("imap-login: listen failed", "addr", addr, "err", err)
@@ -192,7 +196,7 @@ func main() {
 			StarttlsTLS:         extTLS,
 			AuthAddr:            cfg.AuthService.ClientAddr(),
 			AuthTLS:             intTLS,
-			DisablePlainAuth:    svcs.IMAP.PlainAuthDisabled(),
+			DisablePlainAuth:    svcs.IMAPLogin.PlainAuthDisabled(),
 			IMAPIDRetain:        cfg.Protocol.IMAP.IDRetain,
 			WardenAddr:          cfg.WardenService.ClientAddr(),
 			WardenTLS:           intTLS,
@@ -202,10 +206,10 @@ func main() {
 			LookupHoldMax:       cfg.Login.LookupHoldMax,
 			SessionSyncInterval: time.Duration(cfg.Login.SessionSyncInterval) * time.Second,
 			LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
-			HAProxy:             svcs.IMAP.HAProxy,
+			HAProxy:             svcs.IMAPLogin.HAProxy,
 			HAProxyTimeout:      haproxyTimeout,
 			HAProxyNets:         haproxyNets,
-			XClient:             svcs.IMAP.XClient,
+			XClient:             svcs.IMAPLogin.XClient,
 			XClientNets:         xclientNets,
 			AuthMaxAttempts:     cfg.Auth.MaxAttempts,
 			TransientRetries:    cfg.Login.TransientRetries,

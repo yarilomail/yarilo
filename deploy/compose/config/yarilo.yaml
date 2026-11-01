@@ -25,25 +25,74 @@ general:
 ## network, so listeners bind every interface here. Only the ports the
 ## docker-compose.yml publishes reach the host's network.
 services:
-  imaps:
+  ## Login proxies: client TLS ends here.
+  imaps_login:
     enabled: true
     port: 10993
     address: "0.0.0.0"
     ssl_mode: ssl
     haproxy_protocol: false
     xclient_protocol: true
-  imap:
+  imap_login:
     enabled: true
     port: 10143
     address: "0.0.0.0"
     ssl_mode: starttls
     haproxy_protocol: false
     xclient_protocol: true
-  pop3s:
+  pop3s_login:
     enabled: true
     port: 10995
     address: "0.0.0.0"
     ssl_mode: ssl
+    haproxy_protocol: false
+    xclient_protocol: true
+  pop3_login:
+    enabled: true
+    port: 10110
+    address: "0.0.0.0"
+    ssl_mode: starttls
+    haproxy_protocol: false
+    xclient_protocol: true
+  submission_login:
+    enabled: true
+    port: 10587
+    address: "0.0.0.0"
+    ssl_mode: starttls
+    disable_plaintext_auth: true
+  submissions_login:
+    enabled: false
+    port: 10465
+    address: "0.0.0.0"
+    ssl_mode: ssl
+    disable_plaintext_auth: true
+  lmtp_login:
+    enabled: true
+    port: 10024
+    address: "0.0.0.0"
+    ssl_mode: "no"
+    haproxy_protocol: false
+    xclient_protocol: true
+  managesieve_login:
+    enabled: true
+    port: 14190
+    address: "0.0.0.0"
+    ssl_mode: starttls
+    disable_plaintext_auth: false
+    haproxy_protocol: false
+  jmap_login:
+    enabled: true
+    port: 8443
+    address: "0.0.0.0"
+    ssl_mode: ssl
+    haproxy_protocol: false
+    disable_plaintext_auth: true
+  ## Session backends, one plain listener each; the login proxies dial them.
+  imap:
+    enabled: true
+    port: 10143
+    address: "0.0.0.0"
+    ssl_mode: starttls
     haproxy_protocol: false
     xclient_protocol: true
   pop3:
@@ -53,6 +102,12 @@ services:
     ssl_mode: starttls
     haproxy_protocol: false
     xclient_protocol: true
+  submission:
+    enabled: true
+    port: 10587
+    address: "0.0.0.0"
+    ssl_mode: starttls
+    disable_plaintext_auth: true
   lmtp:
     enabled: true
     port: 10024
@@ -60,43 +115,16 @@ services:
     ssl_mode: "no"
     haproxy_protocol: false
     xclient_protocol: true
-  submission:
-    enabled: true
-    port: 10587
-    address: "0.0.0.0"
-    ssl_mode: starttls
-    disable_plaintext_auth: true
-  submissions:
-    enabled: false
-    port: 10465
-    address: "0.0.0.0"
-    ssl_mode: ssl
-    disable_plaintext_auth: true
   managesieve:
     enabled: true
     port: 14190
     address: "0.0.0.0"
-    ssl_mode: starttls
-    disable_plaintext_auth: false
-    haproxy_protocol: false
-  managesieve_be:
-    enabled: true
-    port: 14190
-    address: "0.0.0.0"
     ssl_mode: "no"
-  ## JMAP client listener on yarilo-jmap-login.
-  jmap:
-    enabled: true
-    port: 8443
-    address: "0.0.0.0"
-    ssl_mode: ssl
-    haproxy_protocol: false
-    disable_plaintext_auth: true
   ## Backend listener on yarilo-jmap, reached only by the login proxy. This
   ## stack runs without internal mTLS, so the trust anchor is the peer address:
   ## xclient_protocol here plus general.xclient.trusted_nets. Without both the
   ## backend refuses every request with 403.
-  jmap_be:
+  jmap:
     enabled: true
     port: 10443
     address: "0.0.0.0"

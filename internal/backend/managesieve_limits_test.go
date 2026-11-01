@@ -25,7 +25,7 @@ func TestManageSieveTakesTheSieveLimits(t *testing.T) {
 	go protocol.NewServer(nil).Serve(ctx, ln)  //nolint:errcheck
 	t.Cleanup(func() { cancel(); ln.Close() }) //nolint:errcheck
 	cfg.AuthService.Addr = ln.Addr().String()
-	cfg.Services.ManageSieveBE = &config.ServiceConfig{Enabled: true}
+	cfg.Services.ManageSieve = &config.ServiceConfig{Enabled: true}
 	cfg.Sieve.MaxScriptSize, cfg.Sieve.MaxScripts, cfg.Sieve.MaxStorage = 100, 3, 500
 	cfg.Sieve.SieveExtensions, cfg.Sieve.GlobalExtensions = []string{"fileinto"}, []string{"vnd.yarilo.pipe"}
 

@@ -39,15 +39,6 @@ func TestBindTCPFailsLoudlyOnAPortInUse(t *testing.T) {
 	}
 }
 
-func TestBindTLSRequiresAConfig(t *testing.T) {
-	// a nil TLS config would produce a listener that fails every handshake
-	ln, err := bindTLS("test", &config.ServiceConfig{}, nil)
-	if err == nil {
-		ln.Close()
-		t.Fatal("bindTLS with a nil config must fail")
-	}
-}
-
 func TestBindTCPErrorNamesProtocolAndAddress(t *testing.T) {
 	// the error ends up in startup logs; both fields make it diagnosable
 	_, err := bindTCP("imap", &config.ServiceConfig{Address: "256.256.256.256", Port: 99999})

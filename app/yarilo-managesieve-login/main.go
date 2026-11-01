@@ -37,8 +37,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := config.RequireListeners(cfg, "managesieve_login"); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
 	svcs := cfg.Services
-	if !svcs.ManageSieve.Active() {
+	if !svcs.ManageSieveLogin.Active() {
 		slog.Error("no ManageSieve listener configured (managesieve must be enabled)")
 		os.Exit(1)
 	}
@@ -51,7 +55,7 @@ func main() {
 	)
 
 	// A listener that declares TLS without a certificate must not bind silently.
-	if warn, err := config.CheckListenerTLS("services.managesieve", cfg.Services.ManageSieve, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.managesieve_login", cfg.Services.ManageSieveLogin, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
@@ -100,7 +104,7 @@ func main() {
 	tel := startTelemetry(cfg.Telemetry)
 
 	// Port 4190 - STARTTLS (ManageSieve does not have an implicit-TLS variant).
-	addr, from := svcs.ManageSieve.ListenAddr(config.PublicHost)
+	addr, from := svcs.ManageSieveLogin.ListenAddr(config.PublicHost)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("managesieve-login: listen failed", "addr", addr, "err", err)
@@ -120,7 +124,7 @@ func main() {
 		AuthAddr:            cfg.AuthService.ClientAddr(),
 		AuthTLS:             intTLS,
 		AuthMaxAttempts:     cfg.Auth.MaxAttempts,
-		DisablePlainAuth:    svcs.ManageSieve.PlainAuthDisabled(),
+		DisablePlainAuth:    svcs.ManageSieveLogin.PlainAuthDisabled(),
 		SieveExtensions:     sieveCapability(cfg.Sieve),
 		SieveMaxInvalidCmds: cfg.Protocol.ManageSieve.MaxInvalidCommands,
 		WardenAddr:          cfg.WardenService.ClientAddr(),
