@@ -55,6 +55,11 @@ services:
     enabled: true
     port: 4190
     ssl_mode: starttls
+  jmap_login:
+    enabled: true
+    port: 8443
+    ssl_mode: ssl
+    auth_allow_cleartext: false
 
   imap:
     enabled: true
@@ -81,6 +86,11 @@ services:
     port: 14190
     ssl_mode: "no"
     xclient_protocol: true
+  jmap:
+    enabled: true
+    port: 10443
+    ssl_mode: "no"
+    xclient_protocol: true
 
 imap_login_service:
   backend_addr: 127.0.0.1:10143
@@ -92,6 +102,12 @@ lmtp_login_service:
   backend_addr: 127.0.0.1:10024
 managesieve_login_service:
   backend_addr: 127.0.0.1:14190
+## WebSocket push needs websocket_ticket_key, a secret of your own; without it
+## yarilo-jmap-login serves JMAP over HTTPS only and says so at start.
+jmap_login_service:
+  backend_addr: 127.0.0.1:10443
+jmap_service:
+  auth_master_addr: unix:/run/yarilo/auth/auth-master.sock
 
 auth_service:
   listen: unix:/run/yarilo/auth/auth-client.sock
@@ -130,6 +146,10 @@ storage:
   index: fileindex
 
 protocol:
+  jmap:
+    ## The origin clients reach yarilo-jmap-login on; every URL in the session
+    ## resource starts with it.
+    jmap_base_url: "https://mail.example.org:8443"
   submission:
     relay:
       submission_relay_host: 127.0.0.1
