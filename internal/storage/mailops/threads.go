@@ -3,7 +3,9 @@ package mailops
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
@@ -49,6 +51,7 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 		err = rec(ctx)
 	}
 	if err != nil {
+		metricThreadRecordFailed.Inc()
 		slog.Warn(o.cfg.Protocol+": message saved but not threaded", "user", user, "err", err)
 		return
 	}
@@ -57,6 +60,96 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	if wrote {
 		locks.EmitBest(o.cfg.Locker, locks.ThreadsKey(user), locks.EventThreads, "")
 	}
+}
+
+// A reader threads what a save left out (#2420): it waits a second for the
+// lock, not a delivery's ten, and records a bounded number per read, so a
+// fetch over many gaps cannot hold the account's lock for long.
+const (
+	lateThreadWait = time.Second
+	lateThreadMax  = 64
+)
+
+// ThreadLate records messages of folder that the sidecar does not have, as
+// their save would have: one header read and one append each. It returns the
+// conversations recorded, by GUID, and the lock's refusal; a message it could
+// not record keeps its own id and the next read tries again. An account without
+// a sidecar is the migration's to build (#1425), so it records nothing.
+func (o *Ops) ThreadLate(folder string, msgs []*mailbox.MessageMeta) (map[string]string, error) {
+	if o.cfg.Threads == nil || o.user == nil || o.box == nil || len(msgs) == 0 {
+		return nil, nil
+	}
+	path := threads.PathFor(o.user)
+	if path == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, nil
+	}
+	if len(msgs) > lateThreadMax {
+		msgs = msgs[:lateThreadMax]
+	}
+	user := o.user.Username
+	out := make(map[string]string, len(msgs))
+	wrote := false
+	rec := func(context.Context) error {
+		for _, m := range msgs {
+			raw, err := o.readHeader(folder, m)
+			if err != nil {
+				slog.Debug(o.cfg.Protocol+": late thread: header unreadable", "user", user, "err", err)
+				continue
+			}
+			guid := mailbox.FormatObjectID(m.GUID)
+			id, w, err := o.cfg.Threads.RecordNew(user, path, guid, raw)
+			if err != nil {
+				return err
+			}
+			out[guid] = id
+			if w {
+				wrote = true
+				metricThreadLate.Inc()
+			}
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), o.cfg.Protocol+"-threads-late"), lateThreadWait)
+	defer cancel()
+	var err error
+	if o.cfg.Locker != nil {
+		err = locks.WithLock(ctx, o.cfg.Locker, locks.ThreadsKey(user),
+			locks.Owner(user, o.user.LockID()), threadLockTTL, threadLockRenew, rec)
+	} else {
+		err = rec(ctx)
+	}
+	if err != nil {
+		slog.Debug(o.cfg.Protocol+": late thread: not recorded this time", "user", user, "err", err)
+	}
+	if wrote {
+		locks.EmitBest(o.cfg.Locker, locks.ThreadsKey(user), locks.EventThreads, "")
+	}
+	return out, err
+}
+
+// readHeader reads a stored message up to the end of its header block.
+func (o *Ops) readHeader(folder string, m *mailbox.MessageMeta) ([]byte, error) {
+	rc, err := o.box.OpenMessage(folder, m)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close() //nolint:errcheck
+	var h headerCapture
+	buf := make([]byte, 32<<10)
+	for !h.done {
+		n, err := rc.Read(buf)
+		h.Write(buf[:n]) //nolint:errcheck,gosec // headerCapture never fails
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return h.buf, nil
 }
 
 // maxThreadHeader bounds what a save keeps for threading: the conversation is

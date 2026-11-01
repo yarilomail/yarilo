@@ -3,9 +3,12 @@ package jmap
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
 
 	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // threadGet implements Thread/get (RFC 8621 §3). Threading is not computed yet,
@@ -104,6 +107,39 @@ func (h *userHandle) threadMembers(ids []string) (map[string][]string, error) {
 		}
 	})
 	return out, nil
+}
+
+// threadLate records found messages their save left out of the sidecar
+// (#2420), one ThreadLate per folder. A lock it cannot take ends the attempt
+// for this request: those messages keep their own id until the next read.
+func (h *userHandle) threadLate(found map[string]messageRef) {
+	if h.threads == nil || h.ops == nil || len(found) == 0 {
+		return
+	}
+	path := threads.PathFor(h.info)
+	if path == "" {
+		return
+	}
+	state, err := h.threads.Get(h.info.Username, path)
+	if err != nil {
+		return
+	}
+	byFolder := map[string][]*mailbox.MessageMeta{}
+	state.Read(func(v threads.View) {
+		for _, ref := range found {
+			if ref.meta == nil || ref.meta.GUID == ([16]byte{}) {
+				continue
+			}
+			if _, ok := v.ThreadOf(emailID(ref.meta)); !ok {
+				byFolder[ref.folder] = append(byFolder[ref.folder], ref.meta)
+			}
+		}
+	})
+	for _, folder := range slices.Sorted(maps.Keys(byFolder)) {
+		if _, err := h.ops.ThreadLate(folder, byFolder[folder]); err != nil {
+			return
+		}
+	}
 }
 
 // threadOf reports the conversation one message belongs to, falling back to
